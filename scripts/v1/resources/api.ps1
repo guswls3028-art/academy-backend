@@ -187,7 +187,7 @@ function Invoke-CollectRuntimeImagesReport {
     }
     $ciDigest = $null
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-    $ciPath = Join-Path $repoRoot "docs\00-SSOT\v1\reports\ci-build.latest.md"
+    $ciPath = Join-Path $repoRoot "docs\00-SSOT\reports\ci-build.latest.md"
     if (Test-Path $ciPath) {
         $ciContent = Get-Content -Path $ciPath -Raw -ErrorAction SilentlyContinue
         if ($ciContent -match '\|\s*academy-api\s*\|\s*latest\s*\|\s*(sha256:[a-fA-F0-9]+)\s*\|') {

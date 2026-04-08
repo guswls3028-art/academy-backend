@@ -1,10 +1,10 @@
 ﻿# V1 Stateless Compute 재구축 — 인벤토리 스냅샷 (read-only)
-# 결과: docs/00-SSOT/v1/reports/rebuild-inventory.latest.md 갱신
+# 결과: docs/00-SSOT/reports/rebuild-inventory.latest.md 갱신
 param([string]$AwsProfile = "")
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-$ReportsDir = Join-Path $RepoRoot "docs\00-SSOT\v1\reports"
+$ReportsDir = Join-Path $RepoRoot "docs\00-SSOT\reports"
 $OutPath = Join-Path $ReportsDir "rebuild-inventory.latest.md"
 
 . (Join-Path $ScriptRoot "core\env.ps1")

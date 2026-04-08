@@ -8,9 +8,14 @@ from apps.domains.results.models.exam_result import ExamResult
 
 class ManualGradeItemSerializer(serializers.Serializer):
     exam_question_id = serializers.IntegerField()
-    score = serializers.FloatField(required=False)
+    score = serializers.FloatField(required=False, min_value=0)
     is_correct = serializers.BooleanField(required=False)
     note = serializers.CharField(required=False, allow_blank=True)
+
+    def validate_score(self, value: float) -> float:
+        if value < 0 or value > 100:
+            raise serializers.ValidationError("score는 0 이상 100 이하여야 합니다.")
+        return value
 
 
 class ManualGradeSerializer(serializers.Serializer):

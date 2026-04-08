@@ -177,7 +177,7 @@ foreach ($rev in (Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Na
 }
 
 # --- aws-resource-inventory.latest.md ---
-$invPath = Join-Path $RepoRoot "docs\00-SSOT\v1\reports\aws-resource-inventory.latest.md"
+$invPath = Join-Path $RepoRoot "docs\00-SSOT\reports\aws-resource-inventory.latest.md"
 $invDir = Split-Path $invPath -Parent
 if (-not (Test-Path $invDir)) { New-Item -ItemType Directory -Path $invDir -Force | Out-Null }
 $sb = [System.Text.StringBuilder]::new()
@@ -234,7 +234,7 @@ Set-Content -Path $invPath -Value $sb.ToString() -Encoding UTF8 -Force
 Write-Host '  Inventory:' $invPath -ForegroundColor Green
 
 # --- resource-cleanup-plan.latest.md ---
-$planPath = Join-Path $RepoRoot "docs\00-SSOT\v1\reports\resource-cleanup-plan.latest.md"
+$planPath = Join-Path $RepoRoot "docs\00-SSOT\reports\resource-cleanup-plan.latest.md"
 $planSb = [System.Text.StringBuilder]::new()
 [void]$planSb.AppendLine("# V1 리소스 정리 계획 (비용 절감)")
 [void]$planSb.AppendLine("")

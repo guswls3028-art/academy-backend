@@ -63,4 +63,4 @@ aws batch list-jobs --job-queue academy-v1-video-batch-queue --region "$REGION" 
 
 echo ""
 echo "=== 점검 완료 ==="
-echo "연결 참조 문서: docs/00-SSOT/v1/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md"
+echo "연결 참조 문서: docs/00-SSOT/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md"

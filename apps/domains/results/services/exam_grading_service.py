@@ -179,16 +179,28 @@ class ExamGradingService:
             "breakdown", "is_passed", "status", "updated_at",
         ])
 
-        try:
-            from apps.domains.submissions.services.transition import transit_save
-            # answers_ready → grading → done (STATUS_FLOW SSOT 준수)
-            if submission.status == "answers_ready":
-                transit_save(submission, "grading", actor="ExamGradingService.auto_grade")
+        from apps.domains.submissions.services.transition import (
+            can_transit, transit_save,
+        )
+
+        # answers_ready → grading → done (STATUS_FLOW SSOT 준수)
+        # 다른 상태에서는 grading/done에 도달할 수 없으므로 채점 자체를 중단한다.
+        # @transaction.atomic가 롤백하여 ExamResult 저장도 취소됨.
+        if submission.status == "answers_ready":
+            transit_save(submission, "grading", actor="ExamGradingService.auto_grade")
             transit_save(submission, "done", actor="ExamGradingService.auto_grade")
-        except Exception:
+        elif can_transit(submission.status, "done"):
+            transit_save(submission, "done", actor="ExamGradingService.auto_grade")
+        else:
             import logging
-            logging.getLogger(__name__).exception(
-                "Failed to update submission %s status to 'done'", submission.id
+            logging.getLogger(__name__).error(
+                "Submission %s in status '%s' cannot transition to 'done'; "
+                "aborting grading to preserve data consistency.",
+                submission.id, submission.status,
+            )
+            raise ValidationError(
+                f"Submission {submission.id} in status '{submission.status}' "
+                f"cannot be graded — invalid state for transition to 'done'."
             )
 
         return result
@@ -246,6 +258,9 @@ class ExamGradingService:
             if isinstance(item, dict):
                 qid = item.get("exam_question_id", 0)
                 score = float(item.get("score", 0) or 0)
+                # 음수 방어: 음수면 0으로 클램핑
+                if score < 0:
+                    score = 0.0
 
                 # max_score 결정: item 명시 > 기존 breakdown의 earned > exam 문항 DB
                 raw_max = item.get("max_score")
@@ -261,6 +276,10 @@ class ExamGradingService:
                     else:
                         # 마지막 수단: 문항 DB에서 조회
                         max_score_item = self._get_question_max_score(exam, qid)
+
+                # 만점 초과 방어: max_score 초과면 max_score로 클램핑
+                if score > max_score_item:
+                    score = max_score_item
 
                 manual_total += score
                 manual_max += max_score_item

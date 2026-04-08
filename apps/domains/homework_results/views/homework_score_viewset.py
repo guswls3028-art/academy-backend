@@ -258,6 +258,10 @@ def _apply_score_and_policy(
                     source_id=_hid,
                 ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
 
+                # tenant_id 조회 (enrollment → tenant)
+                from apps.domains.enrollment.models import Enrollment as _Enrollment
+                _tenant_id = _Enrollment.objects.filter(id=_eid).values_list("tenant_id", flat=True).first()
+
                 with transaction.atomic():
                     try:
                         ClinicLink.objects.create(
@@ -269,6 +273,7 @@ def _apply_score_and_policy(
                             is_auto=True,
                             approved=False,
                             cycle_no=max(max_cycle + 1, 1),
+                            tenant_id=_tenant_id,
                             meta={
                                 "kind": "HOMEWORK_FAILED",
                                 "homework_id": _hid,

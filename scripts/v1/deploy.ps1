@@ -4,7 +4,7 @@
 # 자동 동기화(Invoke-SyncEnvFromSSOT)하여, 여러 번 실행해도 동일한 인프라·env 상태가 되도록 idempotent 함.
 # 배포 원칙: 빌드 서버는 사용하지 않는다(0대). 이미지 빌드·ECR 푸시는 GitHub Actions(OIDC)만 사용한다.
 # deploy.ps1는 이미 ECR에 올라간 이미지를 pull하여 배포/refresh만 수행한다. (즉 -SkipBuild가 기본 흐름)
-# 전체 실행 시간: API health 대기(최대 300s) + Netprobe( cold start 시 최대 600s) + Evidence(수십 초) 등으로 20~25분 넘을 수 있음. CI/터미널 타임아웃은 30분 이상 권장 (docs/00-SSOT/v1/reports/DEPLOY-TIMING-CHECKLIST.md 참고).
+# 전체 실행 시간: API health 대기(최대 300s) + Netprobe( cold start 시 최대 600s) + Evidence(수십 초) 등으로 20~25분 넘을 수 있음. CI/터미널 타임아웃은 30분 이상 권장 (docs/00-SSOT/reports/DEPLOY-TIMING-CHECKLIST.md 참고).
 # Cursor 등 실행 시: AWS 프로필은 반드시 default. -AwsProfile default (문서·Cursor 룰 07_aws_profile_default.mdc).
 # ==============================================================================
 [CmdletBinding()]

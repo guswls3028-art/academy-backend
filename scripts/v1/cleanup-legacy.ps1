@@ -1,6 +1,6 @@
 ﻿# V1 Legacy 리소스 정리 — SSOT에 없는 리소스만 대상. 삭제 전 reports 기록 필수.
 # 기능: orphan EIP release, orphan EBS volume delete, unused SG delete, legacy EC2 terminate, legacy ASG inventory/remove.
-# 실행 결과: docs/00-SSOT/v1/reports/cleanup-run.latest.md, resource-cleanup.latest.md 갱신.
+# 실행 결과: docs/00-SSOT/reports/cleanup-run.latest.md, resource-cleanup.latest.md 갱신.
 param(
     [switch]$DryRun = $true,
     [switch]$Execute,
@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-$ReportsDir = Join-Path $RepoRoot "docs\00-SSOT\v1\reports"
+$ReportsDir = Join-Path $RepoRoot "docs\00-SSOT\reports"
 $InventoryPath = Join-Path $ReportsDir "aws-resource-inventory.latest.md"
 $PlanPath = Join-Path $ReportsDir "resource-cleanup-plan.latest.md"
 $CleanupRunPath = Join-Path $ReportsDir "cleanup-run.latest.md"

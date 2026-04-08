@@ -75,4 +75,4 @@ if ($script:VideoLongQueueName) {
     Write-Host "  Video Batch Long: VIDEO_BATCH_JOB_QUEUE_LONG=$($script:VideoLongQueueName)" -ForegroundColor Gray
 }
 Write-Host "`nAPI 인스턴스 refresh-api-env.ps1 실행 또는 instance-refresh 후 적용됨." -ForegroundColor Cyan
-Write-Host "연결 참조 대조: docs/00-SSOT/v1/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md" -ForegroundColor Cyan
+Write-Host "연결 참조 대조: docs/00-SSOT/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md" -ForegroundColor Cyan

@@ -62,7 +62,7 @@ try {
         Pop-Location
         $planOut
     } "deploy -Plan failed. Check drift/params."
-    $results += [PSCustomObject]@{ Step = "2) deploy -Plan"; Result = "OK"; Detail = "Reports: docs/00-SSOT/v1/reports/" }
+    $results += [PSCustomObject]@{ Step = "2) deploy -Plan"; Result = "OK"; Detail = "Reports: docs/00-SSOT/reports/" }
 
     # 3) deploy -PruneLegacy
     $null = Run-Step "3) deploy.ps1 -PruneLegacy" {
@@ -93,7 +93,7 @@ try {
     $results += [PSCustomObject]@{ Step = "4) deploy (No-op)"; Result = if ($noOp) { "OK" } else { "CHECK" }; Detail = if ($noOp) { "No-op confirmed" } else { "See log" } }
 
     # 5) Evidence 위치
-    $results += [PSCustomObject]@{ Step = "5) Evidence"; Result = "-"; Detail = "docs/00-SSOT/v1/reports/, deploy stdout" }
+    $results += [PSCustomObject]@{ Step = "5) Evidence"; Result = "-"; Detail = "docs/00-SSOT/reports/, deploy stdout" }
 }
 catch {
     Write-Log "`n=== VERIFY STOPPED ==="

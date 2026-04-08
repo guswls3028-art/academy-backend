@@ -1,11 +1,17 @@
-> **DEPRECATED**: This document predates V1.1.0. Authoritative deployment docs are at `docs/00-SSOT/v1.1.0/`. References to `docs/00-SSOT/v1/` are stale.
-
 # scripts/v1 — 정식 배포·검증 (풀셋팅 v1)
+
+> **ACTIVE:** 이 문서는 현재 유효합니다.
+>  
+> **Authoritative docs:** `docs/00-SSOT/params.yaml`, `docs/00-SSOT/v1.1.0/`, `docs/00-SSOT/README.md`
+>  
+> **Alias policy:** `docs/00-SSOT/PATH-ALIAS-POLICY.md`
+>  
+> **경고:** `docs/00-SSOT/v1/...` 경로 표기는 stale 별칭일 수 있으므로 사용하지 않습니다.
 
 **딸깍 5단계** (새 PC에서 그대로 재현):
 
 1. **bootstrap** — `pwsh scripts/v1/bootstrap.ps1`  
-   AWS CLI, 인증, region, `docs/00-SSOT/v1/params.yaml` 존재 확인.
+   AWS CLI, 인증, region, `docs/00-SSOT/params.yaml` 존재 확인.
 
 2. **deploy -Plan** — `pwsh scripts/v1/deploy.ps1 -Plan`  
    AWS 변경 없이 표/리포트만 출력. Drift·Evidence 확인.
@@ -16,7 +22,7 @@
 4. **deploy 재실행 (No-op)** — `pwsh scripts/v1/deploy.ps1`  
    변경 없이 완료되는지 확인. 출력에 "Idempotent: No changes required" 확인.
 
-5. **Evidence 확인** — `docs/00-SSOT/v1/reports/` 및 deploy stdout의 Evidence 테이블.
+5. **Evidence 확인** — `docs/00-SSOT/reports/` 및 deploy stdout의 Evidence 테이블.
 
 ---
 
@@ -34,7 +40,7 @@ pwsh scripts/v1/verify.ps1
 
 ## params.yaml
 
-- **위치**: `docs/00-SSOT/v1/params.yaml`
+- **위치**: `docs/00-SSOT/params.yaml`
 - **수정**: 환경별 값(리전, 계정, VPC 등)만 변경. 스크립트는 이 파일만 참조.
 - **API ASG max**: 2 고정 (solo dev, medium reliability).
 
@@ -53,4 +59,4 @@ pwsh scripts/v1/verify.ps1
 - **해결**  
   - **방법 1**: `aws configure` 로 default 프로파일 저장 → 어떤 셸에서든 동작.  
   - **방법 2**: named 프로파일(또는 SSO) 사용 시 `pwsh scripts/v1/deploy.ps1 -Env prod -AwsProfile prod`, `pwsh scripts/v1/verify.ps1 -AwsProfile prod`.
-- **상세**: [docs/00-SSOT/v1/AWS-CURSOR-SETUP.md](../../docs/00-SSOT/v1/AWS-CURSOR-SETUP.md)
+- **상세**: [docs/00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md](../../docs/00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md)

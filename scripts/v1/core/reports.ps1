@@ -1,9 +1,9 @@
-﻿# Persist drift/evidence/audit to docs/00-SSOT/v1/reports/ and history/.
+﻿# Persist drift/evidence/audit to docs/00-SSOT/reports/ and history/.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
 $ReportsScriptDir = $PSScriptRoot
 $ReportsRepoRoot = (Resolve-Path (Join-Path $ReportsScriptDir "..\..\..")).Path
-$ReportsBase = Join-Path $ReportsRepoRoot "docs\00-SSOT\v1\reports"
+$ReportsBase = Join-Path $ReportsRepoRoot "docs\00-SSOT\reports"
 $ReportsHistory = Join-Path $ReportsBase "history"
 
 function Get-ReportsDir {

@@ -230,7 +230,6 @@ class ClinicLink(TimestampModel):
         on_delete=models.CASCADE,
         related_name="clinic_links",
         db_index=True,
-        null=True,  # Step 1: nullable. Step 2: backfill. Step 3: NOT NULL 전환
     )
     enrollment = models.ForeignKey(
         "enrollment.Enrollment",

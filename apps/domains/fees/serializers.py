@@ -173,3 +173,4 @@ class RecordPaymentSerializer(serializers.Serializer):
     paid_at = serializers.DateTimeField(required=False)
     receipt_note = serializers.CharField(required=False, allow_blank=True, default="")
     memo = serializers.CharField(required=False, allow_blank=True, default="")
+    idempotency_key = serializers.CharField(required=False, allow_blank=True, default="", max_length=100)

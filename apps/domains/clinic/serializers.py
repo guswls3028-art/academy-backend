@@ -332,3 +332,10 @@ class ClinicSubmissionSerializer(serializers.ModelSerializer):
                 self.fields["test"].queryset = Test.objects.filter(tenant=tenant)
             if "student" in self.fields:
                 self.fields["student"].queryset = Student.objects.filter(tenant=tenant)
+
+    def validate_score(self, value):
+        if value is None:
+            return value
+        if float(value) < 0:
+            raise serializers.ValidationError("score는 0 이상이어야 합니다.")
+        return value

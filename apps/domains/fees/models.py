@@ -7,6 +7,7 @@
 """
 
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.core.models.base import TimestampModel
@@ -353,6 +354,12 @@ class FeePayment(TimestampModel):
         help_text="영수증 메모 / 입금자명",
     )
     memo = models.TextField(blank=True)
+    idempotency_key = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        help_text="클라이언트 제공 멱등성 키 (중복 납부 방지)",
+    )
 
     class Meta:
         db_table = "fee_payment"
@@ -360,6 +367,13 @@ class FeePayment(TimestampModel):
         indexes = [
             models.Index(fields=["tenant", "student"]),
             models.Index(fields=["tenant", "invoice"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "invoice", "idempotency_key"],
+                condition=Q(idempotency_key__gt=""),
+                name="uniq_fee_payment_idempotency_key",
+            ),
         ]
 
     def __str__(self):

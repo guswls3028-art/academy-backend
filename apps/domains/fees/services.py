@@ -9,11 +9,11 @@
 """
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from itertools import groupby
 from operator import attrgetter
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Sum, Q
 from django.utils import timezone
 
@@ -36,18 +36,25 @@ def _next_invoice_number(tenant, year: int, month: int) -> str:
     """
     FEE-{YYYY}-{MM}-{NNNN} 형식의 청구번호 생성.
     해당 테넌트+연월 내에서 순번 증가.
+
+    반드시 transaction.atomic() 내부에서 호출해야 한다.
+    select_for_update()로 해당 연월의 마지막 행을 잠가서
+    동시 호출 시 중복 번호 생성을 방지한다.
     """
     prefix = f"FEE-{year}-{month:02d}-"
-    last = (
+    # select_for_update: 해당 연월의 모든 invoice를 잠금으로써
+    # 동시 트랜잭션이 같은 번호를 읽는 것을 방지한다.
+    last_invoice = (
         StudentInvoice.objects
+        .select_for_update()
         .filter(tenant=tenant, invoice_number__startswith=prefix)
         .order_by("-invoice_number")
-        .values_list("invoice_number", flat=True)
+        .only("invoice_number")
         .first()
     )
-    if last:
+    if last_invoice:
         try:
-            seq = int(last.split("-")[-1]) + 1
+            seq = int(last_invoice.invoice_number.split("-")[-1]) + 1
         except (ValueError, IndexError):
             seq = 1
     else:
@@ -186,6 +193,9 @@ def generate_monthly_invoices(
 # 수납 기록
 # ========================================================
 
+PAYMENT_DEDUP_WINDOW_SECONDS = 60  # 동일 파라미터 중복 납부 방지 윈도우
+
+
 @transaction.atomic
 def record_payment(
     tenant,
@@ -196,16 +206,22 @@ def record_payment(
     recorded_by=None,
     receipt_note: str = "",
     memo: str = "",
+    idempotency_key: str = "",
 ) -> FeePayment:
     """
     청구서에 대한 납부를 기록한다.
 
     1. select_for_update로 invoice 잠금
-    2. amount <= outstanding 검증
-    3. FeePayment 생성
-    4. invoice.paid_amount 재계산
-    5. 완납 시 status=PAID
-    6. messaging trigger 호출
+    2. 멱등성 검사 (idempotency_key 또는 시간 윈도우 기반)
+    3. amount <= outstanding 검증
+    4. FeePayment 생성
+    5. invoice.paid_amount 재계산
+    6. 완납 시 status=PAID
+    7. messaging trigger 호출
+
+    idempotency_key: 클라이언트가 제공하는 중복 요청 방지 키.
+        동일 키로 이미 성공한 납부가 있으면 기존 납부를 반환한다.
+        키가 없어도 동일 invoice+금액+수단의 짧은 시간 내 중복을 방지한다.
     """
     invoice = (
         StudentInvoice.objects
@@ -216,6 +232,39 @@ def record_payment(
     if invoice.status == "CANCELLED":
         raise ValueError("취소된 청구서에는 수납을 기록할 수 없습니다.")
 
+    # --- 멱등성 검사: idempotency_key 기반 ---
+    if idempotency_key:
+        existing = FeePayment.objects.filter(
+            tenant=tenant,
+            invoice=invoice,
+            idempotency_key=idempotency_key,
+            status="SUCCESS",
+        ).first()
+        if existing:
+            logger.info(
+                "Duplicate payment blocked by idempotency_key=%s (existing payment %d)",
+                idempotency_key, existing.id,
+            )
+            return existing
+
+    # --- 멱등성 검사: 시간 윈도우 기반 (더블클릭/재전송 방지) ---
+    now = timezone.now()
+    dedup_cutoff = now - timedelta(seconds=PAYMENT_DEDUP_WINDOW_SECONDS)
+    recent_duplicate = FeePayment.objects.filter(
+        tenant=tenant,
+        invoice=invoice,
+        amount=amount,
+        payment_method=payment_method,
+        status="SUCCESS",
+        created_at__gte=dedup_cutoff,
+    ).exists()
+    if recent_duplicate:
+        raise ValueError(
+            f"동일한 납부({amount:,}원, {payment_method})가 "
+            f"{PAYMENT_DEDUP_WINDOW_SECONDS}초 이내에 이미 기록되었습니다. "
+            f"중복 납부가 아닌지 확인하세요."
+        )
+
     outstanding = invoice.outstanding_amount
     if amount > outstanding:
         raise ValueError(
@@ -223,7 +272,7 @@ def record_payment(
         )
 
     if paid_at is None:
-        paid_at = timezone.now()
+        paid_at = now
 
     payment = FeePayment.objects.create(
         tenant=tenant,
@@ -236,6 +285,7 @@ def record_payment(
         recorded_by=recorded_by,
         receipt_note=receipt_note,
         memo=memo,
+        idempotency_key=idempotency_key,
     )
 
     _recalculate_invoice(invoice)

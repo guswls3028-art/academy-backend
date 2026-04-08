@@ -97,4 +97,4 @@ try {
 }
 
 Write-Host "`n=== 점검 완료 ===" -ForegroundColor Cyan
-Write-Host "연결 참조 문서: docs/00-SSOT/v1/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md" -ForegroundColor Gray
+Write-Host "연결 참조 문서: docs/00-SSOT/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md" -ForegroundColor Gray

@@ -215,10 +215,14 @@ class PostViewSet(viewsets.ModelViewSet):
             page = max(1, int(request.query_params.get("page") or 1))
         except (TypeError, ValueError):
             page = 1
+        total = qs.count()
         offset = (page - 1) * page_size
         page_qs = qs[offset : offset + page_size]
         serializer = self.get_serializer(page_qs, many=True)
-        return Response(serializer.data)
+        return Response({
+            "count": total,
+            "results": serializer.data,
+        })
 
     @action(detail=False, methods=["get"], url_path="board")
     def board(self, request):

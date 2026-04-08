@@ -98,15 +98,17 @@ class TestSendEventNotification(TestCase):
         self.assertEqual(kw["tenant_id"], 1)
         self.assertEqual(kw["to"], "01087654321")
         self.assertEqual(kw["message_mode"], "alimtalk")
-        self.assertEqual(kw["template_id"], "KA01TP_TEST")
+        # 통합 4종 우선 라우팅 정책: check_in_complete는 attendance 통합 템플릿 사용
+        self.assertEqual(kw["template_id"], "KA01TP260406121126868FGddLmrDFUC")
         # SMS fallback text
         self.assertIn("학원플러스", kw["text"])
         self.assertIn("홍길", kw["text"])
         self.assertIn("수학A반", kw["text"])
         # alimtalk replacements
         reps = {r["key"]: r["value"] for r in kw["alimtalk_replacements"]}
-        self.assertEqual(reps["학원명"], "학원플러스")
-        self.assertEqual(reps["학생이름2"], "길동")
+        # 통합 attendance 템플릿 변수 스키마: 학원이름/학생이름/강의명...
+        self.assertEqual(reps["학원이름"], "학원플러스")
+        self.assertEqual(reps["학생이름"], "홍길동")
         self.assertEqual(reps["강의명"], "수학A반")
 
     @patch(f"{_SVC}.enqueue_sms")
@@ -166,18 +168,23 @@ class TestSendEventNotification(TestCase):
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
-    def test_skips_when_template_not_approved(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
-        """템플릿 미승인이면 발송 스킵."""
+    def test_uses_unified_template_when_template_not_approved(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
+        """통합 4종 우선 정책: 개별 템플릿이 미승인이어도 통합 템플릿으로 발송."""
         tenant = _make_tenant()
         student = _make_student()
         config = _make_config("check_in_complete", solapi_status="PENDING")
         mock_config.return_value = config
+        mock_enqueue.return_value = True
 
         from apps.support.messaging.services import send_event_notification
         result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
 
-        self.assertFalse(result)
-        mock_enqueue.assert_not_called()
+        self.assertTrue(result)
+        mock_enqueue.assert_called_once()
+        self.assertEqual(
+            mock_enqueue.call_args.kwargs["template_id"],
+            "KA01TP260406121126868FGddLmrDFUC",
+        )
 
     @patch(f"{_SVC}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
@@ -340,6 +347,29 @@ class TestEnqueueSmsPolicy(TestCase):
         from apps.support.messaging.services import enqueue_sms
         result = enqueue_sms(tenant_id=9999, to="01012345678", text="테스트")
         self.assertFalse(result)
+
+
+class TestMessagingProviderResolution(TestCase):
+    """정책 분기: provider/pf_id/use_default/sms 허용 여부."""
+
+    @patch(f"{_POL}.get_tenant_provider", return_value="ppurio")
+    @patch(f"{_POL}.resolve_kakao_channel", return_value={"pf_id": "", "use_default": True})
+    def test_resolve_alimtalk_provider_with_default_channel(self, mock_channel, mock_provider):
+        from apps.support.messaging.policy import resolve_messaging_provider
+        result = resolve_messaging_provider(tenant_id=2, message_type="alimtalk")
+        self.assertTrue(result["allowed"])
+        self.assertEqual(result["provider"], "ppurio")
+        self.assertEqual(result["pf_id"], "")
+        self.assertTrue(result["use_default"])
+
+    @patch(f"{_POL}.get_tenant_provider", return_value="solapi")
+    @patch(f"{_POL}.can_send_sms", return_value=False)
+    def test_resolve_sms_provider_blocked(self, mock_can_sms, mock_provider):
+        from apps.support.messaging.policy import resolve_messaging_provider
+        result = resolve_messaging_provider(tenant_id=5, message_type="sms")
+        self.assertFalse(result["allowed"])
+        self.assertEqual(result["reason"], "sms_not_allowed")
+        self.assertEqual(result["provider"], "solapi")
 
 
 # ──────────────────────────────────────────

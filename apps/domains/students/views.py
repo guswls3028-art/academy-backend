@@ -697,10 +697,18 @@ class StudentViewSet(ModelViewSet):
                 else:
                     with transaction.atomic():
                         student_repo.enrollment_filter_student_delete(student.id, tenant=tenant)
-                        if student.user_id:
-                            student.user.delete()
-                        else:
-                            student.delete()
+                        user = student.user if student.user_id else None
+                        student.delete()
+                        if user:
+                            # 안전한 패턴: User를 바로 delete()하면 다른 테넌트 데이터까지 cascade 삭제됨
+                            # 1) 비활성화 먼저
+                            user.is_active = False
+                            user.save(update_fields=["is_active"])
+                            # 2) 해당 테넌트 멤버십만 삭제
+                            TenantMembership.objects.filter(user=user, tenant=tenant).delete()
+                            # 3) 다른 테넌트에 멤버십이 없는 고아 User만 삭제
+                            if not TenantMembership.objects.filter(user=user).exists():
+                                user.delete()
                         parent = None
                         parent_phone_raw = str(student_data.get("parent_phone") or student_data.get("parentPhone", "")).replace(" ", "").replace("-", "").replace(".", "")
                         parent_phone = parent_phone_raw if len(parent_phone_raw) >= 11 else ""
@@ -1197,7 +1205,15 @@ class StudentViewSet(ModelViewSet):
                     user = s.user
                     s.delete()
                     if user:
-                        user.delete()
+                        # 안전한 패턴: User를 바로 delete()하면 다른 테넌트 데이터까지 cascade 삭제됨
+                        # 1) 비활성화 먼저
+                        user.is_active = False
+                        user.save(update_fields=["is_active"])
+                        # 2) 해당 테넌트 멤버십만 삭제
+                        TenantMembership.objects.filter(user=user, tenant=tenant).delete()
+                        # 3) 다른 테넌트에 멤버십이 없는 고아 User만 삭제
+                        if not TenantMembership.objects.filter(user=user).exists():
+                            user.delete()
                     removed += 1
         return Response({"removed": removed}, status=200)
 

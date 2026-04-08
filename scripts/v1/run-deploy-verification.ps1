@@ -1,5 +1,5 @@
 ﻿# V1 배포 검증 자동화 — 인프라/기능/Evidence 수집 후 최종 보고서 생성.
-# 리소스 변경 없음. 검증만 수행. 결과: docs/00-SSOT/v1/reports/deploy-verification-latest.md, V1-FINAL-REPORT.md, audit.latest.md, drift.latest.md 갱신.
+# 리소스 변경 없음. 검증만 수행. 결과: docs/00-SSOT/reports/deploy-verification-latest.md, V1-FINAL-REPORT.md, audit.latest.md, drift.latest.md 갱신.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않는다.
 # 사용: pwsh -File scripts/v1/run-deploy-verification.ps1 [-AwsProfile default] (run-with-env 권장)
 param([string]$AwsProfile = "")
@@ -581,7 +581,7 @@ if ($findings.Count -gt 0) {
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("**연관 보고서:** audit.latest.md, drift.latest.md (동시 갱신됨).")
 
-$reportPath = Join-Path $RepoRoot "docs\00-SSOT\v1\reports"
+$reportPath = Join-Path $RepoRoot "docs\00-SSOT\reports"
 if (-not (Test-Path $reportPath)) { New-Item -ItemType Directory -Path $reportPath -Force | Out-Null }
 Save-DeployVerificationReport -MarkdownContent $sb.ToString()
 
@@ -648,8 +648,8 @@ Save-V1FinalReportInReports -MarkdownContent $finalSb.ToString()
 Write-Host "`n=== 검증 완료 ===" -ForegroundColor Green
 Write-Host "  최종 상태: $finalStatus" -ForegroundColor $(if ($finalStatus -eq "PASS") { "Green" } elseif ($finalStatus -eq "WARNING") { "Yellow" } else { "Red" })
 Write-Host "  GO/NO-GO: $goNoGo" -ForegroundColor Cyan
-Write-Host "  보고서: docs/00-SSOT/v1/reports/deploy-verification-latest.md" -ForegroundColor Cyan
-Write-Host "  V1 최종: docs/00-SSOT/v1/reports/V1-FINAL-REPORT.md" -ForegroundColor Cyan
+Write-Host "  보고서: docs/00-SSOT/reports/deploy-verification-latest.md" -ForegroundColor Cyan
+Write-Host "  V1 최종: docs/00-SSOT/reports/V1-FINAL-REPORT.md" -ForegroundColor Cyan
 Write-Host "  audit.latest.md, drift.latest.md, consistency.latest.md, front-connection.latest.md 갱신됨." -ForegroundColor Gray
 if ($findings.Count -gt 0) {
     Write-Host "  발견 사항: $($findings.Count)건" -ForegroundColor Yellow

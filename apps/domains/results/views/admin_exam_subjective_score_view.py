@@ -60,7 +60,8 @@ class AdminExamSubjectiveScoreView(APIView):
         if new_subjective < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
 
-        max_score = 100.0
+        exam = Exam.objects.filter(id=exam_id).first()
+        max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
         if new_subjective > max_score:
             raise ValidationError(
                 {"detail": f"score must be between 0 and {max_score}", "code": "INVALID"}
@@ -120,7 +121,6 @@ class AdminExamSubjectiveScoreView(APIView):
 
         objective = float(getattr(result, "objective_score", 0.0) or 0.0)
         new_total = objective + new_subjective
-        exam = Exam.objects.filter(id=exam_id).first()
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
         submission_id = 0

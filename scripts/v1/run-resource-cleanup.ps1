@@ -2,7 +2,7 @@
 # PHASE 1: EIP 전부 release (association 없음)
 # PHASE 2: ENI에 연결되지 않은 Security Group 삭제 (SSOT 유지 SG 제외)
 # PHASE 3: API ASG 축소 (min=1 desired=1 max=2)
-# PHASE 4: describe-* 로 재검증 후 docs/00-SSOT/v1/reports/resource-cleanup.latest.md 기록
+# PHASE 4: describe-* 로 재검증 후 docs/00-SSOT/reports/resource-cleanup.latest.md 기록
 # 사용: pwsh -File scripts/v1/run-resource-cleanup.ps1 [-AwsProfile default] [-Execute]
 param(
     [string]$AwsProfile = "",
@@ -11,7 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-$ReportsDir = Join-Path $RepoRoot "docs\00-SSOT\v1\reports"
+$ReportsDir = Join-Path $RepoRoot "docs\00-SSOT\reports"
 $ResourceCleanupPath = Join-Path $ReportsDir "resource-cleanup.latest.md"
 
 . (Join-Path $ScriptRoot "core\env.ps1")

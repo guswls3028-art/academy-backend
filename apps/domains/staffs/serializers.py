@@ -66,7 +66,7 @@ class StaffWorkTypeSerializer(serializers.ModelSerializer):
             staff_repo.staff_queryset_tenant(tenant) if tenant else Staff.objects.none()
         )
         self.fields["work_type_id"].queryset = (
-            staff_repo.work_type_queryset_tenant(tenant) if tenant else staff_repo.work_type_all()
+            staff_repo.work_type_queryset_tenant(tenant) if tenant else staff_repo.work_type_empty_queryset()
         )
 
     class Meta:
@@ -422,6 +422,9 @@ class WorkRecordSerializer(serializers.ModelSerializer):
             tenant = request.tenant
             self.fields["staff"].queryset = Staff.objects.filter(tenant=tenant)
             self.fields["work_type"].queryset = WorkType.objects.filter(tenant=tenant)
+        else:
+            self.fields["staff"].queryset = Staff.objects.none()
+            self.fields["work_type"].queryset = WorkType.objects.none()
 
 
 # ---------------------------
