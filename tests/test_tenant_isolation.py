@@ -230,12 +230,42 @@ class TestPermissionClasses(TestCase):
         # student_user only has student role, not in STAFF_ROLES
         self.assertFalse(perm.has_permission(request, None))
 
-    def test_staff_permission_allows_superuser(self):
-        """TenantResolvedAndStaff allows Django superuser regardless of membership."""
+    def test_staff_permission_allows_superuser_with_matching_tenant(self):
+        """TenantResolvedAndStaff allows superuser whose tenant_id matches request tenant."""
         perm = TenantResolvedAndStaff()
         su = User.objects.create_superuser(
-            username="superadmin", password="pass123"
+            username="superadmin", password="pass123", tenant=self.tenant
         )
+        request = _mock_request(user=su, tenant=self.tenant)
+        self.assertTrue(perm.has_permission(request, None))
+
+    def test_staff_permission_rejects_superuser_cross_tenant(self):
+        """TenantResolvedAndStaff rejects superuser accessing a different tenant (no membership)."""
+        perm = TenantResolvedAndStaff()
+        su = User.objects.create_superuser(
+            username="superadmin_cross", password="pass123", tenant=self.other_tenant
+        )
+        # superuser belongs to other_tenant, trying to access self.tenant
+        request = _mock_request(user=su, tenant=self.tenant)
+        self.assertFalse(perm.has_permission(request, None))
+
+    def test_staff_permission_rejects_superuser_no_tenant(self):
+        """TenantResolvedAndStaff rejects superuser with no tenant_id (no membership)."""
+        perm = TenantResolvedAndStaff()
+        su = User.objects.create_superuser(
+            username="superadmin_none", password="pass123"
+        )
+        request = _mock_request(user=su, tenant=self.tenant)
+        self.assertFalse(perm.has_permission(request, None))
+
+    def test_staff_permission_allows_superuser_with_membership(self):
+        """TenantResolvedAndStaff allows superuser who has staff membership even in different tenant."""
+        perm = TenantResolvedAndStaff()
+        su = User.objects.create_superuser(
+            username="superadmin_member", password="pass123", tenant=self.other_tenant
+        )
+        # superuser belongs to other_tenant but has membership in self.tenant
+        TenantMembership.objects.create(tenant=self.tenant, user=su, role="admin")
         request = _mock_request(user=su, tenant=self.tenant)
         self.assertTrue(perm.has_permission(request, None))
 
