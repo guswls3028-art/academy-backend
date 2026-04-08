@@ -61,11 +61,19 @@ def _send_attendance_notification(tenant, attendance, trigger):
             )
             return
 
+        # 반 정보 (section_mode일 때)
+        section = getattr(session, "section", None)
+        section_label = ""
+        if section:
+            prefix = "클리닉 " if section.section_type == "CLINIC" else ""
+            section_label = f"{prefix}{section.label}반"
+
         context = {
             "강의명": lecture.title or "",
             "차시명": session.title or f"{session.order}차시",
             "날짜": str(session_date) if session_date else now.strftime("%Y-%m-%d"),
             "시간": now.strftime("%H:%M"),
+            "반이름": section_label,
             "_domain_object_id": str(attendance.id),
         }
 

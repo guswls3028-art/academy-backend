@@ -130,6 +130,13 @@ def build_attendance_preview(
 
         # 본문 치환
         body = (template.body or "").strip()
+        # 반 정보 (section_mode일 때)
+        section = getattr(att.session, "section", None)
+        section_label = ""
+        if section:
+            prefix = "클리닉 " if section.section_type == "CLINIC" else ""
+            section_label = f"{prefix}{section.label}반"
+
         context = {
             "학원명": academy_name,
             "학생이름": name,
@@ -137,6 +144,7 @@ def build_attendance_preview(
             "사이트링크": site_url,
             "강의명": att.session.lecture.title or "",
             "차시명": att.session.title or f"{att.session.order}차시",
+            "반이름": section_label,
             "날짜": str(att.session.date) if att.session.date else now.strftime("%Y-%m-%d"),
             "시간": now.strftime("%H:%M"),
         }
