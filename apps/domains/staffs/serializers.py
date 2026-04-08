@@ -338,11 +338,12 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
     def delete(self, instance):
         # 🔐 Owner 삭제 방지
         from apps.core.models import TenantMembership
-        is_owner = TenantMembership.objects.filter(
-            user=instance.user, tenant=instance.tenant, is_active=True, role="owner"
-        ).exists()
-        if is_owner:
-            raise serializers.ValidationError("대표(Owner)는 삭제할 수 없습니다.")
+        if instance.user:
+            is_owner = TenantMembership.objects.filter(
+                user=instance.user, tenant=instance.tenant, is_active=True, role="owner"
+            ).exists()
+            if is_owner:
+                raise serializers.ValidationError("대표(Owner)는 삭제할 수 없습니다.")
 
         user = instance.user
 
@@ -350,7 +351,15 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             teacher_repo.teacher_delete_by_name_phone(instance.tenant, instance.name, instance.phone or "")
             instance.delete()
             if user:
-                user.delete()
+                # User를 hard-delete하지 않고 비활성화 + 해당 테넌트 멤버십만 제거.
+                # hard-delete는 Student, Attendance, 다른 테넌트 Membership 등을
+                # cascade로 파괴할 수 있으므로 절대 금지.
+                TenantMembership.objects.filter(
+                    user=user, tenant=instance.tenant,
+                ).delete()
+                user.is_active = False
+                user.is_staff = False
+                user.save(update_fields=["is_active", "is_staff"])
 
     # =========================
     # Helpers

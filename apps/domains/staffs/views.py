@@ -100,11 +100,16 @@ def can_access_staff_management(user, tenant=None) -> bool:
     """
     if not user or not user.is_authenticated:
         return False
-    if user.is_superuser or user.is_staff:
-        return True
     if not tenant:
         return False
     m = core_repo.membership_get_full(tenant, user)
+    # superuser/staff: 멤버십 있으면 허용, 또는 tenant_id 일치 시 허용
+    if user.is_superuser or user.is_staff:
+        if m and m.is_active:
+            return True
+        if getattr(user, "tenant_id", None) == tenant.id:
+            return True
+        return False
     if not m or not m.is_active:
         return False
     if m.role in ("owner", "admin", "staff"):

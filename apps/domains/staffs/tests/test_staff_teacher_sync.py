@@ -38,6 +38,7 @@ def _create_staff_teacher(tenant, name="김강사", phone="01011112222"):
         password="test1234",
         name=name,
         phone=phone,
+        tenant=tenant,
     )
     user.is_staff = True
     user.save(update_fields=["is_staff"])
