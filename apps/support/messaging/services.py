@@ -410,6 +410,11 @@ def send_event_notification(
             "사이트링크": site_url,
         }
         _sms_vars.update({k: str(v) for k, v in (context or {}).items() if not k.startswith("_")})
+        # context 키 → 템플릿 변수명 별칭 매핑 (#{클리닉장소} ← context["장소"] 등)
+        _ALIAS = {"장소": "클리닉장소", "클리닉장소": "장소"}
+        for src, dst in _ALIAS.items():
+            if src in _sms_vars and dst not in _sms_vars:
+                _sms_vars[dst] = _sms_vars[src]
         sms_text = content_body
         for k, v in _sms_vars.items():
             sms_text = sms_text.replace(f"#{{{k}}}", v)

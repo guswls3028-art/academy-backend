@@ -132,8 +132,8 @@ def check_recipient_allowed(to: str) -> bool:
     if normalized in whitelist:
         return True
     logger.warning(
-        "recipient_guard: blocked sending to %s (not in whitelist: %s)",
-        normalized[:4] + "****", ",".join(sorted(whitelist)),
+        "recipient_guard: blocked sending to %s (not in whitelist, %d entries)",
+        normalized[:4] + "****", len(whitelist),
     )
     return False
 

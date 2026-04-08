@@ -248,6 +248,15 @@ class AdminExamTotalScoreView(APIView):
                     id=_notif_enrollment_id, tenant=_notif_tenant
                 ).first()
                 if enrollment_obj and enrollment_obj.student:
+                    # 차시명: exam → sessions M2M에서 첫 번째 session의 title
+                    _session_title = ""
+                    try:
+                        _first_session = Exam.objects.filter(id=_notif_exam_id).values_list(
+                            "sessions__title", flat=True
+                        ).first()
+                        _session_title = str(_first_session or "")
+                    except Exception:
+                        pass
                     send_event_notification(
                         tenant=_notif_tenant,
                         trigger="exam_score_published",
@@ -256,6 +265,7 @@ class AdminExamTotalScoreView(APIView):
                         context={
                             "시험명": _notif_exam_title,
                             "강의명": str(getattr(enrollment_obj.lecture, "title", "") or ""),
+                            "차시명": _session_title,
                             "시험성적": f"{_notif_score}/{_notif_max}",
                             "_domain_object_id": str(_notif_exam_id),
                         },
