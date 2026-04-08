@@ -15,6 +15,11 @@ from .results.views import (
     MyGradesSummaryView,
 )
 from .profile.views import StudentProfileView
+from apps.domains.fees.views import (
+    StudentFeeInvoiceListView,
+    StudentFeeInvoiceDetailView,
+    StudentFeePaymentListView,
+)
 
 # ✅ NEW
 from .media.views import (
@@ -59,4 +64,9 @@ urlpatterns = [
     path("video/videos/<int:video_id>/like/", StudentVideoLikeView.as_view()),
     path("video/videos/<int:video_id>/comments/", StudentVideoCommentListView.as_view()),
     path("video/comments/<int:comment_id>/", StudentVideoCommentDetailView.as_view()),
+
+    # Fees (수납 조회)
+    path("fees/invoices/", StudentFeeInvoiceListView.as_view()),
+    path("fees/invoices/<int:pk>/", StudentFeeInvoiceDetailView.as_view()),
+    path("fees/payments/", StudentFeePaymentListView.as_view()),
 ]

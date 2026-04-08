@@ -25,6 +25,7 @@ urlpatterns = [
     # =========================
     path("students/", include("apps.domains.students.urls")),
     path("enrollments/", include("apps.domains.enrollment.urls")),
+    path("fees/", include("apps.domains.fees.urls")),
     path("submissions/", include("apps.domains.submissions.urls")),
     path("exams/", include("apps.domains.exams.urls")),
     path("progress/", include("apps.domains.progress.urls")),
@@ -71,6 +72,11 @@ urlpatterns = [
     # Core
     # =========================
     path("core/", include("apps.core.urls")),
+
+    # =========================
+    # Billing / Subscription
+    # =========================
+    path("billing/", include("apps.billing.urls")),
 
     # =========================
     # ✅ Video Domain (media → video 전환)

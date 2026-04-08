@@ -146,6 +146,7 @@ INSTALLED_APPS = [
     "apps.domains.ai.apps.AIDomainConfig",
     "apps.domains.assets",
     "apps.domains.inventory",
+    "apps.domains.fees",
 
     "apps.billing",
 
@@ -429,6 +430,29 @@ AI_SQS_QUEUE_NAME_BASIC = os.getenv("AI_SQS_QUEUE_NAME_BASIC", "academy-v1-ai-qu
 AI_SQS_QUEUE_NAME_PREMIUM = os.getenv("AI_SQS_QUEUE_NAME_PREMIUM", "academy-v1-ai-queue")
 # 메시지 발송 SQS 큐 (워커가 소비). SSOT: academy-v1-messaging-queue
 MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-v1-messaging-queue")
+
+# ==================================================
+# BILLING / SUBSCRIPTION
+# ==================================================
+
+# 결제/청구에서 제외할 테넌트 ID (개발/테스트/시스템).
+# 이 테넌트들은 자동결제, 인보이스 생성, 만료 처리 대상에서 항상 제외된다.
+BILLING_EXEMPT_TENANT_IDS: set[int] = {
+    int(x) for x in os.getenv("BILLING_EXEMPT_TENANT_IDS", "1,2,9999").split(",") if x.strip()
+}
+
+# Toss Payments (PG)
+TOSS_PAYMENTS_SECRET_KEY = os.getenv("TOSS_PAYMENTS_SECRET_KEY", "")
+TOSS_PAYMENTS_CLIENT_KEY = os.getenv("TOSS_PAYMENTS_CLIENT_KEY", "")
+TOSS_WEBHOOK_SECRET = os.getenv("TOSS_WEBHOOK_SECRET", "")
+# 자동결제 승인 API 사용 가능 여부 (추가 계약 필요, 계약 전이면 False)
+TOSS_AUTO_BILLING_ENABLED = os.getenv("TOSS_AUTO_BILLING_ENABLED", "").lower() in ("1", "true", "yes")
+
+# 유예 기간 (일) — 결제 실패 후 서비스 유지 기간
+BILLING_GRACE_PERIOD_DAYS = int(os.getenv("BILLING_GRACE_PERIOD_DAYS", "7"))
+# 결제 재시도 정책
+BILLING_RETRY_MAX_ATTEMPTS = int(os.getenv("BILLING_RETRY_MAX_ATTEMPTS", "3"))
+BILLING_RETRY_INTERVAL_DAYS = int(os.getenv("BILLING_RETRY_INTERVAL_DAYS", "3"))
 
 # ==================================================
 # INTERNAL WORKER
