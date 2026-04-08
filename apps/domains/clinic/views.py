@@ -931,10 +931,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             "시간": _now.strftime("%H:%M"),
             "_domain_object_id": str(obj.pk),
         }
-        def _send_complete_notifications():
-            _send_clinic_notification(_t, _s, "clinic_check_out", _ctx)
-            _send_clinic_notification(_t, _s, "clinic_self_study_completed", _ctx)
-        transaction.on_commit(_send_complete_notifications)
+        transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_self_study_completed", _ctx))
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
