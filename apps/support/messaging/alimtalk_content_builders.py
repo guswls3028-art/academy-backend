@@ -117,16 +117,39 @@ CATEGORY_TO_TEMPLATE_TYPE: dict[str, str] = {
 SYSTEM_TEMPLATE_CATEGORIES = frozenset({"signup"})
 
 
-def get_unified_for_category(category: str) -> tuple[str | None, str | None]:
+def get_unified_for_category(
+    category: str,
+    template_name: str = "",
+    extra_vars: dict | None = None,
+) -> tuple[str | None, str | None]:
     """
     카테고리에 해당하는 통합 템플릿 (template_type, solapi_id) 반환.
     시스템 기본양식(signup) 또는 통합 미활성 시 (None, None).
+
+    clinic 카테고리는 template_name 또는 extra_vars로 clinic_info/clinic_change 구분:
+    - "변경"/"취소" 키워드 → clinic_change
+    - 클리닉기존일정/클리닉변동사항 변수 존재 → clinic_change
+    - 그 외 → clinic_info
     """
     if not UNIFIED_TEMPLATES_ENABLED:
         return None, None
     if category in SYSTEM_TEMPLATE_CATEGORIES:
         return None, None
+
     tt = CATEGORY_TO_TEMPLATE_TYPE.get(category)
+
+    # clinic 카테고리: 변경/취소 vs 일반 안내 분류
+    if tt == TYPE_CLINIC_INFO:
+        is_change = False
+        name_lower = (template_name or "").lower()
+        if "변경" in name_lower or "취소" in name_lower:
+            is_change = True
+        if extra_vars:
+            if extra_vars.get("클리닉기존일정") or extra_vars.get("클리닉변동사항") or extra_vars.get("클리닉수정자"):
+                is_change = True
+        if is_change:
+            tt = TYPE_CLINIC_CHANGE
+
     if tt:
         return tt, TEMPLATE_TYPE_TO_SOLAPI_ID.get(tt)
     return None, None

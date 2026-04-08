@@ -552,7 +552,8 @@ class SendMessageView(APIView):
                 SYSTEM_TEMPLATE_CATEGORIES,
             )
             category = (t.category if t else "") or ""
-            unified_tt, unified_sid = get_unified_for_category(category)
+            tpl_name = (t.name if t else "") or ""
+            unified_tt, unified_sid = get_unified_for_category(category, tpl_name, alimtalk_extra_vars)
 
             if unified_tt and unified_sid:
                 # 통합 4종 사용
