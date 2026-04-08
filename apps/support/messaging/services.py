@@ -467,6 +467,7 @@ def send_event_notification(
             detail_lines = _labeled_lines([
                 ("강의", _ctx_val("강의명", "lecture_name")),
                 ("차시", _ctx_val("차시명", "session_name")),
+                ("반", _ctx_val("반이름", "section_name")),
                 ("날짜", _ctx_val("날짜", "date")),
                 ("시간", _ctx_val("시간", "time")),
             ])
@@ -571,14 +572,13 @@ def send_event_notification(
     elif effective_mode == "sms":
         if _can_sms:
             modes_to_send = ["sms"]
-        elif _can_alimtalk:
-            modes_to_send = ["alimtalk"]
+        else:
+            # SMS 불가 시 알림톡으로 바꿔치지 않음 — 채널 정합성 보장
+            modes_to_send = []
             logger.info(
-                "send_event_notification: trigger=%s tenant=%s SMS unavailable, fallback to alimtalk",
+                "send_event_notification: trigger=%s tenant=%s SMS unavailable, skipping (no cross-channel fallback)",
                 trigger, tenant.id,
             )
-        else:
-            modes_to_send = []
     else:
         modes_to_send = []
 

@@ -179,6 +179,8 @@ class MessagingSQSQueue:
                 "message_id": raw.get("MessageId"),
                 "created_at": data.get("created_at"),
                 "reservation_id": data.get("reservation_id"),
+                "message_mode": (data.get("message_mode") or "").strip().lower() or "sms",
+                "template_id": data.get("template_id"),
                 "alimtalk_replacements": data.get("alimtalk_replacements") or [],
             }
         except Exception as e:
