@@ -35,6 +35,7 @@ def _safe_dt(v: Any) -> Optional[datetime]:
 
 def build_global_results_snapshot(
     *,
+    tenant_id: Optional[int] = None,
     lecture_id: Optional[int] = None,
     from_dt: Optional[Any] = None,
     to_dt: Optional[Any] = None,
@@ -63,6 +64,10 @@ def build_global_results_snapshot(
     tdt = _safe_dt(to_dt)
 
     sessions = Session.objects.all()
+
+    # tenant 격리 — tenant_id가 주어지면 반드시 필터 적용
+    if tenant_id is not None:
+        sessions = sessions.filter(lecture__tenant_id=int(tenant_id))
 
     if l_id:
         sessions = sessions.filter(lecture_id=int(l_id))
