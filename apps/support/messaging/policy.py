@@ -35,7 +35,7 @@ TRIGGER_POLICY = {
     "clinic_reservation_changed": "AUTO_DEFAULT",
     "clinic_cancelled": "AUTO_DEFAULT",
     "clinic_check_in": "AUTO_DEFAULT",
-    "clinic_check_out": "AUTO_DEFAULT",
+    # clinic_check_out: clinic_self_study_completed로 통합 (SSOT). 발송 코드 제거됨.
     "clinic_absent": "AUTO_DEFAULT",
     "clinic_reminder": "AUTO_DEFAULT",
     "clinic_self_study_completed": "AUTO_DEFAULT",

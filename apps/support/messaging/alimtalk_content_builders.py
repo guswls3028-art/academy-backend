@@ -50,7 +50,7 @@ TRIGGER_TO_TEMPLATE_TYPE: dict[str, str] = {
     "clinic_reservation_created": TYPE_CLINIC_INFO,
     "clinic_reminder": TYPE_CLINIC_INFO,
     "clinic_check_in": TYPE_CLINIC_INFO,
-    "clinic_check_out": TYPE_CLINIC_INFO,
+    # clinic_check_out: clinic_self_study_completed로 통합
     "clinic_absent": TYPE_CLINIC_INFO,
     "clinic_self_study_completed": TYPE_CLINIC_INFO,
     "clinic_result_notification": TYPE_CLINIC_INFO,
@@ -143,6 +143,19 @@ def get_unified_for_category(
         is_change = False
         name_lower = (template_name or "").lower()
         if "변경" in name_lower or "취소" in name_lower:
+            is_change = True
+        # 영문 템플릿명도 변경/취소 계열로 분류
+        # 예: clinic change, changed, cancel, cancelled, reschedule, rescheduled
+        english_change_keywords = (
+            "change",
+            "changed",
+            "cancel",
+            "cancelled",
+            "canceled",
+            "reschedule",
+            "rescheduled",
+        )
+        if any(k in name_lower for k in english_change_keywords):
             is_change = True
         if extra_vars:
             if extra_vars.get("클리닉기존일정") or extra_vars.get("클리닉변동사항") or extra_vars.get("클리닉수정자"):
