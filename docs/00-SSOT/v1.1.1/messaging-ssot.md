@@ -53,8 +53,8 @@
 | **attendance** | `KA01TP260406121126868FGddLmrDFUC` | 학원이름, 학생이름, 강의명, 차시명, 강의날짜, 강의시간, **선생님메모**, 사이트링크 | 수업 출석 안내 |
 
 **활성화 플래그:** `UNIFIED_TEMPLATES_ENABLED` (`alimtalk_content_builders.py`)
-- `False` (현재): 기존 개별 승인 템플릿 사용
-- `True`: 통합 4종 사용 (카카오 승인 확인 후 변경)
+- ~~`False`~~: 기존 개별 승인 템플릿 사용
+- **`True` (현재, 2026-04-08 활성화)**: 통합 4종 사용 중 (카카오 승인 완료)
 
 ---
 
@@ -71,7 +71,7 @@
 | 비밀번호 찾기 인증번호 | `password_find_otp` | 학생 | 112 | **APPROVED** | `policy.py:send_alimtalk_via_owner` |
 | 수동 발송 | (관리자 UI) | 선택 대상 | - | (자유양식) | `views.py:SendMessageView` |
 
-### B. 통합 템플릿 (INSPECTING, 2026-04-08) — 승인 후 `UNIFIED_TEMPLATES_ENABLED=True`로 활성화
+### B. 통합 템플릿 (APPROVED, 2026-04-08 승인) — `UNIFIED_TEMPLATES_ENABLED=True` 활성화 완료
 
 > 아래 트리거들은 통합 4종 템플릿으로 커버됨. 승인 후 개별 KA01TP260324... 템플릿은 불필요.
 
@@ -243,8 +243,8 @@ https://hakwonplus.com
 
 ### 통합 템플릿 활성화 (출결/시험/과제/클리닉)
 
-1. [ ] Solapi에서 4개 통합 템플릿 APPROVED 확인 (API 조회)
-2. [ ] `alimtalk_content_builders.py`에서 `UNIFIED_TEMPLATES_ENABLED = True` 변경
+1. [x] Solapi에서 4개 통합 템플릿 APPROVED 확인 (API 조회) — 2026-04-08 완료
+2. [x] `alimtalk_content_builders.py`에서 `UNIFIED_TEMPLATES_ENABLED = True` 변경 — 2026-04-08 완료
 3. [ ] 배포 (git push → CI/CD)
 4. [ ] 테스트 발송 → 수신 확인 (출결, 클리닉, 성적 각 1건)
 5. [ ] 레거시 개별 템플릿(KA01TP260324...) 솔라피에서 삭제 (선택)
@@ -262,7 +262,7 @@ https://hakwonplus.com
 
 | 항목 | 상태 | 필요 조치 |
 |------|------|----------|
-| 통합 템플릿 4종 카카오 검수 | **INSPECTING** | 승인 후 `UNIFIED_TEMPLATES_ENABLED=True` |
+| 통합 템플릿 4종 카카오 검수 | **APPROVED** (2026-04-08) | `UNIFIED_TEMPLATES_ENABLED=True` 활성화 완료 |
 | 자유양식 카테고리 템플릿 | APPROVED (15개) / INSPECTING (5개) | — |
 | 자동발송 코드 | 출결/클리닉 **구현 완료**, 시험/과제/결제 미구현 | 트리거별 구현 |
 | 딥링크 | 미구현 | 이벤트별 경로 추가 |

@@ -403,7 +403,23 @@ def send_event_notification(
             site_url=site_url,
         )
 
-        # SMS 폴백용 text — 알림톡 전체 구조를 평문으로 재현
+        # ── SMS용 text: 사용자 커스텀 template body 직접 치환 (원본 형식 유지) ──
+        _sms_vars = {
+            "학원명": academy_name, "학원이름": academy_name,
+            "학생이름": name, "학생이름2": name_2, "학생이름3": name_3,
+            "사이트링크": site_url,
+        }
+        _sms_vars.update({k: str(v) for k, v in (context or {}).items() if not k.startswith("_")})
+        sms_text = content_body
+        for k, v in _sms_vars.items():
+            sms_text = sms_text.replace(f"#{{{k}}}", v)
+        _OPTIONAL_SMS = {"공지내용", "선생님메모", "내용"}
+        for opt in _OPTIONAL_SMS:
+            sms_text = sms_text.replace(f"#{{{opt}}}", "")
+        sms_text = re.sub(r"#\{[^}]+\}", "", sms_text)
+        sms_text = re.sub(r"\n{3,}", "\n\n", sms_text).strip()
+
+        # ── 알림톡 SMS 폴백용 text (구조화된 형식) ──
         content_value = next((r["value"] for r in replacements if r["key"] == "선생님메모"), "")
         _ctx = context or {}
         _template_type = get_template_type(trigger)
@@ -426,7 +442,7 @@ def send_event_notification(
                 ("날짜", _ctx_val("날짜", "date")),
                 ("시간", _ctx_val("시간", "time")),
             ])
-            text = (
+            alimtalk_text = (
                 f"{academy_name}입니다.\n\n"
                 f"{name}학생님.\n\n"
                 f"클리닉 안내 드립니다.\n"
@@ -440,7 +456,7 @@ def send_event_notification(
                 ("변동사항", _ctx_val("클리닉변동사항", "clinic_changes")),
                 ("수정자", _ctx_val("클리닉수정자", "clinic_modifier")),
             ])
-            text = (
+            alimtalk_text = (
                 f"{academy_name}입니다.\n\n"
                 f"{name}학생님. 클리닉 일정이 변경되었습니다.\n\n"
                 f"{detail_lines}\n\n"
@@ -454,7 +470,7 @@ def send_event_notification(
                 ("날짜", _ctx_val("날짜", "date")),
                 ("시간", _ctx_val("시간", "time")),
             ])
-            text = (
+            alimtalk_text = (
                 f"{academy_name}입니다.\n\n"
                 f"{name}학생님.\n\n"
                 f"출석 안내 드립니다.\n"
@@ -467,7 +483,7 @@ def send_event_notification(
                 ("강의", _ctx_val("강의명", "lecture_name")),
                 ("차시", _ctx_val("차시명", "session_name")),
             ])
-            text = (
+            alimtalk_text = (
                 f"{academy_name}입니다.\n\n"
                 f"{name}학생님.\n\n"
                 f"성적표 안내 드립니다.\n"
@@ -476,9 +492,8 @@ def send_event_notification(
                 f"{site_url}"
             ).strip()
         else:
-            text = f"{content_value}\n{site_url}".strip()
-        # 연속 빈 줄 정리
-        text = re.sub(r"\n{3,}", "\n\n", text)
+            alimtalk_text = f"{content_value}\n{site_url}".strip()
+        alimtalk_text = re.sub(r"\n{3,}", "\n\n", alimtalk_text)
 
         _alimtalk_tid = unified_tid
 
@@ -576,11 +591,16 @@ def send_event_notification(
 
     any_success = False
     for mode in modes_to_send:
+        # 통합 모드: SMS는 사용자 커스텀 body, 알림톡은 구조화 텍스트
+        if use_unified:
+            _text = sms_text if mode == "sms" else alimtalk_text
+        else:
+            _text = text
         try:
             ok = enqueue_sms(
                 tenant_id=tenant.id,
                 to=phone,
-                text=text,
+                text=_text,
                 sender=sender,
                 message_mode=mode,
                 template_id=_alimtalk_tid if mode == "alimtalk" else None,

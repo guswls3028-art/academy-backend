@@ -18,7 +18,7 @@ from __future__ import annotations
 # ──────────────────────────────────────────
 # 카카오 검수 승인 완료 시 True로 변경 → 즉시 통합 템플릿 사용 시작
 # 미승인 상태에서 True로 두면 Solapi 발송 거부됨 — 반드시 승인 확인 후 변경
-UNIFIED_TEMPLATES_ENABLED = False
+UNIFIED_TEMPLATES_ENABLED = True
 
 SOLAPI_CLINIC_INFO = "KA01TP2604061058318608Hy40ZnTFZT"      # 클리닉 일정 안내
 SOLAPI_CLINIC_CHANGE = "KA01TP260406110706969XS06XRZveEk"    # 클리닉 일정 변경
@@ -148,7 +148,10 @@ def build_unified_replacements(
     # 서브변수 치환용 dict
     all_vars = {
         "학원이름": tenant_name,
+        "학원명": tenant_name,  # alias — 사용자 커스텀 body에서 #{학원명} 사용 가능
         "학생이름": student_name,
+        "학생이름2": student_name[1:] if len(student_name) >= 2 else student_name,  # 성 제외
+        "학생이름3": student_name,  # 전체 이름 (하위 호환)
         "사이트링크": site_url,
     }
     # 도메인 컨텍스트 매핑: Solapi 변수명 → [context에서 찾을 키 목록] (한국어 우선, 영어 하위호환)

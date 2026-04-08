@@ -628,6 +628,7 @@ class SendMessageView(APIView):
                 if user_custom_content:
                     alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
                     alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
+                    alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
                 # 추가 변수 (성적 발송 등 카테고리별 템플릿 변수) — 학생별 개별값 우선
                 merged_extra = {**alimtalk_extra_vars, **student_extra}
                 for var_key, var_val in merged_extra.items():
@@ -775,6 +776,7 @@ class SendMessageView(APIView):
                 if user_custom_content:
                     alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
                     alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
+                    alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
 
             try:
                 ok = enqueue_sms(
