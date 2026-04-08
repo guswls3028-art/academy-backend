@@ -1,5 +1,6 @@
 # PATH: apps/domains/clinic/views.py
 import logging
+import time
 
 from django.db import IntegrityError, transaction
 
@@ -862,7 +863,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 "장소": getattr(_session, "location", "") if _session else "",
                 "날짜": str(_session.date) if _session and _session.date else "",
                 "시간": str(_session.start_time)[:5] if _session and getattr(_session, "start_time", None) else "",
-                "_domain_object_id": f"participant_{obj.pk}_{next_status}",
+                "_domain_object_id": f"participant_{obj.pk}_{next_status}_{int(time.time())}",
             }
             transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
 
