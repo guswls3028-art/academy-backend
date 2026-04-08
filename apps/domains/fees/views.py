@@ -11,9 +11,30 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
+from rest_framework.pagination import PageNumberPagination
+
 from apps.core.permissions import TenantResolvedAndStaff, TenantResolvedAndMember, IsStudent
 
+
+class FeesLargePagination(PageNumberPagination):
+    """수납 도메인용 — 학원당 데이터가 수백건 수준이므로 넉넉하게."""
+    page_size = 500
+    page_size_query_param = "page_size"
+    max_page_size = 2000
+
 from .models import FeeTemplate, StudentFee, StudentInvoice, FeePayment
+
+
+def _fees_enabled(request) -> bool:
+    """테넌트의 fee_management feature flag 확인."""
+    tenant = getattr(request, "tenant", None)
+    if not tenant:
+        return False
+    try:
+        flags = tenant.program.feature_flags or {}
+        return bool(flags.get("fee_management"))
+    except Exception:
+        return False
 from .serializers import (
     FeeTemplateSerializer,
     FeeTemplateCreateSerializer,
@@ -36,6 +57,7 @@ logger = logging.getLogger(__name__)
 
 class FeeTemplateViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    pagination_class = FeesLargePagination
 
     def get_serializer_class(self):
         if self.action in ("create", "update", "partial_update"):
@@ -43,6 +65,8 @@ class FeeTemplateViewSet(ModelViewSet):
         return FeeTemplateSerializer
 
     def get_queryset(self):
+        if not _fees_enabled(self.request):
+            return FeeTemplate.objects.none()
         tenant = self.request.tenant
         qs = FeeTemplate.objects.filter(tenant=tenant).select_related("lecture")
 
@@ -77,8 +101,11 @@ class FeeTemplateViewSet(ModelViewSet):
 class StudentFeeViewSet(ModelViewSet):
     serializer_class = StudentFeeSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    pagination_class = FeesLargePagination
 
     def get_queryset(self):
+        if not _fees_enabled(self.request):
+            return StudentFee.objects.none()
         tenant = self.request.tenant
         qs = (
             StudentFee.objects
@@ -145,6 +172,7 @@ class StudentFeeViewSet(ModelViewSet):
 
 class StudentInvoiceViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    pagination_class = FeesLargePagination
     http_method_names = ["get", "patch", "delete", "post"]
 
     def get_serializer_class(self):
@@ -153,6 +181,8 @@ class StudentInvoiceViewSet(ModelViewSet):
         return StudentInvoiceListSerializer
 
     def get_queryset(self):
+        if not _fees_enabled(self.request):
+            return StudentInvoice.objects.none()
         tenant = self.request.tenant
         qs = (
             StudentInvoice.objects
@@ -250,9 +280,12 @@ class StudentInvoiceViewSet(ModelViewSet):
 class FeePaymentViewSet(ModelViewSet):
     serializer_class = FeePaymentSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    pagination_class = FeesLargePagination
     http_method_names = ["get", "post"]
 
     def get_queryset(self):
+        if not _fees_enabled(self.request):
+            return FeePayment.objects.none()
         tenant = self.request.tenant
         qs = (
             FeePayment.objects
