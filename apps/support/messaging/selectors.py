@@ -6,11 +6,14 @@ from apps.support.messaging.models import AutoSendConfig
 
 
 def get_auto_send_config(tenant_id: int, trigger: str) -> Optional[AutoSendConfig]:
-    """테넌트·트리거별 자동발송 설정 조회."""
+    """테넌트·트리거별 자동발송 설정 조회.
+    enabled 여부와 무관하게 config 행 자체를 반환.
+    → 호출자가 config.enabled를 체크하여 비활성이면 스킵.
+    → config 행이 존재하면(비활성 포함) 오너 fallback을 방지.
+    """
     return AutoSendConfig.objects.filter(
         tenant_id=tenant_id,
         trigger=trigger,
-        enabled=True,
     ).select_related("template").first()
 
 
