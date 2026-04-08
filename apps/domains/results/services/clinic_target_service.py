@@ -296,8 +296,10 @@ class ClinicTargetService:
             profile_photo_url = _get_student_photo_url(student)
 
             # 공통 base row
+            student_id = int(student.id) if student else None
             base_row = {
                 "enrollment_id": enrollment_id,
+                "student_id": student_id,
                 "_session_id": session_id,
                 "session_id": session_id,
                 "lecture_id": lecture_id,

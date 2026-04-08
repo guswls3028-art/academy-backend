@@ -18,6 +18,7 @@ from rest_framework import serializers
 
 class AdminClinicTargetSerializer(serializers.Serializer):
     enrollment_id = serializers.IntegerField()
+    student_id = serializers.IntegerField(required=False, allow_null=True)
     student_name = serializers.CharField()
     session_title = serializers.CharField()
 
