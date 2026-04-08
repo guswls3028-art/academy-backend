@@ -1,47 +1,72 @@
-# docs — 문서 (SSOT v4 기준)
+# docs — 프로젝트 문서 단일 진입점
 
-**진입점은 이 파일.** 정식 인프라 문서는 **00-SSOT/v4** 한 세트만 사용한다.
+> 이 파일이 모든 문서의 시작점입니다.
 
----
+## 진실 우선순위 (충돌 시)
 
-## 필독: 정식 문서
+1. `scripts/v1/` 실행 코드
+2. `.github/workflows/` CI 워크플로우
+3. `00-SSOT/params.yaml` 파라미터
+4. SSOT 문서
 
-| 목적 | 경로 |
+## 핵심 경로
+
+| 용도 | 경로 |
 |------|------|
-| **인프라 SSOT (정식)** | [00-SSOT/v4/SSOT.md](00-SSOT/v4/SSOT.md) |
-| **배포·검증·런북** | [00-SSOT/v4/runbook.md](00-SSOT/v4/runbook.md) |
-| **파라미터** | [00-SSOT/v4/params.yaml](00-SSOT/v4/params.yaml) |
-| **00-SSOT 구조·아카이브** | [00-SSOT/README.md](00-SSOT/README.md) |
-
----
+| 실행 파라미터 SSOT | [00-SSOT/params.yaml](00-SSOT/params.yaml) |
+| 배포 아키텍처 | [00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md](00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md) |
+| 배포 스크립트 | [../scripts/v1/deploy.ps1](../scripts/v1/deploy.ps1) |
+| 검증 스크립트 | [../scripts/v1/verify.ps1](../scripts/v1/verify.ps1) |
 
 ## 폴더 구조
 
 ```
-docs/
-├── README.md                   ← 지금 보고 있는 파일
-├── 00-SSOT/
-│   ├── README.md               v4 링크·구조·아카이브 설명
-│   ├── v4/                     정식 SSOT (SSOT.md, params.yaml, runbook, reports 등)
-│   ├── v3_archive/             v3 문서·증명 (참고용)
-│   └── legacy_reports_archive/ 과거 리포트 (참고용)
-├── 01-ARCHITECTURE/            설계·기준 문서
-├── 02-OPERATIONS/              운영 가이드
-├── 03-REPORTS/                 감사·검증 결과
-└── archive/                    완전 과거
+backend/docs/
+├── README.md                         ← 현재 파일 (진입점)
+│
+├── 00-SSOT/                          ← 버전별 진실 문서
+│   ├── params.yaml                   ← 실행 SSOT 파라미터 (스크립트가 직접 로드)
+│   ├── IDENTIFIER-SSOT.md            ← ID 체계 SSOT
+│   ├── messaging-policy.md           ← 메시징 정책
+│   ├── PATH-ALIAS-POLICY.md          ← 경로 별칭 정책
+│   ├── v1.1.0/                       ← 인프라/배포 기준 (현행)
+│   │   ├── DEPLOYMENT-ARCHITECTURE.md
+│   │   ├── INFRASTRUCTURE-OPTIMIZATION.md
+│   │   ├── RELEASE-NOTES.md
+│   │   └── RUNBOOK-*.md              ← 운영 런북 4종
+│   ├── v1.1.1/                       ← 기능/도메인 SSOT (현행)
+│   │   ├── RELEASE-NOTES.md
+│   │   ├── messaging-ssot.md
+│   │   ├── OMR-SYSTEM.md
+│   │   ├── STATE-TRANSITION-SSOT.md
+│   │   └── ... (도메인별 SSOT)
+│   ├── reports/                      ← CI/스크립트 산출물
+│   ├── scripts/                      ← SSOT 관련 스크립트
+│   └── archive/                      ← 구버전 (참고용, 수정 금지)
+│
+├── 01-ARCHITECTURE/                  ← 설계 결정 기록
+│   ├── 설계.md                       ← 전체 설계 개요
+│   ├── REFERENCE.md                  ← 참고 자료
+│   ├── INTERNAL_API_ALLOW_IPS.md     ← API 허용 IP
+│   └── adr/                          ← Architecture Decision Records
+│       ├── ADR-001 ~ ADR-004
+│       └── admin API 계약서
+│
+└── 02-OPERATIONS/                    ← 운영 실무 가이드
+    ├── 배포.md                       ← 배포 절차
+    ├── 운영.md                       ← 운영 절차
+    ├── DEPLOYMENT-MODES.md           ← 배포 모드
+    ├── FORMAL-DEPLOY.md              ← 정식 배포 프로세스
+    ├── local-dev-db.md               ← 로컬 DB 설정
+    ├── SSM_JSON_SCHEMA.md            ← SSM 파라미터 스키마
+    ├── video_batch_production_runbook.md ← 영상 배치 런북
+    ├── 새-테넌트-커스텀-도메인-추가-메뉴얼.md
+    ├── SSWE-테넌트-셋업-체크리스트.md
+    └── 테넌트-도메인-가비아-네임서버.md
 ```
 
----
+## 정리 기준
 
-## 빠른 참조
-
-| 목적 | 문서 |
-|------|------|
-| **00-SSOT/v4/SSOT.md** | [00-SSOT/v4/SSOT.md](00-SSOT/v4/SSOT.md), [00-SSOT/v4/runbook.md](00-SSOT/v4/runbook.md) |
-| **리포트** | [00-SSOT/v4/reports/](00-SSOT/v4/reports/) — drift.latest.md, audit.latest.md, verify.latest.md, history/ |
-| Video Batch 런북·환경 변수 | [02-OPERATIONS/video_batch_production_runbook.md](02-OPERATIONS/video_batch_production_runbook.md) |
-| EventBridge 규칙 상태 | [02-OPERATIONS/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md](02-OPERATIONS/EVENTBRIDGE_RULES_STATE_AND_FUTURE.md) |
-| 인프라 검증 스크립트 | [02-OPERATIONS/INFRA_VERIFICATION_SCRIPTS.md](02-OPERATIONS/INFRA_VERIFICATION_SCRIPTS.md) |
-| 스크립트 폴더·용도 | [scripts/README.md](../scripts/README.md) |
-
-저장소 최상위: [README.md](../README.md)
+- **일회성 조사/검증 보고서:** 패치노트 반영 후 삭제. git history에서 조회 가능.
+- **archive:** 봉인된 구버전만 보관. 운영 기준으로 사용 금지.
+- **새 문서 작성 시:** 반드시 위 3개 폴더 중 하나에 배치. 루트에 직접 생성 금지.

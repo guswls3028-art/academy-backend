@@ -1,8 +1,0 @@
-{
-    "AttachedPolicies": [
-        {
-            "PolicyName": "AmazonECSTaskExecutionRolePolicy",
-            "PolicyArn": "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
-        }
-    ]
-}
