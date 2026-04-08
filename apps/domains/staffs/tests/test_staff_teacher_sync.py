@@ -258,22 +258,43 @@ class TestStaffDeletePolicy(TestCase):
 
 
 class TestStaffPasswordChange(TestCase):
-    """비밀번호 변경 엔드포인트."""
+    """비밀번호 변경 엔드포인트 (실제 view 호출)."""
 
     def setUp(self):
         self.tenant = _make_tenant()
         self.staff = _create_staff_teacher(self.tenant, name="비번테스트", phone="01022223333")
 
+    def _call_change_password(self, staff_id, password_data):
+        from rest_framework.test import APIRequestFactory
+        from apps.domains.staffs.views import StaffViewSet
+        factory = APIRequestFactory()
+        request = factory.post(f"/staffs/{staff_id}/change-password/", password_data, format="json")
+        request.tenant = self.tenant
+        request.user = self.staff.user
+        view = StaffViewSet.as_view({"post": "change_password"})
+        return view(request, pk=staff_id)
+
     def test_password_change_works(self):
         """비밀번호 변경 후 새 비밀번호로 인증 가능."""
-        user = self.staff.user
-        user.set_password("old_password")
-        user.save()
+        resp = self._call_change_password(self.staff.id, {"password": "new_password_123"})
+        self.assertEqual(resp.status_code, 200)
+        self.staff.user.refresh_from_db()
+        self.assertTrue(self.staff.user.check_password("new_password_123"))
 
-        # 새 비밀번호 설정
-        user.set_password("new_password_123")
-        user.save()
+    def test_password_too_short(self):
+        """4자 미만 비밀번호는 거부."""
+        resp = self._call_change_password(self.staff.id, {"password": "ab"})
+        self.assertEqual(resp.status_code, 400)
 
-        user.refresh_from_db()
-        self.assertTrue(user.check_password("new_password_123"))
-        self.assertFalse(user.check_password("old_password"))
+    def test_password_empty(self):
+        """빈 비밀번호는 거부."""
+        resp = self._call_change_password(self.staff.id, {"password": ""})
+        self.assertEqual(resp.status_code, 400)
+
+    def test_password_no_user(self):
+        """계정 없는 Staff는 비밀번호 변경 불가."""
+        staff_no_user = Staff.objects.create(
+            tenant=self.tenant, name="계정없음", phone="01099990000",
+        )
+        resp = self._call_change_password(staff_no_user.id, {"password": "test1234"})
+        self.assertEqual(resp.status_code, 400)

@@ -184,9 +184,14 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         eid = getattr(obj, "enrollment_id", None)
         if not eid:
             return False
+        # tenant 격리: 반드시 tenant FK로 직접 필터 (cross-tenant 누출 방어)
+        tenant = getattr(self.context.get("request"), "tenant", None)
+        if not tenant:
+            return False
         from apps.domains.progress.models import ClinicLink
         return ClinicLink.objects.filter(
             enrollment_id=eid, is_auto=True, resolved_at__isnull=True,
+            tenant=tenant,
         ).exists()
 
     def get_profile_photo_url(self, obj):

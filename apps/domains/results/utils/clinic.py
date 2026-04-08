@@ -25,8 +25,15 @@ def get_clinic_enrollment_ids_for_session(
 
     필요하면 include_manual=True로
     수동까지 포함한 '전체 clinic 대상'을 만들 수 있다.
+
+    tenant 격리: session FK는 이미 tenant-scoped이지만,
+    ClinicLink.tenant FK로 명시 필터하여 암묵적 의존 제거.
     """
+    # tenant 격리: session.lecture.tenant로 명시 필터
+    tenant_id = getattr(getattr(session, "lecture", None), "tenant_id", None)
     qs = ClinicLink.objects.filter(session=session)
+    if tenant_id is not None:
+        qs = qs.filter(tenant_id=tenant_id)
 
     # ✅ 수정사항(추가): 예약 완료로 분리된 대상자는 clinic_required에서 제외
     qs = qs.filter(resolved_at__isnull=True)

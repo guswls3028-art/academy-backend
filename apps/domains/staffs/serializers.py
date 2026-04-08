@@ -288,31 +288,42 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         old_phone = instance.phone or ""
         is_active_before = instance.is_active
 
-        staff = super().update(instance, validated_data)
+        try:
+            with transaction.atomic():
+                staff = super().update(instance, validated_data)
 
-        new_name = staff.name
-        new_phone = staff.phone or ""
-        name_or_phone_changed = (old_name != new_name) or (old_phone != new_phone)
+                new_name = staff.name
+                new_phone = staff.phone or ""
+                name_or_phone_changed = (old_name != new_name) or (old_phone != new_phone)
 
-        # 1) 이름/전화 변경 → Teacher 레코드 동기화 (old 값으로 찾아서 new 값으로 업데이트)
-        if name_or_phone_changed:
-            teacher_repo.teacher_update_name_phone(
-                staff.tenant, old_name, old_phone, new_name, new_phone,
+                # 1) 이름/전화 변경 → Teacher 레코드 동기화 (old 값으로 찾아서 new 값으로 업데이트)
+                if name_or_phone_changed:
+                    teacher_repo.teacher_update_name_phone(
+                        staff.tenant, old_name, old_phone, new_name, new_phone,
+                    )
+
+                # 2) 비활성화 → Teacher도 비활성화 (이름/전화 동기화 후이므로 new 값 사용)
+                if is_active_before and staff.is_active is False:
+                    teacher_repo.teacher_update_is_active_by_name_phone(
+                        staff.tenant, new_name, new_phone, False,
+                    )
+
+                # 3) 재활성화 → Teacher도 활성화
+                if not is_active_before and staff.is_active is True:
+                    teacher_repo.teacher_update_is_active_by_name_phone(
+                        staff.tenant, new_name, new_phone, True,
+                    )
+
+                return staff
+        except IntegrityError as e:
+            err_msg = str(e).lower()
+            if "phone" in err_msg or "uniq_staff_phone" in err_msg or "uniq_teacher_phone" in err_msg:
+                raise serializers.ValidationError(
+                    {"phone": "이미 등록된 전화번호입니다."}
+                )
+            raise serializers.ValidationError(
+                {"detail": "정보 수정 중 충돌이 발생했습니다. 입력값을 확인해 주세요."}
             )
-
-        # 2) 비활성화 → Teacher도 비활성화 (이름/전화 동기화 후이므로 new 값 사용)
-        if is_active_before and staff.is_active is False:
-            teacher_repo.teacher_update_is_active_by_name_phone(
-                staff.tenant, new_name, new_phone, False,
-            )
-
-        # 3) 재활성화 → Teacher도 활성화
-        if not is_active_before and staff.is_active is True:
-            teacher_repo.teacher_update_is_active_by_name_phone(
-                staff.tenant, new_name, new_phone, True,
-            )
-
-        return staff
 
     # =========================
     # DELETE (Staff + Teacher + User)
@@ -328,13 +339,11 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
 
         user = instance.user
 
-        teacher_repo.teacher_delete_by_name_phone(instance.tenant, instance.name, instance.phone or "")
-
-        # 🔥 Staff 삭제
-        instance.delete()
-
-        if user:
-            user.delete()
+        with transaction.atomic():
+            teacher_repo.teacher_delete_by_name_phone(instance.tenant, instance.name, instance.phone or "")
+            instance.delete()
+            if user:
+                user.delete()
 
     # =========================
     # Helpers
