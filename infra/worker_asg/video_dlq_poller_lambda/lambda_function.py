@@ -77,7 +77,11 @@ def lambda_handler(event: dict, context: Any) -> dict:
 
         job_id = body.get("job_id")
         if not job_id:
-            logger.info("DLQ message has no job_id; body keys=%s", list(body.keys()))
+            logger.warning("DLQ message has no job_id; deleting to prevent infinite reprocessing. body keys=%s", list(body.keys()))
+            try:
+                sqs.delete_message(QueueUrl=queue_url, ReceiptHandle=receipt_handle)
+            except Exception as e:
+                logger.warning("delete_message failed for no-job_id msg: %s", e)
             continue
 
         if _call_dlq_mark_dead(job_id):

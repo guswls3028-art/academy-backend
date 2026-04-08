@@ -114,10 +114,12 @@ class Command(BaseCommand):
                 self.stdout.write(
                     f"SKIPPED | video_id={video.id} tenant_id={tenant_id} reason={result.reject_reason}"
                 )
-                # Stop processing if we hit tenant/global limit — no point trying more
-                if result.reject_reason in ("tenant_limit", "global_limit"):
-                    self.stdout.write(f"Stopping: {result.reject_reason} reached")
+                # global_limit: 전체 용량 초과 → 루프 종료
+                if result.reject_reason == "global_limit":
+                    self.stdout.write(f"Stopping: global_limit reached")
                     break
+                # tenant_limit: 해당 테넌트만 용량 초과 → 다른 테넌트 영상은 계속 처리
+                # (break 사용 시 한 테넌트가 전체를 차단하는 버그 발생)
 
         self.stdout.write(
             self.style.SUCCESS(

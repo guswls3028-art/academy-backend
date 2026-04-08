@@ -144,12 +144,9 @@ class ExamViewSet(ModelViewSet):
             raise ValidationError({"session_id": "must be integer"})
 
         try:
-            session = Session.objects.get(id=session_id)
+            session = Session.objects.get(id=session_id, lecture__tenant=tenant)
         except Session.DoesNotExist:
             raise ValidationError({"session_id": "invalid"})
-
-        if getattr(session, "lecture", None) and session.lecture.tenant_id != tenant.id:
-            raise PermissionDenied("Session does not belong to your program.")
 
         # 템플릿 없이 생성 시 강의(Lecture) 과목을 시험 과목으로 자동 반영
         if not subject and getattr(session, "lecture", None):

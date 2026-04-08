@@ -118,8 +118,20 @@ class QuestionExplanationDetailView(APIView):
             return [IsAuthenticated()]
         return [IsAuthenticated(), TenantResolvedAndStaff()]
 
+    def _get_tenant_filtered_question(self, request, question_id: int) -> ExamQuestion:
+        """ExamQuestion을 테넌트 범위 내에서만 조회. 크로스 테넌트 차단."""
+        tenant = request.tenant
+        return get_object_or_404(
+            ExamQuestion.objects.filter(
+                Q(sheet__exam__tenant=tenant)
+                | Q(sheet__exam__sessions__lecture__tenant=tenant)
+                | Q(sheet__exam__derived_exams__sessions__lecture__tenant=tenant)
+            ).distinct(),
+            id=int(question_id),
+        )
+
     def get(self, request, question_id: int):
-        question = get_object_or_404(ExamQuestion, id=int(question_id))
+        question = self._get_tenant_filtered_question(request, question_id)
         try:
             explanation = question.explanation
         except QuestionExplanation.DoesNotExist:
@@ -131,7 +143,7 @@ class QuestionExplanationDetailView(APIView):
 
     @transaction.atomic
     def put(self, request, question_id: int):
-        question = get_object_or_404(ExamQuestion, id=int(question_id))
+        question = self._get_tenant_filtered_question(request, question_id)
 
         serializer = QuestionExplanationWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

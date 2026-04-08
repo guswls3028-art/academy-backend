@@ -145,10 +145,6 @@ class Command(BaseCommand):
 
     @staticmethod
     def _get_tenant_id(video):
-        """Extract tenant_id safely from the video's session→lecture chain."""
-        try:
-            if video.session and video.session.lecture:
-                return video.session.lecture.tenant_id
-        except Exception:
-            pass
-        return None
+        """Extract tenant_id from video's direct tenant FK (SSOT).
+        video.session은 SET_NULL이므로 삭제 후 None — session 경유 경로는 사용하지 않는다."""
+        return getattr(video, "tenant_id", None)

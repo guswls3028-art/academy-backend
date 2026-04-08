@@ -12,7 +12,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
-from apps.core.permissions import TenantResolvedAndStaff
+from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from rest_framework import serializers
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -67,7 +67,7 @@ class SessionViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ("create", "update", "partial_update", "destroy"):
             return [IsAuthenticated(), TenantResolvedAndStaff()]
-        return [IsAuthenticated()]
+        return [IsAuthenticated(), TenantResolvedAndMember()]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SessionFilter
     search_fields = ["location"]
