@@ -205,6 +205,7 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Staff
         fields = [
+            "id",
             "user",
             "username",
             "password",
@@ -215,6 +216,7 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             "pay_type",
             "role",
         ]
+        read_only_fields = ["id"]
         ref_name = "StaffWrite"
         extra_kwargs = {"user": {"required": False}}
 
