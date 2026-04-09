@@ -15,7 +15,7 @@ class AdminExamResultRowSerializer(serializers.Serializer):
     exam_max_score = serializers.FloatField()
 
     final_score = serializers.FloatField()
-    passed = serializers.BooleanField()
+    passed = serializers.BooleanField(allow_null=True)
     clinic_required = serializers.BooleanField()
 
     submitted_at = serializers.DateTimeField(allow_null=True)
@@ -28,6 +28,14 @@ class AdminExamResultRowSerializer(serializers.Serializer):
     lecture_title = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     lecture_color = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
     lecture_chip_label = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+
+    # ===============================
+    # 석차 정보
+    # ===============================
+    rank = serializers.IntegerField(allow_null=True, required=False, default=None)
+    percentile = serializers.FloatField(allow_null=True, required=False, default=None)
+    cohort_size = serializers.IntegerField(allow_null=True, required=False, default=None)
+    cohort_avg = serializers.FloatField(allow_null=True, required=False, default=None)
 
     # ===============================
     # 🔥 Submission 연동 필드 (기존 유지)

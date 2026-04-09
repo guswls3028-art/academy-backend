@@ -20,6 +20,7 @@ from apps.domains.exams.models import Exam
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.progress.models import ClinicLink
+from apps.domains.results.utils.ranking import compute_exam_rankings_batch
 
 
 class MyExamResultView(APIView):
@@ -125,6 +126,12 @@ class MyGradesSummaryView(APIView):
             ).values("exam_id", "enrollment_id").annotate(max_attempt=Max("attempt_index")):
                 retake_counts[(att["enrollment_id"], att["exam_id"])] = att["max_attempt"]
 
+        # 석차 계산 (배치 — 단일 쿼리)
+        exam_rank_maps = compute_exam_rankings_batch(
+            exam_ids=exam_ids,
+            enrollment_ids=enrollment_ids,
+        )
+
         exam_list = []
         seen_exam_ids = set()
         for r in results:
@@ -169,6 +176,8 @@ class MyGradesSummaryView(APIView):
             else:
                 achievement = "FAIL"
 
+            rank_info = exam_rank_maps.get(eid, {}).get(enroll_id, {})
+
             exam_list.append({
                 "exam_id": eid,
                 "enrollment_id": enroll_id,
@@ -182,6 +191,11 @@ class MyGradesSummaryView(APIView):
                 "session_title": session_title,
                 "lecture_title": lecture_title,
                 "submitted_at": r["submitted_at"].isoformat() if r.get("submitted_at") else None,
+                # 석차 정보
+                "rank": rank_info.get("rank"),
+                "percentile": rank_info.get("percentile"),
+                "cohort_size": rank_info.get("cohort_size"),
+                "cohort_avg": rank_info.get("cohort_avg"),
             })
 
         # 과제 성적: HomeworkScore (기입된 것만, score is not None)

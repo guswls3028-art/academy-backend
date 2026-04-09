@@ -22,6 +22,7 @@ from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.views.session_scores_view import _safe_student_name, _get_enrollment_display_fields
 from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+from apps.domains.results.utils.ranking import compute_exam_rankings
 
 
 class AdminExamResultsView(ListAPIView):
@@ -163,6 +164,11 @@ class AdminExamResultsView(ListAPIView):
         ) if session else {}
 
         # -------------------------------------------------
+        # 석차 계산 (전체 응시자 대상, 페이지와 무관)
+        # -------------------------------------------------
+        rank_map = compute_exam_rankings(exam_id=exam_id)
+
+        # -------------------------------------------------
         # rows 구성 (기존 로직 유지)
         # -------------------------------------------------
         rows = []
@@ -194,6 +200,8 @@ class AdminExamResultsView(ListAPIView):
             # 학생 SSOT 표시용 필드 (아바타 + 강의 딱지)
             display = _get_enrollment_display_fields(enrollment_map.get(enrollment_id))
 
+            rank_info = rank_map.get(enrollment_id, {})
+
             rows.append({
                 "enrollment_id": enrollment_id,
                 "student_name": student_name,
@@ -211,6 +219,13 @@ class AdminExamResultsView(ListAPIView):
                 "submission_id": submission_id,
                 "submission_status": submission_status,
                 "name_highlight_clinic_target": highlight_map.get(enrollment_id, False),
+
+                # 석차 정보
+                "rank": rank_info.get("rank"),
+                "percentile": rank_info.get("percentile"),
+                "cohort_size": rank_info.get("cohort_size"),
+                "cohort_avg": rank_info.get("cohort_avg"),
+
                 **display,
             })
 
