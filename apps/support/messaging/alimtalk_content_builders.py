@@ -56,9 +56,9 @@ TRIGGER_TO_TEMPLATE_TYPE: dict[str, str] = {
     "clinic_result_notification": TYPE_CLINIC_INFO,
     "counseling_reservation_created": TYPE_CLINIC_INFO,
 
-    # 클리닉 일정 변경 (기존일정/변동사항/수정자)
-    "clinic_reservation_changed": TYPE_CLINIC_CHANGE,
-    "clinic_cancelled": TYPE_CLINIC_CHANGE,
+    # 클리닉 일정 변경/취소 — clinic_info 사용 (clinic_change는 카카오 하이라이트 길이 제한 3073 에러)
+    "clinic_reservation_changed": TYPE_CLINIC_INFO,
+    "clinic_cancelled": TYPE_CLINIC_INFO,
 
     # 수업출석안내 (강의명/차시명/강의날짜/강의시간)
     "check_in_complete": TYPE_ATTENDANCE,
