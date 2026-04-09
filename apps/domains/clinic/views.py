@@ -858,11 +858,16 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             _s = obj.student
             _tr = _trigger
             _session = obj.session
+            _loc = getattr(_session, "location", "") if _session else ""
+            _date = str(_session.date) if _session and _session.date else ""
+            _time = str(_session.start_time)[:5] if _session and getattr(_session, "start_time", None) else ""
+            _is_cancel = (next_status == SessionParticipant.Status.CANCELLED)
+            _is_absent = (next_status == SessionParticipant.Status.NO_SHOW)
             _ctx = {
                 "클리닉명": getattr(_session, "title", "") if _session else "",
-                "장소": getattr(_session, "location", "") if _session else "",
-                "날짜": str(_session.date) if _session and _session.date else "",
-                "시간": str(_session.start_time)[:5] if _session and getattr(_session, "start_time", None) else "",
+                "장소": f"[취소] {_loc}" if _is_cancel else f"[결석] {_loc}" if _is_absent else _loc,
+                "날짜": _date,
+                "시간": f"취소({_time})" if _is_cancel else f"결석({_time})" if _is_absent else _time,
                 "_domain_object_id": f"participant_{obj.pk}_{next_status}_{int(time.time())}",
             }
             transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
@@ -1180,11 +1185,14 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
         # ── 클리닉 예약 변경 알림 (AUTO_DEFAULT, 학생+학부모) ──
         _t, _s = tenant, request_student
+        _new_loc = getattr(new_session, "location", "") if new_session else ""
+        _new_date = str(new_session.date) if new_session and new_session.date else ""
+        _new_time = str(new_session.start_time)[:5] if new_session and getattr(new_session, "start_time", None) else ""
         _ctx = {
             "클리닉명": getattr(new_session, "title", "") if new_session else "",
-            "장소": getattr(new_session, "location", "") if new_session else "",
-            "날짜": str(new_session.date) if new_session and new_session.date else "",
-            "시간": str(new_session.start_time)[:5] if new_session and getattr(new_session, "start_time", None) else "",
+            "장소": f"[변경] {_new_loc}" if _new_loc else "[변경]",
+            "날짜": _new_date,
+            "시간": _new_time,
             "_domain_object_id": f"booking_change_{new_booking.pk}",
         }
         transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_reservation_changed", _ctx))

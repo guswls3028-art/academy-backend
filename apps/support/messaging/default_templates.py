@@ -197,7 +197,7 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "category": "clinic",
         "name": "[{academy_name}] 클리닉 예약 취소 안내",
         "subject": "클리닉 예약이 취소되었습니다",
-        "body": "#{학생이름} 학생, 클리닉 예약이 취소되었습니다.\n\n재예약이 필요하시면 앱에서 신청해 주세요.",
+        "body": "#{학생이름} 학생, 클리닉 예약이 취소되었습니다.\n\n장소: #{장소}\n날짜: #{날짜}\n\n재예약이 필요하시면 앱에서 신청해 주세요.",
         "minutes_before": None,
     },
     "clinic_check_in": {
@@ -218,7 +218,7 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "category": "clinic",
         "name": "[{academy_name}] 클리닉 결석 알림",
         "subject": "클리닉에 결석하였습니다",
-        "body": "#{학생이름} 학생이 예정된 클리닉에 결석하였습니다.\n\n장소: #{장소}\n날짜: #{날짜}\n시간: #{시간}\n\n사유가 있으시면 학원으로 연락 부탁드립니다.",
+        "body": "#{학생이름} 학생이 예정된 클리닉에 결석하였습니다.\n\n장소: #{장소}\n날짜: #{날짜}\n시간: #{시간}\n\n사유가 있으시면 학원으로 연락 부탁드립니다.\n(결석 처리됨)",
         "minutes_before": None,
     },
     "clinic_result_notification": {
