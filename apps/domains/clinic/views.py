@@ -869,7 +869,12 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     "시간": f"취소({_time})" if _is_cancel else f"결석({_time})" if _is_absent else _time,
                     "_domain_object_id": f"participant_{obj.pk}_{next_status}_{int(time.time())}",
                 }
-                transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
+                # on_commit 대신 직접 호출 — atomic 블록 안에서도 안전 (best-effort)
+                try:
+                    _send_clinic_notification(_t, _s, _tr, _ctx)
+                except Exception:
+                    import logging
+                    logging.getLogger(__name__).exception("clinic notification failed (non-blocking)")
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
