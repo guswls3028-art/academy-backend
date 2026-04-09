@@ -104,10 +104,10 @@ class ExamAttempt(BaseModel):
                 name="unique_representative_per_exam_enrollment",
             ),
             # P0-3: 동일 submission으로 중복 attempt 생성 차단 (동시성 안전)
-            # submission_id=NULL(클리닉 직접 입력)은 제외
+            # submission_id=NULL(클리닉 직접 입력) 및 submission_id=0(수동 점수 입력)은 제외
             models.UniqueConstraint(
                 fields=["submission_id"],
-                condition=models.Q(submission_id__isnull=False),
+                condition=models.Q(submission_id__isnull=False) & ~models.Q(submission_id=0),
                 name="unique_submission_per_attempt",
             ),
         ]
