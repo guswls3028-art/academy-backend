@@ -153,31 +153,38 @@ def _calc_bubble_centers_x(col_x: float, n_choices: int) -> List[float]:
 
 
 def _build_marker_meta() -> Dict[str, Any]:
-    """4코너 비대칭 기준 마크 좌표."""
+    """v11 4코너 비대칭 기준 마크 좌표 — 굵은 채움 도형.
+
+    pdf_renderer._corners()와 동기화.
+    마커 크기 5mm, 팔 두께 1.5mm.
+    """
+    off = 3.0   # 페이지 가장자리 오프셋
+    sz = 5.0    # 마커 크기
+    th = 1.5    # 팔 두께
+    pw, ph = PAGE_W, PAGE_H
+
     return {
         "TL": {
             "type": "square",
-            "center": {"x": 5.0, "y": 5.0},
-            "size": 4.0,  # mm
+            "center": {"x": off + sz / 2, "y": off + sz / 2},
+            "size": sz,
         },
         "TR": {
             "type": "l_shape",
-            "center": {"x": 292.0, "y": 5.0},
-            "arm_length": 5.0,
-            "stroke": 0.5,
+            "center": {"x": pw - off - sz / 2, "y": off + sz / 2},
+            "size": sz,
+            "thickness": th,
         },
         "BL": {
-            "type": "t_shape",
-            "center": {"x": 5.0, "y": 205.0},
-            "arm_h": 5.0,
-            "arm_v": 3.0,
-            "stroke": 0.5,
+            "type": "triangle",
+            "center": {"x": off + sz / 2, "y": ph - off - sz / 2},
+            "size": sz,
         },
         "BR": {
             "type": "plus",
-            "center": {"x": 292.0, "y": 205.0},
-            "arm_length": 5.0,
-            "stroke": 0.5,
+            "center": {"x": pw - off - sz / 2, "y": ph - off - sz / 2},
+            "size": sz,
+            "thickness": th,
         },
     }
 
@@ -188,7 +195,7 @@ def build_omr_meta(
     n_choices: int = 5,
     essay_count: int = 0,
 ) -> Dict[str, Any]:
-    """OMR 메타 생성 (좌표 SSOT). v10: 안전 레이아웃 + 타이밍 마크."""
+    """OMR 메타 생성 (좌표 SSOT). v11: 보강된 마커 + 고밀도 타이밍 마크."""
     layout = compute_safe_layout(question_count)
     per_col = layout["per_col"]
     n_cols = layout["n_cols"]
@@ -269,7 +276,7 @@ def build_omr_meta(
     )
 
     return {
-        "version": "v10",
+        "version": "v11",
         "units": "mm",
         "page": {"width": PAGE_W, "height": PAGE_H},
         "markers": _build_marker_meta(),
@@ -289,26 +296,36 @@ def build_omr_meta(
     }
 
 
-# ── 타이밍 마크 상수 (pdf_renderer와 동기화) ──
-TM_LEFT_OFFSET_X = -2.0    # 컬럼 왼쪽으로 2mm
-TM_LEFT_W = 1.5            # 좌측 마크 폭
-TM_LEFT_H = 1.0            # 좌측 마크 높이
-TM_RIGHT_OFFSET_X = 0.5    # 컬럼 오른쪽으로 0.5mm
-TM_RIGHT_W = 2.0           # 우측 마크 폭 (5행 단위)
-TM_RIGHT_H = 1.2           # 우측 마크 높이
-TM_TRIANGLE_SIZE = 2.0     # 상하 삼각형 크기
-TM_TRIANGLE_TOP_Y = -1.5   # CONTENT_Y 위로 1.5mm
-TM_TRIANGLE_BOT_Y = 1.5    # CONTENT_Y + CONTENT_H 아래로 1.5mm
+# ── 타이밍 마크 상수 v11 (pdf_renderer와 동기화) ──
+TM_LEFT_OFFSET_X = -3.5    # 컬럼 왼쪽으로 3.5mm
+TM_LEFT_W = 2.5            # 좌측 마크 폭
+TM_LEFT_H = 2.0            # 좌측 마크 높이
+TM_RIGHT_OFFSET_X = 1.0    # 컬럼 오른쪽으로 1.0mm
+TM_RIGHT_W = 2.5           # 우측 마크 폭 (일반)
+TM_RIGHT_H = 2.0           # 우측 마크 높이 (일반)
+TM_RIGHT_W5 = 3.0          # 우측 마크 폭 (5행 강조)
+TM_RIGHT_H5 = 2.5          # 우측 마크 높이 (5행 강조)
+TM_TRIANGLE_SIZE = 3.0     # 상하 삼각형 크기 (2→3mm)
+TM_TRIANGLE_TOP_Y = -2.0   # CONTENT_Y 위로 2mm
+TM_TRIANGLE_BOT_Y = 2.0    # CONTENT_Y + CONTENT_H 아래로 2mm
 
 
 def _build_timing_marks_meta(
     *, n_cols: int, per_col: int, question_count: int,
     body_y: float, body_h: float,
 ) -> Dict[str, Any]:
-    """타이밍 마크 좌표 생성 (pdf_renderer._timing_marks와 동기화)."""
+    """v11 타이밍 마크 좌표 생성 (pdf_renderer._timing_marks와 동기화).
+
+    변경점:
+    - 좌측: 매 행 2.5×2.0mm (기존 1.5×1.0mm)
+    - 우측: 매 행 2.5×2.0mm + 5행마다 3.0×2.5mm (기존: 5행만)
+    - 삼각형: 3mm (기존 2mm)
+    - 정렬 바: 컬럼 상하단 연속 바 추가
+    """
     left_marks: List[Dict[str, Any]] = []
     right_marks: List[Dict[str, Any]] = []
     triangles: List[Dict[str, Any]] = []
+    alignment_bars: List[Dict[str, Any]] = []
 
     for ci in range(n_cols):
         col_x = ANS_X + ci * (MC_COL_W + MC_COL_GAP)
@@ -319,25 +336,32 @@ def _build_timing_marks_meta(
             continue
         rh = body_h / cnt
 
-        # 좌측: 매 행 중심
-        for qi in range(cnt):
-            rc = body_y + (qi + 0.5) * rh
-            left_marks.append({
-                "column": ci,
-                "row": qi,
-                "center": {"x": round(col_x + TM_LEFT_OFFSET_X, 2), "y": round(rc, 2)},
-                "w": TM_LEFT_W, "h": TM_LEFT_H,
-            })
+        is_first_col = (ci == 0)
+        is_last_col = (ci == n_cols - 1)
 
-        # 우측: 5행마다
-        for qi in range(cnt):
-            if qi % 5 == 0:
+        # 좌측: 첫 번째 컬럼만 (멀티컬럼 겹침 방지)
+        if is_first_col:
+            for qi in range(cnt):
                 rc = body_y + (qi + 0.5) * rh
+                left_marks.append({
+                    "column": ci,
+                    "row": qi,
+                    "center": {"x": round(col_x + TM_LEFT_OFFSET_X, 2), "y": round(rc, 2)},
+                    "w": TM_LEFT_W, "h": TM_LEFT_H,
+                })
+
+        # 우측: 마지막 컬럼만 (멀티컬럼 겹침 방지)
+        if is_last_col:
+            for qi in range(cnt):
+                rc = body_y + (qi + 0.5) * rh
+                is_5th = (qi % 5 == 0)
                 right_marks.append({
                     "column": ci,
                     "row": qi,
+                    "emphasis": is_5th,
                     "center": {"x": round(col_x + MC_COL_W + TM_RIGHT_OFFSET_X, 2), "y": round(rc, 2)},
-                    "w": TM_RIGHT_W, "h": TM_RIGHT_H,
+                    "w": TM_RIGHT_W5 if is_5th else TM_RIGHT_W,
+                    "h": TM_RIGHT_H5 if is_5th else TM_RIGHT_H,
                 })
 
         # 상/하 삼각형
@@ -353,10 +377,23 @@ def _build_timing_marks_meta(
             "size": TM_TRIANGLE_SIZE,
         })
 
+        # 상하단 정렬 바
+        alignment_bars.append({
+            "column": ci, "position": "top",
+            "x": round(col_x, 2), "y": round(CONTENT_Y - 0.2, 2),
+            "w": MC_COL_W, "h": 1.5,
+        })
+        alignment_bars.append({
+            "column": ci, "position": "bottom",
+            "x": round(col_x, 2), "y": round(CONTENT_Y + CONTENT_H + 0.2, 2),
+            "w": MC_COL_W, "h": 1.5,
+        })
+
     return {
         "left": left_marks,
         "right": right_marks,
         "triangles": triangles,
+        "alignment_bars": alignment_bars,
     }
 
 

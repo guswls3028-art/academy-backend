@@ -240,18 +240,48 @@ class OMRPdfRenderer:
         cv.save()
         return buf.getvalue()
 
-    # ── 코너 마크 ──
+    # ── 코너 마크 (v11: 비대칭 4종 — AI 방향 판별용) ──
+    # TL=square, TR=L-shape, BL=T-shape, BR=plus
+    # 모든 마커는 굵은 채움 도형. meta_generator._build_marker_meta()와 동기화.
+    _CORNER_OFF = 3.0   # 페이지 가장자리로부터 오프셋 (mm)
+    _CORNER_SZ = 5.0    # 마커 기본 크기 (mm)
+    _CORNER_TH = 1.5    # 마커 팔 두께 (mm)
+
     def _corners(self, c):
-        L, W, off = _mm(5), _mm(0.5), _mm(3)
-        pw, ph = _mm(PAGE_W), _mm(PAGE_H)
+        off = self._CORNER_OFF
+        sz = self._CORNER_SZ
+        th = self._CORNER_TH
+        pw, ph = PAGE_W, PAGE_H
         c.setFillColor(black)
-        for ax, ay, aw, ah in [
-            (off, ph-off-W, L, W), (off, ph-off-L, W, L),             # TL
-            (pw-off-L, ph-off-W, L, W), (pw-off-W, ph-off-L, W, L),   # TR
-            (off, off, L, W), (off, off, W, L),                         # BL
-            (pw-off-L, off, L, W), (pw-off-W, off, W, L),              # BR
-        ]:
-            c.rect(ax, ay, aw, ah, fill=1, stroke=0)
+
+        # TL: 채워진 정사각형 (5×5mm)
+        c.rect(_mm(off), _y(off + sz), _mm(sz), _mm(sz), fill=1, stroke=0)
+
+        # TR: L자 (오른쪽+아래 팔, 좌우반전)
+        tr_x = pw - off - sz
+        tr_y = off
+        # 가로 팔
+        c.rect(_mm(tr_x), _y(tr_y + th), _mm(sz), _mm(th), fill=1, stroke=0)
+        # 세로 팔 (오른쪽 끝에서 아래로)
+        c.rect(_mm(pw - off - th), _y(tr_y + sz), _mm(th), _mm(sz), fill=1, stroke=0)
+
+        # BL: 채움 삼각형 (▲, 꼭짓점 위로)
+        bl_cx = off + sz / 2
+        bl_cy = ph - off - sz / 2
+        p = c.beginPath()
+        p.moveTo(_mm(bl_cx - sz / 2), _y(bl_cy + sz / 2))   # 좌하
+        p.lineTo(_mm(bl_cx + sz / 2), _y(bl_cy + sz / 2))   # 우하
+        p.lineTo(_mm(bl_cx), _y(bl_cy - sz / 2))             # 상단 꼭짓점
+        p.close()
+        c.drawPath(p, fill=1, stroke=0)
+
+        # BR: 십자가 (+)
+        br_cx = pw - off - sz / 2
+        br_cy = ph - off - sz / 2
+        # 가로 바
+        c.rect(_mm(br_cx - sz / 2), _y(br_cy + th / 2), _mm(sz), _mm(th), fill=1, stroke=0)
+        # 세로 바
+        c.rect(_mm(br_cx - th / 2), _y(br_cy + sz / 2), _mm(th), _mm(sz), fill=1, stroke=0)
 
     # ══════════════════════════════════════════
     # 좌측 패널
@@ -446,16 +476,14 @@ class OMRPdfRenderer:
 
     def _timing_marks(self, c, doc):
         """
-        OMR 인식용 타이밍 마크 — 행 위치 기준점을 컬럼 바깥에 배치.
+        OMR 인식용 타이밍 마크 v11 — 상용 OMR 수준 식별 밀도.
 
-        추가 마커:
-        1. MC 컬럼 좌측: 매 행마다 작은 사각 마크 (1.5×1.0mm)
-        2. MC 컬럼 우측: 5행마다 큰 사각 마크 (2.0×1.2mm)
-        3. 컬럼 상/하단: 삼각 마크 (기존 원형 앵커 보강)
-        4. 식별자 그리드 좌측: 매 행마다 작은 마크
+        1. MC 컬럼 좌측: 매 행 중심에 사각 마크 (2.5×2.0mm)
+        2. MC 컬럼 우측: 매 행 중심에 사각 마크 (2.5×2.0mm), 5행마다 확대 (3.0×2.5mm)
+        3. 컬럼 상/하단: 삼각 마크 (3mm, 기존 2mm에서 확대)
+        4. 상하단 정렬 바: 컬럼 전체 폭 연속 바 (행 좌표 글로벌 기준)
 
-        이 마크들은 AI 워커가 행 좌표를 보정하는 데 사용.
-        meta_generator.py에도 동기화 필요.
+        meta_generator.py와 동기화.
         """
         mc = doc.mc_count
         if mc <= 0:
@@ -476,37 +504,59 @@ class OMRPdfRenderer:
             cnt = e - s + 1
             rh = bh / cnt if cnt else bh
 
-            # ── 좌측 타이밍 마크: 매 행 중심에 작은 사각형 ──
-            mark_x = col_x - 2.0  # 컬럼 왼쪽 2mm
-            mark_w = 1.5
-            mark_h = 1.0
-            for qi in range(cnt):
-                rc = bt + (qi + 0.5) * rh
-                c.rect(
-                    _mm(mark_x), _y(rc + mark_h / 2),
-                    _mm(mark_w), _mm(mark_h),
-                    fill=1, stroke=0,
-                )
+            is_first_col = (ci == 0)
+            is_last_col = (ci == nc - 1)
 
-            # ── 우측 타이밍 마크: 5행마다 큰 사각형 ──
-            rmark_x = col_x + MC_COL_W + 0.5
-            for qi in range(cnt):
-                if qi % 5 == 0:
+            # ── 좌측 타이밍 마크: 첫 번째 컬럼만 (겹침 방지) ──
+            if is_first_col:
+                lm_x = col_x - 3.5
+                lm_w = 2.5
+                lm_h = 2.0
+                for qi in range(cnt):
                     rc = bt + (qi + 0.5) * rh
                     c.rect(
-                        _mm(rmark_x), _y(rc + 0.6),
-                        _mm(2.0), _mm(1.2),
+                        _mm(lm_x), _y(rc + lm_h / 2),
+                        _mm(lm_w), _mm(lm_h),
                         fill=1, stroke=0,
                     )
 
-            # ── 컬럼 상/하단 삼각형 마커 (기존 원형 앵커 보강) ──
-            # 상단 중앙: ▼
+            # ── 우측 타이밍 마크: 마지막 컬럼만 (겹침 방지) ──
+            if is_last_col:
+                rm_x = col_x + MC_COL_W + 1.0
+                for qi in range(cnt):
+                    rc = bt + (qi + 0.5) * rh
+                    if qi % 5 == 0:
+                        c.rect(
+                            _mm(rm_x), _y(rc + 1.25),
+                            _mm(3.0), _mm(2.5),
+                            fill=1, stroke=0,
+                        )
+                    else:
+                        c.rect(
+                            _mm(rm_x), _y(rc + 1.0),
+                            _mm(2.5), _mm(2.0),
+                            fill=1, stroke=0,
+                        )
+
+            # ── 컬럼 상/하단 삼각형 마커 (3mm) ──
             top_cx = col_x + MC_COL_W / 2
-            top_cy = CONTENT_Y - 1.5
-            self._triangle_down(c, top_cx, top_cy, 2.0)
-            # 하단 중앙: ▲
-            bot_cy = CONTENT_Y + CONTENT_H + 1.5
-            self._triangle_up(c, top_cx, bot_cy, 2.0)
+            top_cy = CONTENT_Y - 2.0
+            self._triangle_down(c, top_cx, top_cy, 3.0)
+            bot_cy = CONTENT_Y + CONTENT_H + 2.0
+            self._triangle_up(c, top_cx, bot_cy, 3.0)
+
+            # ── 상하단 정렬 바 (컬럼 전체 폭, 1.5mm 두께) ──
+            bar_h = 1.5
+            c.rect(
+                _mm(col_x), _y(CONTENT_Y - 0.2),
+                _mm(MC_COL_W), _mm(bar_h),
+                fill=1, stroke=0,
+            )
+            c.rect(
+                _mm(col_x), _y(CONTENT_Y + CONTENT_H + bar_h + 0.2),
+                _mm(MC_COL_W), _mm(bar_h),
+                fill=1, stroke=0,
+            )
 
     @staticmethod
     def _triangle_down(c, cx_mm, cy_mm, size_mm):

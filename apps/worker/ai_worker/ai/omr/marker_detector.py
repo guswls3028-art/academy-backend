@@ -29,21 +29,22 @@ _A4_H_MM = 210.0
 SQUARE = "square"
 L_SHAPE = "l_shape"
 T_SHAPE = "t_shape"
+TRIANGLE = "triangle"
 PLUS = "plus"
 UNKNOWN = "unknown"
 
-# Default v9 marker-corner mapping (orientation 0°):
-#   TL=square, TR=l_shape, BL=t_shape, BR=plus
+# Default v11 marker-corner mapping (orientation 0°):
+#   TL=square, TR=l_shape, BL=triangle, BR=plus
 #   (matches meta_generator._build_marker_meta)
 # Rotated by 90° CW the mapping shifts cyclically.
 _DEFAULT_CORNER_MAP: Dict[int, Dict[str, str]] = {
-    0: {"TL": SQUARE, "TR": L_SHAPE, "BL": T_SHAPE, "BR": PLUS},
-    90: {"TL": PLUS, "TR": SQUARE, "BL": L_SHAPE, "BR": T_SHAPE},
-    180: {"TL": T_SHAPE, "TR": PLUS, "BL": SQUARE, "BR": L_SHAPE},
-    270: {"TL": L_SHAPE, "TR": T_SHAPE, "BL": PLUS, "BR": SQUARE},
+    0: {"TL": SQUARE, "TR": L_SHAPE, "BL": TRIANGLE, "BR": PLUS},
+    90: {"TL": PLUS, "TR": SQUARE, "BL": L_SHAPE, "BR": TRIANGLE},
+    180: {"TL": TRIANGLE, "TR": PLUS, "BL": SQUARE, "BR": L_SHAPE},
+    270: {"TL": L_SHAPE, "TR": TRIANGLE, "BL": PLUS, "BR": SQUARE},
 }
 
-_ALL_MARKER_TYPES = frozenset({SQUARE, L_SHAPE, T_SHAPE, PLUS})
+_ALL_MARKER_TYPES = frozenset({SQUARE, L_SHAPE, T_SHAPE, TRIANGLE, PLUS})
 
 # Corner regions: (x_range_frac, y_range_frac) — outer 15% band
 _CORNER_REGIONS: Dict[str, Tuple[Tuple[float, float], Tuple[float, float]]] = {
@@ -146,7 +147,16 @@ def classify_blob(contour: np.ndarray) -> str:
 
     # --- Classification rules ---
 
-    # SQUARE: high solidity, roughly square aspect, no significant concavities
+    # Vertex count via polygon approximation (key for triangle vs square)
+    peri = cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, 0.04 * peri, True)
+    n_vertices = len(approx)
+
+    # TRIANGLE: convex, 3 vertices (filled triangle)
+    if solidity > 0.80 and n_vertices == 3:
+        return TRIANGLE
+
+    # SQUARE: high solidity, roughly square aspect, ~4 vertices
     if solidity > 0.85 and 0.70 <= aspect <= 1.42:
         return SQUARE
 
@@ -330,8 +340,9 @@ def _extract_candidates(
             if area < min_area_px2 or area > max_area_px2:
                 continue
             # Reject overly complex contours — real markers are simple shapes
-            # (square≈4, L/T/plus≈8-20 points). Noise blobs have 100+ points.
-            if len(cnt) > 80:
+            # (square≈4, triangle≈3, L/T/plus≈8-20 points). High-DPI renders
+            # may produce 100+ raw contour points for clean shapes.
+            if len(cnt) > 200:
                 continue
 
             M = cv2.moments(cnt)
@@ -415,6 +426,8 @@ def _extract_candidates(
 
 # Types that are interchangeable during matching (thin-stroke junction shapes)
 _JUNCTION_TYPES = frozenset({L_SHAPE, T_SHAPE})
+# Triangle can sometimes be classified as t_shape depending on threshold
+_TRIANGLE_COMPAT = frozenset({TRIANGLE, T_SHAPE})
 
 
 def _types_compatible(detected: str, expected: str) -> bool:
@@ -427,6 +440,8 @@ def _types_compatible(detected: str, expected: str) -> bool:
     if detected == expected:
         return True
     if detected in _JUNCTION_TYPES and expected in _JUNCTION_TYPES:
+        return True
+    if detected in _TRIANGLE_COMPAT and expected in _TRIANGLE_COMPAT:
         return True
     return False
 
@@ -484,8 +499,8 @@ def detect_markers(
     image_bgr: np.ndarray,
     meta: Dict[str, Any],
     *,
-    min_area_mm2: float = 2.0,
-    max_area_mm2: float = 30.0,
+    min_area_mm2: float = 3.0,
+    max_area_mm2: float = 50.0,
 ) -> MarkerDetectionResult:
     """
     Detect asymmetric v9 corner markers and determine page orientation.

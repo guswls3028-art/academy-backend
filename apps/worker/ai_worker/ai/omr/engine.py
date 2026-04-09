@@ -121,7 +121,7 @@ def detect_omr_answers_v7(
     # --- Column-local alignment (v9 only) ---
     col_transforms: Dict[int, np.ndarray] = {}
     meta_version = meta.get("version", "v8")
-    if meta_version == "v9" and meta.get("columns"):
+    if meta_version in ("v9", "v10", "v11") and meta.get("columns"):
         col_transforms = _compute_column_transforms(
             gray=gray, scale=scale, columns_meta=meta["columns"],
         )

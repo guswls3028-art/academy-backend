@@ -15,11 +15,21 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 
 .omr{width:297mm;height:210mm;margin:0 auto;background:#fff;position:relative;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 
-.cm{position:absolute;z-index:20}.cm b{position:absolute;background:#000;display:block}
-.cm-tl{top:3mm;left:3mm}.cm-tl .h{width:5mm;height:0.5mm;top:0;left:0}.cm-tl .v{width:0.5mm;height:5mm;top:0;left:0}
-.cm-tr{top:3mm;right:3mm}.cm-tr .h{width:5mm;height:0.5mm;top:0;right:0}.cm-tr .v{width:0.5mm;height:5mm;top:0;right:0}
-.cm-bl{bottom:3mm;left:3mm}.cm-bl .h{width:5mm;height:0.5mm;bottom:0;left:0}.cm-bl .v{width:0.5mm;height:5mm;bottom:0;left:0}
-.cm-br{bottom:3mm;right:3mm}.cm-br .h{width:5mm;height:0.5mm;bottom:0;right:0}.cm-br .v{width:0.5mm;height:5mm;bottom:0;right:0}
+/* v11 비대칭 코너 마커 — TL=square, TR=L, BL=T, BR=plus */
+.cm{position:absolute;z-index:20}
+.cm b{position:absolute;background:#000;display:block}
+/* TL: 채워진 정사각형 5×5mm */
+.cm-tl{top:3mm;left:3mm;width:5mm;height:5mm;background:#000}
+/* TR: L자 (가로5×1.5 + 세로1.5×5) */
+.cm-tr{top:3mm;right:3mm;width:5mm;height:5mm}
+.cm-tr .h{width:5mm;height:1.5mm;top:0;right:0}
+.cm-tr .v{width:1.5mm;height:5mm;top:0;right:0}
+/* BL: 채움 삼각형 (CSS triangle) */
+.cm-bl{bottom:3mm;left:3mm;width:0;height:0;border-left:2.5mm solid transparent;border-right:2.5mm solid transparent;border-bottom:5mm solid #000}
+/* BR: 십자가 (가로5×1.5 + 세로1.5×5) */
+.cm-br{bottom:3mm;right:3mm;width:5mm;height:5mm}
+.cm-br .h{width:5mm;height:1.5mm;top:1.75mm;right:0}
+.cm-br .v{width:1.5mm;height:5mm;top:0;right:1.75mm}
 
 .omr-c{position:absolute;top:9mm;left:10mm;right:10mm;bottom:8mm;display:flex;gap:3mm}
 
@@ -153,7 +163,7 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
   <!-- 코너 마크 -->
   <div class="cm cm-tl"><b class="h"></b><b class="v"></b></div>
   <div class="cm cm-tr"><b class="h"></b><b class="v"></b></div>
-  <div class="cm cm-bl"><b class="h"></b><b class="v"></b></div>
+  <div class="cm cm-bl"></div>
   <div class="cm cm-br"><b class="h"></b><b class="v"></b></div>
 
   <div class="omr-c">
