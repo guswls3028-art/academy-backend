@@ -190,7 +190,7 @@ def send_one_alimtalk_own_solapi(
         return {"status": "error", "reason": "to_pf_template_required"}
     try:
         variables = _build_variables_dict(replacements)
-        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id, variables=variables, disable_sms=False)
+        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id, variables=variables, disable_sms=True)
         message = RequestMessage(from_=sender, to=to, text=text or " ", kakao_options=kakao_option)
         response = client.send(message)
         group_id = getattr(getattr(response, "group_info", None), "group_id", None)
@@ -229,7 +229,7 @@ def send_one_alimtalk(
         return {"status": "error", "reason": "to_pf_template_required"}
     try:
         variables = _build_variables_dict(replacements)
-        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id, variables=variables, disable_sms=False)
+        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id, variables=variables, disable_sms=True)
         message = RequestMessage(
             from_=sender,
             to=to,
