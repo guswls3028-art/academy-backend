@@ -281,6 +281,14 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         # 시스템 강의(공개 영상 컨테이너)인 경우 visibility=PUBLIC 자동 설정
         is_public = getattr(session.lecture, "is_system", False)
+        # uploaded_by: 업로드한 스태프 (인코딩 완료 알림 대상)
+        uploaded_by_staff = None
+        try:
+            from apps.domains.staffs.models import Staff
+            uploaded_by_staff = Staff.objects.filter(user=request.user, tenant=tenant).first()
+        except Exception:
+            pass
+
         video = video_repo.create_video(
             session=session,
             title=title,
@@ -292,6 +300,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             show_watermark=show_watermark,
             visibility=Video.Visibility.PUBLIC if is_public else Video.Visibility.ENROLLED,
             tenant=tenant,
+            uploaded_by=uploaded_by_staff,
         )
 
         content_type = (request.data.get("content_type") or "video/mp4").split(";")[0]

@@ -222,6 +222,8 @@ class AutoSendConfig(models.Model):
         # G. 결제
         PAYMENT_COMPLETE = "payment_complete", "결제 완료"
         PAYMENT_DUE_DAYS_BEFORE = "payment_due_days_before", "납부 예정일 N일 전"
+        # J. 영상
+        VIDEO_ENCODING_COMPLETE = "video_encoding_complete", "영상 인코딩 완료"
         # H. 운영공지 — urgent_notice 제거 (카카오 알림톡 정책 위반)
         # I. 비밀번호 찾기/재설정 — SYSTEM_AUTO
         PASSWORD_FIND_OTP = "password_find_otp", "비밀번호 찾기 인증번호"
@@ -250,7 +252,7 @@ class AutoSendConfig(models.Model):
     message_mode = models.CharField(
         max_length=20,
         choices=[("sms", "SMS만"), ("alimtalk", "알림톡만"), ("both", "둘 다")],
-        default="sms",
+        default="alimtalk",
     )
     # N분 전 발송 (예: 강의 30분 전, 클리닉 60분 전). null=이벤트 시점 발송. 스케줄러에서 사용.
     minutes_before = models.PositiveIntegerField(null=True, blank=True)

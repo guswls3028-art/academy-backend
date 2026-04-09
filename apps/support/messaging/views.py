@@ -450,9 +450,9 @@ class SendMessageView(APIView):
         data = ser.validated_data
         tenant = request.tenant
         send_to = data["send_to"]
-        message_mode = (data.get("message_mode") or "sms").strip().lower()
+        message_mode = (data.get("message_mode") or "alimtalk").strip().lower()
         if message_mode not in ("sms", "alimtalk"):
-            message_mode = "sms"
+            message_mode = "alimtalk"
         template_id = data.get("template_id")
         raw_body = (data.get("raw_body") or "").strip()
         raw_subject = (data.get("raw_subject") or "").strip()
@@ -881,7 +881,7 @@ class AutoSendConfigView(APIView):
                     "template_body": "",
                     "template_solapi_status": "",
                     "enabled": False,
-                    "message_mode": "sms",
+                    "message_mode": "alimtalk",
                     "minutes_before": None,
                     "created_at": None,
                     "updated_at": None,
@@ -943,9 +943,9 @@ class AutoSendConfigView(APIView):
                 continue
             template_id = item.get("template_id")
             enabled = item.get("enabled", False)
-            message_mode = (item.get("message_mode") or "sms").strip().lower()
+            message_mode = (item.get("message_mode") or "alimtalk").strip().lower()
             if message_mode not in ("sms", "alimtalk", "both"):
-                message_mode = "sms"
+                message_mode = "alimtalk"
             minutes_before = item.get("minutes_before")
             if minutes_before is not None:
                 try:
@@ -956,7 +956,7 @@ class AutoSendConfigView(APIView):
             config, _ = AutoSendConfig.objects.get_or_create(
                 tenant=tenant,
                 trigger=trigger,
-                defaults={"enabled": False, "message_mode": "sms"},
+                defaults={"enabled": False, "message_mode": "alimtalk"},
             )
             if template_id:
                 t = MessageTemplate.objects.filter(

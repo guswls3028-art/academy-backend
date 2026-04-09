@@ -60,6 +60,9 @@ TRIGGER_POLICY = {
     "payment_due_days_before": "MANUAL_DEFAULT",
     # urgent_notice: 카카오 알림톡 정책 위반으로 제거
 
+    # 영상 — 인코딩 완료 시 업로더(스태프)에게 알림
+    "video_encoding_complete": "AUTO_DEFAULT",
+
     # DISABLED — 현재 정책상 비활성
     "class_enrollment_complete": "DISABLED",
     "enrollment_expiring_soon": "DISABLED",

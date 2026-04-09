@@ -42,7 +42,7 @@ def get_session_by_id_with_lecture_tenant(session_id):
     return Session.objects.select_related("lecture", "lecture__tenant").get(id=session_id)
 
 
-def create_video(session, title, file_key, order, status, allow_skip=False, max_speed=1.0, show_watermark=True, visibility=None, tenant=None):
+def create_video(session, title, file_key, order, status, allow_skip=False, max_speed=1.0, show_watermark=True, visibility=None, tenant=None, uploaded_by=None):
     from apps.support.video.models import Video
     kwargs = dict(
         session=session,
@@ -54,6 +54,8 @@ def create_video(session, title, file_key, order, status, allow_skip=False, max_
         max_speed=max_speed,
         show_watermark=show_watermark,
     )
+    if uploaded_by is not None:
+        kwargs["uploaded_by"] = uploaded_by
     if visibility is not None:
         kwargs["visibility"] = visibility
     # tenant: 명시적 전달 우선, 없으면 session→lecture→tenant 자동 추출
@@ -755,7 +757,116 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
         delete_video_progress_key(tenant_id, video.id)
     except Exception:
         pass
+    # 영상 인코딩 완료 알림톡 발송 (업로더에게)
+    try:
+        _notify_video_encoding_complete(video, tenant_id)
+    except Exception as e:
+        logger.warning("video_encoding_complete notification failed video_id=%s: %s", video.id, e)
     return True, "ok"
+
+
+def _notify_video_encoding_complete(video, tenant_id: int) -> None:
+    """
+    영상 인코딩 완료 시 업로더(스태프)에게 알림톡 발송.
+    video.uploaded_by가 있고 전화번호가 있으면 send_event_notification으로 발송.
+    """
+    import logging
+    _log = logging.getLogger(__name__)
+
+    uploaded_by = getattr(video, "uploaded_by", None)
+    if not uploaded_by:
+        # uploaded_by가 없으면 select로 가져오기 시도
+        from apps.support.video.models import Video
+        v = Video.objects.filter(pk=video.id).select_related("uploaded_by").first()
+        uploaded_by = getattr(v, "uploaded_by", None) if v else None
+    if not uploaded_by:
+        _log.info("video_encoding_complete: no uploaded_by for video_id=%s, skip", video.id)
+        return
+
+    phone = getattr(uploaded_by, "phone", None) or ""
+    phone = phone.replace("-", "").strip()
+    if not phone:
+        _log.info("video_encoding_complete: uploaded_by has no phone, video_id=%s staff_id=%s", video.id, uploaded_by.id)
+        return
+
+    # 강의명/차시명 추출
+    lecture_name = ""
+    session_name = ""
+    try:
+        if video.session:
+            session_name = video.session.title or ""
+            if video.session.lecture:
+                lecture_name = video.session.lecture.name or ""
+    except Exception:
+        pass
+
+    from apps.support.messaging.services import enqueue_sms
+    from apps.support.messaging.selectors import get_auto_send_config
+    from apps.support.messaging.alimtalk_content_builders import (
+        get_solapi_template_id,
+        build_unified_replacements,
+    )
+
+    trigger = "video_encoding_complete"
+    config = get_auto_send_config(tenant_id, trigger)
+    if config and not config.enabled:
+        _log.info("video_encoding_complete: trigger disabled for tenant %s", tenant_id)
+        return
+
+    # 템플릿 body 가져오기
+    template_body = "영상 인코딩이 완료되었습니다.\n앱에서 영상을 확인해 주세요."
+    if config and config.template:
+        template_body = config.template.body or template_body
+
+    # 테넌트 정보
+    tenant_name = ""
+    site_url = "https://hakwonplus.com"
+    try:
+        from apps.core.models import Tenant
+        t = Tenant.objects.filter(pk=tenant_id).first()
+        if t:
+            tenant_name = t.name or ""
+            if t.code:
+                site_url = f"https://{t.code}.hakwonplus.com"
+    except Exception:
+        pass
+
+    staff_name = getattr(uploaded_by, "name", "") or ""
+    context = {
+        "강의명": lecture_name,
+        "차시명": session_name or video.title or "",
+    }
+
+    solapi_tid = get_solapi_template_id(trigger)
+    message_mode = "alimtalk" if solapi_tid else "sms"
+
+    if solapi_tid:
+        replacements = build_unified_replacements(
+            trigger=trigger,
+            content_body=template_body,
+            context=context,
+            tenant_name=tenant_name,
+            student_name=staff_name,  # 수신자 이름 (스태프)
+            site_url=site_url,
+        )
+        enqueue_sms(
+            tenant_id=tenant_id,
+            to=phone,
+            text=template_body,
+            message_mode="alimtalk",
+            template_id=solapi_tid,
+            alimtalk_replacements=replacements,
+        )
+    else:
+        # SMS fallback
+        text = f"[{tenant_name}] 영상 인코딩 완료\n\n{staff_name}님, {video.title} 영상 인코딩이 완료되었습니다."
+        enqueue_sms(
+            tenant_id=tenant_id,
+            to=phone,
+            text=text,
+            message_mode="sms",
+        )
+    _log.info("video_encoding_complete: sent to %s (staff_id=%s) video_id=%s", phone[:4] + "****", uploaded_by.id, video.id)
 
 
 def job_fail_retry(job_id: str, reason: str) -> tuple[bool, str]:

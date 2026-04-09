@@ -139,6 +139,15 @@ class Video(TimestampModel):
         db_index=True,
     )
 
+    uploaded_by = models.ForeignKey(
+        "staffs.Staff",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="uploaded_videos",
+        help_text="영상을 업로드한 스태프. 인코딩 완료 알림 발송 대상.",
+    )
+
     # --------------------------------------------------
     # 기본 재생 정책 (비디오 단위 default)
     # --------------------------------------------------

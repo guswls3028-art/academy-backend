@@ -76,6 +76,14 @@ TRIGGER_TO_TEMPLATE_TYPE: dict[str, str] = {
     "assignment_due_hours_before": TYPE_SCORE,
     "assignment_not_submitted": TYPE_SCORE,
     "monthly_report_generated": TYPE_SCORE,
+
+    # 퇴원/결제 — score 템플릿 (범용 ITEM_LIST)
+    "withdrawal_complete": TYPE_SCORE,
+    "payment_complete": TYPE_SCORE,
+    "payment_due_days_before": TYPE_SCORE,
+
+    # 영상 — score 템플릿 (강의명/차시명)
+    "video_encoding_complete": TYPE_SCORE,
 }
 
 
@@ -336,6 +344,9 @@ def build_unified_replacements(
         "성적": ["성적", "score"],
         "시험성적": ["시험성적", "exam_score"],
         "클리닉합불": ["클리닉합불", "clinic_result"],
+        # payment — 결제/납부 트리거
+        "납부금액": ["납부금액", "amount"],
+        "청구월": ["청구월", "billing_month"],
         # common
         "날짜": ["날짜", "date"],
         "시간": ["시간", "time"],

@@ -384,6 +384,14 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         ),
         "minutes_before": None,
     },
+    # ───────── 영상 ─────────
+    "video_encoding_complete": {
+        "category": "lecture",
+        "name": "[{academy_name}] 영상 인코딩 완료",
+        "subject": "영상 인코딩이 완료되었습니다",
+        "body": "영상 인코딩이 완료되었습니다.\n앱에서 영상을 확인해 주세요.",
+        "minutes_before": None,
+    },
     # ───────── 운영공지 ─────────
     # urgent_notice: 카카오 알림톡 정책 위반으로 제거
 }
