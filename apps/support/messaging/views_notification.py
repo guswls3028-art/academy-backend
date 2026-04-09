@@ -175,12 +175,24 @@ class ManualNotificationPreviewView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     ALLOWED_TRIGGERS = {
+        # 출결 (attendance 템플릿)
+        "check_in_complete", "absent_occurred", "lecture_session_reminder",
+        # 시험/성적 (score 템플릿)
         "exam_score_published", "exam_not_taken", "retake_assigned",
+        "exam_scheduled_days_before", "exam_start_minutes_before",
+        # 과제 (score 템플릿)
         "assignment_not_submitted", "assignment_registered", "assignment_due_hours_before",
-        "withdrawal_complete", "check_in_complete", "absent_occurred",
-        "monthly_report_generated", "lecture_session_reminder",
-        "payment_complete", "payment_due_days_before", "urgent_notice",
+        # 성적 리포트 (score 템플릿)
+        "monthly_report_generated",
+        # 퇴원/결제 (score 템플릿)
+        "withdrawal_complete", "payment_complete", "payment_due_days_before",
+        # 클리닉 (clinic_info 템플릿)
+        "clinic_reminder", "clinic_reservation_created", "clinic_reservation_changed",
+        "clinic_cancelled", "clinic_check_in", "clinic_absent",
         "clinic_self_study_completed", "clinic_result_notification",
+        "counseling_reservation_created",
+        # 영상 (score 템플릿)
+        "video_encoding_complete",
     }
 
     def post(self, request):
