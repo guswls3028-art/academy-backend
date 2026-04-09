@@ -845,32 +845,31 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             # ✅ V1.1.1 remediation 재정렬:
             # 예약 상태 변경(no_show, cancelled, rejected)은 ClinicLink 해소에 영향 없음.
 
-        # ── 클리닉 상태 변경 알림 (AUTO_DEFAULT) ──
-        _trigger_map = {
-            SessionParticipant.Status.CANCELLED: "clinic_cancelled",
-            SessionParticipant.Status.ATTENDED: "clinic_check_in",
-            SessionParticipant.Status.NO_SHOW: "clinic_absent",
-        }
-        _trigger = _trigger_map.get(next_status)
-        # ── 클리닉 상태 변경 알림 (AUTO_DEFAULT, 학생+학부모) ──
-        if _trigger:
-            _t = getattr(request, "tenant", None)
-            _s = obj.student
-            _tr = _trigger
-            _session = obj.session
-            _loc = getattr(_session, "location", "") if _session else ""
-            _date = str(_session.date) if _session and _session.date else ""
-            _time = str(_session.start_time)[:5] if _session and getattr(_session, "start_time", None) else ""
-            _is_cancel = (next_status == SessionParticipant.Status.CANCELLED)
-            _is_absent = (next_status == SessionParticipant.Status.NO_SHOW)
-            _ctx = {
-                "클리닉명": getattr(_session, "title", "") if _session else "",
-                "장소": f"[취소] {_loc}" if _is_cancel else f"[결석] {_loc}" if _is_absent else _loc,
-                "날짜": _date,
-                "시간": f"취소({_time})" if _is_cancel else f"결석({_time})" if _is_absent else _time,
-                "_domain_object_id": f"participant_{obj.pk}_{next_status}_{int(time.time())}",
+            # ── 클리닉 상태 변경 알림 (AUTO_DEFAULT, atomic 블록 안에서 on_commit 등록) ──
+            _trigger_map = {
+                SessionParticipant.Status.CANCELLED: "clinic_cancelled",
+                SessionParticipant.Status.ATTENDED: "clinic_check_in",
+                SessionParticipant.Status.NO_SHOW: "clinic_absent",
             }
-            transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
+            _trigger = _trigger_map.get(next_status)
+            if _trigger:
+                _t = getattr(request, "tenant", None)
+                _s = obj.student
+                _tr = _trigger
+                _session = obj.session
+                _loc = getattr(_session, "location", "") if _session else ""
+                _date = str(_session.date) if _session and _session.date else ""
+                _time = str(_session.start_time)[:5] if _session and getattr(_session, "start_time", None) else ""
+                _is_cancel = (next_status == SessionParticipant.Status.CANCELLED)
+                _is_absent = (next_status == SessionParticipant.Status.NO_SHOW)
+                _ctx = {
+                    "클리닉명": getattr(_session, "title", "") if _session else "",
+                    "장소": f"[취소] {_loc}" if _is_cancel else f"[결석] {_loc}" if _is_absent else _loc,
+                    "날짜": _date,
+                    "시간": f"취소({_time})" if _is_cancel else f"결석({_time})" if _is_absent else _time,
+                    "_domain_object_id": f"participant_{obj.pk}_{next_status}_{int(time.time())}",
+                }
+                transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
