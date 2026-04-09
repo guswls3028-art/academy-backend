@@ -499,8 +499,8 @@ def detect_markers(
     image_bgr: np.ndarray,
     meta: Dict[str, Any],
     *,
-    min_area_mm2: float = 3.0,
-    max_area_mm2: float = 50.0,
+    min_area_mm2: float = 5.0,
+    max_area_mm2: float = 100.0,
 ) -> MarkerDetectionResult:
     """
     Detect asymmetric v9 corner markers and determine page orientation.

@@ -1,51 +1,48 @@
 # apps/domains/assets/omr/renderer/pdf_renderer.py
 """
-OMR PDF 렌더러 — reportlab 기반 벡터 PDF 생성
+OMR PDF 렌더러 v14 — reportlab 기반 벡터 PDF 생성 (한국 표준 OMR 스타일)
 
 좌표계: meta_generator.py (좌상단 mm) → reportlab (좌하단 pt)
 
 ═══════════════════════════════════════════════════
-시각 시스템 정의
+시각 시스템 정의 v14
 ═══════════════════════════════════════════════════
 
-A. STROKE HIERARCHY (v8)
-  S1  0.80pt  #333333  카드 외곽 / MC·서술형 최외곽 (좌우 동일)
-  S2  0.50pt  #555555  헤더↔본문 구분선 (카드 내부 구획)
-  S3  0.35pt  #aaaaaa  5행 강조 가로선
-  S4  0.25pt  #cccccc  일반 행 구분 / 번호↔버블 세로선 (최소 인쇄 보장)
-  S5  0.35pt  #444444  버블 외곽
-  --  1.00pt  #666666  10행 강조 가로선
+A. STROKE & COLOR
+  S1  2.00pt  #000000  외곽 + 컬럼 구분 (통합 프레임)
+  S2  0.80pt  #333333  헤더↔본문 구분선
+  S3  0.50pt  #777777  5행 강조 가로선
+  S4  0.20pt  #cccccc  일반 행 구분 — 미세
+  S5  0.30pt  #444444  버블 외곽
 
 B. SPACING (mm)
   로고 영역 상단 패딩     5
   로고 → 시험명           3
   시험명 → 부제           2
   카드 헤더 높이          5.5
-  카드 간 간격            0 (밀착, 선 공유)
   좌패널 ↔ 우답안         3 (LP_GAP)
 
 C. TEXT HIERARCHY
-  시험명      Bold  12pt  #111111
+  시험명      Bold  12pt  #000000
   부제        Reg    7pt  #666666
-  섹션 헤더   Bold   7pt  #222222
-  문항번호    Bold   7pt  #111111
-  버블 숫자   Reg    5pt  #bbbbbb
+  섹션 헤더   Bold  5.5pt #222222
+  문항번호    Bold   8pt  #000000
+  버블 숫자   Bold  6.5pt #888888
   안내 제목   Bold  6.5pt #222222
-  안내 본문   Reg   5.5pt #555555
+  안내 본문   Reg   5.5pt #666666
 
-D. CARD GROUPING
-  로고+시험명+부제  열린 영역 (테두리 없음)
-  성명             독립 카드 (S1 외곽 + S2 헤더선)
-  전화번호         독립 카드 (밀착, 상변 공유)
-  안내             독립 카드 (밀착, 상변 공유)
-  MC 컬럼          독립 카드 (S1 외곽)
-  서술형 컬럼      독립 카드 (S1 외곽)
+D. 통합 프레임 구조 (v14)
+  좌측 패널  단일 rect + 내부 구분선
+  답안 영역  단일 외곽 rect + 세로선 칸막이 (독립 박스 없음)
+  그리기 순서: 배경 fill → 내부선 → 외곽 stroke → 텍스트 → 버블
 
-E. BALANCE (CONTENT_H=195mm 기준)
-  로고+제목  76mm  (39%)
-  성명       16mm  ( 8%)
-  전화번호   75mm  (39%)
-  안내       28mm  (14%)
+E. 타이밍 마크 (한국 표준)
+  상하단     균일 간격 수평 바 (4×1.5mm, 8mm 간격)
+  좌우       행 바 (5행: 1.5mm, 10행: 2.0mm, LP_GAP 내 안착)
+
+F. 인식 시스템
+  코너 마커    8mm 비대칭 4종 (TL=square, TR=L, BL=triangle, BR=plus)
+  AI 파이프라인은 코너 마커 + 버블 좌표만 사용 (타이밍 마크 무관)
 ═══════════════════════════════════════════════════
 """
 from __future__ import annotations
@@ -72,37 +69,41 @@ from apps.domains.assets.omr.services.meta_generator import (
     MC_COL_W, MC_COL_GAP, MC_HEADER_H, MC_NUM_W, MC_BUB_PAD,
     BUB_W, BUB_H,
     ID_DIGITS, ID_VALUES, ID_BUB_GAP, ID_BUB_H,
+    ID_DIGIT_W, ID_SEP_W,
     MARGIN_R,
 )
 
 # ══════════════════════════════════════════════
-# A. STROKE HIERARCHY
+# A. STROKE & COLOR (v14 — 통합 프레임 + 한국 표준)
 # ══════════════════════════════════════════════
-S1 = 0.80   # 카드/컬럼 외곽
-S2 = 0.50   # 헤더↔본문
-S3 = 0.35   # 5행 강조
-S4 = 0.25   # 보조선 (최소 인쇄 보장)
-S5 = 0.35   # 버블
+S1 = 2.00   # 외곽 + 컬럼 구분 — 또렷하되 과하지 않음 (0.7mm)
+S2 = 0.80   # 헤더↔본문 구분
+S3 = 0.60   # 5행 강조 — 묶음 구분 또렷
+S4 = 0.30   # 일반 행 구분 — 인쇄/복사에서도 보이게
+S5 = 0.30   # 버블 외곽
 
-C1 = HexColor("#333333")   # S1 외곽
-C2 = HexColor("#555555")   # S2 구획
-C3 = HexColor("#aaaaaa")   # S3 강조
-C4 = HexColor("#cccccc")   # S4 보조
-C5 = HexColor("#444444")   # S5 버블
+# ── 흑백 인쇄 최적화 그레이스케일 ──
+C1 = HexColor("#000000")      # 외곽/컬럼 구분 — 순수 검정
+C2 = HexColor("#333333")      # 헤더 구분
+C3 = HexColor("#666666")      # 5행 강조 — 또렷
+C4 = HexColor("#b0b0b0")      # 일반 행 — 복사에서도 가시
+C5 = HexColor("#444444")      # 버블 외곽
 
 # C. TEXT HIERARCHY
-CT  = HexColor("#111111")   # 본문
-CT2 = HexColor("#222222")   # 헤더
-CT3 = HexColor("#666666")   # 부제/안내본문
-CT4 = HexColor("#c0c0c0")   # 버블숫자
+CT  = HexColor("#000000")      # 본문/번호 — 순수 검정
+CT2 = HexColor("#222222")      # 헤더
+CT3 = HexColor("#666666")      # 부제/안내본문
+CT4 = HexColor("#888888")      # 버블숫자 — 보이되 마킹과 구분
 
 # 헤더 배경
-C_HDR = HexColor("#f4f4f4")
-C_HDR_ESSAY = HexColor("#e8e8e8")   # 서술형 헤더
-C_ZEBRA = HexColor("#fafafa")       # zebra striping
-C_BUB_FILL = HexColor("#f8f8f8")    # 버블 내부 fill
-C_G10 = HexColor("#666666")         # 10행 강조선
-C_ESSAY_LINE = HexColor("#e8e8e8")  # 서술형 줄선
+C_HDR = HexColor("#dcdcdc")         # MC 헤더 — 인쇄/복사 시 또렷
+C_HDR_ESSAY = HexColor("#e6e6e6")   # 서술형 헤더
+C_ZEBRA = HexColor("#f0f0f0")       # zebra — 인쇄에서도 보이는 대비
+C_BUB_FILL = white                  # 버블 내부 — 순백
+C_G10 = HexColor("#444444")         # 10행 강조
+
+# 번호 칼럼 배경
+C_NUM_BG = HexColor("#f5f5f5")      # 번호 칼럼 틴트
 
 # B. SPACING (mm)
 PAD_LOGO_TOP = 5.0
@@ -210,11 +211,6 @@ def _register_fonts():
 # 공통 그리기 헬퍼
 # ══════════════════════════════════════════════
 
-def _card(c, x_pt, top_mm, h_mm, w_pt):
-    """S1 외곽 카드."""
-    c.setStrokeColor(C1); c.setLineWidth(S1)
-    c.rect(x_pt, _y(top_mm + h_mm), w_pt, _mm(h_mm), stroke=1, fill=0)
-
 def _header(c, x_pt, w_pt, top_mm, label):
     """S2 구분선 + 배경 + 라벨."""
     c.setFillColor(C_HDR)
@@ -234,18 +230,16 @@ class OMRPdfRenderer:
         cv.setTitle(f"{doc.exam_title} OMR")
         self._corners(cv)
         self._left(cv, doc)
-        self._mc(cv, doc)
-        self._essay(cv, doc)
-        self._timing_marks(cv, doc)
+        self._answer_area(cv, doc)
         cv.save()
         return buf.getvalue()
 
-    # ── 코너 마크 (v11: 비대칭 4종 — AI 방향 판별용) ──
-    # TL=square, TR=L-shape, BL=T-shape, BR=plus
-    # 모든 마커는 굵은 채움 도형. meta_generator._build_marker_meta()와 동기화.
-    _CORNER_OFF = 3.0   # 페이지 가장자리로부터 오프셋 (mm)
-    _CORNER_SZ = 5.0    # 마커 기본 크기 (mm)
-    _CORNER_TH = 1.5    # 마커 팔 두께 (mm)
+    # ── 코너 마크 (v13: 비대칭 4종 — AI 방향 판별용) ──
+    # TL=square, TR=L-shape, BL=triangle, BR=plus
+    # 모든 마커는 굵은 채움 도형. 8mm 크기. meta_generator._build_marker_meta()와 동기화.
+    _CORNER_OFF = 2.5   # 페이지 가장자리로부터 오프셋 (mm)
+    _CORNER_SZ = 8.0    # 마커 기본 크기 (mm) — 크고 또렷
+    _CORNER_TH = 2.5    # 마커 팔 두께 (mm) — 굵게
 
     def _corners(self, c):
         off = self._CORNER_OFF
@@ -254,18 +248,18 @@ class OMRPdfRenderer:
         pw, ph = PAGE_W, PAGE_H
         c.setFillColor(black)
 
-        # TL: 채워진 정사각형 (5×5mm)
+        # TL: 채워진 정사각형 (8×8mm) — 가장 크고 단순
         c.rect(_mm(off), _y(off + sz), _mm(sz), _mm(sz), fill=1, stroke=0)
 
-        # TR: L자 (오른쪽+아래 팔, 좌우반전)
+        # TR: L자 (굵은 팔 2개, 우상단 코너 형태)
         tr_x = pw - off - sz
         tr_y = off
-        # 가로 팔
+        # 가로 팔 (위쪽)
         c.rect(_mm(tr_x), _y(tr_y + th), _mm(sz), _mm(th), fill=1, stroke=0)
-        # 세로 팔 (오른쪽 끝에서 아래로)
+        # 세로 팔 (오른쪽)
         c.rect(_mm(pw - off - th), _y(tr_y + sz), _mm(th), _mm(sz), fill=1, stroke=0)
 
-        # BL: 채움 삼각형 (▲, 꼭짓점 위로)
+        # BL: 채움 삼각형 (▲, 큰 사이즈)
         bl_cx = off + sz / 2
         bl_cy = ph - off - sz / 2
         p = c.beginPath()
@@ -275,7 +269,7 @@ class OMRPdfRenderer:
         p.close()
         c.drawPath(p, fill=1, stroke=0)
 
-        # BR: 십자가 (+)
+        # BR: 십자가 (+) — 굵은 팔
         br_cx = pw - off - sz / 2
         br_cy = ph - off - sz / 2
         # 가로 바
@@ -295,29 +289,29 @@ class OMRPdfRenderer:
         t_phone = t_name + H_NAME
         t_note = t_phone + H_PHONE
 
-        # 0) 브랜드 컬러 바 (2mm, 상단)
-        if doc.brand_color:
-            try:
-                bc = HexColor(doc.brand_color)
-                c.setFillColor(bc)
-                c.roundRect(x, _y(t_logo + 2), w, _mm(2), _mm(1), fill=1, stroke=0)
-            except Exception:
-                pass
+        # 0) 통합 프레임 (직각)
+        c.setStrokeColor(C1); c.setLineWidth(S1)
+        c.rect(x, _y(CONTENT_Y + CONTENT_H), w, _mm(CONTENT_H), stroke=1, fill=0)
 
-        # 1) 로고+제목 — 테두리 없는 열린 영역
+        # (브랜드 컬러 바 제거 — 흑백 인쇄 전용)
+
+        # 1) 로고+제목
         self._logo_title(c, doc, x, w, t_logo, H_LOGO)
 
-        # 2) 성명 카드
-        _card(c, x, t_name, H_NAME, w)
+        # 2) 성명 — 내부 구분선 (프레임 안에서)
+        c.setStrokeColor(C2); c.setLineWidth(S2)
+        c.line(x, _y(t_name), x + w, _y(t_name))
         _header(c, x, w, t_name, "성 명")
 
-        # 3) 전화번호 카드
-        _card(c, x, t_phone, H_PHONE, w)
+        # 3) 전화번호 — 내부 구분선
+        c.setStrokeColor(C2); c.setLineWidth(S2)
+        c.line(x, _y(t_phone), x + w, _y(t_phone))
         _header(c, x, w, t_phone, "학생 식별번호 (전화번호 뒤 8자리)")
         self._phone(c, x, w, t_phone)
 
-        # 4) 안내 카드
-        _card(c, x, t_note, H_NOTE, w)
+        # 4) 안내 — 내부 구분선
+        c.setStrokeColor(C2); c.setLineWidth(S2)
+        c.line(x, _y(t_note), x + w, _y(t_note))
         self._note(c, x, w, t_note)
 
         # 5) QR 예약 영역 (안내 카드 우하단)
@@ -329,7 +323,7 @@ class OMRPdfRenderer:
         c.setDash()
 
     def _logo_title(self, c, doc, x, w, top, h):
-        """로고 + 시험명 + 부제. 테두리 없음. 내부 여백 확보."""
+        """로고 + 시험명 + 부제. 로고는 항상 존재."""
         ix = x + _mm(LP_PAD_X)
         iw = w - 2 * _mm(LP_PAD_X)
         cx = x + w / 2  # 중심축
@@ -337,7 +331,7 @@ class OMRPdfRenderer:
         # 로고 — 영역의 45% 이내, 상단 5mm 패딩
         logo_ceil = _y(top + PAD_LOGO_TOP)
         logo_max = _mm(min(h * 0.45, 30))
-        cursor = logo_ceil  # 다음 요소 기준점 (reportlab y)
+        cursor = logo_ceil
 
         if doc.logo_bytes:
             try:
@@ -352,16 +346,14 @@ class OMRPdfRenderer:
                 cursor = img_y - _mm(GAP_LOGO_TITLE)
             except Exception:
                 cursor = logo_ceil - _mm(8)
-        else:
-            cursor = logo_ceil - _mm(8)
 
-        # 시험명 — 자동 축소 (15자 초과 → 10pt, 20자 초과 → 9pt)
+        # 시험명
         title_len = len(doc.exam_title) if doc.exam_title else 0
         title_pt = 9 if title_len > 20 else (10 if title_len > 15 else 12)
         c.setFont(_FB, title_pt); c.setFillColor(CT)
         c.drawCentredString(cx, cursor, doc.exam_title)
 
-        # 부제 — 7pt regular, 시험명 아래 2mm
+        # 부제
         parts = []
         if doc.lecture_name: parts.append(doc.lecture_name)
         if doc.session_name: parts.append(doc.session_name)
@@ -370,22 +362,24 @@ class OMRPdfRenderer:
             c.drawCentredString(cx, cursor - _mm(GAP_TITLE_SUB + 3), " / ".join(parts))
 
     def _phone(self, c, x, w, top):
-        """전화번호 쓰기 칸 + 버블 그리드."""
+        """전화번호 쓰기 칸 + 버블 그리드 — 동일 칼럼 그리드 사용."""
         inner_x = x + _mm(LP_BORDER + LP_PAD_X)
         inner_w = LP_W - 2 * LP_BORDER - 2 * LP_PAD_X
 
-        dw = 6.2   # 숫자 셀 폭 mm
-        sw = 4.0    # 대시 구분자 폭 mm
+        # ── 통일 칼럼 그리드 (쓰기칸 = 버블그리드 동일 폭) ──
+        dw = ID_DIGIT_W              # 5.8mm — meta_generator SSOT
+        sw = ID_SEP_W                # 3.5mm — 대시 구분자
         gw = ID_DIGITS * dw + sw
         gx = inner_x + _mm((inner_w - gw) / 2)
 
-        wy = top + HEADER_H + 2.0   # 쓰기 칸 y
-        ch = 7.5                     # 쓰기 칸 높이
+        wy = top + HEADER_H + 2.0    # 쓰기 칸 y
+        ch = 7.0                      # 쓰기 칸 높이
 
-        # 쓰기 칸
+        # 쓰기 칸 — 버블 칼럼과 정확히 같은 x 사용
         c.setLineWidth(S4 + 0.15); c.setStrokeColor(C2)
         for d in range(ID_DIGITS):
-            dx = gx + _mm((d * dw) if d < 4 else (4 * dw + sw + (d - 4) * dw))
+            col_x_mm = (d * dw) if d < 4 else (4 * dw + sw + (d - 4) * dw)
+            dx = gx + _mm(col_x_mm)
             c.rect(dx, _y(wy + ch), _mm(dw), _mm(ch), stroke=1, fill=0)
 
         # 대시
@@ -394,12 +388,13 @@ class OMRPdfRenderer:
             c.setFont(_FB, 10); c.setFillColor(CT)
             c.drawCentredString(sx + _mm(sw / 2), _y(wy + ch - 1.5), "–")
 
-        # 버블 그리드 (gap은 meta_generator.ID_BUB_GAP과 동기화)
-        by0 = top + HEADER_H + ch + 4.0
-        bg = ID_BUB_GAP  # 0.6mm — meta_generator와 동기화
+        # 버블 그리드 — 동일 칼럼 그리드
+        by0 = top + HEADER_H + ch + 3.5
+        bg = ID_BUB_GAP
         c.setLineWidth(S5)
         for d in range(ID_DIGITS):
-            dx = gx + _mm((d * dw) if d < 4 else (4 * dw + sw + (d - 4) * dw))
+            col_x_mm = (d * dw) if d < 4 else (4 * dw + sw + (d - 4) * dw)
+            dx = gx + _mm(col_x_mm)
             ccx = dx + _mm(dw / 2)
             for v in range(ID_VALUES):
                 by = by0 + v * (BUB_H + bg)
@@ -411,237 +406,138 @@ class OMRPdfRenderer:
                 c.drawCentredString(ccx, bcy - _mm(0.8), str(v))
 
     def _note(self, c, x, w, top):
-        """답안지 작성 안내."""
-        ix = x + _mm(3)
-        ty = _y(top + 3)
-        lh = 3.6  # 줄 간격 mm
+        """답안지 작성 안내 — 일관된 들여쓰기."""
+        pad = 3.0                     # 좌측 패딩 mm
+        ix = x + _mm(pad)             # 텍스트 시작 x
+        nix = ix + _mm(2.5)           # 번호 뒤 들여쓰기 (2번째 줄)
+        lh = 3.8                      # 줄 간격 mm
 
-        c.setFont(_FB, 7); c.setFillColor(CT2)
+        ty = _y(top + 3.5)
+
+        c.setFont(_FB, 6.5); c.setFillColor(CT2)
         c.drawString(ix, ty, "답안지 작성 안내")
 
-        y0 = ty - _mm(4.0)
+        y0 = ty - _mm(4.5)
+        line = 0
 
-        # 1번
-        c.setFont(_FN, 6); c.setFillColor(CT3)
-        c.drawString(ix, y0, "1. 전화번호는 본인 휴대폰 번호 뒤 8자리를 적어주세요.")
-        c.drawString(ix + _mm(2.5), y0 - _mm(lh), "휴대폰이 없으면 부모님 번호 뒤 8자리를 적어주세요.")
+        def _line_y(n):
+            return y0 - _mm(lh * n)
 
-        # 2번 — "사인펜" bold
-        c.setFont(_FN, 6); c.setFillColor(CT3)
-        c.drawString(ix, y0 - _mm(lh * 2), "2. 객관식은 ")
-        c.setFont(_FB, 6)
-        c.drawString(ix + _mm(13.5), y0 - _mm(lh * 2), "컴퓨터용 사인펜")
-        c.setFont(_FN, 6)
-        c.drawString(ix + _mm(31), y0 - _mm(lh * 2), "으로 칠해주세요.")
+        # 1. 전화번호
+        c.setFont(_FN, 5.5); c.setFillColor(CT3)
+        c.drawString(ix, _line_y(line), "1. 전화번호는 본인 휴대폰 번호 뒤 8자리를 적어주세요.")
+        line += 1
+        c.drawString(nix, _line_y(line), "휴대폰이 없으면 부모님 번호 뒤 8자리를 적어주세요.")
+        line += 1
 
-        # 3번
-        c.drawString(ix, y0 - _mm(lh * 3), "3. 서술형은 답을 정자로 깔끔하게 적어주세요.")
+        # 2. 사인펜
+        c.drawString(ix, _line_y(line), "2. 객관식은 ")
+        c.setFont(_FB, 5.5)
+        c.drawString(ix + _mm(13), _line_y(line), "컴퓨터용 사인펜")
+        c.setFont(_FN, 5.5)
+        c.drawString(ix + _mm(29.5), _line_y(line), "으로 칠해주세요.")
+        line += 1
 
-        # 4번 — "수정테이프" bold
-        c.drawString(ix, y0 - _mm(lh * 4), "4. ")
-        c.setFont(_FB, 6)
-        c.drawString(ix + _mm(3), y0 - _mm(lh * 4), "수정테이프")
-        c.setFont(_FN, 6)
-        c.drawString(ix + _mm(16), y0 - _mm(lh * 4), "를 사용해주세요. (수정액 금지)")
+        # 3. 수정테이프
+        c.drawString(ix, _line_y(line), "3. ")
+        c.setFont(_FB, 5.5)
+        c.drawString(ix + _mm(3), _line_y(line), "수정테이프")
+        c.setFont(_FN, 5.5)
+        c.drawString(ix + _mm(15), _line_y(line), "를 사용해주세요. (수정액 금지)")
+        line += 1
 
-        # 5번 — 마킹 예시
-        c.drawString(ix, y0 - _mm(lh * 5), "5. 올바른 마킹: ")
-        # 올바른 마킹 — 채워진 타원
+        # 4. 마킹 예시
+        c.drawString(ix, _line_y(line), "4. 올바른 마킹:  ")
         mark_x = ix + _mm(17)
-        mark_y = y0 - _mm(lh * 5) + _mm(0.5)
+        mark_y = _line_y(line) + _mm(0.5)
         c.setFillColor(HexColor("#333333"))
-        c.ellipse(mark_x, mark_y - _mm(1.5), mark_x + _mm(3), mark_y + _mm(1.5),
+        c.ellipse(mark_x, mark_y - _mm(1.3), mark_x + _mm(2.8), mark_y + _mm(1.3),
                   fill=1, stroke=0)
-        # 잘못된 마킹
-        c.setFont(_FN, 6); c.setFillColor(CT3)
-        c.drawString(mark_x + _mm(5), y0 - _mm(lh * 5), "잘못된 마킹: ")
-        c.setFont(_FB, 7); c.setFillColor(HexColor("#999999"))
-        c.drawString(mark_x + _mm(17), y0 - _mm(lh * 5), "✓  △  ─")
+        c.setFont(_FN, 5.5); c.setFillColor(CT3)
+        c.drawString(mark_x + _mm(5), _line_y(line), "잘못된 마킹: ")
+        c.setFont(_FB, 6); c.setFillColor(HexColor("#999999"))
+        c.drawString(mark_x + _mm(16), _line_y(line), "✓  △  ─")
 
     # ══════════════════════════════════════════
-    # MC 컬럼
+    # 답안 영역 — 통합 프레임 + 한국 표준 타이밍
     # ══════════════════════════════════════════
-    def _mc(self, c, doc):
-        if doc.mc_count <= 0:
-            return
+    # 그리기 순서: ① 배경 → ② 내부선 → ③ 외곽 → ④ 텍스트 → ⑤ 버블 → ⑥ 타이밍
+    # fill이 stroke를 덮는 문제를 원천 차단.
+    # MC_COL_GAP은 visual width에 흡수하여 빈 틈 제거.
+
+    def _answer_area(self, c, doc):
         mc = doc.mc_count
-        if mc <= 20:   pc, nc = mc, 1
-        elif mc <= 40: pc, nc = math.ceil(mc/2), 2
-        else:          pc, nc = math.ceil(mc/3), 3
-        for i in range(nc):
-            cx = ANS_X + i * (MC_COL_W + MC_COL_GAP)
-            s = i * pc + 1
-            e = min(s + pc - 1, mc)
-            self._mc_col(c, doc, cx, s, e, nc)
-
-    def _timing_marks(self, c, doc):
-        """
-        OMR 인식용 타이밍 마크 v11 — 상용 OMR 수준 식별 밀도.
-
-        1. MC 컬럼 좌측: 매 행 중심에 사각 마크 (2.5×2.0mm)
-        2. MC 컬럼 우측: 매 행 중심에 사각 마크 (2.5×2.0mm), 5행마다 확대 (3.0×2.5mm)
-        3. 컬럼 상/하단: 삼각 마크 (3mm, 기존 2mm에서 확대)
-        4. 상하단 정렬 바: 컬럼 전체 폭 연속 바 (행 좌표 글로벌 기준)
-
-        meta_generator.py와 동기화.
-        """
-        mc = doc.mc_count
-        if mc <= 0:
+        ec = doc.essay_count
+        if mc <= 0 and ec <= 0:
             return
 
-        if mc <= 20:   pc, nc = mc, 1
-        elif mc <= 40: pc, nc = math.ceil(mc/2), 2
-        else:          pc, nc = math.ceil(mc/3), 3
+        if mc <= 0:    pc, nmc = 0, 0
+        elif mc <= 20: pc, nmc = mc, 1
+        elif mc <= 40: pc, nmc = math.ceil(mc/2), 2
+        else:          pc, nmc = math.ceil(mc/3), 3
 
+        has_essay = ec > 0
+
+        # 프레임 범위 (mm)
+        frame_x = ANS_X
+        frame_w = (PAGE_W - MARGIN_R - frame_x) if has_essay else (
+            nmc * MC_COL_W + max(0, nmc - 1) * MC_COL_GAP)
+
+        fx = _mm(frame_x); fw = _mm(frame_w)
+        ft = _y(CONTENT_Y); fh = _mm(CONTENT_H)
+        fb = ft - fh
+        hh = _mm(MC_HEADER_H)
+        nw = _mm(MC_NUM_W)
         bt = CONTENT_Y + MC_HEADER_H
         bh = CONTENT_H - MC_HEADER_H
-        c.setFillColor(black)
 
-        for ci in range(nc):
-            col_x = ANS_X + ci * (MC_COL_W + MC_COL_GAP)
+        # 섹션 경계 — visual width가 gap을 흡수하여 빈 틈 없음
+        # (type, x_mm, vis_w_mm, data_w_mm, start, end)
+        sections = []
+        for ci in range(nmc):
+            col_x = frame_x + ci * (MC_COL_W + MC_COL_GAP)
             s = ci * pc + 1
             e = min(s + pc - 1, mc)
-            cnt = e - s + 1
-            rh = bh / cnt if cnt else bh
+            if ci < nmc - 1 or has_essay:
+                vw = MC_COL_W + MC_COL_GAP
+            else:
+                vw = frame_x + frame_w - col_x
+            sections.append(('mc', col_x, vw, MC_COL_W, s, e))
+        if has_essay:
+            ex = frame_x + nmc * (MC_COL_W + MC_COL_GAP)
+            ew = frame_x + frame_w - ex
+            sections.append(('essay', ex, ew, ew, 1, ec))
 
-            is_first_col = (ci == 0)
-            is_last_col = (ci == nc - 1)
+        # ═══ ① 배경 (fill) — 모든 stroke보다 먼저 ═══
+        for typ, sx, vw, dw, ss, se in sections:
+            sxp = _mm(sx); vwp = _mm(vw)
+            cnt = se - ss + 1
+            rh = bh / cnt if cnt > 0 else bh
 
-            # ── 좌측 타이밍 마크: 첫 번째 컬럼만 (겹침 방지) ──
-            if is_first_col:
-                lm_x = col_x - 3.5
-                lm_w = 2.5
-                lm_h = 2.0
+            # 헤더 배경
+            c.setFillColor(C_HDR if typ == 'mc' else C_HDR_ESSAY)
+            c.rect(sxp, ft - hh, vwp, hh, fill=1, stroke=0)
+
+            # 번호 칼럼 배경
+            c.setFillColor(C_NUM_BG)
+            c.rect(sxp, fb, nw, _mm(bh), fill=1, stroke=0)
+
+            # 지브라 (MC만, 행 높이 충분할 때)
+            if typ == 'mc' and rh >= 7.0:
                 for qi in range(cnt):
-                    rc = bt + (qi + 0.5) * rh
-                    c.rect(
-                        _mm(lm_x), _y(rc + lm_h / 2),
-                        _mm(lm_w), _mm(lm_h),
-                        fill=1, stroke=0,
-                    )
+                    if (qi // 5) % 2 == 1:
+                        c.setFillColor(C_ZEBRA)
+                        c.rect(sxp, _y(bt + qi * rh + rh), vwp, _mm(rh),
+                               fill=1, stroke=0)
 
-            # ── 우측 타이밍 마크: 마지막 컬럼만 (겹침 방지) ──
-            if is_last_col:
-                rm_x = col_x + MC_COL_W + 1.0
-                for qi in range(cnt):
-                    rc = bt + (qi + 0.5) * rh
-                    if qi % 5 == 0:
-                        c.rect(
-                            _mm(rm_x), _y(rc + 1.25),
-                            _mm(3.0), _mm(2.5),
-                            fill=1, stroke=0,
-                        )
-                    else:
-                        c.rect(
-                            _mm(rm_x), _y(rc + 1.0),
-                            _mm(2.5), _mm(2.0),
-                            fill=1, stroke=0,
-                        )
-
-            # ── 컬럼 상/하단 삼각형 마커 (3mm) ──
-            top_cx = col_x + MC_COL_W / 2
-            top_cy = CONTENT_Y - 2.0
-            self._triangle_down(c, top_cx, top_cy, 3.0)
-            bot_cy = CONTENT_Y + CONTENT_H + 2.0
-            self._triangle_up(c, top_cx, bot_cy, 3.0)
-
-            # ── 상하단 정렬 바 (컬럼 전체 폭, 1.5mm 두께) ──
-            bar_h = 1.5
-            c.rect(
-                _mm(col_x), _y(CONTENT_Y - 0.2),
-                _mm(MC_COL_W), _mm(bar_h),
-                fill=1, stroke=0,
-            )
-            c.rect(
-                _mm(col_x), _y(CONTENT_Y + CONTENT_H + bar_h + 0.2),
-                _mm(MC_COL_W), _mm(bar_h),
-                fill=1, stroke=0,
-            )
-
-    @staticmethod
-    def _triangle_down(c, cx_mm, cy_mm, size_mm):
-        """아래 방향 삼각형 (채움)."""
-        s = size_mm / 2
-        p = c.beginPath()
-        p.moveTo(_mm(cx_mm - s), _y(cy_mm - s))
-        p.lineTo(_mm(cx_mm + s), _y(cy_mm - s))
-        p.lineTo(_mm(cx_mm), _y(cy_mm + s))
-        p.close()
-        c.setFillColor(black)
-        c.drawPath(p, fill=1, stroke=0)
-
-    @staticmethod
-    def _triangle_up(c, cx_mm, cy_mm, size_mm):
-        """위 방향 삼각형 (채움)."""
-        s = size_mm / 2
-        p = c.beginPath()
-        p.moveTo(_mm(cx_mm - s), _y(cy_mm + s))
-        p.lineTo(_mm(cx_mm + s), _y(cy_mm + s))
-        p.lineTo(_mm(cx_mm), _y(cy_mm - s))
-        p.close()
-        c.setFillColor(black)
-        c.drawPath(p, fill=1, stroke=0)
-
-    def _mc_col(self, c, doc, col_mm, s, e, ncols):
-        cx = _mm(col_mm)
-        ct = _y(CONTENT_Y)
-        cw = _mm(MC_COL_W)
-        ch = _mm(CONTENT_H)
-
-        # S1 외곽
-        c.setStrokeColor(C1); c.setLineWidth(S1)
-        c.rect(cx, ct - ch, cw, ch, stroke=1, fill=0)
-
-        # 헤더
-        hh = _mm(MC_HEADER_H)
-        c.setFillColor(C_HDR)
-        c.rect(cx, ct - hh, cw, hh, fill=1, stroke=0)
-        c.setStrokeColor(C2); c.setLineWidth(S2)
-        c.line(cx, ct - hh, cx + cw, ct - hh)
-
-        nw = _mm(MC_NUM_W)
-        # 헤더 내 번호 세로선 (S4)
-        c.setStrokeColor(C4); c.setLineWidth(S4)
-        c.line(cx + nw, ct, cx + nw, ct - hh)
-
-        c.setFont(_FB, 5.5); c.setFillColor(CT2)
-        c.drawCentredString(cx + nw/2, ct - hh + _mm(1.5), "번호")
-        cnt = e - s + 1
-        lb = f"{s}번 ~ {e}번" if ncols > 1 else f"객관식 {cnt}문항"
-        c.drawCentredString(cx + nw + (cw - nw)/2, ct - hh + _mm(1.5), lb)
-
-        # 바디
-        bt = CONTENT_Y + MC_HEADER_H
-        bh = CONTENT_H - MC_HEADER_H
-        rh = bh / cnt if cnt else bh
-
-        # 번호↔버블 세로선 (S4, 전체 높이)
-        c.setStrokeColor(C4); c.setLineWidth(S4)
-        c.line(cx + nw, _y(bt), cx + nw, _y(bt + bh))
-
-        # 버블 x좌표
-        nc = doc.n_choices
-        ax = col_mm + MC_NUM_W + MC_BUB_PAD
-        aw = MC_COL_W - MC_NUM_W - 2 * MC_BUB_PAD
-        gap = (aw - nc * BUB_W) / (nc + 1)
-        bxs = [ax + gap*(i+1) + BUB_W*i + BUB_W/2 for i in range(nc)]
-
-        # 선지 세로선 제거 — 버블 간격만으로 충분히 구분됨
-
-        # 행
-        for qi in range(cnt):
-            qn = s + qi
-            rt = bt + qi * rh
-            rc = rt + rh / 2
-
-            # zebra striping (5행 그룹 교대)
-            group_idx = qi // 5
-            if group_idx % 2 == 1:
-                c.setFillColor(C_ZEBRA)
-                c.rect(cx, _y(rt + rh), cw, _mm(rh), fill=1, stroke=0)
-
-            # 행 구분선
-            if qi > 0:
+        # ═══ ② 내부선 ═══
+        # 행 구분선
+        for typ, sx, vw, dw, ss, se in sections:
+            sxp = _mm(sx); vwp = _mm(vw)
+            cnt = se - ss + 1
+            rh = bh / cnt if cnt > 0 else bh
+            for qi in range(1, cnt):
+                rt_mm = bt + qi * rh
                 g10 = (qi % 10 == 0)
                 g5 = (qi % 5 == 0)
                 if g10:
@@ -650,89 +546,144 @@ class OMRPdfRenderer:
                     c.setStrokeColor(C3); c.setLineWidth(S3)
                 else:
                     c.setStrokeColor(C4); c.setLineWidth(S4)
-                c.line(cx, _y(rt), cx + cw, _y(rt))
+                c.line(sxp, _y(rt_mm), sxp + vwp, _y(rt_mm))
 
-            # 번호 (8pt bold)
-            c.setFont(_FB, 8); c.setFillColor(CT)
-            c.drawCentredString(cx + nw/2, _y(rc) - _mm(1.4), str(qn))
+        # 번호 세로선 (가는선)
+        c.setStrokeColor(C4); c.setLineWidth(S4)
+        for _, sx, *_rest in sections:
+            c.line(_mm(sx) + nw, ft - hh, _mm(sx) + nw, fb)
 
-            # 버블 (fill: #f8f8f8)
-            for bi, bx_mm in enumerate(bxs):
-                bx = _mm(bx_mm)
-                by = _y(rc)
-                c.setStrokeColor(C5); c.setLineWidth(S5); c.setFillColor(C_BUB_FILL)
-                c.ellipse(bx - _mm(BUB_W/2), by - _mm(BUB_H/2),
-                          bx + _mm(BUB_W/2), by + _mm(BUB_H/2), stroke=1, fill=1)
-                c.setFont(_FN, 5.5); c.setFillColor(CT4)
-                c.drawCentredString(bx, by - _mm(0.8), str(bi + 1))
-
-    # ══════════════════════════════════════════
-    # 서술형 컬럼
-    # ══════════════════════════════════════════
-    def _essay(self, c, doc):
-        if doc.essay_count <= 0:
-            return
-        mc = doc.mc_count
-        nmc = 0 if mc <= 0 else (1 if mc <= 20 else (2 if mc <= 40 else 3))
-        ex_mm = ANS_X + nmc * (MC_COL_W + MC_COL_GAP)
-        ew_mm = max(40.0, PAGE_W - MARGIN_R - ex_mm)
-
-        ex = _mm(ex_mm)
-        ew = _mm(ew_mm)
-        et = _y(CONTENT_Y)
-        eh = _mm(CONTENT_H)
-
-        # S1 외곽
-        c.setStrokeColor(C1); c.setLineWidth(S1)
-        c.rect(ex, et - eh, ew, eh, stroke=1, fill=0)
-
-        # 헤더 (서술형 → 다른 배경)
-        hh = _mm(MC_HEADER_H)
-        c.setFillColor(C_HDR_ESSAY)
-        c.rect(ex, et - hh, ew, hh, fill=1, stroke=0)
+        # 헤더 가로 구분선 (전체 폭)
         c.setStrokeColor(C2); c.setLineWidth(S2)
-        c.line(ex, et - hh, ex + ew, et - hh)
+        c.line(fx, ft - hh, fx + fw, ft - hh)
 
-        nw = _mm(MC_NUM_W)
-        c.setStrokeColor(C4); c.setLineWidth(S4)
-        c.line(ex + nw, et, ex + nw, et - hh)
-
-        c.setFont(_FB, 5.5); c.setFillColor(CT2)
-        c.drawCentredString(ex + nw/2, et - hh + _mm(1.5), "번호")
-        c.drawCentredString(ex + nw + (ew - nw)/2, et - hh + _mm(1.5),
-                            f"서술형 {doc.essay_count}문항")
-
-        bt = CONTENT_Y + MC_HEADER_H
-        bh = CONTENT_H - MC_HEADER_H
-        rh = bh / doc.essay_count
-
-        # 번호 세로선
-        c.setStrokeColor(C4); c.setLineWidth(S4)
-        c.line(ex + nw, _y(bt), ex + nw, _y(bt + bh))
-
-        for i in range(doc.essay_count):
-            rt = bt + i * rh
-            rc = rt + rh / 2
-
-            # zebra striping
-            group_idx = i // 5
-            if group_idx % 2 == 1:
-                c.setFillColor(C_ZEBRA)
-                c.rect(ex, _y(rt + rh), ew, _mm(rh), fill=1, stroke=0)
-
+        # 컬럼 세로 구분선 (S1 — 외곽과 동일 두께)
+        for i, (_, sx, *_rest) in enumerate(sections):
             if i > 0:
-                g10 = (i % 10 == 0)
-                g5 = (i % 5 == 0)
-                if g10:
-                    c.setStrokeColor(C_G10); c.setLineWidth(1.0)
-                elif g5:
-                    c.setStrokeColor(C3); c.setLineWidth(S3)
-                else:
-                    c.setStrokeColor(C4); c.setLineWidth(S4)
-                c.line(ex, _y(rt), ex + ew, _y(rt))
+                c.setStrokeColor(C1); c.setLineWidth(S1)
+                c.line(_mm(sx), ft, _mm(sx), fb)
 
-            # 번호 (8pt bold)
-            c.setFont(_FB, 8); c.setFillColor(CT)
-            c.drawCentredString(ex + nw/2, _y(rc) - _mm(1.4), str(i + 1))
+        # ═══ ③ 외곽 프레임 — 최상위 (fill에 덮이지 않음) ═══
+        c.setStrokeColor(C1); c.setLineWidth(S1)
+        c.rect(fx, fb, fw, fh, stroke=1, fill=0)
 
-            # 서술형: 빈 칸 (줄선 없음)
+        # ═══ ④ 텍스트 (헤더 라벨 + 행 번호) ═══
+        for typ, sx, vw, dw, ss, se in sections:
+            sxp = _mm(sx); vwp = _mm(vw)
+            cnt = se - ss + 1
+            rh = bh / cnt if cnt > 0 else bh
+
+            c.setFont(_FB, 6); c.setFillColor(CT2)
+            c.drawCentredString(sxp + nw / 2, ft - hh + _mm(1.2), "번호")
+            if typ == 'mc':
+                lb = f"{ss}번 ~ {se}번" if nmc > 1 else f"객관식 {cnt}문항"
+            else:
+                lb = f"서술형 {cnt}문항"
+            c.drawCentredString(sxp + nw + (vwp - nw) / 2,
+                                ft - hh + _mm(1.2), lb)
+
+            for qi in range(cnt):
+                qn = ss + qi
+                rc = bt + (qi + 0.5) * rh
+                c.setFont(_FB, 8); c.setFillColor(CT)
+                c.drawCentredString(sxp + nw / 2, _y(rc) - _mm(1.4), str(qn))
+
+        # ═══ ⑤ 버블 (MC만) ═══
+        nc = doc.n_choices
+        for typ, sx, vw, dw, ss, se in sections:
+            if typ != 'mc':
+                continue
+            cnt = se - ss + 1
+            rh = bh / cnt if cnt > 0 else bh
+            ax = sx + MC_NUM_W + MC_BUB_PAD
+            aw = dw - MC_NUM_W - 2 * MC_BUB_PAD
+            bgap = (aw - nc * BUB_W) / (nc + 1)
+            bxs = [ax + bgap * (j + 1) + BUB_W * j + BUB_W / 2
+                   for j in range(nc)]
+
+            for qi in range(cnt):
+                rc = bt + (qi + 0.5) * rh
+                for bi, bx_mm in enumerate(bxs):
+                    bx = _mm(bx_mm); by = _y(rc)
+                    c.setStrokeColor(C5); c.setLineWidth(S5)
+                    c.setFillColor(C_BUB_FILL)
+                    c.ellipse(bx - _mm(BUB_W / 2), by - _mm(BUB_H / 2),
+                              bx + _mm(BUB_W / 2), by + _mm(BUB_H / 2),
+                              stroke=1, fill=1)
+                    c.setFont(_FB, 6.5); c.setFillColor(CT4)
+                    c.drawCentredString(bx, by - _mm(1.0), str(bi + 1))
+
+        # ═══ ⑥ 타이밍 마크 (프레임 외부) ═══
+        self._render_timing(c, frame_x, frame_w, sections, bt, bh)
+
+    # ══════════════════════════════════════════
+    # 타이밍 마크 — 한국 OMR 표준 스타일
+    # ══════════════════════════════════════════
+    # 상하단: 균일 간격 수평 바 (바코드 스트립)
+    # 좌우: 5행/10행 행 바 (정렬 보정용)
+    # 깔끔하고 균일한 패턴 — 난잡한 빗금 아님.
+
+    _TM_BAR_W = 4.0      # 상하단 바 폭 (mm)
+    _TM_BAR_H = 1.5      # 상하단 바 높이 (mm)
+    _TM_PERIOD = 8.0     # 바 간격 (mm)
+    _TM_OFFSET = 2.0     # 프레임에서 간격 (mm)
+    _TM_MARGIN = 3.0     # 프레임 좌우 여백 (mm)
+    _TM_ROW_W5 = 1.5     # 5행 바 길이 (mm) — LP_GAP(3mm) 안에 맞춤
+    _TM_ROW_W10 = 2.0    # 10행 바 길이 (mm) — LP_GAP(3mm) 안에 맞춤
+    _TM_ROW_H5 = 0.5     # 5행 바 두께 (mm)
+    _TM_ROW_H10 = 0.7    # 10행 바 두께 (mm)
+    _TM_ROW_GAP = 0.5    # 프레임에서 간격 (mm)
+
+    def _render_timing(self, c, frame_x, frame_w, sections, bt, bh):
+        """프레임 외부 타이밍 마크 — 균일 간격 바 (한국 표준)."""
+        c.setFillColor(black)
+        bw = self._TM_BAR_W
+        bwh = self._TM_BAR_H
+        off = self._TM_OFFSET
+        period = self._TM_PERIOD
+        margin = self._TM_MARGIN
+
+        # ── 상하단 바 (수평 바코드 스트립) ──
+        x = frame_x + margin
+        end_x = frame_x + frame_w - margin
+        while x + bw <= end_x:
+            # 상단: 프레임 위
+            c.rect(_mm(x), _y(CONTENT_Y - off),
+                   _mm(bw), _mm(bwh), fill=1, stroke=0)
+            # 하단: 프레임 아래
+            c.rect(_mm(x), _y(CONTENT_Y + CONTENT_H + off + bwh),
+                   _mm(bw), _mm(bwh), fill=1, stroke=0)
+            x += period
+
+        # ── 좌우 행 바 (5행/10행 간격) ──
+        if not sections:
+            return
+        first_sec = sections[0]
+        last_sec = sections[-1]
+        rg = self._TM_ROW_GAP
+
+        mark_secs = [first_sec]
+        if last_sec is not first_sec:
+            mark_secs.append(last_sec)
+
+        for sec in mark_secs:
+            typ, sx, vw, dw, ss, se = sec
+            cnt = se - ss + 1
+            rh = bh / cnt if cnt > 0 else bh
+            is_first = (sec is first_sec)
+            is_last = (sec is last_sec)
+
+            for qi in range(1, cnt):
+                if qi % 5 != 0:
+                    continue
+                g10 = (qi % 10 == 0)
+                rc_mm = bt + qi * rh  # 행 경계 위치
+                tm_w = self._TM_ROW_W10 if g10 else self._TM_ROW_W5
+                tm_h = self._TM_ROW_H10 if g10 else self._TM_ROW_H5
+
+                if is_first:
+                    c.rect(_mm(frame_x - rg - tm_w), _y(rc_mm + tm_h / 2),
+                           _mm(tm_w), _mm(tm_h), fill=1, stroke=0)
+                if is_last:
+                    c.rect(_mm(frame_x + frame_w + rg), _y(rc_mm + tm_h / 2),
+                           _mm(tm_w), _mm(tm_h), fill=1, stroke=0)
