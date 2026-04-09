@@ -631,14 +631,6 @@ def main() -> int:
                         # 시스템 기본 채널(Solapi PFID)을 사용하는 경우:
                         # tenant provider와 무관하게 시스템 Solapi로 발송.
                         # 뿌리오는 @xxx 형식 PFID만 지원하므로 Solapi 형식 PFID를 넘기면 실패함.
-                        if use_default_channel and tenant_provider == "ppurio":
-                            logger.warning(
-                                "alimtalk blocked: ppurio tenant missing dedicated PFID/channel "
-                                "(tenant=%s, provider=%s)",
-                                tenant_id,
-                                tenant_provider,
-                            )
-                            return {"status": "error", "reason": "ppurio_tenant_channel_not_configured"}
                         if use_default_channel:
                             logger.info(
                                 "alimtalk via system solapi (default channel): tenant=%s provider=%s",
