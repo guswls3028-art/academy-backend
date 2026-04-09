@@ -291,7 +291,28 @@ class MessageTemplateDetailView(APIView):
         serializer = MessageTemplateSerializer(t, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
-        return Response(serializer.data)
+        data = serializer.data
+        # 변수 유효성 경고 (soft validation — 저장은 허용, 경고만 반환)
+        body = (t.body or "")
+        import re as _re
+        used_vars = set(_re.findall(r"#\{([^}]+)\}", body))
+        if used_vars:
+            KNOWN_VARS = {
+                "학원이름", "학원명", "학생이름", "학생이름2", "학생이름3",
+                "사이트링크", "강의명", "차시명", "날짜", "시간", "장소",
+                "클리닉장소", "클리닉날짜", "클리닉시간", "클리닉명",
+                "클리닉기존일정", "클리닉변동사항", "클리닉수정자",
+                "강의날짜", "강의시간", "시험명", "과제명", "성적", "시험성적",
+                "클리닉합불", "납부금액", "청구월", "반이름",
+                "공지내용", "내용", "선생님메모",
+                # 가입용
+                "학생아이디", "학생비밀번호", "학부모아이디", "학부모비밀번호",
+                "비밀번호안내", "인증번호",
+            }
+            unknown = used_vars - KNOWN_VARS
+            if unknown:
+                data["warnings"] = [f"인식할 수 없는 변수: #{{{v}}} — 발송 시 빈 값으로 대체됩니다." for v in sorted(unknown)]
+        return Response(data)
 
     def delete(self, request, pk):
         t = self._get_template(request, pk)
