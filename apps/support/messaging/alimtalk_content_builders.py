@@ -225,26 +225,8 @@ def build_manual_replacements(
     built_content = re.sub(r"#\{[^}]+\}", "", built_content)
     built_content = re.sub(r"\n{3,}", "\n\n", built_content).strip()
 
-    # ── 선생님메모에 컨텍스트 자동 보강 (build_unified_replacements와 동일 로직) ──
+    # ── 선생님메모 = body 치환 결과만 (ITEM_LIST가 장소/날짜/시간 자동 표시) ──
     memo_value = built_content
-    _ESSENTIAL: dict[str, list[tuple[str, str]]] = {
-        TYPE_CLINIC_INFO: [("학생이름", student_name), ("클리닉장소", all_vars.get("클리닉장소", "")), ("클리닉날짜", all_vars.get("클리닉날짜", "")), ("클리닉시간", all_vars.get("클리닉시간", ""))],
-        TYPE_CLINIC_CHANGE: [("학생이름", student_name), ("클리닉기존일정", all_vars.get("클리닉기존일정", "")), ("클리닉변동사항", all_vars.get("클리닉변동사항", ""))],
-        TYPE_ATTENDANCE: [("학생이름", student_name), ("강의명", all_vars.get("강의명", "")), ("강의날짜", all_vars.get("강의날짜", "")), ("강의시간", all_vars.get("강의시간", ""))],
-        TYPE_SCORE: [("학생이름", student_name), ("강의명", all_vars.get("강의명", "")), ("차시명", all_vars.get("차시명", ""))],
-    }
-    _ess = _ESSENTIAL.get(template_type, [])
-    _has_var = any(f"#{{{vn}}}" in content_body for vn, _ in _ess)
-    if not _has_var and _ess:
-        _parts = []
-        if student_name:
-            _parts.append(f"{student_name} 학생 안내드립니다.")
-        _VAR_LBL = {"클리닉장소": "장소", "클리닉날짜": "날짜", "클리닉시간": "시간", "클리닉기존일정": "기존일정", "클리닉변동사항": "변동사항", "강의명": "강의", "차시명": "차시", "강의날짜": "날짜", "강의시간": "시간"}
-        _details = [f"{_VAR_LBL.get(vn, vn)}: {vv}" for vn, vv in _ess if vn != "학생이름" and vv]
-        if _details:
-            _parts.append("\n".join(_details))
-        if _parts:
-            memo_value = f"{chr(10).join(_parts)}\n\n{built_content}".strip()
 
     # Solapi replacements — ITEM_LIST 변수 23자 제한 적용
     registered_vars = TEMPLATE_TYPE_VARIABLES.get(template_type, [])
@@ -380,49 +362,11 @@ def build_unified_replacements(
     built_content = re.sub(r"#\{[^}]+\}", "", built_content)
     built_content = re.sub(r"\n{3,}", "\n\n", built_content).strip()
 
-    # ── 선생님메모에 컨텍스트 자동 보강 ──
-    # Solapi 템플릿 본문 = #{선생님메모}\n#{사이트링크}
-    # 선생님메모 값 = template.body의 #{서브변수} 치환 결과.
-    #
-    # 선생님이 body에 #{학생이름}, #{장소} 등 변수 블록을 직접 써서 커스텀 가능.
-    # 하지만 body가 변수 없이 작성된 경우("클리닉 안내 드립니다."), 카카오톡에
-    # 학생이름/장소/날짜/시간이 전혀 표시되지 않으므로 —
-    # body에 해당 변수가 하나도 포함되지 않았으면, 핵심 정보를 자동 추가한다.
+    # ── 선생님메모 = body 치환 결과만 ──
+    # ITEM_LIST 템플릿이 header(학원이름), highlight(학생이름), item.list(장소/날짜/시간)를
+    # 자동 렌더링하므로, 선생님메모에 동일 정보를 넣으면 중복 표시됨.
+    # 선생님메모에는 body(선생님 편집 가능)의 변수 치환 결과만 넣는다.
     memo_value = built_content
-
-    # 템플릿 타입별 핵심 변수 — body에 이 변수 중 하나라도 있으면 선생님이 커스텀한 것
-    TYPE_ESSENTIAL_VARS: dict[str, list[tuple[str, str]]] = {
-        TYPE_CLINIC_INFO: [("학생이름", student_name), ("클리닉장소", all_vars.get("클리닉장소", "")), ("클리닉날짜", all_vars.get("클리닉날짜", "")), ("클리닉시간", all_vars.get("클리닉시간", ""))],
-        TYPE_CLINIC_CHANGE: [("학생이름", student_name), ("클리닉기존일정", all_vars.get("클리닉기존일정", "")), ("클리닉변동사항", all_vars.get("클리닉변동사항", ""))],
-        TYPE_ATTENDANCE: [("학생이름", student_name), ("강의명", all_vars.get("강의명", "")), ("강의날짜", all_vars.get("강의날짜", "")), ("강의시간", all_vars.get("강의시간", ""))],
-        TYPE_SCORE: [("학생이름", student_name), ("강의명", all_vars.get("강의명", "")), ("차시명", all_vars.get("차시명", ""))],
-    }
-
-    essential = TYPE_ESSENTIAL_VARS.get(template_type, [])
-    body_has_any_var = any(f"#{{{var_name}}}" in content_body for var_name, _ in essential)
-
-    if not body_has_any_var and essential:
-        # 선생님이 변수 블록을 하나도 안 썼으므로, 핵심 정보를 자동 앞에 추가
-        info_parts = []
-        if student_name:
-            info_parts.append(f"{student_name} 학생 안내드립니다.")
-        detail_lines = []
-        # 변수명 → 사람 친화적 라벨
-        VAR_LABELS = {
-            "클리닉장소": "장소", "클리닉날짜": "날짜", "클리닉시간": "시간",
-            "클리닉기존일정": "기존일정", "클리닉변동사항": "변동사항",
-            "강의명": "강의", "차시명": "차시", "강의날짜": "날짜", "강의시간": "시간",
-        }
-        for var_name, var_val in essential:
-            if var_name == "학생이름" or not var_val:
-                continue
-            label = VAR_LABELS.get(var_name, var_name)
-            detail_lines.append(f"{label}: {var_val}")
-        if detail_lines:
-            info_parts.append("\n".join(detail_lines))
-        if info_parts:
-            header = "\n".join(info_parts)
-            memo_value = f"{header}\n\n{built_content}".strip()
 
     # Solapi replacements 빌드 — 등록된 모든 변수에 값 제공
     # ITEM_LIST 변수는 23자 이하로 잘라야 함 (선생님메모/사이트링크 제외)
