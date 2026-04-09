@@ -333,9 +333,15 @@ class StudentViewSet(ModelViewSet):
         # 퇴원 알림 발송 (학부모)
         _student = student  # closure 캡처용
         _tenant = request.tenant
+        _student_id = student.id
         transaction.on_commit(lambda: send_event_notification(
             tenant=_tenant, trigger="withdrawal_complete",
             student=_student, send_to="parent",
+            context={
+                "강의명": "-",
+                "차시명": "-",
+                "_domain_object_id": f"withdrawal_{_student_id}",
+            },
         ))
         return Response(status=204)
 

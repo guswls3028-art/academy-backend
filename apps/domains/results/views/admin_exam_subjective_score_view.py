@@ -198,6 +198,16 @@ class AdminExamSubjectiveScoreView(APIView):
                     id=_enrollment_id, tenant=_tenant
                 ).first()
                 if enr and enr.student:
+                    # 차시명: exam → sessions에서 첫 번째 session title
+                    _session_title = ""
+                    try:
+                        from apps.domains.exams.models import Exam as _Exam
+                        _first_session = _Exam.objects.filter(id=_eid).values_list(
+                            "sessions__title", flat=True
+                        ).first()
+                        _session_title = str(_first_session or "")
+                    except Exception:
+                        pass
                     send_event_notification(
                         tenant=_tenant,
                         trigger="exam_score_published",
@@ -206,6 +216,7 @@ class AdminExamSubjectiveScoreView(APIView):
                         context={
                             "시험명": _exam_title,
                             "강의명": str(getattr(enr.lecture, "title", "") or ""),
+                            "차시명": _session_title,
                             "시험성적": f"{int(_new_total)}/{int(_max)}",
                             "_domain_object_id": str(_eid),
                         },

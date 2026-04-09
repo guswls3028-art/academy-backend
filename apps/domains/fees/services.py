@@ -506,8 +506,11 @@ def _send_payment_complete_notification(tenant, student, billing_month: int, amo
             student=student,
             send_to="parent",
             context={
+                "강의명": "-",
+                "차시명": "-",
                 "납부금액": f"{amount:,}원",
                 "청구월": f"{billing_month}월",
+                "_domain_object_id": f"payment_{student.id}_{billing_month}",
             },
         )
     except Exception:

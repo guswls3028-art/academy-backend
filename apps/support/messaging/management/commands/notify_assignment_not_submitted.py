@@ -160,6 +160,7 @@ class Command(BaseCommand):
                                 "강의명": session.lecture.title or "",
                                 "차시명": session.title or f"{session.order}차시",
                                 "과제명": homework.title or "",
+                                "_domain_object_id": f"hw_{homework.id}_s{student.id}",
                             },
                         )
                         if ok:
