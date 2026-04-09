@@ -190,7 +190,7 @@ def send_one_alimtalk_own_solapi(
         return {"status": "error", "reason": "to_pf_template_required"}
     try:
         variables = _build_variables_dict(replacements)
-        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id, variables=variables, disable_sms=True)
+        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id, variables=variables, disable_sms=False)
         message = RequestMessage(from_=sender, to=to, text=text or " ", kakao_options=kakao_option)
         response = client.send(message)
         group_id = getattr(getattr(response, "group_info", None), "group_id", None)
@@ -229,7 +229,7 @@ def send_one_alimtalk(
         return {"status": "error", "reason": "to_pf_template_required"}
     try:
         variables = _build_variables_dict(replacements)
-        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id, variables=variables, disable_sms=True)
+        kakao_option = KakaoOption(pf_id=pf_id, template_id=template_id, variables=variables, disable_sms=False)
         message = RequestMessage(
             from_=sender,
             to=to,
@@ -813,7 +813,18 @@ def main() -> int:
                         else:
                             reason = result.get("reason", "")
                             # 비재시도성 오류: 템플릿 미승인, 변수 불일치 등 → 재시도해도 영구 실패
-                            _NON_RETRYABLE = ("alimtalk_failed_or_rejected", "InvalidParameterValue", "TemplateNotApproved")
+                            _NON_RETRYABLE = (
+                                "alimtalk_failed_or_rejected",
+                                "alimtalk_requires_pf_id_and_template_id",
+                                "InvalidParameterValue",
+                                "TemplateNotApproved",
+                                "to_pf_template_required",
+                                "to_text_sender_required",
+                                "sender_required",
+                                "to_and_text_required",
+                                "solapi_not_installed",
+                                "sms_not_allowed_for_tenant",
+                            )
                             is_permanent = any(nr in reason for nr in _NON_RETRYABLE)
                             if is_permanent:
                                 logger.error(
