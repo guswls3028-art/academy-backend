@@ -845,7 +845,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             # ✅ V1.1.1 remediation 재정렬:
             # 예약 상태 변경(no_show, cancelled, rejected)은 ClinicLink 해소에 영향 없음.
 
-            # ── 클리닉 상태 변경 알림 (AUTO_DEFAULT, atomic 블록 안에서 on_commit 등록) ──
+            # ── 클리닉 상태 변경 알림 (AUTO_DEFAULT, transaction.on_commit으로 안전 발송) ──
             _trigger_map = {
                 SessionParticipant.Status.CANCELLED: "clinic_cancelled",
                 SessionParticipant.Status.ATTENDED: "clinic_check_in",
@@ -869,12 +869,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     "시간": f"취소({_time})" if _is_cancel else f"결석({_time})" if _is_absent else _time,
                     "_domain_object_id": f"participant_{obj.pk}_{next_status}_{int(time.time())}",
                 }
-                # on_commit 대신 직접 호출 — atomic 블록 안에서도 안전 (best-effort)
-                try:
-                    _send_clinic_notification(_t, _s, _tr, _ctx)
-                except Exception:
-                    import logging
-                    logging.getLogger(__name__).exception("clinic notification failed (non-blocking)")
+                transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}

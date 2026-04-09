@@ -75,6 +75,19 @@ def build_attendance_preview(
     solapi_template_id = (template.solapi_template_id or "").strip() if template else ""
     solapi_approved = solapi_template_id and template.solapi_status == "APPROVED" if template else False
 
+    # ── 통합 알림톡 템플릿 감지 (개별 APPROVED 없어도 통합 4종으로 발송 가능) ──
+    from apps.support.messaging.alimtalk_content_builders import (
+        get_solapi_template_id as get_unified_tid,
+        get_template_type,
+        build_manual_replacements,
+    )
+    unified_tid = get_unified_tid(trigger)
+    use_unified = bool(unified_tid)
+    if use_unified and not solapi_approved:
+        # 개별 APPROVED 없지만 통합 템플릿 존재 → 통합 사용
+        solapi_template_id = unified_tid
+        solapi_approved = True
+
     # SMS-only 모드: 템플릿 본문만 있으면 됨 (APPROVED 불필요)
     # 알림톡 포함 모드 (alimtalk/both): APPROVED 템플릿 필요
     if not template or not (template.body or "").strip():
@@ -151,6 +164,20 @@ def build_attendance_preview(
         for k, v in context.items():
             body = body.replace(f"#{{{k}}}", v)
 
+        # 통합 템플릿 사용 시: Solapi 등록 변수와 정확히 매칭되는 replacements 빌드
+        if use_unified:
+            template_type = get_template_type(trigger)
+            alimtalk_reps = build_manual_replacements(
+                template_type=template_type,
+                content_body=(template.body or "").strip(),
+                context=context,
+                tenant_name=academy_name,
+                student_name=name,
+                site_url=site_url,
+            ) if template_type else [{"key": k, "value": v} for k, v in context.items()]
+        else:
+            alimtalk_reps = [{"key": k, "value": v} for k, v in context.items()]
+
         recipients.append({
             "student_id": student.id,
             "student_name": name,
@@ -160,7 +187,7 @@ def build_attendance_preview(
             "message_body": body,
             "excluded": excluded,
             "exclude_reason": exclude_reason,
-            "alimtalk_replacements": [{"key": k, "value": v} for k, v in context.items()],
+            "alimtalk_replacements": alimtalk_reps,
         })
 
     sendable = [r for r in recipients if not r["excluded"]]
@@ -205,6 +232,18 @@ def build_student_list_preview(
     effective_mode = (config.message_mode if config else "alimtalk") or "alimtalk"
     solapi_template_id = (template.solapi_template_id or "").strip() if template else ""
     solapi_approved = solapi_template_id and template.solapi_status == "APPROVED" if template else False
+
+    # ── 통합 알림톡 템플릿 감지 (개별 APPROVED 없어도 통합 4종으로 발송 가능) ──
+    from apps.support.messaging.alimtalk_content_builders import (
+        get_solapi_template_id as get_unified_tid,
+        get_template_type,
+        build_manual_replacements,
+    )
+    unified_tid = get_unified_tid(trigger)
+    use_unified = bool(unified_tid)
+    if use_unified and not solapi_approved:
+        solapi_template_id = unified_tid
+        solapi_approved = True
 
     if not template or not (template.body or "").strip():
         return {"error": "발송 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
@@ -256,6 +295,20 @@ def build_student_list_preview(
         for k, v in ctx.items():
             body = body.replace(f"#{{{k}}}", str(v))
 
+        # 통합 템플릿 사용 시: Solapi 등록 변수와 정확히 매칭되는 replacements 빌드
+        if use_unified:
+            template_type = get_template_type(trigger)
+            alimtalk_reps = build_manual_replacements(
+                template_type=template_type,
+                content_body=(template.body or "").strip(),
+                context=ctx,
+                tenant_name=academy_name,
+                student_name=name,
+                site_url=site_url,
+            ) if template_type else [{"key": k, "value": str(v)} for k, v in ctx.items()]
+        else:
+            alimtalk_reps = [{"key": k, "value": str(v)} for k, v in ctx.items()]
+
         recipients.append({
             "student_id": student.id,
             "student_name": name,
@@ -264,7 +317,7 @@ def build_student_list_preview(
             "message_body": body,
             "excluded": excluded,
             "exclude_reason": exclude_reason,
-            "alimtalk_replacements": [{"key": k, "value": str(v)} for k, v in ctx.items()],
+            "alimtalk_replacements": alimtalk_reps,
         })
 
     sendable = [r for r in recipients if not r["excluded"]]

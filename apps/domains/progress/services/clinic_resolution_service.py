@@ -37,7 +37,7 @@ def _send_resolution_notification(enrollment_id: int, session_id: int, resolutio
         if not enr or not enr.student or not enr.tenant:
             return
 
-        # 해소 결과 ��글 매핑
+        # 해소 결과 라벨 매핑
         result_label = {
             "EXAM_PASS": "시험 통과",
             "HOMEWORK_PASS": "과제 통과",
@@ -45,9 +45,27 @@ def _send_resolution_notification(enrollment_id: int, session_id: int, resolutio
             "WAIVED": "면제",
         }.get(resolution_type, "해소")
 
+        # 세션 정보 (장소/날짜/시간) — 통합 알림톡 템플릿에 필요
+        session_location = ""
+        session_date = ""
+        session_time = ""
+        if session_id:
+            try:
+                from apps.domains.clinic.models import Session as ClinicSession
+                cs = ClinicSession.objects.filter(pk=session_id).first()
+                if cs:
+                    session_location = getattr(cs, "location", "") or ""
+                    session_date = str(cs.date) if cs.date else ""
+                    session_time = str(cs.start_time)[:5] if getattr(cs, "start_time", None) else ""
+            except Exception:
+                pass
+
         context = {
             "클리닉명": str(getattr(enr.lecture, "title", "") or ""),
             "클리닉합불": result_label,
+            "장소": session_location,
+            "날짜": session_date,
+            "시간": session_time,
             "_domain_object_id": f"{enrollment_id}:{session_id}",
         }
         for send_to in ("parent", "student"):
