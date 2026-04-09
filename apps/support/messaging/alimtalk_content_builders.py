@@ -1,6 +1,7 @@
 # apps/support/messaging/alimtalk_content_builders.py
+# SSOT 문서: backend/.claude/domains/messaging.md (수정 시 문서도 동기화)
 """
-통합 알림톡 템플릿 — 3개 범용 Solapi 템플릿으로 모든 자동발송 커버.
+통합 알림톡 템플릿 — 4개 범용 Solapi ITEM_LIST 템플릿으로 모든 자동발송 커버.
 
 구조:
   Solapi 템플릿 본문 = "#{선생님메모}\n#{사이트링크}"

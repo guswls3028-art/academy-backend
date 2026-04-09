@@ -1,6 +1,7 @@
 # apps/support/messaging/services.py
+# SSOT 문서: backend/.claude/domains/messaging.md (수정 시 문서도 동기화)
 """
-메시지 발송 서비스 — Solapi(SMS/LMS) 연동
+메시지 발송 서비스 — Solapi(SMS/LMS/알림톡) 연동
 
 - API 키/시크릿: 환경변수 SOLAPI_API_KEY, SOLAPI_API_SECRET (또는 Django 설정)
 - 발신번호: SOLAPI_SENDER 또는 settings.SOLAPI_SENDER

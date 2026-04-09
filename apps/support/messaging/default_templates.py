@@ -1,3 +1,4 @@
+# SSOT 문서: backend/.claude/domains/messaging.md (수정 시 문서도 동기화)
 """
 트리거별 기본 템플릿 정의.
 테넌트가 처음 자동발송 설정에 접근할 때 자동 생성됨.
