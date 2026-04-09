@@ -21,6 +21,53 @@ from libs.redis.idempotency import acquire_job_lock, release_job_lock, RedisLock
 
 from apps.worker.messaging_worker.config import load_config
 
+# 트리거명 → 사용자 친화적 라벨 (발송 내역 표시용)
+_TRIGGER_LABELS: dict[str, str] = {
+    "check_in_complete": "입실 완료",
+    "absent_occurred": "결석 발생",
+    "lecture_session_reminder": "수업 시작 알림",
+    "exam_score_published": "성적 공개",
+    "exam_not_taken": "시험 미응시",
+    "retake_assigned": "재시험 대상",
+    "exam_scheduled_days_before": "시험 예정 안내",
+    "exam_start_minutes_before": "시험 시작 알림",
+    "assignment_not_submitted": "과제 미제출",
+    "assignment_registered": "과제 등록",
+    "assignment_due_hours_before": "과제 마감 알림",
+    "monthly_report_generated": "월간 리포트",
+    "withdrawal_complete": "퇴원 처리",
+    "payment_complete": "결제 완료",
+    "payment_due_days_before": "납부 예정 안내",
+    "clinic_reminder": "클리닉 시작 알림",
+    "clinic_reservation_created": "클리닉 예약",
+    "clinic_reservation_changed": "클리닉 변경",
+    "clinic_cancelled": "클리닉 취소",
+    "clinic_check_in": "클리닉 입실",
+    "clinic_absent": "클리닉 결석",
+    "clinic_self_study_completed": "클리닉 완료",
+    "clinic_result_notification": "클리닉 결과",
+    "counseling_reservation_created": "상담 예약",
+    "video_encoding_complete": "영상 인코딩 완료",
+    "registration_approved_student": "가입 안내(학생)",
+    "registration_approved_parent": "가입 안내(학부모)",
+    "password_find_otp": "비밀번호 찾기",
+    "password_reset_student": "비밀번호 재설정(학생)",
+    "password_reset_parent": "비밀번호 재설정(학부모)",
+}
+
+
+def _get_template_summary(event_type: str, template_id: str, message_mode: str) -> str:
+    """발송 내역에 표시할 사람이 읽을 수 있는 요약."""
+    # manual_ 접두어 제거 (수동 발송)
+    trigger = event_type.removeprefix("manual_") if event_type else ""
+    label = _TRIGGER_LABELS.get(trigger, "")
+    if label:
+        mode = "알림톡" if message_mode == "alimtalk" else "SMS"
+        return f"{label} ({mode})"
+    if message_mode == "alimtalk" and template_id:
+        return f"알림톡"
+    return "SMS" if message_mode == "sms" else message_mode or "SMS"
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [MESSAGING-WORKER] %(message)s",
@@ -743,7 +790,7 @@ def main() -> int:
                                             claim_log_id,
                                             success=True,
                                             amount_deducted=Decimal(str(base_price)),
-                                            template_summary=template_id or "SMS",
+                                            template_summary=_get_template_summary(event_type_msg, template_id, message_mode),
                                             message_body=text[:2000],
                                             notification_type=event_type_msg,
                                         )
@@ -753,7 +800,7 @@ def main() -> int:
                                             success=True,
                                             amount_deducted=Decimal(str(base_price)),
                                             recipient_summary=to[:4] + "****",
-                                            template_summary=template_id or "SMS",
+                                            template_summary=_get_template_summary(event_type_msg, template_id, message_mode),
                                             message_body=text[:2000],
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
