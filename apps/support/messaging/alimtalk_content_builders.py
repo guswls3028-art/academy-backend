@@ -245,7 +245,7 @@ def build_manual_replacements(
         if _parts:
             memo_value = f"{chr(10).join(_parts)}\n\n{built_content}".strip()
 
-    # Solapi replacements
+    # Solapi replacements — ITEM_LIST 변수 23자 제한 적용
     registered_vars = TEMPLATE_TYPE_VARIABLES.get(template_type, [])
     replacements = []
     for var_name in registered_vars:
@@ -254,9 +254,12 @@ def build_manual_replacements(
         elif var_name == "사이트링크":
             replacements.append({"key": var_name, "value": site_url})
         elif var_name in all_vars:
-            replacements.append({"key": var_name, "value": all_vars[var_name]})
+            val = all_vars[var_name]
+            if len(val) > ITEM_LIST_VAR_MAX_LEN:
+                val = val[:ITEM_LIST_VAR_MAX_LEN - 1] + "…"
+            replacements.append({"key": var_name, "value": val})
         else:
-            replacements.append({"key": var_name, "value": ""})
+            replacements.append({"key": var_name, "value": "-"})
 
     return replacements
 
@@ -266,24 +269,26 @@ def build_manual_replacements(
 # 템플릿 타입별 등록 변수 (Solapi에 전달해야 하는 전체 변수)
 # ──────────────────────────────────────────
 
-# Solapi에 등록된 실제 템플릿 본문의 변수만 포함해야 함.
-# 통합 4종 템플릿 본문 = "#{선생님메모}\n#{사이트링크}" (일반형)
-# 학원이름/학생이름/장소/날짜/시간 등은 선생님메모 값에 조합되어 들어감.
-# 본문에 없는 변수를 replacements로 보내면 카카오에서 3076 에러로 거부됨.
+# 카카오 검수 시 등록된 변수 전체를 보내야 함 (ITEM_LIST 템플릿).
+# 누락하면 3063(잘못된 파라미터), 값이 23자 초과하면 3076(길이초과) 에러.
+# 선생님메모에 핵심 정보를 조합하므로 나머지 변수는 요약값만 전달.
 TEMPLATE_TYPE_VARIABLES: dict[str, list[str]] = {
     TYPE_CLINIC_INFO: [
-        "선생님메모", "사이트링크",
+        "학원이름", "학생이름", "클리닉장소", "클리닉날짜", "클리닉시간", "선생님메모", "사이트링크",
     ],
     TYPE_CLINIC_CHANGE: [
-        "선생님메모", "사이트링크",
+        "학원이름", "학생이름", "클리닉기존일정", "클리닉변동사항", "클리닉수정자", "선생님메모", "사이트링크",
     ],
     TYPE_SCORE: [
-        "선생님메모", "사이트링크",
+        "학원이름", "학생이름", "강의명", "차시명", "선생님메모", "사이트링크",
     ],
     TYPE_ATTENDANCE: [
-        "선생님메모", "사이트링크",
+        "학원이름", "학생이름", "강의명", "차시명", "강의날짜", "강의시간", "선생님메모", "사이트링크",
     ],
 }
+
+# ITEM_LIST 변수 값 길이 제한 (카카오 정책: 23자)
+ITEM_LIST_VAR_MAX_LEN = 23
 
 
 def build_unified_replacements(
@@ -419,6 +424,7 @@ def build_unified_replacements(
             memo_value = f"{header}\n\n{built_content}".strip()
 
     # Solapi replacements 빌드 — 등록된 모든 변수에 값 제공
+    # ITEM_LIST 변수는 23자 이하로 잘라야 함 (선생님메모/사이트링크 제외)
     registered_vars = TEMPLATE_TYPE_VARIABLES.get(template_type, [])
     replacements = []
     for var_name in registered_vars:
@@ -427,8 +433,11 @@ def build_unified_replacements(
         elif var_name == "사이트링크":
             replacements.append({"key": var_name, "value": site_url})
         elif var_name in all_vars:
-            replacements.append({"key": var_name, "value": all_vars[var_name]})
+            val = all_vars[var_name]
+            if len(val) > ITEM_LIST_VAR_MAX_LEN:
+                val = val[:ITEM_LIST_VAR_MAX_LEN - 1] + "…"
+            replacements.append({"key": var_name, "value": val})
         else:
-            replacements.append({"key": var_name, "value": ""})
+            replacements.append({"key": var_name, "value": "-"})
 
     return replacements
