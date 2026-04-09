@@ -52,6 +52,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         Result.objects
         .filter(target_type="exam", target_id=exam_id, enrollment_id=enrollment_id)
         .prefetch_related("items")
+        .order_by("-id")
         .first()
     )
     if not result:

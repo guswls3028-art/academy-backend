@@ -7,14 +7,27 @@
 - dense_rank: 동점이면 같은 등수, 다음 등수는 건너뛰지 않음
 - query-time 계산: Result 모델에 필드 추가 없음
 - tenant isolation: 호출부에서 보장 (이 유틸은 Result queryset만 받음)
+- NOT_SUBMITTED(미응시) 학생은 석차에서 제외
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
-from apps.domains.results.models import Result
+from apps.domains.results.models import Result, ExamAttempt
 from django.db.models import Max, Subquery
+
+
+def _get_not_submitted_enrollment_ids(attempt_ids: list) -> Set[int]:
+    """NOT_SUBMITTED ExamAttempt의 enrollment_id 집합 반환."""
+    if not attempt_ids:
+        return set()
+    return set(
+        ExamAttempt.objects.filter(
+            id__in=attempt_ids,
+            meta__status="NOT_SUBMITTED",
+        ).values_list("enrollment_id", flat=True)
+    )
 
 
 def compute_exam_rankings(
@@ -25,25 +38,28 @@ def compute_exam_rankings(
     시험별 enrollment_id → {rank, percentile, cohort_size, cohort_avg} 맵 반환.
 
     - rank: dense_rank (동점 = 같은 등수)
-    - percentile: 상위 백분위 (1등 = 작은 값, 꼴찌 = 100에 가까움)
-      공식: ((cohort_size - rank) / (cohort_size - 1)) * 100  (단, 1명이면 100)
-    - cohort_size: 총 응시자 수
+    - percentile: 상위 % (1등/20명 = 5%, 낮을수록 좋음)
+    - cohort_size: 총 응시자 수 (미응시 제외)
     - cohort_avg: 평균 점수
 
-    반환 예:
-    {
-      enrollment_id: {
-          "rank": 1,
-          "percentile": 95.0,  # 상위 5% → 95 percentile
-          "cohort_size": 20,
-          "cohort_avg": 72.5,
-      }
-    }
+    NOT_SUBMITTED(미응시) 학생은 석차 계산에서 제외된다.
     """
     rs = latest_results_per_enrollment(target_type="exam", target_id=int(exam_id))
+    base_qs = rs.exclude(enrollment_id__isnull=True)
+
+    # NOT_SUBMITTED attempt 제외
+    attempt_ids = list(
+        base_qs.exclude(attempt_id__isnull=True)
+        .values_list("attempt_id", flat=True)
+    )
+    not_submitted_eids = _get_not_submitted_enrollment_ids(attempt_ids)
+
     rows = list(
-        rs.exclude(enrollment_id__isnull=True)
+        base_qs.exclude(enrollment_id__in=not_submitted_eids)
         .values("enrollment_id", "total_score")
+        .order_by("-total_score", "enrollment_id")
+    ) if not_submitted_eids else list(
+        base_qs.values("enrollment_id", "total_score")
         .order_by("-total_score", "enrollment_id")
     )
 
@@ -67,13 +83,11 @@ def compute_exam_rankings(
             current_rank += 1
             prev_score = score
 
-        # percentile: 상위 몇 %에 해당하는지
-        # rank 1 = 상위 (1/cohort_size)*100 %
+        # 상위 %: rank/cohort_size * 100 (1등/20명 = 5%)
         if cohort_size <= 1:
             percentile = 100.0
         else:
-            # 상위 백분위: rank가 낮을수록 높은 percentile
-            percentile = round(((cohort_size - current_rank) / (cohort_size - 1)) * 100, 1)
+            percentile = round((current_rank / cohort_size) * 100, 1)
 
         result_map[eid] = {
             "rank": current_rank,
@@ -96,10 +110,12 @@ def compute_exam_rankings_batch(
     반환: { exam_id: { enrollment_id: {rank, percentile, cohort_size, cohort_avg} } }
 
     enrollment_ids가 주어지면 해당 enrollment의 석차만 반환 (계산은 전체 대상).
-    단일 쿼리로 모든 시험의 Result를 가져와서 Python에서 그룹핑.
+    NOT_SUBMITTED(미응시) 학생은 석차 계산에서 제외된다.
     """
     if not exam_ids:
         return {}
+
+    _enrollment_set: Optional[Set[int]] = set(enrollment_ids) if enrollment_ids is not None else None
 
     # 모든 시험의 latest Result를 한 번에 조회
     base = Result.objects.filter(
@@ -114,9 +130,19 @@ def compute_exam_rankings_batch(
         .values("last_id")
     )
 
+    latest_results = Result.objects.filter(id__in=Subquery(latest_ids))
+
+    # NOT_SUBMITTED attempt 제외
+    attempt_ids = list(
+        latest_results.exclude(attempt_id__isnull=True)
+        .values_list("attempt_id", flat=True)
+    )
+    not_submitted_eids = _get_not_submitted_enrollment_ids(attempt_ids)
+
+    qs = latest_results.exclude(enrollment_id__in=not_submitted_eids) if not_submitted_eids else latest_results
+
     rows = list(
-        Result.objects.filter(id__in=Subquery(latest_ids))
-        .values("target_id", "enrollment_id", "total_score")
+        qs.values("target_id", "enrollment_id", "total_score")
         .order_by("target_id", "-total_score", "enrollment_id")
     )
 
@@ -127,7 +153,7 @@ def compute_exam_rankings_batch(
         by_exam.setdefault(eid, []).append(r)
 
     result: Dict[int, Dict[int, dict]] = {}
-    for exam_id, exam_rows in by_exam.items():
+    for exam_id_key, exam_rows in by_exam.items():
         cohort_size = len(exam_rows)
         total = sum(float(r["total_score"] or 0) for r in exam_rows)
         cohort_avg = round(total / cohort_size, 2) if cohort_size else 0.0
@@ -147,10 +173,9 @@ def compute_exam_rankings_batch(
             if cohort_size <= 1:
                 percentile = 100.0
             else:
-                percentile = round(((cohort_size - current_rank) / (cohort_size - 1)) * 100, 1)
+                percentile = round((current_rank / cohort_size) * 100, 1)
 
-            # enrollment_ids 필터: 주어진 경우 해당 enrollment만 결과에 포함
-            if enrollment_ids is None or enroll_id in enrollment_ids:
+            if _enrollment_set is None or enroll_id in _enrollment_set:
                 exam_map[enroll_id] = {
                     "rank": current_rank,
                     "percentile": percentile,
@@ -158,6 +183,6 @@ def compute_exam_rankings_batch(
                     "cohort_avg": cohort_avg,
                 }
 
-        result[exam_id] = exam_map
+        result[exam_id_key] = exam_map
 
     return result

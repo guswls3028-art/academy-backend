@@ -2,8 +2,8 @@
 from __future__ import annotations
 
 from rest_framework.generics import ListAPIView
-from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
@@ -46,7 +46,7 @@ class AdminExamResultsView(ListAPIView):
     """
 
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
-    pagination_class = PageNumberPagination
+    pagination_class = None  # 전체 반환: 시험당 응시자 수십~수백명, rank 정렬 위해 페이지네이션 제거
     serializer_class = AdminExamResultRowSerializer
 
     def get_queryset(self):
@@ -73,15 +73,7 @@ class AdminExamResultsView(ListAPIView):
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
         queryset = self.get_queryset()
-
-        # -------------------------------------------------
-        # 페이지네이션: Result queryset을 먼저 페이지 처리
-        # -------------------------------------------------
-        page = self.paginate_queryset(queryset)
-        if page is None:
-            return self.get_paginated_response([])
-
-        results = page
+        results = list(queryset)
 
         # -------------------------------------------------
         # enrollment_id → student_name (Enrollment 단일 진실)
@@ -230,4 +222,9 @@ class AdminExamResultsView(ListAPIView):
             })
 
         serializer = AdminExamResultRowSerializer(rows, many=True)
-        return self.get_paginated_response(serializer.data)
+        return Response({
+            "count": len(rows),
+            "next": None,
+            "previous": None,
+            "results": serializer.data,
+        })
