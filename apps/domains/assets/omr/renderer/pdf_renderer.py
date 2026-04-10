@@ -567,7 +567,10 @@ class OMRPdfRenderer:
         c.setStrokeColor(C1); c.setLineWidth(S1)
         c.rect(fx, fb, fw, fh, stroke=1, fill=0)
 
-        # ═══ ④ 텍스트 (헤더 라벨 + 행 번호) ═══
+        # ═══ ④ 텍스트 (헤더 라벨 + 선택지 번호 + 행 번호) ═══
+        # 수능 표준: 헤더에 ①②③④⑤ 표시하여 학생이 선택지 위치 즉시 파악
+        _CIRCLED = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
+        nc = doc.n_choices
         for typ, sx, vw, dw, ss, se in sections:
             sxp = _mm(sx); vwp = _mm(vw)
             cnt = se - ss + 1
@@ -576,11 +579,19 @@ class OMRPdfRenderer:
             c.setFont(_FB, 6); c.setFillColor(CT2)
             c.drawCentredString(sxp + nw / 2, ft - hh + _mm(1.2), "번호")
             if typ == 'mc':
-                lb = f"{ss}번 ~ {se}번" if nmc > 1 else f"객관식 {cnt}문항"
+                # 선택지 라벨 ①②③④⑤ — 버블 x좌표에 정렬
+                ax = sx + MC_NUM_W + MC_BUB_PAD
+                aw = dw - MC_NUM_W - 2 * MC_BUB_PAD
+                bgap = (aw - nc * BUB_W) / (nc + 1)
+                c.setFont(_FB, 6); c.setFillColor(CT2)
+                for j in range(nc):
+                    bx_mm = ax + bgap * (j + 1) + BUB_W * j + BUB_W / 2
+                    c.drawCentredString(_mm(bx_mm), ft - hh + _mm(1.2),
+                                        _CIRCLED[j] if j < len(_CIRCLED) else str(j + 1))
             else:
                 lb = f"서술형 {cnt}문항"
-            c.drawCentredString(sxp + nw + (vwp - nw) / 2,
-                                ft - hh + _mm(1.2), lb)
+                c.drawCentredString(sxp + nw + (vwp - nw) / 2,
+                                    ft - hh + _mm(1.2), lb)
 
             for qi in range(cnt):
                 qn = ss + qi
