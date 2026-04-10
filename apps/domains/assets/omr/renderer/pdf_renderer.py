@@ -576,19 +576,25 @@ class OMRPdfRenderer:
             cnt = se - ss + 1
             rh = bh / cnt if cnt > 0 else bh
 
-            c.setFont(_FB, 6); c.setFillColor(CT2)
-            c.drawCentredString(sxp + nw / 2, ft - hh + _mm(1.2), "번호")
             if typ == 'mc':
-                # 선택지 라벨 ①②③④⑤ — 버블 x좌표에 정렬
+                # 상단: "번호" + 범위 (다중 컬럼시)
+                c.setFont(_FB, 5.5); c.setFillColor(CT2)
+                c.drawCentredString(sxp + nw / 2, ft - _mm(1.8), "번호")
+                if nmc > 1:
+                    c.drawCentredString(sxp + nw + (vwp - nw) / 2,
+                                        ft - _mm(1.8), f"{ss}~{se}번")
+                # 하단: ①②③④⑤ — 7pt 또렷, 버블 x좌표 정렬
                 ax = sx + MC_NUM_W + MC_BUB_PAD
                 aw = dw - MC_NUM_W - 2 * MC_BUB_PAD
                 bgap = (aw - nc * BUB_W) / (nc + 1)
-                c.setFont(_FB, 6); c.setFillColor(CT2)
+                c.setFont(_FB, 7); c.setFillColor(CT)
                 for j in range(nc):
                     bx_mm = ax + bgap * (j + 1) + BUB_W * j + BUB_W / 2
-                    c.drawCentredString(_mm(bx_mm), ft - hh + _mm(1.2),
+                    c.drawCentredString(_mm(bx_mm), ft - hh + _mm(0.8),
                                         _CIRCLED[j] if j < len(_CIRCLED) else str(j + 1))
             else:
+                c.setFont(_FB, 6); c.setFillColor(CT2)
+                c.drawCentredString(sxp + nw / 2, ft - hh + _mm(1.2), "번호")
                 lb = f"서술형 {cnt}문항"
                 c.drawCentredString(sxp + nw + (vwp - nw) / 2,
                                     ft - hh + _mm(1.2), lb)
