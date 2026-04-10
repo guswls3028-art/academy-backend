@@ -76,36 +76,36 @@ from apps.domains.assets.omr.services.meta_generator import (
 # ══════════════════════════════════════════════
 # A. STROKE & COLOR (v14 — 통합 프레임 + 한국 표준)
 # ══════════════════════════════════════════════
-# 디자인 철학: 버블이 주인공. 나머지는 물러남.
-# 프리미엄 교육 서비스 톤. 관공서 서류 아님.
-S1 = 1.20   # 외곽 — 존재하되 주장하지 않음
-S2 = 0.50   # 헤더 구분 — 가는 수술선
-S3 = 0.40   # 5행 강조 — 미세한 리듬
-S4 = 0.15   # 일반 행 — 거의 안 보임 (여백이 구분)
-S5 = 0.40   # 버블 외곽 — 답안 영역에서 가장 선명
+# 디자인: v8 깔끔함 + v14 구조 (통합 프레임, 타이밍, ①②③④⑤)
+# 핵심: 가늘고 연한 선. 버블만 또렷. 나머지 전부 뒤로.
+S1 = 0.80   # 외곽 — v8 원본값. 가늘고 깔끔
+S2 = 0.50   # 헤더 구분
+S3 = 0.35   # 5행 강조 — 은은
+S4 = 0.25   # 일반 행 — 최소 인쇄 보장
+S5 = 0.35   # 버블 외곽
 
-# ── 톤 위계: 버블 > 번호 > 구조선 ──
-C1 = HexColor("#1a1a1a")      # 외곽 — 부드러운 검정
-C2 = HexColor("#888888")      # 헤더/컬럼 구분 — 회색 (뒤로 물러남)
-C3 = HexColor("#aaaaaa")      # 5행 — 은은한 리듬
-C4 = HexColor("#d5d5d5")      # 일반 행 — 거의 투명
-C5 = HexColor("#333333")      # 버블 외곽 — 또렷 (주인공)
+# ── v8 톤: 순검정 없음. 전체 부드러운 회색 ──
+C1 = HexColor("#333333")      # 외곽 — 회색 (순검정 아님)
+C2 = HexColor("#555555")      # 헤더/컬럼 구분
+C3 = HexColor("#aaaaaa")      # 5행
+C4 = HexColor("#cccccc")      # 일반 행
+C5 = HexColor("#444444")      # 버블 외곽
 
 # C. TEXT HIERARCHY
-CT  = HexColor("#111111")      # 번호 — 거의 검정
-CT2 = HexColor("#555555")      # 헤더 라벨 — 보조 톤
-CT3 = HexColor("#777777")      # 부제/안내본문
-CT4 = HexColor("#aaaaaa")      # 버블숫자 — 마킹 안 하면 은은, 하면 덮임
+CT  = HexColor("#111111")      # 번호
+CT2 = HexColor("#222222")      # 헤더 라벨
+CT3 = HexColor("#666666")      # 부제/안내본문
+CT4 = HexColor("#c0c0c0")      # 버블숫자 — 거의 안 보임 (마킹하면 덮임)
 
-# 헤더 배경 — 극도로 은은 (관공서 회색띠 제거)
-C_HDR = HexColor("#f5f5f5")         # MC 헤더 — 거의 백색
-C_HDR_ESSAY = HexColor("#f8f8f8")   # 서술형 — 더 밝게
-C_ZEBRA = HexColor("#fafafa")       # zebra — 힌트만
-C_BUB_FILL = white                  # 버블 — 순백
-C_G10 = HexColor("#888888")         # 10행 — 구조선 톤과 통일
+# 배경 — 극도로 은은
+C_HDR = HexColor("#f4f4f4")         # MC 헤더
+C_HDR_ESSAY = HexColor("#f4f4f4")   # 서술형 헤더 — 동일 톤
+C_ZEBRA = HexColor("#fafafa")       # zebra
+C_BUB_FILL = HexColor("#f8f8f8")    # 버블 내부 — 미세 회색 (순백보다 부드러움)
+C_G10 = HexColor("#666666")         # 10행
 
-# 번호 칼럼 배경 — 제거 (여백으로 구분)
-C_NUM_BG = white                    # 틴트 제거 → 깔끔
+# 번호 칼럼 배경
+C_NUM_BG = white                    # 깔끔
 
 # B. SPACING (mm)
 PAD_LOGO_TOP = 5.0
@@ -559,10 +559,10 @@ class OMRPdfRenderer:
         c.setStrokeColor(C2); c.setLineWidth(S2)
         c.line(fx, ft - hh, fx + fw, ft - hh)
 
-        # 컬럼 세로 구분선 — 외곽보다 가볍게 (뒤로 물러남)
+        # 컬럼 세로 구분선 — 외곽과 동일 (통일감)
         for i, (_, sx, *_rest) in enumerate(sections):
             if i > 0:
-                c.setStrokeColor(C2); c.setLineWidth(S2 + 0.3)
+                c.setStrokeColor(C1); c.setLineWidth(S1)
                 c.line(_mm(sx), ft, _mm(sx), fb)
 
         # ═══ ③ 외곽 프레임 — 최상위 (fill에 덮이지 않음) ═══
@@ -578,28 +578,21 @@ class OMRPdfRenderer:
             cnt = se - ss + 1
             rh = bh / cnt if cnt > 0 else bh
 
+            # 헤더: 1행 구조 — 간결. "번호 | ①②③④⑤"
+            c.setFont(_FB, 5.5); c.setFillColor(CT2)
+            c.drawCentredString(sxp + nw / 2, ft - hh + _mm(1.5), "번호")
             if typ == 'mc':
-                # 상단: "번호" + 범위 (다중 컬럼시)
-                c.setFont(_FB, 5.5); c.setFillColor(CT2)
-                c.drawCentredString(sxp + nw / 2, ft - _mm(1.8), "번호")
-                if nmc > 1:
-                    c.drawCentredString(sxp + nw + (vwp - nw) / 2,
-                                        ft - _mm(1.8), f"{ss}~{se}번")
-                # 하단: ①②③④⑤ — 7pt 또렷, 버블 x좌표 정렬
                 ax = sx + MC_NUM_W + MC_BUB_PAD
                 aw = dw - MC_NUM_W - 2 * MC_BUB_PAD
                 bgap = (aw - nc * BUB_W) / (nc + 1)
-                c.setFont(_FB, 7); c.setFillColor(CT)
+                c.setFont(_FB, 6.5); c.setFillColor(CT2)
                 for j in range(nc):
                     bx_mm = ax + bgap * (j + 1) + BUB_W * j + BUB_W / 2
-                    c.drawCentredString(_mm(bx_mm), ft - hh + _mm(0.8),
+                    c.drawCentredString(_mm(bx_mm), ft - hh + _mm(1.5),
                                         _CIRCLED[j] if j < len(_CIRCLED) else str(j + 1))
             else:
-                c.setFont(_FB, 6); c.setFillColor(CT2)
-                c.drawCentredString(sxp + nw / 2, ft - hh + _mm(1.2), "번호")
-                lb = f"서술형 {cnt}문항"
                 c.drawCentredString(sxp + nw + (vwp - nw) / 2,
-                                    ft - hh + _mm(1.2), lb)
+                                    ft - hh + _mm(1.5), f"서술형 {cnt}문항")
 
             for qi in range(cnt):
                 qn = ss + qi
@@ -642,20 +635,20 @@ class OMRPdfRenderer:
     # 좌우: 5행/10행 행 바 (정렬 보정용)
     # 깔끔하고 균일한 패턴 — 난잡한 빗금 아님.
 
-    _TM_BAR_W = 4.0      # 상하단 바 폭 (mm)
-    _TM_BAR_H = 1.5      # 상하단 바 높이 (mm)
-    _TM_PERIOD = 8.0     # 바 간격 (mm)
-    _TM_OFFSET = 2.0     # 프레임에서 간격 (mm)
-    _TM_MARGIN = 3.0     # 프레임 좌우 여백 (mm)
-    _TM_ROW_W5 = 1.5     # 5행 바 길이 (mm) — LP_GAP(3mm) 안에 맞춤
-    _TM_ROW_W10 = 2.0    # 10행 바 길이 (mm) — LP_GAP(3mm) 안에 맞춤
-    _TM_ROW_H5 = 0.5     # 5행 바 두께 (mm)
-    _TM_ROW_H10 = 0.7    # 10행 바 두께 (mm)
-    _TM_ROW_GAP = 0.5    # 프레임에서 간격 (mm)
+    _TM_BAR_W = 2.5      # 상하단 바 폭 — 작고 섬세
+    _TM_BAR_H = 0.8      # 상하단 바 높이 — 얇게
+    _TM_PERIOD = 10.0    # 바 간격 — 넉넉 (덜 빽빽)
+    _TM_OFFSET = 1.5     # 프레임에서 간격
+    _TM_MARGIN = 5.0     # 프레임 좌우 여백 — 넉넉
+    _TM_ROW_W5 = 1.2     # 5행 — 김 붙은 것처럼 짧게
+    _TM_ROW_W10 = 1.5    # 10행
+    _TM_ROW_H5 = 0.3     # 5행 — 미세
+    _TM_ROW_H10 = 0.4    # 10행
+    _TM_ROW_GAP = 0.5    # 프레임에서 간격
 
     def _render_timing(self, c, frame_x, frame_w, sections, bt, bh):
-        """프레임 외부 타이밍 마크 — 균일 간격 바 (한국 표준)."""
-        c.setFillColor(black)
+        """프레임 외부 타이밍 마크 — 연한 회색, 섬세하게."""
+        c.setFillColor(HexColor("#999999"))  # 회색 (검정 아님)
         bw = self._TM_BAR_W
         bwh = self._TM_BAR_H
         off = self._TM_OFFSET
