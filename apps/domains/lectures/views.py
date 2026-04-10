@@ -58,8 +58,17 @@ class LectureViewSet(ModelViewSet):
     def perform_create(self, serializer):
         """
         🔐 Lecture 생성 시 tenant 강제 주입
+        UniqueConstraint(tenant, title) 위반 시 사용자 친화적 에러 메시지 반환
         """
-        serializer.save(tenant=self.request.tenant)
+        try:
+            serializer.save(tenant=self.request.tenant)
+        except IntegrityError as e:
+            error_msg = str(e).lower()
+            if "uniq_lecture_title_per_tenant" in error_msg or "title" in error_msg:
+                raise ValidationError(
+                    {"title": "이미 같은 이름의 강의가 있습니다. 다른 이름을 입력해 주세요."}
+                )
+            raise
 
     @action(detail=False, methods=["get"], url_path="instructor-options")
     def instructor_options(self, request):
