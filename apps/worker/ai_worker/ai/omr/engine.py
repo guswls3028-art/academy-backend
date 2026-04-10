@@ -81,7 +81,8 @@ def detect_omr_answers_v7(
         image_size_px=(image_bgr.shape[1], image_bgr.shape[0]),
     )
 
-    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    gray_raw = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    gray = gray_raw.copy()
 
     # --- v10: CLAHE 전처리 (그림자/조명 불균일 보정) ---
     if config.use_clahe:
@@ -118,13 +119,24 @@ def detect_omr_answers_v7(
         # Legacy fixed threshold fallback
         _, binary = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY_INV)
 
-    # --- Column-local alignment (v9 only) ---
+    # --- Column-local alignment (v9+, displacement-gated) ---
     col_transforms: Dict[int, np.ndarray] = {}
     meta_version = meta.get("version", "v8")
     if meta_version in ("v9", "v10", "v11", "v12", "v13") and meta.get("columns"):
-        col_transforms = _compute_column_transforms(
+        raw_transforms = _compute_column_transforms(
             gray=gray, scale=scale, columns_meta=meta["columns"],
         )
+        # 잘못된 앵커 감지로 인한 과도한 displacement 필터링.
+        # marker_homography가 이미 정밀 워핑을 수행하면 column transform이
+        # 오히려 좌표를 어긋나게 함. 최대 5px 이내만 허용.
+        _MAX_COL_DISPLACEMENT_PX = 5.0
+        for ci, M in raw_transforms.items():
+            # displacement = M @ [0,0,1] 의 translation 성분
+            dx, dy = abs(M[0, 2]), abs(M[1, 2])
+            if dx <= _MAX_COL_DISPLACEMENT_PX and dy <= _MAX_COL_DISPLACEMENT_PX:
+                col_transforms[ci] = M
+            else:
+                logger.debug("Column %d transform rejected: dx=%.1f dy=%.1f exceeds threshold", ci, dx, dy)
 
     results: List[OMRAnswerV1] = []
 
@@ -140,6 +152,7 @@ def detect_omr_answers_v7(
         try:
             answer = _detect_single_question(
                 gray=gray,
+                gray_raw=gray_raw,
                 binary=binary,
                 scale=scale,
                 q_num=q_num,
@@ -308,6 +321,7 @@ def _apply_col_transform(
 def _compute_bubble_score(
     *,
     gray: np.ndarray,
+    gray_raw: np.ndarray,
     binary: np.ndarray,
     cx_px: int,
     cy_px: int,
@@ -354,7 +368,7 @@ def _compute_bubble_score(
         fill_ratio = float(np.count_nonzero(binary_roi)) / max(1, binary_roi.size)
 
     if not config.use_multi_feature:
-        return fill_ratio, {"fill_ratio": fill_ratio, "darkness": 0.0, "uniformity": 0.0, "border_density": 0.0}
+        return fill_ratio, {"fill_ratio": fill_ratio, "darkness": 0.0, "uniformity": 0.0, "border_density": 0.0, "raw_darkness": 0.0}
 
     # --- Darkness & Uniformity (center 60% area) ---
     margin_x = int(roi_w * 0.2)
@@ -371,33 +385,45 @@ def _compute_bubble_score(
     uniformity = 1.0 - (std_intensity / 128.0)
     uniformity = max(0.0, min(1.0, uniformity))
 
+    # --- v11: Raw darkness (CLAHE/adaptive 영향 없는 원본 기반) ---
+    # CLAHE가 지역적으로 명암을 평탄화하면 darkness가 왜곡됨.
+    # 원본 gray의 평균 밝기로 마킹 여부를 가장 안정적으로 판별.
+    raw_roi = gray_raw[y1:y2, x1:x2]
+    if config.use_elliptical_mask:
+        raw_masked = cv2.bitwise_and(raw_roi, mask) if raw_roi.shape == mask.shape else raw_roi
+        raw_pixels = raw_masked[mask > 0] if raw_roi.shape == mask.shape else raw_roi.flatten()
+    else:
+        raw_pixels = raw_roi.flatten()
+    raw_mean = float(np.mean(raw_pixels)) if raw_pixels.size > 0 else 255.0
+    raw_darkness = 1.0 - (raw_mean / 255.0)
+
     # --- v10: Border density (부분 마킹/오염 구분) ---
-    # 실제 마킹: 중심이 진하고 가장자리도 채워짐
-    # 오염/스미어: 가장자리에만 검은 픽셀, 중심은 비어있을 가능성
     border_density = 0.0
     if config.use_border_density and roi_h > 4 and roi_w > 4:
         center_binary = binary_roi[margin_y:roi_h - margin_y, margin_x:roi_w - margin_x]
         center_fill = float(np.count_nonzero(center_binary)) / max(1, center_binary.size)
-        # 중심 대비 전체 fill ratio — 중심이 더 꽉 차 있으면 진짜 마킹
         border_density = min(1.0, center_fill / max(0.01, fill_ratio))
 
-    # Composite score: weighted combination
+    # Composite score: raw_darkness를 primary feature로 사용
+    # raw_darkness는 CLAHE/adaptive 영향을 받지 않아 페이지 전체에서 일관적.
     if config.use_border_density:
-        score = 0.40 * fill_ratio + 0.25 * darkness + 0.15 * uniformity + 0.20 * border_density
+        score = 0.15 * fill_ratio + 0.15 * darkness + 0.10 * uniformity + 0.10 * border_density + 0.50 * raw_darkness
     else:
-        score = 0.50 * fill_ratio + 0.30 * darkness + 0.20 * uniformity
+        score = 0.20 * fill_ratio + 0.15 * darkness + 0.15 * uniformity + 0.50 * raw_darkness
 
     return score, {
         "fill_ratio": round(fill_ratio, 4),
         "darkness": round(darkness, 4),
         "uniformity": round(uniformity, 4),
         "border_density": round(border_density, 4),
+        "raw_darkness": round(raw_darkness, 4),
     }
 
 
 def _detect_single_question(
     *,
     gray: np.ndarray,
+    gray_raw: np.ndarray,
     binary: np.ndarray,
     scale: PageScale,
     q_num: int,
@@ -432,6 +458,7 @@ def _detect_single_question(
 
         score, details = _compute_bubble_score(
             gray=gray,
+            gray_raw=gray_raw,
             binary=binary,
             cx_px=cx_px,
             cy_px=cy_px,

@@ -95,7 +95,7 @@ C5 = HexColor("#444444")      # 버블 외곽
 CT  = HexColor("#111111")      # 번호
 CT2 = HexColor("#222222")      # 헤더 라벨
 CT3 = HexColor("#666666")      # 부제/안내본문
-CT4 = HexColor("#c0c0c0")      # 버블숫자 — 거의 안 보임 (마킹하면 덮임)
+CT4 = HexColor("#999999")      # 버블숫자 — 인쇄 시 보이되 마킹하면 덮임
 
 # 배경 — 극도로 은은
 C_HDR = HexColor("#f4f4f4")         # MC 헤더
