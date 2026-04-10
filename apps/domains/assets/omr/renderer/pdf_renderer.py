@@ -76,34 +76,36 @@ from apps.domains.assets.omr.services.meta_generator import (
 # ══════════════════════════════════════════════
 # A. STROKE & COLOR (v14 — 통합 프레임 + 한국 표준)
 # ══════════════════════════════════════════════
-S1 = 2.00   # 외곽 + 컬럼 구분 — 또렷하되 과하지 않음 (0.7mm)
-S2 = 0.80   # 헤더↔본문 구분
-S3 = 0.60   # 5행 강조 — 묶음 구분 또렷
-S4 = 0.30   # 일반 행 구분 — 인쇄/복사에서도 보이게
-S5 = 0.30   # 버블 외곽
+# 디자인 철학: 버블이 주인공. 나머지는 물러남.
+# 프리미엄 교육 서비스 톤. 관공서 서류 아님.
+S1 = 1.20   # 외곽 — 존재하되 주장하지 않음
+S2 = 0.50   # 헤더 구분 — 가는 수술선
+S3 = 0.40   # 5행 강조 — 미세한 리듬
+S4 = 0.15   # 일반 행 — 거의 안 보임 (여백이 구분)
+S5 = 0.40   # 버블 외곽 — 답안 영역에서 가장 선명
 
-# ── 흑백 인쇄 최적화 그레이스케일 ──
-C1 = HexColor("#000000")      # 외곽/컬럼 구분 — 순수 검정
-C2 = HexColor("#333333")      # 헤더 구분
-C3 = HexColor("#666666")      # 5행 강조 — 또렷
-C4 = HexColor("#b0b0b0")      # 일반 행 — 복사에서도 가시
-C5 = HexColor("#444444")      # 버블 외곽
+# ── 톤 위계: 버블 > 번호 > 구조선 ──
+C1 = HexColor("#1a1a1a")      # 외곽 — 부드러운 검정
+C2 = HexColor("#888888")      # 헤더/컬럼 구분 — 회색 (뒤로 물러남)
+C3 = HexColor("#aaaaaa")      # 5행 — 은은한 리듬
+C4 = HexColor("#d5d5d5")      # 일반 행 — 거의 투명
+C5 = HexColor("#333333")      # 버블 외곽 — 또렷 (주인공)
 
 # C. TEXT HIERARCHY
-CT  = HexColor("#000000")      # 본문/번호 — 순수 검정
-CT2 = HexColor("#222222")      # 헤더
-CT3 = HexColor("#666666")      # 부제/안내본문
-CT4 = HexColor("#888888")      # 버블숫자 — 보이되 마킹과 구분
+CT  = HexColor("#111111")      # 번호 — 거의 검정
+CT2 = HexColor("#555555")      # 헤더 라벨 — 보조 톤
+CT3 = HexColor("#777777")      # 부제/안내본문
+CT4 = HexColor("#aaaaaa")      # 버블숫자 — 마킹 안 하면 은은, 하면 덮임
 
-# 헤더 배경
-C_HDR = HexColor("#dcdcdc")         # MC 헤더 — 인쇄/복사 시 또렷
-C_HDR_ESSAY = HexColor("#e6e6e6")   # 서술형 헤더
-C_ZEBRA = HexColor("#f0f0f0")       # zebra — 인쇄에서도 보이는 대비
-C_BUB_FILL = white                  # 버블 내부 — 순백
-C_G10 = HexColor("#444444")         # 10행 강조
+# 헤더 배경 — 극도로 은은 (관공서 회색띠 제거)
+C_HDR = HexColor("#f5f5f5")         # MC 헤더 — 거의 백색
+C_HDR_ESSAY = HexColor("#f8f8f8")   # 서술형 — 더 밝게
+C_ZEBRA = HexColor("#fafafa")       # zebra — 힌트만
+C_BUB_FILL = white                  # 버블 — 순백
+C_G10 = HexColor("#888888")         # 10행 — 구조선 톤과 통일
 
-# 번호 칼럼 배경
-C_NUM_BG = HexColor("#f5f5f5")      # 번호 칼럼 틴트
+# 번호 칼럼 배경 — 제거 (여백으로 구분)
+C_NUM_BG = white                    # 틴트 제거 → 깔끔
 
 # B. SPACING (mm)
 PAD_LOGO_TOP = 5.0
@@ -557,10 +559,10 @@ class OMRPdfRenderer:
         c.setStrokeColor(C2); c.setLineWidth(S2)
         c.line(fx, ft - hh, fx + fw, ft - hh)
 
-        # 컬럼 세로 구분선 (S1 — 외곽과 동일 두께)
+        # 컬럼 세로 구분선 — 외곽보다 가볍게 (뒤로 물러남)
         for i, (_, sx, *_rest) in enumerate(sections):
             if i > 0:
-                c.setStrokeColor(C1); c.setLineWidth(S1)
+                c.setStrokeColor(C2); c.setLineWidth(S2 + 0.3)
                 c.line(_mm(sx), ft, _mm(sx), fb)
 
         # ═══ ③ 외곽 프레임 — 최상위 (fill에 덮이지 않음) ═══
