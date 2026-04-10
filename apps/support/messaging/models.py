@@ -256,6 +256,19 @@ class AutoSendConfig(models.Model):
     )
     # N분 전 발송 (예: 강의 30분 전, 클리닉 60분 전). null=이벤트 시점 발송. 스케줄러에서 사용.
     minutes_before = models.PositiveIntegerField(null=True, blank=True)
+    # 발송 시점 모드: immediate=즉시, delay_minutes=N분 후, scheduled_hour=매일 지정 시각
+    delay_mode = models.CharField(
+        max_length=20,
+        choices=[
+            ("immediate", "즉시 발송"),
+            ("delay_minutes", "N분 후 발송"),
+            ("scheduled_hour", "지정 시각 발송"),
+        ],
+        default="immediate",
+    )
+    # delay_minutes 모드: 발송 지연 분 수 (예: 60 → 1시간 후)
+    # scheduled_hour 모드: 발송 시각 (0~23, 예: 7 → 오전 7시)
+    delay_value = models.PositiveIntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -264,3 +277,45 @@ class AutoSendConfig(models.Model):
         unique_together = [("tenant", "trigger")]
         verbose_name = "Auto-send config"
         verbose_name_plural = "Auto-send configs"
+
+
+class ScheduledNotification(models.Model):
+    """
+    예약/지연 발송 대기열.
+    delay_mode가 immediate가 아닌 경우, 발송 시점을 계산해 여기에 저장.
+    주기적 폴러(management command)가 send_at <= now인 건을 처리.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "대기"
+        SENT = "sent", "발송완료"
+        FAILED = "failed", "실패"
+        CANCELLED = "cancelled", "취소"
+
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="scheduled_notifications",
+        db_index=True,
+    )
+    trigger = models.CharField(max_length=60, db_index=True)
+    send_at = models.DateTimeField(db_index=True)
+    payload = models.JSONField(help_text="enqueue_sms kwargs (to, text, message_mode, template_id, etc.)")
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    error_message = models.CharField(max_length=500, blank=True, default="")
+
+    class Meta:
+        app_label = "messaging"
+        ordering = ["send_at"]
+        verbose_name = "Scheduled notification"
+        verbose_name_plural = "Scheduled notifications"
+        indexes = [
+            models.Index(fields=["status", "send_at"], name="idx_sched_notif_status_sendat"),
+        ]

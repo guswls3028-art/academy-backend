@@ -838,8 +838,8 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
     }
 
     solapi_tid = get_solapi_template_id(trigger)
-    message_mode = "alimtalk" if solapi_tid else "sms"
 
+    # 발송 payload 구성
     if solapi_tid:
         replacements = build_unified_replacements(
             trigger=trigger,
@@ -849,7 +849,7 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
             student_name=staff_name,  # 수신자 이름 (스태프)
             site_url=site_url,
         )
-        enqueue_sms(
+        sms_kwargs = dict(
             tenant_id=tenant_id,
             to=phone,
             text=template_body,
@@ -860,13 +860,34 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
     else:
         # SMS fallback
         text = f"[{tenant_name}] 영상 인코딩 완료\n\n{staff_name}님, {video.title} 영상 인코딩이 완료되었습니다."
-        enqueue_sms(
+        sms_kwargs = dict(
             tenant_id=tenant_id,
             to=phone,
             text=text,
             message_mode="sms",
         )
-    _log.info("video_encoding_complete: sent to %s (staff_id=%s) video_id=%s", phone[:4] + "****", uploaded_by.id, video.id)
+
+    # delay_mode 분기: immediate / delay_minutes / scheduled_hour
+    delay_mode = getattr(config, "delay_mode", "immediate") if config else "immediate"
+    delay_value = getattr(config, "delay_value", None) if config else None
+
+    if delay_mode == "immediate" or not delay_value:
+        # 즉시 발송
+        enqueue_sms(**sms_kwargs)
+        _log.info("video_encoding_complete: sent immediately to %s staff_id=%s video_id=%s",
+                   phone[:4] + "****", uploaded_by.id, video.id)
+    else:
+        # 예약/지연 발송 → ScheduledNotification에 저장
+        from apps.support.messaging.scheduled import schedule_notification
+        schedule_notification(
+            tenant_id=tenant_id,
+            trigger=trigger,
+            delay_mode=delay_mode,
+            delay_value=delay_value,
+            payload=sms_kwargs,
+        )
+        _log.info("video_encoding_complete: scheduled (%s=%s) to %s staff_id=%s video_id=%s",
+                   delay_mode, delay_value, phone[:4] + "****", uploaded_by.id, video.id)
 
 
 def job_fail_retry(job_id: str, reason: str) -> tuple[bool, str]:

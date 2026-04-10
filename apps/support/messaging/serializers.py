@@ -195,6 +195,21 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
     template_solapi_status = serializers.CharField(
         source="template.solapi_status", read_only=True, default=""
     )
+    # delay_mode/delay_value — 마이그레이션 전에도 안전하게 동작 (컬럼 미존재 시 기본값)
+    delay_mode = serializers.SerializerMethodField()
+    delay_value = serializers.SerializerMethodField()
+
+    def get_delay_mode(self, obj) -> str:
+        try:
+            return (obj.delay_mode or "immediate") if hasattr(obj, "delay_mode") else "immediate"
+        except Exception:
+            return "immediate"
+
+    def get_delay_value(self, obj):
+        try:
+            return obj.delay_value if hasattr(obj, "delay_value") else None
+        except Exception:
+            return None
 
     class Meta:
         model = AutoSendConfig
@@ -209,6 +224,8 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
             "enabled",
             "message_mode",
             "minutes_before",
+            "delay_mode",
+            "delay_value",
             "created_at",
             "updated_at",
         ]
@@ -224,3 +241,8 @@ class AutoSendConfigUpdateSerializer(serializers.Serializer):
         required=False,
     )
     minutes_before = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    delay_mode = serializers.ChoiceField(
+        choices=[("immediate", "즉시 발송"), ("delay_minutes", "N분 후 발송"), ("scheduled_hour", "지정 시각 발송")],
+        required=False,
+    )
+    delay_value = serializers.IntegerField(required=False, allow_null=True, min_value=0)

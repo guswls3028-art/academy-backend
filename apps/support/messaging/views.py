@@ -873,12 +873,12 @@ class AutoSendConfigView(APIView):
     def get(self, request):
         tenant = request.tenant
         triggers = [c[0] for c in AutoSendConfig.Trigger.choices]
-        configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
+        configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
 
         # ── 자동 프로비저닝: config가 하나도 없으면 기본 템플릿 + config 자동 생성 ──
         if not configs.exists():
             self._auto_provision(tenant)
-            configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
+            configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
 
         from apps.support.messaging.policy import get_trigger_policy
 
@@ -989,9 +989,24 @@ class AutoSendConfigView(APIView):
             config.enabled = enabled
             config.message_mode = message_mode
             config.minutes_before = minutes_before
+
+            # delay_mode / delay_value — 마이그레이션 전에도 안전 (hasattr 체크)
+            if hasattr(config, "delay_mode"):
+                delay_mode = (item.get("delay_mode") or "").strip().lower()
+                if delay_mode in ("immediate", "delay_minutes", "scheduled_hour"):
+                    config.delay_mode = delay_mode
+                delay_value = item.get("delay_value")
+                if delay_value is not None:
+                    try:
+                        config.delay_value = max(0, int(delay_value)) if delay_value != "" else None
+                    except (TypeError, ValueError):
+                        config.delay_value = None
+                elif delay_mode == "immediate":
+                    config.delay_value = None
+
             config.save()
 
-        configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
+        configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
         return Response([AutoSendConfigSerializer(c).data for c in configs])
 
 
@@ -1009,7 +1024,7 @@ class ProvisionDefaultTemplatesView(APIView):
         templates = get_default_templates(tenant.name or "학원")
         existing_configs = {
             c.trigger: c
-            for c in AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
+            for c in AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
         }
         default_names = {d["name"] for d in templates.values()}
         created_templates = 0
