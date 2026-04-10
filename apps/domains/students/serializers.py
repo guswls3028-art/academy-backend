@@ -327,6 +327,30 @@ class StudentCreateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"ps_number": "이미 사용 중인 PS 번호입니다."})
 
         attrs["uses_identifier"] = attrs.pop("no_phone", False) or (phone_str is None)
+
+        # school_level_mode 기반 school_type / grade 검증
+        from apps.domains.students.services.school import get_valid_school_types, is_valid_grade
+        from apps.core.models import Program
+        program = Program.objects.filter(tenant=tenant).first()
+        slm = program.feature_flags.get("school_level_mode") if program and program.feature_flags else None
+        valid_types = get_valid_school_types(slm)
+
+        school_type = attrs.get("school_type")
+        if school_type and school_type not in valid_types:
+            labels = {"ELEMENTARY": "초등", "MIDDLE": "중등", "HIGH": "고등"}
+            allowed = ", ".join(labels.get(t, t) for t in sorted(valid_types))
+            raise serializers.ValidationError(
+                {"school_type": f"이 학원에서는 {allowed} 학생만 등록할 수 있습니다."}
+            )
+
+        grade = attrs.get("grade")
+        if school_type and grade is not None and not is_valid_grade(school_type, grade):
+            from apps.domains.students.services.school import GRADE_RANGE
+            lo, hi = GRADE_RANGE.get(school_type, (1, 3))
+            raise serializers.ValidationError(
+                {"grade": f"{school_type} 학생의 학년은 {lo}~{hi}학년이어야 합니다."}
+            )
+
         return attrs
 
 
@@ -374,6 +398,28 @@ class StudentUpdateSerializer(serializers.ModelSerializer):
             internal = user_internal_username(tenant, ps_number)
             if get_user_model().objects.filter(username=internal).exclude(id=instance.user_id).exists():
                 raise serializers.ValidationError({"ps_number": "이미 사용 중인 아이디입니다."})
+
+        # school_level_mode 기반 school_type / grade 검증
+        school_type = attrs.get("school_type", instance.school_type)
+        grade = attrs.get("grade", instance.grade)
+        if school_type:
+            from apps.domains.students.services.school import get_valid_school_types, is_valid_grade
+            from apps.core.models import Program
+            program = Program.objects.filter(tenant=tenant).first()
+            slm = program.feature_flags.get("school_level_mode") if program and program.feature_flags else None
+            valid_types = get_valid_school_types(slm)
+            if school_type not in valid_types:
+                labels = {"ELEMENTARY": "초등", "MIDDLE": "중등", "HIGH": "고등"}
+                allowed = ", ".join(labels.get(t, t) for t in sorted(valid_types))
+                raise serializers.ValidationError(
+                    {"school_type": f"이 학원에서는 {allowed} 학생만 등록할 수 있습니다."}
+                )
+            if grade is not None and not is_valid_grade(school_type, grade):
+                from apps.domains.students.services.school import GRADE_RANGE
+                lo, hi = GRADE_RANGE.get(school_type, (1, 3))
+                raise serializers.ValidationError(
+                    {"grade": f"{school_type} 학생의 학년은 {lo}~{hi}학년이어야 합니다."}
+                )
 
         return attrs
 
@@ -470,6 +516,29 @@ class RegistrationRequestCreateSerializer(serializers.Serializer):
                     raise serializers.ValidationError({key: f"{label}을(를) 입력해 주세요."})
             elif val is None:
                 raise serializers.ValidationError({key: f"{label}을(를) 입력해 주세요."})
+
+        # school_level_mode 기반 school_type / grade 검증
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        if tenant:
+            from apps.domains.students.services.school import get_valid_school_types, is_valid_grade
+            from apps.core.models import Program
+            program = Program.objects.filter(tenant=tenant).first()
+            slm = program.feature_flags.get("school_level_mode") if program and program.feature_flags else None
+            valid_types = get_valid_school_types(slm)
+            if school_type not in valid_types:
+                labels = {"ELEMENTARY": "초등", "MIDDLE": "중등", "HIGH": "고등"}
+                allowed = ", ".join(labels.get(t, t) for t in sorted(valid_types))
+                raise serializers.ValidationError(
+                    {"school_type": f"이 학원에서는 {allowed} 학생만 가입할 수 있습니다."}
+                )
+            grade = attrs.get("grade")
+            if grade is not None and not is_valid_grade(school_type, grade):
+                from apps.domains.students.services.school import GRADE_RANGE
+                lo, hi = GRADE_RANGE.get(school_type, (1, 3))
+                raise serializers.ValidationError(
+                    {"grade": f"{school_type} 학생의 학년은 {lo}~{hi}학년이어야 합니다."}
+                )
 
         return attrs
 

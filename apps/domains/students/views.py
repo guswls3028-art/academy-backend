@@ -515,7 +515,36 @@ class StudentViewSet(ModelViewSet):
         failed = []
         created_students = []
 
+        # school_level_mode 검증 준비
+        from apps.domains.students.services.school import get_valid_school_types, is_valid_grade
+        from apps.core.models import Program
+        program = Program.objects.filter(tenant=tenant).first()
+        slm = program.feature_flags.get("school_level_mode") if program and program.feature_flags else None
+        valid_types = get_valid_school_types(slm)
+
         for idx, item in enumerate(students_data):
+            # school_level_mode 검증
+            st_type = item.get("school_type", "HIGH")
+            if st_type not in valid_types:
+                labels = {"ELEMENTARY": "초등", "MIDDLE": "중등", "HIGH": "고등"}
+                allowed = ", ".join(labels.get(t, t) for t in sorted(valid_types))
+                failed.append({
+                    "row": idx + 1,
+                    "name": item.get("name", ""),
+                    "error": f"이 학원에서는 {allowed} 학생만 등록할 수 있습니다.",
+                })
+                continue
+            st_grade = item.get("grade")
+            if st_grade is not None and not is_valid_grade(st_type, st_grade):
+                from apps.domains.students.services.school import GRADE_RANGE
+                lo, hi = GRADE_RANGE.get(st_type, (1, 3))
+                failed.append({
+                    "row": idx + 1,
+                    "name": item.get("name", ""),
+                    "error": f"{st_type} 학생의 학년은 {lo}~{hi}학년이어야 합니다.",
+                })
+                continue
+
             phone = item.get("phone")  # nullable
             parent_phone = item.get("parent_phone", "")
             # ps_number: 임의 6자리 자동 부여 (학생이 추후 변경 가능)
