@@ -496,6 +496,7 @@ def execute_notification_batch(
                     event_type=f"manual_{notification_type}",
                     target_type="student",
                     target_id=r.get("student_id"),
+                    target_name=r.get("student_name", ""),
                     occurrence_key=f"batch_{batch_id}",
                 )
                 if ok:

@@ -122,6 +122,7 @@ def enqueue_sms(
     event_type: Optional[str] = None,
     target_type: Optional[str] = None,
     target_id: Optional[int | str] = None,
+    target_name: Optional[str] = None,
     occurrence_key: Optional[str] = None,
 ) -> bool:
     """
@@ -192,6 +193,7 @@ def enqueue_sms(
         event_type=event_type,
         target_type=target_type,
         target_id=target_id,
+        target_name=target_name,
         occurrence_key=occurrence_key,
     )
 
@@ -614,6 +616,7 @@ def send_event_notification(
                 event_type=trigger,
                 target_type="student",
                 target_id=student_id,
+                target_name=name,
                 occurrence_key=stable_occurrence,
             )
             if ok:

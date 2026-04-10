@@ -511,6 +511,7 @@ def main() -> int:
                     to = str(data.get("to", "")).replace("-", "").strip()
                     text = str(data.get("text", ""))
                     sender = (data.get("sender") or "").strip()
+                    target_name = (data.get("target_name") or "").strip()
                     message_mode = (data.get("message_mode") or "").strip().lower()
                     if not message_mode or message_mode not in ("sms", "alimtalk"):
                         message_mode = "sms"
@@ -570,7 +571,7 @@ def main() -> int:
                                 message_mode=message_mode or "sms",
                                 business_idempotency_key=business_key,
                                 sqs_message_id=message_id,
-                                recipient_summary=to[:4] + "****" if to else "",
+                                recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****" if to else ""),
                             )
                             if not claimed:
                                 logger.info(
@@ -628,7 +629,7 @@ def main() -> int:
                                     tenant_id=int(tenant_id),
                                     success=False,
                                     amount_deducted=Decimal("0"),
-                                    recipient_summary=to[:4] + "****",
+                                    recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
                                     failure_reason="insufficient_balance",
                                     message_body=text[:2000],
                                     message_mode=message_mode,
@@ -739,7 +740,7 @@ def main() -> int:
                                             tenant_id=int(tenant_id),
                                             success=False,
                                             amount_deducted=Decimal("0"),
-                                            recipient_summary=to[:4] + "****",
+                                            recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
                                             failure_reason="sms_not_allowed_for_tenant",
                                             message_body=text[:2000],
                                             message_mode=message_mode,
@@ -799,7 +800,7 @@ def main() -> int:
                                             tenant_id=int(tenant_id),
                                             success=True,
                                             amount_deducted=Decimal(str(base_price)),
-                                            recipient_summary=to[:4] + "****",
+                                            recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
                                             template_summary=_get_template_summary(event_type_msg, template_id, message_mode),
                                             message_body=text[:2000],
                                             message_mode=message_mode,
@@ -834,7 +835,7 @@ def main() -> int:
                                             tenant_id=int(tenant_id),
                                             success=False,
                                             amount_deducted=Decimal("0"),
-                                            recipient_summary=to[:4] + "****",
+                                            recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
                                             failure_reason=failure_reason[:500],
                                             message_body=text[:2000],
                                             message_mode=message_mode,

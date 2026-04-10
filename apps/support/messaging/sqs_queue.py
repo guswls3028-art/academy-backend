@@ -73,6 +73,7 @@ class MessagingSQSQueue:
         event_type: Optional[str] = None,
         target_type: Optional[str] = None,
         target_id: Optional[int | str] = None,
+        target_name: Optional[str] = None,
         occurrence_key: Optional[str] = None,
     ) -> bool:
         """
@@ -113,6 +114,12 @@ class MessagingSQSQueue:
             message["alimtalk_replacements"] = alimtalk_replacements
         if template_id:
             message["template_id"] = str(template_id)
+        if target_type:
+            message["target_type"] = str(target_type)[:20]
+        if target_id:
+            message["target_id"] = str(target_id)
+        if target_name:
+            message["target_name"] = str(target_name)[:50]
         et = (event_type or "").strip()
         if et:
             message["event_type"] = et[:30]
