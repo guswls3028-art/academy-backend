@@ -236,48 +236,59 @@ class OMRPdfRenderer:
         cv.save()
         return buf.getvalue()
 
-    # ── 코너 마크 (v13: 비대칭 4종 — AI 방향 판별용) ──
-    # TL=square, TR=L-shape, BL=triangle, BR=plus
-    # 모든 마커는 굵은 채움 도형. 8mm 크기. meta_generator._build_marker_meta()와 동기화.
-    _CORNER_OFF = 2.5   # 페이지 가장자리로부터 오프셋 (mm)
-    _CORNER_SZ = 8.0    # 마커 기본 크기 (mm) — 크고 또렷
-    _CORNER_TH = 2.5    # 마커 팔 두께 (mm) — 굵게
+    # ── 코너 마크 — ㄱ자 브래킷(시각) + 분리된 비대칭 마커(AI) ──
+    # 브래킷과 마커 사이 2mm 갭 → 다른 blob으로 인식됨
+    _CORNER_OFF = 2.5   # 마커 오프셋 (페이지 가장자리에서)
+    _CORNER_SZ = 5.0    # 비대칭 마커 크기 (mm)
+    _CORNER_TH = 1.5    # 마커 팔 두께 (mm)
+    _BRACKET_OFF = 1.5  # 브래킷 오프셋 (마커보다 바깥)
+    _BRACKET_ARM = 8.0  # 브래킷 팔 길이
 
     def _corners(self, c):
         off = self._CORNER_OFF
         sz = self._CORNER_SZ
         th = self._CORNER_TH
+        boff = self._BRACKET_OFF
+        barm = self._BRACKET_ARM
         pw, ph = PAGE_W, PAGE_H
+
+        # ── 비대칭 채움 마커 (AI용) — 페이지 안쪽 ──
         c.setFillColor(black)
-
-        # TL: 채워진 정사각형 (8×8mm) — 가장 크고 단순
+        # TL: 정사각형
         c.rect(_mm(off), _y(off + sz), _mm(sz), _mm(sz), fill=1, stroke=0)
-
-        # TR: L자 (굵은 팔 2개, 우상단 코너 형태)
+        # TR: L자
         tr_x = pw - off - sz
-        tr_y = off
-        # 가로 팔 (위쪽)
-        c.rect(_mm(tr_x), _y(tr_y + th), _mm(sz), _mm(th), fill=1, stroke=0)
-        # 세로 팔 (오른쪽)
-        c.rect(_mm(pw - off - th), _y(tr_y + sz), _mm(th), _mm(sz), fill=1, stroke=0)
-
-        # BL: 채움 삼각형 (▲, 큰 사이즈)
-        bl_cx = off + sz / 2
-        bl_cy = ph - off - sz / 2
+        c.rect(_mm(tr_x), _y(off + th), _mm(sz), _mm(th), fill=1, stroke=0)
+        c.rect(_mm(pw - off - th), _y(off + sz), _mm(th), _mm(sz), fill=1, stroke=0)
+        # BL: 삼각형
         p = c.beginPath()
-        p.moveTo(_mm(bl_cx - sz / 2), _y(bl_cy + sz / 2))   # 좌하
-        p.lineTo(_mm(bl_cx + sz / 2), _y(bl_cy + sz / 2))   # 우하
-        p.lineTo(_mm(bl_cx), _y(bl_cy - sz / 2))             # 상단 꼭짓점
+        p.moveTo(_mm(off), _y(ph - off))
+        p.lineTo(_mm(off + sz), _y(ph - off))
+        p.lineTo(_mm(off + sz / 2), _y(ph - off - sz))
         p.close()
         c.drawPath(p, fill=1, stroke=0)
-
-        # BR: 십자가 (+) — 굵은 팔
+        # BR: 십자
         br_cx = pw - off - sz / 2
         br_cy = ph - off - sz / 2
-        # 가로 바
-        c.rect(_mm(br_cx - sz / 2), _y(br_cy + th / 2), _mm(sz), _mm(th), fill=1, stroke=0)
-        # 세로 바
-        c.rect(_mm(br_cx - th / 2), _y(br_cy + sz / 2), _mm(th), _mm(sz), fill=1, stroke=0)
+        c.rect(_mm(br_cx - sz/2), _y(br_cy + th/2), _mm(sz), _mm(th), fill=1, stroke=0)
+        c.rect(_mm(br_cx - th/2), _y(br_cy + sz/2), _mm(th), _mm(sz), fill=1, stroke=0)
+
+        # ── ㄱ자 브래킷 (시각용) — 마커 바깥쪽, 2mm 분리 ──
+        c.setStrokeColor(HexColor("#333333"))
+        c.setLineWidth(0.8)
+        gap = off + sz + 1.5  # 마커 끝 + 여백
+        # TL
+        c.line(_mm(boff), _y(boff), _mm(boff + barm), _y(boff))
+        c.line(_mm(boff), _y(boff), _mm(boff), _y(boff + barm))
+        # TR
+        c.line(_mm(pw - boff - barm), _y(boff), _mm(pw - boff), _y(boff))
+        c.line(_mm(pw - boff), _y(boff), _mm(pw - boff), _y(boff + barm))
+        # BL
+        c.line(_mm(boff), _y(ph - boff), _mm(boff + barm), _y(ph - boff))
+        c.line(_mm(boff), _y(ph - boff), _mm(boff), _y(ph - boff - barm))
+        # BR
+        c.line(_mm(pw - boff - barm), _y(ph - boff), _mm(pw - boff), _y(ph - boff))
+        c.line(_mm(pw - boff), _y(ph - boff), _mm(pw - boff), _y(ph - boff - barm))
 
     # ══════════════════════════════════════════
     # 좌측 패널
@@ -643,55 +654,54 @@ class OMRPdfRenderer:
     _TM_ROW_GAP = 0.5    # 프레임에서 간격
 
     def _render_timing(self, c, frame_x, frame_w, sections, bt, bh):
-        """프레임 외부 타이밍 마크 — 연한 회색, 섬세하게."""
-        c.setFillColor(HexColor("#999999"))  # 회색 (검정 아님)
-        bw = self._TM_BAR_W
-        bwh = self._TM_BAR_H
-        off = self._TM_OFFSET
-        period = self._TM_PERIOD
-        margin = self._TM_MARGIN
+        """인식 마크 — 버블 좌표에 정렬된 기준점. 최외곽 테두리에 배치.
 
-        # ── 상하단 바 (수평 바코드 스트립) ──
-        x = frame_x + margin
-        end_x = frame_x + frame_w - margin
-        while x + bw <= end_x:
-            # 상단: 프레임 위
-            c.rect(_mm(x), _y(CONTENT_Y - off),
-                   _mm(bw), _mm(bwh), fill=1, stroke=0)
-            # 하단: 프레임 아래
-            c.rect(_mm(x), _y(CONTENT_Y + CONTENT_H + off + bwh),
-                   _mm(bw), _mm(bwh), fill=1, stroke=0)
-            x += period
+        상단: 각 MC 컬럼 시작 x에 작은 사각형 (컬럼 위치 보정)
+        하단: 동일
+        좌측: 5행마다 작은 사각형 (행 위치 보정)
+        모든 마크가 실제 버블 좌표와 1:1 대응 → AI 미세 보정에 사용 가능.
+        """
+        c.setFillColor(HexColor("#555555"))
+        mk = 1.5  # 마크 크기 (mm) — 작고 섬세
 
-        # ── 좌우 행 바 (5행/10행 간격) ──
+        # ── 상하단: 각 MC 컬럼 시작점에 마크 ──
+        for typ, sx, vw, dw, ss, se in sections:
+            if typ != 'mc':
+                continue
+            # 컬럼 시작 x + 번호 칼럼 끝 x (버블 시작점)
+            bub_start_x = sx + MC_NUM_W
+            # 상단 (페이지 최상단 근처)
+            c.rect(_mm(bub_start_x - mk/2), _y(1.5 + mk),
+                   _mm(mk), _mm(mk), fill=1, stroke=0)
+            # 하단
+            c.rect(_mm(bub_start_x - mk/2), _y(PAGE_H - 1.5),
+                   _mm(mk), _mm(mk), fill=1, stroke=0)
+            # 컬럼 끝 x
+            col_end_x = sx + dw
+            c.rect(_mm(col_end_x - mk/2), _y(1.5 + mk),
+                   _mm(mk), _mm(mk), fill=1, stroke=0)
+            c.rect(_mm(col_end_x - mk/2), _y(PAGE_H - 1.5),
+                   _mm(mk), _mm(mk), fill=1, stroke=0)
+
+        # ── 좌측: 5행마다 행 경계에 마크 (첫 섹션 기준) ──
         if not sections:
             return
         first_sec = sections[0]
+        typ, sx, vw, dw, ss, se = first_sec
+        cnt = se - ss + 1
+        rh = bh / cnt if cnt > 0 else bh
+        for qi in range(0, cnt + 1, 5):
+            row_y = bt + qi * rh
+            # 좌측 (페이지 왼쪽 가장자리)
+            c.rect(_mm(1.0), _y(row_y + mk/2),
+                   _mm(mk), _mm(mk), fill=1, stroke=0)
+
+        # ── 우측: 마지막 섹션 기준 ──
         last_sec = sections[-1]
-        rg = self._TM_ROW_GAP
-
-        mark_secs = [first_sec]
-        if last_sec is not first_sec:
-            mark_secs.append(last_sec)
-
-        for sec in mark_secs:
-            typ, sx, vw, dw, ss, se = sec
-            cnt = se - ss + 1
-            rh = bh / cnt if cnt > 0 else bh
-            is_first = (sec is first_sec)
-            is_last = (sec is last_sec)
-
-            for qi in range(1, cnt):
-                if qi % 5 != 0:
-                    continue
-                g10 = (qi % 10 == 0)
-                rc_mm = bt + qi * rh  # 행 경계 위치
-                tm_w = self._TM_ROW_W10 if g10 else self._TM_ROW_W5
-                tm_h = self._TM_ROW_H10 if g10 else self._TM_ROW_H5
-
-                if is_first:
-                    c.rect(_mm(frame_x - rg - tm_w), _y(rc_mm + tm_h / 2),
-                           _mm(tm_w), _mm(tm_h), fill=1, stroke=0)
-                if is_last:
-                    c.rect(_mm(frame_x + frame_w + rg), _y(rc_mm + tm_h / 2),
-                           _mm(tm_w), _mm(tm_h), fill=1, stroke=0)
+        typ, sx, vw, dw, ss, se = last_sec
+        cnt = se - ss + 1
+        rh = bh / cnt if cnt > 0 else bh
+        for qi in range(0, cnt + 1, 5):
+            row_y = bt + qi * rh
+            c.rect(_mm(PAGE_W - 1.0 - mk), _y(row_y + mk/2),
+                   _mm(mk), _mm(mk), fill=1, stroke=0)

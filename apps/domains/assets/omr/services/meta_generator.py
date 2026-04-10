@@ -60,9 +60,9 @@ BUB_H = 5.2
 # ── Identifier (전화번호 뒤 8자리) ──
 ID_DIGIT_W = 5.8
 ID_SEP_W = 3.5
-ID_BUB_W = 3.6
-ID_BUB_H = 5.2
-ID_BUB_GAP = 0.6
+ID_BUB_W = 3.2
+ID_BUB_H = 4.2      # 축소 (5.2→4.2) — 간격 확보로 인식률 향상
+ID_BUB_GAP = 1.2     # 확대 (0.6→1.2) — 인접 버블 혼동 방지
 ID_DIGITS = 8
 ID_VALUES = 10
 
@@ -154,14 +154,14 @@ def _calc_bubble_centers_x(col_x: float, n_choices: int) -> List[float]:
 
 
 def _build_marker_meta() -> Dict[str, Any]:
-    """v13 4코너 비대칭 기준 마크 좌표 — 굵은 채움 도형.
+    """v14 4코너 비대칭 기준 마크 좌표 — 소형 채움 도형 + ㄱ자 브래킷.
 
     pdf_renderer._corners()와 동기화.
-    마커 크기 8mm, 팔 두께 2.5mm.
+    마커 크기 4mm (v13 8mm에서 축소), 팔 두께 1.2mm.
     """
     off = 2.5   # 페이지 가장자리 오프셋
-    sz = 8.0    # 마커 크기
-    th = 2.5    # 팔 두께
+    sz = 5.0    # 마커 크기
+    th = 1.5    # 팔 두께
     pw, ph = PAGE_W, PAGE_H
 
     return {
