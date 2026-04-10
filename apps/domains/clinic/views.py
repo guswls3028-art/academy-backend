@@ -304,10 +304,12 @@ class SessionViewSet(viewsets.ModelViewSet):
                 "target_grade": s.target_grade,
                 "target_school_type": s.target_school_type,
                 "has_target_lectures": s._has_target_lectures,
+                "duration_minutes": s.duration_minutes,
                 "participant_count": s.participant_count,
                 "booked_count": s.booked_count,
                 "no_show_count": s.no_show_count,
                 "max_participants": getattr(s, "max_participants", None),
+                "section": s.section_id,
             }
             for s in qs
         ]
@@ -355,7 +357,19 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         dates = data.pop("dates")
         target_lecture_ids = data.pop("target_lecture_ids")
+        section_id = data.pop("section_id", None)
         today = timezone.localdate()
+
+        # Validate section belongs to this tenant
+        section_obj = None
+        if section_id:
+            from apps.domains.lectures.models import Section
+            section_obj = Section.objects.filter(id=section_id, tenant=tenant).first()
+            if not section_obj:
+                return Response(
+                    {"detail": "선택한 반이 유효하지 않습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         # Validate target_lecture_ids belong to this tenant
         if target_lecture_ids:
@@ -391,6 +405,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                         max_participants=data["max_participants"],
                         target_grade=data.get("target_grade"),
                         target_school_type=data.get("target_school_type"),
+                        section=section_obj,
                         created_by=created_by,
                     )
                     if target_lecture_ids:

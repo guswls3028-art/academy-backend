@@ -52,13 +52,25 @@ class Session(TimestampModel):
         help_text="대상 학교 유형. 비어있으면 전체.",
     )
 
+    # 대상 반: section_mode=true + clinic_mode=regular에서 사용. null이면 전체
+    section = models.ForeignKey(
+        "lectures.Section",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="clinic_sessions",
+        help_text="대상 반. section_mode에서만 사용. 비어있으면 전체.",
+    )
+
     # 대상 강의: 비어있으면 전체, 지정하면 해당 강의 수강생만
     target_lectures = models.ManyToManyField(
         "lectures.Lecture",
         blank=True,
-        related_name="clinic_sessions",
+        related_name="clinic_sessions_by_lecture",
         help_text="대상 강의. 비어있으면 전체 학생.",
     )
+
+    memo = models.TextField(blank=True, default="", help_text="세션 메모 (운영용)")
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -10,10 +10,11 @@ class SessionFilter(django_filters.FilterSet):
     date_to = django_filters.DateFilter(field_name="date", lookup_expr="lte")
     target_grade = django_filters.NumberFilter(field_name="target_grade")
     target_school_type = django_filters.CharFilter(field_name="target_school_type")
+    section = django_filters.NumberFilter(field_name="section_id")
 
     class Meta:
         model = Session
-        fields = ["date", "location", "target_grade", "target_school_type"]
+        fields = ["date", "location", "target_grade", "target_school_type", "section"]
 
 
 class ParticipantFilter(django_filters.FilterSet):

@@ -15,6 +15,10 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     created_by = serializers.PrimaryKeyRelatedField(read_only=True)
 
+    # section FK: 쓰기 시 section_id, 읽기 시 id+label
+    section_label = serializers.CharField(source="section.label", read_only=True, default=None)
+    section_type = serializers.CharField(source="section.section_type", read_only=True, default=None)
+
     # 대상 강의: 쓰기 시 id 배열, 읽기 시 id+title
     target_lecture_ids = serializers.PrimaryKeyRelatedField(
         source="target_lectures",
@@ -31,6 +35,9 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
             self.fields["target_lecture_ids"].child_relation.queryset = (
                 Lecture.objects.filter(tenant=request.tenant)
             )
+            if "section" in self.fields:
+                from apps.domains.lectures.models import Section
+                self.fields["section"].queryset = Section.objects.filter(tenant=request.tenant)
 
     # ✅ 파생 필드: 종료 시간 (저장 X)
     end_time = serializers.SerializerMethodField()
@@ -286,6 +293,7 @@ class ClinicSessionBulkCreateSerializer(serializers.Serializer):
     max_participants = serializers.IntegerField(min_value=1, default=20)
     target_grade = serializers.IntegerField(required=False, allow_null=True, default=None)
     target_school_type = serializers.CharField(required=False, allow_null=True, default=None)
+    section_id = serializers.IntegerField(required=False, allow_null=True, default=None)
     target_lecture_ids = serializers.ListField(
         child=serializers.IntegerField(), required=False, default=[]
     )

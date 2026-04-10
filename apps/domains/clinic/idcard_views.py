@@ -66,11 +66,16 @@ class StudentClinicIdcardView(APIView):
                 "current_result": "SUCCESS",
             })
 
-        sessions = list(
-            LectureSession.objects
-            .filter(lecture=enrollment.lecture)
-            .order_by("order")
-        )
+        # section_mode 대응: 학생이 배정된 반의 세션만 조회
+        session_qs = LectureSession.objects.filter(lecture=enrollment.lecture)
+        try:
+            from apps.domains.lectures.models import SectionAssignment
+            sa = SectionAssignment.objects.filter(enrollment=enrollment).first()
+            if sa and sa.class_section_id:
+                session_qs = session_qs.filter(section_id=sa.class_section_id)
+        except Exception:
+            pass
+        sessions = list(session_qs.order_by("order"))
         enrollment_id = enrollment.id
         clinic_links = set(
             ClinicLink.objects.filter(
