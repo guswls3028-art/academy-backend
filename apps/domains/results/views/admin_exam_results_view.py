@@ -110,7 +110,7 @@ class AdminExamResultsView(ListAPIView):
             if eid not in latest_map:
                 latest_map[eid] = {
                     "attempt_id": int(row["attempt_id"]),
-                    "submission_id": int(row["submission_id"]),
+                    "submission_id": int(row["submission_id"]) if row["submission_id"] is not None else 0,
                 }
 
         # Result.attempt_id fallback (현재 페이지 결과만)
@@ -131,7 +131,7 @@ class AdminExamResultsView(ListAPIView):
             if (eid not in latest_map) or (not latest_map[eid].get("submission_id")):
                 latest_map[eid] = {
                     "attempt_id": int(a.id),
-                    "submission_id": int(a.submission_id),
+                    "submission_id": int(a.submission_id) if a.submission_id is not None else 0,
                 }
 
         # Submission.status (현재 페이지에서 참조하는 submission만)
