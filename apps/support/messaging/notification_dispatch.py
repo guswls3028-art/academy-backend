@@ -75,7 +75,7 @@ def build_attendance_preview(
     solapi_template_id = (template.solapi_template_id or "").strip() if template else ""
     solapi_approved = solapi_template_id and template.solapi_status == "APPROVED" if template else False
 
-    # ── 통합 알림톡 템플릿 감지 (개별 APPROVED 없어도 통합 4종으로 발송 가능) ──
+    # ── 통합 알림톡 템플릿 감지 (통합 4종이 있으면 항상 우선 사용) ──
     from apps.support.messaging.alimtalk_content_builders import (
         get_solapi_template_id as get_unified_tid,
         get_template_type,
@@ -83,8 +83,8 @@ def build_attendance_preview(
     )
     unified_tid = get_unified_tid(trigger)
     use_unified = bool(unified_tid)
-    if use_unified and not solapi_approved:
-        # 개별 APPROVED 없지만 통합 템플릿 존재 → 통합 사용
+    if use_unified:
+        # 통합 템플릿 존재 → 개별 APPROVED 여부와 무관하게 항상 통합 사용
         solapi_template_id = unified_tid
         solapi_approved = True
 
@@ -233,7 +233,7 @@ def build_student_list_preview(
     solapi_template_id = (template.solapi_template_id or "").strip() if template else ""
     solapi_approved = solapi_template_id and template.solapi_status == "APPROVED" if template else False
 
-    # ── 통합 알림톡 템플릿 감지 (개별 APPROVED 없어도 통합 4종으로 발송 가능) ──
+    # ── 통합 알림톡 템플릿 감지 (통합 4종이 있으면 항상 우선 사용) ──
     from apps.support.messaging.alimtalk_content_builders import (
         get_solapi_template_id as get_unified_tid,
         get_template_type,
@@ -241,7 +241,7 @@ def build_student_list_preview(
     )
     unified_tid = get_unified_tid(trigger)
     use_unified = bool(unified_tid)
-    if use_unified and not solapi_approved:
+    if use_unified:
         solapi_template_id = unified_tid
         solapi_approved = True
 
