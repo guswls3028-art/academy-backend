@@ -1,16 +1,14 @@
 # apps/domains/assets/omr/services/meta_generator.py
 """
-OMR v13 좌표 메타 생성기 — SSOT
+OMR v14 좌표 메타 생성기 — SSOT
 
 이 파일은 pdf_renderer.py(렌더링 SSOT)와 동기화된 mm 단위 좌표를 정의한다.
 
-v13 변경:
-  - 코너 마커 8mm로 확대 (인식률 향상)
-  - 에지 인식 마크 추가 (상하좌우 촘촘 배치)
-  - 페이지 외곽 테두리 3pt 추가
-  - 섹션 외곽 테두리 2.5pt로 강화
-  - 타이밍 마크 시스템 유지 (수능 스타일)
-  - 4코너 비대칭 기준 마크(markers) 유지
+v14 변경 (v13 대비):
+  - 코너 마커 5mm 비대칭 채움 도형 + ㄱ자 브래킷 (마커 off=2.5, 브래킷 분리)
+  - 인식 마크: 버블 좌표에 정렬된 1.5mm 사각형 (컬럼 x, 행 y 기준점)
+  - 통합 프레임 (v8 깔끔 톤, 부드러운 회색 선)
+  - 4코너 비대칭 기준 마크(markers) 유지 (TL=square, TR=L, BL=triangle, BR=plus)
   - identifier / MC column 로컬 앵커 유지
 
 AI 워커는 이 메타를 사용하여 스캔된 이미지에서 버블 위치를 찾는다.
@@ -154,10 +152,10 @@ def _calc_bubble_centers_x(col_x: float, n_choices: int) -> List[float]:
 
 
 def _build_marker_meta() -> Dict[str, Any]:
-    """v14 4코너 비대칭 기준 마크 좌표 — 소형 채움 도형 + ㄱ자 브래킷.
+    """v14 4코너 비대칭 기준 마크 좌표 — 5mm 채움 도형 + ㄱ자 브래킷.
 
     pdf_renderer._corners()와 동기화.
-    마커 크기 4mm (v13 8mm에서 축소), 팔 두께 1.2mm.
+    마커 크기 5mm, 팔 두께 1.5mm, 오프셋 2.5mm.
     """
     off = 2.5   # 페이지 가장자리 오프셋
     sz = 5.0    # 마커 크기
@@ -196,7 +194,7 @@ def build_omr_meta(
     n_choices: int = 5,
     essay_count: int = 0,
 ) -> Dict[str, Any]:
-    """OMR 메타 생성 (좌표 SSOT). v13: 8mm 코너마커 + 에지마크 + 굵은 외곽."""
+    """OMR 메타 생성 (좌표 SSOT). v14: 5mm 비대칭 마커 + 버블 정렬 인식마크."""
     layout = compute_safe_layout(question_count)
     per_col = layout["per_col"]
     n_cols = layout["n_cols"]
@@ -277,7 +275,7 @@ def build_omr_meta(
     )
 
     return {
-        "version": "v13",
+        "version": "v14",
         "units": "mm",
         "page": {"width": PAGE_W, "height": PAGE_H},
         "markers": _build_marker_meta(),
@@ -297,103 +295,83 @@ def build_omr_meta(
     }
 
 
-# ── 타이밍 마크 상수 v12 (pdf_renderer와 동기화 — 수능 스타일) ──
-
-# 상하단 바코드 바
-TM_BAR_H = 2.5        # 바 높이 (mm)
-TM_BAR_W = 6.0        # 개별 바 폭 (mm)
-TM_BAR_GAP = 2.0      # 바 사이 간격 (mm)
-TM_TOP_Y = -5.0       # CONTENT_Y 위로 5mm
-TM_BOT_Y = 2.5        # CONTENT_Y + CONTENT_H 아래로 2.5mm
-
-# 좌우 행 바 (5행 간격만 — 외곽 컬럼만, 테두리에서 gap만큼 떨어짐)
-TM_G5_LEN = 2.5       # 5행 돌출 길이
-TM_G10_LEN = 3.5      # 10행 돌출 길이
-TM_H_G5 = 0.8         # 5행 바 높이
-TM_H_G10 = 1.2        # 10행 바 높이
-TM_GAP = 0.5          # 컬럼 테두리에서 간격
+# ── 인식 마크 상수 v14 (pdf_renderer._render_timing과 동기화) ──
+# 버블 좌표에 정렬된 1.5mm 사각형 — AI가 컬럼 x / 행 y 보정에 사용
+TM_MK_SIZE = 1.5      # 마크 크기 (mm)
 
 
 def _build_timing_marks_meta(
     *, n_cols: int, per_col: int, question_count: int,
     body_y: float, body_h: float,
 ) -> Dict[str, Any]:
-    """v12 타이밍 마크 좌표 생성 (pdf_renderer._timing_marks와 동기화).
+    """v14 인식 마크 좌표 생성 (pdf_renderer._render_timing과 동기화).
 
-    수능 스타일:
-    - 상하단: 답안 영역 전체 폭에 균일 간격 바코드 바
-    - 좌우: 모든 컬럼에 행 바 (5행/10행 강조)
-    - 갭 내 중간 컬럼은 돌출 길이 축소
+    버블 좌표에 정렬된 기준점:
+    - 상하단: 각 MC 컬럼의 버블 시작 x와 끝 x에 사각형
+    - 좌우: 5행마다 행 경계에 사각형
     """
-    # ── 상하단 바코드 바 ──
-    ans_start = ANS_X
-    ans_end = ANS_X + n_cols * MC_COL_W + max(0, n_cols - 1) * MC_COL_GAP
-    total_w = ans_end - ans_start
-    n_bars = max(1, int(total_w / (TM_BAR_W + TM_BAR_GAP)))
-    actual_gap = (total_w - n_bars * TM_BAR_W) / max(1, n_bars - 1) if n_bars > 1 else 0
+    mk = TM_MK_SIZE
 
-    top_bottom_bars: List[Dict[str, Any]] = []
-    for pos_label, bar_y in [("top", CONTENT_Y + TM_TOP_Y), ("bottom", CONTENT_Y + CONTENT_H + TM_BOT_Y)]:
-        for bi in range(n_bars):
-            bx = ans_start + bi * (TM_BAR_W + actual_gap)
-            top_bottom_bars.append({
-                "position": pos_label,
-                "index": bi,
-                "x": round(bx, 2),
-                "y": round(bar_y, 2),
-                "w": TM_BAR_W,
-                "h": TM_BAR_H,
-            })
-
-    # ── 좌우 행 바 (5행 간격만, 외곽 컬럼만) ──
-    row_bars: List[Dict[str, Any]] = []
+    # ── 상하단: MC 컬럼 버블 시작/끝 x에 마크 ──
+    column_marks: List[Dict[str, Any]] = []
     for ci in range(n_cols):
         col_x = ANS_X + ci * (MC_COL_W + MC_COL_GAP)
-        s = ci * per_col + 1
-        e = min(s + per_col - 1, question_count)
+        bub_start_x = col_x + MC_NUM_W
+        col_end_x = col_x + MC_COL_W
+
+        for x_mm in [bub_start_x, col_end_x]:
+            column_marks.append({
+                "position": "top", "column": ci,
+                "x": round(x_mm - mk / 2, 2),
+                "y": round(1.5, 2),
+                "w": mk, "h": mk,
+            })
+            column_marks.append({
+                "position": "bottom", "column": ci,
+                "x": round(x_mm - mk / 2, 2),
+                "y": round(PAGE_H - 1.5 - mk, 2),
+                "w": mk, "h": mk,
+            })
+
+    # ── 좌우: 5행마다 행 경계에 마크 ──
+    row_marks: List[Dict[str, Any]] = []
+
+    # 좌측: 첫 컬럼 기준
+    if n_cols > 0:
+        s = 1
+        e = min(per_col, question_count)
         cnt = e - s + 1
-        if cnt <= 0:
-            continue
-        rh = body_h / cnt
-
-        is_first = (ci == 0)
-        is_last = (ci == n_cols - 1)
-
-        for qi in range(cnt):
-            g10 = (qi % 10 == 0) and qi > 0
-            g5 = (qi % 5 == 0)
-            if not g5:
-                continue
-
-            rc = body_y + (qi + 0.5) * rh
-            tm_len = TM_G10_LEN if g10 else TM_G5_LEN
-            tm_h = TM_H_G10 if g10 else TM_H_G5
-
-            # 좌측: 첫 컬럼만
-            if is_first:
-                row_bars.append({
-                    "column": ci, "row": qi, "side": "left",
-                    "emphasis": "g10" if g10 else "g5",
-                    "x": round(col_x - TM_GAP - tm_len, 2),
-                    "y": round(rc - tm_h / 2, 2),
-                    "w": round(tm_len, 2),
-                    "h": tm_h,
+        if cnt > 0:
+            rh = body_h / cnt
+            for qi in range(0, cnt + 1, 5):
+                row_y = body_y + qi * rh
+                row_marks.append({
+                    "side": "left", "row": qi,
+                    "x": round(1.0, 2),
+                    "y": round(row_y - mk / 2, 2),
+                    "w": mk, "h": mk,
                 })
 
-            # 우측: 마지막 컬럼만
-            if is_last:
-                row_bars.append({
-                    "column": ci, "row": qi, "side": "right",
-                    "emphasis": "g10" if g10 else "g5",
-                    "x": round(col_x + MC_COL_W + TM_GAP, 2),
-                    "y": round(rc - tm_h / 2, 2),
-                    "w": round(tm_len, 2),
-                    "h": tm_h,
+    # 우측: 마지막 컬럼 기준
+    if n_cols > 0:
+        last_ci = n_cols - 1
+        s = last_ci * per_col + 1
+        e = min(s + per_col - 1, question_count)
+        cnt = e - s + 1
+        if cnt > 0:
+            rh = body_h / cnt
+            for qi in range(0, cnt + 1, 5):
+                row_y = body_y + qi * rh
+                row_marks.append({
+                    "side": "right", "row": qi,
+                    "x": round(PAGE_W - 1.0 - mk, 2),
+                    "y": round(row_y - mk / 2, 2),
+                    "w": mk, "h": mk,
                 })
 
     return {
-        "top_bottom_bars": top_bottom_bars,
-        "row_bars": row_bars,
+        "column_marks": column_marks,
+        "row_marks": row_marks,
     }
 
 

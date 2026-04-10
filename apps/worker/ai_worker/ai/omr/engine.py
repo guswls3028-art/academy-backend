@@ -122,7 +122,7 @@ def detect_omr_answers_v7(
     # --- Column-local alignment (v9+, displacement-gated) ---
     col_transforms: Dict[int, np.ndarray] = {}
     meta_version = meta.get("version", "v8")
-    if meta_version in ("v9", "v10", "v11", "v12", "v13") and meta.get("columns"):
+    if meta_version in ("v9", "v10", "v11", "v12", "v13", "v14") and meta.get("columns"):
         raw_transforms = _compute_column_transforms(
             gray=gray, scale=scale, columns_meta=meta["columns"],
         )
@@ -352,7 +352,8 @@ def _compute_bubble_score(
     binary_roi = binary[y1:y2, x1:x2]
     gray_roi = gray[y1:y2, x1:x2]
 
-    # --- Fill ratio ---
+    # --- Elliptical mask (fill_ratio + raw_darkness 공용) ---
+    mask: Optional[np.ndarray] = None
     if config.use_elliptical_mask:
         mask = np.zeros((roi_h, roi_w), dtype=np.uint8)
         cv2.ellipse(
@@ -361,6 +362,9 @@ def _compute_bubble_score(
             (roi_w // 2, roi_h // 2),
             0, 0, 360, 255, -1,
         )
+
+    # --- Fill ratio ---
+    if mask is not None:
         filled_pixels = np.count_nonzero(cv2.bitwise_and(binary_roi, mask))
         total_pixels = np.count_nonzero(mask)
         fill_ratio = float(filled_pixels) / max(1, total_pixels)
@@ -389,9 +393,9 @@ def _compute_bubble_score(
     # CLAHE가 지역적으로 명암을 평탄화하면 darkness가 왜곡됨.
     # 원본 gray의 평균 밝기로 마킹 여부를 가장 안정적으로 판별.
     raw_roi = gray_raw[y1:y2, x1:x2]
-    if config.use_elliptical_mask:
-        raw_masked = cv2.bitwise_and(raw_roi, mask) if raw_roi.shape == mask.shape else raw_roi
-        raw_pixels = raw_masked[mask > 0] if raw_roi.shape == mask.shape else raw_roi.flatten()
+    if mask is not None and raw_roi.shape == mask.shape:
+        raw_masked = cv2.bitwise_and(raw_roi, mask)
+        raw_pixels = raw_masked[mask > 0]
     else:
         raw_pixels = raw_roi.flatten()
     raw_mean = float(np.mean(raw_pixels)) if raw_pixels.size > 0 else 255.0
