@@ -291,30 +291,29 @@ class OMRPdfRenderer:
         t_phone = t_name + H_NAME
         t_note = t_phone + H_PHONE
 
-        # 0) 통합 프레임 (직각)
-        c.setStrokeColor(C1); c.setLineWidth(S1)
-        c.rect(x, _y(CONTENT_Y + CONTENT_H), w, _mm(CONTENT_H), stroke=1, fill=0)
-
-        # (브랜드 컬러 바 제거 — 흑백 인쇄 전용)
-
+        # 내부 요소 먼저 (fill → line → text)
         # 1) 로고+제목
         self._logo_title(c, doc, x, w, t_logo, H_LOGO)
 
-        # 2) 성명 — 내부 구분선 (프레임 안에서)
-        c.setStrokeColor(C2); c.setLineWidth(S2)
-        c.line(x, _y(t_name), x + w, _y(t_name))
+        # 2) 성명
         _header(c, x, w, t_name, "성 명")
+        c.setStrokeColor(C1); c.setLineWidth(S1)
+        c.line(x, _y(t_name), x + w, _y(t_name))
 
-        # 3) 전화번호 — 내부 구분선
-        c.setStrokeColor(C2); c.setLineWidth(S2)
-        c.line(x, _y(t_phone), x + w, _y(t_phone))
+        # 3) 전화번호
         _header(c, x, w, t_phone, "학생 식별번호 (전화번호 뒤 8자리)")
+        c.setStrokeColor(C1); c.setLineWidth(S1)
+        c.line(x, _y(t_phone), x + w, _y(t_phone))
         self._phone(c, x, w, t_phone)
 
-        # 4) 안내 — 내부 구분선
-        c.setStrokeColor(C2); c.setLineWidth(S2)
+        # 4) 안내
+        c.setStrokeColor(C1); c.setLineWidth(S1)
         c.line(x, _y(t_note), x + w, _y(t_note))
         self._note(c, x, w, t_note)
+
+        # 외곽 프레임 — 맨 마지막 (fill에 덮이지 않음)
+        c.setStrokeColor(C1); c.setLineWidth(S1)
+        c.rect(x, _y(CONTENT_Y + CONTENT_H), w, _mm(CONTENT_H), stroke=1, fill=0)
 
         # 5) QR 예약 영역 (안내 카드 우하단)
         qr_x = x + w - _mm(9)
@@ -578,19 +577,16 @@ class OMRPdfRenderer:
             cnt = se - ss + 1
             rh = bh / cnt if cnt > 0 else bh
 
-            # 헤더: 1행 구조 — 간결. "번호 | ①②③④⑤"
+            # 헤더: "번호 | 객관식 1번 ~ 20번" 또는 "번호 | 서술형 N문항"
             c.setFont(_FB, 5.5); c.setFillColor(CT2)
             c.drawCentredString(sxp + nw / 2, ft - hh + _mm(1.5), "번호")
             if typ == 'mc':
-                ax = sx + MC_NUM_W + MC_BUB_PAD
-                aw = dw - MC_NUM_W - 2 * MC_BUB_PAD
-                bgap = (aw - nc * BUB_W) / (nc + 1)
-                c.setFont(_FB, 6.5); c.setFillColor(CT2)
-                for j in range(nc):
-                    bx_mm = ax + bgap * (j + 1) + BUB_W * j + BUB_W / 2
-                    c.drawCentredString(_mm(bx_mm), ft - hh + _mm(1.5),
-                                        _CIRCLED[j] if j < len(_CIRCLED) else str(j + 1))
+                lb = f"객관식 {ss}번 ~ {se}번"
+                c.setFont(_FB, 6); c.setFillColor(CT2)
+                c.drawCentredString(sxp + nw + (vwp - nw) / 2,
+                                    ft - hh + _mm(1.5), lb)
             else:
+                c.setFont(_FB, 6); c.setFillColor(CT2)
                 c.drawCentredString(sxp + nw + (vwp - nw) / 2,
                                     ft - hh + _mm(1.5), f"서술형 {cnt}문항")
 
