@@ -55,20 +55,28 @@ class LectureViewSet(ModelViewSet):
             qs = qs.exclude(is_system=True)
         return qs
 
+    def _handle_title_integrity_error(self, e):
+        """UniqueConstraint(tenant, title) 위반 시 사용자 친화적 에러 메시지 반환"""
+        error_msg = str(e).lower()
+        if "uniq_lecture_title_per_tenant" in error_msg or "title" in error_msg:
+            raise ValidationError(
+                {"title": "이미 같은 이름의 강의가 있습니다. 다른 이름을 입력해 주세요."}
+            )
+        raise
+
     def perform_create(self, serializer):
-        """
-        🔐 Lecture 생성 시 tenant 강제 주입
-        UniqueConstraint(tenant, title) 위반 시 사용자 친화적 에러 메시지 반환
-        """
+        """🔐 Lecture 생성 시 tenant 강제 주입"""
         try:
             serializer.save(tenant=self.request.tenant)
         except IntegrityError as e:
-            error_msg = str(e).lower()
-            if "uniq_lecture_title_per_tenant" in error_msg or "title" in error_msg:
-                raise ValidationError(
-                    {"title": "이미 같은 이름의 강의가 있습니다. 다른 이름을 입력해 주세요."}
-                )
-            raise
+            self._handle_title_integrity_error(e)
+
+    def perform_update(self, serializer):
+        """🔐 Lecture 수정 시 제목 중복 검증"""
+        try:
+            serializer.save()
+        except IntegrityError as e:
+            self._handle_title_integrity_error(e)
 
     @action(detail=False, methods=["get"], url_path="instructor-options")
     def instructor_options(self, request):
@@ -298,7 +306,14 @@ class SectionViewSet(ModelViewSet):
         )
         return qs
 
+    def _require_section_mode(self):
+        from apps.core.models import Program
+        program = Program.objects.filter(tenant=self.request.tenant).first()
+        if not (program and program.feature_flags and program.feature_flags.get("section_mode")):
+            raise PermissionDenied("반 편성 모드가 비활성화된 학원입니다.")
+
     def perform_create(self, serializer):
+        self._require_section_mode()
         lecture = serializer.validated_data["lecture"]
         if lecture.tenant_id != self.request.tenant.id:
             raise PermissionDenied("다른 학원의 강의에 반을 추가할 수 없습니다.")
@@ -317,6 +332,7 @@ class SectionViewSet(ModelViewSet):
         같은 order의 차시를 모든 반에 한번에 생성.
         POST { "lecture_id": 1, "title": "1차시", "dates": {"A": "2026-04-09", "B": "2026-04-10"} }
         """
+        self._require_section_mode()
         tenant = request.tenant
         lecture_id = request.data.get("lecture_id")
         title = request.data.get("title", "")
@@ -369,6 +385,25 @@ class SectionAssignmentViewSet(ModelViewSet):
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["class_section", "clinic_section", "source", "enrollment__lecture"]
 
+    def _get_feature_flags(self):
+        from apps.core.models import Program
+        program = Program.objects.filter(tenant=self.request.tenant).first()
+        return (program.feature_flags or {}) if program else {}
+
+    def _require_section_mode(self):
+        if not self._get_feature_flags().get("section_mode"):
+            raise PermissionDenied("반 편성 모드가 비활성화된 학원입니다.")
+
+    def _validate_clinic_section(self, clinic_section):
+        """clinic_mode="remediation"일 때 clinic_section 배정 거부."""
+        if clinic_section:
+            ff = self._get_feature_flags()
+            if ff.get("clinic_mode", "remediation") != "regular":
+                raise ValidationError(
+                    "보충형 클리닉 모드에서는 클리닉 반 배정을 할 수 없습니다. "
+                    "정규형 클리닉 모드로 변경 후 시도해 주세요."
+                )
+
     def get_queryset(self):
         qs = SectionAssignment.objects.filter(tenant=self.request.tenant)
         qs = qs.select_related(
@@ -380,6 +415,7 @@ class SectionAssignmentViewSet(ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
+        self._require_section_mode()
         enrollment = serializer.validated_data["enrollment"]
         if enrollment.tenant_id != self.request.tenant.id:
             raise PermissionDenied("다른 학원의 수강에 편성할 수 없습니다.")
@@ -391,6 +427,7 @@ class SectionAssignmentViewSet(ModelViewSet):
         if class_section.section_type != "CLASS":
             raise ValidationError("수업 반(class_section)에는 CLASS 타입의 반만 지정할 수 있습니다.")
         clinic_section = serializer.validated_data.get("clinic_section")
+        self._validate_clinic_section(clinic_section)
         if clinic_section:
             if clinic_section.tenant_id != self.request.tenant.id:
                 raise PermissionDenied("다른 학원의 클리닉 반에 배정할 수 없습니다.")
@@ -401,6 +438,7 @@ class SectionAssignmentViewSet(ModelViewSet):
         serializer.save(tenant=self.request.tenant)
 
     def perform_update(self, serializer):
+        self._require_section_mode()
         enrollment = serializer.validated_data.get("enrollment", serializer.instance.enrollment)
         if enrollment.tenant_id != self.request.tenant.id:
             raise PermissionDenied("다른 학원의 수강에 편성할 수 없습니다.")
@@ -412,6 +450,7 @@ class SectionAssignmentViewSet(ModelViewSet):
         if class_section.section_type != "CLASS":
             raise ValidationError("수업 반(class_section)에는 CLASS 타입의 반만 지정할 수 있습니다.")
         clinic_section = serializer.validated_data.get("clinic_section", serializer.instance.clinic_section)
+        self._validate_clinic_section(clinic_section)
         if clinic_section:
             if clinic_section.tenant_id != self.request.tenant.id:
                 raise PermissionDenied("다른 학원의 클리닉 반에 배정할 수 없습니다.")
@@ -437,6 +476,10 @@ class SectionAssignmentViewSet(ModelViewSet):
 
         if not lecture_id:
             raise ValidationError("lecture_id는 필수입니다.")
+
+        self._require_section_mode()
+        if section_type == "CLINIC":
+            self._validate_clinic_section(True)  # truthy → triggers check
 
         lecture = Lecture.objects.filter(id=lecture_id, tenant=tenant).first()
         if not lecture:
