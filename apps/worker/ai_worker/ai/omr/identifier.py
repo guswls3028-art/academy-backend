@@ -321,10 +321,10 @@ def detect_identifier_v1(
 
     scale: PageScale = build_page_scale_from_meta(meta=meta, image_size_px=(w, h))
 
-    # --- Local anchor alignment (v9 only) ---
+    # --- Local anchor alignment (v9+) ---
     id_affine: Optional[np.ndarray] = None
     meta_version = meta.get("version", "v8")
-    if meta_version == "v9" and cfg.use_local_alignment:
+    if meta_version not in ("v8",) and cfg.use_local_alignment:
         anchors_meta = ident.get("anchors", {})
         if anchors_meta:
             id_affine = _detect_id_anchors(gray, scale, anchors_meta)
