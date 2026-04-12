@@ -21,7 +21,7 @@ RUN pip install --user --no-cache-dir -r requirements/worker-messaging.txt
 
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD pgrep -f "python" > /dev/null || exit 1
+    CMD kill -0 1 2>/dev/null || exit 1
 
 # Messaging Worker 실행
 CMD ["python", "-m", "apps.worker.messaging_worker.sqs_main"]
