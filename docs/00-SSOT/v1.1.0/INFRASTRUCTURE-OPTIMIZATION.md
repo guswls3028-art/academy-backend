@@ -21,7 +21,7 @@
 3. **Tenant isolation is absolute.** No change in this document weakens tenant boundaries.
 4. **Correctness over speed.** Fast execution is valued, but never at the cost of data integrity or tenant safety.
 5. **Non-wasteful, not cheap.** Eliminate unjustified waste; do not cut where UX or reliability suffers.
-6. **Zero-downtime deployment must never break.** API uses scale-up + MinHealthyPercentage=50%; workers use MinHealthyPercentage=0% (SQS buffers during refresh).
+6. **Zero-downtime deployment must never break.** API uses scale-up + MinHealthyPercentage=100%; workers use MinHealthyPercentage=0% (SQS buffers during refresh).
 
 ---
 
@@ -416,7 +416,7 @@ AI worker min=1 is an operating principle, not a cost optimization target. The p
 | RDS db.t4g.medium | PostgreSQL query workload; t4g.small has only 2GB RAM |
 | Redis cache.t4g.small | Video progress + session cache; t4g.micro has only 0.5GB |
 | API + Messaging + AI min=1 | Cold start delays hurt UX; always-on gives instant processing. **All workers min=1 is an operating principle.** |
-| MinHealthyPercentage: API=50%, Workers=0% | Zero-downtime via scale-up strategy (API) and SQS buffering (workers) |
+| MinHealthyPercentage: API=100%, Workers=0% | Zero-downtime via scale-up strategy (API) and SQS buffering (workers) |
 
 **What CAN be cut (see §5.1.1):**
 
@@ -451,7 +451,7 @@ AI worker min=1 is an operating principle, not a cost optimization target. The p
 **API 무중단 배포 — Scale-Up 방식:**
 1. 현재 desired=1이면 desired=2로 scale-up
 2. 90초 대기 후 2대 Healthy 확인
-3. Instance refresh 실행 (`MinHealthyPercentage=50%`, `InstanceWarmup=300s`, `SkipMatching=true`)
+3. Instance refresh 실행 (`MinHealthyPercentage=100%`, `InstanceWarmup=120s`, `SkipMatching=false`)
 4. Refresh 완료 후 desired=1로 scale-down
 
 **워커 배포:**
@@ -591,7 +591,7 @@ Step 3: ROLL BACK CODE (image re-tag + ASG refresh)
   $ aws ecr put-image --repository-name academy-api \
       --image-tag latest --image-manifest "$MANIFEST"
   $ aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg \
-      --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300}'
+      --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120}'
 
 Step 4: VERIFY
   - /healthz returns 200

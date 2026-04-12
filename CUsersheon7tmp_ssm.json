@@ -1,1 +1,0 @@
-{"commands":["docker exec academy-api python manage.py scan_stuck_video_jobs --verbosity 2"]}

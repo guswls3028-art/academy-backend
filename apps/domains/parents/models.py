@@ -7,6 +7,7 @@ from apps.core.db import TenantQuerySet
 
 
 class Parent(TimestampModel):
+    # 설계 의도: 폰 없는 학생의 대리 계정. 학부모가 학생 역할로 서비스 이용.
     # 🔐 tenant-safe manager
     objects = TenantQuerySet.as_manager()
 

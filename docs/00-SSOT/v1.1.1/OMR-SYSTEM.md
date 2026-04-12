@@ -98,15 +98,19 @@
 
 ## API 엔드포인트
 
-| Method | Path | 설명 |
-|--------|------|------|
-| POST | `/exams/{id}/generate-omr/` | OMR 메타 + URL 반환 |
-| GET | `/assets/omr/objective/meta/` | 좌표 메타 조회 |
-| POST | `/submissions/exams/{id}/omr/batch/` | 스캔 파일 일괄 업로드 |
+| Method | Path | 설명 | 상태 |
+|--------|------|------|------|
+| GET | `/exams/{id}/omr/defaults/` | OMR 기본값(시험명, 문항수 등) 조회 | **현행** |
+| POST | `/exams/{id}/omr/preview/` | OMR 미리보기 렌더링 | **현행** |
+| POST | `/exams/{id}/omr/pdf/` | OMR PDF 생성·다운로드 | **현행** |
+| POST | `/exams/{id}/generate-omr/` | OMR 메타 + URL 반환 | ⚠️ **deprecated** |
+| GET | `/assets/omr/objective/meta/` | 좌표 메타 조회 | 현행 |
+| POST | `/submissions/exams/{id}/omr/batch/` | 스캔 파일 일괄 업로드 | 현행 |
 
 ## 버전 이력
 
 | 버전 | 날짜 | 변경 |
 |------|------|------|
-| v7 | 2026-03-19 | HTML SSOT 기반 전면 재설계. 기존 v245_final.py(reportlab PDF) 완전 제거. |
+| v14 | 2026-04 | reportlab 기반 `pdf_renderer.py`로 재구현. `/omr/defaults/`, `/omr/preview/`, `/omr/pdf/` 3종 엔드포인트 추가. `generate-omr/`은 deprecated. |
+| v7 | 2026-03-19 | HTML SSOT 기반 전면 재설계. 기존 v245_final.py 삭제. |
 | v245_final | ~ 2026-03-18 | 구 reportlab 기반 PDF 렌더러 (삭제됨) |

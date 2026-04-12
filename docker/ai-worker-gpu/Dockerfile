@@ -41,7 +41,7 @@ RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements/worker-ai-gpu.txt
 
 # 애플리케이션 코드
-COPY src ./src
+COPY academy ./academy
 COPY apps ./apps
 COPY libs ./libs
 COPY scripts ./scripts

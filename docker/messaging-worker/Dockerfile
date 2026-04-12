@@ -8,7 +8,6 @@ ARG BASE_IMAGE=academy-base:latest
 FROM ${BASE_IMAGE} AS base
 
 USER root
-COPY src ./src
 COPY academy ./academy
 COPY apps ./apps
 COPY libs ./libs

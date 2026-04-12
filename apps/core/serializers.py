@@ -176,9 +176,15 @@ class ProgramUpdateSerializer(serializers.ModelSerializer):
         return value
 
     def validate_feature_flags(self, value):
-        """기능 플래그 변경은 owner만 가능."""
+        """기능 플래그 변경은 owner만 가능. clinic_mode="regular"는 section_mode=true 필수."""
         if not self._is_owner_or_superuser():
             raise serializers.ValidationError("기능 설정 변경은 대표만 가능합니다.")
+        if isinstance(value, dict):
+            if value.get("clinic_mode") == "regular" and not value.get("section_mode"):
+                raise serializers.ValidationError(
+                    "정규형 클리닉 모드(clinic_mode=regular)는 반 편성 모드(section_mode)가 "
+                    "활성화되어야 사용할 수 있습니다."
+                )
         return value
 
 

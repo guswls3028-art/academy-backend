@@ -33,5 +33,9 @@ class AdminClinicTargetsView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response([], status=200)
-        rows = ClinicTargetService.list_admin_targets(tenant=tenant)
+        section_id = request.query_params.get("section_id")
+        section_id = int(section_id) if section_id else None
+        rows = ClinicTargetService.list_admin_targets(
+            tenant=tenant, section_id=section_id,
+        )
         return Response(AdminClinicTargetSerializer(rows, many=True).data)

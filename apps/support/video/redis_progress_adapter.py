@@ -1,7 +1,7 @@
 """Video Progress Adapter - Video 전용 (AI와 분리, IProgress 인터페이스 구현)"""
 from typing import Any, Optional
 from libs.redis.client import get_redis_client
-from src.application.ports.progress import IProgress
+from academy.application.ports.progress import IProgress
 import json
 import logging
 

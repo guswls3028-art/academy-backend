@@ -6,7 +6,7 @@
 >  
 > **alias 정책:** `PATH-ALIAS-POLICY.md`
 
-**현재 운영 기준 문서 버전(배포/CI): V1.1.0**
+**현재 운영 기준 버전: V1.1.1** (배포/CI 문서 SSOT: `v1.1.0/`)
 
 ---
 
@@ -24,8 +24,8 @@
 
 | 버전 | 상태 | 설명 |
 |------|------|------|
-| [v1.1.0/](v1.1.0/) | **ACTIVE** | 무중단 배포 인프라 |
-| [v1.1.1/](v1.1.1/) | **DOMAIN SSOT** | 메시징/커뮤니티/운영 정책 등 도메인 기준 문서 묶음 (배포 파이프라인 기준 아님) |
+| [v1.1.1/](v1.1.1/) | **CURRENT** | 현재 운영 버전 — 도메인 SSOT (메시징/OMR/커뮤니티/운영정책) |
+| [v1.1.0/](v1.1.0/) | **INFRA SSOT** | 배포/CI 아키텍처 기준 문서 (인프라 변경 없으므로 유지) |
 
 ---
 
@@ -34,11 +34,8 @@
 | 버전 | 설명 |
 |------|------|
 | [archive/v1.0.3/](archive/v1.0.3/) | Video infrastructure hardening |
-| [archive/v1.0.2/](archive/v1.0.2/) | Subscription/billing, video social |
-| [archive/v1.0.1/](archive/v1.0.1/) | CSS tokens, tenant isolation |
-| [archive/v1.0.0/](archive/v1.0.0/) | Initial v1 infrastructure setup |
-| [archive/v4/](archive/v4/) | Legacy v4 infrastructure |
-| [archive/v3/](archive/v3/) | Legacy v3 |
+
+> v1.0.0 ~ v1.0.2, v3, v4, legacy_reports는 2026-04-10 정리 시 삭제됨.
 
 ---
 
@@ -48,10 +45,3 @@
 - **SSOT(배포/CI 문서)**: 배포 아키텍처는 `v1.1.0/`을 기준으로 한다.
 - **봉인 버전**: 아카이브된 버전 문서는 수정하지 않는다.
 - **충돌 시**: 실행 코드(scripts, workflows, Dockerfile) > SSOT 문서 > 기타 문서.
-
-## stale 경로 경고
-
-- `docs/00-SSOT/v1/...` 표기는 과거 별칭/레거시 표기입니다.
-- 실제 폴더 기준 경로를 우선 사용하세요:
-  - `docs/00-SSOT/params.yaml`
-  - `docs/00-SSOT/v1.1.0/...`

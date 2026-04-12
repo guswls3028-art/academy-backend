@@ -179,6 +179,18 @@ class StudentProfileView(APIView):
         if "school_type" in data:
             st = (data.get("school_type") or "").strip().upper()
             if st in ("ELEMENTARY", "MIDDLE", "HIGH"):
+                from apps.domains.students.services.school import get_valid_school_types
+                from apps.core.models import Program
+                program = Program.objects.filter(tenant=student.tenant).first()
+                slm = program.feature_flags.get("school_level_mode") if program and program.feature_flags else None
+                valid_types = get_valid_school_types(slm)
+                if st not in valid_types:
+                    labels = {"ELEMENTARY": "초등", "MIDDLE": "중등", "HIGH": "고등"}
+                    allowed = ", ".join(labels.get(t, t) for t in sorted(valid_types))
+                    return Response(
+                        {"detail": f"이 학원에서는 {allowed}만 선택할 수 있습니다."},
+                        status=400,
+                    )
                 student.school_type = st
                 update_fields.append("school_type")
         if "elementary_school" in data:

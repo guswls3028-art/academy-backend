@@ -115,8 +115,8 @@
 | `clinic_self_study_completed` | clinic_info | clinic_check_out 통합 |
 | `clinic_result_notification` | clinic_info | |
 | `counseling_reservation_created` | clinic_info | |
-| `clinic_reservation_changed` | clinic_info | clinic_change 대신 clinic_info 사용 (카카오 3073 에러) |
-| `clinic_cancelled` | clinic_info | 동일 사유로 clinic_info 사용 |
+| `clinic_reservation_changed` | clinic_change | 기존일정/변동사항/수정자 변수 사용 |
+| `clinic_cancelled` | clinic_change | |
 | `check_in_complete` | attendance | |
 | `absent_occurred` | attendance | |
 | `lecture_session_reminder` | attendance | |
@@ -130,7 +130,7 @@
 | `assignment_not_submitted` | score | |
 | `monthly_report_generated` | score | |
 
-**참고:** `clinic_reservation_changed`와 `clinic_cancelled`는 원래 `clinic_change` 템플릿이 맞지만, 카카오 하이라이트 길이 제한 3073 에러로 `clinic_info`를 사용 (line 59-61 주석).
+**참고:** `clinic_reservation_changed`와 `clinic_cancelled`는 `clinic_change` 템플릿을 사용하여 기존일정/변동사항/수정자 변수를 ITEM_LIST에 표시.
 
 ---
 
@@ -466,7 +466,7 @@ SHA-256(canonical) -> 64자 hex
 | 에러 | 의미 | 발생 조건 |
 |------|------|-----------|
 | 3063 | 잘못된 파라미터 | 등록 변수 누락 또는 변수명 불일치 |
-| 3073 | 하이라이트 길이 제한 | ITEM_LIST 하이라이트 항목 길이 초과 (clinic_change에서 발생하여 clinic_info로 전환한 사유) |
+| 3043 | 아이템 하이라이트 불일치 | templateItem/templateItemHighlight 불일치 (카카오 공식 코드) |
 | 3076 | 변수값 길이 초과 | 변수 값이 23자 초과 |
 
 ---

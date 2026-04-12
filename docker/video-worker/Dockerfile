@@ -9,7 +9,6 @@ FROM ${BASE_IMAGE} AS base
 
 USER root
 # 앱 코드 (Base에 두지 않음)
-COPY src ./src
 COPY academy ./academy
 COPY apps ./apps
 COPY libs ./libs
@@ -28,9 +27,8 @@ RUN mkdir -p /tmp/video-worker /tmp/video-worker-locks && chown -R appuser:appus
 
 USER appuser
 # Shared requirements (API + Worker same file)
-COPY requirements/constraints.txt .
-COPY requirements/requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+COPY requirements/constraints.txt requirements/requirements.txt ./requirements/
+RUN pip install --user --no-cache-dir -r requirements/requirements.txt
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD pgrep -f "python" > /dev/null || exit 1

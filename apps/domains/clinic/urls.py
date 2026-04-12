@@ -7,9 +7,9 @@ from .views import (
     ParticipantViewSet,
     TestViewSet,
     SubmissionViewSet,
+    ClinicSettingsView,
+    StudentClinicIdcardView,
 )
-from .idcard_views import StudentClinicIdcardView
-from .views import ClinicSettingsView
 
 router = DefaultRouter()
 router.register("sessions", SessionViewSet, basename="clinic-session")

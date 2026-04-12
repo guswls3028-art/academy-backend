@@ -6,14 +6,49 @@
 # 로컬 한 번에 빌드·실행:
 #   1) 베이스 이미지 빌드: docker build -f docker/Dockerfile.base -t academy-base:latest .
 #   2) 서비스 기동:         docker compose up --build
-# 또는 (베이스 이미지 이미 있을 때): docker compose up --build
-#
-# 각 서비스는 .env 파일을 로드하며, api/video-worker/messaging-worker는
-# 로컬 소스(src, apps, libs)를 /app에 볼륨 매핑하여 개발 편의를 제공합니다.
 # ==============================================================================
 
-version: '3.8'
+# ── 공통 설정 (YAML 앵커) ────────────────────────────────────────────────────
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
 
+x-base-build: &base-build
+  context: .
+  target: base
+  args:
+    BASE_IMAGE: academy-base:latest
+
+x-common-env: &common-env
+  DB_NAME: ${DB_NAME}
+  DB_USER: ${DB_USER}
+  DB_PASSWORD: ${DB_PASSWORD}
+  DB_HOST: ${DB_HOST:-postgres}
+  DB_PORT: ${DB_PORT:-5432}
+  REDIS_HOST: ${REDIS_HOST:-redis}
+  REDIS_PORT: ${REDIS_PORT:-6379}
+  REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  REDIS_DB: ${REDIS_DB:-0}
+  R2_ACCESS_KEY: ${R2_ACCESS_KEY}
+  R2_SECRET_KEY: ${R2_SECRET_KEY}
+  R2_ENDPOINT: ${R2_ENDPOINT}
+  AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+
+x-worker-env: &worker-env
+  <<: *common-env
+  DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
+  API_BASE_URL: ${API_BASE_URL:-http://api:8000}
+  INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
+
+x-dev-volumes: &dev-volumes
+  - ./academy:/app/academy
+  - ./apps:/app/apps
+  - ./libs:/app/libs
+  - ./manage.py:/app/manage.py
+
+# ── 서비스 ───────────────────────────────────────────────────────────────────
 services:
   # ============================================================================
   # PostgreSQL 데이터베이스 (개발용)
@@ -61,132 +96,72 @@ services:
   # ============================================================================
   api:
     build:
-      context: .
+      <<: *base-build
       dockerfile: docker/api/Dockerfile
-      target: base
-      args:
-        BASE_IMAGE: academy-base:latest
     image: academy-api:latest
     container_name: academy-api
     env_file: .env
     environment:
-      # Django 설정
+      <<: *common-env
+      # Django
       SECRET_KEY: ${SECRET_KEY}
       DEBUG: ${DEBUG:-false}
       DJANGO_SETTINGS_MODULE: ${DJANGO_SETTINGS_MODULE:-apps.api.config.settings.prod}
-      
-      # Database
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_HOST: ${DB_HOST:-postgres}
-      DB_PORT: ${DB_PORT:-5432}
       DB_CONN_MAX_AGE: ${DB_CONN_MAX_AGE:-60}
-      
-      # Cloudflare R2 Storage
-      R2_ACCESS_KEY: ${R2_ACCESS_KEY}
-      R2_SECRET_KEY: ${R2_SECRET_KEY}
-      R2_ENDPOINT: ${R2_ENDPOINT}
+      # R2 Buckets
       R2_PUBLIC_BASE_URL: ${R2_PUBLIC_BASE_URL:-}
       R2_AI_BUCKET: ${R2_AI_BUCKET:-academy-ai}
       R2_VIDEO_BUCKET: ${R2_VIDEO_BUCKET:-academy-video}
       R2_EXCEL_BUCKET: ${R2_EXCEL_BUCKET:-academy-excel}
-      
       # CDN
       CDN_HLS_BASE_URL: ${CDN_HLS_BASE_URL}
       CDN_HLS_SIGNING_SECRET: ${CDN_HLS_SIGNING_SECRET:-}
       CDN_HLS_SIGNING_KEY_ID: ${CDN_HLS_SIGNING_KEY_ID:-v1}
-      
-      # Redis (선택적, 미설정 시 DB fallback)
-      REDIS_HOST: ${REDIS_HOST:-redis}
-      REDIS_PORT: ${REDIS_PORT:-6379}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      REDIS_DB: ${REDIS_DB:-0}
-      
-      # AWS SQS
-      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      # SQS
       VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-v1-video-batch-queue}
       AI_SQS_QUEUE_NAME_LITE: ${AI_SQS_QUEUE_NAME_LITE:-academy-v1-ai-queue}
       AI_SQS_QUEUE_NAME_BASIC: ${AI_SQS_QUEUE_NAME_BASIC:-academy-v1-ai-queue}
       AI_SQS_QUEUE_NAME_PREMIUM: ${AI_SQS_QUEUE_NAME_PREMIUM:-academy-v1-ai-queue}
-
       # Worker 통신
       INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
-      
       # Site
       SITE_URL: ${SITE_URL:-https://hakwonplus.com}
-      
-      # Gunicorn 설정 (확장성)
+      # Gunicorn
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-4}
       GUNICORN_WORKER_CONNECTIONS: ${GUNICORN_WORKER_CONNECTIONS:-1000}
     ports:
       - "${API_PORT:-8000}:8000"
-    volumes:
-      - ./src:/app/src
-      - ./apps:/app/apps
-      - ./libs:/app/libs
-      - ./manage.py:/app/manage.py
+    volumes: *dev-volumes
     depends_on:
       postgres:
         condition: service_healthy
     networks:
       - academy-network
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
 
   # ============================================================================
   # Video Worker
   # ============================================================================
   video-worker:
     build:
-      context: .
+      <<: *base-build
       dockerfile: docker/video-worker/Dockerfile
-      target: base
-      args:
-        BASE_IMAGE: academy-base:latest
     image: academy-video-worker:latest
     container_name: academy-video-worker
     env_file: .env
     environment:
-      DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
-      DB_HOST: ${DB_HOST:-postgres}
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_PORT: ${DB_PORT:-5432}
-      # API 연결
-      API_BASE_URL: ${API_BASE_URL:-http://api:8000}
-      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
-      
-      # Worker 설정
+      <<: *worker-env
       WORKER_ID: ${VIDEO_WORKER_ID:-video-worker-1}
       EC2_IDLE_STOP_THRESHOLD: ${EC2_IDLE_STOP_THRESHOLD:-5}
       VIDEO_FAST_ACK: ${VIDEO_FAST_ACK:-1}
       SQS_WAIT_TIME_SECONDS: ${SQS_WAIT_TIME_SECONDS:-20}
-      
-      # AWS SQS
-      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
       VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-v1-video-batch-queue}
-
-      # Redis (선택적)
-      REDIS_HOST: ${REDIS_HOST:-redis}
-      REDIS_PORT: ${REDIS_PORT:-6379}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      REDIS_DB: ${REDIS_DB:-0}
-      
-      # Cloudflare R2 Storage
-      R2_ACCESS_KEY: ${R2_ACCESS_KEY}
-      R2_SECRET_KEY: ${R2_SECRET_KEY}
-      R2_ENDPOINT: ${R2_ENDPOINT}
+      # R2 Video
       R2_BUCKET: ${R2_VIDEO_BUCKET:-academy-video}
       R2_PREFIX: ${R2_PREFIX:-media/hls/videos}
       R2_REGION: ${R2_REGION:-auto}
-      
-      # Video Worker 설정
+      # FFmpeg
       TEMP_DIR: ${VIDEO_WORKER_TEMP_DIR:-/tmp}
       FFMPEG_BIN: ${FFMPEG_BIN:-ffmpeg}
       FFPROBE_BIN: ${FFPROBE_BIN:-ffprobe}
@@ -197,71 +172,41 @@ services:
       RETRY_MAX_ATTEMPTS: ${RETRY_MAX_ATTEMPTS:-5}
       BACKOFF_BASE_SECONDS: ${BACKOFF_BASE_SECONDS:-0.5}
       BACKOFF_CAP_SECONDS: ${BACKOFF_CAP_SECONDS:-10.0}
-    volumes:
-      - ./src:/app/src
-      - ./apps:/app/apps
-      - ./libs:/app/libs
-      - ./manage.py:/app/manage.py
+    volumes: *dev-volumes
     depends_on:
       api:
         condition: service_healthy
     networks:
       - academy-network
     restart: unless-stopped
-    # 로컬용 2GB. 프로덕션은 반드시 4GB(EC2 t4g.medium 또는 Fargate 4GB). 3시간 영상은 4GB 미만 시 OOM 다발.
+    # 로컬용 2GB. 프로덕션은 반드시 4GB(EC2 t4g.medium 또는 Fargate 4GB).
     mem_limit: 2048m
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
 
   # ============================================================================
   # AI Worker CPU (Lite + Basic 큐 처리)
   # ============================================================================
   ai-worker-cpu:
     build:
-      context: .
+      <<: *base-build
       dockerfile: docker/ai-worker-cpu/Dockerfile
-      target: base
-      args:
-        BASE_IMAGE: academy-base:latest
-    image: academy-ai-worker:latest
+    image: academy-ai-worker-cpu:latest
     container_name: academy-ai-worker-cpu
     env_file: .env
     environment:
-      DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
-      DB_HOST: ${DB_HOST:-postgres}
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_PORT: ${DB_PORT:-5432}
-      # API 연결
-      API_BASE_URL: ${API_BASE_URL:-http://api:8000}
-      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
-      
-      # Worker 설정
+      <<: *worker-env
       AI_WORKER_MODE: cpu
       WORKER_ID: ${AI_WORKER_ID_CPU:-ai-worker-cpu-1}
       EC2_IDLE_STOP_THRESHOLD: ${EC2_IDLE_STOP_THRESHOLD:-5}
       SQS_WAIT_TIME_SECONDS: ${SQS_WAIT_TIME_SECONDS:-20}
       AI_WORKER_BASIC_POLL_WEIGHT: ${AI_WORKER_BASIC_POLL_WEIGHT:-3}
       AI_WORKER_LITE_POLL_WEIGHT: ${AI_WORKER_LITE_POLL_WEIGHT:-1}
-      
-      # AWS SQS
-      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
       AI_SQS_QUEUE_NAME_LITE: ${AI_SQS_QUEUE_NAME_LITE:-academy-v1-ai-queue}
       AI_SQS_QUEUE_NAME_BASIC: ${AI_SQS_QUEUE_NAME_BASIC:-academy-v1-ai-queue}
-
-      # Cloudflare R2 Storage
-      R2_ACCESS_KEY: ${R2_ACCESS_KEY}
-      R2_SECRET_KEY: ${R2_SECRET_KEY}
-      R2_ENDPOINT: ${R2_ENDPOINT}
+      # R2 AI
       R2_AI_BUCKET: ${R2_AI_BUCKET:-academy-ai}
       R2_EXCEL_BUCKET: ${R2_EXCEL_BUCKET:-academy-excel}
       EXCEL_BUCKET_NAME: ${R2_EXCEL_BUCKET:-academy-excel}
-      
-      # Google Vision (선택사항)
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     depends_on:
       api:
@@ -269,56 +214,29 @@ services:
     networks:
       - academy-network
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    # Stateless: 로컬 파일 저장 없음 (R2 사용)
+    logging: *default-logging
 
   # ============================================================================
-  # AI Worker GPU (Premium 큐 처리)
+  # AI Worker GPU (Premium 큐 처리) — TODO: Dockerfile 정비 후 활성화
   # ============================================================================
   ai-worker-gpu:
     build:
-      context: .
-      dockerfile: docker/ai-worker-cpu/Dockerfile
-      target: base
-      args:
-        BASE_IMAGE: academy-base:latest
-    image: academy-ai-worker:latest
+      <<: *base-build
+      dockerfile: docker/ai-worker-gpu/Dockerfile
+    image: academy-ai-worker-gpu:latest
     container_name: academy-ai-worker-gpu
     env_file: .env
     environment:
-      DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
-      DB_HOST: ${DB_HOST:-postgres}
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_PORT: ${DB_PORT:-5432}
-      # API 연결
-      API_BASE_URL: ${API_BASE_URL:-http://api:8000}
-      INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
-      
-      # Worker 설정
+      <<: *worker-env
       AI_WORKER_MODE: gpu
       WORKER_ID: ${AI_WORKER_ID_GPU:-ai-worker-gpu-1}
       EC2_IDLE_STOP_THRESHOLD: ${EC2_IDLE_STOP_THRESHOLD:-5}
       SQS_WAIT_TIME_SECONDS: ${SQS_WAIT_TIME_SECONDS:-20}
-      
-      # AWS SQS
-      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
       AI_SQS_QUEUE_NAME_PREMIUM: ${AI_SQS_QUEUE_NAME_PREMIUM:-academy-v1-ai-queue}
-      
-      # Cloudflare R2 Storage
-      R2_ACCESS_KEY: ${R2_ACCESS_KEY}
-      R2_SECRET_KEY: ${R2_SECRET_KEY}
-      R2_ENDPOINT: ${R2_ENDPOINT}
+      # R2 AI
       R2_AI_BUCKET: ${R2_AI_BUCKET:-academy-ai}
       R2_EXCEL_BUCKET: ${R2_EXCEL_BUCKET:-academy-excel}
       EXCEL_BUCKET_NAME: ${R2_EXCEL_BUCKET:-academy-excel}
-      
-      # Google Vision (선택사항)
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS:-}
     depends_on:
       api:
@@ -326,12 +244,7 @@ services:
     networks:
       - academy-network
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
-    # GPU 리소스 제한 (필요시)
+    logging: *default-logging
     # deploy:
     #   resources:
     #     reservations:
@@ -339,44 +252,26 @@ services:
     #         - driver: nvidia
     #           count: 1
     #           capabilities: [gpu]
-    # Stateless: 로컬 파일 저장 없음 (R2 사용)
 
   # ============================================================================
   # Messaging Worker (SQS + Solapi SMS/알림톡)
   # ============================================================================
   messaging-worker:
     build:
-      context: .
+      <<: *base-build
       dockerfile: docker/messaging-worker/Dockerfile
-      target: base
-      args:
-        BASE_IMAGE: academy-base:latest
     image: academy-messaging-worker:latest
     container_name: academy-messaging-worker
     env_file: .env
     environment:
-      DJANGO_SETTINGS_MODULE: apps.api.config.settings.worker
-      DB_HOST: ${DB_HOST:-postgres}
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_PORT: ${DB_PORT:-5432}
-      AWS_REGION: ${AWS_REGION:-ap-northeast-2}
+      <<: *worker-env
       MESSAGING_SQS_QUEUE_NAME: ${MESSAGING_SQS_QUEUE_NAME:-academy-v1-messaging-queue}
       SOLAPI_API_KEY: ${SOLAPI_API_KEY}
       SOLAPI_API_SECRET: ${SOLAPI_API_SECRET}
       SOLAPI_SENDER: ${SOLAPI_SENDER}
       SOLAPI_KAKAO_PF_ID: ${SOLAPI_KAKAO_PF_ID:-}
       SOLAPI_KAKAO_TEMPLATE_ID: ${SOLAPI_KAKAO_TEMPLATE_ID:-}
-      REDIS_HOST: ${REDIS_HOST:-redis}
-      REDIS_PORT: ${REDIS_PORT:-6379}
-      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
-      REDIS_DB: ${REDIS_DB:-0}
-    volumes:
-      - ./src:/app/src
-      - ./apps:/app/apps
-      - ./libs:/app/libs
-      - ./manage.py:/app/manage.py
+    volumes: *dev-volumes
     depends_on:
       api:
         condition: service_healthy
@@ -385,11 +280,7 @@ services:
     networks:
       - academy-network
     restart: unless-stopped
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "10m"
-        max-file: "3"
+    logging: *default-logging
 
 networks:
   academy-network:

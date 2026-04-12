@@ -14,7 +14,6 @@ USER root
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
     && rm -rf /var/lib/apt/lists/* \
     && (ffprobe -version > /dev/null 2>&1 || (echo "ffprobe not in PATH" && exit 1))
-COPY src ./src
 COPY academy ./academy
 COPY apps ./apps
 COPY libs ./libs
@@ -24,9 +23,8 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Shared requirements (API + Worker same file)
-COPY requirements/constraints.txt .
-COPY requirements/requirements.txt .
-RUN pip install --user --no-cache-dir -r requirements.txt
+COPY requirements/constraints.txt requirements/requirements.txt ./requirements/
+RUN pip install --user --no-cache-dir -r requirements/requirements.txt
 
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

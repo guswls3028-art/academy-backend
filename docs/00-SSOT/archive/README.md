@@ -1,6 +1,6 @@
 # 00-SSOT Archive (Legacy / Reference Only)
 
-**Do not use for deployment or operations.** Active docs: [v1.1.0](../v1.1.0/) only.
+**Do not use for deployment or operations.** Active docs: [v1.1.1](../v1.1.1/) (current), [v1.1.0](../v1.1.0/) (runbooks).
 
 | Directory | Description |
 |-----------|-------------|

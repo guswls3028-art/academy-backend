@@ -22,6 +22,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from django.db import models
+
 from apps.domains.lectures.models import Session
 from apps.domains.progress.models import ClinicLink
 from apps.domains.exams.models import Exam
@@ -217,7 +219,7 @@ class ClinicTargetService:
     """
 
     @staticmethod
-    def list_admin_targets(tenant: Any = None, include_resolved: bool = False) -> List[Dict[str, Any]]:
+    def list_admin_targets(tenant: Any = None, include_resolved: bool = False, section_id: Optional[int] = None) -> List[Dict[str, Any]]:
         # tenant 격리: tenant가 None이면 빈 결과 반환 (cross-tenant 누출 방지)
         if tenant is None:
             return []
@@ -234,6 +236,17 @@ class ClinicTargetService:
 
         # ✅ 퇴원(INACTIVE) 수강생의 ClinicLink 제외
         links = links.filter(enrollment__status="ACTIVE")
+
+        # section 필터: SectionAssignment 기반으로 해당 반 학생만 필터
+        if section_id:
+            from apps.domains.lectures.models import SectionAssignment
+            assigned_enrollment_ids = set(
+                SectionAssignment.objects.filter(
+                    models.Q(class_section_id=section_id) | models.Q(clinic_section_id=section_id),
+                    tenant=tenant,
+                ).values_list("enrollment_id", flat=True)
+            )
+            links = links.filter(enrollment_id__in=assigned_enrollment_ids)
 
         # ✅ enrollment 일괄 조회 (N+1 방지 + 학생 SSOT 표시 필드)
         links_list = list(links)

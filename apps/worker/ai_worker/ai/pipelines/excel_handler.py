@@ -8,7 +8,7 @@ import os
 
 from apps.shared.contracts.ai_result import AIResult
 from apps.shared.contracts.ai_job import AIJob
-from src.application.services.excel_parsing_service import ExcelParsingService
+from academy.application.services.excel_parsing_service import ExcelParsingService
 from apps.infrastructure.storage.r2_adapter import R2ObjectStorageAdapter
 
 logger = logging.getLogger(__name__)
@@ -42,7 +42,7 @@ def _record_progress(
 ) -> None:
     """Redis 진행률 기록 (우하단 실시간 프로그래스바용). 구간별 진행률 지원."""
     try:
-        from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
+        from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
         extra = {"percent": percent}
         if step_index is not None:
             extra.update({

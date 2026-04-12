@@ -40,7 +40,7 @@ def _record_progress(
 ) -> None:
     """Redis progress recording for real-time progress bar display."""
     try:
-        from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
+        from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
         extra = {"percent": percent}
         if step_index is not None and step_total is not None:
             extra.update({

@@ -1,5 +1,0 @@
-{
-  "commands": [
-    "docker exec academy-api python manage.py shell -c 'from apps.support.video.models import Video; [print(f\"v{v.id} s={v.status}\") for v in Video.objects.filter(id__in=[242,247,248])]' 2>&1"
-  ]
-}

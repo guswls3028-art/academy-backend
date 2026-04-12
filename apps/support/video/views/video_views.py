@@ -152,6 +152,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     STAFF_ACTIONS = {
         "upload_init",
         "upload_complete",
+        "upload_refresh_url",
+        "upload_multipart_init",
+        "upload_multipart_presign",
+        "upload_multipart_complete",
+        "upload_multipart_abort",
         "retry",
         "create",
         "update",
@@ -567,10 +572,44 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         # 성공 — 기존 upload_complete 로직으로 인코딩 파이프라인 진입
         return self._trigger_upload_complete_pipeline(video)
 
+    # ==================================================
+    # upload/multipart/abort — R2 multipart upload 중단
+    # ==================================================
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/multipart/abort",
+        parser_classes=[JSONParser],
+    )
+    def upload_multipart_abort(self, request, pk=None):
+        """
+        R2 multipart upload 중단 — 불완전 파트 정리.
+        요청: { "upload_id": "..." }
+        """
+        try:
+            video = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        upload_id = request.data.get("upload_id")
+        if not upload_id:
+            return Response(
+                {"detail": "upload_id 필요"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        abort_multipart_upload(key=video.file_key, upload_id=upload_id)
+        logger.info("MULTIPART_ABORTED | video_id=%s | upload_id=%s", video.id, upload_id)
+        return Response({"detail": "aborted"}, status=status.HTTP_200_OK)
+
     def _trigger_upload_complete_pipeline(self, video):
         """multipart 완료 후 기존 upload_complete 파이프라인 재사용."""
         try:
-            return self._upload_complete_impl(video)
+            with transaction.atomic():
+                return self._upload_complete_impl(video)
         except Exception as e:
             logger.exception(
                 "VIDEO_UPLOAD_COMPLETE_ERROR | video_id=%s | type=%s | %s",

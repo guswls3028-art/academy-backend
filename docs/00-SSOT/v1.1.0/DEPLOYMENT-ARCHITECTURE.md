@@ -31,7 +31,7 @@ git push main
     |── (if API changed) ──> [run-migrations] ─── SSM RunCommand ──> migrate on current instance
     |                              |
     |                              v
-    |── (if API changed) ──> [deploy-api] ─── ASG instance refresh (MinHealthy=50%, Warmup=300s)
+    |── (if API changed) ──> [deploy-api] ─── ASG instance refresh (MinHealthy=100%, Warmup=120s)
     |
     |── (if messaging changed) ──> [deploy-messaging] ─── ASG instance refresh (MinHealthy=0%, Warmup=120s)
     |
@@ -173,7 +173,7 @@ Every build produces immutable SHA-tagged images. To rollback:
    ```bash
    aws autoscaling start-instance-refresh \
      --auto-scaling-group-name academy-v1-api-asg \
-     --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300}'
+     --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120}'
    ```
 
 ### Migration Rollback

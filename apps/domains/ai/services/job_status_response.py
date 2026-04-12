@@ -15,7 +15,7 @@ def build_job_status_response(job, result_payload=None) -> dict:
         result_payload = DjangoAIJobRepository().get_result_payload_for_job(job)
     progress = None
     try:
-        from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
+        from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
         # ✅ tenant_id 전달 필수 (tenant namespace 키 사용)
         tenant_id = str(job.tenant_id) if job.tenant_id else None
         progress = RedisProgressAdapter().get_progress(job.job_id, tenant_id=tenant_id)

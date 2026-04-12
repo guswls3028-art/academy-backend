@@ -11,7 +11,6 @@ ENV WORKER_TYPE=CPU
 
 USER root
 # 앱 코드 (Base에 두지 않음)
-COPY src ./src
 COPY academy ./academy
 COPY apps ./apps
 COPY libs ./libs
@@ -30,15 +29,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 USER appuser
-# AI 전용 Python 의존성
-COPY requirements/constraints.txt requirements/common.txt requirements/worker-ai-common.txt requirements/worker-ai-cpu.txt ./requirements/
-RUN pip install --user --no-cache-dir -r requirements/worker-ai-cpu.txt
-
-COPY requirements/worker-ai-excel.txt ./requirements/
-RUN pip install --user --no-cache-dir -r requirements/worker-ai-excel.txt
-
-COPY requirements/worker-ai-tools.txt ./requirements/
-RUN pip install --user --no-cache-dir -r requirements/worker-ai-tools.txt
+# AI 전용 Python 의존성 (단일 RUN으로 레이어 최소화)
+COPY requirements/constraints.txt requirements/common.txt requirements/worker-ai-common.txt requirements/worker-ai-cpu.txt requirements/worker-ai-excel.txt requirements/worker-ai-tools.txt ./requirements/
+RUN pip install --user --no-cache-dir \
+    -r requirements/worker-ai-cpu.txt \
+    -r requirements/worker-ai-excel.txt \
+    -r requirements/worker-ai-tools.txt
 
 # Excel 파싱 워커 의존: apps.infrastructure.storage.r2_adapter (apps SSOT)
 RUN python -c "from apps.infrastructure.storage.r2_adapter import R2ObjectStorageAdapter" || (echo "ERROR: R2ObjectStorageAdapter not importable" && exit 1)

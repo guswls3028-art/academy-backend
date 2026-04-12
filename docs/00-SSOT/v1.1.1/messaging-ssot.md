@@ -252,7 +252,7 @@ https://hakwonplus.com
 
 1. [x] Solapi에서 4개 통합 템플릿 APPROVED 확인 (API 조회) — 2026-04-08 완료
 2. [x] `alimtalk_content_builders.py`에서 `UNIFIED_TEMPLATES_ENABLED = True` 변경 — 2026-04-08 완료
-3. [ ] 배포 (git push → CI/CD)
+3. [x] 배포 (git push → CI/CD) — 배포 완료 확인 (2026-04-10 갱신)
 4. [ ] 테스트 발송 → 수신 확인 (출결, 클리닉, 성적 각 1건)
 5. [ ] 레거시 개별 템플릿(KA01TP260324...) 솔라피에서 삭제 (선택)
 

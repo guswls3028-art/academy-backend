@@ -35,10 +35,10 @@ from academy.adapters.db.django.repositories_video import (
     job_set_running,
 )
 from apps.worker.video_worker.config import load_config
-from src.infrastructure.video.processor import process_video
-from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
+from academy.adapters.video.processor import process_video
+from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
 from apps.support.video.redis_status_cache import cache_video_status
-from src.application.video.handler import CancelledError
+from academy.application.video.handler import CancelledError
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("video_worker_batch")

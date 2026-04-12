@@ -39,7 +39,7 @@ def _record_progress(
 ) -> None:
     """Redis 진행률 기록 (우하단 실시간 프로그래스바용). 구간별 진행률 지원."""
     try:
-        from src.infrastructure.cache.redis_progress_adapter import RedisProgressAdapter
+        from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
         extra = {"percent": percent}
         if step_index is not None and step_total is not None:
             extra.update({
