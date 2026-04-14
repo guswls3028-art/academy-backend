@@ -117,9 +117,11 @@ class VideoPlaybackMixin:
                         "grace_seconds": 3,
                     }
             
-            # Force max speed to 1.0 for proctored class
+            # PROCTORED_CLASS: 관리자가 Video.max_speed를 명시 설정한 경우 존중,
+            # 미설정(1.0 이하)이면 1.0x 강제
             if not perm or perm.max_speed_override is None:
-                max_rate = 1.0
+                video_max = float(video.max_speed or 1.0)
+                max_rate = video_max if video_max > 1.0 else 1.0
                 ui_speed_control = True
             
             # Watermark enabled for proctored class
