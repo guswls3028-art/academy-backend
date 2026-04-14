@@ -969,7 +969,13 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
 
         video = self.get_object()
-        lecture = video.session.lecture
+        session = video.session
+        lecture = session.lecture if session else None
+
+        if not lecture:
+            return Response(
+                {"video": VideoDetailSerializer(video).data, "students": [], "total_filtered": 0}
+            )
 
         enrollments = video_repo.get_enrollments_for_lecture_active(lecture)
 
@@ -983,7 +989,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         }
         attendance = {
             a.enrollment_id: a.status
-            for a in video_repo.get_attendance_for_session(video.session)
+            for a in video_repo.get_attendance_for_session(session)
         }
 
         # ✅ 클리닉 하이라이트 일괄 계산
