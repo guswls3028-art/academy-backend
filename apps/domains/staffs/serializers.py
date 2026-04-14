@@ -194,8 +194,8 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         write_only=True,
         required=True,
     )
-    username = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    username = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=150)
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=128)
 
     def validate_phone(self, value):
         if value:

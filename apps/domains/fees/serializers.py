@@ -171,6 +171,6 @@ class RecordPaymentSerializer(serializers.Serializer):
     amount = serializers.IntegerField(min_value=1)
     payment_method = serializers.ChoiceField(choices=["CARD", "BANK_TRANSFER", "CASH", "OTHER"])
     paid_at = serializers.DateTimeField(required=False)
-    receipt_note = serializers.CharField(required=False, allow_blank=True, default="")
-    memo = serializers.CharField(required=False, allow_blank=True, default="")
+    receipt_note = serializers.CharField(required=False, allow_blank=True, default="", max_length=500)
+    memo = serializers.CharField(required=False, allow_blank=True, default="", max_length=500)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, default="", max_length=100)

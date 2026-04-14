@@ -50,7 +50,7 @@ class PdfQuestionExtractView(APIView):
         if exam_id:
             try:
                 from apps.domains.exams.models import Exam
-                exam = Exam.objects.get(id=int(exam_id))
+                exam = Exam.objects.get(id=int(exam_id), tenant=tenant)
                 if exam.exam_type != Exam.ExamType.TEMPLATE:
                     return Response(
                         {"detail": "문항 분할은 템플릿 시험에서만 가능합니다."},

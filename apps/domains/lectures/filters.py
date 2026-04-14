@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 
 import django_filters
-from .models import Enrollment, Attendance
+from apps.domains.enrollment.models import Enrollment
+from apps.domains.attendance.models import Attendance
 
 
 # --------------------------------------------------

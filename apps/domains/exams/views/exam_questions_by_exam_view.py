@@ -20,15 +20,22 @@ class ExamQuestionsByExamView(APIView):
 
     def get(self, request, exam_id: int):
         from apps.domains.exams.models import Exam
+        from django.shortcuts import get_object_or_404
+        from django.db.models import Q as _Q
 
         tenant = request.tenant
 
         # effective_template_exam_id resolve (regular → template)
-        try:
-            exam = Exam.objects.get(id=exam_id)
-            resolved_exam_id = exam.effective_template_exam_id
-        except Exam.DoesNotExist:
-            resolved_exam_id = exam_id
+        # tenant 격리: 해당 테넌트 강의에 연결되었거나 테넌트 소유 시험만 허용
+        exam = get_object_or_404(
+            Exam.objects.filter(
+                _Q(sessions__lecture__tenant=tenant)
+                | _Q(derived_exams__sessions__lecture__tenant=tenant)
+                | _Q(tenant=tenant)
+            ).distinct(),
+            id=exam_id,
+        )
+        resolved_exam_id = exam.effective_template_exam_id
 
         qs = (
             ExamQuestion.objects

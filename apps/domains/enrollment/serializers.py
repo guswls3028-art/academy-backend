@@ -31,7 +31,10 @@ class EnrollmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Enrollment
-        fields = "__all__"
+        fields = [
+            "id", "tenant", "student", "lecture", "status",
+            "enrolled_at", "created_at", "updated_at",
+        ]
 
 
 class SessionEnrollmentSerializer(serializers.ModelSerializer):
@@ -44,4 +47,7 @@ class SessionEnrollmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SessionEnrollment
-        fields = "__all__"
+        fields = [
+            "id", "tenant", "session", "enrollment",
+            "student_name", "student_id", "created_at",
+        ]

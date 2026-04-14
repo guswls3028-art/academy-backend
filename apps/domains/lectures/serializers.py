@@ -7,7 +7,12 @@ from .models import Lecture, Session, Section, SectionAssignment
 class LectureSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lecture
-        fields = "__all__"
+        fields = [
+            "id", "tenant", "title", "name", "subject", "description",
+            "start_date", "end_date", "lecture_time",
+            "color", "chip_label", "is_active", "is_system",
+            "created_at", "updated_at",
+        ]
         read_only_fields = ["tenant"]
         ref_name = "Lecture"
 
@@ -28,7 +33,11 @@ class SessionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Session
-        fields = "__all__"
+        fields = [
+            "id", "lecture", "section", "order", "title", "date",
+            "section_label", "section_type",
+            "created_at", "updated_at",
+        ]
         ref_name = "LectureSession"
         # UniqueConstraint validators를 비활성화 — order auto-assign과 충돌 방지
         # 커스텀 validate() + DB 제약에서 중복 검증
@@ -84,7 +93,13 @@ class SectionSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Section
-        fields = "__all__"
+        fields = [
+            "id", "tenant", "lecture", "label", "section_type",
+            "day_of_week", "day_of_week_display", "section_type_display",
+            "start_time", "end_time", "location", "max_capacity",
+            "is_active", "assignment_count",
+            "created_at", "updated_at",
+        ]
         read_only_fields = ["tenant"]
         ref_name = "LectureSection"
 
@@ -101,7 +116,12 @@ class SectionAssignmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = SectionAssignment
-        fields = "__all__"
+        fields = [
+            "id", "tenant", "enrollment", "class_section", "clinic_section", "source",
+            "student_name", "student_id", "lecture_id",
+            "class_section_label", "clinic_section_label", "source_display",
+            "created_at", "updated_at",
+        ]
         read_only_fields = ["tenant"]
         ref_name = "SectionAssignment"
 

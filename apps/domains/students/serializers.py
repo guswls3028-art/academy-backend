@@ -28,7 +28,7 @@ class EnrollmentSerializer(serializers.ModelSerializer):
         model = Enrollment
         fields = [
             "id", "student", "lecture", "status",
-            "created_at", "updated_at",
+            "enrolled_at", "created_at", "updated_at",
             "lecture_name", "lecture_color", "lecture_chip_label",
         ]
         ref_name = "StudentEnrollment"
@@ -178,20 +178,20 @@ class AddTagSerializer(serializers.Serializer):
 class StudentBulkItemSerializer(serializers.Serializer):
     """엑셀 일괄 등록용 단일 학생 데이터"""
 
-    name = serializers.CharField(allow_blank=False, trim_whitespace=True)
-    phone = serializers.CharField(allow_blank=True, trim_whitespace=True, required=False, default="")
-    parent_phone = serializers.CharField(allow_blank=False, trim_whitespace=True)
+    name = serializers.CharField(allow_blank=False, trim_whitespace=True, max_length=100)
+    phone = serializers.CharField(allow_blank=True, trim_whitespace=True, required=False, default="", max_length=20)
+    parent_phone = serializers.CharField(allow_blank=False, trim_whitespace=True, max_length=20)
     uses_identifier = serializers.BooleanField(required=False, default=False)
-    gender = serializers.CharField(allow_blank=True, default="")
+    gender = serializers.CharField(allow_blank=True, default="", max_length=10)
     school_type = serializers.ChoiceField(
         choices=[("ELEMENTARY", "초등"), ("MIDDLE", "중등"), ("HIGH", "고등")],
         default="HIGH",
     )
-    school = serializers.CharField(allow_blank=True, default="", required=False)
-    high_school_class = serializers.CharField(allow_blank=True, default="", required=False)
-    major = serializers.CharField(allow_blank=True, default="", required=False)
+    school = serializers.CharField(allow_blank=True, default="", required=False, max_length=100)
+    high_school_class = serializers.CharField(allow_blank=True, default="", required=False, max_length=50)
+    major = serializers.CharField(allow_blank=True, default="", required=False, max_length=100)
     grade = serializers.IntegerField(allow_null=True, required=False)
-    memo = serializers.CharField(allow_blank=True, default="", required=False)
+    memo = serializers.CharField(allow_blank=True, default="", required=False, max_length=500)
     is_managed = serializers.BooleanField(default=True, required=False)
 
     def validate_phone(self, value):

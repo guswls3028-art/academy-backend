@@ -30,9 +30,7 @@ except Exception:  # pragma: no cover
 # ======================================================
 # 🔽 progress pipeline (side-effect)
 # ======================================================
-from apps.domains.progress.tasks.progress_pipeline_task import (
-    run_progress_pipeline_task,
-)
+from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
 # ======================================================
 # Constants (STEP 1 고정)

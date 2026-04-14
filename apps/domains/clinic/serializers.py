@@ -289,7 +289,7 @@ class ClinicSessionBulkCreateSerializer(serializers.Serializer):
     title = serializers.CharField(required=False, allow_blank=True, default="")
     start_time = serializers.TimeField()
     duration_minutes = serializers.IntegerField(min_value=1)
-    location = serializers.CharField()
+    location = serializers.CharField(max_length=200)
     max_participants = serializers.IntegerField(min_value=1, default=20)
     target_grade = serializers.IntegerField(required=False, allow_null=True, default=None)
     target_school_type = serializers.CharField(required=False, allow_null=True, default=None)

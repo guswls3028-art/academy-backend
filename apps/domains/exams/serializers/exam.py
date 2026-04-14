@@ -44,6 +44,7 @@ class ExamSerializer(serializers.ModelSerializer):
             "close_at",
             "answer_visibility",
             "session_ids",
+            "template_exam_id",
 
             "created_at",
             "updated_at",
