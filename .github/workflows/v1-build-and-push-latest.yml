@@ -72,9 +72,10 @@ jobs:
             exit 0
           fi
 
-          PREV=$(git rev-parse HEAD~1 2>/dev/null || echo "")
-          if [ -z "$PREV" ]; then
-            echo "No previous commit — full build"
+          # github.event.before covers the full push range (multi-commit safe)
+          PREV="${{ github.event.before }}"
+          if [ -z "$PREV" ] || [ "$PREV" = "0000000000000000000000000000000000000000" ]; then
+            echo "No previous ref — full build"
             echo "build_all=true" >> $GITHUB_OUTPUT
             echo "build_base=true" >> $GITHUB_OUTPUT
             echo "build_api=true" >> $GITHUB_OUTPUT
