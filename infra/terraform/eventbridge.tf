@@ -7,14 +7,14 @@ data "aws_iam_role" "eventbridge_batch" {
 resource "aws_cloudwatch_event_rule" "reconcile" {
   name                = "${var.naming_prefix}-reconcile-video-jobs"
   description         = "Reconcile video batch jobs"
-  schedule_expression  = "rate(15 minutes)"
+  schedule_expression  = "rate(1 hour)"
   state               = "ENABLED"
 }
 
 resource "aws_cloudwatch_event_rule" "scan_stuck" {
   name                = "${var.naming_prefix}-video-scan-stuck-rate"
   description         = "Scan stuck video jobs"
-  schedule_expression = "rate(5 minutes)"
+  schedule_expression = "rate(1 hour)"
   state               = "ENABLED"
 }
 
