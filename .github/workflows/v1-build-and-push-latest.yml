@@ -919,3 +919,80 @@ jobs:
           fi
 
           echo "Deploy verification PASS" >> $GITHUB_STEP_SUMMARY
+
+      # ECR cleanup: keep latest + 5 sha- tags per repo, delete old images to prevent cost accumulation.
+      # Runs after deploy verification PASS so rollback images are always available.
+      - name: ECR cleanup (keep latest + 5 sha-)
+        if: steps.health.outputs.health_pass == 'true' && steps.asg.outputs.asg_pass == 'true'
+        run: |
+          echo "=== ECR Cleanup ===" >> $GITHUB_STEP_SUMMARY
+          REPOS="academy-base academy-api academy-video-worker academy-messaging-worker academy-ai-worker-cpu"
+          KEEP=5
+          TOTAL_DELETED=0
+
+          for REPO in $REPOS; do
+            echo "--- $REPO ---"
+
+            # List all image digests with tags, sorted by push time (newest first)
+            ALL_IMAGES=$(aws ecr describe-images --repository-name "$REPO" \
+              --region ${{ env.AWS_REGION }} --output json 2>/dev/null || echo '{"imageDetails":[]}')
+
+            # Get sha- tagged image digests to delete (skip latest, keep newest N sha-)
+            DELETABLE=$(echo "$ALL_IMAGES" | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          images = data.get('imageDetails', [])
+
+          # Separate tagged images
+          always_keep_digests = set()
+          sha_images = []
+          for img in images:
+              tags = img.get('imageTags', [])
+              digest = img['imageDigest']
+              if 'latest' in tags or any(t.startswith('release-') for t in tags):
+                  always_keep_digests.add(digest)
+              elif any(t.startswith('sha-') for t in tags):
+                  sha_images.append(img)
+
+          # Sort sha- by push time descending, mark old ones for deletion
+          sha_images.sort(key=lambda x: x.get('imagePushedAt', ''), reverse=True)
+          keep_digests = set(img['imageDigest'] for img in sha_images[:$KEEP])
+          protected = always_keep_digests | keep_digests
+
+          # Collect all deletable digests (old sha- tagged + untagged, excluding protected)
+          deletable = []
+          for img in images:
+              if img['imageDigest'] not in protected:
+                  deletable.append(img['imageDigest'])
+          for d in deletable:
+              print(d)
+          ")
+
+            COUNT=$(echo "$DELETABLE" | grep -c 'sha256:' || true)
+            if [ "$COUNT" -eq 0 ]; then
+              echo "  $REPO: nothing to clean"
+              continue
+            fi
+
+            # Batch delete (max 100 per call)
+            echo "$DELETABLE" | head -100 | jq -R '{"imageDigest": .}' | jq -s '.' > /tmp/ecr_delete_ids.json
+            RESULT=$(aws ecr batch-delete-image --repository-name "$REPO" \
+              --region ${{ env.AWS_REGION }} \
+              --image-ids "$(cat /tmp/ecr_delete_ids.json)" --output json 2>&1 || true)
+            DELETED=$(echo "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('imageIds',[])))" 2>/dev/null || echo "0")
+            FAILED=$(echo "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d.get('failures',[])))" 2>/dev/null || echo "0")
+            echo "  $REPO: deleted=$DELETED, failed=$FAILED (of $COUNT deletable)"
+            TOTAL_DELETED=$((TOTAL_DELETED + DELETED))
+
+            # Handle remaining if >100
+            REMAINING=$(echo "$DELETABLE" | tail -n +101 | grep -c 'sha256:' || true)
+            if [ "$REMAINING" -gt 0 ]; then
+              echo "$DELETABLE" | tail -n +101 | head -100 | jq -R '{"imageDigest": .}' | jq -s '.' > /tmp/ecr_delete_ids2.json
+              aws ecr batch-delete-image --repository-name "$REPO" \
+                --region ${{ env.AWS_REGION }} \
+                --image-ids "$(cat /tmp/ecr_delete_ids2.json)" --output json > /dev/null 2>&1 || true
+            fi
+          done
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| ECR cleanup | $TOTAL_DELETED images deleted |" >> $GITHUB_STEP_SUMMARY
