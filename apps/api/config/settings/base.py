@@ -162,6 +162,7 @@ INSTALLED_APPS = [
     "apps.shared",
     "django_extensions",
     "apps.domains.student_app",
+    "apps.domains.teacher_app",
 ]
 
 # ==================================================
@@ -373,6 +374,14 @@ SOLAPI_SENDER = os.getenv("SOLAPI_SENDER", "")  # 발신 번호 (예: 0101234567
 # 알림톡: 카카오 검수 완료 템플릿만 ENV로 관리 (코드 수정 없이 교체)
 SOLAPI_KAKAO_PF_ID = os.getenv("SOLAPI_KAKAO_PF_ID", "")
 SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
+
+# ==================================================
+# Web Push (VAPID) — Teacher PWA 푸시 알림
+# ==================================================
+
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+VAPID_CONTACT_EMAIL = os.getenv("VAPID_CONTACT_EMAIL", "devhyun7466@gmail.com")
 
 # SMS 허용 tenant (내 테넌트). 해당 tenant에서만 문자(SMS/LMS) 발송 가능.
 OWNER_TENANT_ID = int(os.getenv("OWNER_TENANT_ID", "1"))

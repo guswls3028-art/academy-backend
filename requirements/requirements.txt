@@ -39,3 +39,4 @@ solapi>=5.0.0
 pillow
 python-pptx
 opencv-python-headless
+pywebpush>=2.0.0

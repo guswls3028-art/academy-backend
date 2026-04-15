@@ -158,4 +158,9 @@ urlpatterns = [
     # Student App
     # =========================
     path("student/", include("apps.domains.student_app.urls")),
+
+    # =========================
+    # Teacher App (모바일 PWA BFF + Push)
+    # =========================
+    path("teacher-app/", include("apps.domains.teacher_app.urls")),
 ]
