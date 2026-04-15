@@ -46,6 +46,7 @@ def ensure_parent_for_student(
                     tenant=tenant,
                 )
                 user.set_password(PARENT_DEFAULT_PASSWORD)
+                user.must_change_password = True
                 user.save()
                 parent.user = user
                 parent.save(update_fields=["user"])
@@ -67,6 +68,7 @@ def ensure_parent_for_student(
             tenant=tenant,
         )
         user.set_password(PARENT_DEFAULT_PASSWORD)
+        user.must_change_password = True
         user.save()
 
         parent = Parent.objects.create(

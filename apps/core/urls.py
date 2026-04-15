@@ -4,6 +4,7 @@ from rest_framework.routers import DefaultRouter
 
 from apps.core.views import (
     MeView,
+    ChangePasswordView,
     ProgramView,
     SubscriptionView,
     ProfileViewSet,
@@ -40,6 +41,7 @@ router.register("profile/expenses", MyExpenseViewSet, basename="my-expense")
 
 urlpatterns = [
     path("me/", MeView.as_view(), name="core-me"),
+    path("change-password/", ChangePasswordView.as_view(), name="core-change-password"),
     path("program/", ProgramView.as_view(), name="core-program"),
     path("subscription/", SubscriptionView.as_view(), name="core-subscription"),
     path("job_progress/<str:job_id>/", JobProgressView.as_view(), name="core-job-progress"),

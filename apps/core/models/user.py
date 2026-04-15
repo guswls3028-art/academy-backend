@@ -58,6 +58,10 @@ class User(AbstractUser):
         db_index=True,
         help_text="정규화된 전화번호 (하이픈 제거, 예: 01012345678)",
     )
+    must_change_password = models.BooleanField(
+        default=False,
+        help_text="True이면 로그인 후 비밀번호 변경 강제. 신규 학부모 계정 생성 시 설정.",
+    )
 
     groups = models.ManyToManyField(
         Group,

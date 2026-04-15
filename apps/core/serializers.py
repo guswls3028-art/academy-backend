@@ -28,6 +28,7 @@ class UserSerializer(serializers.ModelSerializer):
             "linkedStudentId",
             "linkedStudentName",
             "linkedStudents",
+            "must_change_password",
         ]
 
     def get_tenantRole(self, user):

@@ -2,7 +2,7 @@
 # Re-export all public symbols for backward compatibility.
 # Existing imports like `from apps.core.views import MeView` continue to work.
 
-from apps.core.views.auth import MeView
+from apps.core.views.auth import MeView, ChangePasswordView
 from apps.core.views.program import ProgramView, SubscriptionView
 from apps.core.views.profile import ProfileViewSet
 from apps.core.views.attendance import MyAttendanceViewSet
@@ -29,6 +29,7 @@ from apps.core.views.tenant_info import (
 
 __all__ = [
     "MeView",
+    "ChangePasswordView",
     "ProgramView",
     "SubscriptionView",
     "ProfileViewSet",

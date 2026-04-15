@@ -964,6 +964,45 @@ class StudentViewSet(ModelViewSet):
                         enrollment_ids[:20], len(enrollment_ids),
                     )
 
+                    # 안전 화이트리스트: f-string으로 삽입되는 모든 테이블명/컬럼명을 검증
+                    _SAFE_TABLES = frozenset({
+                        "results_result_item", "results_result", "results_exam_attempt",
+                        "results_fact", "results_wrong_note_pdf", "results_exam_result",
+                        "submissions_submissionanswer", "submissions_submission",
+                        "homework_results_homeworkscore", "homework_assignment", "homework_enrollment",
+                        "attendance_attendance", "enrollment_sessionenrollment",
+                        "exams_exam_enrollment", "video_videopermission", "video_videoprogress",
+                        "video_videoplaybacksession", "video_videoplaybackevent",
+                        "progress_sessionprogress", "progress_lectureprogress",
+                        "progress_cliniclink", "progress_risklog",
+                        "enrollment_enrollment", "students_studenttag",
+                        "students_studentregistrationrequest",
+                        "clinic_sessionparticipant", "clinic_submission",
+                        "video_videocomment", "video_videolike",
+                        "community_postentity", "community_postreply",
+                        "students_student", "accounts_user", "core_tenantmembership",
+                    })
+                    _SAFE_COLS = frozenset({
+                        "enrollment_id", "student_id", "author_student_id",
+                        "created_by_id", "user_id",
+                    })
+
+                    def _safe_tbl(name):
+                        assert name in _SAFE_TABLES, f"Unexpected table: {name}"
+                        return name
+
+                    def _safe_col(name):
+                        assert name in _SAFE_COLS, f"Unexpected column: {name}"
+                        return name
+
+                    def _table_exists(cur, tbl):
+                        cur.execute(
+                            "SELECT 1 FROM information_schema.tables "
+                            "WHERE table_schema = %s AND table_name = %s",
+                            ["public", tbl],
+                        )
+                        return cur.fetchone() is not None
+
                     if enrollment_ids:
                         e_ids = tuple(enrollment_ids)
 
@@ -990,14 +1029,9 @@ class StudentViewSet(ModelViewSet):
                             ("homework_assignment", "enrollment_id IN %s"),
                             ("homework_enrollment", "enrollment_id IN %s"),
                         ]:
-                            cursor.execute(
-                                "SELECT 1 FROM information_schema.tables "
-                                "WHERE table_schema = %s AND table_name = %s",
-                                ["public", tbl],
-                            )
-                            if cursor.fetchone():
+                            if _table_exists(cursor, _safe_tbl(tbl)):
                                 logger.info("bulk_permanent_delete DELETE %s", tbl)
-                                cursor.execute(f"DELETE FROM {tbl} WHERE {where_sql}", [e_ids])
+                                cursor.execute(f"DELETE FROM {_safe_tbl(tbl)} WHERE {where_sql}", [e_ids])
 
                         # 2) enrollment 자식 테이블들 (enrollment_id FK)
                         enrollment_child_tables = [
@@ -1014,15 +1048,10 @@ class StudentViewSet(ModelViewSet):
                             "progress_risklog",
                         ]
                         for tbl in enrollment_child_tables:
-                            cursor.execute(
-                                "SELECT 1 FROM information_schema.tables "
-                                "WHERE table_schema = %s AND table_name = %s",
-                                ["public", tbl],
-                            )
-                            if cursor.fetchone():
+                            if _table_exists(cursor, _safe_tbl(tbl)):
                                 logger.info("bulk_permanent_delete DELETE %s", tbl)
                                 cursor.execute(
-                                    f"DELETE FROM {tbl} WHERE enrollment_id IN %s",
+                                    f"DELETE FROM {_safe_tbl(tbl)} WHERE enrollment_id IN %s",
                                     [e_ids],
                                 )
 
@@ -1037,12 +1066,7 @@ class StudentViewSet(ModelViewSet):
                         "DELETE FROM students_studenttag WHERE student_id IN %s",
                         [tuple(student_ids)],
                     )
-                    cursor.execute(
-                        "SELECT 1 FROM information_schema.tables "
-                        "WHERE table_schema = %s AND table_name = %s",
-                        ["public", "students_studentregistrationrequest"],
-                    )
-                    if cursor.fetchone():
+                    if _table_exists(cursor, _safe_tbl("students_studentregistrationrequest")):
                         logger.info("bulk_permanent_delete UPDATE students_studentregistrationrequest (unlink)")
                         cursor.execute(
                             "UPDATE students_studentregistrationrequest SET student_id = NULL WHERE student_id IN %s",
@@ -1054,30 +1078,19 @@ class StudentViewSet(ModelViewSet):
                         "video_videocomment",
                         "video_videolike",
                     ]:
-                        cursor.execute(
-                            "SELECT 1 FROM information_schema.tables "
-                            "WHERE table_schema = %s AND table_name = %s",
-                            ["public", tbl],
-                        )
-                        if cursor.fetchone():
+                        if _table_exists(cursor, _safe_tbl(tbl)):
                             logger.info("bulk_permanent_delete DELETE %s", tbl)
-                            # video_videocomment uses author_student_id, others use student_id
-                            col = "author_student_id" if tbl == "video_videocomment" else "student_id"
+                            col = _safe_col("author_student_id" if tbl == "video_videocomment" else "student_id")
                             cursor.execute(
-                                f"DELETE FROM {tbl} WHERE {col} IN %s",
+                                f"DELETE FROM {_safe_tbl(tbl)} WHERE {col} IN %s",
                                 [tuple(student_ids)],
                             )
                     # 커뮤니티(QnA 등)가 해당 학생을 created_by로 참조 → FK 해제 (SET_NULL과 동일)
                     for tbl in ["community_postentity", "community_postreply"]:
-                        cursor.execute(
-                            "SELECT 1 FROM information_schema.tables "
-                            "WHERE table_schema = %s AND table_name = %s",
-                            ["public", tbl],
-                        )
-                        if cursor.fetchone():
+                        if _table_exists(cursor, _safe_tbl(tbl)):
                             logger.info("bulk_permanent_delete UPDATE %s (unlink created_by)", tbl)
                             cursor.execute(
-                                f"UPDATE {tbl} SET created_by_id = NULL WHERE created_by_id IN %s",
+                                f"UPDATE {_safe_tbl(tbl)} SET created_by_id = NULL WHERE created_by_id IN %s",
                                 [tuple(student_ids)],
                             )
                     logger.info("bulk_permanent_delete DELETE students_student")
@@ -1089,33 +1102,22 @@ class StudentViewSet(ModelViewSet):
                         tenant_id = tenant.id
                         # submissions_submission.user_id → accounts_user. enrollment 외 제출도 있을 수 있으므로 user_id 기준 정리.
                         # ⚠️ 반드시 tenant_id 필터 포함 — User는 여러 Tenant에 소속 가능
-                        cursor.execute(
-                            "SELECT 1 FROM information_schema.tables "
-                            "WHERE table_schema = %s AND table_name = %s",
-                            ["public", "submissions_submission"],
-                        )
-                        if cursor.fetchone():
-                            sub_ids_sql = "SELECT id FROM submissions_submission WHERE user_id IN %s AND tenant_id = %s"
-                            cursor.execute(
-                                "SELECT 1 FROM information_schema.tables "
-                                "WHERE table_schema = %s AND table_name = %s",
-                                ["public", "results_exam_result"],
+                        if _table_exists(cursor, _safe_tbl("submissions_submission")):
+                            _SUB_IDS_SQL = (
+                                "SELECT id FROM submissions_submission WHERE user_id IN %s AND tenant_id = %s"
                             )
-                            if cursor.fetchone():
+                            if _table_exists(cursor, _safe_tbl("results_exam_result")):
                                 logger.info("bulk_permanent_delete DELETE results_exam_result (by user submissions)")
                                 cursor.execute(
-                                    f"DELETE FROM results_exam_result WHERE submission_id IN ({sub_ids_sql})",
+                                    "DELETE FROM results_exam_result WHERE submission_id IN ("
+                                    + _SUB_IDS_SQL + ")",
                                     [tuple(user_ids), tenant_id],
                                 )
-                            cursor.execute(
-                                "SELECT 1 FROM information_schema.tables "
-                                "WHERE table_schema = %s AND table_name = %s",
-                                ["public", "submissions_submissionanswer"],
-                            )
-                            if cursor.fetchone():
+                            if _table_exists(cursor, _safe_tbl("submissions_submissionanswer")):
                                 logger.info("bulk_permanent_delete DELETE submissions_submissionanswer (by user)")
                                 cursor.execute(
-                                    f"DELETE FROM submissions_submissionanswer WHERE submission_id IN ({sub_ids_sql})",
+                                    "DELETE FROM submissions_submissionanswer WHERE submission_id IN ("
+                                    + _SUB_IDS_SQL + ")",
                                     [tuple(user_ids), tenant_id],
                                 )
                             logger.info("bulk_permanent_delete DELETE submissions_submission (by user_id, tenant)")

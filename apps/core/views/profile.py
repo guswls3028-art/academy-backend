@@ -74,6 +74,7 @@ class ProfileViewSet(viewsets.ViewSet):
             return Response({"error": "현재 비밀번호가 올바르지 않습니다."}, status=400)
 
         request.user.set_password(new_pw)
-        request.user.save()
+        request.user.must_change_password = False
+        request.user.save(update_fields=["password", "must_change_password"])
 
         return Response({"message": "비밀번호 변경 완료"})

@@ -17,7 +17,7 @@ from apps.core.permissions import TenantResolvedAndStaff, TenantResolved
 from apps.api.common.throttles import SmsEndpointThrottle, SignupCheckThrottle
 from apps.core.models import TenantMembership
 
-from apps.domains.parents.services import ensure_parent_for_student
+from apps.domains.parents.services import ensure_parent_for_student, PARENT_DEFAULT_PASSWORD
 from apps.support.messaging.services import get_tenant_site_url, send_registration_approved_messages
 
 from academy.adapters.db.django import repositories_students as student_repo
@@ -46,7 +46,7 @@ def _approve_registration_request(request, reg):
     from apps.core.models.user import user_internal_username
 
     tenant = request.tenant
-    parent_fixed_password = "0000"  # 학부모 비밀번호 고정
+    parent_fixed_password = PARENT_DEFAULT_PASSWORD
     name = reg.name
     parent_phone = reg.parent_phone
     phone = reg.phone
