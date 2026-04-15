@@ -633,75 +633,108 @@ class OMRPdfRenderer:
                     c.drawCentredString(bx, by - _mm(1.0), str(bi + 1))
 
         # ═══ ⑥ 타이밍 마크 (프레임 외부) ═══
-        self._render_timing(c, frame_x, frame_w, sections, bt, bh)
+        self._render_timing(c, frame_x, frame_w, sections, bt, bh, nc)
 
     # ══════════════════════════════════════════
-    # 타이밍 마크 — 한국 OMR 표준 스타일
+    # 타이밍 마크 — 한국식 바코드 스트립
     # ══════════════════════════════════════════
-    # 상하단: 균일 간격 수평 바 (바코드 스트립)
-    # 좌우: 5행/10행 행 바 (정렬 보정용)
-    # 깔끔하고 균일한 패턴 — 난잡한 빗금 아님.
+    # 상하: 버블 x 좌표에 정렬된 세로 바 → 바코드 패턴
+    # 좌우: 행 y 좌표에 정렬된 가로 바 → 5행/10행 강조
+    # 모든 마크가 실제 버블 좌표와 1:1 대응 → AI 정밀 보정 가능
 
-    _TM_BAR_W = 2.5      # 상하단 바 폭 — 작고 섬세
-    _TM_BAR_H = 0.8      # 상하단 바 높이 — 얇게
-    _TM_PERIOD = 10.0    # 바 간격 — 넉넉 (덜 빽빽)
-    _TM_OFFSET = 1.5     # 프레임에서 간격
-    _TM_MARGIN = 5.0     # 프레임 좌우 여백 — 넉넉
-    _TM_ROW_W5 = 1.2     # 5행 — 김 붙은 것처럼 짧게
-    _TM_ROW_W10 = 1.5    # 10행
-    _TM_ROW_H5 = 0.3     # 5행 — 미세
-    _TM_ROW_H10 = 0.4    # 10행
-    _TM_ROW_GAP = 0.5    # 프레임에서 간격
+    _TM_VBAR_W = 0.7       # 세로 바 폭 (상하단)
+    _TM_VBAR_H = 3.0       # 세로 바 높이
+    _TM_HBAR_W = 3.0       # 가로 바 폭 (좌우 일반)
+    _TM_HBAR_H = 0.7       # 가로 바 높이
+    _TM_HBAR_W5 = 4.0      # 5행 강조 폭
+    _TM_HBAR_H5 = 0.85     # 5행 강조 높이
+    _TM_HBAR_W10 = 4.5     # 10행 강조 폭
+    _TM_HBAR_H10 = 1.0     # 10행 강조 높이
+    _TM_COLOR = HexColor("#444444")
+    _TM_GAP = 1.0          # 프레임 ↔ 마크 간격
 
-    def _render_timing(self, c, frame_x, frame_w, sections, bt, bh):
-        """인식 마크 — 버블 좌표에 정렬된 기준점. 최외곽 테두리에 배치.
+    def _render_timing(self, c, frame_x, frame_w, sections, bt, bh, nc=5):
+        """한국식 바코드 타이밍 스트립 — 버블 좌표에 1:1 정렬.
 
-        상단: 각 MC 컬럼 시작 x에 작은 사각형 (컬럼 위치 보정)
-        하단: 동일
-        좌측: 5행마다 작은 사각형 (행 위치 보정)
-        모든 마크가 실제 버블 좌표와 1:1 대응 → AI 미세 보정에 사용 가능.
+        상하단: 각 버블 x 중심 + 컬럼 경계에 세로 바 → 컬럼 x 보정
+        좌우: 각 행 y 중심에 가로 바 → 행 y 보정 (5행/10행 강조)
         """
-        c.setFillColor(HexColor("#555555"))
-        mk = 1.5  # 마크 크기 (mm) — 작고 섬세
+        vbar_w = self._TM_VBAR_W
+        vbar_h = self._TM_VBAR_H
+        hbar_w = self._TM_HBAR_W
+        hbar_h = self._TM_HBAR_H
+        hbar_w5 = self._TM_HBAR_W5
+        hbar_h5 = self._TM_HBAR_H5
+        hbar_w10 = self._TM_HBAR_W10
+        hbar_h10 = self._TM_HBAR_H10
+        gap = self._TM_GAP
 
-        # ── 상하단: 각 MC 컬럼 시작점에 마크 ──
-        for typ, sx, vw, dw, ss, se in sections:
+        c.setFillColor(self._TM_COLOR)
+
+        # ── 버블 x 좌표 + 컬럼 경계 수집 ──
+        all_xs = []
+        for typ, sx, _vw, dw, ss, se in sections:
             if typ != 'mc':
                 continue
-            # 컬럼 시작 x + 번호 칼럼 끝 x (버블 시작점)
-            bub_start_x = sx + MC_NUM_W
-            # 상단 (페이지 최상단 근처)
-            c.rect(_mm(bub_start_x - mk/2), _y(1.5 + mk),
-                   _mm(mk), _mm(mk), fill=1, stroke=0)
-            # 하단
-            c.rect(_mm(bub_start_x - mk/2), _y(PAGE_H - 1.5),
-                   _mm(mk), _mm(mk), fill=1, stroke=0)
-            # 컬럼 끝 x
-            col_end_x = sx + dw
-            c.rect(_mm(col_end_x - mk/2), _y(1.5 + mk),
-                   _mm(mk), _mm(mk), fill=1, stroke=0)
-            c.rect(_mm(col_end_x - mk/2), _y(PAGE_H - 1.5),
-                   _mm(mk), _mm(mk), fill=1, stroke=0)
+            # 컬럼 경계
+            all_xs.append(sx)
+            all_xs.append(sx + dw)
+            # 각 버블 x 중심
+            ax = sx + MC_NUM_W + MC_BUB_PAD
+            aw = dw - MC_NUM_W - 2 * MC_BUB_PAD
+            bgap = (aw - nc * BUB_W) / (nc + 1)
+            for j in range(nc):
+                bx = ax + bgap * (j + 1) + BUB_W * j + BUB_W / 2
+                all_xs.append(bx)
+        all_xs = sorted(set(all_xs))
 
-        # ── 좌측: 5행마다 행 경계에 마크 (첫 섹션 기준) ──
-        if not sections:
-            return
-        first_sec = sections[0]
-        typ, sx, vw, dw, ss, se = first_sec
-        cnt = se - ss + 1
-        rh = bh / cnt if cnt > 0 else bh
-        for qi in range(0, cnt + 1, 5):
-            row_y = bt + qi * rh
-            # 좌측 (페이지 왼쪽 가장자리)
-            c.rect(_mm(1.0), _y(row_y + mk/2),
-                   _mm(mk), _mm(mk), fill=1, stroke=0)
+        # ── 상단 바코드 스트립 (프레임 바로 위) ──
+        top_y = CONTENT_Y - gap - vbar_h
+        for bx in all_xs:
+            c.rect(_mm(bx - vbar_w / 2), _y(top_y + vbar_h),
+                   _mm(vbar_w), _mm(vbar_h), fill=1, stroke=0)
 
-        # ── 우측: 마지막 섹션 기준 ──
-        last_sec = sections[-1]
-        typ, sx, vw, dw, ss, se = last_sec
-        cnt = se - ss + 1
-        rh = bh / cnt if cnt > 0 else bh
-        for qi in range(0, cnt + 1, 5):
-            row_y = bt + qi * rh
-            c.rect(_mm(PAGE_W - 1.0 - mk), _y(row_y + mk/2),
-                   _mm(mk), _mm(mk), fill=1, stroke=0)
+        # ── 하단 바코드 스트립 (프레임 바로 아래) ──
+        bot_y = CONTENT_Y + CONTENT_H + gap
+        for bx in all_xs:
+            c.rect(_mm(bx - vbar_w / 2), _y(bot_y + vbar_h),
+                   _mm(vbar_w), _mm(vbar_h), fill=1, stroke=0)
+
+        # ── 좌측 바코드 스트립 (첫 MC 컬럼 기준, 모든 행) ──
+        first_mc = next((s for s in sections if s[0] == 'mc'), None)
+        if first_mc:
+            _, _, _, _, ss, se = first_mc
+            cnt = se - ss + 1
+            row_h = bh / cnt if cnt > 0 else bh
+            for qi in range(cnt):
+                row_cy = bt + (qi + 0.5) * row_h
+                q_num = qi + 1
+                if q_num % 10 == 0:
+                    bw, bht = hbar_w10, hbar_h10
+                elif q_num % 5 == 0:
+                    bw, bht = hbar_w5, hbar_h5
+                else:
+                    bw, bht = hbar_w, hbar_h
+                c.rect(_mm(1.0), _y(row_cy + bht / 2),
+                       _mm(bw), _mm(bht), fill=1, stroke=0)
+
+        # ── 우측 바코드 스트립 (마지막 MC 컬럼 기준) ──
+        last_mc = None
+        for s in sections:
+            if s[0] == 'mc':
+                last_mc = s
+        if last_mc:
+            _, _, _, _, ss, se = last_mc
+            cnt = se - ss + 1
+            row_h = bh / cnt if cnt > 0 else bh
+            for qi in range(cnt):
+                row_cy = bt + (qi + 0.5) * row_h
+                q_num = qi + 1
+                if q_num % 10 == 0:
+                    bw, bht = hbar_w10, hbar_h10
+                elif q_num % 5 == 0:
+                    bw, bht = hbar_w5, hbar_h5
+                else:
+                    bw, bht = hbar_w, hbar_h
+                c.rect(_mm(PAGE_W - 1.0 - bw), _y(row_cy + bht / 2),
+                       _mm(bw), _mm(bht), fill=1, stroke=0)

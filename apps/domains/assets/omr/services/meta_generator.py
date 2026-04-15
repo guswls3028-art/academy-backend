@@ -271,7 +271,7 @@ def build_omr_meta(
     # 타이밍 마크 좌표 (pdf_renderer와 동기화)
     timing_marks = _build_timing_marks_meta(
         n_cols=n_cols, per_col=per_col, question_count=question_count,
-        body_y=body_y, body_h=body_h,
+        body_y=body_y, body_h=body_h, n_choices=n_choices,
     )
 
     return {
@@ -296,63 +296,78 @@ def build_omr_meta(
 
 
 # ── 인식 마크 상수 v14 (pdf_renderer._render_timing과 동기화) ──
-# 버블 좌표에 정렬된 1.5mm 사각형 — AI가 컬럼 x / 행 y 보정에 사용
-TM_MK_SIZE = 1.5      # 마크 크기 (mm)
+# 한국식 바코드 스트립: 버블 x / 행 y에 1:1 대응하는 바 좌표
+_TM_VBAR_W = 0.7       # 세로 바 폭 (상하단)
+_TM_VBAR_H = 3.0       # 세로 바 높이
+_TM_HBAR_W = 3.0       # 가로 바 폭 (좌우 일반)
+_TM_HBAR_H = 0.7       # 가로 바 높이
+_TM_HBAR_W5 = 4.0      # 5행 강조 폭
+_TM_HBAR_H5 = 0.85     # 5행 강조 높이
+_TM_HBAR_W10 = 4.5     # 10행 강조 폭
+_TM_HBAR_H10 = 1.0     # 10행 강조 높이
+_TM_GAP = 1.0          # 프레임 ↔ 마크 간격
 
 
 def _build_timing_marks_meta(
     *, n_cols: int, per_col: int, question_count: int,
-    body_y: float, body_h: float,
+    body_y: float, body_h: float, n_choices: int = 5,
 ) -> Dict[str, Any]:
-    """v14 인식 마크 좌표 생성 (pdf_renderer._render_timing과 동기화).
+    """한국식 바코드 타이밍 마크 좌표 (pdf_renderer._render_timing과 동기화).
 
-    버블 좌표에 정렬된 기준점:
-    - 상하단: 각 MC 컬럼의 버블 시작 x와 끝 x에 사각형
-    - 좌우: 5행마다 행 경계에 사각형
+    상하단: 각 버블 x 중심 + 컬럼 경계에 세로 바
+    좌우: 각 행 y 중심에 가로 바 (5행/10행 강조)
     """
-    mk = TM_MK_SIZE
+    vw = _TM_VBAR_W
+    vh = _TM_VBAR_H
+    gap = _TM_GAP
 
-    # ── 상하단: MC 컬럼 버블 시작/끝 x에 마크 ──
-    column_marks: List[Dict[str, Any]] = []
+    # ── 버블 x 좌표 + 컬럼 경계 수집 ──
+    all_xs: List[float] = []
     for ci in range(n_cols):
         col_x = ANS_X + ci * (MC_COL_W + MC_COL_GAP)
-        bub_start_x = col_x + MC_NUM_W
-        col_end_x = col_x + MC_COL_W
+        all_xs.append(col_x)
+        all_xs.append(col_x + MC_COL_W)
+        bxs = _calc_bubble_centers_x(col_x, n_choices)
+        all_xs.extend(bxs)
+    all_xs = sorted(set(round(x, 2) for x in all_xs))
 
-        for x_mm in [bub_start_x, col_end_x]:
-            column_marks.append({
-                "position": "top", "column": ci,
-                "x": round(x_mm - mk / 2, 2),
-                "y": round(1.5, 2),
-                "w": mk, "h": mk,
-            })
-            column_marks.append({
-                "position": "bottom", "column": ci,
-                "x": round(x_mm - mk / 2, 2),
-                "y": round(PAGE_H - 1.5 - mk, 2),
-                "w": mk, "h": mk,
-            })
+    # ── 상단 바 좌표 ──
+    top_y = CONTENT_Y - gap - vh
+    top_bars = [
+        {"x": round(bx - vw / 2, 2), "y": round(top_y, 2), "w": vw, "h": vh}
+        for bx in all_xs
+    ]
 
-    # ── 좌우: 5행마다 행 경계에 마크 ──
-    row_marks: List[Dict[str, Any]] = []
+    # ── 하단 바 좌표 ──
+    bot_y = CONTENT_Y + CONTENT_H + gap
+    bottom_bars = [
+        {"x": round(bx - vw / 2, 2), "y": round(bot_y, 2), "w": vw, "h": vh}
+        for bx in all_xs
+    ]
 
-    # 좌측: 첫 컬럼 기준
+    # ── 좌측 바 좌표 (첫 컬럼 기준, 모든 행) ──
+    left_bars: List[Dict[str, Any]] = []
     if n_cols > 0:
-        s = 1
-        e = min(per_col, question_count)
-        cnt = e - s + 1
+        cnt = min(per_col, question_count)
         if cnt > 0:
             rh = body_h / cnt
-            for qi in range(0, cnt + 1, 5):
-                row_y = body_y + qi * rh
-                row_marks.append({
-                    "side": "left", "row": qi,
-                    "x": round(1.0, 2),
-                    "y": round(row_y - mk / 2, 2),
-                    "w": mk, "h": mk,
+            for qi in range(cnt):
+                row_cy = body_y + (qi + 0.5) * rh
+                q_num = qi + 1
+                if q_num % 10 == 0:
+                    bw, bh_val = _TM_HBAR_W10, _TM_HBAR_H10
+                elif q_num % 5 == 0:
+                    bw, bh_val = _TM_HBAR_W5, _TM_HBAR_H5
+                else:
+                    bw, bh_val = _TM_HBAR_W, _TM_HBAR_H
+                left_bars.append({
+                    "row": qi, "x": 1.0,
+                    "y": round(row_cy - bh_val / 2, 2),
+                    "w": bw, "h": bh_val,
                 })
 
-    # 우측: 마지막 컬럼 기준
+    # ── 우측 바 좌표 (마지막 컬럼 기준) ──
+    right_bars: List[Dict[str, Any]] = []
     if n_cols > 0:
         last_ci = n_cols - 1
         s = last_ci * per_col + 1
@@ -360,18 +375,26 @@ def _build_timing_marks_meta(
         cnt = e - s + 1
         if cnt > 0:
             rh = body_h / cnt
-            for qi in range(0, cnt + 1, 5):
-                row_y = body_y + qi * rh
-                row_marks.append({
-                    "side": "right", "row": qi,
-                    "x": round(PAGE_W - 1.0 - mk, 2),
-                    "y": round(row_y - mk / 2, 2),
-                    "w": mk, "h": mk,
+            for qi in range(cnt):
+                row_cy = body_y + (qi + 0.5) * rh
+                q_num = qi + 1
+                if q_num % 10 == 0:
+                    bw, bh_val = _TM_HBAR_W10, _TM_HBAR_H10
+                elif q_num % 5 == 0:
+                    bw, bh_val = _TM_HBAR_W5, _TM_HBAR_H5
+                else:
+                    bw, bh_val = _TM_HBAR_W, _TM_HBAR_H
+                right_bars.append({
+                    "row": qi, "x": round(PAGE_W - 1.0 - bw, 2),
+                    "y": round(row_cy - bh_val / 2, 2),
+                    "w": bw, "h": bh_val,
                 })
 
     return {
-        "column_marks": column_marks,
-        "row_marks": row_marks,
+        "top_bars": top_bars,
+        "bottom_bars": bottom_bars,
+        "left_bars": left_bars,
+        "right_bars": right_bars,
     }
 
 
