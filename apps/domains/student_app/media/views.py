@@ -417,6 +417,133 @@ class StudentVideoMeView(APIView):
         }, status=status.HTTP_200_OK)
 
 
+class StudentVideoStatsView(APIView):
+    """
+    GET /student/video/me/stats/
+    학생 영상 시청 통계 — 전체 진도율, 완료 영상 수, 강좌별 진도.
+    VideoProgress 모델 집계.
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request):
+        from django.db.models import Count, Sum, Case, When, IntegerField, F, Value
+        from apps.domains.lectures.models import Lecture, Session
+        from apps.domains.enrollment.models import Enrollment
+        from apps.support.video.models import Video, VideoProgress
+
+        tenant = getattr(request, "tenant", None)
+        student = get_request_student(request)
+
+        if not tenant or not student:
+            return Response({
+                "total_videos": 0,
+                "completed_videos": 0,
+                "completion_rate": 0,
+                "total_watch_duration": 0,
+                "total_content_duration": 0,
+                "lectures": [],
+            })
+
+        # 활성 수강 목록
+        enrollments = Enrollment.objects.filter(
+            student=student,
+            tenant=tenant,
+            is_active=True,
+        ).select_related("lecture")
+
+        enrollment_ids = list(enrollments.values_list("id", flat=True))
+        enrollment_map = {e.id: e for e in enrollments}
+
+        if not enrollment_ids:
+            return Response({
+                "total_videos": 0,
+                "completed_videos": 0,
+                "completion_rate": 0,
+                "total_watch_duration": 0,
+                "total_content_duration": 0,
+                "lectures": [],
+            })
+
+        # 전체 통계: VideoProgress 기반
+        progresses = VideoProgress.objects.filter(
+            enrollment_id__in=enrollment_ids,
+            video__status="READY",
+        ).select_related("video", "enrollment")
+
+        total_videos = 0
+        completed_videos = 0
+        total_watch_duration = 0  # progress * duration 추정
+        total_content_duration = 0
+
+        # 강좌별 집계
+        lecture_stats: Dict[int, Dict[str, Any]] = {}
+
+        for p in progresses:
+            video = p.video
+            enrollment = enrollment_map.get(p.enrollment_id)
+            if not enrollment:
+                continue
+
+            lecture_id = enrollment.lecture_id
+            duration = video.duration or 0
+
+            total_videos += 1
+            total_content_duration += duration
+            total_watch_duration += int(p.progress * duration)
+            if p.completed:
+                completed_videos += 1
+
+            if lecture_id not in lecture_stats:
+                lecture_stats[lecture_id] = {
+                    "lecture_id": lecture_id,
+                    "title": enrollment.lecture.title if enrollment.lecture else f"강좌 {lecture_id}",
+                    "video_count": 0,
+                    "completed_count": 0,
+                    "total_duration": 0,
+                    "watch_duration": 0,
+                }
+
+            ls = lecture_stats[lecture_id]
+            ls["video_count"] += 1
+            ls["total_duration"] += duration
+            ls["watch_duration"] += int(p.progress * duration)
+            if p.completed:
+                ls["completed_count"] += 1
+
+        # 강좌별 진도율 계산
+        lectures_data = []
+        for ls in sorted(lecture_stats.values(), key=lambda x: x["title"]):
+            progress_pct = (
+                round((ls["completed_count"] / ls["video_count"]) * 100)
+                if ls["video_count"] > 0
+                else 0
+            )
+            lectures_data.append({
+                "lecture_id": ls["lecture_id"],
+                "title": ls["title"],
+                "video_count": ls["video_count"],
+                "completed_count": ls["completed_count"],
+                "total_duration": ls["total_duration"],
+                "progress_pct": progress_pct,
+            })
+
+        completion_rate = (
+            round((completed_videos / total_videos) * 100, 1)
+            if total_videos > 0
+            else 0
+        )
+
+        return Response({
+            "total_videos": total_videos,
+            "completed_videos": completed_videos,
+            "completion_rate": completion_rate,
+            "total_watch_duration": total_watch_duration,
+            "total_content_duration": total_content_duration,
+            "lectures": lectures_data,
+        })
+
+
 def _students_for_request(request):
     """요청자에 연결된 학생들 (1명 또는 학부모의 모든 자녀). 권한 검사용."""
     student = get_request_student(request)

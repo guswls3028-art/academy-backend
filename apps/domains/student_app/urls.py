@@ -28,6 +28,7 @@ from .media.views import (
     StudentVideoProgressView,
     StudentPublicSessionView,
     StudentVideoMeView,
+    StudentVideoStatsView,
     StudentVideoLikeView,
     StudentVideoCommentListView,
     StudentVideoCommentDetailView,
@@ -57,6 +58,7 @@ urlpatterns = [
 
     # ✅ Video (Student Consumer)
     path("video/me/", StudentVideoMeView.as_view()),
+    path("video/me/stats/", StudentVideoStatsView.as_view()),
     path("video/public-session/", StudentPublicSessionView.as_view()),
     path("video/sessions/<int:session_id>/videos/", StudentSessionVideoListView.as_view()),
     path("video/videos/<int:video_id>/playback/", StudentVideoPlaybackView.as_view()),
