@@ -31,10 +31,16 @@ class TenantListView(APIView):
         if not is_platform_admin_tenant(request):
             return Response({"detail": "Platform admin tenant required."}, status=403)
         tenants = Tenant.objects.all().order_by('id')
+        # Prefetch programs for feature_flags
+        programs_by_tenant = {
+            p.tenant_id: p
+            for p in Program.objects.filter(tenant__in=tenants)
+        }
         data = []
         for tenant in tenants:
             domains = TenantDomain.objects.filter(tenant=tenant, is_active=True)
             primary_domain = domains.filter(is_primary=True).first()
+            program = programs_by_tenant.get(tenant.id)
             data.append({
                 "id": tenant.id,
                 "code": tenant.code,
@@ -42,6 +48,7 @@ class TenantListView(APIView):
                 "isActive": tenant.is_active,
                 "primaryDomain": primary_domain.host if primary_domain else None,
                 "domains": [d.host for d in domains],
+                "featureFlags": program.feature_flags if program else {},
             })
         return Response(data)
 
@@ -186,8 +193,8 @@ class TenantOwnerView(APIView):
 
                 if user:
                     if password:
-                        user.set_password(password)
-                        user.save(update_fields=["password"])
+                        from apps.core.services.password import force_reset_password
+                        force_reset_password(user, password)
                     if name is not None:
                         user.name = name
                     if phone is not None:

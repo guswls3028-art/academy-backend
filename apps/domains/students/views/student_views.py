@@ -1331,8 +1331,8 @@ class StudentViewSet(ModelViewSet):
                         {"detail": "새 비밀번호는 4자 이상이어야 합니다."},
                         status=400,
                     )
-                user.set_password(new_pw)
-                user.save(update_fields=["password"])
+                from apps.core.services.password import change_password
+                change_password(user, new_pw)
 
             # 프로필 사진
             if "profile_photo" in request.FILES:

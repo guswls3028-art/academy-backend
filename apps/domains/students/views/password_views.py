@@ -130,8 +130,8 @@ class StudentPasswordFindVerifyView(APIView):
         user = User.objects.filter(pk=user_id, tenant=tenant).first()
         if not user:
             return Response({"detail": "사용자를 찾을 수 없습니다."}, status=404)
-        user.set_password(new_password)
-        user.save(update_fields=["password"])
+        from apps.core.services.password import change_password
+        change_password(user, new_password)
         cache.delete(key)
         return Response({"message": "비밀번호가 변경되었습니다."}, status=200)
 
@@ -266,8 +266,8 @@ class StudentPasswordResetSendView(APIView):
             else _generate_temp_password()
         )
         old_password_hash = user.password  # 발송 실패 시 롤백용
-        user.set_password(temp_password)
-        user.save(update_fields=["password"])
+        from apps.core.services.password import force_reset_password
+        force_reset_password(user, temp_password)
 
         # skip_notify: 비밀번호만 변경, 알림톡 발송 안 함 (관리자 전용)
         skip_notify = bool(request.data.get("skip_notify", False)) and is_staff_request
@@ -326,8 +326,8 @@ class StudentPasswordResetSendView(APIView):
 
         if not ok:
             # 발송 실패 시 비밀번호 롤백 — 비밀번호는 바뀌었는데 알림 못 받는 상황 방지
-            user.password = old_password_hash
-            user.save(update_fields=["password"])
+            from apps.core.services.password import rollback_password
+            rollback_password(user, old_password_hash)
             return Response(
                 {"detail": "임시 비밀번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."},
                 status=503,

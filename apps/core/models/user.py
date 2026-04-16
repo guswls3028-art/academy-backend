@@ -62,6 +62,10 @@ class User(AbstractUser):
         default=False,
         help_text="True이면 로그인 후 비밀번호 변경 강제. 신규 학부모 계정 생성 시 설정.",
     )
+    token_version = models.PositiveIntegerField(
+        default=0,
+        help_text="비밀번호 변경 시 +1. JWT claim과 비교하여 기존 토큰 무효화.",
+    )
 
     groups = models.ManyToManyField(
         Group,

@@ -93,8 +93,8 @@ class StaffViewSet(viewsets.ModelViewSet):
         if len(new_password) < 4:
             raise ValidationError({"password": "비밀번호는 4자 이상이어야 합니다."})
 
-        staff.user.set_password(new_password)
-        staff.user.save(update_fields=["password"])
+        from apps.core.services.password import force_reset_password
+        force_reset_password(staff.user, new_password)
         return Response({"detail": "비밀번호가 변경되었습니다."})
 
     @action(detail=False, methods=["get"], url_path="me", permission_classes=[IsAuthenticated, TenantResolvedAndMember])

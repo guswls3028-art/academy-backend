@@ -23,6 +23,21 @@ class SmsEndpointThrottle(SimpleRateThrottle):
         }
 
 
+class LoginThrottle(SimpleRateThrottle):
+    """
+    로그인 엔드포인트 전용: IP 기준 10회/분.
+    brute force 방어. 4자 이상 비밀번호 정책에서 특히 중요.
+    """
+    scope = "login"
+    rate = "10/minute"
+
+    def get_cache_key(self, request, view):
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": self.get_ident(request),
+        }
+
+
 class SignupCheckThrottle(SimpleRateThrottle):
     """
     회원가입 중복검사 전용: IP 기준 30회/분.

@@ -65,6 +65,10 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         if user.tenant_id is not None:
             refresh["tenant_id"] = user.tenant_id
             refresh.access_token["tenant_id"] = user.tenant_id
+        # token_version: 비밀번호 변경 시 기존 토큰 무효화용
+        tv = getattr(user, "token_version", 0) or 0
+        refresh["token_version"] = tv
+        refresh.access_token["token_version"] = tv
         return {
             "refresh": str(refresh),
             "access": str(refresh.access_token),
@@ -73,3 +77,8 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 class TenantAwareTokenObtainPairView(TokenObtainPairView):
     serializer_class = TenantAwareTokenObtainPairSerializer
+    throttle_classes = []  # __init__에서 설정
+
+    def get_throttles(self):
+        from apps.api.common.throttles import LoginThrottle
+        return [LoginThrottle()]
