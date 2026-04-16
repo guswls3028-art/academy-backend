@@ -1,6 +1,8 @@
 # apps/worker/ai/ocr/google.py
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -15,12 +17,39 @@ class OCRResult:
     raw: Optional[Any] = None
 
 
+_cached_client: Optional[vision.ImageAnnotatorClient] = None
+
+
+def _get_vision_client() -> vision.ImageAnnotatorClient:
+    """
+    Google Vision 클라이언트 생성.
+    1. GOOGLE_APPLICATION_CREDENTIALS (파일 경로) — 기본
+    2. GOOGLE_CREDENTIALS_JSON (JSON 문자열) — SSM env 주입용
+    3. Default credentials (GCE 등)
+    """
+    global _cached_client
+    if _cached_client is not None:
+        return _cached_client
+
+    creds_json = os.getenv("GOOGLE_CREDENTIALS_JSON", "").strip()
+    if creds_json:
+        from google.oauth2 import service_account
+        info = json.loads(creds_json)
+        credentials = service_account.Credentials.from_service_account_info(info)
+        _cached_client = vision.ImageAnnotatorClient(credentials=credentials)
+    else:
+        _cached_client = vision.ImageAnnotatorClient()
+
+    return _cached_client
+
+
 def google_ocr(image_path: str) -> OCRResult:
     """
     Worker에서 실행되는 Google OCR
-    - service account는 GOOGLE_APPLICATION_CREDENTIALS 또는 기본 환경에 따름
+    - GOOGLE_CREDENTIALS_JSON (JSON 문자열) 또는
+    - GOOGLE_APPLICATION_CREDENTIALS (파일 경로) 사용
     """
-    client = vision.ImageAnnotatorClient()
+    client = _get_vision_client()
 
     with open(image_path, "rb") as f:
         content = f.read()
