@@ -73,6 +73,18 @@ def handle_ai_job(job: AIJob) -> AIResult:
         if job_type_lower == "ppt_generation":
             return handle_ppt_generation_job(job)
 
+        # Matchup index exam (download 불필요 — DB에서 직접 읽음)
+        if job.type == "matchup_index_exam":
+            from apps.worker.ai_worker.ai.pipelines.matchup_index_exam import (
+                run_matchup_index_exam,
+            )
+            return run_matchup_index_exam(
+                job=job,
+                payload=payload,
+                tenant_id=tenant_id,
+                record_progress=_record_progress,
+            )
+
         cfg = AIConfig.load()
 
         download_url = payload.get("download_url")
@@ -297,20 +309,6 @@ def handle_ai_job(job: AIJob) -> AIResult:
                     "identifier": ident,
                     "answers": answers,
                 },
-            )
-
-        # --------------------------------------------------
-        # Matchup index exam (시험 문제 → 매치업 인덱싱)
-        # --------------------------------------------------
-        if job.type == "matchup_index_exam":
-            from apps.worker.ai_worker.ai.pipelines.matchup_index_exam import (
-                run_matchup_index_exam,
-            )
-            return run_matchup_index_exam(
-                job=job,
-                payload=payload,
-                tenant_id=tenant_id,
-                record_progress=_record_progress,
             )
 
         # --------------------------------------------------
