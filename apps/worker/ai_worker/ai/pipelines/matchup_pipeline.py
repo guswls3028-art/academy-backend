@@ -183,44 +183,94 @@ def _whole_pages_as_questions(pages: List[Dict]) -> List[Dict]:
 
 
 def _extract_texts(questions: List[Dict], job_id: str) -> None:
-    """각 문제 영역에서 OCR로 텍스트 추출 (in-place)."""
+    """
+    전체 페이지 OCR → bbox 기반 텍스트 분배.
+    개별 크롭 OCR보다 안정적 (작은 bbox에서도 텍스트 추출 가능).
+    """
     try:
         from apps.worker.ai_worker.ai.ocr.google import google_ocr
     except ImportError:
         from apps.worker.ai_worker.ai.ocr.tesseract import tesseract_ocr as google_ocr
 
-    import cv2
-    import tempfile
-    import os
-
+    # 페이지별로 한 번만 OCR 실행
+    page_texts: Dict[int, str] = {}
+    page_images: Dict[int, str] = {}
     for q in questions:
+        pi = q.get("page_index", 0)
+        if pi not in page_images:
+            page_images[pi] = q["image_path"]
+
+    for pi, img_path in page_images.items():
         try:
-            img = cv2.imread(q["image_path"])
-            if img is None:
-                q["text"] = ""
-                continue
-
-            if q.get("bbox"):
-                x, y, w, h = q["bbox"]
-                img_h, img_w = img.shape[:2]
-                x, y = max(0, int(x)), max(0, int(y))
-                x2, y2 = min(img_w, x + int(w)), min(img_h, y + int(h))
-                if x2 > x and y2 > y:
-                    img = img[y:y2, x:x2]
-
-            # 임시 파일에 저장하여 OCR 호출
-            fd, tmp_path = tempfile.mkstemp(suffix=".png")
-            try:
-                cv2.imwrite(tmp_path, img)
-                result = google_ocr(tmp_path)
-                q["text"] = result.text if hasattr(result, "text") else str(result)
-            finally:
-                os.close(fd)
-                os.unlink(tmp_path)
-
+            result = google_ocr(img_path)
+            page_texts[pi] = result.text if hasattr(result, "text") else str(result)
         except Exception:
-            logger.warning("OCR failed for Q%d in job %s", q["number"], job_id, exc_info=True)
+            logger.warning("Page OCR failed for page %d in job %s", pi, job_id, exc_info=True)
+            page_texts[pi] = ""
+
+    # bbox 기반으로 텍스트 분배 (Y좌표 범위로 매칭)
+    for q in questions:
+        pi = q.get("page_index", 0)
+        full_text = page_texts.get(pi, "")
+
+        if not full_text:
             q["text"] = ""
+            continue
+
+        if not q.get("bbox"):
+            # bbox 없으면 전체 텍스트 할당
+            q["text"] = full_text
+            continue
+
+        # 전체 텍스트를 줄별로 나누어 bbox Y범위에 해당하는 텍스트 추출
+        # 간단한 휴리스틱: 문제 번호로 텍스트 분리
+        q["text"] = _extract_text_for_question(full_text, q["number"], len(questions))
+
+    # fallback: 텍스트 분배 실패 시 전체 텍스트 사용
+    for q in questions:
+        if not q.get("text") and questions:
+            pi = q.get("page_index", 0)
+            q["text"] = page_texts.get(pi, "")
+
+
+def _extract_text_for_question(full_text: str, q_number: int, total: int) -> str:
+    """전체 OCR 텍스트에서 문제 번호 기반으로 해당 문제 텍스트 추출."""
+    import re
+    lines = full_text.split("\n")
+
+    # 문제 번호 패턴: "1.", "1)", "Q1", "문제 1" 등
+    patterns = [
+        rf"^{q_number}\s*[\.\):]",
+        rf"^{q_number}\s",
+        rf"^Q{q_number}[\.\s]",
+    ]
+    next_patterns = [
+        rf"^{q_number + 1}\s*[\.\):]",
+        rf"^{q_number + 1}\s",
+        rf"^Q{q_number + 1}[\.\s]",
+    ] if q_number < total else []
+
+    start_idx = None
+    end_idx = len(lines)
+
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if start_idx is None:
+            for p in patterns:
+                if re.match(p, stripped):
+                    start_idx = i
+                    break
+        elif next_patterns:
+            for p in next_patterns:
+                if re.match(p, stripped):
+                    end_idx = i
+                    break
+            if end_idx != len(lines):
+                break
+
+    if start_idx is not None:
+        return "\n".join(lines[start_idx:end_idx]).strip()
+    return ""
 
 
 def _generate_embeddings(questions: List[Dict], job_id: str) -> None:
