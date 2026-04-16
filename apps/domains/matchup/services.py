@@ -81,7 +81,7 @@ def retry_document(document: MatchupDocument) -> str:
         key=document.r2_key, expires_in=3600
     )
 
-    job_id = dispatch_job(
+    result = dispatch_job(
         job_type="matchup_analysis",
         payload={
             "download_url": download_url,
@@ -94,8 +94,12 @@ def retry_document(document: MatchupDocument) -> str:
         source_id=str(document.id),
     )
 
+    if isinstance(result, dict) and not result.get("ok", True):
+        raise RuntimeError(result.get("error", "dispatch failed"))
+
+    job_id = result.get("job_id", "") if isinstance(result, dict) else str(result)
     document.status = "processing"
-    document.ai_job_id = job_id
+    document.ai_job_id = str(job_id)
     document.error_message = ""
     document.problem_count = 0
     document.save(update_fields=["status", "ai_job_id", "error_message", "problem_count", "updated_at"])

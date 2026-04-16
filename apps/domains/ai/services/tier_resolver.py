@@ -82,7 +82,7 @@ def validate_tier_for_job_type(tier: str, job_type: str) -> bool:
     if tier == "lite":
         return job_type_lower in ("ocr",)
     
-    # Basic: OCR + OMR/status detection + 엑셀 파싱/내보내기
+    # Basic: OCR + OMR/status detection + 엑셀 파싱/내보내기 + 문제분할 + 매치업
     if tier == "basic":
         return job_type_lower in (
             "ocr",
@@ -92,6 +92,8 @@ def validate_tier_for_job_type(tier: str, job_type: str) -> bool:
             "attendance_excel_export",
             "staff_excel_export",
             "ppt_generation",
+            "question_segmentation",
+            "matchup_analysis",
         )
     
     # Premium: 모든 작업 허용

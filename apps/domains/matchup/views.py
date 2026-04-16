@@ -154,7 +154,7 @@ class DocumentUploadView(View):
                 key=r2_key, expires_in=3600
             )
 
-            job_id = dispatch_job(
+            result = dispatch_job(
                 job_type="matchup_analysis",
                 payload={
                     "download_url": download_url,
@@ -167,8 +167,12 @@ class DocumentUploadView(View):
                 source_id=str(doc.id),
             )
 
+            if isinstance(result, dict) and not result.get("ok", True):
+                raise RuntimeError(result.get("error", "dispatch failed"))
+
+            job_id = result.get("job_id", "") if isinstance(result, dict) else str(result)
             doc.status = "processing"
-            doc.ai_job_id = job_id
+            doc.ai_job_id = str(job_id)
             doc.save(update_fields=["status", "ai_job_id", "updated_at"])
         except Exception:
             logger.exception("Failed to dispatch matchup_analysis job for doc %s", doc.id)
