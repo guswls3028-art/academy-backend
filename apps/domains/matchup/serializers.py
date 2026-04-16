@@ -38,3 +38,7 @@ class SimilarProblemSerializer(serializers.Serializer):
     number = serializers.IntegerField()
     text = serializers.CharField()
     similarity = serializers.FloatField()
+    source_type = serializers.CharField()
+    source_lecture_title = serializers.CharField()
+    source_session_title = serializers.CharField()
+    source_exam_title = serializers.CharField()

@@ -63,12 +63,29 @@ class MatchupProblem(TimestampModel):
         MatchupDocument,
         on_delete=models.CASCADE,
         related_name="problems",
+        null=True,
+        blank=True,
     )
     number = models.PositiveIntegerField()
     text = models.TextField(blank=True, default="")
     image_key = models.CharField(max_length=512, blank=True, default="")
     embedding = models.JSONField(null=True, blank=True)
     meta = models.JSONField(default=dict, blank=True)
+
+    # 출처 추적 — 시험 문제 인덱싱 시 사용
+    SOURCE_CHOICES = [
+        ("matchup", "매치업 업로드"),
+        ("exam", "시험 문제"),
+    ]
+    source_type = models.CharField(
+        max_length=20, choices=SOURCE_CHOICES, default="matchup", db_index=True,
+    )
+    source_exam_id = models.IntegerField(null=True, blank=True, db_index=True)
+    source_question_number = models.IntegerField(null=True, blank=True)
+    # 역추적용 비정규화 (JOIN 없이 바로 표시)
+    source_lecture_title = models.CharField(max_length=255, blank=True, default="")
+    source_session_title = models.CharField(max_length=255, blank=True, default="")
+    source_exam_title = models.CharField(max_length=255, blank=True, default="")
 
     class Meta:
         app_label = "matchup"

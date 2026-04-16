@@ -13,6 +13,8 @@ AIJobType = Literal[
     "excel_parsing",
     "ppt_generation",
     "matchup_analysis",
+    "matchup_index_exam",
+    "matchup_search_qna",
 ]
 
 

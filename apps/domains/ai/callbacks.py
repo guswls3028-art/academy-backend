@@ -65,6 +65,39 @@ def dispatch_ai_result_to_domain(
             )
         return
 
+    # matchup_index: 시험 문제 인덱싱 결과
+    if source_domain == "matchup_index":
+        try:
+            _handle_matchup_index_result(
+                job_id=job_id,
+                status=status,
+                result_payload=result_payload or {},
+                error=error,
+                source_id=source_id,
+            )
+        except Exception:
+            logger.exception(
+                "AI_CALLBACK_MATCHUP_INDEX_FAILED | job_id=%s | source_id=%s",
+                job_id, source_id,
+            )
+        return
+
+    # community_qna: 학생 Q&A 매치업 검색 결과
+    if source_domain == "community_qna":
+        try:
+            _handle_qna_matchup_search_result(
+                job_id=job_id,
+                status=status,
+                result_payload=result_payload or {},
+                source_id=source_id,
+            )
+        except Exception:
+            logger.exception(
+                "AI_CALLBACK_QNA_MATCHUP_FAILED | job_id=%s | post_id=%s",
+                job_id, source_id,
+            )
+        return
+
     if source_domain != "submissions":
         logger.debug(
             "AI_CALLBACK_SKIP | source_domain=%s job_id=%s (not submissions)",
@@ -342,6 +375,23 @@ def _handle_exam_ai_result(
                 job_id, exam_id, len(created_questions), len(explanations_data),
             )
 
+            # 매치업 자동 인덱싱: 시험 문제 → MatchupProblem
+            try:
+                from apps.domains.ai.gateway import dispatch_job as _dispatch
+                _dispatch(
+                    job_type="matchup_index_exam",
+                    payload={
+                        "exam_id": str(exam_id),
+                        "tenant_id": str(exam.tenant_id),
+                    },
+                    tenant_id=str(exam.tenant_id),
+                    source_domain="matchup_index",
+                    source_id=str(exam_id),
+                )
+                logger.info("MATCHUP_INDEX_DISPATCHED | exam_id=%s", exam_id)
+            except Exception:
+                logger.warning("MATCHUP_INDEX_DISPATCH_FAILED | exam_id=%s", exam_id, exc_info=True)
+
     except Exam.DoesNotExist:
         logger.warning(
             "AI_CALLBACK_EXAM_NOT_FOUND | job_id=%s | exam_id=%s",
@@ -436,6 +486,121 @@ def _handle_matchup_ai_result(
     logger.info(
         "AI_CALLBACK_MATCHUP_SUCCESS | job_id=%s | doc_id=%s | problems=%d",
         job_id, source_id, len(problem_objs),
+    )
+
+
+def _handle_qna_matchup_search_result(
+    *,
+    job_id: str,
+    status: str,
+    result_payload: Dict[str, Any],
+    source_id: Optional[str],
+) -> None:
+    """Q&A 매치업 검색 결과를 PostEntity.meta에 저장."""
+    if status == "FAILED":
+        logger.warning("AI_CALLBACK_QNA_MATCHUP_FAILED | job_id=%s | post_id=%s", job_id, source_id)
+        return
+
+    post_id = result_payload.get("post_id") or source_id
+    if not post_id:
+        return
+
+    from apps.domains.community.models import PostEntity
+
+    try:
+        post = PostEntity.objects.get(id=int(post_id))
+    except PostEntity.DoesNotExist:
+        logger.warning("AI_CALLBACK_QNA_POST_NOT_FOUND | post_id=%s", post_id)
+        return
+
+    results = result_payload.get("results", [])
+    ocr_text = result_payload.get("ocr_text", "")
+
+    meta = post.meta or {}
+    meta["matchup_results"] = results
+    meta["matchup_ocr_text"] = ocr_text[:500]
+    post.meta = meta
+    post.save(update_fields=["meta"])
+
+    logger.info(
+        "AI_CALLBACK_QNA_MATCHUP_SUCCESS | post_id=%s | results=%d",
+        post_id, len(results),
+    )
+
+
+def _handle_matchup_index_result(
+    *,
+    job_id: str,
+    status: str,
+    result_payload: Dict[str, Any],
+    error: Optional[str],
+    source_id: Optional[str],
+) -> None:
+    """
+    시험 문제 인덱싱 결과 처리 (matchup_index_exam).
+    source_id = exam_id. Document 없이 MatchupProblem 직접 생성.
+    """
+    from apps.domains.matchup.models import MatchupProblem
+
+    if status == "FAILED":
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_INDEX_FAILED | job_id=%s | exam_id=%s | error=%s",
+            job_id, source_id, error,
+        )
+        return
+
+    exam_id = source_id
+    if not exam_id:
+        return
+
+    problems_data = result_payload.get("problems", [])
+    if not problems_data:
+        logger.info("AI_CALLBACK_MATCHUP_INDEX_EMPTY | job_id=%s | exam_id=%s", job_id, exam_id)
+        return
+
+    # tenant_id 추출
+    tenant_id = None
+    if job_id:
+        from apps.domains.ai.models import AIJobModel
+        ai_job = AIJobModel.objects.filter(job_id=job_id).first()
+        if ai_job:
+            tenant_id = ai_job.tenant_id
+
+    if not tenant_id:
+        logger.warning("AI_CALLBACK_MATCHUP_INDEX_NO_TENANT | job_id=%s", job_id)
+        return
+
+    # 기존 인덱싱 결과 삭제 (재인덱싱 시 중복 방지)
+    MatchupProblem.objects.filter(
+        tenant_id=tenant_id,
+        source_type="exam",
+        source_exam_id=int(exam_id),
+    ).delete()
+
+    problem_objs = []
+    for p in problems_data:
+        problem_objs.append(MatchupProblem(
+            tenant_id=tenant_id,
+            document=None,
+            number=p.get("number", 0),
+            text=p.get("text", ""),
+            image_key=p.get("image_key", ""),
+            embedding=p.get("embedding"),
+            meta={},
+            source_type="exam",
+            source_exam_id=int(exam_id),
+            source_question_number=p.get("source_question_number", p.get("number", 0)),
+            source_lecture_title=p.get("lecture_title", ""),
+            source_session_title=p.get("session_title", ""),
+            source_exam_title=p.get("exam_title", ""),
+        ))
+
+    if problem_objs:
+        MatchupProblem.objects.bulk_create(problem_objs, ignore_conflicts=True)
+
+    logger.info(
+        "AI_CALLBACK_MATCHUP_INDEX_SUCCESS | job_id=%s | exam_id=%s | indexed=%d",
+        job_id, exam_id, len(problem_objs),
     )
 
 

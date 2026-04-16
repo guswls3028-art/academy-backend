@@ -354,6 +354,10 @@ class SimilarProblemView(View):
                 "number": problem.number,
                 "text": problem.text[:200],
                 "similarity": round(sim, 4),
+                "source_type": getattr(problem, "source_type", "matchup"),
+                "source_lecture_title": getattr(problem, "source_lecture_title", ""),
+                "source_session_title": getattr(problem, "source_session_title", ""),
+                "source_exam_title": getattr(problem, "source_exam_title", ""),
             }
             # 이미지 URL
             if problem.image_key and generate_presigned_get_url_storage:

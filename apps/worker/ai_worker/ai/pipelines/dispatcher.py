@@ -300,6 +300,35 @@ def handle_ai_job(job: AIJob) -> AIResult:
             )
 
         # --------------------------------------------------
+        # Matchup index exam (시험 문제 → 매치업 인덱싱)
+        # --------------------------------------------------
+        if job.type == "matchup_index_exam":
+            from apps.worker.ai_worker.ai.pipelines.matchup_index_exam import (
+                run_matchup_index_exam,
+            )
+            return run_matchup_index_exam(
+                job=job,
+                payload=payload,
+                tenant_id=tenant_id,
+                record_progress=_record_progress,
+            )
+
+        # --------------------------------------------------
+        # Matchup search QnA (학생 Q&A 사진 → 유사 문제 검색)
+        # --------------------------------------------------
+        if job.type == "matchup_search_qna":
+            from apps.worker.ai_worker.ai.pipelines.matchup_search_qna import (
+                run_matchup_search_qna,
+            )
+            return run_matchup_search_qna(
+                job=job,
+                local_path=local_path,
+                payload=payload,
+                tenant_id=tenant_id,
+                record_progress=_record_progress,
+            )
+
+        # --------------------------------------------------
         # Matchup analysis (매치업 — 문제 분할 + OCR + 임베딩)
         # --------------------------------------------------
         if job.type == "matchup_analysis":

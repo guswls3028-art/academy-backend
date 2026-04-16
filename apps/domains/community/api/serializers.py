@@ -156,8 +156,9 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "replies_count",
             "mappings",
             "attachments",
+            "meta",
         ]
-        read_only_fields = ["tenant", "created_by"]
+        read_only_fields = ["tenant", "created_by", "meta"]
 
 
 class BlockTypeSerializer(serializers.ModelSerializer):

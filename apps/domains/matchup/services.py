@@ -36,7 +36,8 @@ def find_similar_problems(
         MatchupProblem.objects
         .filter(tenant_id=tenant_id, embedding__isnull=False)
         .exclude(id=problem_id)
-        .only("id", "number", "embedding", "document_id", "text")
+        .only("id", "number", "embedding", "document_id", "text",
+              "source_type", "source_lecture_title", "source_session_title", "source_exam_title")
     )
 
     scored = []

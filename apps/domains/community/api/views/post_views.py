@@ -453,6 +453,10 @@ class PostViewSet(viewsets.ModelViewSet):
                     created.append(att)
                     logger.info("PostAttachment created: post=%s, file=%s, key=%s", post.id, fname, r2_key)
 
+            # Q&A 이미지 첨부 시 자동 매치업 검색 디스패치
+            if post.post_type == "qna":
+                _dispatch_qna_matchup(post, created, tenant)
+
             serializer = PostAttachmentSerializer(created, many=True)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
         except Exception:
@@ -557,3 +561,37 @@ class PostViewSet(viewsets.ModelViewSet):
             serializer.validated_data["content"] = sanitize_html(content)
         serializer.save()
         return Response(serializer.data)
+
+
+def _dispatch_qna_matchup(post, attachments, tenant):
+    """Q&A 이미지 첨부 시 자동 매치업 검색 디스패치."""
+    image_atts = [a for a in attachments if (a.content_type or "").startswith("image/")]
+    if not image_atts:
+        return
+
+    att = image_atts[0]  # 첫 번째 이미지만 검색
+
+    try:
+        from apps.domains.ai.gateway import dispatch_job
+        from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+        download_url = generate_presigned_get_url_storage(key=att.r2_key, expires_in=3600)
+        result = dispatch_job(
+            job_type="matchup_search_qna",
+            payload={
+                "download_url": download_url,
+                "post_id": str(post.id),
+                "attachment_id": str(att.id),
+                "r2_key": att.r2_key,
+                "tenant_id": str(tenant.id),
+            },
+            tenant_id=str(tenant.id),
+            source_domain="community_qna",
+            source_id=str(post.id),
+        )
+        logger.info(
+            "QNA_MATCHUP_DISPATCHED | post_id=%s | att_id=%s | ok=%s",
+            post.id, att.id, result.get("ok") if isinstance(result, dict) else True,
+        )
+    except Exception:
+        logger.warning("QNA_MATCHUP_DISPATCH_FAILED | post_id=%s", post.id, exc_info=True)

@@ -83,6 +83,7 @@ class PostEntity(models.Model):
         blank=True,
         help_text="예약 게시 시각. null이면 즉시 게시.",
     )
+    meta = models.JSONField(default=dict, blank=True, help_text="AI 매치업 결과 등 확장 데이터")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

@@ -94,6 +94,8 @@ def validate_tier_for_job_type(tier: str, job_type: str) -> bool:
             "ppt_generation",
             "question_segmentation",
             "matchup_analysis",
+            "matchup_index_exam",
+            "matchup_search_qna",
         )
     
     # Premium: 모든 작업 허용
