@@ -89,8 +89,21 @@ class MatchupProblem(TimestampModel):
 
     class Meta:
         app_label = "matchup"
-        unique_together = [("document", "number")]
         ordering = ["number"]
+        constraints = [
+            # 매치업 업로드 문서 내 중복 방지
+            models.UniqueConstraint(
+                fields=["document", "number"],
+                condition=models.Q(document__isnull=False),
+                name="unique_matchup_doc_number",
+            ),
+            # 시험 인덱싱 중복 방지
+            models.UniqueConstraint(
+                fields=["tenant", "source_exam_id", "source_question_number"],
+                condition=models.Q(source_type="exam"),
+                name="unique_matchup_exam_question",
+            ),
+        ]
 
     def __str__(self):
         return f"Doc {self.document_id} Q{self.number}"

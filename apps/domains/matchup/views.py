@@ -342,7 +342,7 @@ class SimilarProblemView(View):
         # document title 미리 조회
         doc_ids = {p.document_id for p, _ in results}
         doc_titles = dict(
-            MatchupDocument.objects.filter(id__in=doc_ids).values_list("id", "title")
+            MatchupDocument.objects.filter(id__in=doc_ids, tenant=request.tenant).values_list("id", "title")
         )
 
         output = []

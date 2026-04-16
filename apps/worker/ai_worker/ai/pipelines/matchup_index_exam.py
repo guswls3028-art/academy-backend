@@ -47,9 +47,12 @@ def run_matchup_index_exam(
     from apps.domains.exams.models import Exam, ExamQuestion
 
     try:
-        exam = Exam.objects.select_related("sheet").get(id=int(exam_id))
+        filter_kwargs = {"id": int(exam_id)}
+        if tenant_id:
+            filter_kwargs["tenant_id"] = int(tenant_id)
+        exam = Exam.objects.select_related("sheet").get(**filter_kwargs)
     except Exam.DoesNotExist:
-        return AIResult.failed(job_id, f"Exam {exam_id} not found")
+        return AIResult.failed(job_id, f"Exam {exam_id} not found (or tenant mismatch)")
 
     # template exam의 sheet에서 문제 조회
     effective_id = exam.effective_template_exam_id

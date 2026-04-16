@@ -507,8 +507,19 @@ def _handle_qna_matchup_search_result(
 
     from apps.domains.community.models import PostEntity
 
+    # 테넌트 교차검증
+    tenant_id_from_job = None
+    if job_id:
+        from apps.domains.ai.models import AIJobModel
+        ai_job = AIJobModel.objects.filter(job_id=job_id).first()
+        if ai_job:
+            tenant_id_from_job = ai_job.tenant_id
+
     try:
-        post = PostEntity.objects.get(id=int(post_id))
+        filter_kwargs = {"id": int(post_id)}
+        if tenant_id_from_job:
+            filter_kwargs["tenant_id"] = tenant_id_from_job
+        post = PostEntity.objects.get(**filter_kwargs)
     except PostEntity.DoesNotExist:
         logger.warning("AI_CALLBACK_QNA_POST_NOT_FOUND | post_id=%s", post_id)
         return
