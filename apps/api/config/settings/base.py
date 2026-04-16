@@ -146,6 +146,7 @@ INSTALLED_APPS = [
     "apps.domains.ai.apps.AIDomainConfig",
     "apps.domains.assets",
     "apps.domains.inventory",
+    "apps.domains.matchup",
     "apps.domains.fees",
 
     "apps.billing",

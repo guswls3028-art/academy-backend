@@ -48,6 +48,23 @@ def dispatch_ai_result_to_domain(
             )
         return
 
+    # matchup 도메인: matchup_analysis 결과 처리
+    if source_domain == "matchup":
+        try:
+            _handle_matchup_ai_result(
+                job_id=job_id,
+                status=status,
+                result_payload=result_payload or {},
+                error=error,
+                source_id=source_id,
+            )
+        except Exception:
+            logger.exception(
+                "AI_CALLBACK_MATCHUP_FAILED | job_id=%s | source_id=%s",
+                job_id, source_id,
+            )
+        return
+
     if source_domain != "submissions":
         logger.debug(
             "AI_CALLBACK_SKIP | source_domain=%s job_id=%s (not submissions)",
@@ -336,6 +353,90 @@ def _handle_exam_ai_result(
             job_id, exam_id,
         )
         raise
+
+
+def _handle_matchup_ai_result(
+    *,
+    job_id: str,
+    status: str,
+    result_payload: Dict[str, Any],
+    error: Optional[str],
+    source_id: Optional[str],
+) -> None:
+    """
+    Matchup 도메인 AI 결과 처리 (matchup_analysis).
+
+    결과에서 추출된 문제 목록을 MatchupProblem으로 생성하고
+    MatchupDocument 상태를 업데이트한다.
+    """
+    from apps.domains.matchup.models import MatchupDocument, MatchupProblem
+
+    if not source_id:
+        logger.warning("AI_CALLBACK_MATCHUP_NO_SOURCE_ID | job_id=%s", job_id)
+        return
+
+    try:
+        doc = MatchupDocument.objects.get(id=int(source_id))
+    except MatchupDocument.DoesNotExist:
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_DOC_NOT_FOUND | job_id=%s | source_id=%s (deleted?)",
+            job_id, source_id,
+        )
+        return
+
+    # 테넌트 교차검증
+    if job_id:
+        from apps.domains.ai.models import AIJobModel
+        ai_job = AIJobModel.objects.filter(job_id=job_id).first()
+        if ai_job and ai_job.tenant_id:
+            if str(ai_job.tenant_id) != str(doc.tenant_id):
+                logger.error(
+                    "TENANT_ISOLATION_VIOLATION | _handle_matchup_ai_result | "
+                    "job_id=%s | job_tenant=%s | doc_tenant=%s | doc_id=%s",
+                    job_id, ai_job.tenant_id, doc.tenant_id, source_id,
+                )
+                return
+
+    if status == "FAILED":
+        doc.status = "failed"
+        doc.error_message = error or "AI 분석 실패"
+        doc.save(update_fields=["status", "error_message", "updated_at"])
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_FAILED_STATUS | job_id=%s | doc_id=%s | error=%s",
+            job_id, source_id, error,
+        )
+        return
+
+    problems_data = result_payload.get("problems", [])
+
+    # 기존 문제 삭제 (재시도 시 중복 방지)
+    doc.problems.all().delete()
+
+    # bulk create
+    problem_objs = []
+    for p in problems_data:
+        problem_objs.append(MatchupProblem(
+            tenant_id=doc.tenant_id,
+            document=doc,
+            number=p.get("number", 0),
+            text=p.get("text", ""),
+            image_key=p.get("image_key", ""),
+            embedding=p.get("embedding"),
+            meta=p.get("meta", {}),
+        ))
+
+    if problem_objs:
+        MatchupProblem.objects.bulk_create(problem_objs, ignore_conflicts=True)
+
+    doc.status = "done"
+    doc.problem_count = len(problem_objs)
+    doc.error_message = ""
+    doc.save(update_fields=["status", "problem_count", "error_message", "updated_at"])
+
+    logger.info(
+        "AI_CALLBACK_MATCHUP_SUCCESS | job_id=%s | doc_id=%s | problems=%d",
+        job_id, source_id, len(problem_objs),
+    )
 
 
 def detect_stuck_dispatched() -> list[dict]:

@@ -59,6 +59,11 @@ urlpatterns = [
     path("storage/", include("apps.domains.inventory.urls")),
 
     # =========================
+    # Matchup (매치업 — AI 유사 문제)
+    # =========================
+    path("matchup/", include("apps.domains.matchup.urls")),
+
+    # =========================
     # Community (SSOT)
     # =========================
     path("community/", include("apps.domains.community.api.urls")),

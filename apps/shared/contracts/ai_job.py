@@ -20,6 +20,7 @@ AIJobType = Literal[
     "attendance_excel_export",
     "staff_excel_export",
     "ppt_generation",
+    "matchup_analysis",
 ]
 
 

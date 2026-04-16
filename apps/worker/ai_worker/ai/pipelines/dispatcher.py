@@ -299,6 +299,21 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 },
             )
 
+        # --------------------------------------------------
+        # Matchup analysis (매치업 — 문제 분할 + OCR + 임베딩)
+        # --------------------------------------------------
+        if job.type == "matchup_analysis":
+            from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import (
+                run_matchup_pipeline,
+            )
+            return run_matchup_pipeline(
+                job=job,
+                local_path=local_path,
+                payload=payload,
+                tenant_id=tenant_id,
+                record_progress=_record_progress,
+            )
+
         return AIResult.failed(job.id, f"Unsupported job type: {job.type}")
 
     except Exception as e:
