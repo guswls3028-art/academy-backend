@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import tempfile
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import cv2  # type: ignore
 import numpy as np  # type: ignore
@@ -12,6 +12,13 @@ import numpy as np  # type: ignore
 from apps.worker.ai_worker.ai.config import AIConfig
 from apps.worker.ai_worker.ai.detection.segment_opencv import segment_questions_opencv
 from apps.worker.ai_worker.ai.detection.segment_yolo import segment_questions_yolo
+from apps.worker.ai_worker.ai.detection.segment_ocr import (
+    is_ocr_available,
+    segment_questions_ocr,
+)
+
+# PDF 200 DPI 렌더링 기준 좌표 변환 (points → pixels)
+_PDF_TO_PIXEL_SCALE = 200.0 / 72.0
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +37,28 @@ def _is_pdf(file_path: str) -> bool:
         return False
 
 
-def _pdf_to_images(pdf_path: str) -> List[str]:
+def _pdf_to_images(pdf_path: str) -> List[Dict]:
     """
-    PDF 파일의 각 페이지를 이미지로 변환하여 임시 파일 경로 리스트를 반환.
-    PyMuPDF(fitz) 사용 — AI 워커에 설치됨 (worker-ai-tools.txt).
+    PDF 파일의 각 페이지를 이미지로 변환 + 텍스트 기반 문항 박스 사전 계산.
+
+    Returns:
+        [
+          {
+            "image_path": str,
+            "has_embedded_text": bool,
+            "text_boxes": List[BBox]  # 텍스트 기반 분할 박스 (픽셀 좌표계). 비었으면 실패.
+          },
+          ...
+        ]
     """
     from academy.adapters.tools.pymupdf_renderer import PdfDocument
+    from academy.domain.tools.question_splitter import (
+        is_non_question_page,
+        split_questions,
+        TextBlock as SplitterTextBlock,
+    )
 
-    image_paths: List[str] = []
+    results: List[Dict] = []
     tmp_dir = tempfile.mkdtemp(prefix="pdf-seg-")
 
     with PdfDocument(pdf_path) as doc:
@@ -48,13 +69,63 @@ def _pdf_to_images(pdf_path: str) -> List[str]:
             pil_img = doc.render_page(i, dpi=200)
             out_path = os.path.join(tmp_dir, f"page_{i:03d}.png")
             pil_img.save(out_path, "PNG")
-            image_paths.append(out_path)
 
-    return image_paths
+            # 텍스트 존재 여부 검사 — 스캔본이면 False
+            has_text = False
+            text_boxes: List[BBox] = []
+            try:
+                raw_blocks = doc.extract_text_blocks(i)
+                has_text = len(raw_blocks) > 0
+            except Exception:
+                raw_blocks = []
+
+            # 텍스트 PDF의 경우 text-based 분할을 시도해서 per-question 박스 사전 계산
+            if has_text:
+                try:
+                    tbs = [
+                        SplitterTextBlock(text=b.text, x0=b.x0, y0=b.y0, x1=b.x1, y1=b.y1)
+                        for b in raw_blocks
+                    ]
+                    if not is_non_question_page(tbs):
+                        pw, ph = doc.page_dimensions(i)
+                        regions = split_questions(tbs, pw, ph, page_index=i)
+                        scale = _PDF_TO_PIXEL_SCALE
+                        for r in regions:
+                            rx0, ry0, rx1, ry1 = r.bbox
+                            text_boxes.append((
+                                int(rx0 * scale),
+                                int(ry0 * scale),
+                                int((rx1 - rx0) * scale),
+                                int((ry1 - ry0) * scale),
+                            ))
+                except Exception as e:
+                    logger.warning(
+                        "PDF_TEXT_BOXES_ERROR | page=%d | error=%s", i, e,
+                    )
+
+            results.append({
+                "image_path": out_path,
+                "has_embedded_text": has_text,
+                "text_boxes": text_boxes,
+            })
+
+    return results
 
 
-def _segment_single_image(image_path: str) -> List[BBox]:
-    """단일 이미지에 대한 세그멘테이션 (엔진 자동 선택)."""
+def _segment_single_image(
+    image_path: str,
+    *,
+    skip_ocr: bool = False,
+) -> List[BBox]:
+    """
+    단일 이미지에 대한 세그멘테이션 (엔진 자동 선택).
+
+    auto 모드 우선순위: YOLO(모델 있을 때) → OCR(크레덴셜 있을 때, skip_ocr=False) → OpenCV.
+    OCR 경로는 스캔본 시험지에서 문항 번호 감지를 통해 페이지당 여러 문항을 분할.
+
+    skip_ocr: PDF 페이지에 embedded text가 존재할 때 True. OCR 비용을 아낀다
+              (pdf_question_pipeline이 PDF 텍스트로 별도 분할을 수행하기 때문).
+    """
     cfg = AIConfig.load()
     engine = (cfg.QUESTION_SEGMENTATION_ENGINE or "auto").lower()
 
@@ -62,15 +133,44 @@ def _segment_single_image(image_path: str) -> List[BBox]:
         return segment_questions_opencv(image_path)
     if engine == "yolo":
         return segment_questions_yolo(image_path)
+    if engine == "ocr":
+        return segment_questions_ocr(image_path)
 
-    # auto: yolo -> opencv
+    # auto: yolo -> ocr -> opencv
     try:
         boxes = segment_questions_yolo(image_path)
         if boxes:
             return boxes
     except Exception:
         pass
+
+    if not skip_ocr and is_ocr_available():
+        try:
+            boxes = segment_questions_ocr(image_path)
+            if boxes:
+                return boxes
+        except Exception as e:
+            logger.warning("OCR_SEGMENT_AUTO_FAIL | path=%s | error=%s", image_path, e)
+
     return segment_questions_opencv(image_path)
+
+
+def _boxes_for_pdf_page(page_info: Dict) -> List[BBox]:
+    """
+    PDF 페이지 1개에 대한 최종 박스 결정.
+
+    우선순위:
+      1. 텍스트 기반 분할 성공 (text_boxes 존재) → 그대로 사용
+      2. 스캔본 (has_embedded_text=False) → OCR/OpenCV auto 경로
+      3. 텍스트는 있으나 분할 실패 (비문항 페이지 등) → OpenCV (OCR 스킵)
+    """
+    if page_info["text_boxes"]:
+        return list(page_info["text_boxes"])
+
+    # 스캔본이 아닌데 text_boxes가 비었다 = 비문항 페이지 or 분할 실패
+    # OCR을 불러봤자 비문항 페이지면 돈만 쓰므로 OpenCV로만 처리
+    skip_ocr = page_info["has_embedded_text"]
+    return _segment_single_image(page_info["image_path"], skip_ocr=skip_ocr)
 
 
 def segment_questions(image_path: str) -> List[BBox]:
@@ -80,17 +180,17 @@ def segment_questions(image_path: str) -> List[BBox]:
     이미지 파일이면 직접 세그멘테이션.
     """
     if _is_pdf(image_path):
-        page_images = _pdf_to_images(image_path)
-        if not page_images:
+        page_infos = _pdf_to_images(image_path)
+        if not page_infos:
             logger.warning("PDF_SEGMENT_NO_PAGES | path=%s", image_path)
             return []
 
         all_boxes: List[BBox] = []
-        for page_idx, page_path in enumerate(page_images):
-            boxes = _segment_single_image(page_path)
+        for page_idx, info in enumerate(page_infos):
+            boxes = _boxes_for_pdf_page(info)
             logger.info(
-                "PDF_SEGMENT_PAGE | page=%d | boxes=%d | path=%s",
-                page_idx, len(boxes), page_path,
+                "PDF_SEGMENT_PAGE | page=%d | boxes=%d | has_text=%s | text_boxes=%d",
+                page_idx, len(boxes), info["has_embedded_text"], len(info["text_boxes"]),
             )
             all_boxes.extend(boxes)
 
@@ -107,7 +207,12 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
     Returns:
         {
             "pages": [
-                {"page_index": 0, "image_path": str, "boxes": [(x,y,w,h), ...]},
+                {
+                    "page_index": 0,
+                    "image_path": str,
+                    "boxes": [(x,y,w,h), ...],
+                    "has_embedded_text": bool,
+                },
                 ...
             ],
             "total_boxes": int,
@@ -115,18 +220,19 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
         }
     """
     if _is_pdf(image_path):
-        page_images = _pdf_to_images(image_path)
-        if not page_images:
+        page_infos = _pdf_to_images(image_path)
+        if not page_infos:
             return {"pages": [], "total_boxes": 0, "is_pdf": True}
 
         pages = []
         total = 0
-        for idx, page_path in enumerate(page_images):
-            boxes = _segment_single_image(page_path)
+        for idx, info in enumerate(page_infos):
+            boxes = _boxes_for_pdf_page(info)
             pages.append({
                 "page_index": idx,
-                "image_path": page_path,
+                "image_path": info["image_path"],
                 "boxes": boxes,
+                "has_embedded_text": info["has_embedded_text"],
             })
             total += len(boxes)
 
@@ -135,7 +241,12 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
     # 단일 이미지
     boxes = _segment_single_image(image_path)
     return {
-        "pages": [{"page_index": 0, "image_path": image_path, "boxes": boxes}],
+        "pages": [{
+            "page_index": 0,
+            "image_path": image_path,
+            "boxes": boxes,
+            "has_embedded_text": False,
+        }],
         "total_boxes": len(boxes),
         "is_pdf": False,
     }

@@ -21,6 +21,68 @@ class TextBlock:
     y1: float
 
 
+def is_non_question_page(blocks: List[TextBlock]) -> bool:
+    """
+    비문항 페이지 감지 — 표지, 진도표, 안내문, 정답지, 해설지 등.
+
+    휴리스틱:
+    - 정답지/해설지 패턴 감지 → True
+    - 문항 지시문이나 보기 번호가 있으면 → False (문항 페이지)
+    - 비문항 키워드가 여러 개 있으면 → True
+    """
+    full_text = " ".join(b.text for b in blocks).strip()
+    if not full_text:
+        return True
+
+    # 정답지 감지 (최우선): "⑴ × ⑵ O" "⑴ ② ⑵ ④" 같은 패턴 반복
+    answer_pattern = re.findall(r"[⑴⑵⑶⑷⑸⑹⑺⑻⑼]\s*[×OX①②③④⑤]", full_text)
+    if len(answer_pattern) >= 5:
+        return True
+
+    # 해설지 감지: "번호. ⑴ ...이다." 소문항 패턴
+    sub_q_pattern = re.findall(r"\d+\.\s*[⑴⑵⑶⑷⑸⑹⑺⑻⑼]", full_text)
+    if len(sub_q_pattern) >= 2:
+        question_indicators_early = [
+            "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
+            "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
+        ]
+        if not any(kw in full_text for kw in question_indicators_early):
+            return True
+
+    # 문항 페이지 강력 지표: 보기 번호 패턴
+    choice_patterns = ["①", "②", "③", "④", "⑤", "ㄱ.", "ㄴ.", "ㄷ."]
+    has_choices = any(p in full_text for p in choice_patterns)
+
+    question_indicators = [
+        "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
+        "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
+    ]
+    has_question_indicator = any(kw in full_text for kw in question_indicators)
+
+    if has_choices or has_question_indicator:
+        return False
+
+    # 설명조 종결어미 빈도 기반 해설지 감지
+    explanation_markers = re.findall(
+        r"(?:이므로|때문이다|따라서|그러므로|해설|나타난다|관측된다|생성된다)",
+        full_text,
+    )
+    if len(explanation_markers) >= 3 and not has_question_indicator:
+        return True
+
+    # 비문항 지표: 진도표, 강의방침, 안내 등
+    non_question_indicators = [
+        "진도", "운영 방침", "재시험", "클리닉", "홈페이지",
+        "대단원", "중단원", "세부 내용", "난이도",
+        "주차", "복습과제", "워크북",
+    ]
+    non_q_count = sum(1 for kw in non_question_indicators if kw in full_text)
+    if non_q_count >= 3:
+        return True
+
+    return False
+
+
 @dataclass
 class QuestionRegion:
     """A detected question region on a page."""

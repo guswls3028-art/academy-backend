@@ -102,16 +102,37 @@ def run_pdf_question_pipeline(
                 "PDF_TEXT_SPLIT_OK | job_id=%s | questions=%d",
                 job.id, len(questions),
             )
-            # 텍스트 기반 성공 → pages의 boxes를 questions bbox로 교체
-            # (pages의 image_path는 크롭에 사용)
-        else:
-            logger.info(
-                "PDF_TEXT_SPLIT_EMPTY | job_id=%s | falling back to OpenCV",
-                job.id,
-            )
 
-    # 텍스트 기반 실패 또는 이미지 파일 → OpenCV/YOLO fallback
+        # OCR 기반 fallback — 텍스트 분할이 커버하지 못한 페이지(스캔본)에 적용
+        text_covered_pages = {q["page_index"] for q in questions}
+        ocr_target_pages = [
+            p for p in pages if p["page_index"] not in text_covered_pages
+        ]
+        if ocr_target_pages:
+            ocr_questions = _split_questions_by_ocr(ocr_target_pages)
+            if ocr_questions:
+                logger.info(
+                    "PDF_OCR_SPLIT_OK | job_id=%s | pages=%d | questions=%d",
+                    job.id, len(ocr_target_pages), len(ocr_questions),
+                )
+                questions.extend(ocr_questions)
+
+                # 병합 후 페이지 순서 정렬 + 번호 중복 dedup (surgical)
+                questions.sort(
+                    key=lambda q: (q["page_index"], q["bbox"][1])
+                )
+                _resolve_number_conflicts(questions, source="PDF_MERGE")
+            else:
+                logger.info(
+                    "PDF_OCR_SPLIT_EMPTY | job_id=%s | pages=%d",
+                    job.id, len(ocr_target_pages),
+                )
+
+    # 텍스트·OCR 둘 다 실패 → OpenCV fallback (페이지 단위)
     if not questions:
+        logger.info(
+            "PDF_FALLBACK_OPENCV | job_id=%s", job.id,
+        )
         questions = _build_question_list(pages, text_blocks_by_page)
 
     total_boxes = len(questions)
@@ -227,71 +248,23 @@ def run_pdf_question_pipeline(
 
 def _is_non_question_page(blocks: List[Dict]) -> bool:
     """
-    비문항 페이지 감지 — 표지, 진도표, 안내문, 강의 운영 방침 등.
-
-    휴리스틱:
-    - 문항 관련 키워드가 있으면 문항 페이지로 간주
-    - 비문항 키워드만 있으면 비문항 페이지로 간주
-    - 문항 번호 뒤에 보기 패턴(①②③④⑤, (1)(2)(3) 등)이 없으면 목차일 가능성 높음
+    비문항 페이지 감지 — academy.domain.tools.question_splitter.is_non_question_page로 위임.
+    blocks는 {"text", "x0", "y0", "x1", "y1"} dict 리스트.
     """
-    full_text = " ".join(b["text"] for b in blocks).strip()
-    if not full_text:
-        return True
+    from academy.domain.tools.question_splitter import (
+        TextBlock as SplitterTextBlock,
+        is_non_question_page,
+    )
 
-    import re
-
-    # 정답지 감지 (최우선): "⑴ × ⑵ O" "⑴ ② ⑵ ④" 같은 정답 표기 패턴이 반복
-    # 정답지에도 ①②③이 포함되므로 보기 체크보다 먼저 수행해야 함
-    answer_pattern = re.findall(r"[⑴⑵⑶⑷⑸⑹⑺⑻⑼]\s*[×OX①②③④⑤]", full_text)
-    if len(answer_pattern) >= 5:
-        return True
-
-    # 해설지 감지 (정답지 다음으로 우선): "번호. ⑴ ...이다." 소문항 패턴
-    sub_q_pattern = re.findall(r"\d+\.\s*[⑴⑵⑶⑷⑸⑹⑺⑻⑼]", full_text)
-    if len(sub_q_pattern) >= 2:
-        # 문항 지시문이 없으면 해설지 확정
-        question_indicators_early = [
-            "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
-            "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
-        ]
-        if not any(kw in full_text for kw in question_indicators_early):
-            return True
-
-    # 문항 페이지 강력 지표: 보기 번호 패턴이 있으면 문항 페이지
-    choice_patterns = [
-        "①", "②", "③", "④", "⑤",
-        "ㄱ.", "ㄴ.", "ㄷ.",
+    tbs = [
+        SplitterTextBlock(
+            text=b.get("text", ""),
+            x0=b.get("x0", 0.0), y0=b.get("y0", 0.0),
+            x1=b.get("x1", 0.0), y1=b.get("y1", 0.0),
+        )
+        for b in blocks
     ]
-    has_choices = any(p in full_text for p in choice_patterns)
-
-    # 문항 지표: "옳은 것", "구하시오", "표시하시오", "고르시오" 등
-    question_indicators = [
-        "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
-        "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
-    ]
-    has_question_indicator = any(kw in full_text for kw in question_indicators)
-
-    if has_choices or has_question_indicator:
-        return False  # 문항 페이지
-
-    # 설명조 종결어미 빈도 기반 해설지 감지
-    explanation_markers = re.findall(r"(?:이므로|때문이다|따라서|그러므로|해설|나타난다|관측된다|생성된다)", full_text)
-    if len(explanation_markers) >= 3 and not has_question_indicator:
-        return True
-
-    # 비문항 지표: 진도표, 강의방침, 안내 등
-    non_question_indicators = [
-        "진도", "운영 방침", "재시험", "클리닉", "홈페이지",
-        "대단원", "중단원", "세부 내용", "난이도",
-        "주차", "복습과제", "워크북",
-    ]
-    non_q_count = sum(1 for kw in non_question_indicators if kw in full_text)
-
-    # 비문항 키워드가 3개 이상이면 비문항 페이지
-    if non_q_count >= 3:
-        return True
-
-    return False
+    return is_non_question_page(tbs)
 
 
 def _split_questions_by_text(
@@ -380,14 +353,118 @@ def _split_questions_by_text(
     if not all_questions:
         return []
 
-    # 중복 번호 정리
-    numbers = [q["number"] for q in all_questions]
-    if len(set(numbers)) != len(numbers):
-        logger.warning("TEXT_SPLIT_DEDUP | %s → sequential", numbers)
-        for i, q in enumerate(all_questions):
-            q["number"] = i + 1
+    # 중복 번호 정리 — 앞선 번호 유지, 중복만 다음 가용 번호로 재할당
+    _resolve_number_conflicts(all_questions, source="TEXT_SPLIT")
 
     logger.info("TEXT_SPLIT_DONE | questions=%d", len(all_questions))
+    return all_questions
+
+
+def _resolve_number_conflicts(questions: List[Dict], *, source: str) -> None:
+    """
+    번호 중복을 in-place로 해결.
+
+    페이지 순서(page_index, bbox.y) 기준으로 먼저 등장한 번호는 유지,
+    뒤에 등장한 중복 번호만 다음 가용 번호로 재할당.
+
+    기존의 "모든 번호 sequential 재할당"은 파괴적이어서 실제 번호 정보를 소실 →
+    surgical dedup으로 교체.
+    """
+    if len(questions) <= 1:
+        return
+
+    before = [q["number"] for q in questions]
+    if len(set(before)) == len(before):
+        return  # 중복 없음
+
+    # 페이지 순서로 정렬 (안전장치 — 호출자가 정렬했어도 보장)
+    questions.sort(key=lambda q: (q.get("page_index", 0), q.get("bbox", [0, 0])[1]))
+
+    max_num = max(before)
+    seen: set[int] = set()
+    next_free = max_num + 1
+    changes: List[Tuple[int, int]] = []
+
+    for q in questions:
+        num = q["number"]
+        if num not in seen:
+            seen.add(num)
+            continue
+        # 중복 발견 — 다음 가용 번호 할당
+        while next_free in seen:
+            next_free += 1
+        changes.append((num, next_free))
+        q["number"] = next_free
+        seen.add(next_free)
+        next_free += 1
+
+    if changes:
+        logger.warning(
+            "%s_DEDUP | conflicts_resolved=%d | changes=%s",
+            source, len(changes), changes[:10],
+        )
+
+
+def _split_questions_by_ocr(pages: List[Dict]) -> List[Dict]:
+    """
+    스캔본 페이지에 OCR을 적용하여 문항 영역+번호 추출.
+
+    Args:
+        pages: [{"page_index": int, "image_path": str, "boxes": [...]}, ...]
+
+    Returns:
+        [{"number": int, "bbox": [x,y,w,h], "page_index": int, "text": None}]
+        Vision 크레덴셜이 없거나 OCR이 모두 실패하면 빈 리스트.
+    """
+    try:
+        from apps.worker.ai_worker.ai.detection.segment_ocr import (
+            is_ocr_available,
+            segment_questions_ocr_regions,
+        )
+    except ImportError as e:
+        logger.warning("OCR_SPLIT_IMPORT_FAIL | %s", e)
+        return []
+
+    if not is_ocr_available():
+        logger.info("OCR_SPLIT_SKIP | reason=no_credentials")
+        return []
+
+    all_questions: List[Dict] = []
+    for page in pages:
+        image_path = page.get("image_path")
+        page_idx = page.get("page_index", 0)
+        if not image_path:
+            continue
+
+        # embedded text가 있는 페이지는 text-based 분할이 커버했어야 함.
+        # 여기까지 왔다는 건 비문항 페이지(정답지 등) → OCR 스킵.
+        if page.get("has_embedded_text"):
+            logger.info(
+                "OCR_SPLIT_SKIP_TEXT_PAGE | page=%d (text exists, non-question page)",
+                page_idx,
+            )
+            continue
+
+        try:
+            regions = segment_questions_ocr_regions(image_path)
+        except Exception as e:
+            logger.warning(
+                "OCR_SPLIT_PAGE_ERROR | page=%d | error=%s",
+                page_idx, e,
+            )
+            continue
+
+        for x0, y0, x1, y1, num in regions:
+            all_questions.append({
+                "number": int(num),
+                "bbox": [int(x0), int(y0), int(x1 - x0), int(y1 - y0)],
+                "page_index": page_idx,
+                "text": None,
+            })
+
+    # 중복 번호 처리 — 페이지 순서 유지, 중복만 재할당
+    _resolve_number_conflicts(all_questions, source="OCR_SPLIT")
+
     return all_questions
 
 
