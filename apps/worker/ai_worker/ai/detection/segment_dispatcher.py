@@ -161,16 +161,32 @@ def _boxes_for_pdf_page(page_info: Dict) -> List[BBox]:
 
     우선순위:
       1. 텍스트 기반 분할 성공 (text_boxes 존재) → 그대로 사용
-      2. 스캔본 (has_embedded_text=False) → OCR/OpenCV auto 경로
-      3. 텍스트는 있으나 분할 실패 (비문항 페이지 등) → OpenCV (OCR 스킵)
+      2. 스캔본 (has_embedded_text=False) + OCR 가용 → OCR 결과 신뢰
+         - OCR이 [] 반환해도 fallback 안 함 (표지/정답지 등 비문항 페이지의 정상 신호)
+         - OCR 예외(API 실패)만 OpenCV로 폴백
+      3. 텍스트는 있으나 분할 실패 (비문항 페이지 등) → OpenCV
+      4. OCR 불가(크레덴셜 없음) + 스캔본 → OpenCV 안전망
     """
     if page_info["text_boxes"]:
         return list(page_info["text_boxes"])
 
-    # 스캔본이 아닌데 text_boxes가 비었다 = 비문항 페이지 or 분할 실패
-    # OCR을 불러봤자 비문항 페이지면 돈만 쓰므로 OpenCV로만 처리
+    image_path = page_info["image_path"]
+
+    # 스캔본에서 OCR 가용 시 — OCR 결과 신뢰
+    if not page_info["has_embedded_text"] and is_ocr_available():
+        try:
+            boxes = segment_questions_ocr(image_path)
+            return boxes  # 빈 결과도 trust (non-question page)
+        except Exception as e:
+            logger.warning(
+                "PDF_PAGE_OCR_FAIL | path=%s | error=%s",
+                image_path, e,
+            )
+            # fallthrough → OpenCV 안전망
+
+    # 텍스트 있지만 분할 실패 OR OCR 크레덴셜 없음 OR OCR 예외
     skip_ocr = page_info["has_embedded_text"]
-    return _segment_single_image(page_info["image_path"], skip_ocr=skip_ocr)
+    return _segment_single_image(image_path, skip_ocr=skip_ocr)
 
 
 def segment_questions(image_path: str) -> List[BBox]:

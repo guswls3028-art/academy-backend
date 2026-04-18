@@ -324,6 +324,11 @@ def _handle_exam_ai_result(
                         "y": int(bbox[1]) if len(bbox) > 1 else 0,
                         "w": int(bbox[2]) if len(bbox) > 2 else 0,
                         "h": int(bbox[3]) if len(bbox) > 3 else 0,
+                        "page_index": q_data.get("page_index", 0),
+                        # 세그멘테이션에서 감지한 원본 번호 — dedup으로 바뀌었을 수 있음
+                        "detected_number": q_data.get(
+                            "original_number", q_data.get("number", idx)
+                        ),
                     }
                 elif boxes and idx <= len(boxes):
                     b = boxes[idx - 1]

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import io
 import logging
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
@@ -141,10 +141,26 @@ def run_matchup_pipeline(
         step_percent=100, tenant_id=tenant_id,
     )
 
+    # 세그멘테이션 방식 — UI 표시 + 운영 관측용
+    has_text_pages = sum(1 for p in pages if p.get("has_embedded_text"))
+    scan_pages = len(pages) - has_text_pages
+    if not problems:
+        segmentation_method = "none"
+    elif seg_result.get("is_pdf"):
+        if has_text_pages == len(pages):
+            segmentation_method = "text"
+        elif has_text_pages == 0:
+            segmentation_method = "ocr"
+        else:
+            segmentation_method = "mixed"
+    else:
+        segmentation_method = "image"
+
     return AIResult.done(job_id, {
         "problems": problems,
         "document_id": document_id,
         "problem_count": len(problems),
+        "segmentation_method": segmentation_method,
     })
 
 
@@ -184,15 +200,102 @@ def _whole_pages_as_questions(pages: List[Dict]) -> List[Dict]:
 
 def _extract_texts(questions: List[Dict], job_id: str) -> None:
     """
-    전체 페이지 OCR → bbox 기반 텍스트 분배.
-    개별 크롭 OCR보다 안정적 (작은 bbox에서도 텍스트 추출 가능).
+    bbox 기반 OCR 블록 매칭으로 문항별 텍스트 추출.
+
+    접근:
+      1. 페이지별 OCR 블록(줄 단위 bbox)을 한 번에 획득 (lru_cache 덕에 dispatcher와
+         중복 호출 없음)
+      2. 각 문항 bbox와 겹치는 블록을 모아 텍스트 연결
+      3. bbox 없는 문항은 페이지 전체 텍스트 할당
+
+    블록 기반은 페이지 전체 텍스트 + 정규식 번호 분할(legacy) 보다 정확.
+    2단 레이아웃/그림/서답형 등에서 텍스트가 정확한 문항에 매핑된다.
     """
+    blocks_backend = _load_ocr_blocks_backend()
+    if blocks_backend is None:
+        logger.info(
+            "MATCHUP_TEXT_LEGACY | job_id=%s | OCR blocks unavailable, using legacy path",
+            job_id,
+        )
+        _extract_texts_legacy(questions, job_id)
+        return
+
+    # 페이지별 OCR 블록 캐싱 (이미 google_ocr_blocks에 lru_cache 존재 — 추가 보험)
+    page_blocks_cache: Dict[int, list] = {}
+    page_images: Dict[int, str] = {}
+
+    for q in questions:
+        pi = q.get("page_index", 0)
+        if pi not in page_images:
+            page_images[pi] = q["image_path"]
+
+    for pi, img_path in page_images.items():
+        try:
+            page_blocks_cache[pi] = blocks_backend(img_path)
+        except Exception:
+            logger.warning(
+                "MATCHUP_TEXT_OCR_FAIL | job_id=%s | page=%d",
+                job_id, pi, exc_info=True,
+            )
+            page_blocks_cache[pi] = []
+
+    # 문항별로 bbox에 겹치는 블록만 연결
+    for q in questions:
+        pi = q.get("page_index", 0)
+        blocks = page_blocks_cache.get(pi, [])
+        bbox = q.get("bbox")
+
+        if not blocks:
+            q["text"] = ""
+            continue
+
+        if not bbox:
+            q["text"] = "\n".join(b.text for b in blocks)
+            continue
+
+        bx, by, bw, bh = bbox
+        bx1, by1 = bx + bw, by + bh
+
+        relevant: List[Tuple[float, float, str]] = []
+        for blk in blocks:
+            ox = max(0.0, min(float(bx1), blk.x1) - max(float(bx), blk.x0))
+            oy = max(0.0, min(float(by1), blk.y1) - max(float(by), blk.y0))
+            overlap = ox * oy
+            block_area = max(1.0, (blk.x1 - blk.x0) * (blk.y1 - blk.y0))
+            if overlap / block_area >= 0.5:
+                relevant.append((blk.y0, blk.x0, blk.text))
+
+        relevant.sort(key=lambda t: (t[0], t[1]))
+        q["text"] = "\n".join(t[2] for t in relevant)
+
+    # 여전히 텍스트가 없는 문항은 페이지 전체 텍스트로 폴백
+    for q in questions:
+        if q.get("text"):
+            continue
+        pi = q.get("page_index", 0)
+        blocks = page_blocks_cache.get(pi, [])
+        if blocks:
+            q["text"] = "\n".join(b.text for b in blocks)
+        else:
+            q["text"] = ""
+
+
+def _load_ocr_blocks_backend():
+    """google_ocr_blocks를 반환. 임포트 실패 시 None."""
+    try:
+        from apps.worker.ai_worker.ai.ocr.google import google_ocr_blocks
+        return google_ocr_blocks
+    except ImportError:
+        return None
+
+
+def _extract_texts_legacy(questions: List[Dict], job_id: str) -> None:
+    """Vision SDK가 없는 환경용 레거시 경로 — 전체 페이지 OCR + 정규식 번호 분할."""
     try:
         from apps.worker.ai_worker.ai.ocr.google import google_ocr
     except ImportError:
         from apps.worker.ai_worker.ai.ocr.tesseract import tesseract_ocr as google_ocr
 
-    # 페이지별로 한 번만 OCR 실행
     page_texts: Dict[int, str] = {}
     page_images: Dict[int, str] = {}
     for q in questions:
@@ -205,28 +308,23 @@ def _extract_texts(questions: List[Dict], job_id: str) -> None:
             result = google_ocr(img_path)
             page_texts[pi] = result.text if hasattr(result, "text") else str(result)
         except Exception:
-            logger.warning("Page OCR failed for page %d in job %s", pi, job_id, exc_info=True)
+            logger.warning(
+                "Page OCR failed for page %d in job %s",
+                pi, job_id, exc_info=True,
+            )
             page_texts[pi] = ""
 
-    # bbox 기반으로 텍스트 분배 (Y좌표 범위로 매칭)
     for q in questions:
         pi = q.get("page_index", 0)
         full_text = page_texts.get(pi, "")
-
         if not full_text:
             q["text"] = ""
             continue
-
         if not q.get("bbox"):
-            # bbox 없으면 전체 텍스트 할당
             q["text"] = full_text
             continue
-
-        # 전체 텍스트를 줄별로 나누어 bbox Y범위에 해당하는 텍스트 추출
-        # 간단한 휴리스틱: 문제 번호로 텍스트 분리
         q["text"] = _extract_text_for_question(full_text, q["number"], len(questions))
 
-    # fallback: 텍스트 분배 실패 시 전체 텍스트 사용
     for q in questions:
         if not q.get("text") and questions:
             pi = q.get("page_index", 0)

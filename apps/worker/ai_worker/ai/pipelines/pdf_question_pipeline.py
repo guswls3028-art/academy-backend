@@ -109,7 +109,20 @@ def run_pdf_question_pipeline(
             p for p in pages if p["page_index"] not in text_covered_pages
         ]
         if ocr_target_pages:
-            ocr_questions = _split_questions_by_ocr(ocr_target_pages)
+            ocr_questions, ocr_page_texts = _split_questions_by_ocr(ocr_target_pages)
+
+            # 스캔본 페이지의 OCR 전체 텍스트를 full_text_by_page에 주입
+            # → 해설 섹션이 스캔본에 포함된 경우 _extract_explanations가 찾을 수 있게 함.
+            if ocr_page_texts:
+                logger.info(
+                    "PDF_OCR_PAGE_TEXTS | job_id=%s | pages=%d",
+                    job.id, len(ocr_page_texts),
+                )
+                for pi, ptext in ocr_page_texts.items():
+                    # 기존(PyMuPDF) 텍스트와 충돌하지 않도록: 비어있을 때만 주입
+                    if not full_text_by_page.get(pi):
+                        full_text_by_page[pi] = ptext
+
             if ocr_questions:
                 logger.info(
                     "PDF_OCR_SPLIT_OK | job_id=%s | pages=%d | questions=%d",
@@ -219,6 +232,13 @@ def run_pdf_question_pipeline(
             job.id, unmatched_count,
         )
 
+    # 세그멘테이션 방식 분류 — 사용자 UI 피드백 + 운영 관측용
+    segmentation_method = _classify_segmentation_method(
+        is_pdf=is_pdf,
+        pages=pages,
+        questions=questions,
+    )
+
     result = {
         "boxes": flat_boxes,
         "questions": [
@@ -227,6 +247,9 @@ def run_pdf_question_pipeline(
                 "bbox": list(q["bbox"]),
                 "page_index": q["page_index"],
                 "text": q.get("text"),
+                "original_number": (q.get("meta") or {}).get(
+                    "original_number", q["number"]
+                ),
             }
             for q in questions
         ],
@@ -236,6 +259,7 @@ def run_pdf_question_pipeline(
         "total_questions": len(questions),
         "is_pdf": is_pdf,
         "exam_id": payload.get("exam_id"),
+        "segmentation_method": segmentation_method,
     }
 
     logger.info(
@@ -244,6 +268,39 @@ def run_pdf_question_pipeline(
     )
 
     return AIResult.done(job.id, result)
+
+
+def _classify_segmentation_method(
+    *,
+    is_pdf: bool,
+    pages: List[Dict],
+    questions: List[Dict],
+) -> str:
+    """
+    사용된 세그멘테이션 방식을 분류해서 meta로 노출.
+
+    Returns:
+        "text"  — PDF text blocks 기반 분할 (모든 페이지 text)
+        "ocr"   — OCR 기반 분할 (스캔본 포함)
+        "mixed" — 일부 text, 일부 OCR (하이브리드 PDF)
+        "opencv"— OpenCV fallback만 사용 (OCR 크레덴셜 없음/실패)
+        "image" — 단일 이미지 입력
+    """
+    if not is_pdf:
+        return "image"
+
+    if not questions:
+        return "opencv"  # 아무것도 못 찾음 → _build_question_list 폴백 사용
+
+    # 페이지별 텍스트 유무 기준
+    has_text_pages = sum(1 for p in pages if p.get("has_embedded_text"))
+    scan_pages = len(pages) - has_text_pages
+
+    if has_text_pages == len(pages):
+        return "text"
+    if has_text_pages == 0:
+        return "ocr"
+    return "mixed"
 
 
 def _is_non_question_page(blocks: List[Dict]) -> bool:
@@ -389,10 +446,13 @@ def _resolve_number_conflicts(questions: List[Dict], *, source: str) -> None:
         num = q["number"]
         if num not in seen:
             seen.add(num)
+            # original_number 기록 (충돌 없던 경우에도 일관성 위해)
+            q.setdefault("meta", {})["original_number"] = num
             continue
-        # 중복 발견 — 다음 가용 번호 할당
+        # 중복 발견 — 다음 가용 번호 할당, 원본 번호는 meta에 보존
         while next_free in seen:
             next_free += 1
+        q.setdefault("meta", {})["original_number"] = num
         changes.append((num, next_free))
         q["number"] = next_free
         seen.add(next_free)
@@ -405,31 +465,38 @@ def _resolve_number_conflicts(questions: List[Dict], *, source: str) -> None:
         )
 
 
-def _split_questions_by_ocr(pages: List[Dict]) -> List[Dict]:
+def _split_questions_by_ocr(
+    pages: List[Dict],
+) -> Tuple[List[Dict], Dict[int, str]]:
     """
-    스캔본 페이지에 OCR을 적용하여 문항 영역+번호 추출.
+    스캔본 페이지에 OCR을 적용하여 문항 영역+번호 추출, 페이지 전체 텍스트도 함께 반환.
 
     Args:
         pages: [{"page_index": int, "image_path": str, "boxes": [...]}, ...]
 
     Returns:
-        [{"number": int, "bbox": [x,y,w,h], "page_index": int, "text": None}]
-        Vision 크레덴셜이 없거나 OCR이 모두 실패하면 빈 리스트.
+        (questions, page_texts)
+        - questions: [{"number": int, "bbox": [x,y,w,h], "page_index": int, "text": None}]
+        - page_texts: {page_index: "전체 OCR 텍스트"} — 해설 추출용
+        Vision 크레덴셜이 없거나 OCR이 모두 실패하면 ([], {}).
     """
     try:
         from apps.worker.ai_worker.ai.detection.segment_ocr import (
             is_ocr_available,
             segment_questions_ocr_regions,
         )
+        from apps.worker.ai_worker.ai.ocr.google import google_ocr_blocks
     except ImportError as e:
         logger.warning("OCR_SPLIT_IMPORT_FAIL | %s", e)
-        return []
+        return [], {}
 
     if not is_ocr_available():
         logger.info("OCR_SPLIT_SKIP | reason=no_credentials")
-        return []
+        return [], {}
 
     all_questions: List[Dict] = []
+    page_texts: Dict[int, str] = {}
+
     for page in pages:
         image_path = page.get("image_path")
         page_idx = page.get("page_index", 0)
@@ -445,6 +512,7 @@ def _split_questions_by_ocr(pages: List[Dict]) -> List[Dict]:
             )
             continue
 
+        # OCR 문항 영역 추출 (segment_questions_ocr_regions는 google_ocr_blocks 사용 → 캐시 공유)
         try:
             regions = segment_questions_ocr_regions(image_path)
         except Exception as e:
@@ -453,6 +521,19 @@ def _split_questions_by_ocr(pages: List[Dict]) -> List[Dict]:
                 page_idx, e,
             )
             continue
+
+        # 페이지 전체 텍스트도 캐싱된 OCR 블록에서 재조합 (해설 추출용)
+        try:
+            blocks = google_ocr_blocks(image_path)  # lru_cache hit
+            if blocks:
+                # y 좌표 기준 정렬해서 자연스러운 읽기 순서로 연결
+                sorted_blocks = sorted(blocks, key=lambda b: (b.y0, b.x0))
+                page_texts[page_idx] = "\n".join(b.text for b in sorted_blocks)
+        except Exception as e:
+            logger.warning(
+                "OCR_SPLIT_FULL_TEXT_FAIL | page=%d | error=%s",
+                page_idx, e,
+            )
 
         for x0, y0, x1, y1, num in regions:
             all_questions.append({
@@ -465,7 +546,7 @@ def _split_questions_by_ocr(pages: List[Dict]) -> List[Dict]:
     # 중복 번호 처리 — 페이지 순서 유지, 중복만 재할당
     _resolve_number_conflicts(all_questions, source="OCR_SPLIT")
 
-    return all_questions
+    return all_questions, page_texts
 
 
 def _extract_pdf_text(

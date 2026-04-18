@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
@@ -9,6 +10,51 @@ from typing import Any, List, Optional, Tuple
 
 # google cloud vision
 from google.cloud import vision  # type: ignore
+
+logger = logging.getLogger(__name__)
+
+# CloudWatch custom metric 상수 — Vision OCR 호출량/에러 추적용.
+# 캐시 히트는 lru_cache가 함수 본문 실행을 생략하므로 자동으로 제외됨 (비용 메트릭 의도).
+_CW_NAMESPACE = "Academy/AIWorker"
+_CW_METRIC_CALLS = "VisionOCRCalls"
+_CW_METRIC_ERRORS = "VisionOCRErrors"
+
+_cached_cw_client: Any = None
+
+
+def _get_cw_client() -> Any:
+    """CloudWatch boto3 클라이언트 (lazy, 실패 silent)."""
+    global _cached_cw_client
+    if _cached_cw_client is not None:
+        return _cached_cw_client
+    try:
+        import boto3  # type: ignore
+        region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "ap-northeast-2"
+        _cached_cw_client = boto3.client("cloudwatch", region_name=region)
+    except Exception as e:  # noqa: BLE001
+        logger.debug("CloudWatch client init failed: %s", e)
+        _cached_cw_client = False  # sentinel — 재시도 방지
+    return _cached_cw_client
+
+
+def _emit_vision_metric(metric_name: str) -> None:
+    """CloudWatch에 Vision OCR 호출/에러 메트릭 put. 실패는 silent — OCR 결과에 영향 없음."""
+    try:
+        client = _get_cw_client()
+        if not client:
+            return
+        client.put_metric_data(
+            Namespace=_CW_NAMESPACE,
+            MetricData=[
+                {
+                    "MetricName": metric_name,
+                    "Value": 1,
+                    "Unit": "Count",
+                }
+            ],
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.debug("CloudWatch put_metric_data failed (%s): %s", metric_name, e)
 
 
 @dataclass
@@ -105,7 +151,12 @@ def google_ocr_blocks(image_path: str) -> List[OCRTextBlock]:
 def _google_ocr_blocks_cached(
     key: Tuple[str, int, int],
 ) -> Tuple[OCRTextBlock, ...]:
-    """(image_path, size, mtime) 튜플 키로 OCR 결과 캐시."""
+    """(image_path, size, mtime) 튜플 키로 OCR 결과 캐시.
+
+    주의: `lru_cache` 캐시 히트 시 이 함수 본문은 실행되지 않으므로
+    CloudWatch 메트릭은 자동으로 캐시 미스(실제 Vision API 호출)에 대해서만 카운트됨.
+    이는 비용/쿼터 추적 목적에 부합하는 의도된 동작임.
+    """
     image_path = key[0]
     client = _get_vision_client()
 
@@ -113,9 +164,20 @@ def _google_ocr_blocks_cached(
         content = f.read()
 
     image = vision.Image(content=content)
-    response = client.document_text_detection(image=image)
+
+    try:
+        response = client.document_text_detection(image=image)
+    except Exception:
+        # 예외 경로: 네트워크/쿼터/인증 실패 등. 메트릭 put 후 재raise.
+        _emit_vision_metric(_CW_METRIC_ERRORS)
+        raise
+
+    # 성공 호출 (response.error가 있어도 API round-trip은 성공 → 호출 카운트는 증가)
+    _emit_vision_metric(_CW_METRIC_CALLS)
 
     if getattr(response, "error", None) and response.error.message:
+        # API가 error 필드로 실패를 돌려준 경우 — 에러 메트릭도 기록
+        _emit_vision_metric(_CW_METRIC_ERRORS)
         return tuple()
 
     full_annotation = getattr(response, "full_text_annotation", None)
