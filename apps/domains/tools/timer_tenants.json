@@ -1,0 +1,61 @@
+{
+  "_comment": "PC 타이머 프로그램 테넌트 SSOT. 새 테넌트 추가 시 이 파일 한 곳만 수정하세요. 다음 3곳에서 모두 자동 반영: backend/apps/domains/tools/timer_download_view.py (R2 키/파일명 매핑), stopwatch/build_all.py (PyInstaller 빌드 대상), stopwatch/upload_to_r2.py (ZIP 압축 + R2 업로드).",
+  "_fields": {
+    "tenant_code": "Django tenant.code (고유). backend가 이 값으로 매핑.",
+    "display_name": "ZIP 안 README 안내문에 들어가는 학원 이름. basic 버전은 빈 문자열.",
+    "build_dir": "stopwatch/{이 값}/ 디렉토리. PyInstaller 출력 위치. tenant_code와 달라도 됨 (예: hakwonplus → basic).",
+    "exe_filename": "PyInstaller가 만들 exe 파일명.",
+    "r2_zip_filename": "ZIP 파일명. stopwatch/{build_dir}/ 에 만들어지고 tools/timer/{tenant_code}/{이 값} 으로 R2 업로드.",
+    "download_filename": "브라우저 다운로드 시 사용자에게 보일 이름. r2_zip_filename과 달라도 됨 (예: dnb는 R2엔 한글 보습학원, 다운로드 시엔 DnB_Timer.zip)."
+  },
+  "tenants": [
+    {
+      "tenant_code": "hakwonplus",
+      "display_name": "",
+      "build_dir": "basic",
+      "exe_filename": "Timer.exe",
+      "r2_zip_filename": "Timer.zip",
+      "download_filename": "Timer.zip"
+    },
+    {
+      "tenant_code": "tchul",
+      "display_name": "Tchul.com",
+      "build_dir": "tchul",
+      "exe_filename": "Tchul.com_Timer.exe",
+      "r2_zip_filename": "Tchul.com_Timer.zip",
+      "download_filename": "Tchul.com_Timer.zip"
+    },
+    {
+      "tenant_code": "limglish",
+      "display_name": "Limglish",
+      "build_dir": "limglish",
+      "exe_filename": "Limglish_Timer.exe",
+      "r2_zip_filename": "Limglish_Timer.zip",
+      "download_filename": "Limglish_Timer.zip"
+    },
+    {
+      "tenant_code": "ymath",
+      "display_name": "Y math",
+      "build_dir": "ymath",
+      "exe_filename": "Y_math_Timer.exe",
+      "r2_zip_filename": "Y_math_Timer.zip",
+      "download_filename": "Y_math_Timer.zip"
+    },
+    {
+      "tenant_code": "sswe",
+      "display_name": "SSWE Academy",
+      "build_dir": "sswe",
+      "exe_filename": "SSWE_Academy_Timer.exe",
+      "r2_zip_filename": "SSWE_Academy_Timer.zip",
+      "download_filename": "SSWE_Academy_Timer.zip"
+    },
+    {
+      "tenant_code": "dnb",
+      "display_name": "DnB 보습학원",
+      "build_dir": "dnb",
+      "exe_filename": "DnB_보습학원_Timer.exe",
+      "r2_zip_filename": "DnB_보습학원_Timer.zip",
+      "download_filename": "DnB_Timer.zip"
+    }
+  ]
+}
