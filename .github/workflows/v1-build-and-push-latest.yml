@@ -381,16 +381,27 @@ jobs:
         id: migrate
         run: |
           # Find a running API instance to run migrations on (before refresh)
-          INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
-            --auto-scaling-group-names academy-v1-api-asg \
-            --region ${{ env.AWS_REGION }} \
-            --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId | [0]' \
-            --output text)
+          # Retry up to 90s — previous ASG refresh may still be draining
+          INSTANCE_ID=""
+          for ATTEMPT in $(seq 1 6); do
+            INSTANCE_ID=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names academy-v1-api-asg \
+              --region ${{ env.AWS_REGION }} \
+              --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService`].InstanceId | [0]' \
+              --output text)
+
+            if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
+              echo "Found InService instance: $INSTANCE_ID (attempt $ATTEMPT)"
+              break
+            fi
+            echo "No InService instance yet (attempt $ATTEMPT/6), waiting 15s..."
+            sleep 15
+            INSTANCE_ID=""
+          done
 
           if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-            echo "::warning::No InService API instance found for migration. Skipping."
-            echo "skipped=true" >> $GITHUB_OUTPUT
-            exit 0
+            echo "::error::No InService API instance found after 90s. Cannot run migrations."
+            exit 1
           fi
 
           echo "Running migrations on instance: $INSTANCE_ID"
