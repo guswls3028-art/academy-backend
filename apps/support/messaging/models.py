@@ -256,6 +256,8 @@ class AutoSendConfig(models.Model):
     )
     # N분 전 발송 (예: 강의 30분 전, 클리닉 60분 전). null=이벤트 시점 발송. 스케줄러에서 사용.
     minutes_before = models.PositiveIntegerField(null=True, blank=True)
+    # 클리닉 출석/결석 알림톡: ITEM_LIST 시간 필드에 실제 버튼 누른 시각 표시 (기본=예정 시간)
+    show_actual_time = models.BooleanField(default=False)
     # 발송 시점 모드: immediate=즉시, delay_minutes=N분 후, scheduled_hour=매일 지정 시각
     delay_mode = models.CharField(
         max_length=20,

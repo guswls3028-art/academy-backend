@@ -147,6 +147,10 @@ def send_event_notification(
     academy_name = (getattr(tenant, "name", "") or "").strip()
     site_url = get_tenant_site_url(tenant) or ""
 
+    # ── show_actual_time: ITEM_LIST 시간 필드를 실제 버튼 누른 시각으로 교체 ──
+    if context and context.get("_actual_time") and getattr(config, "show_actual_time", False):
+        context["시간"] = context["_actual_time"]
+
     # ── 통합 템플릿 모드: #{선생님메모} + 변수 replacements 빌드 ──
     if use_unified:
         # template.body = #{선생님메모}에 들어갈 안내 문구 (선생님 편집 가능)

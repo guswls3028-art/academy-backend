@@ -141,6 +141,12 @@ class AutoSendConfigView(APIView):
             config.message_mode = message_mode
             config.minutes_before = minutes_before
 
+            # show_actual_time — 클리닉 출석/결석 알림 시간 표시 모드
+            if hasattr(config, "show_actual_time"):
+                sat = item.get("show_actual_time")
+                if sat is not None:
+                    config.show_actual_time = bool(sat)
+
             # delay_mode / delay_value — 마이그레이션 전에도 안전 (hasattr 체크)
             if hasattr(config, "delay_mode"):
                 delay_mode = (item.get("delay_mode") or "").strip().lower()

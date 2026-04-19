@@ -538,6 +538,8 @@ def _send_clinic_notification(tenant, student, trigger, context=None):
 
 - **학생 + 학부모 동시 발송** (AUTO_DEFAULT 정책)
 - `transaction.on_commit()` 내에서 호출 (트랜잭션 커밋 후 발송)
+- context 변수: 클리닉명, 장소, 날짜, 시간, _domain_object_id
+- `clinic_check_in` 트리거 전용 추가 변수: **도착시간** (출석 시점의 `timezone.now()` → `HH:MM` 포맷). 선생님메모 본문에서 `#{도착시간}`으로 사용 가능.
 
 ### _send_attendance_notification
 

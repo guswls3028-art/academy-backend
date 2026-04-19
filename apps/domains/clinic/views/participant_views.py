@@ -501,6 +501,11 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                     "시간": f"취소({_time})" if _is_cancel else f"결석({_time})" if _is_absent else _time,
                     "_domain_object_id": f"participant_{obj.pk}_{next_status}_{int(time.time())}",
                 }
+                # 출석/결석 시 실제 버튼 누른 시각 — 본문 변수 #{도착시간} + ITEM_LIST 시간 대체 옵션
+                if next_status in (SessionParticipant.Status.ATTENDED, SessionParticipant.Status.NO_SHOW):
+                    _now_hm = timezone.now().strftime("%H:%M")
+                    _ctx["도착시간"] = _now_hm
+                    _ctx["_actual_time"] = _now_hm
                 transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
 
         out = ClinicSessionParticipantSerializer(

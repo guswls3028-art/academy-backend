@@ -226,6 +226,7 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
             "minutes_before",
             "delay_mode",
             "delay_value",
+            "show_actual_time",
             "created_at",
             "updated_at",
         ]
@@ -246,3 +247,4 @@ class AutoSendConfigUpdateSerializer(serializers.Serializer):
         required=False,
     )
     delay_value = serializers.IntegerField(required=False, allow_null=True, min_value=0)
+    show_actual_time = serializers.BooleanField(required=False)
