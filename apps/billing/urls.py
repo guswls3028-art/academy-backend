@@ -20,6 +20,8 @@ from apps.billing.views import (
     MyBillingProfileView,
     CancelSubscriptionView,
     RevokeCancelView,
+    # Toss 웹훅 (공개)
+    TossWebhookView,
 )
 
 urlpatterns = [
@@ -44,4 +46,7 @@ urlpatterns = [
     path("profile/", MyBillingProfileView.as_view(), name="billing-profile"),
     path("cancel/", CancelSubscriptionView.as_view(), name="billing-cancel"),
     path("cancel/revoke/", RevokeCancelView.as_view(), name="billing-cancel-revoke"),
+
+    # ── Toss 웹훅 (공개, 서명 검증) ──
+    path("webhooks/toss/", TossWebhookView.as_view(), name="billing-webhook-toss"),
 ]

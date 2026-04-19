@@ -22,7 +22,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from apps.billing.models import Invoice
-from apps.billing.services import invoice_service, subscription_service
+from apps.billing.services import invoice_service, payment_service, subscription_service
 from apps.core.models.program import Program
 
 
@@ -110,28 +110,68 @@ class Command(BaseCommand):
 
         # ──── 2. AUTO_CARD payment attempts ────
         self._log(f"\n  --- Step 2: AUTO_CARD payment ---")
+        # SCHEDULED + PENDING 모두 대상 (PENDING은 이전 배치에서 상태 전이만 된 건)
         due_invoices = Invoice.objects.filter(
-            status="SCHEDULED", due_date__lte=today, billing_mode="AUTO_CARD",
-        ).exclude(tenant_id__in=exempt)
+            status__in=["SCHEDULED", "PENDING"],
+            due_date__lte=today,
+            billing_mode="AUTO_CARD",
+        ).exclude(tenant_id__in=exempt).select_related("tenant")
 
-        if due_invoices.exists():
-            if settings.TOSS_AUTO_BILLING_ENABLED:
-                self._log(f"    Due invoices: {due_invoices.count()} (auto-billing ON)")
-                self._log(f"    [TODO] Phase D: PG payment execution not yet implemented")
-            else:
-                self._log(f"    Due invoices: {due_invoices.count()} -- TOSS_AUTO_BILLING_ENABLED=OFF")
-                for inv in due_invoices[:5]:
-                    self._log(f"      {inv.invoice_number} tenant={inv.tenant.code} "
-                              f"amount={inv.total_amount:,} due={inv.due_date}")
-        else:
+        if not due_invoices.exists():
             self._log(f"    No due AUTO_CARD invoices.")
+        elif not settings.TOSS_AUTO_BILLING_ENABLED:
+            self._log(f"    Due invoices: {due_invoices.count()} -- TOSS_AUTO_BILLING_ENABLED=OFF")
+            for inv in due_invoices[:5]:
+                self._log(f"      {inv.invoice_number} tenant={inv.tenant.code} "
+                          f"amount={inv.total_amount:,} due={inv.due_date}")
+        else:
+            self._log(f"    Due invoices: {due_invoices.count()} (auto-billing ON)")
+            paid_cnt = 0
+            failed_cnt = 0
+            for inv in due_invoices:
+                if dry_run:
+                    self._log(f"    [DRY] Would charge {inv.tenant.code}: {inv.invoice_number} "
+                              f"amount={inv.total_amount:,}")
+                    continue
+                result = payment_service.execute_auto_payment(inv.pk)
+                if result.get("success"):
+                    paid_cnt += 1
+                    self._log(f"    [PAID] {inv.tenant.code}: {inv.invoice_number} "
+                              f"paymentKey={result.get('payment_key', '')[:16]}...")
+                else:
+                    failed_cnt += 1
+                    self._log(f"    [FAIL] {inv.tenant.code}: {inv.invoice_number} "
+                              f"reason={result.get('reason', '')[:80]}")
+            self._log(f"    Result: paid={paid_cnt} failed={failed_cnt}")
 
         # ──── 3. Failed retries ────
         self._log(f"\n  --- Step 3: Failed retries ---")
         retry_invoices = Invoice.objects.filter(
-            status="FAILED", next_retry_at__lte=today,
-        ).exclude(tenant_id__in=exempt)
+            status="FAILED",
+            next_retry_at__lte=today,
+            billing_mode="AUTO_CARD",
+        ).exclude(tenant_id__in=exempt).select_related("tenant")
         self._log(f"    Retry candidates: {retry_invoices.count()}")
+
+        if retry_invoices.exists() and settings.TOSS_AUTO_BILLING_ENABLED:
+            retry_paid = 0
+            retry_failed = 0
+            for inv in retry_invoices:
+                if dry_run:
+                    self._log(f"    [DRY] Would retry {inv.tenant.code}: {inv.invoice_number} "
+                              f"attempt={inv.attempt_count + 1}")
+                    continue
+                result = payment_service.execute_auto_payment(inv.pk)
+                if result.get("success"):
+                    retry_paid += 1
+                    self._log(f"    [RETRY-OK] {inv.tenant.code}: {inv.invoice_number}")
+                else:
+                    retry_failed += 1
+                    self._log(f"    [RETRY-FAIL] {inv.tenant.code}: {inv.invoice_number} "
+                              f"reason={result.get('reason', '')[:80]}")
+            self._log(f"    Result: retried_paid={retry_paid} retried_failed={retry_failed}")
+        elif retry_invoices.exists() and not settings.TOSS_AUTO_BILLING_ENABLED:
+            self._log(f"    Skipped: TOSS_AUTO_BILLING_ENABLED=OFF")
 
         # ──── 4. Exhausted -> OVERDUE ────
         self._log(f"\n  --- Step 4: OVERDUE transitions ---")

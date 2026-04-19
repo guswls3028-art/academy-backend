@@ -14,6 +14,12 @@ logger = logging.getLogger(__name__)
 # 테넌트 해석 없이 통과시키는 경로 (ALB/컨테이너 health check용)
 BYPASS_PATHS = {"/health", "/health/", "/healthz", "/healthz/", "/readyz", "/readyz/"}
 
+# 외부 시스템(PG 등)이 호출하는 공개 엔드포인트 — 테넌트 해석 불가/불필요
+# 페이로드 내 order_id/tenant_id로 자체 라우팅함.
+BYPASS_PREFIXES = (
+    "/api/v1/billing/webhooks/",
+)
+
 
 class TenantMiddleware:
     """
@@ -35,10 +41,14 @@ class TenantMiddleware:
         clear_current_tenant()
         request.tenant = None  # type: ignore[attr-defined]
 
-        # Health 계열은 어떤 경우에도 tenant resolve 금지 (DB 의존성/Host strictness 회피)
+        # Health 계열 + 외부 웹훅은 어떤 경우에도 tenant resolve 금지
         path = (getattr(request, "path", "") or "/").strip() or "/"
         norm = path.rstrip("/") or "/"
-        if path in BYPASS_PATHS or norm in ("/health", "/healthz", "/readyz"):
+        if (
+            path in BYPASS_PATHS
+            or norm in ("/health", "/healthz", "/readyz")
+            or any(path.startswith(p) for p in BYPASS_PREFIXES)
+        ):
             try:
                 return self.get_response(request)
             finally:

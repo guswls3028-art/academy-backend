@@ -6,11 +6,18 @@ Billing API Views.
 2. 원장 API (각 테넌트 owner) — 자기 테넌트 결제 관리
 """
 
+import json
+import logging
+
+from django.conf import settings as django_settings
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework import generics, status
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.billing.adapters.toss_payments import verify_webhook_signature
 from apps.billing.models import Invoice, PaymentTransaction, BillingKey, BillingProfile
 from apps.billing.serializers import (
     BillingKeySerializer,
@@ -23,7 +30,12 @@ from apps.billing.serializers import (
     PaymentTransactionSerializer,
     TenantSubscriptionSummarySerializer,
 )
-from apps.billing.services import billing_key_service, invoice_service, subscription_service
+from apps.billing.services import (
+    billing_key_service,
+    invoice_service,
+    subscription_service,
+    webhook_service,
+)
 from apps.core.models.program import Program
 from apps.core.permissions import (
     IsSuperuserOnly,
@@ -31,6 +43,8 @@ from apps.core.permissions import (
     TenantResolvedAndStaff,
     is_platform_admin_tenant,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════
@@ -417,3 +431,55 @@ class RevokeCancelView(APIView):
             "cancel_at_period_end": program.cancel_at_period_end,
             "message": "해지 예약이 철회되었습니다.",
         })
+
+
+# ══════════════════════════════════════════════
+# 3. Toss 웹훅 (공개 엔드포인트, HMAC 서명으로 검증)
+# ══════════════════════════════════════════════
+
+@method_decorator(csrf_exempt, name="dispatch")
+class TossWebhookView(APIView):
+    """
+    POST /api/v1/billing/webhooks/toss/
+
+    Toss 결제 상태 변경 웹훅.
+    - 인증: TossPayments-Signature 헤더의 HMAC-SHA256 서명 검증
+    - 멱등성: orderId 기준 PaymentTransaction 조회 + 종단 상태 보호
+    - 실패해도 2xx 반환 (Toss가 폭주 재시도하지 않도록 — 내부 로깅으로 추적)
+    """
+    permission_classes = [AllowAny]
+    authentication_classes: list = []
+
+    def post(self, request):
+        raw_body = request.body or b""
+        signature = (
+            request.META.get("HTTP_TOSSPAYMENTS_SIGNATURE")
+            or request.META.get("HTTP_X_TOSSPAYMENTS_SIGNATURE")
+            or request.META.get("HTTP_X_SIGNATURE")
+            or ""
+        )
+
+        if not verify_webhook_signature(raw_body, signature):
+            logger.warning("Toss webhook signature invalid. sig=%r len_body=%d",
+                           signature[:40], len(raw_body))
+            return Response({"detail": "Invalid signature"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        try:
+            event = json.loads(raw_body.decode("utf-8") or "{}")
+        except (UnicodeDecodeError, json.JSONDecodeError) as e:
+            logger.warning("Toss webhook body not JSON: %s", e)
+            return Response({"detail": "Invalid JSON"}, status=status.HTTP_400_BAD_REQUEST)
+
+        event_type = event.get("eventType") or event.get("type") or ""
+        data = event.get("data") or event  # Toss 일부 이벤트는 data 없이 flat 페이로드
+
+        logger.info("Toss webhook received: event=%s orderId=%s status=%s",
+                    event_type, data.get("orderId"), data.get("status"))
+
+        if event_type.upper() in ("PAYMENT.STATUS_CHANGED", "PAYMENT_STATUS_CHANGED", "PAYMENT"):
+            result = webhook_service.handle_payment_status(data)
+            return Response({"ok": True, **result})
+
+        # 알 수 없는 이벤트: 200 OK (Toss가 재시도하지 않도록) + 로그만
+        logger.info("Toss webhook unhandled event: %s", event_type)
+        return Response({"ok": True, "result": "unhandled_event_type", "event_type": event_type})
