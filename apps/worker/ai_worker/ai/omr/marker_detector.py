@@ -158,8 +158,9 @@ def classify_blob(contour: np.ndarray) -> str:
     if solidity > 0.80 and n_vertices == 3:
         return TRIANGLE
 
-    # SQUARE: high solidity, roughly square aspect, ~4 vertices
-    if solidity > 0.85 and 0.70 <= aspect <= 1.42:
+    # SQUARE: high solidity, 정사각형에 가까운 aspect (0.85~1.18)
+    # v15.2: 답안/식별 버블 타원(aspect~0.69)이 SQUARE로 오분류되어 early exit 트리거하던 문제 해결
+    if solidity > 0.85 and 0.85 <= aspect <= 1.18:
         return SQUARE
 
     # PLUS: low solidity, roughly symmetric, 4+ concavities
@@ -472,35 +473,49 @@ def _assign_candidates_to_corners(
     For each corner, pick the candidate that:
     1. Has a compatible marker_type per corner_map (L/T are interchangeable)
     2. Lies within the corner's spatial region
-    3. Has the largest area (most confident detection)
+    3. Is CLOSEST to the page corner vertex (코너 근처 마커 우선, 내부 로고 블롭 배제)
     """
     assigned: Dict[str, _Candidate] = {}
 
+    # 실제 페이지 코너 꼭지점 (오프셋 없이 이미지 극단값)
+    corner_anchors: Dict[str, Tuple[float, float]] = {
+        "TL": (0.0, 0.0),
+        "TR": (float(img_w), 0.0),
+        "BR": (float(img_w), float(img_h)),
+        "BL": (0.0, float(img_h)),
+    }
+
     for corner_name, expected_type in corner_map.items():
         best: Optional[_Candidate] = None
-        best_area = 0.0
+        best_dist = float("inf")
+        anchor_x, anchor_y = corner_anchors[corner_name]
 
         for cand in candidates:
             if not _types_compatible(cand.marker_type, expected_type):
                 continue
             if not _point_in_corner(cand.center[0], cand.center[1], img_w, img_h, corner_name):
                 continue
-            if cand.area > best_area:
+            # 코너 꼭지점까지 거리 (가까울수록 진짜 마커)
+            dist = math.sqrt(
+                (cand.center[0] - anchor_x) ** 2 + (cand.center[1] - anchor_y) ** 2
+            )
+            if dist < best_dist:
                 best = cand
-                best_area = cand.area
+                best_dist = dist
 
         if best is not None:
-            best.corner = corner_name
-            # Override the detected type with the expected type from the map
-            best.marker_type = expected_type
-            # Confidence based on how close to ideal position (center of corner region)
-            xr, yr = _CORNER_REGIONS[corner_name]
-            ideal_x = (xr[0] + xr[1]) / 2 * img_w
-            ideal_y = (yr[0] + yr[1]) / 2 * img_h
-            dist = math.sqrt((best.center[0] - ideal_x) ** 2 + (best.center[1] - ideal_y) ** 2)
-            max_dist = math.sqrt((0.15 * img_w) ** 2 + (0.15 * img_h) ** 2)
-            best.confidence = max(0.0, 1.0 - dist / max_dist) if max_dist > 0 else 0.5
-            assigned[corner_name] = best
+            # 원본 marker_type 보존 — 다른 orientation 시도에 side effect 방지.
+            # best 복사본을 만들어 assign (원본은 다음 angle 시도에서 재사용).
+            max_dist_ref = math.sqrt(img_w ** 2 + img_h ** 2) * 0.1
+            conf = max(0.0, 1.0 - best_dist / max_dist_ref) if max_dist_ref > 0 else 0.5
+            assigned[corner_name] = _Candidate(
+                contour=best.contour,
+                center=best.center,
+                area=best.area,
+                marker_type=expected_type,  # 매핑된 type (homography 용)
+                corner=corner_name,
+                confidence=conf,
+            )
 
     return assigned
 

@@ -176,10 +176,13 @@ def distort(img: np.ndarray, *,
         if c > 0 and c * 2 < min(ch, cw):
             out = out[c:ch - c, c:cw - c]
 
-    # 가우시안 노이즈
+    # 가우시안 노이즈 (메모리 절약 위해 float32 → int16 즉시 변환)
     if noise_sigma > 0:
-        noise = np.random.normal(0, noise_sigma, out.shape).astype(np.int16)
-        out = np.clip(out.astype(np.int16) + noise, 0, 255).astype(np.uint8)
+        noise = (np.random.randn(*out.shape).astype(np.float32) * noise_sigma).astype(np.int16)
+        out_i = out.astype(np.int16)
+        out_i += noise
+        out = np.clip(out_i, 0, 255).astype(np.uint8)
+        del noise, out_i
 
     # 블러
     if blur_ksize > 0 and blur_ksize % 2 == 1:
