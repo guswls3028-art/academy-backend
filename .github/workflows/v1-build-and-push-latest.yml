@@ -406,19 +406,34 @@ jobs:
 
           echo "Running migrations on instance: $INSTANCE_ID"
 
+          # Account ID 동적 추출 (secrets 추가 없이)
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --region ${{ env.AWS_REGION }})
+          ECR_HOST="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          ECR_IMAGE="${ECR_HOST}/academy-api:latest"
+
+          # ⚠️ 중요: 기존 `docker exec academy-api`는 ASG refresh 이전의 구 이미지에서
+          # migrate를 실행해 새 migration 파일이 포함되지 않는 설계 결함이 있었다.
+          # 이를 해결하기 위해 latest 이미지를 새로 pull한 뒤 --rm 임시 컨테이너에서
+          # migrate를 실행한다. 환경변수는 기존 academy-api 컨테이너에서 --env-file로 복사,
+          # 네트워크는 --network container:academy-api로 공유하여 DB 접근을 보장한다.
+          MIGRATE_CMD="set -e; aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_HOST}; docker pull ${ECR_IMAGE}; ENV_FILE=\$(mktemp); docker inspect academy-api --format '{{range .Config.Env}}{{println .}}{{end}}' > \$ENV_FILE; docker run --rm --env-file \$ENV_FILE --network container:academy-api ${ECR_IMAGE} python manage.py migrate --no-input 2>&1; EXIT=\$?; rm -f \$ENV_FILE; exit \$EXIT"
+
+          # SSM commands 배열에 JSON-safe 형태로 전달
+          SSM_PARAMS=$(jq -n --arg cmd "$MIGRATE_CMD" '{commands: [$cmd]}')
+
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --parameters 'commands=["docker exec academy-api python manage.py migrate --no-input 2>&1"]' \
-            --timeout-seconds 120 \
+            --parameters "$SSM_PARAMS" \
+            --timeout-seconds 300 \
             --region ${{ env.AWS_REGION }} \
             --query 'Command.CommandId' \
             --output text)
 
           echo "SSM Command ID: $COMMAND_ID"
 
-          # Wait for command to complete
-          for i in $(seq 1 20); do
+          # Wait for command to complete (최대 ~6분: docker pull + migrate 여유)
+          for i in $(seq 1 36); do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
               --instance-id "$INSTANCE_ID" \
@@ -440,6 +455,12 @@ jobs:
               exit 0
             elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
               echo "::error::Migration failed with status: $STATUS"
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$INSTANCE_ID" \
+                --region ${{ env.AWS_REGION }} \
+                --query 'StandardOutputContent' \
+                --output text
               aws ssm get-command-invocation \
                 --command-id "$COMMAND_ID" \
                 --instance-id "$INSTANCE_ID" \
