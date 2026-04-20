@@ -13,6 +13,9 @@ from typing import Any
 from django.template.loader import render_to_string
 
 from apps.domains.assets.omr.dto.omr_document import OMRDocument
+from apps.domains.assets.omr.services.meta_generator import (
+    MARKER_OFF, MARKER_SZ, MARKER_TH,
+)
 
 
 class OMRHtmlRenderer:
@@ -59,6 +62,12 @@ class OMRHtmlRenderer:
             "choices_labels": [str(i + 1) for i in range(doc.n_choices)],
             "phone_digits": list(range(8)),
             "phone_values": list(range(10)),
+            # v15 인식 마크 SSOT
+            "marker_off_mm": MARKER_OFF,
+            "marker_sz_mm": MARKER_SZ,
+            "marker_th_mm": MARKER_TH,
+            "marker_half_sz_mm": MARKER_SZ / 2,              # CSS triangle border-left/right 폭
+            "marker_br_center_mm": (MARKER_SZ - MARKER_TH) / 2,  # BR 십자 중심 정렬 offset
         }
 
     def _build_mc_columns(self, doc: OMRDocument) -> list[dict]:

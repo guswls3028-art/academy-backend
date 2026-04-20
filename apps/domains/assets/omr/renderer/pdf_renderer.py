@@ -1,11 +1,11 @@
 # apps/domains/assets/omr/renderer/pdf_renderer.py
 """
-OMR PDF 렌더러 v14 — reportlab 기반 벡터 PDF 생성 (한국 표준 OMR 스타일)
+OMR PDF 렌더러 v15 — reportlab 기반 벡터 PDF 생성 (한국 표준 OMR 스타일)
 
 좌표계: meta_generator.py (좌상단 mm) → reportlab (좌하단 pt)
 
 ═══════════════════════════════════════════════════
-시각 시스템 정의 v14
+시각 시스템 정의 v15
 ═══════════════════════════════════════════════════
 
 A. STROKE & COLOR
@@ -36,13 +36,13 @@ D. 통합 프레임 구조 (v14)
   답안 영역  단일 외곽 rect + 세로선 칸막이 (독립 박스 없음)
   그리기 순서: 배경 fill → 내부선 → 외곽 stroke → 텍스트 → 버블
 
-E. 타이밍 마크 (한국 표준)
-  상하단     균일 간격 수평 바 (4×1.5mm, 8mm 간격)
-  좌우       행 바 (5행: 1.5mm, 10행: 2.0mm, LP_GAP 내 안착)
-
-F. 인식 시스템
+E. 인식 시스템 v15.1 (원칙: 모든 인식마크는 AI 엔진이 실제로 사용하는 것만)
   코너 마커    8mm 비대칭 4종 (TL=square, TR=L, BL=triangle, BR=plus)
-  AI 파이프라인은 코너 마커 + 버블 좌표만 사용 (타이밍 마크 무관)
+               오프셋 5mm, 팔 두께 2mm, 순흑 #000 — homography 전역 정렬
+  컬럼 앵커    각 답안 컬럼 TL/BR 2mm 사각형 — 컬럼별 local affine 잔차 보정
+               (종이 비선형 왜곡/ADF 늘어짐 대응)
+  식별번호 앵커 학생번호 그리드 TL/BR 2mm 사각형 — identifier 영역 local affine
+  장식 마크 없음 — engine이 사용하지 않는 인식마크는 그리지 않음
 ═══════════════════════════════════════════════════
 """
 from __future__ import annotations
@@ -68,9 +68,15 @@ from apps.domains.assets.omr.services.meta_generator import (
     ANS_X,
     MC_COL_W, MC_COL_GAP, MC_HEADER_H, MC_NUM_W, MC_BUB_PAD,
     BUB_W, BUB_H,
-    ID_DIGITS, ID_VALUES, ID_BUB_GAP, ID_BUB_H,
+    ID_DIGITS, ID_VALUES, ID_BUB_GAP, ID_BUB_H, ID_BUB_W,
     ID_DIGIT_W, ID_SEP_W,
     MARGIN_R,
+    # v15 인식 마크 SSOT 상수
+    MARKER_OFF, MARKER_SZ, MARKER_TH,
+    COL_ANCHOR_SZ, COL_ANCHOR_OUTSET,
+    # 좌측 패널 수직 분할 + 식별번호 내부 구조 SSOT
+    LP_H_NOTE, LP_H_PHONE, LP_H_NAME,
+    ID_HEADER_H, ID_WRITE_TOP_PAD, ID_WRITE_H, ID_WRITE_BOT_PAD, ID_ANCHOR_SZ,
 )
 
 # ══════════════════════════════════════════════
@@ -113,10 +119,10 @@ GAP_LOGO_TITLE = 3.0
 GAP_TITLE_SUB = 2.0
 HEADER_H = 5.5
 
-# E. BALANCE (mm, 위→아래)
-H_NOTE = 28.0
-H_PHONE = 75.0
-H_NAME = 16.0
+# E. BALANCE (mm, 위→아래) — meta_generator SSOT 공유
+H_NOTE = LP_H_NOTE
+H_PHONE = LP_H_PHONE
+H_NAME = LP_H_NAME
 H_LOGO = CONTENT_H - H_NOTE - H_PHONE - H_NAME
 
 # 폰트
@@ -236,59 +242,37 @@ class OMRPdfRenderer:
         cv.save()
         return buf.getvalue()
 
-    # ── 코너 마크 — ㄱ자 브래킷(시각) + 분리된 비대칭 마커(AI) ──
-    # 브래킷과 마커 사이 2mm 갭 → 다른 blob으로 인식됨
-    _CORNER_OFF = 2.5   # 마커 오프셋 (페이지 가장자리에서)
-    _CORNER_SZ = 5.0    # 비대칭 마커 크기 (mm)
-    _CORNER_TH = 1.5    # 마커 팔 두께 (mm)
-    _BRACKET_OFF = 1.5  # 브래킷 오프셋 (마커보다 바깥)
-    _BRACKET_ARM = 8.0  # 브래킷 팔 길이
-
+    # ── v15.2 코너 마커 — 얇은 ㄱ자 브래킷 3개 + BL 삼각형 (min.t 참고) ──
+    # meta_generator.MARKER_OFF/SZ/TH SSOT. TL/TR/BR은 bracket, BL은 orientation용 삼각형.
     def _corners(self, c):
-        off = self._CORNER_OFF
-        sz = self._CORNER_SZ
-        th = self._CORNER_TH
-        boff = self._BRACKET_OFF
-        barm = self._BRACKET_ARM
+        off = MARKER_OFF
+        sz = MARKER_SZ
+        th = MARKER_TH
         pw, ph = PAGE_W, PAGE_H
 
-        # ── 비대칭 채움 마커 (AI용) — 페이지 안쪽 ──
         c.setFillColor(black)
-        # TL: 정사각형
-        c.rect(_mm(off), _y(off + sz), _mm(sz), _mm(sz), fill=1, stroke=0)
-        # TR: L자
-        tr_x = pw - off - sz
-        c.rect(_mm(tr_x), _y(off + th), _mm(sz), _mm(th), fill=1, stroke=0)
+
+        # TL ┐: 귀퉁이 (off, off), 팔 오른쪽+아래로
+        # 수평 팔 (위쪽): x=[off..off+sz], y=[off..off+th]
+        c.rect(_mm(off), _y(off + th), _mm(sz), _mm(th), fill=1, stroke=0)
+        # 수직 팔 (왼쪽): x=[off..off+th], y=[off..off+sz]
+        c.rect(_mm(off), _y(off + sz), _mm(th), _mm(sz), fill=1, stroke=0)
+
+        # TR ┌: 귀퉁이 (pw-off, off), 팔 왼쪽+아래로
+        c.rect(_mm(pw - off - sz), _y(off + th), _mm(sz), _mm(th), fill=1, stroke=0)
         c.rect(_mm(pw - off - th), _y(off + sz), _mm(th), _mm(sz), fill=1, stroke=0)
-        # BL: 삼각형
+
+        # BL 삼각형 (orientation 판별용 비대칭 신호)
         p = c.beginPath()
         p.moveTo(_mm(off), _y(ph - off))
         p.lineTo(_mm(off + sz), _y(ph - off))
         p.lineTo(_mm(off + sz / 2), _y(ph - off - sz))
         p.close()
         c.drawPath(p, fill=1, stroke=0)
-        # BR: 십자
-        br_cx = pw - off - sz / 2
-        br_cy = ph - off - sz / 2
-        c.rect(_mm(br_cx - sz/2), _y(br_cy + th/2), _mm(sz), _mm(th), fill=1, stroke=0)
-        c.rect(_mm(br_cx - th/2), _y(br_cy + sz/2), _mm(th), _mm(sz), fill=1, stroke=0)
 
-        # ── ㄱ자 브래킷 (시각용) — 마커 바깥쪽, 2mm 분리 ──
-        c.setStrokeColor(HexColor("#333333"))
-        c.setLineWidth(0.8)
-        gap = off + sz + 1.5  # 마커 끝 + 여백
-        # TL
-        c.line(_mm(boff), _y(boff), _mm(boff + barm), _y(boff))
-        c.line(_mm(boff), _y(boff), _mm(boff), _y(boff + barm))
-        # TR
-        c.line(_mm(pw - boff - barm), _y(boff), _mm(pw - boff), _y(boff))
-        c.line(_mm(pw - boff), _y(boff), _mm(pw - boff), _y(boff + barm))
-        # BL
-        c.line(_mm(boff), _y(ph - boff), _mm(boff + barm), _y(ph - boff))
-        c.line(_mm(boff), _y(ph - boff), _mm(boff), _y(ph - boff - barm))
-        # BR
-        c.line(_mm(pw - boff - barm), _y(ph - boff), _mm(pw - boff), _y(ph - boff))
-        c.line(_mm(pw - boff), _y(ph - boff), _mm(pw - boff), _y(ph - boff - barm))
+        # BR ┘: 귀퉁이 (pw-off, ph-off), 팔 왼쪽+위로
+        c.rect(_mm(pw - off - sz), _y(ph - off), _mm(sz), _mm(th), fill=1, stroke=0)
+        c.rect(_mm(pw - off - th), _y(ph - off - th), _mm(th), _mm(sz), fill=1, stroke=0)
 
     # ══════════════════════════════════════════
     # 좌측 패널
@@ -400,8 +384,9 @@ class OMRPdfRenderer:
             c.setFont(_FB, 10); c.setFillColor(CT)
             c.drawCentredString(sx + _mm(sw / 2), _y(wy + ch - 1.5), "–")
 
-        # 버블 그리드 — 동일 칼럼 그리드
-        by0 = top + HEADER_H + ch + 3.5
+        # 버블 그리드 — ID 전용 크기 사용 (meta_generator SSOT와 일치)
+        # by0 = top + ID_HEADER_H + ID_WRITE_TOP_PAD + ID_WRITE_H + ID_WRITE_BOT_PAD
+        by0 = top + ID_HEADER_H + ID_WRITE_TOP_PAD + ID_WRITE_H + ID_WRITE_BOT_PAD
         bg = ID_BUB_GAP
         c.setLineWidth(S5)
         for d in range(ID_DIGITS):
@@ -409,13 +394,29 @@ class OMRPdfRenderer:
             dx = gx + _mm(col_x_mm)
             ccx = dx + _mm(dw / 2)
             for v in range(ID_VALUES):
-                by = by0 + v * (BUB_H + bg)
-                bcy = _y(by + BUB_H / 2)
+                by = by0 + v * (ID_BUB_H + bg)
+                bcy = _y(by + ID_BUB_H / 2)
                 c.setStrokeColor(C5); c.setFillColor(C_BUB_FILL)
-                c.ellipse(ccx - _mm(BUB_W/2), bcy - _mm(BUB_H/2),
-                          ccx + _mm(BUB_W/2), bcy + _mm(BUB_H/2), stroke=1, fill=1)
+                c.ellipse(ccx - _mm(ID_BUB_W/2), bcy - _mm(ID_BUB_H/2),
+                          ccx + _mm(ID_BUB_W/2), bcy + _mm(ID_BUB_H/2), stroke=1, fill=1)
                 c.setFont(_FN, 5.5); c.setFillColor(CT4)
                 c.drawCentredString(ccx, bcy - _mm(0.8), str(v))
+
+        # ── identifier 로컬 앵커 (engine._detect_id_anchors가 사용) ──
+        # meta_generator._build_identifier_meta와 같은 좌표. 2mm × 2mm 순흑 정사각형.
+        grid_start_x_mm = CONTENT_X + LP_BORDER + LP_PAD_X + 2.5 + (LP_W - 2*LP_BORDER - 2*LP_PAD_X - 2*2.5 - (ID_DIGITS*ID_DIGIT_W + ID_SEP_W)) / 2
+        grid_end_x_mm = grid_start_x_mm + ID_DIGITS * ID_DIGIT_W + ID_SEP_W
+        grid_end_y_mm = by0 + (ID_VALUES - 1) * (ID_BUB_H + bg) + ID_BUB_H
+        a_half = ID_ANCHOR_SZ / 2
+        a_tl_cx = grid_start_x_mm - a_half - 0.5
+        a_tl_cy = by0 - a_half - 0.5
+        a_br_cx = grid_end_x_mm + a_half + 0.5
+        a_br_cy = grid_end_y_mm + a_half + 0.5
+        c.setFillColor(black)
+        c.rect(_mm(a_tl_cx - a_half), _y(a_tl_cy + a_half),
+               _mm(ID_ANCHOR_SZ), _mm(ID_ANCHOR_SZ), fill=1, stroke=0)
+        c.rect(_mm(a_br_cx - a_half), _y(a_br_cy + a_half),
+               _mm(ID_ANCHOR_SZ), _mm(ID_ANCHOR_SZ), fill=1, stroke=0)
 
     def _note(self, c, x, w, top):
         """답안지 작성 안내 — 일관된 들여쓰기."""
@@ -632,109 +633,20 @@ class OMRPdfRenderer:
                     c.setFont(_FB, 6.5); c.setFillColor(CT4)
                     c.drawCentredString(bx, by - _mm(1.0), str(bi + 1))
 
-        # ═══ ⑥ 타이밍 마크 (프레임 외부) ═══
-        self._render_timing(c, frame_x, frame_w, sections, bt, bh, nc)
-
-    # ══════════════════════════════════════════
-    # 타이밍 마크 — 한국식 바코드 스트립
-    # ══════════════════════════════════════════
-    # 상하: 버블 x 좌표에 정렬된 세로 바 → 바코드 패턴
-    # 좌우: 행 y 좌표에 정렬된 가로 바 → 5행/10행 강조
-    # 모든 마크가 실제 버블 좌표와 1:1 대응 → AI 정밀 보정 가능
-
-    _TM_VBAR_W = 0.7       # 세로 바 폭 (상하단)
-    _TM_VBAR_H = 3.0       # 세로 바 높이
-    _TM_HBAR_W = 3.0       # 가로 바 폭 (좌우 일반)
-    _TM_HBAR_H = 0.7       # 가로 바 높이
-    _TM_HBAR_W5 = 4.0      # 5행 강조 폭
-    _TM_HBAR_H5 = 0.85     # 5행 강조 높이
-    _TM_HBAR_W10 = 4.5     # 10행 강조 폭
-    _TM_HBAR_H10 = 1.0     # 10행 강조 높이
-    _TM_COLOR = HexColor("#444444")
-    _TM_GAP = 1.0          # 프레임 ↔ 마크 간격
-
-    def _render_timing(self, c, frame_x, frame_w, sections, bt, bh, nc=5):
-        """한국식 바코드 타이밍 스트립 — 버블 좌표에 1:1 정렬.
-
-        상하단: 각 버블 x 중심 + 컬럼 경계에 세로 바 → 컬럼 x 보정
-        좌우: 각 행 y 중심에 가로 바 → 행 y 보정 (5행/10행 강조)
-        """
-        vbar_w = self._TM_VBAR_W
-        vbar_h = self._TM_VBAR_H
-        hbar_w = self._TM_HBAR_W
-        hbar_h = self._TM_HBAR_H
-        hbar_w5 = self._TM_HBAR_W5
-        hbar_h5 = self._TM_HBAR_H5
-        hbar_w10 = self._TM_HBAR_W10
-        hbar_h10 = self._TM_HBAR_H10
-        gap = self._TM_GAP
-
-        c.setFillColor(self._TM_COLOR)
-
-        # ── 버블 x 좌표 + 컬럼 경계 수집 ──
-        all_xs = []
-        for typ, sx, _vw, dw, ss, se in sections:
+        # ═══ ⑥ 컬럼 로컬 앵커 (MC 컬럼만) — 답안 프레임 외부 상/하단 ═══
+        # engine._compute_column_transforms가 검출해 컬럼별 local affine 잔차 보정.
+        # 번호 칼럼 중앙 x, 프레임 외부 1mm 거리. 번호 글자/버블과 겹치지 않음.
+        c.setFillColor(black)
+        half = COL_ANCHOR_SZ / 2
+        for typ, sx, _vw, _dw, _ss, _se in sections:
             if typ != 'mc':
                 continue
-            # 컬럼 경계
-            all_xs.append(sx)
-            all_xs.append(sx + dw)
-            # 각 버블 x 중심
-            ax = sx + MC_NUM_W + MC_BUB_PAD
-            aw = dw - MC_NUM_W - 2 * MC_BUB_PAD
-            bgap = (aw - nc * BUB_W) / (nc + 1)
-            for j in range(nc):
-                bx = ax + bgap * (j + 1) + BUB_W * j + BUB_W / 2
-                all_xs.append(bx)
-        all_xs = sorted(set(all_xs))
-
-        # ── 상단 바코드 스트립 (프레임 바로 위) ──
-        top_y = CONTENT_Y - gap - vbar_h
-        for bx in all_xs:
-            c.rect(_mm(bx - vbar_w / 2), _y(top_y + vbar_h),
-                   _mm(vbar_w), _mm(vbar_h), fill=1, stroke=0)
-
-        # ── 하단 바코드 스트립 (프레임 바로 아래) ──
-        bot_y = CONTENT_Y + CONTENT_H + gap
-        for bx in all_xs:
-            c.rect(_mm(bx - vbar_w / 2), _y(bot_y + vbar_h),
-                   _mm(vbar_w), _mm(vbar_h), fill=1, stroke=0)
-
-        # ── 좌측 바코드 스트립 (첫 MC 컬럼 기준, 모든 행) ──
-        first_mc = next((s for s in sections if s[0] == 'mc'), None)
-        if first_mc:
-            _, _, _, _, ss, se = first_mc
-            cnt = se - ss + 1
-            row_h = bh / cnt if cnt > 0 else bh
-            for qi in range(cnt):
-                row_cy = bt + (qi + 0.5) * row_h
-                q_num = qi + 1
-                if q_num % 10 == 0:
-                    bw, bht = hbar_w10, hbar_h10
-                elif q_num % 5 == 0:
-                    bw, bht = hbar_w5, hbar_h5
-                else:
-                    bw, bht = hbar_w, hbar_h
-                c.rect(_mm(1.0), _y(row_cy + bht / 2),
-                       _mm(bw), _mm(bht), fill=1, stroke=0)
-
-        # ── 우측 바코드 스트립 (마지막 MC 컬럼 기준) ──
-        last_mc = None
-        for s in sections:
-            if s[0] == 'mc':
-                last_mc = s
-        if last_mc:
-            _, _, _, _, ss, se = last_mc
-            cnt = se - ss + 1
-            row_h = bh / cnt if cnt > 0 else bh
-            for qi in range(cnt):
-                row_cy = bt + (qi + 0.5) * row_h
-                q_num = qi + 1
-                if q_num % 10 == 0:
-                    bw, bht = hbar_w10, hbar_h10
-                elif q_num % 5 == 0:
-                    bw, bht = hbar_w5, hbar_h5
-                else:
-                    bw, bht = hbar_w, hbar_h
-                c.rect(_mm(PAGE_W - 1.0 - bw), _y(row_cy + bht / 2),
-                       _mm(bw), _mm(bht), fill=1, stroke=0)
+            ax_cx = sx + MC_NUM_W / 2
+            ax_top_cy = CONTENT_Y - COL_ANCHOR_OUTSET - half
+            ax_bot_cy = CONTENT_Y + CONTENT_H + COL_ANCHOR_OUTSET + half
+            # top anchor (프레임 위)
+            c.rect(_mm(ax_cx - half), _y(ax_top_cy + half),
+                   _mm(COL_ANCHOR_SZ), _mm(COL_ANCHOR_SZ), fill=1, stroke=0)
+            # bottom anchor (프레임 아래)
+            c.rect(_mm(ax_cx - half), _y(ax_bot_cy + half),
+                   _mm(COL_ANCHOR_SZ), _mm(COL_ANCHOR_SZ), fill=1, stroke=0)

@@ -33,25 +33,27 @@ TRIANGLE = "triangle"
 PLUS = "plus"
 UNKNOWN = "unknown"
 
-# Default v11 marker-corner mapping (orientation 0°):
-#   TL=square, TR=l_shape, BL=triangle, BR=plus
-#   (matches meta_generator._build_marker_meta)
-# Rotated by 90° CW the mapping shifts cyclically.
+# Default v15.2 marker-corner mapping (orientation 0°):
+#   TL=┐, TR=┌, BR=┘ (모두 l_shape 얇은 브래킷), BL=triangle (orientation 비대칭 신호)
+# Rotated by 90° CW the mapping shifts cyclically (triangle 위치로 방향 판정).
 _DEFAULT_CORNER_MAP: Dict[int, Dict[str, str]] = {
-    0: {"TL": SQUARE, "TR": L_SHAPE, "BL": TRIANGLE, "BR": PLUS},
-    90: {"TL": PLUS, "TR": SQUARE, "BL": L_SHAPE, "BR": TRIANGLE},
-    180: {"TL": TRIANGLE, "TR": PLUS, "BL": SQUARE, "BR": L_SHAPE},
-    270: {"TL": L_SHAPE, "TR": TRIANGLE, "BL": PLUS, "BR": SQUARE},
+    0: {"TL": L_SHAPE, "TR": L_SHAPE, "BL": TRIANGLE, "BR": L_SHAPE},
+    90: {"TL": L_SHAPE, "TR": L_SHAPE, "BL": L_SHAPE, "BR": TRIANGLE},
+    180: {"TL": L_SHAPE, "TR": TRIANGLE, "BL": L_SHAPE, "BR": L_SHAPE},
+    270: {"TL": TRIANGLE, "TR": L_SHAPE, "BL": L_SHAPE, "BR": L_SHAPE},
 }
 
 _ALL_MARKER_TYPES = frozenset({SQUARE, L_SHAPE, T_SHAPE, TRIANGLE, PLUS})
 
-# Corner regions: (x_range_frac, y_range_frac) — outer 15% band
+# Corner regions: (x_range_frac, y_range_frac) — outer 25% band (v15)
+# v14는 15%였으나 스캔 가장자리 잘림/회전 대응 위해 25%로 확장.
+# 8mm 마커 + 5mm 오프셋이면 중심은 3~4% 지점, 25% band 안에 충분히 여유 있음.
+_CORNER_BAND = 0.25
 _CORNER_REGIONS: Dict[str, Tuple[Tuple[float, float], Tuple[float, float]]] = {
-    "TL": ((0.0, 0.15), (0.0, 0.15)),
-    "TR": ((0.85, 1.0), (0.0, 0.15)),
-    "BR": ((0.85, 1.0), (0.85, 1.0)),
-    "BL": ((0.0, 0.15), (0.85, 1.0)),
+    "TL": ((0.0, _CORNER_BAND), (0.0, _CORNER_BAND)),
+    "TR": ((1.0 - _CORNER_BAND, 1.0), (0.0, _CORNER_BAND)),
+    "BR": ((1.0 - _CORNER_BAND, 1.0), (1.0 - _CORNER_BAND, 1.0)),
+    "BL": ((0.0, _CORNER_BAND), (1.0 - _CORNER_BAND, 1.0)),
 }
 
 
@@ -351,10 +353,10 @@ def _extract_candidates(
             cx = int(M["m10"] / M["m00"])
             cy = int(M["m01"] / M["m00"])
 
-            # Spatial filter: must be in outer 15% band
+            # Spatial filter: 외곽 _CORNER_BAND 내에만 허용
             in_band = (
-                cx < img_w * 0.15 or cx > img_w * 0.85
-                or cy < img_h * 0.15 or cy > img_h * 0.85
+                cx < img_w * _CORNER_BAND or cx > img_w * (1.0 - _CORNER_BAND)
+                or cy < img_h * _CORNER_BAND or cy > img_h * (1.0 - _CORNER_BAND)
             )
             if not in_band:
                 continue
@@ -420,6 +422,18 @@ def _extract_candidates(
         binary_fix, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE,
     )
     _process(contours_f)
+
+    if _has_all_corners():
+        return list(seen.values())
+
+    # Strategy 4: Morphological closing on Otsu (blur/noise 조합에서 마커 경계 복원)
+    # 얇은 팔(2mm=약 24px@300dpi)이 blur로 끊어진 경우를 복원.
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    binary_closed = cv2.morphologyEx(binary_otsu, cv2.MORPH_CLOSE, kernel, iterations=1)
+    contours_cl, _ = cv2.findContours(
+        binary_closed, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE,
+    )
+    _process(contours_cl)
 
     return list(seen.values())
 

@@ -57,7 +57,7 @@ def test_struct():
 
     # A1. meta_generator 기본 생성
     meta = build_omr_meta(question_count=30, n_choices=5, essay_count=5)
-    check("A1. meta version", meta["version"] in ("v8", "v9", "v10"))
+    check("A1. meta version", meta["version"] in ("v8", "v9", "v10", "v14", "v15"))
     check("A1. meta page", meta["page"]["width"] == 297.0 and meta["page"]["height"] == 210.0)
     check("A1. mc_count", meta["mc_count"] == 30)
     check("A1. questions count", len(meta["questions"]) == 30)

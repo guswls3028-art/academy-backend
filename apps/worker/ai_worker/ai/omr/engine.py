@@ -119,7 +119,8 @@ def detect_omr_answers_v7(
         # Legacy fixed threshold fallback
         _, binary = cv2.threshold(gray, 140, 255, cv2.THRESH_BINARY_INV)
 
-    # --- Column-local alignment (v9+, displacement-gated) ---
+    # --- Column-local alignment (v9~v14, displacement-gated) ---
+    # v15: 컬럼 앵커 원 제거됨 — 코너 마커 homography만으로 정렬. col_transforms는 빈 dict.
     col_transforms: Dict[int, np.ndarray] = {}
     meta_version = meta.get("version", "v8")
     if meta_version in ("v9", "v10", "v11", "v12", "v13", "v14") and meta.get("columns"):

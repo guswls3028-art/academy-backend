@@ -15,21 +15,24 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 
 .omr{width:297mm;height:210mm;margin:0 auto;background:#fff;position:relative;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact;border:2px solid #000}
 
-/* v13 비대칭 코너 마커 — TL=square, TR=L, BL=triangle, BR=plus (8mm, 굵게) */
+/* v15.2 코너 마커 (min.t 참고) — 얇은 ㄱ자 브래킷 3개 + BL 삼각형 */
+/* TL=┐, TR=┌, BR=┘ (모두 l_shape), BL=삼각형 (orientation 판별) */
 .cm{position:absolute;z-index:20}
 .cm b{position:absolute;background:#000;display:block}
-/* TL: 채워진 정사각형 8×8mm */
-.cm-tl{top:2.5mm;left:2.5mm;width:8mm;height:8mm;background:#000}
-/* TR: L자 (가로8×2.5 + 세로2.5×8) */
-.cm-tr{top:2.5mm;right:2.5mm;width:8mm;height:8mm}
-.cm-tr .h{width:8mm;height:2.5mm;top:0;right:0}
-.cm-tr .v{width:2.5mm;height:8mm;top:0;right:0}
-/* BL: 채움 삼각형 (CSS triangle, 8mm) */
-.cm-bl{bottom:2.5mm;left:2.5mm;width:0;height:0;border-left:4mm solid transparent;border-right:4mm solid transparent;border-bottom:8mm solid #000}
-/* BR: 십자가 (가로8×2.5 + 세로2.5×8) */
-.cm-br{bottom:2.5mm;right:2.5mm;width:8mm;height:8mm}
-.cm-br .h{width:8mm;height:2.5mm;top:2.75mm;right:0}
-.cm-br .v{width:2.5mm;height:8mm;top:0;right:2.75mm}
+/* TL ┐: 수평팔(위) + 수직팔(왼쪽) */
+.cm-tl{top:{{ marker_off_mm }}mm;left:{{ marker_off_mm }}mm;width:{{ marker_sz_mm }}mm;height:{{ marker_sz_mm }}mm}
+.cm-tl .h{width:{{ marker_sz_mm }}mm;height:{{ marker_th_mm }}mm;top:0;left:0}
+.cm-tl .v{width:{{ marker_th_mm }}mm;height:{{ marker_sz_mm }}mm;top:0;left:0}
+/* TR ┌: 수평팔(위) + 수직팔(오른쪽) */
+.cm-tr{top:{{ marker_off_mm }}mm;right:{{ marker_off_mm }}mm;width:{{ marker_sz_mm }}mm;height:{{ marker_sz_mm }}mm}
+.cm-tr .h{width:{{ marker_sz_mm }}mm;height:{{ marker_th_mm }}mm;top:0;right:0}
+.cm-tr .v{width:{{ marker_th_mm }}mm;height:{{ marker_sz_mm }}mm;top:0;right:0}
+/* BL: 채움 삼각형 (꼭짓점 위) — orientation 판별용 비대칭 신호 */
+.cm-bl{bottom:{{ marker_off_mm }}mm;left:{{ marker_off_mm }}mm;width:0;height:0;border-left:{{ marker_half_sz_mm }}mm solid transparent;border-right:{{ marker_half_sz_mm }}mm solid transparent;border-bottom:{{ marker_sz_mm }}mm solid #000}
+/* BR ┘: 수평팔(아래) + 수직팔(오른쪽) */
+.cm-br{bottom:{{ marker_off_mm }}mm;right:{{ marker_off_mm }}mm;width:{{ marker_sz_mm }}mm;height:{{ marker_sz_mm }}mm}
+.cm-br .h{width:{{ marker_sz_mm }}mm;height:{{ marker_th_mm }}mm;bottom:0;right:0}
+.cm-br .v{width:{{ marker_th_mm }}mm;height:{{ marker_sz_mm }}mm;top:0;right:0}
 
 .omr-c{position:absolute;top:9mm;left:10mm;right:10mm;bottom:8mm;display:flex;gap:3mm}
 
@@ -160,7 +163,7 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 <body>
 
 <div class="omr">
-  <!-- 코너 마크 -->
+  <!-- v15 코너 마커 (비대칭 4종) -->
   <div class="cm cm-tl"><b class="h"></b><b class="v"></b></div>
   <div class="cm cm-tr"><b class="h"></b><b class="v"></b></div>
   <div class="cm cm-bl"></div>

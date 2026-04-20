@@ -1,18 +1,20 @@
 # apps/domains/assets/omr/services/meta_generator.py
 """
-OMR v14 좌표 메타 생성기 — SSOT
+OMR v15 좌표 메타 생성기 — SSOT
 
-이 파일은 pdf_renderer.py(렌더링 SSOT)와 동기화된 mm 단위 좌표를 정의한다.
+pdf_renderer.py(렌더링 SSOT) + omr_sheet.html(프리뷰 SSOT)와 동기화된 mm 단위 좌표.
 
-v14 변경 (v13 대비):
-  - 코너 마커 5mm 비대칭 채움 도형 + ㄱ자 브래킷 (마커 off=2.5, 브래킷 분리)
-  - 인식 마크: 버블 좌표에 정렬된 1.5mm 사각형 (컬럼 x, 행 y 기준점)
-  - 통합 프레임 (v8 깔끔 톤, 부드러운 회색 선)
-  - 4코너 비대칭 기준 마크(markers) 유지 (TL=square, TR=L, BL=triangle, BR=plus)
-  - identifier / MC column 로컬 앵커 유지
+v15.2 변경 (타 학원프로그램 min.t 참고):
+  - 코너 마커를 얇은 ㄱ자 브래킷 스타일로 전환 (4mm 팔 × 1mm 두께, 오프셋 3mm)
+    TL = ┐ (우+하), TR = ┌ (좌+하), BR = ┘ (좌+상) — 모두 l_shape
+    BL = filled 삼각형 (orientation 판별용 비대칭 신호, 유일한 non-L)
+  - marker_detector는 기존 로직 재사용 (type별 assignment, L 3개 + triangle 1개)
+  - 4변 타이밍 스트립 없음 (AI 미사용 = 장식 금지)
+  - 컬럼 로컬 앵커 + identifier 앵커는 engine이 실사용하므로 유지
 
-AI 워커는 이 메타를 사용하여 스캔된 이미지에서 버블 위치를 찾는다.
-pdf_renderer.py 레이아웃이 변경되면 이 파일도 반드시 함께 수정해야 한다.
+AI 워커는 이 메타의 `markers`(homography)와 `questions[*].choices[*].center`
+(버블 좌표)를 사용한다. pdf_renderer/omr_sheet.html 레이아웃이 바뀌면
+이 파일도 반드시 함께 수정한다.
 """
 from __future__ import annotations
 
@@ -56,11 +58,12 @@ BUB_W = 3.6
 BUB_H = 5.2
 
 # ── Identifier (전화번호 뒤 8자리) ──
+# v15.2: 답안 버블과 규격 통일. phone 섹션 높이 확장으로 10개 버블 수용.
 ID_DIGIT_W = 5.8
 ID_SEP_W = 3.5
-ID_BUB_W = 3.2
-ID_BUB_H = 4.2      # 축소 (5.2→4.2) — 간격 확보로 인식률 향상
-ID_BUB_GAP = 1.2     # 확대 (0.6→1.2) — 인접 버블 혼동 방지
+ID_BUB_W = 3.6       # 답안 BUB_W와 동일
+ID_BUB_H = 5.2       # 답안 BUB_H와 동일
+ID_BUB_GAP = 1.2
 ID_DIGITS = 8
 ID_VALUES = 10
 
@@ -151,39 +154,101 @@ def _calc_bubble_centers_x(col_x: float, n_choices: int) -> List[float]:
     ]
 
 
-def _build_marker_meta() -> Dict[str, Any]:
-    """v14 4코너 비대칭 기준 마크 좌표 — 5mm 채움 도형 + ㄱ자 브래킷.
+# ══════════════════════════════════════════
+# 코너 마커 상수 v15.2 — min.t 참고 얇은 브래킷 스타일
+# ══════════════════════════════════════════
+MARKER_OFF = 3.0   # 페이지 가장자리 오프셋 (ADF 여유)
+MARKER_SZ = 4.0    # 팔 길이
+MARKER_TH = 1.0    # 팔 두께 — 얇은 bracket
 
-    pdf_renderer._corners()와 동기화.
-    마커 크기 5mm, 팔 두께 1.5mm, 오프셋 2.5mm.
+# ══════════════════════════════════════════
+# 컬럼 로컬 앵커 — 종이 비선형 왜곡(ADF 늘어짐/구김) 시 컬럼별 local affine 보정용
+# engine._compute_column_transforms가 사용. 4코너 homography 이후 잔차 보정.
+# ══════════════════════════════════════════
+COL_ANCHOR_SZ = 2.0       # 정사각형 한 변 (mm)
+COL_ANCHOR_OUTSET = 1.0   # 답안 프레임 상/하단 외부 거리 (mm)
+
+# ══════════════════════════════════════════
+# 좌측 패널 수직 분할 SSOT — pdf_renderer와 반드시 일치
+# v15.2: phone 75→85 (ID 버블 5.2mm × 10개 수용), 로고 영역 축소
+# ══════════════════════════════════════════
+LP_H_NOTE = 28.0   # 답안지 작성 안내 영역 높이
+LP_H_PHONE = 85.0  # 학생 식별번호 영역 높이 (ID 버블 10개 + 헤더/쓰기칸 포함)
+LP_H_NAME = 16.0   # 성명 영역 높이
+# 로고 영역 = CONTENT_H - LP_H_NOTE - LP_H_PHONE - LP_H_NAME = 66mm
+
+# 식별번호 영역 내부 구조 (pdf_renderer._phone과 일치)
+ID_HEADER_H = 5.5          # 섹션 헤더 높이
+ID_WRITE_TOP_PAD = 2.0     # 헤더 → 쓰기칸 상단 간격
+ID_WRITE_H = 7.0           # 쓰기칸 높이
+ID_WRITE_BOT_PAD = 3.5     # 쓰기칸 하단 → 버블 시작 간격
+ID_ANCHOR_SZ = 2.0         # identifier 로컬 앵커 크기
+
+
+def _build_marker_meta() -> Dict[str, Any]:
+    """v15.2 코너 마커 — 얇은 ㄱ자 브래킷 3개 + BL filled 삼각형 1개 (min.t 참고).
+
+    center 좌표 = 각 도형 실제 centroid (homography destination point).
+    TL/TR/BR은 모두 l_shape (brackets 방향만 다름). marker_detector는 corner 영역 +
+    type 매칭으로 자동 분배. BL 삼각형이 orientation 판별용 비대칭 신호.
     """
-    off = 2.5   # 페이지 가장자리 오프셋
-    sz = 5.0    # 마커 크기
-    th = 1.5    # 팔 두께
+    off = MARKER_OFF
+    sz = MARKER_SZ
+    th = MARKER_TH
     pw, ph = PAGE_W, PAGE_H
+
+    # ㄱ자 브래킷 centroid 공식 (면적 가중)
+    # 수평 팔: SZ × TH, 수직 팔: TH × (SZ - TH) (겹치는 코너 TH×TH 제외)
+    # 브래킷 귀퉁이 (corner_x, corner_y)에서 바깥으로 펼침.
+    area_h = sz * th
+    area_v = th * (sz - th)
+    total = area_h + area_v
+    # 귀퉁이 기준 상대 centroid offset (팔이 +방향으로 뻗을 때)
+    offset_along = (area_h * (sz / 2) + area_v * (th / 2)) / total           # 수평 팔 방향
+    offset_perp = (area_h * (th / 2) + area_v * (th + (sz - th) / 2)) / total  # 수직 팔 방향
+
+    # TL ┐ (corner at off,off, 팔 오른쪽+아래로)
+    tl_cx = off + offset_along
+    tl_cy = off + offset_perp
+
+    # TR ┌ (corner at pw-off,off, 팔 왼쪽+아래로) — x 거울
+    tr_cx = pw - off - offset_along
+    tr_cy = off + offset_perp
+
+    # BR ┘ (corner at pw-off,ph-off, 팔 왼쪽+위로) — x,y 둘 다 거울
+    br_cx = pw - off - offset_along
+    br_cy = ph - off - offset_perp
+
+    # BL filled 삼각형 (꼭짓점 위). 꼭짓점 (off, ph-off), (off+sz, ph-off), (off+sz/2, ph-off-sz)
+    bl_cx = off + sz / 2
+    bl_cy = ph - off - sz / 3
 
     return {
         "TL": {
-            "type": "square",
-            "center": {"x": off + sz / 2, "y": off + sz / 2},
+            "type": "l_shape",
+            "center": {"x": round(tl_cx, 3), "y": round(tl_cy, 3)},
             "size": sz,
+            "thickness": th,
+            "direction": "TL",  # ┐
         },
         "TR": {
             "type": "l_shape",
-            "center": {"x": pw - off - sz / 2, "y": off + sz / 2},
+            "center": {"x": round(tr_cx, 3), "y": round(tr_cy, 3)},
             "size": sz,
             "thickness": th,
+            "direction": "TR",  # ┌
         },
         "BL": {
             "type": "triangle",
-            "center": {"x": off + sz / 2, "y": ph - off - sz / 2},
+            "center": {"x": round(bl_cx, 3), "y": round(bl_cy, 3)},
             "size": sz,
         },
         "BR": {
-            "type": "plus",
-            "center": {"x": pw - off - sz / 2, "y": ph - off - sz / 2},
+            "type": "l_shape",
+            "center": {"x": round(br_cx, 3), "y": round(br_cy, 3)},
             "size": sz,
             "thickness": th,
+            "direction": "BR",  # ┘
         },
     }
 
@@ -242,40 +307,30 @@ def build_omr_meta(
             questions.append(q_entry)
             col_questions.append(q_entry)
 
-        # Column anchors: top and bottom alignment marks
-        col_anchors = {
-            "top": {
-                "type": "circle",
-                "center": {
-                    "x": round(col_x + MC_COL_W - 2.0, 2),
-                    "y": round(body_y - 1.5, 2),
-                },
-                "radius": 1.5,
-            },
-            "bottom": {
-                "type": "circle",
-                "center": {
-                    "x": round(col_x + 2.0, 2),
-                    "y": round(body_y + body_h + 1.0, 2),
-                },
-                "radius": 1.5,
-            },
-        }
+        # v15.2: 컬럼 로컬 앵커 — 답안 프레임 외부 상/하단 (프레임과 1mm 떨어짐).
+        # 번호 글자와 겹치지 않음. engine._compute_column_transforms가 사용.
+        # x 위치: 번호 칼럼 중앙 (코너 마커와 x축으로 분리, 답안 컬럼 식별 가능)
+        anchor_cx = col_x + MC_NUM_W / 2
+        anchor_top_cy = CONTENT_Y - COL_ANCHOR_OUTSET - COL_ANCHOR_SZ / 2
+        anchor_bot_cy = CONTENT_Y + CONTENT_H + COL_ANCHOR_OUTSET + COL_ANCHOR_SZ / 2
         columns.append({
             "column_index": c,
             "col_x": round(col_x, 2),
+            "anchors": {
+                "top": {
+                    "center": {"x": round(anchor_cx, 2), "y": round(anchor_top_cy, 2)},
+                    "size": COL_ANCHOR_SZ,
+                },
+                "bottom": {
+                    "center": {"x": round(anchor_cx, 2), "y": round(anchor_bot_cy, 2)},
+                    "size": COL_ANCHOR_SZ,
+                },
+            },
             "questions": col_questions,
-            "anchors": col_anchors,
         })
 
-    # 타이밍 마크 좌표 (pdf_renderer와 동기화)
-    timing_marks = _build_timing_marks_meta(
-        n_cols=n_cols, per_col=per_col, question_count=question_count,
-        body_y=body_y, body_h=body_h, n_choices=n_choices,
-    )
-
     return {
-        "version": "v14",
+        "version": "v15",
         "units": "mm",
         "page": {"width": PAGE_W, "height": PAGE_H},
         "markers": _build_marker_meta(),
@@ -289,117 +344,13 @@ def build_omr_meta(
             "safe": layout["safe"],
         },
         "questions": questions,           # flat list (backward compatible)
-        "columns": columns,               # grouped by column with anchors
-        "timing_marks": timing_marks,     # 행 정렬용 타이밍 마크
+        "columns": columns,               # grouped by column (v15: 앵커 제거, col_x만)
         "identifier": _build_identifier_meta(),
     }
 
 
-# ── 인식 마크 상수 v14 (pdf_renderer._render_timing과 동기화) ──
-# 한국식 바코드 스트립: 버블 x / 행 y에 1:1 대응하는 바 좌표
-_TM_VBAR_W = 0.7       # 세로 바 폭 (상하단)
-_TM_VBAR_H = 3.0       # 세로 바 높이
-_TM_HBAR_W = 3.0       # 가로 바 폭 (좌우 일반)
-_TM_HBAR_H = 0.7       # 가로 바 높이
-_TM_HBAR_W5 = 4.0      # 5행 강조 폭
-_TM_HBAR_H5 = 0.85     # 5행 강조 높이
-_TM_HBAR_W10 = 4.5     # 10행 강조 폭
-_TM_HBAR_H10 = 1.0     # 10행 강조 높이
-_TM_GAP = 1.0          # 프레임 ↔ 마크 간격
-
-
-def _build_timing_marks_meta(
-    *, n_cols: int, per_col: int, question_count: int,
-    body_y: float, body_h: float, n_choices: int = 5,
-) -> Dict[str, Any]:
-    """한국식 바코드 타이밍 마크 좌표 (pdf_renderer._render_timing과 동기화).
-
-    상하단: 각 버블 x 중심 + 컬럼 경계에 세로 바
-    좌우: 각 행 y 중심에 가로 바 (5행/10행 강조)
-    """
-    vw = _TM_VBAR_W
-    vh = _TM_VBAR_H
-    gap = _TM_GAP
-
-    # ── 버블 x 좌표 + 컬럼 경계 수집 ──
-    all_xs: List[float] = []
-    for ci in range(n_cols):
-        col_x = ANS_X + ci * (MC_COL_W + MC_COL_GAP)
-        all_xs.append(col_x)
-        all_xs.append(col_x + MC_COL_W)
-        bxs = _calc_bubble_centers_x(col_x, n_choices)
-        all_xs.extend(bxs)
-    all_xs = sorted(set(round(x, 2) for x in all_xs))
-
-    # ── 상단 바 좌표 ──
-    top_y = CONTENT_Y - gap - vh
-    top_bars = [
-        {"x": round(bx - vw / 2, 2), "y": round(top_y, 2), "w": vw, "h": vh}
-        for bx in all_xs
-    ]
-
-    # ── 하단 바 좌표 ──
-    bot_y = CONTENT_Y + CONTENT_H + gap
-    bottom_bars = [
-        {"x": round(bx - vw / 2, 2), "y": round(bot_y, 2), "w": vw, "h": vh}
-        for bx in all_xs
-    ]
-
-    # ── 좌측 바 좌표 (첫 컬럼 기준, 모든 행) ──
-    left_bars: List[Dict[str, Any]] = []
-    if n_cols > 0:
-        cnt = min(per_col, question_count)
-        if cnt > 0:
-            rh = body_h / cnt
-            for qi in range(cnt):
-                row_cy = body_y + (qi + 0.5) * rh
-                q_num = qi + 1
-                if q_num % 10 == 0:
-                    bw, bh_val = _TM_HBAR_W10, _TM_HBAR_H10
-                elif q_num % 5 == 0:
-                    bw, bh_val = _TM_HBAR_W5, _TM_HBAR_H5
-                else:
-                    bw, bh_val = _TM_HBAR_W, _TM_HBAR_H
-                left_bars.append({
-                    "row": qi, "x": 1.0,
-                    "y": round(row_cy - bh_val / 2, 2),
-                    "w": bw, "h": bh_val,
-                })
-
-    # ── 우측 바 좌표 (마지막 컬럼 기준) ──
-    right_bars: List[Dict[str, Any]] = []
-    if n_cols > 0:
-        last_ci = n_cols - 1
-        s = last_ci * per_col + 1
-        e = min(s + per_col - 1, question_count)
-        cnt = e - s + 1
-        if cnt > 0:
-            rh = body_h / cnt
-            for qi in range(cnt):
-                row_cy = body_y + (qi + 0.5) * rh
-                q_num = qi + 1
-                if q_num % 10 == 0:
-                    bw, bh_val = _TM_HBAR_W10, _TM_HBAR_H10
-                elif q_num % 5 == 0:
-                    bw, bh_val = _TM_HBAR_W5, _TM_HBAR_H5
-                else:
-                    bw, bh_val = _TM_HBAR_W, _TM_HBAR_H
-                right_bars.append({
-                    "row": qi, "x": round(PAGE_W - 1.0 - bw, 2),
-                    "y": round(row_cy - bh_val / 2, 2),
-                    "w": bw, "h": bh_val,
-                })
-
-    return {
-        "top_bars": top_bars,
-        "bottom_bars": bottom_bars,
-        "left_bars": left_bars,
-        "right_bars": right_bars,
-    }
-
-
 def _build_identifier_meta() -> Dict[str, Any]:
-    """전화번호 뒤 8자리 버블 그리드 좌표."""
+    """전화번호 뒤 8자리 버블 그리드 좌표 (pdf_renderer._phone과 SSOT 동기화)."""
     lp_inner_x = CONTENT_X + LP_BORDER + LP_PAD_X
     grid_w = ID_DIGITS * ID_DIGIT_W + ID_SEP_W
     sec_pad = 2.5
@@ -408,12 +359,15 @@ def _build_identifier_meta() -> Dict[str, Any]:
     grid_offset_x = (available_w - grid_w) / 2
     grid_start_x = lp_inner_x + sec_pad + grid_offset_x
 
-    # Y: 하단에서 역산 (lp-note ~25mm, phone section ~71mm)
-    note_h = 25.0
-    phone_sec_h = 71.0
-    note_top = CONTENT_Y + CONTENT_H - note_h
-    phone_sec_top = note_top - phone_sec_h
-    bubbles_start_y = phone_sec_top + 14.5
+    # Y: pdf_renderer._left / _phone 레이아웃과 일치.
+    #   note_top = CONTENT_Y + CONTENT_H - LP_H_NOTE
+    #   phone_sec_top = note_top - LP_H_PHONE
+    #   bubbles_start_y = phone_sec_top + ID_HEADER_H + ID_WRITE_TOP_PAD + ID_WRITE_H + ID_WRITE_BOT_PAD
+    note_top = CONTENT_Y + CONTENT_H - LP_H_NOTE
+    phone_sec_top = note_top - LP_H_PHONE
+    bubbles_start_y = (
+        phone_sec_top + ID_HEADER_H + ID_WRITE_TOP_PAD + ID_WRITE_H + ID_WRITE_BOT_PAD
+    )
 
     digits = []
     for d in range(ID_DIGITS):
@@ -437,25 +391,27 @@ def _build_identifier_meta() -> Dict[str, Any]:
         ]
         digits.append({"digit_index": d, "bubbles": bubbles})
 
-    # Identifier grid anchors for local alignment
+    # identifier 로컬 앵커 — pdf_renderer._phone에서 실제로 같은 좌표로 그린다.
+    # 위치: 그리드 상단 좌측, 하단 우측 (버블과 겹치지 않는 여백)
     grid_end_x = grid_start_x + grid_w
-    grid_end_y = bubbles_start_y + ID_VALUES * (ID_BUB_H + ID_BUB_GAP)
+    grid_end_y = bubbles_start_y + (ID_VALUES - 1) * (ID_BUB_H + ID_BUB_GAP) + ID_BUB_H
+    half = ID_ANCHOR_SZ / 2
     anchors = {
         "TL": {
             "type": "square",
             "center": {
-                "x": round(grid_start_x - 3.0, 2),
-                "y": round(bubbles_start_y - 3.0, 2),
+                "x": round(grid_start_x - half - 0.5, 2),
+                "y": round(bubbles_start_y - half - 0.5, 2),
             },
-            "size": 2.0,
+            "size": ID_ANCHOR_SZ,
         },
         "BR": {
             "type": "square",
             "center": {
-                "x": round(grid_end_x + 1.0, 2),
-                "y": round(grid_end_y, 2),
+                "x": round(grid_end_x + half + 0.5, 2),
+                "y": round(grid_end_y + half + 0.5, 2),
             },
-            "size": 2.0,
+            "size": ID_ANCHOR_SZ,
         },
     }
 

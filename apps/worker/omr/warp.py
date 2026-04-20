@@ -160,7 +160,8 @@ def _try_marker_homography(
     """
     detection = detect_markers(image_bgr, meta)
 
-    if not detection.success or len(detection.markers) < 4:
+    # 3개 이상이면 시도 (4개 perspective / 3개 affine). 3개 미만만 실패.
+    if len(detection.markers) < 3:
         logger.debug(
             "warp: marker detection insufficient (%d/4 markers)",
             len(detection.markers),
@@ -205,30 +206,39 @@ def _try_marker_homography(
         src_pts.append(np.array(marker.center_px, dtype=np.float32))
         dst_pts.append(dst_pt)
 
-    if len(src_pts) < 4:
-        logger.debug("warp: not enough marker pairs for homography (%d)", len(src_pts))
+    if len(src_pts) < 3:
+        logger.debug("warp: not enough marker pairs (%d)", len(src_pts))
         return None
 
     src_arr = np.array(src_pts, dtype=np.float32)
     dst_arr = np.array(dst_pts, dtype=np.float32)
 
-    H, mask = cv2.findHomography(src_arr, dst_arr, cv2.RANSAC, 5.0)
+    # 4개: perspective homography (종이 휨/각도 보정 가능)
+    # 3개: affine transform (회전+스케일+평행이동만, 페이지가 거의 평면이면 충분)
+    method_name = "marker_homography"
+    if len(src_pts) >= 4:
+        H, _mask = cv2.findHomography(src_arr, dst_arr, cv2.RANSAC, 5.0)
+    else:
+        M_affine = cv2.getAffineTransform(src_arr[:3], dst_arr[:3])
+        H = np.vstack([M_affine, [0.0, 0.0, 1.0]]).astype(np.float64)
+        method_name = "marker_affine_3pt"
+
     if H is None:
-        logger.warning("warp: findHomography returned None")
+        logger.warning("warp: homography/affine returned None")
         return None
 
     warped = cv2.warpPerspective(image_bgr, H, (out_w, out_h))
     residual = _compute_residual(H, src_arr, dst_arr)
 
     logger.info(
-        "warp: marker_homography success orientation=%d residual=%.2f",
-        detection.orientation, residual,
+        "warp: %s success orientation=%d residual=%.2f (%d markers)",
+        method_name, detection.orientation, residual, len(src_pts),
     )
 
     return AlignmentResult(
         image=warped,
         success=True,
-        method="marker_homography",
+        method=method_name,
         orientation=detection.orientation,
         residual_error=residual,
     )
