@@ -25,6 +25,23 @@ from apps.domains.progress.models import ClinicLink
 logger = logging.getLogger(__name__)
 
 
+def _append_history(link, *, action: str, at=None) -> None:
+    """
+    ClinicLink.resolution_history에 현재 상태 snapshot을 append.
+    transition 직전에 호출. 저장은 호출자 책임 (update_fields에 resolution_history 포함).
+    """
+    at = at or timezone.now()
+    history = list(link.resolution_history or [])
+    history.append({
+        "at": at.isoformat(),
+        "action": action,
+        "prev_resolution_type": link.resolution_type,
+        "prev_resolved_at": link.resolved_at.isoformat() if link.resolved_at else None,
+        "prev_evidence": link.resolution_evidence,
+    })
+    link.resolution_history = history
+
+
 def _send_resolution_notification(enrollment_id: int, session_id: int, resolution_type: str):
     """클리닉 해소 완료 알림 (best-effort, on_commit에서 호출)."""
     try:
@@ -110,35 +127,71 @@ class ClinicResolutionService:
             evidence["attempt_id"] = attempt_id
 
         now = timezone.now()
+
+        # V1.1.2: source-specific 해소 (시험별 개별)
+        # history 보존 위해 row 순회 (자동 해소는 보통 1~2건)
+        target_links = list(
+            ClinicLink.objects.select_for_update().filter(
+                enrollment_id=enrollment_id,
+                session_id=session_id,
+                source_type="exam",
+                source_id=int(exam_id),
+                resolved_at__isnull=True,
+            )
+        )
+        count = 0
+        for link in target_links:
+            _append_history(link, action="resolve_exam_pass", at=now)
+            link.resolved_at = now
+            link.resolution_type = ClinicLink.ResolutionType.EXAM_PASS
+            link.resolution_evidence = evidence
+            link.save(update_fields=[
+                "resolved_at", "resolution_type", "resolution_evidence",
+                "resolution_history", "updated_at",
+            ])
+            count += 1
+
+        # update_kwargs는 legacy fallback에서 재사용 (기존 의미 유지)
         update_kwargs = dict(
             resolved_at=now,
             resolution_type=ClinicLink.ResolutionType.EXAM_PASS,
             resolution_evidence=evidence,
         )
 
-        # V1.1.2: source-specific 해소 (시험별 개별)
-        count = ClinicLink.objects.filter(
-            enrollment_id=enrollment_id,
-            session_id=session_id,
-            source_type="exam",
-            source_id=int(exam_id),
-            resolved_at__isnull=True,
-        ).update(**update_kwargs)
-
         # Fallback: legacy links (source_type=NULL, V1.1.1 이전 데이터)
-        # 1건만 해소하여 다른 원인(과제 불합격 등)의 legacy link를 잘못 해소하지 않도록 방어
+        # 엄격 매치: meta.exam_id가 현재 exam_id와 일치하는 링크만 해소.
+        # exam_id 미상인 legacy는 자동 해소 대상에서 제외하여 과매칭 방지.
         if count == 0:
             legacy_link = ClinicLink.objects.filter(
                 enrollment_id=enrollment_id,
                 session_id=session_id,
                 source_type__isnull=True,
                 resolved_at__isnull=True,
+                meta__exam_id=int(exam_id),
             ).order_by("id").first()
             if legacy_link:
+                _append_history(legacy_link, action="resolve_exam_pass_legacy", at=now)
                 for k, v in update_kwargs.items():
                     setattr(legacy_link, k, v)
-                legacy_link.save(update_fields=list(update_kwargs.keys()) + ["updated_at"])
+                legacy_link.save(update_fields=list(update_kwargs.keys()) + [
+                    "resolution_history", "updated_at",
+                ])
                 count = 1
+            else:
+                # meta.exam_id 매칭 실패 — 불명확한 legacy 링크는 건드리지 않음
+                ambiguous = ClinicLink.objects.filter(
+                    enrollment_id=enrollment_id,
+                    session_id=session_id,
+                    source_type__isnull=True,
+                    resolved_at__isnull=True,
+                ).count()
+                if ambiguous:
+                    logger.warning(
+                        "clinic_resolution: EXAM_PASS skipped %d legacy link(s) "
+                        "without matching meta.exam_id=%s (enrollment=%s, session=%s) — "
+                        "manual backfill recommended",
+                        ambiguous, exam_id, enrollment_id, session_id,
+                    )
 
         if count > 0:
             logger.info(
@@ -171,35 +224,67 @@ class ClinicResolutionService:
         }
 
         now = timezone.now()
+
+        # V1.1.2: source-specific 해소 (과제별 개별) — exam과 동일 패턴
+        target_links = list(
+            ClinicLink.objects.select_for_update().filter(
+                enrollment_id=enrollment_id,
+                session_id=session_id,
+                source_type="homework",
+                source_id=int(homework_id),
+                resolved_at__isnull=True,
+            )
+        )
+        count = 0
+        for link in target_links:
+            _append_history(link, action="resolve_homework_pass", at=now)
+            link.resolved_at = now
+            link.resolution_type = ClinicLink.ResolutionType.HOMEWORK_PASS
+            link.resolution_evidence = evidence
+            link.save(update_fields=[
+                "resolved_at", "resolution_type", "resolution_evidence",
+                "resolution_history", "updated_at",
+            ])
+            count += 1
+
         update_kwargs = dict(
             resolved_at=now,
             resolution_type=ClinicLink.ResolutionType.HOMEWORK_PASS,
             resolution_evidence=evidence,
         )
 
-        # V1.1.2: source-specific 해소 (과제별 개별) — exam과 동일 패턴
-        count = ClinicLink.objects.filter(
-            enrollment_id=enrollment_id,
-            session_id=session_id,
-            source_type="homework",
-            source_id=int(homework_id),
-            resolved_at__isnull=True,
-        ).update(**update_kwargs)
-
         # Fallback: legacy links (source_type=NULL, V1.1.1 이전 데이터)
-        # 1건만 해소하여 다른 원인(시험 불합격 등)의 legacy link를 잘못 해소하지 않도록 방어
+        # 엄격 매치: meta.homework_id 일치하는 링크만 해소. 과매칭 방지.
         if count == 0:
             legacy_link = ClinicLink.objects.filter(
                 enrollment_id=enrollment_id,
                 session_id=session_id,
                 source_type__isnull=True,
                 resolved_at__isnull=True,
+                meta__homework_id=int(homework_id),
             ).order_by("id").first()
             if legacy_link:
+                _append_history(legacy_link, action="resolve_homework_pass_legacy", at=now)
                 for k, v in update_kwargs.items():
                     setattr(legacy_link, k, v)
-                legacy_link.save(update_fields=list(update_kwargs.keys()) + ["updated_at"])
+                legacy_link.save(update_fields=list(update_kwargs.keys()) + [
+                    "resolution_history", "updated_at",
+                ])
                 count = 1
+            else:
+                ambiguous = ClinicLink.objects.filter(
+                    enrollment_id=enrollment_id,
+                    session_id=session_id,
+                    source_type__isnull=True,
+                    resolved_at__isnull=True,
+                ).count()
+                if ambiguous:
+                    logger.warning(
+                        "clinic_resolution: HOMEWORK_PASS skipped %d legacy link(s) "
+                        "without matching meta.homework_id=%s (enrollment=%s, session=%s) — "
+                        "manual backfill recommended",
+                        ambiguous, homework_id, enrollment_id, session_id,
+                    )
 
         if count > 0:
             logger.info(
@@ -231,12 +316,17 @@ class ClinicResolutionService:
             logger.warning("clinic_resolution: manual resolve failed, link not found or already resolved (id=%s)", clinic_link_id)
             return None
 
-        link.resolved_at = timezone.now()
+        now = timezone.now()
+        _append_history(link, action="resolve_manual", at=now)
+        link.resolved_at = now
         link.resolution_type = ClinicLink.ResolutionType.MANUAL_OVERRIDE
         link.resolution_evidence = {"user_id": user_id, "memo": memo}
         if memo:
             link.memo = memo
-        link.save(update_fields=["resolved_at", "resolution_type", "resolution_evidence", "memo", "updated_at"])
+        link.save(update_fields=[
+            "resolved_at", "resolution_type", "resolution_evidence",
+            "resolution_history", "memo", "updated_at",
+        ])
 
         logger.info("clinic_resolution: MANUAL_OVERRIDE (link=%s, user=%s)", clinic_link_id, user_id)
         _eid, _sid = link.enrollment_id, link.session_id
@@ -263,12 +353,17 @@ class ClinicResolutionService:
             logger.warning("clinic_resolution: waive failed, link not found or already resolved (id=%s)", clinic_link_id)
             return None
 
-        link.resolved_at = timezone.now()
+        now = timezone.now()
+        _append_history(link, action="waive", at=now)
+        link.resolved_at = now
         link.resolution_type = ClinicLink.ResolutionType.WAIVED
         link.resolution_evidence = {"user_id": user_id, "memo": memo}
         if memo:
             link.memo = memo
-        link.save(update_fields=["resolved_at", "resolution_type", "resolution_evidence", "memo", "updated_at"])
+        link.save(update_fields=[
+            "resolved_at", "resolution_type", "resolution_evidence",
+            "resolution_history", "memo", "updated_at",
+        ])
 
         logger.info("clinic_resolution: WAIVED (link=%s, user=%s)", clinic_link_id, user_id)
         _eid, _sid = link.enrollment_id, link.session_id
@@ -292,10 +387,15 @@ class ClinicResolutionService:
         if not link.resolved_at:
             return link  # already unresolved
 
+        # 이전 해소 정보를 history에 보존한 후 리셋
+        _append_history(link, action="unresolve")
         link.resolved_at = None
         link.resolution_type = None
         link.resolution_evidence = None
-        link.save(update_fields=["resolved_at", "resolution_type", "resolution_evidence", "updated_at"])
+        link.save(update_fields=[
+            "resolved_at", "resolution_type", "resolution_evidence",
+            "resolution_history", "updated_at",
+        ])
 
         logger.info("clinic_resolution: UNRESOLVED (link=%s)", clinic_link_id)
         return link
@@ -308,7 +408,7 @@ class ClinicResolutionService:
     ) -> Optional[ClinicLink]:
         """
         미해소 case를 다음 cycle로 이월.
-        현재 link를 WAIVED(이월)로 닫고, 새 link를 cycle_no+1로 생성.
+        현재 link를 CARRIED_OVER로 닫고, 새 link를 cycle_no+1로 생성.
         """
         try:
             link = ClinicLink.objects.select_for_update().get(
@@ -319,12 +419,16 @@ class ClinicResolutionService:
             logger.warning("clinic_resolution: carry_over failed, link not found (id=%s)", clinic_link_id)
             return None
 
-        # Close current with carry_over marker
+        # Close current with CARRIED_OVER resolution (별도 enum — WAIVED/면제와 구분)
         now = timezone.now()
         link.resolved_at = now
-        link.resolution_type = ClinicLink.ResolutionType.WAIVED
+        link.resolution_type = ClinicLink.ResolutionType.CARRIED_OVER
         link.resolution_evidence = {"carried_over": True, "carried_at": now.isoformat()}
-        link.save(update_fields=["resolved_at", "resolution_type", "resolution_evidence", "updated_at"])
+        _append_history(link, action="carry_over", at=now)
+        link.save(update_fields=[
+            "resolved_at", "resolution_type", "resolution_evidence",
+            "resolution_history", "updated_at",
+        ])
 
         # Create next cycle (source + tenant 전파)
         new_link = ClinicLink.objects.create(

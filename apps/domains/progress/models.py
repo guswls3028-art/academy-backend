@@ -223,6 +223,7 @@ class ClinicLink(TimestampModel):
         HOMEWORK_PASS = "HOMEWORK_PASS", "과제 통과"
         MANUAL_OVERRIDE = "MANUAL_OVERRIDE", "관리자 수동 해소"
         WAIVED = "WAIVED", "면제"
+        CARRIED_OVER = "CARRIED_OVER", "다음 차수로 이월"
         BOOKING_LEGACY = "BOOKING_LEGACY", "레거시(예약 기반)"
 
     tenant = models.ForeignKey(
@@ -261,6 +262,14 @@ class ClinicLink(TimestampModel):
         null=True,
         blank=True,
         help_text="해소 근거: {exam_id, attempt_id, homework_id, score, ...}",
+    )
+
+    # ✅ 감사 이력: 해소/복원/이월 전이 기록 (append-only)
+    # 각 entry: {"at": iso, "action": "resolve|unresolve|carry_over", "resolution_type": "...", "evidence": {...}}
+    resolution_history = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="해소/복원 전이 이력(append-only): 이전 evidence 및 액션 기록",
     )
 
     # --- source tracking (V1.1.2: 시험/과제별 개별 추적) ---

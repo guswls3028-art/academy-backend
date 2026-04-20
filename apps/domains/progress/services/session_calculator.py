@@ -215,21 +215,23 @@ class SessionProgressCalculator:
             aggregate_score = cls._safe_float(best.get("score"), 0.0)
             selected_pass_score = cls._safe_float(best.get("pass_score"), 0.0)
 
-        # 미응시만 있고 실제 응시가 없으면 불합격
+        # ⚠️ 세션 완료 판정은 "개별 시험 모두 통과" 기준 (드리프트 해소).
+        # aggregate_score는 성적 표시용(MAX/AVG/LATEST), 통과 여부는 전수 검사.
+        # 세션에 시험 여러 개인 경우 일부만 통과해도 세션 완료가 되던 문제를 차단.
         all_not_submitted = all(not x["passed"] for x in per_exam_rows) and all(
             int(x["exam_id"]) in not_submitted_exam_ids for x in per_exam_rows
         )
         if all_not_submitted:
             exam_passed = False
-        elif selected_pass_score > 0:
-            exam_passed = bool((aggregate_score or 0.0) >= float(selected_pass_score))
         else:
-            exam_passed = True  # pass_score=0 + 응시자 존재 → 기준 없음, 통과 처리
+            # 모든 개별 시험이 passed=True여야 세션 완료
+            exam_passed = bool(per_exam_rows) and all(bool(x["passed"]) for x in per_exam_rows)
 
         meta = {
             "strategy": str(strategy),
             "pass_source": str(policy.exam_pass_source),
             "aggregate_pass_score": float(selected_pass_score),
+            "all_passed": exam_passed,  # 명시: 모든 개별 시험 통과 여부
             "exams": per_exam_rows,
         }
 
@@ -311,10 +313,11 @@ class SessionProgressCalculator:
 
         obj.completed = bool(obj.video_completed and obj.exam_passed and obj.homework_passed)
 
+        # ⚠️ completed_at은 "최초 완료 시점"으로 불변화.
+        # 점수 수정/대표 attempt 교체로 completed가 False로 회귀해도
+        # 지우지 않음(감사 이력 보존). 현재 완료 여부는 `completed` 플래그로만 판단.
         if obj.completed and not obj.completed_at:
             obj.completed_at = timezone.now()
-        elif not obj.completed and obj.completed_at:
-            obj.completed_at = None
 
         obj.calculated_at = timezone.now()
         obj.save()

@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from django.http import Http404
 
-from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.models import Result, ExamAttempt, ExamResult
 from apps.domains.results.serializers.student_exam_result import StudentExamResultSerializer
 from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.ranking import compute_exam_rankings
+from apps.domains.progress.models import ClinicLink
 
 
 def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
@@ -100,14 +101,70 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     else:
         data["is_pass"] = None
 
+    # ✅ 드리프트 해소: 클리닉 재시험 통과 상태 반영
+    # Result.total_score는 1차 결과 고정이지만, 클리닉 재시험(ClinicLink.EXAM_PASS)
+    # 으로 최종 합격한 경우 학생에게 명시. 최종 합격 판정은 final_pass로 통합.
+    remediated = False
+    clinic_retake_info = None
+    if session:
+        clinic_pass_link = (
+            ClinicLink.objects
+            .filter(
+                enrollment_id=enrollment_id,
+                session=session,
+                source_type="exam",
+                source_id=exam_id,
+                resolved_at__isnull=False,
+                resolution_type=ClinicLink.ResolutionType.EXAM_PASS,
+            )
+            .order_by("-resolved_at")
+            .first()
+        )
+        if clinic_pass_link:
+            remediated = True
+            evidence = clinic_pass_link.resolution_evidence or {}
+            clinic_retake_info = {
+                "score": evidence.get("score"),
+                "pass_score": evidence.get("pass_score"),
+                "attempt_id": evidence.get("attempt_id"),
+                "resolved_at": clinic_pass_link.resolved_at.isoformat()
+                    if clinic_pass_link.resolved_at else None,
+            }
+
+    data["remediated"] = remediated
+    data["clinic_retake"] = clinic_retake_info
+    # final_pass: 1차 합격 OR 클리닉 재시험 통과
+    base_pass = data["is_pass"]
+    if is_not_submitted and not remediated:
+        data["final_pass"] = None
+    elif base_pass is True or remediated:
+        data["final_pass"] = True
+    elif base_pass is False:
+        data["final_pass"] = False
+    else:
+        data["final_pass"] = None
+
+    # ✅ DRAFT 중간 점수 노출 방어
+    # Result가 채점 중 상태면 provisional로 표기. submission→ExamResult→status 체인 확인.
+    is_provisional = False
+    if result.attempt_id:
+        att = ExamAttempt.objects.filter(id=int(result.attempt_id)).only("submission_id").first()
+        if att and att.submission_id:
+            er_status = (
+                ExamResult.objects.filter(submission_id=att.submission_id)
+                .values_list("status", flat=True)
+                .first()
+            )
+            if er_status and er_status != ExamResult.Status.FINAL:
+                is_provisional = True
+    data["is_provisional"] = is_provisional
+
     # 정답 공개 정책 적용
-    # 불합격(is_pass=False) → 비공개 / 미응시 → 비공개 / 기준 미설정(None) → 정책 따름
+    # provisional/미응시/불합격 → 비공개, 합격/기준없음 → 정책 따름
     is_pass = data["is_pass"]
-    if is_not_submitted:
+    if is_provisional or is_not_submitted:
         show_answers = False
-    elif is_pass is None:
-        show_answers = exam.should_show_answers()
-    elif is_pass:
+    elif is_pass is None or is_pass:
         show_answers = exam.should_show_answers()
     else:
         show_answers = False

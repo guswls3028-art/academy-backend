@@ -71,6 +71,36 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
             "source": "online",
         })
 
+    # 기존 Result가 있으면 이전 대표 attempt의 meta에 최종 snapshot 보존.
+    # 재응시로 Result가 덮어쓰여도 이전 점수 이력이 손실되지 않음.
+    existing_result_prev = Result.objects.filter(
+        target_type="exam",
+        target_id=int(exam.id),
+        enrollment_id=int(enrollment_id),
+    ).first()
+    if existing_result_prev and existing_result_prev.attempt_id:
+        from apps.domains.results.models import ExamAttempt as _EA
+        prev_rep = (
+            _EA.objects.select_for_update()
+            .filter(id=int(existing_result_prev.attempt_id))
+            .first()
+        )
+        if prev_rep:
+            m = dict(prev_rep.meta or {}) if isinstance(prev_rep.meta, dict) else {}
+            m["final_result_snapshot"] = {
+                "total_score": existing_result_prev.total_score,
+                "max_score": existing_result_prev.max_score,
+                "objective_score": existing_result_prev.objective_score,
+                "submitted_at": (
+                    existing_result_prev.submitted_at.isoformat()
+                    if existing_result_prev.submitted_at else None
+                ),
+                "archived_at": timezone.now().isoformat(),
+                "replaced_by_submission": int(submission.id),
+            }
+            prev_rep.meta = m
+            prev_rep.save(update_fields=["meta", "updated_at"])
+
     result, _ = Result.objects.get_or_create(
         target_type="exam",
         target_id=int(exam.id),

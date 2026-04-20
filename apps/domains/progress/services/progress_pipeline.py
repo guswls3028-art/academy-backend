@@ -305,30 +305,36 @@ class ProgressPipelineService:
                     pass_score=exam_row.get("pass_score"),
                 )
 
-            # 과제 통과 시 해소 (homework_passed는 calculator에서 결정)
-            if session_progress.homework_passed:
-                # homework_id 조회
-                try:
-                    from apps.domains.homework_results.models import HomeworkScore
-                    hw_score = HomeworkScore.objects.filter(
-                        enrollment_id=int(enrollment_id),
-                        session_id=session.id,
-                        attempt_index=1,
-                        passed=True,
-                    ).first()
-                    if hw_score:
-                        ClinicResolutionService.resolve_by_homework_pass(
-                            enrollment_id=enrollment_id,
-                            session_id=session.id,
-                            homework_id=hw_score.homework_id,
-                            score=hw_score.score,
-                            max_score=hw_score.max_score,
-                        )
-                except Exception:
-                    logger.debug(
-                        "clinic auto-resolve homework: could not find HomeworkScore "
-                        "(enrollment=%s, session=%s)", enrollment_id, session.id,
-                    )
+            # 과제별 해소: 세션의 homework ClinicLink를 순회하며
+            # 해당 homework의 1차 HomeworkScore.passed=True 확인 후 해소
+            from apps.domains.homework_results.models import HomeworkScore
+            homework_source_ids = list(
+                ClinicLink.objects.filter(
+                    enrollment_id=enrollment_id,
+                    session_id=session.id,
+                    source_type="homework",
+                    resolved_at__isnull=True,
+                ).values_list("source_id", flat=True).distinct()
+            )
+            for hw_id in homework_source_ids:
+                if hw_id is None:
+                    continue
+                hw_score = HomeworkScore.objects.filter(
+                    enrollment_id=int(enrollment_id),
+                    session_id=session.id,
+                    homework_id=int(hw_id),
+                    attempt_index=1,
+                    passed=True,
+                ).first()
+                if not hw_score:
+                    continue
+                ClinicResolutionService.resolve_by_homework_pass(
+                    enrollment_id=enrollment_id,
+                    session_id=session.id,
+                    homework_id=int(hw_id),
+                    score=hw_score.score,
+                    max_score=hw_score.max_score,
+                )
 
         except Exception:
             # Auto-resolution failure must not block the pipeline

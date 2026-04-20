@@ -66,11 +66,16 @@ class ClinicRemediationService:
         from apps.domains.results.models import ExamAttempt, ExamResult
         from apps.domains.exams.models import Exam
 
-        # 1. ClinicLink 조회
-        link = ClinicLink.objects.select_for_update().get(
-            id=clinic_link_id,
-            resolved_at__isnull=True,
-        )
+        # 1. ClinicLink 조회 — resolved 여부를 분리 검사하여 운영 메시지 명확화
+        link = ClinicLink.objects.select_for_update().filter(id=clinic_link_id).first()
+        if link is None:
+            raise ClinicLink.DoesNotExist(f"ClinicLink {clinic_link_id}를 찾을 수 없습니다.")
+        if link.resolved_at is not None:
+            raise ValueError(
+                f"ClinicLink {clinic_link_id}는 이미 해소된 상태입니다 "
+                f"(resolution_type={link.resolution_type}). "
+                f"재시도하려면 먼저 관리자가 복원 처리해야 합니다."
+            )
 
         if link.source_type != "exam":
             raise ValueError(f"ClinicLink {clinic_link_id}는 시험 유형이 아닙니다 (source_type={link.source_type})")
@@ -79,7 +84,9 @@ class ClinicRemediationService:
         pass_score = float(getattr(exam, "pass_score", 0) or 0)
         max_score_val = float(getattr(exam, "max_score", 100) or 100)
 
-        # 점수 상한 검증: 만점 초과 방지
+        # 점수 검증: 음수/만점 초과 차단
+        if score < 0:
+            raise ValueError(f"점수({score})는 0 이상이어야 합니다.")
         if max_score_val > 0 and score > max_score_val:
             raise ValueError(f"점수({score})가 만점({max_score_val})을 초과할 수 없습니다.")
 
@@ -168,13 +175,22 @@ class ClinicRemediationService:
         from apps.domains.homework_results.models import HomeworkScore, Homework
         from apps.domains.homework.utils.homework_policy import calc_homework_passed_and_clinic
 
-        # 1. ClinicLink 조회 (session→lecture→tenant 프리로드)
+        # 1. ClinicLink 조회 (session→lecture→tenant 프리로드) — resolved 분리 검사
         link = (
             ClinicLink.objects
             .select_for_update()
             .select_related("session", "session__lecture", "session__lecture__tenant")
-            .get(id=clinic_link_id, resolved_at__isnull=True)
+            .filter(id=clinic_link_id)
+            .first()
         )
+        if link is None:
+            raise ClinicLink.DoesNotExist(f"ClinicLink {clinic_link_id}를 찾을 수 없습니다.")
+        if link.resolved_at is not None:
+            raise ValueError(
+                f"ClinicLink {clinic_link_id}는 이미 해소된 상태입니다 "
+                f"(resolution_type={link.resolution_type}). "
+                f"재시도하려면 먼저 관리자가 복원 처리해야 합니다."
+            )
 
         if link.source_type != "homework":
             raise ValueError(f"ClinicLink {clinic_link_id}는 과제 유형이 아닙니다 (source_type={link.source_type})")
@@ -192,7 +208,9 @@ class ClinicRemediationService:
             ).first()
             max_score = float(first_score.max_score or 100) if first_score and first_score.max_score else 100.0
 
-        # 점수 상한 검증: 만점 초과 방지
+        # 점수 검증: 음수/만점 초과 차단
+        if score < 0:
+            raise ValueError(f"점수({score})는 0 이상이어야 합니다.")
         if max_score > 0 and score > max_score:
             raise ValueError(f"점수({score})가 만점({max_score})을 초과할 수 없습니다.")
 

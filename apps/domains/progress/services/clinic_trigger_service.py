@@ -121,6 +121,7 @@ class ClinicTriggerService:
                 reason=ClinicLink.Reason.AUTO_FAILED,
                 meta={
                     "kind": "EXAM_FAILED",
+                    "kinds": ["EXAM_FAILED"],
                     "exam_id": exam_id,
                     "score": exam_row.get("score"),
                     "pass_score": exam_row.get("pass_score"),
@@ -187,11 +188,21 @@ class ClinicTriggerService:
             ).first()
 
             if existing:
-                meta = dict(existing.meta or {})
-                meta["kind"] = "EXAM_RISK"
-                meta["exam_id"] = int(exam_id)
-                meta["exam_reasons"] = reasons
-                existing.meta = meta
+                # meta merge: 기존 kind 보존 + kinds 배열에 EXAM_RISK 누적
+                # auto_create_if_failed(EXAM_FAILED, score/pass_score) → 이 경로 호출 시
+                # 덮어쓰지 않고 exam_reasons만 추가 (근거 데이터 보존)
+                merged = dict(existing.meta or {})
+                kinds = list(merged.get("kinds") or [])
+                legacy_kind = merged.get("kind")
+                if legacy_kind and legacy_kind not in kinds:
+                    kinds.append(legacy_kind)
+                if "EXAM_RISK" not in kinds:
+                    kinds.append("EXAM_RISK")
+                merged["kinds"] = kinds
+                merged.setdefault("kind", "EXAM_RISK")  # 하위 호환: 기존 kind 우선
+                merged["exam_id"] = int(exam_id)
+                merged["exam_reasons"] = reasons
+                existing.meta = merged
                 existing.is_auto = True
                 existing.save(update_fields=["meta", "is_auto", "updated_at"])
                 return
@@ -205,6 +216,7 @@ class ClinicTriggerService:
             reason=ClinicLink.Reason.AUTO_FAILED,
             meta={
                 "kind": "EXAM_RISK",
+                "kinds": ["EXAM_RISK"],
                 "exam_id": int(exam_id),
                 "exam_reasons": reasons,
             },
