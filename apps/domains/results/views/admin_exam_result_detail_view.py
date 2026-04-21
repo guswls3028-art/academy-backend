@@ -236,7 +236,7 @@ class AdminExamResultDetailView(APIView):
                     try:
                         scan_image_url = generate_presigned_get_url(
                             key=sub.file_key,
-                            expires_in=3600,
+                            expires_in=21600,
                         )
                     except Exception:
                         logger.exception(

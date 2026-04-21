@@ -191,14 +191,14 @@ class SubmissionViewSet(ModelViewSet):
         if isinstance(omr, dict):
             identifier = omr.get("identifier_override") or omr.get("identifier")
 
-        # ✅ 스캔 이미지 presigned URL
+        # ✅ 스캔 이미지 presigned URL (6h TTL — 장시간 검토 세션 대응)
         scan_image_url = ""
         if submission.file_key and submission.source == Submission.Source.OMR_SCAN:
             try:
                 from apps.infrastructure.storage.r2 import generate_presigned_get_url
                 scan_image_url = generate_presigned_get_url(
                     key=submission.file_key,
-                    expires_in=3600,
+                    expires_in=21600,
                 )
             except Exception:
                 scan_image_url = ""
@@ -267,6 +267,39 @@ class SubmissionViewSet(ModelViewSet):
                             {"detail": "해당 시험에 등록되지 않은 학생입니다."},
                             status=400,
                         )
+
+            # ✅ 중복 매칭 차단 (기본): 같은 시험의 다른 submission이 이미 같은 enrollment로 active면 409.
+            #    override=1 쿼리파라미터로만 덮어쓰기 허용 (운영자 명시적 선택).
+            allow_duplicate = str(request.query_params.get("allow_duplicate") or "").lower() in ("1", "true", "yes")
+            if exam_id and not allow_duplicate:
+                dup_qs = (
+                    Submission.objects
+                    .filter(
+                        tenant=tenant,
+                        target_type=Submission.TargetType.EXAM,
+                        target_id=exam_id,
+                        enrollment_id=candidate_eid,
+                        status__in=[
+                            Submission.Status.ANSWERS_READY,
+                            Submission.Status.GRADING,
+                            Submission.Status.DONE,
+                        ],
+                    )
+                    .exclude(id=submission.id)
+                    .order_by("-id")
+                )
+                dup = dup_qs.first()
+                if dup:
+                    return Response(
+                        {
+                            "detail": "이미 이 학생에 매칭된 답안지가 있습니다. 덮어쓰려면 확인이 필요합니다.",
+                            "code": "DUPLICATE_ENROLLMENT",
+                            "conflict_submission_id": int(dup.id),
+                            "conflict_file_key": dup.file_key or "",
+                            "conflict_status": dup.status,
+                        },
+                        status=409,
+                    )
 
             resolved_enrollment_id = candidate_eid
 
@@ -350,5 +383,48 @@ class SubmissionViewSet(ModelViewSet):
                 "updated": updated,
                 "graded": True,
                 "result_id": getattr(result_obj, "id", None),
+                "resolved_enrollment_id": resolved_enrollment_id,
+            }
+        )
+
+    @action(detail=True, methods=["post"], url_path="discard")
+    def discard(self, request, pk=None):
+        """
+        OMR 답안지 폐기 — 스캔 품질 불량/오업로드/중복 등으로 채점 대상에서 제외.
+        - 상태 FAILED로 전환하고 meta.discarded 기록 (감사 목적).
+        - 본 제출에 매칭된 enrollment_id는 유지(기록용)하되 채점 미시행.
+        body (optional): {"reason": "scan_quality"}
+        """
+        submission: Submission = self.get_object()
+        reason = str(request.data.get("reason") or "operator_discarded").strip() or "operator_discarded"
+
+        try:
+            transit_save(
+                submission, Submission.Status.FAILED,
+                admin_override=True,
+                error_message=f"discarded:{reason}",
+                actor=f"admin.discard.user_{getattr(request.user, 'id', '?')}",
+            )
+        except InvalidTransitionError as e:
+            return Response({"detail": str(e)}, status=409)
+
+        meta = dict(submission.meta or {})
+        meta["discarded"] = {
+            "at": timezone.now().isoformat(),
+            "by_user_id": getattr(request.user, "id", None),
+            "reason": reason,
+        }
+        meta.setdefault("manual_review", {})
+        meta["manual_review"]["required"] = False
+        meta["manual_review"]["resolved_at"] = timezone.now().isoformat()
+        submission.meta = meta
+        submission.save(update_fields=["meta", "updated_at"])
+
+        return Response(
+            {
+                "submission_id": submission.id,
+                "status": submission.status,
+                "discarded": True,
+                "reason": reason,
             }
         )
