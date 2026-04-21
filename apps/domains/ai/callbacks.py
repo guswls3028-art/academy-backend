@@ -486,11 +486,19 @@ def _handle_matchup_ai_result(
     doc.status = "done"
     doc.problem_count = len(problem_objs)
     doc.error_message = ""
-    doc.save(update_fields=["status", "problem_count", "error_message", "updated_at"])
+    # segmentation_method를 meta에 저장 (UI 뱃지 + 관측용)
+    meta = doc.meta or {}
+    seg_method = result_payload.get("segmentation_method")
+    if seg_method:
+        meta["segmentation_method"] = seg_method
+    doc.meta = meta
+    doc.save(update_fields=[
+        "status", "problem_count", "error_message", "meta", "updated_at",
+    ])
 
     logger.info(
-        "AI_CALLBACK_MATCHUP_SUCCESS | job_id=%s | doc_id=%s | problems=%d",
-        job_id, source_id, len(problem_objs),
+        "AI_CALLBACK_MATCHUP_SUCCESS | job_id=%s | doc_id=%s | problems=%d | seg=%s",
+        job_id, source_id, len(problem_objs), seg_method,
     )
 
 
