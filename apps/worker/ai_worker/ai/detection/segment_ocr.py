@@ -71,11 +71,8 @@ def segment_questions_ocr_regions(image_path: str) -> List[Tuple[float, float, f
     h_img, w_img = img.shape[:2]
 
     # Google Vision OCR — bbox 포함
-    try:
-        ocr_blocks = google_ocr_blocks(image_path)
-    except Exception as e:
-        logger.warning("OCR_SEGMENT_VISION_FAIL | path=%s | error=%s", image_path, e)
-        return []
+    # 예외는 상위(dispatcher)로 전파 — dispatcher가 OpenCV fallback 판단
+    ocr_blocks = google_ocr_blocks(image_path)
 
     if not ocr_blocks:
         logger.info("OCR_SEGMENT_EMPTY | path=%s", image_path)

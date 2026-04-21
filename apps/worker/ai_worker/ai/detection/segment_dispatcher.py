@@ -116,15 +116,19 @@ def _segment_single_image(
     image_path: str,
     *,
     skip_ocr: bool = False,
+    is_pdf_page: bool = False,
 ) -> List[BBox]:
     """
     단일 이미지에 대한 세그멘테이션 (엔진 자동 선택).
 
-    auto 모드 우선순위: YOLO(모델 있을 때) → OCR(크레덴셜 있을 때, skip_ocr=False) → OpenCV.
+    auto 모드 우선순위: YOLO(모델+PDF페이지) → OCR(크레덴셜 있을 때, skip_ocr=False) → OpenCV.
     OCR 경로는 스캔본 시험지에서 문항 번호 감지를 통해 페이지당 여러 문항을 분할.
 
     skip_ocr: PDF 페이지에 embedded text가 존재할 때 True. OCR 비용을 아낀다
               (pdf_question_pipeline이 PDF 텍스트로 별도 분할을 수행하기 때문).
+    is_pdf_page: True면 PDF에서 렌더링된 페이지. False면 사용자가 직접 업로드한
+                 단일 이미지(카메라 촬영일 가능성). 카메라 사진은 YOLO 학습 분포를
+                 벗어나므로 YOLO를 건너뛰고 OCR/OpenCV 경로 사용.
     """
     cfg = AIConfig.load()
     engine = (cfg.QUESTION_SEGMENTATION_ENGINE or "auto").lower()
@@ -136,13 +140,14 @@ def _segment_single_image(
     if engine == "ocr":
         return segment_questions_ocr(image_path)
 
-    # auto: yolo -> ocr -> opencv
-    try:
-        boxes = segment_questions_yolo(image_path)
-        if boxes:
-            return boxes
-    except Exception:
-        pass
+    # auto 모드: YOLO는 PDF 페이지에만 사용 (카메라 사진 오탐 방지)
+    if is_pdf_page:
+        try:
+            boxes = segment_questions_yolo(image_path)
+            if boxes:
+                return boxes
+        except Exception:
+            pass
 
     if not skip_ocr and is_ocr_available():
         try:
@@ -186,7 +191,7 @@ def _boxes_for_pdf_page(page_info: Dict) -> List[BBox]:
 
     # 텍스트 있지만 분할 실패 OR OCR 크레덴셜 없음 OR OCR 예외
     skip_ocr = page_info["has_embedded_text"]
-    return _segment_single_image(image_path, skip_ocr=skip_ocr)
+    return _segment_single_image(image_path, skip_ocr=skip_ocr, is_pdf_page=True)
 
 
 def segment_questions(image_path: str) -> List[BBox]:

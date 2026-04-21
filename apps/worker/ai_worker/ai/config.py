@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Optional
 
 
 def _env(name: str, default: Optional[str] = None) -> Optional[str]:
@@ -22,8 +22,8 @@ class AIConfig:
 
     # YOLO (optional)
     YOLO_QUESTION_MODEL_PATH: Optional[str] = None
-    YOLO_QUESTION_INPUT_SIZE: int = 640
-    YOLO_QUESTION_CONF_THRESHOLD: float = 0.4
+    YOLO_QUESTION_INPUT_SIZE: int = 1024  # 시험지 A4 해상도에 맞춤 (학습 imgsz 일치)
+    YOLO_QUESTION_CONF_THRESHOLD: float = 0.3  # 문항 감지 — recall 우선
     YOLO_QUESTION_IOU_THRESHOLD: float = 0.5
 
     # Embedding
@@ -44,8 +44,8 @@ class AIConfig:
             QUESTION_SEGMENTATION_ENGINE=_env("QUESTION_SEGMENTATION_ENGINE", "auto") or "auto",
 
             YOLO_QUESTION_MODEL_PATH=_env("YOLO_QUESTION_MODEL_PATH"),
-            YOLO_QUESTION_INPUT_SIZE=int(_env("YOLO_QUESTION_INPUT_SIZE", "640") or "640"),
-            YOLO_QUESTION_CONF_THRESHOLD=float(_env("YOLO_QUESTION_CONF_THRESHOLD", "0.4") or "0.4"),
+            YOLO_QUESTION_INPUT_SIZE=int(_env("YOLO_QUESTION_INPUT_SIZE", "1024") or "1024"),
+            YOLO_QUESTION_CONF_THRESHOLD=float(_env("YOLO_QUESTION_CONF_THRESHOLD", "0.3") or "0.3"),
             YOLO_QUESTION_IOU_THRESHOLD=float(_env("YOLO_QUESTION_IOU_THRESHOLD", "0.5") or "0.5"),
 
             EMBEDDING_BACKEND=_env("EMBEDDING_BACKEND", "auto") or "auto",
