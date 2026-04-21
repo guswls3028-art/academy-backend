@@ -144,6 +144,7 @@ class DocumentUploadView(View):
             size_bytes=file.size,
             content_type=file.content_type,
             status="pending",
+            meta={},
         )
 
         # AI 분석 디스패치
