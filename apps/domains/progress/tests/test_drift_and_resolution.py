@@ -436,6 +436,101 @@ class StudentResultRemediatedTest(TestCase, ClinicTestMixin):
         self.assertFalse(data["final_pass"])
 
 
+class RankingFirstAttemptTest(TestCase, ClinicTestMixin):
+    """
+    석차=1차 정책 유지 검증.
+
+    ExamAttempt(attempt_index=1).meta["initial_snapshot"]["total_score"]가 있으면
+    ranking은 이 값을 사용해야 한다. Result.total_score가 재응시로 덮어쓰여져도
+    석차 기준은 1차 점수 그대로 유지된다.
+    """
+
+    def setUp(self):
+        from apps.domains.exams.models import Exam, ExamEnrollment
+        from apps.domains.results.models import Result, ExamAttempt
+
+        self.data = self.setup_full_tenant("rank_first", student_count=2)
+        self.tenant = self.data["tenant"]
+        self.e_alice = self.data["enrollments"][0]
+        self.e_bob = self.data["enrollments"][1]
+        self.lec_session = self.data["lec_session"]
+
+        self.exam = Exam.objects.create(
+            tenant=self.tenant, title="RankTest",
+            max_score=100.0, pass_score=60.0,
+            allow_retake=True, max_attempts=2,
+        )
+        self.exam.sessions.add(self.lec_session)
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.e_alice)
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.e_bob)
+
+        # Alice: 1차 90점 → 재응시 50점으로 Result 덮어쓰여진 상황 시뮬레이션
+        self.r_alice = Result.objects.create(
+            target_type="exam", target_id=self.exam.id,
+            enrollment=self.e_alice,
+            total_score=50, max_score=100,  # 덮어쓰기 후 값
+        )
+        self.a_alice_1st = ExamAttempt.objects.create(
+            exam_id=self.exam.id, enrollment_id=self.e_alice.id,
+            attempt_index=1, is_representative=False,  # 재응시로 대표 넘김
+            status="done",
+            meta={"initial_snapshot": {"total_score": 90.0, "max_score": 100.0}},
+        )
+        self.a_alice_2nd = ExamAttempt.objects.create(
+            exam_id=self.exam.id, enrollment_id=self.e_alice.id,
+            attempt_index=2, is_representative=True,
+            status="done",
+        )
+        self.r_alice.attempt_id = self.a_alice_2nd.id
+        self.r_alice.save(update_fields=["attempt_id"])
+
+        # Bob: 1차만 70점, 재응시 없음
+        self.r_bob = Result.objects.create(
+            target_type="exam", target_id=self.exam.id,
+            enrollment=self.e_bob,
+            total_score=70, max_score=100,
+        )
+        self.a_bob_1st = ExamAttempt.objects.create(
+            exam_id=self.exam.id, enrollment_id=self.e_bob.id,
+            attempt_index=1, is_representative=True,
+            status="done",
+            meta={"initial_snapshot": {"total_score": 70.0, "max_score": 100.0}},
+        )
+        self.r_bob.attempt_id = self.a_bob_1st.id
+        self.r_bob.save(update_fields=["attempt_id"])
+
+    def test_ranking_uses_first_attempt_snapshot(self):
+        """Alice의 Result=50점이어도 석차는 1차 90점 기준이어야 한다."""
+        from apps.domains.results.utils.ranking import compute_exam_rankings
+        ranks = compute_exam_rankings(exam_id=self.exam.id)
+        self.assertEqual(
+            ranks[self.e_alice.id]["rank"], 1,
+            "Alice 1차 90점 > Bob 70점 → 1등",
+        )
+        self.assertEqual(ranks[self.e_bob.id]["rank"], 2)
+        # cohort_avg도 1차 점수 기반
+        self.assertAlmostEqual(ranks[self.e_alice.id]["cohort_avg"], 80.0, places=1)
+
+    def test_ranking_batch_uses_first_attempt_snapshot(self):
+        """batch 버전도 1차 점수 기준이어야 한다."""
+        from apps.domains.results.utils.ranking import compute_exam_rankings_batch
+        batch = compute_exam_rankings_batch(exam_ids=[self.exam.id])
+        ranks = batch[self.exam.id]
+        self.assertEqual(ranks[self.e_alice.id]["rank"], 1)
+        self.assertEqual(ranks[self.e_bob.id]["rank"], 2)
+
+    def test_ranking_falls_back_to_result_for_legacy(self):
+        """initial_snapshot 없는 legacy attempt는 Result.total_score fallback."""
+        from apps.domains.results.utils.ranking import compute_exam_rankings
+        # Alice 1차 attempt의 initial_snapshot 제거 → legacy 상태 시뮬레이션
+        self.a_alice_1st.meta = {}
+        self.a_alice_1st.save(update_fields=["meta"])
+        ranks = compute_exam_rankings(exam_id=self.exam.id)
+        # Alice Result=50, Bob Result=70 → Bob 1등
+        self.assertEqual(ranks[self.e_bob.id]["rank"], 1)
+        self.assertEqual(ranks[self.e_alice.id]["rank"], 2)
+
+
 class LegacyFallbackTest(TestCase, ClinicTestMixin):
     """Phase 1: legacy fallback 과매칭 차단"""
 

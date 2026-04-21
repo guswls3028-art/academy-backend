@@ -163,6 +163,21 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         # 기존 대표 해제 후 새 attempt를 대표로 설정
         existing_qs.filter(is_representative=True).update(is_representative=False)
 
+        # attempt_index=1이면 "1차 점수 불변 스냅샷"을 meta에 저장한다.
+        # Result.total_score는 ONLINE 재응시 시 sync가 덮어쓰지만,
+        # attempt_index=1.meta["initial_snapshot"]은 한 번 저장되면 이후 갱신 경로가 없어
+        # 석차 계산(ranking.py)이 "석차=1차 점수" 정책을 유지할 수 있게 해준다.
+        new_meta = None
+        if next_index == 1:
+            new_meta = {
+                "initial_snapshot": {
+                    "total_score": float(total),
+                    "max_score": float(max_total),
+                    "submitted_at": timezone.now().isoformat(),
+                    "submission_id": int(submission.id),
+                }
+            }
+
         from django.db import IntegrityError
         try:
             attempt = ExamAttempt.objects.create(
@@ -173,6 +188,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
                 is_retake=(last_index > 0),
                 is_representative=True,
                 status="done",
+                meta=new_meta,
             )
         except IntegrityError:
             # 동시성: 다른 경로에서 이미 생성됨 — 기존 것 사용
