@@ -139,22 +139,40 @@ class SessionProgressCalculator:
             if meta.get("status") == "NOT_SUBMITTED":
                 not_submitted_exam_ids.add(int(ea.exam_id))
 
+        # ⚠️ exam_ids 전체 기준 per_exam_rows. Result 없는 시험도 명시적으로 row를 만들어
+        # `passed=False, score=None, no_result=True`로 두어야 세션 완료 전수 검사에서 누락되지 않는다.
+        # (exam_ids=[1,2,3] 중 Result가 2개만 있는 상황에서, 남은 1개 시험이 미응시인데도
+        #  나머지 2개 합격만으로 세션 완료로 판정되던 잠재 버그 방지.)
+        results_by_exam = {int(r.target_id): r for r in results}
+
         per_exam_rows: List[Dict[str, Any]] = []
-        for r in results:
-            ex = exams.get(int(r.target_id))
+        for eid in [int(x) for x in exam_ids]:
+            ex = exams.get(eid)
 
             exam_pass_score = cls._safe_float(getattr(ex, "pass_score", None), default=0.0) if ex else 0.0
             policy_pass_score = cls._safe_float(getattr(policy, "exam_pass_score", 0.0), default=0.0)
-
             pass_score = (
                 policy_pass_score
                 if policy.exam_pass_source == ProgressPolicy.ExamPassSource.POLICY
                 else exam_pass_score
             )
-            score = cls._safe_float(r.total_score, default=0.0)
 
-            # 미응시 학생은 pass_score와 무관하게 불합격
-            is_not_submitted = int(r.target_id) in not_submitted_exam_ids
+            r = results_by_exam.get(eid)
+            if r is None:
+                per_exam_rows.append({
+                    "exam_id": eid,
+                    "score": None,
+                    "max_score": cls._safe_float(getattr(ex, "max_score", None), 0.0) if ex else 0.0,
+                    "pass_score": float(pass_score),
+                    "passed": False,
+                    "submitted_at": None,
+                    "attempt_count": int(attempt_counts.get(eid, 0)),
+                    "no_result": True,
+                })
+                continue
+
+            score = cls._safe_float(r.total_score, default=0.0)
+            is_not_submitted = eid in not_submitted_exam_ids
             if is_not_submitted:
                 passed_value = False
             elif pass_score > 0:
@@ -162,34 +180,38 @@ class SessionProgressCalculator:
             else:
                 passed_value = True  # pass_score=0 + 응시완료 → 기준 없음, 통과
 
-            per_exam_rows.append(
-                {
-                    "exam_id": int(r.target_id),
-                    "score": score,
-                    "max_score": cls._safe_float(r.max_score, default=0.0),
-                    "pass_score": float(pass_score),
-                    "passed": passed_value,
-                    "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
-                    "attempt_count": int(attempt_counts.get(int(r.target_id), 0)),
-                }
-            )
+            per_exam_rows.append({
+                "exam_id": eid,
+                "score": score,
+                "max_score": cls._safe_float(r.max_score, default=0.0),
+                "pass_score": float(pass_score),
+                "passed": passed_value,
+                "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+                "attempt_count": int(attempt_counts.get(eid, 0)),
+            })
 
         strategy = policy.exam_aggregate_strategy
 
         aggregate_score: Optional[float] = None
         selected_pass_score: float = cls._safe_float(policy.exam_pass_score, 0.0)
 
-        if strategy == ProgressPolicy.ExamAggregateStrategy.MAX:
-            best = max(per_exam_rows, key=lambda x: cls._safe_float(x.get("score"), 0.0))
+        # 집계는 score 있는 row만 대상 (no_result row는 성적 표시에서 제외)
+        scored_rows = [x for x in per_exam_rows if x.get("score") is not None]
+
+        if not scored_rows:
+            aggregate_score = None
+            selected_pass_score = cls._safe_float(policy.exam_pass_score, 0.0)
+        elif strategy == ProgressPolicy.ExamAggregateStrategy.MAX:
+            best = max(scored_rows, key=lambda x: cls._safe_float(x.get("score"), 0.0))
             aggregate_score = cls._safe_float(best.get("score"), 0.0)
             selected_pass_score = cls._safe_float(best.get("pass_score"), 0.0)
 
         elif strategy == ProgressPolicy.ExamAggregateStrategy.AVG:
-            scores = [cls._safe_float(x.get("score"), 0.0) for x in per_exam_rows]
+            scores = [cls._safe_float(x.get("score"), 0.0) for x in scored_rows]
             aggregate_score = (sum(scores) / len(scores)) if scores else 0.0
 
             if policy.exam_pass_source == ProgressPolicy.ExamPassSource.EXAM:
-                ps = [cls._safe_float(x.get("pass_score"), 0.0) for x in per_exam_rows]
+                ps = [cls._safe_float(x.get("pass_score"), 0.0) for x in scored_rows]
                 selected_pass_score = (sum(ps) / len(ps)) if ps else 0.0
             else:
                 selected_pass_score = cls._safe_float(policy.exam_pass_score, 0.0)
@@ -211,27 +233,35 @@ class SessionProgressCalculator:
                 )
 
         else:
-            best = max(per_exam_rows, key=lambda x: cls._safe_float(x.get("score"), 0.0))
+            best = max(scored_rows, key=lambda x: cls._safe_float(x.get("score"), 0.0))
             aggregate_score = cls._safe_float(best.get("score"), 0.0)
             selected_pass_score = cls._safe_float(best.get("pass_score"), 0.0)
 
-        # ⚠️ 세션 완료 판정은 "개별 시험 모두 통과" 기준 (드리프트 해소).
-        # aggregate_score는 성적 표시용(MAX/AVG/LATEST), 통과 여부는 전수 검사.
-        # 세션에 시험 여러 개인 경우 일부만 통과해도 세션 완료가 되던 문제를 차단.
+        # ⚠️ 세션 완료 판정은 "exam_ids 전체 시험 모두 통과" 기준.
+        # per_exam_rows가 exam_ids 전체를 포함하므로 Result 누락 시험도 자동으로 passed=False.
+        # all_not_submitted는 "전부 미응시(NOT_SUBMITTED ExamAttempt) 또는 Result 없음"으로 확장.
+        missing_any_result = any(x.get("no_result") for x in per_exam_rows)
         all_not_submitted = all(not x["passed"] for x in per_exam_rows) and all(
-            int(x["exam_id"]) in not_submitted_exam_ids for x in per_exam_rows
+            x.get("no_result") or int(x["exam_id"]) in not_submitted_exam_ids
+            for x in per_exam_rows
         )
         if all_not_submitted:
             exam_passed = False
         else:
-            # 모든 개별 시험이 passed=True여야 세션 완료
+            # 모든 개별 시험이 passed=True여야 세션 완료 (no_result면 자동 False)
             exam_passed = bool(per_exam_rows) and all(bool(x["passed"]) for x in per_exam_rows)
+
+        # exam_attempted: 단 1건이라도 Result가 있으면 True (기존 의미 유지)
+        # no_result가 섞인 경우에도 응시 시도 자체는 있었다는 의미로 True.
+        # 단, 모든 exam_id에 Result가 없으면 아래쪽 `if not results` 분기에서 먼저 처리됨.
+        _ = missing_any_result  # 명시적 표기, 현재는 meta에만 남김
 
         meta = {
             "strategy": str(strategy),
             "pass_source": str(policy.exam_pass_source),
             "aggregate_pass_score": float(selected_pass_score),
             "all_passed": exam_passed,  # 명시: 모든 개별 시험 통과 여부
+            "missing_results": missing_any_result,  # 일부 exam에 Result 누락
             "exams": per_exam_rows,
         }
 

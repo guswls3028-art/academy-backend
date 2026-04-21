@@ -93,6 +93,56 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
         self.assertIn("all_passed", sp.exam_meta)
         self.assertFalse(sp.exam_meta["all_passed"])
 
+    def test_missing_result_blocks_session_completion(self):
+        """세션에 시험 2개, Result는 1개만 있어도 세션 완료로 판정되면 안 됨.
+
+        시험 A에 응시 + 합격, 시험 B는 Result 없음(미응시/채점 미입력) 상태에서
+        이전에는 per_exam_rows가 A 1건만 생성되어 `all(passed)`=True로 세션 완료.
+        수정 후: per_exam_rows는 exam_ids 전체(2건) 포함하고 B는 passed=False(no_result)
+        → exam_passed=False, 세션 완료 차단.
+        """
+        from apps.domains.results.models import Result
+        exam_a = Exam.objects.create(tenant=self.tenant, title="A", pass_score=60.0, max_score=100.0)
+        exam_b = Exam.objects.create(tenant=self.tenant, title="B", pass_score=60.0, max_score=100.0)
+        exam_a.sessions.add(self.lec_session)
+        exam_b.sessions.add(self.lec_session)
+
+        Result.objects.create(
+            target_type="exam", target_id=exam_a.id,
+            enrollment=self.enrollment, total_score=80, max_score=100,
+        )
+        # exam_b에는 Result 없음 (누락 상태)
+
+        ProgressPolicy.objects.get_or_create(
+            lecture=self.lecture,
+            defaults={
+                "exam_pass_source": ProgressPolicy.ExamPassSource.EXAM,
+                "exam_start_session_order": 1,
+                "homework_start_session_order": 1,
+            },
+        )
+        from apps.domains.progress.services.session_calculator import (
+            SessionProgressCalculator,
+        )
+        sp = SessionProgressCalculator.calculate(
+            enrollment_id=self.enrollment.id,
+            session=self.lec_session,
+            attendance_type="online",
+            video_progress_rate=100,
+        )
+        self.assertFalse(
+            sp.exam_passed,
+            "exam_b Result 누락 → 전수 검사에서 passed=False여야 함",
+        )
+        self.assertFalse(sp.completed, "Result 누락 시험이 있으면 세션 완료 불가")
+        exams_meta = sp.exam_meta.get("exams", [])
+        self.assertEqual(len(exams_meta), 2, "exam_ids 전체가 per_exam_rows에 포함")
+        b_row = next((x for x in exams_meta if x["exam_id"] == exam_b.id), None)
+        self.assertIsNotNone(b_row)
+        self.assertTrue(b_row.get("no_result"))
+        self.assertFalse(b_row.get("passed"))
+        self.assertTrue(sp.exam_meta.get("missing_results"))
+
     def test_completed_at_preserved_on_regression(self):
         """completed=True → 점수 수정으로 False 회귀해도 completed_at 유지"""
         from apps.domains.results.models import Result
@@ -288,6 +338,102 @@ class RemediationValidationTest(TestCase, ClinicTestMixin):
                 graded_by_user_id=self.admin.id,
             )
         self.assertIn("이미 해소", str(ctx.exception))
+
+
+class StudentResultRemediatedTest(TestCase, ClinicTestMixin):
+    """
+    student_result_service.get_my_exam_result_data의 remediated/final_pass 판정이
+    EXAM_PASS + MANUAL_OVERRIDE 모두 커버하는지 검증.
+
+    드리프트 재발 방지: admin_student_grades_view / student_app.results.views는
+    MANUAL_OVERRIDE를 REMEDIATED로 분류하므로, 시험 상세 뷰도 동일하게 맞춰야 한다.
+    """
+
+    def setUp(self):
+        from apps.domains.exams.models import Exam, ExamEnrollment
+        from apps.domains.results.models import Result
+
+        self.data = self.setup_full_tenant("remed_detail", student_count=1)
+        self.tenant = self.data["tenant"]
+        self.enrollment = self.data["enrollments"][0]
+        self.lec_session = self.data["lec_session"]
+        self.student_user = self.enrollment.student.user
+
+        self.exam = Exam.objects.create(
+            tenant=self.tenant, title="MidTerm",
+            max_score=100.0, pass_score=60.0,
+            allow_retake=False, max_attempts=1,
+        )
+        self.exam.sessions.add(self.lec_session)
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+
+        # 1차 불합격 Result
+        Result.objects.create(
+            target_type="exam", target_id=self.exam.id,
+            enrollment=self.enrollment,
+            total_score=40, max_score=100,
+        )
+
+        self.link = self.make_clinic_link(
+            self.enrollment, self.lec_session,
+            source_type="exam", source_id=self.exam.id,
+        )
+        self.admin = User.objects.create_user(
+            username="admin_remed_detail", password="x",
+        )
+
+    def _fetch(self):
+        from unittest.mock import MagicMock
+        from apps.domains.results.services.student_result_service import (
+            get_my_exam_result_data,
+        )
+        request = MagicMock()
+        request.user = self.student_user
+        request.tenant = self.tenant
+        return get_my_exam_result_data(request, self.exam.id, tenant=self.tenant)
+
+    def test_exam_pass_resolution_sets_remediated(self):
+        """EXAM_PASS(재시험 통과)로 해소되면 remediated=True, final_pass=True"""
+        ClinicResolutionService.resolve_by_exam_pass(
+            enrollment_id=self.enrollment.id,
+            session_id=self.lec_session.id,
+            exam_id=self.exam.id,
+            score=80.0, pass_score=60.0,
+        )
+        data = self._fetch()
+        self.assertFalse(data["is_pass"], "1차는 불합격")
+        self.assertTrue(data["remediated"])
+        self.assertTrue(data["final_pass"])
+        self.assertIsNotNone(data["clinic_retake"])
+
+    def test_manual_override_resolution_sets_remediated(self):
+        """MANUAL_OVERRIDE(관리자 수동 해소)도 remediated=True — 드리프트 재발 방지"""
+        ClinicResolutionService.resolve_manually(
+            clinic_link_id=self.link.id,
+            user_id=self.admin.id,
+            memo="수동 해소 회귀 테스트",
+        )
+        data = self._fetch()
+        self.assertFalse(data["is_pass"], "1차는 불합격")
+        self.assertTrue(
+            data["remediated"],
+            "MANUAL_OVERRIDE 해소도 remediated로 인식돼야 함",
+        )
+        self.assertTrue(
+            data["final_pass"],
+            "MANUAL_OVERRIDE 해소 → 학생 상세에서도 최종 합격으로 보여야 함",
+        )
+
+    def test_waived_resolution_is_not_remediated(self):
+        """WAIVED(면제)는 remediated에 포함되지 않음 (목록 뷰 정책과 일치)"""
+        ClinicResolutionService.waive(
+            clinic_link_id=self.link.id,
+            user_id=self.admin.id,
+            memo="면제",
+        )
+        data = self._fetch()
+        self.assertFalse(data["remediated"])
+        self.assertFalse(data["final_pass"])
 
 
 class LegacyFallbackTest(TestCase, ClinicTestMixin):

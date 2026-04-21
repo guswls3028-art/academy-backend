@@ -101,9 +101,11 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     else:
         data["is_pass"] = None
 
-    # ✅ 드리프트 해소: 클리닉 재시험 통과 상태 반영
-    # Result.total_score는 1차 결과 고정이지만, 클리닉 재시험(ClinicLink.EXAM_PASS)
-    # 으로 최종 합격한 경우 학생에게 명시. 최종 합격 판정은 final_pass로 통합.
+    # ✅ 드리프트 해소: 클리닉 재시험 통과 / 관리자 수동 해소 상태 반영
+    # Result.total_score는 1차 결과 고정이지만, ClinicLink가 EXAM_PASS(재시험 통과)
+    # 또는 MANUAL_OVERRIDE(관리자 수동 해소)로 해소된 경우 최종 합격으로 처리한다.
+    # 성적 목록 뷰(admin_student_grades_view / student_app.results)가 두 타입을
+    # REMEDIATED로 분류하므로 상세 뷰도 동일하게 맞춰 드리프트 재발을 방지.
     remediated = False
     clinic_retake_info = None
     if session:
@@ -115,7 +117,10 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
                 source_type="exam",
                 source_id=exam_id,
                 resolved_at__isnull=False,
-                resolution_type=ClinicLink.ResolutionType.EXAM_PASS,
+                resolution_type__in=[
+                    ClinicLink.ResolutionType.EXAM_PASS,
+                    ClinicLink.ResolutionType.MANUAL_OVERRIDE,
+                ],
             )
             .order_by("-resolved_at")
             .first()

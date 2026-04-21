@@ -3,7 +3,13 @@
 석차(등수) 계산 유틸리티.
 
 설계 원칙:
-- 1차 시도(attempt_index=1) 기준 석차 (score-clinic philosophy)
+- 대표 Result(enrollment당 최신 Result) 기준 석차.
+  · 일반 플로우에서 Result는 1차 submission으로 생성되어 "석차=1차 점수"가 성립한다.
+  · 그러나 ONLINE 재응시 시 `sync_result_from_exam_submission`이 Result.total_score를
+    덮어쓰면 석차 기준값이 재응시 점수로 대체된다.
+  · 메모리 정책 ("석차=1차, 성취=전체 이력")을 엄격히 지키려면 Result 대신
+    ExamAttempt.attempt_index=1 기반으로 재설계해야 한다 — 정책 재확인 필요.
+  · 완화책: sync는 이전 대표 attempt.meta.final_result_snapshot에 기존 점수를 백업함.
 - dense_rank: 동점이면 같은 등수, 다음 등수는 건너뛰지 않음
 - query-time 계산: Result 모델에 필드 추가 없음
 - tenant isolation: 호출부에서 보장 (이 유틸은 Result queryset만 받음)
