@@ -40,6 +40,8 @@ class MatchupDocument(TimestampModel):
     ai_job_id = models.CharField(max_length=36, blank=True, default="")
     problem_count = models.PositiveIntegerField(default=0)
     error_message = models.TextField(blank=True, default="")
+    # 운영 관측용 메타 (segmentation_method, has_text_pages 등)
+    meta = models.JSONField(default=dict, blank=True)
 
     class Meta:
         app_label = "matchup"

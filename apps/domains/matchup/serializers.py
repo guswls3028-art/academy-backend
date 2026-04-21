@@ -10,6 +10,7 @@ class MatchupDocumentSerializer(serializers.ModelSerializer):
             "id", "title", "subject", "grade_level",
             "original_name", "size_bytes", "content_type",
             "status", "ai_job_id", "problem_count", "error_message",
+            "meta",
             "created_at", "updated_at",
         ]
         read_only_fields = fields
