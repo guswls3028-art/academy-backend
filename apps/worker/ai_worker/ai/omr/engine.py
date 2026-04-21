@@ -441,6 +441,8 @@ def _detect_single_question(
     """단일 문항의 버블 multi-feature scoring 및 판정."""
     img_h, img_w = img_shape[:2]
     fills: List[Tuple[str, float, Dict[str, float]]] = []
+    # v10.1: 각 버블의 픽셀 좌표 기록 (검토 UI의 BBox overlay용). 판정 로직에는 영향 없음.
+    bubble_rects: List[Dict[str, int]] = []
 
     for ch in choices:
         label = str(ch.get("label", ""))
@@ -474,6 +476,14 @@ def _detect_single_question(
             config=config,
         )
         fills.append((label, score, details))
+        # bbox = 원의 외접 사각형 (x, y, w, h)
+        bubble_rects.append({
+            "label": label,
+            "x": int(max(0, cx_px - rx_px)),
+            "y": int(max(0, cy_px - ry_px)),
+            "w": int(min(img_w, cx_px + rx_px) - max(0, cx_px - rx_px)),
+            "h": int(min(img_h, cy_px + ry_px) - max(0, cy_px - ry_px)),
+        })
 
     if not fills:
         return OMRAnswerV1(
@@ -488,9 +498,26 @@ def _detect_single_question(
     second_score = fills[1][1] if len(fills) > 1 else 0.0
     gap = top_score - second_score
 
+    # 문항 전체 rect = 모든 버블의 bounding box (검토 UI 좌표)
+    if bubble_rects:
+        min_x = min(br["x"] for br in bubble_rects)
+        min_y = min(br["y"] for br in bubble_rects)
+        max_x = max(br["x"] + br["w"] for br in bubble_rects)
+        max_y = max(br["y"] + br["h"] for br in bubble_rects)
+        question_rect: Optional[Dict[str, int]] = {
+            "x": int(min_x),
+            "y": int(min_y),
+            "w": int(max_x - min_x),
+            "h": int(max_y - min_y),
+        }
+    else:
+        question_rect = None
+
     raw_data = {
         "fills": {l: round(s, 4) for l, s, _ in fills},
         "details": {l: d for l, _, d in fills},
+        "bubble_rects": bubble_rects,
+        "rect": question_rect,
     }
 
     # ── 판정 (v10 개선: IQR 기반 noise floor) ──

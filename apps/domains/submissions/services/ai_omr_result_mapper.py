@@ -165,21 +165,30 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         # question_number → ExamQuestion PK 변환 (매핑이 있으면 사용)
         eqid = qnum_to_pk.get(int(raw_id), int(raw_id))
 
+        # v10.1: worker가 raw 안에 제공하는 bubble_rects/rect (검토 UI BBox overlay)
+        raw_payload = a.get("raw") or {}
+        bubble_rects = raw_payload.get("bubble_rects") if isinstance(raw_payload, dict) else None
+        question_rect = raw_payload.get("rect") if isinstance(raw_payload, dict) else None
+
+        omr_meta: Dict[str, Any] = {
+            "version": result.get("version"),
+            "detected": a.get("detected"),
+            "marking": a.get("marking"),
+            "confidence": a.get("confidence"),
+            "status": a.get("status"),
+        }
+        if isinstance(bubble_rects, list) and bubble_rects:
+            omr_meta["bubble_rects"] = bubble_rects
+        if isinstance(question_rect, dict):
+            omr_meta["rect"] = question_rect
+
         SubmissionAnswer.objects.update_or_create(
             submission=submission,
             exam_question_id=int(eqid),
             defaults={
                 "tenant": submission.tenant,
                 "answer": "".join([str(x) for x in a.get("detected") or []]),
-                "meta": {
-                    "omr": {
-                        "version": result.get("version"),
-                        "detected": a.get("detected"),
-                        "marking": a.get("marking"),
-                        "confidence": a.get("confidence"),
-                        "status": a.get("status"),
-                    }
-                },
+                "meta": {"omr": omr_meta},
             },
         )
 
