@@ -80,14 +80,29 @@ class ExamSubmissionsListView(APIView):
         items: list[Dict[str, Any]] = []
         for s in qs:
             enrollment_id = getattr(s, "enrollment_id", None)
+            s_meta = s.meta or {}
+            mr = s_meta.get("manual_review") if isinstance(s_meta, dict) else None
+
             items.append(
                 {
                     "id": int(s.id),
                     "enrollment_id": int(enrollment_id) if enrollment_id else 0,
                     "student_name": _resolve_student_name(s),
                     "status": str(getattr(s, "status", "")),
+                    "source": str(getattr(s, "source", "")),
                     "score": _resolve_score_for_submission(int(s.id)),
                     "created_at": s.created_at.isoformat(),
+                    "file_key": getattr(s, "file_key", None) or "",
+                    "has_file": bool(getattr(s, "file_key", None)),
+                    "manual_review_required": bool(
+                        isinstance(mr, dict) and mr.get("required")
+                    ),
+                    "manual_review_reasons": (
+                        list(mr.get("reasons") or []) if isinstance(mr, dict) else []
+                    ),
+                    "identifier_status": s_meta.get("identifier_status")
+                    if isinstance(s_meta, dict)
+                    else None,
                 }
             )
 

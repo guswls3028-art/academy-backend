@@ -170,29 +170,52 @@ class SubmissionViewSet(ModelViewSet):
         return self._manual_edit_post(request, pk)
 
     def _manual_edit_get(self, request, pk=None):
-        """GET: 현재 답안 목록 + identifier 반환 (수동 편집 화면용)."""
+        """GET: 현재 답안 목록 + identifier + 스캔 이미지 URL 반환 (수동 편집 화면용)."""
         submission: Submission = self.get_object()
         answers_qs = SubmissionAnswer.objects.filter(
             submission=submission,
         ).order_by("exam_question_id")
         answers_data = []
         for a in answers_qs:
+            am = a.meta or {}
+            omr = am.get("omr") if isinstance(am, dict) else None
             answers_data.append({
                 "question_id": a.exam_question_id,
                 "question_no": a.exam_question_id,
                 "answer": a.answer or "",
+                "omr": omr if isinstance(omr, dict) else None,
             })
         meta = dict(submission.meta or {})
         identifier = None
         omr = meta.get("omr") or {}
         if isinstance(omr, dict):
             identifier = omr.get("identifier_override") or omr.get("identifier")
+
+        # ✅ 스캔 이미지 presigned URL
+        scan_image_url = ""
+        if submission.file_key and submission.source == Submission.Source.OMR_SCAN:
+            try:
+                from apps.infrastructure.storage.r2 import generate_presigned_get_url
+                scan_image_url = generate_presigned_get_url(
+                    key=submission.file_key,
+                    expires_in=3600,
+                )
+            except Exception:
+                scan_image_url = ""
+
         return Response({
+            "submission_id": submission.id,
+            "submission_status": submission.status,
+            "enrollment_id": submission.enrollment_id,
+            "target_type": submission.target_type,
+            "target_id": submission.target_id,
             "identifier": identifier,
             "answers": answers_data,
+            "scan_image_url": scan_image_url,
             "meta": {
                 "manual_review": meta.get("manual_review"),
                 "ai_result": meta.get("ai_result"),
+                "identifier_status": meta.get("identifier_status"),
             },
         })
 

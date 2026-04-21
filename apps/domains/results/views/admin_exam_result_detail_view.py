@@ -44,6 +44,13 @@ from apps.domains.exams.models import Exam
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 
+# ✅ OMR 스캔 이미지 presigned URL
+import logging
+from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.infrastructure.storage.r2 import generate_presigned_get_url
+
+logger = logging.getLogger(__name__)
+
 
 class AdminExamResultDetailView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
@@ -197,6 +204,70 @@ class AdminExamResultDetailView(APIView):
             qid = str(item.get("question_id", ""))
             item["correct_answer"] = correct_answers.get(qid, "")
 
+        # -------------------------------------------------
+        # 9️⃣ OMR 스캔 정보 (image_url + per-answer meta)
+        #     — 대표 attempt의 submission을 기반으로 주입
+        # -------------------------------------------------
+        scan_image_url = ""
+        submission_id_for_omr: int | None = None
+        submission_status = None
+        manual_review_meta = None
+        identifier_status = None
+
+        if result.attempt_id:
+            att = ExamAttempt.objects.filter(id=int(result.attempt_id)).first()
+            if att and att.submission_id:
+                submission_id_for_omr = int(att.submission_id)
+
+        if submission_id_for_omr:
+            sub = (
+                Submission.objects
+                .filter(id=submission_id_for_omr, tenant=request.tenant)
+                .only("id", "file_key", "status", "meta", "source")
+                .first()
+            )
+            if sub:
+                submission_status = sub.status
+                s_meta = sub.meta or {}
+                manual_review_meta = s_meta.get("manual_review")
+                identifier_status = s_meta.get("identifier_status")
+
+                if sub.file_key and sub.source == Submission.Source.OMR_SCAN:
+                    try:
+                        scan_image_url = generate_presigned_get_url(
+                            key=sub.file_key,
+                            expires_in=3600,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "scan_image_url presign failed | submission_id=%s",
+                            submission_id_for_omr,
+                        )
+                        scan_image_url = ""
+
+                # Per-answer OMR meta (confidence/marking/status)
+                ans_qs = SubmissionAnswer.objects.filter(
+                    submission_id=submission_id_for_omr,
+                ).only("exam_question_id", "meta")
+                omr_by_qid: dict[int, dict] = {}
+                for a in ans_qs:
+                    am = a.meta or {}
+                    omr = am.get("omr") if isinstance(am, dict) else None
+                    if isinstance(omr, dict) and omr:
+                        omr_by_qid[int(a.exam_question_id)] = omr
+
+                if omr_by_qid:
+                    for item in data.get("items", []):
+                        qid_int = int(item.get("question_id") or 0)
+                        omr = omr_by_qid.get(qid_int)
+                        if not omr:
+                            continue
+                        existing = item.get("meta") or {}
+                        merged_omr = dict(existing.get("omr") or {})
+                        merged_omr.update(omr)
+                        existing["omr"] = merged_omr
+                        item["meta"] = existing
+
         data.update({
             "passed": passed,
             "allow_retake": allow_retake,
@@ -205,6 +276,11 @@ class AdminExamResultDetailView(APIView):
             "clinic_required": bool(clinic_required),
             "edit_state": edit_state,
             "correct_answers": correct_answers,
+            "scan_image_url": scan_image_url,
+            "submission_id": submission_id_for_omr,
+            "submission_status": submission_status,
+            "manual_review": manual_review_meta,
+            "identifier_status": identifier_status,
         })
 
         return Response(data)
