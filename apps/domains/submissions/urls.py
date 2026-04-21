@@ -10,6 +10,7 @@ from .views.exam_submissions_list_view import ExamSubmissionsListView
 from .views.homework_submissions_list_view import HomeworkSubmissionsListView
 from .views.exam_omr_batch_upload_view import ExamOMRBatchUploadView
 from .views.pending_submissions_view import PendingSubmissionsView
+from .views.exam_candidates_view import ExamCandidatesView
 
 router = DefaultRouter()
 router.register("submissions", SubmissionViewSet, basename="submissions")
@@ -49,6 +50,13 @@ urlpatterns = [
         "submissions/exams/<int:exam_id>/omr/batch/",
         ExamOMRBatchUploadView.as_view(),
         name="exam-omr-batch-upload",
+    ),
+
+    # ✅ OMR 검토 학생 picker: GET /submissions/exams/{examId}/candidates/?q=검색어
+    path(
+        "submissions/exams/<int:exam_id>/candidates/",
+        ExamCandidatesView.as_view(),
+        name="exam-candidates",
     ),
 ]
 

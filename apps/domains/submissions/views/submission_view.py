@@ -223,6 +223,53 @@ class SubmissionViewSet(ModelViewSet):
     def _manual_edit_post(self, request, pk=None):
         submission: Submission = Submission.objects.select_for_update().get(pk=self.get_object().pk)
 
+        identifier = request.data.get("identifier")
+        answers = request.data.get("answers") or []
+        note = str(request.data.get("note") or "manual_edit")
+
+        # ✅ identifier 검증 + submission.enrollment_id 반영 (tenant 안전성)
+        #    { "enrollment_id": N } 형식만 매칭. 이외 형식은 meta로 저장만 하고 enrollment 미반영.
+        resolved_enrollment_id: int | None = None
+        if isinstance(identifier, dict) and identifier.get("enrollment_id") is not None:
+            try:
+                candidate_eid = int(identifier["enrollment_id"])
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "enrollment_id는 정수여야 합니다."},
+                    status=400,
+                )
+
+            # 해당 시험의 enrollment 후보인지 검증 (ExamEnrollment → SessionEnrollment fallback)
+            from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+            from apps.domains.exams.models import ExamEnrollment
+
+            tenant = submission.tenant
+            exam_id = int(submission.target_id or 0) if submission.target_type == Submission.TargetType.EXAM else 0
+
+            if not Enrollment.objects.filter(id=candidate_eid, tenant=tenant).exists():
+                return Response(
+                    {"detail": f"enrollment_id={candidate_eid}는 현재 학원의 학생이 아닙니다."},
+                    status=400,
+                )
+
+            if exam_id:
+                in_exam = ExamEnrollment.objects.filter(
+                    exam_id=exam_id, enrollment_id=candidate_eid
+                ).exists()
+                if not in_exam:
+                    # fallback: SessionEnrollment
+                    in_session = SessionEnrollment.objects.filter(
+                        session__exams__id=exam_id,
+                        enrollment_id=candidate_eid,
+                    ).exists()
+                    if not in_session:
+                        return Response(
+                            {"detail": "해당 시험에 등록되지 않은 학생입니다."},
+                            status=400,
+                        )
+
+            resolved_enrollment_id = candidate_eid
+
         # admin_override=True: DONE/FAILED/SUBMITTED/DISPATCHED/NI → ANSWERS_READY 허용
         # GRADING/SUPERSEDED → ANSWERS_READY 차단 (transition.py에서 강제)
         try:
@@ -233,10 +280,6 @@ class SubmissionViewSet(ModelViewSet):
             )
         except InvalidTransitionError as e:
             return Response({"detail": str(e)}, status=409)
-
-        identifier = request.data.get("identifier")
-        answers = request.data.get("answers") or []
-        note = str(request.data.get("note") or "manual_edit")
 
         updated = 0
 
@@ -269,6 +312,7 @@ class SubmissionViewSet(ModelViewSet):
                 "note": note,
                 "updated_answers_count": updated,
                 "identifier": identifier,
+                "resolved_enrollment_id": resolved_enrollment_id,
             }
         )
 
@@ -276,8 +320,15 @@ class SubmissionViewSet(ModelViewSet):
         meta["manual_review"]["required"] = False
         meta["manual_review"]["resolved_at"] = timezone.now().isoformat()
 
+        # ✅ 검증된 enrollment_id가 있으면 submission에 반영 (+ identifier_status matched)
+        save_fields = ["meta", "updated_at"]
+        if resolved_enrollment_id is not None:
+            submission.enrollment_id = resolved_enrollment_id
+            save_fields.append("enrollment_id")
+            meta["identifier_status"] = "matched"
+
         submission.meta = meta
-        submission.save(update_fields=["meta", "updated_at"])
+        submission.save(update_fields=save_fields)
 
         try:
             result_obj = grade_submission(int(submission.id))
