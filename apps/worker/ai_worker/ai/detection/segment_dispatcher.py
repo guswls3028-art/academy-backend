@@ -80,6 +80,7 @@ def _pdf_to_images(pdf_path: str) -> List[Dict]:
                 raw_blocks = []
 
             # 텍스트 PDF의 경우 text-based 분할을 시도해서 per-question 박스 사전 계산
+            text_regions: List = []  # QuestionRegion in points (for cross-page validation)
             if has_text:
                 try:
                     tbs = [
@@ -89,6 +90,7 @@ def _pdf_to_images(pdf_path: str) -> List[Dict]:
                     if not is_non_question_page(tbs):
                         pw, ph = doc.page_dimensions(i)
                         regions = split_questions(tbs, pw, ph, page_index=i)
+                        text_regions = list(regions)
                         scale = _PDF_TO_PIXEL_SCALE
                         for r in regions:
                             rx0, ry0, rx1, ry1 = r.bbox
@@ -107,6 +109,7 @@ def _pdf_to_images(pdf_path: str) -> List[Dict]:
                 "image_path": out_path,
                 "has_embedded_text": has_text,
                 "text_boxes": text_boxes,
+                "text_regions": text_regions,  # QuestionRegion[] — aligned with text_boxes
             })
 
     return results
@@ -160,28 +163,44 @@ def _segment_single_image(
     return segment_questions_opencv(image_path)
 
 
-def _boxes_for_pdf_page(page_info: Dict) -> List[BBox]:
+def _boxes_and_regions_for_pdf_page(
+    page_info: Dict, page_index: int,
+) -> Tuple[List[BBox], List]:
     """
-    PDF 페이지 1개에 대한 최종 박스 결정.
+    PDF 페이지 1개에 대한 최종 박스 + QuestionRegion (번호 포함) 반환.
+
+    regions는 크로스-페이지 anchor 검증에 쓰이며, 번호가 없는
+    (OpenCV fallback) 경우 빈 리스트로 반환.
 
     우선순위:
-      1. 텍스트 기반 분할 성공 (text_boxes 존재) → 그대로 사용
-      2. 스캔본 (has_embedded_text=False) + OCR 가용 → OCR 결과 신뢰
-         - OCR이 [] 반환해도 fallback 안 함 (표지/정답지 등 비문항 페이지의 정상 신호)
-         - OCR 예외(API 실패)만 OpenCV로 폴백
-      3. 텍스트는 있으나 분할 실패 (비문항 페이지 등) → OpenCV
-      4. OCR 불가(크레덴셜 없음) + 스캔본 → OpenCV 안전망
+      1. 텍스트 기반 분할 성공 → text_boxes + text_regions 사용
+      2. 스캔본 + OCR 가용 → OCR 결과 (boxes + numbered regions)
+      3. OCR 불가 / 예외 → OpenCV 안전망 (번호 없음)
     """
+    from academy.domain.tools.question_splitter import QuestionRegion
+
     if page_info["text_boxes"]:
-        return list(page_info["text_boxes"])
+        return list(page_info["text_boxes"]), list(page_info.get("text_regions") or [])
 
     image_path = page_info["image_path"]
 
     # 스캔본에서 OCR 가용 시 — OCR 결과 신뢰
     if not page_info["has_embedded_text"] and is_ocr_available():
         try:
-            boxes = segment_questions_ocr(image_path)
-            return boxes  # 빈 결과도 trust (non-question page)
+            from apps.worker.ai_worker.ai.detection.segment_ocr import (
+                segment_questions_ocr_regions,
+            )
+            raw = segment_questions_ocr_regions(image_path)
+            boxes: List[BBox] = []
+            regions: List = []
+            for x0, y0, x1, y1, qnum in raw:
+                boxes.append((int(x0), int(y0), int(x1 - x0), int(y1 - y0)))
+                regions.append(QuestionRegion(
+                    number=int(qnum),
+                    bbox=(float(x0), float(y0), float(x1), float(y1)),
+                    page_index=page_index,
+                ))
+            return boxes, regions  # 빈 결과도 trust (non-question page)
         except Exception as e:
             logger.warning(
                 "PDF_PAGE_OCR_FAIL | path=%s | error=%s",
@@ -191,7 +210,47 @@ def _boxes_for_pdf_page(page_info: Dict) -> List[BBox]:
 
     # 텍스트 있지만 분할 실패 OR OCR 크레덴셜 없음 OR OCR 예외
     skip_ocr = page_info["has_embedded_text"]
-    return _segment_single_image(image_path, skip_ocr=skip_ocr, is_pdf_page=True)
+    boxes = _segment_single_image(image_path, skip_ocr=skip_ocr, is_pdf_page=True)
+    return boxes, []  # OpenCV fallback — 번호 없음
+
+
+def _collect_pdf_pages(image_path: str) -> Tuple[List[Dict], List[List[BBox]], List[List]]:
+    """
+    PDF의 모든 페이지를 처리해서 (page_infos, boxes_per_page, regions_per_page)를 반환.
+    크로스-페이지 anchor 검증을 적용해 spurious/outlier 박스를 제거.
+    """
+    from academy.domain.tools.question_splitter import validate_anchors_across_pages
+
+    page_infos = _pdf_to_images(image_path)
+    if not page_infos:
+        return [], [], []
+
+    boxes_per_page: List[List[BBox]] = []
+    regions_per_page: List[List] = []
+    for page_idx, info in enumerate(page_infos):
+        boxes, regions = _boxes_and_regions_for_pdf_page(info, page_idx)
+        boxes_per_page.append(boxes)
+        regions_per_page.append(regions)
+
+    # 크로스-페이지 검증: 번호가 있는 페이지들만. OpenCV fallback(번호 無)은 그대로 유지.
+    validated_regions = validate_anchors_across_pages(regions_per_page)
+
+    # 드롭된 region의 박스도 함께 제거 (같은 인덱스).
+    for page_idx, (original, validated) in enumerate(zip(regions_per_page, validated_regions)):
+        if not original or len(original) == len(validated):
+            continue  # 변화 없음 or 애초에 번호 없음
+        kept_nums = {r.number for r in validated}
+        boxes_per_page[page_idx] = [
+            box for box, region in zip(boxes_per_page[page_idx], original)
+            if region.number in kept_nums
+        ]
+        dropped = len(original) - len(validated)
+        logger.info(
+            "PDF_CROSS_PAGE_DROP | page=%d | dropped=%d | kept=%d",
+            page_idx, dropped, len(validated),
+        )
+
+    return page_infos, boxes_per_page, regions_per_page
 
 
 def segment_questions(image_path: str) -> List[BBox]:
@@ -201,14 +260,13 @@ def segment_questions(image_path: str) -> List[BBox]:
     이미지 파일이면 직접 세그멘테이션.
     """
     if _is_pdf(image_path):
-        page_infos = _pdf_to_images(image_path)
+        page_infos, boxes_per_page, _ = _collect_pdf_pages(image_path)
         if not page_infos:
             logger.warning("PDF_SEGMENT_NO_PAGES | path=%s", image_path)
             return []
 
         all_boxes: List[BBox] = []
-        for page_idx, info in enumerate(page_infos):
-            boxes = _boxes_for_pdf_page(info)
+        for page_idx, (info, boxes) in enumerate(zip(page_infos, boxes_per_page)):
             logger.info(
                 "PDF_SEGMENT_PAGE | page=%d | boxes=%d | has_text=%s | text_boxes=%d",
                 page_idx, len(boxes), info["has_embedded_text"], len(info["text_boxes"]),
@@ -241,14 +299,13 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
         }
     """
     if _is_pdf(image_path):
-        page_infos = _pdf_to_images(image_path)
+        page_infos, boxes_per_page, _ = _collect_pdf_pages(image_path)
         if not page_infos:
             return {"pages": [], "total_boxes": 0, "is_pdf": True}
 
         pages = []
         total = 0
-        for idx, info in enumerate(page_infos):
-            boxes = _boxes_for_pdf_page(info)
+        for idx, (info, boxes) in enumerate(zip(page_infos, boxes_per_page)):
             pages.append({
                 "page_index": idx,
                 "image_path": info["image_path"],

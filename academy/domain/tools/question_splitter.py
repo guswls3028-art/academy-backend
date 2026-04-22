@@ -11,6 +11,13 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 
+# 시험지 문항 번호 현실 상한.
+# 통합과학/화학/물리 등 정기고사 최대 관측: ~32.
+# 여유를 두고 60으로 상한 (수능형/심화 포함).
+# 이 상한을 넘는 OCR 결과는 오인식(예: "ㄷ8"→128)으로 간주해 거부.
+_MAX_LEGIT_QUESTION_NUMBER = 60
+
+
 @dataclass
 class TextBlock:
     """A block of text with its bounding box on the page."""
@@ -62,6 +69,18 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     if has_choices or has_question_indicator:
         return False
 
+    # 표지 페이지 감지: 시험지 메타정보는 있고 문항 지표는 없음.
+    # "학년도 1학기 기말고사 과목명 성명" 류 조합이 표지의 특징.
+    cover_markers = re.findall(
+        r"(?:\d+학년도|\d+학기|기말\s?고사|중간\s?고사|과목\s?명|"
+        r"문제지|답안지|답란\s?지|수험\s?번호|응시\s?번호|"
+        r"성\s?명|학\s?번|반\s?번호)",
+        full_text,
+    )
+    # 표지는 보통 본문 대비 매우 짧음. 500자 기준은 빈 박스+헤더 정도.
+    if len(cover_markers) >= 2 and len(full_text) < 500:
+        return True
+
     # 설명조 종결어미 빈도 기반 해설지 감지
     explanation_markers = re.findall(
         r"(?:이므로|때문이다|따라서|그러므로|해설|나타난다|관측된다|생성된다)",
@@ -91,8 +110,7 @@ class QuestionRegion:
     page_index: int
 
 
-# Question number patterns (Korean exam style)
-# Matches: "1.", "2.", "1)", "2)", "(1)", "(2)", "[1]", "[2]"
+# 선택형(객관식) 문항 번호 패턴. "1.", "1) ", "(1) ", "[1] ", "문제 1.", "문 1)".
 _QUESTION_PATTERN = re.compile(
     r"^\s*(?:"
     r"(\d{1,3})\s*[.)]\s"           # "1." or "1) "
@@ -105,27 +123,56 @@ _QUESTION_PATTERN = re.compile(
     r")"
 )
 
+# 서술형/논술형/단답형 섹션은 1부터 번호를 리셋하므로 선택형 번호와 충돌함.
+# 섹션별 number-space offset을 부여해 크로스-페이지 중복 제거 시 legit 문항이
+# 잘못 드롭되지 않도록 한다.
+# 예: `[서술형 1]` → 101, `[서술형 2]` → 102, `[논술형 1]` → 201.
+# OCR은 "술"을 "답"으로 자주 오인식하므로 variant도 허용.
+_SECTION_OFFSETS = {
+    "서술": 100, "서답": 100,
+    "논술": 200, "논답": 200,
+    "단답": 300, "단술": 300,
+    "약술": 400, "약답": 400,
+}
+_SECTION_PATTERN = re.compile(
+    r"^\s*\[?\s*"
+    r"(서\s*술|서\s*답|논\s*술|논\s*답|단\s*답|단\s*술|약\s*술|약\s*답)"
+    r"\s*형?\s*(\d{1,3})"
+)
+
 
 def _extract_question_number(text: str) -> Optional[int]:
     """Extract question number from text block content.
 
-    Returns:
-        Question number if found, None otherwise.
+    선택형 1~60 그대로. 서술형 N → 100+N. 논술형 N → 200+N. 단답형 N → 300+N.
+    번호 공간을 분리해 서술형 리셋 번호가 선택형과 충돌하지 않게 한다.
     """
     text = text.strip()
     if not text:
         return None
 
+    # 1. 서술형/논술형/단답형/약술형 섹션 패턴 먼저 검사
+    sec_m = _SECTION_PATTERN.match(text)
+    if sec_m:
+        section_key = re.sub(r"\s+", "", sec_m.group(1))[:2]  # "서술" 등
+        offset = _SECTION_OFFSETS.get(section_key, 0)
+        try:
+            sub_num = int(sec_m.group(2))
+            if 1 <= sub_num <= _MAX_LEGIT_QUESTION_NUMBER:
+                return offset + sub_num
+        except ValueError:
+            pass
+
+    # 2. 선택형 번호 패턴
     m = _QUESTION_PATTERN.match(text)
     if not m:
         return None
 
-    # One of the groups will have the number
     for g in m.groups():
         if g is not None:
             try:
                 num = int(g)
-                if 1 <= num <= 200:  # reasonable range
+                if 1 <= num <= _MAX_LEGIT_QUESTION_NUMBER:
                     return num
             except ValueError:
                 continue
@@ -193,6 +240,17 @@ def split_questions(
     if not question_starts:
         # No questions detected — skip this page (table of contents, cover, etc.)
         return []
+
+    # 페이지 내 중복 번호 제거. 본문 내 "그림 4는..." 같은 표현이 regex와
+    # 매치되는 경우, layout 순서상 먼저 나온 것을 실제 문항 앵커로 간주.
+    seen: dict[int, int] = {}
+    deduped: List[Tuple[int, int]] = []
+    for qnum, idx in question_starts:
+        if qnum in seen:
+            continue
+        seen[qnum] = idx
+        deduped.append((qnum, idx))
+    question_starts = deduped
 
     # Build regions: each question spans from its start to the next question start
     regions: List[QuestionRegion] = []
@@ -271,3 +329,64 @@ def split_questions(
     regions.sort(key=lambda r: r.number)
 
     return regions
+
+
+def validate_anchors_across_pages(
+    regions_per_page: List[List[QuestionRegion]],
+) -> List[List[QuestionRegion]]:
+    """
+    여러 페이지의 anchor를 모아 문서 전역 검증.
+
+    드롭되는 패턴:
+      1. 크로스-페이지 중복 — 동일 번호가 여러 페이지에 등장하면
+         layout 순서상 가장 앞선 페이지의 것만 유지. 후속 페이지의
+         중복은 본문 내 "그림 4는", "표 2에" 등으로 오탐된 것.
+      2. 시퀀스 outlier — sorted unique 번호의 최대 gap이 비정상적으로
+         크면(median gap 대비 >= 5배 & 절대값 >= 5) 이탈값을 제거.
+         예: [3, 4, 5, 6, 7, 46] → 46 드롭.
+
+    입력 형식: [per_page_regions]
+    반환: 필터링된 [per_page_regions] (페이지 구조 유지, 내부 regions만 필터)
+    """
+    if not regions_per_page:
+        return regions_per_page
+
+    # ── 1. 크로스-페이지 중복 제거 ──
+    seen_numbers: set[int] = set()
+    filtered: List[List[QuestionRegion]] = []
+    for page_regions in regions_per_page:
+        kept: List[QuestionRegion] = []
+        for r in page_regions:
+            if r.number in seen_numbers:
+                continue
+            seen_numbers.add(r.number)
+            kept.append(r)
+        filtered.append(kept)
+
+    # ── 2. 시퀀스 outlier 제거 (선택형/서술형/논술형 각 number-space별 개별 적용) ──
+    # number-space는 100 단위로 분리 (선택형 <100, 서술형 100~199, 논술형 200~299 등).
+    outlier_nums: set[int] = set()
+    by_space: dict[int, List[int]] = {}
+    for n in sorted(seen_numbers):
+        space = n // 100
+        by_space.setdefault(space, []).append(n)
+
+    for space_nums in by_space.values():
+        if len(space_nums) < 4:
+            continue
+        gaps = [space_nums[i + 1] - space_nums[i] for i in range(len(space_nums) - 1)]
+        sorted_gaps = sorted(gaps)
+        median_gap = sorted_gaps[len(sorted_gaps) // 2]
+        for i, gap in enumerate(gaps):
+            if gap >= 5 and gap >= median_gap * 5:
+                # 이탈값 이후 전부 outlier로 처리 (연속 이탈 가능성).
+                outlier_nums.update(space_nums[i + 1:])
+                break
+
+    if outlier_nums:
+        filtered = [
+            [r for r in page_regions if r.number not in outlier_nums]
+            for page_regions in filtered
+        ]
+
+    return filtered
