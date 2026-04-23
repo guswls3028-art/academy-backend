@@ -1,6 +1,7 @@
 # apps/worker/ai/ocr/google.py
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -12,6 +13,62 @@ from typing import Any, List, Optional, Tuple
 from google.cloud import vision  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+# Google Vision JSON 요청 전체 상한은 20MB (base64 오버헤드 감안 ~15MB 실제).
+# 폰 카메라로 찍은 PDF를 200dpi로 렌더하면 페이지당 20MB+ PNG가 나와 silent
+# fail (빈 결과 반환)한다. 안전 구역(10MB) 넘어가면 JPEG로 재인코딩.
+_MAX_VISION_IMAGE_BYTES = 10 * 1024 * 1024
+# PIL max image dimension — 너무 크면 OCR 품질도 안 좋아지고 요청도 느려짐.
+_MAX_IMAGE_DIMENSION = 4000
+
+
+def _prepare_image_for_vision(image_path: str) -> bytes:
+    """Vision API 요청 크기 한도 내로 이미지 바이트 준비.
+
+    원본이 10MB 이하면 그대로 반환. 초과 시 PIL로 resize+JPEG 재인코딩.
+    폰 사진 기반 PDF 업로드가 silent 0 lines로 실패하는 것을 방지.
+    """
+    with open(image_path, "rb") as f:
+        content = f.read()
+
+    if len(content) <= _MAX_VISION_IMAGE_BYTES:
+        return content
+
+    try:
+        from PIL import Image  # type: ignore
+    except ImportError:
+        logger.warning("OCR_IMAGE_OVERSIZE | path=%s | size=%d | PIL unavailable",
+                       image_path, len(content))
+        return content
+
+    img = Image.open(io.BytesIO(content))
+    if img.mode != "RGB":
+        img = img.convert("RGB")
+
+    if max(img.size) > _MAX_IMAGE_DIMENSION:
+        scale = _MAX_IMAGE_DIMENSION / max(img.size)
+        img = img.resize(
+            (int(img.width * scale), int(img.height * scale)),
+            Image.LANCZOS,
+        )
+
+    for quality in (85, 70, 55):
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=quality, optimize=True)
+        out = buf.getvalue()
+        if len(out) <= _MAX_VISION_IMAGE_BYTES:
+            logger.info(
+                "OCR_IMAGE_COMPRESSED | path=%s | orig=%dKB | new=%dKB | q=%d",
+                image_path, len(content) // 1024, len(out) // 1024, quality,
+            )
+            return out
+
+    # 최후: quality 55에도 10MB 못 맞추면 그대로 전송 (최소한 시도).
+    logger.warning(
+        "OCR_IMAGE_STILL_LARGE | path=%s | compressed=%dKB | sending anyway",
+        image_path, len(out) // 1024,
+    )
+    return out
 
 # CloudWatch custom metric 상수 — Vision OCR 호출량/에러 추적용.
 # 캐시 히트는 lru_cache가 함수 본문 실행을 생략하므로 자동으로 제외됨 (비용 메트릭 의도).
@@ -108,9 +165,7 @@ def google_ocr(image_path: str) -> OCRResult:
     """
     client = _get_vision_client()
 
-    with open(image_path, "rb") as f:
-        content = f.read()
-
+    content = _prepare_image_for_vision(image_path)
     image = vision.Image(content=content)
     response = client.text_detection(image=image)
 
@@ -160,9 +215,7 @@ def _google_ocr_blocks_cached(
     image_path = key[0]
     client = _get_vision_client()
 
-    with open(image_path, "rb") as f:
-        content = f.read()
-
+    content = _prepare_image_for_vision(image_path)
     image = vision.Image(content=content)
 
     try:
