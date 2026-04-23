@@ -14,34 +14,55 @@ from google.cloud import vision  # type: ignore
 
 logger = logging.getLogger(__name__)
 
-# Google Vision JSON 요청 전체 상한은 20MB (base64 오버헤드 감안 ~15MB 실제).
-# 폰 카메라로 찍은 PDF를 200dpi로 렌더하면 페이지당 20MB+ PNG가 나와 silent
-# fail (빈 결과 반환)한다. 안전 구역(10MB) 넘어가면 JPEG로 재인코딩.
+# Google Vision API 제한:
+# - JSON 요청 전체: 20MB (base64 오버헤드 감안 ~15MB 실제)
+# - 이미지 dimension: width*height ≤ 75M pixels (공식), 실측 초과 시 silent reject.
+# 폰 카메라로 찍은 PDF(3024x4032)를 200dpi로 렌더하면 8400x11200 = 94M pixels.
+# PNG 압축 효율로 파일 크기는 7-8MB로 줄지만 dimension 한도 넘어서 Vision이 거부.
+# 두 조건 모두 체크해야 함.
 _MAX_VISION_IMAGE_BYTES = 10 * 1024 * 1024
-# PIL max image dimension — 너무 크면 OCR 품질도 안 좋아지고 요청도 느려짐.
+_MAX_VISION_PIXELS = 60 * 1_000_000  # 공식 75M보다 보수적 여유 확보
+# Resize 시 목표 max dimension — 4000px면 long side 4000x3000 = 12M pixels로 안전.
 _MAX_IMAGE_DIMENSION = 4000
 
 
 def _prepare_image_for_vision(image_path: str) -> bytes:
-    """Vision API 요청 크기 한도 내로 이미지 바이트 준비.
+    """Vision API 제한 내로 이미지 바이트 준비.
 
-    원본이 10MB 이하면 그대로 반환. 초과 시 PIL로 resize+JPEG 재인코딩.
-    폰 사진 기반 PDF 업로드가 silent 0 lines로 실패하는 것을 방지.
+    두 조건 체크:
+      1) 파일 크기 ≤ 10MB (20MB JSON 한도 여유)
+      2) dimension width*height ≤ 60M pixels (공식 75M 여유)
+    둘 중 하나라도 넘으면 PIL resize + JPEG 재인코딩.
     """
     with open(image_path, "rb") as f:
         content = f.read()
 
-    if len(content) <= _MAX_VISION_IMAGE_BYTES:
-        return content
-
     try:
         from PIL import Image  # type: ignore
     except ImportError:
-        logger.warning("OCR_IMAGE_OVERSIZE | path=%s | size=%d | PIL unavailable",
-                       image_path, len(content))
+        if len(content) > _MAX_VISION_IMAGE_BYTES:
+            logger.warning(
+                "OCR_IMAGE_OVERSIZE | path=%s | size=%d | PIL unavailable",
+                image_path, len(content),
+            )
         return content
 
-    img = Image.open(io.BytesIO(content))
+    # Dimension 확인 — 파일 크기 먼저 체크하면 놓칠 수 있음
+    try:
+        img = Image.open(io.BytesIO(content))
+        w, h = img.size
+    except Exception as e:
+        logger.warning("OCR_IMAGE_OPEN_FAIL | path=%s | error=%s", image_path, e)
+        return content
+
+    pixels = w * h
+    size_ok = len(content) <= _MAX_VISION_IMAGE_BYTES
+    pixels_ok = pixels <= _MAX_VISION_PIXELS
+
+    if size_ok and pixels_ok:
+        return content
+
+    # Resize + 재인코딩 필요
     if img.mode != "RGB":
         img = img.convert("RGB")
 
@@ -58,12 +79,12 @@ def _prepare_image_for_vision(image_path: str) -> bytes:
         out = buf.getvalue()
         if len(out) <= _MAX_VISION_IMAGE_BYTES:
             logger.info(
-                "OCR_IMAGE_COMPRESSED | path=%s | orig=%dKB | new=%dKB | q=%d",
-                image_path, len(content) // 1024, len(out) // 1024, quality,
+                "OCR_IMAGE_COMPRESSED | path=%s | orig=%dKB(%dx%d) | new=%dKB(%dx%d) | q=%d",
+                image_path, len(content) // 1024, w, h,
+                len(out) // 1024, img.width, img.height, quality,
             )
             return out
 
-    # 최후: quality 55에도 10MB 못 맞추면 그대로 전송 (최소한 시도).
     logger.warning(
         "OCR_IMAGE_STILL_LARGE | path=%s | compressed=%dKB | sending anyway",
         image_path, len(out) // 1024,
