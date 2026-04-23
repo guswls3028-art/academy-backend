@@ -76,3 +76,41 @@ resource "aws_cloudwatch_event_target" "purge_soft_deleted" {
     ]
   })
 }
+
+# ──────────────────────────────────────────────
+# Orphan R2 storage cleanup — weekly
+#
+# Scheduling: 매주 일요일 04:00 KST = 토요일 19:00 UTC
+# - purge_deleted_videos 와 경합 회피 위해 일별 배치와 분리된 시간대.
+# - bucket 전체 스캔 비용 고려하여 주 1회.
+# Trigger: EventBridge → SSM RunCommand → API EC2(docker exec)
+#
+# 대상:
+#  - R2 raw/HLS/_tmp orphan (Video DB row 없음)
+#  - 48시간 이상 경과한 PENDING Video 중 R2 raw 누락 행 → FAILED + soft-delete
+# ──────────────────────────────────────────────
+
+resource "aws_cloudwatch_event_rule" "cleanup_orphan_video_storage" {
+  name                = "${var.naming_prefix}-cleanup-orphan-video-storage"
+  description         = "Weekly cleanup of R2 video orphan files and stale PENDING rows, Sundays 04:00 KST"
+  schedule_expression = "cron(0 19 ? * SAT *)" # 19:00 UTC Sat = 04:00 KST Sun
+  state               = "ENABLED"
+}
+
+resource "aws_cloudwatch_event_target" "cleanup_orphan_video_storage" {
+  rule      = aws_cloudwatch_event_rule.cleanup_orphan_video_storage.name
+  target_id = "SsmRunCommandCleanupOrphanVideoStorage"
+  arn       = "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript"
+  role_arn  = aws_iam_role.eventbridge_ssm_purge.arn
+
+  run_command_targets {
+    key    = "tag:Name"
+    values = ["academy-v1-api"]
+  }
+
+  input = jsonencode({
+    commands = [
+      "docker exec academy-api python manage.py cleanup_orphan_video_storage --apply --min-age-hours=72"
+    ]
+  })
+}
