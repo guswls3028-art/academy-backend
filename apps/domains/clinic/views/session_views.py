@@ -236,6 +236,7 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         year = request.query_params.get("year")
         month = request.query_params.get("month")
+        section_id = request.query_params.get("section")
 
         if not year or not month:
             return Response(
@@ -250,6 +251,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                 date__year=year,
                 date__month=month,
             )
+            .select_related("section")
             .annotate(
                 participant_count=Count("participants"),
                 booked_count=Count(
@@ -272,6 +274,15 @@ class SessionViewSet(viewsets.ModelViewSet):
             .order_by("date", "start_time")
         )
 
+        if section_id:
+            if section_id == "unassigned":
+                qs = qs.filter(section__isnull=True)
+            else:
+                try:
+                    qs = qs.filter(section_id=int(section_id))
+                except (TypeError, ValueError):
+                    pass
+
         data = [
             {
                 "id": s.id,
@@ -288,6 +299,8 @@ class SessionViewSet(viewsets.ModelViewSet):
                 "no_show_count": s.no_show_count,
                 "max_participants": getattr(s, "max_participants", None),
                 "section": s.section_id,
+                "section_label": s.section.label if s.section_id else None,
+                "section_type": s.section.section_type if s.section_id else None,
             }
             for s in qs
         ]
