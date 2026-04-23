@@ -23,6 +23,7 @@ from apps.domains.results.utils.result_queries import latest_results_per_enrollm
 from apps.domains.results.views.session_scores_view import _safe_student_name, _get_enrollment_display_fields
 from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 from apps.domains.results.utils.ranking import compute_exam_rankings
+from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 
 
 class AdminExamResultsView(ListAPIView):
@@ -161,7 +162,7 @@ class AdminExamResultsView(ListAPIView):
         rank_map = compute_exam_rankings(exam_id=exam_id)
 
         # -------------------------------------------------
-        # rows 구성 (기존 로직 유지)
+        # rows 구성 (기존 로직 유지 + 성취 SSOT 필드 주입)
         # -------------------------------------------------
         rows = []
         for r in results:
@@ -174,11 +175,18 @@ class AdminExamResultsView(ListAPIView):
                 submission_status_map.get(submission_id) if submission_id else None
             )
 
-            # pass_score=0 → 판정 기준 없음(None). session_scores_view 동일 패턴.
-            if pass_score > 0:
-                passed = bool(float(r.total_score or 0.0) >= float(pass_score))
-            else:
-                passed = None
+            # ✅ 성취 SSOT 계산: student_result_service와 동일 유틸 사용으로
+            #    관리자 목록과 학생 상세 뷰의 드리프트를 구조적으로 차단.
+            achievement_data = compute_exam_achievement(
+                enrollment_id=enrollment_id,
+                exam_id=exam_id,
+                session=session,
+                total_score=float(r.total_score or 0.0),
+                pass_score=pass_score,
+                attempt_id=getattr(r, "attempt_id", None),
+            )
+            # passed = 1차 합격(석차 판정용). 기존 응답 호환.
+            passed = achievement_data["is_pass"]
 
             clinic_required = bool(
                 session
@@ -205,6 +213,14 @@ class AdminExamResultsView(ListAPIView):
 
                 "passed": passed,
                 "clinic_required": clinic_required,
+
+                # 성취 SSOT 필드
+                "remediated": achievement_data["remediated"],
+                "final_pass": achievement_data["final_pass"],
+                "achievement": achievement_data["achievement"],
+                "clinic_retake": achievement_data["clinic_retake"],
+                "is_provisional": achievement_data["is_provisional"],
+                "meta_status": achievement_data["meta_status"],
 
                 "submitted_at": r.submitted_at,
 

@@ -30,11 +30,21 @@ class ProgressPipelineService:
     # Public entry
     # ---------------------------------------------------------
     @transaction.atomic
-    def apply(self, *, exam_id: Optional[int] = None, submission_id: Optional[int] = None) -> None:
+    def apply(
+        self,
+        *,
+        exam_id: Optional[int] = None,
+        submission_id: Optional[int] = None,
+        enrollment_id: Optional[int] = None,
+        session_id: Optional[int] = None,
+    ) -> None:
         """
         Entry point.
-        - If submission_id is provided, it will try to compute progress based on that submission's target.
-        - If exam_id is provided, it will compute progress for sessions that include that exam.
+        - submission_id: compute progress based on that submission's target.
+        - exam_id      : compute progress for sessions that include that exam (all takers).
+        - enrollment_id + session_id : recompute a single (student × session) point.
+          homework ClinicLink 해소나 admin manual resolve 처럼 exam_id 가 없는
+          진입점에서 특정 학생 한 명의 세션 집계만 갱신할 때 사용.
         """
         if submission_id is not None:
             self._apply_by_submission(submission_id=int(submission_id))
@@ -44,8 +54,40 @@ class ProgressPipelineService:
             self._apply_by_exam(exam_id=int(exam_id))
             return
 
+        if enrollment_id is not None and session_id is not None:
+            self._apply_by_enrollment_session(
+                enrollment_id=int(enrollment_id),
+                session_id=int(session_id),
+            )
+            return
+
         logger.warning("ProgressPipelineService.apply called with no args")
         return
+
+    # ---------------------------------------------------------
+    # Internal: enrollment × session point recompute
+    # ---------------------------------------------------------
+    def _apply_by_enrollment_session(self, *, enrollment_id: int, session_id: int) -> None:
+        from apps.domains.lectures.models import Session  # type: ignore
+
+        session = (
+            Session.objects
+            .filter(id=int(session_id))
+            .select_related("lecture")
+            .first()
+        )
+        if not session:
+            logger.warning(
+                "progress pipeline: session not found (enroll=%s, session=%s)",
+                enrollment_id, session_id,
+            )
+            return
+
+        self._recompute_for_session(
+            enrollment_id=int(enrollment_id),
+            session=session,
+            exam_id=None,
+        )
 
     # ---------------------------------------------------------
     # Internal: submission-based

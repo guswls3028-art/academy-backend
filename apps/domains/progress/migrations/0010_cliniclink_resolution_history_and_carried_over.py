@@ -3,6 +3,32 @@ ClinicLink resolution lifecycle 개선:
 1) resolution_history JSONField 추가 (append-only 이력 보존)
 2) ResolutionType choices에 CARRIED_OVER 추가 ("다음 차수로 이월")
 3) 기존 WAIVED + resolution_evidence.carried_over=True 레코드를 CARRIED_OVER로 backfill
+
+⚠️ 운영 노트 (배포 후 추가됨 — 2026-04-23):
+
+[적용/성능]
+- AddField(JSONField, default=list)는 PostgreSQL 12+ 에서 metadata-only로 처리돼 table
+  rewrite 없이 즉시 완료. 대형 테넌트에서도 lock 시간 짧음.
+- AlterField(choices=...)는 Python/ORM 레벨 전용으로 SQL 변경 없음.
+- RunPython backfill_carried_over 의 UPDATE는 (resolution_type='WAIVED') 조건 매칭
+  row 전체에 row-level lock. resolution_type 에 인덱스가 없으면 대형 테넌트에서
+  수십초 대기 가능 — 배포 시 저트래픽 시간대 권장.
+
+[롤백 주의]
+- reverse_backfill_carried_over 는 **CARRIED_OVER → WAIVED 전량 되돌리기** 이므로,
+  이 마이그레이션 적용 이후 ClinicResolutionService.carry_over() 로 정상 생성된
+  "진짜 CARRIED_OVER" 레코드도 WAIVED 로 잘못 되돌아간다. evidence.carried_over
+  마커가 양쪽 모두에 있어서 forward backfill된 것과 이후 정상 생성된 것을 구분할
+  방법이 없다.
+- 따라서 0009 로 되돌릴 필요가 있다면, 먼저 CARRIED_OVER 분포를 사전 조사하고
+  필요 시 임시 마커(evidence["_pre_0010"]=True)를 추가해 보존한 뒤 수동 SQL 로
+  역마이그레이션을 수행해야 한다. `python manage.py detect_clinic_drift` 로 현재
+  분포 확인 가능.
+
+[감사]
+- RunPython update 는 resolution_history 에 append 하지 않으므로 언제 backfill
+  되었는지 DB 에 기록되지 않는다. 운영 조사 시 본 마이그레이션 적용일을
+  CI 이력 / settings 배포 로그에서 찾아야 한다.
 """
 from django.db import migrations, models
 

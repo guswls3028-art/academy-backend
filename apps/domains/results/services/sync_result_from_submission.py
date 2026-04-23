@@ -101,6 +101,40 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
             prev_rep.meta = m
             prev_rep.save(update_fields=["meta", "updated_at"])
 
+    # ✅ Legacy backfill: 기존 attempt_index=1에 initial_snapshot이 없으면
+    # 재응시로 Result가 덮어써지기 전의 현재 Result 값으로 1회 backfill.
+    # 관리자 수동 점수 입력 경로는 initial_snapshot 저장을 추가했지만,
+    # 이 패치 이전 생성된 attempt_index=1은 snapshot이 없어 ranking이
+    # Result.total_score(=재응시로 덮여쓸 값)로 fallback되어 "석차=1차" 정책이 깨진다.
+    # sync 호출 직전 Result가 1차 값이라는 보장은 없으나, 아직 덮여쓰이기 전
+    # 마지막 기회이므로 "없는 것보다는 낫다" 원칙으로 현재 Result 값을 잠근다.
+    if existing_result_prev:
+        from apps.domains.results.models import ExamAttempt as _EA
+        prev_idx1 = (
+            _EA.objects.select_for_update()
+            .filter(
+                exam_id=int(exam.id),
+                enrollment_id=int(enrollment_id),
+                attempt_index=1,
+            )
+            .first()
+        )
+        if prev_idx1:
+            m1 = dict(prev_idx1.meta or {}) if isinstance(prev_idx1.meta, dict) else {}
+            if "initial_snapshot" not in m1:
+                m1["initial_snapshot"] = {
+                    "total_score": existing_result_prev.total_score,
+                    "max_score": existing_result_prev.max_score,
+                    "submitted_at": (
+                        existing_result_prev.submitted_at.isoformat()
+                        if existing_result_prev.submitted_at else None
+                    ),
+                    "source": "legacy_backfill",
+                    "backfilled_at": timezone.now().isoformat(),
+                }
+                prev_idx1.meta = m1
+                prev_idx1.save(update_fields=["meta", "updated_at"])
+
     result, _ = Result.objects.get_or_create(
         target_type="exam",
         target_id=int(exam.id),

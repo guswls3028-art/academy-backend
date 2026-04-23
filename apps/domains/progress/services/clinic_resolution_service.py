@@ -42,6 +42,82 @@ def _append_history(link, *, action: str, at=None) -> None:
     link.resolution_history = history
 
 
+def _dispatch_progress_for_link(link: ClinicLink) -> None:
+    """
+    해당 ClinicLink 기반으로 SessionProgress 재계산을 on_commit으로 예약.
+
+    필요 이유:
+      admin의 manual resolve / waive / unresolve / carry_over / 재시험 점수 수정이
+      SessionProgress.exam_passed·completed·clinic_required 등 집계 상태를 바꾸지만,
+      파이프라인을 명시적으로 재실행하지 않으면 학생/교사 화면의 파생 지표가
+      stale 상태로 남아 드리프트가 재발한다.
+
+    Dispatch 전략 (우선순위):
+      1) source_type="exam" + source_id 유효 → dispatch_progress_pipeline(exam_id=...)
+         (해당 시험 응시자 전체 재계산 — risk 평가까지 정확)
+      2) source_type=NULL legacy + meta.exam_id 유효 → exam_id path 동일
+      3) 그 외 (homework, exam_id 미상) + enrollment_id + session_id 존재
+         → dispatch_progress_pipeline(enrollment_id=..., session_id=...)
+         (특정 학생 × 세션 한 점 재계산)
+      4) 위 조건 모두 실패 → skip + debug log
+    """
+    exam_id: int | None = None
+    if link.source_type == "exam" and link.source_id:
+        try:
+            exam_id = int(link.source_id)
+        except (TypeError, ValueError):
+            exam_id = None
+    elif link.source_type is None and isinstance(link.meta, dict):
+        raw = link.meta.get("exam_id")
+        if raw is not None:
+            try:
+                exam_id = int(raw)
+            except (TypeError, ValueError):
+                exam_id = None
+
+    # Path 1/2: exam_id 경로
+    if exam_id is not None:
+        _eid = exam_id
+
+        def _dispatch_by_exam() -> None:
+            try:
+                from apps.domains.progress.dispatcher import dispatch_progress_pipeline
+                dispatch_progress_pipeline(exam_id=_eid)
+            except Exception:
+                logger.exception(
+                    "clinic_resolution: pipeline dispatch failed (link=%s, exam=%s)",
+                    link.id, _eid,
+                )
+
+        transaction.on_commit(_dispatch_by_exam)
+        return
+
+    # Path 3: enrollment + session 점 재계산
+    if link.enrollment_id and link.session_id:
+        _enr = int(link.enrollment_id)
+        _sid = int(link.session_id)
+
+        def _dispatch_by_enrollment_session() -> None:
+            try:
+                from apps.domains.progress.dispatcher import dispatch_progress_pipeline
+                dispatch_progress_pipeline(enrollment_id=_enr, session_id=_sid)
+            except Exception:
+                logger.exception(
+                    "clinic_resolution: pipeline dispatch failed "
+                    "(link=%s, enrollment=%s, session=%s)",
+                    link.id, _enr, _sid,
+                )
+
+        transaction.on_commit(_dispatch_by_enrollment_session)
+        return
+
+    logger.debug(
+        "clinic_resolution: pipeline dispatch skipped — insufficient keys "
+        "(link=%s, source_type=%s, enrollment=%s, session=%s)",
+        link.id, link.source_type, link.enrollment_id, link.session_id,
+    )
+
+
 def _send_resolution_notification(enrollment_id: int, session_id: int, resolution_type: str):
     """클리닉 해소 완료 알림 (best-effort, on_commit에서 호출)."""
     try:
@@ -331,6 +407,8 @@ class ClinicResolutionService:
         logger.info("clinic_resolution: MANUAL_OVERRIDE (link=%s, user=%s)", clinic_link_id, user_id)
         _eid, _sid = link.enrollment_id, link.session_id
         transaction.on_commit(lambda: _send_resolution_notification(_eid, _sid, "MANUAL_OVERRIDE"))
+        # ✅ SessionProgress 재계산: manual resolve는 외부 진입점 → pipeline 재실행 필요.
+        _dispatch_progress_for_link(link)
         return link
 
     @staticmethod
@@ -368,6 +446,8 @@ class ClinicResolutionService:
         logger.info("clinic_resolution: WAIVED (link=%s, user=%s)", clinic_link_id, user_id)
         _eid, _sid = link.enrollment_id, link.session_id
         transaction.on_commit(lambda: _send_resolution_notification(_eid, _sid, "WAIVED"))
+        # ✅ SessionProgress 재계산: WAIVED는 clinic_required 지표를 바꾸므로 pipeline 재실행.
+        _dispatch_progress_for_link(link)
         return link
 
     @staticmethod
@@ -398,6 +478,9 @@ class ClinicResolutionService:
         ])
 
         logger.info("clinic_resolution: UNRESOLVED (link=%s)", clinic_link_id)
+        # ✅ SessionProgress 재계산: 해소 취소 시 exam_passed/completed 상태가 다시
+        # 미완료로 복원돼야 한다. 파이프라인 재실행 없이는 드리프트 재발.
+        _dispatch_progress_for_link(link)
         return link
 
     @staticmethod
@@ -449,4 +532,7 @@ class ClinicResolutionService:
             "clinic_resolution: CARRIED_OVER (old=%s→new=%s, cycle=%d→%d)",
             clinic_link_id, new_link.id, link.cycle_no, new_link.cycle_no,
         )
+        # ✅ SessionProgress 재계산: 이월로 현재 cycle은 닫히고 새 cycle이 열림.
+        # clinic_required 미해소 집계가 바뀌므로 pipeline 재실행.
+        _dispatch_progress_for_link(new_link)
         return new_link

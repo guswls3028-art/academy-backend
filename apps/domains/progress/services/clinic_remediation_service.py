@@ -23,7 +23,10 @@ from django.db import transaction
 from django.db.models import Max
 
 from apps.domains.progress.models import ClinicLink
-from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+from apps.domains.progress.services.clinic_resolution_service import (
+    ClinicResolutionService,
+    _dispatch_progress_for_link,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +154,10 @@ class ClinicRemediationService:
             clinic_link_id, exam.id, link.enrollment_id,
             next_attempt, score, is_passed,
         )
+        # ✅ SessionProgress 재계산: 재응시 결과가 exam_passed/clinic_required 지표를
+        # 바꾸므로 파이프라인 재실행. 합격으로 resolve되면 resolve_by_exam_pass 안에서
+        # notification만 on_commit되어 있고 pipeline은 안 돈다. 외부 진입점에서 명시 dispatch.
+        _dispatch_progress_for_link(link)
 
         return result
 
@@ -272,6 +279,10 @@ class ClinicRemediationService:
             clinic_link_id, homework.id, link.enrollment_id,
             next_attempt, score, passed,
         )
+        # ✅ SessionProgress 재계산: homework link는 현재 dispatcher가 exam_id만 받는
+        # 한계로 no-op이 될 수 있으나(헬퍼 내부에서 안전 skip), 헬퍼가 향후 확장되면
+        # 자동으로 동작하도록 진입점에서 일관되게 호출.
+        _dispatch_progress_for_link(link)
 
         return result
 
@@ -351,6 +362,9 @@ class ClinicRemediationService:
             "clinic_remediation: exam retake UPDATE (link=%s, exam=%s, attempt=%d, score=%s, passed=%s)",
             clinic_link_id, exam.id, attempt_index, score, is_passed,
         )
+        # ✅ SessionProgress 재계산: 합격↔불합격 전환 모두 집계를 바꾸므로 pipeline 재실행.
+        # unresolve 경로에서도 재계산이 걸리지만 합격→합격(점수만 변경)도 감사 정합성을 위해 실행.
+        _dispatch_progress_for_link(link)
 
         return result
 
@@ -436,5 +450,7 @@ class ClinicRemediationService:
             "clinic_remediation: homework retake UPDATE (link=%s, homework=%s, attempt=%d, score=%s, passed=%s)",
             clinic_link_id, homework.id, attempt_index, score, passed,
         )
+        # ✅ SessionProgress 재계산: 점수 변경이 clinic_required/집계를 바꾼다.
+        _dispatch_progress_for_link(link)
 
         return result

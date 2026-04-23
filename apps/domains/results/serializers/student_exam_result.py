@@ -62,3 +62,5 @@ class StudentExamResultSerializer(serializers.ModelSerializer):
             "max_attempts",
             "can_retake",
         ]
+        # 성취/드리프트 해소 관련 필드는 View에서 주입(data["..."] = ...).
+        # Meta.fields에 선언하지 않아 ModelSerializer의 model 필드 제약과 분리.

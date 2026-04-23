@@ -18,6 +18,14 @@ class AdminExamResultRowSerializer(serializers.Serializer):
     passed = serializers.BooleanField(allow_null=True)
     clinic_required = serializers.BooleanField()
 
+    # ✅ 성취 SSOT (exam_achievement.py 기준). student_result_service와 동일 계약.
+    remediated = serializers.BooleanField(required=False, default=False)
+    final_pass = serializers.BooleanField(allow_null=True, required=False, default=None)
+    achievement = serializers.CharField(allow_null=True, required=False, default=None)
+    clinic_retake = serializers.JSONField(allow_null=True, required=False, default=None)
+    is_provisional = serializers.BooleanField(required=False, default=False)
+    meta_status = serializers.CharField(allow_null=True, required=False, default=None)
+
     submitted_at = serializers.DateTimeField(allow_null=True)
 
     # ✅ 클리닉 대상 하이라이트

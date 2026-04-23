@@ -99,6 +99,18 @@ class AdminExamTotalScoreView(APIView):
             last = qs.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
             next_index = int(last) + 1
             qs.filter(is_representative=True).update(is_representative=False)
+            # attempt_index=1이면 1차 점수 불변 스냅샷 저장 (석차 정책 SSOT).
+            # 이후 ONLINE 재응시가 Result.total_score를 덮어써도 석차는 이 값 고정.
+            _initial_meta = None
+            if next_index == 1:
+                _initial_meta = {
+                    "initial_snapshot": {
+                        "total_score": float(new_score),
+                        "max_score": float(max_score),
+                        "submitted_at": timezone.now().isoformat(),
+                        "source": "admin_manual_total",
+                    }
+                }
             attempt = ExamAttempt.objects.create(
                 exam_id=exam_id,
                 enrollment_id=enrollment_id,
@@ -107,6 +119,7 @@ class AdminExamTotalScoreView(APIView):
                 is_retake=(last > 0),
                 is_representative=True,
                 status="done",
+                meta=_initial_meta,
             )
             if not result:
                 result = Result.objects.create(

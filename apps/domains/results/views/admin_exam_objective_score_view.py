@@ -80,6 +80,18 @@ class AdminExamObjectiveScoreView(APIView):
             last = qs.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
             next_index = int(last) + 1
             qs.filter(is_representative=True).update(is_representative=False)
+            # attempt_index=1: 1차 점수 스냅샷. Objective는 이 시점 주관식=0이므로
+            # total_score = new_objective (이후 subjective 입력 시 Result만 갱신되고 snapshot은 불변).
+            _initial_meta = None
+            if next_index == 1:
+                _initial_meta = {
+                    "initial_snapshot": {
+                        "total_score": float(new_objective),
+                        "max_score": float(max_score),
+                        "submitted_at": timezone.now().isoformat(),
+                        "source": "admin_manual_objective",
+                    }
+                }
             attempt = ExamAttempt.objects.create(
                 exam_id=exam_id,
                 enrollment_id=enrollment_id,
@@ -88,6 +100,7 @@ class AdminExamObjectiveScoreView(APIView):
                 is_retake=(last > 0),
                 is_representative=True,
                 status="done",
+                meta=_initial_meta,
             )
             if not result:
                 result = Result.objects.create(

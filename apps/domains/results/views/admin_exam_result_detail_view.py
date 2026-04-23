@@ -43,6 +43,7 @@ from apps.domains.exams.models import Exam
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
+from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 
 # ✅ OMR 스캔 이미지 presigned URL
 import logging
@@ -122,13 +123,9 @@ class AdminExamResultDetailView(APIView):
             )
 
         # -------------------------------------------------
-        # 2️⃣ passed (시험 단위 기준)
+        # 2️⃣ passed — compute_exam_achievement(아래)에서 단일 유틸로 계산.
+        #    과거 여기서 직접 pass_score 비교하던 로직은 제거(드리프트 원인).
         # -------------------------------------------------
-        # pass_score=0 → 판정 기준 없음(None). session_scores_view 동일 패턴.
-        if pass_score > 0:
-            passed = bool(float(result.total_score or 0.0) >= pass_score)
-        else:
-            passed = None
 
         # -------------------------------------------------
         # 3️⃣ 재시험 정책 (⚠️ 기존 기능 유지)
@@ -268,8 +265,18 @@ class AdminExamResultDetailView(APIView):
                         existing["omr"] = merged_omr
                         item["meta"] = existing
 
+        # ✅ 성취 SSOT: student/admin 뷰 공통 유틸로 드리프트 차단.
+        achievement_data = compute_exam_achievement(
+            enrollment_id=enrollment_id,
+            exam_id=exam_id,
+            session=session,
+            total_score=float(result.total_score or 0.0),
+            pass_score=pass_score,
+            attempt_id=result.attempt_id,
+        )
+
         data.update({
-            "passed": passed,
+            "passed": achievement_data["is_pass"],
             "allow_retake": allow_retake,
             "max_attempts": max_attempts,
             "can_retake": can_retake,
@@ -281,6 +288,13 @@ class AdminExamResultDetailView(APIView):
             "submission_status": submission_status,
             "manual_review": manual_review_meta,
             "identifier_status": identifier_status,
+            # 성취 SSOT 필드
+            "remediated": achievement_data["remediated"],
+            "final_pass": achievement_data["final_pass"],
+            "achievement": achievement_data["achievement"],
+            "clinic_retake": achievement_data["clinic_retake"],
+            "is_provisional": achievement_data["is_provisional"],
+            "meta_status": achievement_data["meta_status"],
         })
 
         return Response(data)

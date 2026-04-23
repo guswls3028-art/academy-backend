@@ -179,7 +179,10 @@ class ClinicTriggerService:
 
         with transaction.atomic():
             # 미해소 link가 있으면 meta만 갱신
-            existing = ClinicLink.objects.filter(
+            # ✅ select_for_update: 동시 파이프라인 실행 시 meta merge race 방어.
+            #    lock 없이 SELECT 시 두 thread가 같은 existing을 읽어 각자 merge →
+            #    last-write-wins로 한쪽 kinds/reasons가 소실됨.
+            existing = ClinicLink.objects.select_for_update().filter(
                 enrollment_id=int(enrollment_id),
                 session=session,
                 source_type="exam",

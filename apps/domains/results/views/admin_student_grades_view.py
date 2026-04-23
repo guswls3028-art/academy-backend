@@ -11,9 +11,10 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.enrollment.models import Enrollment
-from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.models import Result
 from apps.domains.exams.models import Exam
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
+from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.progress.models import ClinicLink
 from apps.domains.students.models import Student
@@ -59,34 +60,17 @@ class AdminStudentGradesView(APIView):
         )
         exam_ids = list({r["target_id"] for r in results})
 
-        # ✅ 미응시 감지: ExamAttempt.meta.status
-        _attempt_ids = {int(r["attempt_id"]) for r in results if r.get("attempt_id")}
-        _attempt_meta_map = {}
-        if _attempt_ids:
-            for a in ExamAttempt.objects.filter(id__in=_attempt_ids).only("id", "meta"):
-                _attempt_meta_map[int(a.id)] = (a.meta or {}).get("status")
         exams_map = {}
         if exam_ids:
             for e in Exam.objects.filter(id__in=exam_ids).only("id", "title", "pass_score"):
                 exams_map[e.id] = {"title": e.title, "pass_score": float(e.pass_score or 0)}
 
-        # 클리닉 해소 여부
-        resolved_exam_links = {}
-        if exam_ids and enrollment_ids:
-            for cl in ClinicLink.objects.filter(
-                enrollment_id__in=enrollment_ids,
-                source_type="exam",
-                source_id__in=exam_ids,
-                resolved_at__isnull=False,
-                resolution_type__in=["EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE"],
-            ).values("enrollment_id", "source_id", "resolution_type"):
-                resolved_exam_links[(cl["enrollment_id"], cl["source_id"])] = cl["resolution_type"]
-
-        # 재시도 횟수
+        # 재시도 횟수 (bulk)
         retake_counts = {}
         if exam_ids and enrollment_ids:
             from django.db.models import Max
-            for att in ExamAttempt.objects.filter(
+            from apps.domains.results.models import ExamAttempt as _EA
+            for att in _EA.objects.filter(
                 exam_id__in=exam_ids,
                 enrollment_id__in=enrollment_ids,
             ).values("exam_id", "enrollment_id").annotate(max_attempt=Max("attempt_index")):
@@ -103,7 +87,8 @@ class AdminStudentGradesView(APIView):
                     "lecture_chip_label": getattr(en.lecture, "chip_label", None),
                 }
 
-        exam_list = []
+        # ── Stage 1: exam 단위 dedup + session lookup + 시스템 강의 스킵
+        exam_rows = []  # [(r, eid, info, session, lecture_meta)]
         seen_exam_ids = set()
         for r in results:
             eid = r["target_id"]
@@ -112,24 +97,20 @@ class AdminStudentGradesView(APIView):
             seen_exam_ids.add(eid)
             info = exams_map.get(eid) or {"title": f"시험 #{eid}", "pass_score": 0}
             session = get_primary_session_for_exam(eid)
-            session_id = None
-            session_title = None
-            lecture_id = None
-            lecture_title = None
-            lecture_color = None
-            lecture_chip_label = None
-            if session:
-                session_id = session.id
-                session_title = getattr(session, "title", None) or f"{getattr(session, 'order', '')}차시"
-                if hasattr(session, "lecture") and session.lecture:
-                    lecture_id = session.lecture_id
-                    lecture_title = getattr(session.lecture, "title", None)
-                    lecture_color = getattr(session.lecture, "color", None)
-                    lecture_chip_label = getattr(session.lecture, "chip_label", None)
 
             # 시스템 강의(공개 영상 컨테이너)는 성적에서 제외
-            if session and hasattr(session, "lecture") and session.lecture and getattr(session.lecture, "is_system", False):
+            if session and hasattr(session, "lecture") and session.lecture \
+               and getattr(session.lecture, "is_system", False):
                 continue
+
+            session_id = session.id if session else None
+            session_title = (
+                getattr(session, "title", None) or f"{getattr(session, 'order', '')}차시"
+            ) if session else None
+            lecture_id = getattr(session, "lecture_id", None) if session else None
+            lecture_title = getattr(getattr(session, "lecture", None), "title", None) if session else None
+            lecture_color = getattr(getattr(session, "lecture", None), "color", None) if session else None
+            lecture_chip_label = getattr(getattr(session, "lecture", None), "chip_label", None) if session else None
 
             # enrollment → lecture fallback
             if not lecture_title:
@@ -140,30 +121,43 @@ class AdminStudentGradesView(APIView):
                     lecture_color = lecture_color or enroll_info["lecture_color"]
                     lecture_chip_label = lecture_chip_label or enroll_info["lecture_chip_label"]
 
-            _meta_status = _attempt_meta_map.get(int(r["attempt_id"])) if r.get("attempt_id") else None
-            is_not_submitted = (_meta_status == "NOT_SUBMITTED")
+            exam_rows.append({
+                "r": r, "eid": eid, "info": info, "session": session,
+                "session_id": session_id, "session_title": session_title,
+                "lecture_id": lecture_id, "lecture_title": lecture_title,
+                "lecture_color": lecture_color, "lecture_chip_label": lecture_chip_label,
+            })
 
-            raw_pass_score = info["pass_score"] or 0
-            if is_not_submitted:
-                is_pass_1st = None
-            elif raw_pass_score > 0:
-                is_pass_1st = float(r["total_score"]) >= raw_pass_score
-            else:
-                is_pass_1st = None
+        # ── Stage 2: SSOT 유틸로 성취 일괄 계산 (ClinicLink/ExamAttempt/ExamResult 각 1쿼리)
+        bulk_items = [
+            {
+                "enrollment_id": row["r"]["enrollment_id"],
+                "exam_id": row["eid"],
+                "total_score": row["r"]["total_score"],
+                "pass_score": row["info"]["pass_score"],
+                "attempt_id": row["r"].get("attempt_id"),
+                "session": row["session"],
+            }
+            for row in exam_rows
+        ]
+        # admin_student_grades_view 는 exam 별로 대표 session 을 이미 선택했으므로
+        # (동일 exam 이 여러 session 에 걸려도 primary 만 사용), session-agnostic 매칭.
+        # 정책 동등성(HOMEWORK_PASS 케이스)은 test_achievement_contract.py 가 보장.
+        bulk_ach = compute_exam_achievement_bulk(
+            items=bulk_items, use_session_filter=False,
+        )
+
+        # ── Stage 3: 응답 row 조립
+        exam_list = []
+        for row in exam_rows:
+            r = row["r"]
+            eid = row["eid"]
+            info = row["info"]
             enroll_id = r["enrollment_id"]
-            resolution = resolved_exam_links.get((enroll_id, eid))
+            ach_data = bulk_ach.get((int(enroll_id), int(eid)), {})
+            meta_status = ach_data.get("meta_status")
+            is_not_submitted = meta_status == "NOT_SUBMITTED"
             max_attempt = retake_counts.get((enroll_id, eid), 1)
-
-            if is_not_submitted:
-                achievement = "NOT_SUBMITTED"
-            elif is_pass_1st is None:
-                achievement = None
-            elif is_pass_1st:
-                achievement = "PASS"
-            elif resolution in ("EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE"):
-                achievement = "REMEDIATED"
-            else:
-                achievement = "FAIL"
 
             exam_list.append({
                 "exam_id": eid,
@@ -171,16 +165,16 @@ class AdminStudentGradesView(APIView):
                 "title": info["title"],
                 "total_score": None if is_not_submitted else r["total_score"],
                 "max_score": r["max_score"],
-                "is_pass": is_pass_1st,
-                "achievement": achievement,
-                "meta_status": _meta_status,
+                "is_pass": ach_data.get("is_pass"),
+                "achievement": ach_data.get("achievement"),
+                "meta_status": meta_status,
                 "retake_count": max_attempt,
-                "session_id": session_id,
-                "session_title": session_title,
-                "lecture_id": lecture_id,
-                "lecture_title": lecture_title,
-                "lecture_color": lecture_color,
-                "lecture_chip_label": lecture_chip_label,
+                "session_id": row["session_id"],
+                "session_title": row["session_title"],
+                "lecture_id": row["lecture_id"],
+                "lecture_title": row["lecture_title"],
+                "lecture_color": row["lecture_color"],
+                "lecture_chip_label": row["lecture_chip_label"],
                 "submitted_at": r["submitted_at"].isoformat() if r.get("submitted_at") else None,
             })
 
