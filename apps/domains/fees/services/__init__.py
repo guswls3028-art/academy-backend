@@ -432,7 +432,7 @@ def get_dashboard_stats(tenant, year: int, month: int) -> dict:
     paid_count = invoices.filter(status="PAID").count()
 
     # 비목 유형별 통계
-    from .models import InvoiceItem
+    from ..models import InvoiceItem
     fee_type_stats = list(
         InvoiceItem.objects
         .filter(
