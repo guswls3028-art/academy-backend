@@ -186,6 +186,17 @@ jobs:
 
   # ============================================================
   # Phase 2: Build and push images (latest + sha tag)
+  # ----------------------------------------------------------------
+  # Note: every build-push-action step sets `provenance: false` and
+  # `sbom: false`. Default v6 behavior emits SLSA provenance + SBOM
+  # attestations as a separate `unknown/unknown` platform manifest
+  # under the OCI index, plus a `*.dockerbuild` artifact per build.
+  # In our environment (private ECR, OIDC-only push, single ARM64 arch)
+  # these attestations are never consumed downstream, and they
+  # (a) accumulated 22K Actions artifacts in this repo, and
+  # (b) worsened the OCI-index lifecycle cleanup problem.
+  # Revisit if we start publishing images externally or need
+  # signed provenance for SOC/supply-chain audits.
   # ============================================================
   build-and-push:
     runs-on: ubuntu-latest

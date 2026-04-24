@@ -1,0 +1,55 @@
+# ==============================================================================
+# Weekly ECR cleanup — defends against missed deploys.
+# The main v1-build-and-push-latest.yml runs cleanup only on deploy success.
+# If deploys are cancelled/failed for a week, untagged OCI children accumulate.
+# This cron unconditionally runs manifest-aware cleanup every Sunday 03:00 KST.
+# ==============================================================================
+
+name: Weekly ECR Cleanup
+
+on:
+  schedule:
+    # Every Sunday 18:00 UTC = Monday 03:00 KST
+    - cron: '0 18 * * 0'
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-northeast-2
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout ecr-cleanup.py
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/v1/ecr-cleanup.py
+          sparse-checkout-cone-mode: false
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Dry-run (log what would be deleted)
+        run: python3 scripts/v1/ecr-cleanup.py --dry-run --keep 10
+
+      - name: Execute cleanup (keep latest + 10 newest sha-)
+        run: python3 scripts/v1/ecr-cleanup.py --execute --keep 10
+
+      - name: Verify
+        run: python3 scripts/v1/ecr-cleanup.py --verify
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Weekly ECR Cleanup" >> $GITHUB_STEP_SUMMARY
+          echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Keep policy:** latest + 10 newest sha- per repo" >> $GITHUB_STEP_SUMMARY
+          echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
