@@ -34,6 +34,10 @@ RESIDUE_PATTERNS = [
     re.compile(r"^E2E-\d{6,}"),
     re.compile(r"AUDIT-CRUD-\d{6,}"),
     re.compile(r"^EDITED-\d{5,}$"),
+    # 괄호 없는 타임스탬프 접두 패턴 — 자연어에 나타날 수 없음
+    re.compile(r"^E2E학생\d{6,}"),
+    re.compile(r"^E2E\d{6,}"),
+    re.compile(r"^CHAOS-\d{6,}"),
 ]
 
 
