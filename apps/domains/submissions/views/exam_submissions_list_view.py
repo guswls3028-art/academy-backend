@@ -1,7 +1,7 @@
 # PATH: apps/domains/submissions/views/exam_submissions_list_view.py
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -11,20 +11,7 @@ from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.submissions.models import Submission
 
 
-def _resolve_student_name(submission) -> str:
-    """
-    Submission → enrollment → student name 추출 (select_related 전제).
-    """
-    enrollment = getattr(submission, "_enrollment_cache", None)
-    if enrollment is None:
-        enrollment_id = getattr(submission, "enrollment_id", None)
-        if not enrollment_id:
-            return ""
-        try:
-            from apps.domains.enrollment.models import Enrollment
-            enrollment = Enrollment.objects.select_related("student").filter(id=int(enrollment_id)).first()
-        except Exception:
-            return ""
+def _extract_name_from_enrollment(enrollment) -> str:
     if not enrollment:
         return ""
     student = getattr(enrollment, "student", None)
@@ -37,17 +24,6 @@ def _resolve_student_name(submission) -> str:
         if isinstance(v, str) and v.strip():
             return v.strip()
     return ""
-
-
-def _resolve_score_for_submission(submission_id: int) -> Optional[float]:
-    try:
-        from apps.domains.results.models import Result
-        r = Result.objects.filter(submission_id=int(submission_id)).order_by("-id").first()
-        if r and getattr(r, "score", None) is not None:
-            return float(r.score)
-    except Exception:
-        pass
-    return None
 
 
 class ExamSubmissionsListView(APIView):
@@ -75,7 +51,7 @@ class ExamSubmissionsListView(APIView):
             ).exists():
                 return Response([], status=200)
 
-        qs = (
+        qs = list(
             Submission.objects
             .filter(
                 tenant=tenant,
@@ -84,6 +60,28 @@ class ExamSubmissionsListView(APIView):
             )
             .order_by("-id")[:200]
         )
+
+        # N+1 방지: enrollment/result 를 bulk 조회해 dict 로 lookup.
+        # 과거에는 행마다 Enrollment.filter / Result.filter 로 2회씩 쿼리가 발생해
+        # 200행 기준 최대 400 쿼리. 현재는 최대 2쿼리로 고정.
+        enrollment_map: Dict[int, Any] = {}
+        enrollment_ids = {int(s.enrollment_id) for s in qs if getattr(s, "enrollment_id", None)}
+        if enrollment_ids:
+            from apps.domains.enrollment.models import Enrollment
+            for e in Enrollment.objects.select_related("student").filter(id__in=enrollment_ids):
+                enrollment_map[int(e.id)] = e
+
+        score_map: Dict[int, float] = {}
+        submission_ids = [int(s.id) for s in qs]
+        if submission_ids:
+            from apps.domains.results.models import Result
+            # submission 당 최신 Result 1건만 필요 — id desc 순회하며 첫 등장만 채택.
+            for r in Result.objects.filter(submission_id__in=submission_ids).order_by("-id").only(
+                "id", "submission_id", "score"
+            ):
+                sid = int(r.submission_id)
+                if sid not in score_map and getattr(r, "score", None) is not None:
+                    score_map[sid] = float(r.score)
 
         items: list[Dict[str, Any]] = []
         for s in qs:
@@ -102,14 +100,16 @@ class ExamSubmissionsListView(APIView):
                 aligned_flag = ai_result_dict.get("aligned")
                 sheet_version = ai_result_dict.get("version")
 
+            enrollment = enrollment_map.get(int(enrollment_id)) if enrollment_id else None
+
             items.append(
                 {
                     "id": int(s.id),
                     "enrollment_id": int(enrollment_id) if enrollment_id else 0,
-                    "student_name": _resolve_student_name(s),
+                    "student_name": _extract_name_from_enrollment(enrollment),
                     "status": str(getattr(s, "status", "")),
                     "source": str(getattr(s, "source", "")),
-                    "score": _resolve_score_for_submission(int(s.id)),
+                    "score": score_map.get(int(s.id)),
                     "created_at": s.created_at.isoformat(),
                     "file_key": getattr(s, "file_key", None) or "",
                     "has_file": bool(getattr(s, "file_key", None)),
