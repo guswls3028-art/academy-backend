@@ -280,7 +280,11 @@ class DocumentRetryView(View):
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class ProblemListView(View):
-    """GET /api/v1/matchup/problems/?document_id=X"""
+    """GET /api/v1/matchup/problems/?document_id=X
+
+    이미지 presigned URL을 serializer 출력에 합쳐서 반환한다.
+    카드별 N+1 presign 요청을 제거하기 위함.
+    """
 
     def get(self, request):
         if not _is_tenant_staff(request):
@@ -291,6 +295,15 @@ class ProblemListView(View):
         if doc_id:
             qs = qs.filter(document_id=doc_id)
         data = MatchupProblemSerializer(qs, many=True).data
+
+        if generate_presigned_get_url_storage:
+            for row in data:
+                key = row.get("image_key")
+                if key:
+                    row["image_url"] = generate_presigned_get_url_storage(
+                        key=key, expires_in=3600
+                    )
+
         return JsonResponse(data, safe=False)
 
 
