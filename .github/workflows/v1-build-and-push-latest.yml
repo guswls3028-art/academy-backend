@@ -228,6 +228,8 @@ jobs:
           file: docker/Dockerfile.base
           platforms: linux/arm64
           push: true
+          provenance: false
+          sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-base:latest
             ${{ env.ECR_REGISTRY }}/academy-base:sha-${{ needs.detect-changes.outputs.short_sha }}
@@ -244,6 +246,8 @@ jobs:
           build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
           platforms: linux/arm64
           push: true
+          provenance: false
+          sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-api:latest
             ${{ env.ECR_REGISTRY }}/academy-api:sha-${{ needs.detect-changes.outputs.short_sha }}
@@ -260,6 +264,8 @@ jobs:
           build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
           platforms: linux/arm64
           push: true
+          provenance: false
+          sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-video-worker:latest
             ${{ env.ECR_REGISTRY }}/academy-video-worker:sha-${{ needs.detect-changes.outputs.short_sha }}
@@ -276,6 +282,8 @@ jobs:
           build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
           platforms: linux/arm64
           push: true
+          provenance: false
+          sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-messaging-worker:latest
             ${{ env.ECR_REGISTRY }}/academy-messaging-worker:sha-${{ needs.detect-changes.outputs.short_sha }}
@@ -292,6 +300,8 @@ jobs:
           build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
           platforms: linux/arm64
           push: true
+          provenance: false
+          sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:latest
             ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:sha-${{ needs.detect-changes.outputs.short_sha }}
@@ -346,6 +356,7 @@ jobs:
         with:
           name: ci-build-report
           path: docs/00-SSOT/v1.1.0/reports/ci-build.latest.md
+          retention-days: 7
 
       - name: Commit and push ci-build.latest.md
         run: |
