@@ -156,6 +156,12 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     manual_required = False
     reasons = []
 
+    # 자동채점 통계: 운영자가 시험별 인식률을 한눈에 볼 수 있도록 aggregate 저장.
+    answer_stats: Dict[str, Any] = {
+        "total": 0, "ok": 0, "blank": 0, "ambiguous": 0, "error": 0,
+        "sum_conf": 0.0, "n_conf": 0,
+    }
+
     for a in answers:
         # v7 engine은 question_id(=question_number), 구버전은 exam_question_id(=PK)
         raw_id = a.get("exam_question_id") or a.get("question_id")
@@ -171,7 +177,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         question_rect = raw_payload.get("rect") if isinstance(raw_payload, dict) else None
 
         omr_meta: Dict[str, Any] = {
-            "version": result.get("version"),
+            "version": a.get("version") or result.get("version"),
             "detected": a.get("detected"),
             "marking": a.get("marking"),
             "confidence": a.get("confidence"),
@@ -201,6 +207,14 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         except Exception:
             conf_f = None
 
+        # stats 집계
+        answer_stats["total"] += 1
+        if st in ("ok", "blank", "ambiguous", "error"):
+            answer_stats[st] += 1
+        if conf_f is not None:
+            answer_stats["sum_conf"] += conf_f
+            answer_stats["n_conf"] += 1
+
         if st != "ok":
             manual_required = True
             reasons.append("ANSWER_STATUS_NOT_OK")
@@ -212,6 +226,24 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         if conf_f is not None and conf_f < 0.70:
             manual_required = True
             reasons.append("ANSWER_LOW_CONFIDENCE")
+
+    # ── 정렬 실패 명시 ──
+    # 워커가 homography/contour/rotation 어느 경로로도 정렬 못 하면 aligned=False.
+    # 답안은 대부분 blank로 위장되므로 여기서 명시 사유를 추가해 운영자가 즉시 인지.
+    if isinstance(result, dict) and result.get("aligned") is False:
+        manual_required = True
+        reasons.append("ALIGNMENT_FAILED")
+
+    # 평균 신뢰도 보조 필드
+    if answer_stats["n_conf"] > 0:
+        answer_stats["avg_confidence"] = round(
+            answer_stats["sum_conf"] / answer_stats["n_conf"], 4
+        )
+    else:
+        answer_stats["avg_confidence"] = None
+    # 내부 누적값은 저장 생략
+    answer_stats.pop("sum_conf", None)
+    answer_stats.pop("n_conf", None)
 
     # ✅ 식별자 → enrollment 매칭 (전화번호 뒤 8자리 → 학생 자동 식별)
     enrollment_id = None
@@ -241,6 +273,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     meta["manual_review"]["reasons"] = sorted(set(reasons))
     meta["manual_review"]["updated_at"] = datetime.now(timezone.utc).isoformat()
     meta["identifier_status"] = identifier_status
+    meta["answer_stats"] = answer_stats
 
     submission.meta = meta
 

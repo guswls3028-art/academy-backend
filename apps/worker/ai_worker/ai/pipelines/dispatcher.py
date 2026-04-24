@@ -302,7 +302,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
             return AIResult.done(
                 job.id,
                 {
-                    "version": "v9",
+                    "version": str(meta.get("version") or "v9"),
                     "mode": mode,
                     "aligned": align_result.success,
                     "alignment_method": align_result.method,

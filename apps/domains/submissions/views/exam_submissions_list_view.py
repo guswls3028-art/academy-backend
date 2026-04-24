@@ -58,14 +58,22 @@ class ExamSubmissionsListView(APIView):
         if not tenant:
             return Response([], status=200)
 
-        # 테넌트 격리: exam이 해당 테넌트 소속인지 검증
+        # 테넌트 격리: exam이 해당 테넌트 소속이거나, 혹은 tenant 소속 submission이
+        # 최소 1건 있으면 노출. 세션 연결만으로 필터링할 경우 session에서 떼어진(고아)
+        # exam은 submission이 있어도 리스트가 비어 운영자가 존재 자체를 모름.
+        # 아래 queryset에서 tenant=tenant로 최종 스코프를 거므로 격리는 유지된다.
         from apps.domains.exams.models import Exam
-        if not Exam.objects.filter(
-            id=int(exam_id),
-        ).filter(
-            sessions__lecture__tenant=tenant,
-        ).exists():
-            return Response([], status=200)
+        exam_q = Exam.objects.filter(id=int(exam_id))
+        exam_allowed = exam_q.filter(sessions__lecture__tenant=tenant).exists()
+        if not exam_allowed and hasattr(Exam, "tenant"):
+            exam_allowed = exam_q.filter(tenant=tenant).exists()
+        if not exam_allowed:
+            if not Submission.objects.filter(
+                tenant=tenant,
+                target_type=Submission.TargetType.EXAM,
+                target_id=int(exam_id),
+            ).exists():
+                return Response([], status=200)
 
         qs = (
             Submission.objects
@@ -82,6 +90,17 @@ class ExamSubmissionsListView(APIView):
             enrollment_id = getattr(s, "enrollment_id", None)
             s_meta = s.meta or {}
             mr = s_meta.get("manual_review") if isinstance(s_meta, dict) else None
+            ai_result = s_meta.get("ai_result") if isinstance(s_meta, dict) else None
+            ai_result_dict = ai_result.get("result") if isinstance(ai_result, dict) else None
+            stats = s_meta.get("answer_stats") if isinstance(s_meta, dict) else None
+
+            alignment_method = None
+            aligned_flag = None
+            sheet_version = None
+            if isinstance(ai_result_dict, dict):
+                alignment_method = ai_result_dict.get("alignment_method")
+                aligned_flag = ai_result_dict.get("aligned")
+                sheet_version = ai_result_dict.get("version")
 
             items.append(
                 {
@@ -103,6 +122,11 @@ class ExamSubmissionsListView(APIView):
                     "identifier_status": s_meta.get("identifier_status")
                     if isinstance(s_meta, dict)
                     else None,
+                    # 자동채점 진단 필드 (운영자 가시성용)
+                    "answer_stats": stats if isinstance(stats, dict) else None,
+                    "aligned": aligned_flag,
+                    "alignment_method": alignment_method,
+                    "sheet_version": sheet_version,
                 }
             )
 

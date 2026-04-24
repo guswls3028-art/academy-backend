@@ -167,7 +167,7 @@ def detect_omr_answers_v7(
         except Exception:
             logger.exception("OMR detect error q=%d", q_num)
             results.append(OMRAnswerV1(
-                version="v9",
+                version=meta_version,
                 question_id=q_num,
                 detected=[],
                 marking="blank",
@@ -487,7 +487,7 @@ def _detect_single_question(
 
     if not fills:
         return OMRAnswerV1(
-            version="v9", question_id=q_num,
+            version=meta_version, question_id=q_num,
             detected=[], marking="blank",
             confidence=0.0, status="error",
         )
@@ -536,7 +536,7 @@ def _detect_single_question(
 
     if is_blank:
         return OMRAnswerV1(
-            version="v9", question_id=q_num,
+            version=meta_version, question_id=q_num,
             detected=[], marking="blank",
             confidence=0.0, status="blank",
             raw=raw_data,
@@ -547,7 +547,7 @@ def _detect_single_question(
         noise_floor = median_score + _REL_BLANK_TH
         marked = [l for l, s, _ in fills if s >= noise_floor]
         return OMRAnswerV1(
-            version="v9", question_id=q_num,
+            version=meta_version, question_id=q_num,
             detected=marked,
             marking="multi" if len(marked) > 1 else "single",
             confidence=round(gap, 4),
@@ -558,7 +558,7 @@ def _detect_single_question(
     confidence = min(1.0, gap / 0.3)  # gap 0.3 이상이면 confidence 1.0
 
     return OMRAnswerV1(
-        version="v9", question_id=q_num,
+        version=meta_version, question_id=q_num,
         detected=[top_label],
         marking="single",
         confidence=round(confidence, 4),
