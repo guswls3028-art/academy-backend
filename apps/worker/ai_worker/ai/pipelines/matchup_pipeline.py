@@ -168,20 +168,43 @@ def run_matchup_pipeline(
 
 
 def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
-    """세그멘테이션 결과를 문제 리스트로 변환."""
+    """세그멘테이션 결과를 문제 리스트로 변환.
+
+    번호 우선순위:
+      1. segment dispatcher가 boxes와 같은 길이로 ``numbers``를 같이 보내줬고
+         값이 모두 정수(=텍스트/OCR 분리 성공)이면 그 번호를 사용. 시험지의
+         실제 문항 번호와 정렬됨.
+      2. ``numbers``가 비어있거나 None이 섞여 있으면 (OpenCV fallback) 박스 순서로
+         1부터 새로 매김.
+
+    이전엔 항상 (2)만 사용해서, 텍스트/OCR이 어떤 박스를 누락하면 그 이후의 모든
+    번호가 시험지 실제 번호와 어긋났다 (DB Q10 = 시험지 11번 문제 식). 이 fix로
+    박스→번호 매핑이 시험지 원본과 일치한다.
+    """
     questions = []
     q_num = 1
     for page in pages:
         page_idx = page["page_index"]
         img_path = page["image_path"]
-        for bbox in page.get("boxes", []):
+        boxes = page.get("boxes", []) or []
+        numbers = page.get("numbers", []) or []
+        # 번호가 boxes와 같은 길이이고 모두 정수면 신뢰. 그렇지 않으면 fallback.
+        use_segment_numbers = (
+            len(numbers) == len(boxes)
+            and all(isinstance(n, int) for n in numbers)
+        )
+        for i, bbox in enumerate(boxes):
+            if use_segment_numbers:
+                num = int(numbers[i])
+            else:
+                num = q_num
+                q_num += 1
             questions.append({
-                "number": q_num,
+                "number": num,
                 "page_index": page_idx,
                 "image_path": img_path,
                 "bbox": list(bbox),
             })
-            q_num += 1
     return questions
 
 

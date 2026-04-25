@@ -290,6 +290,8 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
                     "page_index": 0,
                     "image_path": str,
                     "boxes": [(x,y,w,h), ...],
+                    "numbers": [int|None, ...],  # boxes와 같은 길이. 텍스트/OCR 분리에서 추출된 실제 시험지 문항 번호.
+                                                  # OpenCV fallback이거나 단일 이미지면 None 채움.
                     "has_embedded_text": bool,
                 },
                 ...
@@ -299,30 +301,38 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
         }
     """
     if _is_pdf(image_path):
-        page_infos, boxes_per_page, _ = _collect_pdf_pages(image_path)
+        page_infos, boxes_per_page, regions_per_page = _collect_pdf_pages(image_path)
         if not page_infos:
             return {"pages": [], "total_boxes": 0, "is_pdf": True}
 
         pages = []
         total = 0
-        for idx, (info, boxes) in enumerate(zip(page_infos, boxes_per_page)):
+        for idx, (info, boxes, regions) in enumerate(zip(page_infos, boxes_per_page, regions_per_page)):
+            # regions는 텍스트/OCR 경로에서 boxes와 같은 순서로 채워짐.
+            # OpenCV fallback이면 빈 리스트 → None으로 정렬 길이 맞추기.
+            if regions and len(regions) == len(boxes):
+                numbers = [int(r.number) for r in regions]
+            else:
+                numbers = [None] * len(boxes)
             pages.append({
                 "page_index": idx,
                 "image_path": info["image_path"],
                 "boxes": boxes,
+                "numbers": numbers,
                 "has_embedded_text": info["has_embedded_text"],
             })
             total += len(boxes)
 
         return {"pages": pages, "total_boxes": total, "is_pdf": True}
 
-    # 단일 이미지
+    # 단일 이미지 — 번호 없음
     boxes = _segment_single_image(image_path)
     return {
         "pages": [{
             "page_index": 0,
             "image_path": image_path,
             "boxes": boxes,
+            "numbers": [None] * len(boxes),
             "has_embedded_text": False,
         }],
         "total_boxes": len(boxes),
