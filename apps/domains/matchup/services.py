@@ -24,10 +24,10 @@ except ImportError:
 #  - length_norm=0.06이 정제 후 짧아진 텍스트에 부정적 영향 → 0.0
 #  - sim 비중 ↑, cross_doc만 살려 서답형 트랩 약화 (다른 시험지 우선)
 # 휴리스틱은 여기까지. 80%+ 도약은 cross-encoder reranker (Phase 2)에서.
-_W_SIM = 0.93        # 임베딩 유사도 (거의 단독 신호)
-_W_FORMAT = 0.0      # format match는 트랩만 강화 → 비활성
-_W_LENGTH = 0.0      # length norm은 정제로 짧아진 본문에 부정적 → 비활성
-_W_CROSS_DOC = 0.07  # 다른 시험지 가산 — 서답형 트랩 약화 + 보충 추천 의도
+_W_SIM = 1.0         # V2.6: 휴리스틱 전부 비활성 — 직접 측정에서 휴리스틱이
+_W_FORMAT = 0.0      #        top1 외에 top2/3 회복을 망침. 순수 sim으로 회귀.
+_W_LENGTH = 0.0      #        80%+ 도약은 Phase 2 cross-encoder에서.
+_W_CROSS_DOC = 0.0   #
 
 
 def _format_of(problem: MatchupProblem) -> str:
@@ -53,16 +53,15 @@ def _length_score(src_len: int, cand_len: int) -> float:
 def find_similar_problems(
     problem_id: int, tenant_id: int, top_k: int = 10
 ) -> List[Tuple["MatchupProblem", float]]:
-    """
-    주어진 문제와 유사한 문제를 찾아 재정렬해 반환.
+    """주어진 문제와 유사한 문제를 찾아 재정렬해 반환.
 
-    1. bi-encoder cosine으로 후보 점수화
-    2. 휴리스틱 reranker (format match + length norm + cross-doc) 결합
-    3. 결합 점수 기준 정렬
+    Pipeline:
+      1. bi-encoder cosine으로 후보 점수화 (DB의 embedding)
+      2. 휴리스틱 신호(sim·cross_doc) 결합 → 1차 정렬
+      3. (가능 시) cross-encoder reranker로 상위 후보 재정렬 — phase 2
+      4. top_k 반환
 
     Returns: [(problem, final_score), ...] 높은 순.
-    final_score는 sim에 reranker 가중치까지 합쳐진 값(0~1 근사 범위, 기존 의미와
-    유사하도록 _W_SIM 비중을 크게 둠).
     """
     try:
         source = MatchupProblem.objects.get(id=problem_id, tenant_id=tenant_id)
@@ -83,13 +82,13 @@ def find_similar_problems(
     src_len = len(source.text or "")
     src_doc_id = source.document_id
 
+    # 1차: bi-encoder + 가벼운 휴리스틱
     scored = []
     for c in candidates:
         if not c.embedding:
             continue
         sim = cosine_similarity(source.embedding, c.embedding)
 
-        # 휴리스틱 신호
         fmt_match = 1.0 if _format_of(c) == src_format else 0.0
         len_score = _length_score(src_len, len(c.text or ""))
         cross_doc = 1.0 if c.document_id != src_doc_id else 0.0
@@ -103,7 +102,31 @@ def find_similar_problems(
         scored.append((c, final))
 
     scored.sort(key=lambda x: x[1], reverse=True)
+
+    # 2차: cross-encoder reranking (의존성/모델 가용 시) — 상위 N개만 재정렬
+    pre_top = scored[:max(top_k * 2, 20)]
+    if len(pre_top) >= 2:
+        reranked = _rerank_with_cross_encoder(source, pre_top)
+        if reranked is not None:
+            return reranked[:top_k]
+
     return scored[:top_k]
+
+
+def _rerank_with_cross_encoder(source, pre_top):
+    """Cross-encoder로 pre_top 재정렬. 의존성 없거나 실패 시 None.
+
+    Returns: [(problem, score), ...] 또는 None
+    """
+    try:
+        from . import reranker as rr
+    except ImportError:
+        return None
+    cands_text = [(p.text or "") for p, _ in pre_top]
+    rr_result = rr.rerank(source.text or "", cands_text, top_k=len(pre_top))
+    if rr_result is None:
+        return None
+    return [(pre_top[idx][0], float(score)) for idx, score in rr_result]
 
 
 def delete_document_with_r2(document: MatchupDocument) -> None:
