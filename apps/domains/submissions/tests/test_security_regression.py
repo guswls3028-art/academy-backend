@@ -34,6 +34,8 @@ from apps.domains.submissions.views.pending_submissions_view import PendingSubmi
 from apps.domains.submissions.views.exam_submissions_list_view import ExamSubmissionsListView
 from apps.domains.submissions.views.homework_submissions_list_view import HomeworkSubmissionsListView
 from apps.domains.submissions.views.exam_omr_submit_view import ExamOMRSubmitView
+from apps.domains.results.views.admin_landing_stats_view import AdminResultsLandingStatsView
+from apps.support.video.views.admin_landing_stats_view import AdminVideosLandingStatsView
 
 User = get_user_model()
 
@@ -351,3 +353,106 @@ class TestC3ExamOMRSubmitGuard(_SecurityFixtureMixin, TestCase):
                                 "file_key": "tenants/x/teacher_upload.png"},
                           exam_id=self.exam.id)
         self.assertNotIn(resp.status_code, (401, 403))
+
+
+# ═══════════════════════════════════════════════════
+# C-5 Landing Stats — 학생 차단 / 스태프 통과 / 크로스테넌트 차단
+# (2026-04-26 KPI 인박스 재설계 회귀 가드)
+# ═══════════════════════════════════════════════════
+
+class TestC5LandingStatsGuard(_SecurityFixtureMixin, TestCase):
+
+    def setUp(self):
+        self._setup_fixtures()
+        # cross-tenant 검증용 다른 테넌트 + 어드민
+        self.other_tenant = _make_tenant("OtherAcademy", "sec_other")
+        self.other_admin = _make_admin(self.other_tenant, "other_admin")
+
+    # --- Results landing-stats ---
+
+    def test_results_landing_stats_student_blocked(self):
+        """학생 → /results/admin/landing-stats/ → 403."""
+        view = AdminResultsLandingStatsView.as_view()
+        resp = self._call(lambda: view, "get",
+                          "/api/v1/results/admin/landing-stats/",
+                          user=self.student_user)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_results_landing_stats_teacher_allowed(self):
+        view = AdminResultsLandingStatsView.as_view()
+        resp = self._call(lambda: view, "get",
+                          "/api/v1/results/admin/landing-stats/",
+                          user=self.teacher)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_results_landing_stats_admin_allowed(self):
+        view = AdminResultsLandingStatsView.as_view()
+        resp = self._call(lambda: view, "get",
+                          "/api/v1/results/admin/landing-stats/",
+                          user=self.admin)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_results_landing_stats_cross_tenant_isolated(self):
+        """다른 테넌트 어드민이 self.tenant 헤더로 호출 → 403 (멤버십 없음)."""
+        view = AdminResultsLandingStatsView.as_view()
+        resp = self._call(lambda: view, "get",
+                          "/api/v1/results/admin/landing-stats/",
+                          user=self.other_admin, tenant=self.tenant)
+        self.assertEqual(resp.status_code, 403,
+                         "CRITICAL: 크로스테넌트 어드민이 다른 학원 KPI 조회 가능!")
+
+    def test_results_landing_stats_isolation_payload(self):
+        """다른 테넌트의 submission이 self.tenant 응답에 섞이지 않는다."""
+        # 다른 테넌트에 lecture/exam/submission 생성
+        other_lecture = Lecture.objects.create(
+            tenant=self.other_tenant, title="OtherMath", name="OtherMath", subject="MATH",
+        )
+        other_session = LectureSession.objects.create(
+            lecture=other_lecture, order=1, title="OtherS1",
+        )
+        other_exam = Exam.objects.create(
+            tenant=self.other_tenant, title="OtherExam",
+            exam_type=Exam.ExamType.REGULAR, pass_score=60, max_score=100, max_attempts=1,
+        )
+        other_exam.sessions.add(other_session)
+
+        view = AdminResultsLandingStatsView.as_view()
+        resp = self._call(lambda: view, "get",
+                          "/api/v1/results/admin/landing-stats/",
+                          user=self.admin)
+        self.assertEqual(resp.status_code, 200)
+        body = resp.data
+        # self.tenant에는 active_lecture 1, active_exam 1 (테스트 fixture 기준)
+        self.assertEqual(body["active_lectures"], 1, body)
+        self.assertEqual(body["active_exams"], 1, body)
+
+    # --- Videos landing-stats ---
+
+    def test_videos_landing_stats_student_blocked(self):
+        view = AdminVideosLandingStatsView.as_view()
+        resp = self._call(lambda: view, "get",
+                          "/api/v1/media/admin/videos/landing-stats/",
+                          user=self.student_user)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_videos_landing_stats_teacher_allowed(self):
+        view = AdminVideosLandingStatsView.as_view()
+        resp = self._call(lambda: view, "get",
+                          "/api/v1/media/admin/videos/landing-stats/",
+                          user=self.teacher)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_videos_landing_stats_admin_allowed(self):
+        view = AdminVideosLandingStatsView.as_view()
+        resp = self._call(lambda: view, "get",
+                          "/api/v1/media/admin/videos/landing-stats/",
+                          user=self.admin)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_videos_landing_stats_cross_tenant_blocked(self):
+        view = AdminVideosLandingStatsView.as_view()
+        resp = self._call(lambda: view, "get",
+                          "/api/v1/media/admin/videos/landing-stats/",
+                          user=self.other_admin, tenant=self.tenant)
+        self.assertEqual(resp.status_code, 403,
+                         "CRITICAL: 크로스테넌트 어드민이 다른 학원 영상 KPI 조회 가능!")
