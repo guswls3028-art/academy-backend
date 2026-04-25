@@ -1,0 +1,18 @@
+# api-extras.txt — API 전용 ML 의존성 (cross-encoder reranker)
+#
+# 매치업 추천 reranker 용도. video-worker는 영향 없음 (별도 Dockerfile).
+# t4g.medium ARM64 환경에서 PyTorch CPU + sentence-transformers 동작.
+#
+# 메모리 영향: ~1.2GB (모델 로드 시). 4GB RAM에서 Gunicorn 워커와 공존 안전.
+
+-c constraints.txt
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+# PyTorch CPU only (CUDA wheel 미포함, ARM64 aarch64 wheel 사용)
+torch
+
+# Tokenizer + 모델 로딩
+transformers
+
+# Cross-encoder 인터페이스 (CrossEncoder 클래스)
+sentence-transformers

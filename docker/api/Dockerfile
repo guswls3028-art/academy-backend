@@ -23,8 +23,19 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Shared requirements (API + Worker same file)
-COPY requirements/constraints.txt requirements/requirements.txt ./requirements/
+COPY requirements/constraints.txt requirements/requirements.txt requirements/api-extras.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/requirements.txt
+# API-only ML deps (cross-encoder reranker for matchup similarity)
+RUN pip install --user --no-cache-dir -r requirements/api-extras.txt
+
+# Pre-download cross-encoder model so first runtime call is fast.
+# Model: BAAI/bge-reranker-v2-m3 (~1.1GB, 다국어 SOTA).
+# 빌드 시간 +5분, 컨테이너 +1.2GB. 운영 첫 매치업 검색 latency를 ~30초 → ~150ms로 단축.
+ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
+ENV HF_HOME=/app/.cache/huggingface
+RUN mkdir -p /app/.cache/huggingface && \
+    python -c "from sentence_transformers import CrossEncoder; CrossEncoder('BAAI/bge-reranker-v2-m3', max_length=512)" && \
+    echo "RERANKER_MODEL_CACHED"
 
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
