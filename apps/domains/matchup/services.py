@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import List, Tuple
 
 from apps.shared.utils.vector import cosine_similarity
@@ -26,8 +27,14 @@ except ImportError:
 # 휴리스틱은 여기까지. 80%+ 도약은 cross-encoder reranker (Phase 2)에서.
 _W_SIM = 1.0         # V2.6: 휴리스틱 전부 비활성 — 직접 측정에서 휴리스틱이
 _W_FORMAT = 0.0      #        top1 외에 top2/3 회복을 망침. 순수 sim으로 회귀.
-_W_LENGTH = 0.0      #        80%+ 도약은 Phase 2 cross-encoder에서.
+_W_LENGTH = 0.0      #
 _W_CROSS_DOC = 0.0   #
+
+# Phase 2 cross-encoder 토글 (기본 OFF).
+# bge-reranker-base는 한국어 시험 문제 의미를 잘 못 잡아 V2.6 56% → 40% 후퇴.
+# v2-m3-ko로 재시도하려면 EBS 8GB→20GB 확장 필요.
+# 운영 중 활성화: SSM에서 환경변수 MATCHUP_USE_CROSS_ENCODER=1 + ASG refresh.
+_USE_CROSS_ENCODER = os.environ.get("MATCHUP_USE_CROSS_ENCODER", "0") == "1"
 
 
 def _format_of(problem: MatchupProblem) -> str:
@@ -103,12 +110,14 @@ def find_similar_problems(
 
     scored.sort(key=lambda x: x[1], reverse=True)
 
-    # 2차: cross-encoder reranking (의존성/모델 가용 시) — 상위 N개만 재정렬
-    pre_top = scored[:max(top_k * 2, 20)]
-    if len(pre_top) >= 2:
-        reranked = _rerank_with_cross_encoder(source, pre_top)
-        if reranked is not None:
-            return reranked[:top_k]
+    # 2차: cross-encoder reranking — 환경변수 MATCHUP_USE_CROSS_ENCODER=1 일 때만.
+    # 기본 OFF: bge-reranker-base가 한국어 시험 문제에 부적합 확인됨.
+    if _USE_CROSS_ENCODER:
+        pre_top = scored[:max(top_k * 2, 20)]
+        if len(pre_top) >= 2:
+            reranked = _rerank_with_cross_encoder(source, pre_top)
+            if reranked is not None:
+                return reranked[:top_k]
 
     return scored[:top_k]
 
