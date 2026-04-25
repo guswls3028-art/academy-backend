@@ -541,21 +541,27 @@ class SectionAssignmentViewSet(ModelViewSet):
                     "assigned": 0,
                 })
 
-            # 트랜잭션 내에서 정확한 카운트 조회
+            # 트랜잭션 내에서 정확한 카운트 조회 — 단일 aggregate로 N+1 제거
+            section_ids = [s.id for s in sections]
             if section_type == "CLASS":
-                counts = {
-                    s.id: SectionAssignment.objects.filter(
-                        tenant=tenant, class_section=s,
-                    ).count()
-                    for s in sections
-                }
+                agg_qs = (
+                    SectionAssignment.objects
+                    .filter(tenant=tenant, class_section_id__in=section_ids)
+                    .values("class_section_id")
+                    .annotate(cnt=Count("id"))
+                )
+                counts = {row["class_section_id"]: row["cnt"] for row in agg_qs}
             else:
-                counts = {
-                    s.id: SectionAssignment.objects.filter(
-                        tenant=tenant, clinic_section=s,
-                    ).count()
-                    for s in sections
-                }
+                agg_qs = (
+                    SectionAssignment.objects
+                    .filter(tenant=tenant, clinic_section_id__in=section_ids)
+                    .values("clinic_section_id")
+                    .annotate(cnt=Count("id"))
+                )
+                counts = {row["clinic_section_id"]: row["cnt"] for row in agg_qs}
+            # 결과에 없던 섹션은 0으로 기본값 (미배정 섹션 용량 계산 일치)
+            for sid in section_ids:
+                counts.setdefault(sid, 0)
 
             for enrollment in unassigned_list:
                 available = [

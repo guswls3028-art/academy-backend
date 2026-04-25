@@ -282,6 +282,10 @@ class SessionEnrollmentViewSet(ModelViewSet):
 
         session = enroll_repo.get_session_by_id_with_lecture(session_id)
 
+        # ✅ session 미존재 시 명시적 404 — 이전엔 None.lecture에서 AttributeError → 500 노출
+        if session is None:
+            raise ValidationError({"detail": "세션을 찾을 수 없습니다."})
+
         # ✅ session 소속 lecture tenant 검증
         if session.lecture.tenant_id != tenant.id:
             raise ValidationError({"detail": "다른 학원의 세션입니다."})
