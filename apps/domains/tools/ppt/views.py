@@ -61,13 +61,13 @@ MAX_PDF_SIZE = 100 * 1024 * 1024  # 100MB per PDF
 
 
 def _is_tenant_staff(request) -> bool:
-    """요청 사용자가 테넌트의 스태프인지 확인."""
-    from apps.core.models.tenant_membership import TenantMembership
-    return TenantMembership.objects.filter(
-        user=request.user,
-        tenant=request.tenant,
-        is_active=True,
-    ).exists()
+    """요청 사용자가 테넌트의 스태프(owner/admin/staff/teacher)인지 확인.
+
+    과거 구현은 어떤 멤버십(학생·학부모 포함)이든 True를 반환해 학생이 PPT AI 잡 디스패치 +
+    대용량 R2 업로드까지 가능했다. is_effective_staff 헬퍼로 역할 필터를 강제한다.
+    """
+    from apps.core.permissions import is_effective_staff
+    return is_effective_staff(request.user, getattr(request, "tenant", None))
 
 
 def _verify_image_magic(data: bytes) -> bool:

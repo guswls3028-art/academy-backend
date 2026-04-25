@@ -2,13 +2,15 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from apps.core.permissions import TenantResolvedAndMember
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.dispatcher import dispatch_submission
 
 
 class ExamOMRSubmitView(APIView):
-    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+    # OMR 스캔은 운영자(또는 교사)가 학생 대리 업로드하는 경로.
+    # 과거 TenantResolvedAndMember로 두어 학생이 타 수강의 enrollment_id로 제출 가능했음.
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request, exam_id: int):
         tenant = getattr(request, "tenant", None)

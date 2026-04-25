@@ -10,7 +10,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 
-from apps.core.permissions import TenantResolvedAndMember
+from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.serializers.submission import (
     SubmissionSerializer,
@@ -25,17 +25,30 @@ from apps.domains.results.services.grading_service import grade_submission
 
 
 class SubmissionViewSet(ModelViewSet):
+    # 기본: Member (학생 CREATE 허용). 관리자 전용 액션은 get_permissions에서 Staff로 승격.
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+
+    # 학생/학부모에게도 열린 액션 (본인 소유 생성만). 그 외는 Staff-only.
+    STUDENT_ALLOWED_ACTIONS = {"create"}
+
+    def get_permissions(self):
+        if self.action in self.STUDENT_ALLOWED_ACTIONS:
+            return [IsAuthenticated(), TenantResolvedAndMember()]
+        return [IsAuthenticated(), TenantResolvedAndStaff()]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return Submission.objects.none()
         qs = Submission.objects.filter(tenant=tenant).order_by("-id")
-        # 학생/학부모는 자기 제출만 볼 수 있음
+        # 학생/학부모는 자기 제출만 볼 수 있음 — 프로필 존재로 판별
+        # (과거 tenant_role 기반 분기는 해당 플래그가 어디에서도 설정되지 않아 항상 미적용 상태였다.)
         user = self.request.user
-        role = getattr(user, "tenant_role", None) or getattr(self.request, "tenant_role", None)
-        if role in ("student", "parent"):
+        is_student_or_parent = (
+            getattr(user, "student_profile", None) is not None
+            or getattr(user, "parent_profile", None) is not None
+        )
+        if is_student_or_parent:
             qs = qs.filter(user=user)
         return qs
 

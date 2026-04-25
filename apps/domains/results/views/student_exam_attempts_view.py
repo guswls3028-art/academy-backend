@@ -23,15 +23,17 @@ class MyExamAttemptsView(APIView):
     def get(self, request, exam_id: int):
         user = request.user
 
-        # enrollment 탐색 (방어)
-        # ✅ tenant isolation: scope enrollment to tenant
-        qs = Enrollment.objects.filter(tenant=request.tenant)
-        if hasattr(Enrollment, "user_id"):
-            qs = qs.filter(user_id=user.id)
-        elif hasattr(Enrollment, "student_id"):
-            qs = qs.filter(student_id=user.id)
+        # enrollment 탐색 — Enrollment.student_id는 Student.pk를 가리키므로
+        # User.pk와 비교하면 다른 학생의 enrollment가 일치할 수 있다.
+        student = getattr(user, "student_profile", None)
+        if not student:
+            return Response([])
 
-        enrollment = qs.first()
+        enrollment = (
+            Enrollment.objects
+            .filter(tenant=request.tenant, student_id=student.id)
+            .first()
+        )
         if not enrollment:
             return Response([])
 

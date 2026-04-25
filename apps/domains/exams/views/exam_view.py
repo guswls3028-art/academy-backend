@@ -47,8 +47,11 @@ class ExamViewSet(ModelViewSet):
     # ================================
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
-            return [IsAuthenticated()]
-        return [IsAuthenticated(), IsTeacherOrAdmin()]
+            # 다른 도메인과 일관: list/retrieve도 테넌트 멤버 검증을 거쳐야 한다
+            # (queryset이 테넌트 스코프이지만, 헤더 기반 X-Tenant-Code 변조 시
+            #  비멤버 인증사용자가 도달할 수 있어 1차 게이트를 추가).
+            return [IsAuthenticated(), TenantResolvedAndMember()]
+        return [IsAuthenticated(), TenantResolvedAndMember(), IsTeacherOrAdmin()]
 
     # ================================
     # 🔥 핵심 FIX: create 응답을 read serializer로

@@ -7,7 +7,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
-from apps.core.permissions import TenantResolvedAndMember
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
 
 
@@ -27,7 +27,7 @@ def _extract_name_from_enrollment(enrollment) -> str:
 
 
 class ExamSubmissionsListView(APIView):
-    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request, exam_id: int):
         tenant = getattr(request, "tenant", None)

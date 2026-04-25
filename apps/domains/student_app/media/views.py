@@ -598,9 +598,14 @@ class StudentSessionVideoListView(APIView):
         Video, VideoPermission = _import_media_models()
         enrollment_id = _get_student_enrollment_id(request)
 
-        try:
-            session = SessionModel.objects.select_related("lecture__tenant").get(id=session_id)
-        except SessionModel.DoesNotExist:
+        # ✅ 테넌트 early-filter (defense-in-depth) — 후속 _student_can_access_session도
+        #    tenant 비교를 하지만, 1차 차단으로 cross-tenant lookup을 금지한다.
+        tenant = getattr(request, "tenant", None)
+        session_qs = SessionModel.objects.select_related("lecture__tenant")
+        if tenant is not None:
+            session_qs = session_qs.filter(lecture__tenant=tenant)
+        session = session_qs.filter(id=session_id).first()
+        if session is None:
             raise Http404
 
         lecture = getattr(session, "lecture", None)

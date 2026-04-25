@@ -40,12 +40,11 @@ class WrongNoteView(APIView):
         if is_teacher_user(user):
             return
 
-        if hasattr(Enrollment, "user_id"):
-            qs = qs.filter(user_id=user.id)
-        elif hasattr(Enrollment, "student_id"):
-            qs = qs.filter(student_id=user.id)
-
-        if not qs.exists():
+        # Enrollment.student_id는 Student.pk이므로 user.pk 비교는 오매칭 버그.
+        student = getattr(user, "student_profile", None)
+        if not student:
+            raise PermissionDenied("You cannot access this enrollment_id.")
+        if not qs.filter(student_id=student.id).exists():
             raise PermissionDenied("You cannot access this enrollment_id.")
 
     def get(self, request):
