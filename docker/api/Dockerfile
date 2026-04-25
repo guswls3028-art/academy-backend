@@ -23,20 +23,16 @@ RUN chown -R appuser:appuser /app
 USER appuser
 
 # Shared requirements (API + Worker same file)
-COPY requirements/constraints.txt requirements/requirements.txt requirements/api-extras.txt ./requirements/
+COPY requirements/constraints.txt requirements/requirements.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/requirements.txt
-# API-only ML deps (cross-encoder reranker for matchup similarity)
-RUN pip install --user --no-cache-dir -r requirements/api-extras.txt
 
-# Pre-download cross-encoder model so first runtime call is fast.
-# Model: BAAI/bge-reranker-base (~280MB, 다국어).
-# v2-m3 (~1.1GB)는 t4g.medium 8GB EBS에서 디스크 압박 → base로 다운사이즈.
-# 추후 EBS 확장 또는 별도 모델 호스팅 시 v2-m3로 교체 가능.
-ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
-ENV HF_HOME=/app/.cache/huggingface
-RUN mkdir -p /app/.cache/huggingface && \
-    python -c "from sentence_transformers import CrossEncoder; CrossEncoder('BAAI/bge-reranker-base', max_length=512)" && \
-    echo "RERANKER_MODEL_CACHED"
+# Note: Phase 2 cross-encoder ML deps (torch + sentence-transformers + 모델)는
+# 직접 평가에서 한국어 시험 문제에 부적합 확인 → 컨테이너에서 제거.
+# 코드(apps/domains/matchup/reranker.py) + requirements/api-extras.txt는 보존.
+# 향후 활성화 시 아래 두 줄 복원 + EBS 확장(8GB→20GB) 권장:
+#   COPY requirements/api-extras.txt ./requirements/
+#   RUN pip install --user --no-cache-dir -r requirements/api-extras.txt
+#   RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('<모델명>', max_length=512)"
 
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
