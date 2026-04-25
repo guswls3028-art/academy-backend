@@ -19,14 +19,15 @@ except ImportError:
 
 # ── Heuristic reranker 가중치 ───────────────────────────
 #
-# 정밀 평가(2026-04-26, 15 케이스)에서 발견:
-#  - 같은 시험지 내 다른 서답형이 sim 0.86으로 잡혀 top1 트랩
-#  - 단원 다른 결과가 top1로 끼어 들어옴
-# bi-encoder sim에 추가 신호를 결합해 재정렬.
-_W_SIM = 0.78        # 임베딩 유사도 (주 신호)
-_W_FORMAT = 0.12     # 포맷 일치 (essay vs choice) — 서답형 트랩 차단
-_W_LENGTH = 0.06     # 텍스트 길이 비율 — 너무 짧거나 너무 긴 후보 페널티
-_W_CROSS_DOC = 0.04  # 다른 시험지 가산 (선생님이 보충용으로 추천 받는 의도)
+# V2 측정(15 케이스)에서 발견된 부작용으로 V2.5 보수화:
+#  - format_match=0.12가 같은 시험지 essay-essay 트랩을 강화 → 0.0
+#  - length_norm=0.06이 정제 후 짧아진 텍스트에 부정적 영향 → 0.0
+#  - sim 비중 ↑, cross_doc만 살려 서답형 트랩 약화 (다른 시험지 우선)
+# 휴리스틱은 여기까지. 80%+ 도약은 cross-encoder reranker (Phase 2)에서.
+_W_SIM = 0.93        # 임베딩 유사도 (거의 단독 신호)
+_W_FORMAT = 0.0      # format match는 트랩만 강화 → 비활성
+_W_LENGTH = 0.0      # length norm은 정제로 짧아진 본문에 부정적 → 비활성
+_W_CROSS_DOC = 0.07  # 다른 시험지 가산 — 서답형 트랩 약화 + 보충 추천 의도
 
 
 def _format_of(problem: MatchupProblem) -> str:
