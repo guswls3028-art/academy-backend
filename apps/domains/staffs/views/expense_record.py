@@ -33,10 +33,21 @@ class ExpenseRecordViewSet(viewsets.ModelViewSet):
         if not tenant:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Tenant is required.")
+
+        staff = serializer.validated_data.get("staff")
+        date = serializer.validated_data.get("date")
+        if staff and date and is_month_locked(staff, date):
+            raise ValidationError("마감된 월입니다. 비용을 추가할 수 없습니다.")
+
         serializer.save(tenant_id=tenant.id)
 
+    def perform_destroy(self, instance):
+        if is_month_locked(instance.staff, instance.date):
+            raise ValidationError("마감된 월입니다. 비용을 삭제할 수 없습니다.")
+        instance.delete()
+
     def perform_update(self, serializer):
-        instance = self.get_object()
+        instance = serializer.instance
 
         if is_month_locked(instance.staff, instance.date):
             raise ValidationError("마감된 월입니다.")
