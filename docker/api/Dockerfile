@@ -29,12 +29,13 @@ RUN pip install --user --no-cache-dir -r requirements/requirements.txt
 RUN pip install --user --no-cache-dir -r requirements/api-extras.txt
 
 # Pre-download cross-encoder model so first runtime call is fast.
-# Model: BAAI/bge-reranker-v2-m3 (~1.1GB, 다국어 SOTA).
-# 빌드 시간 +5분, 컨테이너 +1.2GB. 운영 첫 매치업 검색 latency를 ~30초 → ~150ms로 단축.
+# Model: BAAI/bge-reranker-base (~280MB, 다국어).
+# v2-m3 (~1.1GB)는 t4g.medium 8GB EBS에서 디스크 압박 → base로 다운사이즈.
+# 추후 EBS 확장 또는 별도 모델 호스팅 시 v2-m3로 교체 가능.
 ENV TRANSFORMERS_CACHE=/app/.cache/huggingface
 ENV HF_HOME=/app/.cache/huggingface
 RUN mkdir -p /app/.cache/huggingface && \
-    python -c "from sentence_transformers import CrossEncoder; CrossEncoder('BAAI/bge-reranker-v2-m3', max_length=512)" && \
+    python -c "from sentence_transformers import CrossEncoder; CrossEncoder('BAAI/bge-reranker-base', max_length=512)" && \
     echo "RERANKER_MODEL_CACHED"
 
 # 헬스체크

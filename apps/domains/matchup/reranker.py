@@ -25,8 +25,10 @@ from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-# 환경변수로 모델 변경 가능 — 운영 중 다른 모델 시험할 때
-_MODEL_NAME = os.environ.get("MATCHUP_RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+# 환경변수로 모델 변경 가능 — 운영 중 다른 모델 시험할 때.
+# 기본 모델: bge-reranker-base (~280MB, 다국어).
+# v2-m3는 더 정확하지만 ~1.1GB로 t4g.medium 8GB EBS에서 디스크 압박 발생.
+_MODEL_NAME = os.environ.get("MATCHUP_RERANKER_MODEL", "BAAI/bge-reranker-base")
 _MAX_LENGTH = int(os.environ.get("MATCHUP_RERANKER_MAX_LEN", "512"))
 _BATCH_SIZE = int(os.environ.get("MATCHUP_RERANKER_BATCH", "8"))
 
