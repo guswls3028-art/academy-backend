@@ -26,6 +26,7 @@ from .views.admin_social_views import (
     AdminVideoCommentDetailView,
     AdminVideoEngagementView,
 )
+from .views.admin_landing_stats_view import AdminVideosLandingStatsView
 
 # ========================================================
 # Router
@@ -131,5 +132,17 @@ urlpatterns += [
         "videos/<int:video_id>/engagement/",
         AdminVideoEngagementView.as_view(),
         name="admin-video-engagement",
+    ),
+]
+
+# ========================================================
+# Admin Videos Landing Stats (KPI inbox)
+# ========================================================
+
+urlpatterns += [
+    path(
+        "admin/videos/landing-stats/",
+        AdminVideosLandingStatsView.as_view(),
+        name="admin-videos-landing-stats",
     ),
 ]
