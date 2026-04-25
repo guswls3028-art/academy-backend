@@ -12,12 +12,75 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 from typing import Any, Callable, Dict, List, Tuple
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
 
 logger = logging.getLogger(__name__)
+
+
+# ── 텍스트 정제 + format 감지 ──────────────────────────
+#
+# 목적: 임베딩의 품질을 형식적 텍스트(서답형 헤더, 시험지 푸터, 페이지 번호 등)에서
+# 분리. 같은 시험지 내 다른 서답형이 sim 0.86으로 잡히던 트랩 해소.
+
+# 서답형/논술형 패턴 (감지용)
+_ESSAY_PATTERN = re.compile(
+    r"\[\s*(?:서\s*[답술]형|논\s*[답술]형|단\s*[답술]형|약\s*[답술]형)"
+)
+
+# 정제 대상: 시험지 형식 텍스트 (임베딩 의미와 무관)
+_NOISE_PATTERNS = [
+    # 서답형 헤더 — "[ 서 답형 1 ( 서 논술형 ) ]"
+    re.compile(r"\[\s*(?:서|논|단|약)\s*[답술]형\s*\d*\s*(?:\([^)]*\))?\s*\]"),
+    # 학교명 + 학년 + 과목 푸터 — "( 1 ) 학년 ( 통합 과학 1 ) ( 8 쪽 중 3 쪽 )"
+    re.compile(r"\(\s*\d+\s*\)\s*학\s*년\s*\([^)]+\)\s*\(\s*\d+\s*쪽\s*중\s*\d+\s*쪽\s*\)"),
+    # 학년도 헤더 — "2025 학년도 1 학년 통합 과학 1"
+    re.compile(r"20\d{2}\s*학\s*년\s*도(?:\s*\d+\s*학\s*기)?(?:\s*\d+\s*학\s*년)?\s*[가-힣\s\d]{1,30}(?=\n|$)"),
+    # 페이지 표시 — "( 8 쪽 중 3 쪽 )"
+    re.compile(r"\(\s*\d+\s*쪽\s*중\s*\d+\s*쪽\s*\)"),
+    # "< 본 시험 문제 의 저작권 은 ... >"
+    re.compile(r"<\s*본\s*시험\s*문제[^>]{1,100}>"),
+    # 페이지 이동 마커
+    re.compile(r"<\s*(?:다음\s*장\s*에\s*계속|뒷면\s*에\s*계속|끝\.?\s*수고\s*했습니다)[^>]*>"),
+    # 정답 단위 안내
+    re.compile(r"※\s*정답[^\n]{0,80}처리\s*함\s*\.?"),
+    # 학교명 단독 — "중산 고등학교", "개포 고등학교", "경기 고등학교"
+    re.compile(r"^\s*[가-힣]{2,5}\s*고등\s*학교\s*$", re.MULTILINE),
+    # 페이지 번호만 — "10/8", "11/8"
+    re.compile(r"^\s*\d{1,3}\s*/\s*\d{1,3}\s*$", re.MULTILINE),
+    # 학년 + 과목명 단독 — "1 학년 통합 과학 1"
+    re.compile(r"^\s*\d+\s*학\s*년\s*통합\s*과학\s*\d*\s*$", re.MULTILINE),
+    # 점수 표시 잔여 — "[ 3.2 점 ]"
+    re.compile(r"\[\s*\d+(?:\.\d+)?\s*점\s*\]"),
+    # OCR 잡음 — 한 글자/숫자만 있는 라인 (3글자 이하)
+    re.compile(r"^\s*[a-zA-Z0-9가-힣]{1,3}\s*$", re.MULTILINE),
+]
+
+
+def detect_format(text: str) -> str:
+    """문제 텍스트에서 format 감지. 'essay' (서답/논술/단답형) 또는 'choice' (객관식)."""
+    if not text:
+        return "choice"
+    return "essay" if _ESSAY_PATTERN.search(text) else "choice"
+
+
+def normalize_text_for_embedding(text: str) -> str:
+    """임베딩에 쓰일 텍스트 정제 — 형식·헤더·푸터 노이즈 제거.
+
+    원본 text는 사용자 표시용으로 별도 보관. 이 함수의 결과만 임베딩에 사용.
+    """
+    if not text:
+        return ""
+    cleaned = text
+    for pat in _NOISE_PATTERNS:
+        cleaned = pat.sub("", cleaned)
+    # 연속 공백/개행 정리
+    cleaned = re.sub(r"\n\s*\n", "\n", cleaned)
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    return cleaned.strip()
 
 
 def run_matchup_pipeline(
@@ -123,15 +186,19 @@ def run_matchup_pipeline(
     # ── Step 5: 결과 반환 (100%) ──
     problems = []
     for q in questions_raw:
+        meta_extra = q.get("meta_extra") or {}
+        meta = {
+            "page_index": q.get("page_index", 0),
+            "bbox": q.get("bbox"),
+        }
+        # format(essay/choice) 등은 _generate_embeddings에서 채워둠
+        meta.update(meta_extra)
         problems.append({
             "number": q["number"],
             "text": q.get("text", ""),
             "image_key": q.get("image_key", ""),
             "embedding": q.get("embedding"),
-            "meta": {
-                "page_index": q.get("page_index", 0),
-                "bbox": q.get("bbox"),
-            },
+            "meta": meta,
         })
 
     record_progress(
@@ -395,11 +462,22 @@ def _extract_text_for_question(full_text: str, q_number: int, total: int) -> str
 
 
 def _generate_embeddings(questions: List[Dict], job_id: str) -> None:
-    """문제 텍스트에서 임베딩 생성 (in-place)."""
+    """문제 텍스트에서 임베딩 생성 (in-place).
+
+    임베딩에는 정제된 텍스트 사용(헤더/푸터/형식 단어 제거).
+    원본 text는 사용자 표시용으로 q['text']에 그대로 보관.
+    정제 텍스트는 q['text_for_embedding']에 임시 저장.
+    """
     from apps.worker.ai_worker.ai.embedding.service import get_embeddings
 
-    texts = [q.get("text", "") for q in questions]
-    non_empty = [(i, t) for i, t in enumerate(texts) if t.strip()]
+    # 정제 텍스트 + format 감지 (in-place)
+    for q in questions:
+        raw = q.get("text", "")
+        cleaned = normalize_text_for_embedding(raw)
+        q["text_for_embedding"] = cleaned
+        q.setdefault("meta_extra", {})["format"] = detect_format(raw)
+
+    non_empty = [(i, q["text_for_embedding"]) for i, q in enumerate(questions) if q["text_for_embedding"].strip()]
 
     if not non_empty:
         for q in questions:
