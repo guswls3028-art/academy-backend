@@ -182,24 +182,63 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         lecture = getattr(enrollment, "lecture", None) if enrollment else None
         return getattr(lecture, "chip_label", None) if lecture else None
 
+    def _get_unresolved_clinic_enrollment_ids(self) -> set:
+        """list 직렬화 시 미해결 자동 ClinicLink가 있는 enrollment_id 집합을 1회 prefetch.
+
+        get_name_highlight_clinic_target N+1 회피용. tenant 격리는 ClinicLink.tenant FK로 직접 필터.
+        """
+        ctx = self.context
+        if "_unresolved_clinic_eids" in ctx:
+            return ctx["_unresolved_clinic_eids"]
+
+        request = ctx.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        if not tenant:
+            ctx["_unresolved_clinic_eids"] = set()
+            return set()
+
+        # parent의 instance(list)에서 enrollment_id 수집
+        enrollment_ids = set()
+        instances = getattr(self.parent, "instance", None) if self.parent else None
+        if instances is not None and hasattr(instances, "__iter__"):
+            for p in instances:
+                eid = getattr(p, "enrollment_id", None)
+                if eid:
+                    enrollment_ids.add(int(eid))
+        elif hasattr(self, "instance") and self.instance:
+            eid = getattr(self.instance, "enrollment_id", None)
+            if eid:
+                enrollment_ids.add(int(eid))
+
+        if not enrollment_ids:
+            ctx["_unresolved_clinic_eids"] = set()
+            return set()
+
+        from apps.domains.progress.models import ClinicLink
+        unresolved = set(
+            ClinicLink.objects
+            .filter(
+                tenant=tenant,
+                is_auto=True,
+                resolved_at__isnull=True,
+                enrollment_id__in=enrollment_ids,
+            )
+            .values_list("enrollment_id", flat=True)
+            .distinct()
+        )
+        ctx["_unresolved_clinic_eids"] = unresolved
+        return unresolved
+
     def get_name_highlight_clinic_target(self, obj):
         """클리닉 대상(미해결) + 미출석이면 True"""
         # 이미 출석(ATTENDED)이면 False
         if getattr(obj, "status", None) == "attended":
             return False
-        # enrollment에 미해결 ClinicLink이 있는지 확인
         eid = getattr(obj, "enrollment_id", None)
         if not eid:
             return False
-        # tenant 격리: 반드시 tenant FK로 직접 필터 (cross-tenant 누출 방어)
-        tenant = getattr(self.context.get("request"), "tenant", None)
-        if not tenant:
-            return False
-        from apps.domains.progress.models import ClinicLink
-        return ClinicLink.objects.filter(
-            enrollment_id=eid, is_auto=True, resolved_at__isnull=True,
-            tenant=tenant,
-        ).exists()
+        # bulk prefetch한 set에서 O(1) 룩업으로 N+1 회피.
+        return int(eid) in self._get_unresolved_clinic_enrollment_ids()
 
     def get_profile_photo_url(self, obj):
         """학생 프로필 사진 R2 presigned URL"""

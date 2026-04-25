@@ -129,7 +129,8 @@ class StudentListSerializer(serializers.ModelSerializer):
                 lid = int(lecture_id)
             except (TypeError, ValueError):
                 return False
-            return obj.enrollments.filter(lecture_id=lid).exists()
+            # ViewSet이 enrollments를 prefetch하므로 캐시된 리스트에서 체크 (N+1 회피).
+            return any(e.lecture_id == lid for e in obj.enrollments.all())
 
         return False
 

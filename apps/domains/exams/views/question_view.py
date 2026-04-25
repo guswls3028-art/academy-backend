@@ -24,9 +24,11 @@ class QuestionViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return ExamQuestion.objects.none()
+        # explanation은 reverse OneToOne — select_related로 N+1 회피
+        # (QuestionSerializer.get_explanation_text/source가 obj.explanation 접근).
         return ExamQuestion.objects.filter(
             sheet__exam__sessions__lecture__tenant=tenant
-        ).select_related("sheet", "sheet__exam").distinct()
+        ).select_related("sheet", "sheet__exam", "explanation").distinct()
 
     def _assert_template_editable(self, obj: ExamQuestion):
         if obj.sheet.exam.exam_type != Exam.ExamType.TEMPLATE:

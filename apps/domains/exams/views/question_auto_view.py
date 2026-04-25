@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 
-from apps.domains.exams.models import Sheet, Exam
+from apps.domains.exams.models import Sheet, Exam, ExamQuestion
 from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.serializers.question_auto import QuestionAutoCreateSerializer
 from apps.domains.exams.services.question_factory import create_questions_from_boxes
@@ -47,4 +47,12 @@ class SheetAutoQuestionsView(APIView):
         boxes = [tuple(b) for b in s.validated_data["boxes"]]
         questions = create_questions_from_boxes(sheet_id=int(sheet_id), boxes=boxes)
 
-        return Response(QuestionSerializer(questions, many=True).data)
+        # 직렬화 시 explanation OneToOne reverse 접근 N+1 회피.
+        ids = [q.id for q in questions]
+        qs = (
+            ExamQuestion.objects
+            .filter(id__in=ids)
+            .select_related("sheet", "explanation")
+            .order_by("number")
+        )
+        return Response(QuestionSerializer(qs, many=True).data)

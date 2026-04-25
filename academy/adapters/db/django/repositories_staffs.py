@@ -140,6 +140,15 @@ def staff_get_by_name_phone(name, phone, tenant=None):
     return qs.first()
 
 
+def staff_id_by_name_phone_map_tenant(tenant) -> dict[tuple[str, str], int]:
+    """테넌트 내 Staff의 (name, phone) → id 맵. Teacher list staff_id 룩업 N+1 회피용."""
+    from apps.domains.staffs.models import Staff
+    return {
+        (name, phone or ""): sid
+        for sid, name, phone in Staff.objects.filter(tenant=tenant).values_list("id", "name", "phone")
+    }
+
+
 def work_month_lock_update_or_create(staff, year, month, defaults):
     from apps.domains.staffs.models import WorkMonthLock
     return WorkMonthLock.objects.update_or_create(

@@ -105,7 +105,7 @@ class ExamQuestionInitView(APIView):
 
         qs = (
             ExamQuestion.objects.filter(sheet=sheet)
-            .select_related("sheet")
+            .select_related("sheet", "explanation")
             .order_by("number")
         )
         return Response(QuestionSerializer(qs, many=True).data)

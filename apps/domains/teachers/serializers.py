@@ -18,6 +18,11 @@ class TeacherSerializer(serializers.ModelSerializer):
 
     def get_staff_id(self, obj):
         # 🔐 tenant-scoped lookup: 같은 테넌트 내에서만 Staff 매칭
+        # ViewSet.list가 (name, phone) → id 맵을 컨텍스트로 주입하면 O(1) 룩업으로 N+1 회피.
+        staff_id_map = self.context.get("staff_id_map")
+        if staff_id_map is not None:
+            return staff_id_map.get((obj.name, obj.phone or ""))
+        # 컨텍스트가 없는 경우(단독 사용): 안전한 폴백.
         tenant = getattr(obj, "tenant", None)
         if not tenant:
             return None
