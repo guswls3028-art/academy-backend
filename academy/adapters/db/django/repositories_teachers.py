@@ -20,6 +20,15 @@ def teacher_exists_tenant_name_phone(tenant, name, phone) -> bool:
     return Teacher.objects.filter(tenant=tenant, name=name, phone=phone or "").exists()
 
 
+def teacher_name_phone_keys_tenant(tenant) -> set[tuple[str, str]]:
+    """테넌트 내 모든 Teacher의 (name, phone) 집합. Staff list role 판별 N+1 회피용."""
+    from apps.domains.teachers.models import Teacher
+    return {
+        (name, phone or "")
+        for name, phone in Teacher.objects.filter(tenant=tenant).values_list("name", "phone")
+    }
+
+
 def teacher_update_is_active_by_name_phone(tenant, name, phone, is_active: bool):
     from apps.domains.teachers.models import Teacher
     return Teacher.objects.filter(tenant=tenant, name=name, phone=phone).update(is_active=is_active)

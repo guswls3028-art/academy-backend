@@ -20,6 +20,7 @@ from ..serializers import (
 )
 from academy.adapters.db.django import repositories_staffs as staff_repo
 from academy.adapters.db.django import repositories_core as core_repo
+from academy.adapters.db.django import repositories_teachers as teacher_repo
 from ..filters import StaffFilter
 from apps.core.models import TenantMembership
 from apps.core.permissions import is_effective_staff, TenantResolvedAndMember, TenantResolvedAndStaff
@@ -61,6 +62,16 @@ class StaffViewSet(viewsets.ModelViewSet):
                 if owner_user_id:
                     qs = qs.exclude(user_id=owner_user_id)
         return qs
+
+    def get_serializer_context(self):
+        # list 액션의 StaffListSerializer.get_role N+1 회피:
+        # 테넌트 Teacher의 (name, phone) 집합을 한 번에 로드해 직렬화 시 O(1) 룩업.
+        ctx = super().get_serializer_context()
+        if self.action == "list":
+            tenant = getattr(self.request, "tenant", None)
+            if tenant:
+                ctx["teacher_keys"] = teacher_repo.teacher_name_phone_keys_tenant(tenant)
+        return ctx
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)

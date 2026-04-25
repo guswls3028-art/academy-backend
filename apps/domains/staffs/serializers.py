@@ -120,7 +120,14 @@ class StaffListSerializer(serializers.ModelSerializer):
         return obj.profile_photo.url
 
     def get_role(self, obj):
-        # 오너(owner) 멤버십이 있는 Staff → "OWNER"
+        # ViewSet.list가 (name, phone) 키 집합을 컨텍스트로 주입하면 O(1) 룩업으로 N+1 회피.
+        # list 쿼리셋은 이미 owner Staff를 제외하므로 owner 분기 불필요.
+        teacher_keys = self.context.get("teacher_keys")
+        if teacher_keys is not None:
+            if (obj.name, obj.phone or "") in teacher_keys:
+                return "TEACHER"
+            return "ASSISTANT"
+        # 컨텍스트가 없는 경우(단독 사용): 안전한 폴백.
         if getattr(obj, "user_id", None):
             if core_repo.membership_exists_staff(obj.tenant, obj.user, staff_roles=("owner",)):
                 return "OWNER"
