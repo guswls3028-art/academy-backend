@@ -397,6 +397,8 @@ def _enqueue_manual_problem_index(problem: MatchupProblem) -> None:
 
     워커가 image_key를 다운로드해 OCR + 정제 + 임베딩 후 callback이 problem
     레코드의 text/embedding을 채운다. 인덱싱이 끝나야 매치업 검색 풀에 노출.
+
+    잡 디스패치 결과(ai_job_id 또는 error)를 problem.meta에 기록 — 디버깅 용이.
     """
     from apps.domains.ai.gateway import dispatch_job
 
@@ -414,6 +416,17 @@ def _enqueue_manual_problem_index(problem: MatchupProblem) -> None:
         source_domain="matchup_manual",
         source_id=str(problem.id),
     )
+
+    # meta에 dispatch 결과 기록 (응답으로 즉시 노출 + 운영 진단)
+    meta = dict(problem.meta or {})
+    if isinstance(result, dict):
+        meta["ai_job_id"] = result.get("job_id") or ""
+        if not result.get("ok", True):
+            meta["ai_dispatch_error"] = result.get("error", "dispatch failed")
+            meta["ai_rejection_code"] = result.get("rejection_code") or ""
+    problem.meta = meta
+    problem.save(update_fields=["meta", "updated_at"])
+
     if isinstance(result, dict) and not result.get("ok", True):
         raise RuntimeError(result.get("error", "dispatch failed"))
 
