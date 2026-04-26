@@ -12,8 +12,10 @@ from apps.domains.community.api.serializers import (
 )
 from apps.domains.community.models import PostReply
 from apps.domains.community.models.post import PostEntity
+from apps.domains.community.models import PostAttachment
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import IsSuperuserOnly
+from apps.core.services.ops_audit import record_audit
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +120,13 @@ class PlatformInboxReplyView(APIView):
             post.id, post.tenant_id, request.user.pk,
         )
 
+        record_audit(
+            request,
+            action="inbox.reply",
+            target_tenant=getattr(post, "tenant", None),
+            summary=f"Inbox reply on post#{post.id} ({post.title[:40]})",
+            payload={"post_id": post.id, "reply_id": reply.id},
+        )
         return Response(PostReplySerializer(reply).data, status=status.HTTP_201_CREATED)
 
 
@@ -130,9 +139,47 @@ class PlatformInboxDeleteReplyView(APIView):
 
     def delete(self, request, post_id, reply_id):
         try:
-            reply = PostReply.objects.get(pk=reply_id, post_id=post_id)
+            reply = PostReply.objects.select_related("post", "post__tenant").get(
+                pk=reply_id, post_id=post_id,
+            )
         except PostReply.DoesNotExist:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
+        target_tenant = getattr(getattr(reply, "post", None), "tenant", None)
         reply.delete()
+        record_audit(
+            request,
+            action="inbox.reply_delete",
+            target_tenant=target_tenant,
+            summary=f"Inbox reply deleted: post#{post_id}, reply#{reply_id}",
+            payload={"post_id": post_id, "reply_id": reply_id},
+        )
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PlatformInboxAttachmentDownloadView(APIView):
+    """
+    GET /api/v1/community/platform/inbox/<post_id>/attachments/<att_id>/download/
+    크로스테넌트 첨부 다운로드 presigned URL (superuser 전용).
+    """
+    permission_classes = [IsAuthenticated, IsSuperuserOnly]
+
+    def get(self, request, post_id, att_id):
+        try:
+            att = PostAttachment.objects.select_related("post").get(id=att_id, post_id=post_id)
+        except PostAttachment.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 인박스 글(BUG/FB)에 한해 허용
+        title = (att.post.title or "")
+        if not (title.startswith("[BUG]") or title.startswith("[FB]")):
+            return Response({"detail": "Not an inbox attachment."}, status=status.HTTP_404_NOT_FOUND)
+
+        from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+        url = generate_presigned_get_url_storage(
+            key=att.r2_key,
+            expires_in=3600,
+            filename=att.original_name,
+            content_type=att.content_type or None,
+        )
+        return Response({"url": url, "original_name": att.original_name})

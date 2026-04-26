@@ -236,3 +236,32 @@ def is_platform_admin_tenant(request) -> bool:
         return False
     owner_tenant_id = getattr(settings, "OWNER_TENANT_ID", None)
     return tenant.id == owner_tenant_id
+
+
+class IsPlatformAdmin(BasePermission):
+    """
+    ✅ /dev/* 운영 콘솔 단일 게이트.
+
+    조건:
+    - 인증됨
+    - request.tenant 가 OWNER_TENANT_ID
+    - 해당 테넌트의 owner 멤버십 OR superuser
+
+    매 뷰마다 `if not is_platform_admin_tenant(request): return 403` 보일러플레이트 제거.
+    """
+
+    message = "Platform admin only."
+
+    def has_permission(self, request, view):
+        user = getattr(request, "user", None)
+        if not user or not user.is_authenticated:
+            return False
+        if not is_platform_admin_tenant(request):
+            return False
+        if user.is_superuser:
+            return True
+        from academy.adapters.db.django import repositories_core as core_repo
+        tenant = getattr(request, "tenant", None)
+        return core_repo.membership_exists_staff(
+            tenant=tenant, user=user, staff_roles=("owner",),
+        )

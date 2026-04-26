@@ -217,6 +217,30 @@ def _video_bucket():
     return getattr(settings, "R2_VIDEO_BUCKET", "academy-video")
 
 
+def sum_size_under_prefix_r2_video(*, prefix: str) -> tuple[int, int]:
+    """
+    Video 버킷에서 prefix 아래 모든 객체의 (총 바이트, 객체 수) 반환.
+    페이지네이션 자동 처리. 대용량 prefix는 시간이 오래 걸릴 수 있음 — 호출측에서 캐시 권장.
+    """
+    s3 = _get_s3_client()
+    bucket = _video_bucket()
+    total_bytes = 0
+    total_objects = 0
+    continuation_token = None
+    while True:
+        list_kw = {"Bucket": bucket, "MaxKeys": 1000, "Prefix": prefix}
+        if continuation_token:
+            list_kw["ContinuationToken"] = continuation_token
+        resp = s3.list_objects_v2(**list_kw)
+        for obj in resp.get("Contents") or []:
+            total_bytes += int(obj.get("Size") or 0)
+            total_objects += 1
+        if not resp.get("IsTruncated"):
+            break
+        continuation_token = resp.get("NextContinuationToken")
+    return total_bytes, total_objects
+
+
 def delete_object_r2_video(*, key: str) -> None:
     """R2 Video 버킷에서 객체 1건 삭제 (raw 등)."""
     s3 = _get_s3_client()

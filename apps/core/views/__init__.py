@@ -26,6 +26,19 @@ from apps.core.views.tenant_info import (
     PublicOgMetaView,
     LegalConfigView,
 )
+from apps.core.views.dev_dashboard import DevDashboardSummaryView
+from apps.core.views.dev_tenant_ops import (
+    DevTenantUsageView,
+    DevTenantActivityView,
+    DevImpersonateView,
+    DevTenantStorageView,
+)
+from apps.core.views.dev_search import DevGlobalSearchView
+from apps.core.views.dev_automation import (
+    DevAuditLogListView,
+    DevCronListView,
+    DevCronTriggerView,
+)
 
 __all__ = [
     "MeView",
@@ -48,4 +61,13 @@ __all__ = [
     "TenantInfoView",
     "PublicOgMetaView",
     "LegalConfigView",
+    "DevDashboardSummaryView",
+    "DevTenantUsageView",
+    "DevTenantActivityView",
+    "DevImpersonateView",
+    "DevTenantStorageView",
+    "DevGlobalSearchView",
+    "DevAuditLogListView",
+    "DevCronListView",
+    "DevCronTriggerView",
 ]

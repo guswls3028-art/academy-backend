@@ -11,6 +11,7 @@ from apps.core.permissions import (
     TenantResolvedAndOwner,
     is_platform_admin_tenant,
 )
+from apps.core.services.ops_audit import record_audit
 from academy.adapters.db.django import repositories_core as core_repo
 
 logger = logging.getLogger(__name__)
@@ -89,12 +90,23 @@ class TenantDetailView(APIView):
         if not tenant:
             return Response({"detail": "Tenant not found."}, status=404)
 
+        changes = {}
         if "name" in request.data:
             tenant.name = request.data["name"]
+            changes["name"] = tenant.name
         if "isActive" in request.data:
             tenant.is_active = bool(request.data["isActive"])
+            changes["isActive"] = tenant.is_active
         tenant.save(update_fields=["name", "is_active"])
 
+        if changes:
+            record_audit(
+                request,
+                action="tenant.update",
+                target_tenant=tenant,
+                summary=f"Tenant updated: {tenant.code} {changes}",
+                payload=changes,
+            )
         return self.get(request, tenant_id)
 
 
@@ -152,6 +164,13 @@ class TenantCreateView(APIView):
             }
         )
 
+        record_audit(
+            request,
+            action="tenant.create",
+            target_tenant=tenant,
+            summary=f"Tenant created: {tenant.code} ({tenant.name})",
+            payload={"code": code, "name": name, "domain": domain},
+        )
         return Response({
             "id": tenant.id,
             "code": tenant.code,
@@ -234,6 +253,14 @@ class TenantOwnerView(APIView):
                     tenant.save(update_fields=["owner_name"])
 
             from apps.core.models.user import user_display_username
+            record_audit(
+                request,
+                action="owner.register",
+                target_tenant=tenant,
+                target_user=user,
+                summary=f"Owner registered: {username} -> {tenant.code}",
+                payload={"username": username, "password": password, "name": name, "phone": phone},
+            )
             return Response({
                 "tenantId": tenant.id,
                 "tenantCode": tenant.code,
@@ -244,6 +271,14 @@ class TenantOwnerView(APIView):
             })
         except Exception as e:
             logger.exception("TenantOwnerView post failed: %s", e)
+            record_audit(
+                request,
+                action="owner.register",
+                summary="Owner register failed",
+                payload={"tenant_id": tenant_id},
+                result="failed",
+                error=str(e)[:200],
+            )
             return Response(
                 {"detail": "Owner 등록 중 오류가 발생했습니다."},
                 status=500,
@@ -342,4 +377,11 @@ class TenantOwnerDetailView(APIView):
             return Response({"detail": msg}, status=err)
         membership.is_active = False
         membership.save(update_fields=["is_active"])
+        record_audit(
+            request,
+            action="owner.remove",
+            target_tenant=tenant,
+            target_user=membership.user,
+            summary=f"Owner removed: {getattr(membership.user, 'username', '')} from {tenant.code}",
+        )
         return Response(status=204)

@@ -11,6 +11,7 @@ from apps.core.permissions import (
     TenantResolvedAndStaff,
     is_platform_admin_tenant,
 )
+from apps.core.services.ops_audit import record_audit
 from academy.adapters.db.django import repositories_core as core_repo
 
 
@@ -91,6 +92,12 @@ class MaintenanceModeView(APIView):
                     """
                 )
 
+        record_audit(
+            request,
+            action="maintenance.toggle",
+            summary=f"Maintenance mode {'ON' if enabled else 'OFF'}",
+            payload={"enabled": enabled},
+        )
         return self.get(request)
 
 

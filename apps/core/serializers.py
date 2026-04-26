@@ -101,11 +101,13 @@ class UserSerializer(serializers.ModelSerializer):
 
 class ProgramPublicSerializer(serializers.ModelSerializer):
     tenantCode = serializers.SerializerMethodField()
+    isPlatformAdmin = serializers.SerializerMethodField()
 
     class Meta:
         model = Program
         fields = [
             "tenantCode",
+            "isPlatformAdmin",
             "display_name",
             "brand_key",
             "login_variant",
@@ -122,6 +124,14 @@ class ProgramPublicSerializer(serializers.ModelSerializer):
     def get_tenantCode(self, obj: Program) -> str:
         tenant = getattr(obj, "tenant", None)
         return getattr(tenant, "code", "") or ""
+
+    def get_isPlatformAdmin(self, obj: Program) -> bool:
+        from django.conf import settings
+        tenant = getattr(obj, "tenant", None)
+        if not tenant:
+            return False
+        owner_tenant_id = getattr(settings, "OWNER_TENANT_ID", None)
+        return tenant.id == owner_tenant_id
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

@@ -43,6 +43,7 @@ from apps.core.permissions import (
     TenantResolvedAndStaff,
     is_platform_admin_tenant,
 )
+from apps.core.services.ops_audit import record_audit
 
 logger = logging.getLogger(__name__)
 
@@ -93,11 +94,19 @@ class AdminExtendSubscriptionView(APIView):
         serializer = ExtendSubscriptionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        days = serializer.validated_data["days"]
         try:
-            program = subscription_service.extend(program_id, serializer.validated_data["days"])
+            program = subscription_service.extend(program_id, days)
         except Program.DoesNotExist:
             return Response({"detail": "Program not found"}, status=status.HTTP_404_NOT_FOUND)
 
+        record_audit(
+            request,
+            action="billing.extend",
+            target_tenant=program.tenant,
+            summary=f"Extended {program.tenant.code} +{days}d -> {program.subscription_expires_at}",
+            payload={"days": days, "expires_at": str(program.subscription_expires_at)},
+        )
         return Response({
             "tenant_code": program.tenant.code,
             "subscription_status": program.subscription_status,
@@ -117,15 +126,21 @@ class AdminChangePlanView(APIView):
         serializer = ChangePlanSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
+        new_plan = serializer.validated_data["plan"]
         try:
-            program = subscription_service.change_plan(
-                program_id, serializer.validated_data["plan"]
-            )
+            program = subscription_service.change_plan(program_id, new_plan)
         except Program.DoesNotExist:
             return Response({"detail": "Program not found"}, status=status.HTTP_404_NOT_FOUND)
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
+        record_audit(
+            request,
+            action="billing.change_plan",
+            target_tenant=program.tenant,
+            summary=f"Plan changed: {program.tenant.code} -> {program.plan} ({program.monthly_price}원)",
+            payload={"plan": new_plan, "monthly_price": program.monthly_price},
+        )
         return Response({
             "tenant_code": program.tenant.code,
             "plan": program.plan,
@@ -194,6 +209,13 @@ class AdminMarkInvoicePaidView(APIView):
             invoice_service.retry_pending(inv.pk)
 
         inv = invoice_service.mark_paid(inv.pk)
+        record_audit(
+            request,
+            action="billing.invoice_paid",
+            target_tenant=getattr(inv, "tenant", None),
+            summary=f"Invoice marked PAID: {inv.invoice_number} ({inv.total_amount}원)",
+            payload={"invoice_id": inv.pk, "amount": inv.total_amount},
+        )
         return Response(InvoiceDetailSerializer(inv).data)
 
 

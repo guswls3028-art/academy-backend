@@ -390,6 +390,10 @@ VAPID_CONTACT_EMAIL = os.getenv("VAPID_CONTACT_EMAIL", "devhyun7466@gmail.com")
 
 # SMS 허용 tenant (내 테넌트). 해당 tenant에서만 문자(SMS/LMS) 발송 가능.
 OWNER_TENANT_ID = int(os.getenv("OWNER_TENANT_ID", "1"))
+
+# /dev 운영 콘솔 알림 webhook (Slack incoming webhook URL).
+# 비어 있으면 전송 생략 — check_dev_alerts 커맨드는 조건 평가만 수행.
+DEV_ALERTS_WEBHOOK_URL = os.getenv("DEV_ALERTS_WEBHOOK_URL", "")
 # 로컬 기능 테스트용 tenant. 이 tenant에서는 알림톡·문자 발송 없이 기능만 동작.
 TEST_TENANT_ID = int(os.getenv("TEST_TENANT_ID", "9999"))
 

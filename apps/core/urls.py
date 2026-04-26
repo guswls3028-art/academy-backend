@@ -23,6 +23,15 @@ from apps.core.views import (
     TenantOwnerDetailView,
     PublicOgMetaView,
     LegalConfigView,
+    DevDashboardSummaryView,
+    DevTenantUsageView,
+    DevTenantActivityView,
+    DevImpersonateView,
+    DevTenantStorageView,
+    DevGlobalSearchView,
+    DevAuditLogListView,
+    DevCronListView,
+    DevCronTriggerView,
 )
 from apps.core.views_landing import (
     LandingPublicView,
@@ -57,6 +66,16 @@ urlpatterns = [
     path("tenants/<int:tenant_id>/owner/", TenantOwnerView.as_view(), name="core-tenant-owner"),
     path("tenants/<int:tenant_id>/owners/", TenantOwnerListView.as_view(), name="core-tenant-owners"),
     path("tenants/<int:tenant_id>/owners/<int:user_id>/", TenantOwnerDetailView.as_view(), name="core-tenant-owner-detail"),
+    # Dev/운영 콘솔
+    path("dev/dashboard/", DevDashboardSummaryView.as_view(), name="core-dev-dashboard"),
+    path("dev/tenants/<int:tenant_id>/usage/", DevTenantUsageView.as_view(), name="core-dev-tenant-usage"),
+    path("dev/tenants/<int:tenant_id>/activity/", DevTenantActivityView.as_view(), name="core-dev-tenant-activity"),
+    path("dev/tenants/<int:tenant_id>/impersonate/", DevImpersonateView.as_view(), name="core-dev-tenant-impersonate"),
+    path("dev/tenants/<int:tenant_id>/storage/", DevTenantStorageView.as_view(), name="core-dev-tenant-storage"),
+    path("dev/search/", DevGlobalSearchView.as_view(), name="core-dev-search"),
+    path("dev/audit/", DevAuditLogListView.as_view(), name="core-dev-audit"),
+    path("dev/cron/", DevCronListView.as_view(), name="core-dev-cron-list"),
+    path("dev/cron/run/", DevCronTriggerView.as_view(), name="core-dev-cron-run"),
     # Landing page
     path("landing/public/", LandingPublicView.as_view(), name="core-landing-public"),
     path("landing/has-published/", LandingHasPublishedView.as_view(), name="core-landing-has-published"),
