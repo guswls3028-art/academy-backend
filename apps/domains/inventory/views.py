@@ -8,7 +8,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from django.conf import settings
 
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
 
 from apps.core.models import Program
 from .models import InventoryFolder, InventoryFile
@@ -395,6 +395,7 @@ class FileUploadView(View):
                     grade_level=(request.POST.get("grade_level") or ""),
                 )
                 matchup_doc_id = doc.id
+                matchup_ai_job_id = doc.ai_job_id or ""
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).exception(
@@ -402,8 +403,11 @@ class FileUploadView(View):
                 )
                 # InventoryFile은 살려두고 부분 실패 명시
                 matchup_doc_id = None
+                matchup_ai_job_id = ""
                 matchup_promote_failed = True
                 matchup_error = str(e)[:200]
+        else:
+            matchup_ai_job_id = ""
 
         payload = {
             "id": str(inv_file.id),
@@ -419,6 +423,8 @@ class FileUploadView(View):
         }
         if matchup_doc_id is not None:
             payload["matchupDocumentId"] = matchup_doc_id
+            if matchup_ai_job_id:
+                payload["matchupAiJobId"] = matchup_ai_job_id
         if matchup_promote_failed:
             payload["matchupPromoteFailed"] = True
             payload["matchupError"] = matchup_error
