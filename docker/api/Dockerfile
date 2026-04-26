@@ -27,7 +27,8 @@ COPY requirements/constraints.txt requirements/requirements.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/requirements.txt
 
 # API-only deps (PyMuPDF for matchup 수동 크롭 동기 PDF 렌더링 등)
-COPY requirements/api.txt ./requirements/
+# api.txt → -r ./common.txt 참조 → -c constraints.txt 참조. 셋 다 COPY 필요.
+COPY requirements/api.txt requirements/common.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/api.txt
 
 # Note: Phase 2 cross-encoder ML deps (torch + sentence-transformers + 모델)는
