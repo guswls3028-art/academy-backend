@@ -14,6 +14,36 @@ import numpy as np  # type: ignore
 logger = logging.getLogger(__name__)
 
 
+def imread_exif_aware(path: str) -> Optional[np.ndarray]:
+    """cv2.imread + EXIF orientation 자동 보정.
+
+    cv2.imread는 EXIF rotation 메타데이터를 읽지 않아 휴대폰 사진이 회전된
+    상태로 잘못 처리되는 경우가 많다. PIL로 먼저 열어 ImageOps.exif_transpose
+    로 정상 방향으로 돌린 후 BGR ndarray로 변환.
+
+    Returns: BGR np.ndarray 또는 None (읽기 실패 시).
+    """
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        # PIL 없으면 cv2 fallback
+        return cv2.imread(path)
+
+    try:
+        with Image.open(path) as im:
+            im = ImageOps.exif_transpose(im)
+            if im.mode not in ("RGB", "L"):
+                im = im.convert("RGB")
+            arr = np.array(im)
+        if arr.ndim == 2:
+            return cv2.cvtColor(arr, cv2.COLOR_GRAY2BGR)
+        # PIL은 RGB → cv2는 BGR
+        return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+    except Exception:
+        logger.warning("imread_exif_aware: PIL load failed, falling back to cv2 (path=%s)", path, exc_info=True)
+        return cv2.imread(path)
+
+
 def resize_if_large(
     image: np.ndarray,
     max_width: int = 1920,
