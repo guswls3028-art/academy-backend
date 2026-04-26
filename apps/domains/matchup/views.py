@@ -202,6 +202,7 @@ class DocumentPromoteFromInventoryView(View):
             return JsonResponse({"detail": "Staff only"}, status=403)
 
         import json
+        from django.db import IntegrityError, transaction
         try:
             body = json.loads(request.body)
         except Exception:
@@ -219,21 +220,19 @@ class DocumentPromoteFromInventoryView(View):
         except (InventoryFile.DoesNotExist, ValueError, TypeError):
             return JsonResponse({"detail": "Not found"}, status=404)
 
-        # 학생 scope 파일은 승격 불가 (매치업은 staff 전용 도구)
         if inv_file.scope != "admin":
             return JsonResponse(
                 {"detail": "선생님 저장소(admin scope) 파일만 매치업으로 승격할 수 있습니다."},
                 status=400,
             )
 
-        # 매치업 가능한 형식 체크
         if inv_file.content_type not in ALLOWED_CONTENT_TYPES:
             return JsonResponse(
                 {"detail": f"매치업은 PDF/PNG/JPG만 지원합니다. (현재: {inv_file.content_type})"},
                 status=400,
             )
 
-        # 중복 승격 차단
+        # 사전 중복 검사 — 일반 케이스에서 빠르게 차단
         existing = MatchupDocument.objects.filter(
             tenant=request.tenant, inventory_file=inv_file,
         ).first()
@@ -247,7 +246,6 @@ class DocumentPromoteFromInventoryView(View):
                 status=409,
             )
 
-        # 테넌트당 최대 문서 수 체크
         doc_count = MatchupDocument.objects.filter(tenant=request.tenant).count()
         if doc_count >= MAX_DOCUMENTS_PER_TENANT:
             return JsonResponse(
@@ -259,12 +257,29 @@ class DocumentPromoteFromInventoryView(View):
         subject = body.get("subject", "")
         grade_level = body.get("grade_level", "")
 
-        doc = promote_inventory_to_matchup(
-            inv_file,
-            title=title,
-            subject=subject,
-            grade_level=grade_level,
-        )
+        # Race-safe 승격 — 사전 검사 후 race가 통과해도 OneToOne unique IntegrityError로 차단.
+        try:
+            with transaction.atomic():
+                doc = promote_inventory_to_matchup(
+                    inv_file,
+                    title=title,
+                    subject=subject,
+                    grade_level=grade_level,
+                )
+        except IntegrityError:
+            existing = MatchupDocument.objects.filter(
+                tenant=request.tenant, inventory_file=inv_file,
+            ).first()
+            if existing:
+                return JsonResponse(
+                    {
+                        "detail": "이미 매치업 자료로 등록되어 있습니다.",
+                        "code": "already_promoted",
+                        "document_id": existing.id,
+                    },
+                    status=409,
+                )
+            raise
 
         data = MatchupDocumentSerializer(doc).data
         return JsonResponse(data, status=201)

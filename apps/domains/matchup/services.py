@@ -138,24 +138,36 @@ def _rerank_with_cross_encoder(source, pre_top):
     return [(pre_top[idx][0], float(score)) for idx, score in rr_result]
 
 
+def cleanup_matchup_problem_images(document: MatchupDocument) -> int:
+    """매치업 문서의 problem 이미지를 R2에서 삭제. 원본 PDF/이미지는 건드리지 않음.
+
+    호출 컨텍스트:
+      1. 매치업 문서 직접 삭제 (delete_document_with_r2 내부에서)
+      2. InventoryFile 삭제 cascade 직전 (R2 orphan 방지)
+
+    Returns: 삭제 시도한 problem 이미지 개수.
+    """
+    problem_keys = list(
+        document.problems.exclude(image_key="").values_list("image_key", flat=True)
+    )
+    if not delete_object_r2_storage:
+        return 0
+    for key in problem_keys:
+        if key:
+            try:
+                delete_object_r2_storage(key=key)
+            except Exception:
+                logger.warning("R2 delete failed: %s", key, exc_info=True)
+    return len(problem_keys)
+
+
 def delete_document_with_r2(document: MatchupDocument) -> None:
     """매치업 문서 삭제 — 문제 크롭 이미지만 R2에서 제거.
 
     원본 PDF/이미지(document.r2_key)는 InventoryFile이 소유하므로 여기서 지우지 않는다.
     원본 삭제는 InventoryFile 삭제 시 이루어지고 CASCADE로 MatchupDocument도 함께 삭제된다.
     """
-    problem_keys = list(
-        document.problems.exclude(image_key="").values_list("image_key", flat=True)
-    )
-
-    if delete_object_r2_storage:
-        for key in problem_keys:
-            if key:
-                try:
-                    delete_object_r2_storage(key=key)
-                except Exception:
-                    logger.warning("R2 delete failed: %s", key, exc_info=True)
-
+    cleanup_matchup_problem_images(document)
     document.delete()  # CASCADE로 problems도 삭제 (InventoryFile은 그대로)
 
 
@@ -234,16 +246,11 @@ def promote_inventory_to_matchup(
 ):
     """InventoryFile을 매치업 분석 대상으로 승격. Returns MatchupDocument.
 
-    이미 승격된 파일은 중복 승격 불가 — 호출 측이 검사해서 409 반환.
+    중복 승격 검사는 호출 측 책임 (트랜잭션 내 select_for_update 또는 IntegrityError 처리).
+    OneToOneField unique 제약으로 DB 레벨에서도 race 차단.
     """
     from apps.domains.ai.gateway import dispatch_job
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
-
-    if hasattr(inventory_file, "matchup_document"):
-        # 이미 승격된 경우 — 호출 측 검사 누락 방지
-        existing = MatchupDocument.objects.filter(inventory_file=inventory_file).first()
-        if existing:
-            raise ValueError(f"InventoryFile {inventory_file.id} is already promoted (doc={existing.id})")
 
     doc = MatchupDocument.objects.create(
         tenant=inventory_file.tenant,

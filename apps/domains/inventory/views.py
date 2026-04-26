@@ -372,6 +372,8 @@ class FileUploadView(View):
         promote_flag = (request.POST.get("promote_to_matchup") or "").strip().lower()
         promote = promote_flag in ("1", "true", "yes")
         matchup_doc_id = None
+        matchup_promote_failed = False
+        matchup_error = ""
         if promote:
             if scope != "admin":
                 return JsonResponse(
@@ -393,13 +395,15 @@ class FileUploadView(View):
                     grade_level=(request.POST.get("grade_level") or ""),
                 )
                 matchup_doc_id = doc.id
-            except Exception:
+            except Exception as e:
                 import logging
                 logging.getLogger(__name__).exception(
                     "Promote to matchup failed for inventory_file %s", inv_file.id
                 )
-                # InventoryFile은 살려두고 promote만 실패 보고
+                # InventoryFile은 살려두고 부분 실패 명시
                 matchup_doc_id = None
+                matchup_promote_failed = True
+                matchup_error = str(e)[:200]
 
         payload = {
             "id": str(inv_file.id),
@@ -415,6 +419,9 @@ class FileUploadView(View):
         }
         if matchup_doc_id is not None:
             payload["matchupDocumentId"] = matchup_doc_id
+        if matchup_promote_failed:
+            payload["matchupPromoteFailed"] = True
+            payload["matchupError"] = matchup_error
         return JsonResponse(payload)
 
 
@@ -508,9 +515,28 @@ class FileDeleteView(View):
             return JsonResponse({"detail": "Forbidden"}, status=403)
 
         r2_key = inv_file.r2_key
-        inv_file.delete()
 
-        # 🔐 R2 스토리지 객체 삭제 (스토리지 누수 방지)
+        # 🔐 매치업 problem 이미지 R2 cleanup (cascade로 doc/problem 삭제 전)
+        # InventoryFile cascade → MatchupDocument → MatchupProblem만 일어남.
+        # MatchupProblem.image_key R2 객체는 누가 안 지움 → orphan 방지.
+        try:
+            matchup_doc = getattr(inv_file, "matchup_document", None)
+        except Exception:
+            matchup_doc = None
+        if matchup_doc is not None:
+            try:
+                from apps.domains.matchup.services import cleanup_matchup_problem_images
+                cleanup_matchup_problem_images(matchup_doc)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "matchup problem images cleanup failed for inv_file %s", inv_file.id,
+                    exc_info=True,
+                )
+
+        inv_file.delete()  # CASCADE: MatchupDocument → MatchupProblem 함께 삭제
+
+        # 🔐 원본 R2 객체 삭제 (스토리지 누수 방지)
         if r2_key and delete_object_r2_storage:
             try:
                 delete_object_r2_storage(key=r2_key)
