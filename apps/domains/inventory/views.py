@@ -423,8 +423,8 @@ class FileUploadView(View):
         }
         if matchup_doc_id is not None:
             payload["matchupDocumentId"] = matchup_doc_id
-            if matchup_ai_job_id:
-                payload["matchupAiJobId"] = matchup_ai_job_id
+            # 프론트 Workbox fallback 분기 단순화를 위해 키는 항상 내려준다.
+            payload["matchupAiJobId"] = matchup_ai_job_id or None
         if matchup_promote_failed:
             payload["matchupPromoteFailed"] = True
             payload["matchupError"] = matchup_error

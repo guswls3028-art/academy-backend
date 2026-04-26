@@ -24,6 +24,8 @@ class MatchupDocument(TimestampModel):
         related_name="matchup_document",
     )
     title = models.CharField(max_length=255)
+    # 섹션/카테고리 (예: 중대부고, 숙명여고). 같은 카테고리끼리만 추천에 사용.
+    category = models.CharField(max_length=100, blank=True, default="", db_index=True)
     subject = models.CharField(max_length=100, blank=True, default="")
     grade_level = models.CharField(max_length=50, blank=True, default="")
     r2_key = models.CharField(max_length=512, unique=True, db_index=True)

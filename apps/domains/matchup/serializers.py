@@ -9,7 +9,7 @@ class MatchupDocumentSerializer(serializers.ModelSerializer):
     class Meta:
         model = MatchupDocument
         fields = [
-            "id", "title", "subject", "grade_level",
+            "id", "title", "category", "subject", "grade_level",
             "original_name", "size_bytes", "content_type",
             "status", "ai_job_id", "problem_count", "error_message",
             "meta",
@@ -21,8 +21,10 @@ class MatchupDocumentSerializer(serializers.ModelSerializer):
 
 class MatchupDocumentUpdateSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=255, required=False)
+    category = serializers.CharField(max_length=100, required=False, allow_blank=True)
     subject = serializers.CharField(max_length=100, required=False, allow_blank=True)
     grade_level = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    intent = serializers.ChoiceField(choices=["reference", "test"], required=False)
 
 
 class MatchupProblemSerializer(serializers.ModelSerializer):

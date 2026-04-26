@@ -197,8 +197,12 @@ class DocumentUploadView(View):
             return JsonResponse({"detail": "Storage not configured"}, status=500)
 
         title = request.POST.get("title", "") or file.name
+        category = request.POST.get("category", "")
         subject = request.POST.get("subject", "")
         grade_level = request.POST.get("grade_level", "")
+        upload_intent = (request.POST.get("intent", "reference") or "reference").strip().lower()
+        if upload_intent not in ("reference", "test"):
+            upload_intent = "reference"
 
         # 1) /매치업-업로드/{YYYY-MM}/ 폴더에 InventoryFile 생성
         from apps.domains.inventory.r2_path import build_r2_key, safe_filename, folder_path_string
@@ -248,9 +252,16 @@ class DocumentUploadView(View):
         doc = promote_inventory_to_matchup(
             inv_file,
             title=title,
+            category=category,
             subject=subject,
             grade_level=grade_level,
         )
+        meta = dict(doc.meta or {})
+        meta["upload_intent"] = upload_intent
+        # 프론트에서 시험지/참고자료를 구조적으로 분리해 표시할 수 있도록 역할 키를 함께 남긴다.
+        meta["document_role"] = "exam_sheet" if upload_intent == "test" else "reference_material"
+        doc.meta = meta
+        doc.save(update_fields=["meta", "updated_at"])
 
         data = MatchupDocumentSerializer(doc).data
         return JsonResponse(data, status=201)
@@ -260,7 +271,7 @@ class DocumentUploadView(View):
 class DocumentPromoteFromInventoryView(View):
     """POST /api/v1/matchup/documents/promote/
 
-    body: { inventory_file_id: int, title?: str, subject?: str, grade_level?: str }
+    body: { inventory_file_id: int, title?: str, category?: str, subject?: str, grade_level?: str }
     저장소 admin scope 파일을 매치업 분석 대상으로 승격.
     """
 
@@ -321,6 +332,7 @@ class DocumentPromoteFromInventoryView(View):
             )
 
         title = (body.get("title") or "").strip() or inv_file.display_name
+        category = body.get("category", "")
         subject = body.get("subject", "")
         grade_level = body.get("grade_level", "")
 
@@ -330,6 +342,7 @@ class DocumentPromoteFromInventoryView(View):
                 doc = promote_inventory_to_matchup(
                     inv_file,
                     title=title,
+                    category=category,
                     subject=subject,
                     grade_level=grade_level,
                 )
@@ -399,10 +412,17 @@ class DocumentDetailView(View):
             return JsonResponse(ser.errors, status=400)
 
         update_fields = ["updated_at"]
-        for field in ("title", "subject", "grade_level"):
+        for field in ("title", "category", "subject", "grade_level"):
             if field in ser.validated_data:
                 setattr(doc, field, ser.validated_data[field])
                 update_fields.append(field)
+        if "intent" in ser.validated_data:
+            intent = ser.validated_data["intent"]
+            meta = dict(doc.meta or {})
+            meta["upload_intent"] = intent
+            meta["document_role"] = "exam_sheet" if intent == "test" else "reference_material"
+            doc.meta = meta
+            update_fields.append("meta")
 
         doc.save(update_fields=update_fields)
         return JsonResponse(MatchupDocumentSerializer(doc).data)
@@ -467,9 +487,17 @@ class DocumentCrossMatchesView(View):
             MatchupProblem.objects
             .filter(tenant=request.tenant, embedding__isnull=False)
             .exclude(document_id=doc.id)
+            .exclude(document__meta__upload_intent="test")
+            .exclude(document__meta__document_role="exam_sheet")
             .select_related("document")
-            .only("id", "document_id", "number", "embedding", "document__id", "document__title")
+            .only(
+                "id", "document_id", "number", "embedding",
+                "document__id", "document__title", "document__category", "document__meta",
+            )
         )
+        source_category = (doc.category or "").strip()
+        if source_category:
+            candidates = [c for c in candidates if (c.document.category or "").strip() == source_category]
 
         matches = []
         for p in problems:

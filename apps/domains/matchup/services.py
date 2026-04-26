@@ -78,12 +78,24 @@ def find_similar_problems(
     if not source.embedding:
         return []
 
+    source_category = ""
+    if source.document_id and source.document is not None:
+        source_category = (source.document.category or "").strip()
+
     candidates = (
         MatchupProblem.objects
         .filter(tenant_id=tenant_id, embedding__isnull=False)
         .exclude(id=problem_id)
         .defer("created_at", "updated_at")
     )
+
+    # 같은 카테고리(섹션) 내에서만 추천.
+    # source가 matchup 문서인 경우에만 적용 (exam source는 document가 None).
+    if source_category:
+        candidates = candidates.filter(
+            document__isnull=False,
+            document__category=source_category,
+        )
 
     src_format = _format_of(source)
     src_len = len(source.text or "")
@@ -241,6 +253,7 @@ def promote_inventory_to_matchup(
     inventory_file,
     *,
     title: str = "",
+    category: str = "",
     subject: str = "",
     grade_level: str = "",
 ):
@@ -256,6 +269,7 @@ def promote_inventory_to_matchup(
         tenant=inventory_file.tenant,
         inventory_file=inventory_file,
         title=title or inventory_file.display_name,
+        category=category,
         subject=subject,
         grade_level=grade_level,
         r2_key=inventory_file.r2_key,
