@@ -1,9 +1,12 @@
 # apps/worker/ai/detection/segment_dispatcher.py
 from __future__ import annotations
 
+import contextvars
 import logging
 import os
+import shutil
 import tempfile
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2  # type: ignore
@@ -37,19 +40,91 @@ def _is_pdf(file_path: str) -> bool:
         return False
 
 
-def _pdf_to_images(pdf_path: str) -> List[Dict]:
+# 워커 작업당 생성된 pdf-seg-* tmp 디렉터리들을 추적 → dispatcher의 finally가 일괄 정리.
+# 작업이 동시 실행되더라도 각 작업이 독립 contextvar token을 보유하므로 안전.
+_PDF_SEG_TMP_DIRS: "contextvars.ContextVar[List[str] | None]" = contextvars.ContextVar(
+    "pdf_seg_tmp_dirs", default=None,
+)
+
+
+def begin_pdf_seg_scope() -> None:
+    """dispatcher가 작업 시작 시 호출 — 빈 리스트로 스코프 시작."""
+    _PDF_SEG_TMP_DIRS.set([])
+
+
+def register_pdf_seg_tmp_dirs(dirs: List[str]) -> None:
+    """tmp_dirs를 현재 스코프에 누적 등록. dispatcher의 finally가 일괄 cleanup.
+
+    호출 시점: _pdf_to_images의 mkdtemp 직후(예외 안전망) + 파이프라인의 multipage 결과 수신 후.
+    동일 dir 중복 등록은 무해 (cleanup_pdf_seg_tmp_dirs는 prefix 검증 + ignore_errors).
+
+    no-scope: 워커 entrypoint를 거치지 않은 호출(테스트/스크립트). 여기서는 leak warn만
+    남기고 정리는 호출자 책임 — 즉시 cleanup하면 호출자가 아직 dir을 사용 중일 때 파일이 사라짐.
+    """
+    if not dirs:
+        return
+    bucket = _PDF_SEG_TMP_DIRS.get()
+    if bucket is None:
+        logger.warning(
+            "register_pdf_seg_tmp_dirs called outside scope — caller must cleanup: %s",
+            dirs,
+        )
+        return
+    bucket.extend(dirs)
+
+
+def cleanup_registered_pdf_seg_tmp_dirs() -> None:
+    """dispatcher의 finally가 호출 — 누적된 tmp_dirs를 일괄 정리."""
+    bucket = _PDF_SEG_TMP_DIRS.get()
+    if bucket:
+        cleanup_pdf_seg_tmp_dirs(bucket)
+    _PDF_SEG_TMP_DIRS.set(None)
+
+
+def cleanup_pdf_seg_tmp_dirs(tmp_dirs: List[str]) -> None:
+    """_pdf_to_images가 만든 mkdtemp 디렉터리들을 통째 제거.
+
+    안전 가드: prefix가 "pdf-seg-"이고 tmp 루트 하위인 경로만 삭제.
+    """
+    if not tmp_dirs:
+        return
+    try:
+        tmp_root = Path(tempfile.gettempdir()).resolve()
+    except Exception:
+        return
+    for d in tmp_dirs:
+        if not d:
+            continue
+        try:
+            p = Path(d).resolve()
+            if not p.name.startswith("pdf-seg-"):
+                continue
+            try:
+                p.relative_to(tmp_root)
+            except (ValueError, OSError):
+                logger.warning("cleanup_pdf_seg skip — outside tmp root: %s", p)
+                continue
+            shutil.rmtree(p, ignore_errors=True)
+        except Exception as e:
+            logger.warning("cleanup_pdf_seg failed: dir=%s err=%s", d, e)
+
+
+def _pdf_to_images(pdf_path: str) -> Tuple[List[Dict], str]:
     """
     PDF 파일의 각 페이지를 이미지로 변환 + 텍스트 기반 문항 박스 사전 계산.
 
     Returns:
-        [
-          {
-            "image_path": str,
-            "has_embedded_text": bool,
-            "text_boxes": List[BBox]  # 텍스트 기반 분할 박스 (픽셀 좌표계). 비었으면 실패.
-          },
-          ...
-        ]
+        (
+          [
+            {
+              "image_path": str,
+              "has_embedded_text": bool,
+              "text_boxes": List[BBox]  # 텍스트 기반 분할 박스 (픽셀 좌표계). 비었으면 실패.
+            },
+            ...
+          ],
+          tmp_dir: str  # 호출자가 cleanup_pdf_seg_tmp_dirs로 정리해야 함
+        )
     """
     from academy.adapters.tools.pymupdf_renderer import PdfDocument
     from academy.domain.tools.question_splitter import (
@@ -60,6 +135,10 @@ def _pdf_to_images(pdf_path: str) -> List[Dict]:
 
     results: List[Dict] = []
     tmp_dir = tempfile.mkdtemp(prefix="pdf-seg-")
+    # 즉시 추적 등록 — 이후 PDF 렌더 중 예외가 나도 dispatcher finally가 정리.
+    # 호출자가 register_pdf_seg_tmp_dirs를 호출해도 동일 dir 중복 등록은 무해
+    # (cleanup은 prefix + 존재 여부 검증 후 rmtree, 동일 dir 두 번 처리해도 ignore_errors).
+    register_pdf_seg_tmp_dirs([tmp_dir])
 
     with PdfDocument(pdf_path) as doc:
         page_count = doc.page_count()
@@ -112,7 +191,7 @@ def _pdf_to_images(pdf_path: str) -> List[Dict]:
                 "text_regions": text_regions,  # QuestionRegion[] — aligned with text_boxes
             })
 
-    return results
+    return results, tmp_dir
 
 
 def _segment_single_image(
@@ -211,19 +290,56 @@ def _boxes_and_regions_for_pdf_page(
     # 텍스트 있지만 분할 실패 OR OCR 크레덴셜 없음 OR OCR 예외
     skip_ocr = page_info["has_embedded_text"]
     boxes = _segment_single_image(image_path, skip_ocr=skip_ocr, is_pdf_page=True)
+    boxes = _filter_cover_like_boxes(boxes, image_path, page_index)
     return boxes, []  # OpenCV fallback — 번호 없음
 
 
-def _collect_pdf_pages(image_path: str) -> Tuple[List[Dict], List[List[BBox]], List[List]]:
+def _filter_cover_like_boxes(
+    boxes: List[BBox], image_path: str, page_index: int,
+) -> List[BBox]:
+    """OpenCV fallback이 단일 박스로 페이지 대부분을 묶어내는 케이스 필터.
+
+    문항 anchor를 못 잡은 페이지(표지/목차/안내문 등)에서 OpenCV가 페이지
+    전체를 1개 큰 박스로 반환하면 사용자에게는 "이상하게 잘린 표지"로 보인다.
+    번호 정보가 없으니 실제 문항이 아님이 거의 확실 → 드롭.
+
+    조건: 박스 1개 + 박스 면적이 페이지의 70% 이상.
     """
-    PDF의 모든 페이지를 처리해서 (page_infos, boxes_per_page, regions_per_page)를 반환.
+    if len(boxes) != 1:
+        return boxes
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            return boxes
+        h_img, w_img = img.shape[:2]
+        page_area = float(w_img * h_img)
+        if page_area <= 0:
+            return boxes
+        x, y, w, h = boxes[0]
+        ratio = (w * h) / page_area
+        if ratio >= 0.70:
+            logger.info(
+                "PDF_COVER_LIKE_DROP | page=%d | ratio=%.2f | box=(%d,%d,%d,%d)",
+                page_index, ratio, x, y, w, h,
+            )
+            return []
+    except Exception as e:
+        logger.warning("COVER_FILTER_ERROR | page=%d | error=%s", page_index, e)
+    return boxes
+
+
+def _collect_pdf_pages(image_path: str) -> Tuple[List[Dict], List[List[BBox]], List[List], str]:
+    """
+    PDF의 모든 페이지를 처리해서 (page_infos, boxes_per_page, regions_per_page, tmp_dir)를 반환.
     크로스-페이지 anchor 검증을 적용해 spurious/outlier 박스를 제거.
+
+    tmp_dir은 호출자가 cleanup_pdf_seg_tmp_dirs([tmp_dir])로 정리해야 함.
     """
     from academy.domain.tools.question_splitter import validate_anchors_across_pages
 
-    page_infos = _pdf_to_images(image_path)
+    page_infos, tmp_dir = _pdf_to_images(image_path)
     if not page_infos:
-        return [], [], []
+        return [], [], [], tmp_dir
 
     boxes_per_page: List[List[BBox]] = []
     regions_per_page: List[List] = []
@@ -250,7 +366,7 @@ def _collect_pdf_pages(image_path: str) -> Tuple[List[Dict], List[List[BBox]], L
             page_idx, dropped, len(validated),
         )
 
-    return page_infos, boxes_per_page, regions_per_page
+    return page_infos, boxes_per_page, regions_per_page, tmp_dir
 
 
 def segment_questions(image_path: str) -> List[BBox]:
@@ -258,22 +374,28 @@ def segment_questions(image_path: str) -> List[BBox]:
     worker-side segmentation single entrypoint.
     PDF 파일이면 페이지별로 이미지 변환 후 세그멘테이션.
     이미지 파일이면 직접 세그멘테이션.
+
+    PDF의 경우 page render는 함수 내에서 즉시 정리(번호 결과만 필요). 호출자는
+    별도 cleanup 불필요.
     """
     if _is_pdf(image_path):
-        page_infos, boxes_per_page, _ = _collect_pdf_pages(image_path)
-        if not page_infos:
-            logger.warning("PDF_SEGMENT_NO_PAGES | path=%s", image_path)
-            return []
+        page_infos, boxes_per_page, _, tmp_dir = _collect_pdf_pages(image_path)
+        try:
+            if not page_infos:
+                logger.warning("PDF_SEGMENT_NO_PAGES | path=%s", image_path)
+                return []
 
-        all_boxes: List[BBox] = []
-        for page_idx, (info, boxes) in enumerate(zip(page_infos, boxes_per_page)):
-            logger.info(
-                "PDF_SEGMENT_PAGE | page=%d | boxes=%d | has_text=%s | text_boxes=%d",
-                page_idx, len(boxes), info["has_embedded_text"], len(info["text_boxes"]),
-            )
-            all_boxes.extend(boxes)
+            all_boxes: List[BBox] = []
+            for page_idx, (info, boxes) in enumerate(zip(page_infos, boxes_per_page)):
+                logger.info(
+                    "PDF_SEGMENT_PAGE | page=%d | boxes=%d | has_text=%s | text_boxes=%d",
+                    page_idx, len(boxes), info["has_embedded_text"], len(info["text_boxes"]),
+                )
+                all_boxes.extend(boxes)
 
-        return all_boxes
+            return all_boxes
+        finally:
+            cleanup_pdf_seg_tmp_dirs([tmp_dir])
 
     return _segment_single_image(image_path)
 
@@ -298,12 +420,15 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
             ],
             "total_boxes": int,
             "is_pdf": bool,
+            "tmp_dirs": [str, ...],  # 호출자가 cleanup_pdf_seg_tmp_dirs로 정리해야 함
+                                      # (페이지 image_path들이 이 디렉터리에 살아 있음)
         }
     """
     if _is_pdf(image_path):
-        page_infos, boxes_per_page, regions_per_page = _collect_pdf_pages(image_path)
+        page_infos, boxes_per_page, regions_per_page, tmp_dir = _collect_pdf_pages(image_path)
         if not page_infos:
-            return {"pages": [], "total_boxes": 0, "is_pdf": True}
+            cleanup_pdf_seg_tmp_dirs([tmp_dir])
+            return {"pages": [], "total_boxes": 0, "is_pdf": True, "tmp_dirs": []}
 
         pages = []
         total = 0
@@ -323,9 +448,9 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
             })
             total += len(boxes)
 
-        return {"pages": pages, "total_boxes": total, "is_pdf": True}
+        return {"pages": pages, "total_boxes": total, "is_pdf": True, "tmp_dirs": [tmp_dir]}
 
-    # 단일 이미지 — 번호 없음
+    # 단일 이미지 — 번호 없음. tmp_dir 없음(원본 image_path 그대로 사용).
     boxes = _segment_single_image(image_path)
     return {
         "pages": [{
@@ -337,4 +462,5 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
         }],
         "total_boxes": len(boxes),
         "is_pdf": False,
+        "tmp_dirs": [],
     }

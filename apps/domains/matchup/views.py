@@ -25,6 +25,8 @@ from .services import (
     retry_document,
     promote_inventory_to_matchup,
     ensure_matchup_upload_folder,
+    manually_crop_problem,
+    delete_problem_with_r2,
 )
 from apps.shared.utils.vector import cosine_similarity
 
@@ -650,15 +652,24 @@ class ProblemListView(View):
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class ProblemDetailView(View):
-    """GET /api/v1/matchup/problems/<id>/"""
+    """
+    GET    /api/v1/matchup/problems/<id>/  — 단건 조회
+    PATCH  /api/v1/matchup/problems/<id>/  — number/text 수정
+    DELETE /api/v1/matchup/problems/<id>/  — 단건 삭제 + R2 cleanup
+    """
+
+    def _get_problem(self, request, problem_id):
+        try:
+            return MatchupProblem.objects.get(id=problem_id, tenant=request.tenant)
+        except MatchupProblem.DoesNotExist:
+            return None
 
     def get(self, request, problem_id):
         if not _is_tenant_staff(request):
             return JsonResponse({"detail": "Staff only"}, status=403)
 
-        try:
-            problem = MatchupProblem.objects.get(id=problem_id, tenant=request.tenant)
-        except MatchupProblem.DoesNotExist:
+        problem = self._get_problem(request, problem_id)
+        if not problem:
             return JsonResponse({"detail": "Not found"}, status=404)
 
         data = MatchupProblemSerializer(problem).data
@@ -670,6 +681,176 @@ class ProblemDetailView(View):
             )
 
         return JsonResponse(data)
+
+    def patch(self, request, problem_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        problem = self._get_problem(request, problem_id)
+        if not problem:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        update_fields = ["updated_at"]
+        if "number" in body:
+            try:
+                new_num = int(body["number"])
+            except (TypeError, ValueError):
+                return JsonResponse({"detail": "number must be an integer"}, status=400)
+            if not (1 <= new_num <= 999):
+                return JsonResponse({"detail": "number out of range"}, status=400)
+            problem.number = new_num
+            update_fields.append("number")
+        if "text" in body and isinstance(body["text"], str):
+            problem.text = body["text"]
+            update_fields.append("text")
+
+        try:
+            problem.save(update_fields=update_fields)
+        except Exception as e:
+            # unique constraint 등
+            return JsonResponse({"detail": str(e)}, status=409)
+
+        data = MatchupProblemSerializer(problem).data
+        if problem.image_key and generate_presigned_get_url_storage:
+            data["image_url"] = generate_presigned_get_url_storage(
+                key=problem.image_key, expires_in=3600
+            )
+        return JsonResponse(data)
+
+    def delete(self, request, problem_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        problem = self._get_problem(request, problem_id)
+        if not problem:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        delete_problem_with_r2(problem)
+        return JsonResponse({"ok": True})
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentManualCropView(View):
+    """POST /api/v1/matchup/documents/<id>/manual-crop/
+
+    body: {
+      page_index: 0,
+      bbox: [x, y, w, h],   # 모두 0..1 (페이지 정규화)
+      number: 5,            # 1..999. 같은 번호면 덮어쓰기.
+      text?: ""             # 선택 — 사용자 수동 입력 시
+    }
+
+    동기 응답: 생성/갱신된 problem (image_url 포함).
+    embedding은 워커가 비동기로 채움.
+    """
+
+    def post(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        try:
+            page_index = int(body.get("page_index", 0))
+            number = int(body["number"])
+            raw_bbox = body.get("bbox") or []
+            if isinstance(raw_bbox, dict):
+                bbox = (
+                    float(raw_bbox.get("x", 0)),
+                    float(raw_bbox.get("y", 0)),
+                    float(raw_bbox.get("w", 0)),
+                    float(raw_bbox.get("h", 0)),
+                )
+            else:
+                if len(raw_bbox) != 4:
+                    raise ValueError("bbox length")
+                bbox = (float(raw_bbox[0]), float(raw_bbox[1]), float(raw_bbox[2]), float(raw_bbox[3]))
+            text = body.get("text") or ""
+        except (KeyError, TypeError, ValueError) as e:
+            return JsonResponse({"detail": f"잘못된 요청: {e}"}, status=400)
+
+        try:
+            problem = manually_crop_problem(
+                doc,
+                page_index=page_index,
+                bbox_norm=bbox,
+                number=number,
+                text=text,
+            )
+        except ValueError as e:
+            return JsonResponse({"detail": str(e)}, status=400)
+        except Exception:
+            logger.exception("manual crop failed (doc=%s)", doc.id)
+            return JsonResponse({"detail": "수동 자르기 처리에 실패했습니다."}, status=500)
+
+        data = MatchupProblemSerializer(problem).data
+        if problem.image_key and generate_presigned_get_url_storage:
+            data["image_url"] = generate_presigned_get_url_storage(
+                key=problem.image_key, expires_in=3600,
+            )
+        return JsonResponse(data, status=201)
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentPagesView(View):
+    """GET /api/v1/matchup/documents/<id>/pages/
+
+    수동 크롭 모달을 위한 페이지 정보 + 페이지 이미지 presigned URL.
+    동작: PDF면 페이지별 렌더해서 R2 임시 공간에 캐시 후 presign. 단순 이미지는 그대로.
+
+    응답:
+    {
+      "doc_id": int,
+      "is_pdf": bool,
+      "page_count": int,
+      "pages": [
+         { "index": 0, "url": "...", "width": 0..1, "height": 0..1 }, ...
+      ]
+    }
+
+    pages_url은 short-lived (10분). 모달이 페이지 캔버스에 그릴 때 사용.
+    PDF 페이지 렌더는 매 호출마다 새로 하지 않고, doc.meta.page_image_keys 캐시 재활용.
+    """
+
+    def get(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+        if not generate_presigned_get_url_storage:
+            return JsonResponse({"detail": "Storage not configured"}, status=500)
+
+        from .services import ensure_document_page_images
+        try:
+            pages = ensure_document_page_images(doc)
+        except Exception:
+            logger.exception("ensure_document_page_images failed (doc=%s)", doc.id)
+            return JsonResponse({"detail": "페이지 이미지 준비 실패"}, status=500)
+
+        is_pdf = (doc.content_type or "").lower() == "application/pdf"
+        return JsonResponse({
+            "doc_id": doc.id,
+            "is_pdf": is_pdf,
+            "page_count": len(pages),
+            "pages": pages,
+        })
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")

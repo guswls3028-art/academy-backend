@@ -81,6 +81,17 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     if len(cover_markers) >= 2 and len(full_text) < 500:
         return True
 
+    # 목차/차례 페이지 감지 — 키워드 + 페이지 번호 점선 패턴.
+    # ".... 5", "··· 12" 같은 점선 가이드 또는 "목차/차례/Contents" 헤더.
+    toc_keyword = bool(
+        re.search(r"(?:^|\s)(?:목\s?차|차\s?례|Contents?|Table\s+of\s+Contents)(?:\s|$)", full_text)
+    )
+    dot_leader_count = len(re.findall(r"[.·…]{3,}\s*\d{1,3}\b", full_text))
+    if toc_keyword or dot_leader_count >= 4:
+        # 문항 지표가 없을 때만 — 본문 페이지가 아니라는 확신
+        if not has_choices and not has_question_indicator:
+            return True
+
     # 설명조 종결어미 빈도 기반 해설지 감지
     explanation_markers = re.findall(
         r"(?:이므로|때문이다|따라서|그러므로|해설|나타난다|관측된다|생성된다)",
