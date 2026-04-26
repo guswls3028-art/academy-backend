@@ -289,9 +289,12 @@ class PostViewSet(viewsets.ModelViewSet):
         author_display_name = None
         author_role = "staff"
         if created_by is not None:
-            # 학생 작성
             author_display_name = getattr(created_by, "name", None)
-            author_role = "student"
+            # 학부모가 자녀 컨텍스트로 작성한 경우 author_role=parent (답변 알림 대상 결정용)
+            if getattr(request.user, "parent_profile", None) is not None:
+                author_role = "parent"
+            else:
+                author_role = "student"
         elif request.user and request.user.is_authenticated:
             # 관리자/강사 작성
             staff = getattr(request.user, "staff", None) or getattr(request.user, "staff_profile", None)
@@ -418,8 +421,10 @@ class PostViewSet(viewsets.ModelViewSet):
             author_display_name=author_display_name, author_role=author_role,
         )
 
-        # 알림톡: staff가 학생 글(QnA/상담)에 답변 등록 시 학생/학부모에게 발송.
-        # AutoSendConfig.enabled로 테넌트별 토글, 검수 통과한 통합 score 템플릿 재사용.
+        # 알림톡: staff가 학생/학부모 글(QnA/상담)에 답변 등록 시 발송.
+        # 발송 대상은 글 작성자(author_role)에 따라 분기:
+        #   - student 작성: QnA→학생, 상담→학생+학부모
+        #   - parent 작성: QnA·상담 모두 학부모만 (학부모가 본인 자격으로 쓴 글)
         if author_role == "staff" and post.post_type in ("qna", "counsel") and post.created_by_id:
             try:
                 from apps.support.messaging.services import send_event_notification
@@ -428,17 +433,19 @@ class PostViewSet(viewsets.ModelViewSet):
                     "강의명": (post.category_label or category_fallback),
                     "차시명": (post.title or ""),
                 }
-                if post.post_type == "qna":
+                trigger = "qna_answered" if post.post_type == "qna" else "counsel_answered"
+                post_author_role = getattr(post, "author_role", "") or "student"
+                if post_author_role == "parent":
+                    send_targets = ("parent",)
+                elif post.post_type == "counsel":
+                    send_targets = ("student", "parent")
+                else:  # qna + student
+                    send_targets = ("student",)
+                for send_to in send_targets:
                     send_event_notification(
-                        tenant=tenant, trigger="qna_answered",
-                        student=post.created_by, send_to="student", context=ctx,
+                        tenant=tenant, trigger=trigger,
+                        student=post.created_by, send_to=send_to, context=ctx,
                     )
-                else:  # counsel — 학생 + 학부모
-                    for send_to in ("student", "parent"):
-                        send_event_notification(
-                            tenant=tenant, trigger="counsel_answered",
-                            student=post.created_by, send_to=send_to, context=ctx,
-                        )
             except Exception as e:
                 logger.warning("community reply notification dispatch failed: post_id=%s err=%s", post.id, e)
 

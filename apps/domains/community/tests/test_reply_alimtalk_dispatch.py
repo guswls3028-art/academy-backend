@@ -97,3 +97,35 @@ class TestReplyAlimtalkDispatch(TestCase):
         mock_send.side_effect = RuntimeError("solapi down")
         resp = self._post_reply(self.qna)
         self.assertEqual(resp.status_code, 201, "알림톡 실패가 답변 등록을 막아선 안 됨")
+
+    @patch("apps.support.messaging.services.send_event_notification")
+    def test_parent_authored_qna_dispatches_to_parent_only(self, mock_send):
+        """학부모가 자녀 컨텍스트로 작성한 QnA에 답변 시 parent_phone으로만 발송."""
+        parent_qna = PostEntity.objects.create(
+            tenant=self.tenant, post_type="qna",
+            title="자녀 진도 질문", content="c",
+            created_by=self.student, author_role="parent",
+            author_display_name="홍길동 학부모님", status="published",
+            category_label="수학",
+        )
+        resp = self._post_reply(parent_qna)
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(mock_send.call_count, 1)
+        kwargs = mock_send.call_args.kwargs
+        self.assertEqual(kwargs["trigger"], "qna_answered")
+        self.assertEqual(kwargs["send_to"], "parent")
+
+    @patch("apps.support.messaging.services.send_event_notification")
+    def test_parent_authored_counsel_dispatches_to_parent_only(self, mock_send):
+        """학부모가 자녀 컨텍스트로 작성한 상담에 답변 시 학생 폰 제외, 학부모만 발송."""
+        parent_counsel = PostEntity.objects.create(
+            tenant=self.tenant, post_type="counsel",
+            title="자녀 진학 상담", content="c",
+            created_by=self.student, author_role="parent",
+            author_display_name="홍길동 학부모님", status="published",
+            category_label="진로 상담",
+        )
+        resp = self._post_reply(parent_counsel)
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(mock_send.call_count, 1)
+        self.assertEqual(mock_send.call_args.kwargs["send_to"], "parent")
