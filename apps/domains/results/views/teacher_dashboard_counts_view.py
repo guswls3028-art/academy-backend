@@ -5,9 +5,12 @@ Teacher Dashboard Counts
 GET /results/admin/teacher-dashboard-counts/
 
 선생앱 Today 대시보드 "지금 처리할 일" 위젯용 추가 카운트.
-- 영상 인코딩 실패
-- 매치업 검수 대기 (status=done)
-- 채점 미완료 attempt (최근 7일)
+
+설계 메모(2026-04-26):
+- score_pending / matchup_review_pending 폐기. 사유:
+  · score_pending(ExamAttempt) ↔ /teacher/submissions(Submission) 모델 불일치 + recent_submissions 위젯 중복.
+  · matchup_review_pending: status="done"이 "사람 검수 대기" 의미 아님(AI 분석 완료). 액션 없음.
+- video_failed만 유지 + 30일 윈도우. 30일 지난 실패 영상은 처리 가치 없음(영업 폐기).
 """
 from __future__ import annotations
 
@@ -19,13 +22,10 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.matchup.models import MatchupDocument
-from apps.domains.results.models.exam_attempt import ExamAttempt
 from apps.support.video.models import Video
 
 
-PENDING_ATTEMPT_STATUSES = ["pending", "grading", "failed"]
-SCORE_PENDING_WINDOW_DAYS = 7
+VIDEO_FAILED_WINDOW_DAYS = 30
 
 
 class TeacherDashboardCountsView(APIView):
@@ -34,9 +34,7 @@ class TeacherDashboardCountsView(APIView):
 
     Response:
     {
-      "video_failed": int,
-      "matchup_review_pending": int,
-      "score_pending": int
+      "video_failed": int
     }
     """
 
@@ -45,35 +43,14 @@ class TeacherDashboardCountsView(APIView):
     def get(self, request):
         tenant = getattr(request, "tenant", None)
         if not tenant:
-            return Response(
-                {"video_failed": 0, "matchup_review_pending": 0, "score_pending": 0},
-                status=200,
-            )
+            return Response({"video_failed": 0}, status=200)
 
+        cutoff = timezone.now() - timedelta(days=VIDEO_FAILED_WINDOW_DAYS)
         video_failed = Video.objects.filter(
             tenant=tenant,
             status=Video.Status.FAILED,
             deleted_at__isnull=True,
+            updated_at__gte=cutoff,
         ).count()
 
-        matchup_review_pending = MatchupDocument.objects.filter(
-            tenant=tenant,
-            status="done",
-        ).count()
-
-        cutoff = timezone.now() - timedelta(days=SCORE_PENDING_WINDOW_DAYS)
-        score_pending = ExamAttempt.objects.filter(
-            exam__tenant=tenant,
-            is_representative=True,
-            status__in=PENDING_ATTEMPT_STATUSES,
-            created_at__gte=cutoff,
-        ).count()
-
-        return Response(
-            {
-                "video_failed": int(video_failed),
-                "matchup_review_pending": int(matchup_review_pending),
-                "score_pending": int(score_pending),
-            },
-            status=200,
-        )
+        return Response({"video_failed": int(video_failed)}, status=200)
