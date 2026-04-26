@@ -78,13 +78,6 @@ class DevGlobalSearchView(APIView):
         )
         user_ids = [u.id for u in user_qs]
         # 멤버십 role 매핑
-        role_map = {
-            (m.user_id, m.tenant_id): m.role
-            for m in TenantMembership.objects.filter(
-                user_id__in=user_ids, is_active=True,
-            ).values_list("user_id", "tenant_id", "role").union().values_list(named=True) if False else []
-        }
-        # Fallback: query memberships properly
         memberships = TenantMembership.objects.filter(
             user_id__in=user_ids, is_active=True,
         ).values("user_id", "tenant_id", "role")
