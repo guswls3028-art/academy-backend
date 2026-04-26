@@ -89,6 +89,16 @@ def find_similar_problems(
         .defer("created_at", "updated_at")
     )
 
+    # 시험지(test) source의 자기 doc 안 problem은 후보에서 제외.
+    # 같은 시험지의 다른 problem이 동일 OCR 텍스트로 인덱싱돼 sim≈1로 잡히는
+    # self-doc trap 차단. reference doc 간 cross-doc 추천에는 영향 없음.
+    if source.document_id and source.document is not None:
+        meta = source.document.meta or {}
+        intent = (meta.get("upload_intent") or "").lower()
+        role = (meta.get("document_role") or "").lower()
+        if intent == "test" or role == "exam_sheet":
+            candidates = candidates.exclude(document_id=source.document_id)
+
     # 같은 카테고리(섹션) 내에서만 추천.
     # source가 matchup 문서인 경우에만 적용 (exam source는 document가 None).
     if source_category:

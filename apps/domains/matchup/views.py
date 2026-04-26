@@ -487,7 +487,11 @@ class DocumentCrossMatchesView(View):
         )
         candidates = list(
             MatchupProblem.objects
-            .filter(tenant=request.tenant, embedding__isnull=False)
+            .filter(
+                tenant=request.tenant,
+                embedding__isnull=False,
+                document__isnull=False,  # exam-source problem (document=None) 제외
+            )
             .exclude(document_id=doc.id)
             .exclude(document__meta__upload_intent="test")
             .exclude(document__meta__document_role="exam_sheet")
@@ -499,7 +503,11 @@ class DocumentCrossMatchesView(View):
         )
         source_category = (doc.category or "").strip()
         if source_category:
-            candidates = [c for c in candidates if (c.document.category or "").strip() == source_category]
+            candidates = [
+                c for c in candidates
+                if c.document is not None
+                and (c.document.category or "").strip() == source_category
+            ]
 
         matches = []
         for p in problems:
