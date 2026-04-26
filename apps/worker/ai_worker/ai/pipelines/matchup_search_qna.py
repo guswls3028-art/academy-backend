@@ -103,9 +103,9 @@ def run_matchup_search_qna(
         step_percent=0, tenant_id=tenant_id,
     )
 
-    import django
-    django.setup()
-
+    # django.setup()은 워커 entrypoint(ai_sqs_worker.run_ai_sqs_worker / __main__)에서
+    # 1회 호출. 함수마다 재호출하면 매번 apps registry 재로드로 불필요한 비용 + 멀티스레드
+    # 환경에서 race 리스크. 여기서는 모델 import만 lazy 처리.
     from apps.domains.matchup.models import MatchupProblem
     from apps.shared.utils.vector import cosine_similarity
 

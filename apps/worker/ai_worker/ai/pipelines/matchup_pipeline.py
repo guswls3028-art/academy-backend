@@ -97,10 +97,12 @@ def run_matchup_pipeline(
     )
 
     from apps.worker.ai_worker.ai.detection.segment_dispatcher import (
+        register_pdf_seg_tmp_dirs,
         segment_questions_multipage,
     )
 
     seg_result = segment_questions_multipage(local_path)
+    register_pdf_seg_tmp_dirs(seg_result.get("tmp_dirs") or [])
     pages = seg_result.get("pages", [])
     total_boxes = seg_result.get("total_boxes", 0)
 

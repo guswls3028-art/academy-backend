@@ -163,7 +163,10 @@ def _ocr_exam_questions(questions, job_id):
         logger.warning("R2 storage not available for exam indexing")
         return [""] * len(questions)
 
-    from apps.worker.ai_worker.storage.downloader import download_to_tmp
+    from apps.worker.ai_worker.storage.downloader import (
+        cleanup_tmp_for_path,
+        download_to_tmp,
+    )
 
     texts = []
     for q in questions:
@@ -171,6 +174,7 @@ def _ocr_exam_questions(questions, job_id):
             texts.append("")
             continue
 
+        local_path = None
         try:
             url = generate_presigned_get_url_storage(key=q["image_key"], expires_in=3600)
             local_path = download_to_tmp(download_url=url, job_id=job_id)
@@ -179,6 +183,9 @@ def _ocr_exam_questions(questions, job_id):
         except Exception:
             logger.warning("OCR failed for exam Q%d in job %s", q["number"], job_id, exc_info=True)
             texts.append("")
+        finally:
+            # 문항별 다운로드는 즉시 정리 — dispatcher의 finally는 마지막 local_path만 추적.
+            cleanup_tmp_for_path(local_path)
 
     return texts
 
