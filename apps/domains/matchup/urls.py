@@ -7,6 +7,7 @@ urlpatterns = [
     path("documents/upload/", views.DocumentUploadView.as_view()),
     path("documents/", views.DocumentListView.as_view()),
     path("documents/<int:doc_id>/", views.DocumentDetailView.as_view()),
+    path("documents/<int:doc_id>/preview/", views.DocumentPreviewView.as_view()),
     path("documents/<int:doc_id>/retry/", views.DocumentRetryView.as_view()),
 
     # Problems

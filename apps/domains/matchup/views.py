@@ -251,6 +251,36 @@ class DocumentDetailView(View):
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentPreviewView(View):
+    """GET /api/v1/matchup/documents/<id>/preview/
+
+    원본 PDF/이미지 미리보기용 presigned URL 반환.
+    프론트의 미리보기 모달이 iframe(PDF) 또는 img(이미지)에서 사용.
+    """
+
+    def get(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+        if not generate_presigned_get_url_storage:
+            return JsonResponse({"detail": "Storage not configured"}, status=500)
+        # filename 안 넘기면 ResponseContentDisposition 미설정 → 브라우저가 inline 처리
+        url = generate_presigned_get_url_storage(
+            key=doc.r2_key, expires_in=3600,
+            content_type=doc.content_type or None,
+        )
+        return JsonResponse({
+            "url": url,
+            "content_type": doc.content_type,
+            "title": doc.title,
+            "original_name": doc.original_name,
+        })
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class DocumentRetryView(View):
     """POST /api/v1/matchup/documents/<id>/retry/"""
 
