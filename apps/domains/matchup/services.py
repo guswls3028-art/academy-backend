@@ -139,22 +139,24 @@ def _rerank_with_cross_encoder(source, pre_top):
 
 
 def delete_document_with_r2(document: MatchupDocument) -> None:
-    """문서 + 하위 문제 이미지 + 원본 R2 파일 모두 삭제."""
-    r2_keys = [document.r2_key]
+    """매치업 문서 삭제 — 문제 크롭 이미지만 R2에서 제거.
+
+    원본 PDF/이미지(document.r2_key)는 InventoryFile이 소유하므로 여기서 지우지 않는다.
+    원본 삭제는 InventoryFile 삭제 시 이루어지고 CASCADE로 MatchupDocument도 함께 삭제된다.
+    """
     problem_keys = list(
         document.problems.exclude(image_key="").values_list("image_key", flat=True)
     )
-    r2_keys.extend(problem_keys)
 
     if delete_object_r2_storage:
-        for key in r2_keys:
+        for key in problem_keys:
             if key:
                 try:
                     delete_object_r2_storage(key=key)
                 except Exception:
                     logger.warning("R2 delete failed: %s", key, exc_info=True)
 
-    document.delete()  # CASCADE로 problems도 삭제
+    document.delete()  # CASCADE로 problems도 삭제 (InventoryFile은 그대로)
 
 
 def retry_document(document: MatchupDocument) -> str:
@@ -193,3 +195,96 @@ def retry_document(document: MatchupDocument) -> str:
     document.save(update_fields=["status", "ai_job_id", "error_message", "problem_count", "updated_at"])
 
     return job_id
+
+
+# ── Storage-as-canonical helpers ─────────────────────────
+#
+# 멘탈 모델: InventoryFile = canonical 자료. MatchupDocument = 그 위의 분석 레이어.
+# 매치업 자료의 진입점은 두 가지:
+#   1. 매치업 페이지에서 업로드 → InventoryFile 생성 + 즉시 승격 (1-step UX)
+#   2. 저장소에서 우클릭/토글 → 기존 InventoryFile 승격
+# 두 경로 모두 promote_inventory_to_matchup으로 수렴.
+
+MATCHUP_UPLOAD_ROOT = "매치업-업로드"
+
+
+def ensure_matchup_upload_folder(tenant):
+    """매치업 페이지 직접 업로드용 폴더 (/매치업-업로드/{YYYY-MM}/) 자동 생성. Returns InventoryFolder."""
+    from apps.domains.inventory.models import InventoryFolder
+    from datetime import datetime
+
+    root, _ = InventoryFolder.objects.get_or_create(
+        tenant=tenant, scope="admin", student_ps="",
+        parent=None, name=MATCHUP_UPLOAD_ROOT,
+    )
+    ym_key = datetime.now().strftime("%Y-%m")
+    ym_folder, _ = InventoryFolder.objects.get_or_create(
+        tenant=tenant, scope="admin", student_ps="",
+        parent=root, name=ym_key,
+    )
+    return ym_folder
+
+
+def promote_inventory_to_matchup(
+    inventory_file,
+    *,
+    title: str = "",
+    subject: str = "",
+    grade_level: str = "",
+):
+    """InventoryFile을 매치업 분석 대상으로 승격. Returns MatchupDocument.
+
+    이미 승격된 파일은 중복 승격 불가 — 호출 측이 검사해서 409 반환.
+    """
+    from apps.domains.ai.gateway import dispatch_job
+    from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+    if hasattr(inventory_file, "matchup_document"):
+        # 이미 승격된 경우 — 호출 측 검사 누락 방지
+        existing = MatchupDocument.objects.filter(inventory_file=inventory_file).first()
+        if existing:
+            raise ValueError(f"InventoryFile {inventory_file.id} is already promoted (doc={existing.id})")
+
+    doc = MatchupDocument.objects.create(
+        tenant=inventory_file.tenant,
+        inventory_file=inventory_file,
+        title=title or inventory_file.display_name,
+        subject=subject,
+        grade_level=grade_level,
+        r2_key=inventory_file.r2_key,
+        original_name=inventory_file.original_name,
+        size_bytes=inventory_file.size_bytes,
+        content_type=inventory_file.content_type,
+        status="pending",
+        meta={},
+    )
+
+    try:
+        download_url = generate_presigned_get_url_storage(
+            key=inventory_file.r2_key, expires_in=3600,
+        )
+        result = dispatch_job(
+            job_type="matchup_analysis",
+            payload={
+                "download_url": download_url,
+                "tenant_id": str(inventory_file.tenant_id),
+                "document_id": str(doc.id),
+                "filename": inventory_file.original_name,
+            },
+            tenant_id=str(inventory_file.tenant_id),
+            source_domain="matchup",
+            source_id=str(doc.id),
+        )
+        if isinstance(result, dict) and not result.get("ok", True):
+            raise RuntimeError(result.get("error", "dispatch failed"))
+        job_id = result.get("job_id", "") if isinstance(result, dict) else str(result)
+        doc.status = "processing"
+        doc.ai_job_id = str(job_id)
+        doc.save(update_fields=["status", "ai_job_id", "updated_at"])
+    except Exception:
+        logger.exception("Failed to dispatch matchup_analysis for doc %s", doc.id)
+        doc.status = "failed"
+        doc.error_message = "AI 분석 작업 생성에 실패했습니다."
+        doc.save(update_fields=["status", "error_message", "updated_at"])
+
+    return doc

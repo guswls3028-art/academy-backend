@@ -4,6 +4,8 @@ from .models import MatchupDocument, MatchupProblem
 
 
 class MatchupDocumentSerializer(serializers.ModelSerializer):
+    inventory_file_id = serializers.IntegerField(read_only=True, allow_null=True)
+
     class Meta:
         model = MatchupDocument
         fields = [
@@ -11,6 +13,7 @@ class MatchupDocumentSerializer(serializers.ModelSerializer):
             "original_name", "size_bytes", "content_type",
             "status", "ai_job_id", "problem_count", "error_message",
             "meta",
+            "inventory_file_id",
             "created_at", "updated_at",
         ]
         read_only_fields = fields

@@ -19,8 +19,13 @@ from .serializers import (
     MatchupProblemSerializer,
     SimilarProblemSerializer,
 )
-from .r2_path import build_matchup_document_key
-from .services import find_similar_problems, delete_document_with_r2, retry_document
+from .services import (
+    find_similar_problems,
+    delete_document_with_r2,
+    retry_document,
+    promote_inventory_to_matchup,
+    ensure_matchup_upload_folder,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +90,13 @@ def _is_tenant_staff(request):
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class DocumentUploadView(View):
-    """POST /api/v1/matchup/documents/upload/"""
+    """POST /api/v1/matchup/documents/upload/
+
+    Storage-as-canonical: 매치업 페이지 업로드는 내부적으로
+      1) InventoryFile 생성 (admin scope, /매치업-업로드/{YYYY-MM}/ 폴더)
+      2) MatchupDocument 즉시 승격 + dispatch
+    사용자 체감은 1-step 유지.
+    """
 
     def post(self, request):
         if not _is_tenant_staff(request):
@@ -97,7 +108,7 @@ class DocumentUploadView(View):
 
         if file.content_type not in ALLOWED_CONTENT_TYPES:
             return JsonResponse(
-                {"detail": f"지원하지 않는 형식입니다. PDF, PNG, JPG만 가능합니다."},
+                {"detail": "지원하지 않는 형식입니다. PDF, PNG, JPG만 가능합니다."},
                 status=400,
             )
 
@@ -115,71 +126,145 @@ class DocumentUploadView(View):
                 status=400,
             )
 
+        if not upload_fileobj_to_r2_storage:
+            return JsonResponse({"detail": "Storage not configured"}, status=500)
+
         title = request.POST.get("title", "") or file.name
         subject = request.POST.get("subject", "")
         grade_level = request.POST.get("grade_level", "")
 
-        r2_key, _ = build_matchup_document_key(
+        # 1) /매치업-업로드/{YYYY-MM}/ 폴더에 InventoryFile 생성
+        from apps.domains.inventory.r2_path import build_r2_key, safe_filename, folder_path_string
+        from apps.domains.inventory.models import InventoryFile
+
+        ym_folder = ensure_matchup_upload_folder(tenant)
+        path_parts = []
+        p = ym_folder
+        while p:
+            path_parts.append(p.name)
+            p = p.parent
+        folder_path = folder_path_string(list(reversed(path_parts)))
+
+        safe_name = safe_filename(file.name)
+        r2_key = build_r2_key(
             tenant_id=tenant.id,
-            original_name=file.name,
+            scope="admin",
+            student_ps="",
+            folder_path=folder_path,
+            file_name=safe_name,
         )
 
-        # R2 업로드
-        if upload_fileobj_to_r2_storage:
+        try:
             upload_fileobj_to_r2_storage(
                 fileobj=file,
                 key=r2_key,
                 content_type=file.content_type,
             )
-        else:
-            return JsonResponse({"detail": "Storage not configured"}, status=500)
+        except Exception as e:
+            return JsonResponse({"detail": f"R2 upload failed: {e}"}, status=502)
 
-        doc = MatchupDocument.objects.create(
+        inv_file = InventoryFile.objects.create(
             tenant=tenant,
-            title=title,
-            subject=subject,
-            grade_level=grade_level,
+            scope="admin",
+            student_ps="",
+            folder=ym_folder,
+            display_name=title,
+            description="",
+            icon="file-text",
             r2_key=r2_key,
             original_name=file.name,
             size_bytes=file.size,
             content_type=file.content_type,
-            status="pending",
-            meta={},
         )
 
-        # AI 분석 디스패치
+        # 2) 즉시 승격 + dispatch
+        doc = promote_inventory_to_matchup(
+            inv_file,
+            title=title,
+            subject=subject,
+            grade_level=grade_level,
+        )
+
+        data = MatchupDocumentSerializer(doc).data
+        return JsonResponse(data, status=201)
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentPromoteFromInventoryView(View):
+    """POST /api/v1/matchup/documents/promote/
+
+    body: { inventory_file_id: int, title?: str, subject?: str, grade_level?: str }
+    저장소 admin scope 파일을 매치업 분석 대상으로 승격.
+    """
+
+    def post(self, request):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        import json
         try:
-            from apps.domains.ai.gateway import dispatch_job
-
-            download_url = generate_presigned_get_url_storage(
-                key=r2_key, expires_in=3600
-            )
-
-            result = dispatch_job(
-                job_type="matchup_analysis",
-                payload={
-                    "download_url": download_url,
-                    "tenant_id": str(tenant.id),
-                    "document_id": str(doc.id),
-                    "filename": file.name,
-                },
-                tenant_id=str(tenant.id),
-                source_domain="matchup",
-                source_id=str(doc.id),
-            )
-
-            if isinstance(result, dict) and not result.get("ok", True):
-                raise RuntimeError(result.get("error", "dispatch failed"))
-
-            job_id = result.get("job_id", "") if isinstance(result, dict) else str(result)
-            doc.status = "processing"
-            doc.ai_job_id = str(job_id)
-            doc.save(update_fields=["status", "ai_job_id", "updated_at"])
+            body = json.loads(request.body)
         except Exception:
-            logger.exception("Failed to dispatch matchup_analysis job for doc %s", doc.id)
-            doc.status = "failed"
-            doc.error_message = "AI 분석 작업 생성에 실패했습니다."
-            doc.save(update_fields=["status", "error_message", "updated_at"])
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        inv_file_id = body.get("inventory_file_id")
+        if not inv_file_id:
+            return JsonResponse({"detail": "inventory_file_id required"}, status=400)
+
+        from apps.domains.inventory.models import InventoryFile
+        try:
+            inv_file = InventoryFile.objects.get(
+                id=int(inv_file_id), tenant=request.tenant,
+            )
+        except (InventoryFile.DoesNotExist, ValueError, TypeError):
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        # 학생 scope 파일은 승격 불가 (매치업은 staff 전용 도구)
+        if inv_file.scope != "admin":
+            return JsonResponse(
+                {"detail": "선생님 저장소(admin scope) 파일만 매치업으로 승격할 수 있습니다."},
+                status=400,
+            )
+
+        # 매치업 가능한 형식 체크
+        if inv_file.content_type not in ALLOWED_CONTENT_TYPES:
+            return JsonResponse(
+                {"detail": f"매치업은 PDF/PNG/JPG만 지원합니다. (현재: {inv_file.content_type})"},
+                status=400,
+            )
+
+        # 중복 승격 차단
+        existing = MatchupDocument.objects.filter(
+            tenant=request.tenant, inventory_file=inv_file,
+        ).first()
+        if existing:
+            return JsonResponse(
+                {
+                    "detail": "이미 매치업 자료로 등록되어 있습니다.",
+                    "code": "already_promoted",
+                    "document_id": existing.id,
+                },
+                status=409,
+            )
+
+        # 테넌트당 최대 문서 수 체크
+        doc_count = MatchupDocument.objects.filter(tenant=request.tenant).count()
+        if doc_count >= MAX_DOCUMENTS_PER_TENANT:
+            return JsonResponse(
+                {"detail": f"테넌트당 최대 {MAX_DOCUMENTS_PER_TENANT}개 문서까지 업로드 가능합니다."},
+                status=400,
+            )
+
+        title = (body.get("title") or "").strip() or inv_file.display_name
+        subject = body.get("subject", "")
+        grade_level = body.get("grade_level", "")
+
+        doc = promote_inventory_to_matchup(
+            inv_file,
+            title=title,
+            subject=subject,
+            grade_level=grade_level,
+        )
 
         data = MatchupDocumentSerializer(doc).data
         return JsonResponse(data, status=201)

@@ -5,6 +5,7 @@ from . import views
 urlpatterns = [
     # Documents
     path("documents/upload/", views.DocumentUploadView.as_view()),
+    path("documents/promote/", views.DocumentPromoteFromInventoryView.as_view()),
     path("documents/", views.DocumentListView.as_view()),
     path("documents/<int:doc_id>/", views.DocumentDetailView.as_view()),
     path("documents/<int:doc_id>/preview/", views.DocumentPreviewView.as_view()),

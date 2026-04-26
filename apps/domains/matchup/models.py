@@ -17,6 +17,12 @@ class MatchupDocument(TimestampModel):
         related_name="matchup_documents",
         db_index=True,
     )
+    # 저장소(InventoryFile) 위의 분석 레이어 (storage-as-canonical).
+    inventory_file = models.OneToOneField(
+        "inventory.InventoryFile",
+        on_delete=models.CASCADE,
+        related_name="matchup_document",
+    )
     title = models.CharField(max_length=255)
     subject = models.CharField(max_length=100, blank=True, default="")
     grade_level = models.CharField(max_length=50, blank=True, default="")

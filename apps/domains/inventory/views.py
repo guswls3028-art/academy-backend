@@ -151,12 +151,24 @@ class InventoryListView(View):
             qs_folders = inv_repo.inventory_folder_filter(tenant, scope, student_ps_arg)
             qs_files = inv_repo.inventory_file_filter(tenant, scope, student_ps_arg)
 
+            # 매치업 승격된 파일 ID set (admin scope에만 의미 있음)
+            promoted_map: dict[int, dict] = {}
+            if scope == "admin":
+                from apps.domains.matchup.models import MatchupDocument
+                file_ids = [f.id for f in qs_files]
+                if file_ids:
+                    docs = MatchupDocument.objects.filter(
+                        tenant=tenant, inventory_file_id__in=file_ids,
+                    ).values("id", "inventory_file_id", "status", "problem_count")
+                    promoted_map = {d["inventory_file_id"]: d for d in docs}
+
             folders = [
                 {"id": str(f.id), "name": f.name, "parentId": str(f.parent_id) if f.parent_id else None}
                 for f in qs_folders
             ]
-            files = [
-                {
+            files = []
+            for f in qs_files:
+                row = {
                     "id": str(f.id),
                     "name": f.original_name,
                     "displayName": f.display_name,
@@ -168,8 +180,14 @@ class InventoryListView(View):
                     "contentType": f.content_type or "",
                     "createdAt": f.created_at.isoformat() if f.created_at else "",
                 }
-                for f in qs_files
-            ]
+                doc_info = promoted_map.get(f.id)
+                if doc_info:
+                    row["matchup"] = {
+                        "documentId": doc_info["id"],
+                        "status": doc_info["status"],
+                        "problemCount": doc_info["problem_count"],
+                    }
+                files.append(row)
             return JsonResponse({"folders": folders, "files": files})
         except Exception as e:
             return JsonResponse(
@@ -349,7 +367,41 @@ class FileUploadView(View):
             size_bytes=file_obj.size,
             content_type=file_obj.content_type or "application/octet-stream",
         )
-        return JsonResponse({
+
+        # 매치업 승격 토글 — admin scope + 매치업 가능 형식만
+        promote_flag = (request.POST.get("promote_to_matchup") or "").strip().lower()
+        promote = promote_flag in ("1", "true", "yes")
+        matchup_doc_id = None
+        if promote:
+            if scope != "admin":
+                return JsonResponse(
+                    {"detail": "선생님 저장소 파일만 매치업으로 승격할 수 있습니다."},
+                    status=400,
+                )
+            matchup_allowed = {"application/pdf", "image/png", "image/jpeg", "image/jpg"}
+            if (file_obj.content_type or "") not in matchup_allowed:
+                return JsonResponse(
+                    {"detail": "매치업은 PDF/PNG/JPG만 지원합니다."},
+                    status=400,
+                )
+            try:
+                from apps.domains.matchup.services import promote_inventory_to_matchup
+                doc = promote_inventory_to_matchup(
+                    inv_file,
+                    title=inv_file.display_name,
+                    subject=(request.POST.get("subject") or ""),
+                    grade_level=(request.POST.get("grade_level") or ""),
+                )
+                matchup_doc_id = doc.id
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Promote to matchup failed for inventory_file %s", inv_file.id
+                )
+                # InventoryFile은 살려두고 promote만 실패 보고
+                matchup_doc_id = None
+
+        payload = {
             "id": str(inv_file.id),
             "name": inv_file.original_name,
             "displayName": inv_file.display_name,
@@ -360,7 +412,10 @@ class FileUploadView(View):
             "r2Key": inv_file.r2_key,
             "contentType": inv_file.content_type,
             "createdAt": inv_file.created_at.isoformat() if inv_file.created_at else "",
-        })
+        }
+        if matchup_doc_id is not None:
+            payload["matchupDocumentId"] = matchup_doc_id
+        return JsonResponse(payload)
 
 
 @method_decorator(csrf_exempt, name="dispatch")
