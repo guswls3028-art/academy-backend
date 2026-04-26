@@ -1309,12 +1309,15 @@ class StudentVideoCommentDetailView(APIView):
         if comment.author_student_id != student.id:
             raise PermissionDenied("본인 댓글만 삭제할 수 있습니다.")
 
-        comment.is_deleted = True
-        comment.save(update_fields=["is_deleted", "updated_at"])
-
-        from django.db.models.functions import Greatest
-        Video.objects.filter(id=comment.video_id).update(
-            comment_count=Greatest(F("comment_count") - 1, 0)
+        # 멱등 가드: 이미 삭제된 댓글에 대한 재호출은 카운터를 추가 감소시키지 않음.
+        # update(is_deleted=False) 절에서만 1회 감소 → 동시 DELETE 호출도 안전.
+        updated = VideoComment.objects.filter(id=comment.id, is_deleted=False).update(
+            is_deleted=True
         )
+        if updated:
+            from django.db.models.functions import Greatest
+            Video.objects.filter(id=comment.video_id).update(
+                comment_count=Greatest(F("comment_count") - 1, 0)
+            )
 
         return Response({"deleted": True})
