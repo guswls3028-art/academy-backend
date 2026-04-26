@@ -392,6 +392,32 @@ def _download_inventory_to_temp(inventory_file) -> str:
     return path
 
 
+def _enqueue_manual_problem_index(problem: MatchupProblem) -> None:
+    """수동 크롭 problem에 OCR + 임베딩 인덱싱 워커 잡을 큐잉.
+
+    워커가 image_key를 다운로드해 OCR + 정제 + 임베딩 후 callback이 problem
+    레코드의 text/embedding을 채운다. 인덱싱이 끝나야 매치업 검색 풀에 노출.
+    """
+    from apps.domains.ai.gateway import dispatch_job
+
+    if not problem.image_key:
+        return
+
+    result = dispatch_job(
+        job_type="matchup_manual_index",
+        payload={
+            "problem_id": problem.id,
+            "tenant_id": str(problem.tenant_id),
+            "image_key": problem.image_key,
+        },
+        tenant_id=str(problem.tenant_id),
+        source_domain="matchup_manual",
+        source_id=str(problem.id),
+    )
+    if isinstance(result, dict) and not result.get("ok", True):
+        raise RuntimeError(result.get("error", "dispatch failed"))
+
+
 def manually_crop_problem(
     document: MatchupDocument,
     *,
@@ -512,8 +538,15 @@ def manually_crop_problem(
         document.status = "done"
         document.save(update_fields=["problem_count", "status", "updated_at"])
 
-        # NOTE: 임베딩은 비워둠 — 매치업 검색(find_similar_problems)에는 노출되지 않지만
-        # 그리드/캔버스/탐색에는 즉시 보임. 검색 인덱싱은 향후 별도 워커 job으로 추가.
+        # 임베딩은 비동기 워커가 채움 — OCR + sentence-transformer (matchup_manual_index).
+        # 동기 처리: 레코드 + 이미지만. 즉시 그리드/캔버스/탐색에 노출.
+        try:
+            _enqueue_manual_problem_index(problem)
+        except Exception:
+            logger.exception(
+                "MATCHUP_MANUAL_CROP_ENQUEUE_FAILED | doc=%s | problem=%s",
+                document.id, problem.id,
+            )
 
         logger.info(
             "MATCHUP_MANUAL_CROP | doc=%s | num=%s | created=%s | bbox=%s",

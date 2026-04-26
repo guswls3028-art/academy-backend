@@ -95,6 +95,19 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 record_progress=_record_progress,
             )
 
+        # Matchup manual index (수동 크롭 problem → OCR + 임베딩)
+        # download_url 불필요 — payload.image_key로 직접 R2 접근.
+        if job.type == "matchup_manual_index":
+            from apps.worker.ai_worker.ai.pipelines.matchup_manual_index import (
+                run_matchup_manual_index,
+            )
+            return run_matchup_manual_index(
+                job=job,
+                payload=payload,
+                tenant_id=tenant_id,
+                record_progress=_record_progress,
+            )
+
         cfg = AIConfig.load()
 
         download_url = payload.get("download_url")

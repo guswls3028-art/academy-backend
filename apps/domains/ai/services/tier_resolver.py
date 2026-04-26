@@ -96,6 +96,7 @@ def validate_tier_for_job_type(tier: str, job_type: str) -> bool:
             "matchup_analysis",
             "matchup_index_exam",
             "matchup_search_qna",
+            "matchup_manual_index",
         )
     
     # Premium: 모든 작업 허용

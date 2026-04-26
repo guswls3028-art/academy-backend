@@ -82,6 +82,23 @@ def dispatch_ai_result_to_domain(
             )
         return
 
+    # matchup_manual: 수동 크롭 problem OCR + 임베딩 결과
+    if source_domain == "matchup_manual":
+        try:
+            _handle_matchup_manual_result(
+                job_id=job_id,
+                status=status,
+                result_payload=result_payload or {},
+                error=error,
+                source_id=source_id,
+            )
+        except Exception:
+            logger.exception(
+                "AI_CALLBACK_MATCHUP_MANUAL_FAILED | job_id=%s | problem_id=%s",
+                job_id, source_id,
+            )
+        return
+
     # community_qna: 학생 Q&A 매치업 검색 결과
     if source_domain == "community_qna":
         try:
@@ -628,6 +645,68 @@ def _handle_matchup_index_result(
     logger.info(
         "AI_CALLBACK_MATCHUP_INDEX_SUCCESS | job_id=%s | exam_id=%s | indexed=%d",
         job_id, exam_id, len(problem_objs),
+    )
+
+
+def _handle_matchup_manual_result(
+    *,
+    job_id: str,
+    status: str,
+    result_payload: Dict[str, Any],
+    error: Optional[str],
+    source_id: Optional[str],
+) -> None:
+    """수동 크롭 problem OCR/임베딩 결과 반영.
+
+    source_id = problem_id. 단일 problem 레코드의 text/embedding/format을 채운다.
+    """
+    from apps.domains.matchup.models import MatchupProblem
+
+    if status == "FAILED":
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_MANUAL_FAILED | job_id=%s | problem_id=%s | error=%s",
+            job_id, source_id, error,
+        )
+        return
+
+    problem_id = result_payload.get("problem_id") or source_id
+    if not problem_id:
+        return
+
+    text = (result_payload.get("text") or "").strip()
+    embedding = result_payload.get("embedding")
+    fmt = result_payload.get("format") or "choice"
+
+    try:
+        problem = MatchupProblem.objects.get(id=int(problem_id))
+    except MatchupProblem.DoesNotExist:
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_MANUAL_MISSING | job_id=%s | problem_id=%s",
+            job_id, problem_id,
+        )
+        return
+
+    update_fields = []
+    if text and not (problem.text or "").strip():
+        problem.text = text
+        update_fields.append("text")
+    if embedding is not None:
+        problem.embedding = embedding
+        update_fields.append("embedding")
+
+    meta = dict(problem.meta or {})
+    if "format" not in meta or meta.get("format") in (None, "", "choice"):
+        meta["format"] = fmt
+        problem.meta = meta
+        update_fields.append("meta")
+
+    if update_fields:
+        update_fields.append("updated_at")
+        problem.save(update_fields=update_fields)
+
+    logger.info(
+        "AI_CALLBACK_MATCHUP_MANUAL_SUCCESS | job_id=%s | problem_id=%s | text_len=%d | has_embedding=%s",
+        job_id, problem_id, len(text), embedding is not None,
     )
 
 

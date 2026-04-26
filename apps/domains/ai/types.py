@@ -15,6 +15,7 @@ AIJobType = Literal[
     "matchup_analysis",
     "matchup_index_exam",
     "matchup_search_qna",
+    "matchup_manual_index",
 ]
 
 
