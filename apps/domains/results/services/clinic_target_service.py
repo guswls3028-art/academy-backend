@@ -93,7 +93,7 @@ def _is_low_confidence_for_attempt(*, exam_id: int, enrollment_id: int, attempt_
         a = ExamAttempt.objects.filter(id=int(attempt_id)).first()
         if a and hasattr(a, "meta"):
             reason = _extract_invalid_reason_from_meta(getattr(a, "meta", None))
-            if (reason or "").upper() == "LOW_CONFIDENCE":
+            if (reason or "").upper() in ("LOW_CONFIDENCE", "AMBIGUOUS_SINGLE"):
                 return True
 
     # 2) ResultFact.meta (대표 attempt 기준)
@@ -249,12 +249,13 @@ class ClinicTargetService:
             links = links.filter(enrollment_id__in=assigned_enrollment_ids)
 
         # ✅ enrollment 일괄 조회 (N+1 방지 + 학생 SSOT 표시 필드)
+        # 🔐 tenant 강제 — links는 tenant 스코프이지만 enrollment_id 참조는 강제 제약 없음.
         links_list = list(links)
         all_enrollment_ids = list({int(getattr(lk, "enrollment_id", 0) or 0) for lk in links_list} - {0})
         from apps.domains.enrollment.models import Enrollment as _Enrollment
         enrollment_map: Dict[int, Any] = {
             int(e.id): e
-            for e in _Enrollment.objects.filter(id__in=all_enrollment_ids).select_related("student", "lecture")
+            for e in _Enrollment.objects.filter(id__in=all_enrollment_ids, tenant=tenant).select_related("student", "lecture")
         }
 
         # ✅ 클리닉 하이라이트 (미출석 대상자 노란 형광펜)

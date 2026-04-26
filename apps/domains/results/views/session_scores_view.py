@@ -149,10 +149,12 @@ class SessionScoresView(APIView):
                 exam_id__in=exam_ids
             ).values_list("enrollment_id", flat=True)
 
+            # 🔐 tenant 강제: enrollment_id 참조에 강제 제약 없으므로 명시 차단.
             enrollment_qs = (
                 Enrollment.objects.filter(
                     Q(id__in=hw_enrollment_ids_qs)
-                    | Q(id__in=ex_enrollment_ids_qs)
+                    | Q(id__in=ex_enrollment_ids_qs),
+                    tenant=tenant,
                 )
                 .filter(status="ACTIVE")  # ✅ 퇴원(INACTIVE) 수강생 제외
                 .filter(student__deleted_at__isnull=True)
@@ -160,7 +162,7 @@ class SessionScoresView(APIView):
             )
         else:
             enrollment_qs = (
-                Enrollment.objects.filter(id__in=hw_enrollment_ids_qs)
+                Enrollment.objects.filter(id__in=hw_enrollment_ids_qs, tenant=tenant)
                 .filter(status="ACTIVE")  # ✅ 퇴원(INACTIVE) 수강생 제외
                 .filter(student__deleted_at__isnull=True)
                 .distinct()
@@ -195,6 +197,7 @@ class SessionScoresView(APIView):
                 Enrollment.objects.filter(
                     id__in=session_enrollment_ids,
                     status="ACTIVE",  # ✅ 퇴원(INACTIVE) 수강생 제외
+                    tenant=tenant,    # 🔐 tenant 강제
                 )
                 .filter(student__deleted_at__isnull=True)
                 .values_list("id", flat=True)
@@ -329,9 +332,10 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 4) Enrollment → student_name
         # -------------------------------------------------
+        # 🔐 tenant 강제 — enrollment_ids는 위에서 tenant 필터를 거쳤지만 명시적으로 한 번 더.
         enrollment_map = {
             int(e.id): e
-            for e in Enrollment.objects.filter(id__in=enrollment_ids).select_related("student", "lecture")
+            for e in Enrollment.objects.filter(id__in=enrollment_ids, tenant=tenant).select_related("student", "lecture")
         }
 
         student_name_map = {

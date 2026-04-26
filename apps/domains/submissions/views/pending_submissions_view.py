@@ -107,13 +107,16 @@ class PendingSubmissionsView(APIView):
                 homework_ids.add(int(s.target_id))
 
         # ── Enrollment → student + lecture (batch) ──────────────
+        # 🔐 tenant 필터: Submission이 tenant 스코프라도 enrollment_id 자체에는
+        # 강제 제약이 없으므로 오염된 row가 다른 tenant의 enrollment를 참조하면
+        # 학생 메타가 노출될 수 있다. 명시적으로 tenant 강제.
         enrollment_map: Dict[int, Any] = {}
         if enrollment_ids:
             from apps.domains.enrollment.models import Enrollment
 
             for enr in (
                 Enrollment.objects.select_related("student", "lecture")
-                .filter(id__in=enrollment_ids)
+                .filter(id__in=enrollment_ids, tenant=tenant)
             ):
                 enrollment_map[enr.id] = enr
 
@@ -123,7 +126,7 @@ class PendingSubmissionsView(APIView):
             from apps.domains.exams.models import Exam
 
             exams = (
-                Exam.objects.filter(id__in=exam_ids)
+                Exam.objects.filter(id__in=exam_ids, tenant=tenant)
                 .prefetch_related("sessions__lecture")
             )
             for exam in exams:
@@ -145,7 +148,7 @@ class PendingSubmissionsView(APIView):
             from apps.domains.homework_results.models import Homework
 
             homeworks = (
-                Homework.objects.filter(id__in=homework_ids)
+                Homework.objects.filter(id__in=homework_ids, tenant=tenant)
                 .select_related("session__lecture")
             )
             for hw in homeworks:

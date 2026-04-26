@@ -62,7 +62,8 @@ class AdminStudentGradesView(APIView):
 
         exams_map = {}
         if exam_ids:
-            for e in Exam.objects.filter(id__in=exam_ids).only("id", "title", "pass_score"):
+            # 🔐 tenant 강제 — Exam.tenant FK 존재.
+            for e in Exam.objects.filter(id__in=exam_ids, tenant=tenant).only("id", "title", "pass_score"):
                 exams_map[e.id] = {"title": e.title, "pass_score": float(e.pass_score or 0)}
 
         # 재시도 횟수 (bulk)
@@ -77,9 +78,10 @@ class AdminStudentGradesView(APIView):
                 retake_counts[(att["enrollment_id"], att["exam_id"])] = att["max_attempt"]
 
         # 세션/강의 정보 — enrollment → lecture 매핑
+        # 🔐 enrollment_ids는 line 44에서 이미 tenant 필터됨. 명시적으로 한 번 더.
         enrollment_lecture_map = {}
         if enrollment_ids:
-            for en in Enrollment.objects.filter(id__in=enrollment_ids).select_related("lecture").only("id", "lecture__id", "lecture__title", "lecture__color", "lecture__chip_label"):
+            for en in Enrollment.objects.filter(id__in=enrollment_ids, tenant=tenant).select_related("lecture").only("id", "lecture__id", "lecture__title", "lecture__color", "lecture__chip_label"):
                 enrollment_lecture_map[en.id] = {
                     "lecture_id": en.lecture_id,
                     "lecture_title": en.lecture.title if en.lecture else None,

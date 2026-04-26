@@ -64,11 +64,13 @@ class ExamSubmissionsListView(APIView):
         # N+1 방지: enrollment/result 를 bulk 조회해 dict 로 lookup.
         # 과거에는 행마다 Enrollment.filter / Result.filter 로 2회씩 쿼리가 발생해
         # 200행 기준 최대 400 쿼리. 현재는 최대 2쿼리로 고정.
+        # 🔐 tenant 필터: Submission이 tenant 스코프여도 enrollment_id 참조는 강제 제약이
+        # 없으므로 오염 시 다른 tenant 학생 메타가 노출될 수 있다. 명시적으로 tenant 강제.
         enrollment_map: Dict[int, Any] = {}
         enrollment_ids = {int(s.enrollment_id) for s in qs if getattr(s, "enrollment_id", None)}
         if enrollment_ids:
             from apps.domains.enrollment.models import Enrollment
-            for e in Enrollment.objects.select_related("student").filter(id__in=enrollment_ids):
+            for e in Enrollment.objects.select_related("student").filter(id__in=enrollment_ids, tenant=tenant):
                 enrollment_map[int(e.id)] = e
 
         score_map: Dict[int, float] = {}

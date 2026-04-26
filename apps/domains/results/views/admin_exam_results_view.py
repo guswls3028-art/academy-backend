@@ -78,11 +78,13 @@ class AdminExamResultsView(ListAPIView):
 
         # -------------------------------------------------
         # enrollment_id → student_name (Enrollment 단일 진실)
+        # 🔐 tenant 강제: Result row가 exam tenant 스코프(get_queryset에서 검증)지만
+        # enrollment_id 참조 자체에는 제약이 없으므로 명시적으로 차단.
         # -------------------------------------------------
         enrollment_ids_page = [int(r.enrollment_id) for r in results]
         enrollment_map = {
             int(e.id): e
-            for e in Enrollment.objects.filter(id__in=enrollment_ids_page).select_related("student", "lecture")
+            for e in Enrollment.objects.filter(id__in=enrollment_ids_page, tenant=request.tenant).select_related("student", "lecture")
         }
         student_name_map = {
             eid: _safe_student_name(enrollment_map.get(eid))

@@ -11,12 +11,12 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
 
 
-def _resolve_student_name(enrollment_id: Optional[int]) -> str:
-    if not enrollment_id:
+def _resolve_student_name(enrollment_id: Optional[int], tenant) -> str:
+    if not enrollment_id or not tenant:
         return ""
     try:
         from apps.domains.enrollment.models import Enrollment
-        obj = Enrollment.objects.select_related("student").filter(id=int(enrollment_id)).first()
+        obj = Enrollment.objects.select_related("student").filter(id=int(enrollment_id), tenant=tenant).first()
         if obj:
             student = getattr(obj, "student", None)
             if student:
@@ -32,12 +32,12 @@ def _resolve_student_name(enrollment_id: Optional[int]) -> str:
     return ""
 
 
-def _resolve_lecture_info(enrollment_id: Optional[int]) -> Dict[str, Any]:
-    if not enrollment_id:
+def _resolve_lecture_info(enrollment_id: Optional[int], tenant) -> Dict[str, Any]:
+    if not enrollment_id or not tenant:
         return {}
     try:
         from apps.domains.enrollment.models import Enrollment
-        obj = Enrollment.objects.select_related("lecture").filter(id=int(enrollment_id)).first()
+        obj = Enrollment.objects.select_related("lecture").filter(id=int(enrollment_id), tenant=tenant).first()
         if obj and getattr(obj, "lecture", None):
             lec = obj.lecture
             return {
@@ -105,10 +105,12 @@ class HomeworkSubmissionsListView(APIView):
         ) if enrollment_ids else {}
 
         # enrollment_id → (student, lecture) 일괄 조회
+        # 🔐 tenant 강제: Submission tenant 스코프와 무관하게 enrollment_id 참조 자체에는
+        # 강제 제약이 없으므로 오염 시 다른 tenant 학생 노출 위험 → 명시적으로 차단.
         enrollment_map: Dict[int, Any] = {}
         if enrollment_ids:
             from apps.domains.enrollment.models import Enrollment
-            for enr in Enrollment.objects.select_related("student", "lecture").filter(id__in=enrollment_ids):
+            for enr in Enrollment.objects.select_related("student", "lecture").filter(id__in=enrollment_ids, tenant=tenant):
                 enrollment_map[enr.id] = enr
 
         items: list[Dict[str, Any]] = []
@@ -123,7 +125,7 @@ class HomeworkSubmissionsListView(APIView):
             if student:
                 student_name = getattr(student, "name", "") or ""
             if not student_name:
-                student_name = _resolve_student_name(enrollment_id)
+                student_name = _resolve_student_name(enrollment_id, tenant)
 
             # lecture info
             if lecture:
@@ -133,7 +135,7 @@ class HomeworkSubmissionsListView(APIView):
                     "lecture_chip_label": getattr(lecture, "chip_label", None),
                 }
             else:
-                lecture_info = _resolve_lecture_info(enrollment_id)
+                lecture_info = _resolve_lecture_info(enrollment_id, tenant)
 
             source = getattr(s, "source", "")
             file_key = getattr(s, "file_key", None) or ""
