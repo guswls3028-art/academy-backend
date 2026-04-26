@@ -63,6 +63,10 @@ TRIGGER_POLICY = {
     # 영상 — 인코딩 완료 시 업로더(스태프)에게 알림
     "video_encoding_complete": "AUTO_DEFAULT",
 
+    # 커뮤니티 — 학생/학부모 즉시 통보
+    "qna_answered": "AUTO_DEFAULT",
+    "counsel_answered": "AUTO_DEFAULT",
+
     # DISABLED — 현재 정책상 비활성
     "class_enrollment_complete": "DISABLED",
     "enrollment_expiring_soon": "DISABLED",

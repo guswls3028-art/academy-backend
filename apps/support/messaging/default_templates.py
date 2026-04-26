@@ -390,6 +390,22 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "body": "영상 인코딩이 완료되었습니다.\n앱에서 영상을 확인해 주세요.",
         "minutes_before": None,
     },
+    # ───────── 커뮤니티 (통합 알림톡: score 템플릿) ─────────
+    # body = #{선생님메모} 영역. 학원이름/학생이름/제목/카테고리는 ITEM_LIST 슬롯 사용.
+    "qna_answered": {
+        "category": "community",
+        "name": "[{academy_name}] 질문 답변 완료",
+        "subject": "질문에 답변이 등록되었습니다",
+        "body": "선생님이 질문에 답변하셨습니다.\n앱에서 답변 내용을 확인해 주세요.",
+        "minutes_before": None,
+    },
+    "counsel_answered": {
+        "category": "community",
+        "name": "[{academy_name}] 상담 답변 등록",
+        "subject": "상담 답변이 등록되었습니다",
+        "body": "신청하신 상담에 답변이 등록되었습니다.\n앱에서 상세 내용을 확인해 주세요.",
+        "minutes_before": None,
+    },
     # ───────── 운영공지 ─────────
     # urgent_notice: 카카오 알림톡 정책 위반으로 제거
 }

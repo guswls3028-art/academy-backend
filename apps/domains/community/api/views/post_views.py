@@ -417,6 +417,31 @@ class PostViewSet(viewsets.ModelViewSet):
             post=post, tenant=tenant, created_by=created_by,
             author_display_name=author_display_name, author_role=author_role,
         )
+
+        # 알림톡: staff가 학생 글(QnA/상담)에 답변 등록 시 학생/학부모에게 발송.
+        # AutoSendConfig.enabled로 테넌트별 토글, 검수 통과한 통합 score 템플릿 재사용.
+        if author_role == "staff" and post.post_type in ("qna", "counsel") and post.created_by_id:
+            try:
+                from apps.support.messaging.services import send_event_notification
+                category_fallback = "QnA" if post.post_type == "qna" else "상담"
+                ctx = {
+                    "강의명": (post.category_label or category_fallback),
+                    "차시명": (post.title or ""),
+                }
+                if post.post_type == "qna":
+                    send_event_notification(
+                        tenant=tenant, trigger="qna_answered",
+                        student=post.created_by, send_to="student", context=ctx,
+                    )
+                else:  # counsel — 학생 + 학부모
+                    for send_to in ("student", "parent"):
+                        send_event_notification(
+                            tenant=tenant, trigger="counsel_answered",
+                            student=post.created_by, send_to=send_to, context=ctx,
+                        )
+            except Exception as e:
+                logger.warning("community reply notification dispatch failed: post_id=%s err=%s", post.id, e)
+
         return Response(PostReplySerializer(reply).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=["post"], url_path="attachments")

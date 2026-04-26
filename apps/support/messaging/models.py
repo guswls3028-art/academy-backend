@@ -219,6 +219,9 @@ class AutoSendConfig(models.Model):
         CLINIC_SELF_STUDY_COMPLETED = "clinic_self_study_completed", "자율학습 완료"
         CLINIC_RESULT_NOTIFICATION = "clinic_result_notification", "클리닉 대상 해소(완료)"
         COUNSELING_RESERVATION_CREATED = "counseling_reservation_created", "상담 예약 완료"
+        # F-2. 커뮤니티 — AUTO_DEFAULT
+        QNA_ANSWERED = "qna_answered", "질문 답변 완료"
+        COUNSEL_ANSWERED = "counsel_answered", "상담 답변 등록"
         # G. 결제
         PAYMENT_COMPLETE = "payment_complete", "결제 완료"
         PAYMENT_DUE_DAYS_BEFORE = "payment_due_days_before", "납부 예정일 N일 전"
