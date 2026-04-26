@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from apps.domains.community.models import PostEntity, PostMapping, ScopeNode, BlockType, PostTemplate, PostReply, PostAttachment
+from apps.domains.community.models import PostEntity, PostMapping, ScopeNode, PostTemplate, PostReply, PostAttachment
 
 
 class ScopeNodeMinimalSerializer(serializers.ModelSerializer):
@@ -78,33 +78,14 @@ class PostAttachmentSerializer(serializers.ModelSerializer):
 
 
 class PostEntitySerializer(serializers.ModelSerializer):
-    block_type = serializers.PrimaryKeyRelatedField(
-        queryset=BlockType.objects.all(), required=False, allow_null=True, default=None,
-    )
     content = serializers.CharField(allow_blank=True, required=False, default="")
 
-    def get_fields(self):
-        fields = super().get_fields()
-        request = self.context.get("request")
-        if request and hasattr(request, "tenant") and request.tenant:
-            fields["block_type"].queryset = BlockType.objects.filter(tenant=request.tenant)
-        elif "block_type" in fields:
-            # No request context = explicit deny. Never allow unscoped queryset.
-            fields["block_type"].queryset = BlockType.objects.none()
-        return fields
     mappings = PostMappingSerializer(many=True, read_only=True)
     attachments = PostAttachmentSerializer(many=True, read_only=True)
-    block_type_label = serializers.SerializerMethodField(read_only=True)
     post_type_label = serializers.SerializerMethodField(read_only=True)
     replies_count = serializers.SerializerMethodField(read_only=True)
     created_by_display = serializers.SerializerMethodField(read_only=True)
     created_by_deleted = serializers.SerializerMethodField(read_only=True)
-
-    def get_block_type_label(self, obj):
-        bt = getattr(obj, "block_type", None)
-        if bt is not None:
-            return getattr(bt, "label", None)
-        return None
 
     def get_post_type_label(self, obj):
         return obj.get_post_type_display() if getattr(obj, "post_type", None) else None
@@ -151,8 +132,6 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "tenant",
             "post_type",
             "post_type_label",
-            "block_type",
-            "block_type_label",
             "title",
             "content",
             "category_label",
@@ -173,38 +152,12 @@ class PostEntitySerializer(serializers.ModelSerializer):
         read_only_fields = ["tenant", "created_by", "meta"]
 
 
-class BlockTypeSerializer(serializers.ModelSerializer):
-    code = serializers.CharField(max_length=32, required=False, allow_blank=True)
-
-    class Meta:
-        model = BlockType
-        fields = ["id", "code", "label", "order"]
-        read_only_fields = ["id"]
-
-    def validate_code(self, value):
-        if not value or not value.strip():
-            return value
-        value = value.strip()[:32]
-        if not value:
-            raise serializers.ValidationError("code는 1자 이상 필요합니다.")
-        return value
-
-    def validate_label(self, value):
-        if not value or not value.strip():
-            raise serializers.ValidationError("표시명을 입력하세요.")
-        return value.strip()[:64]
-
-
 class PostTemplateSerializer(serializers.ModelSerializer):
-    block_type_label = serializers.SerializerMethodField(read_only=True)
-
     class Meta:
         model = PostTemplate
         fields = [
             "id",
             "name",
-            "block_type",
-            "block_type_label",
             "title",
             "content",
             "order",
@@ -212,16 +165,3 @@ class PostTemplateSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "created_at", "updated_at"]
-
-    def get_fields(self):
-        fields = super().get_fields()
-        request = self.context.get("request")
-        if request and hasattr(request, "tenant") and request.tenant:
-            fields["block_type"].queryset = BlockType.objects.filter(tenant=request.tenant)
-        elif "block_type" in fields:
-            # No request context = explicit deny. Never allow unscoped queryset.
-            fields["block_type"].queryset = BlockType.objects.none()
-        return fields
-
-    def get_block_type_label(self, obj):
-        return obj.block_type.label if obj.block_type_id else None

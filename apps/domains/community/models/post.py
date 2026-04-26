@@ -1,19 +1,22 @@
 from django.db import models
 from apps.core.models import Tenant
 from apps.domains.students.models import Student
-from .block_type import BlockType
 
 
 POST_TYPE_CHOICES = [
     ("notice", "공지사항"),
     ("board", "게시판"),
-    ("materials", "자료실"),
+    ("materials", "자료실"),  # 일방향 다운로드 정책 — 댓글 비활성 (DOWNLOAD_ONLY_POST_TYPES 참조)
     ("qna", "QnA"),
     ("counsel", "상담 신청"),
 ]
 
-# Student-visible public post types (policy: students see these + their own posts)
+# 학생 가시성 정책: 공지·게시판·자료실은 모두에게 공개, QnA·상담은 작성자+staff만.
 STUDENT_PUBLIC_POST_TYPES = frozenset({"notice", "board", "materials"})
+
+# 댓글 비활성 정책 — 일방향 컨텐츠로 운영. staff/student 모두 reply 등록 차단.
+# 자료실: 강의 자료 다운로드 전용. 의견 교환은 게시판/QnA로 분리.
+DOWNLOAD_ONLY_POST_TYPES = frozenset({"materials"})
 
 VALID_POST_TYPES = {choice[0] for choice in POST_TYPE_CHOICES}
 
@@ -33,14 +36,6 @@ class PostEntity(models.Model):
         default="board",
         db_index=True,
         help_text="게시글 유형 (notice, board, materials, qna, counsel)",
-    )
-    block_type = models.ForeignKey(
-        BlockType,
-        on_delete=models.SET_NULL,
-        related_name="posts",
-        null=True,
-        blank=True,
-        help_text="레거시 블록 타입 FK (post_type으로 대체됨)",
     )
     title = models.CharField(max_length=255)
     content = models.TextField(blank=True, default="")

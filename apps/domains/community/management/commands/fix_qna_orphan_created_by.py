@@ -39,11 +39,10 @@ class Command(BaseCommand):
         dry_run = options["dry_run"]
         student_id = options["student_id"]
 
-        # QnA 블록 타입이고 created_by가 null인 글
+        # QnA 게시물이고 created_by가 null인 글
         orphans = (
-            PostEntity.objects.filter(created_by_id__isnull=True)
-            .filter(block_type__code__iexact="qna")
-            .select_related("tenant", "block_type")
+            PostEntity.objects.filter(created_by_id__isnull=True, post_type="qna")
+            .select_related("tenant")
             .order_by("tenant_id", "created_at")
         )
         if not orphans.exists():

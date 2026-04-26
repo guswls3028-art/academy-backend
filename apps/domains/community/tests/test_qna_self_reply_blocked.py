@@ -101,3 +101,8 @@ class TestQnaSelfReplyBlocked(TestCase):
         view = PostViewSet.as_view({"post": "replies"})
         resp = view(request, pk=self.materials.id)
         self.assertEqual(resp.status_code, 403)
+
+    def test_download_only_constant_includes_materials(self):
+        """SSOT: DOWNLOAD_ONLY_POST_TYPES에 materials 포함 (정책 변경 시 테스트도 같이)."""
+        from apps.domains.community.models.post import DOWNLOAD_ONLY_POST_TYPES
+        self.assertIn("materials", DOWNLOAD_ONLY_POST_TYPES)

@@ -9,6 +9,22 @@ from apps.domains.community.models import PostEntity, PostMapping, ScopeNode
 _EXCLUDE_DELETED_AUTHOR = Q(created_by__isnull=True) | Q(created_by__deleted_at__isnull=True)
 
 
+def _base_queryset(qs: QuerySet) -> QuerySet:
+    """공통 prefetch/annotate — replies_count, mappings, attachments, created_by."""
+    return (
+        qs
+        .annotate(replies_count=Count("replies", distinct=True))
+        .select_related("created_by")
+        .prefetch_related(
+            Prefetch(
+                "mappings",
+                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
+            ),
+            "attachments",
+        )
+    )
+
+
 def get_empty_post_queryset() -> QuerySet:
     """tenant 없을 때 등 빈 목록용."""
     return PostEntity.objects.none()
@@ -16,19 +32,7 @@ def get_empty_post_queryset() -> QuerySet:
 
 def get_post_by_id(tenant, post_id: int):
     """단건 조회. mappings prefetch, replies_count 포함. 없으면 None."""
-    return (
-        PostEntity.objects.filter(tenant=tenant, id=post_id)
-        .annotate(replies_count=Count("replies", distinct=True))
-        .select_related("created_by", "block_type")
-        .prefetch_related(
-            Prefetch(
-                "mappings",
-                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            ),
-            "attachments",
-        )
-        .first()
-    )
+    return _base_queryset(PostEntity.objects.filter(tenant=tenant, id=post_id)).first()
 
 
 def get_all_posts_for_tenant(tenant, *, include_unpublished: bool = False) -> QuerySet:
@@ -36,20 +40,7 @@ def get_all_posts_for_tenant(tenant, *, include_unpublished: bool = False) -> Qu
     qs = PostEntity.objects.filter(tenant=tenant)
     if not include_unpublished:
         qs = qs.filter(status="published")
-    return (
-        qs
-        .filter(_EXCLUDE_DELETED_AUTHOR)
-        .annotate(replies_count=Count("replies", distinct=True))
-        .select_related("created_by", "block_type")
-        .prefetch_related(
-            Prefetch(
-                "mappings",
-                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            ),
-            "attachments",
-        )
-        .order_by("-created_at")
-    )
+    return _base_queryset(qs.filter(_EXCLUDE_DELETED_AUTHOR)).order_by("-created_at")
 
 
 def get_posts_for_node(
@@ -94,53 +85,25 @@ def get_posts_for_node(
     qs = PostEntity.objects.filter(id__in=post_ids, tenant=tenant)
     if not include_unpublished:
         qs = qs.filter(status="published")
-    return (
-        qs
-        .filter(_EXCLUDE_DELETED_AUTHOR)
-        .annotate(replies_count=Count("replies", distinct=True))
-        .select_related("created_by", "block_type")
-        .prefetch_related(
-            Prefetch(
-                "mappings",
-                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            ),
-            "attachments",
-        )
-        .order_by("-created_at")
-    )
+    return _base_queryset(qs.filter(_EXCLUDE_DELETED_AUTHOR)).order_by("-created_at")
 
 
 def get_admin_post_list(
     tenant,
     *,
     post_type: Optional[str] = None,
-    block_type_id: Optional[int] = None,
     lecture_id: Optional[int] = None,
     q: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[QuerySet, int]:
-    """관리자용 목록. 필터: post_type, block_type(레거시), lecture, q(서버 검색). 페이지네이션."""
-    qs = (
-        PostEntity.objects.filter(tenant=tenant)
-        .filter(_EXCLUDE_DELETED_AUTHOR)
-        .annotate(replies_count=Count("replies", distinct=True))
-        .select_related("created_by", "block_type")
-        .prefetch_related(
-            Prefetch(
-                "mappings",
-                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            ),
-            "attachments",
-        )
-        .order_by("-created_at")
-        .distinct()
-    )
+    """관리자용 목록. 필터: post_type, lecture, q(서버 검색). 페이지네이션."""
+    qs = _base_queryset(
+        PostEntity.objects.filter(tenant=tenant).filter(_EXCLUDE_DELETED_AUTHOR)
+    ).order_by("-created_at").distinct()
+
     if post_type:
         qs = qs.filter(post_type=post_type)
-    elif block_type_id is not None:
-        # Legacy: filter by block_type FK (backward compat)
-        qs = qs.filter(block_type_id=block_type_id)
     if lecture_id is not None:
         node_ids = ScopeNode.objects.filter(tenant=tenant, lecture_id=lecture_id).values_list("id", flat=True)
         qs = qs.filter(mappings__node_id__in=node_ids).distinct()
@@ -156,27 +119,6 @@ def get_admin_post_list(
     total = qs.count()
     offset = (page - 1) * page_size
     return qs[offset : offset + page_size], total
-
-
-def get_posts_by_type_for_tenant(tenant, post_type: str, *, include_unpublished: bool = False) -> QuerySet:
-    """테넌트의 특정 post_type 게시물 목록. 학생앱 공용."""
-    qs = PostEntity.objects.filter(tenant=tenant, post_type=post_type)
-    if not include_unpublished:
-        qs = qs.filter(status="published")
-    return (
-        qs
-        .filter(_EXCLUDE_DELETED_AUTHOR)
-        .annotate(replies_count=Count("replies", distinct=True))
-        .select_related("created_by", "block_type")
-        .prefetch_related(
-            Prefetch(
-                "mappings",
-                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            ),
-            "attachments",
-        )
-        .order_by("-created_at")
-    )
 
 
 def get_post_counts_by_node(tenant, post_type: str) -> dict:
@@ -195,27 +137,17 @@ def get_post_counts_by_node(tenant, post_type: str) -> dict:
         .filter(_EXCLUDE_DELETED_AUTHOR)
     )
     total = qs.count()
-
-    # mapping 없는 글 (전체 대상)
     global_count = qs.filter(mappings__isnull=True).distinct().count()
 
-    # node별 카운트
     node_counts = (
-        PostMapping.objects.filter(
-            post__in=qs,
-            post__tenant=tenant,
-        )
+        PostMapping.objects.filter(post__in=qs, post__tenant=tenant)
         .values("node_id")
         .annotate(c=Count("post_id", distinct=True))
     )
     by_node_id = {row["node_id"]: row["c"] for row in node_counts}
 
-    # lecture별 distinct post 카운트
     lecture_counts = (
-        PostMapping.objects.filter(
-            post__in=qs,
-            post__tenant=tenant,
-        )
+        PostMapping.objects.filter(post__in=qs, post__tenant=tenant)
         .values("node__lecture_id")
         .annotate(c=Count("post_id", distinct=True))
     )
@@ -233,22 +165,14 @@ def get_post_counts_by_node(tenant, post_type: str) -> dict:
     }
 
 
-def get_notice_posts_for_tenant(tenant, *, include_unpublished: bool = False) -> QuerySet:
-    """테넌트의 공지 게시물 목록 (post_type='notice'). 학생앱 공지 목록 및 관리자와 동일 데이터."""
-    qs = PostEntity.objects.filter(tenant=tenant, post_type="notice")
+def get_posts_by_type_for_tenant(tenant, post_type: str, *, include_unpublished: bool = False) -> QuerySet:
+    """테넌트의 특정 post_type 게시물 목록. 학생앱 공용."""
+    qs = PostEntity.objects.filter(tenant=tenant, post_type=post_type)
     if not include_unpublished:
         qs = qs.filter(status="published")
-    return (
-        qs
-        .filter(_EXCLUDE_DELETED_AUTHOR)
-        .annotate(replies_count=Count("replies", distinct=True))
-        .select_related("created_by", "block_type")
-        .prefetch_related(
-            Prefetch(
-                "mappings",
-                queryset=PostMapping.objects.select_related("node", "node__lecture", "node__session"),
-            ),
-            "attachments",
-        )
-        .order_by("-created_at")
-    )
+    return _base_queryset(qs.filter(_EXCLUDE_DELETED_AUTHOR)).order_by("-created_at")
+
+
+def get_notice_posts_for_tenant(tenant, *, include_unpublished: bool = False) -> QuerySet:
+    """테넌트의 공지 게시물 목록 (post_type='notice')."""
+    return get_posts_by_type_for_tenant(tenant, "notice", include_unpublished=include_unpublished)

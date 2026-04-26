@@ -13,7 +13,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         limit = options["limit"]
         qs = (
-            PostEntity.objects.filter(block_type__code__iexact="qna")
+            PostEntity.objects.filter(post_type="qna")
             .order_by("-created_at")[:limit]
             .values("id", "tenant_id", "title", "created_by_id", "created_at")
         )

@@ -11,7 +11,7 @@ from apps.core.permissions import TenantResolvedAndStaff
 
 
 class AdminPostViewSet(viewsets.GenericViewSet):
-    """Admin list with filters. block_type_id, lecture_id, page, page_size."""
+    """Admin list with filters. post_type, lecture_id, q, page, page_size."""
     permission_classes = [TenantResolvedAndStaff]
     serializer_class = PostEntitySerializer
 
@@ -28,7 +28,6 @@ class AdminPostViewSet(viewsets.GenericViewSet):
                 return None
 
         post_type = (request.query_params.get("post_type") or "").strip().lower() or None
-        block_type_id = _int_or_none(request.query_params.get("block_type_id"))
         lecture_id = _int_or_none(request.query_params.get("lecture_id"))
         q = (request.query_params.get("q") or "").strip() or None
         try:
@@ -39,7 +38,6 @@ class AdminPostViewSet(viewsets.GenericViewSet):
         qs, total = get_admin_post_list(
             tenant,
             post_type=post_type,
-            block_type_id=block_type_id,
             lecture_id=lecture_id,
             q=q,
             page=page,

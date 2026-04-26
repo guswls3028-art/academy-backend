@@ -270,15 +270,10 @@ class PostViewSet(viewsets.ModelViewSet):
         elif created_by is None and getattr(request.user, "student_profile", None):
             created_by = request.user.student_profile
 
-        # Resolve post_type: from request data, or fall back to block_type.code
+        # Resolve post_type from request data (block_type FK 제거됨 — post_type SSOT)
         post_type = (request.data.get("post_type") or "").strip().lower()
-        block_type = serializer.validated_data.get("block_type")
-        if not post_type and block_type is not None:
-            # Backward compat: derive post_type from block_type.code
-            code = (getattr(block_type, "code", None) or "").strip().lower()
-            valid_types = {"notice", "board", "materials", "qna", "counsel"}
-            post_type = code if code in valid_types else "board"
-        if not post_type:
+        from apps.domains.community.models.post import VALID_POST_TYPES
+        if post_type not in VALID_POST_TYPES:
             post_type = "board"
 
         # QnA는 작성자(created_by) 필수. 프로필 로드 전 제출 시 null 저장 방지.
@@ -311,7 +306,6 @@ class PostViewSet(viewsets.ModelViewSet):
 
         data = {
             "post_type": post_type,
-            "block_type": block_type,
             "title": serializer.validated_data["title"],
             "content": safe_content,
             "category_label": request.data.get("category_label"),
@@ -374,8 +368,10 @@ class PostViewSet(viewsets.ModelViewSet):
 
         # POST: 답변 등록
         # 자료실은 일방향 다운로드용 — 모든 사용자(staff 포함) 댓글 차단
+        # (정책 SSOT: models/post.py:DOWNLOAD_ONLY_POST_TYPES)
+        from apps.domains.community.models.post import DOWNLOAD_ONLY_POST_TYPES
         post_type = getattr(post, "post_type", "")
-        if post_type == "materials":
+        if post_type in DOWNLOAD_ONLY_POST_TYPES:
             return Response(
                 {"detail": "자료실에는 댓글을 등록할 수 없습니다."},
                 status=status.HTTP_403_FORBIDDEN,

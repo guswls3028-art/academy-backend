@@ -6,7 +6,7 @@ from apps.core.permissions import TenantResolvedAndStaff
 
 
 class PostTemplateViewSet(viewsets.ModelViewSet):
-    """글 양식 CRUD. 자주 쓰는 제목/본문/유형 저장·불러오기."""
+    """글 양식 CRUD. 자주 쓰는 제목/본문 저장·불러오기."""
     serializer_class = PostTemplateSerializer
     permission_classes = [TenantResolvedAndStaff]
 
@@ -14,11 +14,7 @@ class PostTemplateViewSet(viewsets.ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return PostTemplate.objects.none()
-        return (
-            PostTemplate.objects.filter(tenant=tenant)
-            .select_related("block_type")
-            .order_by("order", "id")
-        )
+        return PostTemplate.objects.filter(tenant=tenant).order_by("order", "id")
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, "tenant", None)

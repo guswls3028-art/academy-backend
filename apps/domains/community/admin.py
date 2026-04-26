@@ -1,11 +1,5 @@
 from django.contrib import admin
-from .models import BlockType, ScopeNode, PostEntity, PostMapping, PostReply, PostTemplate
-
-
-@admin.register(BlockType)
-class BlockTypeAdmin(admin.ModelAdmin):
-    list_display = ("id", "tenant", "code", "label", "order")
-    list_filter = ("tenant",)
+from .models import ScopeNode, PostEntity, PostMapping, PostReply, PostTemplate
 
 
 @admin.register(ScopeNode)
@@ -16,7 +10,7 @@ class ScopeNodeAdmin(admin.ModelAdmin):
 
 @admin.register(PostEntity)
 class PostEntityAdmin(admin.ModelAdmin):
-    list_display = ("id", "tenant", "title", "post_type", "block_type", "created_by", "created_at")
+    list_display = ("id", "tenant", "title", "post_type", "created_by", "created_at")
     list_filter = ("tenant", "post_type")
 
 
@@ -32,5 +26,5 @@ class PostReplyAdmin(admin.ModelAdmin):
 
 @admin.register(PostTemplate)
 class PostTemplateAdmin(admin.ModelAdmin):
-    list_display = ("id", "tenant", "name", "block_type", "order", "updated_at")
+    list_display = ("id", "tenant", "name", "order", "updated_at")
     list_filter = ("tenant",)
