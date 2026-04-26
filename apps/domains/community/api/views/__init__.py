@@ -6,7 +6,6 @@ from .platform_inbox_views import (
     PlatformInboxListView,
     PlatformInboxReplyView,
     PlatformInboxDeleteReplyView,
-    PlatformInboxAttachmentDownloadView,
 )
 
 __all__ = [
@@ -17,5 +16,4 @@ __all__ = [
     "PlatformInboxListView",
     "PlatformInboxReplyView",
     "PlatformInboxDeleteReplyView",
-    "PlatformInboxAttachmentDownloadView",
 ]

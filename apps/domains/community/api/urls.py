@@ -3,7 +3,6 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     PostViewSet, AdminPostViewSet, ScopeNodeViewSet, PostTemplateViewSet,
     PlatformInboxListView, PlatformInboxReplyView, PlatformInboxDeleteReplyView,
-    PlatformInboxAttachmentDownloadView,
 )
 
 router = DefaultRouter()
@@ -21,5 +20,4 @@ urlpatterns = [
     path("platform/inbox/", PlatformInboxListView.as_view(), name="platform-inbox-list"),
     path("platform/inbox/<int:post_id>/replies/", PlatformInboxReplyView.as_view(), name="platform-inbox-reply"),
     path("platform/inbox/<int:post_id>/replies/<int:reply_id>/", PlatformInboxDeleteReplyView.as_view(), name="platform-inbox-reply-delete"),
-    path("platform/inbox/<int:post_id>/attachments/<int:att_id>/download/", PlatformInboxAttachmentDownloadView.as_view(), name="platform-inbox-attachment-download"),
 ]
