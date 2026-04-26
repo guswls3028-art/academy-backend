@@ -19,6 +19,10 @@ inflection
 # upload_complete ffprobe 검증 (R2 presigned URL)
 ffmpeg-python
 
+# 매치업 수동 크롭: 백엔드가 PDF 페이지 렌더링 + 영역 crop을 동기 처리.
+# (워커는 worker-ai-tools.txt에서 별도 설치)
+PyMuPDF==1.25.3
+
 # Server
 gunicorn
 gevent>=23.0.0
