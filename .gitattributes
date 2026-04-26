@@ -1,2 +1,52 @@
+# 모든 텍스트 파일을 LF로 정규화 (EC2/Linux 호환, Windows 작업물 CRLF 플립 방지)
+* text=auto eol=lf
+
+# Python / TS / 설정 파일
+*.py text eol=lf
+*.pyi text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.toml text eol=lf
+*.ini text eol=lf
+*.cfg text eol=lf
+*.md text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.scss text eol=lf
+*.svg text eol=lf
+*.txt text eol=lf
+
 # Shell scripts: LF (EC2/Linux 호환)
 *.sh text eol=lf
+
+# Windows 전용 스크립트만 CRLF 유지
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+# 바이너리
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.tar binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.mp4 binary
+*.mp3 binary
+*.wav binary
+*.xlsx binary
+*.xls binary
+*.docx binary
+*.doc binary
