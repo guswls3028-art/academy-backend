@@ -242,12 +242,20 @@ def run_ai_sqs_worker() -> int:
                             "SQS_JOB_TIMEOUT_60MIN | request_id=%s | job_id=%s | stopping extender",
                             request_id, job_id,
                         )
-                        fail_ai_job(uow_factory(), job_id, "inference_timeout_60min", tier_from_msg)
+                        ok = fail_ai_job(uow_factory(), job_id, "inference_timeout_60min", tier_from_msg)
+                        if not ok:
+                            logger.error(
+                                "AI_JOB_STATE_TRANSITION_FAILED | step=fail_timeout | job_id=%s | "
+                                "DB still RUNNING — manual cleanup required", job_id,
+                            )
                         _dispatch_domain_callback(
                             prepared, status="FAILED", result_payload=None,
                             error="inference_timeout_60min",
                         )
-                        queue.delete(receipt_handle, tier_from_msg)
+                        if not queue.delete(receipt_handle, tier_from_msg):
+                            logger.error(
+                                "AI_JOB_SQS_DELETE_FAILED | job_id=%s | timeout path", job_id,
+                            )
                         extender.stop()
                         _current_receipt_handle = None
                         consecutive_errors += 1
@@ -255,31 +263,64 @@ def run_ai_sqs_worker() -> int:
                             break
                         continue
 
+                    # 상태 전이 반환값을 명시적으로 검증 — False면 DB 갱신 실패로
+                    # SQS message는 삭제되지만 DB는 RUNNING으로 남아 운영 알람 대상.
                     result = result_container[0] if result_container else None
                     if result is None:
-                        fail_ai_job(uow_factory(), job_id, "inference_error_no_result", tier_from_msg)
+                        ok = fail_ai_job(uow_factory(), job_id, "inference_error_no_result", tier_from_msg)
+                        if not ok:
+                            logger.error(
+                                "AI_JOB_STATE_TRANSITION_FAILED | step=fail | job_id=%s | "
+                                "DB still RUNNING — manual cleanup required", job_id,
+                            )
                         _dispatch_domain_callback(
                             prepared, status="FAILED", result_payload=None,
                             error="inference_error_no_result",
                         )
-                        queue.delete(receipt_handle, tier_from_msg)
+                        if not queue.delete(receipt_handle, tier_from_msg):
+                            logger.error(
+                                "AI_JOB_SQS_DELETE_FAILED | job_id=%s | "
+                                "message will redeliver — idempotency relies on prepare_ai_job",
+                                job_id,
+                            )
                         consecutive_errors += 1
                     elif result.status == "DONE":
-                        complete_ai_job(uow_factory(), job_id, result.result)
+                        ok = complete_ai_job(uow_factory(), job_id, result.result)
+                        if not ok:
+                            logger.error(
+                                "AI_JOB_STATE_TRANSITION_FAILED | step=complete | job_id=%s | "
+                                "DB still RUNNING — manual cleanup required", job_id,
+                            )
                         _dispatch_domain_callback(
                             prepared, status="DONE",
                             result_payload=result.result if isinstance(result.result, dict) else {},
                             error=None,
                         )
-                        queue.delete(receipt_handle, tier_from_msg)
+                        if not queue.delete(receipt_handle, tier_from_msg):
+                            logger.error(
+                                "AI_JOB_SQS_DELETE_FAILED | job_id=%s | "
+                                "completed in DB but SQS delete failed — message will redeliver "
+                                "(prepare_ai_job idempotency will skip)", job_id,
+                            )
                         logger.info("SQS_JOB_COMPLETED | request_id=%s | job_id=%s", request_id, job_id)
                         consecutive_errors = 0
                     else:
-                        fail_ai_job(uow_factory(), job_id, result.error or "failed", tier_from_msg)
+                        ok = fail_ai_job(uow_factory(), job_id, result.error or "failed", tier_from_msg)
+                        if not ok:
+                            logger.error(
+                                "AI_JOB_STATE_TRANSITION_FAILED | step=fail | job_id=%s | "
+                                "DB still RUNNING — manual cleanup required", job_id,
+                            )
                         _dispatch_domain_callback(
                             prepared, status="FAILED", result_payload=None,
                             error=result.error or "failed",
                         )
+                        # DB 종단(FAILED) 전이 후 SQS message 삭제 — 재배달돼도 mark_running이
+                        # idempotent skip 처리하므로 재시도 무의미 + DLQ 도달 방지.
+                        if not queue.delete(receipt_handle, tier_from_msg):
+                            logger.error(
+                                "AI_JOB_SQS_DELETE_FAILED | job_id=%s | failed path", job_id,
+                            )
                         logger.warning("SQS_JOB_FAILED | request_id=%s | job_id=%s | error=%s", request_id, job_id, result.error)
                         consecutive_errors += 1
                 finally:

@@ -23,6 +23,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
 from apps.worker.ai_worker.ai.detection.segment_dispatcher import (
+    register_pdf_seg_tmp_dirs,
     segment_questions_multipage,
 )
 
@@ -57,6 +58,8 @@ def run_pdf_question_pipeline(
 ) -> AIResult:
     """
     PDF 문항 분할 + 해설 인식 통합 파이프라인.
+
+    seg_result의 tmp_dirs는 dispatcher의 finally가 정리(register_pdf_seg_tmp_dirs).
     """
     total_steps = 5
 
@@ -70,6 +73,7 @@ def run_pdf_question_pipeline(
 
     # PDF/이미지 판별 + 페이지 이미지 렌더링 (크롭에 필요)
     seg_result = segment_questions_multipage(local_path)
+    register_pdf_seg_tmp_dirs(seg_result.get("tmp_dirs") or [])
     is_pdf = seg_result["is_pdf"]
     pages = seg_result["pages"]  # [{page_index, image_path, boxes}, ...]
 

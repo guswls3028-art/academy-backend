@@ -9,7 +9,12 @@ from apps.shared.contracts.ai_result import AIResult
 from apps.worker.ai_worker.ai.config import AIConfig
 from apps.worker.ai_worker.ai.ocr.google import google_ocr
 from apps.worker.ai_worker.ai.ocr.tesseract import tesseract_ocr
-from apps.worker.ai_worker.ai.detection.segment_dispatcher import segment_questions, segment_questions_multipage
+from apps.worker.ai_worker.ai.detection.segment_dispatcher import (
+    begin_pdf_seg_scope,
+    cleanup_registered_pdf_seg_tmp_dirs,
+    segment_questions,
+    segment_questions_multipage,
+)
 from apps.worker.ai_worker.ai.handwriting.detector import analyze_handwriting
 from apps.worker.ai_worker.ai.embedding.service import get_embeddings
 from apps.worker.ai_worker.ai.problem.generator import generate_problem_from_ocr
@@ -20,8 +25,8 @@ from apps.worker.ai_worker.ai.pipelines.excel_export_handler import (
     handle_staff_excel_export,
 )
 from apps.worker.ai_worker.ai.pipelines.ppt_handler import handle_ppt_generation_job
-from apps.worker.ai_worker.ai.utils.image_resizer import resize_if_large
-from apps.worker.ai_worker.storage.downloader import download_to_tmp
+from apps.worker.ai_worker.ai.utils.image_resizer import resize_if_large, imread_exif_aware
+from apps.worker.ai_worker.storage.downloader import cleanup_tmp_for_path, download_to_tmp
 import logging
 
 logger = logging.getLogger(__name__)
@@ -57,6 +62,11 @@ def _record_progress(
 
 
 def handle_ai_job(job: AIJob) -> AIResult:
+    # download_to_tmp가 만든 mkdtemp 부모 디렉터리 + segment_questions_multipage가
+    # 만든 pdf-seg-* 디렉터리들을 finally에서 일괄 제거.
+    # 정리 누락 시 워커 인스턴스 디스크가 점진적으로 가득 차 연쇄 실패 발생.
+    local_path: str | None = None
+    begin_pdf_seg_scope()
     try:
         # ✅ tenant_id 추출 (payload 우선, 없으면 job.tenant_id)
         payload: Dict[str, Any] = job.payload or {}
@@ -254,9 +264,9 @@ def handle_ai_job(job: AIJob) -> AIResult:
 
             _record_progress(job.id, "fetching_meta", 30, step_index=2, step_total=7, step_name_display="메타생성", step_percent=100, tenant_id=tenant_id)
 
-            # 2) 이미지 로드 및 리사이징
+            # 2) 이미지 로드 및 리사이징 — EXIF orientation 자동 보정 (휴대폰 사진 대응)
             _record_progress(job.id, "loading", 35, step_index=3, step_total=7, step_name_display="이미지로드", step_percent=0, tenant_id=tenant_id)
-            img_bgr = cv2.imread(local_path)
+            img_bgr = imread_exif_aware(local_path)
             if img_bgr is None:
                 return AIResult.failed(job.id, "cannot read image")
             
@@ -345,3 +355,6 @@ def handle_ai_job(job: AIJob) -> AIResult:
 
     except Exception as e:
         return AIResult.failed(job.id, str(e))
+    finally:
+        cleanup_tmp_for_path(local_path)
+        cleanup_registered_pdf_seg_tmp_dirs()
