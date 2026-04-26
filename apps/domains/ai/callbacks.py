@@ -483,8 +483,11 @@ def _handle_matchup_ai_result(
     if problem_objs:
         MatchupProblem.objects.bulk_create(problem_objs, ignore_conflicts=True)
 
+    # bulk_create + ignore_conflicts로 unique(document, number) 충돌 row가
+    # silent drop될 수 있음 (segmentation 중복 번호 등). UI 좌측 라벨이
+    # 디스패치 수가 아닌 실제 DB row 수와 일치하도록 재카운트.
     doc.status = "done"
-    doc.problem_count = len(problem_objs)
+    doc.problem_count = MatchupProblem.objects.filter(document=doc).count()
     doc.error_message = ""
     # segmentation_method를 meta에 저장 (UI 뱃지 + 관측용)
     meta = doc.meta or {}

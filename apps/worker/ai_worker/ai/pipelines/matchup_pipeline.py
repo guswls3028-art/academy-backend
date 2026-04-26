@@ -243,6 +243,7 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
     """
     questions = []
     q_num = 1
+    seen_numbers: set = set()  # 문서 전역 dedupe — unique(document, number) 충돌 방지
     for page in pages:
         page_idx = page["page_index"]
         img_path = page["image_path"]
@@ -257,8 +258,20 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
             if use_segment_numbers:
                 num = int(numbers[i])
             else:
+                # 카운터 fallback도 충돌 안 나도록 빈 번호로 점프
+                while q_num in seen_numbers:
+                    q_num += 1
                 num = q_num
                 q_num += 1
+            # 같은 number가 이미 등록됐으면 skip — DB unique constraint와 정합.
+            # UI의 problem_count가 dispatch 수와 실제 DB count 어긋나는 문제 차단.
+            if num in seen_numbers:
+                logger.info(
+                    "MATCHUP_DEDUPE_DROP | num=%d page=%d (이미 등록됨)",
+                    num, page_idx,
+                )
+                continue
+            seen_numbers.add(num)
             questions.append({
                 "number": num,
                 "page_index": page_idx,
