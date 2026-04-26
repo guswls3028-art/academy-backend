@@ -26,7 +26,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.billing.models import Invoice, PaymentTransaction
@@ -48,8 +48,20 @@ def _parse_datetime(value: str | None):
 
 @transaction.atomic
 def _handle_done(tx: PaymentTransaction, data: dict[str, Any]) -> str:
+    # 외부 atomic의 SELECT FOR UPDATE는 이미 종료됨. 동시 webhook race 차단을 위해
+    # 핸들러 내부에서 다시 row lock + 최신 상태 확인.
+    tx = PaymentTransaction.objects.select_for_update().select_related("invoice").get(pk=tx.pk)
+
     if tx.status == "SUCCESS":
         return "already_success"
+    # 상태 역전 방어: 환불(REFUNDED/PARTIALLY_REFUNDED) 후 지연 도착한 DONE이
+    # SUCCESS로 덮어쓰면 환불 사실이 사라진다. 종단 상태는 보존.
+    if tx.status in ("REFUNDED", "PARTIALLY_REFUNDED"):
+        logger.warning(
+            "Webhook DONE ignored — terminal refund state: tx=%s status=%s",
+            tx.id, tx.status,
+        )
+        return f"terminal_{tx.status.lower()}"
 
     tx.status = "SUCCESS"
     tx.provider_payment_key = data.get("paymentKey", tx.provider_payment_key)
@@ -84,9 +96,13 @@ def _handle_done(tx: PaymentTransaction, data: dict[str, Any]) -> str:
 
 @transaction.atomic
 def _handle_failed(tx: PaymentTransaction, data: dict[str, Any], reason: str) -> str:
-    if tx.status in ("SUCCESS", "REFUNDED"):
-        # 종단 상태 덮어쓰지 않음
+    tx = PaymentTransaction.objects.select_for_update().select_related("invoice").get(pk=tx.pk)
+    if tx.status in ("SUCCESS", "REFUNDED", "PARTIALLY_REFUNDED"):
+        # 종단 상태 덮어쓰지 않음 — SUCCESS/환불 후 지연된 ABORTED/EXPIRED 무시.
         return f"terminal_{tx.status.lower()}"
+    if tx.status == "FAILED":
+        # 멱등: 동일 실패 이벤트 재수신 시 noop.
+        return "already_failed"
 
     tx.status = "FAILED"
     tx.failure_reason = reason[:500]
@@ -110,8 +126,17 @@ def _handle_failed(tx: PaymentTransaction, data: dict[str, Any], reason: str) ->
 
 @transaction.atomic
 def _handle_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> str:
+    tx = PaymentTransaction.objects.select_for_update().select_related("invoice").get(pk=tx.pk)
     if tx.status == "REFUNDED":
         return "already_refunded"
+    # 환불은 결제 성공 또는 부분 환불 상태에서만 가능. PENDING/FAILED 결제는
+    # 환불할 게 없으므로 운영 알람용 로그만 남기고 상태 변경 안 함.
+    if tx.status not in ("SUCCESS", "PARTIALLY_REFUNDED"):
+        logger.warning(
+            "Webhook CANCELED ignored — non-refundable status: tx=%s status=%s",
+            tx.id, tx.status,
+        )
+        return f"non_refundable_{tx.status.lower()}"
 
     tx.status = "REFUNDED"
     tx.refunded_amount = tx.amount
@@ -129,9 +154,17 @@ def _handle_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> str:
 
 @transaction.atomic
 def _handle_partial_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> str:
+    tx = PaymentTransaction.objects.select_for_update().select_related("invoice").get(pk=tx.pk)
     total_canceled = data.get("totalAmount", 0) - data.get("balanceAmount", tx.amount)
     if total_canceled <= 0:
         return "no_cancel_amount"
+    # 부분 환불도 결제가 성공·부분환불 상태일 때만 의미 있음.
+    if tx.status not in ("SUCCESS", "PARTIALLY_REFUNDED"):
+        logger.warning(
+            "Webhook PARTIAL_CANCELED ignored — non-refundable status: tx=%s status=%s",
+            tx.id, tx.status,
+        )
+        return f"non_refundable_{tx.status.lower()}"
     tx.status = "PARTIALLY_REFUNDED"
     tx.refunded_amount = int(total_canceled)
     tx.refunded_at = timezone.now()
@@ -168,34 +201,50 @@ def handle_payment_status(data: dict[str, Any]) -> dict[str, Any]:
         logger.warning("Webhook ignored: missing orderId/status. data=%s", data)
         return {"result": "invalid_payload", "orderId": order_id, "status": status}
 
-    tx = (
-        PaymentTransaction.objects
-        .select_related("invoice")
-        .filter(provider_order_id=order_id)
-        .order_by("-created_at")
-        .first()
-    )
-
-    if not tx:
-        # orderId로 찾지 못하면 invoice 조회 시도 (invoice가 생겼지만 tx가 없는 상태)
-        try:
-            invoice = Invoice.objects.get(provider_order_id=order_id)
-        except Invoice.DoesNotExist:
-            logger.warning("Webhook unmatched: orderId=%s", order_id)
-            return {"result": "unmatched", "orderId": order_id, "status": status}
-
-        # 최소한의 tx 기록 생성 (비자동결제 경로로 수동 결제된 경우 등)
-        tx = PaymentTransaction.objects.create(
-            tenant_id=invoice.tenant_id,
-            invoice=invoice,
-            provider="tosspayments",
-            provider_order_id=order_id,
-            idempotency_key=order_id,
-            amount=invoice.total_amount,
-            status="PENDING",
-            payment_method="card",
-            request_payload={"source": "webhook_recovery"},
+    with transaction.atomic():
+        tx = (
+            PaymentTransaction.objects
+            .select_for_update()
+            .select_related("invoice")
+            .filter(provider_order_id=order_id)
+            .order_by("-created_at")
+            .first()
         )
+
+        if not tx:
+            # orderId로 찾지 못하면 invoice 조회 시도 (invoice가 생겼지만 tx가 없는 상태)
+            try:
+                invoice = Invoice.objects.select_for_update().get(provider_order_id=order_id)
+            except Invoice.DoesNotExist:
+                logger.warning("Webhook unmatched: orderId=%s", order_id)
+                return {"result": "unmatched", "orderId": order_id, "status": status}
+
+            try:
+                # 최소한의 tx 기록 생성 (비자동결제 경로로 수동 결제된 경우 등)
+                tx = PaymentTransaction.objects.create(
+                    tenant_id=invoice.tenant_id,
+                    invoice=invoice,
+                    provider="tosspayments",
+                    provider_order_id=order_id,
+                    idempotency_key=order_id,
+                    amount=invoice.total_amount,
+                    status="PENDING",
+                    payment_method="card",
+                    request_payload={"source": "webhook_recovery"},
+                )
+            except IntegrityError:
+                # 동시 웹훅으로 동일 idempotency_key가 먼저 생성된 경우 재조회
+                tx = (
+                    PaymentTransaction.objects
+                    .select_for_update()
+                    .select_related("invoice")
+                    .filter(idempotency_key=order_id)
+                    .order_by("-created_at")
+                    .first()
+                )
+                if not tx:
+                    logger.exception("Webhook tx recovery failed after IntegrityError: orderId=%s", order_id)
+                    return {"result": "conflict_retry", "orderId": order_id, "status": status}
 
     if status == "DONE":
         result = _handle_done(tx, data)

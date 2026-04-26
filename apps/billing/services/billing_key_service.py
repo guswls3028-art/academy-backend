@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
@@ -90,24 +90,32 @@ def issue_billing_key(tenant_id: int, auth_key: str) -> BillingKey:
         raise ValueError(f"빌링키 발급 실패: [{error_code}] {error_msg}")
 
     # 3. DB 저장 (트랜잭션 + select_for_update — 짧은 DB 작업만)
-    with transaction.atomic():
-        now = timezone.now()
-        active_keys = (
-            BillingKey.objects.select_for_update()
-            .filter(tenant_id=tenant_id, is_active=True)
-        )
-        active_keys.update(is_active=False, deactivated_at=now)
+    try:
+        with transaction.atomic():
+            # tenant당 발급 직렬화: 활성키가 0개인 시점에서도 profile row lock으로 경쟁 방지
+            profile = BillingProfile.objects.select_for_update().get(pk=profile.pk)
+            now = timezone.now()
+            active_keys = (
+                BillingKey.objects.select_for_update()
+                .filter(tenant_id=tenant_id, is_active=True)
+            )
+            active_keys.update(is_active=False, deactivated_at=now)
 
-        card_info = result.get("card", {})
-        billing_key = BillingKey.objects.create(
-            tenant_id=tenant_id,
-            billing_profile=profile,
-            provider="tosspayments",
-            billing_key=result["billingKey"],
-            card_company=card_info.get("company", ""),
-            card_number_masked=card_info.get("number", ""),
-            is_active=True,
-        )
+            card_info = result.get("card", {})
+            billing_key = BillingKey.objects.create(
+                tenant_id=tenant_id,
+                billing_profile=profile,
+                provider="tosspayments",
+                billing_key=result["billingKey"],
+                card_company=card_info.get("company", ""),
+                card_number_masked=card_info.get("number", ""),
+                is_active=True,
+            )
+    except IntegrityError:
+        # billingkey_one_active_per_tenant 위반 — application-level lock이 정상 동작하면
+        # 여기 도달 안 함. 도달 시 동시성/우회 경로 신호로 ValueError로 변환.
+        logger.exception("Billing key active uniqueness violated for tenant %s", tenant_id)
+        raise ValueError("이미 활성 빌링키가 존재합니다. 잠시 후 다시 시도해 주세요.")
 
     logger.info(
         "Billing key issued for tenant %s: %s (%s)",

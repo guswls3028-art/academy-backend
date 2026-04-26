@@ -105,6 +105,15 @@ class BillingKey(TimestampModel):
         indexes = [
             models.Index(fields=["tenant", "is_active"]),
         ]
+        constraints = [
+            # tenant당 활성 빌링키 1개만 허용 — application-level select_for_update
+            # 외 defense in depth. service.issue_billing_key 우회 경로 차단.
+            models.UniqueConstraint(
+                fields=["tenant"],
+                condition=models.Q(is_active=True),
+                name="billingkey_one_active_per_tenant",
+            ),
+        ]
 
     def __str__(self):
         return f"BillingKey({self.tenant.code}, {self.card_number_masked})"
