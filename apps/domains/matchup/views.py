@@ -26,6 +26,7 @@ from .services import (
     promote_inventory_to_matchup,
     ensure_matchup_upload_folder,
 )
+from apps.shared.utils.vector import cosine_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -457,37 +458,37 @@ class DocumentCrossMatchesView(View):
         except (TypeError, ValueError):
             top_k = 1
 
-        problems = (
-            doc.problems.exclude(embedding__isnull=True).order_by("number")
+        problems = list(
+            doc.problems.exclude(embedding__isnull=True)
+            .only("id", "number", "text", "embedding")
+            .order_by("number")
         )
-
-        # title 캐시 (문제마다 같은 doc이 여러 번 매치될 수 있으므로)
-        title_cache: dict[int, str] = {doc.id: doc.title}
+        candidates = list(
+            MatchupProblem.objects
+            .filter(tenant=request.tenant, embedding__isnull=False)
+            .exclude(document_id=doc.id)
+            .select_related("document")
+            .only("id", "document_id", "number", "embedding", "document__id", "document__title")
+        )
 
         matches = []
         for p in problems:
-            similar = find_similar_problems(
-                problem_id=p.id,
-                tenant_id=request.tenant.id,
-                top_k=top_k * 4,  # cross-doc 필터 후 충분히 남도록 여유분
-            )
-            cross_doc = [
-                (sp, sim) for sp, sim in similar if sp.document_id != doc.id
-            ][:top_k]
+            scored = []
+            for c in candidates:
+                if not c.embedding:
+                    continue
+                scored.append((c, cosine_similarity(p.embedding, c.embedding)))
+            scored.sort(key=lambda item: item[1], reverse=True)
 
-            best_matches = []
-            for sp, sim in cross_doc:
-                if sp.document_id not in title_cache:
-                    src = MatchupDocument.objects.filter(
-                        id=sp.document_id, tenant=request.tenant,
-                    ).only("id", "title").first()
-                    title_cache[sp.document_id] = src.title if src else ""
-                best_matches.append({
+            best_matches = [
+                {
                     "document_id": sp.document_id,
-                    "document_title": title_cache.get(sp.document_id, ""),
+                    "document_title": sp.document.title if sp.document_id else "",
                     "problem_number": sp.number,
                     "similarity": round(sim, 4),
-                })
+                }
+                for sp, sim in scored[:top_k]
+            ]
 
             matches.append({
                 "problem_id": p.id,
