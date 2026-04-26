@@ -19,6 +19,7 @@ from apps.domains.community.selectors import (
     get_all_posts_for_tenant,
     get_empty_post_queryset,
     get_posts_by_type_for_tenant,
+    get_post_counts_by_node,
 )
 from apps.domains.community.services import CommunityService
 from apps.domains.community.models import PostReply, PostAttachment
@@ -29,6 +30,8 @@ from ._common import (
     _get_tenant_from_request,
     MAX_ATTACHMENT_SIZE,
     MAX_ATTACHMENTS_PER_POST,
+    is_attachment_allowed,
+    sanitize_filename,
 )
 
 logger = logging.getLogger(__name__)
@@ -223,6 +226,25 @@ class PostViewSet(viewsets.ModelViewSet):
         """GET /community/posts/materials/ — 자료실 목록."""
         return self._list_by_type(request, "materials")
 
+    @action(detail=False, methods=["get"], url_path="counts")
+    def counts(self, request):
+        """GET /community/posts/counts/?post_type=notice — 트리 카운트 집계.
+
+        프론트가 500건 풀 페치하지 않도록 노드/강의별 카운트만 단일 query로 반환.
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post_type = (request.query_params.get("post_type") or "").strip().lower()
+        from apps.domains.community.models.post import VALID_POST_TYPES
+        if post_type not in VALID_POST_TYPES:
+            return Response(
+                {"detail": f"허용되지 않는 post_type입니다: {post_type}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        data = get_post_counts_by_node(tenant, post_type)
+        return Response(data)
+
     def create(self, request, *args, **kwargs):
         # 학부모 write 차단 — 학부모는 읽기 전용
         if getattr(request.user, "parent_profile", None) is not None:
@@ -350,15 +372,27 @@ class PostViewSet(viewsets.ModelViewSet):
             serializer = PostReplySerializer(qs, many=True)
             return Response(serializer.data)
 
-        # POST: 답변 등록 (content만 필수)
-        # 학생은 공개 타입(notice/board/materials) 또는 본인 글에만 답변 가능
+        # POST: 답변 등록
+        # 자료실은 일방향 다운로드용 — 모든 사용자(staff 포함) 댓글 차단
+        post_type = getattr(post, "post_type", "")
+        if post_type == "materials":
+            return Response(
+                {"detail": "자료실에는 댓글을 등록할 수 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # 학생 권한:
+        #   - 공지/게시판: 댓글 가능
+        #   - QnA/Counsel: 답변은 staff 전용 — 본인 글이라도 self-reply 차단 (B-2)
         request_student = get_request_student(request)
         if request_student is not None:
             from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
-            is_public = getattr(post, "post_type", "") in STUDENT_PUBLIC_POST_TYPES
-            is_own = getattr(post, "created_by_id", None) == request_student.id
-            if not is_public and not is_own:
-                return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
+            is_public = post_type in STUDENT_PUBLIC_POST_TYPES
+            if not is_public:
+                return Response(
+                    {"detail": "QnA·상담 신청에는 학생이 답변을 등록할 수 없습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         serializer = PostReplySerializer(data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
@@ -415,11 +449,17 @@ class PostViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Step 1: Pre-validate ALL file sizes before any upload
+        # Step 1: Pre-validate ALL files (size + MIME + extension) before any upload
         for f in files:
             if f.size > MAX_ATTACHMENT_SIZE:
                 return Response(
                     {"detail": f"파일 '{f.name}'이(가) 50MB를 초과합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            allowed, reason = is_attachment_allowed(f.name or "", f.content_type or "")
+            if not allowed:
+                return Response(
+                    {"detail": f"파일 '{f.name}': {reason}"},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -429,14 +469,15 @@ class PostViewSet(viewsets.ModelViewSet):
         uploaded = []  # list of (r2_key, original_name, size_bytes, content_type)
         try:
             for f in files:
-                name_hash = hashlib.md5(f.name.encode()).hexdigest()[:8]
-                r2_key = f"tenants/{tenant.id}/community/posts/{post.id}/{name_hash}_{f.name}"
+                safe_name = sanitize_filename(f.name)
+                name_hash = hashlib.md5(safe_name.encode()).hexdigest()[:8]
+                r2_key = f"tenants/{tenant.id}/community/posts/{post.id}/{name_hash}_{safe_name}"
                 upload_fileobj_to_r2_storage(
                     fileobj=f,
                     key=r2_key,
                     content_type=f.content_type or "application/octet-stream",
                 )
-                uploaded.append((r2_key, f.name, f.size, f.content_type))
+                uploaded.append((r2_key, safe_name, f.size, f.content_type))
 
             # Step 3: DB creates (inside atomic)
             with transaction.atomic():

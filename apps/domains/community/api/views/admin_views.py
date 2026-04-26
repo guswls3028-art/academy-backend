@@ -30,6 +30,7 @@ class AdminPostViewSet(viewsets.GenericViewSet):
         post_type = (request.query_params.get("post_type") or "").strip().lower() or None
         block_type_id = _int_or_none(request.query_params.get("block_type_id"))
         lecture_id = _int_or_none(request.query_params.get("lecture_id"))
+        q = (request.query_params.get("q") or "").strip() or None
         try:
             page = int(request.query_params.get("page") or 1)
             page_size = int(request.query_params.get("page_size") or 20)
@@ -40,6 +41,7 @@ class AdminPostViewSet(viewsets.GenericViewSet):
             post_type=post_type,
             block_type_id=block_type_id,
             lecture_id=lecture_id,
+            q=q,
             page=page,
             page_size=page_size,
         )

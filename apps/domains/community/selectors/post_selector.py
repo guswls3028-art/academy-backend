@@ -116,10 +116,11 @@ def get_admin_post_list(
     post_type: Optional[str] = None,
     block_type_id: Optional[int] = None,
     lecture_id: Optional[int] = None,
+    q: Optional[str] = None,
     page: int = 1,
     page_size: int = 20,
 ) -> tuple[QuerySet, int]:
-    """관리자용 목록. 필터: post_type, block_type(레거시), lecture. 페이지네이션."""
+    """관리자용 목록. 필터: post_type, block_type(레거시), lecture, q(서버 검색). 페이지네이션."""
     qs = (
         PostEntity.objects.filter(tenant=tenant)
         .filter(_EXCLUDE_DELETED_AUTHOR)
@@ -143,6 +144,15 @@ def get_admin_post_list(
     if lecture_id is not None:
         node_ids = ScopeNode.objects.filter(tenant=tenant, lecture_id=lecture_id).values_list("id", flat=True)
         qs = qs.filter(mappings__node_id__in=node_ids).distinct()
+    if q:
+        q = q.strip()[:100]
+        if q:
+            qs = qs.filter(
+                Q(title__icontains=q)
+                | Q(content__icontains=q)
+                | Q(author_display_name__icontains=q)
+                | Q(category_label__icontains=q)
+            ).distinct()
     total = qs.count()
     offset = (page - 1) * page_size
     return qs[offset : offset + page_size], total
@@ -167,6 +177,60 @@ def get_posts_by_type_for_tenant(tenant, post_type: str, *, include_unpublished:
         )
         .order_by("-created_at")
     )
+
+
+def get_post_counts_by_node(tenant, post_type: str) -> dict:
+    """post_type별 트리 카운트 — 클라이언트가 500건 페치할 필요 없게 단일 집계.
+
+    반환:
+      {
+        "total": 전체 글 수,
+        "by_node_id": {scope_node_id: count},
+        "by_lecture_id": {lecture_id: distinct post count},
+        "global_count": mapping 없는(전체 대상) 글 수,
+      }
+    """
+    qs = (
+        PostEntity.objects.filter(tenant=tenant, post_type=post_type, status="published")
+        .filter(_EXCLUDE_DELETED_AUTHOR)
+    )
+    total = qs.count()
+
+    # mapping 없는 글 (전체 대상)
+    global_count = qs.filter(mappings__isnull=True).distinct().count()
+
+    # node별 카운트
+    node_counts = (
+        PostMapping.objects.filter(
+            post__in=qs,
+            post__tenant=tenant,
+        )
+        .values("node_id")
+        .annotate(c=Count("post_id", distinct=True))
+    )
+    by_node_id = {row["node_id"]: row["c"] for row in node_counts}
+
+    # lecture별 distinct post 카운트
+    lecture_counts = (
+        PostMapping.objects.filter(
+            post__in=qs,
+            post__tenant=tenant,
+        )
+        .values("node__lecture_id")
+        .annotate(c=Count("post_id", distinct=True))
+    )
+    by_lecture_id = {
+        row["node__lecture_id"]: row["c"]
+        for row in lecture_counts
+        if row["node__lecture_id"] is not None
+    }
+
+    return {
+        "total": total,
+        "by_node_id": by_node_id,
+        "by_lecture_id": by_lecture_id,
+        "global_count": global_count,
+    }
 
 
 def get_notice_posts_for_tenant(tenant, *, include_unpublished: bool = False) -> QuerySet:

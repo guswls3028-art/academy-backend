@@ -37,18 +37,21 @@ class PostReplySerializer(serializers.ModelSerializer):
         read_only_fields = ["post", "created_by", "created_at"]
 
     def get_created_by_display(self, obj):
-        # 1) author_display_name (저장된 이름)
+        author_role = (getattr(obj, "author_role", None) or "").lower()
+        created_by = getattr(obj, "created_by", None)
+        # 1) 학생 작성인데 FK가 NULL → 하드 삭제된 학생
+        if author_role == "student" and created_by is None:
+            return "삭제된 학생"
+        # 2) author_display_name (저장된 이름)
         display = getattr(obj, "author_display_name", None)
         if display:
             return display
-        # 2) Student FK
-        created_by = getattr(obj, "created_by", None)
+        # 3) Student FK 살아있고 soft-delete 표시
         if created_by:
-            deleted = getattr(created_by, "deleted_at", None)
-            if deleted:
-                return "삭제된 사용자"
+            if getattr(created_by, "deleted_at", None):
+                return "삭제된 학생"
             return getattr(created_by, "name", None)
-        # 3) 관리자 (레거시)
+        # 4) 관리자 (레거시)
         return "관리자"
 
     def create(self, validated_data):
@@ -110,17 +113,26 @@ class PostEntitySerializer(serializers.ModelSerializer):
         return getattr(obj, "replies_count", 0) if hasattr(obj, "replies_count") else 0
 
     def _is_created_by_deleted(self, obj):
+        """학생 작성 글의 작성자 학생이 삭제되었는지 (hard-delete 또는 soft-delete).
+
+        author_role='student'이면서 (FK NULL OR deleted_at 존재) → 삭제됨.
+        author_role='staff'이거나 미설정이면 관리자/강사 글로 간주.
+        """
+        author_role = (getattr(obj, "author_role", None) or "").lower()
         created_by = getattr(obj, "created_by", None)
-        if created_by is None:
-            return False  # 관리자 작성 — 삭제된 사용자 아님
-        return bool(getattr(created_by, "deleted_at", None))
+        if author_role == "student":
+            if created_by is None:
+                return True  # hard-delete
+            return bool(getattr(created_by, "deleted_at", None))
+        # staff/관리자 글: 삭제 개념 없음
+        return False
 
     def get_created_by_deleted(self, obj):
         return self._is_created_by_deleted(obj)
 
     def get_created_by_display(self, obj):
         if self._is_created_by_deleted(obj):
-            return "삭제된 사용자"
+            return "삭제된 학생"
         # 1) author_display_name (관리자/학생 모두 저장)
         display = getattr(obj, "author_display_name", None)
         if display:
