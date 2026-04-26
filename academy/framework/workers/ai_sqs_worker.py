@@ -17,6 +17,8 @@ import time
 import uuid
 from typing import Optional
 
+from django.db import close_old_connections, connections
+
 from academy.adapters.db.django.uow import DjangoUnitOfWork
 from academy.adapters.queue.sqs.ai_queue import SQSAIQueueAdapter
 from academy.adapters.queue.sqs.visibility_extender import SQSVisibilityExtender
@@ -36,6 +38,7 @@ SQS_VISIBILITY_TIMEOUT = int(os.getenv("AI_SQS_VISIBILITY_TIMEOUT", "3600"))  # 
 VISIBILITY_EXTEND_INTERVAL = int(os.getenv("AI_VISIBILITY_EXTEND_INTERVAL", "60"))  # 60초마다 연장
 BASIC_POLL_WEIGHT = int(os.getenv("AI_WORKER_BASIC_POLL_WEIGHT", "3"))
 LITE_POLL_WEIGHT = int(os.getenv("AI_WORKER_LITE_POLL_WEIGHT", "1"))
+MIN_JOB_INTERVAL_SECONDS = float(os.getenv("AI_WORKER_MIN_JOB_INTERVAL_SECONDS", "1.0"))
 # Lease 전략: (1) 고정. visibility 3600 - safety_margin 60 = 3540. 문서 §8.3.
 LEASE_SECONDS = int(os.getenv("AI_JOB_LEASE_SECONDS", "3540"))
 # inference 최대 60분. 초과 시 fail_ai_job + delete + extender stop. 문서 §8.3.
@@ -43,6 +46,14 @@ INFERENCE_MAX_SECONDS = int(os.getenv("AI_INFERENCE_MAX_SECONDS", "3600"))
 
 _shutdown = False
 _current_receipt_handle: Optional[str] = None
+
+
+def _release_db_connections() -> None:
+    """SQS worker는 요청/응답 수명주기가 없으므로 작업 경계에서 DB 세션을 명시 반납한다."""
+    try:
+        connections.close_all()
+    except Exception:
+        logger.warning("Failed to close DB connections", exc_info=True)
 
 
 def _handle_signal(sig, frame) -> None:
@@ -131,10 +142,13 @@ def run_ai_sqs_worker() -> int:
 
     consecutive_errors = 0
     max_consecutive_errors = 10
+    last_job_finished_at = 0.0
 
     try:
         while not _shutdown:
             try:
+                # 워커 루프 경계에서 stale DB 커넥션 정리 (누수/반납 지연 보호)
+                close_old_connections()
                 try:
                     message, tier = _weighted_poll(queue)
                 except QueueUnavailableError:
@@ -145,6 +159,12 @@ def run_ai_sqs_worker() -> int:
                 if not message:
                     consecutive_errors = 0
                     continue
+
+                # 워커 처리율 상한(초당 1/N)으로 DB 급격한 burst 완화
+                if MIN_JOB_INTERVAL_SECONDS > 0 and last_job_finished_at > 0:
+                    elapsed = time.time() - last_job_finished_at
+                    if elapsed < MIN_JOB_INTERVAL_SECONDS:
+                        time.sleep(MIN_JOB_INTERVAL_SECONDS - elapsed)
 
                 receipt_handle = message.get("receipt_handle")
                 job_id = message.get("job_id")
@@ -206,6 +226,10 @@ def run_ai_sqs_worker() -> int:
                     except Exception as e:
                         from apps.shared.contracts.ai_result import AIResult
                         result_container.append(AIResult.failed(prepared.job_id, str(e)))
+                    finally:
+                        # Django DB connections are thread-local. Inference runs in its own
+                        # thread, so close from inside that thread too.
+                        _release_db_connections()
 
                 try:
                     # 3) Inference (60분 상한. 문서 §8.3)
@@ -261,6 +285,7 @@ def run_ai_sqs_worker() -> int:
                 finally:
                     extender.stop()
                     _current_receipt_handle = None
+                    last_job_finished_at = time.time()
 
                 if consecutive_errors >= max_consecutive_errors:
                     logger.error("Too many consecutive errors (%s), exit", consecutive_errors)
@@ -276,15 +301,16 @@ def run_ai_sqs_worker() -> int:
                 if consecutive_errors >= max_consecutive_errors:
                     return 1
                 time.sleep(5)
+            finally:
+                # 작업 1건 처리 종료 후 커넥션을 RDS에 즉시 반납한다.
+                # close_old_connections()는 정상 persistent connection을 유지할 수 있어
+                # 대량 OCR/매치업 배치에서 connection slot 고갈을 막기엔 부족하다.
+                _release_db_connections()
 
         return 0
     finally:
         extender.stop()
-        try:
-            from django.db import connection
-            connection.close()
-        except Exception:
-            pass
+        _release_db_connections()
 
 
 if __name__ == "__main__":

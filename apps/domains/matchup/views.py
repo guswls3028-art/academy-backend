@@ -10,7 +10,7 @@ from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
 
 from .models import MatchupDocument, MatchupProblem
 from .serializers import (
@@ -84,6 +84,72 @@ def _is_tenant_staff(request):
         user=user, tenant=tenant, is_active=True,
         role__in=["owner", "admin", "teacher", "assistant"],
     ).exists()
+
+
+def _reconcile_document_from_ai_job(doc: MatchupDocument) -> bool:
+    """AIJob은 끝났지만 RDS 고갈 등으로 domain callback이 실패한 문서를 복구한다.
+
+    업로드 직후 대량 처리 중 DB connection slot이 고갈되면 AI job은 DONE인데
+    MatchupDocument만 processing에 남을 수 있다. 목록/상태 조회 시 DB의 AIResult를
+    다시 적용해 멱등 복구한다.
+    """
+    if doc.status not in ("pending", "processing") or not doc.ai_job_id:
+        return False
+
+    try:
+        from apps.domains.ai.models import AIJobModel, AIResultModel
+        from apps.domains.ai.callbacks import _handle_matchup_ai_result
+
+        job = AIJobModel.objects.filter(
+            job_id=doc.ai_job_id,
+            tenant_id=str(doc.tenant_id),
+            job_type="matchup_analysis",
+        ).first()
+        if not job:
+            return False
+
+        if job.source_id and str(job.source_id) != str(doc.id):
+            logger.error(
+                "MATCHUP_RECONCILE_SOURCE_MISMATCH | doc_id=%s | job_id=%s | job_source_id=%s",
+                doc.id, doc.ai_job_id, job.source_id,
+            )
+            return False
+
+        if job.status == "DONE":
+            result = AIResultModel.objects.filter(job=job).first()
+            if not result or not isinstance(result.payload, dict):
+                logger.warning(
+                    "MATCHUP_RECONCILE_NO_RESULT | doc_id=%s | job_id=%s",
+                    doc.id, doc.ai_job_id,
+                )
+                return False
+            _handle_matchup_ai_result(
+                job_id=job.job_id,
+                status="DONE",
+                result_payload=result.payload,
+                error=None,
+                source_id=str(doc.id),
+            )
+            doc.refresh_from_db(fields=["status", "problem_count", "error_message", "meta"])
+            return True
+
+        if job.status in ("FAILED", "REJECTED_BAD_INPUT", "REVIEW_REQUIRED"):
+            _handle_matchup_ai_result(
+                job_id=job.job_id,
+                status="FAILED",
+                result_payload={},
+                error=job.error_message or job.last_error or "AI 분석 실패",
+                source_id=str(doc.id),
+            )
+            doc.refresh_from_db(fields=["status", "problem_count", "error_message", "meta"])
+            return True
+    except Exception:
+        logger.exception(
+            "MATCHUP_RECONCILE_FAILED | doc_id=%s | job_id=%s",
+            doc.id, doc.ai_job_id,
+        )
+
+    return False
 
 
 # ── Document views ───────────────────────────────────
@@ -293,7 +359,9 @@ class DocumentListView(View):
         if not _is_tenant_staff(request):
             return JsonResponse({"detail": "Staff only"}, status=403)
 
-        docs = MatchupDocument.objects.filter(tenant=request.tenant)
+        docs = list(MatchupDocument.objects.filter(tenant=request.tenant))
+        for doc in docs:
+            _reconcile_document_from_ai_job(doc)
         data = MatchupDocumentSerializer(docs, many=True).data
         return JsonResponse(data, safe=False)
 
@@ -351,6 +419,92 @@ class DocumentDetailView(View):
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentCrossMatchesView(View):
+    """GET /api/v1/matchup/documents/<id>/cross-matches/?top_k=1
+
+    이 doc(주로 학생 시험지)의 모든 problem에 대해 다른 doc의 problem 중
+    가장 유사한 top_k건 반환. 같은 doc 안의 problem은 제외(cross-doc only).
+
+    응답 구조:
+    {
+      "doc_id": int,
+      "doc_title": str,
+      "matches": [
+        {
+          "problem_id": int,
+          "problem_number": int,
+          "problem_text_preview": str,  # 처음 80자
+          "best_matches": [
+            {"document_id": int, "document_title": str,
+             "problem_number": int, "similarity": float},
+            ...
+          ]
+        }, ...
+      ]
+    }
+    """
+
+    def get(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        try:
+            top_k = max(1, min(int(request.GET.get("top_k", 1)), 5))
+        except (TypeError, ValueError):
+            top_k = 1
+
+        problems = (
+            doc.problems.exclude(embedding__isnull=True).order_by("number")
+        )
+
+        # title 캐시 (문제마다 같은 doc이 여러 번 매치될 수 있으므로)
+        title_cache: dict[int, str] = {doc.id: doc.title}
+
+        matches = []
+        for p in problems:
+            similar = find_similar_problems(
+                problem_id=p.id,
+                tenant_id=request.tenant.id,
+                top_k=top_k * 4,  # cross-doc 필터 후 충분히 남도록 여유분
+            )
+            cross_doc = [
+                (sp, sim) for sp, sim in similar if sp.document_id != doc.id
+            ][:top_k]
+
+            best_matches = []
+            for sp, sim in cross_doc:
+                if sp.document_id not in title_cache:
+                    src = MatchupDocument.objects.filter(
+                        id=sp.document_id, tenant=request.tenant,
+                    ).only("id", "title").first()
+                    title_cache[sp.document_id] = src.title if src else ""
+                best_matches.append({
+                    "document_id": sp.document_id,
+                    "document_title": title_cache.get(sp.document_id, ""),
+                    "problem_number": sp.number,
+                    "similarity": round(sim, 4),
+                })
+
+            matches.append({
+                "problem_id": p.id,
+                "problem_number": p.number,
+                "problem_text_preview": (p.text or "")[:80],
+                "best_matches": best_matches,
+            })
+
+        return JsonResponse({
+            "doc_id": doc.id,
+            "doc_title": doc.title,
+            "problem_count": len(matches),
+            "matches": matches,
+        })
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class DocumentPreviewView(View):
     """GET /api/v1/matchup/documents/<id>/preview/
 
@@ -404,6 +558,34 @@ class DocumentRetryView(View):
 
         doc.refresh_from_db()
         return JsonResponse(MatchupDocumentSerializer(doc).data)
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentJobView(View):
+    """GET /api/v1/matchup/documents/<id>/job/
+
+    업로드 직후 응답에 ai_job_id가 비어있는 경우(구버전/과도기) 프론트 fallback에서 사용.
+    tenant + staff 범위 내에서만 조회 가능.
+    """
+
+    def get(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        _reconcile_document_from_ai_job(doc)
+        return JsonResponse(
+            {
+                "document_id": doc.id,
+                "status": doc.status,
+                "ai_job_id": doc.ai_job_id or "",
+                "problem_count": doc.problem_count,
+                "title": doc.title,
+            }
+        )
 
 
 # ── Problem views ────────────────────────────────────
