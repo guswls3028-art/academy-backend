@@ -114,3 +114,39 @@ resource "aws_cloudwatch_event_target" "cleanup_orphan_video_storage" {
     ]
   })
 }
+
+# ──────────────────────────────────────────────
+# Auto-close overdue exams/homeworks — daily
+#
+# Scheduling: 매일 03:30 KST = 18:30 UTC
+# - 어드민 사이드패널 useEffect 의존을 제거하기 위한 server-side enforcement.
+# - "다음 차시 날짜가 도래하면 이전 차시의 OPEN 시험/과제는 자동 마감" 정책을
+#   사이트 트래픽과 무관하게 보장.
+# - purge_soft_deleted (03:15 KST) 이후 15분 간격으로 분리.
+# Trigger: EventBridge → SSM RunCommand → API EC2(docker exec)
+# ──────────────────────────────────────────────
+
+resource "aws_cloudwatch_event_rule" "close_overdue_assessments" {
+  name                = "${var.naming_prefix}-close-overdue-assessments"
+  description         = "Daily auto-close of overdue exams/homeworks at 03:30 KST"
+  schedule_expression = "cron(30 18 * * ? *)" # 18:30 UTC = 03:30 KST
+  state               = "ENABLED"
+}
+
+resource "aws_cloudwatch_event_target" "close_overdue_assessments" {
+  rule      = aws_cloudwatch_event_rule.close_overdue_assessments.name
+  target_id = "SsmRunCommandCloseOverdueAssessments"
+  arn       = "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript"
+  role_arn  = aws_iam_role.eventbridge_ssm_purge.arn
+
+  run_command_targets {
+    key    = "tag:Name"
+    values = ["academy-v1-api"]
+  }
+
+  input = jsonencode({
+    commands = [
+      "docker exec academy-api python manage.py close_overdue_assessments"
+    ]
+  })
+}
