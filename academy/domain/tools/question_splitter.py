@@ -49,6 +49,19 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     if len(answer_pattern) >= 5:
         return True
 
+    # ── 정답표 페이지 감지 ──
+    # 운영 케이스 (Tenant 2 doc#143 p55/p65): "1. ④ 2. ④ 3. ① 4. ③ ..." 60+ 반복.
+    # is_non_question_page 미차단 시 60 false anchor가 한 페이지에 폭증.
+    # 패턴: "N. ①②③④⑤" 또는 "N. ④" 가 5개 이상 + 본문 지시문 없음.
+    answer_table = re.findall(r"\b\d{1,3}\.\s*[①②③④⑤]", full_text)
+    if len(answer_table) >= 5:
+        question_indicators_early = [
+            "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
+            "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
+        ]
+        if not any(kw in full_text for kw in question_indicators_early):
+            return True
+
     # 해설지 감지: "번호. ⑴ ...이다." 소문항 패턴
     sub_q_pattern = re.findall(r"\d+\.\s*[⑴⑵⑶⑷⑸⑹⑺⑻⑼]", full_text)
     if len(sub_q_pattern) >= 2:
@@ -58,6 +71,26 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
         ]
         if not any(kw in full_text for kw in question_indicators_early):
             return True
+
+    # ── 해설지 페이지 감지 ──
+    # 운영 케이스 (Tenant 2 doc#120 p112-116): "10. 정답 ④ 문제 해설 ...",
+    # "Step 3. 수능완성 1. 정답 ③ 문제 해설 ..." 패턴 다수 등장.
+    # is_non_question_page 미차단 시 학습자료 over-extraction 주범.
+    # 패턴: "N. 정답" 또는 "N. 정답　④" 또는 "Step N. ... 정답" 5+ 반복.
+    explanation_answer = re.findall(
+        r"\b\d{1,3}\s*\.\s*(?:정\s*답|문제\s*해설)",
+        full_text,
+    )
+    if len(explanation_answer) >= 3:
+        return True
+
+    # ── 학습자료 본문 항목번호 (zb\d+ ID) 페이지 감지 ──
+    # 운영 케이스 (Tenant 2 doc#143 객서심화): "5. zb5) 다음 글을 읽고",
+    # "11. zb11) 다음은", "17. zb17) 그림 (가)는" — 학습 항목 ID로 본문에 다수 등장.
+    # zb패턴이 있고 + 학습 항목 번호로 anchor가 5+ 잡히는 페이지는 학습자료 본문.
+    zb_markers = re.findall(r"\bzb\s*\d{1,3}\s*\)", full_text)
+    if len(zb_markers) >= 3:
+        return True
 
     # 문항 페이지 강력 지표: 보기 번호 패턴
     choice_patterns = ["①", "②", "③", "④", "⑤", "ㄱ.", "ㄴ.", "ㄷ."]
@@ -89,6 +122,22 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     )
     if len(design_cover_markers) >= 1 and len(full_text) < 300:
         return True
+    # 디자인 키워드가 2+ 동시에 있으면 텍스트 길이와 무관 (대형 표지 디자인)
+    if len(design_cover_markers) >= 2 and len(full_text) < 800:
+        return True
+
+    # ── Lorem ipsum placeholder 표지 감지 ──
+    # 운영 케이스 (Tenant 2 18 doc): "RUNNER'S HIGH WITH GOD MIN" + 라틴 lorem ipsum
+    # placeholder 텍스트로 채워진 디자인 표지.
+    # adipiscing/dolore/laoreet/aliquam/ipsum 같은 라틴어 단어가 한 페이지에 다수 등장.
+    lorem_markers = re.findall(
+        r"(?:adipiscing|dolore|laoreet|aliquam|nibh|tincidunt|euismod|"
+        r"volutpat|nonummy|ipsum|consectetur|magna)",
+        full_text,
+        re.IGNORECASE,
+    )
+    if len(lorem_markers) >= 3:
+        return True
 
     # ── 시험지 헤더 페이지 감지 (수능/모의고사 표제) ──
     # "제 4교시 / 신민T 신념 모의고사 / 통합과학 N제 / 탐구 영역 / 홀수형" 같은 표제 페이지.
@@ -99,6 +148,9 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     )
     # 표제 페이지는 본문 대비 텍스트가 아주 적음 (디자인+여백)
     if len(exam_header_markers) >= 2 and len(full_text) < 400:
+        return True
+    # 헤더 키워드 3+ 동시 등장 + 본문 지시문 없음 → 표제 페이지 (길이 무관)
+    if len(exam_header_markers) >= 3 and not has_question_indicator and not has_choices:
         return True
 
     # 표지 페이지 감지: 시험지 메타정보는 있고 문항 지표는 없음.
@@ -160,9 +212,13 @@ class QuestionRegion:
 
 
 # 선택형(객관식) 문항 번호 패턴. "1.", "1) ", "(1) ", "[1] ", "문제 1.", "문 1)".
+# 운영 케이스 (Tenant 2 모의고사): "12)그림은..." 처럼 닫는 ")" 뒤에 공백 없이
+# 한글/영문/괄호가 바로 오는 PDF가 흔함. 공백 강제 시 anchor 다수 미검출.
+# → 다음 글자가 "공백 또는 한글/영문/숫자/구두점"이면 anchor로 인정.
+# (단, ")" 직후가 또 ")" 이거나 "."이면 보기 ①②③④⑤ 또는 본문 일부일 수 있어 거부.)
 _QUESTION_PATTERN = re.compile(
     r"^\s*(?:"
-    r"(\d{1,3})\s*[.)]\s"           # "1." or "1) "
+    r"(\d{1,3})\s*[.)](?=\s|[가-힣A-Za-z(<【\[\"'“‘])"  # "1." / "1) " / "12)그림"
     r"|"
     r"\((\d{1,3})\)\s"              # "(1) "
     r"|"
