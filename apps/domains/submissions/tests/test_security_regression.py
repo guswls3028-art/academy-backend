@@ -456,3 +456,68 @@ class TestC5LandingStatsGuard(_SecurityFixtureMixin, TestCase):
                           user=self.other_admin, tenant=self.tenant)
         self.assertEqual(resp.status_code, 403,
                          "CRITICAL: 크로스테넌트 어드민이 다른 학원 영상 KPI 조회 가능!")
+
+
+# ═══════════════════════════════════════════════════
+# C-6 SubmissionViewSet.create — 학부모 토큰 차단
+# (2026-04-27 시험·성적·과제 실사용 리뷰 회귀 가드)
+# ═══════════════════════════════════════════════════
+
+class TestC6ParentSubmissionCreateBlocked(_SecurityFixtureMixin, TestCase):
+    """학부모 계정(parent_profile only)이 자녀/타가족 enrollment_id로
+    submission POST 시도 → 403.
+
+    학생 토큰의 enrollment 소유권 검증(C-1b)이 student_profile을 통해
+    이뤄지므로, parent_profile만 가진 부모 계정은 그 검증을 건너뛰고
+    임의 enrollment 제출이 가능했던 이력 차단."""
+
+    def setUp(self):
+        from apps.domains.parents.models import Parent
+        self._setup_fixtures()
+        # parent_profile만 가진 부모 계정. tenant/role=parent.
+        self.parent_user = User.objects.create_user(
+            username=user_internal_username(self.tenant, "P-PARENT"),
+            password="test1234",
+            tenant=self.tenant, name="학부모",
+        )
+        Parent.objects.create(
+            tenant=self.tenant, user=self.parent_user,
+            name="학부모", phone="01099998888",
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant, user=self.parent_user, role="parent",
+        )
+
+    def test_parent_create_child_enrollment_blocked(self):
+        """부모 → POST /submissions/submissions/ (자녀 enrollment) → 403."""
+        view = SubmissionViewSet.as_view({"post": "create"})
+        with patch("apps.domains.submissions.views.submission_view.dispatch_submission"):
+            resp = self._call(lambda: view, "post",
+                              "/api/v1/submissions/submissions/",
+                              user=self.parent_user,
+                              data={
+                                  "target_type": "exam",
+                                  "target_id": self.exam.id,
+                                  "source": "online",
+                                  "enrollment_id": self.enrollment.id,
+                                  "payload": {"answers": []},
+                              })
+        self.assertEqual(resp.status_code, 403,
+                         "CRITICAL: 학부모가 자녀/타학생 enrollment_id로 임의 제출 가능!")
+
+    def test_parent_create_peer_enrollment_blocked(self):
+        """부모 → POST /submissions/submissions/ (타가족 enrollment) → 403."""
+        view = SubmissionViewSet.as_view({"post": "create"})
+        with patch("apps.domains.submissions.views.submission_view.dispatch_submission"):
+            resp = self._call(lambda: view, "post",
+                              "/api/v1/submissions/submissions/",
+                              user=self.parent_user,
+                              data={
+                                  "target_type": "exam",
+                                  "target_id": self.exam.id,
+                                  "source": "online",
+                                  "enrollment_id": self.peer_enrollment.id,
+                                  "payload": {"answers": []},
+                              })
+        self.assertEqual(resp.status_code, 403,
+                         "CRITICAL: 학부모가 타가족 enrollment_id로 제출 가능!")
