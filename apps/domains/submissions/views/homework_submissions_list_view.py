@@ -145,11 +145,18 @@ class HomeworkSubmissionsListView(APIView):
                 ext = file_key.rsplit(".", 1)[-1].lower() if "." in file_key else ""
                 file_type = ext
 
+            student_id = int(getattr(student, "id", 0)) if student else 0
+            student_phone_v = getattr(student, "phone", "") if student else ""
+            parent_phone_v = getattr(student, "parent_phone", "") if student else ""
+
             items.append(
                 {
                     "id": int(s.id),
                     "enrollment_id": int(enrollment_id) if enrollment_id else 0,
+                    "student_id": student_id,
                     "student_name": student_name,
+                    "student_phone": student_phone_v or None,
+                    "parent_phone": parent_phone_v or None,
                     "status": str(getattr(s, "status", "")),
                     "source": str(source),
                     "file_key": file_key,

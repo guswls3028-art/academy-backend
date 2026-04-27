@@ -111,12 +111,19 @@ class SubmissionViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return
+        # 🔒 학부모는 시험/과제 제출 권한 없음 (자녀가 본인 폰으로 제출해야 함)
+        # parent_profile 존재 = 학부모 토큰. student_profile이 없는 부모 계정은 제출 차단.
+        # (학부모-학생 겸용 계정은 student_profile이 있으므로 학생 흐름으로 통과)
+        from rest_framework.exceptions import PermissionDenied
+        is_parent = getattr(self.request.user, "parent_profile", None) is not None
+        is_student = getattr(self.request.user, "student_profile", None) is not None
+        if is_parent and not is_student:
+            raise PermissionDenied("학부모 계정은 시험/과제 제출 권한이 없습니다.")
         # target_id(exam/homework)가 해당 테넌트 소속인지 검증
         target_type = serializer.validated_data.get("target_type")
         target_id = serializer.validated_data.get("target_id")
         if target_type and target_id:
             if not self._validate_target_tenant(target_type, target_id, tenant):
-                from rest_framework.exceptions import PermissionDenied
                 raise PermissionDenied("대상이 해당 학원에 속하지 않습니다.")
         # enrollment_id 소유권 검증: 학생은 자신의 enrollment만 사용 가능
         enrollment_id = serializer.validated_data.get("enrollment_id")
@@ -127,7 +134,6 @@ class SubmissionViewSet(ModelViewSet):
                 if not Enrollment.objects.filter(
                     id=enrollment_id, student=student, tenant=tenant,
                 ).exists():
-                    from rest_framework.exceptions import PermissionDenied
                     raise PermissionDenied("해당 수강 정보에 접근할 수 없습니다.")
         submission = serializer.save(user=self.request.user, tenant=tenant)
         dispatch_submission(submission)
