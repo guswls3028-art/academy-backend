@@ -208,6 +208,10 @@ def retry_document(document: MatchupDocument) -> str:
         key=document.r2_key, expires_in=3600
     )
 
+    # 워커 자동분리 모드 분기용 — intent가 페이로드에 있으면 DB 재조회 없이 바로 사용.
+    meta = document.meta or {}
+    upload_intent = (meta.get("upload_intent") or meta.get("document_role") or "").lower()
+
     result = dispatch_job(
         job_type="matchup_analysis",
         payload={
@@ -215,6 +219,7 @@ def retry_document(document: MatchupDocument) -> str:
             "tenant_id": str(document.tenant_id),
             "document_id": str(document.id),
             "filename": document.original_name,
+            "upload_intent": upload_intent,
         },
         tenant_id=str(document.tenant_id),
         source_domain="matchup",
@@ -299,6 +304,7 @@ def promote_inventory_to_matchup(
     category: str = "",
     subject: str = "",
     grade_level: str = "",
+    upload_intent: str = "",
 ):
     """InventoryFile을 매치업 분석 대상으로 승격. Returns MatchupDocument.
 
@@ -307,12 +313,24 @@ def promote_inventory_to_matchup(
 
     category가 비어 있으면 저장소 폴더 트리에서 자동 추론 — 사용자가 폴더로
     이미 분류해둔 mental model을 그대로 매치업으로 가져온다.
+
+    upload_intent: 'reference' (학습자료) / 'test' (시험지). 빈 값이면 미설정으로 두고
+    워커가 학습자료 휴리스틱을 적용. 명시되면 dispatch payload + doc.meta 양쪽에 기록해
+    워커가 race 없이 모드 분기를 결정한다.
     """
     from apps.domains.ai.gateway import dispatch_job
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
     if not (category or "").strip():
         category = _infer_category_from_folder(inventory_file)
+
+    upload_intent = (upload_intent or "").strip().lower()
+    initial_meta: dict = {}
+    if upload_intent in ("reference", "test"):
+        initial_meta["upload_intent"] = upload_intent
+        initial_meta["document_role"] = (
+            "exam_sheet" if upload_intent == "test" else "reference_material"
+        )
 
     doc = MatchupDocument.objects.create(
         tenant=inventory_file.tenant,
@@ -326,7 +344,7 @@ def promote_inventory_to_matchup(
         size_bytes=inventory_file.size_bytes,
         content_type=inventory_file.content_type,
         status="pending",
-        meta={},
+        meta=initial_meta,
     )
 
     try:
@@ -340,6 +358,7 @@ def promote_inventory_to_matchup(
                 "tenant_id": str(inventory_file.tenant_id),
                 "document_id": str(doc.id),
                 "filename": inventory_file.original_name,
+                "upload_intent": upload_intent,
             },
             tenant_id=str(inventory_file.tenant_id),
             source_domain="matchup",

@@ -113,9 +113,36 @@ def run_matchup_pipeline(
         step_percent=100, tenant_id=tenant_id,
     )
 
+    # ── intent 기반 분기 ──
+    # 학습자료(intent=reference)에서 anchor가 폭증한 경우 본문 학습 항목(1.~60.)을
+    # 문항으로 오인한 over-extraction. 페이지 단위 인덱싱으로 폴백 →
+    # 자료 매칭은 페이지 단위로 충분, 노이즈 제거 우선.
+    upload_intent = (payload.get("upload_intent") or "").lower()
+    if not upload_intent and document_id:
+        try:
+            from apps.domains.matchup.models import MatchupDocument
+            doc = MatchupDocument.objects.only("meta").get(id=int(document_id))
+            meta = doc.meta or {}
+            upload_intent = (meta.get("upload_intent") or meta.get("document_role") or "").lower()
+        except Exception as e:
+            logger.warning("MATCHUP_INTENT_LOOKUP_FAIL | doc=%s | err=%s", document_id, e)
+
+    is_reference = upload_intent in ("reference", "reference_material")
+    page_count = len(pages)
+    # 페이지당 평균 anchor가 4 이상이면 학습자료 본문 over-extraction 의심.
+    avg_per_page = total_boxes / max(1, page_count)
+    is_over_extracted = is_reference and total_boxes >= 30 and avg_per_page >= 4
+
     if total_boxes == 0:
         # 문제를 찾지 못한 경우 — 전체 페이지를 하나의 문제로 취급
         logger.info("MATCHUP_NO_BOXES | job_id=%s | treating whole pages as problems", job_id)
+        questions_raw = _whole_pages_as_questions(pages)
+    elif is_over_extracted:
+        # 학습자료 over-extraction 폴백 — 페이지 단위 1박스로 재인덱싱.
+        logger.info(
+            "MATCHUP_REFERENCE_PAGE_FALLBACK | job_id=%s | total_boxes=%d avg_per_page=%.1f → page_count=%d",
+            job_id, total_boxes, avg_per_page, page_count,
+        )
         questions_raw = _whole_pages_as_questions(pages)
     else:
         questions_raw = _boxes_to_questions(pages)

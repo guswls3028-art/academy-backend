@@ -197,3 +197,62 @@ def test_validate_drops_outlier_after_gap():
     out = validate_anchors_across_pages([page0, page1])
     nums_kept = [r.number for page in out for r in page]
     assert 46 not in nums_kept
+
+
+# ── 6. 4분할(quad) layout 감지 ──
+
+def test_quad_layout_detected_and_split():
+    """2x2 4분할 시험지: 4 quadrant 각각의 anchor가 인식되고 박스가 quadrant 경계로 구속."""
+    from academy.domain.tools.question_splitter import (
+        TextBlock as TB,
+        _detect_quad_layout,
+        split_questions,
+    )
+
+    pw, ph = 1000.0, 1400.0
+    # 4분면 중심 좌표 — TL/TR/BL/BR 각각 anchor 1개 + 본문 3블록
+    def quad_blocks(qid: int, base_x: float, base_y: float):
+        return [
+            TB(text=f"{qid}. 다음 중 옳은 것은?", x0=base_x + 50, y0=base_y + 50, x1=base_x + 400, y1=base_y + 70),
+            TB(text="① A ② B ③ C ④ D ⑤ E", x0=base_x + 50, y0=base_y + 90, x1=base_x + 400, y1=base_y + 110),
+            TB(text="<보기> ㄱ. 옳음", x0=base_x + 50, y0=base_y + 130, x1=base_x + 400, y1=base_y + 150),
+        ]
+
+    blocks = (
+        quad_blocks(1, 0, 0)               # TL
+        + quad_blocks(2, 500, 0)           # TR
+        + quad_blocks(3, 0, 700)           # BL
+        + quad_blocks(4, 500, 700)         # BR
+    )
+    assert _detect_quad_layout(blocks, pw, ph) is True
+
+    regions = split_questions(blocks, pw, ph, page_index=0)
+    nums = sorted(r.number for r in regions)
+    assert nums == [1, 2, 3, 4]
+
+    # 각 region이 자기 quadrant 경계 안에 있어야 함
+    by_num = {r.number: r.bbox for r in regions}
+    # 1번 = TL: x < 500 + margin, y < 700 + margin
+    assert by_num[1][2] <= 510 and by_num[1][3] <= 710
+    # 2번 = TR: x > 500 - margin
+    assert by_num[2][0] >= 498
+    # 3번 = BL: y > 700 - margin
+    assert by_num[3][1] >= 698
+    # 4번 = BR: 둘 다
+    assert by_num[4][0] >= 498 and by_num[4][1] >= 698
+
+
+def test_quad_layout_not_falsely_detected_on_dual_column():
+    """일반 2단 페이지는 quad로 잘못 감지되지 않음."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, _detect_quad_layout
+
+    pw, ph = 1000.0, 1400.0
+    blocks = []
+    # 좌측 컬럼에 전체 높이로 텍스트 (TL + BL 모두 텍스트 多)
+    for y in range(50, 1300, 50):
+        blocks.append(TB(text="left", x0=50, y0=float(y), x1=400, y1=float(y + 30)))
+    # 우측 컬럼 동일 — 가운데 가로 gutter 없음
+    for y in range(50, 1300, 50):
+        blocks.append(TB(text="right", x0=550, y0=float(y), x1=950, y1=float(y + 30)))
+
+    assert _detect_quad_layout(blocks, pw, ph) is False

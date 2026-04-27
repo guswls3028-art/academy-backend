@@ -301,6 +301,48 @@ def _detect_column_layout(
     return right_count > len(blocks) * 0.2
 
 
+def _detect_quad_layout(
+    blocks: List[TextBlock],
+    page_width: float,
+    page_height: float,
+) -> bool:
+    """4분할(2x2) 레이아웃 감지 — 한 페이지에 4문항이 grid로 배치된 시험지.
+
+    운영 케이스 (Tenant 2 doc#148 4분할 기출 시험지): 가로 띠로 잘려 multi-question
+    bleed 발생. 4분면 각각 독립 anchor 검색이 필요하다.
+
+    Heuristic:
+      - 4 quadrant 모두에 텍스트 블록이 일정량 이상 분포
+      - 페이지 가운데 가로띠 + 세로띠에 텍스트가 거의 없음 (gutter)
+    """
+    if not blocks or page_width <= 0 or page_height <= 0 or len(blocks) < 12:
+        return False
+
+    mid_x = page_width / 2
+    mid_y = page_height / 2
+    gutter_x = page_width * 0.05
+    gutter_y = page_height * 0.05
+
+    tl = sum(1 for b in blocks if b.x1 < mid_x and b.y1 < mid_y)
+    tr = sum(1 for b in blocks if b.x0 > mid_x and b.y1 < mid_y)
+    bl = sum(1 for b in blocks if b.x1 < mid_x and b.y0 > mid_y)
+    br = sum(1 for b in blocks if b.x0 > mid_x and b.y0 > mid_y)
+
+    # 4분면 모두 충분한 텍스트
+    if min(tl, tr, bl, br) < 3:
+        return False
+
+    # 가운데 가로띠/세로띠에 텍스트 거의 없음 (gutter 검증)
+    in_h_gutter = sum(
+        1 for b in blocks if mid_y - gutter_y < b.y0 < mid_y + gutter_y
+    )
+    in_v_gutter = sum(
+        1 for b in blocks if mid_x - gutter_x < b.x0 < mid_x + gutter_x
+    )
+    threshold = max(2, len(blocks) * 0.06)
+    return in_h_gutter <= threshold and in_v_gutter <= threshold
+
+
 def split_questions(
     text_blocks: List[TextBlock],
     page_width: float,
@@ -321,13 +363,24 @@ def split_questions(
     if not text_blocks:
         return []
 
-    is_dual_column = _detect_column_layout(text_blocks, page_width)
+    # 4분할 레이아웃 우선 검사 — 가로 + 세로 gutter가 모두 있으면 quad.
+    # 4분할이면 dual column 분기와 다른 좌표 구속 필요.
+    is_quad_layout = _detect_quad_layout(text_blocks, page_width, page_height)
+    is_dual_column = (not is_quad_layout) and _detect_column_layout(text_blocks, page_width)
     mid_x = page_width * 0.5
+    mid_y = page_height * 0.5
 
     # Sort blocks by layout order:
     # - Single column: top to bottom
     # - Dual column: left column top-to-bottom, then right column top-to-bottom
-    if is_dual_column:
+    # - Quad: TL → TR → BL → BR (각 quadrant 내 top-to-bottom)
+    if is_quad_layout:
+        def _quad_order(b: TextBlock) -> Tuple[int, float, float]:
+            row = 0 if b.y0 < mid_y else 1
+            col = 0 if b.x0 < mid_x else 1
+            return (row * 2 + col, b.y0, b.x0)
+        sorted_blocks = sorted(text_blocks, key=_quad_order)
+    elif is_dual_column:
         sorted_blocks = sorted(
             text_blocks,
             key=lambda b: (0 if b.x0 < mid_x else 1, b.y0, b.x0),
@@ -380,7 +433,13 @@ def split_questions(
         # Calculate bounding box from all blocks in this region
         y0 = max(0, start_block.y0 - margin)
 
-        if is_dual_column:
+        if is_quad_layout:
+            # 4분할: 시작 블록의 quadrant 경계로 x/y 모두 구속.
+            curr_left = start_block.x0 < mid_x
+            curr_top = start_block.y0 < mid_y
+            x0 = 0 if curr_left else mid_x - margin
+            x1 = mid_x + margin if curr_left else page_width
+        elif is_dual_column:
             # Dual column: use actual text block bounds
             x0 = max(0, min(b.x0 for b in region_blocks) - margin)
             x1 = min(page_width, max(b.x1 for b in region_blocks) + margin)
@@ -394,7 +453,18 @@ def split_questions(
             # 다음 문항 시작점
             next_block = sorted_blocks[question_starts[i + 1][1]]
 
-            if is_dual_column:
+            if is_quad_layout:
+                # 4분할: quadrant이 다르면 현재 quadrant의 행 경계까지.
+                curr_left = start_block.x0 < mid_x
+                curr_top = start_block.y0 < mid_y
+                next_left = next_block.x0 < mid_x
+                next_top = next_block.y0 < mid_y
+                same_quadrant = (curr_left == next_left) and (curr_top == next_top)
+                if same_quadrant:
+                    y1 = next_block.y0 - margin
+                else:
+                    y1 = mid_y - margin if curr_top else page_height
+            elif is_dual_column:
                 curr_in_left = start_block.x0 < mid_x
                 next_in_left = next_block.x0 < mid_x
                 if curr_in_left != next_in_left:
@@ -409,9 +479,16 @@ def split_questions(
                 y1 = next_block.y0 - margin
         else:
             # 마지막 문항: 페이지 하단까지 (비텍스트 요소 포함)
+            # 4분할 마지막 quadrant이면 BR이라 page_height까지 OK
             y1 = page_height
 
         y1 = min(page_height, max(y1, y0 + 10))
+
+        # 4분할: y도 quadrant 경계로 추가 클램프.
+        if is_quad_layout:
+            curr_top = start_block.y0 < mid_y
+            if curr_top:
+                y1 = min(y1, mid_y + margin)
 
         # For dual column, constrain x to the appropriate column
         if is_dual_column:

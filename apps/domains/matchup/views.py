@@ -251,20 +251,15 @@ class DocumentUploadView(View):
             content_type=file.content_type,
         )
 
-        # 2) 즉시 승격 + dispatch
+        # 2) 즉시 승격 + dispatch (intent를 promote에 전달 → meta + payload 양쪽에 기록)
         doc = promote_inventory_to_matchup(
             inv_file,
             title=title,
             category=category,
             subject=subject,
             grade_level=grade_level,
+            upload_intent=upload_intent,
         )
-        meta = dict(doc.meta or {})
-        meta["upload_intent"] = upload_intent
-        # 프론트에서 시험지/참고자료를 구조적으로 분리해 표시할 수 있도록 역할 키를 함께 남긴다.
-        meta["document_role"] = "exam_sheet" if upload_intent == "test" else "reference_material"
-        doc.meta = meta
-        doc.save(update_fields=["meta", "updated_at"])
 
         data = MatchupDocumentSerializer(doc).data
         return JsonResponse(data, status=201)
@@ -338,6 +333,9 @@ class DocumentPromoteFromInventoryView(View):
         category = body.get("category", "")
         subject = body.get("subject", "")
         grade_level = body.get("grade_level", "")
+        upload_intent = (body.get("intent", "reference") or "reference").strip().lower()
+        if upload_intent not in ("reference", "test"):
+            upload_intent = "reference"
 
         # Race-safe 승격 — 사전 검사 후 race가 통과해도 OneToOne unique IntegrityError로 차단.
         try:
@@ -348,6 +346,7 @@ class DocumentPromoteFromInventoryView(View):
                     category=category,
                     subject=subject,
                     grade_level=grade_level,
+                    upload_intent=upload_intent,
                 )
         except IntegrityError:
             existing = MatchupDocument.objects.filter(
