@@ -127,7 +127,9 @@ def run_matchup_pipeline(
         except Exception as e:
             logger.warning("MATCHUP_INTENT_LOOKUP_FAIL | doc=%s | err=%s", document_id, e)
 
-    is_reference = upload_intent in ("reference", "reference_material")
+    # 명시적 시험지(test/exam_sheet)가 아니면 학습자료 의심 — views.py의 default도 'reference'.
+    # 시험지는 사용자가 명확히 의도해 업로드해야 하고, 미설정은 학습자료로 간주해 폴백 검토.
+    is_reference = upload_intent not in ("test", "exam_sheet")
     page_count = len(pages)
     # 페이지당 평균 anchor가 4 이상이면 학습자료 본문 over-extraction 의심.
     avg_per_page = total_boxes / max(1, page_count)
