@@ -206,6 +206,13 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     needs: [detect-changes, run-tests]
+    env:
+      # Job-level env guarantees docker/build-push-action@v6 sees these regardless of
+      # workflow-vs-step env precedence subtleties. RECORD_UPLOAD=false stops the
+      # *.dockerbuild summary artifact upload (the actually accumulating one);
+      # SUMMARY=false hides the rendered summary panel.
+      DOCKER_BUILD_RECORD_UPLOAD: false
+      DOCKER_BUILD_SUMMARY: false
     steps:
       - name: Checkout
         uses: actions/checkout@v4

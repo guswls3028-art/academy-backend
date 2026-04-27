@@ -36,13 +36,19 @@ def gh_api(path: str, method: str = "GET") -> dict:
 
 
 def list_all_artifacts(repo: str) -> list[dict]:
-    artifacts = []
+    """Legacy entrypoint kept for compatibility — _safe_list returns (list, ok)."""
+    arts, _ok = _safe_list(repo)
+    return arts
+
+
+def _safe_list(repo: str) -> tuple[list[dict], bool]:
+    artifacts: list[dict] = []
     page = 1
     while True:
         data = gh_api(f"/repos/{repo}/actions/artifacts?per_page=100&page={page}")
         if data.get("_error"):
             print(f"[ERROR] list page {page}: {data['_error']}", file=sys.stderr)
-            break
+            return artifacts, False
         batch = data.get("artifacts", [])
         if not batch:
             break
@@ -52,7 +58,7 @@ def list_all_artifacts(repo: str) -> list[dict]:
         if len(artifacts) >= total:
             break
         page += 1
-    return artifacts
+    return artifacts, True
 
 
 def delete_artifact(repo: str, artifact_id: int) -> tuple[int, bool, str]:
@@ -102,8 +108,12 @@ def main():
     print()
 
     print("Listing artifacts...")
-    artifacts = list_all_artifacts(args.repo)
+    artifacts, list_ok = _safe_list(args.repo)
     print(f"Total artifacts discovered: {len(artifacts)}")
+    if not list_ok:
+        # Truncated list would silently shrink delete set — refuse to proceed.
+        print("[ERROR] artifact listing failed mid-pagination; aborting to avoid partial run.", file=sys.stderr)
+        sys.exit(2)
 
     expired = [a for a in artifacts if a.get("expired")]
     active = [a for a in artifacts if not a.get("expired")]
@@ -170,6 +180,9 @@ def main():
 
     print(f"\nResult: deleted={deleted}, failed={failed}")
     print(f"Est. reclaimed storage: {total_bytes_delete/1024/1024:.1f} MB")
+    if failed:
+        # Hard-fail so cron doesn't report success while leaking errors.
+        sys.exit(2)
 
 
 if __name__ == "__main__":
