@@ -236,7 +236,7 @@ class DjangoAIJobRepository:
         job = AIJobModel.objects.select_for_update().filter(job_id=job_id).first()
         if not job:
             return False
-        final_str, _ = status_for_exception(tier or job.tier or "basic")
+        final_str, _ = status_for_exception(tier or job.tier or "basic", job.job_type)
         if job.status == final_str:
             return True
         err = (error_message or "")[:2000]

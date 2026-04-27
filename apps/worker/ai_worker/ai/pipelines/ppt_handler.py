@@ -129,6 +129,7 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
             )
             pptx_bytes = result.pptx_bytes
             slide_count = result.slide_count
+            ppt_mode = result.mode  # "question" | "page"
 
         else:
             # mode == "images"
@@ -183,6 +184,7 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
             )
             pptx_bytes = result.pptx_bytes
             slide_count = result.slide_count
+            ppt_mode = None  # 이미지 모드는 페이지/문항 분기 없음
 
         # ──────────────── Step 3: Upload to R2 ────────────────
         _record_progress(
@@ -233,12 +235,16 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
             job.id, tenant_id, mode, slide_count, len(pptx_bytes),
         )
 
-        return AIResult.done(job.id, {
+        result_payload = {
             "download_url": download_url,
             "filename": filename,
             "slide_count": slide_count,
             "size_bytes": len(pptx_bytes),
-        })
+        }
+        if ppt_mode:
+            # "page" → 사용자 안내: 텍스트 추출 안 됨, 페이지 단위로 변환됨
+            result_payload["mode"] = ppt_mode
+        return AIResult.done(job.id, result_payload)
 
     except Exception as e:
         logger.exception(

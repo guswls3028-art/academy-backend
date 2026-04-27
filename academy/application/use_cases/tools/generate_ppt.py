@@ -21,6 +21,8 @@ class PptResult:
     """Result of PPT generation."""
     pptx_bytes: bytes
     slide_count: int
+    # "question": 문항 단위 분리. "page": 페이지 단위 (스캔 PDF fallback). 이미지 모드는 None.
+    mode: Optional[str] = None
 
 
 class GeneratePptUseCase:
@@ -165,7 +167,8 @@ class GeneratePptFromPdfUseCase:
                             resample=PILImage.LANCZOS,
                         )
                     export_img = preprocess_for_export(page_img)
-                    img_bytes = _image_to_bytes(export_img)
+                    # 페이지 단위 = 사진 컨텐츠. JPEG가 PNG보다 1/3 사이즈 (50p PDF에 critical).
+                    img_bytes = _image_to_bytes(export_img, fmt="JPEG")
                     img_bytes = _apply_user_settings(img_bytes)
                     composer.add_slide(img_bytes)
                     del page_img, export_img
@@ -206,8 +209,10 @@ class GeneratePptFromPdfUseCase:
 
             # 텍스트 모드로 갔지만 0 슬라이드인 경우 (예: 모든 페이지가 표지/목차로 분류된 short PDF):
             # 페이지 단위 fallback로 한 번 더 시도해야 사용자가 빈 결과를 보지 않음.
+            fallback_triggered = False
             if composer.slide_count == 0 and not use_whole_page:
                 logger.info("PDF question-splitting yielded 0 slides - falling back to whole-page mode")
+                fallback_triggered = True
                 for page_idx in range(page_count):
                     if on_progress:
                         on_progress(50 + int(page_idx / max(page_count, 1) * 50), f"페이지 단위 변환 {page_idx + 1}/{page_count}")
@@ -218,7 +223,7 @@ class GeneratePptFromPdfUseCase:
                             resample=PILImage.LANCZOS,
                         )
                     export_img = preprocess_for_export(page_img)
-                    img_bytes = _image_to_bytes(export_img)
+                    img_bytes = _image_to_bytes(export_img, fmt="JPEG")
                     img_bytes = _apply_user_settings(img_bytes)
                     composer.add_slide(img_bytes)
                     del page_img, export_img
@@ -230,14 +235,24 @@ class GeneratePptFromPdfUseCase:
             on_progress(100, "완료")
 
         pptx_bytes = composer.finalize()
-        return PptResult(pptx_bytes=pptx_bytes, slide_count=composer.slide_count)
+        result_mode = "page" if (use_whole_page or fallback_triggered) else "question"
+        return PptResult(
+            pptx_bytes=pptx_bytes,
+            slide_count=composer.slide_count,
+            mode=result_mode,
+        )
 
 
 def _image_to_bytes(img, fmt: str = "PNG") -> bytes:
-    """Convert PIL Image to bytes."""
+    """Convert PIL Image to bytes. JPEG quality 90 for photo content."""
     buf = io.BytesIO()
     if img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
-    img.save(buf, format=fmt, optimize=True)
+    if fmt == "JPEG":
+        if img.mode == "L":
+            img = img.convert("RGB")
+        img.save(buf, format="JPEG", quality=90, optimize=True, subsampling=0)
+    else:
+        img.save(buf, format=fmt, optimize=True)
     buf.seek(0)
     return buf.read()

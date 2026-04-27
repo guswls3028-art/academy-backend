@@ -60,7 +60,7 @@ class DjangoDBJobQueue(JobQueue):
         attempt = int(job.attempt_count or 0) + 1
         max_attempts = int(job.max_attempts or self.cfg.default_max_attempts)
         if attempt > max_attempts:
-            final_status, _ = status_for_exception(job.tier or "basic")
+            final_status, _ = status_for_exception(job.tier or "basic", job.job_type)
             job.status = final_status
             job.error_message = job.error_message or "max_attempts_exceeded"
             job.last_error = job.last_error or "max_attempts_exceeded"
@@ -126,7 +126,7 @@ class DjangoDBJobQueue(JobQueue):
                 updated_at=now,
             )
             return
-        final_status, _ = status_for_exception(job.tier or "basic")
+        final_status, _ = status_for_exception(job.tier or "basic", job.job_type)
         AIJobModel.objects.filter(job_id=job_id).update(
             status=final_status,
             last_error=err,
