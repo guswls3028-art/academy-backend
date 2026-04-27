@@ -131,9 +131,19 @@ def run_matchup_pipeline(
     # 시험지는 사용자가 명확히 의도해 업로드해야 하고, 미설정은 학습자료로 간주해 폴백 검토.
     is_reference = upload_intent not in ("test", "exam_sheet")
     page_count = len(pages)
-    # 페이지당 평균 anchor가 4 이상이면 학습자료 본문 over-extraction 의심.
     avg_per_page = total_boxes / max(1, page_count)
-    is_over_extracted = is_reference and total_boxes >= 30 and avg_per_page >= 4
+    # 학습자료 over-extraction 휴리스틱:
+    #   1) anchor 절대값 50+ (운영 실측: 시험지 30 미만, 학습자료 50~280)
+    #   2) 또는 anchor 30+ AND avg≥4 (압축된 시험지 layout 대비)
+    # 운영 T2 실측 (Phase 1 적용 후):
+    #   - 시험지 doc#127/140/146/147: 16~25 (폴백 안 됨)
+    #   - 모의고사 doc#138/137/...: 20 (폴백 안 됨)
+    #   - 학습자료 doc#143/144/145: 133/184/193 (폴백 ✓)
+    #   - 학습자료 doc#120: 143 (폴백 ✓)
+    is_over_extracted = is_reference and (
+        total_boxes >= 50
+        or (total_boxes >= 30 and avg_per_page >= 4)
+    )
 
     if total_boxes == 0:
         # 문제를 찾지 못한 경우 — 전체 페이지를 하나의 문제로 취급
