@@ -228,7 +228,16 @@ class SessionViewSet(ModelViewSet):
         if section_type:
             qs = qs.filter(section__section_type=section_type)
 
+        # 진척률 옵션 — 선생앱 모바일 "오늘" 카드 등에서만 사용
+        if self.request.query_params.get("include_progress") in ("1", "true", "True"):
+            qs = qs.annotate(attendance_filled=Count("attendances", distinct=True))
+
         return qs.order_by("order", "id")
+
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx["include_progress"] = self.request.query_params.get("include_progress") in ("1", "true", "True")
+        return ctx
 
     def perform_create(self, serializer):
         """

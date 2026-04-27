@@ -31,17 +31,60 @@ class SessionSerializer(serializers.ModelSerializer):
     section_label = serializers.CharField(source="section.label", read_only=True, default=None)
     section_type = serializers.CharField(source="section.section_type", read_only=True, default=None)
 
+    # Display helpers (선생앱 모바일 카드 등 외부 노출용 read-only)
+    lecture_title = serializers.CharField(source="lecture.title", read_only=True)
+    lecture_color = serializers.CharField(source="lecture.color", read_only=True, default=None)
+    start_time = serializers.TimeField(source="section.start_time", read_only=True, default=None)
+    end_time = serializers.TimeField(source="section.end_time", read_only=True, default=None)
+    location = serializers.CharField(source="section.location", read_only=True, default=None)
+
+    # 진척률(`?include_progress=1` 시에만 계산) — N+1 방지 위해 viewset에서 annotate
+    attendance_filled = serializers.IntegerField(read_only=True, required=False)
+    attendance_total = serializers.SerializerMethodField()
+
     class Meta:
         model = Session
         fields = [
             "id", "lecture", "section", "order", "title", "date",
             "section_label", "section_type",
+            "lecture_title", "lecture_color",
+            "start_time", "end_time", "location",
+            "attendance_filled", "attendance_total",
             "created_at", "updated_at",
         ]
         ref_name = "LectureSession"
         # UniqueConstraint validators를 비활성화 — order auto-assign과 충돌 방지
         # 커스텀 validate() + DB 제약에서 중복 검증
         validators = []
+
+    def get_attendance_total(self, obj):
+        """
+        진척률 표시용 분모. include_progress 컨텍스트가 켜진 경우에만 계산.
+        - section이 있으면: 해당 section의 ACTIVE class_assignments 수
+        - 없으면: lecture의 ACTIVE enrollments 수
+        """
+        if not self.context.get("include_progress"):
+            return None
+        section = getattr(obj, "section", None)
+        if section is not None:
+            from apps.domains.lectures.models import SectionAssignment
+            return SectionAssignment.objects.filter(
+                class_section=section,
+                enrollment__status="ACTIVE",
+            ).count()
+        from apps.domains.enrollment.models import Enrollment
+        return Enrollment.objects.filter(
+            lecture_id=obj.lecture_id,
+            status="ACTIVE",
+        ).count()
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        # include_progress 미사용 시 진척 필드 제거 (응답 노이즈 감소)
+        if not self.context.get("include_progress"):
+            data.pop("attendance_filled", None)
+            data.pop("attendance_total", None)
+        return data
 
     def validate(self, attrs):
         """
