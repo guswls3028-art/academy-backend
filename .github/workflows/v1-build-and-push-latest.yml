@@ -27,6 +27,11 @@ env:
   AWS_REGION: ap-northeast-2
   ECR_REGISTRY: 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com
   ALB_DNS: academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com
+  # docker/build-push-action@v6 uploads a *.dockerbuild summary artifact per build
+  # (separate from provenance/sbom). Disable to stop UI clutter — we already have
+  # CloudWatch logs + ci-build-report for build observability.
+  DOCKER_BUILD_SUMMARY: false
+  DOCKER_BUILD_RECORD_UPLOAD: false
 
 permissions:
   id-token: write

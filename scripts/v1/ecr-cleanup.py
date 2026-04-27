@@ -49,13 +49,21 @@ MANIFEST_TYPES = {TYPE_MANIFEST, TYPE_DOCKER_MANIFEST}
 ALWAYS_KEEP_TAGS = {"latest"}
 
 
+_NONFATAL_ACTIONS = {"get-lifecycle-policy"}  # missing IAM perm tolerated for verify-only display
+
+
 def aws_ecr(*args) -> str:
-    """Run aws ecr command and return stdout."""
+    """Run aws ecr command and return stdout. Hard-fails on error (except verify-only ops)."""
     cmd = ["aws", "ecr", "--region", REGION] + list(args) + ["--output", "json"]
     r = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if r.returncode != 0:
-        print(f"  [ERROR] {' '.join(cmd[:6])}: {r.stderr.strip()}", file=sys.stderr)
-        return "{}"
+        action = args[0] if args else ""
+        msg = r.stderr.strip()
+        print(f"  [ERROR] aws ecr {action}: {msg}", file=sys.stderr)
+        if action in _NONFATAL_ACTIONS:
+            return "{}"
+        # Hard fail: weekly cron must surface real errors instead of reporting deleted=0 success.
+        sys.exit(2)
     return r.stdout
 
 
