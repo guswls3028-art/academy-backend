@@ -84,6 +84,13 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     if len(explanation_answer) >= 3:
         return True
 
+    # ── 단독 "정답 ①②③④⑤" 패턴 (N. 접두어 없음) ──
+    # 운영 케이스 (모의고사 해설지): OCR이 N. 접두어를 흘리거나 layout이 깨져
+    # "정답 ③", "정답 ⑤" 만 반복되는 페이지. 일반 본문에는 "정답"이 3+ 등장하지 않음.
+    standalone_answer = re.findall(r"정\s*답\s*[①②③④⑤]", full_text)
+    if len(standalone_answer) >= 3:
+        return True
+
     # ── 학습자료 본문 항목번호 (zb\d+ ID) 페이지 감지 ──
     # 운영 케이스 (Tenant 2 doc#143 객서심화): "5. zb5) 다음 글을 읽고",
     # "11. zb11) 다음은", "17. zb17) 그림 (가)는" — 학습 항목 ID로 본문에 다수 등장.
@@ -242,7 +249,10 @@ _SECTION_OFFSETS = {
 _SECTION_PATTERN = re.compile(
     r"^\s*\[?\s*"
     r"(서\s*술|서\s*답|논\s*술|논\s*답|단\s*답|단\s*술|약\s*술|약\s*답)"
-    r"\s*형?\s*(\d{1,3})"
+    # 형 필수 — "서술 1가지 방법..." 같은 본문 false positive 차단.
+    # OCR이 형을 흘리는 경우는 드물고, 본문에서 "서술/논술/단답" 단어가
+    # 숫자 앞에 등장하는 케이스가 더 흔함. 형 없는 패턴은 anchor 후보에서 제외.
+    r"\s*형\s*(\d{1,3})"
 )
 
 

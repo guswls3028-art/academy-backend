@@ -58,6 +58,16 @@ def test_anchor_pattern_section_offset():
     assert _extract_question_number("[서답형 4] 주어진 단어를") == 104
 
 
+def test_anchor_pattern_section_requires_hyeong():
+    """본문 텍스트 "서술 1가지 방법" — 형 없으면 section anchor 아님 (false positive 차단)."""
+    # 형이 없으면 섹션 패턴 매치 안 됨 → 선택형 패턴도 시도하지만 "서술 1"는 _QUESTION_PATTERN
+    # 시작이 숫자가 아니므로 None.
+    assert _extract_question_number("서술 1가지 방법을 설명한다") is None
+    # `서술형 1` 또는 `[서답형 4]`는 정상 매치
+    assert _extract_question_number("서술형 1. 다음 글을 읽고") == 101
+    assert _extract_question_number("[서술형 2] 풀이 과정을") == 102
+
+
 # ── 2. 표지/헤더 페이지 차단 ──
 
 def test_skip_lorem_ipsum_cover():
@@ -128,6 +138,27 @@ def test_skip_zb_marker_page():
         "17. zb17) 그림 (가)는 레이저 길이 측정기,",
     )
     assert is_non_question_page(blocks) is True
+
+
+def test_skip_standalone_jeongdap_answer_page():
+    """OCR layout 깨진 해설지: "정답 ③" 만 3+ 반복 (N. 접두어 없음)."""
+    blocks = _blocks(
+        "정답 ③ ㄱ, ㄷ, ㄹ",
+        "정답 ⑤",
+        "정답 ② 풀이 과정",
+        "정답 ④",
+    )
+    assert is_non_question_page(blocks) is True
+
+
+def test_keeps_question_with_single_jeongdap_in_body():
+    """본문에 '정답' 1회 (보기 ⑤ 옆) 있는 페이지는 차단하지 않음."""
+    blocks = _blocks(
+        "1. 다음 중 옳은 것은?",
+        "① A ② B ③ C ④ D ⑤ E",
+        "정답을 표시하시오.",  # 본문에 정답 단어 등장 가능
+    )
+    assert is_non_question_page(blocks) is False
 
 
 # ── 4. 본문 페이지는 skip되지 않음 ──
