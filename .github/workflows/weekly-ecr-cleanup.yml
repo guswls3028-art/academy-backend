@@ -1,15 +1,13 @@
 # ==============================================================================
-# Weekly ECR cleanup — defends against missed deploys.
-# The main v1-build-and-push-latest.yml runs cleanup only on deploy success.
-# If deploys are cancelled/failed for a week, untagged OCI children accumulate.
-# This cron unconditionally runs manifest-aware cleanup every Sunday 03:00 KST.
+# Weekly infra cleanup — ECR + Batch job def revisions.
+# Each step hard-fails on AWS errors so silent regressions surface immediately.
+# Runs every Sunday 18:00 UTC = Monday 03:00 KST.
 # ==============================================================================
 
-name: Weekly ECR Cleanup
+name: Weekly Infra Cleanup
 
 on:
   schedule:
-    # Every Sunday 18:00 UTC = Monday 03:00 KST
     - cron: '0 18 * * 0'
   workflow_dispatch:
 
@@ -25,10 +23,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout ecr-cleanup.py
+      - name: Checkout cleanup scripts
         uses: actions/checkout@v4
         with:
-          sparse-checkout: scripts/v1/ecr-cleanup.py
+          sparse-checkout: |
+            scripts/v1/ecr-cleanup.py
+            scripts/v1/batch-jobdef-cleanup.py
           sparse-checkout-cone-mode: false
 
       - name: Configure AWS credentials (OIDC)
@@ -37,19 +37,28 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Dry-run (log what would be deleted)
+      - name: Install boto3 (for batch-jobdef-cleanup.py)
+        run: pip install --quiet boto3
+
+      - name: ECR dry-run (log what would be deleted)
         run: python3 scripts/v1/ecr-cleanup.py --dry-run --keep 10
 
-      - name: Execute cleanup (keep latest + 10 newest sha-)
+      - name: ECR execute (keep latest + 10 newest sha-)
         run: python3 scripts/v1/ecr-cleanup.py --execute --keep 10
 
-      - name: Verify
+      - name: ECR verify
         run: python3 scripts/v1/ecr-cleanup.py --verify
+
+      - name: Batch job def dry-run (keep latest 5 active per name)
+        run: python3 scripts/v1/batch-jobdef-cleanup.py --dry-run --keep 5
+
+      - name: Batch job def execute
+        run: python3 scripts/v1/batch-jobdef-cleanup.py --execute --keep 5
 
       - name: Summary
         if: always()
         run: |
-          echo "## Weekly ECR Cleanup" >> $GITHUB_STEP_SUMMARY
+          echo "## Weekly Infra Cleanup" >> $GITHUB_STEP_SUMMARY
           echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "**Keep policy:** latest + 10 newest sha- per repo" >> $GITHUB_STEP_SUMMARY
+          echo "**Keep policy:** ECR latest + 10 newest sha- · Batch latest 5 active revs/name" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
