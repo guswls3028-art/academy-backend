@@ -144,13 +144,17 @@ jobs:
           echo "build_messaging=$MSG" >> $GITHUB_OUTPUT
 
           # AI worker
+          # 워커는 콜백에서 매치업/인벤토리/커뮤니티/시험 도메인 모델을 SELECT한다.
+          # 모델 FK 변경(예: matchup.inventory_file → inventory.InventoryFile) 시
+          # 워커 settings INSTALLED_APPS 동기화가 필요하고, 코드 image 자체에도
+          # 새 모델 정의가 들어가야 한다. 누락 시 운영 콜백 ValueError로 swallow → DB stuck.
+          # 경험상(2026-04-27 inventory 누락) 보수적 트리거가 필요해 도메인 패턴을 넓게 잡는다.
           AI=false
           echo "$CHANGED" | grep -qE "^apps/worker/ai_worker/" && AI=true
           echo "$CHANGED" | grep -qE "^apps/worker/omr/" && AI=true
-          echo "$CHANGED" | grep -qE "^apps/domains/ai/" && AI=true
-          echo "$CHANGED" | grep -qE "^apps/domains/submissions/" && AI=true
-          echo "$CHANGED" | grep -qE "^apps/domains/results/" && AI=true
+          echo "$CHANGED" | grep -qE "^apps/domains/" && AI=true
           echo "$CHANGED" | grep -qE "^apps/support/ai/" && AI=true
+          echo "$CHANGED" | grep -qE "^apps/api/config/settings/(worker|base)\.py$" && AI=true
           echo "$CHANGED" | grep -qE "^academy/" && AI=true
           echo "$CHANGED" | grep -qE "^libs/queue/" && AI=true
           echo "$CHANGED" | grep -qE "^docker/ai-worker" && AI=true
