@@ -158,15 +158,23 @@ def _pdf_to_images(pdf_path: str) -> Tuple[List[Dict], str]:
             except Exception:
                 raw_blocks = []
 
-            # 텍스트 PDF의 경우 text-based 분할을 시도해서 per-question 박스 사전 계산
+            # 텍스트 PDF의 경우 text-based 분할을 시도해서 per-question 박스 사전 계산.
+            # is_non_question_page가 True면 표지/목차/안내/해설 — 이 페이지는 OCR/OpenCV
+            # 안전망에서도 problem으로 잘리지 않도록 plain "skip" 플래그를 표시.
             text_regions: List = []  # QuestionRegion in points (for cross-page validation)
+            is_skip_page = False
             if has_text:
                 try:
                     tbs = [
                         SplitterTextBlock(text=b.text, x0=b.x0, y0=b.y0, x1=b.x1, y1=b.y1)
                         for b in raw_blocks
                     ]
-                    if not is_non_question_page(tbs):
+                    if is_non_question_page(tbs):
+                        is_skip_page = True
+                        logger.info(
+                            "PDF_TEXT_NON_QUESTION_PAGE | page=%d | skip=True", i,
+                        )
+                    else:
                         pw, ph = doc.page_dimensions(i)
                         regions = split_questions(tbs, pw, ph, page_index=i)
                         text_regions = list(regions)
@@ -189,6 +197,7 @@ def _pdf_to_images(pdf_path: str) -> Tuple[List[Dict], str]:
                 "has_embedded_text": has_text,
                 "text_boxes": text_boxes,
                 "text_regions": text_regions,  # QuestionRegion[] — aligned with text_boxes
+                "is_skip_page": is_skip_page,  # 비문항 페이지 (표지/목차/안내). 안전망 우회 금지.
             })
 
     return results, tmp_dir
@@ -260,6 +269,11 @@ def _boxes_and_regions_for_pdf_page(
 
     if page_info["text_boxes"]:
         return list(page_info["text_boxes"]), list(page_info.get("text_regions") or [])
+
+    # text-PDF에서 is_non_question_page=True로 판정된 페이지는 OCR/OpenCV 안전망에서도
+    # problem 박스를 만들지 않음. 표지/목차/안내가 sequential global_number로 잘리는 leak 차단.
+    if page_info.get("is_skip_page"):
+        return [], []
 
     image_path = page_info["image_path"]
 

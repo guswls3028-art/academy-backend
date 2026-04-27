@@ -573,6 +573,111 @@ def manually_crop_problem(
             pass
 
 
+def paste_image_as_problem(
+    document: MatchupDocument,
+    *,
+    image_bytes: bytes,
+    content_type: str,
+    number: int,
+) -> MatchupProblem:
+    """클립보드/파일에서 받은 이미지를 problem으로 직접 등록.
+
+    매뉴얼 크롭과 달리 PDF 페이지 렌더링·bbox 영역 추출이 없음 — 이미지 자체가 문항.
+    직접 촬영본/외부 크롭 이미지/메신저 캡처를 분리 단계 거치지 않고 즉시 인덱싱하기 위함.
+
+    흐름:
+      1. content_type 검증 + Pillow 디코드 → PNG 정규화
+      2. R2 업로드 (matchup problem key, page_index=0 가상)
+      3. MatchupProblem upsert (embedding은 워커가 채움)
+      4. matchup_manual_index 잡 dispatch — OCR + 임베딩 비동기
+
+    paste 모드 problem은 meta.paste=True로 표시 → 매뉴얼 크롭 보드와 분리.
+    """
+    import io
+    from PIL import Image, UnidentifiedImageError
+
+    from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+    from .r2_path import build_matchup_problem_key
+
+    if not (1 <= number <= 999):
+        raise ValueError("문항 번호는 1~999 사이여야 합니다.")
+    allowed_ct = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif"}
+    ct = (content_type or "").lower().split(";")[0].strip()
+    if ct not in allowed_ct:
+        raise ValueError(f"지원하지 않는 이미지 형식: {ct or '없음'}")
+    if not image_bytes or len(image_bytes) > 25 * 1024 * 1024:
+        raise ValueError("이미지 크기가 비어있거나 25MB를 초과합니다.")
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            img.load()
+            # EXIF 회전 보정 — 폰 사진/스캔본의 회전 메타 반영
+            try:
+                from PIL import ImageOps
+                img = ImageOps.exif_transpose(img)
+            except Exception:
+                pass
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGB")
+            buf = io.BytesIO()
+            img.save(buf, "PNG")
+            buf.seek(0)
+    except (UnidentifiedImageError, OSError) as e:
+        raise ValueError(f"이미지 디코드 실패: {e}")
+
+    # R2 prefix — manually_crop_problem과 동일 규칙
+    prefix = ""
+    parts = (document.r2_key or "").split("/")
+    if len(parts) >= 4 and parts[2] == "matchup":
+        prefix = parts[3]
+    if not prefix:
+        prefix = f"manual-{document.id}"
+
+    problem_key = build_matchup_problem_key(
+        tenant_id=document.tenant_id, uuid_prefix=prefix, number=number,
+    )
+    upload_fileobj_to_r2_storage(
+        fileobj=buf, key=problem_key, content_type="image/png",
+    )
+
+    meta_payload = {
+        "manual": True,
+        "paste": True,  # 매뉴얼 크롭 vs paste 구분
+        "page_index": 0,
+        "format": "choice",
+    }
+    problem, created = MatchupProblem.objects.update_or_create(
+        tenant=document.tenant,
+        document=document,
+        number=number,
+        defaults={
+            "text": "",
+            "image_key": problem_key,
+            "embedding": None,
+            "meta": meta_payload,
+            "source_type": "matchup",
+        },
+    )
+
+    document.problem_count = document.problems.count()
+    document.status = "done"
+    document.save(update_fields=["problem_count", "status", "updated_at"])
+
+    try:
+        _enqueue_manual_problem_index(problem)
+    except Exception:
+        logger.exception(
+            "MATCHUP_PASTE_ENQUEUE_FAILED | doc=%s | problem=%s",
+            document.id, problem.id,
+        )
+
+    logger.info(
+        "MATCHUP_PASTE_PROBLEM | doc=%s | num=%s | created=%s | bytes=%d",
+        document.id, number, created, len(image_bytes),
+    )
+    return problem
+
+
 def ensure_document_page_images(document: MatchupDocument) -> List[dict]:
     """문서의 페이지별 이미지를 R2에 캐싱하고 presigned URL 반환.
 

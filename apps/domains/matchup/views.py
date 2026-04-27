@@ -26,6 +26,7 @@ from .services import (
     promote_inventory_to_matchup,
     ensure_matchup_upload_folder,
     manually_crop_problem,
+    paste_image_as_problem,
     delete_problem_with_r2,
 )
 from apps.shared.utils.vector import cosine_similarity
@@ -805,6 +806,59 @@ class DocumentManualCropView(View):
         except Exception:
             logger.exception("manual crop failed (doc=%s)", doc.id)
             return JsonResponse({"detail": "수동 자르기 처리에 실패했습니다."}, status=500)
+
+        data = MatchupProblemSerializer(problem).data
+        if problem.image_key and generate_presigned_get_url_storage:
+            data["image_url"] = generate_presigned_get_url_storage(
+                key=problem.image_key, expires_in=3600,
+            )
+        return JsonResponse(data, status=201)
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentPasteProblemView(View):
+    """POST /api/v1/matchup/documents/<id>/paste-problem/
+
+    클립보드/파일 이미지를 problem으로 직접 등록 (PDF 페이지 매뉴얼 크롭 안 거침).
+
+    Request: multipart/form-data
+      - image: 이미지 파일 (png/jpg/jpeg/webp/gif, ≤25MB)
+      - number: int (1..999) 같은 번호면 덮어쓰기
+
+    동기 응답: 생성/갱신된 problem (image_url 포함).
+    embedding은 워커가 비동기로 채움 (matchup_manual_index).
+    """
+
+    def post(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        upload = request.FILES.get("image")
+        if upload is None:
+            return JsonResponse({"detail": "image 파일이 없습니다."}, status=400)
+
+        try:
+            number = int(request.POST.get("number", "0"))
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "number가 정수가 아닙니다."}, status=400)
+
+        try:
+            data_bytes = upload.read()
+            problem = paste_image_as_problem(
+                doc,
+                image_bytes=data_bytes,
+                content_type=upload.content_type or "",
+                number=number,
+            )
+        except ValueError as e:
+            return JsonResponse({"detail": str(e)}, status=400)
+        except Exception:
+            logger.exception("paste image as problem failed (doc=%s)", doc.id)
+            return JsonResponse({"detail": "이미지 붙여넣기 처리에 실패했습니다."}, status=500)
 
         data = MatchupProblemSerializer(problem).data
         if problem.image_key and generate_presigned_get_url_storage:

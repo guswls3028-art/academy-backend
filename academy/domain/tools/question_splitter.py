@@ -35,6 +35,9 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     휴리스틱:
     - 정답지/해설지 패턴 감지 → True
     - 문항 지시문이나 보기 번호가 있으면 → False (문항 페이지)
+    - 디자인 표지(WORKBOOK/PROJECT 류) → True
+    - 시험지 헤더(제 N 교시 / 탐구 영역 / 홀수형) → True
+    - 학습자료 챕터 표지(객서심화 / 메인자료 / 복습과제 등) → True
     - 비문항 키워드가 여러 개 있으면 → True
     """
     full_text = " ".join(b.text for b in blocks).strip()
@@ -69,6 +72,35 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     if has_choices or has_question_indicator:
         return False
 
+    # ── 디자인 표지 페이지 감지 (학습자료/문제집 표지) ──
+    # 운영 케이스 (Tenant 2): "Runner's High with God Min", "신과 함께 PROJECT WORKBOOK",
+    # "1학기 중간고사 대비 문항편", "객·서 최종대비", "복습과제", "메인자료" 등.
+    # 텍스트 양은 적고(< 300자), 디자인 키워드가 있으면 표지로 판정.
+    design_cover_markers = re.findall(
+        r"(?:WORKBOOK|PROJECT|Runner['’]?s\s*High|GOD\s*MIN|"
+        r"\bTEST\s*[-–—]|TEST\s+\d|"
+        r"신과\s*함께|객\s*[·‧・·]\s*서\s*최종\s*대비|"
+        r"객서\s*심화|객\s*·\s*서|"
+        r"최종\s*대비|중간고사\s*대비|기말고사\s*대비|"
+        r"내신\s*대비|기출\s*통과|"
+        r"문항편|해설편|정답편|"
+        r"복습\s*과제|메인\s*자료|개념\s*완성)",
+        full_text,
+    )
+    if len(design_cover_markers) >= 1 and len(full_text) < 300:
+        return True
+
+    # ── 시험지 헤더 페이지 감지 (수능/모의고사 표제) ──
+    # "제 4교시 / 신민T 신념 모의고사 / 통합과학 N제 / 탐구 영역 / 홀수형" 같은 표제 페이지.
+    exam_header_markers = re.findall(
+        r"(?:제\s*\d+\s*교시|탐구\s*영역|홀수형|짝수형|"
+        r"수능\s*모의고사|N제|모의고사\s*\d+회차?)",
+        full_text,
+    )
+    # 표제 페이지는 본문 대비 텍스트가 아주 적음 (디자인+여백)
+    if len(exam_header_markers) >= 2 and len(full_text) < 400:
+        return True
+
     # 표지 페이지 감지: 시험지 메타정보는 있고 문항 지표는 없음.
     # "학년도 1학기 기말고사 과목명 성명" 류 조합이 표지의 특징.
     cover_markers = re.findall(
@@ -81,10 +113,16 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     if len(cover_markers) >= 2 and len(full_text) < 500:
         return True
 
+    # ── 텍스트 매우 적은 페이지 (디자인/이미지 위주) ──
+    # 문항 지시문도 없고 보기도 없는데 텍스트가 100자 미만이면 표지/디자인 페이지.
+    # "1.", "2." 같은 번호만 있어서 anchor가 잡히는 표지 디자인 페이지 차단.
+    if len(full_text) < 100:
+        return True
+
     # 목차/차례 페이지 감지 — 키워드 + 페이지 번호 점선 패턴.
     # ".... 5", "··· 12" 같은 점선 가이드 또는 "목차/차례/Contents" 헤더.
     toc_keyword = bool(
-        re.search(r"(?:^|\s)(?:목\s?차|차\s?례|Contents?|Table\s+of\s+Contents)(?:\s|$)", full_text)
+        re.search(r"(?:^|\s)(?:목\s?차|차\s?례|Contents?|Table\s+of\s+Contents|INDEX)(?:\s|$)", full_text)
     )
     dot_leader_count = len(re.findall(r"[.·…]{3,}\s*\d{1,3}\b", full_text))
     if toc_keyword or dot_leader_count >= 4:
