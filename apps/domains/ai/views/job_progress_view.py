@@ -68,7 +68,10 @@ class JobProgressView(APIView):
         if job_status in ["DONE", "FAILED", "REJECTED_BAD_INPUT", "FALLBACK_TO_GPU", "REVIEW_REQUIRED"]:
             if "result" in cached_status:
                 response_data["result"] = cached_status["result"]
-            if job_status in ["FAILED", "REJECTED_BAD_INPUT", "FALLBACK_TO_GPU", "REVIEW_REQUIRED"]:
-                response_data["error_message"] = cached_status.get("error_message")
+            # status_for_exception 정책상 Lite/Basic 실패가 status=DONE으로 마킹돼도
+            # error_message는 항상 노출해 silent-timeout(프론트 무한 폴링)을 방지.
+            err = cached_status.get("error_message")
+            if err:
+                response_data["error_message"] = err
 
         return Response(response_data)
