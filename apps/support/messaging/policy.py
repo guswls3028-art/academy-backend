@@ -81,6 +81,58 @@ def get_trigger_policy(trigger: str) -> str:
 
 
 # ──────────────────────────────────────────
+# 자동 발화 구현 여부 — SSOT (운영자 가시성)
+# ──────────────────────────────────────────
+# 코드에서 실제 send_event_notification / send_alimtalk_via_owner / 워커 콜백으로
+# 발화되는 트리거 목록. 여기 없는 트리거는 AutoSendConfig가 enabled=True여도
+# 자동 발송이 일어나지 않음 (수동 발송 모달에서만 동작).
+# 새 자동 발화 코드 추가 시 반드시 여기에도 등록할 것.
+IMPLEMENTED_AUTO_TRIGGERS: frozenset = frozenset([
+    # 가입/등록 (SYSTEM_AUTO)
+    "registration_approved_student",
+    "registration_approved_parent",
+    "password_find_otp",
+    "password_reset_student",
+    "password_reset_parent",
+    # 출결 (즉시 발화)
+    "check_in_complete",
+    "absent_occurred",
+    # 클리닉/상담 (즉시 발화)
+    "clinic_reservation_created",
+    "clinic_reservation_changed",
+    "clinic_cancelled",
+    "clinic_check_in",
+    "clinic_absent",
+    "clinic_self_study_completed",
+    "clinic_result_notification",
+    # 시험/과제/퇴원/결제 (즉시 발화)
+    "exam_score_published",
+    "withdrawal_complete",
+    "payment_complete",
+    "assignment_not_submitted",  # management command (cron)
+    # 영상
+    "video_encoding_complete",
+    # 커뮤니티
+    "qna_answered",
+    "counsel_answered",
+])
+
+
+def get_trigger_implementation_status(trigger: str) -> str:
+    """
+    트리거의 자동 발화 구현 상태.
+    - "implemented": 코드 발화 지점 존재. enabled=True 시 자동 발송 동작.
+    - "manual_only": 자동 발화 미구현. 수동 발송 모달에서만 사용 가능.
+    - "disabled": 정책상 비활성. 발송 자체 차단.
+    """
+    if get_trigger_policy(trigger) == "DISABLED":
+        return "disabled"
+    if trigger in IMPLEMENTED_AUTO_TRIGGERS:
+        return "implemented"
+    return "manual_only"
+
+
+# ──────────────────────────────────────────
 # 테넌트별 메시징 제한 — 계정 관련만 허용
 # ──────────────────────────────────────────
 # 제한된 테넌트: 가입/등록/비번 관련 알림톡만 발송 가능.

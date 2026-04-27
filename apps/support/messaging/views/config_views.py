@@ -31,7 +31,7 @@ class AutoSendConfigView(APIView):
             self._auto_provision(tenant)
             configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
 
-        from apps.support.messaging.policy import get_trigger_policy
+        from apps.support.messaging.policy import get_trigger_policy, get_trigger_implementation_status
 
         by_trigger = {c.trigger: c for c in configs}
 
@@ -39,9 +39,11 @@ class AutoSendConfigView(APIView):
         for trigger in triggers:
             c = by_trigger.get(trigger)
             policy_mode = get_trigger_policy(trigger)
+            impl_status = get_trigger_implementation_status(trigger)
             if c:
                 data = AutoSendConfigSerializer(c).data
                 data["policy_mode"] = policy_mode
+                data["implementation_status"] = impl_status
                 result.append(data)
             else:
                 result.append({
@@ -58,6 +60,7 @@ class AutoSendConfigView(APIView):
                     "created_at": None,
                     "updated_at": None,
                     "policy_mode": policy_mode,
+                    "implementation_status": impl_status,
                 })
         return Response(result)
 
@@ -109,12 +112,21 @@ class AutoSendConfigView(APIView):
                 {"detail": "configs는 배열이어야 합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        from apps.support.messaging.policy import get_trigger_implementation_status
+
+        rejected_triggers = []
         for item in configs_data:
             trigger = (item.get("trigger") or "").strip()
             if not trigger or trigger not in dict(AutoSendConfig.Trigger.choices):
                 continue
             template_id = item.get("template_id")
             enabled = item.get("enabled", False)
+            # 미구현/DISABLED 트리거는 자동 발송 ON 차단 — 운영자 혼란 방지
+            if enabled:
+                impl_status = get_trigger_implementation_status(trigger)
+                if impl_status != "implemented":
+                    enabled = False
+                    rejected_triggers.append({"trigger": trigger, "reason": impl_status})
             message_mode = (item.get("message_mode") or "alimtalk").strip().lower()
             if message_mode not in ("sms", "alimtalk", "both"):
                 message_mode = "alimtalk"
@@ -163,8 +175,22 @@ class AutoSendConfigView(APIView):
 
             config.save()
 
+        if rejected_triggers:
+            import logging
+            _log = logging.getLogger(__name__)
+            _log.info(
+                "AutoSendConfig PATCH rejected enable for unimplemented triggers tenant=%s rejected=%s",
+                tenant.id, rejected_triggers,
+            )
         configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
-        return Response([AutoSendConfigSerializer(c).data for c in configs])
+        from apps.support.messaging.policy import get_trigger_policy, get_trigger_implementation_status
+        result = []
+        for c in configs:
+            data = AutoSendConfigSerializer(c).data
+            data["policy_mode"] = get_trigger_policy(c.trigger)
+            data["implementation_status"] = get_trigger_implementation_status(c.trigger)
+            result.append(data)
+        return Response(result)
 
 
 class ProvisionDefaultTemplatesView(APIView):
