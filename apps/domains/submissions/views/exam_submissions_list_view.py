@@ -76,14 +76,27 @@ class ExamSubmissionsListView(APIView):
         score_map: Dict[int, float] = {}
         submission_ids = [int(s.id) for s in qs]
         if submission_ids:
-            from apps.domains.results.models import Result
-            # submission 당 최신 Result 1건만 필요 — id desc 순회하며 첫 등장만 채택.
-            for r in Result.objects.filter(submission_id__in=submission_ids).order_by("-id").only(
-                "id", "submission_id", "score"
-            ):
-                sid = int(r.submission_id)
-                if sid not in score_map and getattr(r, "score", None) is not None:
-                    score_map[sid] = float(r.score)
+            from apps.domains.results.models import Result, ExamAttempt
+            # Result는 submission FK가 없고 attempt(ExamAttempt) 경유. submission 당 최신 Result 1건만
+            # 필요해서 attempt.submission_id 기준 첫 등장만 채택.
+            attempt_ids = list(
+                ExamAttempt.objects.filter(submission_id__in=submission_ids)
+                .values_list("id", flat=True)
+            )
+            if attempt_ids:
+                results_qs = (
+                    Result.objects.filter(attempt_id__in=attempt_ids)
+                    .select_related("attempt")
+                    .only("id", "attempt_id", "attempt__submission_id", "total_score")
+                    .order_by("-id")
+                )
+                for r in results_qs:
+                    a = r.attempt
+                    if not a or not a.submission_id:
+                        continue
+                    sid = int(a.submission_id)
+                    if sid not in score_map and r.total_score is not None:
+                        score_map[sid] = float(r.total_score)
 
         items: list[Dict[str, Any]] = []
         for s in qs:
