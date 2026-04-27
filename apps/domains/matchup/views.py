@@ -443,6 +443,113 @@ class DocumentDetailView(View):
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class CategoryListView(View):
+    """GET /api/v1/matchup/categories/
+
+    카테고리별 문서 카운트 집계. 미분류는 빈 문자열("")로 반환.
+    """
+
+    def get(self, request):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        from django.db.models import Count, Q
+        rows = (
+            MatchupDocument.objects.filter(tenant=request.tenant)
+            .values("category")
+            .annotate(
+                total=Count("id"),
+                tests=Count(
+                    "id",
+                    filter=Q(meta__upload_intent="test") | Q(meta__document_role="exam_sheet"),
+                ),
+            )
+            .order_by("category")
+        )
+        result = [
+            {
+                "name": (r["category"] or "").strip(),
+                "total": r["total"],
+                "tests": r["tests"],
+                "references": r["total"] - r["tests"],
+            }
+            for r in rows
+        ]
+        return JsonResponse(result, safe=False)
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class CategoryRenameView(View):
+    """POST /api/v1/matchup/categories/rename/
+
+    body: { from: str, to: str }
+    `to`가 이미 존재하면 자연스럽게 병합(merge)된다 — 동일한 SQL UPDATE 한 번.
+    빈 문자열 to는 "미분류로 이동"과 동일.
+    """
+
+    def post(self, request):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        from_name = (body.get("from") or "").strip()
+        to_name = (body.get("to") or "").strip()
+        # from은 빈 값 허용 안 함 — 미분류 문서를 일괄 카테고리화하려면 assign 사용.
+        if not from_name:
+            return JsonResponse({"detail": "from은 빈 값일 수 없습니다."}, status=400)
+        if len(to_name) > 100:
+            return JsonResponse({"detail": "카테고리 이름이 너무 깁니다 (100자 이내)."}, status=400)
+        if from_name == to_name:
+            return JsonResponse({"updated": 0, "category": to_name})
+
+        updated = MatchupDocument.objects.filter(
+            tenant=request.tenant, category=from_name,
+        ).update(category=to_name)
+        return JsonResponse({"updated": updated, "category": to_name})
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class CategoryAssignView(View):
+    """POST /api/v1/matchup/categories/assign/
+
+    body: { document_ids: [int], category: str }
+    여러 문서에 카테고리 일괄 부여. 빈 문자열이면 미분류로 이동.
+    """
+
+    def post(self, request):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        ids = body.get("document_ids") or []
+        if not isinstance(ids, list) or not ids:
+            return JsonResponse({"detail": "document_ids 필수 (배열)"}, status=400)
+        try:
+            int_ids = [int(x) for x in ids]
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "document_ids는 정수 배열이어야 합니다."}, status=400)
+
+        category = (body.get("category") or "").strip()
+        if len(category) > 100:
+            return JsonResponse({"detail": "카테고리 이름이 너무 깁니다 (100자 이내)."}, status=400)
+
+        updated = MatchupDocument.objects.filter(
+            tenant=request.tenant, id__in=int_ids,
+        ).update(category=category)
+        return JsonResponse({"updated": updated, "category": category})
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class DocumentCrossMatchesView(View):
     """GET /api/v1/matchup/documents/<id>/cross-matches/?top_k=1
 

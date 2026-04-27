@@ -16,6 +16,11 @@ urlpatterns = [
     path("documents/<int:doc_id>/job/", views.DocumentJobView.as_view()),
     path("documents/<int:doc_id>/retry/", views.DocumentRetryView.as_view()),
 
+    # Categories
+    path("categories/", views.CategoryListView.as_view()),
+    path("categories/rename/", views.CategoryRenameView.as_view()),
+    path("categories/assign/", views.CategoryAssignView.as_view()),
+
     # Problems
     path("problems/", views.ProblemListView.as_view()),
     path("problems/presign/", views.ProblemPresignView.as_view()),
