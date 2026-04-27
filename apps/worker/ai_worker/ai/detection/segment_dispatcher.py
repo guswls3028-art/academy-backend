@@ -459,6 +459,8 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
                 "boxes": boxes,
                 "numbers": numbers,
                 "has_embedded_text": info["has_embedded_text"],
+                # 페이지 단위 폴백 시 표지/해설지/lorem ipsum 페이지 제외용.
+                "is_skip_page": bool(info.get("is_skip_page")),
             })
             total += len(boxes)
 

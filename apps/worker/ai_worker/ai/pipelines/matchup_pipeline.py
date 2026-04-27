@@ -151,11 +151,16 @@ def run_matchup_pipeline(
         questions_raw = _whole_pages_as_questions(pages)
     elif is_over_extracted:
         # 학습자료 over-extraction 폴백 — 페이지 단위 1박스로 재인덱싱.
+        # 단, is_skip_page(표지/해설지/lorem ipsum) 페이지는 제외 — 그대로 두면
+        # 라틴 placeholder가 problem #1/#2로 인덱싱되어 매치업 노이즈가 됨.
+        kept_pages = [p for p in pages if not p.get("is_skip_page")]
         logger.info(
-            "MATCHUP_REFERENCE_PAGE_FALLBACK | job_id=%s | total_boxes=%d avg_per_page=%.1f → page_count=%d",
-            job_id, total_boxes, avg_per_page, page_count,
+            "MATCHUP_REFERENCE_PAGE_FALLBACK | job_id=%s | total_boxes=%d avg=%.1f "
+            "raw_pages=%d kept_pages=%d (skip=%d)",
+            job_id, total_boxes, avg_per_page, page_count, len(kept_pages),
+            page_count - len(kept_pages),
         )
-        questions_raw = _whole_pages_as_questions(pages)
+        questions_raw = _whole_pages_as_questions(kept_pages)
     else:
         questions_raw = _boxes_to_questions(pages)
 
