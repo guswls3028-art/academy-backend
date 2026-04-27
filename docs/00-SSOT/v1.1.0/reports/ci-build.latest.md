@@ -1,16 +1,16 @@
 ## V1.1.0 CI Build — latest + sha 이미지 푸시 증거 (OIDC)
 
-**Generated:** 2026-04-27T15:39:37+00:00
+**Generated:** 2026-04-27T17:23:33+00:00
 **SSOT:** docs/00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md
 **Region:** ap-northeast-2
-**gitSha:** 3e4bf4ba766034f342794ca0b7df0d4401a70393
-**shortSha:** 3e4bf4ba
+**gitSha:** db406c3b934007c2fba3f514a4ece4945b8f8690
+**shortSha:** db406c3b
 **Changes:** api=true video=false messaging=false ai=true force_full=false
 
 | repo | tags | imageDigest |
 |------|------|-------------|
-| academy-base | latest, sha-3e4bf4ba | sha256:ec4fdfade816d38a4635083fdbbdd968ecad84ba9410a3d3de190bf951366eab |
-| academy-api | latest, sha-3e4bf4ba | sha256:cf1cf86c0b3624328e17a841739f7efff4adc203887a315db5226105e2b1eea1 |
-| academy-video-worker | latest, sha-3e4bf4ba | sha256:7ea09731cad03f97d18f9864d38a8707c78878408db706daf66cf26d95c4d46c |
-| academy-messaging-worker | latest, sha-3e4bf4ba | sha256:e6854aea489ae499b704ad5b5063c8e6ffe8ef6d864b22cfa52e00e77effa696 |
-| academy-ai-worker-cpu | latest, sha-3e4bf4ba | sha256:3f0ccbdbe5f2ff4e6b8d2cfb3da4ac458c3fab0331bb8521378971f2a821cdbf |
+| academy-base | latest, sha-db406c3b | sha256:ec4fdfade816d38a4635083fdbbdd968ecad84ba9410a3d3de190bf951366eab |
+| academy-api | latest, sha-db406c3b | sha256:5637a2e1875f427480d5e377ffb3cbf093006ee5d3ca5a2e3fa5b7806f08af47 |
+| academy-video-worker | latest, sha-db406c3b | sha256:fe0a408d4885e9c7d1a4798204c45e3d0c20f8c1f47e43007e8397562f45f48f |
+| academy-messaging-worker | latest, sha-db406c3b | sha256:7a05d0d529a11fe07c5042e368f31f697300b8304d3b76bfff15493aaf28c221 |
+| academy-ai-worker-cpu | latest, sha-db406c3b | sha256:800c006293de89b394abbf7070504332a4bc42656650d14a4802706cbae593c9 |
