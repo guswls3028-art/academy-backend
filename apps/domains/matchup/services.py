@@ -246,8 +246,11 @@ def retry_document(document: MatchupDocument) -> str:
     # 기존 문제 삭제
     document.problems.all().delete()
 
+    # presigned URL 6시간 — 큐 적체 시 워커가 1시간 후 picking하면 만료되어
+    # 403 Forbidden으로 doc.status='failed' 반복 사이클 발생 (운영 사고 2026-04-29).
+    # 6시간이면 큐 적체에도 충분.
     download_url = generate_presigned_get_url_storage(
-        key=document.r2_key, expires_in=3600
+        key=document.r2_key, expires_in=21600
     )
 
     # 워커 자동분리 모드 분기용 — intent가 페이로드에 있으면 DB 재조회 없이 바로 사용.
@@ -390,8 +393,9 @@ def promote_inventory_to_matchup(
     )
 
     try:
+        # presigned URL 6시간 — 큐 적체 시 1시간 만료 → 403 사고 방어
         download_url = generate_presigned_get_url_storage(
-            key=inventory_file.r2_key, expires_in=3600,
+            key=inventory_file.r2_key, expires_in=21600,
         )
         result = dispatch_job(
             job_type="matchup_analysis",
