@@ -149,7 +149,7 @@ def run_matchup_pipeline(
         step_percent=0, tenant_id=tenant_id,
     )
 
-    from apps.worker.ai_worker.ai.detection.segment_dispatcher import (
+    from academy.adapters.ai.detection.segment_dispatcher import (
         register_pdf_seg_tmp_dirs,
         segment_questions_multipage,
     )
@@ -593,7 +593,7 @@ def _flag_merge_suspect(questions: List[Dict]) -> None:
 def _load_ocr_blocks_backend():
     """google_ocr_blocks를 반환. 임포트 실패 시 None."""
     try:
-        from apps.worker.ai_worker.ai.ocr.google import google_ocr_blocks
+        from academy.adapters.ai.ocr.google import google_ocr_blocks
         return google_ocr_blocks
     except ImportError:
         return None
@@ -602,9 +602,9 @@ def _load_ocr_blocks_backend():
 def _extract_texts_legacy(questions: List[Dict], job_id: str) -> None:
     """Vision SDK가 없는 환경용 레거시 경로 — 전체 페이지 OCR + 정규식 번호 분할."""
     try:
-        from apps.worker.ai_worker.ai.ocr.google import google_ocr
+        from academy.adapters.ai.ocr.google import google_ocr
     except ImportError:
-        from apps.worker.ai_worker.ai.ocr.tesseract import tesseract_ocr as google_ocr
+        from academy.adapters.ai.ocr.tesseract import tesseract_ocr as google_ocr
 
     page_texts: Dict[int, str] = {}
     page_images: Dict[int, str] = {}
@@ -696,7 +696,7 @@ def _generate_embeddings(questions: List[Dict], job_id: str) -> None:
     원본 text는 사용자 표시용으로 q['text']에 그대로 보관.
     정제 텍스트는 q['text_for_embedding']에 임시 저장.
     """
-    from apps.worker.ai_worker.ai.embedding.service import get_embeddings
+    from academy.adapters.ai.embedding.service import get_embeddings
 
     # 정제 텍스트 + format 감지 (in-place)
     for q in questions:
@@ -736,7 +736,7 @@ def _generate_image_embeddings(questions: List[Dict], job_id: str) -> None:
     실패해도 텍스트 임베딩만으로 매칭 가능하므로 fail-safe.
     """
     try:
-        from apps.worker.ai_worker.ai.embedding.image_service import get_image_embeddings
+        from academy.adapters.ai.embedding.image_service import get_image_embeddings
     except ImportError:
         for q in questions:
             q["image_embedding"] = None

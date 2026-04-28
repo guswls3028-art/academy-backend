@@ -5,8 +5,8 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-from apps.worker.ai_worker.ai.config import AIConfig
-from apps.worker.ai_worker.ai.problem.prompt import BASE_PROMPT
+from academy.adapters.ai.config import AIConfig
+from academy.adapters.ai.problem.prompt import BASE_PROMPT
 
 try:
     from openai import OpenAI  # type: ignore

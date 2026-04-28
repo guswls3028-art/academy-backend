@@ -5,11 +5,11 @@ from typing import Dict, Any, List
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
-from apps.worker.ai_worker.ai.pipelines.video_frame_extractor import (
+from academy.application.use_cases.ai.pipelines.video_frame_extractor import (
     extract_key_frames,
     extract_frame_at_index,
 )
-from apps.worker.ai_worker.ai.utils.image_resizer import resize_if_large
+from academy.adapters.ai.utils.image_resizer import resize_if_large
 
 
 def _estimate_writing_score(gray_roi: np.ndarray) -> float:

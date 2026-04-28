@@ -134,7 +134,7 @@ def run_matchup_manual_index(
     except ImportError:
         return AIResult.failed(job_id, "R2 storage not available")
 
-    from apps.worker.ai_worker.storage.downloader import (
+    from academy.adapters.ai.storage.downloader import (
         cleanup_tmp_for_path,
         download_to_tmp,
     )
@@ -160,7 +160,7 @@ def run_matchup_manual_index(
     text = ""
     preprocessed_path: str | None = None
     try:
-        from apps.worker.ai_worker.ai.ocr.google import google_ocr
+        from academy.adapters.ai.ocr.google import google_ocr
         ocr_input_path = local_path
         if is_camera_capture:
             preprocessed_path = _preprocess_camera_image(local_path)
@@ -191,7 +191,7 @@ def run_matchup_manual_index(
     cleaned = ""
     if text:
         try:
-            from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import (
+            from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
                 normalize_text_for_embedding,
                 detect_format,
             )
@@ -201,7 +201,7 @@ def run_matchup_manual_index(
 
         if cleaned.strip():
             try:
-                from apps.worker.ai_worker.ai.embedding.service import get_embeddings
+                from academy.adapters.ai.embedding.service import get_embeddings
                 batch = get_embeddings([cleaned])
                 if batch.vectors:
                     embedding = batch.vectors[0]
@@ -210,7 +210,7 @@ def run_matchup_manual_index(
 
     fmt = "choice"
     try:
-        from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import detect_format
+        from academy.application.use_cases.ai.pipelines.matchup_pipeline import detect_format
         fmt = detect_format(text)
     except Exception:
         pass
@@ -218,7 +218,7 @@ def run_matchup_manual_index(
     # 이미지 CLIP 임베딩 — OCR 텍스트 약해도 시각 매칭 보강
     image_embedding = None
     try:
-        from apps.worker.ai_worker.ai.embedding.image_service import get_image_embeddings
+        from academy.adapters.ai.embedding.image_service import get_image_embeddings
         # local_path는 이미 cleanup_tmp_for_path로 정리됐을 수 있음. 다시 다운로드.
         local_path2 = download_to_tmp(download_url=url, job_id=job_id + "_img")
         try:

@@ -51,8 +51,8 @@ def cmd_scan(args):
         sys.exit(1)
 
     from apps.domains.assets.omr.services.meta_generator import build_omr_meta
-    from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
-    from apps.worker.ai_worker.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
+    from academy.adapters.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
+    from academy.adapters.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
 
     image_path = args.image
     if not os.path.exists(image_path):
@@ -80,7 +80,7 @@ def cmd_scan(args):
     print(f"[2/6] 이미지 로드: {img_bgr.shape[1]}x{img_bgr.shape[0]}")
 
     # 3) 워프 시도
-    from apps.worker.omr.warp import warp_to_a4_landscape
+    from academy.adapters.ai.omr.warp import warp_to_a4_landscape
     aligned = img_bgr
     warped = warp_to_a4_landscape(image_bgr=img_bgr)
     if warped is not None:

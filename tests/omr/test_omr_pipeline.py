@@ -22,11 +22,11 @@ import cv2
 import numpy as np
 
 from apps.domains.assets.omr.services.meta_generator import build_omr_meta
-from apps.worker.ai_worker.ai.omr.meta_px import build_page_scale_from_meta
-from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
-from apps.worker.ai_worker.ai.omr.identifier import IdentifierConfigV1
-from apps.worker.ai_worker.ai.omr.types import OMRAnswerV1
-from apps.worker.omr.roi_builder import build_questions_payload_from_meta
+from academy.adapters.ai.omr.meta_px import build_page_scale_from_meta
+from academy.adapters.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
+from academy.adapters.ai.omr.identifier import IdentifierConfigV1
+from academy.adapters.ai.omr.types import OMRAnswerV1
+from academy.adapters.ai.omr.roi_builder import build_questions_payload_from_meta
 
 PASS = 0
 FAIL = 0

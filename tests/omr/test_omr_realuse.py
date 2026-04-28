@@ -30,9 +30,9 @@ from reportlab.lib.units import mm as MM
 from apps.domains.assets.omr.services.meta_generator import build_omr_meta
 from apps.domains.assets.omr.renderer.pdf_renderer import OMRPdfRenderer
 from apps.domains.assets.omr.dto.omr_document import OMRDocument
-from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
-from apps.worker.ai_worker.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
-from apps.worker.omr.warp import align_to_a4_landscape
+from academy.adapters.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
+from academy.adapters.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
+from academy.adapters.ai.omr.warp import align_to_a4_landscape
 from tests.omr.test_omr_full_pipeline import distort
 
 

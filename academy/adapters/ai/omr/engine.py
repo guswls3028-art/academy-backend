@@ -21,8 +21,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
-from apps.worker.ai_worker.ai.omr.meta_px import build_page_scale_from_meta, PageScale
-from apps.worker.ai_worker.ai.omr.types import OMRAnswerV1
+from academy.adapters.ai.omr.meta_px import build_page_scale_from_meta, PageScale
+from academy.adapters.ai.omr.types import OMRAnswerV1
 
 logger = logging.getLogger(__name__)
 

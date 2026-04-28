@@ -48,7 +48,7 @@ def segment_questions_ocr_regions(image_path: str) -> List[Tuple[float, float, f
         [(x0, y0, x1, y1, question_number), ...]
     """
     try:
-        from apps.worker.ai_worker.ai.ocr.google import google_ocr_blocks
+        from academy.adapters.ai.ocr.google import google_ocr_blocks
     except ImportError as e:
         logger.warning("OCR_SEGMENT_IMPORT_FAIL | %s", e)
         return []

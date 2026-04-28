@@ -3,7 +3,7 @@ AI SQS Worker — Hexagonal 프레임워크 계층 (thin)
 
 - Use Case + Adapter만 호출.
 - SQS 수신 → prepare_ai_job → visibility 연장 → inference → complete/fail → delete.
-- 기존 apps.worker.ai_worker.ai.pipelines.dispatcher.handle_ai_job 사용 (inference).
+- 기존 academy.application.use_cases.ai.pipelines.dispatcher.handle_ai_job 사용 (inference).
 """
 from __future__ import annotations
 
@@ -108,8 +108,8 @@ def _run_inference(prepared: PreparedJob):
     """기존 handle_ai_job 호출 (contract 변환)."""
     from apps.shared.contracts.ai_job import AIJob
     from apps.shared.contracts.ai_result import AIResult
-    from apps.worker.ai_worker.ai.pipelines.dispatcher import handle_ai_job
-    from apps.worker.ai_worker.ai.pipelines.tier_enforcer import enforce_tier_limits
+    from academy.application.use_cases.ai.pipelines.dispatcher import handle_ai_job
+    from academy.application.use_cases.ai.pipelines.tier_enforcer import enforce_tier_limits
 
     allowed, error_msg = enforce_tier_limits(
         tier=prepared.tier,

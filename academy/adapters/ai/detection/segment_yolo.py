@@ -11,7 +11,7 @@ import logging
 from functools import lru_cache
 from typing import List, Tuple
 
-from apps.worker.ai_worker.ai.config import AIConfig
+from academy.adapters.ai.config import AIConfig
 
 logger = logging.getLogger(__name__)
 

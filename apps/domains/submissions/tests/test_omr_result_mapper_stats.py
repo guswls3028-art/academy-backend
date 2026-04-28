@@ -68,7 +68,7 @@ def test_answer_stats_stored_in_meta_contract():
 def test_engine_version_dynamic():
     # engine이 OMRAnswerV1.version을 meta_version으로 동적 채우는지 확인
     import inspect
-    from apps.worker.ai_worker.ai.omr import engine
+    from academy.adapters.ai.omr import engine
     src = inspect.getsource(engine)
     # 하드코딩 "v9"로 OMRAnswerV1을 만드는 경로가 사라졌는지 (5곳 전부 meta_version)
     assert src.count('version="v9"') == 0, "engine에 version=\"v9\" 하드코딩 잔재"

@@ -22,7 +22,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
-from apps.worker.ai_worker.ai.detection.segment_dispatcher import (
+from academy.adapters.ai.detection.segment_dispatcher import (
     register_pdf_seg_tmp_dirs,
     segment_questions_multipage,
 )
@@ -485,11 +485,11 @@ def _split_questions_by_ocr(
         Vision 크레덴셜이 없거나 OCR이 모두 실패하면 ([], {}).
     """
     try:
-        from apps.worker.ai_worker.ai.detection.segment_ocr import (
+        from academy.adapters.ai.detection.segment_ocr import (
             is_ocr_available,
             segment_questions_ocr_regions,
         )
-        from apps.worker.ai_worker.ai.ocr.google import google_ocr_blocks
+        from academy.adapters.ai.ocr.google import google_ocr_blocks
     except ImportError as e:
         logger.warning("OCR_SPLIT_IMPORT_FAIL | %s", e)
         return [], {}

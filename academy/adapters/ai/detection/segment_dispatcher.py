@@ -12,10 +12,10 @@ from typing import Dict, List, Optional, Tuple
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
-from apps.worker.ai_worker.ai.config import AIConfig
-from apps.worker.ai_worker.ai.detection.segment_opencv import segment_questions_opencv
-from apps.worker.ai_worker.ai.detection.segment_yolo import segment_questions_yolo
-from apps.worker.ai_worker.ai.detection.segment_ocr import (
+from academy.adapters.ai.config import AIConfig
+from academy.adapters.ai.detection.segment_opencv import segment_questions_opencv
+from academy.adapters.ai.detection.segment_yolo import segment_questions_yolo
+from academy.adapters.ai.detection.segment_ocr import (
     is_ocr_available,
     segment_questions_ocr,
 )
@@ -280,7 +280,7 @@ def _boxes_and_regions_for_pdf_page(
     # 스캔본에서 OCR 가용 시 — OCR 결과 신뢰
     if not page_info["has_embedded_text"] and is_ocr_available():
         try:
-            from apps.worker.ai_worker.ai.detection.segment_ocr import (
+            from academy.adapters.ai.detection.segment_ocr import (
                 segment_questions_ocr_regions,
             )
             raw = segment_questions_ocr_regions(image_path)

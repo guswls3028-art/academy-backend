@@ -152,7 +152,7 @@ def run_matchup_index_exam(
 def _ocr_exam_questions(questions, job_id):
     """ExamQuestion 이미지에서 OCR 텍스트 추출."""
     try:
-        from apps.worker.ai_worker.ai.ocr.google import google_ocr
+        from academy.adapters.ai.ocr.google import google_ocr
     except ImportError:
         logger.warning("Google OCR not available for exam indexing")
         return [""] * len(questions)
@@ -163,7 +163,7 @@ def _ocr_exam_questions(questions, job_id):
         logger.warning("R2 storage not available for exam indexing")
         return [""] * len(questions)
 
-    from apps.worker.ai_worker.storage.downloader import (
+    from academy.adapters.ai.storage.downloader import (
         cleanup_tmp_for_path,
         download_to_tmp,
     )
@@ -192,7 +192,7 @@ def _ocr_exam_questions(questions, job_id):
 
 def _generate_embeddings_for_texts(texts, job_id):
     """텍스트 → 임베딩."""
-    from apps.worker.ai_worker.ai.embedding.service import get_embeddings
+    from academy.adapters.ai.embedding.service import get_embeddings
 
     non_empty = [(i, t) for i, t in enumerate(texts) if t.strip()]
     if not non_empty:

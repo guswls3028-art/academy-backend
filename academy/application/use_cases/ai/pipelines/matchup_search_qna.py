@@ -39,7 +39,7 @@ def run_matchup_search_qna(
     )
 
     try:
-        from apps.worker.ai_worker.ai.ocr.google import google_ocr
+        from academy.adapters.ai.ocr.google import google_ocr
     except ImportError:
         return AIResult.failed(job_id, "OCR not available")
 
@@ -72,7 +72,7 @@ def run_matchup_search_qna(
         step_percent=0, tenant_id=tenant_id,
     )
 
-    from apps.worker.ai_worker.ai.embedding.service import get_embeddings
+    from academy.adapters.ai.embedding.service import get_embeddings
 
     try:
         batch = get_embeddings([text])

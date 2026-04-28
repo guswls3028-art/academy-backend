@@ -93,7 +93,7 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
             if not r2_key:
                 return AIResult.failed(job.id, "r2_key required for pdf mode")
 
-            from apps.worker.ai_worker.storage.downloader import download_r2_key_to_tmp
+            from academy.adapters.ai.storage.downloader import download_r2_key_to_tmp
             pdf_path = download_r2_key_to_tmp(r2_key=r2_key, job_id=str(job.id))
             tmp_dirs.append(os.path.dirname(pdf_path))
 
@@ -137,7 +137,7 @@ def handle_ppt_generation_job(job: AIJob) -> AIResult:
             if not r2_keys:
                 return AIResult.failed(job.id, "r2_keys required for images mode")
 
-            from apps.worker.ai_worker.storage.downloader import download_r2_key_to_tmp
+            from academy.adapters.ai.storage.downloader import download_r2_key_to_tmp
 
             image_bytes_list = []
             total_imgs = len(r2_keys)

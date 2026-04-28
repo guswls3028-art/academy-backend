@@ -341,7 +341,7 @@ def _ai_infer_parent_phone(
     Returns: (parent_phone_col_index | None, confidence)
     """
     try:
-        from apps.worker.ai_worker.ai.excel_schema_infer import infer_parent_phone_column
+        from academy.adapters.ai.excel_schema_infer import infer_parent_phone_column
     except ImportError:
         return None, 0.0
 

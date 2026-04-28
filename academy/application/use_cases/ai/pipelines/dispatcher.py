@@ -6,27 +6,27 @@ from typing import Any, Dict
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
 
-from apps.worker.ai_worker.ai.config import AIConfig
-from apps.worker.ai_worker.ai.ocr.google import google_ocr
-from apps.worker.ai_worker.ai.ocr.tesseract import tesseract_ocr
-from apps.worker.ai_worker.ai.detection.segment_dispatcher import (
+from academy.adapters.ai.config import AIConfig
+from academy.adapters.ai.ocr.google import google_ocr
+from academy.adapters.ai.ocr.tesseract import tesseract_ocr
+from academy.adapters.ai.detection.segment_dispatcher import (
     begin_pdf_seg_scope,
     cleanup_registered_pdf_seg_tmp_dirs,
     segment_questions,
     segment_questions_multipage,
 )
-from apps.worker.ai_worker.ai.handwriting.detector import analyze_handwriting
-from apps.worker.ai_worker.ai.embedding.service import get_embeddings
-from apps.worker.ai_worker.ai.problem.generator import generate_problem_from_ocr
-from apps.worker.ai_worker.ai.pipelines.homework_video_analyzer import analyze_homework_video
-from apps.worker.ai_worker.ai.pipelines.excel_handler import handle_excel_parsing_job
-from apps.worker.ai_worker.ai.pipelines.excel_export_handler import (
+from academy.adapters.ai.handwriting.detector import analyze_handwriting
+from academy.adapters.ai.embedding.service import get_embeddings
+from academy.adapters.ai.problem.generator import generate_problem_from_ocr
+from academy.application.use_cases.ai.pipelines.homework_video_analyzer import analyze_homework_video
+from academy.application.use_cases.ai.pipelines.excel_handler import handle_excel_parsing_job
+from academy.application.use_cases.ai.pipelines.excel_export_handler import (
     handle_attendance_excel_export,
     handle_staff_excel_export,
 )
-from apps.worker.ai_worker.ai.pipelines.ppt_handler import handle_ppt_generation_job
-from apps.worker.ai_worker.ai.utils.image_resizer import resize_if_large, imread_exif_aware
-from apps.worker.ai_worker.storage.downloader import cleanup_tmp_for_path, download_to_tmp
+from academy.application.use_cases.ai.pipelines.ppt_handler import handle_ppt_generation_job
+from academy.adapters.ai.utils.image_resizer import resize_if_large, imread_exif_aware
+from academy.adapters.ai.storage.downloader import cleanup_tmp_for_path, download_to_tmp
 import logging
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
 
         # Matchup index exam (download 불필요 — DB에서 직접 읽음)
         if job.type == "matchup_index_exam":
-            from apps.worker.ai_worker.ai.pipelines.matchup_index_exam import (
+            from academy.application.use_cases.ai.pipelines.matchup_index_exam import (
                 run_matchup_index_exam,
             )
             return run_matchup_index_exam(
@@ -98,7 +98,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
         # Matchup manual index (수동 크롭 problem → OCR + 임베딩)
         # download_url 불필요 — payload.image_key로 직접 R2 접근.
         if job.type == "matchup_manual_index":
-            from apps.worker.ai_worker.ai.pipelines.matchup_manual_index import (
+            from academy.application.use_cases.ai.pipelines.matchup_manual_index import (
                 run_matchup_manual_index,
             )
             return run_matchup_manual_index(
@@ -149,7 +149,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
         # Question segmentation (PDF 시험지 문항 분할 + 해설 인식)
         # --------------------------------------------------
         if job.type == "question_segmentation":
-            from apps.worker.ai_worker.ai.pipelines.pdf_question_pipeline import (
+            from academy.application.use_cases.ai.pipelines.pdf_question_pipeline import (
                 run_pdf_question_pipeline,
             )
             return run_pdf_question_pipeline(
@@ -256,9 +256,9 @@ def handle_ai_job(job: AIJob) -> AIResult:
             # 7단계: 다운로드(완료), 메타가져오기, 이미지로드, 정렬, ROI빌드, 식별자감지, 답안감지
             import cv2  # type: ignore
 
-            from apps.worker.ai_worker.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
-            from apps.worker.omr.warp import align_to_a4_landscape
-            from apps.worker.ai_worker.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
+            from academy.adapters.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
+            from academy.adapters.ai.omr.warp import align_to_a4_landscape
+            from academy.adapters.ai.omr.identifier import detect_identifier_v1, IdentifierConfigV1
             from apps.domains.assets.omr.services.meta_generator import build_omr_meta
 
             mode = str(payload.get("mode") or "auto").lower()
@@ -338,7 +338,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
         # Matchup search QnA (학생 Q&A 사진 → 유사 문제 검색)
         # --------------------------------------------------
         if job.type == "matchup_search_qna":
-            from apps.worker.ai_worker.ai.pipelines.matchup_search_qna import (
+            from academy.application.use_cases.ai.pipelines.matchup_search_qna import (
                 run_matchup_search_qna,
             )
             return run_matchup_search_qna(
@@ -353,7 +353,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
         # Matchup analysis (매치업 — 문제 분할 + OCR + 임베딩)
         # --------------------------------------------------
         if job.type == "matchup_analysis":
-            from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import (
+            from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
                 run_matchup_pipeline,
             )
             return run_matchup_pipeline(

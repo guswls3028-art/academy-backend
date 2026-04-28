@@ -14,7 +14,7 @@ from __future__ import annotations
 
 def test_strip_watermark_shinmin_tworkbook():
     """`신민 TWORKBOOK` 워터마크 제거 (운영 doc#123/144/126/145, 50건/문서)."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import strip_page_noise
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import strip_page_noise
     src = "신민 TWORKBOOK 1. 다음은 측정과 관련된 설명이다."
     out = strip_page_noise(src)
     assert "TWORKBOOK" not in out
@@ -23,7 +23,7 @@ def test_strip_watermark_shinmin_tworkbook():
 
 def test_strip_watermark_runners_high_god_min():
     """`Runner S high with God min` 푸터 제거 (운영 doc#120 q10/14/16/18/20)."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import strip_page_noise
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import strip_page_noise
     src = "Runner S high with God min 5. 다음은 측정과 관련된 설명이다"
     out = strip_page_noise(src)
     assert "Runner" not in out
@@ -33,7 +33,7 @@ def test_strip_watermark_runners_high_god_min():
 
 def test_strip_watermark_runners_high_apostrophe_variants():
     """OCR이 어포스트로피를 흘리는 변형도 잡아야 함."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import strip_page_noise
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import strip_page_noise
     for variant in [
         "Runner's high with God min",
         "RUNNER'S HIGH WITH GOD MIN",
@@ -46,7 +46,7 @@ def test_strip_watermark_runners_high_apostrophe_variants():
 
 def test_strip_unit_step_headers():
     """`Step 1. 개념완성` / `Step 2. 내신완성` / `Step 3. 수능완성` 단원 헤더 제거 (doc#120 11건)."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import strip_page_noise
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import strip_page_noise
     src = "Step 1. 개념완성 1. 시간 과 공간 의 기술 에 대한 설명"
     out = strip_page_noise(src)
     assert "개념완성" not in out
@@ -55,7 +55,7 @@ def test_strip_unit_step_headers():
 
 def test_strip_chapter_header_line():
     """`6 CHAPTER 01 과학 의 기초` 챕터 헤더 라인 제거."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import strip_page_noise
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import strip_page_noise
     src = "6 CHAPTER 01 과학 의 기초\n추가 설명 ⊕ 수소 원자 - 수소 원자 지름 : 약 0.1 nm"
     out = strip_page_noise(src)
     assert "CHAPTER" not in out
@@ -64,7 +64,7 @@ def test_strip_chapter_header_line():
 
 def test_strip_lorem_ipsum_residue():
     """라틴 lorem ipsum 잔재 제거 (doc#143 표지 spillover)."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import strip_page_noise
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import strip_page_noise
     src = "is dolore te feugait nulla consectetuer 1. 표는 주기율표를 나타낸 것이다"
     out = strip_page_noise(src)
     assert "consectetuer" not in out
@@ -73,7 +73,7 @@ def test_strip_lorem_ipsum_residue():
 
 def test_strip_preserves_content_intact():
     """본문 의미를 손상시키지 않음 (false positive 회귀 방지)."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import strip_page_noise
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import strip_page_noise
     # '신민' 단독, 'Step' 단독은 본문에 등장 가능 — 워터마크 풀 패턴만 제거.
     src = "1. 다음 글에서 신민이 등장하는 인물의 특징을 찾으시오."
     out = strip_page_noise(src)
@@ -81,7 +81,7 @@ def test_strip_preserves_content_intact():
 
 
 def test_strip_empty_input():
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import strip_page_noise
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import strip_page_noise
     assert strip_page_noise("") == ""
     assert strip_page_noise(None) == ""  # type: ignore[arg-type]
 
@@ -93,7 +93,7 @@ def test_flag_merge_suspect_dual_anchor_in_long_text():
 
     _trim_box_merged_text가 먼저 잘라내므로 trim 무력화한 케이스로 검증.
     """
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import _flag_merge_suspect
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _flag_merge_suspect
     long_body = "표는 별 내부에서 일어나는 핵융합 반응을 나타낸 것이다. " * 30
     # trim이 일어나지 않을 케이스: 첫 anchor 자기 자신 외에 추가 anchor가 텍스트 끝부분에
     # 있고 trim 한도(80자) 미만 잘림 위험으로 trim skip → flag로 표시.
@@ -111,7 +111,7 @@ def test_flag_merge_suspect_dual_anchor_in_long_text():
 
 def test_flag_merge_suspect_short_text_skipped():
     """짧은 본문(< 800)은 false positive 위험으로 검사 제외."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import _flag_merge_suspect
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _flag_merge_suspect
     questions = [{"number": 1, "text": "1. 짧은 문제\n3. 다른 인용",
                   "page_index": 0, "bbox": [0, 0, 100, 100]}]
     _flag_merge_suspect(questions)
@@ -120,7 +120,7 @@ def test_flag_merge_suspect_short_text_skipped():
 
 def test_flag_merge_suspect_no_inner_anchor():
     """본문에 anchor 없으면 표시 안 됨."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import _flag_merge_suspect
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _flag_merge_suspect
     body = "다음 그림은 별의 진화를 나타낸 것이다. " * 50
     questions = [{"number": 13, "text": f"13. {body}",
                   "page_index": 5, "bbox": [0, 0, 100, 100]}]
@@ -135,7 +135,7 @@ def test_flag_merge_suspect_no_inner_anchor():
 def test_intent_keywords_present_in_pipeline():
     """run_matchup_pipeline 안의 intent 자동 추정 키워드 sanity check."""
     import inspect
-    from apps.worker.ai_worker.ai.pipelines import matchup_pipeline
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
     src = inspect.getsource(matchup_pipeline.run_matchup_pipeline)
     # 시험지 키워드
     for kw in ["시험지", "중간고사", "기말고사", "모의고사", "기출 통과"]:
@@ -149,7 +149,7 @@ def test_intent_keywords_present_in_pipeline():
 
 def test_trim_box_merged_text_cuts_at_second_anchor():
     """한 problem 텍스트에 추가 anchor 있으면 그 위치 이전까지 trim (doc#131 q4 패턴)."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import _trim_box_merged_text
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _trim_box_merged_text
     long_body = "표는 별 내부에서 일어나는 핵융합 반응을 나타낸 것이다. " * 25
     questions = [{
         "number": 13,
@@ -165,7 +165,7 @@ def test_trim_box_merged_text_cuts_at_second_anchor():
 
 def test_trim_box_merged_text_skips_page_fallback():
     """bbox=None (페이지 폴백) problem은 trim 안 함 — 학습자료 본문 항목번호 false positive 방지."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import _trim_box_merged_text
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _trim_box_merged_text
     body = "다음은 별의 진화에 대한 자료이다. " * 30
     questions = [{
         "number": 1,
@@ -180,7 +180,7 @@ def test_trim_box_merged_text_skips_page_fallback():
 
 def test_trim_box_merged_text_skips_short_text():
     """600자 미만 text는 trim 안 함 (false anchor 방어)."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import _trim_box_merged_text
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _trim_box_merged_text
     questions = [{
         "number": 1, "text": "1. 짧은 문제 내용 본문\n3. 그림은",
         "page_index": 0, "bbox": [0, 0, 100, 100],
@@ -193,7 +193,7 @@ def test_trim_box_merged_text_skips_short_text():
 
 def test_flag_merge_suspect_skips_page_fallback_problems():
     """페이지 폴백 problem (bbox=None)은 검수 배지 안 띄움 — 학습자료 false positive 차단."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import _flag_merge_suspect
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _flag_merge_suspect
     body = "객서심화 자료의 본문 내용이다. " * 50
     questions = [{
         "number": 1,
@@ -207,7 +207,7 @@ def test_flag_merge_suspect_skips_page_fallback_problems():
 
 def test_flag_merge_suspect_skips_trimmed_problems():
     """이미 _trim_box_merged_text가 trim한 problem은 검수 배지 안 띄움 (정제됨)."""
-    from apps.worker.ai_worker.ai.pipelines.matchup_pipeline import _flag_merge_suspect
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _flag_merge_suspect
     body = "별의 진화 본문. " * 80
     questions = [{
         "number": 13,

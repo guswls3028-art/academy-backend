@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Literal
 
-from apps.worker.ai_worker.ai.config import AIConfig
+from academy.adapters.ai.config import AIConfig
 from apps.shared.utils.vector import cosine_similarity  # noqa: F401 — re-export
 
 EmbeddingBackendName = Literal["local", "openai"]
