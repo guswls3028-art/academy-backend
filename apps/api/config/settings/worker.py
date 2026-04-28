@@ -84,8 +84,12 @@ DATABASES = {
         "PASSWORD": os.getenv("DB_PASSWORD"),
         "HOST": os.getenv("DB_HOST"),
         "PORT": os.getenv("DB_PORT", "5432"),
-        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),  # V1.1: 60s reuse (커넥션 폭증 방지)
-        "CONN_HEALTH_CHECKS": True,  # V1.1.0: validate connection before reuse
+        # 워커는 작업 중심 (긴 처리 시간) → connection 재사용 가치 낮음 + 풀 고갈 위험 큼.
+        # 운영 사고 (2026-04-29 00:21): AI 워커 3대 + API 동시 RDS 연결로 max_conn(~280) 도달.
+        # 워커 CONN_MAX_AGE=0으로 매 작업 후 connection 즉시 닫아 풀 고갈 방어.
+        # API 쪽은 60s 유지 (요청 reuse 가치 큼).
+        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE_WORKER", os.getenv("DB_CONN_MAX_AGE", "0"))),
+        "CONN_HEALTH_CHECKS": True,
         "OPTIONS": {"connect_timeout": 10},
     }
 }
