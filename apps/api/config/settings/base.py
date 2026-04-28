@@ -212,7 +212,11 @@ DATABASES = {
         "PASSWORD": os.getenv("DB_PASSWORD"),
         "HOST": os.getenv("DB_HOST"),
         "PORT": os.getenv("DB_PORT", "5432"),
-        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "60")),  # V1.1: 60s reuse (커넥션 폭증 방지). 0=매 요청 후 종료.
+        # 운영 사고 (2026-04-29 01:00): API 인스턴스 1대가 569 connection 누수.
+        # CONN_MAX_AGE=60초 + 사용자 30+ 동시 업로드 트래픽으로 idle conn 풀에서 안 풀림.
+        # 60s → 5s로 단축하여 idle conn 빠르게 RDS에 반환. RDS Proxy 도입 전 임시 방어.
+        # 환경변수 DB_CONN_MAX_AGE override 가능 (수치 안정 후 다시 60으로 올릴 수 있음).
+        "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "5")),
         "CONN_HEALTH_CHECKS": True,  # V1.1.0: validate connection before reuse (prevents stale-connection errors after RDS recovery)
         "OPTIONS": {
             "connect_timeout": 10,
