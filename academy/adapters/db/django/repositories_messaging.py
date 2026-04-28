@@ -28,7 +28,7 @@ def create_notification_log(
         True: 정상 생성됨
         False: sqs_message_id 기준 중복 (이미 성공 기록 존재) → 생성 안 함
     """
-    from apps.support.messaging.models import NotificationLog
+    from apps.domains.messaging.models import NotificationLog
 
     # DB-level dedup: 동일 SQS 메시지에 대해 이미 성공 기록이 있으면 스킵
     if sqs_message_id and success:
@@ -66,7 +66,7 @@ def claim_notification_slot(
         (True, log_id): Slot claimed successfully. Proceed to send.
         (False, None): Duplicate. Already claimed/sent by another worker.
     """
-    from apps.support.messaging.models import NotificationLog
+    from apps.domains.messaging.models import NotificationLog
 
     if not business_idempotency_key:
         # Legacy message without business key — skip claim, fall through to old path
@@ -100,7 +100,7 @@ def finalize_notification(
     notification_type: str = "",
 ) -> None:
     """Update a claimed notification slot with final result."""
-    from apps.support.messaging.models import NotificationLog
+    from apps.domains.messaging.models import NotificationLog
 
     NotificationLog.objects.filter(id=log_id).update(
         success=success,

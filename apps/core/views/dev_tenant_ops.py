@@ -60,7 +60,7 @@ class DevTenantUsageView(APIView):
 
         # 영상
         try:
-            from apps.support.video.models import Video
+            from apps.domains.video.models import Video
             videos_total = Video.all_with_deleted.filter(tenant=tenant).count()
             videos_active = Video.objects.filter(tenant=tenant).count()
             videos_processing = Video.objects.filter(tenant=tenant, status="PROCESSING").count()
@@ -70,7 +70,7 @@ class DevTenantUsageView(APIView):
 
         # 메시지 (30d)
         try:
-            from apps.support.messaging.models import NotificationLog
+            from apps.domains.messaging.models import NotificationLog
             messages_30d = NotificationLog.objects.filter(tenant=tenant, sent_at__gte=d30).count()
             messages_failed_30d = NotificationLog.objects.filter(
                 tenant=tenant, sent_at__gte=d30, success=False,

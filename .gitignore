@@ -72,3 +72,9 @@ tmp_api_env.json
 # 로컬 테스트 자료 (git 제외)
 로컬테스트자료/
 test-results/
+
+# 운영 진단 / 임시 ad-hoc 스크립트 + 다운로드된 진단 이미지
+.tmp_*.py
+_inspect_imgs/
+_dev_stdout.log
+_dev_stderr.log

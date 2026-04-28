@@ -46,7 +46,7 @@ urlpatterns = [
     # ==================================================
     # path(
     #     "internal/",
-    #     include("apps.support.video.urls_internal"),
+    #     include("apps.domains.video.urls_internal"),
     # ),
 ]
 

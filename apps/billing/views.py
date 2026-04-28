@@ -370,7 +370,7 @@ class CardRegisterPrepareView(APIView):
 
     def post(self, request):
         from django.conf import settings as django_settings
-        from apps.support.messaging.services.url_helpers import get_tenant_site_url
+        from apps.domains.messaging.services.url_helpers import get_tenant_site_url
         tenant = request.tenant
         customer_key = billing_key_service.get_or_create_customer_key(tenant.id)
         # 카드 인증 후 Toss는 SPA 도메인으로 redirect 해야 함 — API 도메인 X.

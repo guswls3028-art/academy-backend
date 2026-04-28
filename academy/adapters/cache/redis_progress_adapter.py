@@ -68,7 +68,7 @@ class RedisProgressAdapter(IProgress):
                 try:
                     vid = job_id.replace("video:", "").strip()
                     if vid.isdigit():
-                        from apps.support.video.redis_status_cache import set_video_heartbeat
+                        from apps.domains.video.redis_status_cache import set_video_heartbeat
                         set_video_heartbeat(int(tenant_id), int(vid))
                 except Exception as hb_e:
                     logger.debug("Video heartbeat set failed: %s", hb_e)

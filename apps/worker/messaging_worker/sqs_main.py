@@ -129,7 +129,7 @@ def _handle_signal(sig, frame):
 def _get_solapi_client(cfg):
     """DEBUG=True 또는 SOLAPI_MOCK=true 이면 Mock (로그만), 아니면 실제 Solapi."""
     if os.environ.get("SOLAPI_MOCK", "").lower() in ("true", "1", "yes") or os.environ.get("DEBUG", "").lower() in ("true", "1", "yes"):
-        from apps.support.messaging.solapi_mock import MockSolapiMessageService
+        from apps.domains.messaging.solapi_mock import MockSolapiMessageService
         return MockSolapiMessageService(api_key=cfg.SOLAPI_API_KEY, api_secret=cfg.SOLAPI_API_SECRET)
     from solapi import SolapiMessageService
     return SolapiMessageService(api_key=cfg.SOLAPI_API_KEY, api_secret=cfg.SOLAPI_API_SECRET)
@@ -147,7 +147,7 @@ def send_one_alimtalk_ppurio(
 ) -> dict:
     """뿌리오 알림톡 1건 발송. Solapi send_one_alimtalk과 동일 인터페이스."""
     try:
-        from apps.support.messaging.ppurio_client import send_ppurio_alimtalk
+        from apps.domains.messaging.ppurio_client import send_ppurio_alimtalk
         return send_ppurio_alimtalk(
             to=to, sender=sender, pf_id=pf_id,
             template_id=template_id, replacements=replacements,
@@ -164,7 +164,7 @@ def send_one_sms_ppurio(
 ) -> dict:
     """뿌리오 SMS/LMS 1건 발송. Solapi send_one_sms와 동일 인터페이스."""
     try:
-        from apps.support.messaging.ppurio_client import send_ppurio_sms
+        from apps.domains.messaging.ppurio_client import send_ppurio_sms
         return send_ppurio_sms(to=to, text=text, sender=sender, api_key=api_key, account=account)
     except Exception as e:
         logger.exception("ppurio sms failed to=%s****", (to or "")[:4])
@@ -491,7 +491,7 @@ def main() -> int:
                     if reservation_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
                         _record_progress(job_id, "checking", 10, step_index=1, step_percent=100, tenant_id=tenant_id_str)
                         try:
-                            from apps.support.messaging.services import is_reservation_cancelled
+                            from apps.domains.messaging.services import is_reservation_cancelled
                             if is_reservation_cancelled(int(reservation_id), tenant_id=tenant_id):
                                 logger.info("reservation_id=%s cancelled, skip send", reservation_id)
                                 queue_client.delete_message(
@@ -528,13 +528,13 @@ def main() -> int:
                     use_default_channel = True  # 시스템 기본 알림톡 채널 사용 여부
                     if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
                         try:
-                            from apps.support.messaging.credit_services import (
+                            from apps.domains.messaging.credit_services import (
                                 get_tenant_messaging_info,
                                 deduct_credits,
                                 rollback_credits,
                             )
-                            from apps.support.messaging.models import NotificationLog
-                            from apps.support.messaging.policy import resolve_kakao_channel, get_tenant_provider, get_tenant_own_credentials
+                            from apps.domains.messaging.models import NotificationLog
+                            from apps.domains.messaging.policy import resolve_kakao_channel, get_tenant_provider, get_tenant_own_credentials
                             from apps.core.models import Tenant
                             info = get_tenant_messaging_info(int(tenant_id))
                             if info:
@@ -592,7 +592,7 @@ def main() -> int:
                         # Legacy DB-level dedup: Redis 장애 복구 후 재처리 시 이미 발송된 메시지 스킵
                         if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
                             try:
-                                from apps.support.messaging.models import NotificationLog as _NL
+                                from apps.domains.messaging.models import NotificationLog as _NL
                                 if _NL.objects.filter(
                                     sqs_message_id=message_id, success=True
                                 ).exists():
@@ -616,7 +616,7 @@ def main() -> int:
                         if info and float(base_price) > 0 and tenant_id is not None:
                             _record_progress(job_id, "validating", 30, step_index=2, step_percent=0, tenant_id=tenant_id_str)
                             from decimal import Decimal
-                            from apps.support.messaging.credit_services import deduct_credits
+                            from apps.domains.messaging.credit_services import deduct_credits
                             from academy.adapters.db.django.repositories_messaging import create_notification_log
                             bal = info.get("credit_balance", "0")
                             if float(bal) < float(base_price):
@@ -728,7 +728,7 @@ def main() -> int:
                                 )
                                 if deducted:
                                     try:
-                                        from apps.support.messaging.credit_services import rollback_credits
+                                        from apps.domains.messaging.credit_services import rollback_credits
                                         rollback_credits(int(tenant_id), base_price)
                                     except Exception as e:
                                         logger.warning("rollback_credits failed: %s", e)
@@ -781,7 +781,7 @@ def main() -> int:
                         if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE") and info:
                             try:
                                 from decimal import Decimal
-                                from apps.support.messaging.credit_services import rollback_credits
+                                from apps.domains.messaging.credit_services import rollback_credits
                                 from academy.adapters.db.django.repositories_messaging import (
                                     create_notification_log, finalize_notification,
                                 )
@@ -896,7 +896,7 @@ def main() -> int:
                     except Exception:
                         if deducted:
                             try:
-                                from apps.support.messaging.credit_services import rollback_credits
+                                from apps.domains.messaging.credit_services import rollback_credits
                                 rollback_credits(int(tenant_id), base_price)
                                 logger.info("Rolled back credits for tenant_id=%s after send exception", tenant_id)
                             except Exception as rb_err:

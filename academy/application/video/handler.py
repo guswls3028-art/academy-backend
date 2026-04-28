@@ -72,7 +72,7 @@ class ProcessVideoJobHandler:
         # 재시도 시 API가 설정한 취소 요청이 있으면 이 메시지는 스킵
         if tenant_id is not None:
             try:
-                from apps.support.video.redis_status_cache import is_cancel_requested
+                from apps.domains.video.redis_status_cache import is_cancel_requested
                 if is_cancel_requested(tenant_id, video_id):
                     logger.info("[HANDLER] Cancel requested for video_id=%s, skipping", video_id)
                     return "skip:cancel"
@@ -82,7 +82,7 @@ class ProcessVideoJobHandler:
         # processor 단계별 취소 확인용
         def _cancel_check() -> bool:
             try:
-                from apps.support.video.redis_status_cache import is_cancel_requested
+                from apps.domains.video.redis_status_cache import is_cancel_requested
                 return bool(tenant_id is not None and is_cancel_requested(tenant_id, video_id))
             except Exception:
                 return False
@@ -98,8 +98,8 @@ class ProcessVideoJobHandler:
                 # 이미 FAST_ACK로 delete된 상태 → 즉시 reclaim으로 Reconciler 대상화 후 re-enqueue
                 if self._repo.try_reclaim_video(video_id, force=True):
                     try:
-                        from apps.support.video.models import Video
-                        from apps.support.video.services.video_encoding import create_job_and_submit_batch
+                        from apps.domains.video.models import Video
+                        from apps.domains.video.services.video_encoding import create_job_and_submit_batch
                         video = Video.objects.select_related("session__lecture").get(pk=video_id)
                         result = create_job_and_submit_batch(video)
                         if result.job:

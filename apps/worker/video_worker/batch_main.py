@@ -37,7 +37,7 @@ from academy.adapters.db.django.repositories_video import (
 from academy.adapters.video.config import load_config
 from academy.adapters.video.processor import process_video
 from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
-from apps.support.video.redis_status_cache import cache_video_status
+from apps.domains.video.redis_status_cache import cache_video_status
 from academy.application.video.handler import CancelledError
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -55,8 +55,8 @@ _heartbeat_stop = threading.Event()
 
 def _try_enqueue_next_for_tenant(tenant_id: int) -> None:
     """Job 완료 후 tenant 슬롯이 비었으면 다음 UPLOADED 비디오를 자동 enqueue."""
-    from apps.support.video.models import Video, VideoTranscodeJob
-    from apps.support.video.services.video_encoding import create_job_and_submit_batch
+    from apps.domains.video.models import Video, VideoTranscodeJob
+    from apps.domains.video.services.video_encoding import create_job_and_submit_batch
 
     active_video_ids = VideoTranscodeJob.objects.filter(
         tenant_id=tenant_id,
@@ -107,7 +107,7 @@ def _handle_term(signum: int, frame: object) -> None:
 def _heartbeat_loop(job_id: str, video_id: int) -> None:
     """RUNNING job의 last_heartbeat_at 갱신 + DDB lock lease 연장 (1 video 1 job 보장)."""
     from django import db as django_db
-    from apps.support.video.services.video_job_lock import extend as lock_extend
+    from apps.domains.video.services.video_job_lock import extend as lock_extend
     from django.conf import settings
     lock_ttl = int(getattr(settings, "VIDEO_JOB_LOCK_TTL_SECONDS", 43200))
     consecutive_failures = 0
@@ -151,7 +151,7 @@ def _is_valid_uuid(s: str) -> bool:
 
 def _video_still_exists(video_id: int) -> bool:
     """Video 행이 아직 존재하는지 (삭제/취소 시 Worker 중단 판단용)."""
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.filter(pk=video_id).exists()
 
 

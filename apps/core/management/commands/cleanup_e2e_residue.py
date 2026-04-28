@@ -84,7 +84,7 @@ class Command(BaseCommand):
         from apps.domains.students.models import Student
         from apps.domains.community.models.post import PostEntity
         from apps.domains.matchup.models import MatchupDocument
-        from apps.support.messaging.models import MessageTemplate
+        from apps.domains.messaging.models import MessageTemplate
         from apps.core.models import Tenant
 
         try:

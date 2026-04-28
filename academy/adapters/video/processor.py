@@ -430,7 +430,7 @@ def process_video(
                 min_segments=max(3, int(getattr(cfg, "MIN_SEGMENTS_PER_VARIANT", 3))),
             )
         except UploadIntegrityError as e:
-            from apps.support.video.services.ops_events import emit_ops_event
+            from apps.domains.video.services.ops_events import emit_ops_event
             emit_ops_event(
                 "UPLOAD_INTEGRITY_FAIL",
                 severity="ERROR",

@@ -2,7 +2,7 @@
 # ⚠️ 기존 코드 유지 + support.video 전환 + internal video-worker include
 
 from django.urls import path, include
-from apps.support.video.views.internal_views import (
+from apps.domains.video.views.internal_views import (
     VideoProcessingCompleteView,
     VideoBacklogCountView,
     VideoBacklogScoreView,
@@ -71,7 +71,7 @@ urlpatterns = [
     # =========================
     # Messaging (알림톡 잔액/충전/연동/로그)
     # =========================
-    path("messaging/", include("apps.support.messaging.urls")),
+    path("messaging/", include("apps.domains.messaging.urls")),
 
     # =========================
     # Core
@@ -88,7 +88,7 @@ urlpatterns = [
     # - URL prefix는 기존 "media/" 유지 (외부 클라이언트 안정성)
     # - include 경로만 video로 전환
     # =========================
-    path("media/", include("apps.support.video.urls")),
+    path("media/", include("apps.domains.video.urls")),
 
     # =========================
     # AI job 상태 조회 (엑셀 내보내기 등)
@@ -99,7 +99,7 @@ urlpatterns = [
     # ✅ Video Worker (internal)
     # /api/v1/internal/video-worker/*
     # =========================
-    path("internal/", include("apps.support.video.urls_internal")),
+    path("internal/", include("apps.domains.video.urls_internal")),
 
     # =========================
     # B1: Video BacklogCount (queue_depth_lambda → CloudWatch)

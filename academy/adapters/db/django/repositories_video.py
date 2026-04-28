@@ -8,14 +8,14 @@ from typing import Optional
 
 def get_video_status(video_id: int) -> Optional[str]:
     """Video 상태만 조회 (worker에서 이미 READY인지 확인용)."""
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     row = Video.objects.filter(pk=video_id).values_list("status", flat=True).first()
     return row
 
 
 def get_video_for_update(video_id: int):
     """select_for_update로 Video 1건 조회 (tenant_id 추출을 위한 select_related 포함)."""
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.select_for_update(of=("self",)).select_related(
         "session", "session__lecture", "session__lecture__tenant"
     ).filter(id=int(video_id)).first()
@@ -23,7 +23,7 @@ def get_video_for_update(video_id: int):
 
 def get_video_queryset_with_relations():
     """VideoViewSet 기본 queryset. upload_complete enqueue 시 video.session.lecture.tenant 필요."""
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.all().select_related(
         "session", "session__lecture", "session__lecture__tenant"
     )
@@ -31,7 +31,7 @@ def get_video_queryset_with_relations():
 
 def get_video_by_pk_with_relations(pk):
     """Video 1건 (session, lecture, tenant 포함). perform_destroy 등에서 tenant_id 사용."""
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.select_related(
         "session", "session__lecture", "session__lecture__tenant"
     ).filter(pk=pk).first()
@@ -43,7 +43,7 @@ def get_session_by_id_with_lecture_tenant(session_id):
 
 
 def create_video(session, title, file_key, order, status, allow_skip=False, max_speed=1.0, show_watermark=True, visibility=None, tenant=None, uploaded_by=None):
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     kwargs = dict(
         session=session,
         title=title,
@@ -81,12 +81,12 @@ def get_enrollments_for_lecture_active(lecture):
 
 
 def get_video_progresses_for_video(video):
-    from apps.support.video.models import VideoProgress
+    from apps.domains.video.models import VideoProgress
     return VideoProgress.objects.filter(video=video)
 
 
 def get_video_access_for_video(video):
-    from apps.support.video.models import VideoAccess
+    from apps.domains.video.models import VideoAccess
     return VideoAccess.objects.filter(video=video)
 
 
@@ -101,7 +101,7 @@ def get_enrollments_for_lecture(lecture):
 
 
 def get_playback_events_queryset_for_video(video, since=None):
-    from apps.support.video.models import VideoPlaybackEvent
+    from apps.domains.video.models import VideoPlaybackEvent
     qs = VideoPlaybackEvent.objects.filter(video=video).select_related(
         "enrollment", "enrollment__student"
     )
@@ -111,12 +111,12 @@ def get_playback_events_queryset_for_video(video, since=None):
 
 
 def video_filter_by_lecture(lecture):
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.filter(session__lecture=lecture).order_by("order", "title", "id").distinct()
 
 
 def video_filter_by_session_ready(session_id):
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.filter(
         session_id=session_id,
         status=Video.Status.READY,
@@ -133,7 +133,7 @@ def enrollment_get_by_student_lecture_active(student, lecture):
 
 
 def video_progress_get(video, enrollment):
-    from apps.support.video.models import VideoProgress
+    from apps.domains.video.models import VideoProgress
     return VideoProgress.objects.filter(video=video, enrollment=enrollment).first()
 
 
@@ -153,12 +153,12 @@ def session_enrollment_exists(session, enrollment) -> bool:
 
 
 def video_access_get(video, enrollment):
-    from apps.support.video.models import VideoAccess
+    from apps.domains.video.models import VideoAccess
     return VideoAccess.objects.filter(video=video, enrollment=enrollment).first()
 
 
 def video_access_filter(video, enrollment=None):
-    from apps.support.video.models import VideoAccess
+    from apps.domains.video.models import VideoAccess
     qs = VideoAccess.objects.filter(video=video)
     if enrollment is not None:
         qs = qs.filter(enrollment=enrollment)
@@ -166,7 +166,7 @@ def video_access_filter(video, enrollment=None):
 
 
 def video_access_update_or_create_by_ids(video_id, enrollment_id, defaults):
-    from apps.support.video.models import VideoAccess
+    from apps.domains.video.models import VideoAccess
     return VideoAccess.objects.update_or_create(
         video_id=video_id,
         enrollment_id=enrollment_id,
@@ -175,22 +175,22 @@ def video_access_update_or_create_by_ids(video_id, enrollment_id, defaults):
 
 
 def video_access_all():
-    from apps.support.video.models import VideoAccess
+    from apps.domains.video.models import VideoAccess
     return VideoAccess.objects.all()
 
 
 def video_progress_all():
-    from apps.support.video.models import VideoProgress
+    from apps.domains.video.models import VideoProgress
     return VideoProgress.objects.all()
 
 
 def video_progress_filter(video):
-    from apps.support.video.models import VideoProgress
+    from apps.domains.video.models import VideoProgress
     return VideoProgress.objects.filter(video=video)
 
 
 def video_progress_filter_video_enrollment_ids(video, enrollment_ids):
-    from apps.support.video.models import VideoProgress
+    from apps.domains.video.models import VideoProgress
     qs = VideoProgress.objects.filter(enrollment_id__in=enrollment_ids)
     if video:
         qs = qs.filter(video=video)
@@ -198,27 +198,27 @@ def video_progress_filter_video_enrollment_ids(video, enrollment_ids):
 
 
 def video_get_by_id(video_id):
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.filter(id=int(video_id)).first()
 
 
 def video_get_by_id_only_policy(video_id):
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.filter(id=video_id).only("id", "policy_version").first()
 
 
 def video_get_by_id_with_relations(video_id):
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.select_related("session", "session__lecture").get(id=video_id)
 
 
 def video_get_by_id_with_session(video_id):
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.select_related("session").get(id=video_id)
 
 
 def video_update(video_id, **kwargs):
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.filter(id=video_id).update(**kwargs)
 
 
@@ -271,7 +271,7 @@ def attendance_filter_session_status(session, status):
 # ---- VideoPlaybackSession ----
 def playback_session_cleanup_expired(student_id):
     from django.utils import timezone
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     now = timezone.now()
     return VideoPlaybackSession.objects.filter(
         enrollment__student_id=student_id,
@@ -281,7 +281,7 @@ def playback_session_cleanup_expired(student_id):
 
 
 def playback_session_filter_active(student_id, now, expires_at_gt):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.filter(
         enrollment__student_id=student_id,
         status=VideoPlaybackSession.Status.ACTIVE,
@@ -290,17 +290,17 @@ def playback_session_filter_active(student_id, now, expires_at_gt):
 
 
 def playback_session_create(**kwargs):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.create(**kwargs)
 
 
 def playback_session_get_by_session_id(session_id):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.get(session_id=session_id)
 
 
 def playback_session_filter_update_active(session_id, student_id, **update_kwargs):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.filter(
         session_id=session_id,
         enrollment__student_id=student_id,
@@ -309,27 +309,27 @@ def playback_session_filter_update_active(session_id, student_id, **update_kwarg
 
 
 def playback_session_select_related_get(session_id):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.select_related(
         "enrollment", "enrollment__student", "video"
     ).get(session_id=session_id)
 
 
 def playback_session_select_related_filter(**kwargs):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.select_related(
         "enrollment", "enrollment__student", "video"
     ).filter(**kwargs)
 
 
 def playback_session_filter(**kwargs):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.filter(**kwargs)
 
 
 def playback_session_end_by_session_id(session_id):
     from django.utils import timezone
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     now = timezone.now()
     return VideoPlaybackSession.objects.filter(session_id=session_id).update(
         status=VideoPlaybackSession.Status.ENDED,
@@ -338,7 +338,7 @@ def playback_session_end_by_session_id(session_id):
 
 
 def playback_session_get_by_session_id_and_student(session_id, student_id):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.select_related("enrollment").get(
         session_id=session_id,
         enrollment__student_id=student_id,
@@ -347,7 +347,7 @@ def playback_session_get_by_session_id_and_student(session_id, student_id):
 
 
 def playback_session_get_by_session_id_and_student_any(session_id, student_id):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.select_related("enrollment").get(
         session_id=session_id,
         enrollment__student_id=student_id,
@@ -355,7 +355,7 @@ def playback_session_get_by_session_id_and_student_any(session_id, student_id):
 
 
 def playback_session_filter_update(session_id, student_id, **update_kwargs):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.filter(
         session_id=session_id,
         enrollment__student_id=student_id,
@@ -365,7 +365,7 @@ def playback_session_filter_update(session_id, student_id, **update_kwargs):
 
 def playback_session_filter_update_any(session_id, student_id, **update_kwargs):
     from django.utils import timezone
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     now = timezone.now()
     return VideoPlaybackSession.objects.filter(
         session_id=session_id,
@@ -374,7 +374,7 @@ def playback_session_filter_update_any(session_id, student_id, **update_kwargs):
 
 
 def playback_session_update_expired(now):
-    from apps.support.video.models import VideoPlaybackSession
+    from apps.domains.video.models import VideoPlaybackSession
     return VideoPlaybackSession.objects.filter(
         status=VideoPlaybackSession.Status.ACTIVE,
         expires_at__lt=now,
@@ -383,7 +383,7 @@ def playback_session_update_expired(now):
 
 # ---- VideoPlaybackEvent ----
 def playback_event_filter_by_video_id(video_id, since=None):
-    from apps.support.video.models import VideoPlaybackEvent
+    from apps.domains.video.models import VideoPlaybackEvent
     qs = VideoPlaybackEvent.objects.filter(video_id=video_id).select_related(
         "enrollment", "enrollment__student"
     )
@@ -393,7 +393,7 @@ def playback_event_filter_by_video_id(video_id, since=None):
 
 
 def playback_event_bulk_create(objs, batch_size=500):
-    from apps.support.video.models import VideoPlaybackEvent
+    from apps.domains.video.models import VideoPlaybackEvent
     return VideoPlaybackEvent.objects.bulk_create(objs, batch_size=batch_size)
 
 
@@ -428,7 +428,7 @@ def _cache_video_status_safe(
     if not tenant_id:
         return
     try:
-        from apps.support.video.redis_status_cache import cache_video_status
+        from apps.domains.video.redis_status_cache import cache_video_status
         cache_video_status(
             tenant_id=tenant_id,
             video_id=video_id,
@@ -454,7 +454,7 @@ class DjangoVideoRepository:
     def mark_processing(self, video_id: int) -> bool:
         from django.db import transaction
         from django.utils import timezone
-        from apps.support.video.models import Video
+        from apps.domains.video.models import Video
 
         with transaction.atomic():
             video = get_video_for_update(video_id)
@@ -494,7 +494,7 @@ class DjangoVideoRepository:
         from django.db import transaction
         from django.utils import timezone
         from datetime import timedelta
-        from apps.support.video.models import Video
+        from apps.domains.video.models import Video
 
         with transaction.atomic():
             video = get_video_for_update(video_id)
@@ -536,7 +536,7 @@ class DjangoVideoRepository:
         """
         from django.db import transaction
         from django.utils import timezone
-        from apps.support.video.models import Video
+        from apps.domains.video.models import Video
 
         with transaction.atomic():
             video = get_video_for_update(video_id)
@@ -559,7 +559,7 @@ class DjangoVideoRepository:
         duration: Optional[int] = None,
     ) -> tuple[bool, str]:
         from django.db import transaction
-        from apps.support.video.models import Video
+        from apps.domains.video.models import Video
 
         with transaction.atomic():
             video = get_video_for_update(video_id)
@@ -609,7 +609,7 @@ class DjangoVideoRepository:
 
     def fail_video(self, video_id: int, reason: str) -> tuple[bool, str]:
         from django.db import transaction
-        from apps.support.video.models import Video
+        from apps.domains.video.models import Video
 
         with transaction.atomic():
             video = get_video_for_update(video_id)
@@ -647,7 +647,7 @@ class DjangoVideoRepository:
 
 def job_get_by_id(job_id) -> Optional["VideoTranscodeJob"]:
     """Job 조회 (video, session, lecture 포함)."""
-    from apps.support.video.models import VideoTranscodeJob
+    from apps.domains.video.models import VideoTranscodeJob
     return VideoTranscodeJob.objects.select_related(
         "video", "video__session", "video__session__lecture", "video__session__lecture__tenant"
     ).filter(pk=job_id).first()
@@ -658,7 +658,7 @@ def job_set_running(job_id: str) -> bool:
     Job QUEUED/RETRY_WAIT → RUNNING. Batch 전용 (no lease, no heartbeat, no backlog).
     """
     from django.utils import timezone
-    from apps.support.video.models import VideoTranscodeJob
+    from apps.domains.video.models import VideoTranscodeJob
 
     now = timezone.now()
     n = VideoTranscodeJob.objects.filter(
@@ -683,7 +683,7 @@ def job_heartbeat(job_id, lease_seconds: int = 3600) -> bool:
     """RUNNING Job의 last_heartbeat_at 및 locked_until 갱신."""
     from django.utils import timezone
     from datetime import timedelta
-    from apps.support.video.models import VideoTranscodeJob
+    from apps.domains.video.models import VideoTranscodeJob
 
     now = timezone.now()
     locked_until = now + timedelta(seconds=lease_seconds)
@@ -704,7 +704,7 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
     Idempotent: 이미 SUCCEEDED+READY이면 True 반환 (중복 실행 시 안전).
     """
     from django.db import transaction
-    from apps.support.video.models import Video, VideoTranscodeJob
+    from apps.domains.video.models import Video, VideoTranscodeJob
 
     with transaction.atomic():
         job = VideoTranscodeJob.objects.select_for_update(of=("self",)).select_related("video").filter(pk=job_id).first()
@@ -740,7 +740,7 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
         job.locked_until = None
         job.save(update_fields=["state", "locked_by", "locked_until", "updated_at"])
         try:
-            from apps.support.video.services.video_job_lock import release as lock_release
+            from apps.domains.video.services.video_job_lock import release as lock_release
             lock_release(video.id)
         except Exception:
             pass
@@ -753,7 +753,7 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
         ttl=None,
     )
     try:
-        from apps.support.video.redis_status_cache import delete_video_progress_key
+        from apps.domains.video.redis_status_cache import delete_video_progress_key
         delete_video_progress_key(tenant_id, video.id)
     except Exception:
         pass
@@ -776,7 +776,7 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
     uploaded_by = getattr(video, "uploaded_by", None)
     if not uploaded_by:
         # uploaded_by가 없으면 select로 가져오기 시도
-        from apps.support.video.models import Video
+        from apps.domains.video.models import Video
         v = Video.objects.filter(pk=video.id).select_related("uploaded_by").first()
         uploaded_by = getattr(v, "uploaded_by", None) if v else None
     if not uploaded_by:
@@ -800,9 +800,9 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
     except Exception:
         pass
 
-    from apps.support.messaging.services import enqueue_sms
-    from apps.support.messaging.selectors import get_auto_send_config
-    from apps.support.messaging.alimtalk_content_builders import (
+    from apps.domains.messaging.services import enqueue_sms
+    from apps.domains.messaging.selectors import get_auto_send_config
+    from apps.domains.messaging.alimtalk_content_builders import (
         get_solapi_template_id,
         build_unified_replacements,
     )
@@ -878,7 +878,7 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
                    phone[:4] + "****", uploaded_by.id, video.id)
     else:
         # 예약/지연 발송 → ScheduledNotification에 저장
-        from apps.support.messaging.scheduled import schedule_notification
+        from apps.domains.messaging.scheduled import schedule_notification
         schedule_notification(
             tenant_id=tenant_id,
             trigger=trigger,
@@ -894,7 +894,7 @@ def job_fail_retry(job_id: str, reason: str) -> tuple[bool, str]:
     """Job FAILED + attempt_count++ + state=RETRY_WAIT. Video는 변경 없음. Terminal 상태는 보호."""
     from django.db import transaction
     from django.db.models import F
-    from apps.support.video.models import VideoTranscodeJob
+    from apps.domains.video.models import VideoTranscodeJob
 
     TERMINAL_STATES = {
         VideoTranscodeJob.State.SUCCEEDED,
@@ -925,7 +925,7 @@ def job_fail_retry(job_id: str, reason: str) -> tuple[bool, str]:
 def job_set_cancel_requested(job_id) -> bool:
     """RUNNING Job에 cancel_requested=True 설정 (retry API에서 협력적 취소용)."""
     from django.utils import timezone
-    from apps.support.video.models import VideoTranscodeJob
+    from apps.domains.video.models import VideoTranscodeJob
 
     n = VideoTranscodeJob.objects.filter(
         pk=job_id,
@@ -936,7 +936,7 @@ def job_set_cancel_requested(job_id) -> bool:
 
 def job_is_cancel_requested(job_id) -> bool:
     """Job.cancel_requested 여부."""
-    from apps.support.video.models import VideoTranscodeJob
+    from apps.domains.video.models import VideoTranscodeJob
 
     job = VideoTranscodeJob.objects.filter(pk=job_id).values("cancel_requested").first()
     return bool(job and job.get("cancel_requested"))
@@ -945,7 +945,7 @@ def job_is_cancel_requested(job_id) -> bool:
 def job_cancel(job_id: str) -> bool:
     """Job CANCELLED (재시도 버튼으로 사용자가 취소 요청 시). Terminal 상태는 보호."""
     from django.utils import timezone
-    from apps.support.video.models import VideoTranscodeJob
+    from apps.domains.video.models import VideoTranscodeJob
 
     n = VideoTranscodeJob.objects.filter(
         pk=job_id,
@@ -967,7 +967,7 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
     """Job DEAD. Transactional: Job + Video 원자적 업데이트. Terminal 상태(SUCCEEDED, DEAD, CANCELLED)는 보호."""
     from django.db import transaction
     from django.utils import timezone
-    from apps.support.video.models import Video, VideoTranscodeJob
+    from apps.domains.video.models import Video, VideoTranscodeJob
 
     TERMINAL_STATES = {
         VideoTranscodeJob.State.SUCCEEDED,
@@ -998,12 +998,12 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
             error_reason=err_msg or job.error_message,
         )
     try:
-        from apps.support.video.services.video_job_lock import release as lock_release
+        from apps.domains.video.services.video_job_lock import release as lock_release
         lock_release(job.video_id)
     except Exception:
         pass
     try:
-        from apps.support.video.services.ops_events import emit_ops_event
+        from apps.domains.video.services.ops_events import emit_ops_event
         emit_ops_event(
             "JOB_DEAD",
             severity="ERROR",
@@ -1016,7 +1016,7 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
     except Exception:
         pass
     try:
-        from apps.support.video.redis_status_cache import delete_video_progress_key
+        from apps.domains.video.redis_status_cache import delete_video_progress_key
         delete_video_progress_key(job.tenant_id, job.video_id)
     except Exception:
         pass
@@ -1035,7 +1035,7 @@ def job_mark_dead_if_active(
     """
     from django.db import transaction
     from django.utils import timezone
-    from apps.support.video.models import Video, VideoTranscodeJob
+    from apps.domains.video.models import Video, VideoTranscodeJob
 
     err_msg = str(error_message)[:2000]
     err_code = str(error_code)[:64]
@@ -1065,12 +1065,12 @@ def job_mark_dead_if_active(
         job = VideoTranscodeJob.objects.filter(pk=job_id).first()
         if job:
             try:
-                from apps.support.video.services.video_job_lock import release as lock_release
+                from apps.domains.video.services.video_job_lock import release as lock_release
                 lock_release(job.video_id)
             except Exception:
                 pass
             try:
-                from apps.support.video.services.ops_events import emit_ops_event
+                from apps.domains.video.services.ops_events import emit_ops_event
                 emit_ops_event(
                     "JOB_DEAD",
                     severity="ERROR",
@@ -1083,7 +1083,7 @@ def job_mark_dead_if_active(
             except Exception:
                 pass
             try:
-                from apps.support.video.redis_status_cache import delete_video_progress_key
+                from apps.domains.video.redis_status_cache import delete_video_progress_key
                 delete_video_progress_key(job.tenant_id, job.video_id)
             except Exception:
                 pass
@@ -1092,7 +1092,7 @@ def job_mark_dead_if_active(
 
 def job_count_backlog() -> int:
     """BacklogCount: QUEUED + RETRY_WAIT (RUNNING은 backlog 아님)."""
-    from apps.support.video.models import VideoTranscodeJob
+    from apps.domains.video.models import VideoTranscodeJob
 
     return VideoTranscodeJob.objects.filter(
         state__in=[
@@ -1108,7 +1108,7 @@ def job_compute_backlog_score() -> float:
     CloudWatch Metric 교체용 (TargetTracking).
     """
     from django.db.models import Case, IntegerField, Sum, Value, When
-    from apps.support.video.models import VideoTranscodeJob
+    from apps.domains.video.models import VideoTranscodeJob
 
     score_expr = Case(
         When(state=VideoTranscodeJob.State.QUEUED, then=Value(1)),

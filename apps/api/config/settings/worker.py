@@ -58,8 +58,8 @@ INSTALLED_APPS = [
     "apps.domains.inventory",  # MatchupDocument.inventory_file FK NOT NULL (Storage-Matchup 통합)
     "apps.domains.matchup",  # AI 콜백이 MatchupDocument/MatchupProblem 모델 사용
     "apps.domains.student_app",
-    "apps.support.video",
-    "apps.support.messaging",
+    "apps.domains.video",
+    "apps.domains.messaging",
     "apps.shared",
 ]
 

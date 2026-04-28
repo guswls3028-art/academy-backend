@@ -12,7 +12,7 @@ sys.path.insert(0, base_dir)
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.dev")
 django.setup()
 
-from apps.support.messaging.models import MessageTemplate  # noqa: E402
+from apps.domains.messaging.models import MessageTemplate  # noqa: E402
 
 TENANT_ID = 1
 

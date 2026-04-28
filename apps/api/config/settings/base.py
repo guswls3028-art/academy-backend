@@ -151,8 +151,8 @@ INSTALLED_APPS = [
 
     "apps.billing",
 
-    "apps.support.video",
-    "apps.support.messaging",
+    "apps.domains.video",
+    "apps.domains.messaging",
 
     "rest_framework",
     "rest_framework_simplejwt",

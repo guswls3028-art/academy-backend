@@ -13,8 +13,8 @@ os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings.dev")
 django.setup()
 
 from django.conf import settings  # noqa: E402
-from apps.support.messaging.models import MessageTemplate  # noqa: E402
-from apps.support.messaging.solapi_template_client import (  # noqa: E402
+from apps.domains.messaging.models import MessageTemplate  # noqa: E402
+from apps.domains.messaging.solapi_template_client import (  # noqa: E402
     create_kakao_template,
     validate_template_variables,
 )

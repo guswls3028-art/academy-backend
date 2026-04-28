@@ -43,7 +43,7 @@ from academy.adapters.db.django.repositories_video import (
 from academy.adapters.video.config import load_config
 from academy.adapters.video.processor import process_video
 from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
-from apps.support.video.redis_status_cache import cache_video_status
+from apps.domains.video.redis_status_cache import cache_video_status
 from academy.application.video.handler import CancelledError
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -118,8 +118,8 @@ def verify_connections() -> bool:
 # ── Auto-enqueue ─────────────────────────────────────────────
 def _try_enqueue_next_for_tenant(tenant_id: int) -> None:
     """Job 완료 후 tenant 슬롯이 비었으면 다음 UPLOADED 비디오를 자동 enqueue."""
-    from apps.support.video.models import Video, VideoTranscodeJob
-    from apps.support.video.services.video_encoding import create_job_and_submit_batch
+    from apps.domains.video.models import Video, VideoTranscodeJob
+    from apps.domains.video.services.video_encoding import create_job_and_submit_batch
 
     active_video_ids = VideoTranscodeJob.objects.filter(
         tenant_id=tenant_id,
@@ -156,7 +156,7 @@ def poll_next_job():
     select_for_update(skip_locked=True)로 다중 데몬 인스턴스 안전성 확보.
     """
     from django.db import transaction
-    from apps.support.video.models import VideoTranscodeJob
+    from apps.domains.video.models import VideoTranscodeJob
 
     with transaction.atomic():
         return (
@@ -178,7 +178,7 @@ def poll_next_job():
 # ── Heartbeat ────────────────────────────────────────────────
 def _heartbeat_loop(job_id: str, video_id: int) -> None:
     from django import db as django_db
-    from apps.support.video.services.video_job_lock import extend as lock_extend
+    from apps.domains.video.services.video_job_lock import extend as lock_extend
     from django.conf import settings
     lock_ttl = int(getattr(settings, "VIDEO_JOB_LOCK_TTL_SECONDS", 43200))
     consecutive_failures = 0
@@ -203,7 +203,7 @@ def _heartbeat_loop(job_id: str, video_id: int) -> None:
 
 
 def _video_still_exists(video_id: int) -> bool:
-    from apps.support.video.models import Video
+    from apps.domains.video.models import Video
     return Video.objects.filter(pk=video_id).exists()
 
 

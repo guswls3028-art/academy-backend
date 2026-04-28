@@ -1,0 +1,1296 @@
+# PATH: apps/support/video/views/video_views.py
+
+import logging
+from uuid import uuid4
+from datetime import timedelta
+
+from django.conf import settings
+from django.db import models, transaction
+from django.db.utils import IntegrityError
+from django.utils import timezone
+
+from rest_framework import status
+from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
+from rest_framework.filters import SearchFilter
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.viewsets import ModelViewSet
+from rest_framework.parsers import (
+    JSONParser,
+    MultiPartParser,
+    FormParser,
+)
+from django_filters.rest_framework import DjangoFilterBackend
+
+from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from libs.r2_client.presign import (
+    create_presigned_put_url,
+    create_presigned_get_url,
+    create_multipart_upload,
+    create_presigned_upload_part_url,
+    complete_multipart_upload,
+    abort_multipart_upload,
+)
+from libs.r2_client.client import head_object
+
+
+from apps.core.r2_paths import video_raw_key, video_hls_prefix
+from apps.core.permissions import IsStudent, TenantResolvedAndStaff
+from apps.core.authentication import CsrfExemptSessionAuthentication
+
+from apps.domains.lectures.models import Lecture, Session
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.attendance.models import Attendance
+
+from academy.adapters.db.django import repositories_video as video_repo
+from ..models import (
+    Video,
+    VideoAccess,
+    VideoProgress,
+    VideoPlaybackEvent,
+    VideoFolder,
+)
+from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
+from ..services.video_encoding import create_job_and_submit_batch
+from .playback_mixin import VideoPlaybackMixin
+
+# 로거 설정
+logger = logging.getLogger(__name__)
+
+# ==================================================
+# utils
+# ==================================================
+def _safe_int(v, default=None):
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+
+def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
+    """
+    upload_complete 최소 무결성 검증
+    """
+    if not url:
+        return False, {}, "source_url_missing"
+
+    try:
+        import ffmpeg  # type: ignore
+    except Exception:
+        return False, {}, "ffmpeg_module_missing"
+
+    try:
+        probe = ffmpeg.probe(url)
+    except Exception as e:
+        return False, {}, f"ffprobe_failed:{str(e)[:200]}"
+
+    fmt = probe.get("format") or {}
+    streams = probe.get("streams") or []
+
+    dur_raw = fmt.get("duration")
+    duration = None
+    try:
+        if dur_raw is not None:
+            duration = int(float(dur_raw))
+    except Exception:
+        duration = None
+
+    has_video = any((s.get("codec_type") == "video") for s in streams)
+
+    if not has_video:
+        return False, {"duration": duration, "has_video": False}, "no_video_stream"
+
+    if duration is None:
+        return False, {"duration": None, "has_video": True}, "duration_missing"
+
+    if duration < 0:
+        return False, {"duration": duration, "has_video": True}, "duration_invalid"
+
+    return True, {"duration": duration, "has_video": True}, ""
+
+
+# ==================================================
+# ✅ EC2 자동 시작 로직 제거됨 (SQS 기반 아키텍처로 전환)
+#
+# SQS 기반 아키텍처에서는:
+# - Worker는 ECS/Fargate에서 자동으로 관리됨
+# - 작업이 SQS에 있으면 Worker가 자동으로 처리
+# - EC2 인스턴스 수동 관리 불필요
+# ==================================================
+
+
+# ==================================================
+# ViewSet
+# ==================================================
+class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
+    """
+    Video 관리 + 통계 + 학생 목록
+    """
+
+    serializer_class = VideoSerializer
+
+    parser_classes = [JSONParser]
+
+    authentication_classes = [
+        JWTAuthentication,
+        CsrfExemptSessionAuthentication,
+    ]
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        tenant = getattr(self.request, "tenant", None)
+        if not tenant:
+            from apps.domains.video.models import Video
+            return Video.objects.none()
+        return video_repo.get_video_queryset_with_relations().filter(
+            tenant=tenant
+        )
+
+    # 테넌트 스태프(owner/admin/staff/teacher)만 허용 — Django is_staff 없어도 오너·원장 업로드 가능
+    STAFF_ACTIONS = {
+        "upload_init",
+        "upload_complete",
+        "upload_refresh_url",
+        "upload_multipart_init",
+        "upload_multipart_presign",
+        "upload_multipart_complete",
+        "upload_multipart_abort",
+        "retry",
+        "create",
+        "update",
+        "partial_update",
+        "destroy",
+        "public_session",
+        "delete_folder",
+    }
+    # folders: GET=학생 허용(목록), POST=스태프만(생성)
+    # list/retrieve: 스태프 전용 (학생은 /student/video/* endpoint만 사용해야 함)
+    def get_permissions(self):
+        if self.action == "folders":
+            if getattr(self.request, "method", "").upper() in ("GET", "HEAD"):
+                return [IsAuthenticated()]
+            return [IsAuthenticated(), TenantResolvedAndStaff()]
+        if self.action in self.STAFF_ACTIONS or self.action in ("list", "retrieve"):
+            return [IsAuthenticated(), TenantResolvedAndStaff()]
+        return [IsAuthenticated()]
+
+    filter_backends = [DjangoFilterBackend, SearchFilter]
+    filterset_fields = ["session", "status", "folder"]
+    search_fields = ["title"]
+
+    def perform_destroy(self, instance):
+        """
+        영상 소프트 삭제: 진행 중 Job에 대해 AWS Batch Terminate 호출 → Job DEAD 처리 → soft-delete.
+        R2 스토리지 정리는 6개월 보관 후 purge_deleted_videos 커맨드에서 수행.
+        Terminate 실패해도 삭제 요청은 성공.
+        """
+        video = video_repo.get_video_by_pk_with_relations(instance.pk)
+        video_id = instance.id
+        # Kill ALL active TranscodeJobs for this video (not just current_job).
+        # Soft-delete doesn't trigger CASCADE, so zombie RETRY_WAIT jobs can
+        # block tenant concurrency slots indefinitely.
+        try:
+            from apps.domains.video.models import VideoTranscodeJob
+            from apps.domains.video.services.batch_control import terminate_batch_job
+            from academy.adapters.db.django.repositories_video import job_mark_dead_if_active
+
+            active_jobs = VideoTranscodeJob.objects.filter(
+                video_id=video_id,
+                state__in=[
+                    VideoTranscodeJob.State.QUEUED,
+                    VideoTranscodeJob.State.RUNNING,
+                    VideoTranscodeJob.State.RETRY_WAIT,
+                ],
+            )
+            for cur in active_jobs:
+                aws_batch_job_id = (getattr(cur, "aws_batch_job_id", None) or "").strip()
+                if aws_batch_job_id:
+                    try:
+                        terminate_batch_job(
+                            aws_batch_job_id,
+                            "video_deleted",
+                            video_id=video_id,
+                            job_id=str(cur.id),
+                        )
+                    except Exception as e:
+                        logger.warning("Video delete: Batch terminate failed video_id=%s job_id=%s: %s", video_id, cur.id, e)
+                _, rows = job_mark_dead_if_active(
+                    str(cur.id),
+                    error_code="VIDEO_DELETED",
+                    error_message="Video deleted; job marked DEAD",
+                )
+                if rows:
+                    logger.info("Video delete: DEAD_UPDATED video_id=%s job_id=%s", video_id, cur.id)
+                else:
+                    logger.info("Video delete: DEAD_SKIPPED_ALREADY_TERMINAL video_id=%s job_id=%s", video_id, cur.id)
+        except Exception as e:
+            logger.warning("Video delete: job cleanup failed video_id=%s: %s", video_id, e)
+        # Soft-delete: sets deleted_at, keeps row + R2 files for 6-month retention
+        instance.delete()
+        logger.info("Video soft-deleted: video_id=%s", video_id)
+
+    # ==================================================
+    # upload/init
+    # ==================================================
+    @transaction.atomic
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="upload/init",
+        parser_classes=[JSONParser],
+    )
+    def upload_init(self, request):
+        session_id = request.data.get("session")
+        title = request.data.get("title")
+        filename = request.data.get("filename")
+
+        allow_skip = bool(request.data.get("allow_skip", False))
+        max_speed = float(request.data.get("max_speed", 1.0) or 1.0)
+        show_watermark = bool(request.data.get("show_watermark", True))
+
+        if not session_id or not title or not filename:
+            return Response(
+                {"detail": "session, title, filename required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+        except Session.DoesNotExist:
+            return Response(
+                {"detail": "해당 차시를 찾을 수 없습니다. 페이지를 새로고침한 뒤 다시 시도하세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tenant = session.lecture.tenant
+        request_tenant = getattr(request, "tenant", None)
+        if request_tenant and tenant.id != request_tenant.id:
+            return Response(
+                {"detail": "다른 프로그램의 차시에는 업로드할 수 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        tenant_code = tenant.code
+        tenant_id = tenant.id
+        order = (
+            session.videos.aggregate(max_order=models.Max("order")).get("max_order") or 0
+        ) + 1
+
+        ext = filename.split(".")[-1].lower() if "." in filename else "mp4"
+        key = video_raw_key(
+            tenant_id=tenant_id,
+            session_id=session_id,
+            unique_id=str(uuid4()),
+            ext=ext,
+        )
+
+        # 시스템 강의(공개 영상 컨테이너)인 경우 visibility=PUBLIC 자동 설정
+        is_public = getattr(session.lecture, "is_system", False)
+        # uploaded_by: 업로드한 스태프 (인코딩 완료 알림 대상)
+        uploaded_by_staff = None
+        try:
+            from apps.domains.staffs.models import Staff
+            uploaded_by_staff = Staff.objects.filter(user=request.user, tenant=tenant).first()
+        except Exception:
+            pass
+
+        video = video_repo.create_video(
+            session=session,
+            title=title,
+            file_key=key,
+            order=order,
+            status=Video.Status.PENDING,
+            allow_skip=allow_skip,
+            max_speed=max_speed,
+            show_watermark=show_watermark,
+            visibility=Video.Visibility.PUBLIC if is_public else Video.Visibility.ENROLLED,
+            tenant=tenant,
+            uploaded_by=uploaded_by_staff,
+        )
+
+        content_type = (request.data.get("content_type") or "video/mp4").split(";")[0]
+        upload_url = create_presigned_put_url(key=key, content_type=content_type)
+
+        return Response(
+            {
+                "video": VideoSerializer(video).data,
+                "upload_url": upload_url,
+                "file_key": key,
+                "content_type": content_type,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+    # ==================================================
+    # public_session — 공개 영상 업로드/목록용 세션 (테넌트당 1개)
+    # ==================================================
+    @transaction.atomic
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="public-session",
+        url_name="public-session",
+    )
+    def public_session(self, request):
+        """
+        테넌트당 공개 영상 전용 시스템 Lecture + Session을 get_or_create 하고
+        session_id, lecture_id 를 반환합니다.
+        이 세션에 올린 영상은 visibility=PUBLIC으로 설정되어
+        프로그램(테넌트)에 등록된 모든 학생이 시청 가능합니다.
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "테넌트를 확인할 수 없습니다. X-Tenant-Code 헤더가 필요합니다. 같은 도메인(예: tchul.com)으로 접속했는지 확인하세요."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        lecture = Lecture.get_or_create_system_lecture(tenant)
+        session, _ = Session.objects.get_or_create(
+            lecture=lecture,
+            order=1,
+            defaults={"title": "전체공개영상", "date": None},
+        )
+        return Response(
+            {"session_id": session.id, "lecture_id": lecture.id},
+            status=status.HTTP_200_OK,
+        )
+
+    # ==================================================
+    # upload/refresh-url — 만료된 presigned PUT URL 재발급
+    # ==================================================
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/refresh-url",
+        parser_classes=[JSONParser],
+    )
+    def upload_refresh_url(self, request, pk=None):
+        """
+        R2 PUT용 presigned URL 재발급.
+        대용량 파일 업로드 시 기존 URL 만료 대비.
+        PENDING 상태 영상에서만 허용.
+        """
+        try:
+            video = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if video.status != Video.Status.PENDING:
+            return Response(
+                {"detail": f"URL 재발급은 PENDING 상태에서만 가능합니다. (현재: {video.status})"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if not video.file_key:
+            return Response(
+                {"detail": "파일 키가 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content_type = request.data.get("content_type", "video/mp4").split(";")[0]
+        upload_url = create_presigned_put_url(
+            key=video.file_key,
+            content_type=content_type,
+        )
+
+        return Response({
+            "upload_url": upload_url,
+            "video_id": video.id,
+        })
+
+    # ==================================================
+    # upload/multipart/init — R2 multipart upload 시작
+    # ==================================================
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/multipart/init",
+        parser_classes=[JSONParser],
+    )
+    def upload_multipart_init(self, request, pk=None):
+        """
+        R2 multipart upload 생성.
+        대용량 파일(>100MB)은 multipart로 업로드해야 안정적이며,
+        5GiB 초과 파일은 반드시 multipart 필요 (R2 단일 PUT 한계).
+        """
+        try:
+            video = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if video.status != Video.Status.PENDING:
+            return Response(
+                {"detail": f"PENDING 상태에서만 가능합니다. (현재: {video.status})"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        if not video.file_key:
+            return Response(
+                {"detail": "파일 키가 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        content_type = request.data.get("content_type", "video/mp4").split(";")[0]
+
+        try:
+            upload_id = create_multipart_upload(
+                key=video.file_key,
+                content_type=content_type,
+            )
+        except Exception as e:
+            logger.exception("MULTIPART_INIT_ERROR | video_id=%s | %s", video.id, e)
+            return Response(
+                {"detail": "multipart upload 생성에 실패했습니다."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        return Response({
+            "upload_id": upload_id,
+            "video_id": video.id,
+            "file_key": video.file_key,
+        })
+
+    # ==================================================
+    # upload/multipart/presign — 파트별 presigned URL 발급
+    # ==================================================
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/multipart/presign",
+        parser_classes=[JSONParser],
+    )
+    def upload_multipart_presign(self, request, pk=None):
+        """
+        파트 번호 목록에 대한 presigned URL 일괄 발급.
+        요청: { "upload_id": "...", "part_numbers": [1, 2, 3] }
+        응답: { "urls": { "1": "https://...", "2": "https://...", ... } }
+        """
+        try:
+            video = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if video.status != Video.Status.PENDING:
+            return Response(
+                {"detail": f"PENDING 상태에서만 가능합니다. (현재: {video.status})"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        upload_id = request.data.get("upload_id")
+        part_numbers = request.data.get("part_numbers", [])
+
+        if not upload_id or not part_numbers:
+            return Response(
+                {"detail": "upload_id와 part_numbers 필요"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if len(part_numbers) > 100:
+            return Response(
+                {"detail": "한 번에 최대 100개 파트까지 요청 가능"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            urls = {}
+            for pn in part_numbers:
+                urls[str(pn)] = create_presigned_upload_part_url(
+                    key=video.file_key,
+                    upload_id=upload_id,
+                    part_number=int(pn),
+                )
+            return Response({"urls": urls})
+        except Exception as e:
+            logger.exception("MULTIPART_PRESIGN_ERROR | video_id=%s | %s", video.id, e)
+            return Response(
+                {"detail": "presigned URL 생성에 실패했습니다."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+    # ==================================================
+    # upload/multipart/complete — R2 multipart upload 완료
+    # ==================================================
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/multipart/complete",
+        parser_classes=[JSONParser],
+    )
+    def upload_multipart_complete(self, request, pk=None):
+        """
+        R2 multipart upload 완료.
+        요청: { "upload_id": "...", "parts": [{"ETag": "...", "PartNumber": 1}, ...] }
+        완료 후 기존 upload/complete와 동일한 인코딩 파이프라인 진입.
+        """
+        try:
+            video = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if video.status != Video.Status.PENDING:
+            return Response(
+                {"detail": f"PENDING 상태에서만 가능합니다. (현재: {video.status})"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        upload_id = request.data.get("upload_id")
+        parts = request.data.get("parts", [])
+
+        if not upload_id or not parts:
+            return Response(
+                {"detail": "upload_id와 parts 필요"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            complete_multipart_upload(
+                key=video.file_key,
+                upload_id=upload_id,
+                parts=parts,
+            )
+        except Exception as e:
+            logger.exception("MULTIPART_COMPLETE_ERROR | video_id=%s | %s", video.id, e)
+            # 실패 시 abort 시도
+            abort_multipart_upload(key=video.file_key, upload_id=upload_id)
+            return Response(
+                {"detail": f"multipart 완료 실패: {str(e)[:200]}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        # 성공 — 기존 upload_complete 로직으로 인코딩 파이프라인 진입
+        return self._trigger_upload_complete_pipeline(video)
+
+    # ==================================================
+    # upload/multipart/abort — R2 multipart upload 중단
+    # ==================================================
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/multipart/abort",
+        parser_classes=[JSONParser],
+    )
+    def upload_multipart_abort(self, request, pk=None):
+        """
+        R2 multipart upload 중단 — 불완전 파트 정리.
+        요청: { "upload_id": "..." }
+        """
+        try:
+            video = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        upload_id = request.data.get("upload_id")
+        if not upload_id:
+            return Response(
+                {"detail": "upload_id 필요"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        abort_multipart_upload(key=video.file_key, upload_id=upload_id)
+        logger.info("MULTIPART_ABORTED | video_id=%s | upload_id=%s", video.id, upload_id)
+        return Response({"detail": "aborted"}, status=status.HTTP_200_OK)
+
+    def _trigger_upload_complete_pipeline(self, video):
+        """multipart 완료 후 기존 upload_complete 파이프라인 재사용."""
+        try:
+            with transaction.atomic():
+                return self._upload_complete_impl(video)
+        except Exception as e:
+            logger.exception(
+                "VIDEO_UPLOAD_COMPLETE_ERROR | video_id=%s | type=%s | %s",
+                video.id, type(e).__name__, e,
+            )
+            return Response(
+                {"detail": "업로드 완료 처리 중 오류가 발생했습니다."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+    # ==================================================
+    # upload/complete
+    # ==================================================
+    @transaction.atomic
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="upload/complete",
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+    )
+    def upload_complete(self, request, pk=None):
+        try:
+            video = self.get_object()
+        except Exception as e:
+            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | get_object | %s", e)
+            return Response(
+                {"detail": "영상을 찾을 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not getattr(video, "session", None) or not getattr(video.session, "lecture", None):
+            return Response(
+                {"detail": "영상이 차시/강의에 연결되어 있지 않아 업로드 완료할 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not getattr(video.session.lecture, "tenant", None):
+            return Response(
+                {"detail": "강의의 프로그램(테넌트) 정보가 없어 업로드 완료할 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            return self._upload_complete_impl(video)
+        except Exception as e:
+            logger.exception(
+                "VIDEO_UPLOAD_COMPLETE_ERROR | video_id=%s | type=%s | %s",
+                getattr(video, "id", None),
+                type(e).__name__,
+                e,
+            )
+            return Response(
+                {"detail": "업로드 완료 처리 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+    def _upload_complete_impl(self, video):
+        """upload_complete 실제 처리 (예외 시 호출부에서 503 반환)."""
+        video_id = video.id
+        # [TRACE] upload_complete entry
+        _tenant_id = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
+        logger.info(
+            "VIDEO_UPLOAD_TRACE | upload_complete entry | video_id=%s tenant_id=%s source_path=%s status=%s execution=1_ENTRY",
+            video.id,
+            _tenant_id,
+            video.file_key or "",
+            video.status,
+        )
+
+        if video.status != Video.Status.PENDING:
+            return Response(
+                {"detail": f"Invalid status: {video.status}"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            exists, size = head_object(video.file_key)
+        except Exception as e:
+            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | head_object | video_id=%s | %s", video_id, e)
+            return Response(
+                {"detail": "저장소 확인 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        logger.info(
+            "VIDEO_UPLOAD_TRACE | head_object ok | video_id=%s exists=%s size=%s execution=1b_HEAD_OK",
+            video_id, exists, size,
+        )
+        if not exists or size == 0:
+            video.error_reason = "source_not_found_or_empty"
+            video.save(update_fields=["error_reason"])
+            return Response(
+                {"detail": "S3 object not found"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            src_url = create_presigned_get_url(key=video.file_key, expires_in=600)
+        except Exception as e:
+            logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | create_presigned_get_url | video_id=%s | %s", video_id, e)
+            video.error_reason = f"presigned_get_failed:{str(e)[:200]}"
+            video.save(update_fields=["error_reason"])
+            return Response(
+                {"detail": "presigned_get_failed"},
+                status=status.HTTP_409_CONFLICT,
+            )
+        logger.info("VIDEO_UPLOAD_TRACE | presigned_get ok | video_id=%s execution=1c_PRESIGN_OK", video_id)
+
+        ok, meta, reason = None, {}, ""
+        try:
+            ok, meta, reason = _validate_source_media_via_ffprobe(src_url)
+        except Exception as e:
+            logger.exception(
+                "VIDEO_UPLOAD_COMPLETE_ERROR | ffprobe raised | video_id=%s | %s | FALLBACK: skip validation, enqueue",
+                video_id, e,
+            )
+            ok, meta, reason = False, {"duration": 0}, "ffprobe_exception_fallback"
+
+        # ffprobe 실패 시(ffmpeg_module_missing, ffprobe_failed, ffprobe_exception 등) 반드시 enqueue
+        # duration=None fallback → Encoding worker에서 재검증
+        # 절대 enqueue를 스킵하지 않음 (video.status PENDING 유지 방지)
+        if not ok:
+            duration = _safe_int(meta.get("duration"), None) if meta else None
+            video.duration = duration
+            video.status = Video.Status.UPLOADED
+            video.error_reason = ""
+            video.save(update_fields=["status", "duration", "error_reason"])
+            logger.info(
+                "VIDEO_UPLOAD_TRACE | before enqueue (ffprobe_fail reason=%s duration=%s) | video_id=%s execution=2_BEFORE_ENQUEUE",
+                reason, duration, video_id,
+            )
+            result = create_job_and_submit_batch(video)
+            if not result.job:
+                logger.warning(
+                    "VIDEO_UPLOAD_ENQUEUE_DEFERRED | video_id=%s | reason=%s | reject=%s | "
+                    "video is UPLOADED; will be picked up by reconciliation or manual retry",
+                    video.id, reason, result.reject_reason,
+                )
+            return Response(VideoSerializer(video).data)
+
+        min_dur = _safe_int(getattr(settings, "VIDEO_MIN_DURATION_SECONDS", 3), 3)
+        duration = _safe_int(meta.get("duration"), None)
+
+        if duration is not None and duration < int(min_dur):
+            video.duration = duration
+            video.status = Video.Status.UPLOADED
+            video.error_reason = ""
+            video.save(update_fields=["status", "duration", "error_reason"])
+            _tid = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
+            logger.info(
+                "VIDEO_UPLOAD_TRACE | before enqueue (duration<min branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
+                video.id, _tid, video.file_key or "",
+            )
+            result = create_job_and_submit_batch(video)
+            if not result.job:
+                logger.warning(
+                    "VIDEO_UPLOAD_ENQUEUE_DEFERRED | video_id=%s | reject=%s | "
+                    "video is UPLOADED; will be picked up by reconciliation or manual retry",
+                    video.id, result.reject_reason,
+                )
+            return Response(VideoSerializer(video).data)
+
+        video.duration = duration
+        video.status = Video.Status.UPLOADED
+        video.error_reason = ""
+        video.save(update_fields=["status", "duration", "error_reason"])
+        _tid = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
+        logger.info(
+            "VIDEO_UPLOAD_TRACE | before enqueue (normal branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
+            video.id, _tid, video.file_key or "",
+        )
+        result = create_job_and_submit_batch(video)
+        if not result.job:
+            logger.warning(
+                "VIDEO_UPLOAD_ENQUEUE_DEFERRED | video_id=%s | reject=%s | "
+                "video is UPLOADED; will be picked up by reconciliation or manual retry",
+                video.id, result.reject_reason,
+            )
+        return Response(VideoSerializer(video).data)
+
+    # ==================================================
+    # retry (Job 기반 re-encode)
+    # ==================================================
+    # 새 VideoTranscodeJob 생성 + Video.current_job 교체 + enqueue(job_id).
+    # 기존 RUNNING Job은 cancel_requested 플래그로 협력적 취소.
+    @transaction.atomic
+    @action(detail=True, methods=["post"], url_path="retry")
+    def retry(self, request, pk=None):
+        from academy.adapters.db.django.repositories_video import job_mark_dead, job_set_cancel_requested
+        from apps.domains.video.models import VideoTranscodeJob
+        from apps.domains.video.services.batch_submit import terminate_batch_job
+
+        try:
+            video = Video.objects.select_for_update(of=("self",)).select_related("tenant", "session__lecture__tenant").get(
+                pk=self.get_object().pk
+            )
+        except Video.DoesNotExist:
+            raise ValidationError("해당 영상을 찾을 수 없습니다.")
+
+        if not getattr(video, "session", None) or not getattr(video.session, "lecture", None):
+            raise ValidationError("영상이 차시/강의에 연결되어 있지 않아 재처리할 수 없습니다.")
+        if not getattr(video.session.lecture, "tenant", None):
+            raise ValidationError("강의의 프로그램(테넌트) 정보가 없어 재처리할 수 없습니다.")
+
+        # PENDING + file_key: upload-complete may have failed (network/timeout); retry = re-run upload-complete
+        if video.status == Video.Status.PENDING:
+            if video.file_key:
+                return self._upload_complete_impl(video)
+            raise ValidationError("업로드가 완료되지 않았습니다. 파일을 먼저 업로드해 주세요.")
+
+        try:
+            STALE_QUEUED_THRESHOLD = getattr(
+                settings, "VIDEO_RETRY_STALE_QUEUED_HOURS", 1
+            )
+            STALE_RUNNING_THRESHOLD = getattr(
+                settings, "VIDEO_RETRY_STALE_RUNNING_MINUTES", 30
+            )
+            now = timezone.now()
+            stale_cutoff = now - timedelta(hours=STALE_QUEUED_THRESHOLD)
+            stale_running_cutoff = now - timedelta(minutes=STALE_RUNNING_THRESHOLD)
+
+            cur = None
+            if video.current_job_id:
+                cur = VideoTranscodeJob.objects.filter(pk=video.current_job_id).first()
+                if cur and cur.state == VideoTranscodeJob.State.RUNNING and not getattr(cur, "cancel_requested", False):
+                    # Stale RUNNING detection: if no heartbeat or last activity too old, treat as dead
+                    last_activity = cur.last_heartbeat_at or cur.updated_at
+                    if last_activity < stale_running_cutoff:
+                        logger.warning(
+                            "VIDEO_RETRY_STALE_RUNNING | job_id=%s | video_id=%s | last_activity=%s",
+                            cur.id, video.id, last_activity,
+                        )
+                        terminate_batch_job(str(cur.id), reason="stale_running_superseded")
+                        job_mark_dead(
+                            str(cur.id),
+                            error_code="STALE_RUNNING",
+                            error_message=f"Stale RUNNING job (last activity: {last_activity}), superseded via retry",
+                        )
+                        video.refresh_from_db()
+                        video.current_job_id = None
+                        video.status = Video.Status.UPLOADED
+                        video.save(update_fields=["current_job_id", "status", "updated_at"])
+                    else:
+                        return Response(
+                            {"detail": "Cannot retry: a job is currently RUNNING. Request cancel first or wait for it to finish."},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
+                    has_batch_id = bool((getattr(cur, "aws_batch_job_id", None) or "").strip())
+                    if not has_batch_id:
+                        job_mark_dead(
+                            str(cur.id),
+                            error_code="STALE_NO_BATCH_ID",
+                            error_message="Stale; no aws_batch_job_id (submit failed or lost), re-enqueued via retry",
+                        )
+                        video.refresh_from_db()
+                        video.current_job_id = None
+                        video.status = Video.Status.UPLOADED
+                        video.save(update_fields=["current_job_id", "status", "updated_at"])
+                    elif cur.updated_at >= stale_cutoff:
+                        raise ValidationError("Already in backlog (job queued or retry wait)")
+                    else:
+                        terminate_batch_job(str(cur.id), reason="superseded")
+                        job_mark_dead(
+                            str(cur.id),
+                            error_code="STALE_RETRY",
+                            error_message="Stale; re-enqueued via retry (was QUEUED/RETRY_WAIT too long)",
+                        )
+                        video.refresh_from_db()
+                        video.current_job_id = None
+                        video.status = Video.Status.UPLOADED
+                        video.save(update_fields=["current_job_id", "status", "updated_at"])
+                elif cur and cur.state == VideoTranscodeJob.State.RUNNING:
+                    terminate_batch_job(str(cur.id), reason="superseded")
+                    job_set_cancel_requested(cur.id)
+
+            if video.status not in (Video.Status.READY, Video.Status.FAILED):
+                if video.status not in (Video.Status.UPLOADED, Video.Status.PROCESSING):
+                    raise ValidationError(
+                        f"Cannot retry: status must be READY or FAILED (current: {video.status})"
+                    )
+
+            # Re-enqueue: ensure source object exists so job does not fail later
+            file_key = (video.file_key or "").strip()
+            if not file_key:
+                raise ValidationError(
+                    "업로드된 파일 정보가 없습니다. 삭제 후 다시 업로드해 주세요."
+                )
+            try:
+                exists, size = head_object(file_key)
+            except Exception as e:
+                logger.exception("VIDEO_RETRY_HEAD_OBJECT_ERROR | video_id=%s | %s", video.id, e)
+                raise ValidationError(
+                    "저장소 확인 중 오류가 발생했습니다. 잠시 후 다시 시도하세요."
+                )
+            if not exists or size == 0:
+                video.error_reason = "source_not_found_or_empty"
+                video.save(update_fields=["error_reason"])
+                return Response(
+                    {"detail": "S3 object not found"},
+                    status=status.HTTP_409_CONFLICT,
+                )
+
+            video.status = Video.Status.UPLOADED
+            video.save(update_fields=["status", "updated_at"])
+
+            from apps.domains.video.services.video_encoding import REASON_TENANT_LIMIT, REASON_GLOBAL_LIMIT
+            result = create_job_and_submit_batch(video)
+            if not result.job:
+                if result.reject_reason == REASON_TENANT_LIMIT:
+                    raise ValidationError(
+                        "현재 처리 중인 영상이 많아 대기열이 가득 찼습니다. 처리 완료 후 자동으로 시작되거나, 잠시 후 다시 시도해 주세요."
+                    )
+                if result.reject_reason == REASON_GLOBAL_LIMIT:
+                    raise ValidationError(
+                        "전체 처리 대기열이 가득 찼습니다. 잠시 후 다시 시도해 주세요."
+                    )
+                raise ValidationError(
+                    "비디오 작업 등록 실패. API 서버 AWS Batch 설정을 확인하세요."
+                )
+
+            logger.info(
+                "VIDEO_RETRY_ENQUEUED | job_id=%s | video_id=%s | tenant_id=%s",
+                result.job.id, video.id,
+                getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None),
+            )
+            return Response(
+                {"detail": "Video reprocessing queued (Batch)", "job_id": str(result.job.id)},
+                status=status.HTTP_202_ACCEPTED,
+            )
+        except ValidationError:
+            raise
+        except IntegrityError:
+            existing = VideoTranscodeJob.objects.filter(
+                video=video,
+                state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RUNNING, VideoTranscodeJob.State.RETRY_WAIT],
+            ).first()
+            if existing:
+                return Response(
+                    {"detail": "Job already active for this video", "job_id": str(existing.id)},
+                    status=status.HTTP_200_OK,
+                )
+            raise ValidationError(
+                "재처리 요청 처리 중 충돌이 발생했습니다. 잠시 후 다시 시도해 주세요."
+            )
+        except Exception as e:
+            logger.exception("VIDEO_RETRY_ERROR | video_id=%s | %s", getattr(video, "id", None), e)
+            raise ValidationError(
+                "재처리 요청 처리 중 오류가 발생했습니다. 잠시 후 다시 시도하거나 관리자에게 문의하세요."
+            )
+
+    # ==================================================
+    # stats
+    # ==================================================
+    @action(detail=True, methods=["get"], url_path="stats")
+    def stats(self, request, pk=None):
+        from apps.core.permissions import is_effective_staff
+        if not is_effective_staff(request.user, getattr(request, 'tenant', None)):
+            return Response({"detail": "Staff access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        video = self.get_object()
+        session = video.session
+        lecture = session.lecture if session else None
+
+        if not lecture:
+            return Response(
+                {"video": VideoDetailSerializer(video).data, "students": [], "total_filtered": 0}
+            )
+
+        enrollments = video_repo.get_enrollments_for_lecture_active(lecture)
+
+        progresses = {
+            p.enrollment_id: p
+            for p in video_repo.get_video_progresses_for_video(video)
+        }
+        perms = {
+            p.enrollment_id: p
+            for p in video_repo.get_video_access_for_video(video)
+        }
+        attendance = {
+            a.enrollment_id: a.status
+            for a in video_repo.get_attendance_for_session(session)
+        }
+
+        # ✅ 클리닉 하이라이트 일괄 계산
+        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+        tenant = getattr(request, "tenant", None)
+        highlight_map = compute_clinic_highlight_map(
+            tenant=tenant,
+            enrollment_ids=set(e.id for e in enrollments),
+        ) if tenant else {}
+
+        students = []
+        for e in enrollments:
+            vp = progresses.get(e.id)
+            perm = perms.get(e.id)
+
+            # Use SSOT access resolver
+            from apps.domains.video.services.access_resolver import resolve_access_mode
+            access_mode = resolve_access_mode(video=video, enrollment=e)
+
+            # Legacy rule for backward compatibility
+            rule = perm.rule if perm else "free"
+            effective_rule = rule
+            if rule == "once" and vp and vp.completed:
+                effective_rule = "free"
+
+            lecture = getattr(video.session, "lecture", None) if video.session else None
+
+            # profile_photo_url
+            profile_photo_url = None
+            r2_key = getattr(e.student, "profile_photo_r2_key", None) or ""
+            if r2_key:
+                try:
+                    from django.conf import settings as _settings
+                    from libs.r2_client.presign import create_presigned_get_url
+                    profile_photo_url = create_presigned_get_url(r2_key, expires_in=3600, bucket=_settings.R2_STORAGE_BUCKET)
+                except Exception:
+                    pass
+
+            students.append(
+                {
+                    "enrollment": e.id,
+                    "student_name": e.student.name,
+                    "attendance_status": attendance.get(e.id),
+                    "lecture_title": lecture.title if lecture else None,
+                    "lecture_color": getattr(lecture, "color", None) if lecture else None,
+                    "progress": vp.progress if vp else 0,
+                    "completed": vp.completed if vp else False,
+                    "rule": rule,  # Legacy field
+                    "effective_rule": effective_rule,  # Legacy field
+                    "access_mode": access_mode.value,  # New field
+                    "parent_phone": getattr(e.student, "parent_phone", None),
+                    "student_phone": getattr(e.student, "phone", None),
+                    "school": getattr(e.student, "school", None),
+                    "grade": getattr(e.student, "grade", None),
+                    "profile_photo_url": profile_photo_url,
+                    "name_highlight_clinic_target": highlight_map.get(e.id, False),
+                }
+            )
+
+        return Response(
+            {
+                "video": VideoDetailSerializer(video).data,
+                "students": students,
+                "total_filtered": len(students),
+            }
+        )
+
+    # ==================================================
+    # summary
+    # ==================================================
+    @action(detail=True, methods=["get"], url_path="summary")
+    def summary(self, request, pk=None):
+        video = self.get_object()
+        lecture = video.session.lecture
+
+        range_key = request.query_params.get("range", "7d")
+        now = timezone.now()
+
+        since = None
+        if range_key == "24h":
+            since = now - timedelta(hours=24)
+        elif range_key == "7d":
+            since = now - timedelta(days=7)
+
+        enrollments = video_repo.get_enrollments_for_lecture(lecture)
+        total = enrollments.count()
+
+        progresses = video_repo.get_video_progresses_for_video(video)
+        completed_count = progresses.filter(completed=True).count()
+
+        duration = int(video.duration or 0)
+
+        watched_seconds = 0
+        for p in progresses.iterator():
+            watched_seconds += int(float(p.progress or 0) * duration)
+
+        completion_rate = (completed_count / total) if total else 0.0
+
+        ev_qs = video_repo.get_playback_events_queryset_for_video(video, since=since)
+
+        weights = {
+            "VISIBILITY_HIDDEN": 1,
+            "VISIBILITY_VISIBLE": 0,
+            "FOCUS_LOST": 2,
+            "FOCUS_GAINED": 0,
+            "SEEK_ATTEMPT": 3,
+            "SPEED_CHANGE_ATTEMPT": 3,
+            "FULLSCREEN_ENTER": 0,
+            "FULLSCREEN_EXIT": 0,
+            "PLAYER_ERROR": 1,
+        }
+
+        agg = {}
+        for ev in ev_qs.iterator():
+            eid = ev.enrollment_id
+            if eid not in agg:
+                agg[eid] = {
+                    "enrollment": eid,
+                    "student_name": ev.enrollment.student.name,
+                    "score": 0,
+                }
+
+            score = int(weights.get(ev.event_type, 1))
+            if ev.violated:
+                score *= 2
+            if ev.violation_reason:
+                score += 1
+
+            agg[eid]["score"] += score
+
+        risk_top = sorted(
+            agg.values(),
+            key=lambda x: x["score"],
+            reverse=True,
+        )[:5]
+
+        return Response(
+            {
+                "video_id": video.id,
+                "range": range_key,
+                "total_students": total,
+                "completed_count": completed_count,
+                "completion_rate": completion_rate,
+                "watched_seconds_est": watched_seconds,
+                "risk_top": risk_top,
+            }
+        )
+
+    # ==================================================
+    # student list
+    # ==================================================
+    @action(
+        detail=False,
+        methods=["get"],
+        url_path="student",
+        permission_classes=[IsAuthenticated, IsStudent],
+    )
+    def student_list(self, request):
+        return self._student_list_impl(request)
+
+    # ==================================================
+    # video folders — 공개 영상 폴더 관리
+    # ==================================================
+    @action(
+        detail=False,
+        methods=["get", "post"],
+        url_path="folders",
+    )
+    def folders(self, request):
+        """GET: 폴더 목록 조회. POST: 폴더 생성. (동일 url_path에 메서드별 분기)"""
+        if request.method == "GET":
+            return self._list_folders_impl(request)
+        return self._create_folder_impl(request)
+
+    def _list_folders_impl(self, request):
+        """공개 영상 폴더 목록 조회. session_id(레거시) 또는 tenant 기반."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "Tenant required"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        session_id = request.query_params.get("session_id")
+        if session_id:
+            # 레거시 호환: session_id가 전달되면 해당 세션의 폴더 조회
+            try:
+                session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+            except Session.DoesNotExist:
+                return Response(
+                    {"detail": "Session not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if session.lecture.tenant_id != tenant.id:
+                return Response(
+                    {"detail": "Session not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            folders = VideoFolder.objects.filter(
+                models.Q(session=session) | models.Q(tenant=tenant, session__isnull=True)
+            ).order_by("order", "name")
+        else:
+            # 신규: tenant 기반 폴더 조회
+            folders = VideoFolder.objects.filter(tenant=tenant).order_by("order", "name")
+        return Response(VideoFolderSerializer(folders, many=True).data)
+
+    def _create_folder_impl(self, request):
+        """공개 영상 폴더 생성."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "Tenant required"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        session_id = request.data.get("session_id")
+        name = request.data.get("name")
+        parent_id = request.data.get("parent_id")  # null이면 루트 폴더
+
+        if not name:
+            return Response(
+                {"detail": "name required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        session = None
+        if session_id:
+            try:
+                session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+            except Session.DoesNotExist:
+                return Response(
+                    {"detail": "Session not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if session.lecture.tenant_id != tenant.id:
+                return Response(
+                    {"detail": "Session not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        parent = None
+        if parent_id:
+            try:
+                parent = VideoFolder.objects.get(id=parent_id, tenant=tenant)
+            except VideoFolder.DoesNotExist:
+                return Response(
+                    {"detail": "Parent folder not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        # 같은 이름의 폴더가 이미 있는지 확인
+        if VideoFolder.objects.filter(tenant=tenant, parent=parent, name=name).exists():
+            return Response(
+                {"detail": "Folder with this name already exists"},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        folder = VideoFolder.objects.create(
+            tenant=tenant,
+            session=session,
+            parent=parent,
+            name=name,
+            order=VideoFolder.objects.filter(tenant=tenant, parent=parent).count(),
+        )
+
+        return Response(VideoFolderSerializer(folder).data, status=status.HTTP_201_CREATED)
+
+    @action(
+        detail=False,
+        methods=["delete"],
+        url_path="folders/(?P<folder_id>[^/.]+)",
+    )
+    def delete_folder(self, request, folder_id=None):
+        """공개 영상 폴더 삭제."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response(
+                {"detail": "Tenant required"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        try:
+            folder = VideoFolder.objects.get(
+                id=folder_id,
+                tenant=tenant,
+            )
+        except VideoFolder.DoesNotExist:
+            return Response(
+                {"detail": "Folder not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        
+        # 하위 폴더나 영상이 있는지 확인
+        if folder.children.exists():
+            return Response(
+                {"detail": "Cannot delete folder with subfolders"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if folder.videos.exists():
+            return Response(
+                {"detail": "Cannot delete folder with videos"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        
+        folder.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
