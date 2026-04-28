@@ -15,6 +15,7 @@ urlpatterns = [
     path("documents/<int:doc_id>/cross-matches/", views.DocumentCrossMatchesView.as_view()),
     path("documents/<int:doc_id>/job/", views.DocumentJobView.as_view()),
     path("documents/<int:doc_id>/retry/", views.DocumentRetryView.as_view()),
+    path("documents/<int:doc_id>/hit-report.pdf", views.DocumentHitReportPdfView.as_view()),
 
     # Categories
     path("categories/", views.CategoryListView.as_view()),
