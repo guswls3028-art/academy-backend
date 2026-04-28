@@ -848,6 +848,68 @@ class StudentVideoPlaybackView(APIView):
             "grace_seconds": 3,
         }
 
+        # PROCTORED_CLASS: 서버 측 세션 + token 발급 (PlaybackStartView 인프라 인라인 호출).
+        # 클라가 별도 PlaybackStartView를 호출하지 않아도 세션이 생성되어 만료/revoke 메커니즘이 적용됨.
+        # heartbeat/event 검증은 클라가 token을 사용해서 호출해야 완전히 활성화.
+        playback_token = None
+        playback_session_id = None
+        playback_expires_at = None
+        if is_proctored and enrollment_obj:
+            try:
+                from apps.support.video.services.playback_session import issue_session, init_session_redis
+                from apps.support.video.drm import create_playback_token
+                from apps.support.video.models import VideoPlaybackSession as _PS
+                from django.conf import settings as _settings
+                from django.utils import timezone as _tz
+                ttl = int(getattr(_settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600))
+                ok_s, sess, _err = issue_session(
+                    student_id=enrollment_obj.student_id,
+                    device_id=str(request.headers.get("X-Device-Id") or request.user.id),
+                    ttl_seconds=ttl,
+                    max_sessions=int(getattr(_settings, "VIDEO_MAX_SESSIONS", 9999)),
+                    max_devices=int(getattr(_settings, "VIDEO_MAX_DEVICES", 9999)),
+                )
+                if ok_s and sess:
+                    playback_session_id = sess["session_id"]
+                    expires_ts = int(sess["expires_at"])
+                    playback_expires_at = expires_ts
+                    expires_at_dt = _tz.datetime.fromtimestamp(expires_ts, tz=_tz.utc)
+                    from academy.adapters.db.django import repositories_video as _vr
+                    _vr.playback_session_create(
+                        video=video,
+                        enrollment=enrollment_obj,
+                        session_id=playback_session_id,
+                        device_id=str(request.headers.get("X-Device-Id") or request.user.id),
+                        status=_PS.Status.ACTIVE,
+                        started_at=_tz.now(),
+                        expires_at=expires_at_dt,
+                        last_seen=_tz.now(),
+                        violated_count=0,
+                        total_count=0,
+                        is_revoked=False,
+                    )
+                    init_session_redis(session_id=playback_session_id, ttl_seconds=ttl)
+                    playback_token = create_playback_token(
+                        payload={
+                            "video_id": video.id,
+                            "enrollment_id": enrollment_obj.id,
+                            "session_id": playback_session_id,
+                            "user_id": request.user.id,
+                            "student_id": enrollment_obj.student_id,
+                            "access_mode": "PROCTORED_CLASS",
+                            "monitoring_enabled": True,
+                            "pv": int(getattr(video, "policy_version", 1) or 1),
+                        },
+                        ttl_seconds=ttl,
+                    )
+            except Exception as _e:
+                logger.exception("[StudentVideoPlaybackView] proctored session issue failed: %s", _e)
+                # 세션 발급 실패 시 PROCTORED 영상 시청 차단(데이터 무결성 우선)
+                return Response(
+                    {"detail": "수업 영상 세션 발급에 실패했습니다. 잠시 후 다시 시도해 주세요."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+
         # 좋아요 여부 확인
         is_liked = False
         student = get_request_student(request)
@@ -882,6 +944,9 @@ class StudentVideoPlaybackView(APIView):
             "hls_url": hls_url,
             "mp4_url": mp4_url,
             "play_url": play_url,
+            "playback_token": playback_token,
+            "playback_session_id": playback_session_id,
+            "playback_expires_at": playback_expires_at,
             "policy": {
                 "access_mode": access_mode_value,
                 "monitoring_enabled": is_proctored,

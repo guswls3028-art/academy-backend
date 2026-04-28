@@ -51,4 +51,9 @@ class StudentVideoPlaybackSerializer(serializers.Serializer):
     mp4_url = serializers.CharField(allow_null=True, required=False)
     play_url = serializers.CharField(allow_null=True, required=False)  # ✅ 재생 URL 추가
 
+    # PROCTORED_CLASS일 때만 채워짐. FREE_REVIEW면 모두 null.
+    playback_token = serializers.CharField(allow_null=True, required=False)
+    playback_session_id = serializers.CharField(allow_null=True, required=False)
+    playback_expires_at = serializers.IntegerField(allow_null=True, required=False)
+
     policy = serializers.DictField()
