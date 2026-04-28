@@ -5,8 +5,8 @@ from pathlib import Path
 
 import requests
 
-from apps.worker.video_worker.config import Config
-from apps.worker.video_worker.utils import backoff_sleep, ensure_dir, trim_tail
+from academy.adapters.video.config import Config
+from academy.adapters.video.utils import backoff_sleep, ensure_dir, trim_tail
 
 logger = logging.getLogger("video_worker")
 

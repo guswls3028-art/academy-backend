@@ -8,7 +8,7 @@ from pathlib import Path
 import boto3
 from boto3.s3.transfer import TransferConfig
 
-from apps.worker.video_worker.utils import guess_content_type, cache_control_for_object, trim_tail, backoff_sleep
+from academy.adapters.video.utils import guess_content_type, cache_control_for_object, trim_tail, backoff_sleep
 
 logger = logging.getLogger(__name__)
 

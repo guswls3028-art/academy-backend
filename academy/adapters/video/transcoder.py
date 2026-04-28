@@ -1,5 +1,3 @@
-# PATH: apps/worker/video_worker/video/transcoder.py
-
 from __future__ import annotations
 
 import json
@@ -11,7 +9,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from academy.application.video.handler import CancelledError
-from apps.worker.video_worker.utils import ensure_dir, trim_tail
+from academy.adapters.video.utils import ensure_dir, trim_tail
 import logging
 
 logger = logging.getLogger(__name__)
@@ -418,7 +416,7 @@ def transcode_to_hls(
             assert p.stdout is not None
             assert p.stderr is not None
             if job_id and cancel_event:
-                from apps.worker.video_worker.current_transcode import set_current
+                from academy.adapters.video.current_transcode import set_current
                 set_current(p, job_id, cancel_event)
             try:
                 def read_stdout_progress() -> None:
@@ -497,7 +495,7 @@ def transcode_to_hls(
                     )
             finally:
                 if job_id and cancel_event:
-                    from apps.worker.video_worker.current_transcode import clear_current
+                    from academy.adapters.video.current_transcode import clear_current
                     clear_current()
         except Exception as e:
             if isinstance(e, TranscodeError):
@@ -514,7 +512,7 @@ def transcode_to_hls(
             text=True,
         )
         if job_id and cancel_event:
-            from apps.worker.video_worker.current_transcode import set_current
+            from academy.adapters.video.current_transcode import set_current
             set_current(p, job_id, cancel_event)
         try:
             deadline = time.monotonic() + effective_timeout
@@ -546,7 +544,7 @@ def transcode_to_hls(
             stderr_tail = (p.stderr.read() if p.stderr else "")
         finally:
             if job_id and cancel_event:
-                from apps.worker.video_worker.current_transcode import clear_current
+                from academy.adapters.video.current_transcode import clear_current
                 clear_current()
 
     master = output_root / "master.m3u8"

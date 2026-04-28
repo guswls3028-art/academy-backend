@@ -34,7 +34,7 @@ from academy.adapters.db.django.repositories_video import (
     job_is_cancel_requested,
     job_set_running,
 )
-from apps.worker.video_worker.config import load_config
+from academy.adapters.video.config import load_config
 from academy.adapters.video.processor import process_video
 from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
 from apps.support.video.redis_status_cache import cache_video_status

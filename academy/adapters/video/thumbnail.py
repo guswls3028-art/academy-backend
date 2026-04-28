@@ -3,7 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from apps.worker.video_worker.utils import ensure_dir, trim_tail
+from academy.adapters.video.utils import ensure_dir, trim_tail
 
 
 class ThumbnailError(RuntimeError):

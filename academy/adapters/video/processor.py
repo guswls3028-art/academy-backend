@@ -52,13 +52,13 @@ def process_video(
     Returns:
         (hls_master_path, duration_seconds)
     """
-    from apps.worker.video_worker.download import download_to_file
-    from apps.worker.video_worker.utils import temp_workdir, trim_tail
-    from apps.worker.video_worker.video.duration import probe_duration_seconds
-    from apps.worker.video_worker.video.thumbnail import generate_thumbnail
-    from apps.worker.video_worker.video.transcoder import transcode_to_hls
-    from apps.worker.video_worker.video.validate import validate_hls_output
-    from apps.worker.video_worker.video.r2_uploader import upload_directory
+    from academy.adapters.video.downloader import download_to_file
+    from academy.adapters.video.utils import temp_workdir, trim_tail
+    from academy.adapters.video.duration import probe_duration_seconds
+    from academy.adapters.video.thumbnail import generate_thumbnail
+    from academy.adapters.video.transcoder import transcode_to_hls
+    from academy.adapters.video.validate import validate_hls_output
+    from academy.adapters.video.r2_uploader import upload_directory
     from libs.r2_client.presign import create_presigned_get_url
 
     video_id = int(job.get("video_id"))
@@ -404,7 +404,7 @@ def process_video(
             backoff_base=float(cfg.BACKOFF_BASE_SECONDS),
             backoff_cap=float(cfg.BACKOFF_CAP_SECONDS),
         )
-        from apps.worker.video_worker.video.r2_uploader import (
+        from academy.adapters.video.r2_uploader import (
             publish_tmp_to_final,
             verify_hls_integrity_r2,
             delete_prefix,
