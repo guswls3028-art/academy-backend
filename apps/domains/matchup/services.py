@@ -424,12 +424,15 @@ def _enqueue_manual_problem_index(problem: MatchupProblem) -> None:
     if not problem.image_key:
         return
 
+    # paste 이미지(클립보드/외부 캡처)는 카메라 사진 가능성 → OCR 전처리 적용 플래그.
+    is_paste = bool((problem.meta or {}).get("paste"))
     result = dispatch_job(
         job_type="matchup_manual_index",
         payload={
             "problem_id": problem.id,
             "tenant_id": str(problem.tenant_id),
             "image_key": problem.image_key,
+            "is_camera_capture": is_paste,
         },
         tenant_id=str(problem.tenant_id),
         source_domain="matchup_manual",
