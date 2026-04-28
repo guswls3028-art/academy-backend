@@ -53,6 +53,59 @@ _NOISE_PATTERNS = [
 ]
 
 
+# 페이지 워터마크/푸터/단원헤더 — q['text'] (display + embedding) 양쪽 정제용.
+#
+# 운영 케이스 (Tenant 2 학습자료 13개 doc, 누적 ~437건 problem):
+# 페이지 푸터/워터마크가 본문 박스 안에 prepend되어 problem.text에 그대로 들어옴.
+# is_non_question_page는 페이지 SKIP만 결정하지 페이지 내 박스 텍스트 정제는 안 함.
+#
+# - 신민 TWORKBOOK / 신민T (Runner's High 학원 워터마크)
+# - Runner's High with God min (디자인 푸터)
+# - GOD MIN (배지)
+# - Step N. 개념완성 / 내신완성 / 수능완성 (학습자료 단원헤더)
+# - CHAPTER NN 헤더 (학습자료 챕터)
+# - lorem ipsum 라틴 placeholder (디자인 표지의 잔류 텍스트가 본문 박스에 spillover)
+_PAGE_NOISE_PATTERNS = [
+    # 신민 TWORKBOOK 워터마크 (운영 doc#123/144/126/145 등 50건/문서)
+    re.compile(r"신\s*민\s*T?WORKBOOK", re.IGNORECASE),
+    re.compile(r"\bTWORKBOOK\b", re.IGNORECASE),
+    # Runner's High / GOD MIN 푸터
+    re.compile(r"Runner['’`]?\s*[sS5]?\s*high\s*with\s*[Gg]od\s*[Mm]in", re.IGNORECASE),
+    re.compile(r"Runner['’`]?\s*[sS5]?\s*high", re.IGNORECASE),
+    re.compile(r"\bGOD\s*MIN\b", re.IGNORECASE),
+    # 단원 헤더 — Step 1. 개념완성 / Step 2. 내신완성 / Step 3. 수능완성
+    re.compile(r"Step\s*\d\s*\.\s*(?:개념|내신|수능)\s*완\s*성"),
+    # CHAPTER NN 챕터 헤더 (행 단위, 학습자료)
+    re.compile(r"^\s*\d{0,2}\s*CHAPTER\s+\d{1,2}[^\n]{0,40}$", re.MULTILINE),
+    # 라틴 lorem ipsum 잔재 (디자인 표지 spillover)
+    re.compile(
+        r"(?:adipiscing|consectetuer|laoreet|tincidunt|euismod|"
+        r"volutpat|nonummy|aliquam|nibh\s+euismod)[^\s,.\n]*",
+        re.IGNORECASE,
+    ),
+]
+
+
+def strip_page_noise(text: str) -> str:
+    """페이지 푸터/워터마크/단원헤더를 problem 텍스트에서 제거.
+
+    임베딩과 사용자 표시 양쪽에 적용. 매치업 sim에서 동일 prefix가
+    false sim 상승으로 작용하던 문제와 어드민 화면에서 problem 텍스트에
+    "신민 TWORKBOOK Runner's High..." 노이즈가 prepend되던 결함 동시 해소.
+    """
+    if not text:
+        return ""
+    cleaned = text
+    for pat in _PAGE_NOISE_PATTERNS:
+        cleaned = pat.sub("", cleaned)
+    # 정제 후 잔여 공백/개행 정리 — 라인이 비면 제거.
+    lines = [ln.rstrip() for ln in cleaned.split("\n")]
+    lines = [ln for ln in lines if ln.strip()]
+    cleaned = "\n".join(lines)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    return cleaned.strip()
+
+
 def detect_format(text: str) -> str:
     """문제 텍스트에서 format 감지. 'essay' (서답/논술/단답형) 또는 'choice' (객관식)."""
     if not text:
@@ -118,14 +171,32 @@ def run_matchup_pipeline(
     # 문항으로 오인한 over-extraction. 페이지 단위 인덱싱으로 폴백 →
     # 자료 매칭은 페이지 단위로 충분, 노이즈 제거 우선.
     upload_intent = (payload.get("upload_intent") or "").lower()
+    doc_title = ""
     if not upload_intent and document_id:
         try:
             from apps.domains.matchup.models import MatchupDocument
-            doc = MatchupDocument.objects.only("meta").get(id=int(document_id))
+            doc = MatchupDocument.objects.only("meta", "title").get(id=int(document_id))
             meta = doc.meta or {}
             upload_intent = (meta.get("upload_intent") or meta.get("document_role") or "").lower()
+            doc_title = doc.title or ""
         except Exception as e:
             logger.warning("MATCHUP_INTENT_LOOKUP_FAIL | doc=%s | err=%s", document_id, e)
+
+    # 명시적 intent 미설정 시 doc.title 키워드로 자동 추정.
+    # 운영 T2 28 doc 중 27개가 intent=NONE. 메타 미설정이라 페이지 폴백 트리거 자체가
+    # 학습자료/시험지 구분 없이 일률적으로 적용되던 결함을 해소.
+    if not upload_intent and doc_title:
+        title_l = doc_title
+        if any(k in title_l for k in (
+            "시험지", "중간고사", "기말고사", "모의고사", "TEST", "Test",
+            "기출 통과", "고난도",
+        )):
+            upload_intent = "exam_sheet"
+        elif any(k in title_l for k in (
+            "메인자료", "메인 자료", "복습과제", "복습 과제", "객서심화", "객서 심화",
+            "객·서", "개념완성", "문항편", "WORKBOOK",
+        )):
+            upload_intent = "reference"
 
     # 명시적 시험지(test/exam_sheet)가 아니면 학습자료 의심 — views.py의 default도 'reference'.
     # 시험지는 사용자가 명확히 의도해 업로드해야 하고, 미설정은 학습자료로 간주해 폴백 검토.
@@ -421,6 +492,43 @@ def _extract_texts(questions: List[Dict], job_id: str) -> None:
         else:
             q["text"] = ""
 
+    # 페이지 노이즈(워터마크/푸터/단원헤더) 정제 — display + embedding 양쪽 적용.
+    for q in questions:
+        if q.get("text"):
+            q["text"] = strip_page_noise(q["text"])
+
+    # box-merge 의심 표시 — 한 problem 텍스트에 다른 anchor가 추가로 들어있으면
+    # 인접 문항이 OCR 블록 단위로 합쳐졌다는 신호. UI에서 매뉴얼 검수 권장 배지.
+    # 운영 케이스 (Tenant 2 doc#131): q4 = "13. 표는... 15. 그림은..." 두 문항 합침.
+    _flag_merge_suspect(questions)
+
+
+_MERGE_INNER_ANCHOR = re.compile(
+    r"(?:^|\n)\s*(\d{1,2})\s*[.)]\s*(?=[가-힣A-Za-z(<\[])",
+)
+
+
+def _flag_merge_suspect(questions: List[Dict]) -> None:
+    """한 problem 텍스트에 추가 anchor가 들어있으면 box-merge 의심.
+
+    문항 시작 anchor 1개 외에 다른 N. 패턴이 본문 안에 추가로 등장하면
+    인접 문항이 박스 분리 실패로 한 problem에 합쳐진 케이스. 매치업 화면에서
+    매뉴얼 크롭/Ctrl+V paste 권장 배지를 띄우기 위해 meta에 표시.
+
+    threshold: 추가 anchor 1+ AND text 길이 800자 이상. 짧은 문항에 본문 인용
+    "1. 조건은..." 같은 false positive 차단.
+    """
+    for q in questions:
+        text = q.get("text") or ""
+        if len(text) < 800:
+            continue
+        # 첫 30자 이후의 anchor만 카운트 (자기 자신 anchor 제외)
+        scan_text = text[30:] if len(text) > 30 else ""
+        anchors = _MERGE_INNER_ANCHOR.findall(scan_text)
+        if len(anchors) >= 1:
+            q.setdefault("meta_extra", {})["merge_suspect"] = True
+            q["meta_extra"]["merge_inner_anchors"] = len(anchors)
+
 
 def _load_ocr_blocks_backend():
     """google_ocr_blocks를 반환. 임포트 실패 시 None."""
@@ -471,6 +579,13 @@ def _extract_texts_legacy(questions: List[Dict], job_id: str) -> None:
         if not q.get("text") and questions:
             pi = q.get("page_index", 0)
             q["text"] = page_texts.get(pi, "")
+
+    # 페이지 노이즈 정제 — strip_page_noise (display + embedding 양쪽).
+    for q in questions:
+        if q.get("text"):
+            q["text"] = strip_page_noise(q["text"])
+
+    _flag_merge_suspect(questions)
 
 
 def _extract_text_for_question(full_text: str, q_number: int, total: int) -> str:
