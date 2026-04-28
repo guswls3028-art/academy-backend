@@ -35,14 +35,19 @@ logger = logging.getLogger(__name__)
 # 색상 — 학원 브랜드 톤
 _HEADER_COLOR = "#0F172A"  # slate-900
 _ACCENT_COLOR = "#2563EB"  # blue-600
-_HIT_COLOR = "#16A34A"     # green-600
+_HIT_COLOR = "#16A34A"     # green-600 (직접 적중)
+_TYPE_COLOR = "#0891B2"    # cyan-600 (유형 적중)
+_CONCEPT_COLOR = "#7C3AED" # violet-600 (개념 커버)
 _MISS_COLOR = "#94A3B8"    # slate-400
 _BG_SUBTLE = "#F8FAFC"     # slate-50
 
-# 적중 임계값 — 이 값 이상이면 "적중"으로 카운트
-_HIT_THRESHOLD = 0.85
-# 매치 자체 표시 임계값 — 이 값 미만이면 "유사 자료 없음"
-_DISPLAY_THRESHOLD = 0.70
+# 매칭 분류 임계값 — GPT의 "직접/유형/개념/불일치" 분류 적용.
+# 카메라 사진 vs 컴퓨터 PDF는 OCR 차이로 sim이 0.7~0.85에 다수 분포 →
+# "직접만 적중"으로 묶으면 실제 적중을 놓침. 3단계로 정직하게 표시.
+_DIRECT_HIT = 0.85   # 직접 적중 — 거의 같은 문제 (변형 포함)
+_TYPE_HIT = 0.75     # 유형 적중 — 풀이 구조 유사
+_CONCEPT_HIT = 0.60  # 개념 커버 — 같은 단원/개념
+# < 0.60: 유사 자료 없음 (불일치)
 
 
 def _ensure_korean_font() -> Tuple[str, str]:
@@ -120,8 +125,19 @@ def _download_image_to_pil(url: str, max_dim: int = 1200):
         return None
 
 
+def _classify_match(sim: float) -> str:
+    """sim → 분류 ('direct' / 'type' / 'concept' / 'miss')."""
+    if sim >= _DIRECT_HIT:
+        return "direct"
+    if sim >= _TYPE_HIT:
+        return "type"
+    if sim >= _CONCEPT_HIT:
+        return "concept"
+    return "miss"
+
+
 def generate_matchup_hit_report_pdf(
-    document, *, hit_threshold: float = _HIT_THRESHOLD,
+    document, *, hit_threshold: float = _DIRECT_HIT,
 ) -> bytes:
     """시험지 doc 기준 적중률 PDF 생성.
 
@@ -141,6 +157,7 @@ def generate_matchup_hit_report_pdf(
     from apps.domains.matchup.models import MatchupProblem
     from apps.domains.matchup.services import find_similar_problems
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+    from apps.shared.utils.vector import cosine_similarity
 
     fn_reg, fn_bold = _ensure_korean_font()
 
@@ -149,7 +166,10 @@ def generate_matchup_hit_report_pdf(
         document.problems.exclude(image_key="").order_by("number")
     )
 
-    # 각 problem 매치 결과 미리 계산
+    # 각 problem 매치 결과 미리 계산.
+    # find_similar_problems의 score는 휴리스틱 가중치(format/length/cross_doc) 포함되어
+    # 정렬용으로는 좋지만 보고서 표시 sim으로는 인플레이션됨. top1 선정은 그 score로
+    # 하고, 표시 sim은 raw cosine similarity로 별도 계산하여 정직하게 보여줌.
     matches: List[Tuple[MatchupProblem, Optional[MatchupProblem], float]] = []
     for p in problems:
         try:
@@ -159,18 +179,49 @@ def generate_matchup_hit_report_pdf(
         except Exception:
             sim_results = []
         if sim_results:
-            best_problem, best_score = sim_results[0]
-            matches.append((p, best_problem, float(best_score)))
+            best_problem, _heuristic_score = sim_results[0]
+            # 표시용 raw cosine sim — text emb (+ image emb ensemble) 직접 계산.
+            # 페이지 폴백 candidate (bbox=null)는 페이지 통째 텍스트로 sim 부풀림 →
+            # 0.05 패널티로 정직한 적중 분류.
+            try:
+                if p.embedding and best_problem.embedding:
+                    raw_text_sim = float(cosine_similarity(p.embedding, best_problem.embedding))
+                else:
+                    raw_text_sim = 0.0
+                if p.image_embedding and best_problem.image_embedding:
+                    raw_img_sim = float(cosine_similarity(p.image_embedding, best_problem.image_embedding))
+                    src_len = len((p.text or "").strip())
+                    img_w = 0.5 if src_len < 60 else (0.3 if src_len < 200 else 0.15)
+                    display_sim = (1 - img_w) * raw_text_sim + img_w * raw_img_sim
+                else:
+                    display_sim = raw_text_sim
+                # 페이지 폴백 패널티 (bbox=null 후보) — services.py와 동일 기준.
+                # -0.15 + ceiling 0.84로 페이지 통째 텍스트 false positive 차단.
+                cand_meta = best_problem.meta or {}
+                if cand_meta.get("bbox") is None:
+                    display_sim = min(0.84, display_sim - 0.15)
+                    display_sim = max(0.0, display_sim)
+            except Exception:
+                display_sim = float(_heuristic_score)
+            matches.append((p, best_problem, display_sim))
         else:
             matches.append((p, None, 0.0))
 
-    # 적중 통계
+    # 적중 통계 — 3단계 분류
     total = len(matches)
-    hits = sum(1 for _, m, s in matches if m is not None and s >= hit_threshold)
+    direct_hits = sum(1 for _, m, s in matches if m is not None and s >= _DIRECT_HIT)
+    type_hits = sum(1 for _, m, s in matches if m is not None and _TYPE_HIT <= s < _DIRECT_HIT)
+    concept_hits = sum(1 for _, m, s in matches if m is not None and _CONCEPT_HIT <= s < _TYPE_HIT)
+    misses = total - direct_hits - type_hits - concept_hits
+    # 호환성: hit_threshold 인자는 직접 적중만 카운트
+    hits = direct_hits
     avg_sim = (
         sum(s for _, _, s in matches) / total
         if total else 0.0
     )
+    # 직접 + 유형 = 진짜 적중 (학원 마케팅 정직성)
+    real_hit_count = direct_hits + type_hits
+    real_hit_pct = (real_hit_count / total * 100) if total else 0.0
 
     buf = io.BytesIO()
     c = canvas.Canvas(buf, pagesize=portrait(A4))
@@ -203,43 +254,60 @@ def generate_matchup_hit_report_pdf(
     c.setFillColor(HexColor("#475569"))  # slate-600
     c.drawCentredString(page_w / 2, y, f"발행일 {issued_at}")
 
-    # 적중 통계 박스
+    # 적중 통계 박스 — 3단계 분류
     y -= 25 * mm
     box_x = margin + 10 * mm
     box_w = inner_w - 20 * mm
-    box_h = 50 * mm
+    box_h = 70 * mm
     c.setFillColor(HexColor(_BG_SUBTLE))
     c.roundRect(box_x, y - box_h, box_w, box_h, 6, fill=1, stroke=0)
 
-    # 적중 수치
-    hit_pct = (hits / total * 100) if total else 0.0
-    c.setFont(fn_bold, 36)
-    c.setFillColor(HexColor(_HIT_COLOR if hit_pct >= 50 else _ACCENT_COLOR))
-    c.drawCentredString(page_w / 2, y - 22 * mm, f"{hits} / {total} 적중")
-    c.setFont(fn_reg, 12)
+    # 메인 적중 수치 — 직접 + 유형 합산
+    c.setFont(fn_bold, 30)
+    c.setFillColor(HexColor(_HIT_COLOR if real_hit_pct >= 50 else _ACCENT_COLOR))
+    c.drawCentredString(page_w / 2, y - 18 * mm, f"{real_hit_count} / {total} 적중")
+    c.setFont(fn_reg, 11)
     c.setFillColor(HexColor("#475569"))
     c.drawCentredString(
-        page_w / 2, y - 32 * mm,
-        f"적중률 {hit_pct:.1f}%   ·   평균 유사도 {avg_sim*100:.1f}%   ·   기준 {hit_threshold*100:.0f}%+",
-    )
-    c.drawCentredString(
-        page_w / 2, y - 42 * mm,
-        "유사도 85%+ = 사실상 같은 문제 (변형 포함)",
+        page_w / 2, y - 26 * mm,
+        f"실전 대비 반영률 {real_hit_pct:.1f}%   ·   평균 유사도 {avg_sim*100:.1f}%",
     )
 
+    # 3단계 breakdown
+    bd_y = y - 40 * mm
+    col_w = box_w / 4
+    items = [
+        ("직접 적중", direct_hits, _HIT_COLOR, "거의 같은 문제"),
+        ("유형 적중", type_hits, _TYPE_COLOR, "풀이 구조 동일"),
+        ("개념 커버", concept_hits, _CONCEPT_COLOR, "같은 단원/개념"),
+        ("관련성 낮음", misses, _MISS_COLOR, "유사 자료 없음"),
+    ]
+    for i, (lbl, n, col, desc) in enumerate(items):
+        cx = box_x + col_w * (i + 0.5)
+        c.setFont(fn_bold, 18)
+        c.setFillColor(HexColor(col))
+        c.drawCentredString(cx, bd_y, str(n))
+        c.setFont(fn_bold, 9)
+        c.setFillColor(HexColor("#334155"))
+        c.drawCentredString(cx, bd_y - 6 * mm, lbl)
+        c.setFont(fn_reg, 8)
+        c.setFillColor(HexColor("#64748B"))
+        c.drawCentredString(cx, bd_y - 11 * mm, desc)
+
     # 안내 문구
-    y -= box_h + 20 * mm
-    c.setFont(fn_reg, 10)
-    c.setFillColor(HexColor("#64748B"))  # slate-500
+    y -= box_h + 12 * mm
+    c.setFont(fn_reg, 9.5)
+    c.setFillColor(HexColor("#64748B"))
     notes = [
-        "· 본 보고서는 우리 학원에서 학생에게 미리 제공한 학습자료가 실제 시험에 ",
+        "· 본 보고서는 우리 학원에서 학생에게 미리 제공한 학습자료가 실제 시험에",
         "  얼마나 적중했는지를 자동으로 분석한 결과입니다.",
-        "· 각 문항은 좌측(실제 시험)과 우측(우리 자료)으로 비교됩니다.",
-        "· 유사도 85% 이상 = 사실상 같은 문제 (단어 한두 개만 다른 변형 포함).",
+        "· 직접 적중(85%+) = 사실상 같은 문제 (단어 한두 개만 다른 변형 포함)",
+        "· 유형 적중(75~85%) = 풀이 구조가 동일하거나 매우 유사한 문제",
+        "· 개념 커버(60~75%) = 같은 단원/개념을 다루는 문제",
     ]
     for line in notes:
         c.drawString(box_x, y, line)
-        y -= 6 * mm
+        y -= 5.5 * mm
 
     # 푸터
     c.setFont(fn_reg, 9)
@@ -256,18 +324,21 @@ def generate_matchup_hit_report_pdf(
         c.setFillColor(white)
         c.setFont(fn_bold, 14)
         c.drawString(margin, page_h - 12 * mm, f"Q{src.number}")
-        # sim 라벨
-        is_hit = mat is not None and sim >= hit_threshold
-        is_miss = mat is None or sim < _DISPLAY_THRESHOLD
-        if is_hit:
-            label = f"적중  ·  유사도 {sim*100:.1f}%"
+        # sim 라벨 — 3단계 분류
+        cls = _classify_match(sim) if mat is not None else "miss"
+        if cls == "direct":
+            label = f"직접 적중  ·  {sim*100:.1f}%"
             label_color = HexColor(_HIT_COLOR)
-        elif is_miss:
+        elif cls == "type":
+            label = f"유형 적중  ·  {sim*100:.1f}%"
+            label_color = HexColor(_TYPE_COLOR)
+        elif cls == "concept":
+            label = f"개념 커버  ·  {sim*100:.1f}%"
+            label_color = HexColor(_CONCEPT_COLOR)
+        else:
             label = "유사 자료 없음"
             label_color = HexColor(_MISS_COLOR)
-        else:
-            label = f"부분 유사  ·  유사도 {sim*100:.1f}%"
-            label_color = HexColor(_ACCENT_COLOR)
+        is_miss = cls == "miss"
         c.setFont(fn_bold, 12)
         c.setFillColor(label_color)
         c.drawRightString(page_w - margin, page_h - 12 * mm, label)
@@ -327,8 +398,8 @@ def generate_matchup_hit_report_pdf(
             src_url, _HEADER_COLOR,
         )
 
-        # 우: 매치된 자료
-        if mat is not None and sim >= _DISPLAY_THRESHOLD:
+        # 우: 매치된 자료 (개념 커버 이상이면 표시)
+        if mat is not None and sim >= _CONCEPT_HIT:
             mat_doc_title = ""
             try:
                 mat_doc_title = (mat.document.title or "")[:50] if mat.document_id else ""
@@ -343,10 +414,14 @@ def generate_matchup_hit_report_pdf(
                 except Exception:
                     mat_url = ""
             sub = (mat_doc_title or "학원 자료") + f"  ·  {mat.number}번"
+            col_color = {
+                "direct": _HIT_COLOR,
+                "type": _TYPE_COLOR,
+                "concept": _CONCEPT_COLOR,
+            }.get(cls, _ACCENT_COLOR)
             _draw_column(
                 margin + col_w + col_gap, "우리 자료",
-                sub, mat_url,
-                _HIT_COLOR if is_hit else _ACCENT_COLOR,
+                sub, mat_url, col_color,
             )
         else:
             # 유사 자료 없음 — 우측 박스만 그리고 "유사 자료 없음" 안내

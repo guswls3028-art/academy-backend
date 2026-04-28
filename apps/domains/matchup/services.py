@@ -130,6 +130,8 @@ def find_similar_problems(
     src_doc_id = source.document_id
 
     # 1차: bi-encoder + 가벼운 휴리스틱 + 이미지 ensemble
+    # 페이지 폴백 candidate는 텍스트 전체 페이지라 sim이 부풀려져 false positive
+    # 다수 → 패널티 적용. (bbox=null인 problem이 페이지 폴백 결과)
     scored = []
     for c in candidates:
         if not c.embedding:
@@ -145,6 +147,18 @@ def find_similar_problems(
             sim = _txt_w * text_sim + _img_w * img_sim
         else:
             sim = text_sim
+
+        # 페이지 폴백 candidate 패널티 — bbox 없는 problem (페이지 단위 인덱싱)은
+        # 페이지 통째 텍스트라 sim 인플레이션. 운영 측정 (doc#148/q1):
+        #   - doc#143/q8 (페이지폴백, "측정 표준") raw sim 0.89
+        #   - doc#147/q1 (정상분리, 진짜 같은 문제 "자연 세계 규모") raw sim 0.76
+        # → 패널티 -0.15 + sim ceiling 0.84 적용으로 페이지 폴백 false positive를
+        # 직접 적중에서 강제 다운그레이드. 정상 분리 후보가 top1이 되도록.
+        c_meta = c.meta or {}
+        c_is_page_fallback = c_meta.get("bbox") is None
+        if c_is_page_fallback:
+            sim = min(0.84, sim - 0.15)
+            sim = max(0.0, sim)
 
         fmt_match = 1.0 if _format_of(c) == src_format else 0.0
         len_score = _length_score(src_len, len(c.text or ""))

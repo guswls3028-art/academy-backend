@@ -203,17 +203,18 @@ def run_matchup_pipeline(
     is_reference = upload_intent not in ("test", "exam_sheet")
     page_count = len(pages)
     avg_per_page = total_boxes / max(1, page_count)
-    # 학습자료 over-extraction 휴리스틱:
-    #   1) anchor 절대값 50+ (운영 실측: 시험지 30 미만, 학습자료 50~280)
-    #   2) 또는 anchor 30+ AND avg≥4 (압축된 시험지 layout 대비)
-    # 운영 T2 실측 (Phase 1 적용 후):
-    #   - 시험지 doc#127/140/146/147: 16~25 (폴백 안 됨)
-    #   - 모의고사 doc#138/137/...: 20 (폴백 안 됨)
-    #   - 학습자료 doc#143/144/145: 133/184/193 (폴백 ✓)
-    #   - 학습자료 doc#120: 143 (폴백 ✓)
+    # 학습자료 over-extraction 휴리스틱 — 페이지 폴백 (페이지=problem) 트리거.
+    # 운영 사용자 보고 (2026-04-28): doc#130 페이지에 44/45/46 문항이 명확히 분리
+    # 되어 있는데도 폴백되어 페이지 통째 problem이 됨. 임계값 50 → 70로 강화하여
+    # 일부 학습자료 (anchor 50~70)가 정상 anchor 분리로 복귀.
+    # 운영 T2 실측:
+    #   - 시험지 doc#127/140/146/147: 16~25 (폴백 안 됨, 변동 없음)
+    #   - 모의고사 doc#134~142: 16~22 (폴백 안 됨, 변동 없음)
+    #   - 학습자료 doc#143/144/145: 80+ anchor (over-extraction, 폴백 유지)
+    #   - 학습자료 doc#120/123/130/131/132/133: 50~70 (이전 폴백 → 이제 anchor 분리 복귀)
     is_over_extracted = is_reference and (
-        total_boxes >= 50
-        or (total_boxes >= 30 and avg_per_page >= 4)
+        total_boxes >= 70
+        or (total_boxes >= 40 and avg_per_page >= 5)
     )
 
     if total_boxes == 0:
