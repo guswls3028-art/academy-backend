@@ -497,15 +497,50 @@ def _extract_texts(questions: List[Dict], job_id: str) -> None:
         if q.get("text"):
             q["text"] = strip_page_noise(q["text"])
 
-    # box-merge 의심 표시 — 한 problem 텍스트에 다른 anchor가 추가로 들어있으면
-    # 인접 문항이 OCR 블록 단위로 합쳐졌다는 신호. UI에서 매뉴얼 검수 권장 배지.
-    # 운영 케이스 (Tenant 2 doc#131): q4 = "13. 표는... 15. 그림은..." 두 문항 합침.
+    # box-merge text trim — 한 problem 텍스트에 추가 anchor 발견 시 그 위치 이전까지로 trim.
+    # 운영 케이스 (Tenant 2 doc#131 q4): "13. 표는... 15. 그림은..." 두 문항 합쳐짐.
+    _trim_box_merged_text(questions)
+
+    # 정제 후에도 잔존하는 box-merge 케이스에 검수 배지 표시 (UI 가이드).
     _flag_merge_suspect(questions)
 
 
 _MERGE_INNER_ANCHOR = re.compile(
     r"(?:^|\n)\s*(\d{1,2})\s*[.)]\s*(?=[가-힣A-Za-z(<\[])",
 )
+
+
+def _trim_box_merged_text(questions: List[Dict]) -> None:
+    """한 problem 텍스트에 추가 anchor 발견 시 그 위치 이전까지로 trim.
+
+    운영 케이스 (Tenant 2 doc#131 q4): "13. 표는... 15. 그림은..." 두 anchor가
+    한 박스에 OCR 단계에서 합쳐져 problem 텍스트가 두 문항을 동시에 포함.
+    임베딩이 두 문항 의미가 섞여 매치업 sim 노이즈로 작용.
+
+    fix: q.text의 첫 anchor 자기 자신을 건너뛴 뒤, 추가 anchor 발견 시 그
+    위치 이전까지로 trim. 두 번째 anchor 이후 텍스트는 다른 problem이므로
+    제거하면 임베딩이 깨끗해진다. 이미지(R2)는 그대로라 사용자 표시는 영향 없음.
+    """
+    for q in questions:
+        text = q.get("text") or ""
+        # bbox 있는 문항(박스 분리 정상)에만 적용. 페이지 폴백 problem은 페이지 전체 텍스트라 trim 부적절.
+        if not q.get("bbox"):
+            continue
+        if len(text) < 600:
+            continue
+        # 첫 30자 이후의 anchor만 검사 (자기 자신 anchor 제외)
+        if len(text) <= 30:
+            continue
+        m = _MERGE_INNER_ANCHOR.search(text[30:])
+        if m is None:
+            continue
+        cut_at = 30 + m.start()
+        trimmed = text[:cut_at].rstrip()
+        # trim 후 너무 짧아지면(< 80자) 원본 유지 — false anchor 방어
+        if len(trimmed) < 80:
+            continue
+        q["text"] = trimmed
+        q.setdefault("meta_extra", {})["text_trimmed"] = True
 
 
 def _flag_merge_suspect(questions: List[Dict]) -> None:
@@ -515,14 +550,24 @@ def _flag_merge_suspect(questions: List[Dict]) -> None:
     인접 문항이 박스 분리 실패로 한 problem에 합쳐진 케이스. 매치업 화면에서
     매뉴얼 크롭/Ctrl+V paste 권장 배지를 띄우기 위해 meta에 표시.
 
-    threshold: 추가 anchor 1+ AND text 길이 800자 이상. 짧은 문항에 본문 인용
-    "1. 조건은..." 같은 false positive 차단.
+    threshold:
+      - bbox 있음 (페이지 폴백 problem 제외 — 학습자료 본문 항목번호 false positive 방지)
+      - text 길이 800+ AND 추가 anchor 1+
+      - _trim_box_merged_text가 trim한 problem은 표시 안 함 (정제됨)
     """
     for q in questions:
+        # 페이지 폴백 (bbox=None) problem은 false positive 다수라 검사 제외.
+        # 운영 케이스 (Tenant 2 doc#143/144/145 객서심화): 본문 항목번호 5./7./9.가
+        # 자연 등장하는 학습자료. 페이지 폴백 적용된 doc은 자동분리 결과가 아니라
+        # 페이지 단위라 box-merge 개념이 부정합.
+        if not q.get("bbox"):
+            continue
+        # text trim된 problem은 이미 정제 — 표시 불필요
+        if (q.get("meta_extra") or {}).get("text_trimmed"):
+            continue
         text = q.get("text") or ""
         if len(text) < 800:
             continue
-        # 첫 30자 이후의 anchor만 카운트 (자기 자신 anchor 제외)
         scan_text = text[30:] if len(text) > 30 else ""
         anchors = _MERGE_INNER_ANCHOR.findall(scan_text)
         if len(anchors) >= 1:
@@ -585,6 +630,7 @@ def _extract_texts_legacy(questions: List[Dict], job_id: str) -> None:
         if q.get("text"):
             q["text"] = strip_page_noise(q["text"])
 
+    _trim_box_merged_text(questions)
     _flag_merge_suspect(questions)
 
 
