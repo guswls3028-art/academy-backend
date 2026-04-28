@@ -14,13 +14,15 @@ AWS Batch 컨테이너
 
 ## 파일 역할
 
+워커 entry만 이 디렉토리에 잔존. 인코딩 코어/유틸은 `academy/adapters/video/` 가 정본.
+
 | 파일 | 역할 |
 |------|------|
-| `batch_entrypoint.py` | SSM 파라미터 로드, 환경 변수 설정 후 `batch_main`으로 exec |
-| `batch_main.py` | Job 1건 처리: RUNNING 전환, heartbeat, process_video, SIGTERM 처리 |
-| `config.py` | 워커 설정 로드 |
-| `video/` | 트랜스코더, 썸네일, R2 업로드 등 실제 인코딩 로직 |
-| `download.py`, `utils.py` | 다운로드/유틸 |
+| `batch_entrypoint.py` | SSM 파라미터 로드, 환경 변수 설정 후 `batch_main`/`daemon_main`으로 exec |
+| `batch_main.py` | Batch 모드 1 job: RUNNING 전환, heartbeat, `academy.adapters.video.processor.process_video` 호출, SIGTERM 처리 |
+| `daemon_main.py` | Daemon 모드 폴링 루프: 30분 이하 영상 처리 (Batch와 동일하게 academy adapter 호출) |
+
+`academy/adapters/video/` 안의 모듈 (config, downloader, transcoder, thumbnail, duration, r2_uploader, validate, current_transcode, utils, processor) 가 실제 인코딩 로직 정본. Worker entry는 thin wrapper.
 
 ## DB 생명주기 (Batch 경로)
 
