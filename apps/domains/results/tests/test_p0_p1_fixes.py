@@ -485,8 +485,8 @@ class TestHomeworkScoreValidation(TestCase):
         self.assertTrue(s.is_valid())
 
     def test_core_serializer_also_validates(self):
-        """core.py HomeworkQuickPatchSerializer also validates."""
-        from apps.domains.homework.serializers.core import HomeworkQuickPatchSerializer
+        """homework_results.HomeworkQuickPatchSerializer also validates (legacy alias name)."""
+        from apps.domains.homework_results.serializers.homework_score import HomeworkQuickPatchSerializer
 
         data = {
             "homework_id": 1,

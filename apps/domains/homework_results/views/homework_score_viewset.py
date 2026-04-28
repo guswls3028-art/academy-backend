@@ -1,4 +1,4 @@
-# PATH: apps/domains/homework/views/homework_score_viewset.py
+# PATH: apps/domains/homework_results/views/homework_score_viewset.py
 # 역할: HomeworkScore 조회/수정 + quick_patch(upsert)로 점수입력(% or raw/max) 지원
 
 """
@@ -12,10 +12,6 @@ Endpoint:
 설계 계약 (LOCKED):
 - Homework 합불(passed)은 PATCH 시점에만 계산
 - SessionScores API는 passed / clinic_required 값을 그대로 신뢰
-
-✅ IMPORTANT (리팩토링)
-- HomeworkScore 스냅샷의 단일 진실은 homework_results 도메인이다.
-- 하지만 /homework/scores/* 라우팅은 프론트 호환을 위해 유지한다.
 
 Quick Patch (MVP):
 - homework_id + enrollment_id 기반 upsert
@@ -44,30 +40,25 @@ from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
-# ✅ 단일 진실
-from apps.domains.homework_results.models import HomeworkScore
-from apps.domains.homework_results.models import Homework
-
+from apps.domains.homework_results.models import HomeworkScore, Homework
 from apps.domains.homework_results.serializers import (
     HomeworkScoreSerializer,
-)
-from apps.domains.homework.serializers import (
     HomeworkQuickPatchSerializer,
 )
-from apps.domains.homework.filters import HomeworkScoreFilter
+from apps.domains.homework_results.filters import HomeworkScoreFilter
 
 from apps.core.permissions import TenantResolvedAndStaff
 
-# 🔐 enrollment tenant guard
+# enrollment tenant guard
 from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
 
-# submissions 기준 보정 (기존 구조 유지)
+# submissions 기준 보정
 from apps.domains.submissions.models import Submission
 
-# progress pipeline 단일 진실 (기존 구조 유지)
+# progress pipeline 단일 진실
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
-# homework policy 계산 유틸 (HomeworkPolicy 단일 진실)
+# homework policy 계산 유틸 (HomeworkPolicy 단일 진실 — homework 도메인 함수 재사용)
 from apps.domains.homework.utils.homework_policy import (
     calc_homework_passed_and_clinic,
 )
@@ -77,9 +68,6 @@ from apps.domains.progress.models import ClinicLink
 from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
 
 
-# =====================================================
-# helpers
-# =====================================================
 logger = logging.getLogger(__name__)
 
 
@@ -102,7 +90,6 @@ def _sync_homework_clinic_link(
     - 합격(passed=True): 미해소 ClinicLink가 있으면 해소
     """
     if passed:
-        # 합격 → 미해소 ClinicLink 해소
         ClinicResolutionService.resolve_by_homework_pass(
             enrollment_id=enrollment_id,
             session_id=session.id,
@@ -111,7 +98,6 @@ def _sync_homework_clinic_link(
             max_score=max_score,
         )
     else:
-        # 불합격/미제출 → ClinicLink 생성 (idempotent)
         existing_unresolved = ClinicLink.objects.filter(
             enrollment_id=enrollment_id,
             session=session,
@@ -129,7 +115,6 @@ def _sync_homework_clinic_link(
             ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
 
             from django.db import IntegrityError as DjangoIntegrityError
-            # tenant_id 조회
             from apps.domains.enrollment.models import Enrollment as _Enrollment
             _tenant_id = _Enrollment.objects.filter(id=enrollment_id).values_list("tenant_id", flat=True).first()
             try:
@@ -151,7 +136,6 @@ def _sync_homework_clinic_link(
                     },
                 )
             except DjangoIntegrityError:
-                # race condition: 동시 요청으로 이미 생성됨 — 정상 케이스
                 pass
 
 
@@ -176,7 +160,6 @@ def _apply_score_and_policy(
 ) -> HomeworkScore:
     """
     HomeworkScore에 점수 반영 + HomeworkPolicy 계산
-    (동작 변경 없음 / 중복 제거용)
     """
     obj.score = score
     obj.max_score = max_score
@@ -244,9 +227,6 @@ def _maybe_fix_submission(
     submission.save(update_fields=list(dict.fromkeys(update_fields)))
 
 
-# =====================================================
-# ViewSet
-# =====================================================
 class HomeworkScoreViewSet(ModelViewSet):
     """
     HomeworkScore 관리 ViewSet
@@ -295,7 +275,6 @@ class HomeworkScoreViewSet(ModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         obj: HomeworkScore = self.get_object()
 
-        # 🔐 enrollment tenant guard: obj의 enrollment이 현재 tenant에 속하는지 검증
         validate_enrollment_belongs_to_tenant(obj.enrollment_id, request.tenant)
 
         if getattr(obj, "is_locked", False):
@@ -364,8 +343,6 @@ class HomeworkScoreViewSet(ModelViewSet):
             else:
                 progress_info = {"dispatched": False, "reason": "NO_SUBMISSION"}
 
-            # ✅ ClinicLink 동기화: Submission 없어도 과제 합불에 따라 생성/해소
-            # 중첩 savepoint로 감싸서 IntegrityError가 외부 트랜잭션을 깨지 않도록 보호
             try:
                 with transaction.atomic():
                     _sync_homework_clinic_link(
@@ -392,13 +369,6 @@ class HomeworkScoreViewSet(ModelViewSet):
     # =================================================
     @action(detail=False, methods=["patch"], url_path="quick")
     def quick_patch(self, request):
-        """
-        Quick input (MVP)
-
-        - % 입력: score=85, max_score 생략 (percent 직접 입력)
-        - raw/max: score=32, max_score=64
-        - 미제출: meta_status="NOT_SUBMITTED", score=null
-        """
         try:
             serializer = HomeworkQuickPatchSerializer(data=request.data)
             serializer.is_valid(raise_exception=True)
@@ -406,15 +376,12 @@ class HomeworkScoreViewSet(ModelViewSet):
             homework_id = serializer.validated_data["homework_id"]
             enrollment_id = serializer.validated_data["enrollment_id"]
 
-            # 🔐 enrollment tenant guard: enrollment이 현재 tenant에 속하는지 검증
             validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
 
             score = serializer.validated_data.get("score")
             max_score = serializer.validated_data.get("max_score")
             meta_status = serializer.validated_data.get("meta_status")
 
-            # ✅ 단일 진실: homework → session (DoesNotExist → 404)
-            # 🔐 tenant isolation: homework must belong to request tenant
             homework = get_object_or_404(
                 Homework.objects.select_related("session", "session__lecture", "session__lecture__tenant").filter(
                     session__lecture__tenant=self.request.tenant,
@@ -424,7 +391,6 @@ class HomeworkScoreViewSet(ModelViewSet):
             session = homework.session
 
             with transaction.atomic():
-                # ✅ attempt_index=1: 성적 페이지는 1차(성적 산출 대상)만 조회/수정
                 obj = (
                     HomeworkScore.objects.select_for_update()
                     .filter(
@@ -498,8 +464,6 @@ class HomeworkScoreViewSet(ModelViewSet):
                             obj.meta = None
                         obj.save(update_fields=["meta", "updated_at"])
 
-                # ✅ ClinicLink 동기화: 과제 합불 결과에 따라 생성/해소
-                # 중첩 savepoint로 감싸서 IntegrityError가 외부 트랜잭션을 깨지 않도록 보호
                 try:
                     with transaction.atomic():
                         _sync_homework_clinic_link(
@@ -524,7 +488,6 @@ class HomeworkScoreViewSet(ModelViewSet):
             raise
         except Exception as e:
             logger.exception("quick_patch failed: %s", e)
-            # DEBUG일 때만 응답 본문에 오류 노출 (Network 탭에서 확인 가능)
             if getattr(settings, "DEBUG", False):
                 return Response(
                     {

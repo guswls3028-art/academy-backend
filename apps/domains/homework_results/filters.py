@@ -1,11 +1,7 @@
-# PATH: apps/domains/homework/filters.py
-# 역할: /homework/scores/ 필터 지원 (score 단일 진실은 homework_results)
+# PATH: apps/domains/homework_results/filters.py
 
 import django_filters
 
-# DESIGN:
-# - /homework/scores/* 엔드포인트는 유지하되
-# - Score 스냅샷의 단일 진실은 homework_results.HomeworkScore 이다.
 from apps.domains.homework_results.models import HomeworkScore
 
 

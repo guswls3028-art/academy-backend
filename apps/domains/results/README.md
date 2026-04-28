@@ -3,6 +3,21 @@ RESULTS 도메인 단일진실(SSOT) 봉인 문서
 
 이 문서는 results 도메인의 설계·책임·경계를 영구적으로 고정하기 위한 봉인 문서다.
 
+🎯 도메인 범위 (오해 방지 — READ FIRST)
+
+본 도메인은 **시험(Exam) 결과 SSOT** 다.
+"통합 결과 도메인"이 아니다. 이름 때문에 오해되기 쉬우나:
+
+- ✅ Exam(시험) 의 채점·attempt·집계만 다룬다.
+- ❌ Homework(숙제) 결과는 다루지 않는다 — `apps/domains/homework_results/` 의 HomeworkScore 가 보관.
+- ❌ 클리닉/진척 cross-domain 합산이 필요하면 `progress` / `clinic` 도메인이 두 결과(ExamResult + HomeworkScore)를 모두 read 한다.
+
+신규 변경자는 results 안에 Homework 관련 모델/로직을 추가해서는 안 된다.
+본 도메인의 모든 모델·서비스·집계는 Exam 단위 결과만 처리한다.
+
+평가 5도메인 (exams / submissions / results / homework / homework_results) 책임 분담은
+`backend/docs/00-SSOT/v1.1.1/HEXAGONAL-CUTOVER-POLICY.md §8` 참조.
+
 이 문서가 존재하는 한:
 
 ❌ 구조 재설계 금지

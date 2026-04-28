@@ -3,10 +3,7 @@
 from .core import (
     HomeworkPolicySerializer,
     HomeworkPolicyPatchSerializer,
-    HomeworkScoreSerializer,
-    HomeworkQuickPatchSerializer,
 )
-
 from .homework_enrollment_serializer import (
     HomeworkEnrollmentRowSerializer,
     HomeworkEnrollmentUpdateSerializer,
@@ -15,8 +12,6 @@ from .homework_enrollment_serializer import (
 __all__ = [
     "HomeworkPolicySerializer",
     "HomeworkPolicyPatchSerializer",
-    "HomeworkScoreSerializer",
-    "HomeworkQuickPatchSerializer",
     "HomeworkEnrollmentRowSerializer",
     "HomeworkEnrollmentUpdateSerializer",
 ]
