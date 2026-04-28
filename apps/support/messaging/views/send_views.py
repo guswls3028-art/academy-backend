@@ -167,6 +167,7 @@ class SendMessageView(APIView):
 
         enqueued = 0
         skipped_no_phone = 0
+        enqueue_failed = 0
         for s in students:
             phone = None
             if send_to == "student":
@@ -257,10 +258,18 @@ class SendMessageView(APIView):
                 )
             if ok:
                 enqueued += 1
+            else:
+                enqueue_failed += 1
 
+        detail = f"발송 예정 {enqueued}건"
+        if enqueue_failed:
+            detail += f" (큐 등록 실패 {enqueue_failed}건)"
+        if skipped_no_phone:
+            detail += f" (전화번호 없음 {skipped_no_phone}건)"
         return Response({
-            "detail": f"발송 예정 {enqueued}건입니다.",
+            "detail": detail + ".",
             "enqueued": enqueued,
+            "enqueue_failed": enqueue_failed,
             "skipped_no_phone": skipped_no_phone,
         }, status=status.HTTP_200_OK)
 
@@ -350,6 +359,7 @@ class SendMessageView(APIView):
 
         enqueued = 0
         skipped_no_phone = 0
+        enqueue_failed = 0
         for s in staffs:
             phone = (s.phone or "").replace("-", "").strip()
             if not phone or len(phone) < 10:
@@ -423,9 +433,17 @@ class SendMessageView(APIView):
                 )
             if ok:
                 enqueued += 1
+            else:
+                enqueue_failed += 1
 
+        detail = f"발송 예정 {enqueued}건"
+        if enqueue_failed:
+            detail += f" (큐 등록 실패 {enqueue_failed}건)"
+        if skipped_no_phone:
+            detail += f" (전화번호 없음 {skipped_no_phone}건)"
         return Response({
-            "detail": f"발송 예정 {enqueued}건입니다.",
+            "detail": detail + ".",
             "enqueued": enqueued,
+            "enqueue_failed": enqueue_failed,
             "skipped_no_phone": skipped_no_phone,
         }, status=status.HTTP_200_OK)

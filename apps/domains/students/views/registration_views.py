@@ -244,23 +244,22 @@ class RegistrationRequestViewSet(ModelViewSet):
             ).filter(
                 Q(phone=phone) | Q(parent_phone=phone)
             ).first()
-            if existing:
+            # 2) 승인 대기 중인 신청
+            pending_exists = StudentRegistrationRequest.objects.filter(
+                tenant=tenant,
+                status=StudentRegistrationRequest.PENDING,
+            ).filter(
+                Q(phone=phone) | Q(parent_phone=phone)
+            ).exists()
+            # phone enumeration 완화: 둘 중 하나라도 있으면 동일 generic 메시지로 응답.
+            # 이전엔 "이미 등록" / "승인 대기" 로 분기되어 외부에서 phone book scrape 가능했음.
+            if existing or pending_exists:
                 result["phone"] = {
                     "available": False,
-                    "reason": "이미 등록된 전화번호입니다. 기존 계정으로 로그인해 주세요.",
+                    "reason": "해당 전화번호는 사용할 수 없습니다. 가입된 계정이 있다면 기존 계정으로 로그인해 주세요.",
                 }
             else:
-                # 2) 승인 대기 중인 신청
-                pending = StudentRegistrationRequest.objects.filter(
-                    tenant=tenant,
-                    status=StudentRegistrationRequest.PENDING,
-                ).filter(
-                    Q(phone=phone) | Q(parent_phone=phone)
-                ).exists()
-                if pending:
-                    result["phone"] = {"available": False, "reason": "해당 전화번호로 가입 신청이 승인 대기 중입니다."}
-                else:
-                    result["phone"] = {"available": True}
+                result["phone"] = {"available": True}
 
         return Response(result)
 

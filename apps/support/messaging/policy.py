@@ -215,13 +215,17 @@ def is_event_dry_run(trigger: str) -> bool:
     if not raw:
         return False
 
-    # 가입/비밀번호 관련은 항상 실발송 (dry-run 제외)
+    # 가입/비밀번호/결제·인증성 관련은 항상 실발송 (dry-run 제외)
     ALWAYS_LIVE_TRIGGERS = frozenset([
         "registration_approved_student",
         "registration_approved_parent",
         "password_find_otp",
         "password_reset_student",
         "password_reset_parent",
+        "payment_complete",
+        "payment_failed",
+        "billing_card_registered",
+        "billing_card_failed",
     ])
     if trigger in ALWAYS_LIVE_TRIGGERS:
         return False

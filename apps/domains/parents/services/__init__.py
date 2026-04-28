@@ -39,10 +39,12 @@ def ensure_parent_for_student(
     if parent:
         if not parent.user_id:
             with transaction.atomic():
+                # 기존 parent.name이 있으면 우선 사용 — 자녀 N명일 때 마지막 자녀 이름으로 덮이는 문제 회피.
+                user_name = parent.name or f"{student_name} 학부모"
                 user = User.objects.create_user(
                     username=parent_username,
                     phone=parent_phone,
-                    name=f"{student_name} 학부모",
+                    name=user_name,
                     tenant=tenant,
                 )
                 user.set_password(PARENT_DEFAULT_PASSWORD)

@@ -265,6 +265,12 @@ class StudentPasswordResetSendView(APIView):
             if client_temp_password and is_staff_request
             else _generate_temp_password()
         )
+        # 비밀번호 정책: 최소 4자 (PASSWORD_POLICY_4CHAR). staff가 더 짧게 입력해도 강제 적용.
+        if len(temp_password) < 4:
+            return Response(
+                {"detail": "임시 비밀번호는 최소 4자 이상이어야 합니다."},
+                status=400,
+            )
         old_password_hash = user.password  # 발송 실패 시 롤백용
         from apps.core.services.password import force_reset_password
         force_reset_password(user, temp_password)

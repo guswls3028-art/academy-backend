@@ -101,16 +101,18 @@ def generate_monthly_invoices(
 
     # 유효 기간 + ONE_TIME 중복 필터링
     student_fees = []
+    # cancel된 invoice는 제외 — cancel 후 재청구 가능해야 한다.
     one_time_already_billed = set(
         InvoiceItem.objects
         .filter(
             tenant=tenant,
             fee_template__billing_cycle=FeeTemplate.BillingCycle.ONE_TIME,
+            invoice__status__in=["PENDING", "PARTIAL", "PAID", "OVERDUE"],
         )
-        .exclude(invoice__status="CANCELLED")
         .values_list("fee_template_id", "invoice__student_id")
     )
 
+    one_time_dup_skipped = []  # silent skip 대신 errors로 보고할 수 있게 추적
     for sf in all_student_fees:
         # 유효 기간 체크
         if sf.billing_start_month and billing_period < sf.billing_start_month:
@@ -118,14 +120,17 @@ def generate_monthly_invoices(
         if sf.billing_end_month and billing_period > sf.billing_end_month:
             continue
 
-        # ONE_TIME 중복 방지: 이미 청구된 적 있으면 skip
+        # ONE_TIME 중복 방지: 이미 청구된 적 있으면 skip + 보고
         if sf.fee_template.billing_cycle == FeeTemplate.BillingCycle.ONE_TIME:
             if (sf.fee_template_id, sf.student_id) in one_time_already_billed:
+                one_time_dup_skipped.append(
+                    f"{sf.student.name}: {sf.fee_template.name} (1회성, 이미 청구됨)"
+                )
                 continue
 
         student_fees.append(sf)
 
-    result = {"created": 0, "skipped": 0, "errors": []}
+    result = {"created": 0, "skipped": 0, "errors": list(one_time_dup_skipped)}
 
     # 이미 청구서가 있는 학생 목록
     existing_student_ids = set(
@@ -147,44 +152,54 @@ def generate_monthly_invoices(
             result["skipped"] += 1
             continue
 
-        try:
-            with transaction.atomic():
-                student = fees[0].student
-                total = sum(sf.effective_amount for sf in fees)
+        student_name = fees[0].student.name if fees else "?"
+        # invoice_number race 시 1회 재시도 — 동시 트랜잭션이 같은 seq를 읽는 경우 IntegrityError → retry.
+        for attempt in range(2):
+            try:
+                with transaction.atomic():
+                    student = fees[0].student
+                    total = sum(sf.effective_amount for sf in fees)
 
-                if total == 0:
-                    result["skipped"] += 1
-                    continue
+                    if total == 0:
+                        result["skipped"] += 1
+                        break
 
-                inv_number = _next_invoice_number(tenant, billing_year, billing_month)
-                invoice = StudentInvoice.objects.create(
-                    tenant=tenant,
-                    student=student,
-                    invoice_number=inv_number,
-                    billing_year=billing_year,
-                    billing_month=billing_month,
-                    total_amount=total,
-                    due_date=due_date,
-                    created_by=created_by,
-                )
-
-                items = []
-                for sf in fees:
-                    items.append(InvoiceItem(
+                    inv_number = _next_invoice_number(tenant, billing_year, billing_month)
+                    invoice = StudentInvoice.objects.create(
                         tenant=tenant,
-                        invoice=invoice,
-                        fee_template=sf.fee_template,
-                        description=sf.fee_template.name,
-                        amount=sf.effective_amount,
-                    ))
-                InvoiceItem.objects.bulk_create(items)
+                        student=student,
+                        invoice_number=inv_number,
+                        billing_year=billing_year,
+                        billing_month=billing_month,
+                        total_amount=total,
+                        due_date=due_date,
+                        created_by=created_by,
+                    )
 
-                result["created"] += 1
+                    items = []
+                    for sf in fees:
+                        items.append(InvoiceItem(
+                            tenant=tenant,
+                            invoice=invoice,
+                            fee_template=sf.fee_template,
+                            description=sf.fee_template.name,
+                            amount=sf.effective_amount,
+                        ))
+                    InvoiceItem.objects.bulk_create(items)
 
-        except Exception as e:
-            student_name = fees[0].student.name if fees else "?"
-            logger.exception("Invoice generation failed for student %s: %s", student_name, e)
-            result["errors"].append(f"{student_name}: {str(e)}")
+                    result["created"] += 1
+                    break
+
+            except IntegrityError as e:
+                if attempt == 0:
+                    logger.warning("Invoice number race for student %s, retrying: %s", student_name, e)
+                    continue
+                logger.exception("Invoice generation IntegrityError after retry for %s: %s", student_name, e)
+                result["errors"].append(f"{student_name}: invoice 번호 충돌(재시도 실패)")
+            except Exception as e:
+                logger.exception("Invoice generation failed for student %s: %s", student_name, e)
+                result["errors"].append(f"{student_name}: {str(e)}")
+                break
 
     return result
 
@@ -232,7 +247,7 @@ def record_payment(
     if invoice.status == "CANCELLED":
         raise ValueError("취소된 청구서에는 수납을 기록할 수 없습니다.")
 
-    # --- 멱등성 검사: idempotency_key 기반 ---
+    # --- 멱등성 검사: idempotency_key 기반 (있으면 시간 윈도우 검사 skip) ---
     if idempotency_key:
         existing = FeePayment.objects.filter(
             tenant=tenant,
@@ -246,24 +261,26 @@ def record_payment(
                 idempotency_key, existing.id,
             )
             return existing
-
-    # --- 멱등성 검사: 시간 윈도우 기반 (더블클릭/재전송 방지) ---
-    now = timezone.now()
-    dedup_cutoff = now - timedelta(seconds=PAYMENT_DEDUP_WINDOW_SECONDS)
-    recent_duplicate = FeePayment.objects.filter(
-        tenant=tenant,
-        invoice=invoice,
-        amount=amount,
-        payment_method=payment_method,
-        status="SUCCESS",
-        created_at__gte=dedup_cutoff,
-    ).exists()
-    if recent_duplicate:
-        raise ValueError(
-            f"동일한 납부({amount:,}원, {payment_method})가 "
-            f"{PAYMENT_DEDUP_WINDOW_SECONDS}초 이내에 이미 기록되었습니다. "
-            f"중복 납부가 아닌지 확인하세요."
-        )
+        now = timezone.now()
+    else:
+        # --- 멱등성 검사: 시간 윈도우 기반 (더블클릭/재전송 방지) ---
+        # idempotency_key 미제공 시에만 적용 — 의도적 분할 납부는 key를 반드시 보내야 함.
+        now = timezone.now()
+        dedup_cutoff = now - timedelta(seconds=PAYMENT_DEDUP_WINDOW_SECONDS)
+        recent_duplicate = FeePayment.objects.filter(
+            tenant=tenant,
+            invoice=invoice,
+            amount=amount,
+            payment_method=payment_method,
+            status="SUCCESS",
+            created_at__gte=dedup_cutoff,
+        ).exists()
+        if recent_duplicate:
+            raise ValueError(
+                f"동일한 납부({amount:,}원, {payment_method})가 "
+                f"{PAYMENT_DEDUP_WINDOW_SECONDS}초 이내에 이미 기록되었습니다. "
+                f"중복 납부면 잠시 후 다시 시도하거나, 의도적 분할 납부는 idempotency_key를 지정하세요."
+            )
 
     outstanding = invoice.outstanding_amount
     if amount > outstanding:

@@ -166,12 +166,13 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "delete_folder",
     }
     # folders: GET=학생 허용(목록), POST=스태프만(생성)
+    # list/retrieve: 스태프 전용 (학생은 /student/video/* endpoint만 사용해야 함)
     def get_permissions(self):
         if self.action == "folders":
             if getattr(self.request, "method", "").upper() in ("GET", "HEAD"):
                 return [IsAuthenticated()]
             return [IsAuthenticated(), TenantResolvedAndStaff()]
-        if self.action in self.STAFF_ACTIONS:
+        if self.action in self.STAFF_ACTIONS or self.action in ("list", "retrieve"):
             return [IsAuthenticated(), TenantResolvedAndStaff()]
         return [IsAuthenticated()]
 

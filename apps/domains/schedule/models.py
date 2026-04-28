@@ -3,12 +3,15 @@ from apps.domains.lectures.models import Lecture
 
 
 # ========================================================
-# D-Day
+# D-Day  ⚠️ DEPRECATED
 # ========================================================
+# 이 도메인 전체가 폐기 대상이다. urls/views/serializers/admin/frontend 사용처 0건.
+# 모델·테이블은 데이터 안전을 위해 잔존. 추후 마이그레이션으로 drop + INSTALLED_APPS 제거 예정.
+# 신규 코드는 절대 이 모델을 import 하지 말 것.
 
 class Dday(models.Model):
     """
-    강의 단위 주요 일정 (시험, 마감, 이벤트 등)
+    [DEPRECATED] 강의 단위 주요 일정 (시험, 마감, 이벤트 등)
     """
 
     lecture = models.ForeignKey(

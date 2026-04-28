@@ -209,6 +209,20 @@ class AdminMarkInvoicePaidView(APIView):
             invoice_service.retry_pending(inv.pk)
 
         inv = invoice_service.mark_paid(inv.pk)
+        # 회계 대조 무결성: mark-paid 시 PaymentTransaction(SUCCESS, manual) 동시 생성.
+        from apps.billing.models import PaymentTransaction
+        import uuid
+        try:
+            PaymentTransaction.objects.create(
+                tenant=getattr(inv, "tenant", None),
+                invoice=inv,
+                amount=inv.total_amount,
+                status="SUCCESS",
+                provider="manual",
+                idempotency_key=f"manual_admin_{inv.pk}_{uuid.uuid4().hex[:12]}",
+            )
+        except Exception as e:
+            logger.warning("PaymentTransaction(manual) create skipped for invoice %s: %s", inv.pk, e)
         record_audit(
             request,
             action="billing.invoice_paid",

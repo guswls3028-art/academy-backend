@@ -297,6 +297,16 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         validated_data.pop("username", None)
         validated_data.pop("password", None)
 
+        # 🔐 Owner Staff는 is_active=False 변경 차단 (본인 비활성화로 운영 마비 방지)
+        if "is_active" in validated_data and not validated_data["is_active"]:
+            from apps.core.models import TenantMembership as _TM
+            if instance.user_id and _TM.objects.filter(
+                user_id=instance.user_id, tenant=instance.tenant, is_active=True, role="owner",
+            ).exists():
+                raise serializers.ValidationError(
+                    {"is_active": "대표(Owner)는 비활성화할 수 없습니다."}
+                )
+
         # Teacher 동기화를 위해 old 값 보존 (super().update() 전)
         old_name = instance.name
         old_phone = instance.phone or ""

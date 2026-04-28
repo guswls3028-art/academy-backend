@@ -20,11 +20,15 @@ class NotificationLogListView(APIView):
         page = max(1, int(request.query_params.get("page", 1)))
         page_size = min(50, max(1, int(request.query_params.get("page_size", 20))))
         offset = (page - 1) * page_size
-        qs = (
-            NotificationLog.objects.filter(tenant=request.tenant)
-            .order_by("-sent_at")[offset : offset + page_size]
-        )
-        count = NotificationLog.objects.filter(tenant=request.tenant).count()
+        # status 필터: success / failure / all (기본 all)
+        status_filter = (request.query_params.get("status") or "").strip().lower()
+        base_qs = NotificationLog.objects.filter(tenant=request.tenant)
+        if status_filter == "success":
+            base_qs = base_qs.filter(success=True)
+        elif status_filter == "failure":
+            base_qs = base_qs.filter(success=False)
+        qs = base_qs.order_by("-sent_at")[offset : offset + page_size]
+        count = base_qs.count()
         items = [
             {
                 "id": r.id,
