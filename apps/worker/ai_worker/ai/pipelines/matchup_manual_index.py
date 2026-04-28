@@ -215,6 +215,29 @@ def run_matchup_manual_index(
     except Exception:
         pass
 
+    # 이미지 CLIP 임베딩 — OCR 텍스트 약해도 시각 매칭 보강
+    image_embedding = None
+    try:
+        from apps.worker.ai_worker.ai.embedding.image_service import get_image_embeddings
+        # local_path는 이미 cleanup_tmp_for_path로 정리됐을 수 있음. 다시 다운로드.
+        local_path2 = download_to_tmp(download_url=url, job_id=job_id + "_img")
+        try:
+            ocr_input_path2 = local_path2
+            if is_camera_capture:
+                pre = _preprocess_camera_image(local_path2)
+                if pre != local_path2:
+                    ocr_input_path2 = pre
+            batch = get_image_embeddings([ocr_input_path2])
+            if batch.vectors and batch.vectors[0]:
+                image_embedding = batch.vectors[0]
+            if ocr_input_path2 != local_path2:
+                try: os.unlink(ocr_input_path2)
+                except OSError: pass
+        finally:
+            cleanup_tmp_for_path(local_path2)
+    except Exception:
+        logger.warning("manual_index: image embedding failed for problem=%s", problem_id, exc_info=True)
+
     record_progress(
         job_id, "done", 100,
         step_index=3, step_total=3,
@@ -226,5 +249,6 @@ def run_matchup_manual_index(
         "problem_id": int(problem_id),
         "text": text,
         "embedding": embedding,
+        "image_embedding": image_embedding,
         "format": fmt,
     })

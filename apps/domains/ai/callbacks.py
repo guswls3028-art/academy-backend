@@ -494,6 +494,7 @@ def _handle_matchup_ai_result(
             text=p.get("text", ""),
             image_key=p.get("image_key", ""),
             embedding=p.get("embedding"),
+            image_embedding=p.get("image_embedding"),
             meta=p.get("meta", {}),
         ))
 
@@ -511,6 +512,13 @@ def _handle_matchup_ai_result(
     seg_method = result_payload.get("segmentation_method")
     if seg_method:
         meta["segmentation_method"] = seg_method
+    # 워커가 캐시한 페이지 PNG 키 — ManualCropModal 첫 진입 즉시 (PDF 다운로드/렌더 회피)
+    page_keys = result_payload.get("page_image_keys")
+    page_dims = result_payload.get("page_dimensions")
+    if page_keys:
+        meta["page_image_keys"] = list(page_keys)
+        if page_dims:
+            meta["page_dimensions"] = list(page_dims)
     doc.meta = meta
     doc.save(update_fields=[
         "status", "problem_count", "error_message", "meta", "updated_at",
@@ -675,6 +683,7 @@ def _handle_matchup_manual_result(
 
     text = (result_payload.get("text") or "").strip()
     embedding = result_payload.get("embedding")
+    image_embedding = result_payload.get("image_embedding")
     fmt = result_payload.get("format") or "choice"
 
     try:
@@ -693,6 +702,9 @@ def _handle_matchup_manual_result(
     if embedding is not None:
         problem.embedding = embedding
         update_fields.append("embedding")
+    if image_embedding is not None:
+        problem.image_embedding = image_embedding
+        update_fields.append("image_embedding")
 
     meta = dict(problem.meta or {})
     if "format" not in meta or meta.get("format") in (None, "", "choice"):

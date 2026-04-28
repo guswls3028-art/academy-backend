@@ -89,6 +89,24 @@ def find_similar_problems(
         .defer("created_at", "updated_at")
     )
 
+    # 텍스트 + 이미지 ensemble 가중치. OCR 짧은 source는 이미지 유사도 비중 ↑.
+    # 짧은 텍스트(< 60자)면 이미지 0.5, 긴 텍스트(>= 200자)면 이미지 0.15.
+    # 환경변수 override 가능: MATCHUP_IMAGE_SIM_WEIGHT
+    src_text_len_for_w = len((source.text or "").strip())
+    if src_text_len_for_w < 60:
+        _img_w = 0.5
+    elif src_text_len_for_w < 200:
+        _img_w = 0.3
+    else:
+        _img_w = 0.15
+    import os as _osw
+    try:
+        _img_w = float(_osw.environ.get("MATCHUP_IMAGE_SIM_WEIGHT", "") or _img_w)
+    except ValueError:
+        pass
+    _txt_w = max(0.0, 1.0 - _img_w)
+    src_img_emb = source.image_embedding
+
     # 시험지(test) source의 자기 doc 안 problem은 후보에서 제외.
     # 같은 시험지의 다른 problem이 동일 OCR 텍스트로 인덱싱돼 sim≈1로 잡히는
     # self-doc trap 차단. reference doc 간 cross-doc 추천에는 영향 없음.
@@ -111,12 +129,22 @@ def find_similar_problems(
     src_len = len(source.text or "")
     src_doc_id = source.document_id
 
-    # 1차: bi-encoder + 가벼운 휴리스틱
+    # 1차: bi-encoder + 가벼운 휴리스틱 + 이미지 ensemble
     scored = []
     for c in candidates:
         if not c.embedding:
             continue
-        sim = cosine_similarity(source.embedding, c.embedding)
+        text_sim = cosine_similarity(source.embedding, c.embedding)
+        # 이미지 임베딩 ensemble — 양쪽 모두 보유 시에만 결합. 한쪽이라도 없으면 텍스트만.
+        img_sim = 0.0
+        if src_img_emb and c.image_embedding:
+            try:
+                img_sim = cosine_similarity(src_img_emb, c.image_embedding)
+            except Exception:
+                img_sim = 0.0
+            sim = _txt_w * text_sim + _img_w * img_sim
+        else:
+            sim = text_sim
 
         fmt_match = 1.0 if _format_of(c) == src_format else 0.0
         len_score = _length_score(src_len, len(c.text or ""))

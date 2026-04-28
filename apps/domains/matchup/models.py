@@ -80,6 +80,9 @@ class MatchupProblem(TimestampModel):
     text = models.TextField(blank=True, default="")
     image_key = models.CharField(max_length=512, blank=True, default="")
     embedding = models.JSONField(null=True, blank=True)
+    # CLIP image embedding (cropped problem 이미지) — 텍스트 임베딩이 약한 카메라 사진/
+    # 스캔본의 매치업 정확도 보강. find_similar_problems가 ensemble 가중평균 적용.
+    image_embedding = models.JSONField(null=True, blank=True)
     meta = models.JSONField(default=dict, blank=True)
 
     # 출처 추적 — 시험 문제 인덱싱 시 사용

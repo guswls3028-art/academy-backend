@@ -286,6 +286,18 @@ def run_matchup_pipeline(
 
     _upload_cropped_images(questions_raw, tenant_id, document_id, job_id)
 
+    # 이미지 CLIP 임베딩 — cropped 영역을 시각 임베딩으로 변환. 카메라 사진/
+    # 스캔본의 OCR이 약해도 이미지 유사도로 매칭 보강 (find_similar_problems
+    # ensemble 가중평균).
+    _generate_image_embeddings(questions_raw, job_id)
+    _cleanup_cropped_image_temps(questions_raw)
+
+    # 페이지 PNG도 같이 R2에 업로드 → ensure_document_page_images 캐시 hit.
+    # 모달 첫 진입 PDF 다운로드 + 페이지 렌더 비용 사전 분산.
+    page_image_keys, page_dimensions = _upload_page_images_for_modal_cache(
+        pages, tenant_id, document_id, job_id,
+    )
+
     record_progress(
         job_id, "upload_images", 90,
         step_index=4, step_total=5,
@@ -308,6 +320,7 @@ def run_matchup_pipeline(
             "text": q.get("text", ""),
             "image_key": q.get("image_key", ""),
             "embedding": q.get("embedding"),
+            "image_embedding": q.get("image_embedding"),
             "meta": meta,
         })
 
@@ -338,6 +351,8 @@ def run_matchup_pipeline(
         "document_id": document_id,
         "problem_count": len(problems),
         "segmentation_method": segmentation_method,
+        "page_image_keys": page_image_keys,
+        "page_dimensions": page_dimensions,
     })
 
 
@@ -712,14 +727,134 @@ def _generate_embeddings(questions: List[Dict], job_id: str) -> None:
             q["embedding"] = None
 
 
+def _generate_image_embeddings(questions: List[Dict], job_id: str) -> None:
+    """문제 이미지에서 CLIP 임베딩 생성 (in-place).
+
+    텍스트 임베딩과 별도. 카메라 사진/스캔본 OCR이 약해도 시각 유사도로
+    매치업 정확도 보강. find_similar_problems가 ensemble 가중평균 적용.
+
+    실패해도 텍스트 임베딩만으로 매칭 가능하므로 fail-safe.
+    """
+    try:
+        from apps.worker.ai_worker.ai.embedding.image_service import get_image_embeddings
+    except ImportError:
+        for q in questions:
+            q["image_embedding"] = None
+        return
+
+    # 각 problem의 cropped 이미지 경로. _upload_cropped_images 이후 호출되어
+    # q["image_path"]는 페이지 PNG지만, R2 업로드 직전 cropped 영역을 별도 경로로
+    # 보관해야 정확. 일단 페이지 전체 이미지로 임베딩 (학습자료/페이지 폴백 케이스).
+    # bbox 있는 케이스는 cropped 영역이 더 정확할 수 있으나, 여기서는 비용 절감.
+    paths: List[str] = []
+    indices: List[int] = []
+    for i, q in enumerate(questions):
+        p = q.get("cropped_image_path") or q.get("image_path") or ""
+        if p:
+            paths.append(p)
+            indices.append(i)
+
+    if not paths:
+        for q in questions:
+            q["image_embedding"] = None
+        return
+
+    try:
+        batch = get_image_embeddings(paths)
+        for q in questions:
+            q["image_embedding"] = None
+        for idx, vec in zip(indices, batch.vectors):
+            if vec:
+                questions[idx]["image_embedding"] = vec
+    except Exception:
+        logger.warning("Image embedding generation failed for job %s", job_id, exc_info=True)
+        for q in questions:
+            q["image_embedding"] = None
+
+
+def _upload_page_images_for_modal_cache(
+    pages: List[Dict],
+    tenant_id: str | None,
+    document_id: str,
+    job_id: str,
+) -> Tuple[List[str], List[Tuple[int, int]]]:
+    """매뉴얼 크롭 모달 캔버스용 페이지 PNG를 R2에 업로드.
+
+    매치업 자동분리 워커가 이미 임시 dir에 페이지 PNG를 만들었으므로 그것을
+    R2의 ensure_document_page_images 캐시 위치(prefix/pages/NNN.png)에 일괄
+    업로드. 콜백이 doc.meta.page_image_keys/page_dimensions에 저장.
+
+    Returns: (page_keys, page_dimensions)
+    """
+    import io as _io
+    try:
+        from PIL import Image as _PILImage
+        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+    except ImportError:
+        return [], []
+    if not document_id or not tenant_id:
+        return [], []
+
+    # prefix는 _upload_cropped_images와 동일 규칙 — 첫 problem image_key에서 추출.
+    # 자동분리 결과의 image_key는 "tenants/{tid}/matchup/{uuid}/problems/{n}.png" 패턴.
+    prefix = ""
+    try:
+        from apps.domains.matchup.models import MatchupDocument as _MD
+        doc = _MD.objects.only("r2_key").get(id=int(document_id))
+        parts = (doc.r2_key or "").split("/")
+        if len(parts) >= 4 and parts[2] == "matchup":
+            prefix = parts[3]
+    except Exception:
+        pass
+    if not prefix:
+        prefix = f"manual-{document_id}"
+
+    page_keys: List[str] = []
+    page_dimensions: List[Tuple[int, int]] = []
+    for page in pages:
+        idx = int(page.get("page_index", 0))
+        img_path = page.get("image_path") or ""
+        if not img_path:
+            continue
+        try:
+            with _PILImage.open(img_path) as im:
+                im.load()
+                w, h = im.size
+                buf = _io.BytesIO()
+                im.save(buf, "PNG")
+                buf.seek(0)
+            key = f"tenants/{tenant_id}/matchup/{prefix}/pages/{idx:03d}.png"
+            upload_fileobj_to_r2_storage(
+                fileobj=buf, key=key, content_type="image/png",
+            )
+            page_keys.append(key)
+            page_dimensions.append((w, h))
+        except Exception:
+            logger.warning(
+                "MATCHUP_PAGE_CACHE_UPLOAD_FAIL | job=%s | page=%d",
+                job_id, idx, exc_info=True,
+            )
+    logger.info(
+        "MATCHUP_PAGE_CACHE | job=%s | doc=%s | pages=%d",
+        job_id, document_id, len(page_keys),
+    )
+    return page_keys, page_dimensions
+
+
 def _upload_cropped_images(
     questions: List[Dict],
     tenant_id: str | None,
     document_id: str,
     job_id: str,
 ) -> None:
-    """크롭된 문제 이미지를 R2에 업로드 (in-place로 image_key 설정)."""
+    """크롭된 문제 이미지를 R2에 업로드 (in-place로 image_key 설정).
+
+    부수효과: q["cropped_image_path"]에 임시 파일 경로 저장. 이미지 임베딩이
+    페이지 전체가 아닌 cropped 영역을 사용하도록 — 시각 매칭 정확도 향상.
+    """
     import cv2
+    import os as _os
+    import tempfile as _tempfile
     import uuid as _uuid
 
     try:
@@ -760,8 +895,29 @@ def _upload_cropped_images(
             )
             q["image_key"] = r2_key
 
+            # 이미지 임베딩용 임시 파일 (cropped 영역 PNG)
+            try:
+                fd, tmp_path = _tempfile.mkstemp(suffix=".png", prefix="matchup_crop_")
+                _os.close(fd)
+                cv2.imwrite(tmp_path, img)
+                q["cropped_image_path"] = tmp_path
+            except Exception:
+                q["cropped_image_path"] = q["image_path"]
+
         except Exception:
             logger.warning(
                 "Image upload failed for Q%d in job %s",
                 q["number"], job_id, exc_info=True,
             )
+
+
+def _cleanup_cropped_image_temps(questions: List[Dict]) -> None:
+    """이미지 임베딩 후 cropped 임시 파일 정리."""
+    import os as _os
+    for q in questions:
+        p = q.get("cropped_image_path")
+        if p and p != q.get("image_path") and _os.path.exists(p):
+            try:
+                _os.unlink(p)
+            except OSError:
+                pass
