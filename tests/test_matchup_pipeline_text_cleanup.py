@@ -218,3 +218,52 @@ def test_flag_merge_suspect_skips_trimmed_problems():
     }]
     _flag_merge_suspect(questions)
     assert "merge_suspect" not in questions[0]["meta_extra"]
+
+
+# ── 페이지 sub-crop (페이지 폴백 시 페이지 안 anchor 단위 분리) ──
+
+def test_whole_pages_sub_crop_anchor_1_to_4():
+    """페이지 안 anchor 1~4개 → anchor 단위 sub-crop (실제 문항 케이스)."""
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _whole_pages_as_questions
+    from academy.domain.tools.question_splitter import QuestionRegion
+    pages = [{
+        "page_index": 0, "image_path": "/tmp/page_000.png",
+        "text_regions": [
+            QuestionRegion(number=44, bbox=(50.0, 100.0, 250.0, 300.0), page_index=0),
+            QuestionRegion(number=45, bbox=(50.0, 320.0, 250.0, 500.0), page_index=0),
+            QuestionRegion(number=46, bbox=(50.0, 520.0, 250.0, 700.0), page_index=0),
+        ],
+    }]
+    out = _whole_pages_as_questions(pages)
+    assert len(out) == 3
+    assert {q["number"] for q in out} == {44, 45, 46}
+    assert all(q["bbox"] is not None for q in out)
+
+
+def test_whole_pages_sub_crop_anchor_5_or_more_falls_back():
+    """페이지 안 anchor 5+ → over-extraction 의심 → 페이지 통째 (기존 폴백)."""
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _whole_pages_as_questions
+    from academy.domain.tools.question_splitter import QuestionRegion
+    pages = [{
+        "page_index": 0, "image_path": "/tmp/page_000.png",
+        "text_regions": [
+            QuestionRegion(number=n, bbox=(50.0, n*30.0, 250.0, n*30.0+25), page_index=0)
+            for n in range(1, 8)
+        ],
+    }]
+    out = _whole_pages_as_questions(pages)
+    assert len(out) == 1
+    assert out[0]["bbox"] is None
+
+
+def test_whole_pages_sub_crop_no_anchors_falls_back():
+    """페이지 안 anchor 없음 → 페이지 통째 (기존 동작 유지)."""
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _whole_pages_as_questions
+    pages = [
+        {"page_index": 0, "image_path": "/tmp/page_000.png", "text_regions": []},
+        {"page_index": 1, "image_path": "/tmp/page_001.png", "text_regions": []},
+    ]
+    out = _whole_pages_as_questions(pages)
+    assert len(out) == 2
+    assert all(q["bbox"] is None for q in out)
+    assert {q["number"] for q in out} == {1, 2}

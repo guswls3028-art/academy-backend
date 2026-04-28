@@ -415,15 +415,80 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
 
 
 def _whole_pages_as_questions(pages: List[Dict]) -> List[Dict]:
-    """세그멘테이션 실패 시 전체 페이지를 하나의 문제로."""
-    questions = []
-    for i, page in enumerate(pages):
+    """페이지 폴백 시 페이지를 problem으로 변환.
+
+    GPT 인사이트 (2026-04-28): 페이지 폴백 발생해도 페이지 안 anchor 위치로
+    sub-crop 재시도하면 학습자료 80+ anchor doc도 정상 분리 가능.
+
+    분리 정책:
+    - 페이지 안 anchor 1~4개 = 실제 문항 → anchor 단위로 sub-crop
+    - 페이지 안 anchor 5+개 = 본문 학습 항목번호 over-extraction → 페이지 통째
+    - 페이지 안 anchor 0개 = 분리 불가 → 페이지 통째 (기존 동작)
+
+    효과 (운영 doc#143/144/145 기대):
+    - 페이지 폴백 → 페이지당 3~4 problem (실제 문항 단위)로 정상 분리
+    - 사용자 매뉴얼 크롭 부담 감소
+    """
+    questions: List[Dict] = []
+    seen_numbers: set = set()
+    fallback_counter = 1
+    pixel_scale = 200.0 / 72.0  # _PDF_TO_PIXEL_SCALE — segment_dispatcher와 동일
+
+    for page in pages:
+        page_idx = page["page_index"]
+        img_path = page["image_path"]
+        # text_regions = QuestionRegion 리스트 (PDF 좌표). over-extraction 페이지는
+        # text_regions 그대로 보존되어 있으나 boxes는 비어있을 수 있음.
+        text_regions = page.get("text_regions") or []
+
+        # 페이지 안 anchor 5+개면 over-extraction 의심 → 페이지 통째
+        if len(text_regions) >= 5:
+            while fallback_counter in seen_numbers:
+                fallback_counter += 1
+            questions.append({
+                "number": fallback_counter,
+                "page_index": page_idx,
+                "image_path": img_path,
+                "bbox": None,
+            })
+            seen_numbers.add(fallback_counter)
+            fallback_counter += 1
+            continue
+
+        # 페이지 안 anchor 1~4개 → anchor 단위 sub-crop
+        if 1 <= len(text_regions) <= 4:
+            for region in text_regions:
+                num = int(region.number)
+                if num in seen_numbers:
+                    continue
+                seen_numbers.add(num)
+                rx0, ry0, rx1, ry1 = region.bbox
+                bbox_px = [
+                    int(rx0 * pixel_scale),
+                    int(ry0 * pixel_scale),
+                    int((rx1 - rx0) * pixel_scale),
+                    int((ry1 - ry0) * pixel_scale),
+                ]
+                questions.append({
+                    "number": num,
+                    "page_index": page_idx,
+                    "image_path": img_path,
+                    "bbox": bbox_px,
+                })
+            continue
+
+        # anchor 0개 → 페이지 통째 (기존 동작)
+        while fallback_counter in seen_numbers:
+            fallback_counter += 1
         questions.append({
-            "number": i + 1,
-            "page_index": page["page_index"],
-            "image_path": page["image_path"],
-            "bbox": None,  # 전체 페이지
+            "number": fallback_counter,
+            "page_index": page_idx,
+            "image_path": img_path,
+            "bbox": None,
         })
+        seen_numbers.add(fallback_counter)
+        fallback_counter += 1
+
     return questions
 
 
