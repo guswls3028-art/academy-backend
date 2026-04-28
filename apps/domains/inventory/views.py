@@ -281,10 +281,10 @@ class FileUploadView(View):
         if not file_obj:
             return JsonResponse({"detail": "file required"}, status=400)
 
-        # 파일 크기 제한: 100MB
-        MAX_FILE_SIZE = 100 * 1024 * 1024
+        # 파일 크기 제한: 2GB (사용자 요청 — 악용 risk 없는 학원 SaaS)
+        MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024
         if file_obj.size > MAX_FILE_SIZE:
-            return JsonResponse({"detail": "파일 크기가 100MB를 초과합니다."}, status=400)
+            return JsonResponse({"detail": "파일 크기가 2GB를 초과합니다."}, status=400)
 
         # 파일 타입 화이트리스트
         ALLOWED_CONTENT_TYPES = {
