@@ -63,7 +63,7 @@ class TestReplyAlimtalkDispatch(TestCase):
         view = PostViewSet.as_view({"post": "replies"})
         return view(request, pk=post.id)
 
-    @patch("apps.support.messaging.services.send_event_notification")
+    @patch("apps.domains.messaging.services.send_event_notification")
     def test_qna_reply_dispatches_qna_answered_to_student(self, mock_send):
         resp = self._post_reply(self.qna)
         self.assertEqual(resp.status_code, 201, resp.data)
@@ -75,7 +75,7 @@ class TestReplyAlimtalkDispatch(TestCase):
         self.assertEqual(kwargs["context"]["강의명"], "수학")
         self.assertEqual(kwargs["context"]["차시명"], "함수 미분 질문")
 
-    @patch("apps.support.messaging.services.send_event_notification")
+    @patch("apps.domains.messaging.services.send_event_notification")
     def test_counsel_reply_dispatches_to_student_and_parent(self, mock_send):
         resp = self._post_reply(self.counsel)
         self.assertEqual(resp.status_code, 201, resp.data)
@@ -86,19 +86,19 @@ class TestReplyAlimtalkDispatch(TestCase):
             self.assertEqual(call.kwargs["trigger"], "counsel_answered")
             self.assertEqual(call.kwargs["context"]["강의명"], "진로 상담")
 
-    @patch("apps.support.messaging.services.send_event_notification")
+    @patch("apps.domains.messaging.services.send_event_notification")
     def test_board_reply_does_not_dispatch(self, mock_send):
         resp = self._post_reply(self.board)
         self.assertEqual(resp.status_code, 201, resp.data)
         mock_send.assert_not_called()
 
-    @patch("apps.support.messaging.services.send_event_notification")
+    @patch("apps.domains.messaging.services.send_event_notification")
     def test_dispatch_failure_does_not_break_reply(self, mock_send):
         mock_send.side_effect = RuntimeError("solapi down")
         resp = self._post_reply(self.qna)
         self.assertEqual(resp.status_code, 201, "알림톡 실패가 답변 등록을 막아선 안 됨")
 
-    @patch("apps.support.messaging.services.send_event_notification")
+    @patch("apps.domains.messaging.services.send_event_notification")
     def test_parent_authored_qna_dispatches_to_parent_only(self, mock_send):
         """학부모가 자녀 컨텍스트로 작성한 QnA에 답변 시 parent_phone으로만 발송."""
         parent_qna = PostEntity.objects.create(
@@ -115,7 +115,7 @@ class TestReplyAlimtalkDispatch(TestCase):
         self.assertEqual(kwargs["trigger"], "qna_answered")
         self.assertEqual(kwargs["send_to"], "parent")
 
-    @patch("apps.support.messaging.services.send_event_notification")
+    @patch("apps.domains.messaging.services.send_event_notification")
     def test_parent_authored_counsel_dispatches_to_parent_only(self, mock_send):
         """학부모가 자녀 컨텍스트로 작성한 상담에 답변 시 학생 폰 제외, 학부모만 발송."""
         parent_counsel = PostEntity.objects.create(

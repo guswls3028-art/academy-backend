@@ -34,8 +34,8 @@ class StudentPasswordFindRequestView(APIView):
 
     def post(self, request):
         from django.core.cache import cache
-        from apps.support.messaging.selectors import get_auto_send_config
-        from apps.support.messaging.policy import MessagingPolicyError, is_messaging_disabled
+        from apps.domains.messaging.selectors import get_auto_send_config
+        from apps.domains.messaging.policy import MessagingPolicyError, is_messaging_disabled
 
         name = (request.data.get("name") or "").strip()
         phone = (request.data.get("phone") or "").replace(" ", "").replace("-", "").replace(".", "")
@@ -74,7 +74,7 @@ class StudentPasswordFindRequestView(APIView):
 
         # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
         # password_find_otp 전용 템플릿이 PENDING이면 registration_approved_student로 fallback
-        from apps.support.messaging.policy import send_alimtalk_via_owner
+        from apps.domains.messaging.policy import send_alimtalk_via_owner
         from django.conf import settings as _settings
         site_url = getattr(_settings, "SITE_URL", "") or "https://hakwonplus.com"
         ok = send_alimtalk_via_owner(
@@ -281,8 +281,8 @@ class StudentPasswordResetSendView(APIView):
             return Response({"message": "비밀번호가 변경되었습니다. (알림톡 미발송)"}, status=200)
 
         # 알림톡 발송
-        from apps.support.messaging.selectors import get_auto_send_config
-        from apps.support.messaging.policy import MessagingPolicyError, is_messaging_disabled
+        from apps.domains.messaging.selectors import get_auto_send_config
+        from apps.domains.messaging.policy import MessagingPolicyError, is_messaging_disabled
 
         if is_messaging_disabled(tenant.id):
             return Response(
@@ -312,7 +312,7 @@ class StudentPasswordResetSendView(APIView):
             )
 
         # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
-        from apps.support.messaging.policy import send_alimtalk_via_owner
+        from apps.domains.messaging.policy import send_alimtalk_via_owner
         from django.conf import settings as _settings
         site_url = getattr(_settings, "SITE_URL", "") or "https://hakwonplus.com"
         trigger = "password_reset_student" if target == "student" else "password_reset_parent"

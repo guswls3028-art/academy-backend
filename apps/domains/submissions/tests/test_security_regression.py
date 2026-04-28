@@ -35,7 +35,7 @@ from apps.domains.submissions.views.exam_submissions_list_view import ExamSubmis
 from apps.domains.submissions.views.homework_submissions_list_view import HomeworkSubmissionsListView
 from apps.domains.submissions.views.exam_omr_submit_view import ExamOMRSubmitView
 from apps.domains.results.views.admin_landing_stats_view import AdminResultsLandingStatsView
-from apps.support.video.views.admin_landing_stats_view import AdminVideosLandingStatsView
+from apps.domains.video.views.admin_landing_stats_view import AdminVideosLandingStatsView
 
 User = get_user_model()
 

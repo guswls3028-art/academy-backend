@@ -18,7 +18,7 @@ from apps.api.common.throttles import SmsEndpointThrottle, SignupCheckThrottle
 from apps.core.models import TenantMembership
 
 from apps.domains.parents.services import ensure_parent_for_student, PARENT_DEFAULT_PASSWORD
-from apps.support.messaging.services import get_tenant_site_url, send_registration_approved_messages
+from apps.domains.messaging.services import get_tenant_site_url, send_registration_approved_messages
 
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student, StudentRegistrationRequest

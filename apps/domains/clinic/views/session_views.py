@@ -18,7 +18,7 @@ from ..serializers import ClinicSessionSerializer
 from ..filters import SessionFilter
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
-from apps.support.messaging.services import send_clinic_reminder_for_students
+from apps.domains.messaging.services import send_clinic_reminder_for_students
 from apps.domains.progress.models import ClinicLink
 from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
 

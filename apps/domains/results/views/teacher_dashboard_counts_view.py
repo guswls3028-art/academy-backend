@@ -22,7 +22,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.support.video.models import Video
+from apps.domains.video.models import Video
 
 
 VIDEO_FAILED_WINDOW_DAYS = 30

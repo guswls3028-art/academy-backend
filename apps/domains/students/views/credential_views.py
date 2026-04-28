@@ -60,13 +60,13 @@ class SendExistingCredentialsView(APIView):
         if not send_to or len(send_to) != 11:
             return Response({"detail": "등록된 전화번호가 없어 발송할 수 없습니다."}, status=400)
 
-        from apps.support.messaging.policy import MessagingPolicyError, is_messaging_disabled
+        from apps.domains.messaging.policy import MessagingPolicyError, is_messaging_disabled
 
         if is_messaging_disabled(tenant.id):
             return Response({"message": "아이디/비밀번호가 발송되었습니다."}, status=200)
 
         # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
-        from apps.support.messaging.policy import send_alimtalk_via_owner
+        from apps.domains.messaging.policy import send_alimtalk_via_owner
         from django.conf import settings as _settings
         site_url = getattr(_settings, "SITE_URL", "") or "https://hakwonplus.com"
         ok = send_alimtalk_via_owner(

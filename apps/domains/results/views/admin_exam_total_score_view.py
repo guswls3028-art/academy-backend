@@ -255,7 +255,7 @@ class AdminExamTotalScoreView(APIView):
         def _send_score_notification():
             try:
                 from apps.domains.enrollment.models import Enrollment
-                from apps.support.messaging.services import send_event_notification
+                from apps.domains.messaging.services import send_event_notification
 
                 enrollment_obj = Enrollment.objects.select_related("student", "lecture").filter(
                     id=_notif_enrollment_id, tenant=_notif_tenant

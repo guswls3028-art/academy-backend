@@ -24,7 +24,7 @@ from django.conf import settings
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.support.messaging.services import send_event_notification
+from apps.domains.messaging.services import send_event_notification
 from apps.domains.fees.services import auto_assign_fees_on_enrollment
 
 logger = logging.getLogger(__name__)

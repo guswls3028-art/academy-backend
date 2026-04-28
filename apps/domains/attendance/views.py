@@ -41,7 +41,7 @@ def _send_attendance_notification(tenant, attendance, trigger):
     학부모에게 "입실하였습니다" 알림을 보내면 안 됨.
     """
     try:
-        from apps.support.messaging.services import send_event_notification
+        from apps.domains.messaging.services import send_event_notification
         from django.utils import timezone
 
         enrollment = attendance.enrollment

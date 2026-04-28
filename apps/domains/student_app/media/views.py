@@ -21,10 +21,10 @@ from .serializers import (
 
 def _import_media_models():
     try:
-        from apps.support.video.models import Video, VideoAccess
+        from apps.domains.video.models import Video, VideoAccess
     except Exception as e:
         raise RuntimeError(
-            "[CRITICAL] apps.support.video.models.Video import 실패"
+            "[CRITICAL] apps.domains.video.models.Video import 실패"
         ) from e
     return Video, VideoAccess
 
@@ -150,7 +150,7 @@ def _pick_urls(video, request=None) -> Tuple[Optional[str], Optional[str]]:
     """
     from django.conf import settings
     from django.utils import timezone
-    from apps.support.video.views.playback_mixin import VideoPlaybackMixin
+    from apps.domains.video.views.playback_mixin import VideoPlaybackMixin
     
     # 비디오 상태 확인
     if not hasattr(video, "status") or video.status != video.Status.READY:
@@ -318,7 +318,7 @@ class StudentVideoMeView(APIView):
         )
 
         # 강의별 영상 요약을 한 번의 쿼리로 가져오기 (N+1 방지)
-        from apps.support.video.models import Video
+        from apps.domains.video.models import Video
         from django.db.models import Count, Sum
 
         # 수강 강의 세션 + 전체공개영상 세션 모두 포함
@@ -430,7 +430,7 @@ class StudentVideoStatsView(APIView):
         from django.db.models import Count, Sum, Case, When, IntegerField, F, Value
         from apps.domains.lectures.models import Lecture, Session
         from apps.domains.enrollment.models import Enrollment
-        from apps.support.video.models import Video, VideoProgress
+        from apps.domains.video.models import Video, VideoProgress
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -669,7 +669,7 @@ class StudentSessionVideoListView(APIView):
             thumb = _build_thumbnail_url(v)
 
             # Use SSOT access resolver
-            from apps.support.video.services.access_resolver import resolve_access_mode
+            from apps.domains.video.services.access_resolver import resolve_access_mode
             
             access_mode_value = None
             if enrollment_obj:
@@ -724,7 +724,7 @@ class StudentVideoPlaybackView(APIView):
             raise Http404
 
         # 공개 영상인지 확인 (visibility 필드 기반)
-        from apps.support.video.models import Video as _VideoModel
+        from apps.domains.video.models import Video as _VideoModel
         is_public_session = getattr(video, "visibility", _VideoModel.Visibility.ENROLLED) == _VideoModel.Visibility.PUBLIC
 
         if is_public_session:
@@ -772,7 +772,7 @@ class StudentVideoPlaybackView(APIView):
             raise PermissionDenied("이 영상은 시청이 제한되었습니다.")
 
         # Use SSOT access resolver (enrollment_obj는 위에서 검증된 객체만 사용)
-        from apps.support.video.services.access_resolver import resolve_access_mode
+        from apps.domains.video.services.access_resolver import resolve_access_mode
 
         access_mode_value = None
         if enrollment_obj:
@@ -856,9 +856,9 @@ class StudentVideoPlaybackView(APIView):
         playback_expires_at = None
         if is_proctored and enrollment_obj:
             try:
-                from apps.support.video.services.playback_session import issue_session, init_session_redis
-                from apps.support.video.drm import create_playback_token
-                from apps.support.video.models import VideoPlaybackSession as _PS
+                from apps.domains.video.services.playback_session import issue_session, init_session_redis
+                from apps.domains.video.drm import create_playback_token
+                from apps.domains.video.models import VideoPlaybackSession as _PS
                 from django.conf import settings as _settings
                 from django.utils import timezone as _tz
                 ttl = int(getattr(_settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600))
@@ -914,7 +914,7 @@ class StudentVideoPlaybackView(APIView):
         is_liked = False
         student = get_request_student(request)
         if student:
-            from apps.support.video.models import VideoLike
+            from apps.domains.video.models import VideoLike
             video_tenant_id = getattr(video, "tenant_id", None)
             if video_tenant_id is None:
                 video_tenant_id = (
@@ -981,7 +981,7 @@ class StudentVideoProgressView(APIView):
 
     def post(self, request, video_id: int):
         Video, VideoPermission = _import_media_models()
-        from apps.support.video.models import VideoProgress
+        from apps.domains.video.models import VideoProgress
         from apps.domains.enrollment.models import Enrollment
 
         enrollment_id = _get_student_enrollment_id(request)
@@ -1014,7 +1014,7 @@ class StudentVideoProgressView(APIView):
 
         # 공개 영상: 수강등록 없이 시청 가능. VideoProgress는 (video, enrollment) 필수라 DB 저장 불가.
         # 동일 응답 형태로 200 반환해 프론트 스펙 유지 (DB 미저장)
-        from apps.support.video.models import Video as _VideoModel2
+        from apps.domains.video.models import Video as _VideoModel2
         is_public_video = getattr(video, "visibility", _VideoModel2.Visibility.ENROLLED) == _VideoModel2.Visibility.PUBLIC
         if is_public_video:
             progress_value = request.data.get("progress", None)
@@ -1106,7 +1106,7 @@ class StudentVideoLikeView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def post(self, request, video_id: int):
-        from apps.support.video.models import Video, VideoLike
+        from apps.domains.video.models import Video, VideoLike
         from django.db.models import F
 
         student = get_request_student(request)
@@ -1171,7 +1171,7 @@ class StudentVideoCommentListView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request, video_id: int):
-        from apps.support.video.models import Video, VideoComment
+        from apps.domains.video.models import Video, VideoComment
 
         tenant = getattr(request, "tenant", None)
         if not tenant:
@@ -1254,7 +1254,7 @@ class StudentVideoCommentListView(APIView):
         return Response({"comments": data, "total": len(data)})
 
     def post(self, request, video_id: int):
-        from apps.support.video.models import Video, VideoComment
+        from apps.domains.video.models import Video, VideoComment
         from django.db.models import F
 
         tenant = getattr(request, "tenant", None)
@@ -1330,7 +1330,7 @@ class StudentVideoCommentDetailView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def patch(self, request, comment_id: int):
-        from apps.support.video.models import VideoComment
+        from apps.domains.video.models import VideoComment
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -1358,7 +1358,7 @@ class StudentVideoCommentDetailView(APIView):
         return Response({"id": comment.id, "content": comment.content, "is_edited": True})
 
     def delete(self, request, comment_id: int):
-        from apps.support.video.models import Video, VideoComment
+        from apps.domains.video.models import Video, VideoComment
         from django.db.models import F
 
         tenant = getattr(request, "tenant", None)

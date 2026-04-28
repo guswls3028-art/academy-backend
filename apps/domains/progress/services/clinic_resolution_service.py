@@ -122,7 +122,7 @@ def _send_resolution_notification(enrollment_id: int, session_id: int, resolutio
     """클리닉 해소 완료 알림 (best-effort, on_commit에서 호출)."""
     try:
         from apps.domains.enrollment.models import Enrollment
-        from apps.support.messaging.services import send_event_notification
+        from apps.domains.messaging.services import send_event_notification
 
         enr = Enrollment.objects.select_related("student", "tenant", "lecture").filter(
             id=enrollment_id,

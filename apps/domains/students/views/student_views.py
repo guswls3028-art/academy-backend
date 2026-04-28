@@ -24,7 +24,7 @@ from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
 
 from apps.domains.parents.services import ensure_parent_for_student
-from apps.support.messaging.services import send_welcome_messages, get_tenant_site_url, send_event_notification
+from apps.domains.messaging.services import send_welcome_messages, get_tenant_site_url, send_event_notification
 from apps.domains.ai.gateway import dispatch_job
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 

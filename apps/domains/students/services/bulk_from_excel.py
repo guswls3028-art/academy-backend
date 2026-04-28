@@ -106,7 +106,7 @@ def bulk_create_students_from_excel_rows(
     # 가입 안내 알림톡 발송 (새로 생성된 학생만)
     if created_students:
         try:
-            from apps.support.messaging.services import send_welcome_messages, get_tenant_site_url
+            from apps.domains.messaging.services import send_welcome_messages, get_tenant_site_url
             site_url = get_tenant_site_url(tenant)
             parent_pw = {
                 s.parent_phone: "0000"

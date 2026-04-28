@@ -427,7 +427,7 @@ class PostViewSet(viewsets.ModelViewSet):
         #   - parent 작성: QnA·상담 모두 학부모만 (학부모가 본인 자격으로 쓴 글)
         if author_role == "staff" and post.post_type in ("qna", "counsel") and post.created_by_id:
             try:
-                from apps.support.messaging.services import send_event_notification
+                from apps.domains.messaging.services import send_event_notification
                 category_fallback = "QnA" if post.post_type == "qna" else "상담"
                 ctx = {
                     "강의명": (post.category_label or category_fallback),

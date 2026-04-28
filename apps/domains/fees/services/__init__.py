@@ -516,7 +516,7 @@ def _recalculate_invoice(invoice: StudentInvoice):
 def _send_payment_complete_notification(tenant, student, billing_month: int, amount: int):
     """수납 완료 알림 발송 (messaging 연동)."""
     try:
-        from apps.support.messaging.services import send_event_notification
+        from apps.domains.messaging.services import send_event_notification
         send_event_notification(
             tenant=tenant,
             trigger="payment_complete",
