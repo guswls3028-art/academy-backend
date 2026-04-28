@@ -48,7 +48,7 @@ ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
     "image/jpg",
 }
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB — 운영 학습자료(객서심화/메인자료) 80~96MB 흔함, inventory 경로와 정합
 MAX_DOCUMENTS_PER_TENANT = 500
 
 
@@ -184,7 +184,7 @@ class DocumentUploadView(View):
 
         if file.size > MAX_FILE_SIZE:
             return JsonResponse(
-                {"detail": "파일 크기가 50MB를 초과합니다."},
+                {"detail": "파일 크기가 200MB를 초과합니다."},
                 status=400,
             )
 
