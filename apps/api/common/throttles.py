@@ -51,3 +51,23 @@ class SignupCheckThrottle(SimpleRateThrottle):
             "scope": self.scope,
             "ident": self.get_ident(request),
         }
+
+
+class ChangePasswordThrottle(SimpleRateThrottle):
+    """
+    비밀번호 변경 전용: 사용자(또는 IP) 기준 10회/시간.
+    활성 세션 탈취 후 brute force 방지층.
+    """
+    scope = "change_password"
+    rate = "10/hour"
+
+    def get_cache_key(self, request, view):
+        ident = (
+            str(request.user.pk)
+            if request.user and request.user.is_authenticated
+            else self.get_ident(request)
+        )
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": ident,
+        }

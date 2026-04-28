@@ -214,11 +214,13 @@ class RegistrationRequestViewSet(ModelViewSet):
         result = {}
 
         if username:
-            # 1) 이미 등록된 학생 (활성)
+            # 1) 이미 등록된 학생 (활성). LIKE 와일드카드 회피 위해 정확 매칭.
+            from apps.core.models.user import user_internal_username
+            internal = user_internal_username(tenant, username)
             exists = Student.objects.filter(
                 tenant=tenant,
                 deleted_at__isnull=True,
-                user__username__endswith=f"_{username}",
+                user__username=internal,
             ).exists()
             if exists:
                 result["username"] = {"available": False, "reason": "이미 사용 중인 아이디입니다."}
@@ -286,10 +288,12 @@ class RegistrationRequestViewSet(ModelViewSet):
                 Q(phone=phone_check) | Q(parent_phone=phone_check)
             ).select_related("user").first()
         if not existing_student and username_check:
+            from apps.core.models.user import user_internal_username
+            internal_check = user_internal_username(tenant, username_check)
             existing_student = Student.objects.filter(
                 tenant=tenant,
                 deleted_at__isnull=True,
-                user__username__endswith=f"_{username_check}",
+                user__username=internal_check,
             ).select_related("user").first()
 
         if existing_student:
@@ -343,20 +347,17 @@ class RegistrationRequestViewSet(ModelViewSet):
             )
         except IntegrityError as e:
             logger.warning("RegistrationRequest create IntegrityError: %s", e)
-            return Response(
-                {"detail": "저장 중 제약 조건 오류가 발생했습니다. 입력값(이름·전화번호 등)을 확인해 주세요.", "error": str(e)},
-                status=400,
-            )
+            payload = {"detail": "저장 중 제약 조건 오류가 발생했습니다. 입력값(이름·전화번호 등)을 확인해 주세요."}
+            if settings.DEBUG:
+                payload["error"] = str(e)
+            return Response(payload, status=400)
         except Exception as e:
             logger.exception("RegistrationRequest create error: %s", e)
-            return Response(
-                {
-                    "detail": "가입 신청 저장 중 오류가 발생했습니다.",
-                    "error": str(e),
-                    "traceback": traceback.format_exc() if settings.DEBUG else None,
-                },
-                status=500,
-            )
+            payload = {"detail": "가입 신청 저장 중 오류가 발생했습니다."}
+            if settings.DEBUG:
+                payload["error"] = str(e)
+                payload["traceback"] = traceback.format_exc()
+            return Response(payload, status=500)
 
         # 자동 승인 설정 시 즉시 승인 처리
         try:
@@ -376,13 +377,10 @@ class RegistrationRequestViewSet(ModelViewSet):
             return Response(out.data, status=201)
         except Exception as e:
             logger.exception("RegistrationRequest response serialize error: %s", e)
-            return Response(
-                {
-                    "detail": "가입 신청이 저장되었으나 응답 생성 중 오류가 발생했습니다.",
-                    "error": str(e),
-                },
-                status=500,
-            )
+            payload = {"detail": "가입 신청이 저장되었으나 응답 생성 중 오류가 발생했습니다."}
+            if settings.DEBUG:
+                payload["error"] = str(e)
+            return Response(payload, status=500)
 
     @action(detail=False, methods=["post"], url_path="bulk_approve")
     def bulk_approve(self, request):

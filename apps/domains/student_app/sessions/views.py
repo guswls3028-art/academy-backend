@@ -2,6 +2,8 @@
 import re
 from datetime import time as dt_time
 
+from django.db.models import Count, Q
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -10,6 +12,7 @@ from apps.domains.student_app.permissions import IsStudentOrParent, get_request_
 from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.lectures.models import Session as LectureSession
 from apps.domains.clinic.models import SessionParticipant
+from apps.domains.attendance.models import Attendance
 from .serializers import StudentSessionSerializer
 
 
@@ -98,6 +101,67 @@ class StudentSessionListView(APIView):
         return Response(StudentSessionSerializer(data, many=True).data)
 
 
+class StudentAttendanceSummaryView(APIView):
+    """
+    GET /student/attendance/summary/
+    학생 본인의 출결 누적 요약 + 최근 차시별 상태.
+    학부모는 자녀 단위로 받음 (?student_id 옵션).
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request):
+        student = get_request_student(request)
+        if not student:
+            return Response({"detail": "Not found."}, status=404)
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Not found."}, status=404)
+
+        qs = Attendance.objects.filter(
+            tenant=tenant,
+            enrollment__student=student,
+        )
+
+        # 누적 카운트
+        agg = qs.aggregate(
+            total=Count("id"),
+            present=Count("id", filter=Q(status__in=["PRESENT", "ONLINE", "SUPPLEMENT"])),
+            absent=Count("id", filter=Q(status="ABSENT")),
+            late=Count("id", filter=Q(status="LATE")),
+            early=Count("id", filter=Q(status="EARLY_LEAVE")),
+            runaway=Count("id", filter=Q(status="RUNAWAY")),
+        )
+
+        # 최근 20개 차시 출결
+        recent_qs = (
+            qs.select_related("session", "session__lecture")
+            .order_by("-session__date", "-id")[:20]
+        )
+        recent = []
+        for att in recent_qs:
+            sess = att.session
+            recent.append({
+                "session_id": sess.id,
+                "lecture_title": getattr(sess.lecture, "title", "") if sess.lecture_id else "",
+                "session_title": sess.title or (f"{sess.order}차시" if sess.order else ""),
+                "date": sess.date.isoformat() if sess.date else None,
+                "status": att.status,
+            })
+
+        return Response({
+            "summary": {
+                "total": agg["total"] or 0,
+                "present": agg["present"] or 0,
+                "absent": agg["absent"] or 0,
+                "late": agg["late"] or 0,
+                "early_leave": agg["early"] or 0,
+                "runaway": agg["runaway"] or 0,
+            },
+            "recent": recent,
+        })
+
+
 class StudentSessionDetailView(APIView):
     """
     GET /student/sessions/{id}/
@@ -123,11 +187,19 @@ class StudentSessionDetailView(APIView):
         session = LectureSession.objects.filter(id=pk).select_related("lecture").first()
         if not session:
             return Response({"detail": "Not found."}, status=404)
+        # 차시에 연결된 운영 시험(regular) 중 활성/마감 — 학생 측 시험 진입 분기용.
+        exam_ids = list(
+            session.exams.filter(
+                tenant=tenant,
+                exam_type="regular",
+                is_active=True,
+            ).exclude(status="DRAFT").values_list("id", flat=True)
+        )
         data = {
             "id": session.id,
             "title": getattr(session, "title", "") or f"{getattr(session.lecture, 'title', '')} {session.order}차시",
             "date": session.date.isoformat() if session.date else None,
             "status": None,
-            "exam_ids": [],
+            "exam_ids": exam_ids,
         }
         return Response(StudentSessionSerializer(data).data)

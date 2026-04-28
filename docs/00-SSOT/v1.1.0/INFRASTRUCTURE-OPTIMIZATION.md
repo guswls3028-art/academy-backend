@@ -99,8 +99,8 @@
 
 | Variant | 해상도 | CRF | maxrate | bufsize | Profile | Audio |
 |---------|--------|-----|---------|---------|---------|-------|
-| v2 (고화질) | 원본 유지 (≤1080p) | 20 | 8000k | 12000k | High L4.1 | AAC 128k |
-| v1 (중화질) | 720p 비율 보존 | 23 | 3000k | 4500k | Main L3.1 | AAC 96k |
+| v2 (고화질) | 원본 유지 (≤1080p) | 18 | 12000k | 18000k | High L4.1 | AAC 128k |
+| v1 (중화질) | 720p 비율 보존 | 21 | 5000k | 7500k | Main L3.1 | AAC 128k |
 
 **핵심 변경:**
 - 고정 비트레이트 → CRF 기반 품질 제어 (장면별 비트레이트 자동 조절)
@@ -108,7 +108,8 @@
 - 휴대폰 rotation 메타데이터 자동 처리 (90°/270° w↔h 스왑)
 - 원본 ≤720p인 경우 단일 variant (업스케일 방지)
 - `VIDEO_WORKER_MODE`: 코드 기본값은 `batch`. 운영 비관리 인스턴스는 환경변수로 `daemon` 설정하여 ≤90min 영상 처리 중
-- preset: `medium` (품질 우선)
+- preset: `slow` (텍스트/판서 디테일 보존 우선)
+- 2026-04-27: SSOT 정정 — 코드(`apps/worker/video_worker/video/transcoder.py`) 운영값과 동기화. 이전 표(CRF 20/23, preset medium)는 미반영 초안.
 
 **인코딩 시간 (c6g.xlarge 4 vCPU 기준):**
 | 영상 길이 | 소요 시간 |

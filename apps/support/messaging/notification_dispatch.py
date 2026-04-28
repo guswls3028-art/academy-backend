@@ -150,12 +150,15 @@ def build_attendance_preview(
             prefix = "클리닉 " if section.section_type == "CLINIC" else ""
             section_label = f"{prefix}{section.label}반"
 
+        # 클리닉 세션은 lecture 없음 — 안전 가드.
+        _lecture = getattr(att.session, "lecture", None)
+        _lecture_title = (getattr(_lecture, "title", "") or "") if _lecture else "클리닉"
         context = {
             "학원명": academy_name,
             "학생이름": name,
             "학생이름2": name_2,
             "사이트링크": site_url,
-            "강의명": att.session.lecture.title or "",
+            "강의명": _lecture_title,
             "차시명": att.session.title or f"{att.session.order}차시",
             "반이름": section_label,
             "날짜": str(att.session.date) if att.session.date else now.strftime("%Y-%m-%d"),

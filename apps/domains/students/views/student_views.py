@@ -287,7 +287,8 @@ class StudentViewSet(ModelViewSet):
         student.save(update_fields=update_fields)
         if student.user:
             student.user.is_active = False
-            user_update = ["is_active"]
+            student.user.token_version = (student.user.token_version or 0) + 1
+            user_update = ["is_active", "token_version"]
             if student.user.phone:
                 student.user.phone = None
                 user_update.append("phone")
@@ -831,7 +832,8 @@ class StudentViewSet(ModelViewSet):
                 student.save(update_fields=update_fields)
                 if student.user:
                     student.user.is_active = False
-                    user_update = ["is_active"]
+                    student.user.token_version = (student.user.token_version or 0) + 1
+                    user_update = ["is_active", "token_version"]
                     if student.user.phone:
                         student.user.phone = None
                         user_update.append("phone")

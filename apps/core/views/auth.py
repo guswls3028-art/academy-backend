@@ -10,6 +10,7 @@ from drf_yasg.utils import swagger_auto_schema
 
 from apps.core.permissions import TenantResolvedAndMember
 from apps.core.serializers import UserSerializer
+from apps.api.common.throttles import ChangePasswordThrottle
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class ChangePasswordView(APIView):
     """
 
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+    throttle_classes = [ChangePasswordThrottle]
 
     @swagger_auto_schema(auto_schema=None)
     def post(self, request):

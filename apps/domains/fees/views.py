@@ -390,19 +390,40 @@ class FeeOverdueView(APIView):
 # Student API (학생 조회 전용)
 # ========================================================
 
+def _resolve_student_or_children(user, tenant):
+    """
+    학생: 본인 student.
+    학부모: 자녀 student 목록.
+    어느 쪽도 아니면 None.
+    """
+    student = getattr(user, "student_profile", None)
+    if student:
+        return [student]
+    parent = getattr(user, "parent_profile", None)
+    if parent:
+        from apps.domains.students.models import Student as _Student
+        children = list(
+            _Student.objects.filter(
+                tenant=tenant, parent=parent, deleted_at__isnull=True
+            )
+        )
+        return children or None
+    return None
+
+
 class StudentFeeInvoiceListView(APIView):
-    """학생 본인의 청구서 목록."""
+    """학생 본인 또는 학부모(자녀)의 청구서 목록."""
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request):
         tenant = request.tenant
-        student = getattr(request.user, "student_profile", None)
-        if not student:
-            return Response({"detail": "학생 계정이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+        students = _resolve_student_or_children(request.user, tenant)
+        if not students:
+            return Response({"detail": "학생 또는 학부모 계정이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
 
         invoices = (
             StudentInvoice.objects
-            .filter(tenant=tenant, student=student)
+            .filter(tenant=tenant, student__in=students)
             .exclude(status="CANCELLED")
             .select_related("student")
             .order_by("-billing_year", "-billing_month")
@@ -413,19 +434,19 @@ class StudentFeeInvoiceListView(APIView):
 
 
 class StudentFeeInvoiceDetailView(APIView):
-    """학생 본인의 청구서 상세."""
+    """학생 본인 또는 학부모(자녀)의 청구서 상세."""
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request, pk):
         tenant = request.tenant
-        student = getattr(request.user, "student_profile", None)
-        if not student:
-            return Response({"detail": "학생 계정이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+        students = _resolve_student_or_children(request.user, tenant)
+        if not students:
+            return Response({"detail": "학생 또는 학부모 계정이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             invoice = (
                 StudentInvoice.objects
-                .filter(tenant=tenant, student=student)
+                .filter(tenant=tenant, student__in=students)
                 .exclude(status="CANCELLED")
                 .prefetch_related("items", "payments")
                 .get(pk=pk)
@@ -438,18 +459,18 @@ class StudentFeeInvoiceDetailView(APIView):
 
 
 class StudentFeePaymentListView(APIView):
-    """학생 본인의 납부 내역."""
+    """학생 본인 또는 학부모(자녀)의 납부 내역."""
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request):
         tenant = request.tenant
-        student = getattr(request.user, "student_profile", None)
-        if not student:
-            return Response({"detail": "학생 계정이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
+        students = _resolve_student_or_children(request.user, tenant)
+        if not students:
+            return Response({"detail": "학생 또는 학부모 계정이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
 
         payments = (
             FeePayment.objects
-            .filter(tenant=tenant, student=student, status="SUCCESS")
+            .filter(tenant=tenant, student__in=students, status="SUCCESS")
             .select_related("invoice", "student")
             .order_by("-paid_at")
         )
