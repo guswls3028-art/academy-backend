@@ -7,6 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.core.models import Program, Tenant, TenantDomain, TenantMembership
+from apps.core.parsing import parse_bool
 from apps.core.permissions import (
     TenantResolvedAndOwner,
     is_platform_admin_tenant,
@@ -95,7 +96,8 @@ class TenantDetailView(APIView):
             tenant.name = request.data["name"]
             changes["name"] = tenant.name
         if "isActive" in request.data:
-            tenant.is_active = bool(request.data["isActive"])
+            # parse_bool: "false" 문자열을 False로 처리. bool("false") == True 회귀 방지.
+            tenant.is_active = parse_bool(request.data["isActive"], field_name="isActive")
             changes["isActive"] = tenant.is_active
         tenant.save(update_fields=["name", "is_active"])
 

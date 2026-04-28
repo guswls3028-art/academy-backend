@@ -73,7 +73,11 @@ def _get_openai_client() -> "OpenAI":
 def _embed_openai(texts: List[str]) -> EmbeddingBatch:
     cfg = AIConfig.load()
     client = _get_openai_client()
-    response = client.embeddings.create(model=cfg.EMBEDDING_OPENAI_MODEL, input=texts)
+    # PII 가드: OpenAI에 inline 전화번호(010-XXXX-XXXX)가 평문으로 흘러가지 않도록
+    # 패턴 마스킹. 임베딩 의미에 거의 영향 없음(같은 형태 토큰으로 치환).
+    from apps.shared.utils.pii import mask_inline_phones
+    safe_texts = [mask_inline_phones(t) for t in texts]
+    response = client.embeddings.create(model=cfg.EMBEDDING_OPENAI_MODEL, input=safe_texts)
     vectors = [list(map(float, d.embedding)) for d in response.data]
     return EmbeddingBatch(vectors=vectors, backend="openai")
 

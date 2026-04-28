@@ -46,7 +46,10 @@ def _get_client() -> "OpenAI":
 
 def generate_problem_from_ocr(ocr_text: str) -> ParsedProblem:
     cfg = AIConfig.load()
-    prompt = BASE_PROMPT.format(ocr_text=ocr_text)
+    # PII 가드: OCR 텍스트에 답안지/Q&A 사진의 inline 전화번호가 섞여있어도
+    # OpenAI로는 마스킹된 형태만 전달.
+    from apps.shared.utils.pii import mask_inline_phones
+    prompt = BASE_PROMPT.format(ocr_text=mask_inline_phones(ocr_text))
 
     client = _get_client()
     response = client.chat.completions.create(

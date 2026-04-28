@@ -140,8 +140,18 @@ class UnhandledExceptionMiddleware:
 
     def process_exception(self, request, exception):
         logger.exception("Unhandled exception: %s", exception)
-        resp = JsonResponse(
-            {"detail": "서버 오류가 발생했습니다.", "error": str(exception)},
-            status=500,
-        )
+        # 운영(DEBUG=False)에서는 내부 예외 메시지를 응답에 노출하지 않는다.
+        # correlation_id 는 항상 포함해 운영 디버깅 시 로그와 매칭 가능.
+        try:
+            from apps.api.common.correlation import get_correlation_id
+            cid = get_correlation_id() or ""
+        except Exception:
+            cid = ""
+        body = {
+            "detail": "서버 오류가 발생했습니다.",
+            "correlation_id": cid,
+        }
+        if getattr(settings, "DEBUG", False):
+            body["error"] = str(exception)
+        resp = JsonResponse(body, status=500)
         return _add_cors_headers_to_response(request, resp)

@@ -28,9 +28,13 @@ def infer_parent_phone_column(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
 
+    from apps.shared.utils.pii import mask_sample_for_llm
+
     masked = []
     for c in candidates:
-        samples = c.get("samples", [])[:5]
+        # 전화번호/이름 등 PII가 raw로 OpenAI에 전송되지 않도록 마스킹.
+        # AI는 형태(010-****-XXXX 같은 패턴)만으로도 컬럼 분류 가능.
+        samples = [mask_sample_for_llm(s) for s in c.get("samples", [])[:5]]
         masked.append({
             "col_index": c["col_index"],
             "header": c["header"],

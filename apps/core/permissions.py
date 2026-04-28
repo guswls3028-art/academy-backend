@@ -8,11 +8,24 @@ from apps.core.models import TenantMembership
 
 
 def _get_client_ip(request):
-    """X-Forwarded-For (첫 번째) 또는 REMOTE_ADDR."""
+    """클라이언트 IP 추출.
+
+    TRUSTED_PROXY_CIDRS 가 설정된 경우:
+      - REMOTE_ADDR 가 신뢰 프록시 범위 안일 때만 XFF 첫 값을 신뢰.
+      - 신뢰 범위 밖이면 XFF는 위조 가능하므로 무시하고 REMOTE_ADDR 사용.
+    설정이 비어 있으면 후방 호환을 위해 XFF 첫 값을 그대로 사용.
+    """
     forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
-    if forwarded:
+    remote = request.META.get("REMOTE_ADDR", "")
+    trusted = getattr(settings, "TRUSTED_PROXY_CIDRS", "") or ""
+    if not trusted:
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        return remote
+    # 설정이 있으면 REMOTE_ADDR 가 신뢰 프록시 안일 때만 XFF 신뢰
+    if forwarded and _ip_in_allowed_cidrs(remote, trusted):
         return forwarded.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR", "")
+    return remote
 
 
 def _ip_in_allowed_cidrs(ip_str: str, allow_ips_setting: str) -> bool:

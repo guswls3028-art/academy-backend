@@ -13,6 +13,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 
+from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff, TenantResolved
 from apps.api.common.throttles import SmsEndpointThrottle, SignupCheckThrottle
 from apps.core.models import TenantMembership
@@ -437,8 +438,12 @@ class RegistrationRequestViewSet(ModelViewSet):
         if request.method == "PATCH":
             auto_approve = request.data.get("auto_approve")
             if auto_approve is not None:
+                # parse_bool: "false"/"0" 등 문자열을 안전하게 boolean으로 변환.
+                # bool("false") == True 이슈 방지.
+                tenant.student_registration_auto_approve = parse_bool(
+                    auto_approve, field_name="auto_approve",
+                )
                 try:
-                    tenant.student_registration_auto_approve = bool(auto_approve)
                     tenant.save(update_fields=["student_registration_auto_approve"])
                 except Exception:
                     pass

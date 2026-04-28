@@ -5,6 +5,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff
 from ..color_utils import get_effective_clinic_colors
 
@@ -46,11 +47,15 @@ class ClinicSettingsView(APIView):
         update_fields = []
         with transaction.atomic():
             if "use_daily_random" in request.data:
-                tenant.clinic_use_daily_random = bool(request.data["use_daily_random"])
+                tenant.clinic_use_daily_random = parse_bool(
+                    request.data["use_daily_random"], field_name="use_daily_random",
+                )
                 update_fields.append("clinic_use_daily_random")
 
             if "auto_approve_booking" in request.data:
-                tenant.clinic_auto_approve_booking = bool(request.data["auto_approve_booking"])
+                tenant.clinic_auto_approve_booking = parse_bool(
+                    request.data["auto_approve_booking"], field_name="auto_approve_booking",
+                )
                 update_fields.append("clinic_auto_approve_booking")
 
             colors = request.data.get("colors")
