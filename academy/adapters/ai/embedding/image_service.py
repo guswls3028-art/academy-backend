@@ -16,6 +16,7 @@ LLM 사용 안 함 — Vision Transformer (CLIP-ViT-B-32) image encoder만.
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -24,6 +25,11 @@ logger = logging.getLogger(__name__)
 # CLIP 모델 — 이미지 임베딩 (텍스트는 별도 sentence-transformer 사용 → 한국어 강함).
 # clip-ViT-B-32: 표준 CLIP, 512차원 이미지 임베딩. ~340MB.
 _CLIP_MODEL_NAME = "clip-ViT-B-32"
+
+# 한 번에 인코딩할 이미지 수 상한.
+# t4g.medium(2 vCPU, 4GB) 기준 batch 16 = 메모리 ~600MB peak, ~6s/batch.
+# 무제한일 때(~400 images) OOM/wedge 사고 발생(2026-04-29). 환경변수로 조정.
+_CLIP_BATCH_SIZE = max(1, int(os.getenv("CLIP_IMAGE_BATCH_SIZE", "16")))
 
 try:
     from sentence_transformers import SentenceTransformer  # type: ignore
@@ -69,27 +75,38 @@ def get_image_embeddings(image_paths: List[str]) -> ImageEmbeddingBatch:
         logger.warning("CLIP model load failed: %s — image embeddings empty", e)
         return ImageEmbeddingBatch(vectors=[[] for _ in image_paths])
 
-    images = []
-    valid_indices = []
-    for i, p in enumerate(image_paths):
-        try:
-            img = Image.open(p).convert("RGB")
-            images.append(img)
-            valid_indices.append(i)
-        except Exception as e:
-            logger.warning("image load failed (%s): %s", p, e)
-    if not images:
-        return ImageEmbeddingBatch(vectors=[[] for _ in image_paths])
-
-    try:
-        vectors = model.encode(images, convert_to_numpy=False)
-        vectors_list = [list(map(float, v)) for v in vectors]
-    except Exception as e:
-        logger.warning("CLIP encode failed: %s", e)
-        return ImageEmbeddingBatch(vectors=[[] for _ in image_paths])
-
-    # valid_indices 순서대로 채워넣기
+    # 메모리 폭증 방지를 위해 batch 단위로 처리.
+    # 이미지를 한꺼번에 PIL로 열면 PDF 1건당 400+ images로 4GB RAM 워커 OOM.
     out: List[List[float]] = [[] for _ in image_paths]
-    for idx, vec in zip(valid_indices, vectors_list):
-        out[idx] = vec
+    total = len(image_paths)
+    for start in range(0, total, _CLIP_BATCH_SIZE):
+        end = min(start + _CLIP_BATCH_SIZE, total)
+        batch_paths = image_paths[start:end]
+        images = []
+        local_indices: List[int] = []
+        for offset, p in enumerate(batch_paths):
+            try:
+                img = Image.open(p).convert("RGB")
+                images.append(img)
+                local_indices.append(start + offset)
+            except Exception as e:
+                logger.warning("image load failed (%s): %s", p, e)
+        if not images:
+            continue
+        try:
+            vectors = model.encode(images, convert_to_numpy=False, batch_size=_CLIP_BATCH_SIZE)
+            for idx, vec in zip(local_indices, vectors):
+                out[idx] = list(map(float, vec))
+        except Exception as e:
+            logger.warning(
+                "CLIP encode failed (batch %d-%d/%d): %s",
+                start, end, total, e,
+            )
+        finally:
+            # PIL Image fileobj/decoder 명시 해제 — 누수 시 다음 batch에서 메모리 누적.
+            for img in images:
+                try:
+                    img.close()
+                except Exception:
+                    pass
     return ImageEmbeddingBatch(vectors=out)

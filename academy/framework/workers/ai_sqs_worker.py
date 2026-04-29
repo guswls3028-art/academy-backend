@@ -238,8 +238,12 @@ def run_ai_sqs_worker() -> int:
                     inference_thread.join(timeout=INFERENCE_MAX_SECONDS)
 
                     if inference_thread.is_alive():
+                        # Daemon thread는 정지 불가 — 그대로 두면 zombie thread가
+                        # CPU/메모리를 누적 점유해 다음 잡 처리 중 wedge(2026-04-29 사고).
+                        # 사후 처리(fail_ai_job, callback, SQS delete) 후 프로세스를
+                        # 강제 종료해 docker `--restart unless-stopped`로 재기동한다.
                         logger.error(
-                            "SQS_JOB_TIMEOUT_60MIN | request_id=%s | job_id=%s | stopping extender",
+                            "SQS_JOB_TIMEOUT_60MIN | request_id=%s | job_id=%s | hard exit after cleanup",
                             request_id, job_id,
                         )
                         ok = fail_ai_job(uow_factory(), job_id, "inference_timeout_60min", tier_from_msg)
@@ -248,20 +252,24 @@ def run_ai_sqs_worker() -> int:
                                 "AI_JOB_STATE_TRANSITION_FAILED | step=fail_timeout | job_id=%s | "
                                 "DB still RUNNING — manual cleanup required", job_id,
                             )
-                        _dispatch_domain_callback(
-                            prepared, status="FAILED", result_payload=None,
-                            error="inference_timeout_60min",
-                        )
-                        if not queue.delete(receipt_handle, tier_from_msg):
-                            logger.error(
-                                "AI_JOB_SQS_DELETE_FAILED | job_id=%s | timeout path", job_id,
+                        try:
+                            _dispatch_domain_callback(
+                                prepared, status="FAILED", result_payload=None,
+                                error="inference_timeout_60min",
                             )
+                        except Exception:
+                            logger.exception("Domain callback during timeout failed (non-fatal)")
+                        try:
+                            if not queue.delete(receipt_handle, tier_from_msg):
+                                logger.error(
+                                    "AI_JOB_SQS_DELETE_FAILED | job_id=%s | timeout path", job_id,
+                                )
+                        except Exception:
+                            logger.exception("SQS delete during timeout failed (non-fatal)")
                         extender.stop()
-                        _current_receipt_handle = None
-                        consecutive_errors += 1
-                        if _shutdown:
-                            break
-                        continue
+                        _release_db_connections()
+                        # zombie daemon thread 누적 방지 — 컨테이너 재기동(docker restart=unless-stopped)
+                        os._exit(2)
 
                     # 상태 전이 반환값을 명시적으로 검증 — False면 DB 갱신 실패로
                     # SQS message는 삭제되지만 DB는 RUNNING으로 남아 운영 알람 대상.
