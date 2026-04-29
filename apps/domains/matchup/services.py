@@ -117,9 +117,11 @@ def find_similar_problems(
         if intent == "test" or role == "exam_sheet":
             candidates = candidates.exclude(document_id=source.document_id)
 
-    # 같은 카테고리(섹션) 내에서만 추천.
-    # source가 matchup 문서인 경우에만 적용 (exam source는 document가 None).
-    if source_category:
+    # 같은 카테고리(섹션) 내에서만 추천. 빈 카테고리도 빈 카테고리끼리만.
+    # source가 matchup 문서이면 항상 격리 적용. (exam source는 document_id=None)
+    # 사용자(철 선생) 피드백 2026-04-29: "중대부고 자료에 다른 학교 자료가 막 뜬다"
+    # → 카테고리 누락 시 격리가 풀려 leak되던 버그 차단.
+    if source.document_id:
         candidates = candidates.filter(
             document__isnull=False,
             document__category=source_category,

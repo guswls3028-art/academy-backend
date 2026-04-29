@@ -16,6 +16,13 @@ urlpatterns = [
     path("documents/<int:doc_id>/job/", views.DocumentJobView.as_view()),
     path("documents/<int:doc_id>/retry/", views.DocumentRetryView.as_view()),
     path("documents/<int:doc_id>/hit-report.pdf", views.DocumentHitReportPdfView.as_view()),
+    path("documents/<int:doc_id>/hit-report-draft/", views.HitReportDraftView.as_view()),
+
+    # Curated hit reports
+    path("hit-reports/<int:report_id>/", views.HitReportDetailView.as_view()),
+    path("hit-reports/<int:report_id>/entries/", views.HitReportEntriesUpsertView.as_view()),
+    path("hit-reports/<int:report_id>/submit/", views.HitReportSubmitView.as_view()),
+    path("hit-reports/<int:report_id>/curated.pdf", views.HitReportPdfView.as_view()),
 
     # Categories
     path("categories/", views.CategoryListView.as_view()),

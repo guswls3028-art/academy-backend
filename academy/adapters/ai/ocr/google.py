@@ -14,6 +14,29 @@ from google.cloud import vision  # type: ignore
 
 logger = logging.getLogger(__name__)
 
+# Vision API circuit breaker — 빌링/인증 실패가 한 번 발생하면 짧은 시간 차단.
+# 사고 컨텍스트 (2026-04-29): GCP project 빌링이 끊겨 PermissionDenied 발생 시
+# 매 페이지마다 5~10초 응답 지연이 누적되어 SQS_JOB_TIMEOUT_60MIN으로 워커 stuck 26건.
+# 첫 실패 후 5분간 OCR 호출을 즉시 skip하면, 매치업 파이프라인은 OpenCV/페이지 폴백으로
+# 진행되어 worker는 다음 잡으로 넘어간다. 빌링 풀리면 5분 후 자동 복구.
+_AUTH_FAIL_UNTIL = 0.0
+_AUTH_FAIL_COOLDOWN_SEC = 300
+
+
+def _is_auth_disabled_now() -> bool:
+    import time
+    return time.time() < _AUTH_FAIL_UNTIL
+
+
+def _trip_auth_breaker(reason: str) -> None:
+    import time
+    global _AUTH_FAIL_UNTIL
+    _AUTH_FAIL_UNTIL = max(_AUTH_FAIL_UNTIL, time.time() + _AUTH_FAIL_COOLDOWN_SEC)
+    logger.error(
+        "VISION_OCR_CIRCUIT_OPEN | cooldown=%ds | reason=%s",
+        _AUTH_FAIL_COOLDOWN_SEC, reason,
+    )
+
 # Google Vision API 제한:
 # - JSON 요청 전체: 20MB (base64 오버헤드 감안 ~15MB 실제)
 # - 이미지 dimension: width*height ≤ 75M pixels (공식), 실측 초과 시 silent reject.
@@ -184,13 +207,23 @@ def google_ocr(image_path: str) -> OCRResult:
     - GOOGLE_CREDENTIALS_JSON (JSON 문자열) 또는
     - GOOGLE_APPLICATION_CREDENTIALS (파일 경로) 사용
     """
+    if _is_auth_disabled_now():
+        return OCRResult(text="", confidence=None, raw={"error": "circuit_open"})
+
     client = _get_vision_client()
 
     content = _prepare_image_for_vision(image_path)
     image = vision.Image(content=content)
-    response = client.text_detection(image=image)
+    try:
+        response = client.text_detection(image=image)
+    except Exception as e:
+        if _is_auth_failure(e):
+            _trip_auth_breaker(str(e)[:200])
+        raise
 
     if getattr(response, "error", None) and response.error.message:
+        if _is_auth_failure_message(response.error.message):
+            _trip_auth_breaker(response.error.message[:200])
         return OCRResult(text="", confidence=None, raw={"error": response.error.message})
 
     annotations = getattr(response, "text_annotations", None) or []
@@ -204,6 +237,30 @@ def google_ocr(image_path: str) -> OCRResult:
     )
 
 
+def _is_auth_failure(exc: Exception) -> bool:
+    """gRPC PermissionDenied/Unauthenticated/BillingDisabled 류 에러 식별."""
+    msg = (str(exc) or "").lower()
+    cls = type(exc).__name__
+    return (
+        cls in ("PermissionDenied", "Unauthenticated", "Forbidden")
+        or "billing_disabled" in msg
+        or "billing is enabled" in msg
+        or "permission_denied" in msg
+        or "unauthenticated" in msg
+        or "403" in msg and "vision" in msg
+    )
+
+
+def _is_auth_failure_message(msg: str) -> bool:
+    m = (msg or "").lower()
+    return (
+        "billing_disabled" in m
+        or "permission denied" in m
+        or "permission_denied" in m
+        or "unauthenticated" in m
+    )
+
+
 def google_ocr_blocks(image_path: str) -> List[OCRTextBlock]:
     """
     Vision document_text_detection으로 줄 단위 텍스트 블록을 bbox와 함께 추출.
@@ -214,6 +271,9 @@ def google_ocr_blocks(image_path: str) -> List[OCRTextBlock]:
     동일 경로·동일 파일 크기 조합에 대해 결과를 메모리 캐시 (LRU)하여
     한 번의 작업 내에서 중복 OCR 호출(dispatcher + pipeline)을 방지.
     """
+    if _is_auth_disabled_now():
+        return []
+
     try:
         stat = os.stat(image_path)
         key: Tuple[str, int, int] = (image_path, int(stat.st_size), int(stat.st_mtime))
@@ -241,9 +301,12 @@ def _google_ocr_blocks_cached(
 
     try:
         response = client.document_text_detection(image=image)
-    except Exception:
+    except Exception as e:
         # 예외 경로: 네트워크/쿼터/인증 실패 등. 메트릭 put 후 재raise.
         _emit_vision_metric(_CW_METRIC_ERRORS)
+        if _is_auth_failure(e):
+            _trip_auth_breaker(str(e)[:200])
+            return tuple()  # 인증 실패는 raise하지 않고 빈 결과 — 워커 누적 timeout 방지
         raise
 
     # 성공 호출 (response.error가 있어도 API round-trip은 성공 → 호출 카운트는 증가)
@@ -252,6 +315,8 @@ def _google_ocr_blocks_cached(
     if getattr(response, "error", None) and response.error.message:
         # API가 error 필드로 실패를 돌려준 경우 — 에러 메트릭도 기록
         _emit_vision_metric(_CW_METRIC_ERRORS)
+        if _is_auth_failure_message(response.error.message):
+            _trip_auth_breaker(response.error.message[:200])
         return tuple()
 
     full_annotation = getattr(response, "full_text_annotation", None)

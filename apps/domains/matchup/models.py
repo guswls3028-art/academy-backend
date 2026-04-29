@@ -120,3 +120,90 @@ class MatchupProblem(TimestampModel):
 
     def __str__(self):
         return f"Doc {self.document_id} Q{self.number}"
+
+
+class MatchupHitReport(TimestampModel):
+    """시험지 1 doc 단위로 사람이 큐레이션한 적중 보고서.
+
+    실장이 매치업이 자동으로 찾아준 후보 중 적합한 것을 골라 코멘트·해설을 붙여
+    선생/학원장에게 제출하는 보고서. 학원 운영의 핵심 비즈니스 산출물.
+
+    자동 PDF 보고서(hit-report.pdf)와는 분리:
+      - hit-report.pdf  = 시스템이 top1 매칭으로 자동 생성 (마케팅/네이버 카페용)
+      - hit-report      = 사람이 후보를 골라 큐레이션 (선생 보고서/학원 내부용)
+    """
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="matchup_hit_reports",
+        db_index=True,
+    )
+    document = models.OneToOneField(
+        MatchupDocument,
+        on_delete=models.CASCADE,
+        related_name="hit_report",
+    )
+    title = models.CharField(max_length=255, blank=True, default="")
+    summary = models.TextField(blank=True, default="")  # 보고서 상단 메모/설명
+
+    STATUS_CHOICES = [
+        ("draft", "작성중"),
+        ("submitted", "제출됨"),
+    ]
+    status = models.CharField(
+        max_length=20, choices=STATUS_CHOICES, default="draft", db_index=True,
+    )
+    submitted_at = models.DateTimeField(null=True, blank=True)
+    submitted_by_id = models.IntegerField(null=True, blank=True)
+    submitted_by_name = models.CharField(max_length=100, blank=True, default="")
+
+    class Meta:
+        app_label = "matchup"
+        ordering = ["-updated_at"]
+
+    def __str__(self):
+        return f"HitReport doc#{self.document_id} ({self.status})"
+
+
+class MatchupHitReportEntry(TimestampModel):
+    """문항 단위 큐레이션 엔트리. exam doc의 problem 1개당 1개.
+
+    selected_problem_ids: 사용자가 선택한 학원 자료 problem id 목록 (multi).
+    comment: 사용자가 직접 작성한 코멘트/해설 (학원이 어떻게 가르쳤는지 등).
+    """
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="matchup_hit_report_entries",
+        db_index=True,
+    )
+    report = models.ForeignKey(
+        MatchupHitReport,
+        on_delete=models.CASCADE,
+        related_name="entries",
+    )
+    exam_problem = models.ForeignKey(
+        MatchupProblem,
+        on_delete=models.CASCADE,
+        related_name="hit_report_entries",
+    )
+    selected_problem_ids = models.JSONField(default=list, blank=True)
+    comment = models.TextField(blank=True, default="")
+    order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        app_label = "matchup"
+        ordering = ["order", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["report", "exam_problem"],
+                name="unique_hit_report_exam_problem",
+            ),
+        ]
+
+    def __str__(self):
+        return f"Entry report#{self.report_id} exam_q={self.exam_problem_id}"

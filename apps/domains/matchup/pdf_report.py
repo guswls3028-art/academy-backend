@@ -457,3 +457,321 @@ def generate_matchup_hit_report_pdf(
 
     c.save()
     return buf.getvalue()
+
+
+def generate_curated_hit_report_pdf(report) -> bytes:
+    """큐레이션 보고서 PDF — 실장이 직접 고른 후보 + 코멘트.
+
+    표지: 학원 로고 + 시험지 제목 + 작성자/요약/제출일 + 문항 수
+    각 문항: 좌(시험지) | 우(선택한 학원자료 N개 썸네일 + 코멘트)
+    """
+    from reportlab.lib.pagesizes import A4, portrait
+    from reportlab.lib.colors import HexColor, black, white
+    from reportlab.lib.units import mm
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.utils import ImageReader
+
+    from apps.domains.matchup.models import MatchupProblem
+    from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+    fn_reg, fn_bold = _ensure_korean_font()
+
+    document = report.document
+    tenant = document.tenant
+    tenant_name = (tenant.name or "").strip() or "학원"
+
+    # 시험지 problem (number 순)
+    exam_problems = list(
+        document.problems.exclude(image_key="").order_by("number")
+    )
+
+    # 엔트리 매핑 (exam_problem_id → entry)
+    entries_by_eid = {
+        e.exam_problem_id: e for e in report.entries.all()
+    }
+
+    # 선택된 학원 problem들 한꺼번에 prefetch
+    all_selected_ids = set()
+    for e in entries_by_eid.values():
+        for pid in (e.selected_problem_ids or []):
+            try:
+                all_selected_ids.add(int(pid))
+            except (TypeError, ValueError):
+                pass
+
+    selected_meta = {}
+    if all_selected_ids:
+        for p in MatchupProblem.objects.filter(
+            tenant=tenant, id__in=list(all_selected_ids),
+        ).select_related("document"):
+            selected_meta[p.id] = p
+
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=portrait(A4))
+    page_w, page_h = portrait(A4)
+    margin = 18 * mm
+    inner_w = page_w - margin * 2
+
+    issued_at = (
+        report.submitted_at.strftime("%Y년 %m월 %d일")
+        if report.submitted_at else datetime.now().strftime("%Y년 %m월 %d일")
+    )
+    author_name = (report.submitted_by_name or "").strip()
+    author_label = author_name or "작성자 미기재"
+
+    # ── 표지 ──
+    c.setFillColor(HexColor(_HEADER_COLOR))
+    c.rect(0, page_h - 38 * mm, page_w, 38 * mm, fill=1, stroke=0)
+    c.setFillColor(white)
+    c.setFont(fn_bold, 26)
+    c.drawCentredString(page_w / 2, page_h - 22 * mm, tenant_name)
+    c.setFont(fn_reg, 12)
+    c.drawCentredString(page_w / 2, page_h - 32 * mm, "큐레이션 적중 보고서")
+
+    y = page_h - 75 * mm
+    c.setFillColor(black)
+    c.setFont(fn_bold, 20)
+    title = (report.title or document.title or "시험지 적중 보고서")[:60]
+    c.drawCentredString(page_w / 2, y, title)
+    y -= 9 * mm
+    c.setFont(fn_reg, 11)
+    c.setFillColor(HexColor("#475569"))
+    c.drawCentredString(
+        page_w / 2, y,
+        f"카테고리  ·  {(document.category or '미분류')[:40]}",
+    )
+    y -= 6 * mm
+    c.drawCentredString(page_w / 2, y, f"작성자  ·  {author_label}    발행일  ·  {issued_at}")
+
+    # 요약 박스 (사용자 작성 summary)
+    summary_text = (report.summary or "").strip()
+    if summary_text:
+        y -= 14 * mm
+        box_x = margin + 8 * mm
+        box_w = inner_w - 16 * mm
+        box_h = 50 * mm
+        c.setFillColor(HexColor(_BG_SUBTLE))
+        c.roundRect(box_x, y - box_h, box_w, box_h, 6, fill=1, stroke=0)
+        c.setFillColor(HexColor("#0F172A"))
+        c.setFont(fn_bold, 11)
+        c.drawString(box_x + 6 * mm, y - 8 * mm, "요약")
+        c.setFont(fn_reg, 10)
+        c.setFillColor(HexColor("#334155"))
+        # 매우 단순한 wrap — 줄당 ~50자
+        lines = []
+        for raw in summary_text.split("\n"):
+            line = raw.strip()
+            while len(line) > 50:
+                lines.append(line[:50])
+                line = line[50:]
+            if line:
+                lines.append(line)
+            if len(lines) >= 7:
+                break
+        ty = y - 14 * mm
+        for line in lines[:7]:
+            c.drawString(box_x + 6 * mm, ty, line)
+            ty -= 5.5 * mm
+
+    # 통계 박스 — 큐레이션 카운트
+    curated_count = sum(
+        1 for e in entries_by_eid.values()
+        if (e.selected_problem_ids or []) or (e.comment or "").strip()
+    )
+    total_q = len(exam_problems)
+    stat_y = 60 * mm
+    c.setFont(fn_bold, 28)
+    c.setFillColor(HexColor(_HIT_COLOR if curated_count > 0 else _MISS_COLOR))
+    c.drawCentredString(page_w / 2, stat_y, f"{curated_count} / {total_q} 문항 큐레이션")
+
+    # 푸터
+    c.setFont(fn_reg, 9)
+    c.setFillColor(HexColor("#94A3B8"))
+    c.drawCentredString(page_w / 2, 12 * mm, f"{tenant_name}  ·  적중 큐레이션 보고서")
+    c.showPage()
+
+    # ── 각 문항 페이지 ──
+    def _safe_url(image_key):
+        if not image_key:
+            return ""
+        try:
+            return generate_presigned_get_url_storage(key=image_key, expires_in=600) or ""
+        except Exception:
+            return ""
+
+    total = len(exam_problems)
+    for idx, ep in enumerate(exam_problems, start=1):
+        # 헤더
+        c.setFillColor(HexColor(_HEADER_COLOR))
+        c.rect(0, page_h - 18 * mm, page_w, 18 * mm, fill=1, stroke=0)
+        c.setFillColor(white)
+        c.setFont(fn_bold, 14)
+        c.drawString(margin, page_h - 12 * mm, f"Q{ep.number}")
+        entry = entries_by_eid.get(ep.id)
+        sel_ids = (entry.selected_problem_ids if entry else []) or []
+        comment = (entry.comment if entry else "") or ""
+
+        # 우상단 라벨
+        c.setFont(fn_bold, 11)
+        if sel_ids:
+            c.setFillColor(HexColor(_HIT_COLOR))
+            c.drawRightString(
+                page_w - margin, page_h - 12 * mm,
+                f"학원 자료 {len(sel_ids)}건",
+            )
+        else:
+            c.setFillColor(HexColor(_MISS_COLOR))
+            c.drawRightString(page_w - margin, page_h - 12 * mm, "선택 없음")
+
+        # 본문 좌/우
+        col_gap = 6 * mm
+        col_w = (inner_w - col_gap) / 2
+        col_top = page_h - 28 * mm
+        col_bottom = 30 * mm
+        col_h = col_top - col_bottom
+
+        # 좌: 시험지 문항
+        c.setFillColor(HexColor(_HEADER_COLOR))
+        c.setFont(fn_bold, 11)
+        c.drawString(margin, col_top + 2 * mm, "실제 시험")
+        c.setFillColor(HexColor("#475569"))
+        c.setFont(fn_reg, 9)
+        c.drawString(
+            margin, col_top - 4 * mm,
+            (document.title or "시험지")[:55] + f"  ·  {ep.number}번",
+        )
+        box_top = col_top - 8 * mm
+        box_h = box_top - col_bottom
+        c.setStrokeColor(HexColor("#E2E8F0"))
+        c.setLineWidth(0.5)
+        c.rect(margin, col_bottom, col_w, box_h, stroke=1, fill=0)
+        url = _safe_url(ep.image_key)
+        if url:
+            pil = _download_image_to_pil(url, max_dim=900)
+            if pil is not None:
+                iw, ih = pil.size
+                pad = 4 * mm
+                inner_box_w = col_w - pad * 2
+                inner_box_h = box_h - pad * 2
+                scale = min(inner_box_w / iw, inner_box_h / ih)
+                draw_w = iw * scale
+                draw_h = ih * scale
+                draw_x = margin + (col_w - draw_w) / 2
+                draw_y = col_bottom + (box_h - draw_h) / 2
+                c.drawImage(
+                    ImageReader(pil),
+                    draw_x, draw_y, draw_w, draw_h,
+                    preserveAspectRatio=True, mask="auto",
+                )
+
+        # 우: 선택된 학원 자료 (썸네일 그리드) + 코멘트
+        x_right = margin + col_w + col_gap
+        c.setFillColor(HexColor(_HEADER_COLOR))
+        c.setFont(fn_bold, 11)
+        c.drawString(x_right, col_top + 2 * mm, "큐레이션 자료")
+
+        if sel_ids:
+            # 썸네일 영역 (상단 60%) + 코멘트 영역 (하단 40%)
+            thumb_top = col_top - 8 * mm
+            comment_h = col_h * 0.4
+            thumb_area_h = col_h - 8 * mm - comment_h - 4 * mm
+            comment_top = col_bottom + comment_h
+            # 썸네일 박스
+            c.setStrokeColor(HexColor("#E2E8F0"))
+            c.setLineWidth(0.5)
+            c.rect(x_right, comment_top + 4 * mm, col_w, thumb_area_h, stroke=1, fill=0)
+            # grid 2열 (최대 4건 표시)
+            shown = sel_ids[:4]
+            cells = max(1, len(shown))
+            cols_n = 1 if cells == 1 else 2
+            rows_n = (cells + cols_n - 1) // cols_n
+            cell_w = col_w / cols_n
+            cell_h = thumb_area_h / rows_n
+            for i, pid in enumerate(shown):
+                p = selected_meta.get(int(pid))
+                if not p:
+                    continue
+                row = i // cols_n
+                col = i % cols_n
+                cx = x_right + cell_w * col
+                cy = comment_top + 4 * mm + thumb_area_h - cell_h * (row + 1)
+                pad = 2 * mm
+                c.setStrokeColor(HexColor("#F1F5F9"))
+                c.rect(cx + pad, cy + pad, cell_w - pad * 2, cell_h - pad * 2, stroke=1, fill=0)
+                # 라벨
+                c.setFillColor(HexColor("#475569"))
+                c.setFont(fn_reg, 7.5)
+                src_doc_title = ""
+                try:
+                    src_doc_title = (p.document.title or "")[:30] if p.document_id else ""
+                except Exception:
+                    src_doc_title = ""
+                c.drawString(
+                    cx + pad + 1 * mm, cy + cell_h - pad - 3 * mm,
+                    f"{src_doc_title}  ·  {p.number}번"[:40],
+                )
+                # 이미지
+                url2 = _safe_url(p.image_key)
+                if url2:
+                    pil2 = _download_image_to_pil(url2, max_dim=700)
+                    if pil2 is not None:
+                        iw, ih = pil2.size
+                        ip = 1.5 * mm
+                        ibw = cell_w - pad * 2 - ip * 2
+                        ibh = cell_h - pad * 2 - 6 * mm
+                        scale = min(ibw / iw, ibh / ih)
+                        dw = iw * scale
+                        dh = ih * scale
+                        dx = cx + pad + (cell_w - pad * 2 - dw) / 2
+                        dy = cy + pad + (cell_h - pad * 2 - 6 * mm - dh) / 2
+                        c.drawImage(
+                            ImageReader(pil2),
+                            dx, dy, dw, dh,
+                            preserveAspectRatio=True, mask="auto",
+                        )
+            # 코멘트 박스
+            c.setStrokeColor(HexColor("#E2E8F0"))
+            c.rect(x_right, col_bottom, col_w, comment_h, stroke=1, fill=0)
+            c.setFillColor(HexColor(_BG_SUBTLE))
+            c.rect(x_right, col_bottom, col_w, comment_h, stroke=0, fill=1)
+            c.setFillColor(HexColor("#0F172A"))
+            c.setFont(fn_bold, 9)
+            c.drawString(x_right + 3 * mm, col_bottom + comment_h - 4 * mm, "지도 코멘트")
+            c.setFont(fn_reg, 9)
+            c.setFillColor(HexColor("#334155"))
+            ty = col_bottom + comment_h - 9 * mm
+            lines: List[str] = []
+            for raw in (comment or "").split("\n"):
+                line = raw.strip()
+                while len(line) > 36:
+                    lines.append(line[:36])
+                    line = line[36:]
+                if line:
+                    lines.append(line)
+            for line in lines[:6]:
+                c.drawString(x_right + 3 * mm, ty, line)
+                ty -= 4.5 * mm
+        else:
+            # 선택 없음 안내
+            c.setFillColor(HexColor("#94A3B8"))
+            c.setFont(fn_reg, 9)
+            c.drawString(x_right, col_top - 4 * mm, "선택된 자료가 없습니다")
+            c.setStrokeColor(HexColor("#E2E8F0"))
+            c.setDash(2, 2)
+            c.rect(x_right, col_bottom, col_w, col_h - 8 * mm, stroke=1, fill=0)
+            c.setDash()
+            c.setFillColor(HexColor("#94A3B8"))
+            c.setFont(fn_reg, 11)
+            c.drawCentredString(
+                x_right + col_w / 2, col_bottom + (col_h - 8 * mm) / 2,
+                "큐레이션 미작성",
+            )
+
+        # 푸터
+        c.setFont(fn_reg, 9)
+        c.setFillColor(HexColor("#94A3B8"))
+        c.drawCentredString(page_w / 2, 12 * mm, f"{tenant_name}  ·  {idx} / {total}")
+        c.showPage()
+
+    c.save()
+    return buf.getvalue()

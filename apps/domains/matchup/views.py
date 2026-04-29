@@ -12,12 +12,13 @@ from django.views.decorators.csrf import csrf_exempt
 
 from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
 
-from .models import MatchupDocument, MatchupProblem
+from .models import MatchupDocument, MatchupProblem, MatchupHitReport, MatchupHitReportEntry
 from .serializers import (
     MatchupDocumentSerializer,
     MatchupDocumentUpdateSerializer,
     MatchupProblemSerializer,
     SimilarProblemSerializer,
+    MatchupHitReportSerializer,
 )
 from .services import (
     find_similar_problems,
@@ -608,13 +609,14 @@ class DocumentCrossMatchesView(View):
                 "document__id", "document__title", "document__category", "document__meta",
             )
         )
+        # 카테고리 격리 — 빈 카테고리도 빈 카테고리끼리만 매칭.
+        # 사용자 피드백 2026-04-29: 카테고리 누락 시 다른 학교 자료가 leak되던 버그 차단.
         source_category = (doc.category or "").strip()
-        if source_category:
-            candidates = [
-                c for c in candidates
-                if c.document is not None
-                and (c.document.category or "").strip() == source_category
-            ]
+        candidates = [
+            c for c in candidates
+            if c.document is not None
+            and (c.document.category or "").strip() == source_category
+        ]
 
         matches = []
         for p in problems:
@@ -1106,6 +1108,373 @@ class ProblemPresignView(View):
             key=problem.image_key, expires_in=3600
         )
         return JsonResponse({"url": url})
+
+
+# ── Curated Hit Report (사람이 큐레이션한 보고서) ────────────────
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class HitReportDraftView(View):
+    """GET /api/v1/matchup/documents/<doc_id>/hit-report-draft/
+
+    시험지 doc 기준 큐레이션 보고서 조회. 없으면 자동 draft 생성.
+    응답에 시험지 problem 목록 + 후보 매치(자동 top_k) 포함 → 프론트가 한 번에 그리기.
+    """
+
+    def get(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        # 시험지(test) 또는 exam_sheet만 보고서 작성 가능 (학습자료에 보고서 X)
+        meta = doc.meta or {}
+        is_test = (
+            (meta.get("upload_intent") or "").lower() == "test"
+            or (meta.get("document_role") or "").lower() == "exam_sheet"
+        )
+        if not is_test:
+            return JsonResponse(
+                {"detail": "보고서는 시험지(test) 자료에서만 작성할 수 있습니다.",
+                 "code": "not_test_doc"},
+                status=400,
+            )
+
+        report, _ = MatchupHitReport.objects.get_or_create(
+            tenant=request.tenant, document=doc,
+            defaults={"title": doc.title or ""},
+        )
+
+        # 시험지 problems
+        exam_problems = list(
+            doc.problems.order_by("number").only(
+                "id", "number", "text", "image_key", "embedding",
+            )
+        )
+        # entry 미리 로드
+        entries_by_pid = {
+            e.exam_problem_id: e
+            for e in report.entries.all()
+        }
+
+        # 자동 후보 매치 (find_similar_problems) — 카테고리 격리 적용됨
+        from .services import find_similar_problems
+        candidate_top_k = 5
+
+        problem_data = []
+        all_candidate_ids = set()
+        for ep in exam_problems:
+            entry = entries_by_pid.get(ep.id)
+            cand = []
+            try:
+                sim_results = find_similar_problems(
+                    problem_id=ep.id, tenant_id=request.tenant.id, top_k=candidate_top_k,
+                )
+            except Exception:
+                logger.exception("find_similar_problems failed (problem=%s)", ep.id)
+                sim_results = []
+            for cp, sim in sim_results:
+                cand.append({
+                    "id": cp.id,
+                    "document_id": cp.document_id,
+                    "number": cp.number,
+                    "text_preview": (cp.text or "")[:120],
+                    "similarity": round(sim, 4),
+                    "image_key": cp.image_key,
+                })
+                all_candidate_ids.add(cp.id)
+
+            problem_data.append({
+                "id": ep.id,
+                "number": ep.number,
+                "text_preview": (ep.text or "")[:200],
+                "image_key": ep.image_key,
+                "candidates": cand,
+                "entry": (
+                    {
+                        "id": entry.id,
+                        "selected_problem_ids": entry.selected_problem_ids or [],
+                        "comment": entry.comment or "",
+                        "order": entry.order,
+                    }
+                    if entry else None
+                ),
+            })
+
+        # presigned URL 일괄 — 시험지 problem + 후보 problem
+        url_map: dict = {}
+        if generate_presigned_get_url_storage:
+            for ep in exam_problems:
+                if ep.image_key and ep.image_key not in url_map:
+                    url_map[ep.image_key] = generate_presigned_get_url_storage(
+                        key=ep.image_key, expires_in=3600,
+                    )
+            # 후보 image_keys
+            cand_keys = set()
+            for pd in problem_data:
+                for c in pd["candidates"]:
+                    if c["image_key"]:
+                        cand_keys.add(c["image_key"])
+            # 사용자 명시 선택 problem (자동 후보에 없을 수도) — 보강
+            extra_qs = MatchupProblem.objects.filter(
+                tenant=request.tenant,
+                id__in=[
+                    pid for e in entries_by_pid.values()
+                    for pid in (e.selected_problem_ids or [])
+                ],
+            ).only("id", "image_key", "document_id", "number", "text")
+            extra_meta = {p.id: p for p in extra_qs}
+            for p in extra_qs:
+                if p.image_key:
+                    cand_keys.add(p.image_key)
+            for k in cand_keys:
+                if k not in url_map:
+                    url_map[k] = generate_presigned_get_url_storage(
+                        key=k, expires_in=3600,
+                    )
+            for pd in problem_data:
+                if pd["image_key"]:
+                    pd["image_url"] = url_map.get(pd["image_key"])
+                for c in pd["candidates"]:
+                    if c["image_key"]:
+                        c["image_url"] = url_map.get(c["image_key"])
+        else:
+            extra_meta = {}
+
+        return JsonResponse({
+            "report": MatchupHitReportSerializer(report).data,
+            "exam_problems": problem_data,
+            "selected_problem_meta": [
+                {
+                    "id": p.id, "document_id": p.document_id,
+                    "number": p.number,
+                    "text_preview": (p.text or "")[:120],
+                    "image_key": p.image_key,
+                    "image_url": url_map.get(p.image_key) if p.image_key else None,
+                }
+                for p in extra_meta.values()
+            ],
+        })
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class HitReportDetailView(View):
+    """
+    PATCH  /api/v1/matchup/hit-reports/<id>/         — title/summary 수정
+    POST   /api/v1/matchup/hit-reports/<id>/entries/ — 엔트리 일괄 upsert
+    POST   /api/v1/matchup/hit-reports/<id>/submit/  — 제출 (status=submitted)
+    DELETE /api/v1/matchup/hit-reports/<id>/         — 삭제 (drag of caution: 관리자만)
+    """
+
+    def _get(self, request, report_id):
+        try:
+            return MatchupHitReport.objects.select_related("document").get(
+                id=report_id, tenant=request.tenant,
+            )
+        except MatchupHitReport.DoesNotExist:
+            return None
+
+    def patch(self, request, report_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        report = self._get(request, report_id)
+        if not report:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        update_fields = ["updated_at"]
+        if "title" in body and isinstance(body["title"], str):
+            report.title = body["title"][:255]
+            update_fields.append("title")
+        if "summary" in body and isinstance(body["summary"], str):
+            report.summary = body["summary"]
+            update_fields.append("summary")
+        report.save(update_fields=update_fields)
+        return JsonResponse(MatchupHitReportSerializer(report).data)
+
+    def delete(self, request, report_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        report = self._get(request, report_id)
+        if not report:
+            return JsonResponse({"detail": "Not found"}, status=404)
+        report.delete()
+        return JsonResponse({"ok": True})
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class HitReportEntriesUpsertView(View):
+    """POST /api/v1/matchup/hit-reports/<id>/entries/
+
+    body: {
+      entries: [
+        { exam_problem_id: int, selected_problem_ids: [int],
+          comment: str, order: int }, ...
+      ]
+    }
+    upsert (report, exam_problem) 단위. 빈 selected + 빈 comment면 삭제.
+    """
+
+    def post(self, request, report_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            report = MatchupHitReport.objects.select_related("document").get(
+                id=report_id, tenant=request.tenant,
+            )
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        entries = body.get("entries")
+        if not isinstance(entries, list):
+            return JsonResponse({"detail": "entries 배열이 필요합니다."}, status=400)
+
+        # exam_problem_id가 같은 doc의 problem인지 검증 (cross-tenant/cross-doc 차단)
+        exam_problem_ids = [int(e.get("exam_problem_id", 0)) for e in entries]
+        valid_exam_pids = set(
+            MatchupProblem.objects
+            .filter(tenant=request.tenant, document=report.document, id__in=exam_problem_ids)
+            .values_list("id", flat=True)
+        )
+
+        # selected_problem_ids는 같은 tenant 안의 problem이어야 함
+        all_selected = set()
+        for e in entries:
+            for pid in (e.get("selected_problem_ids") or []):
+                try:
+                    all_selected.add(int(pid))
+                except (TypeError, ValueError):
+                    pass
+        valid_selected = set(
+            MatchupProblem.objects
+            .filter(tenant=request.tenant, id__in=all_selected)
+            .values_list("id", flat=True)
+        )
+
+        upserted = 0
+        deleted = 0
+        for e in entries:
+            try:
+                exam_pid = int(e.get("exam_problem_id"))
+            except (TypeError, ValueError):
+                continue
+            if exam_pid not in valid_exam_pids:
+                continue
+            sel = [
+                pid for pid in (e.get("selected_problem_ids") or [])
+                if isinstance(pid, int) and pid in valid_selected
+            ]
+            comment = (e.get("comment") or "")[:5000]
+            try:
+                order = int(e.get("order", 0))
+            except (TypeError, ValueError):
+                order = 0
+
+            if not sel and not comment.strip():
+                # 빈 엔트리 → 기존 삭제
+                d, _ = MatchupHitReportEntry.objects.filter(
+                    report=report, exam_problem_id=exam_pid,
+                ).delete()
+                deleted += d
+                continue
+
+            MatchupHitReportEntry.objects.update_or_create(
+                tenant=request.tenant,
+                report=report,
+                exam_problem_id=exam_pid,
+                defaults={
+                    "selected_problem_ids": sel,
+                    "comment": comment,
+                    "order": order,
+                },
+            )
+            upserted += 1
+
+        # report.updated_at 갱신
+        report.save(update_fields=["updated_at"])
+        return JsonResponse({"upserted": upserted, "deleted": deleted})
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class HitReportSubmitView(View):
+    """POST /api/v1/matchup/hit-reports/<id>/submit/
+
+    상태를 submitted로 전환 + 제출자/제출시각 기록.
+    실장이 작성을 마치고 선생/학원장에게 제출했다는 표식.
+    """
+
+    def post(self, request, report_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            report = MatchupHitReport.objects.get(id=report_id, tenant=request.tenant)
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        from django.utils import timezone
+        report.status = "submitted"
+        report.submitted_at = timezone.now()
+        user = getattr(request, "user", None)
+        if user is not None:
+            report.submitted_by_id = getattr(user, "id", None)
+            full = (
+                getattr(user, "name", None)
+                or getattr(user, "username", None)
+                or getattr(user, "email", "")
+            )
+            report.submitted_by_name = (full or "")[:100]
+        report.save(update_fields=[
+            "status", "submitted_at", "submitted_by_id", "submitted_by_name", "updated_at",
+        ])
+        return JsonResponse(MatchupHitReportSerializer(report).data)
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class HitReportPdfView(View):
+    """GET /api/v1/matchup/hit-reports/<id>/curated.pdf
+
+    사람이 큐레이션한 보고서 PDF. 표지(요약) + 각 문항(좌:시험지 / 우:선택자료N + 코멘트).
+    """
+
+    def get(self, request, report_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            report = MatchupHitReport.objects.select_related("document").get(
+                id=report_id, tenant=request.tenant,
+            )
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        try:
+            from .pdf_report import generate_curated_hit_report_pdf
+            pdf_bytes = generate_curated_hit_report_pdf(report)
+        except Exception:
+            logger.exception("curated_hit_report_pdf failed (report=%s)", report.id)
+            return JsonResponse({"detail": "PDF 생성 실패"}, status=500)
+
+        from urllib.parse import quote
+        title = report.title or report.document.title or f"matchup-hitreport-{report.id}"
+        safe_name = quote(title[:80])
+        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+        resp["Content-Disposition"] = (
+            f"attachment; filename=\"matchup-hitreport-{report.id}.pdf\"; "
+            f"filename*=UTF-8''{safe_name}.pdf"
+        )
+        resp["Cache-Control"] = "private, no-cache"
+        return resp
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
