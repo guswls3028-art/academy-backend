@@ -41,6 +41,13 @@ RUN python -c "from apps.infrastructure.storage.r2_adapter import R2ObjectStorag
 # AI 파이프라인 의존: academy.adapters.ai.storage.downloader
 RUN python -c "from academy.adapters.ai.storage.downloader import download_to_tmp" || (echo "ERROR: download_to_tmp not importable" && exit 1)
 
+# CLIP-ViT-B-32 + paraphrase-multilingual-MiniLM-L12-v2 가중치 사전 캐시.
+# 사고(2026-04-29): 워커 부팅 후 첫 잡 처리 시 huggingface에서 600MB 다운로드 →
+# 진행률 85%에서 5~15분 stuck. 인스턴스 5대 동시 다운로드로 더 심함.
+# 이미지 빌드 시 한 번 받아두면 부팅 즉시 polling 가능, 매 retry/배포마다 즉시 효과.
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); SentenceTransformer('clip-ViT-B-32'); print('CLIP+MiniLM cached OK')" \
+    || (echo "ERROR: model pre-cache failed" && exit 1)
+
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD kill -0 1 2>/dev/null || exit 1
 
