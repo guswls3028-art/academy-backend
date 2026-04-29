@@ -13,7 +13,7 @@ from __future__ import annotations
 import io
 import logging
 import re
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.shared.contracts.ai_result import AIResult
@@ -278,31 +278,62 @@ def run_matchup_pipeline(
     )
 
     # ── Step 4: 이미지 업로드 (90%) ──
+    # "이미지 저장" 라벨은 사용자가 의미를 알기 어려워 "썸네일/이미지 캐시"로 명시.
+    # 78페이지 PDF에서 5분간 "이미지 저장 85%" 정체로 보이던 UX 정체 해소를 위해
+    # 이미지 업로드 / CLIP 임베딩 / 페이지 캐시 3단계로 진행률 분산.
     record_progress(
         job_id, "upload_images", 85,
         step_index=4, step_total=5,
-        step_name_display="이미지 저장",
+        step_name_display=f"문항 이미지 업로드 (0/{len(questions_raw)})",
         step_percent=0, tenant_id=tenant_id,
     )
 
-    _upload_cropped_images(questions_raw, tenant_id, document_id, job_id)
+    _upload_cropped_images(
+        questions_raw, tenant_id, document_id, job_id,
+        on_progress=lambda done, total: record_progress(
+            job_id, "upload_images", 85,
+            step_index=4, step_total=5,
+            step_name_display=f"문항 이미지 업로드 ({done}/{total})",
+            step_percent=int(done / total * 33) if total else 0,
+            tenant_id=tenant_id,
+        ),
+    )
 
     # 이미지 CLIP 임베딩 — cropped 영역을 시각 임베딩으로 변환. 카메라 사진/
     # 스캔본의 OCR이 약해도 이미지 유사도로 매칭 보강 (find_similar_problems
     # ensemble 가중평균).
+    record_progress(
+        job_id, "upload_images", 87,
+        step_index=4, step_total=5,
+        step_name_display="시각 임베딩 생성",
+        step_percent=33, tenant_id=tenant_id,
+    )
     _generate_image_embeddings(questions_raw, job_id)
     _cleanup_cropped_image_temps(questions_raw)
 
     # 페이지 PNG도 같이 R2에 업로드 → ensure_document_page_images 캐시 hit.
     # 모달 첫 진입 PDF 다운로드 + 페이지 렌더 비용 사전 분산.
+    record_progress(
+        job_id, "upload_images", 88,
+        step_index=4, step_total=5,
+        step_name_display=f"페이지 캐시 생성 (0/{len(pages)})",
+        step_percent=66, tenant_id=tenant_id,
+    )
     page_image_keys, page_dimensions = _upload_page_images_for_modal_cache(
         pages, tenant_id, document_id, job_id,
+        on_progress=lambda done, total: record_progress(
+            job_id, "upload_images", 88,
+            step_index=4, step_total=5,
+            step_name_display=f"페이지 캐시 생성 ({done}/{total})",
+            step_percent=66 + int(done / total * 33) if total else 66,
+            tenant_id=tenant_id,
+        ),
     )
 
     record_progress(
         job_id, "upload_images", 90,
         step_index=4, step_total=5,
-        step_name_display="이미지 저장",
+        step_name_display="이미지 캐시 완료",
         step_percent=100, tenant_id=tenant_id,
     )
 
@@ -843,6 +874,7 @@ def _upload_page_images_for_modal_cache(
     tenant_id: str | None,
     document_id: str,
     job_id: str,
+    on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> Tuple[List[str], List[Tuple[int, int]]]:
     """매뉴얼 크롭 모달 캔버스용 페이지 PNG를 R2에 업로드.
 
@@ -877,10 +909,16 @@ def _upload_page_images_for_modal_cache(
 
     page_keys: List[str] = []
     page_dimensions: List[Tuple[int, int]] = []
-    for page in pages:
+    total = len(pages)
+    for processed, page in enumerate(pages, 1):
         idx = int(page.get("page_index", 0))
         img_path = page.get("image_path") or ""
         if not img_path:
+            if on_progress:
+                try:
+                    on_progress(processed, total)
+                except Exception:
+                    pass
             continue
         try:
             with _PILImage.open(img_path) as im:
@@ -900,6 +938,11 @@ def _upload_page_images_for_modal_cache(
                 "MATCHUP_PAGE_CACHE_UPLOAD_FAIL | job=%s | page=%d",
                 job_id, idx, exc_info=True,
             )
+        if on_progress and (processed % 5 == 0 or processed == total):
+            try:
+                on_progress(processed, total)
+            except Exception:
+                pass
     logger.info(
         "MATCHUP_PAGE_CACHE | job=%s | doc=%s | pages=%d",
         job_id, document_id, len(page_keys),
@@ -912,6 +955,7 @@ def _upload_cropped_images(
     tenant_id: str | None,
     document_id: str,
     job_id: str,
+    on_progress: Optional[Callable[[int, int], None]] = None,
 ) -> None:
     """크롭된 문제 이미지를 R2에 업로드 (in-place로 image_key 설정).
 
@@ -930,8 +974,9 @@ def _upload_cropped_images(
         return
 
     uuid_prefix = str(_uuid.uuid4())
+    total = len(questions)
 
-    for q in questions:
+    for processed, q in enumerate(questions, 1):
         try:
             img = cv2.imread(q["image_path"])
             if img is None:
@@ -975,6 +1020,11 @@ def _upload_cropped_images(
                 "Image upload failed for Q%d in job %s",
                 q["number"], job_id, exc_info=True,
             )
+        if on_progress and (processed % 5 == 0 or processed == total):
+            try:
+                on_progress(processed, total)
+            except Exception:
+                pass
 
 
 def _cleanup_cropped_image_temps(questions: List[Dict]) -> None:

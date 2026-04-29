@@ -259,19 +259,51 @@ def generate_matchup_hit_report_pdf(
     box_x = margin + 10 * mm
     box_w = inner_w - 20 * mm
     box_h = 70 * mm
-    c.setFillColor(HexColor(_BG_SUBTLE))
-    c.roundRect(box_x, y - box_h, box_w, box_h, 6, fill=1, stroke=0)
+    # 빈 결과(시험지 분리 미완료 / 매치 0건)는 경고 톤 박스 — 학원이 마케팅용으로
+    # 빈 보고서를 발행하는 사고 방지. 처리중 doc은 0/0 결과로 보고서가 만들어질 수
+    # 있으므로 표지에서 사용자가 즉시 인지하도록.
+    is_empty_report = total == 0 or real_hit_count == 0
+    if is_empty_report:
+        c.setFillColor(HexColor("#FEF2F2"))  # red-50
+        c.roundRect(box_x, y - box_h, box_w, box_h, 6, fill=1, stroke=0)
+        c.setStrokeColor(HexColor("#FCA5A5"))  # red-300
+        c.setLineWidth(1.5)
+        c.roundRect(box_x, y - box_h, box_w, box_h, 6, fill=0, stroke=1)
+    else:
+        c.setFillColor(HexColor(_BG_SUBTLE))
+        c.roundRect(box_x, y - box_h, box_w, box_h, 6, fill=1, stroke=0)
 
     # 메인 적중 수치 — 직접 + 유형 합산
     c.setFont(fn_bold, 30)
-    c.setFillColor(HexColor(_HIT_COLOR if real_hit_pct >= 50 else _ACCENT_COLOR))
-    c.drawCentredString(page_w / 2, y - 18 * mm, f"{real_hit_count} / {total} 적중")
-    c.setFont(fn_reg, 11)
-    c.setFillColor(HexColor("#475569"))
-    c.drawCentredString(
-        page_w / 2, y - 26 * mm,
-        f"실전 대비 반영률 {real_hit_pct:.1f}%   ·   평균 유사도 {avg_sim*100:.1f}%",
-    )
+    if total == 0:
+        # 처리 미완료 / 시험지에 추출된 문항이 0건 — 적중률 계산 불가
+        c.setFillColor(HexColor("#DC2626"))  # red-600
+        c.drawCentredString(page_w / 2, y - 18 * mm, "분리 미완료")
+        c.setFont(fn_reg, 11)
+        c.setFillColor(HexColor("#991B1B"))  # red-800
+        c.drawCentredString(
+            page_w / 2, y - 26 * mm,
+            "시험지에 추출된 문항이 0건이라 적중률을 계산할 수 없습니다",
+        )
+    elif real_hit_count == 0:
+        # 문항은 추출됐지만 매치 0건 — 학원 자료 부족 또는 정말 안 적중
+        c.setFillColor(HexColor("#DC2626"))  # red-600
+        c.drawCentredString(page_w / 2, y - 18 * mm, f"0 / {total} 적중")
+        c.setFont(fn_reg, 11)
+        c.setFillColor(HexColor("#991B1B"))
+        c.drawCentredString(
+            page_w / 2, y - 26 * mm,
+            "유사도 75% 이상 학원 자료가 없습니다 (자료를 더 등록해 보세요)",
+        )
+    else:
+        c.setFillColor(HexColor(_HIT_COLOR if real_hit_pct >= 50 else _ACCENT_COLOR))
+        c.drawCentredString(page_w / 2, y - 18 * mm, f"{real_hit_count} / {total} 적중")
+        c.setFont(fn_reg, 11)
+        c.setFillColor(HexColor("#475569"))
+        c.drawCentredString(
+            page_w / 2, y - 26 * mm,
+            f"실전 대비 반영률 {real_hit_pct:.1f}%   ·   평균 유사도 {avg_sim*100:.1f}%",
+        )
 
     # 3단계 breakdown
     bd_y = y - 40 * mm
