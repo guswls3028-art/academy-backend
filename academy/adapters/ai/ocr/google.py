@@ -206,6 +206,10 @@ def google_ocr(image_path: str) -> OCRResult:
     Worker에서 실행되는 Google OCR
     - GOOGLE_CREDENTIALS_JSON (JSON 문자열) 또는
     - GOOGLE_APPLICATION_CREDENTIALS (파일 경로) 사용
+
+    매 호출 = Vision API 1 unit 과금. CloudWatch metric으로 실시간 가시성 확보.
+    호출처(manual_index/index_exam/search_qna/dispatcher)는 lru_cache 없으므로
+    호출 측에서 중복 호출 자제 책임.
     """
     if _is_auth_disabled_now():
         return OCRResult(text="", confidence=None, raw={"error": "circuit_open"})
@@ -217,11 +221,16 @@ def google_ocr(image_path: str) -> OCRResult:
     try:
         response = client.text_detection(image=image)
     except Exception as e:
+        _emit_vision_metric(_CW_METRIC_ERRORS)
         if _is_auth_failure(e):
             _trip_auth_breaker(str(e)[:200])
         raise
 
+    # API round-trip 성공 = 호출 카운트 (과금 단위와 매칭)
+    _emit_vision_metric(_CW_METRIC_CALLS)
+
     if getattr(response, "error", None) and response.error.message:
+        _emit_vision_metric(_CW_METRIC_ERRORS)
         if _is_auth_failure_message(response.error.message):
             _trip_auth_breaker(response.error.message[:200])
         return OCRResult(text="", confidence=None, raw={"error": response.error.message})
