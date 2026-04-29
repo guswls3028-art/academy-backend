@@ -195,6 +195,23 @@ def delete_object_r2_storage(*, key: str) -> None:
     s3.delete_object(Bucket=_storage_bucket(), Key=key)
 
 
+def get_object_bytes_r2_storage(*, key: str) -> bytes | None:
+    """R2 Storage 버킷에서 객체 바이트 직접 가져오기. 없으면 None.
+
+    OCR 영구 캐시 등 짧은 JSON 결과 fetch 용도. 큰 파일은 presign + HTTP 사용.
+    """
+    from botocore.exceptions import ClientError
+    s3 = _get_s3_client()
+    try:
+        resp = s3.get_object(Bucket=_storage_bucket(), Key=key)
+        return resp["Body"].read()
+    except ClientError as err:
+        code = (err.response.get("Error") or {}).get("Code", "")
+        if code in ("404", "NoSuchKey", "NotFound"):
+            return None
+        raise
+
+
 def head_object_r2_storage(*, key: str) -> tuple[bool, int]:
     """객체 존재 여부 및 크기(bytes)."""
     from botocore.exceptions import ClientError

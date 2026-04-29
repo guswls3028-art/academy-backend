@@ -131,50 +131,96 @@ def find_similar_problems(
     src_len = len(source.text or "")
     src_doc_id = source.document_id
 
-    # 1차: bi-encoder + 가벼운 휴리스틱 + 이미지 ensemble
-    # 페이지 폴백 candidate는 텍스트 전체 페이지라 sim이 부풀려져 false positive
-    # 다수 → 패널티 적용. (bbox=null인 problem이 페이지 폴백 결과)
-    scored = []
-    for c in candidates:
-        if not c.embedding:
-            continue
-        text_sim = cosine_similarity(source.embedding, c.embedding)
-        # 이미지 임베딩 ensemble — 양쪽 모두 보유 시에만 결합. 한쪽이라도 없으면 텍스트만.
-        img_sim = 0.0
-        if src_img_emb and c.image_embedding:
-            try:
-                img_sim = cosine_similarity(src_img_emb, c.image_embedding)
-            except Exception:
-                img_sim = 0.0
-            sim = _txt_w * text_sim + _img_w * img_sim
-        else:
-            sim = text_sim
-
-        # 페이지 폴백 candidate 패널티 — bbox 없는 problem (페이지 단위 인덱싱)은
-        # 페이지 통째 텍스트라 sim 인플레이션. 운영 측정 (doc#148/q1):
-        #   - doc#143/q8 (페이지폴백, "측정 표준") raw sim 0.89
-        #   - doc#147/q1 (정상분리, 진짜 같은 문제 "자연 세계 규모") raw sim 0.76
-        # → 패널티 -0.15 + sim ceiling 0.84 적용으로 페이지 폴백 false positive를
-        # 직접 적중에서 강제 다운그레이드. 정상 분리 후보가 top1이 되도록.
-        c_meta = c.meta or {}
-        c_is_page_fallback = c_meta.get("bbox") is None
-        if c_is_page_fallback:
-            sim = min(0.84, sim - 0.15)
-            sim = max(0.0, sim)
-
-        fmt_match = 1.0 if _format_of(c) == src_format else 0.0
-        len_score = _length_score(src_len, len(c.text or ""))
-        cross_doc = 1.0 if c.document_id != src_doc_id else 0.0
-
-        final = (
-            _W_SIM * sim
-            + _W_FORMAT * fmt_match
-            + _W_LENGTH * len_score
-            + _W_CROSS_DOC * cross_doc
+    # 1차: bi-encoder + 휴리스틱 + 이미지 ensemble — numpy vectorized.
+    # 운영 사고(2026-04-29 사용자 보고): T2 problem 5,717개 매 클릭마다 Python 순회로
+    # cosine 5,717번 → 매치업 페이지 클릭 시 렉. numpy bulk dot product로 100배 가속.
+    cand_list = list(
+        candidates.only(
+            "id", "document_id", "embedding", "image_embedding",
+            "meta", "text",
         )
-        scored.append((c, final))
+    )
+    if not cand_list:
+        return []
 
-    scored.sort(key=lambda x: x[1], reverse=True)
+    try:
+        import numpy as np
+    except ImportError:
+        np = None  # type: ignore
+
+    if np is not None:
+        # 텍스트 임베딩 stack
+        emb_dim = len(source.embedding)
+        valid_idx = []
+        for i, c in enumerate(cand_list):
+            if c.embedding and len(c.embedding) == emb_dim:
+                valid_idx.append(i)
+        if not valid_idx:
+            return []
+        cand_list = [cand_list[i] for i in valid_idx]
+
+        E = np.asarray(
+            [c.embedding for c in cand_list], dtype=np.float32,
+        )  # (N, D)
+        s = np.asarray(source.embedding, dtype=np.float32)  # (D,)
+        s_n = float(np.linalg.norm(s)) or 1.0
+        E_n = np.linalg.norm(E, axis=1)
+        E_n = np.where(E_n <= 0, 1.0, E_n)
+        text_sims = (E @ s) / (E_n * s_n)
+        text_sims = np.clip(text_sims, -1.0, 1.0)
+        text_sims = (text_sims + 1.0) / 2.0  # cosine_similarity()와 동일 정규화
+
+        # 이미지 임베딩 ensemble — 양쪽 보유한 인덱스만 결합
+        sims = text_sims.copy()
+        if src_img_emb:
+            src_img = np.asarray(src_img_emb, dtype=np.float32)
+            si_n = float(np.linalg.norm(src_img)) or 1.0
+            img_sims = np.zeros(len(cand_list), dtype=np.float32)
+            has_img = np.zeros(len(cand_list), dtype=bool)
+            for i, c in enumerate(cand_list):
+                ie = c.image_embedding
+                if not ie or len(ie) != len(src_img):
+                    continue
+                ie_arr = np.asarray(ie, dtype=np.float32)
+                ie_n = float(np.linalg.norm(ie_arr)) or 1.0
+                raw = float(np.dot(ie_arr, src_img) / (ie_n * si_n))
+                img_sims[i] = max(0.0, min(1.0, (max(-1.0, min(1.0, raw)) + 1.0) / 2.0))
+                has_img[i] = True
+            # ensemble은 양쪽 보유 시에만, 아니면 텍스트만
+            sims = np.where(has_img, _txt_w * text_sims + _img_w * img_sims, text_sims)
+
+        # 페이지 폴백 패널티 — bbox=null candidate (페이지 통째 인덱싱)
+        fb_mask = np.array(
+            [(c.meta or {}).get("bbox") is None for c in cand_list], dtype=bool,
+        )
+        # 패널티: -0.15 후 ceiling 0.84
+        penal = np.minimum(0.84, sims - 0.15)
+        penal = np.maximum(0.0, penal)
+        sims = np.where(fb_mask, penal, sims)
+
+        # 휴리스틱 weight 모두 0이라 그대로 sim. 정렬.
+        order = np.argsort(-sims)  # desc
+        scored = [(cand_list[i], float(sims[i])) for i in order]
+    else:
+        # numpy 없는 환경 fallback (CI에는 numpy 보장 — 사실상 도달 안 함)
+        scored = []
+        for c in cand_list:
+            if not c.embedding:
+                continue
+            text_sim = cosine_similarity(source.embedding, c.embedding)
+            img_sim = 0.0
+            if src_img_emb and c.image_embedding:
+                try:
+                    img_sim = cosine_similarity(src_img_emb, c.image_embedding)
+                except Exception:
+                    img_sim = 0.0
+                sim = _txt_w * text_sim + _img_w * img_sim
+            else:
+                sim = text_sim
+            if (c.meta or {}).get("bbox") is None:
+                sim = max(0.0, min(0.84, sim - 0.15))
+            scored.append((c, sim))
+        scored.sort(key=lambda x: x[1], reverse=True)
 
     # 2차: cross-encoder reranking — 환경변수 MATCHUP_USE_CROSS_ENCODER=1 일 때만.
     # 기본 OFF: bge-reranker-base가 한국어 시험 문제에 부적합 확인됨.

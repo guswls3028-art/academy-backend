@@ -14,6 +14,59 @@ from google.cloud import vision  # type: ignore
 
 logger = logging.getLogger(__name__)
 
+# ── R2 영구 OCR 캐시 ─────────────────────────────────────────────
+# 사고 컨텍스트 (2026-04-29): 사용자 GCP Vision 청구 ~37,000원/월. 분석 결과
+# retry/reanalyze 시마다 같은 페이지 이미지를 다시 OCR 호출하는 게 큰 비중.
+# image bytes의 sha256 hash 기반 영구 캐시로 동일 페이지 재호출 0건 보장.
+#
+# 캐시 키 구조: ocr-cache/{kind}/{hash[:2]}/{hash}.json
+#   - kind: text (google_ocr) / blocks (google_ocr_blocks)
+#   - hash[:2]: prefix shard (R2 listing 부담 분산)
+#
+# Hit 비용: R2 GET (~$0.36/M req) << Vision API ($1.50/1K req). 1000회 재호출 막으면 약 1,800원 절감,
+# R2 비용은 사실상 무시 가능.
+
+_OCR_CACHE_ENABLED = os.environ.get("MATCHUP_OCR_R2_CACHE", "1") != "0"
+
+
+def _ocr_cache_key(image_bytes: bytes, kind: str) -> str:
+    import hashlib
+    h = hashlib.sha256(image_bytes).hexdigest()
+    return f"ocr-cache/{kind}/{h[:2]}/{h}.json"
+
+
+def _ocr_cache_get(image_bytes: bytes, kind: str) -> Any:
+    if not _OCR_CACHE_ENABLED:
+        return None
+    try:
+        from apps.infrastructure.storage.r2 import get_object_bytes_r2_storage
+    except ImportError:
+        return None
+    try:
+        body = get_object_bytes_r2_storage(key=_ocr_cache_key(image_bytes, kind))
+        if not body:
+            return None
+        return json.loads(body)
+    except Exception:
+        logger.debug("OCR cache get failed", exc_info=True)
+        return None
+
+
+def _ocr_cache_put(image_bytes: bytes, kind: str, payload: Any) -> None:
+    if not _OCR_CACHE_ENABLED:
+        return
+    try:
+        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+        import io
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        upload_fileobj_to_r2_storage(
+            fileobj=io.BytesIO(data),
+            key=_ocr_cache_key(image_bytes, kind),
+            content_type="application/json",
+        )
+    except Exception:
+        logger.debug("OCR cache put failed", exc_info=True)
+
 # Vision API circuit breaker — 빌링/인증 실패가 한 번 발생하면 짧은 시간 차단.
 # 사고 컨텍스트 (2026-04-29): GCP project 빌링이 끊겨 PermissionDenied 발생 시
 # 매 페이지마다 5~10초 응답 지연이 누적되어 SQS_JOB_TIMEOUT_60MIN으로 워커 stuck 26건.
@@ -208,15 +261,23 @@ def google_ocr(image_path: str) -> OCRResult:
     - GOOGLE_APPLICATION_CREDENTIALS (파일 경로) 사용
 
     매 호출 = Vision API 1 unit 과금. CloudWatch metric으로 실시간 가시성 확보.
-    호출처(manual_index/index_exam/search_qna/dispatcher)는 lru_cache 없으므로
-    호출 측에서 중복 호출 자제 책임.
+    R2 영구 캐시(image bytes sha256)로 retry/reanalyze 비용 0건.
     """
     if _is_auth_disabled_now():
         return OCRResult(text="", confidence=None, raw={"error": "circuit_open"})
 
-    client = _get_vision_client()
-
     content = _prepare_image_for_vision(image_path)
+
+    # R2 영구 캐시 확인
+    cached = _ocr_cache_get(content, kind="text")
+    if cached is not None:
+        return OCRResult(
+            text=cached.get("text", "") or "",
+            confidence=cached.get("confidence"),
+            raw=None,
+        )
+
+    client = _get_vision_client()
     image = vision.Image(content=content)
     try:
         response = client.text_detection(image=image)
@@ -237,12 +298,17 @@ def google_ocr(image_path: str) -> OCRResult:
 
     annotations = getattr(response, "text_annotations", None) or []
     if not annotations:
+        # 빈 결과도 캐시 — 같은 빈 이미지 다시 호출 막기
+        _ocr_cache_put(content, kind="text", payload={"text": ""})
         return OCRResult(text="", confidence=None, raw=None)
 
+    text_out = annotations[0].description or ""
+    _ocr_cache_put(content, kind="text", payload={"text": text_out})
+
     return OCRResult(
-        text=annotations[0].description or "",
+        text=text_out,
         confidence=None,
-        raw=None,  # raw를 통째로 넘기면 직렬화 이슈가 생길 수 있어 기본 None
+        raw=None,
     )
 
 
@@ -303,9 +369,21 @@ def _google_ocr_blocks_cached(
     이는 비용/쿼터 추적 목적에 부합하는 의도된 동작임.
     """
     image_path = key[0]
-    client = _get_vision_client()
-
     content = _prepare_image_for_vision(image_path)
+
+    # R2 영구 캐시 확인 — retry/reanalyze 시 같은 페이지 이미지 재호출 0건
+    cached = _ocr_cache_get(content, kind="blocks")
+    if cached is not None:
+        return tuple(
+            OCRTextBlock(
+                text=row.get("text", ""),
+                x0=float(row.get("x0", 0)), y0=float(row.get("y0", 0)),
+                x1=float(row.get("x1", 0)), y1=float(row.get("y1", 0)),
+            )
+            for row in (cached.get("blocks") or [])
+        )
+
+    client = _get_vision_client()
     image = vision.Image(content=content)
 
     try:
@@ -330,6 +408,7 @@ def _google_ocr_blocks_cached(
 
     full_annotation = getattr(response, "full_text_annotation", None)
     if not full_annotation:
+        _ocr_cache_put(content, kind="blocks", payload={"blocks": []})
         return tuple()
 
     # 줄 단위로 그룹핑 — detected_break가 LINE_BREAK(5)/EOL_SURE_SPACE(3)일 때 한 줄 종료.
@@ -368,6 +447,16 @@ def _google_ocr_blocks_cached(
                     if tb is not None:
                         blocks.append(tb)
 
+    # 영구 캐시 — 같은 페이지 이미지 재처리 시 Vision 호출 0건
+    _ocr_cache_put(
+        content, kind="blocks",
+        payload={
+            "blocks": [
+                {"text": b.text, "x0": b.x0, "y0": b.y0, "x1": b.x1, "y1": b.y1}
+                for b in blocks
+            ],
+        },
+    )
     return tuple(blocks)
 
 
