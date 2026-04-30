@@ -83,7 +83,7 @@ class ClinicRemediationService:
         if link.source_type != "exam":
             raise ValueError(f"ClinicLink {clinic_link_id}는 시험 유형이 아닙니다 (source_type={link.source_type})")
 
-        exam = Exam.objects.get(id=link.source_id)
+        exam = Exam.objects.get(id=link.source_id, tenant_id=link.tenant_id)
         pass_score = float(getattr(exam, "pass_score", 0) or 0)
         max_score_val = float(getattr(exam, "max_score", 100) or 100)
 
@@ -202,7 +202,7 @@ class ClinicRemediationService:
         if link.source_type != "homework":
             raise ValueError(f"ClinicLink {clinic_link_id}는 과제 유형이 아닙니다 (source_type={link.source_type})")
 
-        homework = Homework.objects.get(id=link.source_id)
+        homework = Homework.objects.get(id=link.source_id, tenant_id=link.tenant_id)
         session = link.session
 
         # max_score 결정: 전달받은 값 > 1차 HomeworkScore.max_score > 100
@@ -313,7 +313,7 @@ class ClinicRemediationService:
         if link.source_type != "exam":
             raise ValueError(f"ClinicLink {clinic_link_id}는 시험 유형이 아닙니다")
 
-        exam = Exam.objects.get(id=link.source_id)
+        exam = Exam.objects.get(id=link.source_id, tenant_id=link.tenant_id)
         pass_score = float(getattr(exam, "pass_score", 0) or 0)
         max_score_val = float(getattr(exam, "max_score", 100) or 100)
 
@@ -398,7 +398,7 @@ class ClinicRemediationService:
         if link.source_type != "homework":
             raise ValueError(f"ClinicLink {clinic_link_id}는 과제 유형이 아닙니다")
 
-        homework = Homework.objects.get(id=link.source_id)
+        homework = Homework.objects.get(id=link.source_id, tenant_id=link.tenant_id)
         session = link.session
 
         hs = HomeworkScore.objects.select_for_update().get(

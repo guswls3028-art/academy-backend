@@ -909,10 +909,11 @@ def delete_problem_with_r2(problem: MatchupProblem) -> None:
                 exc_info=True,
             )
     doc_id = problem.document_id
+    tenant_id = problem.tenant_id
     problem.delete()
     if doc_id:
         try:
-            doc = MatchupDocument.objects.get(id=doc_id)
+            doc = MatchupDocument.objects.get(id=doc_id, tenant_id=tenant_id)
             doc.problem_count = doc.problems.count()
             doc.save(update_fields=["problem_count", "updated_at"])
         except MatchupDocument.DoesNotExist:
