@@ -470,9 +470,15 @@ def split_questions(
             x0 = 0 if curr_left else mid_x - margin
             x1 = mid_x + margin if curr_left else page_width
         elif is_dual_column:
-            # Dual column: use actual text block bounds
-            x0 = max(0, min(b.x0 for b in region_blocks) - margin)
-            x1 = min(page_width, max(b.x1 for b in region_blocks) + margin)
+            # Dual column: column 전체 width 사용 — region_blocks가 anchor 1개만 포함하면
+            # x range가 매우 좁아져 strip(width<10%) 결함이 됨. column 경계로 강제.
+            # 그림/표가 column을 살짝 벗어나도 OK (다음 column constraint에서 클램프).
+            if start_block.x0 < mid_x:
+                x0 = 0
+                x1 = mid_x + margin
+            else:
+                x0 = mid_x - margin
+                x1 = page_width
         else:
             # Single column: use full page width (images/diagrams may extend beyond text)
             x0 = 0
@@ -504,6 +510,11 @@ def split_questions(
                     # 같은 컬럼: 다음 문항 직전까지 전체 사용
                     # 그림/표가 텍스트 아래에 있으므로 gap 전체를 포함
                     y1 = next_block.y0 - margin
+                    # Defensive: 같은 column에서도 sort 오류로 next.y0 ≤ start.y0인
+                    # 경우(예: column 너비 추정 mid_x 경계 위에 걸쳐있는 anchor)는
+                    # page_height fallback. strip 결함 차단.
+                    if y1 <= y0:
+                        y1 = page_height
             else:
                 # 단일 컬럼: 다음 문항 직전까지 전체 사용
                 y1 = next_block.y0 - margin

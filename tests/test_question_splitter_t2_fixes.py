@@ -314,6 +314,38 @@ def test_dual_column_anchor_distribution_fallback():
     assert _detect_column_layout(blocks, pw) is True
 
 
+def test_dual_column_uses_full_column_width():
+    """dual-column에서 region_blocks의 x range가 좁아도 column 전체 width를 사용.
+
+    운영 doc#294 q19 bbox=(2465, 1019, 204, 78) — width=204 (페이지 8400의 2.4%).
+    region_blocks가 anchor 한 개만 포함하면 x range 좁아져 strip width.
+    fix 적용 후 column 전체 width 사용.
+    """
+    from academy.domain.tools.question_splitter import (
+        TextBlock as TB,
+        split_questions,
+    )
+
+    blocks = [
+        TB(text="1. 그림", x0=4500, y0=1000, x1=4700, y1=1100),  # 우측 column anchor
+        TB(text="2. 다음", x0=4500, y0=2000, x1=4700, y1=2100),  # 우측 column 다음 anchor
+        # 좌측에 다른 anchor 추가해서 dual-column 인식
+        TB(text="3. 그림", x0=100, y0=1000, x1=300, y1=1100),
+        TB(text="4. 다음", x0=100, y0=2000, x1=300, y1=2100),
+    ]
+    pw, ph = 8400.0, 11200.0
+    regions = split_questions(blocks, pw, ph, page_index=0)
+    by_num = {r.number: r.bbox for r in regions}
+
+    # q1 (우측 column) — width가 column 전체 (절반 page_width 이상)
+    if 1 in by_num:
+        x0, y0, x1, y1 = by_num[1]
+        width = x1 - x0
+        assert width >= pw * 0.4, (
+            f"q1 width={width} too narrow (column full width 사용 안 됨)"
+        )
+
+
 def test_split_questions_cross_column_anchor_fallback():
     """dual-column 미인식 케이스에서 next anchor가 위에 있어도 strip(10px)이 안 나옴.
 
