@@ -366,6 +366,12 @@ def _collect_pdf_pages(image_path: str) -> Tuple[List[Dict], List[List[BBox]], L
     validated_regions = validate_anchors_across_pages(regions_per_page)
 
     # 드롭된 region의 박스도 함께 제거 (같은 인덱스).
+    # boxes_per_page와 regions_per_page를 같은 인덱스로 동기 갱신해야 한다.
+    # 과거에는 regions_per_page를 그대로 반환해 다운스트림(_boxes_to_questions /
+    # segment_questions_multipage)에서 len(regions) != len(boxes) 가 되어 페이지의
+    # 번호가 모두 None으로 폴백되는 손실이 발생했다. 이로 인해 OCR이 정상 검출한
+    # 시험지 페이지가 OpenCV fallback처럼 보이며 fallback counter로 잘못된 시험지
+    # 번호가 매겨지는 결함이 운영 doc#329 / #294 / #292 / #291 등에서 광범위 발생.
     for page_idx, (original, validated) in enumerate(zip(regions_per_page, validated_regions)):
         if not original or len(original) == len(validated):
             continue  # 변화 없음 or 애초에 번호 없음
@@ -380,7 +386,7 @@ def _collect_pdf_pages(image_path: str) -> Tuple[List[Dict], List[List[BBox]], L
             page_idx, dropped, len(validated),
         )
 
-    return page_infos, boxes_per_page, regions_per_page, tmp_dir
+    return page_infos, boxes_per_page, validated_regions, tmp_dir
 
 
 def segment_questions(image_path: str) -> List[BBox]:
