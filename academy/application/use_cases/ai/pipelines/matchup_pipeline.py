@@ -243,6 +243,20 @@ def run_matchup_pipeline(
             "problem_count": 0,
         })
 
+    # ── Skeleton INSERT — 신규 업로드 사용자에게 즉시 부분 결과 노출 ──
+    # 백엔드 파이프라인이 끝(Step 5)에 일괄 INSERT하던 결함으로, 신규 업로드 doc은
+    # 처음부터 끝까지 빈 화면이었음 (재분석은 이전 결과 노출). 세그멘테이션 직후
+    # 번호+bbox+page_index만 가진 skeleton row를 미리 INSERT하여, 프론트
+    # ProblemGrid의 부분 결과 banner가 즉시 동작하도록.
+    # 최종 callbacks._handle_matchup_ai_result가 `doc.problems.all().delete()` 후
+    # bulk_create하므로 정합성에 영향 없음 (삭제→재생성 패턴 유지).
+    if document_id:
+        try:
+            _insert_skeleton_problems(questions_raw, document_id, tenant_id, job_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("MATCHUP_SKELETON_INSERT_FAIL | job=%s | doc=%s",
+                           job_id, document_id, exc_info=True)
+
     # ── Step 2: OCR (50%) ──
     record_progress(
         job_id, "ocr", 40,
@@ -1025,6 +1039,67 @@ def _upload_cropped_images(
                 on_progress(processed, total)
             except Exception:
                 pass
+
+
+def _insert_skeleton_problems(
+    questions: List[Dict],
+    document_id: str,
+    tenant_id: str | None,
+    job_id: str,
+) -> None:
+    """세그멘테이션 직후 number+bbox+page_index만 가진 skeleton row를 INSERT.
+
+    프론트 ProblemGrid 부분 결과 노출을 위해. 신규 업로드 doc도 즉시 grid에
+    문항 카운트가 보이고, 점차 OCR/임베딩/이미지가 채워지는 UX.
+
+    is_partial=True 메타 플래그로 최종 결과와 구분. 최종 callbacks가
+    `doc.problems.all().delete()`로 모두 지우고 bulk_create하므로 정합성 안전.
+    """
+    if not questions or not document_id:
+        return
+
+    from apps.domains.matchup.models import MatchupDocument, MatchupProblem
+
+    try:
+        doc = MatchupDocument.objects.only("id", "tenant_id", "status").get(id=int(document_id))
+    except MatchupDocument.DoesNotExist:
+        return
+
+    # 워커 ↔ DB 텐넌트 교차검증 (callbacks와 동일 패턴)
+    if tenant_id and str(doc.tenant_id) != str(tenant_id):
+        logger.warning(
+            "SKELETON_INSERT_TENANT_MISMATCH | job=%s | doc=%s | doc_tenant=%s | job_tenant=%s",
+            job_id, document_id, doc.tenant_id, tenant_id,
+        )
+        return
+
+    # 재시도 케이스 — 기존 problems 보존하지 않고 새 skeleton으로 갈음.
+    # 최종 callbacks가 어차피 delete + bulk_create하므로 일관됨.
+    MatchupProblem.objects.filter(document=doc).delete()
+
+    rows = [
+        MatchupProblem(
+            tenant_id=doc.tenant_id,
+            document=doc,
+            number=q.get("number", 0),
+            text="",  # OCR 전 — 빈 텍스트
+            image_key="",  # 이미지 업로드 전
+            embedding=None,
+            image_embedding=None,
+            meta={
+                "is_partial": True,
+                "page_index": q.get("page_index", 0),
+                "bbox": q.get("bbox"),
+            },
+        )
+        for q in questions
+    ]
+    MatchupProblem.objects.bulk_create(rows, ignore_conflicts=True)
+    inserted = MatchupProblem.objects.filter(document=doc).count()
+    logger.info(
+        "MATCHUP_SKELETON_INSERT | job=%s | doc=%s | dispatched=%d | inserted=%d",
+        job_id, document_id, len(rows), inserted,
+    )
 
 
 def _cleanup_cropped_image_temps(questions: List[Dict]) -> None:
