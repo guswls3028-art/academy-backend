@@ -65,10 +65,10 @@ class OpsAuditLog(TimestampModel):
         db_table = "ops_audit_log"
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["-created_at"]),
-            models.Index(fields=["action", "-created_at"]),
-            models.Index(fields=["target_tenant", "-created_at"]),
-            models.Index(fields=["actor_user", "-created_at"]),
+            models.Index(fields=["-created_at"], name="ops_audit_l_created_idx"),
+            models.Index(fields=["action", "-created_at"], name="ops_audit_l_action_idx"),
+            models.Index(fields=["target_tenant", "-created_at"], name="ops_audit_l_tenant_idx"),
+            models.Index(fields=["actor_user", "-created_at"], name="ops_audit_l_actor_idx"),
         ]
 
     def __str__(self) -> str:

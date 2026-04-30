@@ -160,11 +160,70 @@ def rule_unanswered_inbox(min_age_hours: int = 24):
     }
 
 
+def rule_stale_workers(min_age_minutes: int = 5):
+    """N분+ heartbeat 미갱신 워커. SQS 워커 process 멈춤 즉시 감지."""
+    try:
+        from apps.core.models import WorkerHeartbeatModel
+    except Exception:
+        return None
+    cutoff = timezone.now() - timedelta(minutes=min_age_minutes)
+    qs = WorkerHeartbeatModel.objects.filter(last_seen_at__lt=cutoff).order_by("name", "instance")
+    rows = [
+        {
+            "worker": h.name,
+            "instance": h.instance,
+            "last_seen": h.last_seen_at.isoformat(timespec="seconds") if h.last_seen_at else None,
+            "version": h.version or "—",
+        }
+        for h in qs[:30]
+    ]
+    if not rows:
+        return None
+    return {
+        "title": f"💔 워커 heartbeat 정지 {len(rows)}건 ({min_age_minutes}분+ 미갱신)",
+        "rows": rows,
+        "total": len(rows),
+    }
+
+
+def rule_circuit_breaker_open():
+    """현재 open 상태인 외부 API circuit (in-memory state는 alert에서 안 잡힘 → ops_audit 기반)."""
+    try:
+        from apps.core.models import OpsAuditLog
+    except Exception:
+        return None
+    # 최근 30분 내 circuit_open 액션 (해소되지 않은 상태)
+    since = timezone.now() - timedelta(minutes=30)
+    qs = OpsAuditLog.objects.filter(action="circuit.open", created_at__gte=since).order_by("-created_at")
+    seen_keys: set[str] = set()
+    rows: list[dict] = []
+    for log in qs[:50]:
+        # summary 형식: "{name} (failures={n})" — name 단위로 첫 등장만 표시
+        name = (log.summary or "").split(" ")[0] or "unknown"
+        if name in seen_keys:
+            continue
+        seen_keys.add(name)
+        rows.append({
+            "circuit": name,
+            "at": log.created_at.isoformat(timespec="seconds") if log.created_at else None,
+            "summary": (log.summary or "")[:80],
+        })
+    if not rows:
+        return None
+    return {
+        "title": f"⚡ 외부 API circuit open {len(rows)}개",
+        "rows": rows,
+        "total": len(rows),
+    }
+
+
 RULES: list[Rule] = [
     Rule("expiring_3d", "만료 3일 이내", rule_expiring_3d, "warning"),
     Rule("overdue_invoices", "연체/실패 인보이스", rule_overdue_invoices, "danger"),
     Rule("audit_failed_24h", "24h 실패 작업 임계 초과", rule_audit_failed_24h, "danger"),
     Rule("unanswered_inbox", "24h+ 미답변 문의", rule_unanswered_inbox, "warning"),
+    Rule("stale_workers", "워커 heartbeat 정지", rule_stale_workers, "danger"),
+    Rule("circuit_open", "외부 API circuit open", rule_circuit_breaker_open, "danger"),
 ]
 
 

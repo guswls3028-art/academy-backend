@@ -149,6 +149,14 @@ def run_ai_sqs_worker() -> int:
             try:
                 # 워커 루프 경계에서 stale DB 커넥션 정리 (누수/반납 지연 보호)
                 close_old_connections()
+                # Heartbeat — WORKER_TYPE env로 ai_cpu/ai_gpu 구분. 실패는 silent.
+                try:
+                    import os as _os
+                    from apps.shared.utils.heartbeat import beat as _beat
+                    _wt = (_os.getenv("WORKER_TYPE", "CPU") or "CPU").lower()
+                    _beat(f"ai_{_wt}")
+                except Exception:
+                    pass
                 try:
                     message, tier = _weighted_poll(queue)
                 except QueueUnavailableError:

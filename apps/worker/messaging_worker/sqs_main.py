@@ -394,6 +394,12 @@ def main() -> int:
     try:
         while not _shutdown:
             try:
+                # Heartbeat — 매 polling cycle 1회. 실패는 silent (워커 차단 X).
+                try:
+                    from apps.shared.utils.heartbeat import beat as _beat
+                    _beat("messaging")
+                except Exception:
+                    pass
                 try:
                     raw = queue_client.receive_message(
                         queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,

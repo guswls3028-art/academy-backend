@@ -6,6 +6,7 @@ from .user import User, Attendance, Expense
 from .program import Program
 from .landing_page import LandingPage
 from .ops_audit import OpsAuditLog
+from .worker_heartbeat import WorkerHeartbeatModel
 
 __all__ = [
     "Tenant",
@@ -17,4 +18,5 @@ __all__ = [
     "Program",
     "LandingPage",
     "OpsAuditLog",
+    "WorkerHeartbeatModel",
 ]
