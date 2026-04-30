@@ -196,10 +196,10 @@ def generate_matchup_hit_report_pdf(
                 else:
                     display_sim = raw_text_sim
                 # 페이지 폴백 패널티 (bbox=null 후보) — services.py와 동일 기준.
-                # -0.15 + ceiling 0.84로 페이지 통째 텍스트 false positive 차단.
+                # -0.10 + ceiling 0.89로 false positive 차단하면서 진짜 적중 0.85+ 회복.
                 cand_meta = best_problem.meta or {}
                 if cand_meta.get("bbox") is None:
-                    display_sim = min(0.84, display_sim - 0.15)
+                    display_sim = min(0.89, display_sim - 0.10)
                     display_sim = max(0.0, display_sim)
             except Exception:
                 display_sim = float(_heuristic_score)

@@ -193,8 +193,9 @@ def find_similar_problems(
         fb_mask = np.array(
             [(c.meta or {}).get("bbox") is None for c in cand_list], dtype=bool,
         )
-        # 패널티: -0.15 후 ceiling 0.84
-        penal = np.minimum(0.84, sims - 0.15)
+        # 패널티: -0.15 후 ceiling 0.89 (정상 분리 후보가 0.91+이면 자연 차분, 0.85+ 진짜
+        # 적중도 "직접 적중"으로 노출 — 학원 마케팅 가치 false negative 완화)
+        penal = np.minimum(0.89, sims - 0.10)
         penal = np.maximum(0.0, penal)
         sims = np.where(fb_mask, penal, sims)
 
