@@ -300,15 +300,35 @@ def _detect_column_layout(
 ) -> bool:
     """Detect if the page has a dual-column layout.
 
-    Heuristic: if >30% of text blocks have x0 > page_width * 0.45,
-    the page likely has two columns.
+    Two heuristics (OR):
+      1. >20% of text blocks have x0 > page_width * 0.45 (right column populated)
+      2. anchor "N." pattern blocks distributed in both halves (≥2 each side)
+
+    조건 (2) 추가 근거: 운영 doc#177/329/292/291 (T2 시험지) — Vision OCR이
+    페이지 좌/우 column을 한 line으로 묶거나 우측 column block 수가 적어 (1)
+    임계값을 넘기지 못하는 경우, dual-column 미인식 → split_questions 단계에서
+    next_block.y0 < start_block.y0 인 cross-column anchor를 single-column으로
+    잘못 처리 → strip(10px) bbox 결함. anchor 분포 기반 판정으로 보완.
     """
     if not blocks or page_width <= 0:
         return False
 
     mid_x = page_width * 0.45
     right_count = sum(1 for b in blocks if b.x0 > mid_x)
-    return right_count > len(blocks) * 0.2
+    if right_count > len(blocks) * 0.2:
+        return True
+
+    # Fallback: anchor "N."이 좌/우 column 모두에 배치되어 있으면 dual-column
+    anchor_pattern = re.compile(r"^\s*(\d{1,3})\s*[.)]")
+    left_anchors = sum(
+        1 for b in blocks
+        if b.x0 <= mid_x and anchor_pattern.match(b.text or "")
+    )
+    right_anchors = sum(
+        1 for b in blocks
+        if b.x0 > mid_x and anchor_pattern.match(b.text or "")
+    )
+    return left_anchors >= 2 and right_anchors >= 2
 
 
 def _detect_quad_layout(
@@ -487,6 +507,14 @@ def split_questions(
             else:
                 # 단일 컬럼: 다음 문항 직전까지 전체 사용
                 y1 = next_block.y0 - margin
+                # Defensive: 다음 anchor가 시작 anchor보다 위에 있으면 (y1 < y0)
+                # cross-column anchor (dual-column 미인식) → 페이지 끝까지.
+                # 이 fallback이 없으면 next_block.y0 < start_block.y0 인 케이스에서
+                # 아래의 max(y1, y0 + 10) 클램프가 작동해 strip(10px) bbox가 됨.
+                # 운영 doc#177 q1 bbox=(0, 377, 8400, 63) — 다음 anchor가 우측 column
+                # 의 위쪽에 있어 strip만 잡힌 결함의 본질 fix.
+                if y1 <= y0:
+                    y1 = page_height
         else:
             # 마지막 문항: 페이지 하단까지 (비텍스트 요소 포함)
             # 4분할 마지막 quadrant이면 BR이라 page_height까지 OK

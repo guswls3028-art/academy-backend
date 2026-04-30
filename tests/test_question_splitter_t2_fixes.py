@@ -287,3 +287,60 @@ def test_quad_layout_not_falsely_detected_on_dual_column():
         blocks.append(TB(text="right", x0=550, y0=float(y), x1=950, y1=float(y + 30)))
 
     assert _detect_quad_layout(blocks, pw, ph) is False
+
+
+def test_dual_column_anchor_distribution_fallback():
+    """우측 column block 수가 적어도 anchor 분포로 dual-column 인식.
+
+    운영 doc#177 결함 시나리오 재현: Vision OCR이 우측 column의 본문/보기를
+    잘 못 잡아서 우측 anchor만 잡힌 경우 기존 heuristic (right_count > 20%)로는
+    미인식되지만 anchor 분포로 인식해야 함.
+    """
+    from academy.domain.tools.question_splitter import TextBlock as TB, _detect_column_layout
+
+    pw = 8400.0
+    blocks = [
+        # 좌측 column: anchor 1, 2, 3 + 본문 블록 다수
+        TB(text="1. 그림", x0=100, y0=200, x1=4000, y1=300),
+        TB(text="2. 다음", x0=100, y0=2000, x1=4000, y1=2100),
+        TB(text="3. 그림", x0=100, y0=4000, x1=4000, y1=4100),
+        *[TB(text="본문", x0=200, y0=float(y), x1=3900, y1=float(y + 50))
+          for y in range(400, 9000, 600)],
+        # 우측 column: anchor 4, 5, 6 + 본문 적음 (3개)
+        TB(text="4. 그림", x0=4500, y0=200, x1=8200, y1=300),
+        TB(text="5. 그림", x0=4500, y0=3000, x1=8200, y1=3100),
+        TB(text="6. 다음", x0=4500, y0=6000, x1=8200, y1=6100),
+    ]
+    assert _detect_column_layout(blocks, pw) is True
+
+
+def test_split_questions_cross_column_anchor_fallback():
+    """dual-column 미인식 케이스에서 next anchor가 위에 있어도 strip(10px)이 안 나옴.
+
+    운영 doc#177 q1 결함 (bbox=[0, 377, 8400, 63] = strip 10px) 재현.
+    좌측 anchor "1." 다음에 우측 anchor "3."이 정렬되어 next_block.y0 < start_block.y0.
+    fix 적용 후 y1=page_height fallback으로 정상 height.
+    """
+    from academy.domain.tools.question_splitter import (
+        TextBlock as TB,
+        split_questions,
+    )
+
+    # dual-column이지만 우측 block이 매우 적어서 _detect_column_layout 미인식 가능
+    blocks = [
+        TB(text="1. 그림", x0=100, y0=400, x1=4000, y1=500),
+        TB(text="2. 다음", x0=100, y0=2000, x1=4000, y1=2100),
+        TB(text="3. 그림", x0=4500, y0=400, x1=8000, y1=500),
+        TB(text="4. 다음", x0=4500, y0=2000, x1=8000, y1=2100),
+    ]
+    pw, ph = 8400.0, 11200.0
+    regions = split_questions(blocks, pw, ph, page_index=0)
+    assert len(regions) == 4
+    by_num = {r.number: r.bbox for r in regions}
+
+    # 모든 region의 height >= 100 (strip 결함 차단)
+    for num, (x0, y0, x1, y1) in by_num.items():
+        height = y1 - y0
+        assert height >= 100, (
+            f"q{num} bbox=({x0},{y0},{x1},{y1}) height={height} too small (strip)"
+        )
