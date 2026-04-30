@@ -533,6 +533,13 @@ def split_questions(
 
         y1 = min(page_height, max(y1, y0 + 10))
 
+        # Strip 절대 차단: height < 100px (페이지 매우 작은 일부)는 OCR false anchor 또는
+        # cross-column anchor sort 오류의 흔적. 이전 분기들의 fallback이 모두 miss한 경우.
+        # T2 운영 reanalyze (2026-04-30): 11건 strip 잔존 (h<100) — false anchor가
+        # 같은 페이지 같은 column 내 매우 가까이 detect되어 보호망 통과. 무조건 page_height까지.
+        if y1 - y0 < 100:
+            y1 = page_height
+
         # 4분할: y도 quadrant 경계로 추가 클램프.
         if is_quad_layout:
             curr_top = start_block.y0 < mid_y
