@@ -12,6 +12,7 @@ import re
 import requests
 
 from apps.domains.messaging.solapi_template_client import _create_auth_header
+from apps.shared.utils.circuit_breaker import CircuitOpenError, circuit_breaker
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,13 @@ def _normalize_phone(phone: str) -> str:
     return re.sub(r"\D", "", phone or "")
 
 
+@circuit_breaker(
+    name="solapi_sender",
+    failure_threshold=5,
+    window_seconds=30,
+    cooldown_seconds=60,
+    expected_exceptions=[requests.RequestException, ValueError],
+)
 def get_active_sender_numbers(api_key: str, api_secret: str) -> list[str]:
     """
     솔라피에 등록된 활성 발신번호 목록 조회.
@@ -114,6 +122,8 @@ def verify_sender_number(
 
     try:
         active = get_active_sender_numbers(api_key, api_secret)
+    except CircuitOpenError:
+        return False, "솔라피 일시 장애 — 잠시 후 다시 시도해 주세요."
     except ValueError as e:
         return False, str(e)
 

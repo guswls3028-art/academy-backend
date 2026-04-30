@@ -70,6 +70,19 @@ def _get_openai_client() -> "OpenAI":
     return _openai_client
 
 
+from apps.shared.utils.circuit_breaker import circuit_breaker as _circuit_breaker
+
+
+@_circuit_breaker(
+    name="openai_embedding",
+    failure_threshold=5,
+    window_seconds=30,
+    cooldown_seconds=60,
+)
+def _embed_openai_call(client, model: str, safe_texts: List[str]) -> object:
+    return client.embeddings.create(model=model, input=safe_texts)
+
+
 def _embed_openai(texts: List[str]) -> EmbeddingBatch:
     cfg = AIConfig.load()
 
@@ -82,7 +95,7 @@ def _embed_openai(texts: List[str]) -> EmbeddingBatch:
     # 패턴 마스킹. 임베딩 의미에 거의 영향 없음(같은 형태 토큰으로 치환).
     from apps.shared.utils.pii import mask_inline_phones
     safe_texts = [mask_inline_phones(t) for t in texts]
-    response = client.embeddings.create(model=cfg.EMBEDDING_OPENAI_MODEL, input=safe_texts)
+    response = _embed_openai_call(client, cfg.EMBEDDING_OPENAI_MODEL, safe_texts)
     vectors = [list(map(float, d.embedding)) for d in response.data]
     return EmbeddingBatch(vectors=vectors, backend="openai")
 

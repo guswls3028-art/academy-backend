@@ -17,6 +17,8 @@ from typing import Optional
 
 import requests
 
+from apps.shared.utils.circuit_breaker import circuit_breaker
+
 logger = logging.getLogger(__name__)
 
 SOLAPI_BASE = "https://api.solapi.com"
@@ -63,6 +65,13 @@ def _create_auth_header(api_key: str, api_secret: str) -> str:
     return f"HMAC-SHA256 apiKey={api_key}, date={date_time}, salt={salt}, signature={signature}"
 
 
+@circuit_breaker(
+    name="solapi_template",
+    failure_threshold=5,
+    window_seconds=30,
+    cooldown_seconds=60,
+    expected_exceptions=[requests.RequestException, ValueError],
+)
 def create_kakao_template(
     api_key: str,
     api_secret: str,
