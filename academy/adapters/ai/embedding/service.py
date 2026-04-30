@@ -72,6 +72,11 @@ def _get_openai_client() -> "OpenAI":
 
 def _embed_openai(texts: List[str]) -> EmbeddingBatch:
     cfg = AIConfig.load()
+
+    # Quota 가드: 외부 OpenAI 호출만 카운트 (local backend는 자체 처리이므로 무한).
+    from apps.domains.ai.services.quota import consume_ai_quota
+    consume_ai_quota(kind="embedding_openai")
+
     client = _get_openai_client()
     # PII 가드: OpenAI에 inline 전화번호(010-XXXX-XXXX)가 평문으로 흘러가지 않도록
     # 패턴 마스킹. 임베딩 의미에 거의 영향 없음(같은 형태 토큰으로 치환).

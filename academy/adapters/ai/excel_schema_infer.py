@@ -28,6 +28,10 @@ def infer_parent_phone_column(
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
 
+    # Quota 가드: 엑셀 컬럼 추론도 OpenAI 호출이므로 카운트.
+    from apps.domains.ai.services.quota import consume_ai_quota
+    consume_ai_quota(kind="schema_infer")
+
     from apps.shared.utils.pii import mask_sample_for_llm
 
     masked = []

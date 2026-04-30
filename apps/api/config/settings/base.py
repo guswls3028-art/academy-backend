@@ -476,6 +476,11 @@ BILLING_GRACE_PERIOD_DAYS = int(os.getenv("BILLING_GRACE_PERIOD_DAYS", "7"))
 BILLING_RETRY_MAX_ATTEMPTS = int(os.getenv("BILLING_RETRY_MAX_ATTEMPTS", "3"))
 BILLING_RETRY_INTERVAL_DAYS = int(os.getenv("BILLING_RETRY_INTERVAL_DAYS", "3"))
 
+# AI 호출 quota enforcement (외부 모델 비용 폭증 방지)
+# 가격정책 결정 전에는 OFF로 코드만 배포. 마이그레이션 적용 후 ENV로 ON 가능.
+# 한도: apps.domains.ai.services.quota.DEFAULT_LIMITS 참고.
+AI_QUOTA_ENFORCEMENT_ENABLED = os.getenv("AI_QUOTA_ENFORCEMENT_ENABLED", "").lower() in ("1", "true", "yes")
+
 # ==================================================
 # INTERNAL WORKER
 # ==================================================

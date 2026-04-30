@@ -4,7 +4,7 @@ from __future__ import annotations
 from django.db import models
 from django.utils import timezone
 
-from apps.core.models.base import BaseModel
+from apps.core.models.base import BaseModel, TimestampModel
 
 
 class AIJobModel(BaseModel):
@@ -145,3 +145,51 @@ class AIRuntimeConfigModel(BaseModel):
 
     def __str__(self) -> str:
         return f"AIRuntimeConfig({self.key}={self.value})"
+
+
+# ──────────────────────────────────────────────────────────────────────
+# AI Usage Quota (테넌트별 AI 호출 카운트 — 비용 폭증 방지)
+# ──────────────────────────────────────────────────────────────────────
+
+class AIUsageModel(TimestampModel):
+    """테넌트 × kind × (year, month) 단위 AI 호출 카운트.
+
+    quota service가 select_for_update로 잠그고 증가시킨다.
+    가격정책 결정 전 default 한도(`apps.domains.ai.services.quota.DEFAULT_LIMITS`)
+    적용 → 한도 초과 시 AIQuotaExceeded 예외.
+    """
+
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        related_name="ai_usages",
+        db_index=True,
+    )
+    kind = models.CharField(
+        max_length=32,
+        db_index=True,
+        help_text="matchup / ocr / embedding / problem_generation / schema_infer",
+    )
+    year = models.PositiveSmallIntegerField()
+    month = models.PositiveSmallIntegerField()
+    day = models.PositiveSmallIntegerField(
+        help_text="일일 한도 추적용. 0이면 월간 집계 row.",
+        default=0,
+    )
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table = "ai_usage"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "kind", "year", "month", "day"],
+                name="uniq_ai_usage_per_period",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "kind", "year", "month"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"AIUsage({self.tenant_id}, {self.kind}, {self.year}-{self.month:02d}-{self.day:02d}={self.count})"
+

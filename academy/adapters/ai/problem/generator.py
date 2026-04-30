@@ -46,6 +46,11 @@ def _get_client() -> "OpenAI":
 
 def generate_problem_from_ocr(ocr_text: str) -> ParsedProblem:
     cfg = AIConfig.load()
+
+    # Quota 가드: 외부 OpenAI gpt-* 호출 카운트.
+    from apps.domains.ai.services.quota import consume_ai_quota
+    consume_ai_quota(kind="problem_generation")
+
     # PII 가드: OCR 텍스트에 답안지/Q&A 사진의 inline 전화번호가 섞여있어도
     # OpenAI로는 마스킹된 형태만 전달.
     from apps.shared.utils.pii import mask_inline_phones
