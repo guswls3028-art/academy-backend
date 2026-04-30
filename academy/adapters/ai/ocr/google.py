@@ -172,6 +172,8 @@ def _prepare_image_for_vision(image_path: str) -> bytes:
 _CW_NAMESPACE = "Academy/AIWorker"
 _CW_METRIC_CALLS = "VisionOCRCalls"
 _CW_METRIC_ERRORS = "VisionOCRErrors"
+# 비용 절감 효과 모니터링 — R2 영구 캐시 hit 횟수. (CALLS = miss + 실 호출)
+_CW_METRIC_CACHE_HITS = "VisionOCRCacheHits"
 
 _cached_cw_client: Any = None
 
@@ -271,6 +273,7 @@ def google_ocr(image_path: str) -> OCRResult:
     # R2 영구 캐시 확인
     cached = _ocr_cache_get(content, kind="text")
     if cached is not None:
+        _emit_vision_metric(_CW_METRIC_CACHE_HITS)
         return OCRResult(
             text=cached.get("text", "") or "",
             confidence=cached.get("confidence"),
@@ -374,6 +377,7 @@ def _google_ocr_blocks_cached(
     # R2 영구 캐시 확인 — retry/reanalyze 시 같은 페이지 이미지 재호출 0건
     cached = _ocr_cache_get(content, kind="blocks")
     if cached is not None:
+        _emit_vision_metric(_CW_METRIC_CACHE_HITS)
         return tuple(
             OCRTextBlock(
                 text=row.get("text", ""),
