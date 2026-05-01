@@ -674,11 +674,6 @@ def job_set_running(job_id: str) -> bool:
     return n == 1
 
 
-def job_claim_for_running(job_id, worker_id: str, lease_seconds: int = 3600) -> bool:
-    """DEPRECATED: SQS 경로용. Batch는 job_set_running 사용."""
-    return job_set_running(job_id)
-
-
 def job_heartbeat(job_id, lease_seconds: int = 3600) -> bool:
     """RUNNING Job의 last_heartbeat_at 및 locked_until 갱신."""
     from django.utils import timezone
