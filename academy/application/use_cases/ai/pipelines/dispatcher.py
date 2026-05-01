@@ -67,6 +67,24 @@ def handle_ai_job(job: AIJob) -> AIResult:
     # 정리 누락 시 워커 인스턴스 디스크가 점진적으로 가득 차 연쇄 실패 발생.
     local_path: str | None = None
     begin_pdf_seg_scope()
+
+    # 워커 tenant context binding — 다운스트림 OCR/임베딩의 ai_usage 누적 + CloudWatch
+    # tenant 차원 메트릭에 사용. 워커는 jobs를 순차 처리하므로 finally에서 명시적 clear
+    # 필수 (다음 job으로 leak 방지).
+    _bound_tenant_for_ctx = None
+    _payload_for_ctx: Dict[str, Any] = job.payload or {}
+    _tenant_id_for_ctx = _payload_for_ctx.get("tenant_id") or job.tenant_id or None
+    if _tenant_id_for_ctx:
+        try:
+            from apps.core.models import Tenant
+            from apps.core.tenant.context import set_current_tenant
+            _t = Tenant.objects.filter(id=int(_tenant_id_for_ctx)).first()
+            if _t:
+                set_current_tenant(_t)
+                _bound_tenant_for_ctx = _t
+        except Exception:
+            logger.debug("worker tenant context bind failed", exc_info=True)
+
     try:
         # ✅ tenant_id 추출 (payload 우선, 없으면 job.tenant_id)
         payload: Dict[str, Any] = job.payload or {}
@@ -371,3 +389,9 @@ def handle_ai_job(job: AIJob) -> AIResult:
     finally:
         cleanup_tmp_for_path(local_path)
         cleanup_registered_pdf_seg_tmp_dirs()
+        if _bound_tenant_for_ctx is not None:
+            try:
+                from apps.core.tenant.context import clear_current_tenant
+                clear_current_tenant()
+            except Exception:  # noqa: BLE001
+                pass

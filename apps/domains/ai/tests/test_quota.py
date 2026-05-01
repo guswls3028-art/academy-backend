@@ -1,7 +1,8 @@
-"""AI 호출 quota enforcement 단위테스트.
+"""AI 호출 quota tracking/enforcement 단위테스트.
 
 검증:
-- enforcement OFF: tenant 카운트 안 늘고 한도 초과해도 패스
+- tracking ON (default) + enforcement OFF: 카운트는 증가, 한도 초과해도 raise 안 함
+- tracking OFF: 카운트 0 유지
 - enforcement ON + 정상 사용: 카운트 증가
 - enforcement ON + daily 한도 초과: AIQuotaExceeded
 - enforcement ON + monthly 한도 초과: AIQuotaExceeded
@@ -30,8 +31,8 @@ from apps.domains.ai.services.quota import (
 User = get_user_model()
 
 
-class QuotaDisabledTest(TestCase):
-    """AI_QUOTA_ENFORCEMENT_ENABLED=False (default)에서는 no-op."""
+class QuotaTrackingOnlyTest(TestCase):
+    """기본 동작: tracking ON, enforcement OFF — 카운트만 누적, raise 없음."""
 
     def setUp(self):
         self.tenant = Tenant.objects.create(code="t_qd", name="QuotaOff")
@@ -40,8 +41,26 @@ class QuotaDisabledTest(TestCase):
     def tearDown(self):
         clear_current_tenant()
 
-    @override_settings(AI_QUOTA_ENFORCEMENT_ENABLED=False)
-    def test_no_count_when_disabled(self):
+    @override_settings(AI_USAGE_TRACKING_ENABLED=True, AI_QUOTA_ENFORCEMENT_ENABLED=False)
+    def test_count_increments_with_tracking_only(self):
+        # enforcement off여도 ai_usage 카운트는 누적되어야 함 (실측 데이터 수집).
+        for _ in range(3):
+            consume_ai_quota(kind="problem_generation")
+        # daily(2 row) + monthly(1 row) = 2 rows for same kind
+        rows = AIUsageModel.objects.filter(tenant=self.tenant, kind="problem_generation")
+        self.assertEqual(rows.count(), 2)
+        self.assertEqual(sum(r.count for r in rows), 6)  # 3 daily + 3 monthly
+
+    @override_settings(AI_USAGE_TRACKING_ENABLED=True, AI_QUOTA_ENFORCEMENT_ENABLED=False)
+    def test_no_raise_when_enforcement_off_even_at_limit(self):
+        # 한도를 넘겨도 enforcement off면 raise 없음 — brake 비활성 상태.
+        limit = DEFAULT_LIMITS["schema_infer"]["daily"]
+        for _ in range(limit + 5):
+            consume_ai_quota(kind="schema_infer")  # raise 없어야 함
+
+    @override_settings(AI_USAGE_TRACKING_ENABLED=False)
+    def test_no_count_when_tracking_disabled(self):
+        # 명시적으로 tracking 끄면 카운트 0.
         for _ in range(10):
             consume_ai_quota(kind="problem_generation")
         self.assertEqual(

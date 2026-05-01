@@ -476,9 +476,12 @@ BILLING_GRACE_PERIOD_DAYS = int(os.getenv("BILLING_GRACE_PERIOD_DAYS", "7"))
 BILLING_RETRY_MAX_ATTEMPTS = int(os.getenv("BILLING_RETRY_MAX_ATTEMPTS", "3"))
 BILLING_RETRY_INTERVAL_DAYS = int(os.getenv("BILLING_RETRY_INTERVAL_DAYS", "3"))
 
-# AI 호출 quota enforcement (외부 모델 비용 폭증 방지)
-# 가격정책 결정 전에는 OFF로 코드만 배포. 마이그레이션 적용 후 ENV로 ON 가능.
-# 한도: apps.domains.ai.services.quota.DEFAULT_LIMITS 참고.
+# AI 호출 quota — 두 단계 분리.
+#   1) tracking (default ON): tenant×kind 호출수 누적. ai_usage 테이블 기반. 한도 무관.
+#   2) enforcement (default OFF): 누적치가 DEFAULT_LIMITS 초과 시 AIQuotaExceeded raise.
+# 운영 절차: tracking으로 실측 → 가격정책 결정 → enforcement 토글로 brake 활성화.
+# 한도/단가: apps.domains.ai.services.quota.DEFAULT_LIMITS 참고.
+AI_USAGE_TRACKING_ENABLED = os.getenv("AI_USAGE_TRACKING_ENABLED", "1").lower() in ("1", "true", "yes")
 AI_QUOTA_ENFORCEMENT_ENABLED = os.getenv("AI_QUOTA_ENFORCEMENT_ENABLED", "").lower() in ("1", "true", "yes")
 
 # ==================================================

@@ -1,11 +1,17 @@
-"""AI 호출 quota 가드 — 테넌트별 일일/월간 한도 enforcement.
+"""AI 호출 quota — tracking + enforcement 2단 분리.
 
-가격정책 결정 전 임시 default 한도. 운영 데이터로 정책이 정해지면 plan별 한도로 확장.
+tracking (default ON): tenant×kind 호출수를 ai_usage에 누적. 한도 체크 없음.
+enforcement (default OFF): 누적치가 DEFAULT_LIMITS 초과 시 AIQuotaExceeded raise.
+
+운영 절차:
+    1. tracking으로 실측 데이터 수집 (현재 단계)
+    2. 가격정책 결정 → DEFAULT_LIMITS 또는 tenant별 override 설정
+    3. AI_QUOTA_ENFORCEMENT_ENABLED=true 토글로 brake 활성화
 
 호출처:
 - generate_problem_from_ocr → kind="problem_generation"
 - _embed_openai (외부 임베딩) → kind="embedding_openai"
-- google_ocr → kind="ocr"
+- google_ocr / google_ocr_blocks → kind="ocr"
 - infer_parent_phone_column → kind="schema_infer"
 - 매치업 파이프라인 시작 → kind="matchup"
 
@@ -16,8 +22,6 @@
     except AIQuotaExceeded as e:
         logger.warning("...", e.tenant_id, e.kind)
         raise
-
-활성화: settings.AI_QUOTA_ENFORCEMENT_ENABLED=True (default False).
 """
 from __future__ import annotations
 
@@ -67,12 +71,17 @@ class AIQuotaExceeded(Exception):
 
 
 def consume_ai_quota(kind: QuotaKind, cost: int = 1) -> None:
-    """현재 테넌트 컨텍스트의 AI 호출 카운트를 cost만큼 증가.
+    """현재 테넌트 컨텍스트의 AI 호출을 cost만큼 카운트.
 
-    한도 초과 시 AIQuotaExceeded. settings.AI_QUOTA_ENFORCEMENT_ENABLED=False면 no-op.
-    tenant context 없으면 (admin 작업 등) skip — 안전한 default.
+    동작:
+      - AI_USAGE_TRACKING_ENABLED=True (default) + tenant context 있음 → 누적 카운트
+      - AI_QUOTA_ENFORCEMENT_ENABLED=True 추가로 → DEFAULT_LIMITS 초과 시 raise
+      - tenant context 없으면 (admin/익명 워커) skip — 안전한 default
+
+    enforcement OFF 상태에서도 카운트는 계속 쌓이므로,
+    나중에 AI_QUOTA_ENFORCEMENT_ENABLED=true로 토글하는 즉시 brake가 활성화된다.
     """
-    if not getattr(settings, "AI_QUOTA_ENFORCEMENT_ENABLED", False):
+    if not getattr(settings, "AI_USAGE_TRACKING_ENABLED", True):
         return
 
     from apps.core.tenant.context import get_current_tenant
@@ -80,51 +89,57 @@ def consume_ai_quota(kind: QuotaKind, cost: int = 1) -> None:
 
     tenant = get_current_tenant()
     if tenant is None:
-        # tenant 없으면 enforcement skip (admin 작업, 테스트 등 — quota는 테넌트 단위 정책).
         return
 
     limits = DEFAULT_LIMITS.get(kind)
     if not limits:
-        logger.warning("Unknown AI quota kind: %s — skipping enforcement", kind)
+        # 알 수 없는 kind는 tracking/enforcement 모두 skip — 의도치 않은 row 누적 방지.
+        logger.warning("Unknown AI quota kind: %s — skipping", kind)
         return
 
+    enforcement_on = getattr(settings, "AI_QUOTA_ENFORCEMENT_ENABLED", False)
+
     today = timezone.localdate()
-    with transaction.atomic():
-        # 일일 row
-        daily, _ = AIUsageModel.objects.select_for_update().get_or_create(
-            tenant=tenant,
-            kind=kind,
-            year=today.year,
-            month=today.month,
-            day=today.day,
-            defaults={"count": 0},
-        )
-        if daily.count + cost > limits["daily"]:
-            raise AIQuotaExceeded(
-                tenant_id=tenant.id, kind=kind,
-                period=f"daily-{today.isoformat()}",
-                used=daily.count, limit=limits["daily"],
+    try:
+        with transaction.atomic():
+            daily, _ = AIUsageModel.objects.select_for_update().get_or_create(
+                tenant=tenant,
+                kind=kind,
+                year=today.year,
+                month=today.month,
+                day=today.day,
+                defaults={"count": 0},
             )
-        # 월간 row (day=0)
-        monthly, _ = AIUsageModel.objects.select_for_update().get_or_create(
-            tenant=tenant,
-            kind=kind,
-            year=today.year,
-            month=today.month,
-            day=0,
-            defaults={"count": 0},
-        )
-        if monthly.count + cost > limits["monthly"]:
-            raise AIQuotaExceeded(
-                tenant_id=tenant.id, kind=kind,
-                period=f"monthly-{today.year}-{today.month:02d}",
-                used=monthly.count, limit=limits["monthly"],
+            if enforcement_on and daily.count + cost > limits["daily"]:
+                raise AIQuotaExceeded(
+                    tenant_id=tenant.id, kind=kind,
+                    period=f"daily-{today.isoformat()}",
+                    used=daily.count, limit=limits["daily"],
+                )
+            monthly, _ = AIUsageModel.objects.select_for_update().get_or_create(
+                tenant=tenant,
+                kind=kind,
+                year=today.year,
+                month=today.month,
+                day=0,
+                defaults={"count": 0},
             )
-        # 둘 다 통과 → 카운트 증가
-        daily.count += cost
-        monthly.count += cost
-        daily.save(update_fields=["count", "updated_at"])
-        monthly.save(update_fields=["count", "updated_at"])
+            if enforcement_on and monthly.count + cost > limits["monthly"]:
+                raise AIQuotaExceeded(
+                    tenant_id=tenant.id, kind=kind,
+                    period=f"monthly-{today.year}-{today.month:02d}",
+                    used=monthly.count, limit=limits["monthly"],
+                )
+            daily.count += cost
+            monthly.count += cost
+            daily.save(update_fields=["count", "updated_at"])
+            monthly.save(update_fields=["count", "updated_at"])
+    except AIQuotaExceeded:
+        raise
+    except Exception:
+        # tracking 실패가 본 작업을 죽이면 안 됨 — DB 일시 단절 등은 silent.
+        logger.warning("AI usage tracking failed | kind=%s tenant=%s",
+                       kind, tenant.id, exc_info=True)
 
 
 def get_current_usage(kind: QuotaKind) -> dict[str, int]:

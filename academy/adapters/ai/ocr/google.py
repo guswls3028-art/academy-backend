@@ -194,23 +194,54 @@ def _get_cw_client() -> Any:
 
 
 def _emit_vision_metric(metric_name: str) -> None:
-    """CloudWatch에 Vision OCR 호출/에러 메트릭 put. 실패는 silent — OCR 결과에 영향 없음."""
+    """CloudWatch에 Vision OCR 호출/에러 메트릭 put. 실패는 silent — OCR 결과에 영향 없음.
+
+    tenant context가 설정되어 있으면 TenantId 차원도 함께 emit하여
+    어느 학원이 호출량의 대부분을 차지하는지 대시보드에서 분리 가능.
+    """
     try:
         client = _get_cw_client()
         if not client:
             return
-        client.put_metric_data(
-            Namespace=_CW_NAMESPACE,
-            MetricData=[
-                {
-                    "MetricName": metric_name,
-                    "Value": 1,
-                    "Unit": "Count",
-                }
-            ],
-        )
+
+        tenant_id_str: Optional[str] = None
+        try:
+            from apps.core.tenant.context import get_current_tenant  # type: ignore
+            tenant = get_current_tenant()
+            if tenant is not None:
+                tenant_id_str = str(tenant.id)
+        except Exception:  # noqa: BLE001
+            tenant_id_str = None
+
+        metrics: List[dict] = [
+            {"MetricName": metric_name, "Value": 1, "Unit": "Count"},
+        ]
+        if tenant_id_str:
+            metrics.append({
+                "MetricName": metric_name,
+                "Value": 1,
+                "Unit": "Count",
+                "Dimensions": [{"Name": "TenantId", "Value": tenant_id_str}],
+            })
+        client.put_metric_data(Namespace=_CW_NAMESPACE, MetricData=metrics)
     except Exception as e:  # noqa: BLE001
         logger.debug("CloudWatch put_metric_data failed (%s): %s", metric_name, e)
+
+
+def _track_ocr_usage() -> None:
+    """ai_usage 테이블에 ocr 호출 카운트. tracking off / tenant 미설정 시 no-op.
+
+    enforcement off 상태에서도 카운트는 누적되므로,
+    나중에 AI_QUOTA_ENFORCEMENT_ENABLED=true 토글로 brake 즉시 활성화 가능.
+    AIQuotaExceeded는 그대로 raise — enforcement 활성화 시 실제 brake로 동작.
+    """
+    try:
+        from apps.domains.ai.services.quota import consume_ai_quota
+        consume_ai_quota(kind="ocr")
+    except ImportError:
+        return
+    # AIQuotaExceeded는 catch하지 않고 호출자에게 전파 (enforcement 토글 시 brake).
+    # 그 외 예외는 quota 모듈 내부에서 swallow됨 (DB 일시 단절 등).
 
 
 @dataclass
@@ -279,6 +310,10 @@ def google_ocr(image_path: str) -> OCRResult:
             confidence=cached.get("confidence"),
             raw=None,
         )
+
+    # ai_usage 누적 (enforcement off 시 카운트만, on 시 한도 초과면 raise).
+    # 캐시 히트는 과금 단위가 아니므로 위쪽에서 return 후 카운트하지 않는다.
+    _track_ocr_usage()
 
     client = _get_vision_client()
     image = vision.Image(content=content)
@@ -386,6 +421,9 @@ def _google_ocr_blocks_cached(
             )
             for row in (cached.get("blocks") or [])
         )
+
+    # ai_usage 누적 (캐시 히트는 카운트하지 않음 — 과금 단위와 일치).
+    _track_ocr_usage()
 
     client = _get_vision_client()
     image = vision.Image(content=content)
