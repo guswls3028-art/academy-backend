@@ -67,24 +67,34 @@ def _ocr_cache_put(image_bytes: bytes, kind: str, payload: Any) -> None:
     except Exception:
         logger.debug("OCR cache put failed", exc_info=True)
 
-# Vision API circuit breaker — 빌링/인증 실패가 한 번 발생하면 짧은 시간 차단.
+# Vision API circuit breaker — 빌링/인증 실패가 한 번 발생하면 일정 시간 차단.
 # 사고 컨텍스트 (2026-04-29): GCP project 빌링이 끊겨 PermissionDenied 발생 시
 # 매 페이지마다 5~10초 응답 지연이 누적되어 SQS_JOB_TIMEOUT_60MIN으로 워커 stuck 26건.
-# 첫 실패 후 5분간 OCR 호출을 즉시 skip하면, 매치업 파이프라인은 OpenCV/페이지 폴백으로
-# 진행되어 worker는 다음 잡으로 넘어간다. 빌링 풀리면 5분 후 자동 복구.
+# 첫 실패 후 cooldown 동안 OCR 호출을 즉시 skip → 매치업 파이프라인은 OpenCV/페이지
+# 폴백으로 진행 → worker는 다음 잡으로 넘어감. 빌링 풀리면 cooldown 후 자동 복구.
+#
+# 4-28 재발 사고 (37,915 retry 폭주, 5만원 spike): cooldown 5분이 너무 짧아 SQS 메시지
+# visibility timeout(60분)과 mismatch. 메시지가 visibility 만료 후 재dispatch되어
+# 새 워커가 또 시도 → 5분 cooldown 풀리면 또 호출. 30분으로 확장하여
+# SQS visibility timeout 절반 이상 cover. ENV로 override 가능.
 _AUTH_FAIL_UNTIL = 0.0
-_AUTH_FAIL_COOLDOWN_SEC = 300
+_AUTH_FAIL_COOLDOWN_SEC = int(os.environ.get("VISION_OCR_AUTH_FAIL_COOLDOWN_SEC", "1800"))
 
 
 def _is_auth_disabled_now() -> bool:
     import time
-    return time.time() < _AUTH_FAIL_UNTIL
+    if time.time() < _AUTH_FAIL_UNTIL:
+        # circuit open 상태에서 호출 시도 = retry 폭주 시그널. 카운트.
+        _emit_vision_metric(_CW_METRIC_AUTH_FAILS)
+        return True
+    return False
 
 
 def _trip_auth_breaker(reason: str) -> None:
     import time
     global _AUTH_FAIL_UNTIL
     _AUTH_FAIL_UNTIL = max(_AUTH_FAIL_UNTIL, time.time() + _AUTH_FAIL_COOLDOWN_SEC)
+    _emit_vision_metric(_CW_METRIC_AUTH_FAILS)
     logger.error(
         "VISION_OCR_CIRCUIT_OPEN | cooldown=%ds | reason=%s",
         _AUTH_FAIL_COOLDOWN_SEC, reason,
@@ -174,6 +184,9 @@ _CW_METRIC_CALLS = "VisionOCRCalls"
 _CW_METRIC_ERRORS = "VisionOCRErrors"
 # 비용 절감 효과 모니터링 — R2 영구 캐시 hit 횟수. (CALLS = miss + 실 호출)
 _CW_METRIC_CACHE_HITS = "VisionOCRCacheHits"
+# 빌링 사고/인증 실패 시도 횟수 — circuit open 후 skip 호출도 카운트.
+# 4-28 사고 (37,915 retry 폭주) 모니터링용. CALLS와 별도라 비용 spike 사전 경보.
+_CW_METRIC_AUTH_FAILS = "VisionOCRAuthFails"
 
 _cached_cw_client: Any = None
 
