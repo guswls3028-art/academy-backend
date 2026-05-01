@@ -203,6 +203,10 @@ def run_matchup_pipeline(
     is_reference = upload_intent not in ("test", "exam_sheet")
     page_count = len(pages)
     avg_per_page = total_boxes / max(1, page_count)
+
+    # paper_type 집계 — 분기 결정 + 결과 반환에 한 번만 계산.
+    paper_type_summary = _aggregate_paper_types(pages)
+
     # 학습자료 over-extraction 휴리스틱 — 페이지 폴백 (페이지=problem) 트리거.
     # 운영 사용자 보고 (2026-04-28): doc#130 페이지에 44/45/46 문항이 명확히 분리
     # 되어 있는데도 폴백되어 페이지 통째 problem이 됨. 임계값 50 → 70로 강화하여
@@ -217,20 +221,35 @@ def run_matchup_pipeline(
         or (total_boxes >= 40 and avg_per_page >= 5)
     )
 
+    # paper_type 기반 저신뢰 doc 폴백 — 학생 답안지 폰사진/UNKNOWN 다수.
+    # T2 시험지 6 doc(전부 학생 답안지 폰사진) C10 mismatch 56% 결함:
+    # 학생 필기 침범 + perspective + 회전 → 자동분리 결과의 신뢰성 자체가 붕괴.
+    # 페이지 단위로 폴백하면 학원에는 "이 시험지는 페이지 단위 매칭"이라고 노출되고
+    # 잘못된 문항 매핑으로 인한 신뢰성 사고를 차단할 수 있음.
+    is_low_confidence_doc = (
+        paper_type_summary["primary"] == "student_answer_photo"
+        or paper_type_summary["low_confidence_ratio"] >= 0.5
+    )
+
     if total_boxes == 0:
         # 문제를 찾지 못한 경우 — 전체 페이지를 하나의 문제로 취급
         logger.info("MATCHUP_NO_BOXES | job_id=%s | treating whole pages as problems", job_id)
         questions_raw = _whole_pages_as_questions(pages)
-    elif is_over_extracted:
-        # 학습자료 over-extraction 폴백 — 페이지 단위 1박스로 재인덱싱.
-        # 단, is_skip_page(표지/해설지/lorem ipsum) 페이지는 제외 — 그대로 두면
+    elif is_over_extracted or is_low_confidence_doc:
+        # 페이지 폴백 트리거:
+        # - over-extraction (학습자료 anchor 폭증) OR
+        # - 저신뢰 source (학생 답안지 폰사진 등 — paper_type 분류 신호)
+        # is_skip_page(표지/해설지/lorem ipsum) 페이지는 제외 — 그대로 두면
         # 라틴 placeholder가 problem #1/#2로 인덱싱되어 매치업 노이즈가 됨.
         kept_pages = [p for p in pages if not p.get("is_skip_page")]
         logger.info(
-            "MATCHUP_REFERENCE_PAGE_FALLBACK | job_id=%s | total_boxes=%d avg=%.1f "
-            "raw_pages=%d kept_pages=%d (skip=%d)",
+            "MATCHUP_PAGE_FALLBACK | job_id=%s | total_boxes=%d avg=%.1f "
+            "raw_pages=%d kept_pages=%d (skip=%d) | over_ext=%s | low_conf=%s | "
+            "primary_paper_type=%s",
             job_id, total_boxes, avg_per_page, page_count, len(kept_pages),
             page_count - len(kept_pages),
+            is_over_extracted, is_low_confidence_doc,
+            paper_type_summary["primary"],
         )
         questions_raw = _whole_pages_as_questions(kept_pages)
     else:
@@ -399,10 +418,64 @@ def run_matchup_pipeline(
         "segmentation_method": segmentation_method,
         "page_image_keys": page_image_keys,
         "page_dimensions": page_dimensions,
+        "paper_type_summary": paper_type_summary,
     })
 
 
 # ── 내부 함수 ────────────────────────────────────────
+
+
+def _aggregate_paper_types(pages: List[Dict]) -> Dict[str, Any]:
+    """페이지별 paper_type을 doc 단위로 집계 + 경고 산출.
+
+    Source 게이트의 핵심: 학생 답안지 폰사진(STUDENT_ANSWER_PHOTO)이 다수 섞이거나
+    분류 불명(UNKNOWN) 비율이 높으면 자동분리 신뢰도가 낮아 어드민에서 사용자 경고가
+    필요. callbacks가 이 결과를 doc.meta["paper_type_summary"]로 저장 → 프론트
+    ProblemGrid가 경고 배너로 노출.
+
+    Returns:
+      {
+        "distribution": {"clean_pdf_single": N, ...},
+        "low_confidence_ratio": 0.0~1.0,  # student_answer_photo + unknown 페이지 비율
+        "primary": "clean_pdf_single",     # 가장 많은 유형
+        "warnings": ["student_answer_photo_detected", ...],
+      }
+    """
+    from collections import Counter
+
+    if not pages:
+        return {
+            "distribution": {},
+            "low_confidence_ratio": 0.0,
+            "primary": "unknown",
+            "warnings": [],
+        }
+
+    types = [p.get("paper_type") or "unknown" for p in pages]
+    counter = Counter(types)
+    total = len(types)
+
+    low_conf_keys = ("student_answer_photo", "unknown")
+    low_conf_count = sum(counter.get(k, 0) for k in low_conf_keys)
+    low_conf_ratio = low_conf_count / max(1, total)
+
+    primary = counter.most_common(1)[0][0]
+
+    warnings: List[str] = []
+    if counter.get("student_answer_photo", 0) >= 1:
+        warnings.append("student_answer_photo_detected")
+    if low_conf_ratio >= 0.3:
+        warnings.append("low_confidence_source_majority")
+    if counter.get("non_question", 0) >= total * 0.5 and total >= 4:
+        # 절반 이상이 비-문항 페이지 — source 부적합 의심
+        warnings.append("non_question_majority")
+
+    return {
+        "distribution": dict(counter),
+        "low_confidence_ratio": round(low_conf_ratio, 3),
+        "primary": primary,
+        "warnings": warnings,
+    }
 
 
 def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
@@ -630,10 +703,61 @@ def _extract_texts(questions: List[Dict], job_id: str) -> None:
     # 정제 후에도 잔존하는 box-merge 케이스에 검수 배지 표시 (UI 가이드).
     _flag_merge_suspect(questions)
 
+    # number↔content 매핑 검증 — 신뢰성 붕괴(C10 mismatch 56%) 1차 차단선.
+    _verify_problem_numbers(questions)
+
 
 _MERGE_INNER_ANCHOR = re.compile(
     r"(?:^|\n)\s*(\d{1,2})\s*[.)]\s*(?=[가-힣A-Za-z(<\[])",
 )
+
+
+def _verify_problem_numbers(questions: List[Dict]) -> None:
+    """problem.text 첫 anchor 번호와 q.number 일치 검증 — number↔content mismatch 차단.
+
+    매치업 결과 PDF에서 "Q3 적중자료" 자리에 Q5 본문이 표시되던 신뢰성 결함의 1차 차단선.
+    T2 시험지 doc#177/#294에서 56% 발생한 C10 mismatch — 분리 자체는 됐으나 DB의
+    problem.number와 image의 본문 번호가 어긋난 케이스.
+
+    검증 결과:
+    - mismatch면 q.meta_extra["number_mismatch"] = {"db": db_num, "ocr": ocr_num} 기록.
+    - 어드민 UI는 이 플래그로 검수 배지 표시 + 사용자가 manual crop으로 보정.
+    - 자동 reject는 안 함 — false positive(OCR이 anchor를 잘못 인식한 케이스) 우려.
+
+    적용 범위:
+    - bbox 있는 problem만 (분리 정상) — 페이지 폴백(bbox=None)은 페이지 전체 텍스트라 번호 검증 부적합.
+    - first_line의 첫 80자에서 anchor 추출 — 매치업 OCR이 헤더/푸터를 본문 앞에 prepend하지 않음 가정.
+    """
+    from academy.domain.tools.question_splitter import _extract_question_number
+
+    mismatch_count = 0
+    checked = 0
+    for q in questions:
+        if not q.get("bbox"):
+            continue
+        text = (q.get("text") or "").strip()
+        if not text:
+            continue
+        first_line = text.split("\n", 1)[0][:80]
+        ocr_num = _extract_question_number(first_line)
+        if ocr_num is None:
+            continue
+        db_num = q.get("number")
+        if db_num is None:
+            continue
+        checked += 1
+        if int(ocr_num) != int(db_num):
+            q.setdefault("meta_extra", {})["number_mismatch"] = {
+                "db": int(db_num),
+                "ocr": int(ocr_num),
+            }
+            mismatch_count += 1
+
+    if mismatch_count:
+        logger.warning(
+            "MATCHUP_NUMBER_MISMATCH | count=%d/%d (checked=%d)",
+            mismatch_count, len(questions), checked,
+        )
 
 
 def _trim_box_merged_text(questions: List[Dict]) -> None:
@@ -758,6 +882,7 @@ def _extract_texts_legacy(questions: List[Dict], job_id: str) -> None:
 
     _trim_box_merged_text(questions)
     _flag_merge_suspect(questions)
+    _verify_problem_numbers(questions)
 
 
 def _extract_text_for_question(full_text: str, q_number: int, total: int) -> str:

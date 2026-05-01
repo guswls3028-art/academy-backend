@@ -519,6 +519,10 @@ def _handle_matchup_ai_result(
         meta["page_image_keys"] = list(page_keys)
         if page_dims:
             meta["page_dimensions"] = list(page_dims)
+    # paper_type 페이지별 분포 + Source 부적합 경고 (어드민 UI 배너용)
+    paper_type_summary = result_payload.get("paper_type_summary")
+    if paper_type_summary:
+        meta["paper_type_summary"] = paper_type_summary
     doc.meta = meta
     doc.save(update_fields=[
         "status", "problem_count", "error_message", "meta", "updated_at",

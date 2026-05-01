@@ -127,8 +127,11 @@ def _pdf_to_images(pdf_path: str) -> Tuple[List[Dict], str]:
         )
     """
     from academy.adapters.tools.pymupdf_renderer import PdfDocument
+    from academy.domain.tools.paper_type import (
+        PaperType,
+        classify_paper_type,
+    )
     from academy.domain.tools.question_splitter import (
-        is_non_question_page,
         split_questions,
         TextBlock as SplitterTextBlock,
     )
@@ -159,24 +162,39 @@ def _pdf_to_images(pdf_path: str) -> Tuple[List[Dict], str]:
                 raw_blocks = []
 
             # 텍스트 PDF의 경우 text-based 분할을 시도해서 per-question 박스 사전 계산.
-            # is_non_question_page가 True면 표지/목차/안내/해설 — 이 페이지는 OCR/OpenCV
-            # 안전망에서도 problem으로 잘리지 않도록 plain "skip" 플래그를 표시.
+            # paper_type 분류기가 NON_QUESTION으로 판정하면 표지/목차/안내/해설 — 이 페이지는
+            # OCR/OpenCV 안전망에서도 problem으로 잘리지 않도록 plain "skip" 플래그를 표시.
             text_regions: List = []  # QuestionRegion in points (for cross-page validation)
             is_skip_page = False
+            page_paper_type: str = PaperType.UNKNOWN.value
+            paper_type_debug: Dict = {}
             if has_text:
                 try:
                     tbs = [
                         SplitterTextBlock(text=b.text, x0=b.x0, y0=b.y0, x1=b.x1, y1=b.y1)
                         for b in raw_blocks
                     ]
-                    if is_non_question_page(tbs):
+                    pw, ph = doc.page_dimensions(i)
+                    pt = classify_paper_type(
+                        text_blocks=tbs,
+                        image_path=out_path,
+                        page_width=pw,
+                        page_height=ph,
+                        has_embedded_text=True,
+                    )
+                    page_paper_type = pt.paper_type.value
+                    paper_type_debug = pt.debug
+                    if pt.is_non_question:
                         is_skip_page = True
                         logger.info(
-                            "PDF_TEXT_NON_QUESTION_PAGE | page=%d | skip=True", i,
+                            "PDF_TEXT_NON_QUESTION_PAGE | page=%d | skip=True | "
+                            "paper_type=%s",
+                            i, page_paper_type,
                         )
                     else:
-                        pw, ph = doc.page_dimensions(i)
-                        regions = split_questions(tbs, pw, ph, page_index=i)
+                        regions = split_questions(
+                            tbs, pw, ph, page_index=i, paper_type=pt,
+                        )
                         text_regions = list(regions)
                         scale = _PDF_TO_PIXEL_SCALE
                         for r in regions:
@@ -187,6 +205,12 @@ def _pdf_to_images(pdf_path: str) -> Tuple[List[Dict], str]:
                                 int((rx1 - rx0) * scale),
                                 int((ry1 - ry0) * scale),
                             ))
+                        logger.info(
+                            "PDF_TEXT_LAYOUT | page=%d | paper_type=%s | "
+                            "regions=%d | dual=%s | quad=%s",
+                            i, page_paper_type, len(regions),
+                            pt.is_dual_column, pt.is_quadrant,
+                        )
                 except Exception as e:
                     logger.warning(
                         "PDF_TEXT_BOXES_ERROR | page=%d | error=%s", i, e,
@@ -198,6 +222,8 @@ def _pdf_to_images(pdf_path: str) -> Tuple[List[Dict], str]:
                 "text_boxes": text_boxes,
                 "text_regions": text_regions,  # QuestionRegion[] — aligned with text_boxes
                 "is_skip_page": is_skip_page,  # 비문항 페이지 (표지/목차/안내). 안전망 우회 금지.
+                "paper_type": page_paper_type,
+                "paper_type_debug": paper_type_debug,
             })
 
     return results, tmp_dir

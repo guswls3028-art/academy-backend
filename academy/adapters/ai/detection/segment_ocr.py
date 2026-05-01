@@ -137,8 +137,8 @@ def segment_questions_ocr_regions(image_path: str) -> List[Tuple[float, float, f
         return []
 
     try:
+        from academy.domain.tools.paper_type import classify_paper_type
         from academy.domain.tools.question_splitter import (
-            is_non_question_page,
             split_questions,
             TextBlock as SplitterTextBlock,
         )
@@ -168,20 +168,33 @@ def segment_questions_ocr_regions(image_path: str) -> List[Tuple[float, float, f
     ]
 
     # 멀티 anchor 라인 분할 — Vision OCR이 좌/우 컬럼을 한 줄로 묶는 경우 대비.
-    # 분할 후에도 is_non_question_page 판정은 동일하게 작동하도록 splitter_blocks 갱신.
     splitter_blocks = _split_multi_anchor_blocks(splitter_blocks)
 
-    # 비문항 페이지(정답지/해설지/표지 등) 스킵
-    if is_non_question_page(splitter_blocks):
-        logger.info("OCR_SEGMENT_SKIP_NON_QUESTION | path=%s", image_path)
+    # paper_type 분류 — 텍스트 분포 휴리스틱 + 픽셀 백업 종합.
+    # OCR 경로는 has_embedded_text=False (스캔본/사진).
+    # OCR 블록 분포가 부족한 폰사진/저해상도 케이스도 픽셀 기반 dual-col 백업으로 보강.
+    pt = classify_paper_type(
+        text_blocks=splitter_blocks,
+        image_path=image_path,
+        page_width=float(w_img),
+        page_height=float(h_img),
+        has_embedded_text=False,
+    )
+
+    if pt.is_non_question:
+        logger.info(
+            "OCR_SEGMENT_SKIP_NON_QUESTION | path=%s | paper_type=%s",
+            image_path, pt.paper_type.value,
+        )
         return []
 
-    # question_splitter 호출 — 픽셀 좌표계에서 동작
+    # question_splitter 호출 — 픽셀 좌표계에서 동작. paper_type으로 layout 강제.
     regions = split_questions(
         text_blocks=splitter_blocks,
         page_width=float(w_img),
         page_height=float(h_img),
         page_index=0,
+        paper_type=pt,
     )
 
     if not regions:
@@ -192,8 +205,10 @@ def segment_questions_ocr_regions(image_path: str) -> List[Tuple[float, float, f
         return []
 
     logger.info(
-        "OCR_SEGMENT_OK | path=%s | blocks=%d | regions=%d | nums=%s",
+        "OCR_SEGMENT_OK | path=%s | blocks=%d | regions=%d | paper_type=%s | "
+        "dual=%s | quad=%s | nums=%s",
         image_path, len(ocr_blocks), len(regions),
+        pt.paper_type.value, pt.is_dual_column, pt.is_quadrant,
         [r.number for r in regions],
     )
 

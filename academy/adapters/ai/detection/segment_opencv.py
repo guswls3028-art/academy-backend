@@ -22,6 +22,28 @@ import numpy as np  # type: ignore
 BBox = Tuple[int, int, int, int]
 
 
+def detect_dual_column_pixel(image_path: str) -> bool:
+    """이미지 픽셀 기반 dual-col 감지 (paper_type 분류기 백업 신호).
+
+    OCR 블록 분포 휴리스틱이 부족한 폰사진/저해상도 스캔본에서 dual-col을
+    잡기 위한 백업. 기존 _detect_columns 로직 재사용.
+    """
+    image_bgr = cv2.imread(image_path)
+    if image_bgr is None:
+        return False
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    h_img, w_img = gray.shape[:2]
+    if w_img < 200 or h_img < 200:
+        return False
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+    _, thresh = cv2.threshold(
+        blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+    )
+    clean = _remove_structural_lines(thresh, w_img, h_img)
+    columns = _detect_columns(clean, w_img, h_img)
+    return len(columns) >= 2
+
+
 def segment_questions_opencv(image_path: str) -> List[BBox]:
     """
     프로젝션 기반 문항 세그멘테이션.

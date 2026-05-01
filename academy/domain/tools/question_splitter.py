@@ -378,6 +378,7 @@ def split_questions(
     page_width: float,
     page_height: float,
     page_index: int = 0,
+    paper_type: Optional["PaperTypeResult"] = None,
 ) -> List[QuestionRegion]:
     """Split a page into question regions based on detected question numbers.
 
@@ -386,6 +387,10 @@ def split_questions(
         page_width: Page width in points.
         page_height: Page height in points.
         page_index: Index of the page in the PDF.
+        paper_type: Optional explicit layout decision (paper_type.PaperTypeResult).
+                    If provided, the dual/quad detection heuristics are bypassed
+                    and the explicit layout is used. None → fall back to the
+                    in-module heuristics for backward compatibility.
 
     Returns:
         List of QuestionRegion sorted by question number.
@@ -393,30 +398,28 @@ def split_questions(
     if not text_blocks:
         return []
 
-    # 4분할 레이아웃 우선 검사 — 가로 + 세로 gutter가 모두 있으면 quad.
-    # 4분할이면 dual column 분기와 다른 좌표 구속 필요.
-    is_quad_layout = _detect_quad_layout(text_blocks, page_width, page_height)
-    is_dual_column = (not is_quad_layout) and _detect_column_layout(text_blocks, page_width)
+    # paper_type이 명시되면 휴리스틱 우회. NON_QUESTION이면 빈 리스트 반환.
+    if paper_type is not None:
+        if paper_type.is_non_question:
+            return []
+        is_quad_layout = paper_type.is_quadrant
+        is_dual_column = paper_type.is_dual_column and not is_quad_layout
+    else:
+        # 4분할 레이아웃 우선 검사 — 가로 + 세로 gutter가 모두 있으면 quad.
+        # 4분할이면 dual column 분기와 다른 좌표 구속 필요.
+        is_quad_layout = _detect_quad_layout(text_blocks, page_width, page_height)
+        is_dual_column = (not is_quad_layout) and _detect_column_layout(text_blocks, page_width)
     mid_x = page_width * 0.5
     mid_y = page_height * 0.5
 
-    # Sort blocks by layout order:
-    # - Single column: top to bottom
-    # - Dual column: left column top-to-bottom, then right column top-to-bottom
-    # - Quad: TL → TR → BL → BR (각 quadrant 내 top-to-bottom)
-    if is_quad_layout:
-        def _quad_order(b: TextBlock) -> Tuple[int, float, float]:
-            row = 0 if b.y0 < mid_y else 1
-            col = 0 if b.x0 < mid_x else 1
-            return (row * 2 + col, b.y0, b.x0)
-        sorted_blocks = sorted(text_blocks, key=_quad_order)
-    elif is_dual_column:
-        sorted_blocks = sorted(
-            text_blocks,
-            key=lambda b: (0 if b.x0 < mid_x else 1, b.y0, b.x0),
-        )
-    else:
-        sorted_blocks = sorted(text_blocks, key=lambda b: (b.y0, b.x0))
+    # layout strategy 결정 — 정렬·x/y 경계·후처리 클램프를 strategy에 위임.
+    from academy.domain.tools.region_splitters import get_strategy_by_layout_flags
+
+    strategy = get_strategy_by_layout_flags(
+        is_quad=is_quad_layout, is_dual=is_dual_column,
+    )
+
+    sorted_blocks = strategy.sort_blocks(text_blocks, mid_x, mid_y)
 
     # Find question start positions
     question_starts: List[Tuple[int, int]] = []  # (question_number, block_index)
@@ -445,117 +448,40 @@ def split_questions(
     margin = 2.0  # small margin in points
 
     for i, (qnum, start_idx) in enumerate(question_starts):
-        # Region starts at current question block
         start_block = sorted_blocks[start_idx]
+        next_block = (
+            sorted_blocks[question_starts[i + 1][1]]
+            if i + 1 < len(question_starts)
+            else None
+        )
 
-        # Determine end boundary
-        if i + 1 < len(question_starts):
-            next_start_idx = question_starts[i + 1][1]
-            # Collect all blocks from start to just before next question
-            region_blocks = sorted_blocks[start_idx:next_start_idx]
-        else:
-            # Last question: extends to end of page
-            region_blocks = sorted_blocks[start_idx:]
-
-        if not region_blocks:
+        # Defensive: region_blocks 비면 skip (sort 결과 inconsistency 방어)
+        end_idx = question_starts[i + 1][1] if next_block is not None else len(sorted_blocks)
+        if not sorted_blocks[start_idx:end_idx]:
             continue
 
-        # Calculate bounding box from all blocks in this region
+        # Strategy 호출: x range / y end 계산
+        x0, x1 = strategy.compute_x_range(start_block, page_width, mid_x, margin)
         y0 = max(0, start_block.y0 - margin)
-
-        if is_quad_layout:
-            # 4분할: 시작 블록의 quadrant 경계로 x/y 모두 구속.
-            curr_left = start_block.x0 < mid_x
-            curr_top = start_block.y0 < mid_y
-            x0 = 0 if curr_left else mid_x - margin
-            x1 = mid_x + margin if curr_left else page_width
-        elif is_dual_column:
-            # Dual column: column 전체 width 사용 — region_blocks가 anchor 1개만 포함하면
-            # x range가 매우 좁아져 strip(width<10%) 결함이 됨. column 경계로 강제.
-            # 그림/표가 column을 살짝 벗어나도 OK (다음 column constraint에서 클램프).
-            if start_block.x0 < mid_x:
-                x0 = 0
-                x1 = mid_x + margin
-            else:
-                x0 = mid_x - margin
-                x1 = page_width
-        else:
-            # Single column: use full page width (images/diagrams may extend beyond text)
-            x0 = 0
-            x1 = page_width
-
-        # ── 하단 종료점 결정 ──
-        if i + 1 < len(question_starts):
-            # 다음 문항 시작점
-            next_block = sorted_blocks[question_starts[i + 1][1]]
-
-            if is_quad_layout:
-                # 4분할: quadrant이 다르면 현재 quadrant의 행 경계까지.
-                curr_left = start_block.x0 < mid_x
-                curr_top = start_block.y0 < mid_y
-                next_left = next_block.x0 < mid_x
-                next_top = next_block.y0 < mid_y
-                same_quadrant = (curr_left == next_left) and (curr_top == next_top)
-                if same_quadrant:
-                    y1 = next_block.y0 - margin
-                else:
-                    y1 = mid_y - margin if curr_top else page_height
-            elif is_dual_column:
-                curr_in_left = start_block.x0 < mid_x
-                next_in_left = next_block.x0 < mid_x
-                if curr_in_left != next_in_left:
-                    # 컬럼이 다르면 현재 컬럼 끝까지 (그림/표 포함)
-                    y1 = page_height
-                else:
-                    # 같은 컬럼: 다음 문항 직전까지 전체 사용
-                    # 그림/표가 텍스트 아래에 있으므로 gap 전체를 포함
-                    y1 = next_block.y0 - margin
-                    # Defensive: 같은 column에서도 sort 오류로 next.y0 ≤ start.y0인
-                    # 경우(예: column 너비 추정 mid_x 경계 위에 걸쳐있는 anchor)는
-                    # page_height fallback. strip 결함 차단.
-                    if y1 <= y0:
-                        y1 = page_height
-            else:
-                # 단일 컬럼: 다음 문항 직전까지 전체 사용
-                y1 = next_block.y0 - margin
-                # Defensive: 다음 anchor가 시작 anchor보다 위에 있으면 (y1 < y0)
-                # cross-column anchor (dual-column 미인식) → 페이지 끝까지.
-                # 이 fallback이 없으면 next_block.y0 < start_block.y0 인 케이스에서
-                # 아래의 max(y1, y0 + 10) 클램프가 작동해 strip(10px) bbox가 됨.
-                # 운영 doc#177 q1 bbox=(0, 377, 8400, 63) — 다음 anchor가 우측 column
-                # 의 위쪽에 있어 strip만 잡힌 결함의 본질 fix.
-                if y1 <= y0:
-                    y1 = page_height
-        else:
-            # 마지막 문항: 페이지 하단까지 (비텍스트 요소 포함)
-            # 4분할 마지막 quadrant이면 BR이라 page_height까지 OK
-            y1 = page_height
+        y1 = strategy.compute_y_end(
+            start_block, next_block,
+            page_width, page_height, mid_x, mid_y, margin,
+        )
 
         y1 = min(page_height, max(y1, y0 + 10))
 
         # Strip 절대 차단: height < 페이지의 5% (시험지 problem의 합리적 최소 크기)는
-        # OCR false anchor 또는 cross-column anchor sort 오류의 흔적. 이전 분기들의
-        # fallback이 모두 miss한 경우의 마지막 보루.
+        # OCR false anchor 또는 cross-column anchor sort 오류의 흔적. strategy의
+        # compute_y_end fallback이 miss한 경우의 마지막 보루.
         # T2 운영 reanalyze (2026-04-30): 11건 strip 잔존 (h=10~100). 임계 100px도
         # doc#177 q1 (정확히 100px, h=y1-y0이 page_height의 0.9%)에서 통과되어
         # 5% 비율 임계로 변경. 11200 * 0.05 = 560px 최소.
         if y1 - y0 < page_height * 0.05:
             y1 = page_height
 
-        # 4분할: y도 quadrant 경계로 추가 클램프.
-        if is_quad_layout:
-            curr_top = start_block.y0 < mid_y
-            if curr_top:
-                y1 = min(y1, mid_y + margin)
-
-        # For dual column, constrain x to the appropriate column
-        if is_dual_column:
-            if start_block.x0 < mid_x:
-                x0 = max(0, x0)
-                x1 = min(mid_x + margin, x1)
-            else:
-                x0 = max(mid_x - margin, x0)
-                x1 = min(page_width, x1)
+        # Strategy post-clamp: quad는 quadrant 경계 / dual은 column 경계 추가 구속.
+        x0, x1 = strategy.post_clamp_x(start_block, x0, x1, page_width, mid_x, margin)
+        y0, y1 = strategy.post_clamp_y(start_block, y0, y1, page_height, mid_y, margin)
 
         regions.append(
             QuestionRegion(
