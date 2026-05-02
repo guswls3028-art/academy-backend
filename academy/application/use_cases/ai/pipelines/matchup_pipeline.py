@@ -166,41 +166,74 @@ def run_matchup_pipeline(
         step_percent=100, tenant_id=tenant_id,
     )
 
-    # ── intent 기반 분기 ──
-    # 학습자료(intent=reference)에서 anchor가 폭증한 경우 본문 학습 항목(1.~60.)을
-    # 문항으로 오인한 over-extraction. 페이지 단위 인덱싱으로 폴백 →
-    # 자료 매칭은 페이지 단위로 충분, 노이즈 제거 우선.
-    upload_intent = (payload.get("upload_intent") or "").lower()
+    # ── source_type 7-value 라우터 (2026-05-02 학원장 directive) ──
+    # 알고리즘 X 라우터 부재가 본질. 자료 유형별 strategy 분기.
+    # 7-value: student_exam_photo / school_exam_pdf / commercial_workbook /
+    #          academy_workbook / explanation / answer_key / other
+    from apps.domains.matchup.source_types import normalize_source_type
+    source_type = normalize_source_type(
+        payload.get("source_type") or payload.get("upload_intent")
+    )
+    upload_intent = source_type  # legacy alias 보존
     doc_title = ""
-    if not upload_intent and document_id:
+    if (source_type == "other") and document_id:
+        # payload에 명시 안 됐으면 DB에서 읽기 (race-safe)
         try:
             from apps.domains.matchup.models import MatchupDocument
             doc = MatchupDocument.objects.only("meta", "title").get(id=int(document_id))
             meta = doc.meta or {}
-            upload_intent = (meta.get("upload_intent") or meta.get("document_role") or "").lower()
+            source_type = normalize_source_type(
+                meta.get("source_type") or meta.get("upload_intent") or meta.get("document_role")
+            )
+            upload_intent = source_type
             doc_title = doc.title or ""
         except Exception as e:
-            logger.warning("MATCHUP_INTENT_LOOKUP_FAIL | doc=%s | err=%s", document_id, e)
+            logger.warning("MATCHUP_SOURCE_TYPE_LOOKUP_FAIL | doc=%s | err=%s", document_id, e)
 
-    # 명시적 intent 미설정 시 doc.title 키워드로 자동 추정.
-    # 운영 T2 28 doc 중 27개가 intent=NONE. 메타 미설정이라 페이지 폴백 트리거 자체가
-    # 학습자료/시험지 구분 없이 일률적으로 적용되던 결함을 해소.
-    if not upload_intent and doc_title:
+    # ── 인덱싱 X 사이클 (explanation / answer_key) — 즉시 0 problems 반환 ──
+    # 매치업 후보 vector search에 노이즈로 들어가는 것 차단. doc.meta에 마커 저장.
+    if source_type in ("explanation", "answer_key"):
+        logger.info(
+            "MATCHUP_SKIP_INDEXING | job=%s | doc=%s | source_type=%s",
+            job_id, document_id, source_type,
+        )
+        record_progress(
+            job_id, "done", 100,
+            step_index=5, step_total=5,
+            step_name_display="완료",
+            step_percent=100, tenant_id=tenant_id,
+        )
+        return AIResult.done(job_id, {
+            "problems": [],
+            "document_id": document_id,
+            "problem_count": 0,
+            "source_type": source_type,
+            "skipped_for_indexing": True,
+            "skip_reason": "explanation/answer_key는 매치업 인덱스 대상 X",
+            "paper_type_summary": {
+                "primary": source_type, "warnings": [],
+                "distribution": {source_type: 1}, "low_confidence_ratio": 0.0,
+            },
+        })
+
+    # legacy title 휴리스틱 — source_type=other인 doc에 한해 fallback (하위 호환).
+    if source_type == "other" and doc_title:
         title_l = doc_title
         if any(k in title_l for k in (
             "시험지", "중간고사", "기말고사", "모의고사", "TEST", "Test",
             "기출 통과", "고난도",
         )):
-            upload_intent = "exam_sheet"
-        elif any(k in title_l for k in (
-            "메인자료", "메인 자료", "복습과제", "복습 과제", "객서심화", "객서 심화",
-            "객·서", "개념완성", "문항편", "WORKBOOK",
-        )):
-            upload_intent = "reference"
+            source_type = "school_exam_pdf"
+            upload_intent = source_type
 
-    # 명시적 시험지(test/exam_sheet)가 아니면 학습자료 의심 — views.py의 default도 'reference'.
-    # 시험지는 사용자가 명확히 의도해 업로드해야 하고, 미설정은 학습자료로 간주해 폴백 검토.
-    is_reference = upload_intent not in ("test", "exam_sheet")
+    # is_reference: 시험지군이 아니면 학습자료로 간주 (over_ext 폴백 검토 대상).
+    # student_exam_photo / school_exam_pdf는 시험지군.
+    is_reference = source_type not in ("student_exam_photo", "school_exam_pdf")
+    # student_exam_photo 강제 폴백 신호 — 손글씨 노이즈로 anchor 신뢰성 붕괴 방지.
+    is_student_photo = source_type == "student_exam_photo"
+    # commercial_workbook 강제 폴백 신호 — 시판교재는 cover/index/explanation 페이지 혼재.
+    # page-as-problem + skip_page 키워드 보강이 가장 안정적.
+    is_commercial = source_type == "commercial_workbook"
     page_count = len(pages)
     avg_per_page = total_boxes / max(1, page_count)
 
@@ -229,6 +262,9 @@ def run_matchup_pipeline(
     is_low_confidence_doc = (
         paper_type_summary["primary"] == "student_answer_photo"
         or paper_type_summary["low_confidence_ratio"] >= 0.5
+        # source_type 1순위 신호 — 학원장 명시 입력이 paper_type 휴리스틱보다 신뢰성 높음.
+        or is_student_photo  # 학생 답안지 폰사진은 항상 page-as-problem
+        or is_commercial     # 시판 교재는 cover/index/해설 페이지 혼재 → page-as-problem 안전
     )
 
     if total_boxes == 0:
