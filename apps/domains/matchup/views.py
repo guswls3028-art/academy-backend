@@ -1158,9 +1158,11 @@ class HitReportDraftView(View):
             for e in report.entries.all()
         }
 
-        # 자동 후보 매치 (find_similar_problems) — 카테고리 격리 적용됨
+        # 자동 후보 매치 (find_similar_problems) — 카테고리 격리 적용됨.
+        # 큐레이션 보고서 작성자는 자동 top_k=5보다 많은 후보를 보고 직접 골라야 정확도가 올라감
+        # (운영 보고: 5개 후보로는 부족 — 학원장 직접 선정 워크플로우 지원).
         from .services import find_similar_problems
-        candidate_top_k = 5
+        candidate_top_k = 15
 
         problem_data = []
         all_candidate_ids = set()
