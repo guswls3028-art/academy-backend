@@ -461,6 +461,67 @@ def run_matchup_pipeline(
 # ── 내부 함수 ────────────────────────────────────────
 
 
+def _page_confidence(page: Dict[str, Any]) -> Tuple[float, List[str]]:
+    """단일 페이지 분리 신뢰도 (0~1) + 부족 신호 목록.
+
+    Phase 3 (2026-05-02 학원장 directive): 검수 UI 우선순위 표시 + VLM fallback 트리거.
+
+    신호 (이미 page dict에 있는 데이터로 계산, 추가 OCR 호출 X):
+    - paper_type (known/unknown)
+    - is_skip_page (cover/index/answer_key 휴리스틱 결과)
+    - boxes 수 (정상 = 1~6 / 과다 = 8+ / 0 = 분리 실패)
+    - has_embedded_text (PDF 텍스트 vs 스캔)
+
+    Returns: (confidence 0~1, reasons: ["short_label", ...])
+    """
+    reasons: List[str] = []
+    paper_type = page.get("paper_type") or "unknown"
+    is_skip = bool(page.get("is_skip_page"))
+    boxes = page.get("boxes") or []
+    n_boxes = len(boxes)
+    has_text = bool(page.get("has_embedded_text"))
+
+    # skip page는 의도된 제외 → confidence 1.0 (검수 불필요)
+    if is_skip:
+        return 1.0, ["intentional_skip"]
+
+    score = 1.0
+
+    # paper_type 신호 — unknown은 텍스트로 분류 못한 케이스
+    if paper_type == "unknown":
+        score -= 0.30
+        reasons.append("paper_type_unknown")
+    elif paper_type == "student_answer_photo":
+        score -= 0.40
+        reasons.append("student_answer_photo")
+    elif paper_type == "non_question":
+        # is_skip_page에서 처리되어야 정상이지만, 미처리된 케이스 페널티
+        score -= 0.20
+        reasons.append("non_question_not_skipped")
+
+    # boxes 수 신호 — 0은 분리 실패, 8+는 over-extract 의심
+    if n_boxes == 0:
+        score -= 0.30
+        reasons.append("no_boxes_detected")
+    elif n_boxes >= 8:
+        score -= 0.15
+        reasons.append("excessive_boxes_%d" % n_boxes)
+    elif n_boxes == 1:
+        # 1 box는 정상일 수도 있으나 dual-col에서 strip cut 의심 시그널
+        if paper_type in ("scan_dual", "clean_pdf_dual", "quadrant"):
+            score -= 0.15
+            reasons.append("single_box_dual_layout")
+
+    # 스캔본 + paper_type 모호 = OCR 부정확 가능성
+    if not has_text and paper_type == "unknown":
+        score -= 0.10
+        reasons.append("scan_without_classification")
+
+    # clamp [0, 1]
+    score = max(0.0, min(1.0, score))
+    return round(score, 2), reasons
+
+
 def _aggregate_paper_types(pages: List[Dict]) -> Dict[str, Any]:
     """페이지별 paper_type을 doc 단위로 집계 + 경고 산출.
 
@@ -469,12 +530,17 @@ def _aggregate_paper_types(pages: List[Dict]) -> Dict[str, Any]:
     필요. callbacks가 이 결과를 doc.meta["paper_type_summary"]로 저장 → 프론트
     ProblemGrid가 경고 배너로 노출.
 
+    Phase 3 (2026-05-02): per-page confidence + low_conf_pages 리스트 추가.
+    검수 UI가 우선순위 페이지 표시 + VLM fallback 후보 식별.
+
     Returns:
       {
         "distribution": {"clean_pdf_single": N, ...},
         "low_confidence_ratio": 0.0~1.0,  # student_answer_photo + unknown 페이지 비율
         "primary": "clean_pdf_single",     # 가장 많은 유형
         "warnings": ["student_answer_photo_detected", ...],
+        "low_conf_pages": [{"idx": int, "confidence": 0.0~1.0, "reasons": [...]}]
+        "page_confidence_avg": 0.0~1.0,    # doc 전체 평균 신뢰도
       }
     """
     from collections import Counter
@@ -485,6 +551,8 @@ def _aggregate_paper_types(pages: List[Dict]) -> Dict[str, Any]:
             "low_confidence_ratio": 0.0,
             "primary": "unknown",
             "warnings": [],
+            "low_conf_pages": [],
+            "page_confidence_avg": 0.0,
         }
 
     types = [p.get("paper_type") or "unknown" for p in pages]
@@ -506,11 +574,34 @@ def _aggregate_paper_types(pages: List[Dict]) -> Dict[str, Any]:
         # 절반 이상이 비-문항 페이지 — source 부적합 의심
         warnings.append("non_question_majority")
 
+    # Phase 3: per-page confidence
+    LOW_CONF_THRESHOLD = 0.55  # 임계값 미만 = 어드민 검수 큐 + VLM fallback 후보
+    confidences: List[float] = []
+    low_conf_pages: List[Dict[str, Any]] = []
+    for idx, p in enumerate(pages):
+        conf, reasons = _page_confidence(p)
+        confidences.append(conf)
+        if conf < LOW_CONF_THRESHOLD and not p.get("is_skip_page"):
+            low_conf_pages.append({
+                "idx": p.get("page_index", idx),
+                "confidence": conf,
+                "reasons": reasons,
+                "paper_type": p.get("paper_type") or "unknown",
+                "n_boxes": len(p.get("boxes") or []),
+            })
+    avg_conf = round(sum(confidences) / max(1, len(confidences)), 3)
+
+    if low_conf_pages and len(low_conf_pages) >= max(2, total * 0.2):
+        # 20% 이상 페이지가 low_conf → review_required 경고 추가
+        warnings.append("review_required")
+
     return {
         "distribution": dict(counter),
         "low_confidence_ratio": round(low_conf_ratio, 3),
         "primary": primary,
         "warnings": warnings,
+        "low_conf_pages": low_conf_pages,
+        "page_confidence_avg": avg_conf,
     }
 
 
