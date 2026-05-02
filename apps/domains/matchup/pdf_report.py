@@ -405,8 +405,9 @@ def _draw_cover(c, *, page_w, page_h, margin, inner_w,
                 fn_reg, fn_bold, tenant_name, report_title,
                 document_category, author_label, issued_at,
                 summary_text, curated_count, total_q,
-                pinned_count):
-    """표지 — 학원 로고 띠 + 보고서 제목 + 메타 + 큐레이션 통계."""
+                pinned_count, hit_problem_count, hit_rate,
+                curated_problem_count):
+    """표지 — 학원 로고 띠 + 매치업 적중률 헤드라인 + 보고서 제목 + 메타 + 통계."""
     from reportlab.lib.colors import HexColor, black, white
     from reportlab.lib.units import mm
 
@@ -419,12 +420,47 @@ def _draw_cover(c, *, page_w, page_h, margin, inner_w,
     c.setFont(fn_reg, 12)
     c.drawCentredString(page_w / 2, page_h - 26 * mm, "큐레이션 적중 보고서")
 
-    # 표제
-    y = page_h - 50 * mm
+    # ── 매치업 적중률 헤드라인 (학원 마케팅 1순위 정보) ──
+    # 표지 맨 앞 큰 글씨로. 학생/학부모가 PDF 열자마자 보는 위치.
+    # 분모 = 큐레이션 작성된 문항 수. 부분 큐레이션 보고서에서 비현실적 % 회피.
+    headline_y = page_h - 56 * mm
+    if total_q == 0:
+        c.setFillColor(HexColor(_MISS_COLOR))
+        c.setFont(fn_bold, 24)
+        c.drawCentredString(page_w / 2, headline_y, "분리된 시험지 문항이 없습니다")
+    elif curated_problem_count == 0:
+        c.setFillColor(HexColor(_MISS_COLOR))
+        c.setFont(fn_bold, 24)
+        c.drawCentredString(page_w / 2, headline_y, "큐레이션된 문항이 없습니다")
+        c.setFont(fn_reg, 11)
+        c.setFillColor(HexColor("#94A3B8"))
+        c.drawCentredString(
+            page_w / 2, headline_y - 8 * mm,
+            "편집기에서 시험지 문항별 학원 자료를 1건 이상 선택하세요.",
+        )
+    else:
+        if hit_rate >= 50:
+            hr_color = _HIT_COLOR
+        elif hit_rate >= 25:
+            hr_color = _ACCENT_COLOR
+        else:
+            hr_color = _MISS_COLOR
+        c.setFillColor(HexColor(hr_color))
+        c.setFont(fn_bold, 44)
+        c.drawCentredString(page_w / 2, headline_y, f"매치업 적중률  {hit_rate:.1f}%")
+        c.setFillColor(HexColor("#475569"))
+        c.setFont(fn_reg, 12)
+        c.drawCentredString(
+            page_w / 2, headline_y - 9 * mm,
+            f"큐레이션 {curated_problem_count}문항 중 {hit_problem_count}문항이 학원 자료와 75%+ 유사",
+        )
+
+    # 표제 (적중률 아래)
+    y = headline_y - 22 * mm
     c.setFillColor(black)
-    c.setFont(fn_bold, 22)
+    c.setFont(fn_bold, 18)
     c.drawCentredString(page_w / 2, y, (report_title or "")[:80])
-    y -= 9 * mm
+    y -= 7 * mm
     c.setFillColor(HexColor("#475569"))
     c.setFont(fn_reg, 11)
     c.drawCentredString(page_w / 2, y, f"카테고리  ·  {(document_category or '미분류')[:50]}")
@@ -439,7 +475,7 @@ def _draw_cover(c, *, page_w, page_h, margin, inner_w,
         y -= 12 * mm
         box_x = margin + 30 * mm
         box_w = inner_w - 60 * mm
-        box_h = 36 * mm
+        box_h = 30 * mm
         c.setFillColor(HexColor(_BG_SUBTLE))
         c.roundRect(box_x, y - box_h, box_w, box_h, 6, fill=1, stroke=0)
         c.setFillColor(HexColor("#0F172A"))
@@ -457,20 +493,17 @@ def _draw_cover(c, *, page_w, page_h, margin, inner_w,
             if line:
                 lines.append(line)
         ty = y - 13 * mm
-        for line in lines[:5]:
+        for line in lines[:4]:
             c.drawString(box_x + 6 * mm, ty, line)
             ty -= 5 * mm
 
-    # 통계 — 큐레이션 카운트 + 후보 카운트
-    stat_y = 50 * mm
-    c.setFont(fn_bold, 28)
-    c.setFillColor(HexColor(_HIT_COLOR if curated_count > 0 else _MISS_COLOR))
-    c.drawCentredString(page_w / 2, stat_y, f"{curated_count} / {total_q} 문항 큐레이션")
+    # 보조 통계 — 큐레이션 카운트 (적중률 아래 보조 정보로 격하)
+    stat_y = 25 * mm
     c.setFont(fn_reg, 11)
-    c.setFillColor(HexColor("#475569"))
+    c.setFillColor(HexColor("#64748B"))
     c.drawCentredString(
-        page_w / 2, stat_y - 8 * mm,
-        f"선택된 학원 자료 총 {pinned_count}건",
+        page_w / 2, stat_y,
+        f"큐레이션 작성: {curated_count} / {total_q} 문항   ·   선택된 학원 자료 총 {pinned_count}건",
     )
 
     # 푸터
@@ -543,6 +576,29 @@ def generate_curated_hit_report_pdf(report) -> bytes:
     )
     pinned_count = sum(len(e.selected_problem_ids or []) for e in entries_by_eid.values())
 
+    # ── 매치업 적중률 (표지 헤드라인) ──
+    # 분모: 큐레이션 작성된 문항 수 (curated_problem_count). 전체 시험지 문항 수가 아님.
+    #   이유: 부분 큐레이션 보고서에서 "186문항 중 3문항 적중 = 1.6%" 같은 비현실적 수치 회피.
+    #   "큐레이션 5문항 중 3문항이 직접/유형 적중 = 60%"가 학원장이 학부모에게 보여주기 적합.
+    # 분자: 큐레이션 자료 1건 이상이 시험지 문항과 sim ≥ 0.75 (직접+유형 적중).
+    hit_problem_count = 0
+    curated_problem_count = 0  # 큐레이션 자료가 1건 이상 선택된 문항 수
+    for ep in exam_problems:
+        e = entries_by_eid.get(ep.id)
+        sel_ids = (e.selected_problem_ids if e else []) or []
+        if not sel_ids:
+            continue
+        curated_problem_count += 1
+        for pid in sel_ids:
+            p = selected_meta.get(int(pid))
+            if not p:
+                continue
+            sim = _compute_display_sim(ep, p)
+            if sim >= _TYPE_HIT:  # 0.75
+                hit_problem_count += 1
+                break  # 문항당 1번만 카운트
+    hit_rate = (hit_problem_count / curated_problem_count * 100) if curated_problem_count else 0.0
+
     buf = io.BytesIO()
     page_size = landscape(A4)
     c = canvas.Canvas(buf, pagesize=page_size)
@@ -567,6 +623,8 @@ def generate_curated_hit_report_pdf(report) -> bytes:
         summary_text=(report.summary or "").strip(),
         curated_count=curated_count, total_q=len(exam_problems),
         pinned_count=pinned_count,
+        hit_problem_count=hit_problem_count, hit_rate=hit_rate,
+        curated_problem_count=curated_problem_count,
     )
     c.showPage()
 
