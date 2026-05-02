@@ -351,20 +351,44 @@ def _draw_compare_page(c, *, page_w, page_h, margin, inner_w,
         c.drawString(margin + 4 * mm, cb_y + cb_h - 6 * mm, "지도 코멘트")
         c.setFont(fn_reg, 9.5)
         c.setFillColor(HexColor("#334155"))
-        # landscape inner_w ~269mm → 줄당 ~110자
-        wrap_n = 110
+        # landscape inner_w ~269mm → 한글 wide char 기준 줄당 ~55자 안전 (영문 110자)
+        # 한글이 포함되면 wide char로 폭이 약 2배 → wrap을 보수적으로 55자.
+        # ord >= 0x3000 (CJK) 한 글자를 2칸으로 카운트하여 시각 폭 기준 wrap.
+        def _visual_len(s: str) -> int:
+            return sum(2 if ord(ch) >= 0x3000 else 1 for ch in s)
+        def _wrap_visual(s: str, max_w: int = 110) -> List[str]:
+            out, cur, cur_w = [], "", 0
+            for ch in s:
+                w = 2 if ord(ch) >= 0x3000 else 1
+                if cur_w + w > max_w:
+                    out.append(cur)
+                    cur, cur_w = ch, w
+                else:
+                    cur += ch
+                    cur_w += w
+            if cur:
+                out.append(cur)
+            return out
         lines: List[str] = []
         for raw in comment_text.split("\n"):
             line = raw.strip()
-            while len(line) > wrap_n:
-                lines.append(line[:wrap_n])
-                line = line[wrap_n:]
-            if line:
-                lines.append(line)
+            if not line:
+                continue
+            lines.extend(_wrap_visual(line, 110))
         ty = cb_y + cb_h - 11 * mm
-        for ln in lines[:3]:
+        max_lines = 3
+        shown = lines[:max_lines]
+        for ln in shown:
             c.drawString(margin + 4 * mm, ty, ln)
             ty -= 5 * mm
+        # 잘림 표시 — 사용자가 PDF에 모든 코멘트가 안 나온다는 걸 인지해야.
+        if len(lines) > max_lines:
+            c.setFillColor(HexColor("#94A3B8"))
+            c.setFont(fn_reg, 8)
+            c.drawString(
+                margin + 4 * mm, ty + 1 * mm,
+                f"… +{len(lines) - max_lines}줄 더 (편집기에서 전체 확인)",
+            )
 
     # ── Pane 영역
     pane_top = page_h - header_h - 4 * mm
@@ -497,13 +521,17 @@ def _draw_cover(c, *, page_w, page_h, margin, inner_w,
             c.drawString(box_x + 6 * mm, ty, line)
             ty -= 5 * mm
 
-    # 보조 통계 — 큐레이션 카운트 (적중률 아래 보조 정보로 격하)
+    # 보조 통계 — 헤드라인과 metric 분리 명시 (혼란 방지).
+    # 헤드라인 분모 = curated_problem_count (sel_ids 1건+ 문항)
+    # 보조 = curated_count (sel_ids OR comment 작성 문항) — 코멘트만 있어도 작성으로 카운트.
     stat_y = 25 * mm
     c.setFont(fn_reg, 11)
     c.setFillColor(HexColor("#64748B"))
     c.drawCentredString(
         page_w / 2, stat_y,
-        f"큐레이션 작성: {curated_count} / {total_q} 문항   ·   선택된 학원 자료 총 {pinned_count}건",
+        f"자료 선택: {curated_problem_count} / {total_q} 문항   ·   "
+        f"코멘트 작성: {curated_count} / {total_q} 문항   ·   "
+        f"선택된 학원 자료 총 {pinned_count}건",
     )
 
     # 푸터
