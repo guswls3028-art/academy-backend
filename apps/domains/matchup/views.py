@@ -1447,20 +1447,63 @@ class HitReportListView(View):
         # 작성 진행률 = entries 중 selected_problem_ids 또는 comment 있는 것을 카운트.
         # JSONField __len 필터는 backend별 호환성 issue 있어 Python 루프로 정직하게 산출.
         from .models import MatchupHitReportEntry
-        all_entries = MatchupHitReportEntry.objects.filter(
+        all_entries = list(MatchupHitReportEntry.objects.filter(
             tenant=request.tenant, report_id__in=[r.id for r in reports],
-        ).only("id", "report_id", "selected_problem_ids", "comment")
+        ).select_related("exam_problem").only(
+            "id", "report_id", "selected_problem_ids", "comment",
+            "exam_problem__id", "exam_problem__embedding", "exam_problem__image_embedding",
+            "exam_problem__text", "exam_problem__meta",
+        ))
         curated_by_report: dict = {}
         for e in all_entries:
             if (e.selected_problem_ids or []) or (e.comment or "").strip():
                 curated_by_report[e.report_id] = curated_by_report.get(e.report_id, 0) + 1
 
+        # 적중률(hit_rate) 산출 — sim≥0.75인 큐레이션 자료를 1건 이상 보유한 문항 비율.
+        # PDF 표지 헤드라인과 동일 정의. list endpoint에서 노출하면 강사 통산 KPI 즉시 가시화.
+        # 알고리즘: bulk fetch (selected_problem_ids 합집합) → 메모리 dict로 cosine 계산 → entry별 max sim ≥ 0.75 카운트.
+        all_sel_ids: set = set()
+        for e in all_entries:
+            for pid in (e.selected_problem_ids or []):
+                try:
+                    all_sel_ids.add(int(pid))
+                except (TypeError, ValueError):
+                    pass
+        sel_meta_by_id: dict = {}
+        if all_sel_ids:
+            for p in MatchupProblem.objects.filter(
+                tenant=request.tenant, id__in=list(all_sel_ids),
+            ).only("id", "embedding", "image_embedding", "meta", "text"):
+                sel_meta_by_id[p.id] = p
+
+        from .pdf_report import _compute_display_sim, _TYPE_HIT
+        hit_count_by_report: dict = {}
+        for e in all_entries:
+            sel_ids = e.selected_problem_ids or []
+            if not sel_ids:
+                continue
+            ep = e.exam_problem
+            for pid in sel_ids:
+                cand = sel_meta_by_id.get(int(pid)) if isinstance(pid, int) else None
+                if not cand:
+                    continue
+                sim = _compute_display_sim(ep, cand)
+                if sim is not None and sim >= _TYPE_HIT:  # 0.75
+                    hit_count_by_report[e.report_id] = hit_count_by_report.get(e.report_id, 0) + 1
+                    break  # 문항당 1번만
+
         rows = []
+        total_hit = 0
+        total_exam = 0
         for r in reports:
             doc = r.document
             exam_count = doc.problem_count if doc else 0
             curated_count = curated_by_report.get(r.id, 0)
             curated_progress = (curated_count / exam_count * 100.0) if exam_count else 0.0
+            hit_count = hit_count_by_report.get(r.id, 0)
+            hit_rate = (hit_count / exam_count * 100.0) if exam_count else 0.0
+            total_hit += hit_count
+            total_exam += exam_count
 
             author_name = ""
             if r.author_id and r.author is not None:
@@ -1489,14 +1532,21 @@ class HitReportListView(View):
                 "exam_count": exam_count,
                 "curated_count": curated_count,
                 "curated_progress": round(curated_progress, 1),
+                "hit_count": hit_count,
+                "hit_rate": round(hit_rate, 1),
                 "created_at": r.created_at.isoformat(),
                 "updated_at": r.updated_at.isoformat(),
             })
 
+        # 통산 적중률 = 모든 보고서의 hit_count 합 / exam_count 합. 강사 1인 누적 KPI.
+        avg_hit_rate = (total_hit / total_exam * 100.0) if total_exam else 0.0
         summary = {
             "total": len(rows),
             "submitted": sum(1 for r in rows if r["status"] == "submitted"),
             "drafts": sum(1 for r in rows if r["status"] == "draft"),
+            "avg_hit_rate": round(avg_hit_rate, 1),
+            "total_hit": total_hit,
+            "total_exam": total_exam,
         }
         return JsonResponse({"reports": rows, "summary": summary})
 
