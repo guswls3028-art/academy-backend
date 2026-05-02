@@ -204,7 +204,12 @@ _VISION_ADAPTER: Optional[VLMVisionAdapter] = None
 # 보다 매우 보수적이지만, 사고 시 비용 폭주를 in-memory counter로 차단.
 _VLM_DOC_CALL_LIMIT = int(os.getenv("MATCHUP_VLM_PER_DOC_LIMIT", "50"))
 _GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
-_GEMINI_TIMEOUT = 30  # seconds — low_conf 페이지 ondemand 호출용
+# 큰 시험지 폰사진(2~4MB) vision 처리는 cold start 시 30s 초과. 90s 까지 허용.
+_GEMINI_TIMEOUT = int(os.getenv("MATCHUP_VLM_TIMEOUT_SEC", "90"))
+# 페이지당 30+ 문항이 있는 dual-col commercial_workbook도 응답 잘리지 않도록 8192로 확장.
+_GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("MATCHUP_VLM_MAX_OUTPUT_TOKENS", "8192"))
+# 429(quota) 시 백오프 후 1회 retry. 그래도 실패하면 RuntimeError로 명시 (silent mock 금지).
+_GEMINI_RETRY_BACKOFF_SEC = int(os.getenv("MATCHUP_VLM_RETRY_BACKOFF", "5"))
 
 _doc_call_counter: Dict[str, int] = {}
 
@@ -230,8 +235,17 @@ def _gemini_request(
     response_schema_hint: str = "",
     document_id: str | int | None = None,
 ) -> Dict[str, Any]:
-    """Gemini generateContent REST 호출. JSON 응답 강제."""
+    """Gemini generateContent REST 호출. JSON 응답 강제.
+
+    실패 정책 (silent mock fallback 금지 — 호출자에서 RuntimeError catch):
+    - timeout / 5xx → RuntimeError
+    - 429 (quota) → backoff 후 1회 retry, 재실패 시 RuntimeError
+    - 응답 truncated → MAX_TOKENS finishReason 명시
+    - JSON 파싱 실패 → 응답 마지막 미완 } 보정 시도, 실패 시 RuntimeError
+    """
     import json as _json
+    import time as _time
+    import re as _re
     import requests
 
     api_key = os.getenv("GEMINI_API_KEY")
@@ -245,48 +259,86 @@ def _gemini_request(
         "generationConfig": {
             "temperature": 0.0,
             "responseMimeType": "application/json",
-            "maxOutputTokens": 2048,
+            "maxOutputTokens": _GEMINI_MAX_OUTPUT_TOKENS,
         },
     }
-    if response_schema_hint:
-        # 사용자에게 어떤 schema인지 알리는 prompt가 첫 part에 포함되어야 함.
-        # responseSchema(structured output)는 v1beta에서 일부 모델만 지원 → text prompt로 대체.
-        pass
-
     url = f"{_GEMINI_API_BASE}/models/{model}:generateContent?key={api_key}"
-    try:
-        resp = requests.post(
-            url, json=payload, timeout=_GEMINI_TIMEOUT,
-            headers={"Content-Type": "application/json"},
-        )
-    except Exception as e:
-        raise RuntimeError(f"Gemini API 호출 실패: {e}") from e
 
-    if resp.status_code != 200:
-        raise RuntimeError(
-            f"Gemini API {resp.status_code}: {resp.text[:300]}"
-        )
+    # 호출 + 429 단발 retry
+    resp = None
+    for attempt in (0, 1):
+        try:
+            resp = requests.post(
+                url, json=payload, timeout=_GEMINI_TIMEOUT,
+                headers={"Content-Type": "application/json"},
+            )
+        except requests.Timeout as e:
+            raise RuntimeError(f"Gemini API timeout({_GEMINI_TIMEOUT}s): {e}") from e
+        except Exception as e:
+            raise RuntimeError(f"Gemini API 호출 실패: {e}") from e
+
+        if resp.status_code == 429 and attempt == 0:
+            # quota 초과 — 백오프 후 1회 retry
+            _time.sleep(_GEMINI_RETRY_BACKOFF_SEC)
+            continue
+        break
+
+    if resp is None or resp.status_code != 200:
+        body = (resp.text[:300] if resp is not None else "no-response")
+        code = (resp.status_code if resp is not None else 0)
+        raise RuntimeError(f"Gemini API {code}: {body}")
 
     data = resp.json()
     candidates = data.get("candidates") or []
     if not candidates:
-        raise RuntimeError(f"Gemini 응답에 candidates 없음: {data}")
-    parts_out = (candidates[0].get("content") or {}).get("parts") or []
+        raise RuntimeError(f"Gemini 응답에 candidates 없음: {str(data)[:300]}")
+
+    cand0 = candidates[0]
+    finish_reason = cand0.get("finishReason") or ""
+    parts_out = (cand0.get("content") or {}).get("parts") or []
     text = "".join(p.get("text", "") for p in parts_out).strip()
     if not text:
-        raise RuntimeError("Gemini 응답 텍스트 비어있음")
+        raise RuntimeError(f"Gemini 응답 텍스트 비어있음 (finish={finish_reason})")
+
     try:
         return _json.loads(text)
-    except _json.JSONDecodeError as e:
-        # 모델이 JSON 외 wrapping 추가한 경우 — 가장 바깥 { } 추출.
-        import re as _re
-        m = _re.search(r"\{[\s\S]*\}", text)
-        if m:
+    except _json.JSONDecodeError:
+        pass
+
+    # 1차: 가장 바깥 { } 매칭
+    m = _re.search(r"\{[\s\S]*\}", text)
+    if m:
+        try:
+            return _json.loads(m.group(0))
+        except _json.JSONDecodeError:
+            pass
+
+    # 2차: MAX_TOKENS로 잘린 경우 — 마지막 완전한 problems[] 항목까지만 살리고 닫음.
+    # truncated 응답 패턴: ...{"number":N, "bbox":[..], "confidence": (잘림)
+    if finish_reason == "MAX_TOKENS" or len(text) >= _GEMINI_MAX_OUTPUT_TOKENS // 4:
+        # problems 배열 닫기 시도
+        last_complete = text.rfind('},')
+        if last_complete > 0:
+            head = text[:last_complete + 1]
+            # array+object 닫기. 모델이 "problems": [ 까지만 응답한 경우 등 다양한 케이스 보정.
+            patched = head + ']}'
             try:
-                return _json.loads(m.group(0))
+                return _json.loads(patched)
             except _json.JSONDecodeError:
                 pass
-        raise RuntimeError(f"Gemini 응답 JSON 파싱 실패: {text[:200]}") from e
+            # array가 problems 안에 있을 경우 추가 닫기
+            patched2 = head + ']'
+            outer = _re.search(r'\{[\s\S]*?"problems"\s*:\s*\[', text)
+            if outer:
+                try:
+                    rebuilt = outer.group(0) + text[outer.end():last_complete + 1] + ']}'
+                    return _json.loads(rebuilt)
+                except _json.JSONDecodeError:
+                    pass
+
+    raise RuntimeError(
+        f"Gemini 응답 JSON 파싱 실패 (finish={finish_reason}, len={len(text)}): {text[:200]}"
+    )
 
 
 def reset_doc_quota(document_id: str | int | None = None) -> None:
@@ -374,10 +426,14 @@ class GeminiVLMTextAdapter:
             )
         except Exception as e:
             logger.warning("Gemini text classify 실패: %s", e)
-            # fallback: keyword heuristic mock
-            return MockVLMTextAdapter().classify(
+            # 명시적 fallback: keyword heuristic mock + 실패 reason debug에 노출.
+            mock_result = MockVLMTextAdapter().classify(
                 ocr_text=ocr_text, ocr_blocks=ocr_blocks, page_meta=page_meta,
             )
+            mock_result.debug["adapter"] = "mock_after_gemini_fail"
+            mock_result.debug["gemini_error"] = str(e)[:300]
+            mock_result.debug["model"] = self.model
+            return mock_result
         return PageRoleResult(
             page_role=_normalize_role(str(data.get("page_role", "problem"))),
             should_skip=bool(data.get("should_skip", False)),
@@ -428,10 +484,14 @@ class GeminiVLMVisionAdapter:
             )
         except Exception as e:
             logger.warning("Gemini vision detect 실패: %s", e)
-            # fallback: 기존 mock(boxes 그대로)
-            return MockVLMVisionAdapter().detect_problems(
+            # 명시적 fallback — debug에 실패 사유 표시 (검수 UI에서 사용자가 판단 가능).
+            mock_result = MockVLMVisionAdapter().detect_problems(
                 image_path=image_path, page_meta=page_meta,
             )
+            mock_result.debug["adapter"] = "mock_after_gemini_fail"
+            mock_result.debug["gemini_error"] = str(e)[:300]
+            mock_result.debug["model"] = self.model
+            return mock_result
 
         problems_raw = data.get("problems") or []
         problems: List[ProblemBbox] = []

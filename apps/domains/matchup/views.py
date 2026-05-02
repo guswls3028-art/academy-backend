@@ -1166,12 +1166,12 @@ class DocumentPageVlmClassifyView(View):
         if not page_url:
             return JsonResponse({"detail": "페이지 URL 없음"}, status=500)
 
-        # presigned URL → temp file 다운로드
+        # presigned URL → temp file 다운로드 (R2 ap-northeast 통과 시간 + 큰 PDF 페이지 고려)
         import os
         import tempfile
         import requests
         try:
-            r = requests.get(page_url, timeout=30)
+            r = requests.get(page_url, timeout=60)
             r.raise_for_status()
         except Exception as e:
             logger.warning("VLM page image download fail (doc=%s page=%s): %s", doc.id, page_idx_i, e)
