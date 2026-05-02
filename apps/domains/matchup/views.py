@@ -1481,43 +1481,16 @@ class HitReportPdfView(View):
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class DocumentHitReportPdfView(View):
-    """GET /api/v1/matchup/documents/<id>/hit-report.pdf
+    """폐기됨 (deprecated). 자동 PDF는 큐레이션 보고서로 대체.
 
-    시험지 doc 기준 적중률 PDF 보고서. 학원이 학생/학부모/네이버 카페에
-    공유하는 마케팅 보고서. 각 문항별 좌(시험지) | 우(학원 자료) 비교 +
-    유사도(%) + 학원 브랜딩.
-
-    Query: ?threshold=0.85 (적중 기준 임계값, 기본 0.85)
+    URL은 backward compat 위해 유지하되 410 Gone 반환.
+    프론트엔드 버튼은 이미 제거됨.
     """
 
     def get(self, request, doc_id):
-        if not _is_tenant_staff(request):
-            return JsonResponse({"detail": "Staff only"}, status=403)
-        try:
-            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
-        except MatchupDocument.DoesNotExist:
-            return JsonResponse({"detail": "Not found"}, status=404)
-
-        try:
-            threshold = float(request.GET.get("threshold", "0.85"))
-            threshold = max(0.5, min(0.99, threshold))
-        except ValueError:
-            threshold = 0.85
-
-        try:
-            from .pdf_report import generate_matchup_hit_report_pdf
-            pdf_bytes = generate_matchup_hit_report_pdf(doc, hit_threshold=threshold)
-        except Exception:
-            logger.exception("matchup_hit_report_pdf failed (doc=%s)", doc.id)
-            return JsonResponse({"detail": "PDF 생성 실패"}, status=500)
-
-        # 파일명 — 한글 보존 (RFC 5987 인코딩)
-        from urllib.parse import quote
-        safe_name = quote((doc.title or f"matchup-{doc.id}")[:80])
-        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
-        resp["Content-Disposition"] = (
-            f"attachment; filename=\"matchup-{doc.id}.pdf\"; "
-            f"filename*=UTF-8''{safe_name}.pdf"
+        return JsonResponse(
+            {"detail": "자동 적중 PDF는 폐기되었습니다. 큐레이션 보고서를 사용하세요."},
+            status=410,
         )
-        resp["Cache-Control"] = "private, no-cache"
-        return resp
+
+

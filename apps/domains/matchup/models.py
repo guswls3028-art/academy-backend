@@ -127,10 +127,6 @@ class MatchupHitReport(TimestampModel):
 
     실장이 매치업이 자동으로 찾아준 후보 중 적합한 것을 골라 코멘트·해설을 붙여
     선생/학원장에게 제출하는 보고서. 학원 운영의 핵심 비즈니스 산출물.
-
-    자동 PDF 보고서(hit-report.pdf)와는 분리:
-      - hit-report.pdf  = 시스템이 top1 매칭으로 자동 생성 (마케팅/네이버 카페용)
-      - hit-report      = 사람이 후보를 골라 큐레이션 (선생 보고서/학원 내부용)
     """
     objects = TenantQuerySet.as_manager()
 
