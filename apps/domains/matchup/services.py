@@ -112,9 +112,11 @@ def find_similar_problems(
     # self-doc trap 차단. reference doc 간 cross-doc 추천에는 영향 없음.
     if source.document_id and source.document is not None:
         meta = source.document.meta or {}
-        intent = (meta.get("upload_intent") or "").lower()
-        role = (meta.get("document_role") or "").lower()
-        if intent == "test" or role == "exam_sheet":
+        # 7-value source_type SSOT — legacy 2-value도 매핑되어 들어옴.
+        from apps.domains.matchup.source_types import normalize_source_type
+        st = normalize_source_type(meta.get("source_type") or meta.get("upload_intent") or meta.get("document_role"))
+        # 시험지 doc(학교 PDF / 학생 폰사진)은 자기 doc 내 problem을 후보에서 제외.
+        if st in ("school_exam_pdf", "student_exam_photo"):
             candidates = candidates.exclude(document_id=source.document_id)
 
     # 같은 카테고리(섹션) 내에서만 추천. 빈 카테고리도 빈 카테고리끼리만.
@@ -302,9 +304,12 @@ def retry_document(document: MatchupDocument) -> str:
         key=document.r2_key, expires_in=21600
     )
 
-    # 워커 자동분리 모드 분기용 — intent가 페이로드에 있으면 DB 재조회 없이 바로 사용.
+    # 워커 strategy 라우터 신호 — 7-value source_type SSOT.
+    from apps.domains.matchup.source_types import normalize_source_type
     meta = document.meta or {}
-    upload_intent = (meta.get("upload_intent") or meta.get("document_role") or "").lower()
+    source_type = normalize_source_type(
+        meta.get("source_type") or meta.get("upload_intent") or meta.get("document_role")
+    )
 
     result = dispatch_job(
         job_type="matchup_analysis",
@@ -313,7 +318,8 @@ def retry_document(document: MatchupDocument) -> str:
             "tenant_id": str(document.tenant_id),
             "document_id": str(document.id),
             "filename": document.original_name,
-            "upload_intent": upload_intent,
+            "upload_intent": source_type,   # legacy alias
+            "source_type": source_type,     # 7-value SSOT
         },
         tenant_id=str(document.tenant_id),
         source_domain="matchup",
@@ -408,23 +414,30 @@ def promote_inventory_to_matchup(
     category가 비어 있으면 저장소 폴더 트리에서 자동 추론 — 사용자가 폴더로
     이미 분류해둔 mental model을 그대로 매치업으로 가져온다.
 
-    upload_intent: 'reference' (학습자료) / 'test' (시험지). 빈 값이면 미설정으로 두고
-    워커가 학습자료 휴리스틱을 적용. 명시되면 dispatch payload + doc.meta 양쪽에 기록해
-    워커가 race 없이 모드 분기를 결정한다.
+    upload_intent: 7-value source_type (`student_exam_photo`/`school_exam_pdf`/
+    `commercial_workbook`/`academy_workbook`/`explanation`/`answer_key`/`other`).
+    Legacy 2-value (`test`/`reference`/`exam_sheet`)도 자동 매핑 수용.
+    명시되면 dispatch payload + doc.meta 양쪽에 기록해 워커가 race 없이 strategy 분기.
     """
     from apps.domains.ai.gateway import dispatch_job
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+    from apps.domains.matchup.source_types import normalize_source_type, is_indexable
 
     if not (category or "").strip():
         category = _infer_category_from_folder(inventory_file)
 
-    upload_intent = (upload_intent or "").strip().lower()
-    initial_meta: dict = {}
-    if upload_intent in ("reference", "test"):
-        initial_meta["upload_intent"] = upload_intent
-        initial_meta["document_role"] = (
-            "exam_sheet" if upload_intent == "test" else "reference_material"
-        )
+    # 7-value SSOT 정규화 — legacy/empty 입력도 안전 default("other") 보장.
+    source_type = normalize_source_type(upload_intent)
+    initial_meta: dict = {
+        "source_type": source_type,            # 7-value SSOT (worker dispatcher 1순위 신호)
+        "upload_intent": source_type,          # legacy 호환 (이전 코드/뷰가 읽어도 OK)
+        "indexable": is_indexable(source_type),  # 매치업 검색 인덱스 대상 여부 (worker가 인덱싱 분기)
+    }
+    # legacy document_role 보존 — 호환을 위해 시험지류는 exam_sheet, 그 외는 reference_material로 매핑.
+    initial_meta["document_role"] = (
+        "exam_sheet" if source_type in ("school_exam_pdf", "student_exam_photo")
+        else "reference_material"
+    )
 
     doc = MatchupDocument.objects.create(
         tenant=inventory_file.tenant,
@@ -453,7 +466,8 @@ def promote_inventory_to_matchup(
                 "tenant_id": str(inventory_file.tenant_id),
                 "document_id": str(doc.id),
                 "filename": inventory_file.original_name,
-                "upload_intent": upload_intent,
+                "upload_intent": source_type,   # 7-value SSOT (정규화 후 값)
+                "source_type": source_type,     # 명시적 별칭 (worker가 직접 참조)
             },
             tenant_id=str(inventory_file.tenant_id),
             source_domain="matchup",
