@@ -24,7 +24,17 @@ class MatchupDocumentUpdateSerializer(serializers.Serializer):
     category = serializers.CharField(max_length=100, required=False, allow_blank=True)
     subject = serializers.CharField(max_length=100, required=False, allow_blank=True)
     grade_level = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    # legacy 2-value (호환 유지)
     intent = serializers.ChoiceField(choices=["reference", "test"], required=False)
+    # 7-value SSOT — Phase 1A. 학원장이 잘못 백필된 doc 라벨 즉시 보정 가능.
+    source_type = serializers.ChoiceField(
+        choices=[
+            "student_exam_photo", "school_exam_pdf",
+            "commercial_workbook", "academy_workbook",
+            "explanation", "answer_key", "other",
+        ],
+        required=False,
+    )
 
 
 class MatchupProblemSerializer(serializers.ModelSerializer):

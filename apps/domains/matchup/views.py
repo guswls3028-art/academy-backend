@@ -421,11 +421,24 @@ class DocumentDetailView(View):
             if field in ser.validated_data:
                 setattr(doc, field, ser.validated_data[field])
                 update_fields.append(field)
-        if "intent" in ser.validated_data:
-            intent = ser.validated_data["intent"]
+        # source_type 7-value SSOT — Phase 1A 후속 (post-upload 보정).
+        # 학원장이 백필 결과를 검수하면서 잘못 분류된 doc을 즉시 정정 가능.
+        if "source_type" in ser.validated_data or "intent" in ser.validated_data:
+            from apps.domains.matchup.source_types import normalize_source_type, is_indexable
+            new_st = normalize_source_type(
+                ser.validated_data.get("source_type") or ser.validated_data.get("intent")
+            )
             meta = dict(doc.meta or {})
-            meta["upload_intent"] = intent
-            meta["document_role"] = "exam_sheet" if intent == "test" else "reference_material"
+            meta["source_type"] = new_st
+            meta["upload_intent"] = new_st          # legacy alias 동기화
+            meta["indexable"] = is_indexable(new_st)
+            meta["document_role"] = (
+                "exam_sheet" if new_st in ("school_exam_pdf", "student_exam_photo")
+                else "reference_material"
+            )
+            # 학원장 직접 변경 마커 (백필 마커 우선순위 낮춤)
+            meta["source_type_user_override"] = True
+            meta.pop("source_type_backfilled", None)
             doc.meta = meta
             update_fields.append("meta")
 
