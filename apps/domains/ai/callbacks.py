@@ -481,8 +481,11 @@ def _handle_matchup_ai_result(
 
     problems_data = result_payload.get("problems", [])
 
-    # 기존 문제 삭제 (재시도 시 중복 방지)
-    doc.problems.all().delete()
+    # 기존 문제 삭제 (재시도 시 중복 방지). manual=true는 학원장이 ManualCropModal에서
+    # 직접 자른 것이라 보존 — 검수 모달의 "재분석" 후에도 학원장 작업이 살아있어야.
+    # 아래 bulk_create(ignore_conflicts=True)가 unique(document, number) 충돌을
+    # silent drop하므로, 같은 번호의 자동 결과는 자연스럽게 manual에 우선권을 양보.
+    doc.problems.exclude(meta__manual=True).delete()
 
     # bulk create
     problem_objs = []

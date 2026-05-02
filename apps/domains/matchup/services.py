@@ -343,12 +343,17 @@ def reanalyze_document(document: MatchupDocument) -> str:
 
 
 def retry_document(document: MatchupDocument) -> str:
-    """실패한 문서를 재처리. 새 AI job을 디스패치하고 job_id 반환."""
+    """실패한 문서를 재처리. 새 AI job을 디스패치하고 job_id 반환.
+
+    manual=true problem (학원장이 ManualCropModal에서 직접 자른 것)은 보존.
+    pipeline 결과의 bulk_create는 ignore_conflicts=True라 같은 number 충돌 시
+    silent drop되어 manual이 우선권을 가짐.
+    """
     from apps.domains.ai.gateway import dispatch_job
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
-    # 기존 문제 삭제
-    document.problems.all().delete()
+    # 기존 문제 삭제 — 단, manual=true는 학원장 직접 작업이라 보존.
+    document.problems.exclude(meta__manual=True).delete()
 
     # presigned URL 6시간 — 큐 적체 시 워커가 1시간 후 picking하면 만료되어
     # 403 Forbidden으로 doc.status='failed' 반복 사이클 발생 (운영 사고 2026-04-29).
