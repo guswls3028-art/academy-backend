@@ -169,20 +169,28 @@ def _classify_match(sim: float) -> str:
     return "miss"
 
 
-def _compute_display_sim(source, candidate) -> float:
+def _compute_display_sim(source, candidate) -> Optional[float]:
     """source vs candidate raw cosine sim (+ image emb ensemble + bbox=null 패널티).
 
     find_similar_problems의 score는 정렬용 휴리스틱(format/length/cross_doc) 가중치라
     표시값으로는 인플레이션됨. 보고서 표시 sim은 raw cosine으로 정직하게 계산.
+
+    Returns:
+      float — sim 측정 가능 (0.0~1.0)
+      None  — text/image embedding 둘 다 없어 측정 불가 (호출자가 "측정 불가" UI 표시)
     """
     from apps.shared.utils.vector import cosine_similarity
 
     try:
-        if source.embedding and candidate.embedding:
-            raw_text_sim = float(cosine_similarity(source.embedding, candidate.embedding))
-        else:
-            raw_text_sim = 0.0
-        if source.image_embedding and candidate.image_embedding:
+        has_text_emb = bool(source.embedding and candidate.embedding)
+        has_img_emb = bool(source.image_embedding and candidate.image_embedding)
+        if not has_text_emb and not has_img_emb:
+            return None  # 측정 불가 — sim=0.0%로 표시하면 misleading
+        raw_text_sim = (
+            float(cosine_similarity(source.embedding, candidate.embedding))
+            if has_text_emb else 0.0
+        )
+        if has_img_emb:
             raw_img_sim = float(cosine_similarity(
                 source.image_embedding, candidate.image_embedding,
             ))
@@ -198,7 +206,9 @@ def _compute_display_sim(source, candidate) -> float:
             display_sim = max(0.0, display_sim)
         return display_sim
     except Exception:
-        return 0.0
+        logger.exception("compute_display_sim failed (src=%s, cand=%s)",
+                         getattr(source, "id", "?"), getattr(candidate, "id", "?"))
+        return None
 
 
 def _pane_color_for_class(cls: str) -> str:
@@ -238,7 +248,20 @@ def _draw_single_pane(c, *, x, y, w, h, label, sub, image_url,
     c.drawString(x + 3 * mm, y + h - 6 * mm, label)
     c.setFillColor(HexColor("#475569"))
     c.setFont(fn_reg, 8.5)
-    c.drawString(x + 3 * mm, y + h - 9 * mm, (sub or "")[:90])
+    # 한글 wide char 보정 — pane 폭 기준으로 시각 길이 자르기 + ellipsis.
+    # pane_w ~131mm, 캡션 좌측 패딩 3mm, 폰트 8.5pt → 영문 1글자 ~1.5mm, 한글 ~3mm.
+    # max visual length 80 (영문 80자 / 한글 40자) 보수적으로.
+    sub_text = sub or ""
+    visual_max = 80
+    out, vw = "", 0
+    for ch in sub_text:
+        cw = 2 if ord(ch) >= 0x3000 else 1
+        if vw + cw > visual_max:
+            out += "…"
+            break
+        out += ch
+        vw += cw
+    c.drawString(x + 3 * mm, y + h - 9 * mm, out)
 
     # 이미지 박스
     img_y = y
@@ -446,7 +469,8 @@ def _draw_cover(c, *, page_w, page_h, margin, inner_w,
 
     # ── 매치업 적중률 헤드라인 (학원 마케팅 1순위 정보) ──
     # 표지 맨 앞 큰 글씨로. 학생/학부모가 PDF 열자마자 보는 위치.
-    # 분모 = 큐레이션 작성된 문항 수. 부분 큐레이션 보고서에서 비현실적 % 회피.
+    # 분모 = 전체 시험지 문항 수 (강사 직접 요청). 학부모는 본 시험 전체에서
+    # 우리 학원이 미리 다룬 비율을 보고 싶어함.
     headline_y = page_h - 56 * mm
     if total_q == 0:
         c.setFillColor(HexColor(_MISS_COLOR))
@@ -476,8 +500,17 @@ def _draw_cover(c, *, page_w, page_h, margin, inner_w,
         c.setFont(fn_reg, 12)
         c.drawCentredString(
             page_w / 2, headline_y - 9 * mm,
-            f"큐레이션 {curated_problem_count}문항 중 {hit_problem_count}문항이 학원 자료와 75%+ 유사",
+            f"전체 {total_q}문항 중 {hit_problem_count}문항이 학원 자료와 75%+ 유사",
         )
+        # 큐레이션 진행률 보조 라인 — 부분 작업 보고서임을 정직하게 표시.
+        if curated_problem_count < total_q:
+            c.setFont(fn_reg, 10)
+            c.setFillColor(HexColor("#94A3B8"))
+            c.drawCentredString(
+                page_w / 2, headline_y - 15 * mm,
+                f"※ 큐레이션 작성 {curated_problem_count}/{total_q} 문항 ({curated_progress:.0f}%) — "
+                "미작성 문항은 적중에서 제외",
+            )
 
     # 표제 (적중률 아래)
     y = headline_y - 22 * mm
@@ -605,12 +638,12 @@ def generate_curated_hit_report_pdf(report) -> bytes:
     pinned_count = sum(len(e.selected_problem_ids or []) for e in entries_by_eid.values())
 
     # ── 매치업 적중률 (표지 헤드라인) ──
-    # 분모: 큐레이션 작성된 문항 수 (curated_problem_count). 전체 시험지 문항 수가 아님.
-    #   이유: 부분 큐레이션 보고서에서 "186문항 중 3문항 적중 = 1.6%" 같은 비현실적 수치 회피.
-    #   "큐레이션 5문항 중 3문항이 직접/유형 적중 = 60%"가 학원장이 학부모에게 보여주기 적합.
+    # 강사 직접 요청 (2026-05-02): "전 문항에 대한 평균 적중률".
+    # 분모 = 전체 시험지 문항 수 (total_q). 학부모가 본 시험에서 우리 학원이 미리
+    # 다룬 비율 = 마케팅 핵심. curated 분모(부분 작업 보호)는 보조 라인으로 격하.
     # 분자: 큐레이션 자료 1건 이상이 시험지 문항과 sim ≥ 0.75 (직접+유형 적중).
     hit_problem_count = 0
-    curated_problem_count = 0  # 큐레이션 자료가 1건 이상 선택된 문항 수
+    curated_problem_count = 0  # 큐레이션 자료가 1건 이상 선택된 문항 수 (보조)
     for ep in exam_problems:
         e = entries_by_eid.get(ep.id)
         sel_ids = (e.selected_problem_ids if e else []) or []
@@ -622,10 +655,14 @@ def generate_curated_hit_report_pdf(report) -> bytes:
             if not p:
                 continue
             sim = _compute_display_sim(ep, p)
-            if sim >= _TYPE_HIT:  # 0.75
+            if sim is not None and sim >= _TYPE_HIT:  # 0.75
                 hit_problem_count += 1
                 break  # 문항당 1번만 카운트
-    hit_rate = (hit_problem_count / curated_problem_count * 100) if curated_problem_count else 0.0
+    total_q = len(exam_problems)
+    # 분모 = 전체 시험지 문항 (강사 요청). 시험지 분리 0건 시 0%.
+    hit_rate = (hit_problem_count / total_q * 100) if total_q else 0.0
+    # 큐레이션 진행률 (보조) = 사용자가 작업한 비율
+    curated_progress = (curated_problem_count / total_q * 100) if total_q else 0.0
 
     buf = io.BytesIO()
     page_size = landscape(A4)
@@ -711,12 +748,17 @@ def generate_curated_hit_report_pdf(report) -> bytes:
                 continue
 
             sim = _compute_display_sim(ep, p)
-            cls = _classify_match(sim)
-            label_text = {
-                "direct": f"직접 적중  ·  {sim*100:.1f}%",
-                "type": f"유형 적중  ·  {sim*100:.1f}%",
-                "concept": f"개념 커버  ·  {sim*100:.1f}%",
-            }.get(cls, f"유사도 {sim*100:.1f}%")
+            if sim is None:
+                # embedding 누락 — 측정 불가. "0.0%" 대신 명시적 표시.
+                cls = None
+                label_text = "유사도 측정 불가 (임베딩 누락)"
+            else:
+                cls = _classify_match(sim)
+                label_text = {
+                    "direct": f"직접 적중  ·  {sim*100:.1f}%",
+                    "type": f"유형 적중  ·  {sim*100:.1f}%",
+                    "concept": f"개념 커버  ·  {sim*100:.1f}%",
+                }.get(cls, f"유사도 {sim*100:.1f}%")
 
             mat_url = sel_url_by_pid.get(p.id, "")
             mat_doc_title = ""
