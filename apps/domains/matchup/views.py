@@ -28,6 +28,7 @@ from .services import (
     ensure_matchup_upload_folder,
     manually_crop_problem,
     paste_image_as_problem,
+    merge_problems,
     delete_problem_with_r2,
 )
 from apps.shared.utils.vector import cosine_similarity
@@ -921,6 +922,61 @@ class DocumentManualCropView(View):
                 key=problem.image_key, expires_in=3600,
             )
         return JsonResponse(data, status=201)
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentMergeProblemsView(View):
+    """POST /api/v1/matchup/documents/<id>/merge-problems/
+
+    같은 doc 내 problem N(>=2)개를 1개로 합친다. 시험지에서 한 문항이 컬럼 경계나
+    페이지 경계에 걸쳐 자동분리에 의해 분리된 경우, 사용자가 그리드에서 N개를 선택해
+    하나로 묶을 수 있게 해주는 운영자 도구.
+    """
+
+    def post(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        ids = body.get("problem_ids") or []
+        if not isinstance(ids, list):
+            return JsonResponse({"detail": "problem_ids는 배열이어야 합니다."}, status=400)
+
+        target_number = body.get("target_number")
+        if target_number is not None:
+            try:
+                target_number = int(target_number)
+            except (TypeError, ValueError):
+                return JsonResponse({"detail": "target_number가 정수가 아닙니다."}, status=400)
+
+        try:
+            problem = merge_problems(
+                doc,
+                problem_ids=[int(x) for x in ids],
+                target_number=target_number,
+            )
+        except ValueError as e:
+            return JsonResponse({"detail": str(e)}, status=400)
+        except Exception:
+            logger.exception("merge_problems failed (doc=%s)", doc.id)
+            return JsonResponse({"detail": "문항 합치기 처리에 실패했습니다."}, status=500)
+
+        data = MatchupProblemSerializer(problem).data
+        if problem.image_key and generate_presigned_get_url_storage:
+            data["image_url"] = generate_presigned_get_url_storage(
+                key=problem.image_key, expires_in=3600,
+            )
+        return JsonResponse(data, status=200)
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")

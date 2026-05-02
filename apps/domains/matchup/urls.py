@@ -12,6 +12,7 @@ urlpatterns = [
     path("documents/<int:doc_id>/pages/", views.DocumentPagesView.as_view()),
     path("documents/<int:doc_id>/manual-crop/", views.DocumentManualCropView.as_view()),
     path("documents/<int:doc_id>/paste-problem/", views.DocumentPasteProblemView.as_view()),
+    path("documents/<int:doc_id>/merge-problems/", views.DocumentMergeProblemsView.as_view()),
     path("documents/<int:doc_id>/cross-matches/", views.DocumentCrossMatchesView.as_view()),
     path("documents/<int:doc_id>/job/", views.DocumentJobView.as_view()),
     path("documents/<int:doc_id>/retry/", views.DocumentRetryView.as_view()),

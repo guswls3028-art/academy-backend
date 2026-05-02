@@ -895,6 +895,227 @@ def _render_and_upload_pages(
             pass
 
 
+def merge_problems(
+    document: MatchupDocument,
+    *,
+    problem_ids: List[int],
+    target_number: int | None = None,
+) -> MatchupProblem:
+    """같은 doc의 problem N개를 1개로 합친다 (시험지에서 한 문항이 컬럼/페이지에 걸쳐 쪼개진 경우).
+
+    동작:
+      1. problem_ids 순서 = vertical stack 순서 (위→아래). 첫 번째가 primary.
+      2. 각 problem 이미지를 R2에서 PIL로 로드, 폭은 max로 통일(작은 폭은 padding).
+      3. 세로로 concat → PNG → R2에 새 key로 업로드.
+      4. primary problem의 image_key/text/embedding/meta 갱신.
+         - text = 각 problem의 text를 "\n\n"으로 join
+         - embedding/image_embedding = None (워커가 재계산)
+         - meta = 기존 meta + {merged_from: [other_ids], merged_count: N}
+         - number = target_number (지정 안 하면 min)
+      5. 나머지 problem들은 R2 이미지 삭제 + row 삭제.
+      6. 워커에 manual_index 잡 dispatch (OCR + 임베딩 재계산).
+
+    Returns: 갱신된 primary MatchupProblem.
+
+    Raises:
+      ValueError — 검증 실패 (problem 부족/cross-doc/cross-tenant).
+    """
+    import io
+    from PIL import Image
+
+    from apps.infrastructure.storage.r2 import (
+        upload_fileobj_to_r2_storage,
+        generate_presigned_get_url_storage,
+    )
+    from .r2_path import build_matchup_problem_key
+
+    if not problem_ids or len(problem_ids) < 2:
+        raise ValueError("합칠 문항을 2개 이상 선택해주세요.")
+
+    seen_ids: set = set()
+    ordered_ids: List[int] = []
+    for pid in problem_ids:
+        try:
+            pid_int = int(pid)
+        except (TypeError, ValueError):
+            raise ValueError(f"잘못된 problem id: {pid}")
+        if pid_int in seen_ids:
+            continue
+        seen_ids.add(pid_int)
+        ordered_ids.append(pid_int)
+    if len(ordered_ids) < 2:
+        raise ValueError("합칠 문항을 2개 이상 선택해주세요.")
+
+    # tenant + doc 일치 검증 (cross-doc/cross-tenant 차단)
+    problems_qs = MatchupProblem.objects.filter(
+        tenant=document.tenant, document=document, id__in=ordered_ids,
+    )
+    by_id = {p.id: p for p in problems_qs}
+    if len(by_id) != len(ordered_ids):
+        raise ValueError("선택한 문항 중 일부가 이 문서에 없습니다.")
+    ordered_problems = [by_id[pid] for pid in ordered_ids]
+
+    # target_number 결정 — 미지정 시 min(numbers).
+    nums = [p.number for p in ordered_problems]
+    if target_number is None:
+        target_number = min(nums)
+    try:
+        target_number = int(target_number)
+    except (TypeError, ValueError):
+        raise ValueError("문항 번호가 정수가 아닙니다.")
+    if not (1 <= target_number <= 999):
+        raise ValueError("문항 번호는 1~999 사이여야 합니다.")
+
+    primary = ordered_problems[0]
+    others = ordered_problems[1:]
+
+    # target_number가 다른 (이 doc에 잔존할) problem과 충돌하면 차단.
+    # 합쳐서 사라질 problem들의 number는 충돌 대상에서 제외.
+    merged_ids_set = {p.id for p in others}
+    conflict = (
+        MatchupProblem.objects.filter(
+            tenant=document.tenant, document=document, number=target_number,
+        )
+        .exclude(id__in=merged_ids_set)
+        .exclude(id=primary.id)
+        .first()
+    )
+    if conflict:
+        raise ValueError(
+            f"문항 번호 {target_number}는 이미 다른 문항(Q{conflict.number})에서 사용 중입니다."
+        )
+
+    # 각 문항 이미지를 R2에서 로드.
+    if not generate_presigned_get_url_storage:
+        raise RuntimeError("Storage not configured")
+
+    import urllib.request
+    images: List[Image.Image] = []
+    for p in ordered_problems:
+        if not p.image_key:
+            raise ValueError(f"Q{p.number}는 이미지가 없어 합칠 수 없습니다.")
+        url = generate_presigned_get_url_storage(key=p.image_key, expires_in=600)
+        try:
+            with urllib.request.urlopen(url, timeout=30) as resp:
+                data = resp.read()
+        except Exception as e:
+            raise RuntimeError(f"Q{p.number} 이미지 다운로드 실패: {e}")
+        try:
+            img = Image.open(io.BytesIO(data))
+            img.load()
+            if img.mode not in ("RGB", "RGBA"):
+                img = img.convert("RGB")
+        except Exception as e:
+            raise RuntimeError(f"Q{p.number} 이미지 디코드 실패: {e}")
+        images.append(img)
+
+    # vertical stack — 폭을 max로 맞추고 작은 이미지는 흰 배경 가운데 정렬.
+    # 정렬은 reading order: 사용자 선택 순서대로 위→아래.
+    max_w = max(img.size[0] for img in images)
+    total_h = sum(img.size[1] for img in images)
+    GAP = 8  # 문항 간 작은 간격 — 시각적 분리
+    total_h += GAP * (len(images) - 1)
+
+    canvas = Image.new("RGB", (max_w, total_h), color=(255, 255, 255))
+    cur_y = 0
+    for img in images:
+        w, h = img.size
+        x = (max_w - w) // 2
+        # RGBA가 섞여 있으면 RGB 캔버스에 paste 시 alpha mask 필요
+        canvas.paste(img.convert("RGB"), (x, cur_y))
+        cur_y += h + GAP
+
+    buf = io.BytesIO()
+    canvas.save(buf, "PNG")
+    buf.seek(0)
+
+    # R2 prefix — manually_crop_problem과 동일 규칙.
+    prefix = ""
+    parts = (document.r2_key or "").split("/")
+    if len(parts) >= 4 and parts[2] == "matchup":
+        prefix = parts[3]
+    if not prefix:
+        prefix = f"manual-{document.id}"
+
+    new_key = build_matchup_problem_key(
+        tenant_id=document.tenant_id, uuid_prefix=prefix, number=target_number,
+    )
+    upload_fileobj_to_r2_storage(
+        fileobj=buf, key=new_key, content_type="image/png",
+    )
+
+    # primary 갱신 — 기존 image_key는 R2에서 삭제(같은 prefix 정리).
+    old_primary_key = primary.image_key
+    merged_text = "\n\n".join((p.text or "").strip() for p in ordered_problems if (p.text or "").strip())
+    new_meta = dict(primary.meta or {})
+    new_meta["manual"] = True
+    new_meta["merged"] = True
+    new_meta["merged_from"] = [p.id for p in others]
+    new_meta["merged_numbers"] = [p.number for p in others]
+    new_meta["merged_count"] = len(ordered_problems)
+    # bbox/page_index은 합친 결과에서 의미 없음 — 명시 제거.
+    new_meta.pop("bbox", None)
+    new_meta.pop("bbox_norm", None)
+    new_meta.pop("page_index", None)
+    # 검수 신호도 합친 결과에는 적용 안 함.
+    new_meta.pop("merge_suspect", None)
+    new_meta.pop("number_mismatch", None)
+    new_meta.pop("is_partial", None)
+
+    # 같은 doc에 있는 others의 number와 target_number가 겹치는 경우 unique constraint
+    # 충돌 방지를 위해 others를 먼저 삭제한 뒤 primary를 갱신한다.
+    for p in others:
+        if p.image_key and delete_object_r2_storage:
+            try:
+                delete_object_r2_storage(key=p.image_key)
+            except Exception:
+                logger.warning(
+                    "R2 merged problem image delete failed: %s", p.image_key,
+                    exc_info=True,
+                )
+        p.delete()
+
+    # primary의 기존 image도 새 key와 다르면 정리.
+    if old_primary_key and old_primary_key != new_key and delete_object_r2_storage:
+        try:
+            delete_object_r2_storage(key=old_primary_key)
+        except Exception:
+            logger.warning(
+                "R2 primary old image delete failed: %s", old_primary_key,
+                exc_info=True,
+            )
+
+    primary.number = target_number
+    primary.text = merged_text
+    primary.image_key = new_key
+    primary.embedding = None
+    primary.image_embedding = None
+    primary.meta = new_meta
+    primary.save(update_fields=[
+        "number", "text", "image_key", "embedding", "image_embedding", "meta", "updated_at",
+    ])
+
+    # 문서 problem_count 갱신
+    document.problem_count = document.problems.count()
+    document.status = "done"
+    document.save(update_fields=["problem_count", "status", "updated_at"])
+
+    # OCR + 임베딩 재계산 (비동기)
+    try:
+        _enqueue_manual_problem_index(primary)
+    except Exception:
+        logger.exception(
+            "MATCHUP_MERGE_ENQUEUE_FAILED | doc=%s | problem=%s",
+            document.id, primary.id,
+        )
+
+    logger.info(
+        "MATCHUP_MERGE | doc=%s | primary=%s | merged=%s | target_number=%s",
+        document.id, primary.id, [p.id for p in others], target_number,
+    )
+    return primary
+
+
 def delete_problem_with_r2(problem: MatchupProblem) -> None:
     """단일 problem 삭제 + R2 cleanup.
 
