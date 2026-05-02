@@ -1062,43 +1062,52 @@ def merge_problems(
     new_meta.pop("number_mismatch", None)
     new_meta.pop("is_partial", None)
 
-    # 같은 doc에 있는 others의 number와 target_number가 겹치는 경우 unique constraint
-    # 충돌 방지를 위해 others를 먼저 삭제한 뒤 primary를 갱신한다.
-    for p in others:
-        if p.image_key and delete_object_r2_storage:
+    # 데이터 무결성 보호: DB 변경은 단일 트랜잭션으로 묶는다.
+    # primary.save() 또는 document.save()가 실패하면 others의 row 삭제도 함께 롤백되어,
+    # "여러 problem이 사라졌는데 합친 problem은 갱신 안 된" 손실 상태를 차단한다.
+    # R2 정리는 트랜잭션 커밋 후 best-effort — 롤백 시 R2 객체는 그대로 유지되어
+    # 카드 broken image도 발생하지 않음 (다음 표시 때 그대로 보임).
+    from django.db import transaction
+
+    others_old_keys = [p.image_key for p in others if p.image_key]
+
+    with transaction.atomic():
+        for p in others:
+            p.delete()
+
+        primary.number = target_number
+        primary.text = merged_text
+        primary.image_key = new_key
+        primary.embedding = None
+        primary.image_embedding = None
+        primary.meta = new_meta
+        primary.save(update_fields=[
+            "number", "text", "image_key", "embedding", "image_embedding", "meta", "updated_at",
+        ])
+
+        # 문서 problem_count 갱신. status는 건드리지 않는다 — 'processing' doc에서 합치기를
+        # 호출했을 때 AI 워커 callback과 race로 잘못된 'done' 덮어쓰기를 막기 위함.
+        document.problem_count = document.problems.count()
+        document.save(update_fields=["problem_count", "updated_at"])
+
+    # 트랜잭션 커밋 완료 — 이제 R2 cleanup (best-effort).
+    if delete_object_r2_storage:
+        for old_key in others_old_keys:
             try:
-                delete_object_r2_storage(key=p.image_key)
+                delete_object_r2_storage(key=old_key)
             except Exception:
                 logger.warning(
-                    "R2 merged problem image delete failed: %s", p.image_key,
+                    "R2 merged problem image delete failed: %s", old_key,
                     exc_info=True,
                 )
-        p.delete()
-
-    # primary의 기존 image도 새 key와 다르면 정리.
-    if old_primary_key and old_primary_key != new_key and delete_object_r2_storage:
-        try:
-            delete_object_r2_storage(key=old_primary_key)
-        except Exception:
-            logger.warning(
-                "R2 primary old image delete failed: %s", old_primary_key,
-                exc_info=True,
-            )
-
-    primary.number = target_number
-    primary.text = merged_text
-    primary.image_key = new_key
-    primary.embedding = None
-    primary.image_embedding = None
-    primary.meta = new_meta
-    primary.save(update_fields=[
-        "number", "text", "image_key", "embedding", "image_embedding", "meta", "updated_at",
-    ])
-
-    # 문서 problem_count 갱신
-    document.problem_count = document.problems.count()
-    document.status = "done"
-    document.save(update_fields=["problem_count", "status", "updated_at"])
+        if old_primary_key and old_primary_key != new_key:
+            try:
+                delete_object_r2_storage(key=old_primary_key)
+            except Exception:
+                logger.warning(
+                    "R2 primary old image delete failed: %s", old_primary_key,
+                    exc_info=True,
+                )
 
     # OCR + 임베딩 재계산 (비동기)
     try:

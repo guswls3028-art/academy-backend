@@ -959,10 +959,11 @@ class DocumentMergeProblemsView(View):
             except (TypeError, ValueError):
                 return JsonResponse({"detail": "target_number가 정수가 아닙니다."}, status=400)
 
+        # int 변환은 service에 위임 — service가 ValueError로 응답하면 400 반환.
         try:
             problem = merge_problems(
                 doc,
-                problem_ids=[int(x) for x in ids],
+                problem_ids=ids,
                 target_number=target_number,
             )
         except ValueError as e:
