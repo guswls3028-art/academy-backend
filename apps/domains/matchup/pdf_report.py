@@ -453,7 +453,7 @@ def _draw_cover(c, *, page_w, page_h, margin, inner_w,
                 document_category, author_label, issued_at,
                 summary_text, curated_count, total_q,
                 pinned_count, hit_problem_count, hit_rate,
-                curated_problem_count):
+                curated_problem_count, curated_progress):
     """표지 — 학원 로고 띠 + 매치업 적중률 헤드라인 + 보고서 제목 + 메타 + 통계."""
     from reportlab.lib.colors import HexColor, black, white
     from reportlab.lib.units import mm
@@ -690,6 +690,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
         pinned_count=pinned_count,
         hit_problem_count=hit_problem_count, hit_rate=hit_rate,
         curated_problem_count=curated_problem_count,
+        curated_progress=curated_progress,
     )
     c.showPage()
 
