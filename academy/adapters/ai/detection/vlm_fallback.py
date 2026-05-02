@@ -208,8 +208,13 @@ _GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 _GEMINI_TIMEOUT = int(os.getenv("MATCHUP_VLM_TIMEOUT_SEC", "90"))
 # 페이지당 30+ 문항이 있는 dual-col commercial_workbook도 응답 잘리지 않도록 8192로 확장.
 _GEMINI_MAX_OUTPUT_TOKENS = int(os.getenv("MATCHUP_VLM_MAX_OUTPUT_TOKENS", "8192"))
-# 429(quota) 시 백오프 후 1회 retry. 그래도 실패하면 RuntimeError로 명시 (silent mock 금지).
+# 429(quota)/503(서버 deadline) 시 백오프 후 1회 retry. 그래도 실패하면 RuntimeError로 명시.
 _GEMINI_RETRY_BACKOFF_SEC = int(os.getenv("MATCHUP_VLM_RETRY_BACKOFF", "5"))
+# Vision 호출 전 이미지 압축 — Gemini 서버 측 deadline(~30s) 초과 차단. 큰 폰사진 PDF
+# 페이지(2~4MB)가 가장 빈번한 503 원인. 1600px max + JPEG 85 quality로 보내면 정확도
+# 손실 거의 없이 호출 시간 1/3로 단축됨.
+_GEMINI_VISION_MAX_DIM = int(os.getenv("MATCHUP_VLM_VISION_MAX_DIM", "1600"))
+_GEMINI_VISION_JPEG_Q = int(os.getenv("MATCHUP_VLM_VISION_JPEG_Q", "85"))
 
 _doc_call_counter: Dict[str, int] = {}
 
@@ -264,7 +269,7 @@ def _gemini_request(
     }
     url = f"{_GEMINI_API_BASE}/models/{model}:generateContent?key={api_key}"
 
-    # 호출 + 429 단발 retry
+    # 호출 + 429/503 단발 retry. 503 = Gemini 서버 deadline(~30s) 초과 (큰 vision payload).
     resp = None
     for attempt in (0, 1):
         try:
@@ -277,8 +282,7 @@ def _gemini_request(
         except Exception as e:
             raise RuntimeError(f"Gemini API 호출 실패: {e}") from e
 
-        if resp.status_code == 429 and attempt == 0:
-            # quota 초과 — 백오프 후 1회 retry
+        if resp.status_code in (429, 503) and attempt == 0:
             _time.sleep(_GEMINI_RETRY_BACKOFF_SEC)
             continue
         break
@@ -459,6 +463,7 @@ class GeminiVLMVisionAdapter:
         page_meta: Dict[str, Any] | None = None,
     ) -> ProblemBboxResult:
         import base64
+        import io as _io
         import mimetypes
 
         meta = page_meta or {}
@@ -469,8 +474,30 @@ class GeminiVLMVisionAdapter:
         except Exception as e:
             raise RuntimeError(f"VLM vision 이미지 읽기 실패: {e}") from e
 
-        mime, _ = mimetypes.guess_type(image_path)
-        mime = mime or "image/png"
+        # Gemini 서버 deadline(~30s) 차단을 위해 큰 이미지를 1600px / JPEG 85로 압축.
+        # bbox 좌표는 모델이 원본 픽셀 기준으로 응답하므로, 압축 비율을 추적해서 응답 후
+        # 원본 좌표계로 역변환한다.
+        scale = 1.0
+        try:
+            from PIL import Image  # type: ignore
+            img = Image.open(_io.BytesIO(img_bytes))
+            orig_w, orig_h = img.size
+            if max(orig_w, orig_h) > _GEMINI_VISION_MAX_DIM:
+                scale = _GEMINI_VISION_MAX_DIM / max(orig_w, orig_h)
+                new_size = (int(orig_w * scale), int(orig_h * scale))
+                img = img.convert("RGB").resize(new_size, Image.LANCZOS)
+                buf = _io.BytesIO()
+                img.save(buf, format="JPEG", quality=_GEMINI_VISION_JPEG_Q, optimize=True)
+                img_bytes = buf.getvalue()
+                mime = "image/jpeg"
+            else:
+                mime, _ = mimetypes.guess_type(image_path)
+                mime = mime or "image/png"
+        except Exception:
+            # PIL 부재 / 손상 이미지 — 원본 그대로 전송 (기존 동작 유지).
+            mime, _ = mimetypes.guess_type(image_path)
+            mime = mime or "image/png"
+
         b64 = base64.b64encode(img_bytes).decode("ascii")
 
         try:
@@ -495,10 +522,14 @@ class GeminiVLMVisionAdapter:
 
         problems_raw = data.get("problems") or []
         problems: List[ProblemBbox] = []
+        # 압축한 경우 bbox 좌표를 원본 px로 역변환 (모델 응답이 압축 이미지 기준일 수 있음).
+        inv = (1.0 / scale) if scale and scale != 1.0 else 1.0
         for i, p in enumerate(problems_raw, start=1):
             try:
                 bbox = p.get("bbox") or []
                 x, y, w, h = (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
+                if inv != 1.0:
+                    x, y, w, h = (int(x * inv), int(y * inv), int(w * inv), int(h * inv))
                 problems.append(ProblemBbox(
                     number=int(p.get("number", i)),
                     bbox=(x, y, w, h),
@@ -512,7 +543,11 @@ class GeminiVLMVisionAdapter:
             should_skip=bool(data.get("should_skip", False)),
             problems=problems,
             confidence=float(data.get("confidence", 0.7)),
-            debug={"adapter": "gemini", "model": self.model, "raw_count": len(problems_raw)},
+            debug={
+                "adapter": "gemini", "model": self.model,
+                "raw_count": len(problems_raw),
+                "scale": round(scale, 3),
+            },
         )
 
 

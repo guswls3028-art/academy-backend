@@ -301,7 +301,8 @@ def run_matchup_pipeline(
     if total_boxes == 0:
         # 문제를 찾지 못한 경우 — 전체 페이지를 하나의 문제로 취급
         logger.info("MATCHUP_NO_BOXES | job_id=%s | treating whole pages as problems", job_id)
-        questions_raw = _whole_pages_as_questions(pages)
+        questions_raw, vlm_stats = _pages_via_vlm_or_fallback(pages, document_id, job_id)
+        paper_type_summary["vlm_auto_split"] = vlm_stats
     elif is_over_extracted or is_low_confidence_doc:
         # 페이지 폴백 트리거:
         # - over-extraction (학습자료 anchor 폭증) OR
@@ -318,7 +319,11 @@ def run_matchup_pipeline(
             is_over_extracted, is_low_confidence_doc,
             paper_type_summary["primary"],
         )
-        questions_raw = _whole_pages_as_questions(kept_pages)
+        # P1 자동 통합 (2026-05-03 학원장 directive): page-as-problem 직전에 VLM bbox 시도.
+        # anchor 1~4 페이지는 기존 sub-crop 유지 (신뢰도 높음).
+        # anchor 0 또는 5+ 페이지만 VLM vision 호출 — 실패/저신뢰 시 page-as-problem.
+        questions_raw, vlm_stats = _pages_via_vlm_or_fallback(kept_pages, document_id, job_id)
+        paper_type_summary["vlm_auto_split"] = vlm_stats
     else:
         questions_raw = _boxes_to_questions(pages)
 
@@ -688,6 +693,135 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
                 "bbox": list(bbox),
             })
     return questions
+
+
+def _try_vlm_problem_bboxes(page: Dict, document_id) -> Optional[Any]:
+    """단일 페이지에 vision_VLM 호출. 실패/저신뢰 시 None 반환.
+
+    품질 게이트:
+      - debug.adapter == "gemini" (mock 폴백 X)
+      - should_skip == False
+      - confidence >= 0.80
+      - len(problems) >= 2 (페이지당 최소 2 문항 분리되어야 의미 있음)
+    """
+    try:
+        from academy.adapters.ai.detection.vlm_fallback import detect_problems_vision
+        result = detect_problems_vision(
+            image_path=page["image_path"],
+            page_meta={
+                "document_id": document_id,
+                "page_index": page["page_index"],
+                "page_width": page.get("width"),
+                "page_height": page.get("height"),
+            },
+        )
+    except Exception as e:
+        logger.warning("MATCHUP_VLM_AUTO_FAIL | doc=%s | page=%s | err=%s",
+                       document_id, page.get("page_index"), e)
+        return None
+    adapter = (result.debug or {}).get("adapter", "")
+    if adapter != "gemini" or result.should_skip:
+        return None
+    if result.confidence < 0.80 or len(result.problems) < 2:
+        return None
+    return result
+
+
+def _pages_via_vlm_or_fallback(
+    pages: List[Dict], document_id, job_id: str,
+) -> Tuple[List[Dict], Dict[str, Any]]:
+    """페이지 폴백 분기 — VLM 시도 → 실패 시 기존 page-as-problem.
+
+    페이지별 라우팅:
+      - anchor 1~4: 기존 sub-crop (신뢰도 높음, VLM 호출 X)
+      - anchor 0 또는 5+: VLM vision 시도 → 통과 시 sub-crop, 실패 시 page-as-problem
+
+    학원장 directive (2026-05-02): VLM은 메인 X, fallback only.
+    이 함수는 page-as-problem 직전 마지막 fallback 단계로만 VLM 시도.
+    """
+    import os as _os
+
+    use_vlm = _os.getenv("MATCHUP_VLM_AUTO_SPLIT", "1") == "1"
+    questions: List[Dict] = []
+    seen_numbers: set = set()
+    fallback_counter = 1
+    pixel_scale = 200.0 / 72.0  # _PDF_TO_PIXEL_SCALE — segment_dispatcher와 동일
+
+    vlm_pages_used = 0
+    vlm_problems_added = 0
+    vlm_pages_attempted = 0
+
+    for page in pages:
+        page_idx = page["page_index"]
+        img_path = page["image_path"]
+        text_regions = page.get("text_regions") or []
+
+        # 1. anchor 1~4 → 기존 sub-crop (anchor 신뢰 높음)
+        if 1 <= len(text_regions) <= 4:
+            for region in text_regions:
+                num = int(region.number)
+                if num in seen_numbers:
+                    continue
+                seen_numbers.add(num)
+                rx0, ry0, rx1, ry1 = region.bbox
+                bbox_px = [
+                    int(rx0 * pixel_scale),
+                    int(ry0 * pixel_scale),
+                    int((rx1 - rx0) * pixel_scale),
+                    int((ry1 - ry0) * pixel_scale),
+                ]
+                questions.append({
+                    "number": num,
+                    "page_index": page_idx,
+                    "image_path": img_path,
+                    "bbox": bbox_px,
+                })
+            continue
+
+        # 2. anchor 0 또는 5+ → VLM 시도 (env로 끌 수 있음)
+        if use_vlm and document_id:
+            vlm_pages_attempted += 1
+            vlm = _try_vlm_problem_bboxes(page, document_id)
+            if vlm is not None:
+                vlm_pages_used += 1
+                for prob in vlm.problems:
+                    while fallback_counter in seen_numbers:
+                        fallback_counter += 1
+                    questions.append({
+                        "number": fallback_counter,
+                        "page_index": page_idx,
+                        "image_path": img_path,
+                        "bbox": list(prob.bbox),
+                    })
+                    seen_numbers.add(fallback_counter)
+                    fallback_counter += 1
+                    vlm_problems_added += 1
+                continue
+
+        # 3. VLM 실패/비활성/저신뢰 → page-as-problem
+        while fallback_counter in seen_numbers:
+            fallback_counter += 1
+        questions.append({
+            "number": fallback_counter,
+            "page_index": page_idx,
+            "image_path": img_path,
+            "bbox": None,
+        })
+        seen_numbers.add(fallback_counter)
+        fallback_counter += 1
+
+    logger.info(
+        "MATCHUP_VLM_AUTO_DONE | job=%s doc=%s | use_vlm=%s | "
+        "vlm_attempted=%d vlm_used=%d vlm_problems=%d total_questions=%d",
+        job_id, document_id, use_vlm,
+        vlm_pages_attempted, vlm_pages_used, vlm_problems_added, len(questions),
+    )
+    return questions, {
+        "enabled": use_vlm,
+        "pages_attempted": vlm_pages_attempted,
+        "pages_used": vlm_pages_used,
+        "problems_added": vlm_problems_added,
+    }
 
 
 def _whole_pages_as_questions(pages: List[Dict]) -> List[Dict]:
