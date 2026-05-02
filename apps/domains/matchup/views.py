@@ -1221,18 +1221,32 @@ class HitReportDraftView(View):
         from .services import find_similar_problems
         candidate_top_k = 15
 
+        # 병렬 후보 검색 — 시험지 27 문항 × 직렬 ~50s 게이트웨이 컷 회피.
+        # 8 worker 동시 vector 검색 → ~6배 단축. 각 검색은 독립 read-only.
+        from concurrent.futures import ThreadPoolExecutor
+
+        sim_by_eid: dict = {}
+        tenant_id = request.tenant.id
+
+        def _fetch_candidates(ep_id: int):
+            try:
+                return ep_id, find_similar_problems(
+                    problem_id=ep_id, tenant_id=tenant_id, top_k=candidate_top_k,
+                )
+            except Exception:
+                logger.exception("find_similar_problems failed (problem=%s)", ep_id)
+                return ep_id, []
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for ep_id, sim_results in pool.map(_fetch_candidates, [ep.id for ep in exam_problems]):
+                sim_by_eid[ep_id] = sim_results
+
         problem_data = []
         all_candidate_ids = set()
         for ep in exam_problems:
             entry = entries_by_pid.get(ep.id)
             cand = []
-            try:
-                sim_results = find_similar_problems(
-                    problem_id=ep.id, tenant_id=request.tenant.id, top_k=candidate_top_k,
-                )
-            except Exception:
-                logger.exception("find_similar_problems failed (problem=%s)", ep.id)
-                sim_results = []
+            sim_results = sim_by_eid.get(ep.id, [])
             for cp, sim in sim_results:
                 cand.append({
                     "id": cp.id,

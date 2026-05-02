@@ -123,6 +123,30 @@ def _download_image_to_pil(url: str, max_dim: int = 1600):
         return None
 
 
+def _prefetch_images(urls: List[str], max_dim: int = 1600) -> dict:
+    """다수의 R2 presigned URL을 병렬 다운로드하여 url→PIL 매핑 반환.
+
+    PDF 생성 시 N 페이지 × 2 pane = 수십~수백 이미지를 직렬로 받으면
+    게이트웨이 60s timeout 초과. 8 worker로 동시 다운로드 → 시간 ~1/8.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    cache: dict = {}
+    unique_urls = [u for u in {u for u in urls if u}]
+    if not unique_urls:
+        return cache
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = {pool.submit(_download_image_to_pil, u, max_dim): u for u in unique_urls}
+        for fut in as_completed(futures):
+            url = futures[fut]
+            try:
+                cache[url] = fut.result()
+            except Exception as e:
+                logger.warning("prefetch failed (%s): %s", url, e)
+                cache[url] = None
+    return cache
+
+
 def _safe_url(image_key) -> str:
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
     if not image_key:
@@ -196,8 +220,11 @@ def _pane_bg_for_class(cls: str) -> str:
 # ── 렌더 헬퍼 ────────────────────────────────────────────────
 def _draw_single_pane(c, *, x, y, w, h, label, sub, image_url,
                       accent_color, accent_bg, fn_reg, fn_bold,
-                      placeholder_text=None):
-    """단일 pane — 캡션 strip + 이미지 박스. ProblemDetailModal pane과 동일 구조."""
+                      placeholder_text=None, image_cache=None):
+    """단일 pane — 캡션 strip + 이미지 박스. ProblemDetailModal pane과 동일 구조.
+
+    image_cache (dict[url]→PIL): 미리 병렬 다운로드된 이미지. None이면 즉시 다운로드(레거시).
+    """
     from reportlab.lib.colors import HexColor
     from reportlab.lib.units import mm
     from reportlab.lib.utils import ImageReader
@@ -227,7 +254,10 @@ def _draw_single_pane(c, *, x, y, w, h, label, sub, image_url,
         c.drawCentredString(x + w / 2, img_y + img_h / 2, msg)
         return
 
-    pil = _download_image_to_pil(image_url, max_dim=1800)
+    if image_cache is not None and image_url in image_cache:
+        pil = image_cache[image_url]
+    else:
+        pil = _download_image_to_pil(image_url, max_dim=1800)
     if pil is None:
         c.setFont(fn_reg, 10)
         c.setFillColor(HexColor("#94A3B8"))
@@ -258,7 +288,8 @@ def _draw_compare_page(c, *, page_w, page_h, margin, inner_w,
                        right_label, right_sub, right_url,
                        comment_text=None,
                        footer_idx=0, footer_total=0,
-                       right_placeholder=None):
+                       right_placeholder=None,
+                       image_cache=None):
     """문항 vs 후보 1쌍 비교 페이지 (A4 landscape).
 
     상단 다크 헤더: Q번호 + 후보 위치 + 적중 라벨
@@ -344,6 +375,7 @@ def _draw_compare_page(c, *, page_w, page_h, margin, inner_w,
         label=left_label, sub=left_sub, image_url=left_url,
         accent_color=_SOURCE_PANE_COLOR, accent_bg=_SOURCE_PANE_BG,
         fn_reg=fn_reg, fn_bold=fn_bold,
+        image_cache=image_cache,
     )
 
     # 우 (매치 자료)
@@ -360,6 +392,7 @@ def _draw_compare_page(c, *, page_w, page_h, margin, inner_w,
         accent_color=right_color, accent_bg=right_bg,
         fn_reg=fn_reg, fn_bold=fn_bold,
         placeholder_text=right_placeholder,
+        image_cache=image_cache,
     )
 
 
@@ -490,6 +523,14 @@ def generate_curated_hit_report_pdf(report) -> bytes:
         sel = (e.selected_problem_ids if e else []) or []
         body_page_count += max(1, len(sel))
 
+    # ── 이미지 prefetch (병렬) ──
+    # 게이트웨이 60s 컷 회피. 후보 N개 × 2 pane 직렬 다운로드는 N=20 정도부터 timeout.
+    # 8 worker 병렬 + url 캐시로 중복 다운로드 제거.
+    ep_url_by_id = {ep.id: _safe_url(ep.image_key) for ep in exam_problems}
+    sel_url_by_pid = {p.id: _safe_url(p.image_key) for p in selected_meta.values()}
+    all_urls = [u for u in list(ep_url_by_id.values()) + list(sel_url_by_pid.values()) if u]
+    image_cache = _prefetch_images(all_urls, max_dim=1800)
+
     # 표지 통계
     curated_count = sum(
         1 for e in entries_by_eid.values()
@@ -529,7 +570,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
     doc_title_short = (document.title or "시험지")[:60]
 
     for ep in exam_problems:
-        ep_url = _safe_url(ep.image_key)
+        ep_url = ep_url_by_id.get(ep.id, "")
         entry = entries_by_eid.get(ep.id)
         sel_ids = (entry.selected_problem_ids if entry else []) or []
         comment = (entry.comment if entry else "") or ""
@@ -550,6 +591,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
                 right_placeholder="큐레이션 미작성",
                 comment_text=comment if comment else None,
                 footer_idx=page_idx, footer_total=body_page_count,
+                image_cache=image_cache,
             )
             c.showPage()
             continue
@@ -572,6 +614,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
                     right_placeholder="자료를 찾을 수 없음",
                     comment_text=comment if comment else None,
                     footer_idx=page_idx, footer_total=body_page_count,
+                    image_cache=image_cache,
                 )
                 c.showPage()
                 continue
@@ -584,7 +627,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
                 "concept": f"개념 커버  ·  {sim*100:.1f}%",
             }.get(cls, f"유사도 {sim*100:.1f}%")
 
-            mat_url = _safe_url(p.image_key)
+            mat_url = sel_url_by_pid.get(p.id, "")
             mat_doc_title = ""
             try:
                 mat_doc_title = (p.document.title or "")[:50] if p.document_id else ""
@@ -605,6 +648,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
                 right_url=mat_url,
                 comment_text=comment if comment else None,
                 footer_idx=page_idx, footer_total=body_page_count,
+                image_cache=image_cache,
             )
             c.showPage()
 
