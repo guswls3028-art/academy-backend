@@ -58,7 +58,8 @@ def _length_score(src_len: int, cand_len: int) -> float:
 
 
 def find_similar_problems(
-    problem_id: int, tenant_id: int, top_k: int = 10
+    problem_id: int, tenant_id: int, top_k: int = 10,
+    author_id: int | None = None,
 ) -> List[Tuple["MatchupProblem", float]]:
     """주어진 문제와 유사한 문제를 찾아 재정렬해 반환.
 
@@ -67,6 +68,12 @@ def find_similar_problems(
       2. 휴리스틱 신호(sim·cross_doc) 결합 → 1차 정렬
       3. (가능 시) cross-encoder reranker로 상위 후보 재정렬 — phase 2
       4. top_k 반환
+
+    author_id (저작권 격리, 2026-05-03~):
+      매치업 보고서 = 강사 1인 포트폴리오 정체성. 작성 강사가 본인 자료만 후보로
+      받게 author 필터링. 단, document.author=NULL legacy 자료는 모든 강사가
+      공용 풀로 사용 가능 (구버전 데이터 보호).
+      None=필터 없음 (학원 owner/admin이 전체 풀 검색하는 케이스 등).
 
     Returns: [(problem, final_score), ...] 높은 순.
     """
@@ -88,6 +95,14 @@ def find_similar_problems(
         .exclude(id=problem_id)
         .defer("created_at", "updated_at")
     )
+
+    # 저작권 격리 — author_id 지정 시 본인 자료 + 공용 풀(legacy author=NULL)만.
+    # exam-source problem(document=None)은 별도 필터에서 처리되므로 여기서는 영향 X.
+    if author_id is not None:
+        from django.db.models import Q
+        candidates = candidates.filter(
+            Q(document__author_id=author_id) | Q(document__author__isnull=True)
+        )
 
     # 텍스트 + 이미지 ensemble 가중치. OCR 짧은 source는 이미지 유사도 비중 ↑.
     # 짧은 텍스트(< 60자)면 이미지 0.5, 긴 텍스트(>= 200자)면 이미지 0.15.
@@ -121,8 +136,8 @@ def find_similar_problems(
 
     # 같은 카테고리(섹션) 내에서만 추천. 빈 카테고리도 빈 카테고리끼리만.
     # source가 matchup 문서이면 항상 격리 적용. (exam source는 document_id=None)
-    # 사용자(철 선생) 피드백 2026-04-29: "중대부고 자료에 다른 학교 자료가 막 뜬다"
-    # → 카테고리 누락 시 격리가 풀려 leak되던 버그 차단.
+    # 강사간 자료 leak은 author_id 필터(2026-05-03~)로 별도 차단 — 카테고리 격리는 학교 내
+    # 다른 자료 mixing 방어 layer (2026-04-29 운영 버그 fix).
     if source.document_id:
         candidates = candidates.filter(
             document__isnull=False,
@@ -468,6 +483,7 @@ def promote_inventory_to_matchup(
     subject: str = "",
     grade_level: str = "",
     upload_intent: str = "",
+    author=None,
 ):
     """InventoryFile을 매치업 분석 대상으로 승격. Returns MatchupDocument.
 
@@ -481,6 +497,9 @@ def promote_inventory_to_matchup(
     `commercial_workbook`/`academy_workbook`/`explanation`/`answer_key`/`other`).
     Legacy 2-value (`test`/`reference`/`exam_sheet`)도 자동 매핑 수용.
     명시되면 dispatch payload + doc.meta 양쪽에 기록해 워커가 race 없이 strategy 분기.
+
+    author: 자료를 업로드/소유하는 강사 (User). find_similar 격리의 baseline.
+    None=공용 풀(레거시 호환). 호출자(view)가 request.user 전달.
     """
     from apps.domains.ai.gateway import dispatch_job
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
@@ -504,6 +523,7 @@ def promote_inventory_to_matchup(
 
     doc = MatchupDocument.objects.create(
         tenant=inventory_file.tenant,
+        author=author,  # 강사 1인 포트폴리오 baseline. None=공용 풀.
         inventory_file=inventory_file,
         title=title or inventory_file.display_name,
         category=category,

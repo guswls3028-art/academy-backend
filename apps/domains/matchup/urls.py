@@ -22,7 +22,8 @@ urlpatterns = [
     path("documents/<int:doc_id>/hit-report.pdf", views.DocumentHitReportPdfView.as_view()),
     path("documents/<int:doc_id>/hit-report-draft/", views.HitReportDraftView.as_view()),
 
-    # Curated hit reports
+    # Curated hit reports — 강사 1인 매치업 적중 보고서 (수업 히스토리 + 학원 KPI + 신뢰자료)
+    path("hit-reports/", views.HitReportListView.as_view()),
     path("hit-reports/<int:report_id>/", views.HitReportDetailView.as_view()),
     path("hit-reports/<int:report_id>/entries/", views.HitReportEntriesUpsertView.as_view()),
     path("hit-reports/<int:report_id>/submit/", views.HitReportSubmitView.as_view()),

@@ -94,6 +94,42 @@ def _is_tenant_staff(request):
     ).exists()
 
 
+def _is_tenant_admin(request) -> bool:
+    """학원 owner/admin 권한자만. 다른 강사 보고서 access 권한.
+
+    매치업 보고서 = 강사 1인 포트폴리오. 작성자 외에는 학원 운영진만 조회/수정 가능.
+    일반 teacher/assistant는 본인 보고서만 접근.
+    """
+    user = getattr(request, "user", None)
+    tenant = getattr(request, "tenant", None)
+    if not user or not tenant:
+        return False
+    if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
+        return True
+    from apps.core.models import TenantMembership
+    return TenantMembership.objects.filter(
+        user=user, tenant=tenant, is_active=True,
+        role__in=["owner", "admin"],
+    ).exists()
+
+
+def _hit_report_writable(request, report) -> bool:
+    """보고서 수정/삭제/제출/PDF 다운로드 권한.
+
+    작성자 본인 OR 학원 admin/owner. 그 외(다른 강사)는 차단.
+    legacy report(author=NULL)는 admin/owner만 — 작성자 식별 불가.
+    """
+    user = getattr(request, "user", None)
+    if not user:
+        return False
+    if getattr(user, "is_superuser", False):
+        return True
+    user_id = getattr(user, "id", None)
+    if user_id and report.author_id and report.author_id == user_id:
+        return True
+    return _is_tenant_admin(request)
+
+
 def _reconcile_document_from_ai_job(doc: MatchupDocument) -> bool:
     """AIJob은 끝났지만 RDS 고갈 등으로 domain callback이 실패한 문서를 복구한다.
 
@@ -256,7 +292,8 @@ class DocumentUploadView(View):
             content_type=file.content_type,
         )
 
-        # 2) 즉시 승격 + dispatch (intent를 promote에 전달 → meta + payload 양쪽에 기록)
+        # 2) 즉시 승격 + dispatch (intent를 promote에 전달 → meta + payload 양쪽에 기록).
+        # author=request.user — 자료를 업로드한 강사를 매치업 격리 baseline으로 등록.
         doc = promote_inventory_to_matchup(
             inv_file,
             title=title,
@@ -264,6 +301,7 @@ class DocumentUploadView(View):
             subject=subject,
             grade_level=grade_level,
             upload_intent=upload_intent,
+            author=getattr(request, "user", None),
         )
 
         data = MatchupDocumentSerializer(doc).data
@@ -352,6 +390,7 @@ class DocumentPromoteFromInventoryView(View):
                     subject=subject,
                     grade_level=grade_level,
                     upload_intent=upload_intent,
+                    author=getattr(request, "user", None),
                 )
         except IntegrityError:
             existing = MatchupDocument.objects.filter(
@@ -1268,10 +1307,16 @@ class SimilarProblemView(View):
 
         top_k = min(int(body.get("top_k", 10)), 50)
 
+        # 저작권 격리: 호출자 자신의 자료 + legacy 공용 풀만 후보.
+        # admin/owner는 운영 검증 시 author=NULL로 우회 가능 (전체 풀). 일반 강사는 본인 풀.
+        scope_author_id = getattr(getattr(request, "user", None), "id", None)
+        if _is_tenant_admin(request) and (request.GET.get("scope") or "").lower() == "all":
+            scope_author_id = None
         results = find_similar_problems(
             problem_id=problem_id,
             tenant_id=request.tenant.id,
             top_k=top_k,
+            author_id=scope_author_id,
         )
 
         # document title 미리 조회
@@ -1339,14 +1384,130 @@ class ProblemPresignView(View):
         return JsonResponse({"url": url})
 
 
-# ── Curated Hit Report (사람이 큐레이션한 보고서) ────────────────
+# ── Curated Hit Report (강사 1인의 매치업 적중 보고서) ────────────
+#
+# 정체성 (정정 2026-05-03):
+#   매치업 보고서 = 프리랜서 강사 1인이 작성하는 3중 역할 산출물.
+#     ① 수업 히스토리 (강사 자기 검토)
+#     ② 제출 리포트 (소속 학원에 정기 제출하는 KPI)
+#     ③ 신뢰자료+홍보물 (신규 학원/카페에서 강사 개인 브랜딩)
+#   카테고리당 시험지 1장 + 강사 1명 = 보고서 1건. 강사 N명이 각자 보고서 작성 가능.
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class HitReportListView(View):
+    """GET /api/v1/matchup/hit-reports/
+
+    강사 1인 보고서 누적 리스트. 본인 보고서 + 학원 admin/owner는 전체 조회 가능.
+
+    Query params:
+      mine=1              : 본인 작성 보고서만 (admin/owner도 본인 시점만)
+      status=draft|submitted (선택)
+      category=str        (선택)
+
+    Response:
+      {
+        "reports": [
+          { id, document_id, document_title, document_category,
+            author_id, author_name, title, status, submitted_at,
+            exam_count, curated_count, curated_progress, ... },
+          ...
+        ],
+        "summary": { total, submitted, drafts }
+      }
+    """
+
+    def get(self, request):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        qs = MatchupHitReport.objects.filter(tenant=request.tenant).select_related(
+            "document", "author",
+        )
+
+        # 일반 강사(admin/owner 아님)는 항상 본인 보고서만. admin/owner는 mine=1로 명시 시에만.
+        is_admin = _is_tenant_admin(request)
+        mine = (request.GET.get("mine") or "").lower() in ("1", "true", "yes")
+        user_id = getattr(getattr(request, "user", None), "id", None)
+        if not is_admin or mine:
+            if user_id:
+                qs = qs.filter(author_id=user_id)
+            else:
+                qs = qs.none()
+
+        status_filter = (request.GET.get("status") or "").strip().lower()
+        if status_filter in ("draft", "submitted"):
+            qs = qs.filter(status=status_filter)
+
+        category_filter = (request.GET.get("category") or "").strip()
+        if category_filter:
+            qs = qs.filter(document__category=category_filter)
+
+        reports = list(qs.order_by("-updated_at")[:200])
+
+        # 작성 진행률 = entries 중 selected_problem_ids 또는 comment 있는 것을 카운트.
+        # JSONField __len 필터는 backend별 호환성 issue 있어 Python 루프로 정직하게 산출.
+        from .models import MatchupHitReportEntry
+        all_entries = MatchupHitReportEntry.objects.filter(
+            tenant=request.tenant, report_id__in=[r.id for r in reports],
+        ).only("id", "report_id", "selected_problem_ids", "comment")
+        curated_by_report: dict = {}
+        for e in all_entries:
+            if (e.selected_problem_ids or []) or (e.comment or "").strip():
+                curated_by_report[e.report_id] = curated_by_report.get(e.report_id, 0) + 1
+
+        rows = []
+        for r in reports:
+            doc = r.document
+            exam_count = doc.problem_count if doc else 0
+            curated_count = curated_by_report.get(r.id, 0)
+            curated_progress = (curated_count / exam_count * 100.0) if exam_count else 0.0
+
+            author_name = ""
+            if r.author_id and r.author is not None:
+                author_name = (
+                    getattr(r.author, "name", None)
+                    or getattr(r.author, "username", "")
+                    or getattr(r.author, "email", "")
+                ) or ""
+                # username 내부 prefix 제거 (t{tid}_ 제거).
+                from apps.core.models.user import user_display_username
+                if author_name == getattr(r.author, "username", ""):
+                    author_name = user_display_username(r.author) or author_name
+            elif r.submitted_by_name:
+                author_name = r.submitted_by_name
+
+            rows.append({
+                "id": r.id,
+                "document_id": r.document_id,
+                "document_title": doc.title if doc else "",
+                "document_category": doc.category if doc else "",
+                "author_id": r.author_id,
+                "author_name": author_name,
+                "title": r.title,
+                "status": r.status,
+                "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+                "exam_count": exam_count,
+                "curated_count": curated_count,
+                "curated_progress": round(curated_progress, 1),
+                "created_at": r.created_at.isoformat(),
+                "updated_at": r.updated_at.isoformat(),
+            })
+
+        summary = {
+            "total": len(rows),
+            "submitted": sum(1 for r in rows if r["status"] == "submitted"),
+            "drafts": sum(1 for r in rows if r["status"] == "draft"),
+        }
+        return JsonResponse({"reports": rows, "summary": summary})
+
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class HitReportDraftView(View):
     """GET /api/v1/matchup/documents/<doc_id>/hit-report-draft/
 
-    시험지 doc 기준 큐레이션 보고서 조회. 없으면 자동 draft 생성.
-    응답에 시험지 problem 목록 + 후보 매치(자동 top_k) 포함 → 프론트가 한 번에 그리기.
+    시험지 doc + 호출자(강사) 기준 적중 보고서 조회. 없으면 자동 draft 생성(author=호출자).
+    같은 시험지에 강사 N명이 각자 보고서를 만들 수 있고, 본 응답은 호출자 본인 것만 반환.
+    응답에 시험지 problem 목록 + 후보 매치(강사 본인 자료 + 공용 풀) 포함.
     """
 
     def get(self, request, doc_id):
@@ -1370,8 +1531,12 @@ class HitReportDraftView(View):
                 status=400,
             )
 
+        # 강사 scope: 같은 시험지에 강사별로 별개 보고서. 작성자 본인 보고서를 가져온다.
+        # admin/owner가 doc 진입 시: author=user로 자기 보고서 작성. 기존 다른 강사 보고서는 영향 없음.
         report, _ = MatchupHitReport.objects.get_or_create(
-            tenant=request.tenant, document=doc,
+            tenant=request.tenant,
+            document=doc,
+            author=getattr(request, "user", None),
             defaults={"title": doc.title or ""},
         )
 
@@ -1399,11 +1564,16 @@ class HitReportDraftView(View):
 
         sim_by_eid: dict = {}
         tenant_id = request.tenant.id
+        # 저작권 격리: 보고서 작성자(강사) 본인 자료 + 공용 풀(author=NULL legacy)만 후보.
+        # admin/owner가 작성 중인 보고서면 본인 자료 + legacy 풀. 작성자 외 access 시
+        # _hit_report_writable이 차단하므로 여기까지 도달하지 않음.
+        scope_author_id = getattr(getattr(request, "user", None), "id", None)
 
         def _fetch_candidates(ep_id: int):
             try:
                 return ep_id, find_similar_problems(
                     problem_id=ep_id, tenant_id=tenant_id, top_k=candidate_top_k,
+                    author_id=scope_author_id,
                 )
             except Exception:
                 logger.exception("find_similar_problems failed (problem=%s)", ep_id)
@@ -1508,8 +1678,10 @@ class HitReportDetailView(View):
     """
     PATCH  /api/v1/matchup/hit-reports/<id>/         — title/summary 수정
     POST   /api/v1/matchup/hit-reports/<id>/entries/ — 엔트리 일괄 upsert
-    POST   /api/v1/matchup/hit-reports/<id>/submit/  — 제출 (status=submitted)
-    DELETE /api/v1/matchup/hit-reports/<id>/         — 삭제 (drag of caution: 관리자만)
+    POST   /api/v1/matchup/hit-reports/<id>/submit/  — 학원 제출 (status=submitted)
+    DELETE /api/v1/matchup/hit-reports/<id>/         — 삭제
+
+    저작권 격리: 모든 조작은 작성자 본인 또는 학원 admin/owner만 가능 (_hit_report_writable).
     """
 
     def _get(self, request, report_id):
@@ -1526,6 +1698,12 @@ class HitReportDetailView(View):
         report = self._get(request, report_id)
         if not report:
             return JsonResponse({"detail": "Not found"}, status=404)
+        # 저작권 격리: 작성자 본인 또는 학원 admin/owner만 수정 가능.
+        if not _hit_report_writable(request, report):
+            return JsonResponse(
+                {"detail": "다른 강사의 보고서는 수정할 수 없습니다."},
+                status=403,
+            )
 
         import json
         try:
@@ -1549,6 +1727,11 @@ class HitReportDetailView(View):
         report = self._get(request, report_id)
         if not report:
             return JsonResponse({"detail": "Not found"}, status=404)
+        if not _hit_report_writable(request, report):
+            return JsonResponse(
+                {"detail": "다른 강사의 보고서는 삭제할 수 없습니다."},
+                status=403,
+            )
         report.delete()
         return JsonResponse({"ok": True})
 
@@ -1575,6 +1758,12 @@ class HitReportEntriesUpsertView(View):
             )
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
+        # 저작권 격리: 작성자 본인 또는 admin/owner만 entries 수정.
+        if not _hit_report_writable(request, report):
+            return JsonResponse(
+                {"detail": "다른 강사의 보고서는 수정할 수 없습니다."},
+                status=403,
+            )
 
         import json
         try:
@@ -1594,7 +1783,9 @@ class HitReportEntriesUpsertView(View):
             .values_list("id", flat=True)
         )
 
-        # selected_problem_ids는 같은 tenant 안의 problem이어야 함
+        # selected_problem_ids는 보고서 작성자 본인 자료 + 공용 풀(legacy author=NULL)만 허용.
+        # 다른 강사 자료를 자기 보고서에 박는 동선 차단 = 저작권 분리.
+        # admin/owner는 검증 차원에서 전체 풀 가능 (request.user 본인이 author 본인 케이스 포함).
         all_selected = set()
         for e in entries:
             for pid in (e.get("selected_problem_ids") or []):
@@ -1602,11 +1793,17 @@ class HitReportEntriesUpsertView(View):
                     all_selected.add(int(pid))
                 except (TypeError, ValueError):
                     pass
-        valid_selected = set(
-            MatchupProblem.objects
-            .filter(tenant=request.tenant, id__in=all_selected)
-            .values_list("id", flat=True)
+        from django.db.models import Q
+        selected_qs = MatchupProblem.objects.filter(
+            tenant=request.tenant, id__in=all_selected,
         )
+        if report.author_id and not _is_tenant_admin(request):
+            selected_qs = selected_qs.filter(
+                Q(document__author_id=report.author_id)
+                | Q(document__author__isnull=True)
+                | Q(document__isnull=True)  # exam-source problem은 author 무관
+            )
+        valid_selected = set(selected_qs.values_list("id", flat=True))
 
         upserted = 0
         deleted = 0
@@ -1657,7 +1854,7 @@ class HitReportSubmitView(View):
     """POST /api/v1/matchup/hit-reports/<id>/submit/
 
     상태를 submitted로 전환 + 제출자/제출시각 기록.
-    실장이 작성을 마치고 선생/학원장에게 제출했다는 표식.
+    강사가 작성을 마치고 소속 학원에 제출했다는 표식 (KPI 보고).
     """
 
     def post(self, request, report_id):
@@ -1667,12 +1864,20 @@ class HitReportSubmitView(View):
             report = MatchupHitReport.objects.get(id=report_id, tenant=request.tenant)
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
+        if not _hit_report_writable(request, report):
+            return JsonResponse(
+                {"detail": "다른 강사의 보고서는 제출할 수 없습니다."},
+                status=403,
+            )
 
         from django.utils import timezone
         report.status = "submitted"
         report.submitted_at = timezone.now()
         user = getattr(request, "user", None)
         if user is not None:
+            # author FK가 비어있던 legacy report 백필 — 제출 시점에 작성자 식별.
+            if not report.author_id:
+                report.author = user
             report.submitted_by_id = getattr(user, "id", None)
             full = (
                 getattr(user, "name", None)
@@ -1681,7 +1886,7 @@ class HitReportSubmitView(View):
             )
             report.submitted_by_name = (full or "")[:100]
         report.save(update_fields=[
-            "status", "submitted_at", "submitted_by_id", "submitted_by_name", "updated_at",
+            "status", "submitted_at", "submitted_by_id", "submitted_by_name", "author", "updated_at",
         ])
         return JsonResponse(MatchupHitReportSerializer(report).data)
 
@@ -1690,18 +1895,25 @@ class HitReportSubmitView(View):
 class HitReportPdfView(View):
     """GET /api/v1/matchup/hit-reports/<id>/curated.pdf
 
-    사람이 큐레이션한 보고서 PDF. 표지(요약) + 각 문항(좌:시험지 / 우:선택자료N + 코멘트).
+    강사 1인 적중 보고서 PDF — 수업 히스토리 + 학원 KPI + 신뢰자료/홍보물 3중 역할.
+    표지(작성 강사 + 적중률 요약) + 각 문항(좌:학생 시험지 / 우:강사 수업자료 + 지도 코멘트).
     """
 
     def get(self, request, report_id):
         if not _is_tenant_staff(request):
             return JsonResponse({"detail": "Staff only"}, status=403)
         try:
-            report = MatchupHitReport.objects.select_related("document").get(
+            report = MatchupHitReport.objects.select_related("document", "author").get(
                 id=report_id, tenant=request.tenant,
             )
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
+        # 보고서는 강사 1인의 산출물 — 본인 또는 학원 admin/owner만 PDF 다운로드 가능.
+        if not _hit_report_writable(request, report):
+            return JsonResponse(
+                {"detail": "다른 강사의 보고서는 다운로드할 수 없습니다."},
+                status=403,
+            )
 
         try:
             from .pdf_report import generate_curated_hit_report_pdf

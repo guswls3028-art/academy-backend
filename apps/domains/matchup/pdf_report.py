@@ -1,10 +1,13 @@
 # PATH: apps/domains/matchup/pdf_report.py
 """
-매치업 큐레이션 적중 보고서 PDF 생성.
+매치업 적중 보고서 PDF — 강사 1인의 3중 역할 산출물.
 
-비즈니스 컨텍스트:
-  실장이 매치업 자동 후보 중 적합한 학원 자료를 직접 골라 코멘트와 함께
-  학원장/선생에게 제출하는 보고서. 학원 운영의 핵심 산출물.
+비즈니스 컨텍스트 (정정 2026-05-03):
+  프리랜서 강사 1인이 작성/제출하는 보고서. 동일 PDF가 동시에 3 역할을 수행한다.
+    ① 수업 히스토리 (강사 본인 자기 검토용 누적 기록)
+    ② 제출 리포트 (소속 학원에 정기 제출하는 KPI/평가 input)
+    ③ 신뢰자료+홍보물 (신규 학원·학부모·카페에서 강사 개인 브랜딩)
+  좌 pane = 학생이 제출한 학교 시험지. 우 pane = 그 강사 본인이 수업에 쓴 자료.
 
 레이아웃 SSOT:
   매치업 홈 우측 추천 패널에서 후보 클릭 시 뜨는 ProblemDetailModal과
@@ -12,8 +15,8 @@
     - A4 landscape (297×210mm) → 두 이미지 풀폭 비교
     - 페이지 = 시험지 문항 1개 × 큐레이션 후보 1건 (후보 N개면 N 페이지)
     - 좌 pane (warning 톤): 실제 시험 문항
-    - 우 pane (적중 분류 색): 큐레이션 자료 + 유사도 라벨
-    - 하단 코멘트 band: 페이지마다 반복 (같은 문항이면 동일 코멘트 노출)
+    - 우 pane (적중 분류 색): 강사 수업 자료 + 유사도 라벨
+    - 하단 코멘트 band: 페이지마다 반복 (강사의 지도 노트)
 """
 from __future__ import annotations
 
@@ -459,14 +462,19 @@ def _draw_cover(c, *, page_w, page_h, margin, inner_w,
     from reportlab.lib.colors import HexColor, black, white
     from reportlab.lib.units import mm
 
-    # 헤더 띠 (32mm)
+    # 헤더 띠 (32mm) — 학원명 + "{강사명} 적중 보고서" 정체성 표시.
     c.setFillColor(HexColor(_HEADER_COLOR))
     c.rect(0, page_h - 32 * mm, page_w, 32 * mm, fill=1, stroke=0)
     c.setFillColor(white)
     c.setFont(fn_bold, 26)
     c.drawCentredString(page_w / 2, page_h - 18 * mm, tenant_name)
     c.setFont(fn_reg, 12)
-    c.drawCentredString(page_w / 2, page_h - 26 * mm, "큐레이션 적중 보고서")
+    sub_title = (
+        f"{author_label} 강사 적중 보고서"
+        if author_label and author_label != "작성자 미기재"
+        else "매치업 적중 보고서"
+    )
+    c.drawCentredString(page_w / 2, page_h - 26 * mm, sub_title)
 
     # ── 매치업 적중률 헤드라인 (학원 마케팅 1순위 정보) ──
     # 표지 맨 앞 큰 글씨로. 학생/학부모가 PDF 열자마자 보는 위치.
@@ -676,7 +684,23 @@ def generate_curated_hit_report_pdf(report) -> bytes:
         report.submitted_at.strftime("%Y년 %m월 %d일") if report.submitted_at
         else datetime.now().strftime("%Y년 %m월 %d일")
     )
-    author_label = (report.submitted_by_name or "").strip() or "작성자 미기재"
+    # 작성자(강사) 라벨 — author FK가 1순위. 없으면 legacy submitted_by_name 폴백.
+    author_label = ""
+    if report.author_id and report.author is not None:
+        try:
+            from apps.core.models.user import user_display_username
+            author_label = (
+                getattr(report.author, "name", None)
+                or user_display_username(report.author)
+                or getattr(report.author, "email", "")
+                or ""
+            ).strip()
+        except Exception:
+            author_label = ""
+    if not author_label:
+        author_label = (report.submitted_by_name or "").strip()
+    if not author_label:
+        author_label = "작성자 미기재"
 
     # ── 표지 ──
     _draw_cover(

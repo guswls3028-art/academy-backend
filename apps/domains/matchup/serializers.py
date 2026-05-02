@@ -63,11 +63,15 @@ class MatchupHitReportSerializer(serializers.ModelSerializer):
     document_id = serializers.IntegerField(read_only=True)
     document_title = serializers.SerializerMethodField()
     document_category = serializers.SerializerMethodField()
+    # 강사 정체성 — 보고서의 1순위 메타데이터.
+    author_id = serializers.IntegerField(read_only=True, allow_null=True)
+    author_name = serializers.SerializerMethodField()
 
     class Meta:
         model = MatchupHitReport
         fields = [
             "id", "document_id", "document_title", "document_category",
+            "author_id", "author_name",
             "title", "summary",
             "status", "submitted_at", "submitted_by_name",
             "entries",
@@ -75,6 +79,7 @@ class MatchupHitReportSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id", "document_id", "document_title", "document_category",
+            "author_id", "author_name",
             "status", "submitted_at", "submitted_by_name",
             "entries", "created_at", "updated_at",
         ]
@@ -84,6 +89,19 @@ class MatchupHitReportSerializer(serializers.ModelSerializer):
 
     def get_document_category(self, obj):
         return obj.document.category if obj.document_id else ""
+
+    def get_author_name(self, obj):
+        # 작성 강사명. 본명 → username(prefix 제거) → email 순. legacy는 submitted_by_name fallback.
+        if obj.author_id and obj.author is not None:
+            from apps.core.models.user import user_display_username
+            user = obj.author
+            return (
+                getattr(user, "name", None)
+                or user_display_username(user)
+                or getattr(user, "email", "")
+                or ""
+            )
+        return obj.submitted_by_name or ""
 
 
 class SimilarProblemSerializer(serializers.Serializer):

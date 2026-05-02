@@ -8,7 +8,12 @@ from apps.core.db import TenantQuerySet
 
 
 class MatchupDocument(TimestampModel):
-    """업로드된 문제 문서 (PDF/이미지)."""
+    """업로드된 문제 문서 (PDF/이미지).
+
+    author = 자료를 업로드한 강사. 매치업 보고서 = 강사 1인 포트폴리오 철학에서
+    저작권 격리의 baseline. NULL=legacy/공용 풀 — find_similar에서 모든 강사가
+    후보로 사용 가능 (구버전 데이터 보호).
+    """
     objects = TenantQuerySet.as_manager()
 
     tenant = models.ForeignKey(
@@ -16,6 +21,15 @@ class MatchupDocument(TimestampModel):
         on_delete=models.CASCADE,
         related_name="matchup_documents",
         db_index=True,
+    )
+    author = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="matchup_documents_authored",
+        db_index=True,
+        help_text="자료 업로더(소유 강사). NULL=legacy 공용 풀.",
     )
     # 저장소(InventoryFile) 위의 분석 레이어 (storage-as-canonical).
     inventory_file = models.OneToOneField(
@@ -60,7 +74,10 @@ class MatchupDocument(TimestampModel):
 
 
 class MatchupProblem(TimestampModel):
-    """문서에서 추출된 개별 문제."""
+    """문서에서 추출된 개별 문제.
+
+    매치업 보고서 우 pane(강사 수업자료)의 단위. document.author로 강사 격리.
+    """
     objects = TenantQuerySet.as_manager()
 
     tenant = models.ForeignKey(
@@ -123,10 +140,15 @@ class MatchupProblem(TimestampModel):
 
 
 class MatchupHitReport(TimestampModel):
-    """시험지 1 doc 단위로 사람이 큐레이션한 적중 보고서.
+    """프리랜서 강사 1인이 작성하는 매치업 적중 보고서.
 
-    실장이 매치업이 자동으로 찾아준 후보 중 적합한 것을 골라 코멘트·해설을 붙여
-    선생/학원장에게 제출하는 보고서. 학원 운영의 핵심 비즈니스 산출물.
+    역할: 동일 보고서가 (1) 강사의 수업 히스토리, (2) 소속 학원에 정기 제출하는 KPI,
+    (3) 신규 학원/학부모/카페 대상 신뢰자료+홍보물 의 3가지로 동시에 사용된다.
+
+    구조: 카테고리당 시험지 1장 + 강사 1명 = 보고서 1건. 같은 시험지에 여러 강사가
+    각자 보고서를 만들 수 있고, 각 보고서는 자기 author의 자료만 큐레이션 후보로 본다.
+
+    좌 pane = 학생이 제출한 학교 시험지. 우 pane = 그 강사 본인이 수업에 쓴 자료.
     """
     objects = TenantQuerySet.as_manager()
 
@@ -136,10 +158,21 @@ class MatchupHitReport(TimestampModel):
         related_name="matchup_hit_reports",
         db_index=True,
     )
-    document = models.OneToOneField(
+    # 시험지 doc — 카테고리당 1장 가정. 강사별 별개 보고서 가능 → ForeignKey + UniqueConstraint(document, author).
+    document = models.ForeignKey(
         MatchupDocument,
         on_delete=models.CASCADE,
-        related_name="hit_report",
+        related_name="hit_reports",
+    )
+    # 보고서 작성 강사 (소유자). NULL=legacy.
+    author = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="matchup_hit_reports_authored",
+        db_index=True,
+        help_text="보고서 작성 강사. submitted_by_id는 deprecated (호환 보존).",
     )
     title = models.CharField(max_length=255, blank=True, default="")
     summary = models.TextField(blank=True, default="")  # 보고서 상단 메모/설명
@@ -152,22 +185,31 @@ class MatchupHitReport(TimestampModel):
         max_length=20, choices=STATUS_CHOICES, default="draft", db_index=True,
     )
     submitted_at = models.DateTimeField(null=True, blank=True)
+    # deprecated: author FK로 대체. 호환을 위해 보존하되 신규 코드는 author 사용.
     submitted_by_id = models.IntegerField(null=True, blank=True)
     submitted_by_name = models.CharField(max_length=100, blank=True, default="")
 
     class Meta:
         app_label = "matchup"
         ordering = ["-updated_at"]
+        constraints = [
+            # 같은 강사가 같은 시험지에 보고서 2건 작성 차단.
+            # author=NULL은 PostgreSQL NULL semantics로 자동 면제 — legacy 보고서 보호.
+            models.UniqueConstraint(
+                fields=["document", "author"],
+                name="unique_hit_report_doc_author",
+            ),
+        ]
 
     def __str__(self):
-        return f"HitReport doc#{self.document_id} ({self.status})"
+        return f"HitReport doc#{self.document_id} author#{self.author_id} ({self.status})"
 
 
 class MatchupHitReportEntry(TimestampModel):
-    """문항 단위 큐레이션 엔트리. exam doc의 problem 1개당 1개.
+    """문항 단위 큐레이션 엔트리. 시험지 problem 1개당 1개.
 
-    selected_problem_ids: 사용자가 선택한 학원 자료 problem id 목록 (multi).
-    comment: 사용자가 직접 작성한 코멘트/해설 (학원이 어떻게 가르쳤는지 등).
+    selected_problem_ids: 강사가 선택한 본인 수업자료 problem id 목록 (multi).
+    comment: 강사 본인이 작성한 지도 코멘트/해설 (수업 노트).
     """
     objects = TenantQuerySet.as_manager()
 
