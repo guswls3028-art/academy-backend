@@ -29,6 +29,7 @@ from django.db import transaction
 # 명백한 E2E 지문 — 자연어와 겹치지 않는 식별자 패턴만 허용
 RESIDUE_PATTERNS = [
     re.compile(r"\[E2E-\d{6,}"),
+    re.compile(r"\[E2E\] "),                 # 2026-05-02: 운영 잔재 [E2E] 공지... 형식
     re.compile(r"\[AUDIT-\w*-?\d{6,}"),
     re.compile(r"\[CHAOS-\d{3,}"),
     re.compile(r"^E2E-\d{6,}"),
@@ -37,6 +38,10 @@ RESIDUE_PATTERNS = [
     # 괄호 없는 타임스탬프 접두 패턴 — 자연어에 나타날 수 없음
     re.compile(r"^E2E학생\d{6,}"),
     re.compile(r"^E2E\d{6,}"),
+    re.compile(r"^E2E메시지\d+"),             # 2026-05-02: 송장에 노출된 E2E 발신 학생명
+    re.compile(r"^E2E ?Test ?Exam \d{6,}"),  # 2026-05-02: 운영 시험 도배 패턴
+    re.compile(r"^E2E시험"),
+    re.compile(r"^두번째 시험임$"),           # 2026-05-02: 명시적 테스트 명칭
     re.compile(r"^CHAOS-\d{6,}"),
 ]
 
@@ -85,6 +90,8 @@ class Command(BaseCommand):
         from apps.domains.community.models.post import PostEntity
         from apps.domains.matchup.models import MatchupDocument
         from apps.domains.messaging.models import MessageTemplate
+        from apps.domains.exams.models.exam import Exam
+        from apps.domains.homework_results.models.homework import Homework
         from apps.core.models import Tenant
 
         try:
@@ -118,12 +125,26 @@ class Command(BaseCommand):
             if matches_residue(t.name or "")
         ]
 
-        total = len(students) + len(posts) + len(matchups) + len(templates)
+        # 5. 시험 — title (template/regular 모두). 2026-05-02 운영 [E2E Test Exam ...] 도배 sweep.
+        exams = [
+            e for e in Exam.objects.filter(tenant_id=tenant_id)
+            if matches_residue(e.title or "")
+        ]
+
+        # 6. 과제 — title. 동일 패턴.
+        homeworks = [
+            h for h in Homework.objects.filter(tenant_id=tenant_id)
+            if matches_residue(h.title or "")
+        ]
+
+        total = len(students) + len(posts) + len(matchups) + len(templates) + len(exams) + len(homeworks)
 
         self._print_group("학생 (Student)", students, limit, lambda s: f"id={s.id} ps={s.ps_number} name={s.name!r}")
         self._print_group("게시글 (PostEntity)", posts, limit, lambda p: f"id={p.id} title={p.title!r}")
         self._print_group("매치업 문서 (MatchupDocument)", matchups, limit, lambda m: f"id={m.id} title={m.title!r}")
         self._print_group("메시지 템플릿 (MessageTemplate)", templates, limit, lambda t: f"id={t.id} name={t.name!r}")
+        self._print_group("시험 (Exam)", exams, limit, lambda e: f"id={e.id} type={e.exam_type} title={e.title!r}")
+        self._print_group("과제 (Homework)", homeworks, limit, lambda h: f"id={h.id} title={h.title!r}")
 
         self.stdout.write(self.style.HTTP_INFO(f"\n=== 합계: {total}건 ==="))
 
@@ -144,13 +165,17 @@ class Command(BaseCommand):
             p_del = sum(p.delete()[0] for p in posts)
             m_del = sum(m.delete()[0] for m in matchups)
             t_del = sum(t.delete()[0] for t in templates)
+            e_del = sum(e.delete()[0] for e in exams)
+            h_del = sum(h.delete()[0] for h in homeworks)
 
         self.stdout.write(self.style.SUCCESS(
             f"\n삭제 완료:\n"
             f"  - 학생 cascade rows: {s_del}\n"
             f"  - 게시글 cascade rows: {p_del}\n"
             f"  - 매치업 cascade rows: {m_del}\n"
-            f"  - 템플릿 cascade rows: {t_del}"
+            f"  - 템플릿 cascade rows: {t_del}\n"
+            f"  - 시험 cascade rows: {e_del}\n"
+            f"  - 과제 cascade rows: {h_del}"
         ))
 
     def _print_group(self, label: str, items, limit: int, fmt):
