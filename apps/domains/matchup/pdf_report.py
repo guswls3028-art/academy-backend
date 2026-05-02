@@ -257,7 +257,7 @@ def _draw_single_pane(c, *, x, y, w, h, label, sub, image_url,
     if image_cache is not None and image_url in image_cache:
         pil = image_cache[image_url]
     else:
-        pil = _download_image_to_pil(image_url, max_dim=1800)
+        pil = _download_image_to_pil(image_url, max_dim=1200)
     if pil is None:
         c.setFont(fn_reg, 10)
         c.setFillColor(HexColor("#94A3B8"))
@@ -273,8 +273,13 @@ def _draw_single_pane(c, *, x, y, w, h, label, sub, image_url,
     draw_h = ih * scale
     draw_x = x + (w - draw_w) / 2
     draw_y = img_y + (img_h - draw_h) / 2
+    # JPEG 75 압축으로 reportlab 임베딩 — 100MB+ PDF 회피.
+    # PIL 직접 전달 시 raw 픽셀로 임베딩되어 페이지당 수 MB.
+    jpg_buf = io.BytesIO()
+    pil.save(jpg_buf, format="JPEG", quality=75, optimize=True)
+    jpg_buf.seek(0)
     c.drawImage(
-        ImageReader(pil),
+        ImageReader(jpg_buf),
         draw_x, draw_y, draw_w, draw_h,
         preserveAspectRatio=True, mask="auto",
     )
@@ -529,7 +534,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
     ep_url_by_id = {ep.id: _safe_url(ep.image_key) for ep in exam_problems}
     sel_url_by_pid = {p.id: _safe_url(p.image_key) for p in selected_meta.values()}
     all_urls = [u for u in list(ep_url_by_id.values()) + list(sel_url_by_pid.values()) if u]
-    image_cache = _prefetch_images(all_urls, max_dim=1800)
+    image_cache = _prefetch_images(all_urls, max_dim=1200)
 
     # 표지 통계
     curated_count = sum(
