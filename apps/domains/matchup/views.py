@@ -24,6 +24,8 @@ from .services import (
     find_similar_problems,
     delete_document_with_r2,
     retry_document,
+    reanalyze_document,
+    exclude_page_from_matchup,
     promote_inventory_to_matchup,
     ensure_matchup_upload_folder,
     manually_crop_problem,
@@ -1092,6 +1094,67 @@ class DocumentPagesView(View):
             "page_count": len(pages),
             "pages": pages,
         })
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentPageExcludeView(View):
+    """POST /api/v1/matchup/documents/<doc_id>/pages/<page_idx>/exclude/
+
+    Phase 5-deep 검수 UI: 학원장이 low_conf 페이지를 매치업 인덱싱에서 제외.
+    즉시 효과: 해당 페이지 problems 삭제. 영구 효과: 다음 reanalyze 시 워커가 skip.
+    """
+
+    def post(self, request, doc_id, page_idx):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        try:
+            result = exclude_page_from_matchup(doc, int(page_idx))
+        except ValueError as e:
+            return JsonResponse({"detail": str(e)}, status=400)
+        except Exception:
+            logger.exception("exclude_page_from_matchup failed (doc=%s page=%s)", doc.id, page_idx)
+            return JsonResponse({"detail": "페이지 제외 실패"}, status=500)
+
+        return JsonResponse({
+            "ok": True,
+            "doc_id": doc.id,
+            "page_index": int(page_idx),
+            **result,
+        })
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentReanalyzeView(View):
+    """POST /api/v1/matchup/documents/<doc_id>/reanalyze/
+
+    status 무관 재분석 — Phase 5-deep 검수 UI에서 호출.
+    DocumentRetryView는 failed only. 학원장 검수 후(excluded_pages 적용 /
+    source_type 변경 후) done 상태에서 재처리 트리거 진입점이 필요.
+    """
+
+    def post(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        try:
+            job_id = reanalyze_document(doc)
+        except RuntimeError as e:
+            return JsonResponse({"detail": str(e)}, status=409)
+        except Exception:
+            logger.exception("reanalyze_document failed (doc=%s)", doc.id)
+            return JsonResponse({"detail": "재분석 실패"}, status=500)
+
+        doc.refresh_from_db()
+        return JsonResponse({**MatchupDocumentSerializer(doc).data, "job_id": job_id})
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")

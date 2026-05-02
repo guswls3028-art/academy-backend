@@ -289,6 +289,59 @@ def delete_document_with_r2(document: MatchupDocument) -> None:
     document.delete()  # CASCADE로 problems도 삭제 (InventoryFile은 그대로)
 
 
+def exclude_page_from_matchup(
+    document: MatchupDocument,
+    page_index: int,
+) -> dict:
+    """페이지를 매치업 인덱싱에서 제외 — Phase 5-deep 검수 UI.
+
+    동작:
+      1. doc.meta.excluded_pages 리스트에 page_index 추가 (set 중복 제거)
+      2. 해당 페이지의 problems 즉시 삭제 (R2 이미지 포함)
+      3. 다음 reanalyze 시 워커가 해당 페이지 skip (matchup_pipeline)
+
+    Returns: {removed_problems: int, excluded_pages: List[int]}
+    """
+    if page_index < 0 or page_index > 999:
+        raise ValueError("page_index가 범위를 벗어났습니다.")
+
+    meta = dict(document.meta or {})
+    excluded = list(meta.get("excluded_pages") or [])
+    if page_index not in excluded:
+        excluded.append(int(page_index))
+        excluded.sort()
+    meta["excluded_pages"] = excluded
+    document.meta = meta
+
+    # 해당 페이지 problems 즉시 제거 — meta.page_index로 매칭.
+    # JSONField filter는 backend별 다르지만 Postgres jsonb 정확 매칭 가능.
+    target_problems = [
+        p for p in document.problems.all()
+        if (p.meta or {}).get("page_index") == int(page_index)
+    ]
+    removed = 0
+    for p in target_problems:
+        delete_problem_with_r2(p)
+        removed += 1
+
+    document.save(update_fields=["meta", "updated_at"])
+    return {"removed_problems": removed, "excluded_pages": excluded}
+
+
+def reanalyze_document(document: MatchupDocument) -> str:
+    """status 무관하게 매치업 문서 재분석 — Phase 5-deep 검수 UI.
+
+    DocumentRetryView의 retry_document는 status='failed'만 허용. done 상태에서
+    학원장이 검수 후 "재분석" 누르는 경우(excluded_pages 적용/source_type 변경
+    후 재처리 등) 별도 진입점이 필요. 워커 dispatch는 retry_document와 동일.
+
+    processing 상태에서 중복 dispatch는 금지 — 큐 적체로 메모리 사고 위험.
+    """
+    if document.status == "processing":
+        raise RuntimeError("이미 처리 중인 문서입니다. 완료 후 다시 시도하세요.")
+    return retry_document(document)
+
+
 def retry_document(document: MatchupDocument) -> str:
     """실패한 문서를 재처리. 새 AI job을 디스패치하고 job_id 반환."""
     from apps.domains.ai.gateway import dispatch_job
@@ -311,6 +364,10 @@ def retry_document(document: MatchupDocument) -> str:
         meta.get("source_type") or meta.get("upload_intent") or meta.get("document_role")
     )
 
+    # excluded_pages — Phase 5-deep 검수 UI에서 학원장이 제외한 페이지 idx.
+    # 워커가 segmentation 결과에서 해당 페이지 skip → 다시 problem 생성 X.
+    excluded_pages = list((meta.get("excluded_pages") or []))
+
     result = dispatch_job(
         job_type="matchup_analysis",
         payload={
@@ -320,6 +377,7 @@ def retry_document(document: MatchupDocument) -> str:
             "filename": document.original_name,
             "upload_intent": source_type,   # legacy alias
             "source_type": source_type,     # 7-value SSOT
+            "excluded_pages": excluded_pages,
         },
         tenant_id=str(document.tenant_id),
         source_domain="matchup",

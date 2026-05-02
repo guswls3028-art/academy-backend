@@ -159,6 +159,37 @@ def run_matchup_pipeline(
     pages = seg_result.get("pages", [])
     total_boxes = seg_result.get("total_boxes", 0)
 
+    # ── Excluded pages (Phase 5-deep 검수 UI) ──
+    # 학원장이 검수 모달에서 "이 페이지 제외" 누른 페이지 idx 리스트.
+    # payload 우선, 없으면 doc.meta.excluded_pages를 직접 조회 (race-safe).
+    excluded_pages_raw = payload.get("excluded_pages")
+    excluded: set[int] = set()
+    if isinstance(excluded_pages_raw, (list, tuple)):
+        for v in excluded_pages_raw:
+            try:
+                excluded.add(int(v))
+            except (TypeError, ValueError):
+                pass
+    if not excluded and document_id:
+        try:
+            from apps.domains.matchup.models import MatchupDocument
+            doc_row = MatchupDocument.objects.only("meta").get(id=int(document_id))
+            for v in (doc_row.meta or {}).get("excluded_pages") or []:
+                try:
+                    excluded.add(int(v))
+                except (TypeError, ValueError):
+                    pass
+        except Exception as e:
+            logger.warning("MATCHUP_EXCLUDED_PAGES_LOOKUP_FAIL | doc=%s | err=%s", document_id, e)
+    if excluded:
+        before = len(pages)
+        pages = [p for p in pages if int(p.get("page_index", -1)) not in excluded]
+        total_boxes = sum(len(p.get("boxes") or []) for p in pages)
+        logger.info(
+            "MATCHUP_EXCLUDED_PAGES_APPLIED | job=%s | doc=%s | excluded=%s | pages %d→%d",
+            job_id, document_id, sorted(excluded), before, len(pages),
+        )
+
     record_progress(
         job_id, "segmentation", 30,
         step_index=1, step_total=5,
