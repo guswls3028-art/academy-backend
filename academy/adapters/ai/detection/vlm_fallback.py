@@ -2,23 +2,25 @@
 """VLM fallback adapter — low_conf 페이지 대상 1차/2차 분류기.
 
 학원장 directive (2026-05-02): VLM은 메인 엔진 X, fallback only.
-Phase 4 단계: 인터페이스만 설계. 실제 API 호출은 mock으로 대체.
 
-Tier 구조 (가성비 우선):
-  Tier 1 (free):       OpenCV + OCR + YOLO (이미 운영)
-  Tier 2 (text-LLM):   GPT-5 nano text — page_role/anchor_role 결정 (OCR 결과 입력)
-  Tier 3 (vision):     GPT-5 nano vision — bbox 추출 / 손글씨/그림 dominant 페이지
-  Tier 4 (재시도):     GPT-5 mini retry
-  Tier 5 (금지):       Sonnet/Opus/GPT-5.5/Haiku 등 비싼 모델 사용 X
+Tier 구조 (가성비 우선, 2026-05-03 GPT→Gemini 전환):
+  Tier 1 (free):     OpenCV + OCR + YOLO (이미 운영)
+  Tier 2 (text):     Gemini 2.5 Flash-Lite text — page_role 분류 (OCR 결과 입력)
+  Tier 3 (vision):   Gemini 2.5 Flash vision — bbox 추출 / 손글씨/그림 dominant 페이지
+  Tier 4 (재시도):   Gemini 2.5 Flash retry (text-only)
+  Tier 5 (금지):     Pro 등 비싼 모델 사용 X
 
 호출 시점: low_conf_pages (paper_type_summary.low_conf_pages) 가 비지 않을 때만.
-호출 비용 cap: doc당 max $5 (대략 GPT-5 nano vision ~500 페이지).
+호출 횟수 cap: doc당 max 50 호출 (in-memory counter).
 
 Public API:
   classify_page_role_text(ocr_blocks, page_meta) -> PageRoleResult  # Tier 2
   detect_problems_vision(image_path, page_meta) -> ProblemBboxResult  # Tier 3
 
-본 모듈은 mock 구현부터 시작. 실제 OpenAI 호출은 별도 PR로 wire-up.
+env 설정:
+  MATCHUP_VLM_TEXT_ADAPTER=gemini_flash_lite  # 또는 mock (default)
+  MATCHUP_VLM_VISION_ADAPTER=gemini_flash     # 또는 mock (default)
+  GEMINI_API_KEY=...                          # SSM /academy/workers/env에 통합
 """
 from __future__ import annotations
 
@@ -189,17 +191,290 @@ _TEXT_ADAPTER: Optional[VLMTextAdapter] = None
 _VISION_ADAPTER: Optional[VLMVisionAdapter] = None
 
 
+# ── Gemini REST 호출 헬퍼 + cost guard ──────────────────────────
+
+
+# Gemini API 가격 (2026-05 시점, 페이지당 추정):
+#   gemini-2.5-flash-lite (text+vision):  input $0.10/Mtok / output $0.40/Mtok
+#   gemini-2.5-flash      (text+vision):  input $0.30/Mtok / output $1.20/Mtok
+# 호출 1건당 평균 cost (text 1k+200, vision 1500+300):
+#   flash-lite text: ~$0.0002 / vision: ~$0.0005
+#   flash      text: ~$0.0006 / vision: ~$0.0015
+# doc 1건당 호출 수 cap = 50 (cost worst-case ~$0.075). 학원장 directive($5/doc)
+# 보다 매우 보수적이지만, 사고 시 비용 폭주를 in-memory counter로 차단.
+_VLM_DOC_CALL_LIMIT = int(os.getenv("MATCHUP_VLM_PER_DOC_LIMIT", "50"))
+_GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
+_GEMINI_TIMEOUT = 30  # seconds — low_conf 페이지 ondemand 호출용
+
+_doc_call_counter: Dict[str, int] = {}
+
+
+def _check_doc_quota(document_id: str | int | None) -> None:
+    """doc별 VLM 호출 횟수 cap. 초과 시 RuntimeError."""
+    if not document_id:
+        return  # ondemand classify endpoint(예: 검수 UI)는 doc id 항상 전달.
+    key = str(document_id)
+    cur = _doc_call_counter.get(key, 0)
+    if cur >= _VLM_DOC_CALL_LIMIT:
+        raise RuntimeError(
+            f"VLM 호출 한도 초과 (doc={key}, limit={_VLM_DOC_CALL_LIMIT}). "
+            f"ASG 재기동 또는 MATCHUP_VLM_PER_DOC_LIMIT env로 조정."
+        )
+    _doc_call_counter[key] = cur + 1
+
+
+def _gemini_request(
+    *,
+    model: str,
+    parts: List[Dict[str, Any]],
+    response_schema_hint: str = "",
+    document_id: str | int | None = None,
+) -> Dict[str, Any]:
+    """Gemini generateContent REST 호출. JSON 응답 강제."""
+    import json as _json
+    import requests
+
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY not set (SSM /academy/workers/env 확인)")
+
+    _check_doc_quota(document_id)
+
+    payload: Dict[str, Any] = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "temperature": 0.0,
+            "responseMimeType": "application/json",
+            "maxOutputTokens": 2048,
+        },
+    }
+    if response_schema_hint:
+        # 사용자에게 어떤 schema인지 알리는 prompt가 첫 part에 포함되어야 함.
+        # responseSchema(structured output)는 v1beta에서 일부 모델만 지원 → text prompt로 대체.
+        pass
+
+    url = f"{_GEMINI_API_BASE}/models/{model}:generateContent?key={api_key}"
+    try:
+        resp = requests.post(
+            url, json=payload, timeout=_GEMINI_TIMEOUT,
+            headers={"Content-Type": "application/json"},
+        )
+    except Exception as e:
+        raise RuntimeError(f"Gemini API 호출 실패: {e}") from e
+
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"Gemini API {resp.status_code}: {resp.text[:300]}"
+        )
+
+    data = resp.json()
+    candidates = data.get("candidates") or []
+    if not candidates:
+        raise RuntimeError(f"Gemini 응답에 candidates 없음: {data}")
+    parts_out = (candidates[0].get("content") or {}).get("parts") or []
+    text = "".join(p.get("text", "") for p in parts_out).strip()
+    if not text:
+        raise RuntimeError("Gemini 응답 텍스트 비어있음")
+    try:
+        return _json.loads(text)
+    except _json.JSONDecodeError as e:
+        # 모델이 JSON 외 wrapping 추가한 경우 — 가장 바깥 { } 추출.
+        import re as _re
+        m = _re.search(r"\{[\s\S]*\}", text)
+        if m:
+            try:
+                return _json.loads(m.group(0))
+            except _json.JSONDecodeError:
+                pass
+        raise RuntimeError(f"Gemini 응답 JSON 파싱 실패: {text[:200]}") from e
+
+
+def reset_doc_quota(document_id: str | int | None = None) -> None:
+    """테스트/관리 도구용 — doc 단위 또는 전체 카운터 리셋."""
+    if document_id is None:
+        _doc_call_counter.clear()
+    else:
+        _doc_call_counter.pop(str(document_id), None)
+
+
+# ── Gemini 어댑터 ───────────────────────────────────────────────
+
+
+_PAGE_ROLE_PROMPT = """당신은 한국어 시험지/학습자료 페이지를 분석하는 분류기입니다.
+페이지의 OCR 텍스트가 아래 주어집니다. 이 페이지가 어떤 역할인지 판단하세요.
+
+가능한 page_role:
+  - cover: 표지 (시험지명/학교명/학년/시리즈 표지)
+  - index: 목차 (CONTENTS, 목차, Chapter/Part 리스트)
+  - problem: 문항 페이지 (실제 문제 + 보기)
+  - explanation: 해설/풀이 페이지
+  - answer_key: 정답표 페이지
+  - mixed: 문항 + 해설 혼재
+
+JSON으로 다음 schema로만 응답하세요:
+{
+  "page_role": "...",
+  "should_skip": <true if cover/index/explanation/answer_key>,
+  "confidence": <0.0~1.0>,
+  "reason": "<한 문장>"
+}
+
+OCR 텍스트:
+"""
+
+
+_PROBLEM_BBOX_PROMPT = """당신은 한국어 시험지 페이지의 문항 영역을 검출하는 시스템입니다.
+첨부된 페이지 이미지에서 각 문항의 위치(bbox)와 번호를 찾아 JSON으로만 응답하세요.
+
+규칙:
+- bbox는 [x, y, w, h] 픽셀 좌표 (페이지 좌상단 0,0 기준)
+- 표지/목차/해설/정답지 페이지면 problems = [], should_skip = true
+- 손글씨 답안이 있어도 본문 영역만 검출
+
+JSON schema:
+{
+  "page_role": "problem|cover|index|explanation|answer_key|mixed",
+  "should_skip": <bool>,
+  "problems": [{"number": <int>, "bbox": [x, y, w, h], "confidence": <0.0~1.0>}],
+  "confidence": <0.0~1.0>
+}
+"""
+
+
+def _normalize_role(raw: str) -> PageRole:
+    """문자열 → PageRole enum (모르는 값은 PROBLEM 보수적 기본)."""
+    try:
+        return PageRole(raw)
+    except (ValueError, KeyError):
+        logger.warning("Unknown page_role %r from VLM, defaulting to PROBLEM", raw)
+        return PageRole.PROBLEM
+
+
+class GeminiVLMTextAdapter:
+    """Tier 2 — Gemini text 호출로 page_role 분류."""
+
+    def __init__(self, model: str = "gemini-2.5-flash-lite"):
+        self.model = model
+
+    def classify(
+        self,
+        *,
+        ocr_text: str,
+        ocr_blocks: List[Dict[str, Any]] | None = None,
+        page_meta: Dict[str, Any] | None = None,
+    ) -> PageRoleResult:
+        meta = page_meta or {}
+        document_id = meta.get("document_id")
+        prompt = _PAGE_ROLE_PROMPT + (ocr_text or "")[:6000]
+        try:
+            data = _gemini_request(
+                model=self.model,
+                parts=[{"text": prompt}],
+                document_id=document_id,
+            )
+        except Exception as e:
+            logger.warning("Gemini text classify 실패: %s", e)
+            # fallback: keyword heuristic mock
+            return MockVLMTextAdapter().classify(
+                ocr_text=ocr_text, ocr_blocks=ocr_blocks, page_meta=page_meta,
+            )
+        return PageRoleResult(
+            page_role=_normalize_role(str(data.get("page_role", "problem"))),
+            should_skip=bool(data.get("should_skip", False)),
+            confidence=float(data.get("confidence", 0.6)),
+            debug={
+                "adapter": "gemini",
+                "model": self.model,
+                "reason": str(data.get("reason", ""))[:200],
+            },
+        )
+
+
+class GeminiVLMVisionAdapter:
+    """Tier 3 — Gemini vision 호출로 페이지 이미지에서 문항 bbox 검출."""
+
+    def __init__(self, model: str = "gemini-2.5-flash"):
+        self.model = model
+
+    def detect_problems(
+        self,
+        *,
+        image_path: str,
+        page_meta: Dict[str, Any] | None = None,
+    ) -> ProblemBboxResult:
+        import base64
+        import mimetypes
+
+        meta = page_meta or {}
+        document_id = meta.get("document_id")
+        try:
+            with open(image_path, "rb") as f:
+                img_bytes = f.read()
+        except Exception as e:
+            raise RuntimeError(f"VLM vision 이미지 읽기 실패: {e}") from e
+
+        mime, _ = mimetypes.guess_type(image_path)
+        mime = mime or "image/png"
+        b64 = base64.b64encode(img_bytes).decode("ascii")
+
+        try:
+            data = _gemini_request(
+                model=self.model,
+                parts=[
+                    {"text": _PROBLEM_BBOX_PROMPT},
+                    {"inline_data": {"mime_type": mime, "data": b64}},
+                ],
+                document_id=document_id,
+            )
+        except Exception as e:
+            logger.warning("Gemini vision detect 실패: %s", e)
+            # fallback: 기존 mock(boxes 그대로)
+            return MockVLMVisionAdapter().detect_problems(
+                image_path=image_path, page_meta=page_meta,
+            )
+
+        problems_raw = data.get("problems") or []
+        problems: List[ProblemBbox] = []
+        for i, p in enumerate(problems_raw, start=1):
+            try:
+                bbox = p.get("bbox") or []
+                x, y, w, h = (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
+                problems.append(ProblemBbox(
+                    number=int(p.get("number", i)),
+                    bbox=(x, y, w, h),
+                    confidence=float(p.get("confidence", 0.7)),
+                ))
+            except (TypeError, ValueError, IndexError):
+                continue
+
+        return ProblemBboxResult(
+            page_role=_normalize_role(str(data.get("page_role", "problem"))),
+            should_skip=bool(data.get("should_skip", False)),
+            problems=problems,
+            confidence=float(data.get("confidence", 0.7)),
+            debug={"adapter": "gemini", "model": self.model, "raw_count": len(problems_raw)},
+        )
+
+
+# ── Factory ─────────────────────────────────────────────────────
+
+
 def get_text_adapter() -> VLMTextAdapter:
     """env MATCHUP_VLM_TEXT_ADAPTER 기반 어댑터 반환.
 
     값:
-      "mock" (default) — MockVLMTextAdapter (현재 단계)
-      "openai_gpt5_nano" — 실제 OpenAI 호출 (Phase 4 후속 PR에서 구현)
+      "mock" (default)       — MockVLMTextAdapter
+      "gemini_flash_lite"    — GeminiVLMTextAdapter (gemini-2.5-flash-lite)
+      "gemini_flash"         — GeminiVLMTextAdapter (gemini-2.5-flash)
     """
     global _TEXT_ADAPTER
     if _TEXT_ADAPTER is None:
         choice = os.getenv("MATCHUP_VLM_TEXT_ADAPTER", "mock").lower()
-        if choice == "mock":
+        if choice == "gemini_flash_lite":
+            _TEXT_ADAPTER = GeminiVLMTextAdapter(model="gemini-2.5-flash-lite")
+        elif choice == "gemini_flash":
+            _TEXT_ADAPTER = GeminiVLMTextAdapter(model="gemini-2.5-flash")
+        elif choice == "mock":
             _TEXT_ADAPTER = MockVLMTextAdapter()
         else:
             logger.warning("Unknown text adapter %r, falling back to mock", choice)
@@ -208,11 +483,21 @@ def get_text_adapter() -> VLMTextAdapter:
 
 
 def get_vision_adapter() -> VLMVisionAdapter:
-    """env MATCHUP_VLM_VISION_ADAPTER 기반 어댑터 반환."""
+    """env MATCHUP_VLM_VISION_ADAPTER 기반 어댑터 반환.
+
+    값:
+      "mock" (default)       — MockVLMVisionAdapter
+      "gemini_flash_lite"    — GeminiVLMVisionAdapter (가벼움 / 정확도 ↓)
+      "gemini_flash"         — GeminiVLMVisionAdapter (default vision tier)
+    """
     global _VISION_ADAPTER
     if _VISION_ADAPTER is None:
         choice = os.getenv("MATCHUP_VLM_VISION_ADAPTER", "mock").lower()
-        if choice == "mock":
+        if choice == "gemini_flash":
+            _VISION_ADAPTER = GeminiVLMVisionAdapter(model="gemini-2.5-flash")
+        elif choice == "gemini_flash_lite":
+            _VISION_ADAPTER = GeminiVLMVisionAdapter(model="gemini-2.5-flash-lite")
+        elif choice == "mock":
             _VISION_ADAPTER = MockVLMVisionAdapter()
         else:
             logger.warning("Unknown vision adapter %r, falling back to mock", choice)

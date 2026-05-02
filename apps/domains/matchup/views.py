@@ -1129,6 +1129,101 @@ class DocumentPageExcludeView(View):
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentPageVlmClassifyView(View):
+    """POST /api/v1/matchup/documents/<doc_id>/pages/<page_idx>/vlm-classify/
+
+    Phase 5-deep VLM 정밀 분석: low_conf 페이지 ondemand로 Gemini 호출.
+    - 페이지 이미지를 R2에서 다운로드 → temp file → vision adapter 호출
+    - 결과: {page_role, should_skip, problems[{number, bbox, confidence}], confidence, debug}
+    - cost guard: doc당 호출 횟수 cap (vlm_fallback._VLM_DOC_CALL_LIMIT)
+    """
+
+    def post(self, request, doc_id, page_idx):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        try:
+            page_idx_i = int(page_idx)
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "Invalid page_idx"}, status=400)
+
+        from .services import ensure_document_page_images
+        try:
+            pages = ensure_document_page_images(doc)
+        except Exception:
+            logger.exception("ensure_document_page_images failed (doc=%s)", doc.id)
+            return JsonResponse({"detail": "페이지 이미지 준비 실패"}, status=500)
+
+        if page_idx_i < 0 or page_idx_i >= len(pages):
+            return JsonResponse({"detail": "page_idx 범위 초과"}, status=400)
+
+        page = pages[page_idx_i]
+        page_url = page.get("url")
+        if not page_url:
+            return JsonResponse({"detail": "페이지 URL 없음"}, status=500)
+
+        # presigned URL → temp file 다운로드
+        import os
+        import tempfile
+        import requests
+        try:
+            r = requests.get(page_url, timeout=30)
+            r.raise_for_status()
+        except Exception as e:
+            logger.warning("VLM page image download fail (doc=%s page=%s): %s", doc.id, page_idx_i, e)
+            return JsonResponse({"detail": "페이지 이미지 다운로드 실패"}, status=502)
+
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
+        try:
+            tmp.write(r.content)
+            tmp.flush()
+            tmp.close()
+
+            from academy.adapters.ai.detection.vlm_fallback import detect_problems_vision
+            try:
+                result = detect_problems_vision(
+                    image_path=tmp.name,
+                    page_meta={
+                        "document_id": doc.id,
+                        "page_index": page_idx_i,
+                        "page_width": page.get("width"),
+                        "page_height": page.get("height"),
+                    },
+                )
+            except RuntimeError as e:
+                # quota / API key missing 등
+                msg = str(e)
+                status_code = 429 if "한도 초과" in msg else 500
+                return JsonResponse({"detail": msg}, status=status_code)
+            except Exception:
+                logger.exception("VLM detect_problems_vision failed (doc=%s page=%s)", doc.id, page_idx_i)
+                return JsonResponse({"detail": "VLM 분석 실패"}, status=500)
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+
+        return JsonResponse({
+            "ok": True,
+            "doc_id": doc.id,
+            "page_index": page_idx_i,
+            "page_role": result.page_role.value,
+            "should_skip": result.should_skip,
+            "confidence": result.confidence,
+            "problems": [
+                {"number": p.number, "bbox": list(p.bbox), "confidence": p.confidence}
+                for p in result.problems
+            ],
+            "debug": result.debug,
+        })
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class DocumentReanalyzeView(View):
     """POST /api/v1/matchup/documents/<doc_id>/reanalyze/
 
