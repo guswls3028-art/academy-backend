@@ -705,14 +705,130 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
     return questions
 
 
-def _try_vlm_problem_bboxes(page: Dict, document_id) -> Optional[Any]:
-    """단일 페이지에 vision_VLM 호출. 실패/저신뢰 시 None 반환.
+def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any]:
+    """VLM 결과의 다층 검증 — 운영 시각 검수 결함 4종(D-1~D-4) 차단.
 
-    품질 게이트:
+    운영 사고 (2026-05-03 시각 검수): 시험지 6 doc 모두 VLM 결함 패턴.
+    - D-1: 4-quadrant 오분할 (Q1이 두 박스로 split, 보기/답안만 cell)
+    - D-2: mid-cut strip (cell 가로 띠 한 줄)
+    - D-3: 표지/헤더가 problem (PageRole=problem 응답)
+    - D-4: 시험지 헤더 prepend (페이지 위쪽 너무 멀리 시작)
+
+    각 게이트 실패 시 페이지 전체 reject → page-as-problem fallback 적용.
+    이미지 dim 못 가져오면 통과 (회귀 안전망).
+
+    Returns: result (통과) 또는 None (reject — page-as-problem fallback).
+    """
+    import cv2
+    from academy.adapters.ai.detection.vlm_fallback import PageRole
+
+    # D-3: page_role 게이트 — should_skip + cover/index/explanation/answer_key
+    if result.page_role in (
+        PageRole.COVER, PageRole.INDEX,
+        PageRole.EXPLANATION, PageRole.ANSWER_KEY,
+    ):
+        logger.info(
+            "VLM_GATE_REJECT_PAGE_ROLE | page=%s | role=%s",
+            page_idx, result.page_role.value,
+        )
+        return None
+
+    try:
+        img = cv2.imread(image_path)
+    except Exception:
+        return result
+    if img is None:
+        return result
+    h_img, w_img = img.shape[:2]
+    if h_img < 100 or w_img < 100:
+        return result
+
+    header_zone = h_img * 0.08      # D-4: 페이지 위쪽 8% 헤더 영역
+    min_h_ratio = 0.05               # D-2: strip cut 차단
+    min_w_ratio = 0.15               # 너무 좁은 cell 차단
+
+    for p in result.problems:
+        try:
+            x, y, w, h = p.bbox
+        except (TypeError, ValueError):
+            continue
+        if w <= 0 or h <= 0:
+            continue
+
+        # D-2: bbox aspect — strip 차단
+        if h < h_img * min_h_ratio:
+            logger.info(
+                "VLM_GATE_REJECT_STRIP | page=%s | num=%s | h_ratio=%.3f",
+                page_idx, p.number, h / h_img,
+            )
+            return None
+        if w < w_img * min_w_ratio:
+            logger.info(
+                "VLM_GATE_REJECT_THIN | page=%s | num=%s | w_ratio=%.3f",
+                page_idx, p.number, w / w_img,
+            )
+            return None
+
+        # D-4: bbox y_min — 헤더 침범 차단
+        if y < header_zone:
+            logger.info(
+                "VLM_GATE_REJECT_HEADER | page=%s | num=%s | y=%d zone=%.0f",
+                page_idx, p.number, y, header_zone,
+            )
+            return None
+
+    # D-1: bbox 인접 중첩 — 두 박스가 같은 영역 잡으면 4-quadrant 오분할
+    n = len(result.problems)
+    for i in range(n):
+        try:
+            x1, y1, w1, h1 = result.problems[i].bbox
+        except (TypeError, ValueError):
+            continue
+        for j in range(i + 1, n):
+            try:
+                x2, y2, w2, h2 = result.problems[j].bbox
+            except (TypeError, ValueError):
+                continue
+            ix = max(0, min(x1 + w1, x2 + w2) - max(x1, x2))
+            iy = max(0, min(y1 + h1, y2 + h2) - max(y1, y2))
+            inter = ix * iy
+            union = w1 * h1 + w2 * h2 - inter
+            iou = inter / max(1, union)
+            if iou > 0.3:
+                logger.info(
+                    "VLM_GATE_REJECT_OVERLAP | page=%s | nums=(%s,%s) | iou=%.2f",
+                    page_idx, result.problems[i].number, result.problems[j].number, iou,
+                )
+                return None
+
+    # D-1 보강: number 시퀀스 — 중복 또는 큰 jump
+    nums = sorted(int(p.number) for p in result.problems)
+    if len(set(nums)) < len(nums):
+        logger.info("VLM_GATE_REJECT_DUP_NUMS | page=%s | nums=%s", page_idx, nums)
+        return None
+    if len(nums) >= 2:
+        gaps = [nums[i + 1] - nums[i] for i in range(len(nums) - 1)]
+        if max(gaps) > 10 and (min(gaps) <= 0 or max(gaps) > min(gaps) * 5):
+            logger.info(
+                "VLM_GATE_REJECT_SEQ_JUMP | page=%s | nums=%s",
+                page_idx, nums,
+            )
+            return None
+
+    return result
+
+
+def _try_vlm_problem_bboxes(page: Dict, document_id) -> Optional[Any]:
+    """단일 페이지에 vision_VLM 호출. 실패/저신뢰/결함 시 None 반환.
+
+    1차 게이트:
       - debug.adapter == "gemini" (mock 폴백 X)
       - should_skip == False
       - confidence >= 0.80
-      - len(problems) >= 2 (페이지당 최소 2 문항 분리되어야 의미 있음)
+      - len(problems) >= 2
+
+    2차 게이트 (운영 사고 fix 2026-05-03 D-1~D-4):
+      _validate_vlm_bboxes에서 page_role/aspect/y_min/overlap/seq 검증.
     """
     try:
         from academy.adapters.ai.detection.vlm_fallback import detect_problems_vision
@@ -734,7 +850,7 @@ def _try_vlm_problem_bboxes(page: Dict, document_id) -> Optional[Any]:
         return None
     if result.confidence < 0.80 or len(result.problems) < 2:
         return None
-    return result
+    return _validate_vlm_bboxes(result, page["image_path"], page.get("page_index"))
 
 
 def _pages_via_vlm_or_fallback(
@@ -1013,6 +1129,74 @@ def _extract_texts(questions: List[Dict], job_id: str) -> None:
 
     # number↔content 매핑 검증 — 신뢰성 붕괴(C10 mismatch 56%) 1차 차단선.
     _verify_problem_numbers(questions)
+
+    # 자동 품질 점수 — 매치업 인덱싱 게이트 (P0-2, 2026-05-04).
+    _compute_quality_score(questions)
+
+
+def _compute_quality_score(questions: List[Dict]) -> None:
+    """problem당 quality_score 계산 + low_quality flag.
+
+    운영 사고 fix (2026-05-04): 시각 검수에서 발견된 결함 cell이 매치업 검색
+    인덱싱에 그대로 들어가 학원에 잘못된 결과 전달. 자동 품질 점수로 검색 후보
+    게이트를 걸어 결함 cell을 검색에서 제외 (find_similar_problems가 low_quality
+    exclude). 검수 UI는 low_quality cell을 우선순위로 표시.
+
+    점수 (0~1):
+    - bbox 적합 (0.30): bbox 있고 적당한 크기 (page-as-problem은 0.15)
+    - text anchor 일치 (0.30): meta_extra.number_mismatch 없음
+    - text 길이 충분 (0.20): len(text) >= 30자 (보기/답안만 cell 차단)
+    - 본문 패턴 (0.20): meta_extra.no_anchor_in_text 없음
+
+    Threshold: score < 0.7 → meta_extra.low_quality=True.
+    """
+    for q in questions:
+        score = 0.0
+        text = (q.get("text") or "").strip()
+        bbox = q.get("bbox")
+        meta_extra = q.get("meta_extra") or {}
+
+        # 1. bbox 적합
+        if bbox:
+            try:
+                _, _, w, h = bbox
+                if w > 100 and h > 100:
+                    score += 0.30
+                elif w > 50 and h > 50:
+                    score += 0.15  # 작은 박스는 부분 점수
+            except (TypeError, ValueError):
+                pass
+        else:
+            score += 0.15  # page-as-problem fallback (페이지 단위 매칭 가치)
+
+        # 2. text anchor 일치
+        if not meta_extra.get("number_mismatch"):
+            score += 0.30
+
+        # 3. text 길이 충분
+        if len(text) >= 30:
+            score += 0.20
+        elif len(text) >= 10:
+            score += 0.10
+
+        # 4. 본문 패턴 (보기/답안만 cell 아님)
+        if not meta_extra.get("no_anchor_in_text"):
+            score += 0.20
+
+        q.setdefault("meta_extra", {})["quality_score"] = round(score, 2)
+        if score < 0.7:
+            q["meta_extra"]["low_quality"] = True
+
+    # 통계 로깅
+    low_count = sum(
+        1 for q in questions
+        if (q.get("meta_extra") or {}).get("low_quality")
+    )
+    if low_count:
+        logger.warning(
+            "MATCHUP_QUALITY_SCORE | low_quality=%d/%d (인덱싱 게이트 적용)",
+            low_count, len(questions),
+        )
 
 
 _MERGE_INNER_ANCHOR = re.compile(

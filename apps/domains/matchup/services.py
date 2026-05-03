@@ -93,6 +93,10 @@ def find_similar_problems(
         MatchupProblem.objects
         .filter(tenant_id=tenant_id, embedding__isnull=False)
         .exclude(id=problem_id)
+        # low_quality 게이트 (P0-2, 2026-05-04): 자동 품질 점수 < 0.7 cell은
+        # 매치업 검색 후보에서 제외. 학원에 잘못된 매칭 결과 전달 차단.
+        # 학원장 검수 UI에서 직접 manual crop으로 보정 후 매치업에 노출 가능.
+        .exclude(meta__low_quality=True)
         .defer("created_at", "updated_at")
     )
 
