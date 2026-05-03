@@ -40,6 +40,19 @@ def _is_pdf(file_path: str) -> bool:
         return False
 
 
+def _bias_handwriting_score(source_type: Optional[str]) -> Optional[float]:
+    """source_type 신호 → handwriting_score bias 변환.
+
+    학생답안지 폰사진은 손글씨 + perspective + 회전이 본질이므로 픽셀 휴리스틱
+    실패해도 STUDENT_ANSWER_PHOTO 분류를 강제. 0.85는 classify_paper_type의
+    0.78 임계값을 안정 통과시키는 값. 다른 source_type은 픽셀/텍스트 휴리스틱
+    그대로 사용 (None).
+    """
+    if source_type == "student_exam_photo":
+        return 0.85
+    return None
+
+
 # 워커 작업당 생성된 pdf-seg-* tmp 디렉터리들을 추적 → dispatcher의 finally가 일괄 정리.
 # 작업이 동시 실행되더라도 각 작업이 독립 contextvar token을 보유하므로 안전.
 _PDF_SEG_TMP_DIRS: "contextvars.ContextVar[List[str] | None]" = contextvars.ContextVar(
@@ -109,7 +122,7 @@ def cleanup_pdf_seg_tmp_dirs(tmp_dirs: List[str]) -> None:
             logger.warning("cleanup_pdf_seg failed: dir=%s err=%s", d, e)
 
 
-def _pdf_to_images(pdf_path: str) -> Tuple[List[Dict], str]:
+def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -> Tuple[List[Dict], str]:
     """
     PDF 파일의 각 페이지를 이미지로 변환 + 텍스트 기반 문항 박스 사전 계산.
 
@@ -181,6 +194,7 @@ def _pdf_to_images(pdf_path: str) -> Tuple[List[Dict], str]:
                         page_width=pw,
                         page_height=ph,
                         has_embedded_text=True,
+                        handwriting_score=handwriting_bias,
                     )
                     page_paper_type = pt.paper_type.value
                     paper_type_debug = pt.debug
@@ -279,6 +293,8 @@ def _segment_single_image(
 
 def _boxes_and_regions_for_pdf_page(
     page_info: Dict, page_index: int,
+    *,
+    handwriting_bias: Optional[float] = None,
 ) -> Tuple[List[BBox], List]:
     """
     PDF 페이지 1개에 대한 최종 박스 + QuestionRegion (번호 포함) 반환.
@@ -290,6 +306,10 @@ def _boxes_and_regions_for_pdf_page(
       1. 텍스트 기반 분할 성공 → text_boxes + text_regions 사용
       2. 스캔본 + OCR 가용 → OCR 결과 (boxes + numbered regions)
       3. OCR 불가 / 예외 → OpenCV 안전망 (번호 없음)
+
+    OCR 경로에서 paper_type을 별도 분류하여 page_info["paper_type"]에 보존
+    (segment_questions_ocr_regions은 boxes만 반환하므로 paper_type 정보가
+    유실되어 _aggregate_paper_types가 unknown으로 떨어뜨리는 결함 차단).
     """
     from academy.domain.tools.question_splitter import QuestionRegion
 
@@ -319,6 +339,13 @@ def _boxes_and_regions_for_pdf_page(
                     bbox=(float(x0), float(y0), float(x1), float(y1)),
                     page_index=page_index,
                 ))
+            # OCR 경로 paper_type 보존 — segment_questions_ocr_regions이 메타를
+            # 돌려주지 않으므로 dispatcher가 별도 classify_paper_type 호출.
+            _classify_and_record_paper_type(
+                page_info, image_path,
+                has_embedded_text=False,
+                handwriting_bias=handwriting_bias,
+            )
             return boxes, regions  # 빈 결과도 trust (non-question page)
         except Exception as e:
             logger.warning(
@@ -331,7 +358,48 @@ def _boxes_and_regions_for_pdf_page(
     skip_ocr = page_info["has_embedded_text"]
     boxes = _segment_single_image(image_path, skip_ocr=skip_ocr, is_pdf_page=True)
     boxes = _filter_cover_like_boxes(boxes, image_path, page_index)
+    # OpenCV fallback / OCR 예외 경로도 paper_type 분류 시도 (image_path 기반).
+    _classify_and_record_paper_type(
+        page_info, image_path,
+        has_embedded_text=bool(page_info.get("has_embedded_text")),
+        handwriting_bias=handwriting_bias,
+    )
     return boxes, []  # OpenCV fallback — 번호 없음
+
+
+def _classify_and_record_paper_type(
+    page_info: Dict, image_path: str,
+    *,
+    has_embedded_text: bool,
+    handwriting_bias: Optional[float],
+) -> None:
+    """page_info에 paper_type 정보가 비어 있으면 image_path 기반으로 분류 후 저장.
+
+    classify_paper_type을 텍스트 블록 없이 호출하면 이미지 픽셀 휴리스틱과
+    handwriting bias만 사용. STUDENT_ANSWER_PHOTO 분기는 bias 0.78+로 진입.
+    """
+    if page_info.get("paper_type") and page_info.get("paper_type") != "unknown":
+        return  # 이미 PDF 텍스트 경로에서 분류됨
+    try:
+        from PIL import Image as _PILImage  # 지연 import — opencv와 충돌 방지
+        from academy.domain.tools.paper_type import classify_paper_type
+        with _PILImage.open(image_path) as img:
+            w, h = img.size
+        pt = classify_paper_type(
+            text_blocks=None,
+            image_path=image_path,
+            page_width=float(w),
+            page_height=float(h),
+            has_embedded_text=has_embedded_text,
+            handwriting_score=handwriting_bias,
+        )
+        page_info["paper_type"] = pt.paper_type.value
+        page_info["paper_type_debug"] = pt.debug
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "PAPER_TYPE_CLASSIFY_FAIL | path=%s | err=%s",
+            image_path, e,
+        )
 
 
 def _filter_cover_like_boxes(
@@ -368,23 +436,34 @@ def _filter_cover_like_boxes(
     return boxes
 
 
-def _collect_pdf_pages(image_path: str) -> Tuple[List[Dict], List[List[BBox]], List[List], str]:
+def _collect_pdf_pages(
+    image_path: str,
+    *,
+    source_type: Optional[str] = None,
+) -> Tuple[List[Dict], List[List[BBox]], List[List], str]:
     """
     PDF의 모든 페이지를 처리해서 (page_infos, boxes_per_page, regions_per_page, tmp_dir)를 반환.
     크로스-페이지 anchor 검증을 적용해 spurious/outlier 박스를 제거.
 
     tmp_dir은 호출자가 cleanup_pdf_seg_tmp_dirs([tmp_dir])로 정리해야 함.
+
+    source_type — 학원장 입력 신호. student_exam_photo면 handwriting_bias 0.85로
+    classify_paper_type의 STUDENT_ANSWER_PHOTO 분기를 강제. 다른 source는 휴리스틱.
     """
     from academy.domain.tools.question_splitter import validate_anchors_across_pages
 
-    page_infos, tmp_dir = _pdf_to_images(image_path)
+    handwriting_bias = _bias_handwriting_score(source_type)
+
+    page_infos, tmp_dir = _pdf_to_images(image_path, handwriting_bias=handwriting_bias)
     if not page_infos:
         return [], [], [], tmp_dir
 
     boxes_per_page: List[List[BBox]] = []
     regions_per_page: List[List] = []
     for page_idx, info in enumerate(page_infos):
-        boxes, regions = _boxes_and_regions_for_pdf_page(info, page_idx)
+        boxes, regions = _boxes_and_regions_for_pdf_page(
+            info, page_idx, handwriting_bias=handwriting_bias,
+        )
         boxes_per_page.append(boxes)
         regions_per_page.append(regions)
 
@@ -415,7 +494,7 @@ def _collect_pdf_pages(image_path: str) -> Tuple[List[Dict], List[List[BBox]], L
     return page_infos, boxes_per_page, validated_regions, tmp_dir
 
 
-def segment_questions(image_path: str) -> List[BBox]:
+def segment_questions(image_path: str, *, source_type: Optional[str] = None) -> List[BBox]:
     """
     worker-side segmentation single entrypoint.
     PDF 파일이면 페이지별로 이미지 변환 후 세그멘테이션.
@@ -425,7 +504,7 @@ def segment_questions(image_path: str) -> List[BBox]:
     별도 cleanup 불필요.
     """
     if _is_pdf(image_path):
-        page_infos, boxes_per_page, _, tmp_dir = _collect_pdf_pages(image_path)
+        page_infos, boxes_per_page, _, tmp_dir = _collect_pdf_pages(image_path, source_type=source_type)
         try:
             if not page_infos:
                 logger.warning("PDF_SEGMENT_NO_PAGES | path=%s", image_path)
@@ -446,10 +525,18 @@ def segment_questions(image_path: str) -> List[BBox]:
     return _segment_single_image(image_path)
 
 
-def segment_questions_multipage(image_path: str) -> Dict[str, any]:
+def segment_questions_multipage(
+    image_path: str,
+    *,
+    source_type: Optional[str] = None,
+) -> Dict[str, any]:
     """
     PDF 문항 분할 확장판 — 페이지별 결과 + 전체 이미지 경로 반환.
     question_segmentation 워커에서 사용.
+
+    source_type — 학원장 입력 신호. paper_type 분류기에 handwriting_bias로 전달.
+    student_exam_photo면 STUDENT_ANSWER_PHOTO 분기 강제 → pipeline의 page-as-problem
+    폴백이 신뢰성 있게 작동.
 
     Returns:
         {
@@ -471,7 +558,9 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
         }
     """
     if _is_pdf(image_path):
-        page_infos, boxes_per_page, regions_per_page, tmp_dir = _collect_pdf_pages(image_path)
+        page_infos, boxes_per_page, regions_per_page, tmp_dir = _collect_pdf_pages(
+            image_path, source_type=source_type,
+        )
         if not page_infos:
             cleanup_pdf_seg_tmp_dirs([tmp_dir])
             return {"pages": [], "total_boxes": 0, "is_pdf": True, "tmp_dirs": []}
@@ -493,6 +582,10 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
                 "has_embedded_text": info["has_embedded_text"],
                 # 페이지 단위 폴백 시 표지/해설지/lorem ipsum 페이지 제외용.
                 "is_skip_page": bool(info.get("is_skip_page")),
+                # paper_type 보존 — _aggregate_paper_types가 distribution 계산에 사용.
+                # PDF 텍스트/OCR/OpenCV 경로 모두 _classify_and_record_paper_type으로 채움.
+                "paper_type": info.get("paper_type") or "unknown",
+                "paper_type_debug": info.get("paper_type_debug") or {},
             })
             total += len(boxes)
 
@@ -500,6 +593,14 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
 
     # 단일 이미지 — 번호 없음. tmp_dir 없음(원본 image_path 그대로 사용).
     boxes = _segment_single_image(image_path)
+    # 단일 이미지 경로에서도 paper_type을 분류 — 학생답안지 폰사진이 보통 단일 이미지.
+    # source_type=student_exam_photo + handwriting_bias로 STUDENT_ANSWER_PHOTO 강제.
+    single_info: Dict = {"image_path": image_path}
+    _classify_and_record_paper_type(
+        single_info, image_path,
+        has_embedded_text=False,
+        handwriting_bias=_bias_handwriting_score(source_type),
+    )
     return {
         "pages": [{
             "page_index": 0,
@@ -507,6 +608,8 @@ def segment_questions_multipage(image_path: str) -> Dict[str, any]:
             "boxes": boxes,
             "numbers": [None] * len(boxes),
             "has_embedded_text": False,
+            "paper_type": single_info.get("paper_type") or "unknown",
+            "paper_type_debug": single_info.get("paper_type_debug") or {},
         }],
         "total_boxes": len(boxes),
         "is_pdf": False,

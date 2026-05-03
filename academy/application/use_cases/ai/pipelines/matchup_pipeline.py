@@ -149,12 +149,35 @@ def run_matchup_pipeline(
         step_percent=0, tenant_id=tenant_id,
     )
 
+    # source_type을 분할 호출 전에 결정 — segment_dispatcher가 paper_type 분류기에
+    # handwriting_score bias로 전달해야 student_exam_photo가 STUDENT_ANSWER_PHOTO로
+    # 분류되어 page-as-problem 폴백이 신뢰성 있게 작동.
+    from apps.domains.matchup.source_types import normalize_source_type
+    source_type = normalize_source_type(
+        payload.get("source_type") or payload.get("upload_intent")
+    )
+    upload_intent = source_type  # legacy alias 보존
+    doc_title = ""
+    if (source_type == "other") and document_id:
+        # payload에 명시 안 됐으면 DB에서 읽기 (race-safe)
+        try:
+            from apps.domains.matchup.models import MatchupDocument
+            doc = MatchupDocument.objects.only("meta", "title").get(id=int(document_id))
+            meta = doc.meta or {}
+            source_type = normalize_source_type(
+                meta.get("source_type") or meta.get("upload_intent") or meta.get("document_role")
+            )
+            upload_intent = source_type
+            doc_title = doc.title or ""
+        except Exception as e:
+            logger.warning("MATCHUP_SOURCE_TYPE_LOOKUP_FAIL | doc=%s | err=%s", document_id, e)
+
     from academy.adapters.ai.detection.segment_dispatcher import (
         register_pdf_seg_tmp_dirs,
         segment_questions_multipage,
     )
 
-    seg_result = segment_questions_multipage(local_path)
+    seg_result = segment_questions_multipage(local_path, source_type=source_type)
     register_pdf_seg_tmp_dirs(seg_result.get("tmp_dirs") or [])
     pages = seg_result.get("pages", [])
     total_boxes = seg_result.get("total_boxes", 0)
@@ -197,29 +220,10 @@ def run_matchup_pipeline(
         step_percent=100, tenant_id=tenant_id,
     )
 
-    # ── source_type 7-value 라우터 (2026-05-02 학원장 directive) ──
-    # 알고리즘 X 라우터 부재가 본질. 자료 유형별 strategy 분기.
+    # source_type은 segmentation 호출 전에 결정됨 (segment_dispatcher가 paper_type
+    # 분류기에 handwriting_bias로 전달해야 STUDENT_ANSWER_PHOTO 분기가 작동).
     # 7-value: student_exam_photo / school_exam_pdf / commercial_workbook /
     #          academy_workbook / explanation / answer_key / other
-    from apps.domains.matchup.source_types import normalize_source_type
-    source_type = normalize_source_type(
-        payload.get("source_type") or payload.get("upload_intent")
-    )
-    upload_intent = source_type  # legacy alias 보존
-    doc_title = ""
-    if (source_type == "other") and document_id:
-        # payload에 명시 안 됐으면 DB에서 읽기 (race-safe)
-        try:
-            from apps.domains.matchup.models import MatchupDocument
-            doc = MatchupDocument.objects.only("meta", "title").get(id=int(document_id))
-            meta = doc.meta or {}
-            source_type = normalize_source_type(
-                meta.get("source_type") or meta.get("upload_intent") or meta.get("document_role")
-            )
-            upload_intent = source_type
-            doc_title = doc.title or ""
-        except Exception as e:
-            logger.warning("MATCHUP_SOURCE_TYPE_LOOKUP_FAIL | doc=%s | err=%s", document_id, e)
 
     # ── 인덱싱 X 사이클 (explanation / answer_key) — 즉시 0 problems 반환 ──
     # 매치업 후보 vector search에 노이즈로 들어가는 것 차단. doc.meta에 마커 저장.
@@ -302,7 +306,13 @@ def run_matchup_pipeline(
     # 사례 발견(2026-05-03 시각 검수: doc#302/#120 page 13~14 박스가 본문 누락).
     # → 자동 통합에서는 안전한 page-as-problem만, 검수 UI ondemand에서는 학원장이 직접
     # 페이지 별로 VLM 호출 + 결과 보고 채택 가능.
-    skip_vlm_auto = is_commercial
+    #
+    # student_exam_photo도 동일 정책 — T2 시험지 6 doc 시각 검수(2026-05-03)에서
+    # P0 다층 게이트(VLM bbox role/IoU/y_min/height/width 검증)를 통과한 표지·헤더·strip
+    # 박스가 다수 잔존(D-3/D-4). 학생답안지는 페이지에 본문+표지+답안카드+학생필기가
+    # 비정형 layout으로 섞여 있어 VLM이 confidence 0.95+로 표지/헤더 박스를 problem으로
+    # 응답. → 자동 통합 단계에서는 page-as-problem 강제. 정밀 매칭은 검수 UI에서 ondemand.
+    skip_vlm_auto = is_commercial or is_student_photo
 
     if total_boxes == 0:
         # 문제를 찾지 못한 경우 — 전체 페이지를 하나의 문제로 취급

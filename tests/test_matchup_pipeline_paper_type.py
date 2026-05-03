@@ -4,8 +4,13 @@
 - _verify_problem_numbers: number↔content mismatch 차단 (C10 결함)
 - _aggregate_paper_types: doc 단위 분포 집계 + 경고 산출
 - is_low_confidence_doc 분기: STUDENT_ANSWER_PHOTO majority → page-as-problem 폴백
+- _bias_handwriting_score / source_type 흐름: STUDENT_ANSWER_PHOTO 분기 강제 + paper_type
+  보존 (운영 결함 2026-05-04: 1534/1534 unknown → P0 게이트 우회 결함 D-3/D-4)
 """
 from __future__ import annotations
+
+import os
+import tempfile
 
 from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
     _aggregate_paper_types,
@@ -225,3 +230,214 @@ def test_aggregate_non_question_minor_no_warning():
     ]
     summary = _aggregate_paper_types(pages)
     assert "non_question_majority" not in summary["warnings"]
+
+
+# ── 3. _bias_handwriting_score (Phase A-1: source_type → paper_type 분류기 신호) ──
+
+def test_bias_handwriting_score_student_photo():
+    """student_exam_photo → 0.85 (classify_paper_type의 0.78 임계값 통과)."""
+    from academy.adapters.ai.detection.segment_dispatcher import _bias_handwriting_score
+
+    assert _bias_handwriting_score("student_exam_photo") == 0.85
+
+
+def test_bias_handwriting_score_other_sources_none():
+    """다른 source_type은 None — 픽셀/텍스트 휴리스틱 그대로 사용."""
+    from academy.adapters.ai.detection.segment_dispatcher import _bias_handwriting_score
+
+    for st in (
+        "school_exam_pdf", "commercial_workbook", "academy_workbook",
+        "explanation", "answer_key", "other", None, "",
+    ):
+        assert _bias_handwriting_score(st) is None, f"source_type={st!r} should yield None"
+
+
+# ── 4. classify_paper_type + handwriting_score bias 통합 ──
+
+def test_classify_with_handwriting_bias_yields_student_answer_photo():
+    """has_embedded_text=False + handwriting_score=0.85 → STUDENT_ANSWER_PHOTO 분기.
+
+    운영 결함 2026-05-04: classify_paper_type 호출 시 handwriting_score 인자가
+    누락되어 STUDENT_ANSWER_PHOTO 분기가 dead branch였음. T2 1534/1534 페이지 unknown.
+    Phase A-1: source_type=student_exam_photo이면 bias 0.85로 강제 진입.
+    """
+    from academy.domain.tools.paper_type import PaperType, classify_paper_type
+
+    pt = classify_paper_type(
+        text_blocks=None,
+        image_path=None,  # bias만 신뢰. UNKNOWN 분기로 빠지는지 안 빠지는지 검증
+        page_width=1000.0,
+        page_height=1400.0,
+        has_embedded_text=False,
+        handwriting_score=0.85,
+    )
+    # text_blocks=None and image_path=None은 UNKNOWN 분기 — bias도 무시됨.
+    # 이 경우 pipeline에서 page-as-problem 폴백이 어차피 진입 (is_student_photo 게이트)
+    # 단, image_path 있으면 STUDENT_ANSWER_PHOTO 분류 가능. 실제 운영 흐름 검증:
+    assert pt.paper_type is PaperType.UNKNOWN  # 입력 신호 부재 케이스
+
+
+def test_classify_with_handwriting_bias_and_image_yields_student_answer_photo(tmp_path):
+    """image_path 있으면 bias 신호가 살아있음 → STUDENT_ANSWER_PHOTO 강제."""
+    from PIL import Image
+
+    from academy.domain.tools.paper_type import PaperType, classify_paper_type
+
+    img_path = tmp_path / "fake_student.png"
+    Image.new("RGB", (800, 1100), (240, 240, 240)).save(img_path)
+
+    pt = classify_paper_type(
+        text_blocks=None,
+        image_path=str(img_path),
+        page_width=800.0,
+        page_height=1100.0,
+        has_embedded_text=False,
+        handwriting_score=0.85,
+    )
+    assert pt.paper_type is PaperType.STUDENT_ANSWER_PHOTO
+    assert pt.confidence >= 0.78
+
+
+def test_classify_without_bias_no_student_answer_photo(tmp_path):
+    """handwriting_score=None이면 STUDENT_ANSWER_PHOTO 분기 진입 X (회귀 락)."""
+    from PIL import Image
+
+    from academy.domain.tools.paper_type import PaperType, classify_paper_type
+
+    img_path = tmp_path / "fake_print.png"
+    Image.new("RGB", (800, 1100), (255, 255, 255)).save(img_path)
+
+    pt = classify_paper_type(
+        text_blocks=None,
+        image_path=str(img_path),
+        page_width=800.0,
+        page_height=1100.0,
+        has_embedded_text=False,
+        handwriting_score=None,
+    )
+    assert pt.paper_type is not PaperType.STUDENT_ANSWER_PHOTO
+
+
+def test_classify_with_embedded_text_ignores_bias(tmp_path):
+    """has_embedded_text=True (PDF 텍스트 추출 가능)면 bias 있어도 STUDENT_ANSWER_PHOTO 분기 X.
+
+    인쇄 PDF가 손글씨 같은 stroke variance 휴리스틱에 잡혀 잘못 분류되는 false positive 차단.
+    """
+    from PIL import Image
+
+    from academy.domain.tools.paper_type import PaperType, classify_paper_type
+
+    img_path = tmp_path / "clean_pdf_page.png"
+    Image.new("RGB", (800, 1100), (255, 255, 255)).save(img_path)
+
+    pt = classify_paper_type(
+        text_blocks=None,
+        image_path=str(img_path),
+        page_width=800.0,
+        page_height=1100.0,
+        has_embedded_text=True,
+        handwriting_score=0.85,
+    )
+    assert pt.paper_type is not PaperType.STUDENT_ANSWER_PHOTO
+
+
+# ── 5. _classify_and_record_paper_type (OCR/OpenCV 경로 paper_type 보존) ──
+
+def test_classify_and_record_writes_to_page_info(tmp_path):
+    """page_info에 paper_type 저장 — _aggregate_paper_types가 unknown으로 떨어뜨리는 결함 차단.
+
+    운영 결함 2026-05-04: OCR 경로에서 segment_questions_ocr_regions은 boxes만 반환하므로
+    paper_type이 page_info에 없음 → 1534/1534 unknown. 이 헬퍼가 보완.
+    """
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_dispatcher import _classify_and_record_paper_type
+
+    img_path = tmp_path / "page.png"
+    Image.new("RGB", (800, 1100), (240, 240, 240)).save(img_path)
+
+    page_info: dict = {}
+    _classify_and_record_paper_type(
+        page_info, str(img_path),
+        has_embedded_text=False,
+        handwriting_bias=0.85,
+    )
+    assert page_info.get("paper_type") == "student_answer_photo"
+
+
+def test_classify_and_record_skip_when_already_set(tmp_path):
+    """이미 paper_type이 unknown 아닌 값으로 설정되어 있으면 덮어쓰지 않음.
+
+    PDF 텍스트 경로에서 정상 분류된 페이지가 OCR fallback 경로 들어오면 덮어쓰기 방지.
+    """
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_dispatcher import _classify_and_record_paper_type
+
+    img_path = tmp_path / "page.png"
+    Image.new("RGB", (800, 1100), (240, 240, 240)).save(img_path)
+
+    page_info: dict = {"paper_type": "clean_pdf_single"}
+    _classify_and_record_paper_type(
+        page_info, str(img_path),
+        has_embedded_text=False,
+        handwriting_bias=0.85,
+    )
+    assert page_info["paper_type"] == "clean_pdf_single"  # 보존
+
+
+def test_classify_and_record_overwrites_unknown(tmp_path):
+    """page_info["paper_type"]가 "unknown"이면 다시 분류 시도 (PDF 텍스트 경로 실패 케이스)."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_dispatcher import _classify_and_record_paper_type
+
+    img_path = tmp_path / "page.png"
+    Image.new("RGB", (800, 1100), (240, 240, 240)).save(img_path)
+
+    page_info: dict = {"paper_type": "unknown"}
+    _classify_and_record_paper_type(
+        page_info, str(img_path),
+        has_embedded_text=False,
+        handwriting_bias=0.85,
+    )
+    assert page_info["paper_type"] == "student_answer_photo"
+
+
+# ── 6. segment_questions_multipage 단일 이미지 + source_type 통합 ──
+
+def test_segment_multipage_single_image_with_student_source(tmp_path, monkeypatch):
+    """단일 이미지 + source_type=student_exam_photo → page dict의 paper_type=student_answer_photo.
+
+    운영 흐름 회귀 락: 학생답안지 폰사진(보통 단일 이미지 업로드)이 dispatcher → pipeline →
+    _aggregate_paper_types 거쳐 primary='student_answer_photo' 결정 → page-as-problem 폴백.
+    """
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_dispatcher import segment_questions_multipage
+
+    img_path = tmp_path / "student_photo.png"
+    Image.new("RGB", (1200, 1600), (235, 235, 235)).save(img_path)
+
+    # _segment_single_image이 OCR/OpenCV/YOLO 호출하지만 fake 이미지면 빈 boxes 반환
+    # (테스트 환경 OCR 자격 없음). 우리는 paper_type만 검증.
+    result = segment_questions_multipage(str(img_path), source_type="student_exam_photo")
+
+    assert result["is_pdf"] is False
+    assert len(result["pages"]) == 1
+    page = result["pages"][0]
+    assert page["paper_type"] == "student_answer_photo"
+
+
+def test_segment_multipage_single_image_without_source(tmp_path):
+    """source_type 없이 단일 이미지 → STUDENT_ANSWER_PHOTO 분기 진입 X (bias 없음)."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_dispatcher import segment_questions_multipage
+
+    img_path = tmp_path / "unknown_source.png"
+    Image.new("RGB", (1200, 1600), (235, 235, 235)).save(img_path)
+
+    result = segment_questions_multipage(str(img_path))  # source_type=None
+    page = result["pages"][0]
+    assert page["paper_type"] != "student_answer_photo"
