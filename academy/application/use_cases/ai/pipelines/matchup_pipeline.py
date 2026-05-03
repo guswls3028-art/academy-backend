@@ -298,10 +298,18 @@ def run_matchup_pipeline(
         or is_commercial     # 시판 교재는 cover/index/해설 페이지 혼재 → page-as-problem 안전
     )
 
+    # commercial_workbook은 single-column layout에서 VLM이 dual/quadrant로 잘못 분할하는
+    # 사례 발견(2026-05-03 시각 검수: doc#302/#120 page 13~14 박스가 본문 누락).
+    # → 자동 통합에서는 안전한 page-as-problem만, 검수 UI ondemand에서는 학원장이 직접
+    # 페이지 별로 VLM 호출 + 결과 보고 채택 가능.
+    skip_vlm_auto = is_commercial
+
     if total_boxes == 0:
         # 문제를 찾지 못한 경우 — 전체 페이지를 하나의 문제로 취급
         logger.info("MATCHUP_NO_BOXES | job_id=%s | treating whole pages as problems", job_id)
-        questions_raw, vlm_stats = _pages_via_vlm_or_fallback(pages, document_id, job_id)
+        questions_raw, vlm_stats = _pages_via_vlm_or_fallback(
+            pages, document_id, job_id, skip_vlm=skip_vlm_auto,
+        )
         paper_type_summary["vlm_auto_split"] = vlm_stats
     elif is_over_extracted or is_low_confidence_doc:
         # 페이지 폴백 트리거:
@@ -313,16 +321,18 @@ def run_matchup_pipeline(
         logger.info(
             "MATCHUP_PAGE_FALLBACK | job_id=%s | total_boxes=%d avg=%.1f "
             "raw_pages=%d kept_pages=%d (skip=%d) | over_ext=%s | low_conf=%s | "
-            "primary_paper_type=%s",
+            "primary_paper_type=%s | skip_vlm_auto=%s",
             job_id, total_boxes, avg_per_page, page_count, len(kept_pages),
             page_count - len(kept_pages),
             is_over_extracted, is_low_confidence_doc,
-            paper_type_summary["primary"],
+            paper_type_summary["primary"], skip_vlm_auto,
         )
         # P1 자동 통합 (2026-05-03 학원장 directive): page-as-problem 직전에 VLM bbox 시도.
         # anchor 1~4 페이지는 기존 sub-crop 유지 (신뢰도 높음).
         # anchor 0 또는 5+ 페이지만 VLM vision 호출 — 실패/저신뢰 시 page-as-problem.
-        questions_raw, vlm_stats = _pages_via_vlm_or_fallback(kept_pages, document_id, job_id)
+        questions_raw, vlm_stats = _pages_via_vlm_or_fallback(
+            kept_pages, document_id, job_id, skip_vlm=skip_vlm_auto,
+        )
         paper_type_summary["vlm_auto_split"] = vlm_stats
     else:
         questions_raw = _boxes_to_questions(pages)
@@ -728,7 +738,7 @@ def _try_vlm_problem_bboxes(page: Dict, document_id) -> Optional[Any]:
 
 
 def _pages_via_vlm_or_fallback(
-    pages: List[Dict], document_id, job_id: str,
+    pages: List[Dict], document_id, job_id: str, *, skip_vlm: bool = False,
 ) -> Tuple[List[Dict], Dict[str, Any]]:
     """페이지 폴백 분기 — VLM 시도 → 실패 시 기존 page-as-problem.
 
@@ -738,10 +748,16 @@ def _pages_via_vlm_or_fallback(
 
     학원장 directive (2026-05-02): VLM은 메인 X, fallback only.
     이 함수는 page-as-problem 직전 마지막 fallback 단계로만 VLM 시도.
+
+    skip_vlm=True 시 VLM 호출 자체를 우회 (commercial_workbook 같이 VLM이 잘못
+    분할하는 사례 차단). 이 경우 anchor 1~4 sub-crop만 + 나머지 page-as-problem.
     """
     import os as _os
 
-    use_vlm = _os.getenv("MATCHUP_VLM_AUTO_SPLIT", "1") == "1"
+    use_vlm = (
+        not skip_vlm
+        and _os.getenv("MATCHUP_VLM_AUTO_SPLIT", "1") == "1"
+    )
     questions: List[Dict] = []
     seen_numbers: set = set()
     fallback_counter = 1
