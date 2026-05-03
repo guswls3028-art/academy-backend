@@ -485,7 +485,17 @@ def _handle_matchup_ai_result(
     # 직접 자른 것이라 보존 — 검수 모달의 "재분석" 후에도 학원장 작업이 살아있어야.
     # 아래 bulk_create(ignore_conflicts=True)가 unique(document, number) 충돌을
     # silent drop하므로, 같은 번호의 자동 결과는 자연스럽게 manual에 우선권을 양보.
-    doc.problems.exclude(meta__manual=True).delete()
+    #
+    # JSONB NULL semantics 회피 (운영 사고 2026-05-03): 이전 코드
+    # `exclude(meta__manual=True)`는 `NOT ((meta->'manual') = 'true')`로 변환되어
+    # 키가 없는 row(skeleton 등)에서 NULL=true → NULL → false로 평가 → exclude에서 빠짐
+    # → delete 0건 → 이후 bulk_create가 unique(doc, number) 충돌로 silent drop →
+    # skeleton row가 영구히 살아남음. T2 1355 problems가 dead state로 invalid 인덱싱.
+    # ID 기반 명시 exclude로 NULL semantics 우회.
+    manual_ids = list(
+        doc.problems.filter(meta__manual=True).values_list("id", flat=True)
+    )
+    doc.problems.exclude(id__in=manual_ids).delete()
 
     # bulk create
     problem_objs = []

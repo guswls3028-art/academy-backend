@@ -368,7 +368,13 @@ def retry_document(document: MatchupDocument) -> str:
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
     # 기존 문제 삭제 — 단, manual=true는 학원장 직접 작업이라 보존.
-    document.problems.exclude(meta__manual=True).delete()
+    # JSONB NULL semantics 회피 (운영 사고 2026-05-03): manual 키 없는 row가
+    # exclude에서 빠지는 PostgreSQL NULL semantics로 skeleton row가 영구히 살아남는
+    # 결함. ID 기반 명시 exclude로 우회. 자세한 분석은 callbacks.py:_handle_matchup_ai_result.
+    manual_ids = list(
+        document.problems.filter(meta__manual=True).values_list("id", flat=True)
+    )
+    document.problems.exclude(id__in=manual_ids).delete()
 
     # presigned URL 6시간 — 큐 적체 시 워커가 1시간 후 picking하면 만료되어
     # 403 Forbidden으로 doc.status='failed' 반복 사이클 발생 (운영 사고 2026-04-29).
