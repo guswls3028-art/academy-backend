@@ -49,12 +49,52 @@ def test_verify_skips_page_fallback_problems():
 
 
 def test_verify_skips_when_no_anchor_in_text():
-    """text 첫 줄에 anchor 없으면 검증 스킵 (false negative 안전망)."""
+    """text 첫 줄에 anchor 없고 보기 마커도 없으면 검증/flag 모두 스킵 (false negative 안전망)."""
     questions = [
         {"number": 1, "bbox": [0, 0, 100, 100], "text": "다음 중 옳은 것은?\n① A"},
     ]
     _verify_problem_numbers(questions)
     assert (questions[0].get("meta_extra") or {}).get("number_mismatch") is None
+    assert (questions[0].get("meta_extra") or {}).get("no_anchor_in_text") is None
+
+
+def test_verify_no_anchor_with_bogi_marker_flagged():
+    """text 첫 줄에 anchor 없고 <보기>로 시작하면 no_anchor_in_text=True flag.
+
+    Fix-2 (운영 사고 2026-05-03): doc#148 reanalyze 결과 DB#2가 1번 문항의
+    보기/답안 부분만 cropping된 mid-cut 결함. _verify_problem_numbers가 anchor
+    없는 text를 silent skip 하면서 검수 UI에 결함 신호 못 줌. 이 fix는 보기 마커
+    로 시작하는 cell을 검수 우선순위로 표시.
+    """
+    questions = [
+        {
+            "number": 2,
+            "bbox": [0, 0, 100, 100],
+            "text": "<보기> ㄱ. (가)와 (나)는 거시 세계에 속한다.\n① ㄱ ② ㄴ ③ ㄷ",
+        },
+    ]
+    _verify_problem_numbers(questions)
+    flag = questions[0]["meta_extra"]
+    assert flag.get("no_anchor_in_text") is True
+    assert flag.get("number_mismatch") is None  # mismatch와 별도 flag
+
+
+def test_verify_no_anchor_with_korean_choice_marker_flagged():
+    """ㄱ. ㄴ. 보기 표지로 시작하는 cell도 flag."""
+    questions = [
+        {"number": 5, "bbox": [0, 0, 100, 100], "text": "ㄱ. 첫 번째 보기\nㄴ. 두 번째"},
+    ]
+    _verify_problem_numbers(questions)
+    assert questions[0]["meta_extra"]["no_anchor_in_text"] is True
+
+
+def test_verify_no_anchor_with_circle_choice_flagged():
+    """① 같은 객관식 답안 마커로 시작하는 cell flag (본문 cut 후 답안만 잡힌 케이스)."""
+    questions = [
+        {"number": 7, "bbox": [0, 0, 100, 100], "text": "① 가 ② 나 ③ 다 ④ 라 ⑤ 마"},
+    ]
+    _verify_problem_numbers(questions)
+    assert questions[0]["meta_extra"]["no_anchor_in_text"] is True
 
 
 def test_verify_skips_empty_text():

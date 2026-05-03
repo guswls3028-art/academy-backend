@@ -1038,7 +1038,15 @@ def _verify_problem_numbers(questions: List[Dict]) -> None:
     """
     from academy.domain.tools.question_splitter import _extract_question_number
 
+    # 보기/답안 마커 — 본문 cropping 결함 시 (다음 문항의 보기 부분만 잡힌 케이스)
+    # 이런 cell은 첫 줄에 anchor 번호가 없고 보기 마커로 시작하는 게 특징.
+    # T2 doc#148 reanalyze (2026-05-03)에서 VLM 4-quadrant 오분할로 1번 문항이
+    # 두 cell로 split — DB#2가 "<보기> ㄱ. ... ① ㄱ ② ㄴ" 만 있는 보기/답안 cell.
+    # 어드민 검수 UI가 우선순위 표시할 수 있게 flag.
+    _ANSWER_MARKERS = ("<보기>", "ㄱ.", "ㄴ.", "ㄷ.", "ㄹ.", "①", "②", "③", "④", "⑤")
+
     mismatch_count = 0
+    no_anchor_count = 0
     checked = 0
     for q in questions:
         if not q.get("bbox"):
@@ -1049,6 +1057,11 @@ def _verify_problem_numbers(questions: List[Dict]) -> None:
         first_line = text.split("\n", 1)[0][:80]
         ocr_num = _extract_question_number(first_line)
         if ocr_num is None:
+            # anchor 없음 — 보기/답안 마커로 시작하면 본문 cropping 결함 의심.
+            stripped = first_line.lstrip()
+            if any(stripped.startswith(m) for m in _ANSWER_MARKERS):
+                q.setdefault("meta_extra", {})["no_anchor_in_text"] = True
+                no_anchor_count += 1
             continue
         db_num = q.get("number")
         if db_num is None:
@@ -1061,10 +1074,10 @@ def _verify_problem_numbers(questions: List[Dict]) -> None:
             }
             mismatch_count += 1
 
-    if mismatch_count:
+    if mismatch_count or no_anchor_count:
         logger.warning(
-            "MATCHUP_NUMBER_MISMATCH | count=%d/%d (checked=%d)",
-            mismatch_count, len(questions), checked,
+            "MATCHUP_NUMBER_MISMATCH | mismatch=%d/%d no_anchor=%d (checked=%d)",
+            mismatch_count, len(questions), no_anchor_count, checked,
         )
 
 
