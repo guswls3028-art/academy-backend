@@ -828,17 +828,17 @@ def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any
     return result
 
 
-def _try_vlm_problem_bboxes(page: Dict, document_id) -> Optional[Any]:
-    """단일 페이지에 vision_VLM 호출. 실패/저신뢰/결함 시 None 반환.
+def _try_vlm_problem_bboxes(page: Dict, document_id) -> Tuple[Optional[Any], Optional[str]]:
+    """단일 페이지에 vision_VLM 호출. (validated_result, raw_paper_type) 튜플 반환.
 
-    1차 게이트:
-      - debug.adapter == "gemini" (mock 폴백 X)
-      - should_skip == False
-      - confidence >= 0.80
-      - len(problems) >= 2
+    paper_type은 게이트와 무관하게 항상 VLM 응답 그대로 추출 (B-2):
+    bbox는 4종 결함(D-1~D-4) 게이트에서 reject되어도 paper_type 분류 신호는
+    유효하므로 page meta에 보존. None은 VLM 호출 자체 실패 또는 unknown.
 
-    2차 게이트 (운영 사고 fix 2026-05-03 D-1~D-4):
-      _validate_vlm_bboxes에서 page_role/aspect/y_min/overlap/seq 검증.
+    bbox validated_result:
+      1차 게이트: adapter == "gemini" + should_skip False + conf >= 0.80 + problems >= 2
+      2차 게이트: _validate_vlm_bboxes (D-1~D-4)
+      통과 시 result, 실패 시 None.
     """
     try:
         from academy.adapters.ai.detection.vlm_fallback import detect_problems_vision
@@ -854,13 +854,21 @@ def _try_vlm_problem_bboxes(page: Dict, document_id) -> Optional[Any]:
     except Exception as e:
         logger.warning("MATCHUP_VLM_AUTO_FAIL | doc=%s | page=%s | err=%s",
                        document_id, page.get("page_index"), e)
-        return None
+        return None, None
+
     adapter = (result.debug or {}).get("adapter", "")
+    raw_paper_type = getattr(result, "paper_type", None)
+    # mock 폴백이거나 unknown이면 paper_type 신호 무효
+    if adapter != "gemini" or not raw_paper_type or raw_paper_type == "unknown":
+        raw_paper_type = None
+
+    # bbox 게이트는 별도 — paper_type은 응답 받자마자 보존
     if adapter != "gemini" or result.should_skip:
-        return None
+        return None, raw_paper_type
     if result.confidence < 0.80 or len(result.problems) < 2:
-        return None
-    return _validate_vlm_bboxes(result, page["image_path"], page.get("page_index"))
+        return None, raw_paper_type
+    validated = _validate_vlm_bboxes(result, page["image_path"], page.get("page_index"))
+    return validated, raw_paper_type
 
 
 def _pages_via_vlm_or_fallback(
@@ -923,17 +931,20 @@ def _pages_via_vlm_or_fallback(
         # 2. anchor 0 또는 5+ → VLM 시도 (env로 끌 수 있음)
         if use_vlm and document_id:
             vlm_pages_attempted += 1
-            vlm = _try_vlm_problem_bboxes(page, document_id)
+            vlm, vlm_paper_type = _try_vlm_problem_bboxes(page, document_id)
+
+            # B-2 (2026-05-04): VLM이 분류한 paper_type을 page dict에 override.
+            # bbox 게이트(D-1~D-4) reject되어도 paper_type 신호는 유효하므로 항상 적용.
+            # heuristic + handwriting_bias(A-1)보다 VLM 직접 분류가 정확.
+            # _aggregate_paper_types가 자동 반영 → paper_type_summary 정밀화.
+            if vlm_paper_type:
+                page["paper_type"] = vlm_paper_type
+                debug = page.setdefault("paper_type_debug", {})
+                debug["vlm_override"] = True
+                debug["vlm_paper_type"] = vlm_paper_type
+                debug["bbox_validated"] = vlm is not None
+
             if vlm is not None:
-                # B-2 (2026-05-04): VLM이 분류한 paper_type을 page dict에 override.
-                # heuristic + handwriting_bias(A-1)보다 VLM 직접 분류가 정확.
-                # _aggregate_paper_types가 자동 반영 → paper_type_summary 정밀화.
-                vlm_paper_type = getattr(vlm, "paper_type", "unknown")
-                if vlm_paper_type and vlm_paper_type != "unknown":
-                    page["paper_type"] = vlm_paper_type
-                    debug = page.setdefault("paper_type_debug", {})
-                    debug["vlm_override"] = True
-                    debug["vlm_paper_type"] = vlm_paper_type
                 vlm_pages_used += 1
                 for prob in vlm.problems:
                     while fallback_counter in seen_numbers:

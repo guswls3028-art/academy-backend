@@ -354,23 +354,18 @@ def test_problem_bbox_result_paper_type_override():
 
 
 def test_pages_via_vlm_overrides_page_paper_type(monkeypatch):
-    """VLM 채택 시 page['paper_type']이 VLM 값으로 override (B-2 핵심).
-
-    pipeline._aggregate_paper_types가 page['paper_type']을 사용하므로,
-    VLM이 정확하게 분류한 paper_type이 자동 반영되어 paper_type_summary 정밀화.
-    """
+    """VLM 채택 시 page['paper_type']이 VLM 값으로 override (B-2 핵심)."""
     from academy.application.use_cases.ai.pipelines import matchup_pipeline
 
     page = {
         "page_index": 0,
         "image_path": "/fake/path.png",
         "boxes": [],
-        "text_regions": [],  # anchor 0 → VLM 호출 분기
+        "text_regions": [],
         "has_embedded_text": False,
-        "paper_type": "unknown",  # heuristic 결과
+        "paper_type": "unknown",
     }
 
-    # _try_vlm_problem_bboxes mock — VLM 채택 + paper_type=quadrant 응답
     accepted_vlm = ProblemBboxResult(
         page_role=PageRole.PROBLEM,
         should_skip=False,
@@ -381,24 +376,30 @@ def test_pages_via_vlm_overrides_page_paper_type(monkeypatch):
         confidence=0.92,
         paper_type="quadrant",
     )
+    # 새 시그니처: (validated_or_none, raw_paper_type)
     monkeypatch.setattr(
         matchup_pipeline, "_try_vlm_problem_bboxes",
-        lambda page, doc_id: accepted_vlm,
+        lambda page, doc_id: (accepted_vlm, "quadrant"),
     )
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
 
-    questions, vlm_stats = matchup_pipeline._pages_via_vlm_or_fallback(
+    _, vlm_stats = matchup_pipeline._pages_via_vlm_or_fallback(
         [page], document_id="123", job_id="test", skip_vlm=False,
     )
 
-    # VLM accepted → page paper_type override
     assert page["paper_type"] == "quadrant"
     assert page.get("paper_type_debug", {}).get("vlm_override") is True
+    assert page.get("paper_type_debug", {}).get("bbox_validated") is True
     assert vlm_stats["pages_used"] == 1
 
 
-def test_pages_via_vlm_unknown_paper_type_no_override(monkeypatch):
-    """VLM이 paper_type=unknown 응답 시 기존 page paper_type 보존 (override X)."""
+def test_pages_via_vlm_paper_type_override_even_if_bbox_rejected(monkeypatch):
+    """VLM bbox 게이트 reject되어도 paper_type 응답은 page meta에 override (B-2 보강).
+
+    핵심: bbox 검증과 paper_type 신호는 별개. VLM 응답 받으면 paper_type은 항상 사용.
+    이 케이스가 운영 academy_workbook 사례 — VLM bbox 모두 reject되지만 paper_type은
+    'clean_pdf_dual' 같이 정확 분류.
+    """
     from academy.application.use_cases.ai.pipelines import matchup_pipeline
 
     page = {
@@ -407,22 +408,43 @@ def test_pages_via_vlm_unknown_paper_type_no_override(monkeypatch):
         "boxes": [],
         "text_regions": [],
         "has_embedded_text": False,
-        "paper_type": "scan_dual",  # heuristic 결과 보존되어야 함
+        "paper_type": "unknown",
     }
 
-    accepted_vlm = ProblemBboxResult(
-        page_role=PageRole.PROBLEM,
-        should_skip=False,
-        problems=[
-            ProblemBbox(number=1, bbox=(10, 10, 100, 100), confidence=0.9),
-            ProblemBbox(number=2, bbox=(120, 10, 100, 100), confidence=0.9),
-        ],
-        confidence=0.92,
-        paper_type="unknown",  # VLM 모름 → heuristic 보존
-    )
+    # bbox는 reject (None) but paper_type 응답은 받음
     monkeypatch.setattr(
         matchup_pipeline, "_try_vlm_problem_bboxes",
-        lambda page, doc_id: accepted_vlm,
+        lambda page, doc_id: (None, "clean_pdf_dual"),
+    )
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+
+    _, vlm_stats = matchup_pipeline._pages_via_vlm_or_fallback(
+        [page], document_id="123", job_id="test", skip_vlm=False,
+    )
+
+    # bbox는 reject but paper_type은 override (핵심 회귀 락)
+    assert page["paper_type"] == "clean_pdf_dual"
+    assert page.get("paper_type_debug", {}).get("vlm_override") is True
+    assert page.get("paper_type_debug", {}).get("bbox_validated") is False
+    assert vlm_stats["pages_used"] == 0  # bbox는 reject
+
+
+def test_pages_via_vlm_no_paper_type_response_no_override(monkeypatch):
+    """VLM 응답에 paper_type=None (mock fallback 또는 unknown) → heuristic 보존."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    page = {
+        "page_index": 0,
+        "image_path": "/fake/path.png",
+        "boxes": [],
+        "text_regions": [],
+        "has_embedded_text": False,
+        "paper_type": "scan_dual",
+    }
+
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda page, doc_id: (None, None),
     )
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
 
@@ -430,37 +452,7 @@ def test_pages_via_vlm_unknown_paper_type_no_override(monkeypatch):
         [page], document_id="123", job_id="test", skip_vlm=False,
     )
 
-    # VLM unknown → page paper_type 보존
     assert page["paper_type"] == "scan_dual"
-    assert page.get("paper_type_debug", {}).get("vlm_override") is None
-
-
-def test_pages_via_vlm_rejected_no_paper_type_override(monkeypatch):
-    """VLM이 게이트 reject되면 page paper_type 보존 (heuristic 그대로)."""
-    from academy.application.use_cases.ai.pipelines import matchup_pipeline
-
-    page = {
-        "page_index": 0,
-        "image_path": "/fake/path.png",
-        "boxes": [],
-        "text_regions": [],
-        "has_embedded_text": False,
-        "paper_type": "student_answer_photo",
-    }
-
-    # _try_vlm_problem_bboxes None 반환 → reject 시뮬
-    monkeypatch.setattr(
-        matchup_pipeline, "_try_vlm_problem_bboxes",
-        lambda page, doc_id: None,
-    )
-    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
-
-    matchup_pipeline._pages_via_vlm_or_fallback(
-        [page], document_id="123", job_id="test", skip_vlm=False,
-    )
-
-    # VLM rejected → page paper_type 보존
-    assert page["paper_type"] == "student_answer_photo"
     assert page.get("paper_type_debug") is None or "vlm_override" not in page.get("paper_type_debug", {})
 
 
