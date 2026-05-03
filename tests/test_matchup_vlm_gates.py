@@ -299,3 +299,176 @@ def test_quality_score_short_text_with_no_anchor_low_quality():
     # bbox 0.15 + anchor 0.30 + text<10 0 + no_anchor 0 = 0.45
     assert me["quality_score"] == 0.45
     assert me["low_quality"] is True
+
+
+# ── B-2 (2026-05-04): VLM paper_type 분류 통합 ──
+
+def test_normalize_paper_type_valid():
+    """valid paper_type 값은 그대로 반환."""
+    from academy.adapters.ai.detection.vlm_fallback import _normalize_paper_type
+
+    for pt in ("clean_pdf_single", "clean_pdf_dual", "scan_single", "scan_dual",
+               "quadrant", "student_answer_photo", "side_notes", "non_question",
+               "unknown"):
+        assert _normalize_paper_type(pt) == pt
+
+
+def test_normalize_paper_type_invalid_to_unknown():
+    """invalid 값 / None / 빈 문자열 → 'unknown'."""
+    from academy.adapters.ai.detection.vlm_fallback import _normalize_paper_type
+
+    for raw in (None, "", "garbage", "Layout_unknown", "single_column", 42):
+        assert _normalize_paper_type(raw) == "unknown", f"raw={raw!r} should yield unknown"
+
+
+def test_normalize_paper_type_case_insensitive():
+    """대문자 입력도 lowercase로 정규화되어 valid 매칭 (LLM 응답 robustness)."""
+    from academy.adapters.ai.detection.vlm_fallback import _normalize_paper_type
+
+    assert _normalize_paper_type("STUDENT_ANSWER_PHOTO") == "student_answer_photo"
+    assert _normalize_paper_type("Quadrant") == "quadrant"
+    assert _normalize_paper_type("  scan_dual  ") == "scan_dual"  # strip 적용
+
+
+def test_problem_bbox_result_paper_type_default():
+    """ProblemBboxResult.paper_type 기본값 'unknown' (하위호환)."""
+    r = ProblemBboxResult(
+        page_role=PageRole.PROBLEM,
+        should_skip=False,
+        problems=[],
+        confidence=0.7,
+    )
+    assert r.paper_type == "unknown"
+
+
+def test_problem_bbox_result_paper_type_override():
+    """ProblemBboxResult.paper_type 명시 시 보존."""
+    r = ProblemBboxResult(
+        page_role=PageRole.PROBLEM,
+        should_skip=False,
+        problems=[],
+        confidence=0.9,
+        paper_type="quadrant",
+    )
+    assert r.paper_type == "quadrant"
+
+
+def test_pages_via_vlm_overrides_page_paper_type(monkeypatch):
+    """VLM 채택 시 page['paper_type']이 VLM 값으로 override (B-2 핵심).
+
+    pipeline._aggregate_paper_types가 page['paper_type']을 사용하므로,
+    VLM이 정확하게 분류한 paper_type이 자동 반영되어 paper_type_summary 정밀화.
+    """
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    page = {
+        "page_index": 0,
+        "image_path": "/fake/path.png",
+        "boxes": [],
+        "text_regions": [],  # anchor 0 → VLM 호출 분기
+        "has_embedded_text": False,
+        "paper_type": "unknown",  # heuristic 결과
+    }
+
+    # _try_vlm_problem_bboxes mock — VLM 채택 + paper_type=quadrant 응답
+    accepted_vlm = ProblemBboxResult(
+        page_role=PageRole.PROBLEM,
+        should_skip=False,
+        problems=[
+            ProblemBbox(number=1, bbox=(10, 10, 100, 100), confidence=0.9),
+            ProblemBbox(number=2, bbox=(120, 10, 100, 100), confidence=0.9),
+        ],
+        confidence=0.92,
+        paper_type="quadrant",
+    )
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda page, doc_id: accepted_vlm,
+    )
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+
+    questions, vlm_stats = matchup_pipeline._pages_via_vlm_or_fallback(
+        [page], document_id="123", job_id="test", skip_vlm=False,
+    )
+
+    # VLM accepted → page paper_type override
+    assert page["paper_type"] == "quadrant"
+    assert page.get("paper_type_debug", {}).get("vlm_override") is True
+    assert vlm_stats["pages_used"] == 1
+
+
+def test_pages_via_vlm_unknown_paper_type_no_override(monkeypatch):
+    """VLM이 paper_type=unknown 응답 시 기존 page paper_type 보존 (override X)."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    page = {
+        "page_index": 0,
+        "image_path": "/fake/path.png",
+        "boxes": [],
+        "text_regions": [],
+        "has_embedded_text": False,
+        "paper_type": "scan_dual",  # heuristic 결과 보존되어야 함
+    }
+
+    accepted_vlm = ProblemBboxResult(
+        page_role=PageRole.PROBLEM,
+        should_skip=False,
+        problems=[
+            ProblemBbox(number=1, bbox=(10, 10, 100, 100), confidence=0.9),
+            ProblemBbox(number=2, bbox=(120, 10, 100, 100), confidence=0.9),
+        ],
+        confidence=0.92,
+        paper_type="unknown",  # VLM 모름 → heuristic 보존
+    )
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda page, doc_id: accepted_vlm,
+    )
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+
+    matchup_pipeline._pages_via_vlm_or_fallback(
+        [page], document_id="123", job_id="test", skip_vlm=False,
+    )
+
+    # VLM unknown → page paper_type 보존
+    assert page["paper_type"] == "scan_dual"
+    assert page.get("paper_type_debug", {}).get("vlm_override") is None
+
+
+def test_pages_via_vlm_rejected_no_paper_type_override(monkeypatch):
+    """VLM이 게이트 reject되면 page paper_type 보존 (heuristic 그대로)."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    page = {
+        "page_index": 0,
+        "image_path": "/fake/path.png",
+        "boxes": [],
+        "text_regions": [],
+        "has_embedded_text": False,
+        "paper_type": "student_answer_photo",
+    }
+
+    # _try_vlm_problem_bboxes None 반환 → reject 시뮬
+    monkeypatch.setattr(
+        matchup_pipeline, "_try_vlm_problem_bboxes",
+        lambda page, doc_id: None,
+    )
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+
+    matchup_pipeline._pages_via_vlm_or_fallback(
+        [page], document_id="123", job_id="test", skip_vlm=False,
+    )
+
+    # VLM rejected → page paper_type 보존
+    assert page["paper_type"] == "student_answer_photo"
+    assert page.get("paper_type_debug") is None or "vlm_override" not in page.get("paper_type_debug", {})
+
+
+def test_mock_vision_adapter_paper_type_default():
+    """MockVLMVisionAdapter도 paper_type 필드 보유 (하위호환)."""
+    from academy.adapters.ai.detection.vlm_fallback import MockVLMVisionAdapter
+
+    adapter = MockVLMVisionAdapter()
+    result = adapter.detect_problems(image_path="/fake.png", page_meta={"boxes": []})
+    assert hasattr(result, "paper_type")
+    assert result.paper_type == "unknown"

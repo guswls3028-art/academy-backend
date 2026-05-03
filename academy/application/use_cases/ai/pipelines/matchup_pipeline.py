@@ -925,6 +925,15 @@ def _pages_via_vlm_or_fallback(
             vlm_pages_attempted += 1
             vlm = _try_vlm_problem_bboxes(page, document_id)
             if vlm is not None:
+                # B-2 (2026-05-04): VLM이 분류한 paper_type을 page dict에 override.
+                # heuristic + handwriting_bias(A-1)보다 VLM 직접 분류가 정확.
+                # _aggregate_paper_types가 자동 반영 → paper_type_summary 정밀화.
+                vlm_paper_type = getattr(vlm, "paper_type", "unknown")
+                if vlm_paper_type and vlm_paper_type != "unknown":
+                    page["paper_type"] = vlm_paper_type
+                    debug = page.setdefault("paper_type_debug", {})
+                    debug["vlm_override"] = True
+                    debug["vlm_paper_type"] = vlm_paper_type
                 vlm_pages_used += 1
                 for prob in vlm.problems:
                     while fallback_counter in seen_numbers:

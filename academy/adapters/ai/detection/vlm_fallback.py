@@ -68,12 +68,20 @@ class ProblemBbox:
 
 @dataclass
 class ProblemBboxResult:
-    """Tier 3 vision 결과 — 페이지 내 문항 bbox 리스트."""
+    """Tier 3 vision 결과 — 페이지 내 문항 bbox 리스트.
+
+    paper_type: VLM이 직접 분류한 페이지 유형 (B-2 보강, 2026-05-04).
+      값은 PaperType enum value (clean_pdf_single/dual, scan_single/dual, quadrant,
+      student_answer_photo, side_notes, non_question, unknown). 호출자(_pages_via_vlm_or_fallback)
+      가 page dict의 paper_type을 이 값으로 override 해 _aggregate_paper_types가
+      heuristic 보다 정확한 신호 사용.
+    """
 
     page_role: PageRole
     should_skip: bool
     problems: List[ProblemBbox]
     confidence: float
+    paper_type: str = "unknown"
     debug: Dict[str, Any] = field(default_factory=dict)
 
 
@@ -180,6 +188,7 @@ class MockVLMVisionAdapter:
             should_skip=False,
             problems=problems,
             confidence=0.5,
+            paper_type="unknown",
             debug={"adapter": "mock", "fallback_to_existing_boxes": True},
         )
 
@@ -388,6 +397,17 @@ _PROBLEM_BBOX_PROMPT = """당신은 한국어 시험지·교재 페이지의 문
 - quadrant: 4분할 (상-하 × 좌-우, 페이지가 4 사분면에 4 문항). 학생 답안지 폰사진에 흔함.
 - mixed: 위 layout이 섞여 있음.
 
+다음으로 paper_type (페이지 유형)을 식별하세요:
+- clean_pdf_single: 깨끗한 인쇄 PDF, 단일 컬럼 (출판사 시판 교재 본문)
+- clean_pdf_dual: 깨끗한 인쇄 PDF, 2단 컬럼
+- scan_single: 스캔본 시험지 단일 컬럼 (학교 인쇄 + 종이 스캔)
+- scan_dual: 스캔본 시험지 2단 컬럼
+- quadrant: 4분할 (2x2 그리드) 페이지
+- student_answer_photo: 학생이 풀고 폰으로 찍은 시험지 (손글씨 답안 + perspective + 회전 + 종이 그림자)
+- side_notes: 학습자료 본문 (Step N. / 항목번호가 본문에 다수 등장)
+- non_question: 표지·목차·해설·정답지·빈 페이지 (should_skip=true와 일치)
+- unknown: 분류 불명
+
 문항 박스 작성 규칙 (필수):
 - 각 박스는 문항 번호(예: "1.", "(1)", "①")부터 본문, 보기, 답란까지 모두 포함하도록 잡으세요.
 - 박스 안에 실제 본문 텍스트가 반드시 있어야 합니다. 빈 영역에 박스를 만들지 마세요.
@@ -406,10 +426,23 @@ JSON schema (이 외 키는 추가하지 마세요):
   "page_role": "problem|cover|index|explanation|answer_key|mixed",
   "should_skip": <bool>,
   "layout": "single_column|dual_column|quadrant|mixed|other",
+  "paper_type": "clean_pdf_single|clean_pdf_dual|scan_single|scan_dual|quadrant|student_answer_photo|side_notes|non_question|unknown",
   "problems": [{"number": <int>, "bbox": [x, y, w, h], "confidence": <0.0~1.0>}],
   "confidence": <0.0~1.0>
 }
 """
+
+# paper_type 응답 valid set — VLM이 invalid 값 응답 시 unknown으로 폴백.
+_VALID_PAPER_TYPES = frozenset({
+    "clean_pdf_single", "clean_pdf_dual", "scan_single", "scan_dual",
+    "quadrant", "student_answer_photo", "side_notes", "non_question", "unknown",
+})
+
+
+def _normalize_paper_type(raw: Any) -> str:
+    """문자열 → valid paper_type. 모르는 값은 unknown."""
+    s = str(raw or "").strip().lower()
+    return s if s in _VALID_PAPER_TYPES else "unknown"
 
 
 def _normalize_role(raw: str) -> PageRole:
@@ -558,10 +591,12 @@ class GeminiVLMVisionAdapter:
             should_skip=bool(data.get("should_skip", False)),
             problems=problems,
             confidence=float(data.get("confidence", 0.7)),
+            paper_type=_normalize_paper_type(data.get("paper_type")),
             debug={
                 "adapter": "gemini", "model": self.model,
                 "raw_count": len(problems_raw),
                 "scale": round(scale, 3),
+                "layout": str(data.get("layout", "")),
             },
         )
 
