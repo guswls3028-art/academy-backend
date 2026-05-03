@@ -2129,6 +2129,224 @@ class HitReportPdfView(View):
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class HitReportZipExportView(View):
+    """GET /api/v1/matchup/hit-reports/<id>/share.zip
+
+    카페·블로그 게시용 raw asset 패키지 — 강사가 PDF 그대로 가져다 쓸 수 있게.
+      - pages/page_001.png ... page_N.png : 페이지별 PNG (PDF 페이지 1:1 변환)
+      - cover.png                          : 표지 이미지 (page_001 alias)
+      - summary.md                         : 강사명/학원/시험지/적중률/문항 코멘트 markdown
+      - README.txt                         : 카페 게시 가이드
+
+    PDF은 학원 제출용 정식 산출물 / ZIP은 강사가 카페에 자유 게시 시 paste·업로드용.
+    외부 공유 link(R-C C-1)는 별개 — 본 endpoint도 staff 인증 필요. zip은 강사가
+    수동 다운로드 후 본인 명의로 카페에 게시.
+    """
+
+    def get(self, request, report_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            report = MatchupHitReport.objects.select_related("document", "author").get(
+                id=report_id, tenant=request.tenant,
+            )
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+        if not _hit_report_writable(request, report):
+            return JsonResponse(
+                {"detail": "다른 강사의 보고서는 다운로드할 수 없습니다."},
+                status=403,
+            )
+
+        try:
+            zip_bytes = _build_hit_report_share_zip(report)
+        except Exception:
+            logger.exception("hit_report_share_zip failed (report=%s)", report.id)
+            return JsonResponse({"detail": "ZIP 생성 실패"}, status=500)
+
+        from urllib.parse import quote
+        title = report.title or report.document.title or f"matchup-hitreport-{report.id}"
+        safe_name = quote(title[:80])
+        resp = HttpResponse(zip_bytes, content_type="application/zip")
+        resp["Content-Disposition"] = (
+            f"attachment; filename=\"matchup-hitreport-{report.id}-share.zip\"; "
+            f"filename*=UTF-8''{safe_name}-카페공유.zip"
+        )
+        resp["Cache-Control"] = "private, no-cache"
+        return resp
+
+
+def _build_hit_report_share_zip(report) -> bytes:
+    """PDF → 페이지별 PNG + summary.md + README.txt → in-memory ZIP.
+
+    PyMuPDF로 PDF 페이지 → 200dpi PNG 변환. 이미 PDF 생성 로직(이미지 prefetch +
+    레이아웃)을 재사용하므로 ZIP 생성은 PDF 1회 빌드 + 페이지 렌더 비용.
+    """
+    import io
+    import zipfile
+    from datetime import datetime
+
+    from .pdf_report import generate_curated_hit_report_pdf, _compute_display_sim
+    from .models import MatchupProblem
+    from academy.adapters.tools.pymupdf_renderer import PdfDocument
+
+    pdf_bytes = generate_curated_hit_report_pdf(report)
+
+    # PDF → 페이지별 PNG (200 dpi — 카페 업로드 시 화질 충분, 사이즈 적정).
+    page_pngs: list[bytes] = []
+    pdf_temp = io.BytesIO(pdf_bytes)
+    pdf_temp.seek(0)
+    import tempfile
+    import os
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        with open(tmp_path, "wb") as f:
+            f.write(pdf_bytes)
+        with PdfDocument(tmp_path) as doc_pdf:
+            for i in range(doc_pdf.page_count()):
+                page_img = doc_pdf.render_page(i, dpi=200)
+                buf = io.BytesIO()
+                page_img.save(buf, "PNG", optimize=True)
+                page_pngs.append(buf.getvalue())
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+    # summary.md — 카페 본문에 paste 가능한 markdown
+    document = report.document
+    tenant = document.tenant
+    tenant_name = (tenant.name or "").strip() or "학원"
+
+    author_name = ""
+    if report.author_id and report.author is not None:
+        try:
+            from apps.core.models.user import user_display_username
+            author_name = (
+                getattr(report.author, "name", None)
+                or user_display_username(report.author)
+                or ""
+            ).strip()
+        except Exception:
+            author_name = ""
+    if not author_name:
+        author_name = report.submitted_by_name or ""
+
+    issued_at = (
+        report.submitted_at.strftime("%Y년 %m월 %d일") if report.submitted_at
+        else datetime.now().strftime("%Y년 %m월 %d일")
+    )
+
+    # 적중률 산출 — PDF 표지와 동일 정의
+    exam_problems = list(
+        document.problems.exclude(image_key="").order_by("number")
+    )
+    entries_by_eid = {e.exam_problem_id: e for e in report.entries.all()}
+    all_sel_ids = set()
+    for e in entries_by_eid.values():
+        for pid in (e.selected_problem_ids or []):
+            try:
+                all_sel_ids.add(int(pid))
+            except (TypeError, ValueError):
+                pass
+    sel_meta = {}
+    if all_sel_ids:
+        for p in MatchupProblem.objects.filter(
+            tenant=tenant, id__in=list(all_sel_ids),
+        ).only("id", "embedding", "image_embedding", "meta", "text", "number", "document_id"):
+            sel_meta[p.id] = p
+
+    hit_count = 0
+    for ep in exam_problems:
+        e = entries_by_eid.get(ep.id)
+        sel_ids = (e.selected_problem_ids if e else []) or []
+        for pid in sel_ids:
+            cand = sel_meta.get(int(pid)) if isinstance(pid, int) else None
+            if not cand:
+                continue
+            sim = _compute_display_sim(ep, cand)
+            if sim is not None and sim >= 0.75:
+                hit_count += 1
+                break
+    total_q = len(exam_problems)
+    hit_rate = (hit_count / total_q * 100) if total_q else 0.0
+
+    md_lines: list[str] = []
+    md_lines.append(f"# {report.title or document.title or '매치업 적중 보고서'}")
+    md_lines.append("")
+    md_lines.append(f"- **학원**: {tenant_name}")
+    if author_name:
+        md_lines.append(f"- **강사**: {author_name}")
+    md_lines.append(f"- **시험**: {document.title or ''}")
+    if document.category:
+        md_lines.append(f"- **카테고리**: {document.category}")
+    md_lines.append(f"- **발행일**: {issued_at}")
+    md_lines.append(f"- **매치업 적중률**: {hit_rate:.1f}%  (전체 {total_q}문항 중 {hit_count}문항이 학원 자료와 75%+ 유사)")
+    md_lines.append("")
+
+    if (report.summary or "").strip():
+        md_lines.append("## 보고서 요약")
+        md_lines.append("")
+        md_lines.append(report.summary.strip())
+        md_lines.append("")
+
+    md_lines.append("## 문항별 코멘트")
+    md_lines.append("")
+    for ep in exam_problems:
+        e = entries_by_eid.get(ep.id)
+        comment = ((e.comment if e else "") or "").strip()
+        if not comment:
+            continue
+        md_lines.append(f"### Q{ep.number}")
+        md_lines.append("")
+        md_lines.append(comment)
+        md_lines.append("")
+
+    md_lines.append("---")
+    md_lines.append("")
+    md_lines.append(f"_본 보고서는 {tenant_name}의 매치업 적중 분석 결과입니다._")
+    summary_md = "\n".join(md_lines).encode("utf-8")
+
+    # README.txt — 사용 가이드
+    readme_lines = [
+        "매치업 적중 보고서 — 카페/블로그 공유용 패키지",
+        "",
+        "구성:",
+        "  pages/page_001.png  ~  page_NNN.png  : 페이지별 PNG (PDF와 동일 양식)",
+        "  cover.png                            : 표지 (page_001 alias)",
+        "  summary.md                           : 카페 본문에 paste 가능한 markdown 요약",
+        "  README.txt                           : 본 안내 파일",
+        "",
+        "사용:",
+        "  1. summary.md 내용을 카페 글 본문에 복사·붙여넣기",
+        "  2. pages/*.png 또는 cover.png을 카페 에디터에 이미지 업로드",
+        "     (네이버 카페·블로그 모두 PNG 직접 업로드 지원)",
+        "  3. 본 자료는 강사 본인 명의로 자유롭게 게시 가능",
+        "",
+        "주의:",
+        "  - 본 ZIP은 작성 강사 또는 학원 owner/admin만 다운로드 가능",
+        "  - 학원의 다른 강사 자료가 포함되었을 수 있으니 게시 전 확인",
+    ]
+    readme_txt = "\n".join(readme_lines).encode("utf-8")
+
+    # ZIP 패키징
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, png in enumerate(page_pngs, start=1):
+            zf.writestr(f"pages/page_{i:03d}.png", png)
+        if page_pngs:
+            zf.writestr("cover.png", page_pngs[0])  # 페이지 1 alias = 표지
+        zf.writestr("summary.md", summary_md)
+        zf.writestr("README.txt", readme_txt)
+
+    return zip_buf.getvalue()
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class DocumentHitReportPdfView(View):
     """폐기됨 (deprecated). 자동 PDF는 큐레이션 보고서로 대체.
 

@@ -28,6 +28,8 @@ urlpatterns = [
     path("hit-reports/<int:report_id>/entries/", views.HitReportEntriesUpsertView.as_view()),
     path("hit-reports/<int:report_id>/submit/", views.HitReportSubmitView.as_view()),
     path("hit-reports/<int:report_id>/curated.pdf", views.HitReportPdfView.as_view()),
+    # 카페·블로그 게시용 raw asset (PNG + summary.md). 강사가 본인 명의로 자유 게시.
+    path("hit-reports/<int:report_id>/share.zip", views.HitReportZipExportView.as_view()),
 
     # Categories
     path("categories/", views.CategoryListView.as_view()),
