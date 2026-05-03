@@ -1920,6 +1920,9 @@ class HitReportSubmitView(View):
                 status=403,
             )
 
+        # 중복 발송 방지: status 전이(draft→submitted) 1회만 알림. 이미 submitted 호출 시 알림 skip.
+        was_already_submitted = report.status == "submitted"
+
         from django.utils import timezone
         report.status = "submitted"
         report.submitted_at = timezone.now()
@@ -1938,7 +1941,148 @@ class HitReportSubmitView(View):
         report.save(update_fields=[
             "status", "submitted_at", "submitted_by_id", "submitted_by_name", "author", "updated_at",
         ])
+
+        # B-2: 학원 owner/admin에게 알림톡 (학원별 AutoSendConfig 토글 — 기본 OFF).
+        # 첫 제출 1회만 발송 (status 재진입 보호). 실패는 silent — 보고서 제출 자체는 성공.
+        if not was_already_submitted:
+            try:
+                _notify_hit_report_submitted(report, request)
+            except Exception:
+                logger.exception("HIT_REPORT_NOTIFY_FAILED | report_id=%s", report.id)
+
         return JsonResponse(MatchupHitReportSerializer(report).data)
+
+
+def _notify_hit_report_submitted(report, request) -> None:
+    """매치업 보고서 학원 제출 시 owner/admin 알림톡 발송.
+
+    정책 (사용자 결정 2026-05-03):
+      - AutoSendConfig 토글 — 기본 OFF, 학원이 messaging 설정에서 ON 시에만.
+      - 수신자: 해당 tenant의 owner/admin 권한자 모두 (멀티 admin 학원 케이스 대응).
+      - 중복 방지: status draft→submitted 전이 시점 1회만 (호출자 측 가드 + 발송 로그).
+      - 발송 실패는 silent — 본 endpoint(submit)의 성공/실패와 분리.
+
+    재사용: TYPE_SCORE 템플릿 (메모리 `community_alimtalk` 패턴, 신규 카카오 검수 회피).
+    """
+    from apps.domains.messaging.selectors import get_auto_send_config
+    from apps.domains.messaging.services import enqueue_sms
+    from apps.domains.messaging.alimtalk_content_builders import (
+        get_solapi_template_id, build_unified_replacements,
+    )
+    from apps.domains.messaging.policy import is_messaging_disabled
+    from apps.core.models import TenantMembership, Tenant
+
+    trigger = "matchup_report_submitted"
+    tenant = report.tenant
+    tenant_id = tenant.id
+
+    if is_messaging_disabled(tenant_id):
+        logger.info("hit_report_notify skipped: tenant %s messaging disabled", tenant_id)
+        return
+
+    config = get_auto_send_config(tenant_id, trigger)
+    if not config or not config.enabled:
+        logger.debug(
+            "hit_report_notify skipped: trigger=%s tenant=%s (config disabled or missing)",
+            trigger, tenant_id,
+        )
+        return
+
+    template = config.template
+    template_body = (template.body if template else "") or (
+        "강사가 매치업 적중 보고서를 제출했습니다.\n"
+        "어드민 → 매치업에서 보고서 inbox를 확인해 주세요."
+    )
+
+    tenant_name = (tenant.name or "").strip() or "학원"
+    site_url = "https://hakwonplus.com"
+    if tenant.code:
+        site_url = f"https://{tenant.code}.hakwonplus.com"
+
+    author_name = ""
+    if report.author_id and report.author is not None:
+        from apps.core.models.user import user_display_username
+        author_name = (
+            getattr(report.author, "name", None)
+            or user_display_username(report.author)
+            or ""
+        )
+    if not author_name:
+        author_name = report.submitted_by_name or "강사"
+
+    doc = report.document
+    doc_title = (doc.title if doc else "") or "시험지"
+    doc_category = (doc.category if doc else "") or ""
+
+    # ITEM_LIST 슬롯 매핑 — score 템플릿 재사용 ("강의명"=학교/카테고리, "차시명"=시험지+강사)
+    context = {
+        "강의명": (doc_category or doc_title)[:30],
+        "차시명": f"{doc_title[:20]}  ·  {author_name} 강사"[:30],
+    }
+
+    # 수신자 — owner/admin 멀티 (TenantMembership active)
+    memberships = list(
+        TenantMembership.objects.filter(
+            tenant=tenant, is_active=True, role__in=["owner", "admin"],
+        ).select_related("user").only(
+            "user__id", "user__name", "user__username", "user__phone",
+        )
+    )
+    if not memberships:
+        logger.info("hit_report_notify: no owner/admin in tenant %s", tenant_id)
+        return
+
+    solapi_tid = get_solapi_template_id(trigger)
+    sent_count = 0
+    sent_user_ids: list[int] = []
+    for m in memberships:
+        u = getattr(m, "user", None)
+        if not u:
+            continue
+        phone = (getattr(u, "phone", "") or "").replace("-", "").strip()
+        if not phone:
+            logger.debug(
+                "hit_report_notify: user %s has no phone, skip", getattr(u, "id", "?"),
+            )
+            continue
+
+        recipient_name = getattr(u, "name", None) or getattr(u, "username", "") or ""
+
+        sms_kwargs = dict(
+            tenant_id=tenant_id,
+            to=phone,
+            text=template_body,
+            message_mode="alimtalk",
+        )
+        if solapi_tid:
+            replacements = build_unified_replacements(
+                trigger=trigger,
+                content_body=template_body,
+                context=context,
+                tenant_name=tenant_name,
+                student_name=recipient_name,  # score 템플릿 수신자 슬롯
+                site_url=site_url,
+            )
+            sms_kwargs["template_id"] = solapi_tid
+            sms_kwargs["alimtalk_replacements"] = replacements
+
+        try:
+            ok = enqueue_sms(**sms_kwargs)
+            if ok:
+                sent_count += 1
+                sent_user_ids.append(u.id)
+        except Exception as e:
+            logger.warning(
+                "hit_report_notify enqueue failed: report=%s user=%s err=%s",
+                report.id, u.id, e,
+            )
+
+    # 발송 로그 — meta에 영구 기록 (운영 감사 추적용. 본 컬럼은 신규 추가 없이 jsonb meta 활용 가능하나
+    # MatchupHitReport는 meta 필드가 없으므로 logger.info만 남긴다).
+    logger.info(
+        "HIT_REPORT_NOTIFIED | tenant=%s report=%s author=%s recipients=%d/%d user_ids=%s",
+        tenant_id, report.id, report.author_id, sent_count, len(memberships), sent_user_ids,
+    )
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")

@@ -63,6 +63,9 @@ TRIGGER_POLICY = {
     # 영상 — 인코딩 완료 시 업로더(스태프)에게 알림
     "video_encoding_complete": "AUTO_DEFAULT",
 
+    # 매치업 — 강사가 적중 보고서 학원 제출 시 owner/admin 알림 (기본 OFF)
+    "matchup_report_submitted": "AUTO_DEFAULT",
+
     # 커뮤니티 — 학생/학부모 즉시 통보
     "qna_answered": "AUTO_DEFAULT",
     "counsel_answered": "AUTO_DEFAULT",
@@ -112,6 +115,8 @@ IMPLEMENTED_AUTO_TRIGGERS: frozenset = frozenset([
     "assignment_not_submitted",  # management command (cron)
     # 영상
     "video_encoding_complete",
+    # 매치업 보고서 (강사 → 학원 owner/admin)
+    "matchup_report_submitted",
     # 커뮤니티
     "qna_answered",
     "counsel_answered",

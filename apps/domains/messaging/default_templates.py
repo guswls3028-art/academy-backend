@@ -390,6 +390,16 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "body": "영상 인코딩이 완료되었습니다.\n앱에서 영상을 확인해 주세요.",
         "minutes_before": None,
     },
+    # ───────── 매치업 보고서 ─────────
+    # 강사가 매치업 적중 보고서를 학원에 제출 시 owner/admin 수신.
+    # body = score 템플릿의 #{선생님메모} 슬롯. 시험지명/카테고리/강사는 ITEM_LIST.
+    "matchup_report_submitted": {
+        "category": "lecture",
+        "name": "[{academy_name}] 매치업 적중 보고서 제출",
+        "subject": "강사가 매치업 적중 보고서를 제출했습니다",
+        "body": "강사가 매치업 적중 보고서를 제출했습니다.\n어드민 → 매치업에서 보고서 inbox를 확인해 주세요.",
+        "minutes_before": None,
+    },
     # ───────── 커뮤니티 (통합 알림톡: score 템플릿) ─────────
     # body = #{선생님메모} 영역. 학원이름/학생이름/제목/카테고리는 ITEM_LIST 슬롯 사용.
     "qna_answered": {

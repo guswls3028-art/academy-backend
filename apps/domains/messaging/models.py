@@ -227,6 +227,8 @@ class AutoSendConfig(models.Model):
         PAYMENT_DUE_DAYS_BEFORE = "payment_due_days_before", "납부 예정일 N일 전"
         # J. 영상
         VIDEO_ENCODING_COMPLETE = "video_encoding_complete", "영상 인코딩 완료"
+        # J-2. 매치업 보고서 — 강사 1인이 학원에 보고서 제출 시 owner/admin 알림 (기본 OFF, AUTO_DEFAULT)
+        MATCHUP_REPORT_SUBMITTED = "matchup_report_submitted", "매치업 보고서 제출"
         # H. 운영공지 — urgent_notice 제거 (카카오 알림톡 정책 위반)
         # I. 비밀번호 찾기/재설정 — SYSTEM_AUTO
         PASSWORD_FIND_OTP = "password_find_otp", "비밀번호 찾기 인증번호"

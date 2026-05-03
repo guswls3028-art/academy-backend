@@ -85,6 +85,10 @@ TRIGGER_TO_TEMPLATE_TYPE: dict[str, str] = {
     # 영상 — score 템플릿 (강의명/차시명)
     "video_encoding_complete": TYPE_SCORE,
 
+    # 매치업 — score 템플릿 재사용 (학원/시험지/강사명을 ITEM_LIST 슬롯에)
+    # 사용자 정책 (B-2 / 메모리 community_alimtalk 패턴): 신규 카카오 검수 회피.
+    "matchup_report_submitted": TYPE_SCORE,
+
     # 커뮤니티 — score 템플릿 (강의명/차시명 슬롯에 카테고리/제목 사용)
     "qna_answered": TYPE_SCORE,
     "counsel_answered": TYPE_SCORE,

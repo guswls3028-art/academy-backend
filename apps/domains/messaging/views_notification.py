@@ -193,6 +193,8 @@ class ManualNotificationPreviewView(APIView):
         "counseling_reservation_created",
         # 영상 (score 템플릿)
         "video_encoding_complete",
+        # 매치업 보고서 (score 템플릿) — 강사→학원 owner/admin 수동 발송 가능
+        "matchup_report_submitted",
     }
 
     def post(self, request):
