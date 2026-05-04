@@ -312,6 +312,14 @@ def _gemini_request(
     _check_tenant_quota(tenant_id)  # tenant cap 먼저 (광범위)
     _check_doc_quota(document_id)
 
+    # DB 영구 카운터 — quota service 통합 (모니터링 + enforcement 가능, P0-2 보강)
+    # tenant context 없으면 silent skip (admin script 등에서 호출 시).
+    try:
+        from apps.domains.ai.services.quota import consume_ai_quota
+        consume_ai_quota("matchup_vlm")
+    except Exception as _e:  # tracking 실패는 본 호출 죽이면 안 됨
+        logger.warning("matchup_vlm quota tracking failed: %s", _e)
+
     payload: Dict[str, Any] = {
         "contents": [{"parts": parts}],
         "generationConfig": {
