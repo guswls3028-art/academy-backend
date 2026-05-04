@@ -318,7 +318,7 @@ def run_matchup_pipeline(
         # 문제를 찾지 못한 경우 — 전체 페이지를 하나의 문제로 취급
         logger.info("MATCHUP_NO_BOXES | job_id=%s | treating whole pages as problems", job_id)
         questions_raw, vlm_stats = _pages_via_vlm_or_fallback(
-            pages, document_id, job_id, skip_vlm=skip_vlm_auto,
+            pages, document_id, job_id, skip_vlm=skip_vlm_auto, tenant_id=tenant_id,
         )
         paper_type_summary["vlm_auto_split"] = vlm_stats
     elif is_over_extracted or is_low_confidence_doc:
@@ -341,7 +341,7 @@ def run_matchup_pipeline(
         # anchor 1~4 페이지는 기존 sub-crop 유지 (신뢰도 높음).
         # anchor 0 또는 5+ 페이지만 VLM vision 호출 — 실패/저신뢰 시 page-as-problem.
         questions_raw, vlm_stats = _pages_via_vlm_or_fallback(
-            kept_pages, document_id, job_id, skip_vlm=skip_vlm_auto,
+            kept_pages, document_id, job_id, skip_vlm=skip_vlm_auto, tenant_id=tenant_id,
         )
         paper_type_summary["vlm_auto_split"] = vlm_stats
     else:
@@ -828,12 +828,17 @@ def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any
     return result
 
 
-def _try_vlm_problem_bboxes(page: Dict, document_id) -> Tuple[Optional[Any], Optional[str]]:
+def _try_vlm_problem_bboxes(
+    page: Dict, document_id, tenant_id: str | int | None = None,
+) -> Tuple[Optional[Any], Optional[str]]:
     """단일 페이지에 vision_VLM 호출. (validated_result, raw_paper_type) 튜플 반환.
 
     paper_type은 게이트와 무관하게 항상 VLM 응답 그대로 추출 (B-2):
     bbox는 4종 결함(D-1~D-4) 게이트에서 reject되어도 paper_type 분류 신호는
     유효하므로 page meta에 보존. None은 VLM 호출 자체 실패 또는 unknown.
+
+    Cost cap (P0-2, 2026-05-04): tenant_id를 vlm_fallback._gemini_request에 전달
+    하여 tenant별 일별 호출 cap 적용.
 
     bbox validated_result:
       1차 게이트: adapter == "gemini" + should_skip False + conf >= 0.80 + problems >= 2
@@ -846,6 +851,7 @@ def _try_vlm_problem_bboxes(page: Dict, document_id) -> Tuple[Optional[Any], Opt
             image_path=page["image_path"],
             page_meta={
                 "document_id": document_id,
+                "tenant_id": tenant_id,
                 "page_index": page["page_index"],
                 "page_width": page.get("width"),
                 "page_height": page.get("height"),
@@ -872,7 +878,8 @@ def _try_vlm_problem_bboxes(page: Dict, document_id) -> Tuple[Optional[Any], Opt
 
 
 def _pages_via_vlm_or_fallback(
-    pages: List[Dict], document_id, job_id: str, *, skip_vlm: bool = False,
+    pages: List[Dict], document_id, job_id: str, *,
+    skip_vlm: bool = False, tenant_id: str | int | None = None,
 ) -> Tuple[List[Dict], Dict[str, Any]]:
     """페이지 폴백 분기 — VLM 시도 → 실패 시 기존 page-as-problem.
 
@@ -931,7 +938,7 @@ def _pages_via_vlm_or_fallback(
         # 2. anchor 0 또는 5+ → VLM 시도 (env로 끌 수 있음)
         if use_vlm and document_id:
             vlm_pages_attempted += 1
-            vlm, vlm_paper_type = _try_vlm_problem_bboxes(page, document_id)
+            vlm, vlm_paper_type = _try_vlm_problem_bboxes(page, document_id, tenant_id=tenant_id)
 
             # B-2 (2026-05-04): VLM이 분류한 paper_type을 page dict에 override.
             # bbox 게이트(D-1~D-4) reject되어도 paper_type 신호는 유효하므로 항상 적용.

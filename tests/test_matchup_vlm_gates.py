@@ -379,7 +379,7 @@ def test_pages_via_vlm_overrides_page_paper_type(monkeypatch):
     # 새 시그니처: (validated_or_none, raw_paper_type)
     monkeypatch.setattr(
         matchup_pipeline, "_try_vlm_problem_bboxes",
-        lambda page, doc_id: (accepted_vlm, "quadrant"),
+        lambda page, doc_id, tenant_id=None: (accepted_vlm, "quadrant"),
     )
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
 
@@ -414,7 +414,7 @@ def test_pages_via_vlm_paper_type_override_even_if_bbox_rejected(monkeypatch):
     # bbox는 reject (None) but paper_type 응답은 받음
     monkeypatch.setattr(
         matchup_pipeline, "_try_vlm_problem_bboxes",
-        lambda page, doc_id: (None, "clean_pdf_dual"),
+        lambda page, doc_id, tenant_id=None: (None, "clean_pdf_dual"),
     )
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
 
@@ -444,7 +444,7 @@ def test_pages_via_vlm_no_paper_type_response_no_override(monkeypatch):
 
     monkeypatch.setattr(
         matchup_pipeline, "_try_vlm_problem_bboxes",
-        lambda page, doc_id: (None, None),
+        lambda page, doc_id, tenant_id=None: (None, None),
     )
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
 
@@ -464,3 +464,84 @@ def test_mock_vision_adapter_paper_type_default():
     result = adapter.detect_problems(image_path="/fake.png", page_meta={"boxes": []})
     assert hasattr(result, "paper_type")
     assert result.paper_type == "unknown"
+
+
+# ── P0-2 (2026-05-04): VLM cost cap per_tenant ──
+
+def test_check_tenant_quota_under_limit_passes():
+    """tenant 일별 호출 수가 limit 미만이면 통과."""
+    from academy.adapters.ai.detection import vlm_fallback
+
+    vlm_fallback.reset_tenant_quota()
+    # default limit 500. 작은 값으로 reset 후 실행.
+    for _ in range(10):
+        vlm_fallback._check_tenant_quota("test_tenant_a")
+    # 예외 없으면 통과
+    assert True
+
+
+def test_check_tenant_quota_exceeds_limit_raises(monkeypatch):
+    """tenant 일별 limit 초과 시 RuntimeError."""
+    from academy.adapters.ai.detection import vlm_fallback
+
+    vlm_fallback.reset_tenant_quota()
+    monkeypatch.setattr(vlm_fallback, "_VLM_TENANT_DAILY_LIMIT", 3)
+    # 3회는 통과
+    for _ in range(3):
+        vlm_fallback._check_tenant_quota("test_tenant_b")
+    # 4회째 RuntimeError
+    with pytest.raises(RuntimeError, match="VLM 호출 한도 초과 \\(tenant=test_tenant_b"):
+        vlm_fallback._check_tenant_quota("test_tenant_b")
+
+
+def test_check_tenant_quota_separate_tenants_independent():
+    """tenant ID 다르면 카운터 독립."""
+    from academy.adapters.ai.detection import vlm_fallback
+
+    vlm_fallback.reset_tenant_quota()
+    monkeypatch_setter = lambda: None  # noop
+    # 직접 _VLM_TENANT_DAILY_LIMIT는 안 만지고 raw counter 검증
+    for _ in range(5):
+        vlm_fallback._check_tenant_quota("tenant_x")
+    for _ in range(5):
+        vlm_fallback._check_tenant_quota("tenant_y")
+    # 양쪽 다 cap 미만이라 예외 없음. counter 분리 검증.
+    from datetime import date
+    today = date.today().isoformat()
+    assert vlm_fallback._tenant_call_counter[("tenant_x", today)] == 5
+    assert vlm_fallback._tenant_call_counter[("tenant_y", today)] == 5
+
+
+def test_check_tenant_quota_none_tenant_skipped():
+    """tenant_id None이면 quota 검사 안 함 (legacy 호환)."""
+    from academy.adapters.ai.detection import vlm_fallback
+
+    vlm_fallback.reset_tenant_quota()
+    for _ in range(1000):
+        vlm_fallback._check_tenant_quota(None)
+    # 예외 없음. counter 비어있어야 함.
+    assert vlm_fallback._tenant_call_counter == {}
+
+
+def test_reset_tenant_quota_specific_tenant():
+    """reset_tenant_quota(tenant_id)는 해당 tenant만 리셋."""
+    from academy.adapters.ai.detection import vlm_fallback
+
+    vlm_fallback.reset_tenant_quota()
+    vlm_fallback._check_tenant_quota("tenant_a")
+    vlm_fallback._check_tenant_quota("tenant_b")
+    vlm_fallback.reset_tenant_quota("tenant_a")
+    from datetime import date
+    today = date.today().isoformat()
+    assert ("tenant_a", today) not in vlm_fallback._tenant_call_counter
+    assert vlm_fallback._tenant_call_counter[("tenant_b", today)] == 1
+
+
+def test_reset_tenant_quota_all():
+    """reset_tenant_quota(None)은 전체 리셋."""
+    from academy.adapters.ai.detection import vlm_fallback
+
+    vlm_fallback._check_tenant_quota("tenant_a")
+    vlm_fallback._check_tenant_quota("tenant_b")
+    vlm_fallback.reset_tenant_quota()
+    assert vlm_fallback._tenant_call_counter == {}

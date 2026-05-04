@@ -212,6 +212,10 @@ _VISION_ADAPTER: Optional[VLMVisionAdapter] = None
 # doc 1건당 호출 수 cap = 50 (cost worst-case ~$0.075). 학원장 directive($5/doc)
 # 보다 매우 보수적이지만, 사고 시 비용 폭주를 in-memory counter로 차단.
 _VLM_DOC_CALL_LIMIT = int(os.getenv("MATCHUP_VLM_PER_DOC_LIMIT", "50"))
+# Tenant 단위 일별 호출 cap (P0-2 cost cap, 2026-05-04). 한 학원이 다수 doc 업로드 시
+# cost 폭주 방지. default 500 = ~$2.5/일 (flash vision $0.005 × 500). 학원장 정책에
+# 따라 env로 조정. 일 reset은 자동 (date key 변경 시 새 카운터).
+_VLM_TENANT_DAILY_LIMIT = int(os.getenv("MATCHUP_VLM_PER_TENANT_DAILY_LIMIT", "500"))
 _GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta"
 # 큰 시험지 폰사진(2~4MB) vision 처리는 cold start 시 30s 초과. 90s 까지 허용.
 _GEMINI_TIMEOUT = int(os.getenv("MATCHUP_VLM_TIMEOUT_SEC", "90"))
@@ -226,6 +230,7 @@ _GEMINI_VISION_MAX_DIM = int(os.getenv("MATCHUP_VLM_VISION_MAX_DIM", "1600"))
 _GEMINI_VISION_JPEG_Q = int(os.getenv("MATCHUP_VLM_VISION_JPEG_Q", "85"))
 
 _doc_call_counter: Dict[str, int] = {}
+_tenant_call_counter: Dict[tuple, int] = {}  # (tenant_id_str, date_str) → count
 
 
 def _check_doc_quota(document_id: str | int | None) -> None:
@@ -242,12 +247,46 @@ def _check_doc_quota(document_id: str | int | None) -> None:
     _doc_call_counter[key] = cur + 1
 
 
+def _check_tenant_quota(tenant_id: str | int | None) -> None:
+    """tenant별 일별 VLM 호출 cap. 초과 시 RuntimeError.
+
+    cost 폭주 방지 (P0-2, 2026-05-04). 한 학원이 다수 doc 업로드 시 호출 폭주 차단.
+    date 자동 변경 (KST date key) — 다음 날 자동 reset.
+    in-memory counter — ASG 재기동 시 리셋. 운영 모니터링은 별도 metric 필요.
+    """
+    if not tenant_id:
+        return
+    from datetime import date
+    today = date.today().isoformat()
+    key = (str(tenant_id), today)
+    cur = _tenant_call_counter.get(key, 0)
+    if cur >= _VLM_TENANT_DAILY_LIMIT:
+        raise RuntimeError(
+            f"VLM 호출 한도 초과 (tenant={tenant_id}, date={today}, "
+            f"limit={_VLM_TENANT_DAILY_LIMIT}). "
+            f"내일 자동 reset 또는 MATCHUP_VLM_PER_TENANT_DAILY_LIMIT env로 조정."
+        )
+    _tenant_call_counter[key] = cur + 1
+
+
+def reset_tenant_quota(tenant_id: str | int | None = None) -> None:
+    """테스트/관리용 — tenant counter 리셋. None이면 전체 리셋."""
+    global _tenant_call_counter
+    if tenant_id is None:
+        _tenant_call_counter = {}
+    else:
+        _tenant_call_counter = {
+            k: v for k, v in _tenant_call_counter.items() if k[0] != str(tenant_id)
+        }
+
+
 def _gemini_request(
     *,
     model: str,
     parts: List[Dict[str, Any]],
     response_schema_hint: str = "",
     document_id: str | int | None = None,
+    tenant_id: str | int | None = None,
 ) -> Dict[str, Any]:
     """Gemini generateContent REST 호출. JSON 응답 강제.
 
@@ -256,6 +295,10 @@ def _gemini_request(
     - 429 (quota) → backoff 후 1회 retry, 재실패 시 RuntimeError
     - 응답 truncated → MAX_TOKENS finishReason 명시
     - JSON 파싱 실패 → 응답 마지막 미완 } 보정 시도, 실패 시 RuntimeError
+
+    Cost cap (P0-2, 2026-05-04):
+    - doc별: _check_doc_quota (ASG 재기동 시 reset)
+    - tenant별 일별: _check_tenant_quota (date key 변경 시 자동 reset)
     """
     import json as _json
     import time as _time
@@ -266,6 +309,7 @@ def _gemini_request(
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY not set (SSM /academy/workers/env 확인)")
 
+    _check_tenant_quota(tenant_id)  # tenant cap 먼저 (광범위)
     _check_doc_quota(document_id)
 
     payload: Dict[str, Any] = {
@@ -469,12 +513,14 @@ class GeminiVLMTextAdapter:
     ) -> PageRoleResult:
         meta = page_meta or {}
         document_id = meta.get("document_id")
+        tenant_id = meta.get("tenant_id")
         prompt = _PAGE_ROLE_PROMPT + (ocr_text or "")[:6000]
         try:
             data = _gemini_request(
                 model=self.model,
                 parts=[{"text": prompt}],
                 document_id=document_id,
+                tenant_id=tenant_id,
             )
         except Exception as e:
             logger.warning("Gemini text classify 실패: %s", e)
@@ -516,6 +562,7 @@ class GeminiVLMVisionAdapter:
 
         meta = page_meta or {}
         document_id = meta.get("document_id")
+        tenant_id = meta.get("tenant_id")
         try:
             with open(image_path, "rb") as f:
                 img_bytes = f.read()
@@ -556,6 +603,7 @@ class GeminiVLMVisionAdapter:
                     {"inline_data": {"mime_type": mime, "data": b64}},
                 ],
                 document_id=document_id,
+                tenant_id=tenant_id,
             )
         except Exception as e:
             logger.warning("Gemini vision detect 실패: %s", e)
