@@ -441,3 +441,53 @@ def test_segment_multipage_single_image_without_source(tmp_path):
     result = segment_questions_multipage(str(img_path))  # source_type=None
     page = result["pages"][0]
     assert page["paper_type"] != "student_answer_photo"
+
+
+# ── A-2 POC: estimate_handwriting_score (2026-05-04) ──
+
+def test_estimate_handwriting_score_returns_float(tmp_path):
+    """기본 동작 — float [0.0, 1.0] 반환."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_opencv import estimate_handwriting_score
+
+    img_path = tmp_path / "blank.png"
+    Image.new("RGB", (800, 1000), (255, 255, 255)).save(img_path)
+
+    score = estimate_handwriting_score(str(img_path))
+    assert isinstance(score, float)
+    assert 0.0 <= score <= 1.0
+
+
+def test_estimate_handwriting_score_empty_image_zero(tmp_path):
+    """완전 빈 페이지 → 0.0 (edge 없음)."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_opencv import estimate_handwriting_score
+
+    img_path = tmp_path / "white.png"
+    Image.new("RGB", (800, 1000), (255, 255, 255)).save(img_path)
+
+    score = estimate_handwriting_score(str(img_path))
+    assert score == 0.0
+
+
+def test_estimate_handwriting_score_invalid_path_zero():
+    """존재하지 않는 path → 0.0 (안전 폴백)."""
+    from academy.adapters.ai.detection.segment_opencv import estimate_handwriting_score
+
+    score = estimate_handwriting_score("/nonexistent/path.png")
+    assert score == 0.0
+
+
+def test_estimate_handwriting_score_too_small_image_zero(tmp_path):
+    """100x100 미만 이미지 → 0.0 (의미있는 측정 불가)."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_opencv import estimate_handwriting_score
+
+    img_path = tmp_path / "tiny.png"
+    Image.new("RGB", (50, 50), (240, 240, 240)).save(img_path)
+
+    score = estimate_handwriting_score(str(img_path))
+    assert score == 0.0

@@ -22,6 +22,72 @@ import numpy as np  # type: ignore
 BBox = Tuple[int, int, int, int]
 
 
+def estimate_handwriting_score(image_path: str) -> float:
+    """페이지 이미지에서 손글씨 비율 추정 [0.0, 1.0] (A-2 POC, 2026-05-04).
+
+    원리: edge orientation entropy.
+    - 인쇄 텍스트는 axis-aligned (0°/90°/45°/135° 등 quantized) → 낮은 entropy
+    - 손글씨는 random direction strokes → 높은 entropy
+    Sobel gradient → 강한 edge만 → 방향 분포 → entropy 정규화.
+
+    classify_paper_type의 handwriting_score 인자에 주입하여 STUDENT_ANSWER_PHOTO
+    분기 (>= 0.78 임계). source_type=student_exam_photo의 hardcoded 0.85 대신
+    페이지별 측정값 사용 → 깨끗 페이지(인쇄본만)는 SCAN_DUAL/SCAN_SINGLE로 분류
+    되어 anchor splitter 사용 가능 → 매치업 정확도 페이지→문항 단위 복귀.
+
+    POC 측정 결과 (T2 데이터, 2026-05-04):
+    - exam_photo (학생답안지) n=43: mean=0.905
+    - workbook (인쇄 PDF) n=82: mean=0.864
+    - 평균 차이 0.04 — 단순 임계로 두 도메인 분리 어려움 (false positive 100%).
+    → entropy 단독 신호 불충분. 다음 cycle: stroke width variance 추가 또는 CNN 학습.
+
+    현재 운영 통합 X — classify_paper_type에서 source_type bias (A-1, hardcoded 0.85)를
+    그대로 사용. 이 함수는 라이브러리에 보관 (다음 detector 시도 시 비교 baseline).
+
+    Returns: 0.0 (인쇄본만) ~ 1.0 (손글씨 dominant).
+    이미지 못 읽으면 0.0 (안전 폴백 — heuristic 다른 신호로 결정).
+    """
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        return 0.0
+    h, w = img.shape[:2]
+    if h < 100 or w < 100:
+        return 0.0
+
+    # 1. blur — 노이즈 제거 (스캐너 dust, JPEG artifact)
+    blur = cv2.GaussianBlur(img, (3, 3), 0)
+
+    # 2. Sobel gradient (x, y)
+    sx = cv2.Sobel(blur, cv2.CV_64F, 1, 0, ksize=3)
+    sy = cv2.Sobel(blur, cv2.CV_64F, 0, 1, ksize=3)
+    mag = np.sqrt(sx ** 2 + sy ** 2)
+
+    # 3. 강한 edge만 (상위 5% threshold) — 텍스트 + 손글씨 픽셀
+    if mag.max() < 1.0:  # 거의 빈 페이지
+        return 0.0
+    threshold = float(np.percentile(mag, 95))
+    edges = mag > threshold
+    edge_count = int(edges.sum())
+    if edge_count < 100:
+        return 0.0
+
+    # 4. edge orientation 분포 (18 bins, -π~π)
+    angles = np.arctan2(sy[edges], sx[edges])
+    hist, _ = np.histogram(angles, bins=18, range=(-np.pi, np.pi))
+    if hist.sum() == 0:
+        return 0.0
+    p = hist / hist.sum()
+
+    # 5. entropy 계산 → max entropy(log 18) 정규화
+    entropy = -float((p * np.log(p + 1e-9)).sum())
+    max_entropy = float(np.log(18))
+    score = entropy / max_entropy
+
+    # POC 보정: 인쇄 텍스트는 0.6~0.7 범위, 손글씨는 0.8+ 관찰 (T2 시험지 측정 후 조정).
+    # 일단 raw score 반환 — 호출자(classify_paper_type)가 0.78 임계로 판정.
+    return float(min(1.0, max(0.0, score)))
+
+
 def detect_dual_column_pixel(image_path: str) -> bool:
     """이미지 픽셀 기반 dual-col 감지 (paper_type 분류기 백업 신호).
 
