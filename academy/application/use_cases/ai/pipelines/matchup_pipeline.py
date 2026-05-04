@@ -297,6 +297,10 @@ def run_matchup_pipeline(
     is_low_confidence_doc = (
         paper_type_summary["primary"] == "student_answer_photo"
         or paper_type_summary["low_confidence_ratio"] >= 0.5
+        # paper_type primary가 unknown — 분류기 fail 케이스. 운영 audit (2026-05-04 doc#312)
+        # 에서 발견: paper_type=unknown으로 page-as-problem 폴백 미진입 → 표지/목차/챕터
+        # 헤더가 problem으로 인덱싱(15p 중 4p). unknown도 안전 폴백 적용.
+        or paper_type_summary["primary"] == "unknown"
         # source_type 1순위 신호 — 학원장 명시 입력이 paper_type 휴리스틱보다 신뢰성 높음.
         or is_student_photo  # 학생 답안지 폰사진은 항상 page-as-problem
         or is_commercial     # 시판 교재는 cover/index/해설 페이지 혼재 → page-as-problem 안전
@@ -619,7 +623,20 @@ def _aggregate_paper_types(pages: List[Dict]) -> Dict[str, Any]:
     low_conf_count = sum(counter.get(k, 0) for k in low_conf_keys)
     low_conf_ratio = low_conf_count / max(1, total)
 
-    primary = counter.most_common(1)[0][0]
+    # primary 결정 — 운영 audit (2026-05-04 doc#274/276 등 22 doc) 발견:
+    # non_question 페이지가 most_common이지만 본문 페이지가 다수인 doc도 22건 존재.
+    # 학원장 검수 UI에 "non_question 다수" 노출돼 본문 doc인데 misclassification.
+    # → non_question은 priority 낮춤 (본문 분류 가능한 paper_type 있으면 그것 우선).
+    _CONTENT_TYPES = (
+        "clean_pdf_single", "clean_pdf_dual", "scan_single", "scan_dual",
+        "quadrant", "student_answer_photo", "side_notes",
+    )
+    content_counter = Counter({k: v for k, v in counter.items() if k in _CONTENT_TYPES})
+    if content_counter and counter.most_common(1)[0][0] == "non_question":
+        # most_common이 non_question이지만 본문 paper_type이 있으면 본문 priority
+        primary = content_counter.most_common(1)[0][0]
+    else:
+        primary = counter.most_common(1)[0][0]
 
     warnings: List[str] = []
     if counter.get("student_answer_photo", 0) >= 1:

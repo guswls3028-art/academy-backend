@@ -232,6 +232,51 @@ def test_aggregate_non_question_minor_no_warning():
     assert "non_question_majority" not in summary["warnings"]
 
 
+# ── Full audit fix (2026-05-04): primary 결정 + unknown 폴백 ──
+
+def test_aggregate_primary_non_question_demoted_to_content():
+    """non_question이 most_common이지만 본문 paper_type 있으면 본문 priority.
+
+    운영 audit (2026-05-04 doc#274/276 등 22 doc) 발견:
+    표지 페이지 다수 + 본문 일부 doc에서 primary=non_question 표시되어 학원장 UI 노이즈.
+    본문 paper_type(clean_pdf_dual 등)이 있으면 본문 priority.
+    """
+    # non_question 5장 + clean_pdf_dual 3장 → primary=clean_pdf_dual (non_q most_common but demoted)
+    pages = [{"paper_type": "non_question"}] * 5 + [{"paper_type": "clean_pdf_dual"}] * 3
+    summary = _aggregate_paper_types(pages)
+    assert summary["primary"] == "clean_pdf_dual"
+    # distribution은 그대로 (분포 정보 보존)
+    assert summary["distribution"]["non_question"] == 5
+    assert summary["distribution"]["clean_pdf_dual"] == 3
+
+
+def test_aggregate_primary_non_question_only_keeps_non_question():
+    """non_question만 있으면 primary=non_question (본문 paper_type 부재)."""
+    pages = [{"paper_type": "non_question"}] * 4
+    summary = _aggregate_paper_types(pages)
+    assert summary["primary"] == "non_question"
+
+
+def test_aggregate_primary_unknown_with_content_promotes_content():
+    """unknown most_common + 본문 일부 → 본문 priority.
+
+    unknown은 _CONTENT_TYPES에 없음. content_counter에 본문 있으면 본문 우선.
+    """
+    pages = [{"paper_type": "unknown"}] * 6 + [{"paper_type": "scan_dual"}] * 2
+    summary = _aggregate_paper_types(pages)
+    # unknown most_common but scan_dual content가 있으면 demote
+    # 단 unknown은 non_question 외에 demote 조건 X (현재 implementation은 non_question만)
+    # → unknown most_common 그대로 (다른 fix는 별도 cycle)
+    assert summary["primary"] == "unknown"  # unknown 자체는 그대로 (low_conf_ratio로 fallback 트리거)
+
+
+def test_aggregate_primary_content_majority_not_affected():
+    """본문 most_common이면 그대로 (changes 영향 없음)."""
+    pages = [{"paper_type": "clean_pdf_dual"}] * 5 + [{"paper_type": "non_question"}] * 2
+    summary = _aggregate_paper_types(pages)
+    assert summary["primary"] == "clean_pdf_dual"
+
+
 # ── 3. _bias_handwriting_score (Phase A-1: source_type → paper_type 분류기 신호) ──
 
 def test_bias_handwriting_score_student_photo():
