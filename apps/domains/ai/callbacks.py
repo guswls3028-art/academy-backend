@@ -529,26 +529,38 @@ def _handle_matchup_ai_result(
     # 학원장 실측 갭 fix (2026-05-05): 처리 status="done" 안에 진짜 결함을 숨기지 말 것.
     #   기존: 워커가 FAILED 외 응답이면 무조건 done. problem 0 / 폴백-only 도 success.
     #   학원장 dashboard "완료 N / 실패 0" 카운터가 거짓 안전망이 됨.
-    # meta.processing_quality 라벨링:
-    #   "ok"            — 문항 단위 분리 성공 (problem_count >= 2)
-    #   "no_problems"   — problem 0건 (worker 가 분리 결과 없이 success 반환)
-    #   "fallback_only" — page-as-problem / whole-page-fallback 만 (실제 매치업 가치 낮음)
-    # 학원장 UI 카운터에서 분리 표시할 수 있게 하되, 기존 status enum 은 보존(호환성).
-    page_count_meta = result_payload.get("page_count") or doc.page_count or 0
-    fallback_methods = {
-        "page_fallback", "whole_page_as_problem", "page_as_problem",
-        "low_conf_page_fallback",
-    }
+    #
+    # meta.processing_quality (5단계 — TDD test_matchup_split_ideal_scenarios.py):
+    #   "precise_split" — bbox null < 30%. 문항 단위 정밀 분리. 매치업 정상 가치.
+    #   "coarse_split"  — bbox null 30~50%. 일부 페이지 폴백 (검수 권장).
+    #   "needs_review"  — bbox null 50~70%. 다수 폴백 (학원장 직접 자르기 보강 필요).
+    #   "page_fallback" — bbox null 70%+ AND problem_count > 0. 거의 모두 페이지=problem.
+    #   "no_problems"   — problem 0건. 분리 자체 X (학원장 매뉴얼 처리).
+    #
+    # 측정 — DB에서 bbox null 카운트로 정밀도 산출. metric에 가려졌던 폴백 결함 노출.
     real_problem_count = doc.problem_count
     if real_problem_count == 0:
         meta["processing_quality"] = "no_problems"
-    elif (
-        seg_method in fallback_methods
-        or (page_count_meta > 0 and real_problem_count <= page_count_meta)
-    ):
-        meta["processing_quality"] = "fallback_only"
+        meta["bbox_null_ratio"] = None
     else:
-        meta["processing_quality"] = "ok"
+        from django.db.models import Q
+        bbox_null_count = MatchupProblem.objects.filter(
+            document=doc,
+        ).filter(
+            # bbox=null in JSON meta — DB에서 직접 검사
+            # (meta__bbox__isnull은 JSONField 값 null 검사)
+            Q(meta__bbox__isnull=True) | Q(meta__bbox=None),
+        ).count()
+        bbox_ratio = bbox_null_count / real_problem_count
+        meta["bbox_null_ratio"] = round(bbox_ratio, 3)
+        if bbox_ratio >= 0.7:
+            meta["processing_quality"] = "page_fallback"
+        elif bbox_ratio >= 0.5:
+            meta["processing_quality"] = "needs_review"
+        elif bbox_ratio >= 0.3:
+            meta["processing_quality"] = "coarse_split"
+        else:
+            meta["processing_quality"] = "precise_split"
     # 워커가 캐시한 페이지 PNG 키 — ManualCropModal 첫 진입 즉시 (PDF 다운로드/렌더 회피)
     page_keys = result_payload.get("page_image_keys")
     page_dims = result_payload.get("page_dimensions")
