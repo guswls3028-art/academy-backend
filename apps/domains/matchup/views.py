@@ -1788,6 +1788,15 @@ class HitReportDetailView(View):
                 {"detail": "다른 강사의 보고서는 수정할 수 없습니다."},
                 status=403,
             )
+        if report.status == "submitted" and not _is_tenant_admin(request):
+            return JsonResponse(
+                {
+                    "detail": "제출 완료된 보고서는 수정할 수 없습니다. "
+                              "관리자에게 재작성을 요청하세요.",
+                    "code": "submitted_locked",
+                },
+                status=403,
+            )
 
         import json
         try:
@@ -1814,6 +1823,15 @@ class HitReportDetailView(View):
         if not _hit_report_writable(request, report):
             return JsonResponse(
                 {"detail": "다른 강사의 보고서는 삭제할 수 없습니다."},
+                status=403,
+            )
+        if report.status == "submitted" and not _is_tenant_admin(request):
+            return JsonResponse(
+                {
+                    "detail": "제출 완료된 보고서는 삭제할 수 없습니다. "
+                              "관리자에게 요청하세요.",
+                    "code": "submitted_locked",
+                },
                 status=403,
             )
         report.delete()
@@ -1846,6 +1864,20 @@ class HitReportEntriesUpsertView(View):
         if not _hit_report_writable(request, report):
             return JsonResponse(
                 {"detail": "다른 강사의 보고서는 수정할 수 없습니다."},
+                status=403,
+            )
+
+        # Submit lock (P1, 2026-05-05): submitted 보고서는 entries 수정 불가.
+        # 학원에 제출한 KPI 자료가 임의 변경되지 않도록 보호. 재작성 필요시
+        # 별도 endpoint (status=draft 복귀) 또는 admin이 manual 처리.
+        # admin/owner는 우회 가능 — 학원 측 수정 권한 (예: 강사 퇴사 후 보고서 보완).
+        if report.status == "submitted" and not _is_tenant_admin(request):
+            return JsonResponse(
+                {
+                    "detail": "제출 완료된 보고서는 수정할 수 없습니다. "
+                              "관리자에게 재작성을 요청하세요.",
+                    "code": "submitted_locked",
+                },
                 status=403,
             )
 
