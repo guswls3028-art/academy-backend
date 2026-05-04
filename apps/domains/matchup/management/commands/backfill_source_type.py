@@ -25,7 +25,7 @@ from apps.domains.matchup.models import MatchupDocument
 
 # title regex → source_type. 첫 매치 우선.
 RULES = [
-    (re.compile(r"신민"), "commercial_workbook", "신민 외부 출판"),
+    # 신민 규칙 제거 (시각 검수 결과 페이지 8~12 문항 본문 — academy_workbook 적합).
     (re.compile(r"^\d{4}\s.*(?:중간고사|기말고사|모의고사)"), "school_exam_pdf", "학년도 학교 시험"),
     (re.compile(r"기출\s*통과"), "school_exam_pdf", "학교 기출 통과"),
     (re.compile(r"학년도\s.*(?:중간|기말|모의고사)"), "school_exam_pdf", "학년도 시험"),
