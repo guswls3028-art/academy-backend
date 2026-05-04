@@ -91,10 +91,15 @@ def test_gate_page_role_problem_passes(monkeypatch):
 # ── D-2: bbox aspect (strip cut) ──
 
 def test_gate_strip_cut_low_height_rejects(monkeypatch):
-    """D-2: bbox height < page * 0.05 → strip cut → reject."""
-    _make_image(monkeypatch, w=2000, h=2800)  # h_img=2800, threshold=140px
+    """D-2: 진짜 strip cut (h<1% AND w>50%) → reject.
+
+    Phase 4 (2026-05-05): 박철T 워크북 단답형 양식 (h~2-3%) 통과시키기 위해
+    임계값 완화. h_ratio<1% AND w_ratio>50%인 가로 strip만 reject.
+    """
+    _make_image(monkeypatch, w=2000, h=2800)  # h_img=2800, w_img=2000
+    # h=20 (0.7%) AND w=1500 (75%) → 진짜 strip cut
     result = _bbox_result(problems=[
-        (1, 100, 300, 1500, 100),  # h=100 < 140 → strip
+        (1, 100, 300, 1500, 20),
         (2, 100, 500, 1500, 800),
     ])
     out = _validate_vlm_bboxes(result, "fake.png", page_idx=1)
@@ -102,14 +107,32 @@ def test_gate_strip_cut_low_height_rejects(monkeypatch):
 
 
 def test_gate_thin_box_low_width_rejects(monkeypatch):
-    """너무 좁은 cell (width < page * 0.15) → reject."""
-    _make_image(monkeypatch, w=2000, h=2800)  # min_w = 300
+    """D-2 thin: 너무 좁은 cell (w_ratio < 10%) → reject.
+
+    Phase 4 (2026-05-05): 임계값 0.15 → 0.10 완화. 단답형 박철T 양식 보호.
+    """
+    _make_image(monkeypatch, w=2000, h=2800)  # min_w = 200 (10%)
     result = _bbox_result(problems=[
-        (1, 100, 300, 200, 800),  # w=200 < 300 → thin
+        (1, 100, 300, 190, 800),  # w=190 < 200 → thin
         (2, 500, 300, 1500, 800),
     ])
     out = _validate_vlm_bboxes(result, "fake.png", page_idx=1)
     assert out is None
+
+
+def test_gate_park_short_question_passes(monkeypatch):
+    """박철T 워크북 단답형 (h~2-3%) 가 D-2 게이트 통과.
+
+    Phase 4 회귀 락: doc#327/325 진단 결과 단답형이 게이트 reject되지 않아야.
+    """
+    _make_image(monkeypatch, w=1366, h=2880)
+    result = _bbox_result(problems=[
+        (1, 758, 146, 541, 70),   # h_ratio 2.4%, w_ratio 39%
+        (2, 758, 517, 541, 84),   # h_ratio 2.9%
+        (3, 758, 803, 541, 58),   # h_ratio 2.0%
+    ])
+    out = _validate_vlm_bboxes(result, "fake.png", page_idx=0)
+    assert out is result, "박철T 단답형 양식이 D-2 게이트 통과해야"
 
 
 # ── D-4: y_min header zone ──

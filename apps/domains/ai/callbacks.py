@@ -542,6 +542,8 @@ def _handle_matchup_ai_result(
     if real_problem_count == 0:
         meta["processing_quality"] = "no_problems"
         meta["bbox_null_ratio"] = None
+        # 추천 pool 필터 (Phase 4, 2026-05-05): problem 0건 = 인덱싱 무용
+        meta["indexable"] = False
     else:
         from django.db.models import Q
         bbox_null_count = MatchupProblem.objects.filter(
@@ -553,14 +555,24 @@ def _handle_matchup_ai_result(
         ).count()
         bbox_ratio = bbox_null_count / real_problem_count
         meta["bbox_null_ratio"] = round(bbox_ratio, 3)
+        # 추천 pool 자동 필터 (Phase 4, 2026-05-05): bbox null 비율 기반.
+        # services.find_similar_problems가 meta.indexable=False인 doc을 풀에서 제외.
+        # 학원장은 검수 후 직접 자르기로 indexable=True 토글 가능.
+        # 학원장 실측 갭 fix:
+        #   88 doc page_fallback이 매치업 풀에 페이지 임베딩 노이즈로 들어가
+        #   매치업 자동 추천 작동률 0%였음. indexable 필터로 정밀 분리만 풀에 진입.
         if bbox_ratio >= 0.7:
             meta["processing_quality"] = "page_fallback"
+            meta["indexable"] = False  # 페이지 통째 problem = 매칭 노이즈
         elif bbox_ratio >= 0.5:
             meta["processing_quality"] = "needs_review"
+            meta["indexable"] = False  # 학원장 검수 권고 — 검수 후 토글
         elif bbox_ratio >= 0.3:
             meta["processing_quality"] = "coarse_split"
+            meta["indexable"] = True   # 부분 정밀, 사용 가능
         else:
             meta["processing_quality"] = "precise_split"
+            meta["indexable"] = True   # 정밀 분리, 풀 진입 OK
     # 워커가 캐시한 페이지 PNG 키 — ManualCropModal 첫 진입 즉시 (PDF 다운로드/렌더 회피)
     page_keys = result_payload.get("page_image_keys")
     page_dims = result_payload.get("page_dimensions")

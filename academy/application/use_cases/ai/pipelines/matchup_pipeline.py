@@ -713,9 +713,21 @@ def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any
     if h_img < 100 or w_img < 100:
         return result
 
-    header_zone = h_img * 0.08      # D-4: 페이지 위쪽 8% 헤더 영역
-    min_h_ratio = 0.05               # D-2: strip cut 차단
-    min_w_ratio = 0.15               # 너무 좁은 cell 차단
+    # D-2/D-4 임계값 완화 (Phase 4, 2026-05-05):
+    #   기존 D-2 min_h_ratio=0.05 + D-4 header_zone=0.08 — 시험지 양식 4-quadrant
+    #   오분할 detect 안전망. 그러나 박철T 워크북 진단 결과 (doc#327/325/286):
+    #     - 단답형/공식 문항 h_ratio 2~3% (D-2 기존 0.05에서 reject)
+    #     - 첫 문항 y_ratio 4~5% (D-4 기존 0.08에서 reject)
+    #   = 박철T 73 doc 수제작 + 36 doc 메인 약 100 doc이 게이트에서 차단됨.
+    #
+    # 새 게이트:
+    #   D-2 strip: h_ratio < 1% AND w_ratio > 50% (진짜 가로 strip cut만 reject)
+    #   D-2 thin:  w_ratio < 10% (좁은 cell)
+    #   D-4 header: y_ratio < 4% (4% 이하만 header 침범 의심)
+    header_zone = h_img * 0.04
+    min_h_strip_ratio = 0.01    # D-2: 1% 이하 + w 50%+ 일 때만 strip 의심
+    min_w_strip_ratio = 0.50    # D-2 strip 패턴의 w 임계
+    min_w_ratio = 0.10           # D-2 thin: 좁은 cell 차단
 
     for p in result.problems:
         try:
@@ -725,21 +737,21 @@ def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any
         if w <= 0 or h <= 0:
             continue
 
-        # D-2: bbox aspect — strip 차단
-        if h < h_img * min_h_ratio:
+        # D-2: 진짜 strip cut만 reject (가로로 긴 1% 미만 cell)
+        if (h / h_img) < min_h_strip_ratio and (w / w_img) > min_w_strip_ratio:
             logger.info(
-                "VLM_GATE_REJECT_STRIP | page=%s | num=%s | h_ratio=%.3f",
-                page_idx, p.number, h / h_img,
+                "VLM_GATE_REJECT_STRIP | page=%s | num=%s | h_ratio=%.3f w_ratio=%.3f",
+                page_idx, p.number, h / h_img, w / w_img,
             )
             return None
-        if w < w_img * min_w_ratio:
+        if (w / w_img) < min_w_ratio:
             logger.info(
                 "VLM_GATE_REJECT_THIN | page=%s | num=%s | w_ratio=%.3f",
                 page_idx, p.number, w / w_img,
             )
             return None
 
-        # D-4: bbox y_min — 헤더 침범 차단
+        # D-4: bbox y_min — 헤더 침범 차단 (4% 이하만)
         if y < header_zone:
             logger.info(
                 "VLM_GATE_REJECT_HEADER | page=%s | num=%s | y=%d zone=%.0f",
