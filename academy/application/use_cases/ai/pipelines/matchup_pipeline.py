@@ -831,7 +831,10 @@ def _try_vlm_problem_bboxes(
     # bbox 게이트는 별도 — paper_type은 응답 받자마자 보존
     if adapter != "gemini" or result.should_skip:
         return None, raw_paper_type
-    if result.confidence < 0.80 or len(result.problems) < 2:
+    # 1차 게이트 완화 (2026-05-05): `< 2` → `< 1`.
+    # 박철 수제작 1-문항/페이지 layout (doc#327 등 73 doc) 차단 결함 fix.
+    # D-1~D-4 (validate) 게이트가 cell 크기/IoU/헤더 검증으로 false positive 차단 유지.
+    if result.confidence < 0.80 or len(result.problems) < 1:
         return None, raw_paper_type
     validated = _validate_vlm_bboxes(result, page["image_path"], page.get("page_index"))
     return validated, raw_paper_type
