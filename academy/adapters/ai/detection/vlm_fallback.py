@@ -64,6 +64,10 @@ class ProblemBbox:
     number: int                       # 문항 번호 (OCR 또는 VLM 추출)
     bbox: Tuple[int, int, int, int]   # (x, y, w, h)
     confidence: float                 # 0.0 ~ 1.0
+    # 공유 보기/자료 묶음 — "<보기>(N~M)" 같이 보기가 여러 문항에 묶일 때
+    # 묶인 다른 문항 번호 list. 묶음 문항은 동일 bbox 가지며 D-1 IoU 게이트는
+    # shared_with set이 일치하는 문항 쌍은 overlap reject 면제.
+    shared_with: List[int] = field(default_factory=list)
 
 
 @dataclass
@@ -469,6 +473,13 @@ _PROBLEM_BBOX_PROMPT = """당신은 한국어 시험지·교재 페이지의 문
 - 인접한 문항 박스가 서로 겹치지 않도록 하세요.
 - 표지·목차·해설·정답지·문제 없는 빈 페이지면 problems = [], should_skip = true.
 
+공유 보기/자료 (시판 교재·기출에 흔함) — 매우 중요:
+- "<보기>(12~13)", "[12-13]", "다음을 읽고 12, 13번에 답하시오" 같이 보기/자료 하나가 여러 문항(예: 12와 13)에 묶이면,
+  보기 + 묶인 모든 문항(12 + 13) 전체를 통째로 감싸는 동일한 bbox를 묶인 각 문항(12, 13) 모두에 부여하세요.
+- 즉 묶인 문항들(12, 13)은 **동일한 bbox(같은 좌표)**를 share. 보기 따로 잘라 떼어내지 말 것.
+- shared_with: 묶인 문항 번호 list (선택 출력) — 12번 객체에 "shared_with":[13], 13번 객체에 "shared_with":[12].
+- 묶음 문항이 같은 bbox를 가지면 D-1 IoU 게이트가 reject할 수 있으므로, shared_with 표시로 게이트가 묶음을 인식.
+
 bbox 좌표 (반드시 페이지 이미지 픽셀 기준):
 - [x, y, w, h] = 박스 왼쪽 위 모서리(x, y) + 너비(w) + 높이(h).
 - 페이지 좌상단이 (0, 0).
@@ -479,7 +490,7 @@ JSON schema (이 외 키는 추가하지 마세요):
   "should_skip": <bool>,
   "layout": "single_column|dual_column|quadrant|mixed|other",
   "paper_type": "clean_pdf_single|clean_pdf_dual|scan_single|scan_dual|quadrant|student_answer_photo|side_notes|non_question|unknown",
-  "problems": [{"number": <int>, "bbox": [x, y, w, h], "confidence": <0.0~1.0>}],
+  "problems": [{"number": <int>, "bbox": [x, y, w, h], "confidence": <0.0~1.0>, "shared_with": [<int>, ...]}],
   "confidence": <0.0~1.0>
 }
 """
@@ -634,10 +645,13 @@ class GeminiVLMVisionAdapter:
                 x, y, w, h = (int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3]))
                 if inv != 1.0:
                     x, y, w, h = (int(x * inv), int(y * inv), int(w * inv), int(h * inv))
+                shared_raw = p.get("shared_with") or []
+                shared_with = [int(s) for s in shared_raw if isinstance(s, (int, str)) and str(s).lstrip("-").isdigit()]
                 problems.append(ProblemBbox(
                     number=int(p.get("number", i)),
                     bbox=(x, y, w, h),
                     confidence=float(p.get("confidence", 0.7)),
+                    shared_with=shared_with,
                 ))
             except (TypeError, ValueError, IndexError):
                 continue

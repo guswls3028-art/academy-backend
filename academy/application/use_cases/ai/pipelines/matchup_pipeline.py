@@ -282,6 +282,24 @@ def run_matchup_pipeline(
     # - is_commercial/is_student_photo 강제 page-as-problem 제거 — VLM 시도.
     # - 학원장 검수 UI의 직접 자르기로 분리 결함 보강.
 
+    # commercial_workbook 강제 VLM primary (Phase 8+ 후속, 2026-05-05):
+    #   시판 교재 책자(예: 26-1m 학교명 내지)는 anchor splitter가 cover/index/해설/답안
+    #   페이지의 anchor 박스도 problem으로 추출해 학원장 manual ground truth(본문만)
+    #   과 큰 갭 발생. _pages_via_vlm 안의 page_role D-3 게이트는 cover/index/explanation/
+    #   answer_key 자동 reject 해 본문 페이지만 problem 생성.
+    force_vlm_primary = (source_type == "commercial_workbook")
+    if force_vlm_primary:
+        logger.info(
+            "MATCHUP_FORCE_VLM_PRIMARY | job=%s | doc=%s | source=%s "
+            "(anchor 결과 무시 + page_role 게이트 적용)",
+            job_id, document_id, source_type,
+        )
+        for p in pages:
+            p["text_regions"] = []
+            p["boxes"] = []
+            p["numbers"] = []
+        total_boxes = 0
+
     if total_boxes == 0:
         logger.info(
             "MATCHUP_NO_BOXES | job_id=%s | VLM 시도 (page-as-problem 폴백 폐기됨)",
@@ -417,6 +435,10 @@ def run_matchup_pipeline(
             "page_index": q.get("page_index", 0),
             "bbox": q.get("bbox"),
         }
+        # 공유 보기/자료 묶음 정보 (시판 교재 <보기>(N~M) 양식 등) 보존.
+        # 매치업 검수 UI에서 묶음 표시 + 추천 결과에서 묶음 단위로 노출하도록 활용.
+        if q.get("shared_with"):
+            meta["shared_with"] = list(q["shared_with"])
         # format(essay/choice) 등은 _generate_embeddings에서 채워둠
         meta.update(meta_extra)
         problems.append({
@@ -760,16 +782,24 @@ def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any
             return None
 
     # D-1: bbox 인접 중첩 — 두 박스가 같은 영역 잡으면 4-quadrant 오분할
+    # 단 공유 보기/자료 묶음(shared_with)은 같은 bbox가 정상 — IoU reject 면제.
     n = len(result.problems)
     for i in range(n):
         try:
             x1, y1, w1, h1 = result.problems[i].bbox
         except (TypeError, ValueError):
             continue
+        num_i = int(result.problems[i].number)
+        shared_i = set(getattr(result.problems[i], "shared_with", []) or [])
         for j in range(i + 1, n):
             try:
                 x2, y2, w2, h2 = result.problems[j].bbox
             except (TypeError, ValueError):
+                continue
+            num_j = int(result.problems[j].number)
+            shared_j = set(getattr(result.problems[j], "shared_with", []) or [])
+            # 공유 보기 묶음: i가 j를 share or j가 i를 share — IoU 게이트 skip
+            if num_j in shared_i or num_i in shared_j:
                 continue
             ix = max(0, min(x1 + w1, x2 + w2) - max(x1, x2))
             iy = max(0, min(y1 + h1, y2 + h2) - max(y1, y2))
@@ -779,7 +809,7 @@ def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any
             if iou > 0.3:
                 logger.info(
                     "VLM_GATE_REJECT_OVERLAP | page=%s | nums=(%s,%s) | iou=%.2f",
-                    page_idx, result.problems[i].number, result.problems[j].number, iou,
+                    page_idx, num_i, num_j, iou,
                 )
                 return None
 
@@ -922,16 +952,29 @@ def _pages_via_vlm(
             if vlm is not None:
                 vlm_pages_used += 1
                 for prob in vlm.problems:
-                    while fallback_counter in seen_numbers:
+                    # VLM 원본 number 신뢰 시도 (정상 양수 + 미중복) → 시판 교재의
+                    # 본문 번호(12, 13...)와 학원장 manual 결과 일치성 확보.
+                    # 공유 보기 묶음(shared_with)은 같은 bbox + 같은 페이지에 다수
+                    # problem (12, 13) 등록 — 각자 자기 번호로.
+                    prob_num = int(prob.number) if prob.number and prob.number > 0 else 0
+                    if prob_num and prob_num not in seen_numbers:
+                        num = prob_num
+                    else:
+                        while fallback_counter in seen_numbers:
+                            fallback_counter += 1
+                        num = fallback_counter
                         fallback_counter += 1
-                    questions.append({
-                        "number": fallback_counter,
+                    seen_numbers.add(num)
+                    q_entry = {
+                        "number": num,
                         "page_index": page_idx,
                         "image_path": img_path,
                         "bbox": list(prob.bbox),
-                    })
-                    seen_numbers.add(fallback_counter)
-                    fallback_counter += 1
+                    }
+                    shared = list(getattr(prob, "shared_with", []) or [])
+                    if shared:
+                        q_entry["shared_with"] = shared
+                    questions.append(q_entry)
                     vlm_problems_added += 1
                 continue
 

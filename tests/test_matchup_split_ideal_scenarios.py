@@ -588,7 +588,99 @@ def test_find_similar_uses_contains_not_eq_to_avoid_null_exclusion():
     )
 
 
-# ── 시나리오 13: D-2 strip + D-4 header 게이트가 박철T 양식 통과시켜야 ─
+# ── 시나리오 13: 공유 보기 묶음 (`<보기>(N~M)`) 같은 bbox 허용 ──
+
+
+def test_shared_passage_bboxes_pass_d1_overlap_gate(monkeypatch):
+    """시판 교재 공유 보기 양식: `<보기>(12~13)` 같이 보기가 12, 13에 묶이면
+    두 problem 모두 동일한 bbox 가져야. D-1 IoU 게이트가 묶음 쌍은 reject 면제.
+    """
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _validate_vlm_bboxes
+    from academy.adapters.ai.detection.vlm_fallback import (
+        ProblemBboxResult, ProblemBbox, PageRole,
+    )
+
+    class FakeArray:
+        shape = (2880, 1366, 3)
+
+    monkeypatch.setattr("cv2.imread", lambda path: FakeArray())
+
+    # 12, 13 공유 보기 — 같은 bbox + shared_with 표시
+    same_bbox = (100, 400, 1200, 800)
+    shared_result = ProblemBboxResult(
+        page_role=PageRole.PROBLEM,
+        should_skip=False,
+        problems=[
+            ProblemBbox(number=12, bbox=same_bbox, confidence=0.95, shared_with=[13]),
+            ProblemBbox(number=13, bbox=same_bbox, confidence=0.95, shared_with=[12]),
+        ],
+        confidence=0.95,
+        paper_type="clean_pdf_dual",
+    )
+
+    validated = _validate_vlm_bboxes(shared_result, "/tmp/p.png", page_idx=0)
+    assert validated is not None, (
+        "공유 보기 묶음 (shared_with 표시) 은 D-1 IoU 게이트 면제되어야 — "
+        "두 problem 모두 등록 (보기까지 통째 crop 정책)"
+    )
+    assert len(validated.problems) == 2
+
+
+def test_overlap_without_shared_with_still_rejects(monkeypatch):
+    """D-1 회귀 락 — shared_with 없는 bbox 중첩은 여전히 reject (4-quadrant 결함)."""
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _validate_vlm_bboxes
+    from academy.adapters.ai.detection.vlm_fallback import (
+        ProblemBboxResult, ProblemBbox, PageRole,
+    )
+
+    class FakeArray:
+        shape = (2880, 1366, 3)
+
+    monkeypatch.setattr("cv2.imread", lambda path: FakeArray())
+
+    # 두 박스 거의 같은 영역 (4-quadrant 오분할 패턴)
+    overlap_result = ProblemBboxResult(
+        page_role=PageRole.PROBLEM,
+        should_skip=False,
+        problems=[
+            ProblemBbox(number=1, bbox=(100, 400, 1200, 800), confidence=0.9),
+            ProblemBbox(number=2, bbox=(110, 410, 1180, 780), confidence=0.9),
+        ],
+        confidence=0.9,
+        paper_type="clean_pdf_dual",
+    )
+
+    validated = _validate_vlm_bboxes(overlap_result, "/tmp/p.png", page_idx=0)
+    assert validated is None, (
+        "shared_with 없는 IoU 0.9+ 중첩은 D-1 게이트가 여전히 reject"
+    )
+
+
+def test_commercial_workbook_forces_vlm_primary():
+    """commercial_workbook source_type은 anchor 결과 무시 + VLM primary 진입.
+
+    근거 (2026-05-05 학원장 manual ground truth 비교):
+      T1 doc 615 manual=true 154 vs T2 doc 207 anchor 자동 187 — 자동이 cover/index/
+      해설/답안 페이지에서 가짜 problem 다수 (p6:10, p107:12, p221:11).
+      anchor path는 page_role 게이트 없음. _pages_via_vlm 안의 D-3 게이트만 cover/
+      index/explanation/answer_key 자동 reject.
+    fix: commercial_workbook 시 anchor 결과 (text_regions/boxes) 강제 비워서
+      _pages_via_vlm path 진입 → D-3 게이트가 본문 페이지만 problems 생성.
+    """
+    import inspect
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    src = inspect.getsource(matchup_pipeline.run_matchup_pipeline)
+    has_force = (
+        "force_vlm_primary" in src and "commercial_workbook" in src
+    )
+    assert has_force, (
+        "commercial_workbook source_type 시 force_vlm_primary 분기 누락 — "
+        "anchor path가 cover/index 페이지를 가짜 problem으로 등록"
+    )
+
+
+# ── 시나리오 16: D-2 strip + D-4 header 게이트가 박철T 양식 통과시켜야 ─
 
 
 def test_validate_vlm_bboxes_passes_park_workbook_layout(monkeypatch):
