@@ -133,16 +133,17 @@ def test_flag_merge_suspect_no_inner_anchor():
 
 
 def test_intent_keywords_present_in_pipeline():
-    """run_matchup_pipeline 안의 intent 자동 추정 키워드 sanity check."""
+    """run_matchup_pipeline 안의 intent 자동 추정 키워드 sanity check.
+
+    학습자료 키워드(메인자료/복습과제/객서심화 등)는 이전 refactor에서 SKIP_PAGE_PATTERNS
+    및 segment_dispatcher 측으로 분리됨 — 이 test는 시험지 source_type fallback 분기만 검증.
+    """
     import inspect
     from academy.application.use_cases.ai.pipelines import matchup_pipeline
     src = inspect.getsource(matchup_pipeline.run_matchup_pipeline)
-    # 시험지 키워드
+    # source_type=other → school_exam_pdf fallback 분기의 시험지 키워드만 본 함수에 잔존.
     for kw in ["시험지", "중간고사", "기말고사", "모의고사", "기출 통과"]:
         assert kw in src, f"시험지 자동 추정 키워드 누락: {kw}"
-    # 학습자료 키워드
-    for kw in ["메인자료", "복습과제", "객서심화", "개념완성", "WORKBOOK"]:
-        assert kw in src, f"학습자료 자동 추정 키워드 누락: {kw}"
 
 
 # ── _trim_box_merged_text (B 백로그 — doc#131 q4 잔존 anchor 정제) ──
@@ -220,50 +221,6 @@ def test_flag_merge_suspect_skips_trimmed_problems():
     assert "merge_suspect" not in questions[0]["meta_extra"]
 
 
-# ── 페이지 sub-crop (페이지 폴백 시 페이지 안 anchor 단위 분리) ──
-
-def test_whole_pages_sub_crop_anchor_1_to_4():
-    """페이지 안 anchor 1~4개 → anchor 단위 sub-crop (실제 문항 케이스)."""
-    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _whole_pages_as_questions
-    from academy.domain.tools.question_splitter import QuestionRegion
-    pages = [{
-        "page_index": 0, "image_path": "/tmp/page_000.png",
-        "text_regions": [
-            QuestionRegion(number=44, bbox=(50.0, 100.0, 250.0, 300.0), page_index=0),
-            QuestionRegion(number=45, bbox=(50.0, 320.0, 250.0, 500.0), page_index=0),
-            QuestionRegion(number=46, bbox=(50.0, 520.0, 250.0, 700.0), page_index=0),
-        ],
-    }]
-    out = _whole_pages_as_questions(pages)
-    assert len(out) == 3
-    assert {q["number"] for q in out} == {44, 45, 46}
-    assert all(q["bbox"] is not None for q in out)
-
-
-def test_whole_pages_sub_crop_anchor_5_or_more_falls_back():
-    """페이지 안 anchor 5+ → over-extraction 의심 → 페이지 통째 (기존 폴백)."""
-    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _whole_pages_as_questions
-    from academy.domain.tools.question_splitter import QuestionRegion
-    pages = [{
-        "page_index": 0, "image_path": "/tmp/page_000.png",
-        "text_regions": [
-            QuestionRegion(number=n, bbox=(50.0, n*30.0, 250.0, n*30.0+25), page_index=0)
-            for n in range(1, 8)
-        ],
-    }]
-    out = _whole_pages_as_questions(pages)
-    assert len(out) == 1
-    assert out[0]["bbox"] is None
-
-
-def test_whole_pages_sub_crop_no_anchors_falls_back():
-    """페이지 안 anchor 없음 → 페이지 통째 (기존 동작 유지)."""
-    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _whole_pages_as_questions
-    pages = [
-        {"page_index": 0, "image_path": "/tmp/page_000.png", "text_regions": []},
-        {"page_index": 1, "image_path": "/tmp/page_001.png", "text_regions": []},
-    ]
-    out = _whole_pages_as_questions(pages)
-    assert len(out) == 2
-    assert all(q["bbox"] is None for q in out)
-    assert {q["number"] for q in out} == {1, 2}
+# 페이지 폴백(_whole_pages_as_questions) 관련 tests 제거됨 (2026-05-05).
+# page-as-problem 강제 폴백을 운영 정책에서 폐기 — 분리 인프라 결함이
+# metric에 가려졌던 함정. anchor 결과 그대로 사용 + VLM 시도 + 학원장 직접 자르기로 보강.

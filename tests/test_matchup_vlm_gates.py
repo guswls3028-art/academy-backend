@@ -383,8 +383,8 @@ def test_pages_via_vlm_overrides_page_paper_type(monkeypatch):
     )
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
 
-    _, vlm_stats = matchup_pipeline._pages_via_vlm_or_fallback(
-        [page], document_id="123", job_id="test", skip_vlm=False,
+    _, vlm_stats = matchup_pipeline._pages_via_vlm(
+        [page], document_id="123", job_id="test",
     )
 
     assert page["paper_type"] == "quadrant"
@@ -418,8 +418,8 @@ def test_pages_via_vlm_paper_type_override_even_if_bbox_rejected(monkeypatch):
     )
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
 
-    _, vlm_stats = matchup_pipeline._pages_via_vlm_or_fallback(
-        [page], document_id="123", job_id="test", skip_vlm=False,
+    _, vlm_stats = matchup_pipeline._pages_via_vlm(
+        [page], document_id="123", job_id="test",
     )
 
     # bbox는 reject but paper_type은 override (핵심 회귀 락)
@@ -448,8 +448,8 @@ def test_pages_via_vlm_no_paper_type_response_no_override(monkeypatch):
     )
     monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
 
-    matchup_pipeline._pages_via_vlm_or_fallback(
-        [page], document_id="123", job_id="test", skip_vlm=False,
+    matchup_pipeline._pages_via_vlm(
+        [page], document_id="123", job_id="test",
     )
 
     assert page["paper_type"] == "scan_dual"

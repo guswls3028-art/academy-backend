@@ -261,91 +261,34 @@ def run_matchup_pipeline(
             source_type = "school_exam_pdf"
             upload_intent = source_type
 
-    # is_reference: 시험지군이 아니면 학습자료로 간주 (over_ext 폴백 검토 대상).
-    # student_exam_photo / school_exam_pdf는 시험지군.
-    is_reference = source_type not in ("student_exam_photo", "school_exam_pdf")
-    # student_exam_photo 강제 폴백 신호 — 손글씨 노이즈로 anchor 신뢰성 붕괴 방지.
-    is_student_photo = source_type == "student_exam_photo"
-    # commercial_workbook 강제 폴백 신호 — 시판교재는 cover/index/explanation 페이지 혼재.
-    # page-as-problem + skip_page 키워드 보강이 가장 안정적.
-    is_commercial = source_type == "commercial_workbook"
     page_count = len(pages)
     avg_per_page = total_boxes / max(1, page_count)
 
-    # paper_type 집계 — 분기 결정 + 결과 반환에 한 번만 계산.
+    # paper_type 집계 — 결과 반환에 한 번만 계산. 분기 결정에는 이제 사용하지 않음.
     paper_type_summary = _aggregate_paper_types(pages)
 
-    # 학습자료 over-extraction 휴리스틱 — 페이지 폴백 (페이지=problem) 트리거.
-    # 운영 사용자 보고 (2026-04-28): doc#130 페이지에 44/45/46 문항이 명확히 분리
-    # 되어 있는데도 폴백되어 페이지 통째 problem이 됨. 임계값 50 → 70로 강화하여
-    # 일부 학습자료 (anchor 50~70)가 정상 anchor 분리로 복귀.
-    # 운영 T2 실측:
-    #   - 시험지 doc#127/140/146/147: 16~25 (폴백 안 됨, 변동 없음)
-    #   - 모의고사 doc#134~142: 16~22 (폴백 안 됨, 변동 없음)
-    #   - 학습자료 doc#143/144/145: 80+ anchor (over-extraction, 폴백 유지)
-    #   - 학습자료 doc#120/123/130/131/132/133: 50~70 (이전 폴백 → 이제 anchor 분리 복귀)
-    is_over_extracted = is_reference and (
-        total_boxes >= 70
-        or (total_boxes >= 40 and avg_per_page >= 5)
-    )
-
-    # paper_type 기반 저신뢰 doc 폴백 — 학생 답안지 폰사진/UNKNOWN 다수.
-    # T2 시험지 6 doc(전부 학생 답안지 폰사진) C10 mismatch 56% 결함:
-    # 학생 필기 침범 + perspective + 회전 → 자동분리 결과의 신뢰성 자체가 붕괴.
-    # 페이지 단위로 폴백하면 학원에는 "이 시험지는 페이지 단위 매칭"이라고 노출되고
-    # 잘못된 문항 매핑으로 인한 신뢰성 사고를 차단할 수 있음.
-    is_low_confidence_doc = (
-        paper_type_summary["primary"] == "student_answer_photo"
-        or paper_type_summary["low_confidence_ratio"] >= 0.5
-        # paper_type primary가 unknown — 분류기 fail 케이스. 운영 audit (2026-05-04 doc#312)
-        # 에서 발견: paper_type=unknown으로 page-as-problem 폴백 미진입 → 표지/목차/챕터
-        # 헤더가 problem으로 인덱싱(15p 중 4p). unknown도 안전 폴백 적용.
-        or paper_type_summary["primary"] == "unknown"
-        # source_type 1순위 신호 — 학원장 명시 입력이 paper_type 휴리스틱보다 신뢰성 높음.
-        or is_student_photo  # 학생 답안지 폰사진은 항상 page-as-problem
-        or is_commercial     # 시판 교재는 cover/index/해설 페이지 혼재 → page-as-problem 안전
-    )
-
-    # commercial_workbook은 single-column layout에서 VLM이 dual/quadrant로 잘못 분할하는
-    # 사례 발견(2026-05-03 시각 검수: doc#302/#120 page 13~14 박스가 본문 누락).
-    # → 자동 통합에서는 안전한 page-as-problem만, 검수 UI ondemand에서는 학원장이 직접
-    # 페이지 별로 VLM 호출 + 결과 보고 채택 가능.
+    # ── page-as-problem 강제 폴백 폐기 (2026-05-05 학원장 directive) ──
+    # 폐기 사유:
+    # - is_over_extracted / is_low_confidence_doc / is_commercial / is_student_photo
+    #   네 트리거가 운영 default가 되어 분리 인프라 결함이 metric에 가려졌음.
+    # - T2 박철 운영 실측 (2026-05-05): 193 doc 진짜 분리 성공률 1.6% (3 doc 페이지당 5+).
+    #   commercial_workbook 6 doc + student_exam_photo 7 doc = 100% page_fallback.
+    #   doc#166 (26-1m 숙명여고) 332 페이지 → 266 problems 모두 페이지=problem.
+    # - 폴백이 학원장에게 "안전"한 게 아니라 매치업 자체를 무용하게 만듦.
     #
-    # student_exam_photo도 동일 정책 — T2 시험지 6 doc 시각 검수(2026-05-03)에서
-    # P0 다층 게이트(VLM bbox role/IoU/y_min/height/width 검증)를 통과한 표지·헤더·strip
-    # 박스가 다수 잔존(D-3/D-4). 학생답안지는 페이지에 본문+표지+답안카드+학생필기가
-    # 비정형 layout으로 섞여 있어 VLM이 confidence 0.95+로 표지/헤더 박스를 problem으로
-    # 응답. → 자동 통합 단계에서는 page-as-problem 강제. 정밀 매칭은 검수 UI에서 ondemand.
-    skip_vlm_auto = is_commercial or is_student_photo
+    # 새 정책:
+    # - anchor 결과 그대로 사용. over-extraction 무관 (학원장 검수에서 직접 정리).
+    # - anchor 0이면 VLM 시도. VLM 실패 시 그 페이지는 problems 0 (정직한 실패).
+    # - is_commercial/is_student_photo 강제 page-as-problem 제거 — VLM 시도.
+    # - 학원장 검수 UI의 직접 자르기로 분리 결함 보강.
 
     if total_boxes == 0:
-        # 문제를 찾지 못한 경우 — 전체 페이지를 하나의 문제로 취급
-        logger.info("MATCHUP_NO_BOXES | job_id=%s | treating whole pages as problems", job_id)
-        questions_raw, vlm_stats = _pages_via_vlm_or_fallback(
-            pages, document_id, job_id, skip_vlm=skip_vlm_auto, tenant_id=tenant_id,
-        )
-        paper_type_summary["vlm_auto_split"] = vlm_stats
-    elif is_over_extracted or is_low_confidence_doc:
-        # 페이지 폴백 트리거:
-        # - over-extraction (학습자료 anchor 폭증) OR
-        # - 저신뢰 source (학생 답안지 폰사진 등 — paper_type 분류 신호)
-        # is_skip_page(표지/해설지/lorem ipsum) 페이지는 제외 — 그대로 두면
-        # 라틴 placeholder가 problem #1/#2로 인덱싱되어 매치업 노이즈가 됨.
-        kept_pages = [p for p in pages if not p.get("is_skip_page")]
         logger.info(
-            "MATCHUP_PAGE_FALLBACK | job_id=%s | total_boxes=%d avg=%.1f "
-            "raw_pages=%d kept_pages=%d (skip=%d) | over_ext=%s | low_conf=%s | "
-            "primary_paper_type=%s | skip_vlm_auto=%s",
-            job_id, total_boxes, avg_per_page, page_count, len(kept_pages),
-            page_count - len(kept_pages),
-            is_over_extracted, is_low_confidence_doc,
-            paper_type_summary["primary"], skip_vlm_auto,
+            "MATCHUP_NO_BOXES | job_id=%s | VLM 시도 (page-as-problem 폴백 폐기됨)",
+            job_id,
         )
-        # P1 자동 통합 (2026-05-03 학원장 directive): page-as-problem 직전에 VLM bbox 시도.
-        # anchor 1~4 페이지는 기존 sub-crop 유지 (신뢰도 높음).
-        # anchor 0 또는 5+ 페이지만 VLM vision 호출 — 실패/저신뢰 시 page-as-problem.
-        questions_raw, vlm_stats = _pages_via_vlm_or_fallback(
-            kept_pages, document_id, job_id, skip_vlm=skip_vlm_auto, tenant_id=tenant_id,
+        questions_raw, vlm_stats = _pages_via_vlm(
+            pages, document_id, job_id, tenant_id=tenant_id,
         )
         paper_type_summary["vlm_auto_split"] = vlm_stats
     else:
@@ -894,28 +837,24 @@ def _try_vlm_problem_bboxes(
     return validated, raw_paper_type
 
 
-def _pages_via_vlm_or_fallback(
+def _pages_via_vlm(
     pages: List[Dict], document_id, job_id: str, *,
-    skip_vlm: bool = False, tenant_id: str | int | None = None,
+    tenant_id: str | int | None = None,
 ) -> Tuple[List[Dict], Dict[str, Any]]:
-    """페이지 폴백 분기 — VLM 시도 → 실패 시 기존 page-as-problem.
+    """anchor 0 페이지에 VLM bbox 시도 — page-as-problem 폴백 폐기됨.
 
-    페이지별 라우팅:
-      - anchor 1~4: 기존 sub-crop (신뢰도 높음, VLM 호출 X)
-      - anchor 0 또는 5+: VLM vision 시도 → 통과 시 sub-crop, 실패 시 page-as-problem
+    페이지별 라우팅 (학원장 directive 2026-05-05):
+      - anchor 1+: sub-crop (anchor 결과 그대로)
+      - anchor 0 + VLM 통과: VLM bbox sub-crop
+      - anchor 0 + VLM 실패: 페이지 skip (problems 0). 학원장 검수 UI 직접 자르기로 보강.
 
-    학원장 directive (2026-05-02): VLM은 메인 X, fallback only.
-    이 함수는 page-as-problem 직전 마지막 fallback 단계로만 VLM 시도.
-
-    skip_vlm=True 시 VLM 호출 자체를 우회 (commercial_workbook 같이 VLM이 잘못
-    분할하는 사례 차단). 이 경우 anchor 1~4 sub-crop만 + 나머지 page-as-problem.
+    이전에는 VLM 실패 시 page-as-problem 폴백이 자동 진입하여 metric상 "성공"으로
+    잡혔으나, 박철 운영 실측 (193 doc 진짜 성공률 1.6%) 결과 폴백 자체가 분리 인프라
+    결함을 가리는 함정으로 판명. 정직한 실패 + 학원장 직접 보강이 운영 정책.
     """
     import os as _os
 
-    use_vlm = (
-        not skip_vlm
-        and _os.getenv("MATCHUP_VLM_AUTO_SPLIT", "1") == "1"
-    )
+    use_vlm = _os.getenv("MATCHUP_VLM_AUTO_SPLIT", "1") == "1"
     questions: List[Dict] = []
     seen_numbers: set = set()
     fallback_counter = 1
@@ -924,14 +863,15 @@ def _pages_via_vlm_or_fallback(
     vlm_pages_used = 0
     vlm_problems_added = 0
     vlm_pages_attempted = 0
+    pages_skipped_no_split = 0
 
     for page in pages:
         page_idx = page["page_index"]
         img_path = page["image_path"]
         text_regions = page.get("text_regions") or []
 
-        # 1. anchor 1~4 → 기존 sub-crop (anchor 신뢰 높음)
-        if 1 <= len(text_regions) <= 4:
+        # 1. anchor 1+ → sub-crop (anchor 결과 그대로 사용)
+        if text_regions:
             for region in text_regions:
                 num = int(region.number)
                 if num in seen_numbers:
@@ -952,15 +892,11 @@ def _pages_via_vlm_or_fallback(
                 })
             continue
 
-        # 2. anchor 0 또는 5+ → VLM 시도 (env로 끌 수 있음)
+        # 2. anchor 0 → VLM bbox 시도
         if use_vlm and document_id:
             vlm_pages_attempted += 1
             vlm, vlm_paper_type = _try_vlm_problem_bboxes(page, document_id, tenant_id=tenant_id)
 
-            # B-2 (2026-05-04): VLM이 분류한 paper_type을 page dict에 override.
-            # bbox 게이트(D-1~D-4) reject되어도 paper_type 신호는 유효하므로 항상 적용.
-            # heuristic + handwriting_bias(A-1)보다 VLM 직접 분류가 정확.
-            # _aggregate_paper_types가 자동 반영 → paper_type_summary 정밀화.
             if vlm_paper_type:
                 page["paper_type"] = vlm_paper_type
                 debug = page.setdefault("paper_type_debug", {})
@@ -984,108 +920,24 @@ def _pages_via_vlm_or_fallback(
                     vlm_problems_added += 1
                 continue
 
-        # 3. VLM 실패/비활성/저신뢰 → page-as-problem
-        while fallback_counter in seen_numbers:
-            fallback_counter += 1
-        questions.append({
-            "number": fallback_counter,
-            "page_index": page_idx,
-            "image_path": img_path,
-            "bbox": None,
-        })
-        seen_numbers.add(fallback_counter)
-        fallback_counter += 1
+        # 3. VLM 실패/비활성 → 페이지 skip. page-as-problem 폴백 폐기됨.
+        # 학원장 검수 UI의 직접 자르기로 보강.
+        pages_skipped_no_split += 1
 
     logger.info(
         "MATCHUP_VLM_AUTO_DONE | job=%s doc=%s | use_vlm=%s | "
-        "vlm_attempted=%d vlm_used=%d vlm_problems=%d total_questions=%d",
+        "vlm_attempted=%d vlm_used=%d vlm_problems=%d skipped=%d total=%d",
         job_id, document_id, use_vlm,
-        vlm_pages_attempted, vlm_pages_used, vlm_problems_added, len(questions),
+        vlm_pages_attempted, vlm_pages_used, vlm_problems_added,
+        pages_skipped_no_split, len(questions),
     )
     return questions, {
         "enabled": use_vlm,
         "pages_attempted": vlm_pages_attempted,
         "pages_used": vlm_pages_used,
         "problems_added": vlm_problems_added,
+        "pages_skipped_no_split": pages_skipped_no_split,
     }
-
-
-def _whole_pages_as_questions(pages: List[Dict]) -> List[Dict]:
-    """페이지 폴백 시 페이지를 problem으로 변환.
-
-    GPT 인사이트 (2026-04-28): 페이지 폴백 발생해도 페이지 안 anchor 위치로
-    sub-crop 재시도하면 학습자료 80+ anchor doc도 정상 분리 가능.
-
-    분리 정책:
-    - 페이지 안 anchor 1~4개 = 실제 문항 → anchor 단위로 sub-crop
-    - 페이지 안 anchor 5+개 = 본문 학습 항목번호 over-extraction → 페이지 통째
-    - 페이지 안 anchor 0개 = 분리 불가 → 페이지 통째 (기존 동작)
-
-    효과 (운영 doc#143/144/145 기대):
-    - 페이지 폴백 → 페이지당 3~4 problem (실제 문항 단위)로 정상 분리
-    - 사용자 매뉴얼 크롭 부담 감소
-    """
-    questions: List[Dict] = []
-    seen_numbers: set = set()
-    fallback_counter = 1
-    pixel_scale = 200.0 / 72.0  # _PDF_TO_PIXEL_SCALE — segment_dispatcher와 동일
-
-    for page in pages:
-        page_idx = page["page_index"]
-        img_path = page["image_path"]
-        # text_regions = QuestionRegion 리스트 (PDF 좌표). over-extraction 페이지는
-        # text_regions 그대로 보존되어 있으나 boxes는 비어있을 수 있음.
-        text_regions = page.get("text_regions") or []
-
-        # 페이지 안 anchor 5+개면 over-extraction 의심 → 페이지 통째
-        if len(text_regions) >= 5:
-            while fallback_counter in seen_numbers:
-                fallback_counter += 1
-            questions.append({
-                "number": fallback_counter,
-                "page_index": page_idx,
-                "image_path": img_path,
-                "bbox": None,
-            })
-            seen_numbers.add(fallback_counter)
-            fallback_counter += 1
-            continue
-
-        # 페이지 안 anchor 1~4개 → anchor 단위 sub-crop
-        if 1 <= len(text_regions) <= 4:
-            for region in text_regions:
-                num = int(region.number)
-                if num in seen_numbers:
-                    continue
-                seen_numbers.add(num)
-                rx0, ry0, rx1, ry1 = region.bbox
-                bbox_px = [
-                    int(rx0 * pixel_scale),
-                    int(ry0 * pixel_scale),
-                    int((rx1 - rx0) * pixel_scale),
-                    int((ry1 - ry0) * pixel_scale),
-                ]
-                questions.append({
-                    "number": num,
-                    "page_index": page_idx,
-                    "image_path": img_path,
-                    "bbox": bbox_px,
-                })
-            continue
-
-        # anchor 0개 → 페이지 통째 (기존 동작)
-        while fallback_counter in seen_numbers:
-            fallback_counter += 1
-        questions.append({
-            "number": fallback_counter,
-            "page_index": page_idx,
-            "image_path": img_path,
-            "bbox": None,
-        })
-        seen_numbers.add(fallback_counter)
-        fallback_counter += 1
-
-    return questions
 
 
 def _extract_texts(questions: List[Dict], job_id: str) -> None:

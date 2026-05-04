@@ -72,7 +72,7 @@ class ProblemBboxResult:
 
     paper_type: VLM이 직접 분류한 페이지 유형 (B-2 보강, 2026-05-04).
       값은 PaperType enum value (clean_pdf_single/dual, scan_single/dual, quadrant,
-      student_answer_photo, side_notes, non_question, unknown). 호출자(_pages_via_vlm_or_fallback)
+      student_answer_photo, side_notes, non_question, unknown). 호출자(_pages_via_vlm)
       가 page dict의 paper_type을 이 값으로 override 해 _aggregate_paper_types가
       heuristic 보다 정확한 신호 사용.
     """
