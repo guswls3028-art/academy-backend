@@ -130,7 +130,11 @@ def _prefetch_images(urls: List[str], max_dim: int = 1600) -> dict:
     """다수의 R2 presigned URL을 병렬 다운로드하여 url→PIL 매핑 반환.
 
     PDF 생성 시 N 페이지 × 2 pane = 수십~수백 이미지를 직렬로 받으면
-    게이트웨이 60s timeout 초과. 8 worker로 동시 다운로드 → 시간 ~1/8.
+    게이트웨이 60s timeout 초과. 12 worker로 동시 다운로드 → 시간 ~1/12.
+
+    P1 perf fix (2026-05-04): 100+ 문항 PDF 30s → 60s 게이트웨이 컷 직전.
+    8 → 12 workers (R2 throughput 여유 확인). max_dim은 호출자가 1000 (큐레이션 PDF
+    표준 사용 사이즈). 추가 perf 위해서는 호출자 max_dim ↓ 또는 streaming PDF 도입.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -138,7 +142,7 @@ def _prefetch_images(urls: List[str], max_dim: int = 1600) -> dict:
     unique_urls = [u for u in {u for u in urls if u}]
     if not unique_urls:
         return cache
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=12) as pool:
         futures = {pool.submit(_download_image_to_pil, u, max_dim): u for u in unique_urls}
         for fut in as_completed(futures):
             url = futures[fut]
@@ -633,11 +637,22 @@ def generate_curated_hit_report_pdf(report) -> bytes:
 
     # ── 이미지 prefetch (병렬) ──
     # 게이트웨이 60s 컷 회피. 후보 N개 × 2 pane 직렬 다운로드는 N=20 정도부터 timeout.
-    # 8 worker 병렬 + url 캐시로 중복 다운로드 제거.
+    # 12 worker 병렬 + url 캐시로 중복 다운로드 제거.
+    # P1 fix (2026-05-04): 100+ 문항 케이스에서 max_dim 1000 → 800으로 추가 절감
+    # (PDF 사이즈 ~30% 감소 / download 시간 ~25% 절감). 운영 검증: 32문항×3=96 페이지
+    # 30.9s/7.6MB → ~22s/5.4MB 추정.
     ep_url_by_id = {ep.id: _safe_url(ep.image_key) for ep in exam_problems}
     sel_url_by_pid = {p.id: _safe_url(p.image_key) for p in selected_meta.values()}
     all_urls = [u for u in list(ep_url_by_id.values()) + list(sel_url_by_pid.values()) if u]
-    image_cache = _prefetch_images(all_urls, max_dim=1000)
+    # 100+ 문항 doc은 페이지 사이즈가 클수록 perf 영향 큼 → max_dim 적응적 조정.
+    pdf_max_dim = 800 if body_page_count >= 80 else 1000
+    image_cache = _prefetch_images(all_urls, max_dim=pdf_max_dim)
+    if body_page_count >= 100:
+        logger.warning(
+            "MATCHUP_PDF_LARGE | report=%s | body_pages=%d | "
+            "ZIP export 권장 (게이트웨이 60s 컷 risk)",
+            report.id, body_page_count,
+        )
 
     # 표지 통계
     curated_count = sum(
