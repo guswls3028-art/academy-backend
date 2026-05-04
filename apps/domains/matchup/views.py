@@ -26,6 +26,7 @@ from .services import (
     retry_document,
     reanalyze_document,
     exclude_page_from_matchup,
+    include_page_to_matchup,
     promote_inventory_to_matchup,
     ensure_matchup_upload_folder,
     manually_crop_problem,
@@ -1158,6 +1159,39 @@ class DocumentPageExcludeView(View):
         except Exception:
             logger.exception("exclude_page_from_matchup failed (doc=%s page=%s)", doc.id, page_idx)
             return JsonResponse({"detail": "페이지 제외 실패"}, status=500)
+
+        return JsonResponse({
+            "ok": True,
+            "doc_id": doc.id,
+            "page_index": int(page_idx),
+            **result,
+        })
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentPageIncludeView(View):
+    """POST /api/v1/matchup/documents/<doc_id>/pages/<page_idx>/include/
+
+    P1 (2026-05-04): exclude_page_from_matchup 롤백.
+    학원장이 실수로 페이지를 제외했다가 복구하는 case.
+    excluded_pages 리스트에서 page_index 제거. problem 복원은 reanalyze 별도 호출.
+    """
+
+    def post(self, request, doc_id, page_idx):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        try:
+            result = include_page_to_matchup(doc, int(page_idx))
+        except ValueError as e:
+            return JsonResponse({"detail": str(e)}, status=400)
+        except Exception:
+            logger.exception("include_page_to_matchup failed (doc=%s page=%s)", doc.id, page_idx)
+            return JsonResponse({"detail": "페이지 복원 실패"}, status=500)
 
         return JsonResponse({
             "ok": True,

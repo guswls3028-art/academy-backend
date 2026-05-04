@@ -347,6 +347,36 @@ def exclude_page_from_matchup(
     return {"removed_problems": removed, "excluded_pages": excluded}
 
 
+def include_page_to_matchup(
+    document: MatchupDocument,
+    page_index: int,
+) -> dict:
+    """페이지를 매치업 인덱싱에 다시 포함 — exclude_page_from_matchup 롤백 (P1, 2026-05-04).
+
+    동작:
+      1. doc.meta.excluded_pages 리스트에서 page_index 제거
+      2. doc.meta 저장 (problems는 자동 복원되지 않음 — 다음 reanalyze 시 분석)
+      3. 학원장이 별도로 reanalyze_document 호출해야 problem 복원
+
+    학원장이 실수로 페이지를 제외했다가 복구하는 case.
+    Returns: {excluded_pages: List[int], requires_reanalyze: bool}
+    """
+    if page_index < 0 or page_index > 999:
+        raise ValueError("page_index가 범위를 벗어났습니다.")
+
+    meta = dict(document.meta or {})
+    excluded = list(meta.get("excluded_pages") or [])
+    if int(page_index) not in excluded:
+        # 이미 포함된 페이지 — no-op
+        return {"excluded_pages": excluded, "requires_reanalyze": False}
+
+    excluded = [p for p in excluded if int(p) != int(page_index)]
+    meta["excluded_pages"] = excluded
+    document.meta = meta
+    document.save(update_fields=["meta", "updated_at"])
+    return {"excluded_pages": excluded, "requires_reanalyze": True}
+
+
 def reanalyze_document(document: MatchupDocument) -> str:
     """status 무관하게 매치업 문서 재분석 — Phase 5-deep 검수 UI.
 

@@ -11,6 +11,7 @@ urlpatterns = [
     path("documents/<int:doc_id>/preview/", views.DocumentPreviewView.as_view()),
     path("documents/<int:doc_id>/pages/", views.DocumentPagesView.as_view()),
     path("documents/<int:doc_id>/pages/<int:page_idx>/exclude/", views.DocumentPageExcludeView.as_view()),
+    path("documents/<int:doc_id>/pages/<int:page_idx>/include/", views.DocumentPageIncludeView.as_view()),
     path("documents/<int:doc_id>/pages/<int:page_idx>/vlm-classify/", views.DocumentPageVlmClassifyView.as_view()),
     path("documents/<int:doc_id>/reanalyze/", views.DocumentReanalyzeView.as_view()),
     path("documents/<int:doc_id>/manual-crop/", views.DocumentManualCropView.as_view()),
