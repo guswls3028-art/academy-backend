@@ -282,12 +282,13 @@ def run_matchup_pipeline(
     # - is_commercial/is_student_photo 강제 page-as-problem 제거 — VLM 시도.
     # - 학원장 검수 UI의 직접 자르기로 분리 결함 보강.
 
-    # commercial_workbook 강제 VLM primary (Phase 8+ 후속, 2026-05-05):
-    #   시판 교재 책자(예: 26-1m 학교명 내지)는 anchor splitter가 cover/index/해설/답안
-    #   페이지의 anchor 박스도 problem으로 추출해 학원장 manual ground truth(본문만)
-    #   과 큰 갭 발생. _pages_via_vlm 안의 page_role D-3 게이트는 cover/index/explanation/
-    #   answer_key 자동 reject 해 본문 페이지만 problem 생성.
-    force_vlm_primary = (source_type == "commercial_workbook")
+    # 강제 VLM primary (Phase 8+ 후속, 2026-05-05):
+    #   학원장 manual ground truth 비교 결함:
+    #   - commercial_workbook 책자: cover/index/해설/답안 페이지 가짜 problem
+    #   - school_exam_pdf: anchor OCR 일부 번호 누락 시 fallback counter가 잘못
+    #     매핑 (doc 204 Q24 자리에 시험지 27번 들어감)
+    #   _pages_via_vlm 안의 page_role D-3 게이트 + VLM 정확 number 매핑이 본질 fix.
+    force_vlm_primary = source_type in ("commercial_workbook", "school_exam_pdf")
     if force_vlm_primary:
         logger.info(
             "MATCHUP_FORCE_VLM_PRIMARY | job=%s | doc=%s | source=%s "
@@ -660,11 +661,27 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
     questions = []
     q_num = 1
     seen_numbers: set = set()  # 문서 전역 dedupe — unique(document, number) 충돌 방지
+    # paper_type 페이지 게이트 (Phase 8+, 2026-05-05 학원장 manual ground truth):
+    #   T1 doc 624 manual=56 vs T2 doc 216 anchor=59. 자동 결과 p3:13, p36:11, p38:10
+    #   = cover/index/끝부분 페이지에서 가짜 problem. anchor splitter가 비-문항
+    #   페이지의 box를 problem으로 등록하던 결함. 페이지 단위 paper_type이
+    #   non_question/explanation/answer_key/cover/index면 boxes skip.
+    _NON_PROBLEM_PAGE_TYPES = {
+        "non_question", "explanation", "answer_key",
+        "cover", "index",
+    }
     for page in pages:
         page_idx = page["page_index"]
         img_path = page["image_path"]
         boxes = page.get("boxes", []) or []
         numbers = page.get("numbers", []) or []
+        page_type = (page.get("paper_type") or "").strip().lower()
+        if page_type in _NON_PROBLEM_PAGE_TYPES:
+            logger.info(
+                "MATCHUP_SKIP_NON_PROBLEM_PAGE | page=%s | type=%s | boxes=%d (skipped)",
+                page_idx, page_type, len(boxes),
+            )
+            continue
         # 번호가 boxes와 같은 길이이고 모두 정수면 신뢰. 그렇지 않으면 fallback.
         use_segment_numbers = (
             len(numbers) == len(boxes)

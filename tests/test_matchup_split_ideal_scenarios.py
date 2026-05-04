@@ -656,6 +656,51 @@ def test_overlap_without_shared_with_still_rejects(monkeypatch):
     )
 
 
+def test_anchor_path_skips_non_problem_pages():
+    """_boxes_to_questions: paper_type=non_question/explanation/answer_key/cover/index
+    페이지의 boxes는 problem 등록 X.
+
+    근거 (2026-05-05 학원장 manual ground truth):
+      T1 doc 624 (3-1-1 지구시스템) manual=56 vs T2 doc 216 anchor=59 + 가짜 page
+      분포 (p3:13, p36:11, p38:10 = cover/끝부분에서 가짜 problem). academy_workbook
+      긴 책자 자료에서 anchor splitter가 비-문항 페이지 box도 problem 등록.
+    fix: anchor path도 page_type 게이트 적용 (이전엔 _validate_vlm_bboxes D-3
+      게이트만 작동).
+    """
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _boxes_to_questions
+
+    pages = [
+        # cover 페이지 — boxes 있어도 skip
+        {
+            "page_index": 0, "image_path": "/tmp/p0.png",
+            "boxes": [(50, 100, 200, 80) for _ in range(13)],
+            "numbers": list(range(1, 14)),
+            "paper_type": "non_question",
+        },
+        # 본문 페이지 — 정상 등록
+        {
+            "page_index": 6, "image_path": "/tmp/p6.png",
+            "boxes": [(50, 100, 400, 200), (50, 350, 400, 200)],
+            "numbers": [1, 2],
+            "paper_type": "clean_pdf_dual",
+        },
+        # 끝 페이지 (해설) — skip
+        {
+            "page_index": 38, "image_path": "/tmp/p38.png",
+            "boxes": [(50, 100, 200, 80) for _ in range(10)],
+            "numbers": list(range(50, 60)),
+            "paper_type": "explanation",
+        },
+    ]
+    questions = _boxes_to_questions(pages)
+    # 본문 페이지 2개만
+    assert len(questions) == 2, (
+        f"non_question/explanation 페이지의 13+10 가짜 boxes는 skip 되어야. "
+        f"실제 등록={len(questions)}"
+    )
+    assert all(q["page_index"] == 6 for q in questions)
+
+
 def test_vlm_prompt_includes_essay_question_instruction():
     """VLM prompt에 서술형/논술형 페이지가 problem임을 명시.
 
@@ -672,6 +717,26 @@ def test_vlm_prompt_includes_essay_question_instruction():
     # answer_key와의 명시적 구분
     assert "정답표" in _PROBLEM_BBOX_PROMPT or "answer_key" in _PROBLEM_BBOX_PROMPT, (
         "answer_key 정의 명확화 누락"
+    )
+
+
+def test_school_exam_pdf_forces_vlm_primary():
+    """school_exam_pdf도 VLM primary — anchor OCR 번호 누락 시 fallback counter
+    잘못 매핑 fix.
+
+    근거 (2026-05-05 학원장 ground truth):
+      T2 doc 204 (2025 개포고 1학기 중간고사): Q24~Q25 슬롯에 시험지 27~28번 들어감.
+      anchor splitter가 24/25/26번 OCR 못 잡고 fallback counter 사용 → 잘못 매핑.
+    fix: school_exam_pdf도 commercial과 동일하게 VLM primary 분기 → VLM이
+      페이지 보고 정확한 number 인식.
+    """
+    import inspect
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    src = inspect.getsource(matchup_pipeline.run_matchup_pipeline)
+    has_school_force = "school_exam_pdf" in src and "force_vlm_primary" in src
+    assert has_school_force, (
+        "school_exam_pdf VLM primary 분기 누락 — number 매핑 결함 회복 안 됨"
     )
 
 
