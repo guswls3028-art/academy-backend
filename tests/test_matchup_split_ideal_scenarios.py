@@ -656,6 +656,25 @@ def test_overlap_without_shared_with_still_rejects(monkeypatch):
     )
 
 
+def test_vlm_prompt_includes_essay_question_instruction():
+    """VLM prompt에 서술형/논술형 페이지가 problem임을 명시.
+
+    근거 (2026-05-05 학생사진 manual ground truth doc 699):
+      manual 32 problems vs 자동 27 — p6/p7 서술형 페이지 skip됨 (-5).
+      VLM이 서술형 페이지를 answer_key/non_question으로 오분류해 D-3 게이트 reject.
+    fix: prompt에 "[서답형 N], [서술형 N] 표시 페이지는 page_role=problem,
+      should_skip=false" 명시.
+    """
+    from academy.adapters.ai.detection.vlm_fallback import _PROBLEM_BBOX_PROMPT
+    assert "서답형" in _PROBLEM_BBOX_PROMPT or "서술형" in _PROBLEM_BBOX_PROMPT, (
+        "VLM prompt에 서술형/서답형 instruction 누락 — 학생사진 서술형 페이지 skip 결함"
+    )
+    # answer_key와의 명시적 구분
+    assert "정답표" in _PROBLEM_BBOX_PROMPT or "answer_key" in _PROBLEM_BBOX_PROMPT, (
+        "answer_key 정의 명확화 누락"
+    )
+
+
 def test_commercial_workbook_forces_vlm_primary():
     """commercial_workbook source_type은 anchor 결과 무시 + VLM primary 진입.
 

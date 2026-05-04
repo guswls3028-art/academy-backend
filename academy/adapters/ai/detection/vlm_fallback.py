@@ -480,6 +480,14 @@ _PROBLEM_BBOX_PROMPT = """당신은 한국어 시험지·교재 페이지의 문
 - shared_with: 묶인 문항 번호 list (선택 출력) — 12번 객체에 "shared_with":[13], 13번 객체에 "shared_with":[12].
 - 묶음 문항이 같은 bbox를 가지면 D-1 IoU 게이트가 reject할 수 있으므로, shared_with 표시로 게이트가 묶음을 인식.
 
+서술형/논술형 영역도 problem 페이지 — 매우 중요:
+- "[서답형 N]", "[서술형 N]", "[논술형 N]", "(서답형)" 표시가 있는 페이지는 **problem 페이지**입니다 (page_role=problem).
+- 서술형은 객관식 다음 번호로 이어집니다 (예: 객관식 1~25 + 서답형 26, 27, 28...). 빈 답안 칸이 있어도 문항 본문을 problem으로 등록.
+- answer_key (정답표) 와의 차이:
+  - answer_key = 시험지 끝의 출제자 정답표 (객관식 ①②③④⑤ 또는 [정답: ...] 식의 정답 모음)
+  - 서술형 답안 영역 = problem 페이지의 일부 (학생이 푸는 곳, 정답 X)
+- 서술형 페이지를 answer_key/non_question으로 분류하지 마세요. should_skip=false, page_role=problem.
+
 bbox 좌표 (반드시 페이지 이미지 픽셀 기준):
 - [x, y, w, h] = 박스 왼쪽 위 모서리(x, y) + 너비(w) + 높이(h).
 - 페이지 좌상단이 (0, 0).
