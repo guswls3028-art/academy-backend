@@ -170,6 +170,77 @@ def _delete_folder_tree_r2_and_db(folder: InventoryFolder, tenant: Tenant, scope
     folder.delete()
 
 
+def delete_folder_recursive(
+    *,
+    tenant: Tenant,
+    folder: InventoryFolder,
+    scope: str,
+    student_ps: str,
+) -> dict:
+    """폴더 + 하위 모든 폴더/파일 + R2 객체 + 매치업 cascade 한방 삭제.
+
+    순서:
+      1. 트리 수집 (folder + 모든 자식 폴더·파일)
+      2. 각 파일의 매치업 problem 이미지 R2 cleanup (먼저 — orphan 방지)
+      3. 각 파일의 원본 R2 객체 삭제 (best effort, 실패는 로그만)
+      4. 루트 폴더 .delete() — Django CASCADE로 자식 폴더 + InventoryFile +
+         매치업 doc/problem 모두 정리
+
+    Returns: {"ok": True, "deleted": {folders, files, matchup_docs, r2_objects}}
+    """
+    import logging
+    log = logging.getLogger(__name__)
+
+    folders, files = _collect_folder_tree(folder, tenant, scope, student_ps)
+    matchup_doc_count = 0
+    r2_deleted = 0
+
+    # 매치업 problem 이미지 cleanup (cascade 전 — InventoryFile cascade는 problem
+    # 이미지 R2 객체를 알지 못함)
+    for inv_file in files:
+        try:
+            matchup_doc = getattr(inv_file, "matchup_document", None)
+        except Exception:
+            matchup_doc = None
+        if matchup_doc is not None:
+            matchup_doc_count += 1
+            try:
+                from apps.domains.matchup.services import cleanup_matchup_problem_images
+                cleanup_matchup_problem_images(matchup_doc)
+            except Exception:
+                log.warning(
+                    "matchup problem images cleanup failed for inv_file %s",
+                    inv_file.id, exc_info=True,
+                )
+
+    # 원본 R2 객체 삭제 (best effort)
+    if delete_object_r2_storage:
+        for inv_file in files:
+            if not inv_file.r2_key:
+                continue
+            try:
+                delete_object_r2_storage(key=inv_file.r2_key)
+                r2_deleted += 1
+            except Exception:
+                log.warning(
+                    "Failed to delete R2 object: %s", inv_file.r2_key,
+                    exc_info=True,
+                )
+
+    # DB cascade 삭제 — 루트 .delete()로 자식 폴더/파일 + 매치업 doc/problem 한 번에 정리.
+    folder.delete()
+
+    return {
+        "ok": True,
+        "deleted": {
+            "folders": len(folders),
+            "files": len(files),
+            "matchup_docs": matchup_doc_count,
+            "r2_objects": r2_deleted,
+        },
+    }
+
+
 def move_folder(
     *,
     tenant: Tenant,

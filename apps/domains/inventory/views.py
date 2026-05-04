@@ -14,7 +14,11 @@ from apps.core.models import Program
 from .models import InventoryFolder, InventoryFile
 from .r2_path import build_r2_key, safe_filename, folder_path_string
 from academy.adapters.db.django import repositories_inventory as inv_repo
-from .services import move_file as do_move_file, move_folder as do_move_folder
+from .services import (
+    move_file as do_move_file,
+    move_folder as do_move_folder,
+    delete_folder_recursive as do_delete_folder_recursive,
+)
 
 # R2 Storage 버킷 (인벤토리 전용)
 try:
@@ -433,7 +437,9 @@ class FileUploadView(View):
 
 @method_decorator(csrf_exempt, name="dispatch")
 class FolderDeleteView(View):
-    """DELETE /storage/inventory/folders/:id/ — 비어있을 때만 삭제.
+    """DELETE /storage/inventory/folders/:id/
+       — 기본: 비어있을 때만 삭제 (안전)
+       — ?recursive=true: 하위 폴더/파일/매치업 cascade + R2 객체 정리.
     PATCH — 폴더 이름 변경."""
 
     @method_decorator(_tenant_required)
@@ -442,6 +448,7 @@ class FolderDeleteView(View):
         tenant = request.tenant
         scope = (request.GET.get("scope") or "admin").lower()
         student_ps = (request.GET.get("student_ps") or "").strip()
+        recursive = (request.GET.get("recursive") or "").lower() in ("true", "1", "yes")
 
         # 🔐 scope 권한 검증: 학생은 admin scope 접근 불가
         perm_err = _check_scope_permission(request, scope)
@@ -453,6 +460,13 @@ class FolderDeleteView(View):
             return JsonResponse({"detail": "Not found"}, status=404)
         if folder.scope != scope or (scope == "student" and folder.student_ps != student_ps):
             return JsonResponse({"detail": "Forbidden"}, status=403)
+
+        if recursive:
+            # 하위 포함 한방 삭제 — 매치업 problem 이미지/원본 R2 객체/cascade DB 모두 정리
+            result = do_delete_folder_recursive(
+                tenant=tenant, folder=folder, scope=scope, student_ps=student_ps,
+            )
+            return JsonResponse(result, status=200)
 
         if inv_repo.inventory_folder_has_children(tenant, folder):
             return JsonResponse({"detail": "비어있지 않은 폴더는 지울 수 없습니다. 먼저 하위 파일·폴더를 비우거나 삭제하세요.", "code": "folder_not_empty"}, status=400)
