@@ -47,6 +47,16 @@ RUN pip install --user --no-cache-dir \
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); SentenceTransformer('clip-ViT-B-32'); print('CLIP+MiniLM cached OK')" \
     || (echo "ERROR: model pre-cache failed" && exit 1)
 
+# YOLO 문항 분리 모델 (V7n_plus, 2026-05-04 학습) — 6.3MB.
+# 학생답안지 6 doc 시험지 + academy_workbook 6 doc 113 페이지 / 499 bbox VLM 자동 라벨,
+# YOLOv8n + imgsz=1024 + 200 epochs + augmentation 강화 (perspective/HSV/mosaic).
+# best mAP50=0.70 / mAP50-95=0.29. 운영 검증: academy_workbook/commercial PDF에서 본문
+# 정확 검출. 학생답안지는 단일 이미지 경로(YOLO skip)라 영향 없음.
+# AIConfig.YOLO_QUESTION_MODEL_PATH ENV로 활성화 — 미설정 시 segment_yolo가
+# YoloNotConfiguredError raise → segment_dispatcher가 OCR/OpenCV로 폴백 (안전).
+COPY --chown=appuser:appuser models ./models
+ENV YOLO_QUESTION_MODEL_PATH=/app/models/yolo_v7n_plus.pt
+
 # 앱 코드 (Base에 두지 않음) — 자주 변경되는 레이어를 가장 아래로
 USER root
 COPY --chown=appuser:appuser academy ./academy

@@ -54,6 +54,10 @@ apps/infrastructure/storage/**/__pycache__/
 *.pth
 *.onnx
 
+# 운영 배포 모델은 ai-worker 이미지에 포함 — 예외 (B-1+ V7n_plus 2026-05-04)
+!backend/models/*.pt
+!models/*.pt
+
 # =========================
 # OS
 # =========================
