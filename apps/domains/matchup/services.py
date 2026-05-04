@@ -126,27 +126,37 @@ def find_similar_problems(
     _txt_w = max(0.0, 1.0 - _img_w)
     src_img_emb = source.image_embedding
 
-    # 시험지(test) source의 자기 doc 안 problem은 후보에서 제외.
-    # 같은 시험지의 다른 problem이 동일 OCR 텍스트로 인덱싱돼 sim≈1로 잡히는
-    # self-doc trap 차단. reference doc 간 cross-doc 추천에는 영향 없음.
+    # source 의 source_type 식별 — 시험지(test) vs 자료(reference) 분기.
+    # 학원장 실측 갭 fix (2026-05-05):
+    #   기존: 모든 source 가 같은 카테고리 내에서만 추천 → 박철T 같이 카테고리당 doc
+    #   1~몇 개 분포면 시험지 source 의 매칭 풀 ≈ 0. 매치업 자동 추천 작동률 0%.
+    #   변경: 시험지 source(school_exam_pdf / student_exam_photo)는 카테고리 격리 해제.
+    #   시험지 카테고리(학교/시험일정)와 자료 카테고리(강의 회차)는 다른 분류 체계라
+    #   격리하면 매칭 절대 불가. author_id 격리(강사 1인 SSOT) + low_quality 제외만 유지.
+    #   자료(academy_workbook/commercial_workbook 등) source 끼리 매칭은 같은 강의
+    #   단원 안에서 의미 있으므로 카테고리 격리 유지.
+    is_test_source = False
     if source.document_id and source.document is not None:
         meta = source.document.meta or {}
         # 7-value source_type SSOT — legacy 2-value도 매핑되어 들어옴.
         from apps.domains.matchup.source_types import normalize_source_type
         st = normalize_source_type(meta.get("source_type") or meta.get("upload_intent") or meta.get("document_role"))
-        # 시험지 doc(학교 PDF / 학생 폰사진)은 자기 doc 내 problem을 후보에서 제외.
-        if st in ("school_exam_pdf", "student_exam_photo"):
+        is_test_source = st in ("school_exam_pdf", "student_exam_photo")
+        # 시험지 doc 의 자기 doc 안 problem 은 sim≈1 self-doc trap 이라 항상 제외.
+        if is_test_source:
             candidates = candidates.exclude(document_id=source.document_id)
 
-    # 같은 카테고리(섹션) 내에서만 추천. 빈 카테고리도 빈 카테고리끼리만.
-    # source가 matchup 문서이면 항상 격리 적용. (exam source는 document_id=None)
-    # 강사간 자료 leak은 author_id 필터(2026-05-03~)로 별도 차단 — 카테고리 격리는 학교 내
-    # 다른 자료 mixing 방어 layer (2026-04-29 운영 버그 fix).
-    if source.document_id:
+    # 자료 source 는 같은 카테고리 안에서만. 시험지 source 는 author 풀 전체.
+    # exam source(document_id=None)는 어차피 별도 처리.
+    if source.document_id and not is_test_source:
         candidates = candidates.filter(
             document__isnull=False,
             document__category=source_category,
         )
+    elif source.document_id and is_test_source:
+        # 시험지 source — reference 자료 풀(matchup doc 전체)에서 검색.
+        # author_id 격리는 위에서 이미 적용됨 (line 105~109).
+        candidates = candidates.filter(document__isnull=False)
 
     src_format = _format_of(source)
     src_len = len(source.text or "")

@@ -525,6 +525,30 @@ def _handle_matchup_ai_result(
     seg_method = result_payload.get("segmentation_method")
     if seg_method:
         meta["segmentation_method"] = seg_method
+
+    # 학원장 실측 갭 fix (2026-05-05): 처리 status="done" 안에 진짜 결함을 숨기지 말 것.
+    #   기존: 워커가 FAILED 외 응답이면 무조건 done. problem 0 / 폴백-only 도 success.
+    #   학원장 dashboard "완료 N / 실패 0" 카운터가 거짓 안전망이 됨.
+    # meta.processing_quality 라벨링:
+    #   "ok"            — 문항 단위 분리 성공 (problem_count >= 2)
+    #   "no_problems"   — problem 0건 (worker 가 분리 결과 없이 success 반환)
+    #   "fallback_only" — page-as-problem / whole-page-fallback 만 (실제 매치업 가치 낮음)
+    # 학원장 UI 카운터에서 분리 표시할 수 있게 하되, 기존 status enum 은 보존(호환성).
+    page_count_meta = result_payload.get("page_count") or doc.page_count or 0
+    fallback_methods = {
+        "page_fallback", "whole_page_as_problem", "page_as_problem",
+        "low_conf_page_fallback",
+    }
+    real_problem_count = doc.problem_count
+    if real_problem_count == 0:
+        meta["processing_quality"] = "no_problems"
+    elif (
+        seg_method in fallback_methods
+        or (page_count_meta > 0 and real_problem_count <= page_count_meta)
+    ):
+        meta["processing_quality"] = "fallback_only"
+    else:
+        meta["processing_quality"] = "ok"
     # 워커가 캐시한 페이지 PNG 키 — ManualCropModal 첫 진입 즉시 (PDF 다운로드/렌더 회피)
     page_keys = result_payload.get("page_image_keys")
     page_dims = result_payload.get("page_dimensions")
