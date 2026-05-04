@@ -551,11 +551,40 @@ def test_find_similar_problems_excludes_not_indexable_docs():
 
     src = inspect.getsource(services.find_similar_problems)
     has_indexable_filter = (
-        "document__meta__indexable=False" in src
-        or "document__meta__indexable=True" in src  # 다른 방향 표현도 OK
+        'document__meta__contains={"indexable": False}' in src
+        or "document__meta__contains={'indexable': False}" in src
+        or "document__meta__indexable=False" in src
     )
     assert has_indexable_filter, (
-        "find_similar_problems candidates 쿼리에 document__meta__indexable 필터 누락"
+        "find_similar_problems candidates 쿼리에 document__meta indexable 필터 누락"
+    )
+
+
+def test_find_similar_uses_contains_not_eq_to_avoid_null_exclusion():
+    """find_similar_problems 풀 필터는 meta__contains 사용해야 NULL 행 제외 결함 회피.
+
+    CRITICAL 회귀 락 (Phase 8, 2026-05-05): meta__low_quality=True 식 ORM 사용 시
+    PostgreSQL 3-valued logic으로 NULL 행 모두 제외 (NOT NULL = NULL → WHERE 제외).
+    T2 14797/14804 problems가 low_quality 키 없음에도 풀 0건이 됐던 학원장 매치업
+    작동률 0% 본질 결함. meta__contains는 jsonb @> 사용 → NULL 안전.
+    """
+    import inspect
+    from apps.domains.matchup import services
+
+    src = inspect.getsource(services.find_similar_problems)
+    # meta__contains 패턴이 있어야 — 직접 = 비교는 NULL 결함 위험
+    assert 'meta__contains={"low_quality": True}' in src or "meta__contains={'low_quality': True}" in src, (
+        "low_quality 필터 meta__contains 패턴이 아님 — NULL 행 제외 결함 위험"
+    )
+    # 직접 meta__low_quality=True 사용 차단 (NULL 결함 회귀 방지) — 주석 제외
+    code_lines = [
+        line for line in src.split("\n")
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    code_only = "\n".join(code_lines)
+    assert "meta__low_quality=True" not in code_only, (
+        "meta__low_quality=True 직접 사용 발견 — NULL 행 제외 결함 회귀. "
+        "meta__contains={'low_quality': True} 로 변경하세요."
     )
 
 
