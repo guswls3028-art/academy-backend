@@ -120,6 +120,26 @@ def classify_paper_type(
         except Exception as e:  # noqa: BLE001
             debug["non_question_check_error"] = str(e)
 
+    # 1.5. Chapter divider 검출 (Low fix, 2026-05-04 PHASE_FULL_AUDIT):
+    # commercial 6 doc + workbook part 학습자료에서 chapter divider 페이지
+    # (분홍/파랑/녹색 단일 background) 가 problem으로 인덱싱됨.
+    # color-dominant detection으로 non_question 강제 → segment_dispatcher가 is_skip_page 처리.
+    if image_path:
+        try:
+            from academy.adapters.ai.detection.segment_opencv import detect_chapter_divider
+            if detect_chapter_divider(image_path):
+                return PaperTypeResult(
+                    paper_type=PaperType.NON_QUESTION,
+                    confidence=0.85,
+                    is_dual_column=False,
+                    is_quadrant=False,
+                    is_handwriting_present=False,
+                    has_embedded_text=has_embedded_text,
+                    debug={**debug, "reason": "chapter_divider_color_dominant"},
+                )
+        except Exception as e:  # noqa: BLE001
+            debug["chapter_divider_check_error"] = str(e)
+
     # 2. 학생 답안지 폰사진
     # writing_score는 인쇄 텍스트도 높게 나오므로 단독 사용 불가.
     # 신뢰 조건: 스캔본(=embedded text 없음) + 매우 높은 writing_score.

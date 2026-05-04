@@ -22,6 +22,51 @@ import numpy as np  # type: ignore
 BBox = Tuple[int, int, int, int]
 
 
+def detect_chapter_divider(image_path: str) -> bool:
+    """페이지가 chapter divider (단일 색 background) 인지 추정.
+
+    Audit 결함 (2026-05-04 PHASE_FULL_AUDIT): commercial 6 doc + workbook part 학습자료
+    (doc#312, #303 등)에서 chapter divider 페이지(분홍/파랑/녹색 단일 background +
+    큰 헤더 텍스트)가 problem으로 인덱싱됨. anchor splitter가 본문과 동일 취급.
+
+    원리:
+    - HSV saturation > 30 픽셀 비율 (색상 있는 영역) ≥ 30% — 본문(흰색)이 아님
+    - dominant hue (가장 많이 나오는 색상) 비율 ≥ 50% — 단일 색 background
+    - 두 조건 모두 충족 시 chapter divider 판정 → paper_type=non_question 강제
+
+    False positive 위험: 큰 그림/지도/차트가 dominant color 가질 수 있음. 임계값
+    50%는 보수적 (전체 페이지의 절반 이상이 같은 색일 때만 trigger). 본문 페이지에
+    그림 있어도 보통 30~40% 수준.
+
+    Returns: True (chapter divider 추정) / False (본문).
+    이미지 못 읽으면 False (안전 폴백 — 본문 처리).
+    """
+    img = cv2.imread(image_path)
+    if img is None:
+        return False
+    h, w = img.shape[:2]
+    if h < 100 or w < 100:
+        return False
+
+    # HSV 변환
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    s = hsv[:, :, 1]
+
+    # 1. saturation > 30인 픽셀 (색상 있는 영역) 비율
+    colored_ratio = float((s > 30).sum()) / (h * w)
+    if colored_ratio < 0.30:
+        return False  # white background 본문 페이지
+
+    # 2. dominant hue 비율
+    hue = hsv[:, :, 0][s > 30]  # 색상 있는 픽셀의 hue만
+    if len(hue) < 1000:
+        return False  # 색상 픽셀 너무 적음
+    hist = np.bincount(hue, minlength=180)
+    top_bin_ratio = float(hist.max()) / hist.sum()
+
+    return bool(top_bin_ratio >= 0.50)  # 단일 색이 50%+ → chapter divider
+
+
 def estimate_handwriting_score(image_path: str) -> float:
     """페이지 이미지에서 손글씨 비율 추정 [0.0, 1.0] (A-2 POC, 2026-05-04).
 

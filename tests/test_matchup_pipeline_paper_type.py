@@ -536,3 +536,81 @@ def test_estimate_handwriting_score_too_small_image_zero(tmp_path):
 
     score = estimate_handwriting_score(str(img_path))
     assert score == 0.0
+
+
+# ── Low fix POC: detect_chapter_divider (2026-05-04 PHASE_FULL_AUDIT) ──
+
+def test_detect_chapter_divider_white_background_false(tmp_path):
+    """흰색 배경 본문 페이지 → False (chapter divider 아님)."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_opencv import detect_chapter_divider
+
+    img_path = tmp_path / "white.png"
+    Image.new("RGB", (800, 1000), (255, 255, 255)).save(img_path)
+
+    assert detect_chapter_divider(str(img_path)) is False
+
+
+def test_detect_chapter_divider_colored_dominant_true(tmp_path):
+    """분홍 단일 색 background → True (chapter divider 추정)."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_opencv import detect_chapter_divider
+
+    img_path = tmp_path / "pink_divider.png"
+    # 분홍색 단일 background (대표 chapter divider 색상)
+    Image.new("RGB", (800, 1000), (240, 130, 180)).save(img_path)
+
+    assert detect_chapter_divider(str(img_path)) is True
+
+
+def test_detect_chapter_divider_blue_dominant_true(tmp_path):
+    """파랑 단일 색 background → True."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_opencv import detect_chapter_divider
+
+    img_path = tmp_path / "blue_divider.png"
+    Image.new("RGB", (800, 1000), (50, 130, 230)).save(img_path)
+
+    assert detect_chapter_divider(str(img_path)) is True
+
+
+def test_detect_chapter_divider_invalid_path_false():
+    """존재하지 않는 path → False (안전 폴백)."""
+    from academy.adapters.ai.detection.segment_opencv import detect_chapter_divider
+
+    assert detect_chapter_divider("/nonexistent/path.png") is False
+
+
+def test_detect_chapter_divider_too_small_false(tmp_path):
+    """100x100 미만 이미지 → False."""
+    from PIL import Image
+
+    from academy.adapters.ai.detection.segment_opencv import detect_chapter_divider
+
+    img_path = tmp_path / "tiny.png"
+    Image.new("RGB", (50, 50), (240, 130, 180)).save(img_path)
+
+    assert detect_chapter_divider(str(img_path)) is False
+
+
+def test_classify_paper_type_chapter_divider_returns_non_question(tmp_path):
+    """classify_paper_type이 chapter divider 페이지를 non_question으로 분류 (통합)."""
+    from PIL import Image
+
+    from academy.domain.tools.paper_type import PaperType, classify_paper_type
+
+    img_path = tmp_path / "pink_divider.png"
+    Image.new("RGB", (800, 1000), (240, 130, 180)).save(img_path)
+
+    pt = classify_paper_type(
+        text_blocks=None,  # text 없음 → divider check만
+        image_path=str(img_path),
+        page_width=800.0,
+        page_height=1000.0,
+        has_embedded_text=False,
+    )
+    assert pt.paper_type is PaperType.NON_QUESTION
+    assert pt.debug.get("reason") == "chapter_divider_color_dominant"
