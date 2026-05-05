@@ -981,6 +981,76 @@ class DocumentManualCropView(View):
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentBulkDeleteProblemsView(View):
+    """POST /api/v1/matchup/documents/<id>/bulk-delete-problems/
+
+    body 옵션 (OR 결합):
+      number_from: int   # 이 번호 이상 모든 problem 삭제 (예: 162 → 162,163,...)
+      number_to:   int   # 이 번호 이하 모든 problem 삭제
+      problem_ids: int[] # 명시적 ID 삭제
+
+    학원장이 doc 일부만 manual cut하고 나머지 자동분리 잔존 일괄정리에 사용.
+    R2 image도 함께 삭제 (delete_problem_with_r2 사용).
+
+    Returns: { "deleted": N, "ids": [...] }
+    """
+
+    def post(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        from django.db.models import Q
+        cond = Q()
+        nf = body.get("number_from")
+        nt = body.get("number_to")
+        ids = body.get("problem_ids") or []
+        if nf is not None:
+            try: cond |= Q(number__gte=int(nf))
+            except (TypeError, ValueError): return JsonResponse({"detail": "number_from must be int"}, status=400)
+        if nt is not None:
+            try: cond |= Q(number__lte=int(nt))
+            except (TypeError, ValueError): return JsonResponse({"detail": "number_to must be int"}, status=400)
+        if ids:
+            try: cond |= Q(id__in=[int(x) for x in ids])
+            except (TypeError, ValueError): return JsonResponse({"detail": "problem_ids must be int[]"}, status=400)
+        if not cond:
+            return JsonResponse({"detail": "number_from / number_to / problem_ids 중 하나는 필수"}, status=400)
+
+        targets = list(MatchupProblem.objects.filter(
+            tenant=request.tenant, document=doc,
+        ).filter(cond))
+
+        deleted_ids = []
+        for p in targets:
+            try:
+                pid = p.id
+                delete_problem_with_r2(p)
+                deleted_ids.append(pid)
+            except Exception:
+                logger.exception("bulk delete failed (problem=%s)", p.id)
+
+        # problem_count 갱신
+        try:
+            doc.problem_count = MatchupProblem.objects.filter(tenant=request.tenant, document=doc).count()
+            doc.save(update_fields=["problem_count", "updated_at"])
+        except Exception:
+            logger.exception("problem_count update failed (doc=%s)", doc.id)
+
+        return JsonResponse({"deleted": len(deleted_ids), "ids": deleted_ids})
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class DocumentMergeProblemsView(View):
     """POST /api/v1/matchup/documents/<id>/merge-problems/
 
