@@ -412,18 +412,25 @@ def exclude_page_from_matchup(
     document.meta = meta
 
     # 해당 페이지 problems 즉시 제거 — meta.page_index로 매칭.
-    # JSONField filter는 backend별 다르지만 Postgres jsonb 정확 매칭 가능.
+    # manual=true 보호 (운영 위험 fix 2026-05-05): 학원장이 직접 자른 problem은 페이지 제외에서도 보존.
+    # 학원장이 자기가 자른 page를 실수로 exclude해도 manual cut 결과는 살림.
     target_problems = [
         p for p in document.problems.all()
         if (p.meta or {}).get("page_index") == int(page_index)
+        and not (p.meta or {}).get("manual")
     ]
+    preserved_manual = sum(
+        1 for p in document.problems.all()
+        if (p.meta or {}).get("page_index") == int(page_index)
+        and (p.meta or {}).get("manual")
+    )
     removed = 0
     for p in target_problems:
         delete_problem_with_r2(p)
         removed += 1
 
     document.save(update_fields=["meta", "updated_at"])
-    return {"removed_problems": removed, "excluded_pages": excluded}
+    return {"removed_problems": removed, "excluded_pages": excluded, "preserved_manual": preserved_manual}
 
 
 def include_page_to_matchup(

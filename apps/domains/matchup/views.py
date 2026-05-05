@@ -989,10 +989,13 @@ class DocumentBulkDeleteProblemsView(View):
       number_to:   int   # 이 번호 이하 모든 problem 삭제
       problem_ids: int[] # 명시적 ID 삭제
 
-    학원장이 doc 일부만 manual cut하고 나머지 자동분리 잔존 일괄정리에 사용.
-    R2 image도 함께 삭제 (delete_problem_with_r2 사용).
+    **manual=true 보호 (절대 보존, default ON)**:
+      학원장이 직접 자른 problem (meta.manual=true)은 number_from 범위 안에 있어도 삭제 안 됨.
+      retry_document와 동일 패턴 — manual_ids 명시 exclude (NULL semantics 회피).
+      운영 위험 (학원장 진행 중 cut 손실) 방지가 본질이라 force 옵션 X.
 
-    Returns: { "deleted": N, "ids": [...] }
+    R2 image도 함께 삭제 (delete_problem_with_r2 사용).
+    Returns: { "deleted": N, "ids": [...], "preserved_manual": M }
     """
 
     def post(self, request, doc_id):
@@ -1027,9 +1030,24 @@ class DocumentBulkDeleteProblemsView(View):
         if not cond:
             return JsonResponse({"detail": "number_from / number_to / problem_ids 중 하나는 필수"}, status=400)
 
-        targets = list(MatchupProblem.objects.filter(
-            tenant=request.tenant, document=doc,
-        ).filter(cond))
+        # manual=true 보호 — retry_document와 동일 패턴.
+        # NULL semantics 회피 (운영 사고 2026-05-03): manual 키 없는 row가 PostgreSQL
+        # 3-valued logic으로 exclude에서 빠질 수 있어 ID 명시 exclude 사용.
+        manual_ids = list(
+            MatchupProblem.objects.filter(
+                tenant=request.tenant, document=doc, meta__manual=True,
+            ).values_list("id", flat=True)
+        )
+
+        targets = list(
+            MatchupProblem.objects.filter(tenant=request.tenant, document=doc)
+            .filter(cond)
+            .exclude(id__in=manual_ids)
+        )
+        # 사용자 의도 검증 위해 보호된 manual 수 로깅/응답에 포함
+        protected_manual_in_range = MatchupProblem.objects.filter(
+            tenant=request.tenant, document=doc, id__in=manual_ids,
+        ).filter(cond).count()
 
         deleted_ids = []
         for p in targets:
@@ -1047,7 +1065,11 @@ class DocumentBulkDeleteProblemsView(View):
         except Exception:
             logger.exception("problem_count update failed (doc=%s)", doc.id)
 
-        return JsonResponse({"deleted": len(deleted_ids), "ids": deleted_ids})
+        return JsonResponse({
+            "deleted": len(deleted_ids),
+            "ids": deleted_ids,
+            "preserved_manual": protected_manual_in_range,
+        })
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
