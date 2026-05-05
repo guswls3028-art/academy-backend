@@ -884,6 +884,17 @@ def manually_crop_problem(
             "bbox_norm": [float(x), float(y), float(w), float(h)],
             "format": "choice",  # 사용자가 명시 안 하면 기본 choice
         }
+        # update_or_create defaults에서 embedding 강제 reset 제거 (2026-05-05 학원장 결함 fix):
+        #   기존: 같은 number로 다시 cut(여백 조정 등) 시 embedding=None 강제 → find_similar
+        #   풀에서 즉시 빠짐 → 추천에서 사라지는 결함. 학원장 카톡 보고: "수정한 problem이
+        #   매치 인식 못해 사라져 재등록 불가".
+        #   변경: embedding은 defaults에서 제외 → 옛 값 유지. 워커가 _enqueue_manual_problem_index
+        #   콜백으로 새 image 기반 embedding으로 갱신. 그동안 옛 embedding으로 추천 풀 유지.
+        #   정확도 일시 약간 떨어지지만 "사라짐" 결함 즉시 해소.
+        existing = MatchupProblem.objects.filter(
+            tenant=document.tenant, document=document, number=number,
+        ).first()
+        is_recreate = existing is not None
         problem, created = MatchupProblem.objects.update_or_create(
             tenant=document.tenant,
             document=document,
@@ -891,9 +902,9 @@ def manually_crop_problem(
             defaults={
                 "text": text or "",
                 "image_key": problem_key,
-                "embedding": None,
                 "meta": meta_payload,
                 "source_type": "matchup",
+                # embedding/image_embedding 명시 X — 옛 값 유지하다 워커가 새 값으로 덮어씀
             },
         )
 
