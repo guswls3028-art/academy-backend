@@ -47,15 +47,20 @@ RUN pip install --user --no-cache-dir \
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); SentenceTransformer('clip-ViT-B-32'); print('CLIP+MiniLM cached OK')" \
     || (echo "ERROR: model pre-cache failed" && exit 1)
 
-# YOLO 문항 분리 모델 (V8s_groundtruth, 2026-05-05 학습, AWS Batch g4dn.xlarge) — 22.6MB.
-# 학원장 manual ground truth 8 doc / 277 page / 695 bbox (commercial 1+342 / academy 5+296 / student 2+57).
-# YOLOv8s + imgsz=1024 + 200 epochs (113 early stop) + 보수적 augmentation (degrees=2, flip 0).
-# best mAP50=0.979 / mAP50-95=0.836. 운영 검증: V7n_plus 대비 commercial 0→2/page,
-# school_exam 9→21/4page, student_photo 2→6 정확 분리. confusion: P=92% R=96%.
+# YOLO 문항 분리 모델 (V9_combined, 2026-05-06 학습, AWS Batch g4dn.xlarge T4) — 22.6MB.
+# 누적 manual ground truth 46 doc / 1,425 page / 3,207 bbox (T1 학원장 8 doc 695 + T2 직접 cut 38 doc 2,512).
+# 양식 분포: 신과함께 commercial 5 doc 1,402 / 메인자료 academy 14 doc 826 / academy 기타 12 doc 746 /
+# 학생시험사진 5 doc 173 / school_exam_pdf 1 doc 3 / 수능 출제원안 2 doc 39.
+# YOLOv8s + imgsz=1024 + 200 epochs (103 early stop, best epoch 73) + 보수적 augmentation.
+# best mAP50=0.9646 / mAP50-95=0.8655 (val 278 page, 625 instances).
+# 평가지표는 V8s(0.979)보다 약간 낮으나 학습 데이터 4.62배 다양성으로 더 도전적인 val set 평가
+# (commercial 신과함께 다른 학교 양식 + academy 학교별 메인자료 + 학생사진 5학교 등).
+# 운영 추론 검증: T2 sample doc reanalyze로 V8s vs V9 비교 후 진정한 평가.
+# 이전 모델: yolo_v8s_groundtruth.pt (T1 8 doc 695 bbox, mAP50=0.979) — 보존, 회귀 시 즉시 복귀 가능.
 # AIConfig.YOLO_QUESTION_MODEL_PATH ENV로 활성화 — 미설정 시 segment_yolo가
 # YoloNotConfiguredError raise → segment_dispatcher가 OCR/OpenCV로 폴백 (안전).
 COPY --chown=appuser:appuser models ./models
-ENV YOLO_QUESTION_MODEL_PATH=/app/models/yolo_v8s_groundtruth.pt
+ENV YOLO_QUESTION_MODEL_PATH=/app/models/yolo_v9_combined.pt
 
 # 앱 코드 (Base에 두지 않음) — 자주 변경되는 레이어를 가장 아래로
 USER root
