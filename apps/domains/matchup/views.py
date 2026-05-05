@@ -1850,6 +1850,43 @@ class HitReportDraftView(View):
         else:
             extra_meta = {}
 
+        # 후보/선택 자료의 출처 식별 메타 — 강사가 "자료 198번"만 보고 출처를 직접
+        # 찾는 불편(2026-05-05 사용자 보고)을 제거하기 위해 파일명·카테고리·source_type을
+        # 응답에 포함. 1 query in_bulk로 N+1 회피. 후보·extra_meta·exam doc 모두 동일 lookup.
+        doc_ids: set = {ep.document_id for ep in exam_problems}
+        for pd in problem_data:
+            for c in pd["candidates"]:
+                doc_ids.add(c["document_id"])
+        for p in extra_meta.values():
+            doc_ids.add(p.document_id)
+
+        doc_meta_by_id: dict = {}
+        if doc_ids:
+            for d in MatchupDocument.objects.filter(
+                tenant=request.tenant, id__in=doc_ids,
+            ).only("id", "title", "category", "meta"):
+                src = ""
+                if isinstance(d.meta, dict):
+                    src = str(
+                        d.meta.get("source_type")
+                        or d.meta.get("upload_intent")
+                        or ""
+                    )
+                doc_meta_by_id[d.id] = {
+                    "document_title": d.title or "",
+                    "document_category": d.category or "",
+                    "source_type": src,
+                }
+
+        def _doc_label(doc_id: int) -> dict:
+            return doc_meta_by_id.get(doc_id) or {
+                "document_title": "", "document_category": "", "source_type": "",
+            }
+
+        for pd in problem_data:
+            for c in pd["candidates"]:
+                c.update(_doc_label(c["document_id"]))
+
         return JsonResponse({
             "report": MatchupHitReportSerializer(report).data,
             "exam_problems": problem_data,
@@ -1860,6 +1897,7 @@ class HitReportDraftView(View):
                     "text_preview": (p.text or "")[:120],
                     "image_key": p.image_key,
                     "image_url": url_map.get(p.image_key) if p.image_key else None,
+                    **_doc_label(p.document_id),
                 }
                 for p in extra_meta.values()
             ],
