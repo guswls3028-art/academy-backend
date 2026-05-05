@@ -1717,10 +1717,14 @@ class HitReportDraftView(View):
             return JsonResponse({"detail": "Not found"}, status=404)
 
         # 시험지(test) 또는 exam_sheet만 보고서 작성 가능 (학습자료에 보고서 X)
+        # source_type SSOT 추가 (2026-05-05 운영 fix): document_role 잘못 backfill된 도큐
+        # (예: doc 272 student_exam_photo인데 role=reference_material) 보호. source_type이
+        # school_exam_pdf | student_exam_photo면 시험지로 인정.
         meta = doc.meta or {}
         is_test = (
             (meta.get("upload_intent") or "").lower() == "test"
             or (meta.get("document_role") or "").lower() == "exam_sheet"
+            or (meta.get("source_type") or "").lower() in ("school_exam_pdf", "student_exam_photo")
         )
         if not is_test:
             return JsonResponse(
