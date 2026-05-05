@@ -1,15 +1,22 @@
 """find_similar_problems 격리 정책 회귀 테스트.
 
-학원장 실측 갭 fix (2026-05-05):
-  기존: 모든 source 가 같은 카테고리 안에서만 추천 → 박철T 처럼 카테고리당 doc 1~몇 개
-        분포면 시험지 source 의 매칭 풀 0이 강제. 매치업 자동 추천 작동률 0%.
-  변경: 시험지 source(school_exam_pdf / student_exam_photo) 는 카테고리 격리 해제.
-        자료 source 끼리 매칭은 카테고리 격리 유지.
+정책 진화 이력:
+  875f63f3 (2026-05-04): 박철T 카테고리당 doc 1~몇 개 → 시험지 source 카테고리 격리
+                        해제 (매치업 작동률 0% fix 시도).
+  db8ecb77 (2026-05-05): 학원장 실측 — 개포고 시험지에 단대부고 자료 추천되는 cross-school
+                        누출 결함 발견. 카테고리 격리 항상 적용으로 복원. 모든 카테고리
+                        (개포고/단대부고/숙명여고/중대부고/은광여고/박철T) 자료 22+ 보유
+                        실측 확인 → 격리 유지가 정확.
 
-회귀 락:
-- 시험지 source 가 다른 카테고리의 reference 자료를 후보로 받을 수 있어야 한다.
-- 자료 source 는 여전히 같은 카테고리만 후보로 받아야 한다 (회귀 방지).
-- author_id 격리는 둘 다 유지 (강사 1인 격리 SSOT 보존).
+회귀 락 (현재 정책):
+- 시험지/자료 source 모두 같은 카테고리 안에서만 후보 풀 구성 (cross-school 차단).
+- 시험지 source 는 자기 doc 안 problem 제외 (self-doc trap 방지).
+- author_id 격리는 유지 (강사 1인 격리 SSOT).
+
+DB 의존성:
+- find_similar_problems 가 `meta__contains` (jsonb @>) 쿼리 사용 → SQLite 미지원.
+- CI smoke test (settings.test = SQLite) 환경에서는 모듈 단위 skip.
+- PostgreSQL 통합 테스트(settings.test_pg) 환경에서만 실행.
 """
 from __future__ import annotations
 
@@ -21,9 +28,16 @@ from apps.core.models import Tenant
 from apps.domains.inventory.models import InventoryFile
 from apps.domains.matchup.models import MatchupDocument, MatchupProblem
 from apps.domains.matchup.services import find_similar_problems
+from django.conf import settings
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
+
+# SQLite 는 meta__contains (jsonb @>) 미지원 → PG 환경에서만 실행.
+pytestmark = pytest.mark.skipif(
+    "sqlite" in settings.DATABASES["default"].get("ENGINE", ""),
+    reason="find_similar_problems uses meta__contains (jsonb @>) — PostgreSQL only",
+)
 
 
 @pytest.fixture
@@ -92,8 +106,13 @@ def _emb(seed: float) -> list[float]:
 
 
 @pytest.mark.django_db
-def test_test_paper_source_crosses_categories(tenant, author):
-    """시험지 source 는 다른 카테고리 자료를 후보로 받아야 한다 (학원장 실측 갭 fix)."""
+def test_test_paper_source_isolated_within_category(tenant, author):
+    """시험지 source 는 같은 카테고리 안 자료만 후보로 받아야 한다 (db8ecb77 cross-school fix).
+
+    정책 변경 (db8ecb77, 2026-05-05): 학원장 실측 — 개포고 시험지에 단대부고 자료 추천되는
+    cross-school 누출 결함 발견. 시험지 source 카테고리 격리 해제 → 항상 적용으로 복원.
+    모든 학교 카테고리 자료 22+ 보유 확인됨 → 격리 유지가 정확.
+    """
     # 시험지 source — "2026 중대부고 1학기 중간고사" 카테고리
     test_problem = _make_problem(
         tenant=tenant,
@@ -104,27 +123,25 @@ def test_test_paper_source_crosses_categories(tenant, author):
         embedding=_emb(1.0),
         doc_title="2026 중대부고 시험지",
     )
-    # 강사 본인의 다른 카테고리 자료 — "박철T 언남 생명 매치업"
-    ref_problem = _make_problem(
+    # 강사 본인의 같은 카테고리 자료 — 후보로 떠야 함
+    ref_same_cat = _make_problem(
+        tenant=tenant,
+        author=author,
+        category="2026 중대부고 1학기 중간고사",
+        source_type="academy_workbook",
+        text="다음 중 옳은 것은?",
+        embedding=_emb(1.01),
+        doc_title="중대부고 풀이 자료",
+    )
+    # 강사 본인의 다른 카테고리 자료 — 격리로 후보에서 제외되어야 함
+    ref_other_cat = _make_problem(
         tenant=tenant,
         author=author,
         category="박철T 언남 생명 매치업",
         source_type="academy_workbook",
         text="다음 중 옳은 것은?",
-        embedding=_emb(1.01),
+        embedding=_emb(1.02),
         doc_title="박철T 워크북 1회차",
-    )
-
-    # author_id 격리 분리 위해 None으로 먼저 — 후보 풀 자체에 들어가는지 확인.
-    results_no_author = find_similar_problems(
-        problem_id=test_problem.id,
-        tenant_id=tenant.id,
-        top_k=10,
-        author_id=None,
-    )
-    assert len(results_no_author) >= 1, (
-        "카테고리 격리 해제만으로 시험지 source 가 다른 카테고리 자료를 후보로 받아야 함 "
-        f"(현재 후보={len(results_no_author)})"
     )
 
     results = find_similar_problems(
@@ -134,9 +151,11 @@ def test_test_paper_source_crosses_categories(tenant, author):
         author_id=author.id,
     )
 
-    assert len(results) >= 1, "시험지 source 가 다른 카테고리 자료를 후보로 받아야 함"
-    found_ids = [p.id for p, _ in results]
-    assert ref_problem.id in found_ids, "다른 카테고리의 강사 본인 자료가 후보 풀에 포함되어야 함"
+    found_ids = {p.id for p, _ in results}
+    assert ref_same_cat.id in found_ids, "같은 카테고리 자료는 후보로 떠야 함"
+    assert ref_other_cat.id not in found_ids, (
+        "다른 카테고리 자료는 cross-school 격리로 후보에서 제외 (db8ecb77 회귀 락)"
+    )
 
 
 @pytest.mark.django_db
