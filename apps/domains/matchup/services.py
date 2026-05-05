@@ -85,6 +85,23 @@ def find_similar_problems(
     if not source.embedding:
         return []
 
+    # redis 캐싱 (P1, 2026-05-05): 학원장 같은 시험지 재클릭 / 보고서 빌더 27 problem
+    # 병렬 호출에서 매번 풀 fetch + numpy ensemble 부하 차단. fail-OPEN.
+    # TTL 1h — pool 변경 (새 doc / reanalyze) 후 최대 1h stale.
+    from .cache import get_cached_similar, set_cached_similar
+    cached = get_cached_similar(tenant_id, problem_id, top_k, author_id)
+    if cached is not None:
+        # 캐시된 ID로 problem 객체 단일 PK 쿼리 — DB pool fetch 회피.
+        cached_ids = [pid for pid, _ in cached]
+        if not cached_ids:
+            return []
+        problems_by_id = MatchupProblem.objects.in_bulk(cached_ids)
+        return [
+            (problems_by_id[pid], score)
+            for pid, score in cached
+            if pid in problems_by_id
+        ]
+
     source_category = ""
     if source.document_id and source.document is not None:
         source_category = (source.document.category or "").strip()
@@ -174,9 +191,16 @@ def find_similar_problems(
     # 1차: bi-encoder + 휴리스틱 + 이미지 ensemble — numpy vectorized.
     # 운영 사고(2026-04-29 사용자 보고): T2 problem 5,717개 매 클릭마다 Python 순회로
     # cosine 5,717번 → 매치업 페이지 클릭 시 렉. numpy bulk dot product로 100배 가속.
+    #
+    # image_embedding lazy fetch (P1, 2026-05-05 부하 fix):
+    #   기존: 매 query 카테고리 풀 ~2300 problem 모두 image_embedding fetch
+    #   (~2KB/row × 2300 = ~5MB serialization). 학원장 클릭 시 API CPU spike 본질.
+    #   neu: 1차 text-only fetch → text cosine top N 선별 → 그 N 만 image_embedding
+    #   별도 PK 인덱스 fetch. 매 query payload ~50% 감소. 정확도 보존
+    #   (선별 기준은 image=1 가정 upper bound — top N 밖에서 final top_k 진입 불가).
     cand_list = list(
         candidates.only(
-            "id", "document_id", "embedding", "image_embedding",
+            "id", "document_id", "embedding",
             "meta", "text",
         )
     )
@@ -210,15 +234,44 @@ def find_similar_problems(
         text_sims = np.clip(text_sims, -1.0, 1.0)
         text_sims = (text_sims + 1.0) / 2.0  # cosine_similarity()와 동일 정규화
 
-        # 이미지 임베딩 ensemble — 양쪽 보유한 인덱스만 결합
-        sims = text_sims.copy()
+        # 페이지 폴백 마스크 — fb_mask는 1차 선별과 최종 패널티 양쪽에서 사용.
+        fb_mask = np.array(
+            [(c.meta or {}).get("bbox") is None for c in cand_list], dtype=bool,
+        )
+
+        # 1차 선별 — image fetch 후보 N개 정함 (image lazy fetch 정확도 보존).
+        # bbox=null: max 0.89 (image 보태도 못 넘는 상한)
+        # bbox=present: text + image=1 가정 upper bound (실제 image_sim 후 ≤)
+        # image fetch N (default top_k×10, 최소 100). N 밖 후보는 final top_k 진입 불가.
+        pre_score = np.where(
+            fb_mask,
+            np.maximum(0.0, np.minimum(0.89, text_sims - 0.10)),
+            _txt_w * text_sims + _img_w,
+        )
+        image_fetch_n = min(max(top_k * 10, 100), len(cand_list))
+        if image_fetch_n < len(cand_list):
+            pre_top_idx = np.argpartition(-pre_score, image_fetch_n - 1)[:image_fetch_n]
+        else:
+            pre_top_idx = np.arange(len(cand_list))
+
+        # image_embedding 별도 fetch — top N IDs 만. PK 인덱스 단일 query.
+        img_emb_by_id: dict = {}
         if src_img_emb:
+            top_ids = [int(cand_list[i].id) for i in pre_top_idx]
+            img_emb_by_id = dict(
+                MatchupProblem.objects.filter(id__in=top_ids)
+                .values_list("id", "image_embedding")
+            )
+
+        # 이미지 임베딩 ensemble — 양쪽 보유한 인덱스만 결합 (top N만 의미 있음)
+        sims = text_sims.copy()
+        if src_img_emb and img_emb_by_id:
             src_img = np.asarray(src_img_emb, dtype=np.float32)
             si_n = float(np.linalg.norm(src_img)) or 1.0
             img_sims = np.zeros(len(cand_list), dtype=np.float32)
             has_img = np.zeros(len(cand_list), dtype=bool)
-            for i, c in enumerate(cand_list):
-                ie = c.image_embedding
+            for i in pre_top_idx:
+                ie = img_emb_by_id.get(int(cand_list[i].id))
                 if not ie or len(ie) != len(src_img):
                     continue
                 ie_arr = np.asarray(ie, dtype=np.float32)
@@ -230,9 +283,6 @@ def find_similar_problems(
             sims = np.where(has_img, _txt_w * text_sims + _img_w * img_sims, text_sims)
 
         # 페이지 폴백 패널티 — bbox=null candidate (페이지 통째 인덱싱)
-        fb_mask = np.array(
-            [(c.meta or {}).get("bbox") is None for c in cand_list], dtype=bool,
-        )
         # 패널티: -0.15 후 ceiling 0.89 (정상 분리 후보가 0.91+이면 자연 차분, 0.85+ 진짜
         # 적중도 "직접 적중"으로 노출 — 학원 마케팅 가치 false negative 완화)
         penal = np.minimum(0.89, sims - 0.10)
@@ -270,9 +320,19 @@ def find_similar_problems(
         if len(pre_top) >= 2:
             reranked = _rerank_with_cross_encoder(source, pre_top)
             if reranked is not None:
-                return reranked[:top_k]
+                final = reranked[:top_k]
+                set_cached_similar(
+                    tenant_id, problem_id, top_k, author_id,
+                    [(p.id, sc) for p, sc in final],
+                )
+                return final
 
-    return scored[:top_k]
+    final = scored[:top_k]
+    set_cached_similar(
+        tenant_id, problem_id, top_k, author_id,
+        [(p.id, sc) for p, sc in final],
+    )
+    return final
 
 
 def _rerank_with_cross_encoder(source, pre_top):
