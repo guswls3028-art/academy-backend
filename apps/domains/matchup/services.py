@@ -141,16 +141,21 @@ def find_similar_problems(
             Q(document__author_id=author_id) | Q(document__author__isnull=True)
         )
 
-    # 텍스트 + 이미지 ensemble 가중치. OCR 짧은 source는 이미지 유사도 비중 ↑.
-    # 짧은 텍스트(< 60자)면 이미지 0.5, 긴 텍스트(>= 200자)면 이미지 0.15.
-    # 환경변수 override 가능: MATCHUP_IMAGE_SIM_WEIGHT
+    # 텍스트 + 이미지 ensemble 가중치. 학원장 본질 의견 (2026-05-05 카톡):
+    #   "그림 때려맞춘 걸 더 주로 내세우는데 모델이 그림보다 글씨 인식 많이 함"
+    #   "우리 매치업 핵심 = 그림 매칭, 그림 비중 상향 필요"
+    # 2026-05-06 디폴트 상향 (image weight V2):
+    #   짧은(<60자):  0.5 → 0.7 (OCR 부족한 그림 위주 source는 image 우선)
+    #   중간(<200자): 0.3 → 0.5 (text/image balance)
+    #   긴(>=200자): 0.15 → 0.3 (긴 text도 그림 신호 일정 비중 보장)
+    # 환경변수 override 가능: MATCHUP_IMAGE_SIM_WEIGHT (per-tenant 튜닝).
     src_text_len_for_w = len((source.text or "").strip())
     if src_text_len_for_w < 60:
-        _img_w = 0.5
+        _img_w = 0.7
     elif src_text_len_for_w < 200:
-        _img_w = 0.3
+        _img_w = 0.5
     else:
-        _img_w = 0.15
+        _img_w = 0.3
     import os as _osw
     try:
         _img_w = float(_osw.environ.get("MATCHUP_IMAGE_SIM_WEIGHT", "") or _img_w)
@@ -888,13 +893,16 @@ def manually_crop_problem(
             "bbox_norm": [float(x), float(y), float(w), float(h)],
             "format": "choice",  # 사용자가 명시 안 하면 기본 choice
         }
-        # update_or_create defaults에서 embedding 강제 reset 제거 (2026-05-05 학원장 결함 fix):
-        #   기존: 같은 number로 다시 cut(여백 조정 등) 시 embedding=None 강제 → find_similar
-        #   풀에서 즉시 빠짐 → 추천에서 사라지는 결함. 학원장 카톡 보고: "수정한 problem이
-        #   매치 인식 못해 사라져 재등록 불가".
-        #   변경: embedding은 defaults에서 제외 → 옛 값 유지. 워커가 _enqueue_manual_problem_index
-        #   콜백으로 새 image 기반 embedding으로 갱신. 그동안 옛 embedding으로 추천 풀 유지.
-        #   정확도 일시 약간 떨어지지만 "사라짐" 결함 즉시 해소.
+        # update_or_create defaults — text embedding은 옛 값 유지, image embedding은 reset.
+        # 정책 분리 (2026-05-06 본질 fix):
+        #   text embedding: 옛 값 유지 (학원장 결함 fix 63f343ef). text 필드는 새 OCR 결과로
+        #     덮어쓰지만 OCR 텍스트가 옛 cut과 유사할 가능성 큼 → "추천에서 사라짐" 결함 회피.
+        #   image embedding: 명시 reset (None). 같은 number 재cut은 다른 bbox 영역 = 완전히
+        #     다른 image. 옛 image_embedding 유지하면 text+image ensemble의 image_sim이
+        #     잘못된 신호로 score 왜곡 → 학원장 "그림 매칭 약함" 본질 결함 일부 원인.
+        #     None reset → 워커가 새 image로 갱신할 때까지 image=0 (text-only fallback,
+        #     find_similar에서 has_img mask 처리). ca8770e3 boost +0.15는 사라짐 보강용으로
+        #     유지 (text embedding은 옛 값 사용 중이므로 매치 신호 약화 보강).
         existing = MatchupProblem.objects.filter(
             tenant=document.tenant, document=document, number=number,
         ).first()
@@ -908,7 +916,8 @@ def manually_crop_problem(
                 "image_key": problem_key,
                 "meta": meta_payload,
                 "source_type": "matchup",
-                # embedding/image_embedding 명시 X — 옛 값 유지하다 워커가 새 값으로 덮어씀
+                # text embedding 명시 X — 옛 값 유지 (워커가 새 OCR 기반으로 덮어씀)
+                "image_embedding": None,  # 명시 reset — 옛 image와 새 bbox image mismatch 차단
             },
         )
 
@@ -1029,6 +1038,9 @@ def paste_image_as_problem(
             "text": "",
             "image_key": problem_key,
             "embedding": None,
+            # paste 재호출 = 다른 image 자체. 옛 image_embedding 유지하면 새 paste image와
+            # mismatch → 매치업 score 왜곡. embedding과 동일하게 None reset (워커 갱신).
+            "image_embedding": None,
             "meta": meta_payload,
             "source_type": "matchup",
         },
