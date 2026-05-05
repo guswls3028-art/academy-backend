@@ -248,6 +248,7 @@ def _segment_single_image(
     *,
     skip_ocr: bool = False,
     is_pdf_page: bool = False,
+    source_type: str | None = None,
 ) -> List[BBox]:
     """
     단일 이미지에 대한 세그멘테이션 (엔진 자동 선택).
@@ -260,6 +261,9 @@ def _segment_single_image(
     is_pdf_page: True면 PDF에서 렌더링된 페이지. False면 사용자가 직접 업로드한
                  단일 이미지(카메라 촬영일 가능성). 카메라 사진은 YOLO 학습 분포를
                  벗어나므로 YOLO를 건너뛰고 OCR/OpenCV 경로 사용.
+    source_type: 양식 신호 (P1.5, 2026-05-06) — segment_questions_yolo 양식별 conf 분기.
+                 commercial_workbook / academy_workbook / student_exam_photo / school_exam_pdf.
+                 호출 chain 점진 적용 — None 시 default conf (회귀 0).
     """
     cfg = AIConfig.load()
     engine = (cfg.QUESTION_SEGMENTATION_ENGINE or "auto").lower()
@@ -267,14 +271,14 @@ def _segment_single_image(
     if engine == "opencv":
         return segment_questions_opencv(image_path)
     if engine == "yolo":
-        return segment_questions_yolo(image_path)
+        return segment_questions_yolo(image_path, source_type=source_type)
     if engine == "ocr":
         return segment_questions_ocr(image_path)
 
     # auto 모드: YOLO는 PDF 페이지에만 사용 (카메라 사진 오탐 방지)
     if is_pdf_page:
         try:
-            boxes = segment_questions_yolo(image_path)
+            boxes = segment_questions_yolo(image_path, source_type=source_type)
             if boxes:
                 return boxes
         except Exception:

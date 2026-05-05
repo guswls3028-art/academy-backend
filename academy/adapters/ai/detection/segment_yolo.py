@@ -40,9 +40,18 @@ def _get_model():
     return YOLO(model_path)
 
 
-def segment_questions_yolo(image_path: str) -> List[BBox]:
+def segment_questions_yolo(
+    image_path: str,
+    *,
+    source_type: str | None = None,
+) -> List[BBox]:
     """
     YOLO 모델로 문항 영역 검출.
+
+    Args:
+        source_type: 양식 신호 (P1.5, 2026-05-06). commercial_workbook / academy_workbook /
+            student_exam_photo / school_exam_pdf. 양식별 conf override (AIConfig.YOLO_QUESTION_CONF_MAP).
+            None 이면 default conf (회귀 0). 호출 chain 점진 적용.
 
     Returns:
         [(x, y, w, h), ...] — 문항 바운딩 박스 (좌상단 기준, 픽셀 좌표)
@@ -50,10 +59,15 @@ def segment_questions_yolo(image_path: str) -> List[BBox]:
     cfg = AIConfig.load()
     model = _get_model()
 
+    # 양식별 conf 적용 — source_type 매칭 시 매핑 사용, 없으면 default.
+    conf = cfg.YOLO_QUESTION_CONF_THRESHOLD
+    if source_type and isinstance(cfg.YOLO_QUESTION_CONF_MAP, dict):
+        conf = cfg.YOLO_QUESTION_CONF_MAP.get(source_type, conf)
+
     results = model(
         image_path,
         imgsz=cfg.YOLO_QUESTION_INPUT_SIZE,
-        conf=cfg.YOLO_QUESTION_CONF_THRESHOLD,
+        conf=conf,
         iou=cfg.YOLO_QUESTION_IOU_THRESHOLD,
         verbose=False,
     )
@@ -77,7 +91,7 @@ def segment_questions_yolo(image_path: str) -> List[BBox]:
     boxes.sort(key=lambda b: (b[1], b[0]))
 
     logger.info(
-        "YOLO_SEGMENT | path=%s | boxes=%d",
-        image_path, len(boxes),
+        "YOLO_SEGMENT | path=%s | source_type=%s | conf=%.2f | boxes=%d",
+        image_path, source_type or "-", conf, len(boxes),
     )
     return boxes
