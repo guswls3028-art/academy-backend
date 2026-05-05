@@ -133,6 +133,15 @@ def find_similar_problems(
         .defer("created_at", "updated_at")
     )
 
+    # manual_only flag (P1.5 / α4, 2026-05-06): 학원장 cut 자료만 추천.
+    #   배경: 사용자 노가다 3,207 bbox cut + 자동분리 76% 실패 (T2 audit).
+    #   ENV MATCHUP_RECOMMEND_MANUAL_ONLY=1 시 추천 풀 = manual=true 자료만.
+    #   학원장 옵션 (default OFF). T2 운영 검증 후 ON 권장.
+    #   조합: α1 indexable backfill + α3 boost 와 직교. flag ON이 가장 강한 정책.
+    import os as _osmo
+    if _osmo.environ.get("MATCHUP_RECOMMEND_MANUAL_ONLY", "0") == "1":
+        candidates = candidates.filter(meta__contains={"manual": True})
+
     # 저작권 격리 — author_id 지정 시 본인 자료 + 공용 풀(legacy author=NULL)만.
     # exam-source problem(document=None)은 별도 필터에서 처리되므로 여기서는 영향 X.
     if author_id is not None:
@@ -319,15 +328,22 @@ def find_similar_problems(
         penal = np.maximum(0.0, penal)
         sims = np.where(fb_mask, penal, sims)
 
-        # manual=true boost (2026-05-05 학원장 결함 fix):
-        #   학원장이 manual_crop 재호출(여백 조정)로 정교화한 자료가 새 image와 옛 embedding
-        #   mismatch + 워커 재처리 늦음으로 cosine sim score 낮아 30위 밖 누락 결함.
-        #   학원장 의도 = manual cut은 이 자료가 매칭에 의미 있다는 명시적 큐레이션.
-        #   fix: manual=true 자료에 +0.15 score 가산 → top 30 진입 보장.
+        # manual=true boost — 학원장 노가다 cut 가치 보호 (2026-05-06 강화).
+        #   배경: 학원장 5시간+ × 3,207 bbox 노가다 cut의 가치 = AI 학습 + 추천 풀 우선순위.
+        #   기존 (ca8770e3): +0.15 boost (재cut mismatch 보강용).
+        #   강화 (P1.4 / α3): +0.30 default (manual cut 절대 우선, 자동분리 자료보다 항상 높음).
+        #   ENV MATCHUP_MANUAL_BOOST 로 운영 튜닝 가능 (per-tenant 미세조정).
+        #   사용자 의도 검증: "내가 자른 걸 AI가 학습 + 추천에 100% 반영" — α1 indexable backfill 후
+        #   추천 풀에서 자동분리 noise 제거됐고, 잔여 자동분리 자료는 manual보다 항상 후순위.
         manual_mask = np.array(
             [(c.meta or {}).get("manual") is True for c in cand_list], dtype=bool,
         )
-        sims = np.where(manual_mask, np.minimum(1.0, sims + 0.15), sims)
+        import os as _osmb
+        try:
+            _manual_boost = float(_osmb.environ.get("MATCHUP_MANUAL_BOOST", "0.30") or "0.30")
+        except ValueError:
+            _manual_boost = 0.30
+        sims = np.where(manual_mask, np.minimum(1.0, sims + _manual_boost), sims)
 
         # 휴리스틱 weight 모두 0이라 그대로 sim. 정렬.
         order = np.argsort(-sims)  # desc
