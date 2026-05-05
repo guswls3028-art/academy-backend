@@ -1593,12 +1593,15 @@ class HitReportListView(View):
         all_entries = list(MatchupHitReportEntry.objects.filter(
             tenant=request.tenant, report_id__in=[r.id for r in reports],
         ).select_related("exam_problem").only(
-            "id", "report_id", "selected_problem_ids", "comment",
+            "id", "report_id", "selected_problem_ids", "comment", "excluded",
             "exam_problem__id", "exam_problem__embedding", "exam_problem__image_embedding",
             "exam_problem__text", "exam_problem__meta",
         ))
         curated_by_report: dict = {}
         for e in all_entries:
+            # excluded(PDF 제외) entry는 진행률·적중률 모두에서 제외 — PDF SSOT와 동기.
+            if getattr(e, "excluded", False):
+                continue
             if (e.selected_problem_ids or []) or (e.comment or "").strip():
                 curated_by_report[e.report_id] = curated_by_report.get(e.report_id, 0) + 1
 
@@ -1622,6 +1625,8 @@ class HitReportListView(View):
         from .pdf_report import _compute_display_sim, _TYPE_HIT
         hit_count_by_report: dict = {}
         for e in all_entries:
+            if getattr(e, "excluded", False):
+                continue
             sel_ids = e.selected_problem_ids or []
             if not sel_ids:
                 continue
@@ -1805,6 +1810,7 @@ class HitReportDraftView(View):
                         "selected_problem_ids": entry.selected_problem_ids or [],
                         "comment": entry.comment or "",
                         "order": entry.order,
+                        "excluded": bool(entry.excluded),
                     }
                     if entry else None
                 ),
@@ -2082,13 +2088,14 @@ class HitReportEntriesUpsertView(View):
                 if isinstance(pid, int) and pid in valid_selected
             ]
             comment = (e.get("comment") or "")[:5000]
+            excluded = bool(e.get("excluded", False))
             try:
                 order = int(e.get("order", 0))
             except (TypeError, ValueError):
                 order = 0
 
-            if not sel and not comment.strip():
-                # 빈 엔트리 → 기존 삭제
+            if not sel and not comment.strip() and not excluded:
+                # 빈 엔트리(선택/코멘트/PDF 제외 의사 모두 없음) → 기존 삭제
                 d, _ = MatchupHitReportEntry.objects.filter(
                     report=report, exam_problem_id=exam_pid,
                 ).delete()
@@ -2103,6 +2110,7 @@ class HitReportEntriesUpsertView(View):
                     "selected_problem_ids": sel,
                     "comment": comment,
                     "order": order,
+                    "excluded": excluded,
                 },
             )
             upserted += 1

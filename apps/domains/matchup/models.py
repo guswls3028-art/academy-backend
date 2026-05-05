@@ -232,6 +232,9 @@ class MatchupHitReportEntry(TimestampModel):
     selected_problem_ids = models.JSONField(default=list, blank=True)
     comment = models.TextField(blank=True, default="")
     order = models.PositiveIntegerField(default=0)
+    # 강사가 매칭 못시킨/큐레이션 의도가 없는 시험지 문항을 PDF에서 빼고 싶을 때 ON.
+    # PDF 렌더 + 적중률(분모/분자) 모두 skip. UI 좌측 Q 리스트 토글 (2026-05-05).
+    excluded = models.BooleanField(default=False)
 
     class Meta:
         app_label = "matchup"

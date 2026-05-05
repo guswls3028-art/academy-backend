@@ -611,6 +611,14 @@ def generate_curated_hit_report_pdf(report) -> bytes:
         document.problems.exclude(image_key="").order_by("number")
     )
     entries_by_eid = {e.exam_problem_id: e for e in report.entries.all()}
+    # 강사가 명시적으로 PDF 제외 토글한 Q는 본문 + 적중률 분모 모두에서 skip
+    # (2026-05-05 박철T 보고: 매칭 못한 Q 페이지가 결과물에 들어가는 게 거슬림).
+    excluded_ep_ids = {
+        e.exam_problem_id for e in entries_by_eid.values()
+        if getattr(e, "excluded", False)
+    }
+    if excluded_ep_ids:
+        exam_problems = [ep for ep in exam_problems if ep.id not in excluded_ep_ids]
 
     # 선택된 학원 problem prefetch
     all_selected_ids = set()
@@ -654,12 +662,17 @@ def generate_curated_hit_report_pdf(report) -> bytes:
             report.id, body_page_count,
         )
 
-    # 표지 통계
+    # 표지 통계 — excluded(PDF 제외 토글) entry는 본문/표지 모두에서 빠짐.
     curated_count = sum(
         1 for e in entries_by_eid.values()
-        if (e.selected_problem_ids or []) or (e.comment or "").strip()
+        if not getattr(e, "excluded", False)
+        and ((e.selected_problem_ids or []) or (e.comment or "").strip())
     )
-    pinned_count = sum(len(e.selected_problem_ids or []) for e in entries_by_eid.values())
+    pinned_count = sum(
+        len(e.selected_problem_ids or [])
+        for e in entries_by_eid.values()
+        if not getattr(e, "excluded", False)
+    )
 
     # ── 매치업 적중률 (표지 헤드라인) ──
     # 강사 직접 요청 (2026-05-02): "전 문항에 대한 평균 적중률".
