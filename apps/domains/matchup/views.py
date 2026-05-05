@@ -984,10 +984,11 @@ class DocumentManualCropView(View):
 class DocumentBulkDeleteProblemsView(View):
     """POST /api/v1/matchup/documents/<id>/bulk-delete-problems/
 
-    body 옵션 (OR 결합):
-      number_from: int   # 이 번호 이상 모든 problem 삭제 (예: 162 → 162,163,...)
-      number_to:   int   # 이 번호 이하 모든 problem 삭제
-      problem_ids: int[] # 명시적 ID 삭제
+    body 옵션:
+      number_from: int   # 단독: 이 번호 이상 삭제 (예: 162 → 162,163,...)
+      number_to:   int   # 단독: 이 번호 이하 삭제
+      number_from + number_to 동시: 두 값 사이 range 삭제 (AND, 예: 150~200)
+      problem_ids: int[] # 명시적 ID 삭제 (위 range와 OR 결합)
 
     **manual=true 보호 (절대 보존, default ON)**:
       학원장이 직접 자른 problem (meta.manual=true)은 number_from 범위 안에 있어도 삭제 안 됨.
@@ -1014,20 +1015,36 @@ class DocumentBulkDeleteProblemsView(View):
             return JsonResponse({"detail": "Invalid JSON"}, status=400)
 
         from django.db.models import Q
-        cond = Q()
         nf = body.get("number_from")
         nt = body.get("number_to")
         ids = body.get("problem_ids") or []
-        if nf is not None:
-            try: cond |= Q(number__gte=int(nf))
-            except (TypeError, ValueError): return JsonResponse({"detail": "number_from must be int"}, status=400)
-        if nt is not None:
-            try: cond |= Q(number__lte=int(nt))
-            except (TypeError, ValueError): return JsonResponse({"detail": "number_to must be int"}, status=400)
+        try:
+            nf_int = int(nf) if nf is not None else None
+            nt_int = int(nt) if nt is not None else None
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "number_from / number_to must be int"}, status=400)
+
+        # number range — 둘 다 있으면 AND(사이 range), 하나만 있으면 그쪽 단방향.
+        range_cond = Q()
+        if nf_int is not None and nt_int is not None:
+            if nf_int > nt_int:
+                return JsonResponse({"detail": "number_from <= number_to 이어야 합니다"}, status=400)
+            range_cond = Q(number__gte=nf_int) & Q(number__lte=nt_int)
+        elif nf_int is not None:
+            range_cond = Q(number__gte=nf_int)
+        elif nt_int is not None:
+            range_cond = Q(number__lte=nt_int)
+
+        cond = range_cond
         if ids:
-            try: cond |= Q(id__in=[int(x) for x in ids])
-            except (TypeError, ValueError): return JsonResponse({"detail": "problem_ids must be int[]"}, status=400)
-        if not cond:
+            try:
+                ids_q = Q(id__in=[int(x) for x in ids])
+            except (TypeError, ValueError):
+                return JsonResponse({"detail": "problem_ids must be int[]"}, status=400)
+            # range가 비었으면 ids만, 있으면 OR 결합 (range 또는 명시 IDs).
+            cond = ids_q if not (nf_int is not None or nt_int is not None) else (range_cond | ids_q)
+
+        if not (nf_int is not None or nt_int is not None or ids):
             return JsonResponse({"detail": "number_from / number_to / problem_ids 중 하나는 필수"}, status=400)
 
         # manual=true 보호 — retry_document와 동일 패턴.
