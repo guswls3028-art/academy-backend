@@ -901,6 +901,15 @@ def manually_crop_problem(
                 document.id, problem.id,
             )
 
+        # 검색 캐시 무효화 (학원장 결함 fix 2026-05-05): manual cut 후 신규 problem이
+        # 풀에 들어와도 기존 시험지 source의 redis 캐시(TTL)에 갇혀 있어 검색 결과에
+        # 안 나타남. tenant 전체 invalidate로 즉시 반영.
+        try:
+            from .cache import invalidate_tenant_similar_cache
+            invalidate_tenant_similar_cache(document.tenant_id)
+        except Exception:
+            logger.exception("MATCHUP_CACHE_INVALIDATE_FAILED | tenant=%s", document.tenant_id)
+
         logger.info(
             "MATCHUP_MANUAL_CROP | doc=%s | num=%s | created=%s | bbox=%s",
             document.id, number, created, bbox_norm,
@@ -1010,6 +1019,11 @@ def paste_image_as_problem(
             "MATCHUP_PASTE_ENQUEUE_FAILED | doc=%s | problem=%s",
             document.id, problem.id,
         )
+    try:
+        from .cache import invalidate_tenant_similar_cache
+        invalidate_tenant_similar_cache(document.tenant_id)
+    except Exception:
+        logger.exception("MATCHUP_CACHE_INVALIDATE_FAILED | tenant=%s", document.tenant_id)
 
     logger.info(
         "MATCHUP_PASTE_PROBLEM | doc=%s | num=%s | created=%s | bytes=%d",

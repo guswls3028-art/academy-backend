@@ -1756,9 +1756,11 @@ class HitReportDraftView(View):
 
         # 자동 후보 매치 (find_similar_problems) — 카테고리 격리 적용됨.
         # 큐레이션 보고서 작성자는 자동 top_k=5보다 많은 후보를 보고 직접 골라야 정확도가 올라감
+        # 학원장 결함 fix (2026-05-05): "15문항 이외의 다른 문항도 떴으면" — 사용자가
+        # 일부 제외 시 추가 후보 자동 노출 위해 candidate_top_k 15 → 30 확장.
         # (운영 보고: 5개 후보로는 부족 — 학원장 직접 선정 워크플로우 지원).
         from .services import find_similar_problems
-        candidate_top_k = 15
+        candidate_top_k = 30
 
         # 병렬 후보 검색 — 시험지 27 문항 × 직렬 ~50s 게이트웨이 컷 회피.
         # 8 worker 동시 vector 검색 → ~6배 단축. 각 검색은 독립 read-only.
