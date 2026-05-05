@@ -176,12 +176,23 @@ def find_similar_problems(
         if is_test_source:
             candidates = candidates.exclude(document_id=source.document_id)
 
-    # 모든 source — 같은 카테고리(학교/강사 매치업) 안에서만 검색. cross-school 누출 차단.
+    # 카테고리 격리 + manual=true cross-category 예외 (2026-05-05 학원장 실측 fix):
+    #   문제: 박철T가 숙명여고 시험지 보고서 작성 시, 본인이 박철t 언남고 카테고리에
+    #   cut한 manual 자료가 카테고리 격리로 추천 풀에서 빠짐. "내가 자른 자료가 안 뜬다"
+    #   결함 (카톡 보고).
+    #   원칙: 자동분리 자료는 카테고리 격리 유지(cross-school 누출 차단, db8ecb77).
+    #   학원장이 의도적으로 manual cut한 자료는 카테고리 무관 추천 풀 진입 허용.
+    #   manual=true 자료는 학원장 명시적 큐레이션이라 본인 보고서 어디서든 활용 의도.
     # exam source(document_id=None)는 별도 처리.
     if source.document_id:
+        from django.db.models import Q
+        category_or_manual = (
+            Q(document__category=source_category)
+            | Q(meta__contains={"manual": True})
+        )
         candidates = candidates.filter(
+            category_or_manual,
             document__isnull=False,
-            document__category=source_category,
         )
 
     src_format = _format_of(source)
