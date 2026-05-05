@@ -143,14 +143,12 @@ def find_similar_problems(
     src_img_emb = source.image_embedding
 
     # source 의 source_type 식별 — 시험지(test) vs 자료(reference) 분기.
-    # 학원장 실측 갭 fix (2026-05-05):
-    #   기존: 모든 source 가 같은 카테고리 내에서만 추천 → 박철T 같이 카테고리당 doc
-    #   1~몇 개 분포면 시험지 source 의 매칭 풀 ≈ 0. 매치업 자동 추천 작동률 0%.
-    #   변경: 시험지 source(school_exam_pdf / student_exam_photo)는 카테고리 격리 해제.
-    #   시험지 카테고리(학교/시험일정)와 자료 카테고리(강의 회차)는 다른 분류 체계라
-    #   격리하면 매칭 절대 불가. author_id 격리(강사 1인 SSOT) + low_quality 제외만 유지.
-    #   자료(academy_workbook/commercial_workbook 등) source 끼리 매칭은 같은 강의
-    #   단원 안에서 의미 있으므로 카테고리 격리 유지.
+    # 카테고리 격리 항상 적용 (2026-05-05 학원장 실측 결함 fix):
+    #   기존: 시험지 source 는 카테고리 격리 해제 → 개포고 시험지에 단대부고 자료 추천되는
+    #   격리 결함. 박철T 케이스(자료 1~몇 개) 우려로 도입했지만 실측 데이터로
+    #   모든 카테고리(개포고/단대부고/숙명여고/중대부고/은광여고/박철T)가 시험지 1+ /
+    #   자료 22+ 보유 확인됨. 격리 유지가 정확.
+    #   시험지 doc 의 자기 doc 안 problem 은 sim≈1 self-doc trap 이라 항상 제외.
     is_test_source = False
     if source.document_id and source.document is not None:
         meta = source.document.meta or {}
@@ -158,21 +156,16 @@ def find_similar_problems(
         from apps.domains.matchup.source_types import normalize_source_type
         st = normalize_source_type(meta.get("source_type") or meta.get("upload_intent") or meta.get("document_role"))
         is_test_source = st in ("school_exam_pdf", "student_exam_photo")
-        # 시험지 doc 의 자기 doc 안 problem 은 sim≈1 self-doc trap 이라 항상 제외.
         if is_test_source:
             candidates = candidates.exclude(document_id=source.document_id)
 
-    # 자료 source 는 같은 카테고리 안에서만. 시험지 source 는 author 풀 전체.
-    # exam source(document_id=None)는 어차피 별도 처리.
-    if source.document_id and not is_test_source:
+    # 모든 source — 같은 카테고리(학교/강사 매치업) 안에서만 검색. cross-school 누출 차단.
+    # exam source(document_id=None)는 별도 처리.
+    if source.document_id:
         candidates = candidates.filter(
             document__isnull=False,
             document__category=source_category,
         )
-    elif source.document_id and is_test_source:
-        # 시험지 source — reference 자료 풀(matchup doc 전체)에서 검색.
-        # author_id 격리는 위에서 이미 적용됨 (line 105~109).
-        candidates = candidates.filter(document__isnull=False)
 
     src_format = _format_of(source)
     src_len = len(source.text or "")
