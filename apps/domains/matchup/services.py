@@ -300,6 +300,16 @@ def find_similar_problems(
         penal = np.maximum(0.0, penal)
         sims = np.where(fb_mask, penal, sims)
 
+        # manual=true boost (2026-05-05 학원장 결함 fix):
+        #   학원장이 manual_crop 재호출(여백 조정)로 정교화한 자료가 새 image와 옛 embedding
+        #   mismatch + 워커 재처리 늦음으로 cosine sim score 낮아 30위 밖 누락 결함.
+        #   학원장 의도 = manual cut은 이 자료가 매칭에 의미 있다는 명시적 큐레이션.
+        #   fix: manual=true 자료에 +0.15 score 가산 → top 30 진입 보장.
+        manual_mask = np.array(
+            [(c.meta or {}).get("manual") is True for c in cand_list], dtype=bool,
+        )
+        sims = np.where(manual_mask, np.minimum(1.0, sims + 0.15), sims)
+
         # 휴리스틱 weight 모두 0이라 그대로 sim. 정렬.
         order = np.argsort(-sims)  # desc
         scored = [(cand_list[i], float(sims[i])) for i in order]
