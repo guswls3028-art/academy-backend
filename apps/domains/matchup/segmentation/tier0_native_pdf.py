@@ -962,3 +962,346 @@ def analyze_pdf_v2(pdf_path: str) -> dict[str, Any]:
     }
 
     return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Stage 5.3 v3 — paper_type aware + 학습자료 strict pruning + Tier 1 명시
+# ════════════════════════════════════════════════════════════════════════════
+#
+# v2 한계 (Stage 5.2 평가):
+#  - 학습자료(객서심화/복습과제/내지) recall 2.5~7.5x 잔존
+#  - 학습자료 페이지의 "예제 N", "Step N", 챕터 sub-section 번호도 line_start 통과
+#  - 운영 paper_type 분류기를 prototype 안에 흡수하지 않아 자료 종류별 정책 분기 X
+#
+# v3 보강:
+#  1. paper_type prototype 분류기 (파일명 + 본문 키워드 + anchor density + 선택지 패턴)
+#  2. paper_type 별 anchor 정책:
+#     - exam/mock/killer_test: v2 그대로
+#     - review_homework/advanced_material/workbook_main: strict (선택지 동반 검증 필수)
+#     - answer_explanation/cover: anchor 0
+#     - unknown: low_confidence 분류
+#  3. anchor 선택지 동반 검증 (학습자료 strict 모드)
+#  4. y-gap < 임계값 → 본문 항목 의심
+#  5. 문서 수준 over-detection 경고 (anchor > expected*2)
+#  6. tier1_required 명시 (scanned PDF / partial text)
+#
+# 운영 OCR 호출은 미진행 (credentials 없음 + 비용 — 사용자 directive 준수).
+
+PAPER_TYPE_EXAM = "exam"
+PAPER_TYPE_MOCK_EXAM = "mock_exam"
+PAPER_TYPE_KILLER_TEST = "killer_test"
+PAPER_TYPE_REVIEW_HOMEWORK = "review_homework"
+PAPER_TYPE_ADVANCED_MATERIAL = "advanced_material"
+PAPER_TYPE_WORKBOOK_MAIN = "workbook_main"
+PAPER_TYPE_ANSWER_EXPLANATION = "answer_explanation"
+PAPER_TYPE_COVER = "cover"
+PAPER_TYPE_UNKNOWN = "unknown"
+
+# 학습자료 paper_type — strict anchor pruning 대상
+_LEARNING_MATERIAL_PAPER_TYPES = frozenset({
+    PAPER_TYPE_REVIEW_HOMEWORK,
+    PAPER_TYPE_ADVANCED_MATERIAL,
+    PAPER_TYPE_WORKBOOK_MAIN,
+})
+
+# 시험지 paper_type — v2 정책 그대로
+_EXAM_PAPER_TYPES = frozenset({
+    PAPER_TYPE_EXAM,
+    PAPER_TYPE_MOCK_EXAM,
+    PAPER_TYPE_KILLER_TEST,
+})
+
+# 파일명 키워드 → paper_type 추정
+_FILENAME_HINTS = (
+    # 학습자료류 (가장 강한 신호 — 운영 분포에서 over-detection 주범)
+    ("복습과제", PAPER_TYPE_REVIEW_HOMEWORK),
+    ("객서심화", PAPER_TYPE_ADVANCED_MATERIAL),
+    ("객·서", PAPER_TYPE_ADVANCED_MATERIAL),
+    ("객서", PAPER_TYPE_ADVANCED_MATERIAL),
+    ("심화", PAPER_TYPE_ADVANCED_MATERIAL),
+    ("내지", PAPER_TYPE_WORKBOOK_MAIN),
+    ("메인자료", PAPER_TYPE_WORKBOOK_MAIN),
+    ("개념완성", PAPER_TYPE_WORKBOOK_MAIN),
+    ("문항편", PAPER_TYPE_WORKBOOK_MAIN),
+    ("workbook", PAPER_TYPE_WORKBOOK_MAIN),
+    # 시험지/모의고사/킬러
+    ("모의고사", PAPER_TYPE_MOCK_EXAM),
+    ("파이널", PAPER_TYPE_MOCK_EXAM),
+    ("내신용", PAPER_TYPE_MOCK_EXAM),
+    ("킬러", PAPER_TYPE_KILLER_TEST),
+    ("killer", PAPER_TYPE_KILLER_TEST),
+    ("기출", PAPER_TYPE_EXAM),
+    ("중간고사", PAPER_TYPE_EXAM),
+    ("기말고사", PAPER_TYPE_EXAM),
+)
+
+# 본문 키워드 → paper_type 보조 신호 (파일명 hint 없을 때)
+_BODY_KEYWORD_HINTS = (
+    ("복습 과제", PAPER_TYPE_REVIEW_HOMEWORK),
+    ("탐구 활동", PAPER_TYPE_WORKBOOK_MAIN),
+    ("Step ", PAPER_TYPE_WORKBOOK_MAIN),
+    ("개념 정리", PAPER_TYPE_WORKBOOK_MAIN),
+    ("정답과 해설", PAPER_TYPE_ANSWER_EXPLANATION),
+    ("정답 및 해설", PAPER_TYPE_ANSWER_EXPLANATION),
+)
+
+# 선택지 패턴 — 학습자료 strict 모드의 anchor 동반 검증
+_CHOICE_PATTERN_RE = re.compile(r"[①②③④⑤]|ㄱ\.|ㄴ\.|ㄷ\.|보기에서|다음 중|옳은\s*것|옳지\s*않은")
+
+# 학습자료 strict 모드: anchor 주변 ±20개 word 안에 선택지/문제형 키워드 등장 필수
+_LEARNING_STRICT_NEIGHBOR_RANGE = 20
+
+# y-gap pruning — 같은 column 안 인접 anchor 사이 y-gap 최소값 (PDF points)
+_MIN_ANCHOR_Y_GAP = 30.0
+
+# 페이지당 anchor 임계값 (이 이상이면 suspicious)
+_MAX_ANCHORS_PER_PAGE = 30
+
+
+def classify_paper_type_prototype(
+    *,
+    file_name: str = "",
+    pages_full_text: str = "",
+    total_anchors: int = 0,
+    page_count: int = 1,
+) -> tuple[str, float, dict]:
+    """파일명 + 본문 + anchor density 휴리스틱으로 paper_type 추정.
+
+    운영 academy.domain.tools.paper_type 와는 분리된 prototype — 9-class 운영 enum 대신
+    학습자료/시험지/answer/cover 등 dispatcher 정책 분기에 필요한 카테고리만.
+
+    Returns:
+        (paper_type, confidence, debug)
+    """
+    debug: dict = {"file_name": file_name}
+    fn_lower = (file_name or "").lower()
+
+    # 1. 파일명 hint (가장 강한 신호)
+    for kw, pt in _FILENAME_HINTS:
+        if kw.lower() in fn_lower:
+            debug["filename_match"] = kw
+            return (pt, 0.85, debug)
+
+    # 2. 본문 키워드 hint
+    for kw, pt in _BODY_KEYWORD_HINTS:
+        if kw in pages_full_text:
+            debug["body_keyword_match"] = kw
+            return (pt, 0.7, debug)
+
+    # 3. anchor density 휴리스틱
+    if page_count > 0:
+        anchors_per_page = total_anchors / page_count
+        debug["anchors_per_page"] = round(anchors_per_page, 2)
+        # 너무 많은 anchor — 학습자료 의심
+        if anchors_per_page >= 25:
+            return (PAPER_TYPE_ADVANCED_MATERIAL, 0.6, debug)
+        # 정상 시험지 범위
+        if 1 <= anchors_per_page <= 5:
+            return (PAPER_TYPE_EXAM, 0.5, debug)
+
+    return (PAPER_TYPE_UNKNOWN, 0.3, debug)
+
+
+def _has_choice_pattern_nearby(
+    anchor: NumberAnchor, word_blocks: list[dict],
+) -> bool:
+    """anchor 주변 ±20 word 안에 선택지/문제형 키워드 동반 여부.
+
+    학습자료 strict 모드에서 본문 inline 항목번호 차단.
+    """
+    if not word_blocks:
+        return False
+    # anchor word index 찾기 (bbox 일치)
+    ax, ay = anchor.bbox[0], anchor.bbox[1]
+    sorted_w = sorted(word_blocks, key=lambda w: (w["y0"], w["x0"]))
+    anchor_idx = -1
+    for i, w in enumerate(sorted_w):
+        if abs(w["x0"] - ax) < 1.0 and abs(w["y0"] - ay) < 1.0:
+            anchor_idx = i
+            break
+    if anchor_idx < 0:
+        return False
+    start = max(0, anchor_idx - _LEARNING_STRICT_NEIGHBOR_RANGE)
+    end = min(len(sorted_w), anchor_idx + _LEARNING_STRICT_NEIGHBOR_RANGE + 1)
+    neighbor_text = " ".join(w.get("text", "") for w in sorted_w[start:end])
+    return bool(_CHOICE_PATTERN_RE.search(neighbor_text))
+
+
+def _filter_anchors_by_y_gap(
+    anchors: list[NumberAnchor], min_gap: float = _MIN_ANCHOR_Y_GAP,
+) -> list[NumberAnchor]:
+    """같은 column (x0 근접) 안 인접 anchor 사이 y-gap 너무 작으면 본문 항목 의심 — 후순위 drop.
+
+    sort: y0 ↑. 인접 anchor 의 y0 차이가 min_gap 미만이면 후순위 (number 가 더 큰 것) drop.
+    """
+    if len(anchors) <= 1:
+        return anchors
+
+    # column 기준 grouping (x0 ±50pt 그룹)
+    sorted_a = sorted(anchors, key=lambda a: (a.bbox[0], a.bbox[1]))
+    groups: list[list[NumberAnchor]] = []
+    for a in sorted_a:
+        placed = False
+        for g in groups:
+            if abs(g[0].bbox[0] - a.bbox[0]) < 50.0:
+                g.append(a)
+                placed = True
+                break
+        if not placed:
+            groups.append([a])
+
+    kept: list[NumberAnchor] = []
+    for group in groups:
+        group.sort(key=lambda a: a.bbox[1])
+        prev_y = -float("inf")
+        for a in group:
+            if a.bbox[1] - prev_y < min_gap:
+                # too close — 본문 항목 의심, drop
+                continue
+            kept.append(a)
+            prev_y = a.bbox[1]
+    kept.sort(key=lambda a: (a.bbox[1], a.bbox[0]))
+    return kept
+
+
+def detect_problem_anchors_v3(
+    page: PageBlocks, columns: ColumnLayout, paper_type: str,
+) -> list[NumberAnchor]:
+    """v3 anchor 검출 — paper_type-aware + 학습자료 strict + y-gap pruning.
+
+    paper_type 별 정책:
+    - answer_explanation / cover: anchor 0 (page_role 단계에서 차단되지만 안전망)
+    - 학습자료: 선택지 동반 검증 + y-gap pruning + 페이지 max anchor 제한
+    - exam/mock/killer: v2 그대로 (이미 정확)
+    - unknown: v2 + y-gap pruning (보수적)
+    """
+    if paper_type in (PAPER_TYPE_ANSWER_EXPLANATION, PAPER_TYPE_COVER):
+        return []
+
+    # v2 base (line_start strict + 60 상한 + column 근접 + dedup)
+    base = detect_problem_anchors_v2(page, columns)
+    if not base:
+        return []
+
+    # 학습자료 strict 모드: 선택지 동반 검증 필수
+    if paper_type in _LEARNING_MATERIAL_PAPER_TYPES:
+        with_choice = [a for a in base if _has_choice_pattern_nearby(a, page.word_blocks)]
+        # 너무 엄격하면 0개 — 페이지에 선택지 패턴이 있으면 그대로 유지, 없으면 v2 그대로 (페이지 자체가 학습자료 본문이라 의심)
+        if with_choice:
+            base = with_choice
+        else:
+            # 선택지가 페이지 어디에도 없는 경우 — 학습자료 본문으로 추정해서 anchor 비움
+            return []
+
+    # y-gap pruning (학습자료 + unknown)
+    if paper_type in _LEARNING_MATERIAL_PAPER_TYPES or paper_type == PAPER_TYPE_UNKNOWN:
+        base = _filter_anchors_by_y_gap(base)
+
+    # 페이지 max anchor (학습자료 + unknown 만 적용)
+    if paper_type in _LEARNING_MATERIAL_PAPER_TYPES or paper_type == PAPER_TYPE_UNKNOWN:
+        if len(base) > _MAX_ANCHORS_PER_PAGE:
+            # 너무 많음 — 본문 항목 폭증 의심, suspicious
+            base = []  # paper_type aware 모드: 학습자료에서 anchor 폭증은 본문일 가능성 ↑
+
+    return base
+
+
+def analyze_pdf_v3(pdf_path: str, *, file_name: Optional[str] = None) -> dict[str, Any]:
+    """v3 통합 entrypoint — paper_type 결합 + 학습자료 strict + Tier 1 명시.
+
+    file_name optional — 운영 호출자가 doc.original_name 전달 권장.
+    None 이면 pdf_path 의 basename 사용.
+    """
+    import os as _os
+
+    pages = extract_page_blocks(pdf_path)
+    n_pages = len(pages)
+    n_text_pages = sum(1 for p in pages if p.has_embedded_text)
+
+    if file_name is None:
+        file_name = _os.path.basename(pdf_path)
+
+    # tier1_required (v2 와 동일)
+    tier1_required = False
+    tier1_reason = ""
+    if n_pages == 0:
+        tier1_required = True
+        tier1_reason = "empty_pdf"
+    elif n_text_pages == 0:
+        tier1_required = True
+        tier1_reason = "scanned_no_text_layer"
+    elif n_text_pages < n_pages * 0.5:
+        tier1_required = True
+        tier1_reason = "partial_text_layer"
+
+    # 1차 — v2 anchor 사용해서 paper_type 분류 신호 수집
+    pre_anchors_total = 0
+    full_text_chunks: list[str] = []
+    per_page_columns: list[ColumnLayout] = []
+    for page in pages:
+        cols = detect_columns(page.word_blocks, page.page_width)
+        per_page_columns.append(cols)
+        v2_anchors = detect_problem_anchors_v2(page, cols)
+        pre_anchors_total += len(v2_anchors)
+        full_text_chunks.append(
+            " ".join(b.get("text", "") for b in page.text_blocks)[:300]
+        )
+    full_text = " ".join(full_text_chunks)
+
+    paper_type, pt_conf, pt_debug = classify_paper_type_prototype(
+        file_name=file_name,
+        pages_full_text=full_text,
+        total_anchors=pre_anchors_total,
+        page_count=n_pages,
+    )
+
+    # 2차 — paper_type-aware anchor 검출
+    per_page_anchors: list[list[NumberAnchor]] = []
+    for page, cols in zip(pages, per_page_columns):
+        anchors = detect_problem_anchors_v3(page, cols, paper_type)
+        per_page_anchors.append(anchors)
+
+    cross = cross_page_validate(per_page_anchors)
+
+    out: dict[str, Any] = {
+        "version": "v3",
+        "pdf_path": pdf_path,
+        "file_name": file_name,
+        "page_count": n_pages,
+        "text_pages": n_text_pages,
+        "paper_type": paper_type,
+        "paper_type_confidence": pt_conf,
+        "paper_type_debug": pt_debug,
+        "tier1_required": tier1_required,
+        "tier1_reason": tier1_reason,
+        "pages": [],
+        "cross_page": {
+            "detected_total": cross.detected_total,
+            "expected_max": cross.expected_max,
+            "sequence_continuity": cross.sequence_continuity,
+            "duplicates_dropped": cross.duplicates_dropped,
+            "suspicious_pages": cross.suspicious_pages,
+        },
+    }
+
+    for page, anchors, cols in zip(pages, per_page_anchors, per_page_columns):
+        role = classify_page_role_v2(page, anchors)
+        candidates = derive_bbox_candidates_v2(anchors, page, cols)
+        out["pages"].append({
+            "page_index": page.page_index,
+            "page_width": page.page_width,
+            "page_height": page.page_height,
+            "has_embedded_text": page.has_embedded_text,
+            "role": role.role,
+            "role_confidence": role.confidence,
+            "role_debug": role.debug,
+            "anchor_count": len(anchors),
+            "anchors": [asdict(a) for a in anchors],
+            "bbox_candidates": [asdict(c) for c in candidates],
+            "columns": {
+                "count": cols.column_count,
+                "lefts": cols.column_lefts,
+            },
+        })
+
+    return out
