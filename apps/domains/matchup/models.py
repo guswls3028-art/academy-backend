@@ -305,3 +305,116 @@ class MatchupHitReportEntry(TimestampModel):
 
     def __str__(self):
         return f"Entry report#{self.report_id} exam_q={self.exam_problem_id}"
+
+
+class ProblemSegmentationProposal(TimestampModel):
+    """AI 문항 분리 결과 — 운영 문항(MatchupProblem)과 구조 분리 (Stage 3, 2026-05-06).
+
+    AI 결과(VLM/YOLO/OCR)는 ConfirmedProblem이 아니라 proposal이다.
+    승인 후에만 MatchupProblem으로 승격.
+
+    원칙:
+    - proposal은 추천 풀에 들어가지 않는다 (find_similar 후보 X).
+    - proposal은 selected_problem_ids에 참조되지 않는다.
+    - 승인 전 indexable=False (실효는 status 필드).
+    - 학원장 manual=True cut 영역과 겹치는 proposal은 자동 status='rejected'
+      (validation_errors에 'manual_overlap' reason 기록).
+
+    승격 path:
+        ProblemSegmentationProposal(status='approved')
+            → MatchupProblem 생성 (transaction.atomic, audit log)
+            → ProblemSegmentationProposal.status='approved' 유지 (audit 보존)
+    """
+
+    objects = TenantQuerySet.as_manager()
+
+    STATUS_CHOICES = [
+        ("pending", "검수 대기"),
+        ("needs_review", "검수 필수"),
+        ("rejected", "거절"),
+        ("approved", "승인 완료"),
+        ("auto_passed", "자동 통과 (validator)"),
+    ]
+
+    ENGINE_CHOICES = [
+        ("yolo", "YOLO segmentation"),
+        ("vlm", "VLM (Gemini)"),
+        ("ocr", "OCR + layout heuristic"),
+        ("native_pdf", "Native PDF parser"),
+        ("manual_assist", "사용자 수동 자르기 보조"),
+    ]
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="matchup_segmentation_proposals",
+        db_index=True,
+    )
+    document = models.ForeignKey(
+        MatchupDocument,
+        on_delete=models.CASCADE,
+        related_name="segmentation_proposals",
+        db_index=True,
+    )
+    # AI 분석 batch 식별자 — 같은 batch의 proposal 묶음 그룹화 / rerun 비교용.
+    # job_id 또는 application 정의 키 (예: "yolo-v11-2026-05-06-doc321") 자유 형식.
+    analysis_version_key = models.CharField(max_length=128, blank=True, default="", db_index=True)
+
+    page_number = models.IntegerField(default=0, db_index=True)
+    # bbox JSON: {"x": float, "y": float, "w": float, "h": float, "norm": bool}
+    # norm=True 면 0~1 normalized, False 면 px. callback이 채울 때 명시.
+    bbox = models.JSONField(default=dict, blank=True)
+    detected_problem_number = models.IntegerField(default=0)
+
+    engine = models.CharField(max_length=32, choices=ENGINE_CHOICES, db_index=True)
+    model_version = models.CharField(max_length=64, blank=True, default="")
+    confidence = models.FloatField(default=0.0)
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default="pending",
+        db_index=True,
+    )
+
+    # R2 객체 키 — 잘린 problem 이미지가 있다면 보관 (preview용). 승인 시 MatchupProblem으로 이전.
+    image_key = models.CharField(max_length=512, blank=True, default="")
+
+    # AI 원본 응답 — 디버깅/audit. 임의 JSON.
+    raw_response = models.JSONField(default=dict, blank=True)
+
+    # validator 검출 오류 / 거절 사유 — schema:
+    # [{"code": "manual_overlap", "detail": "...", "bbox_iou": 0.42}, ...]
+    validation_errors = models.JSONField(default=list, blank=True)
+
+    # 승인/거절 시 누가/언제 — audit. status='pending'이면 둘 다 NULL.
+    reviewed_by = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="reviewed_segmentation_proposals",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    # 승인된 proposal이 어떤 MatchupProblem으로 승격됐는지 trace.
+    promoted_problem = models.ForeignKey(
+        "MatchupProblem",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="source_proposals",
+    )
+
+    class Meta:
+        app_label = "matchup"
+        ordering = ["document_id", "page_number", "detected_problem_number"]
+        indexes = [
+            models.Index(fields=["tenant", "document", "status"]),
+            models.Index(fields=["tenant", "status", "engine"]),
+            models.Index(fields=["analysis_version_key"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"Proposal doc#{self.document_id} p{self.page_number} "
+            f"q{self.detected_problem_number} [{self.status}/{self.engine}]"
+        )
