@@ -1946,3 +1946,224 @@ def analyze_pdf_v5_1(
         })
 
     return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Stage 5.5.2 v5_2 — anchor 검출 자체 개선 (학습자료 본문 inline 차단)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Stage 5.5.1 발견:
+#  - FP/TP 의 x0 분포 거의 동일 — x0 영역 제한만으로 구분 불가
+#  - FP 의 number 1 이 482번 (66%) 등장 — 같은 number 가 페이지마다 반복되는
+#    학습자료 본문 inline 패턴
+#  - inline 키워드 (예제/Step/유형) 빈도 시그널 약함
+#
+# v5_2 정책:
+#  1. doc-level number 빈도 기반 학습자료 본문 추정
+#     - 한 number 가 doc-level 5+ 등장 → 본문 inline 의심
+#     - unique_numbers / total_candidates < 0.3 → 본문 폭증 doc
+#  2. 학습자료 본문 추정 시 cross-page first-occurrence dedup (paper_type 무관)
+#  3. layout-aware anchor x0 영역 제한 + confidence demotion (drop X — recall 보호)
+
+# 본문 폭증 추정 임계
+_NUM_FREQ_OVERFLOW_PER_NUMBER = 5
+_UNIQUE_NUMBER_RATIO_OVERFLOW = 0.3
+# layout-aware x0 허용 영역 (norm 좌표)
+_LAYOUT_X0_ALLOW = {
+    LAYOUT_FOUR_BLOCK: [(0.0, 0.18), (0.42, 0.62)],
+    LAYOUT_TWO_COLUMN: [(0.0, 0.18), (0.42, 0.62)],
+    LAYOUT_SINGLE_COLUMN: [(0.0, 0.30)],
+    LAYOUT_PAGE_LEVEL: [(0.0, 1.0)],
+    LAYOUT_UNKNOWN: [(0.0, 0.50)],
+}
+
+
+def estimate_inline_overflow(
+    per_page_anchors: list[list[NumberAnchor]],
+) -> tuple[bool, dict]:
+    """doc-level number 빈도 분석 — 학습자료 본문 inline anchor 폭증 추정."""
+    total = sum(len(a) for a in per_page_anchors)
+    if total == 0:
+        return (False, {"total": 0})
+    num_counts: dict[int, int] = {}
+    for anchors in per_page_anchors:
+        for a in anchors:
+            num_counts[a.number] = num_counts.get(a.number, 0) + 1
+    unique = len(num_counts)
+    max_freq = max(num_counts.values()) if num_counts else 0
+    unique_ratio = unique / total
+    debug = {
+        "total": total, "unique_numbers": unique,
+        "max_freq_per_number": max_freq,
+        "unique_ratio": round(unique_ratio, 3),
+    }
+    is_overflow = (
+        max_freq >= _NUM_FREQ_OVERFLOW_PER_NUMBER
+        or unique_ratio < _UNIQUE_NUMBER_RATIO_OVERFLOW
+    )
+    debug["is_overflow"] = is_overflow
+    return (is_overflow, debug)
+
+
+def x0_in_layout_allowed_region(x0: float, layout_type: str) -> bool:
+    regions = _LAYOUT_X0_ALLOW.get(layout_type) or _LAYOUT_X0_ALLOW[LAYOUT_UNKNOWN]
+    for low, high in regions:
+        if low <= x0 <= high:
+            return True
+    return False
+
+
+def filter_anchors_v5_2(
+    per_page_anchors: list[list[NumberAnchor]],
+    layout_type: str,
+    page_widths: list[float],
+) -> tuple[list[list[NumberAnchor]], dict]:
+    """v5_2 anchor 필터 — inline overflow 차단 + layout-aware x0 demotion."""
+    overflow, ov_debug = estimate_inline_overflow(per_page_anchors)
+    debug: dict = {"overflow": ov_debug, "applied_dedup": False, "demoted_count": 0}
+
+    if overflow:
+        seen: set[int] = set()
+        deduped: list[list[NumberAnchor]] = []
+        for anchors in per_page_anchors:
+            kept: list[NumberAnchor] = []
+            for a in anchors:
+                if a.number in seen:
+                    continue
+                seen.add(a.number)
+                kept.append(a)
+            deduped.append(kept)
+        per_page_anchors = deduped
+        debug["applied_dedup"] = True
+        debug["after_dedup_total"] = sum(len(a) for a in per_page_anchors)
+
+    demoted = 0
+    out: list[list[NumberAnchor]] = []
+    for page_idx, anchors in enumerate(per_page_anchors):
+        page_w = page_widths[page_idx] if page_idx < len(page_widths) else 595.0
+        kept: list[NumberAnchor] = []
+        for a in anchors:
+            x0_norm = a.bbox[0] / page_w if page_w > 0 else 0
+            if not x0_in_layout_allowed_region(x0_norm, layout_type):
+                new_conf = max(0.0, a.confidence * 0.5)
+                if new_conf < 0.3:
+                    demoted += 1
+                    continue
+                a = NumberAnchor(
+                    number=a.number, page_index=a.page_index,
+                    bbox=a.bbox, text=a.text, style=a.style,
+                    confidence=new_conf,
+                )
+            kept.append(a)
+        out.append(kept)
+    debug["demoted_count"] = demoted
+    return out, debug
+
+
+def analyze_pdf_v5_2(
+    pdf_path: str, *, file_name: Optional[str] = None,
+) -> dict[str, Any]:
+    """v5_2 — v5_1 base 위에 inline overflow 차단 + layout-aware x0 demotion."""
+    import os as _os
+
+    pages = extract_page_blocks(pdf_path)
+    n_pages = len(pages)
+    n_text_pages = sum(1 for p in pages if p.has_embedded_text)
+    if file_name is None:
+        file_name = _os.path.basename(pdf_path)
+
+    tier1_required = False
+    tier1_reason = ""
+    if n_pages == 0:
+        tier1_required = True; tier1_reason = "empty_pdf"
+    elif n_text_pages == 0:
+        tier1_required = True; tier1_reason = "scanned_no_text_layer"
+    elif n_text_pages < n_pages * 0.5:
+        tier1_required = True; tier1_reason = "partial_text_layer"
+
+    pre_anchors_total = 0
+    full_text_chunks: list[str] = []
+    per_page_columns: list[ColumnLayout] = []
+    pre_per_page_bboxes: list[list[tuple[float, float, float, float]]] = []
+    page_widths: list[float] = []
+    for page in pages:
+        cols = detect_columns(page.word_blocks, page.page_width)
+        per_page_columns.append(cols)
+        page_widths.append(page.page_width)
+        v2_anchors = detect_problem_anchors_v2(page, cols)
+        pre_anchors_total += len(v2_anchors)
+        full_text_chunks.append(" ".join(b.get("text", "") for b in page.text_blocks)[:300])
+        pre_bboxes = []
+        for a in v2_anchors:
+            bbox_norm = (
+                a.bbox[0] / page.page_width if page.page_width else 0,
+                a.bbox[1] / page.page_height if page.page_height else 0,
+                (a.bbox[2] - a.bbox[0]) / page.page_width if page.page_width else 0,
+                (a.bbox[3] - a.bbox[1]) / page.page_height if page.page_height else 0,
+            )
+            pre_bboxes.append(bbox_norm)
+        pre_per_page_bboxes.append(pre_bboxes)
+    full_text = " ".join(full_text_chunks)
+
+    paper_type, pt_conf, pt_debug = classify_paper_type_v4(
+        file_name=file_name, pages_full_text=full_text,
+        total_anchors=pre_anchors_total, page_count=n_pages,
+    )
+    layout = classify_layout_v2(pre_per_page_bboxes)
+
+    per_page_anchors: list[list[NumberAnchor]] = []
+    for page, cols in zip(pages, per_page_columns):
+        anchors = detect_problem_anchors_v3(page, cols, paper_type)
+        per_page_anchors.append(anchors)
+
+    per_page_anchors_v52, v52_debug = filter_anchors_v5_2(
+        per_page_anchors, layout.layout_type, page_widths,
+    )
+    cross = cross_page_validate(per_page_anchors_v52)
+
+    out: dict[str, Any] = {
+        "version": "v5_2",
+        "pdf_path": pdf_path,
+        "file_name": file_name,
+        "page_count": n_pages,
+        "text_pages": n_text_pages,
+        "_internal_paper_type": paper_type,
+        "_internal_paper_type_confidence": pt_conf,
+        "_internal_paper_type_debug": pt_debug,
+        "layout_v2": {
+            "type": layout.layout_type, "confidence": layout.confidence,
+            "x0_clusters": layout.x0_clusters, "page_p50": layout.page_bbox_count_p50,
+        },
+        "tier1_required": tier1_required,
+        "tier1_reason": tier1_reason,
+        "anchor_filter_v52": v52_debug,
+        "pages": [],
+        "cross_page": {
+            "detected_total": cross.detected_total,
+            "expected_max": cross.expected_max,
+            "sequence_continuity": cross.sequence_continuity,
+            "duplicates_dropped": cross.duplicates_dropped,
+            "suspicious_pages": cross.suspicious_pages,
+        },
+    }
+
+    for page, anchors, cols in zip(pages, per_page_anchors_v52, per_page_columns):
+        role = classify_page_role_v2(page, anchors)
+        candidates = derive_bbox_candidates_v2(anchors, page, cols)
+        out["pages"].append({
+            "page_index": page.page_index,
+            "page_width": page.page_width,
+            "page_height": page.page_height,
+            "has_embedded_text": page.has_embedded_text,
+            "role": role.role,
+            "role_confidence": role.confidence,
+            "anchor_count": len(anchors),
+            "anchors": [asdict(a) for a in anchors],
+            "bbox_candidates": [asdict(c) for c in candidates],
+            "columns": {
+                "count": cols.column_count,
+                "lefts": cols.column_lefts,
+            },
+        })
+
+    return out
