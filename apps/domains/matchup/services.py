@@ -547,10 +547,19 @@ def retry_document(document: MatchupDocument) -> str:
     # JSONB NULL semantics 회피 (운영 사고 2026-05-03): manual 키 없는 row가
     # exclude에서 빠지는 PostgreSQL NULL semantics로 skeleton row가 영구히 살아남는
     # 결함. ID 기반 명시 exclude로 우회. 자세한 분석은 callbacks.py:_handle_matchup_ai_result.
+    #
+    # manual_owner_pinned 보호 (2026-05-06 위급 fix): 학원장이 적중 보고서에서 별 토글한
+    # selected_problem_ids 가리키는 problem은 reanalyze 시 삭제 안 함 (selected_problem_ids
+    # 무효화 차단). MatchupHitReportEntry → manual_owner_pinned=true 마킹 + 본 exclude.
+    # 학원장 어제 작성 보고서 가치 보호.
     manual_ids = list(
         document.problems.filter(meta__manual=True).values_list("id", flat=True)
     )
-    document.problems.exclude(id__in=manual_ids).delete()
+    pinned_ids = list(
+        document.problems.filter(meta__manual_owner_pinned=True).values_list("id", flat=True)
+    )
+    protected_ids = list(set(manual_ids) | set(pinned_ids))
+    document.problems.exclude(id__in=protected_ids).delete()
 
     # presigned URL 6시간 — 큐 적체 시 워커가 1시간 후 picking하면 만료되어
     # 403 Forbidden으로 doc.status='failed' 반복 사이클 발생 (운영 사고 2026-04-29).
