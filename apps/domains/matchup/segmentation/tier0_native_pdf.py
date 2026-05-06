@@ -414,3 +414,551 @@ def analyze_pdf(pdf_path: str) -> dict[str, Any]:
             "bbox_candidates": [asdict(c) for c in candidates],
         })
     return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Stage 5.2 v2 — Tier 0 정밀화 (anchor over-detection 10x → ~1x 목표)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# v1 한계 (Stage 5.1 평가):
+#  1. anchor over-detection 10x — 본문 inline "1." "2." 모두 anchor 인식
+#  2. page_role false positive — "기출"/"고사" 키워드가 페이지 어디서나 매칭
+#  3. 정답표/해설 페이지 anchor 폭증 ("1.④ 2.③ 3.①" 60+ 반복)
+#  4. column awareness 없음 — 좌측/우측 column 혼동
+#  5. cross-page sequence validation 없음
+#
+# v2 보강 (운영 question_splitter / paper_type 일부 휴리스틱 흡수):
+#  1. line_start strict — anchor word 가 같은 y-band 의 leftmost word 여야 함
+#  2. _MAX_LEGIT_QUESTION_NUMBER=60 (운영 정의 흡수)
+#  3. 정답표/해설/zb 마커 페이지 차단 (anchor=0 처리)
+#  4. column detection (1/2/4 columns by x0 histogram)
+#  5. column 시작 x0 근접도 필터
+#  6. cross-page sequence continuity 검증
+#  7. page_role 키워드 검사 영역을 페이지 첫 200자 또는 상단 25%로 제한
+#  8. anchor 충분 + sequence 정상 → role=problem 우선
+#  9. text_pages=0 → tier1_required 명시 분류
+
+# 운영 정의 흡수 — 시험 문항 번호 현실 상한
+_MAX_LEGIT_QUESTION_NUMBER_V2 = 60
+
+# 정답표 / 해설지 / zb 마커 패턴 (운영 question_splitter.is_non_question_page 흡수)
+_ANSWER_TABLE_RE = re.compile(r"\b\d{1,3}\.\s*[①②③④⑤]")
+_EXPLANATION_RE = re.compile(r"\b\d{1,3}\s*\.\s*(?:정\s*답|문제\s*해설)")
+_STANDALONE_ANSWER_RE = re.compile(r"정\s*답\s*[①②③④⑤]")
+_ZB_MARKER_RE = re.compile(r"\bzb\s*\d{1,3}\s*\)")
+_QUESTION_INDICATOR_KW = (
+    "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
+    "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
+)
+
+
+@dataclass
+class ColumnLayout:
+    """페이지의 column 추정 결과."""
+    column_count: int  # 1 / 2 / 4
+    column_lefts: list[float]  # column 별 left edge x0 (PDF points)
+    column_width: float  # 각 column 평균 width
+
+
+@dataclass
+class CrossPageValidation:
+    """문서 전체 cross-page anchor sequence validation 결과."""
+    detected_total: int
+    expected_max: int  # 도달한 anchor 번호의 max
+    sequence_continuity: float  # 0~1: 누락 없는 정도
+    duplicates_dropped: int
+    suspicious_pages: list[int]
+
+
+def _is_line_leading_word(
+    word: dict, all_words: list[dict], *, y_tol: float = 3.0, x_tol: float = 5.0,
+) -> bool:
+    """word 가 같은 y-band 안 leftmost word 인지 (line_start strict).
+
+    line 의 leading word 가 anchor 후보. 본문 inline "1." 같은 false positive 차단.
+    """
+    same_line = [
+        w for w in all_words
+        if abs(w["y0"] - word["y0"]) < y_tol
+    ]
+    if not same_line:
+        return False
+    leftmost_x = min(w["x0"] for w in same_line)
+    return word["x0"] - leftmost_x < x_tol
+
+
+def _is_answer_or_explanation_page(page: PageBlocks) -> tuple[bool, str]:
+    """운영 question_splitter.is_non_question_page 의 핵심 차단 패턴 흡수.
+
+    정답표 ("1.④ 2.③" 5+) / 해설지 ("N. 정답") / standalone "정답 ④" / zb 마커
+    페이지는 anchor 폭증 주범 — 명시 차단.
+
+    return: (차단 여부, 차단 사유)
+    """
+    full_text = " ".join(b.get("text", "") for b in page.text_blocks).strip()
+    if not full_text:
+        return (False, "")
+
+    # 정답표
+    if len(_ANSWER_TABLE_RE.findall(full_text)) >= 5:
+        if not any(kw in full_text for kw in _QUESTION_INDICATOR_KW):
+            return (True, "answer_table")
+
+    # 해설지 ("N. 정답" 3+)
+    if len(_EXPLANATION_RE.findall(full_text)) >= 3:
+        return (True, "explanation_page")
+
+    # standalone "정답 ④" 3+
+    if len(_STANDALONE_ANSWER_RE.findall(full_text)) >= 3:
+        return (True, "standalone_answer")
+
+    # zb 마커 3+ (학습자료 본문 항목번호)
+    if len(_ZB_MARKER_RE.findall(full_text)) >= 3:
+        return (True, "zb_markers")
+
+    return (False, "")
+
+
+def detect_columns(
+    word_blocks: list[dict], page_width: float,
+    *, min_words_per_column: int = 5,
+) -> ColumnLayout:
+    """word x0 분포로 column 개수 + left edges 추정.
+
+    1단/2단/4단 양식 검출. 단순 1D histogram + cluster.
+
+    Returns:
+        ColumnLayout(column_count, column_lefts, column_width).
+        word 부족 시 (column_count=1, [0.0], page_width).
+    """
+    if len(word_blocks) < min_words_per_column:
+        return ColumnLayout(column_count=1, column_lefts=[0.0], column_width=page_width)
+
+    # x0 histogram — page_width 를 32 bin 으로
+    bin_count = 32
+    bin_w = page_width / bin_count
+    histogram = [0] * bin_count
+    for w in word_blocks:
+        b = min(int(w["x0"] / bin_w), bin_count - 1)
+        if b >= 0:
+            histogram[b] += 1
+
+    # peak 검출 — 인접 bin 의 local maxima
+    peaks = []
+    for i in range(bin_count):
+        if histogram[i] < min_words_per_column:
+            continue
+        is_peak = True
+        for j in (i - 1, i + 1):
+            if 0 <= j < bin_count and histogram[j] > histogram[i]:
+                is_peak = False
+                break
+        if is_peak:
+            peaks.append((i, histogram[i]))
+
+    # peak count 가 1/2/4 와 가까운지
+    n_peaks = len(peaks)
+    if n_peaks <= 1:
+        return ColumnLayout(column_count=1, column_lefts=[0.0], column_width=page_width)
+
+    # 너무 많은 peak (column 와 무관한 word density variance) — 보수적 1단 처리
+    if n_peaks > 4:
+        # 최대 2개만 picking (가장 큰 peak 2개)
+        peaks.sort(key=lambda p: p[1], reverse=True)
+        picks = sorted([p[0] for p in peaks[:2]])
+        if len(picks) == 2 and picks[1] - picks[0] >= bin_count // 4:
+            lefts = [picks[0] * bin_w, picks[1] * bin_w]
+            cw = page_width / 2
+            return ColumnLayout(column_count=2, column_lefts=lefts, column_width=cw)
+        return ColumnLayout(column_count=1, column_lefts=[0.0], column_width=page_width)
+
+    # 2/3/4 peaks
+    sorted_lefts = sorted(p[0] * bin_w for p in peaks)
+    cw = page_width / n_peaks
+    if n_peaks == 2:
+        return ColumnLayout(column_count=2, column_lefts=sorted_lefts, column_width=cw)
+    if n_peaks in (3, 4):
+        # 3은 4 column 중 1개 누락 가능성 — 4로 추정 (보수적), 또는 2 로 fallback
+        if n_peaks == 4:
+            return ColumnLayout(column_count=4, column_lefts=sorted_lefts, column_width=cw)
+        # n_peaks=3 → 2 column으로 보수적 fallback
+        return ColumnLayout(column_count=2, column_lefts=sorted_lefts[:2], column_width=page_width / 2)
+
+    return ColumnLayout(column_count=1, column_lefts=[0.0], column_width=page_width)
+
+
+def detect_problem_anchors_v2(page: PageBlocks, columns: ColumnLayout) -> list[NumberAnchor]:
+    """v2 anchor 검출 — line_start strict + _MAX_LEGIT_NUMBER + column 근접도.
+
+    v1 한계 fix:
+    - 본문 inline "1." 차단 (line_leading word 만)
+    - 번호 ≤ 60 (운영 _MAX_LEGIT_QUESTION_NUMBER 흡수)
+    - column 시작 x0 근접 word 만 picking
+    """
+    # 운영 차단 패턴 — 정답표/해설/zb 페이지면 anchor=[]
+    blocked, reason = _is_answer_or_explanation_page(page)
+    if blocked:
+        return []
+
+    anchors: list[NumberAnchor] = []
+    all_words = page.word_blocks
+
+    # column 시작 x0 set (tolerance 0.05 * page_width)
+    col_tol = page.page_width * 0.05
+    column_starts = columns.column_lefts
+
+    for w in all_words:
+        text = (w.get("text") or "").strip()
+        if not text:
+            continue
+
+        match_n: Optional[int] = None
+        match_style: Optional[str] = None
+        match_conf = 0.0
+
+        if text in _CIRCLED:
+            match_n = _CIRCLED[text]
+            match_style = "circled"
+            match_conf = 0.9
+        elif text in _PARENED:
+            match_n = _PARENED[text]
+            match_style = "parened"
+            match_conf = 0.9
+        elif (m := _NUM_ARABIC_DOT.match(text)):
+            match_n = int(m.group(1))
+            match_style = "arabic_dot"
+            match_conf = 0.85
+        elif (m := _NUM_ARABIC_PAREN.match(text)):
+            match_n = int(m.group(1))
+            match_style = "arabic_paren"
+            match_conf = 0.8
+        elif (m := _NUM_ARABIC_BUNG.match(text)):
+            match_n = int(m.group(1))
+            match_style = "arabic_bung"
+            match_conf = 0.8
+        elif (m := _NUM_ARABIC_INPAREN.match(text)):
+            match_n = int(m.group(1))
+            match_style = "arabic_inparen"
+            match_conf = 0.75
+
+        if match_n is None:
+            continue
+
+        # v2 핵심 fix #1 — _MAX_LEGIT_QUESTION_NUMBER 운영 정의 흡수
+        if not (1 <= match_n <= _MAX_LEGIT_QUESTION_NUMBER_V2):
+            continue
+
+        # v2 핵심 fix #2 — line_start strict
+        if not _is_line_leading_word(w, all_words):
+            continue
+
+        # v2 핵심 fix #3 — column 시작 x0 근접도
+        is_at_column_start = any(
+            abs(w["x0"] - col_x) < col_tol for col_x in column_starts
+        )
+        if not is_at_column_start:
+            # 1단 layout 이고 좌측 50% 안이면 통과 (보수적 양보)
+            if columns.column_count == 1 and w["x0"] < page.page_width * 0.5:
+                pass
+            else:
+                continue
+
+        # confidence 보정: column start bonus
+        if is_at_column_start:
+            match_conf = min(1.0, match_conf + 0.05)
+
+        anchors.append(NumberAnchor(
+            number=match_n,
+            page_index=page.page_index,
+            bbox=(w["x0"], w["y0"], w["x1"], w["y1"]),
+            text=text,
+            style=match_style,
+            confidence=match_conf,
+        ))
+
+    # v2 핵심 fix #4 — 같은 페이지 안 같은 number 중복 dedup (가장 conf 높은 것만)
+    by_number: dict[int, NumberAnchor] = {}
+    for a in anchors:
+        prev = by_number.get(a.number)
+        if not prev or a.confidence > prev.confidence:
+            by_number[a.number] = a
+    deduped = list(by_number.values())
+    deduped.sort(key=lambda a: (a.bbox[1], a.bbox[0]))
+    return deduped
+
+
+def cross_page_validate(
+    per_page_anchors: list[list[NumberAnchor]],
+    *, expected_max: Optional[int] = None,
+) -> CrossPageValidation:
+    """문서 전체 anchor sequence 검증.
+
+    - 페이지별 anchor 의 number 가 전체적으로 monotonically increase 인지
+    - 중복 number 가 페이지 간 발생하면 의심 페이지 표시
+    - expected_max (페이지 단위 예상 최대) 비교
+    """
+    seen_numbers: dict[int, int] = {}  # number → 처음 발견한 page_index
+    suspicious: set[int] = set()
+    duplicates_dropped = 0
+
+    for page_idx, anchors in enumerate(per_page_anchors):
+        for a in anchors:
+            if a.number in seen_numbers and seen_numbers[a.number] != page_idx:
+                # 다른 페이지에서 같은 번호 — 의심
+                suspicious.add(page_idx)
+                duplicates_dropped += 1
+            else:
+                seen_numbers[a.number] = page_idx
+
+    detected_total = sum(len(a) for a in per_page_anchors)
+    detected_max = max(seen_numbers.keys()) if seen_numbers else 0
+
+    # sequence continuity: 1..detected_max 중 보유율
+    if detected_max > 0:
+        present = sum(1 for n in range(1, detected_max + 1) if n in seen_numbers)
+        continuity = present / detected_max
+    else:
+        continuity = 0.0
+
+    return CrossPageValidation(
+        detected_total=detected_total,
+        expected_max=detected_max,
+        sequence_continuity=continuity,
+        duplicates_dropped=duplicates_dropped,
+        suspicious_pages=sorted(suspicious),
+    )
+
+
+def classify_page_role_v2(
+    page: PageBlocks, anchors: list[NumberAnchor],
+) -> PageRoleAnalysis:
+    """v2 page role — 키워드 검사 영역 제한 + anchor 우선.
+
+    v1 결함 fix:
+    - "기출", "고사" 같은 키워드가 페이지 어디서나 cover false positive 만들었음 →
+      페이지 첫 200자 또는 상단 25% 영역에서만 검사.
+    - anchor 가 충분히 있고 sequence 가 정상이면 role=problem 우선.
+    - 정답표/해설지는 _is_answer_or_explanation_page 로 별도 차단.
+    """
+    if not page.has_embedded_text:
+        return PageRoleAnalysis(
+            page_index=page.page_index, role="unknown",
+            confidence=0.0, debug={"reason": "no_embedded_text"},
+        )
+
+    # 정답/해설/zb 마커 우선 차단
+    blocked, reason = _is_answer_or_explanation_page(page)
+    if blocked:
+        return PageRoleAnalysis(
+            page_index=page.page_index,
+            role="answer_key" if reason in ("answer_table", "explanation_page", "standalone_answer") else "unknown",
+            confidence=0.85,
+            debug={"reason": reason},
+        )
+
+    # v2 fix — 키워드 검사 영역 제한:
+    # 페이지 상단 25% 내 text_block 의 첫 200자 + 모든 text_block 의 첫 줄.
+    top_y = page.page_height * 0.25
+    top_text_blocks = [b for b in page.text_blocks if b.get("y0", 0) < top_y]
+    top_text = " ".join(b.get("text", "") for b in top_text_blocks)[:300]
+    first_line_text = " ".join(
+        (b.get("text", "") or "").split("\n", 1)[0] for b in page.text_blocks
+    )[:200]
+    keyword_search = top_text + " " + first_line_text
+
+    for role, keywords in _NON_QUESTION_HINTS.items():
+        for kw in keywords:
+            if kw.lower() in keyword_search.lower():
+                # anchor 가 충분 (page 평균 이상) 이면 problem 으로 판단 우선 — false positive 방지
+                if len(anchors) >= 5:
+                    continue
+                return PageRoleAnalysis(
+                    page_index=page.page_index, role=role,
+                    confidence=0.7,
+                    debug={"matched_keyword": kw, "scope": "top_or_first_line"},
+                )
+
+    if len(anchors) >= 2:
+        # sequence continuity 보너스
+        nums = sorted(a.number for a in anchors)
+        gaps = sum(1 for i in range(1, len(nums)) if nums[i] - nums[i - 1] != 1)
+        conf = 0.85 if gaps == 0 else 0.75
+        return PageRoleAnalysis(
+            page_index=page.page_index, role="problem",
+            confidence=conf,
+            debug={"anchor_count": len(anchors), "sequence_gaps": gaps},
+        )
+
+    return PageRoleAnalysis(
+        page_index=page.page_index, role="unknown",
+        confidence=0.3, debug={"anchor_count": len(anchors)},
+    )
+
+
+def derive_bbox_candidates_v2(
+    anchors: list[NumberAnchor], page: PageBlocks, columns: ColumnLayout,
+) -> list[BboxCandidate]:
+    """v2 bbox 도출 — column-aware.
+
+    column_count >= 2 면 각 column 별로 sequence 분리해서 bbox 생성 — 좌측 column
+    의 마지막 problem 이 우측 column 의 첫 problem 까지 이어지지 않도록.
+    """
+    if not anchors:
+        return []
+
+    if columns.column_count <= 1:
+        return derive_bbox_candidates(anchors, page)  # v1 fallback (1단)
+
+    # column 별 anchor 분리 — anchor.bbox.x0 가 어느 column 에 가까운지
+    cols_sorted = sorted(columns.column_lefts)
+    col_anchors: list[list[NumberAnchor]] = [[] for _ in cols_sorted]
+    for a in anchors:
+        # 각 column left 까지 거리 계산
+        ax = a.bbox[0]
+        nearest = min(range(len(cols_sorted)), key=lambda i: abs(ax - cols_sorted[i]))
+        col_anchors[nearest].append(a)
+
+    candidates: list[BboxCandidate] = []
+    page_w = page.page_width
+    page_h = page.page_height
+
+    for col_idx, anchors_in_col in enumerate(col_anchors):
+        if not anchors_in_col:
+            continue
+        col_left = cols_sorted[col_idx]
+        col_right = (
+            cols_sorted[col_idx + 1]
+            if col_idx + 1 < len(cols_sorted)
+            else page_w * 0.95
+        )
+        sorted_a = sorted(anchors_in_col, key=lambda a: a.bbox[1])
+
+        for i, anchor in enumerate(sorted_a):
+            x0 = max(col_left, page_w * 0.02)
+            y0 = anchor.bbox[1]
+            x1 = min(col_right - page_w * 0.01, page_w * 0.98)
+
+            if i + 1 < len(sorted_a):
+                y1 = sorted_a[i + 1].bbox[1]
+            else:
+                y1 = page_h * 0.95
+
+            preview_words = [
+                w.get("text", "")
+                for w in page.word_blocks
+                if (
+                    w["y0"] >= y0 and w["y1"] <= y1
+                    and w["x0"] >= x0 and w["x1"] <= x1
+                )
+            ]
+            text_preview = " ".join(preview_words)[:80]
+
+            bbox_norm = (
+                x0 / page_w,
+                y0 / page_h,
+                (x1 - x0) / page_w,
+                (y1 - y0) / page_h,
+            )
+            candidates.append(BboxCandidate(
+                number=anchor.number,
+                page_index=anchor.page_index,
+                bbox=(x0, y0, x1, y1),
+                bbox_norm=bbox_norm,
+                text_preview=text_preview,
+                confidence=anchor.confidence,
+            ))
+    return candidates
+
+
+def analyze_pdf_v2(pdf_path: str) -> dict[str, Any]:
+    """v2 통합 entrypoint — Tier 0 정밀화 + Tier 1 후보 분류.
+
+    Returns:
+        {
+            "version": "v2",
+            "pdf_path": str,
+            "page_count": int,
+            "tier1_required": bool,        # text_pages=0 → Tier 1 OCR 필수
+            "tier1_reason": str,
+            "cross_page": {detected_total, expected_max, sequence_continuity, ...},
+            "pages": [
+                {... v1 키 + columns + role_v2 ...},
+                ...
+            ],
+        }
+    """
+    pages = extract_page_blocks(pdf_path)
+    n_pages = len(pages)
+    n_text_pages = sum(1 for p in pages if p.has_embedded_text)
+
+    # Tier 1 필요 여부 — born-digital 인지
+    tier1_required = False
+    tier1_reason = ""
+    if n_pages == 0:
+        tier1_required = True
+        tier1_reason = "empty_pdf"
+    elif n_text_pages == 0:
+        tier1_required = True
+        tier1_reason = "scanned_no_text_layer"
+    elif n_text_pages < n_pages * 0.5:
+        tier1_required = True
+        tier1_reason = "partial_text_layer"
+
+    out: dict[str, Any] = {
+        "version": "v2",
+        "pdf_path": pdf_path,
+        "page_count": n_pages,
+        "text_pages": n_text_pages,
+        "tier1_required": tier1_required,
+        "tier1_reason": tier1_reason,
+        "pages": [],
+    }
+
+    # 페이지별 분석
+    per_page_anchors: list[list[NumberAnchor]] = []
+    per_page_columns: list[ColumnLayout] = []
+    for page in pages:
+        cols = detect_columns(page.word_blocks, page.page_width)
+        anchors = detect_problem_anchors_v2(page, cols)
+        per_page_anchors.append(anchors)
+        per_page_columns.append(cols)
+
+    # cross-page validation
+    cross = cross_page_validate(per_page_anchors)
+
+    # 페이지별 결과 dump
+    for page, anchors, cols in zip(pages, per_page_anchors, per_page_columns):
+        role = classify_page_role_v2(page, anchors)
+        candidates = derive_bbox_candidates_v2(anchors, page, cols)
+        suspicious = page.page_index in cross.suspicious_pages
+        out["pages"].append({
+            "page_index": page.page_index,
+            "page_width": page.page_width,
+            "page_height": page.page_height,
+            "has_embedded_text": page.has_embedded_text,
+            "role": role.role,
+            "role_confidence": role.confidence,
+            "role_debug": role.debug,
+            "text_block_count": len(page.text_blocks),
+            "word_block_count": len(page.word_blocks),
+            "image_block_count": len(page.image_blocks),
+            "anchor_count": len(anchors),
+            "anchors": [asdict(a) for a in anchors],
+            "bbox_candidates": [asdict(c) for c in candidates],
+            "columns": {
+                "count": cols.column_count,
+                "lefts": cols.column_lefts,
+                "width": cols.column_width,
+            },
+            "suspicious": suspicious,
+        })
+
+    out["cross_page"] = {
+        "detected_total": cross.detected_total,
+        "expected_max": cross.expected_max,
+        "sequence_continuity": cross.sequence_continuity,
+        "duplicates_dropped": cross.duplicates_dropped,
+        "suspicious_pages": cross.suspicious_pages,
+    }
+
+    return out
