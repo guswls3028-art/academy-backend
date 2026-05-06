@@ -37,6 +37,71 @@ _W_CROSS_DOC = 0.0   #
 _USE_CROSS_ENCODER = os.environ.get("MATCHUP_USE_CROSS_ENCODER", "0") == "1"
 
 
+# ── 추천 풀 자격 SSOT (Stage 4, 2026-05-06) ────────────────────────
+#
+# 추천 풀 진입 자격을 단일 함수로 SSOT. find_similar_problems 외 batch 추천,
+# 보고서 자동 매핑 등 모든 진입점에서 동일 게이트 통과.
+#
+# default mode (legacy null 통과):
+#   기존 운영 데이터(processing_quality=NULL, proposal_status=NULL,
+#   confirmation_status=NULL)는 전부 통과 — 추천 풀 0건 장애 방지.
+#   blocklist 동작: 명시 차단 마커가 박힌 problem만 제외.
+#     - meta.low_quality=True
+#     - document.meta.indexable=False
+#     - meta.proposal_status ∈ {pending, needs_review, rejected}
+#     - meta.processing_quality ∈ {page_fallback, no_problems, needs_review, failed}
+#
+# strict mode (ENV MATCHUP_RECOMMEND_STRICT_ALLOWLIST=1):
+#   미래 도입할 confirmation 신호 기반 strict allowlist.
+#   meta.confirmation_status='confirmed' 또는 meta.manual=True 만 통과.
+#   현재 운영 분포 (2026-05-06 실측): confirmed=0건, manual=4,270건 →
+#   strict 즉시 ON 시 풀 4,270건 (legacy 25,412건 제외). 추천 정확도 ↑,
+#   재현율 ↓. T2 검증 후 점진 ON 권장.
+#
+# manual_only mode (ENV MATCHUP_RECOMMEND_MANUAL_ONLY=1):
+#   학원장 cut 자료만 추천 (P1.5/α4, 2026-05-06). strict allowlist의 부분집합.
+#   strict 모드와 동시 ON 시 manual_only가 우선 (둘 다 만족).
+
+def eligible_for_recommendation_qs(qs):
+    """추천 풀 진입 자격 SSOT. 모든 진입점에서 동일 게이트 보장.
+
+    Args:
+        qs: MatchupProblem queryset (이미 tenant/embedding 필터 적용된 상태 권장)
+
+    Returns:
+        eligibility 게이트 통과한 queryset.
+    """
+    import os as _os
+    qs = (
+        qs
+        # low_quality 게이트 (P0-2, 2026-05-04): 자동 품질 점수 < 0.7 cell 제외.
+        # CRITICAL fix (Phase 8, 2026-05-05): meta__contains는 NULL safe (정확 매칭).
+        .exclude(meta__contains={"low_quality": True})
+        # Phase 4 (2026-05-05): page_fallback/no_problems/needs_review doc 차단.
+        .exclude(document__meta__contains={"indexable": False})
+        # Stage 0 (2026-05-06): AI proposal 미승인 결과 차단. 사용자 작성 데이터 immutable.
+        .exclude(meta__contains={"proposal_status": "pending"})
+        .exclude(meta__contains={"proposal_status": "needs_review"})
+        .exclude(meta__contains={"proposal_status": "rejected"})
+        .exclude(meta__contains={"processing_quality": "page_fallback"})
+        .exclude(meta__contains={"processing_quality": "no_problems"})
+        .exclude(meta__contains={"processing_quality": "needs_review"})
+        .exclude(meta__contains={"processing_quality": "failed"})
+    )
+
+    if _os.environ.get("MATCHUP_RECOMMEND_STRICT_ALLOWLIST", "0") == "1":
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(meta__contains={"confirmation_status": "confirmed"})
+            | Q(meta__contains={"manual": True})
+        )
+
+    if _os.environ.get("MATCHUP_RECOMMEND_MANUAL_ONLY", "0") == "1":
+        qs = qs.filter(meta__contains={"manual": True})
+
+    return qs
+
+
 def _format_of(problem: MatchupProblem) -> str:
     """problem의 meta에서 format 추출. 미설정이면 텍스트로 즉석 감지(레거시)."""
     meta = problem.meta or {}
@@ -106,55 +171,10 @@ def find_similar_problems(
     if source.document_id and source.document is not None:
         source_category = (source.document.category or "").strip()
 
-    candidates = (
-        MatchupProblem.objects
-        .filter(tenant_id=tenant_id, embedding__isnull=False)
+    candidates = eligible_for_recommendation_qs(
+        MatchupProblem.objects.filter(tenant_id=tenant_id, embedding__isnull=False)
         .exclude(id=problem_id)
-        # low_quality 게이트 (P0-2, 2026-05-04): 자동 품질 점수 < 0.7 cell은
-        # 매치업 검색 후보에서 제외. 학원에 잘못된 매칭 결과 전달 차단.
-        # 학원장 검수 UI에서 직접 manual crop으로 보정 후 매치업에 노출 가능.
-        #
-        # CRITICAL fix (Phase 8, 2026-05-05):
-        #   기존 `.exclude(meta__low_quality=True)` 는 PostgreSQL 3-valued logic
-        #   결함으로 NULL/missing 키 행을 모두 제외 (NOT NULL = NULL → WHERE 제외).
-        #   T2 14797/14804 problems가 low_quality 키 없음 → 풀 항상 0건.
-        #   학원장 매치업 작동률 0% 의 진짜 본질. `.exclude(meta__contains=...)` 는
-        #   `meta @> '{...}'::jsonb` SQL 사용 → 정확히 매칭되는 행만 제외 (NULL 통과).
-        .exclude(meta__contains={"low_quality": True})
-        # 추천 pool 자동 필터 (Phase 4, 2026-05-05):
-        #   MatchupDocument.meta.indexable=False 인 doc 의 problem 풀 진입 차단.
-        #   callbacks._handle_matchup_ai_result가 bbox_null_ratio 기반으로 마커 부여:
-        #     precise_split / coarse_split → indexable=True
-        #     page_fallback / needs_review / no_problems → indexable=False
-        #   page_fallback doc 의 페이지 임베딩이 매치업 풀에 노이즈로 들어가
-        #   추천 0% 결함을 만들었던 결함 (2026-05-05 학원장 실측) fix.
-        #   동일 NULL safety — `meta__contains` 사용으로 legacy doc 안전 통과.
-        .exclude(document__meta__contains={"indexable": False})
-        # Stage 0 즉시 차단 패치 (사용자 directive 2026-05-06):
-        #   사용자 작성 데이터 immutable 원칙 — AI proposal 미승인 결과가 추천 풀 진입 절대 X.
-        #   pending/needs_review/rejected proposal + page_fallback/no_problems/needs_review/failed
-        #   processing_quality 모두 명시 차단. NULL safety: meta__contains는 정확 매칭 (legacy
-        #   problem 영향 X).
-        #   장기 plan = Stage 4 allowlist (confirmed only) 전환 + ProblemSegmentationProposal
-        #   별도 모델 마이그레이션 (Stage 3).
-        .exclude(meta__contains={"proposal_status": "pending"})
-        .exclude(meta__contains={"proposal_status": "needs_review"})
-        .exclude(meta__contains={"proposal_status": "rejected"})
-        .exclude(meta__contains={"processing_quality": "page_fallback"})
-        .exclude(meta__contains={"processing_quality": "no_problems"})
-        .exclude(meta__contains={"processing_quality": "needs_review"})
-        .exclude(meta__contains={"processing_quality": "failed"})
-        .defer("created_at", "updated_at")
-    )
-
-    # manual_only flag (P1.5 / α4, 2026-05-06): 학원장 cut 자료만 추천.
-    #   배경: 사용자 노가다 3,207 bbox cut + 자동분리 76% 실패 (T2 audit).
-    #   ENV MATCHUP_RECOMMEND_MANUAL_ONLY=1 시 추천 풀 = manual=true 자료만.
-    #   학원장 옵션 (default OFF). T2 운영 검증 후 ON 권장.
-    #   조합: α1 indexable backfill + α3 boost 와 직교. flag ON이 가장 강한 정책.
-    import os as _osmo
-    if _osmo.environ.get("MATCHUP_RECOMMEND_MANUAL_ONLY", "0") == "1":
-        candidates = candidates.filter(meta__contains={"manual": True})
+    ).defer("created_at", "updated_at")
 
     # 저작권 격리 — author_id 지정 시 본인 자료 + 공용 풀(legacy author=NULL)만.
     # exam-source problem(document=None)은 별도 필터에서 처리되므로 여기서는 영향 X.
