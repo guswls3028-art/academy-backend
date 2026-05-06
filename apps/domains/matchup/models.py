@@ -418,3 +418,241 @@ class ProblemSegmentationProposal(TimestampModel):
             f"Proposal doc#{self.document_id} p{self.page_number} "
             f"q{self.detected_problem_number} [{self.status}/{self.engine}]"
         )
+
+
+class TenantSegmentationProfile(TimestampModel):
+    """tenant 별 segmentation 정책 (Stage 5.4.6, 2026-05-06).
+
+    학원/강사마다 자료 양식이 다르므로 전역 모델이 아닌 tenant 단위로 학습된 profile
+    저장. cross-tenant 공유 영구 금지 — 다른 학원 manual cut 으로 우리 tenant
+    threshold 학습 안 함.
+
+    원칙:
+    - is_active=False default — feature flag, 관리자 명시 활성화 후 사용
+    - profile 자동 업데이트 worker 는 Stage 5.5+ 영역 — 이번 commit 은 schema 만
+    - GlobalPolicy fallback (fallback_to_global=True) — 학습 데이터 부족 시 안전 기본값
+    """
+
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.OneToOneField(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="segmentation_profile",
+    )
+
+    # gradual rollout — feature flag
+    is_active = models.BooleanField(default=False, db_index=True)
+    fallback_to_global = models.BooleanField(default=True)
+    profile_version = models.PositiveIntegerField(default=1)
+
+    # paper_type 별 임계값 (operate prototype 위에 학습)
+    # 예: {"exam": {"expected_max": 30, "auto_approve_threshold": 0.85}, ...}
+    paper_type_thresholds = models.JSONField(default=dict, blank=True)
+    # 예: {"exam": 30, "review_homework": 80, "advanced_material": 200, ...}
+    paper_type_expected_max = models.JSONField(default=dict, blank=True)
+    # 예: {"exam": 0.85, "workbook_main": 0.9, ...}
+    auto_approve_thresholds = models.JSONField(default=dict, blank=True)
+
+    # tenant 자료 layout 패턴 (manual cut 통계로 학습)
+    # 예: [{"name": "single_column", "ratio": 0.62}, {"name": "two_column", "ratio": 0.36}]
+    common_layout_clusters = models.JSONField(default=list, blank=True)
+    # 예: {"x0_clusters": [0.05, 0.50], "width_p50": 0.42, ...}
+    bbox_stats = models.JSONField(default=dict, blank=True)
+    # 예: {"1": 0.62, "2": 0.36, "4": 0.02}
+    column_count_distribution = models.JSONField(default=dict, blank=True)
+
+    # 운영 통계 — feedback loop 입력
+    scanned_pdf_ratio = models.FloatField(null=True, blank=True)
+    manual_correction_rate = models.FloatField(null=True, blank=True)
+    vlm_needed_ratio = models.FloatField(null=True, blank=True)
+
+    # profile 신뢰도 (학습 데이터 양 + 자동 승인률 등 종합)
+    confidence_score = models.FloatField(default=0.0)
+    samples_used = models.IntegerField(default=0)
+    last_profiled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        app_label = "matchup"
+        indexes = [
+            models.Index(fields=["tenant", "is_active"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"TenantProfile(tenant={self.tenant_id}, v{self.profile_version}, "
+            f"active={self.is_active}, conf={self.confidence_score:.2f})"
+        )
+
+
+class LayoutFingerprint(TimestampModel):
+    """document 별 레이아웃 지문 (Stage 5.4.6, 2026-05-06).
+
+    같은 tenant 안에서 비슷한 layout 의 doc 을 그루핑 — manual correction 패턴 reuse.
+    cross-tenant 매칭 영구 금지.
+
+    원칙:
+    - tenant FK 필수 — 다른 학원 자료와 매칭 안 함
+    - similarity_cluster_id 는 tenant 안에서만 의미 있음
+    - 이번 commit 은 schema 만 — 자동 fingerprint 생성 worker 는 Stage 5.5+ 영역
+    """
+
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="layout_fingerprints",
+        db_index=True,
+    )
+    document = models.ForeignKey(
+        MatchupDocument,
+        on_delete=models.CASCADE,
+        related_name="layout_fingerprints",
+    )
+
+    paper_type = models.CharField(max_length=32, blank=True, default="", db_index=True)
+    fingerprint_version = models.PositiveIntegerField(default=1)
+
+    # 페이지 메타
+    page_count = models.IntegerField(default=0)
+    page_size = models.JSONField(default=dict, blank=True)  # {"width": 595, "height": 842}
+
+    # 레이아웃 시그널
+    text_density = models.FloatField(default=0.0)
+    image_density = models.FloatField(default=0.0)
+    column_count = models.IntegerField(default=1)
+    anchor_density = models.FloatField(default=0.0)
+
+    # bbox 분포 시그널 (예: x0_clusters=[0.05, 0.50])
+    x0_clusters = models.JSONField(default=list, blank=True)
+    y_gap_distribution = models.JSONField(default=dict, blank=True)
+    font_size_distribution = models.JSONField(default=dict, blank=True)
+
+    # filename / category 패턴
+    filename_patterns = models.JSONField(default=list, blank=True)
+
+    # 같은 tenant 안 비슷한 layout doc 그루핑 — cross-tenant 매칭 X
+    similarity_cluster_id = models.CharField(
+        max_length=64, blank=True, default="", db_index=True,
+    )
+
+    class Meta:
+        app_label = "matchup"
+        indexes = [
+            models.Index(fields=["tenant", "paper_type"]),
+            models.Index(fields=["tenant", "similarity_cluster_id"]),
+            models.Index(fields=["tenant", "document", "fingerprint_version"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "document", "fingerprint_version"],
+                name="uniq_layout_fingerprint_per_doc_version",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"Fingerprint doc#{self.document_id} v{self.fingerprint_version} "
+            f"pt={self.paper_type}"
+        )
+
+
+class ManualCorrectionDelta(TimestampModel):
+    """학원장 manual correction audit log (Stage 5.4.6, 2026-05-06).
+
+    proposal 검수 / 별 토글 / bbox 조정 / split / merge 등 사용자 개입을
+    audit. 이 델타가 누적되면 TenantSegmentationProfile 학습 신호로 사용.
+
+    원칙:
+    - read-only audit — 본 모델은 selected_problem_ids / hit_report 변경 X
+    - tenant FK 필수
+    - manual cut 자체는 immutable — 이 델타는 검수 기록만
+    - Stage 5.5+ worker 가 이 델타로 tenant profile 업데이트
+    """
+
+    CORRECTION_TYPE_CHOICES = [
+        ("approve", "approve"),
+        ("reject", "reject"),
+        ("bbox_adjust", "bbox_adjust"),
+        ("split", "split"),
+        ("merge", "merge"),
+        ("manual_create", "manual_create"),
+        ("number_adjust", "number_adjust"),
+        ("text_adjust", "text_adjust"),
+    ]
+
+    SOURCE_CHOICES = [
+        ("user_ui", "user_ui"),
+        ("admin_review", "admin_review"),
+    ]
+
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="manual_correction_deltas",
+        db_index=True,
+    )
+    # nullable — proposal 외 다른 path 의 manual correction (bbox 직접 조정 등) 도 기록 가능
+    proposal = models.ForeignKey(
+        ProblemSegmentationProposal,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="correction_deltas",
+    )
+    problem = models.ForeignKey(
+        MatchupProblem,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="correction_deltas",
+    )
+    document = models.ForeignKey(
+        MatchupDocument,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="correction_deltas",
+    )
+
+    correction_type = models.CharField(
+        max_length=32,
+        choices=CORRECTION_TYPE_CHOICES,
+        db_index=True,
+    )
+    source = models.CharField(
+        max_length=16,
+        choices=SOURCE_CHOICES,
+        default="user_ui",
+    )
+
+    # bbox audit (proposal/problem 의 원 bbox vs 사용자 수정 bbox)
+    original_bbox = models.JSONField(null=True, blank=True)
+    corrected_bbox = models.JSONField(null=True, blank=True)
+    iou_with_ai = models.FloatField(null=True, blank=True)
+
+    # 부가 메타
+    paper_type_at_action = models.CharField(max_length=32, blank=True, default="")
+    engine_at_action = models.CharField(max_length=32, blank=True, default="")
+    notes = models.TextField(blank=True, default="")
+
+    created_by = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="matchup_correction_deltas",
+    )
+
+    class Meta:
+        app_label = "matchup"
+        indexes = [
+            models.Index(fields=["tenant", "correction_type", "created_at"]),
+            models.Index(fields=["tenant", "paper_type_at_action"]),
+            models.Index(fields=["tenant", "document"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"CorrectionDelta tenant={self.tenant_id} type={self.correction_type} "
+            f"proposal={self.proposal_id} problem={self.problem_id}"
+        )
