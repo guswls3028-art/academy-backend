@@ -312,3 +312,228 @@ def create_proposal(
         )
 
     return proposal
+
+
+# ── Phase 3.3 (2026-05-06): approve / reject API helpers ────────────────
+#
+# proposal → MatchupProblem 승격 path. callback 미연결 — staff 명시 호출만.
+#
+# 원칙:
+# - rejected proposal 은 영구적으로 승격 불가 (manual_overlap 포함).
+# - approved 중복 승인 금지.
+# - select_for_update 로 동시 승인 race 차단.
+# - transaction.atomic — 승격 실패 시 proposal status 변경도 롤백.
+# - selected_problem_ids / 기존 보고서 / comment 절대 미접근.
+# - manual=true MatchupProblem row 는 SELECT 도 안 함 (직접 변경 X — 보존만).
+
+_APPROVABLE_STATUSES = frozenset({"pending", "needs_review", "auto_passed"})
+_PROMOTED_META_KEY_FROM_PROPOSAL = "approved_from_proposal_id"
+
+
+class ProposalApprovalError(Exception):
+    """approve_proposal / reject_proposal 검증 실패."""
+
+
+def _validation_errors_have_manual_overlap(validation_errors: list[dict]) -> bool:
+    """validation_errors 안에 code='manual_overlap' 가 하나라도 있으면 True."""
+    for err in validation_errors or []:
+        if isinstance(err, dict) and err.get("code") == "manual_overlap":
+            return True
+    return False
+
+
+@transaction.atomic
+def approve_proposal(
+    proposal_id: int,
+    user,
+    *,
+    adjustments: Optional[dict] = None,
+):
+    """proposal → MatchupProblem 승격.
+
+    Args:
+        proposal_id: ProblemSegmentationProposal id.
+        user: 승인자 (User 인스턴스 또는 None).
+        adjustments: optional dict — bbox / text / image_key / embedding override.
+            bbox 변경 시 manual_overlap 재검사.
+
+    Returns:
+        승격된 MatchupProblem 인스턴스.
+
+    Raises:
+        ProposalApprovalError:
+            - proposal status 가 _APPROVABLE_STATUSES 밖 (rejected / approved 등)
+            - validation_errors 에 manual_overlap 존재 (영구 차단)
+            - adjusted bbox 가 manual cut 과 overlap
+            - 동시성 race 등
+
+    Side effects (transaction.atomic):
+        - 새 MatchupProblem 생성 (manual=False, confirmation_status='confirmed',
+          approved_from_proposal_id=proposal.id, bbox 기록).
+        - proposal.status='approved', reviewed_by, reviewed_at, promoted_problem 갱신.
+        - selected_problem_ids 어떤 곳에도 반영 X.
+        - 기존 manual=true MatchupProblem row 변경 X (read 없음).
+    """
+    from django.utils import timezone
+    from apps.domains.matchup.models import (
+        MatchupProblem,
+        ProblemSegmentationProposal,
+    )
+
+    proposal = ProblemSegmentationProposal.objects.select_for_update().get(id=proposal_id)
+
+    # status transition 검증 — rejected 는 영구 차단.
+    if proposal.status == "rejected":
+        raise ProposalApprovalError(
+            f"rejected proposal cannot be approved (id={proposal_id})"
+        )
+    if proposal.status == "approved":
+        # 이미 승격됨 — idempotent 거절 (재승격 시 MatchupProblem 중복 생성 방지).
+        raise ProposalApprovalError(
+            f"proposal already approved (id={proposal_id})"
+        )
+    if proposal.status not in _APPROVABLE_STATUSES:
+        raise ProposalApprovalError(
+            f"invalid status for approval: {proposal.status} (id={proposal_id})"
+        )
+
+    # validation_errors 에 manual_overlap 있으면 영구 차단 (Phase 3.2 정책 보강).
+    if _validation_errors_have_manual_overlap(proposal.validation_errors):
+        raise ProposalApprovalError(
+            f"proposal has manual_overlap validation error — permanently blocked "
+            f"(id={proposal_id})"
+        )
+
+    bbox_for_problem = dict(proposal.bbox or {})
+    text_override: Optional[str] = None
+    image_key_override: Optional[str] = None
+    embedding_override = None
+
+    if adjustments:
+        if "bbox" in adjustments:
+            new_bbox = adjustments["bbox"]
+            # adjusted bbox 로 manual_overlap 재검사
+            overlaps, max_iou, conflict_id = overlaps_existing_manual(
+                document_id=proposal.document_id,
+                candidate_bbox=new_bbox,
+                page_number=proposal.page_number,
+            )
+            if overlaps:
+                raise ProposalApprovalError(
+                    f"adjusted bbox overlaps existing manual cut "
+                    f"(iou={max_iou:.3f}, conflict_problem_id={conflict_id}, id={proposal_id})"
+                )
+            # bbox_for_problem 도 dict 형식으로 정규화
+            if isinstance(new_bbox, dict):
+                bbox_for_problem = dict(new_bbox)
+            elif isinstance(new_bbox, (list, tuple)) and len(new_bbox) == 4:
+                vals = [float(v) for v in new_bbox]
+                bbox_for_problem = {
+                    "x": vals[0], "y": vals[1], "w": vals[2], "h": vals[3],
+                    "norm": _looks_normalized(vals),
+                }
+        if "text" in adjustments:
+            text_override = adjustments["text"]
+        if "image_key" in adjustments:
+            image_key_override = adjustments["image_key"]
+        if "embedding" in adjustments:
+            embedding_override = adjustments["embedding"]
+
+    # MatchupProblem 생성 — Stage 4 strict allowlist 통과 자격 부여.
+    new_meta = {
+        "manual": False,                          # AI 결과 + 학원장 승인 (manual cut 과 별개)
+        "confirmation_status": "confirmed",       # Stage 4 strict allowlist 통과 자격
+        _PROMOTED_META_KEY_FROM_PROPOSAL: proposal.id,
+        "engine": proposal.engine,
+        "model_version": proposal.model_version,
+        "approved_by_id": user.id if user is not None and getattr(user, "id", None) else None,
+        "bbox": bbox_for_problem,
+    }
+    new_problem = MatchupProblem.objects.create(
+        tenant_id=proposal.tenant_id,
+        document_id=proposal.document_id,
+        number=proposal.detected_problem_number,
+        text=(text_override if text_override is not None else ""),
+        image_key=(image_key_override if image_key_override is not None else (proposal.image_key or "")),
+        embedding=embedding_override,
+        meta=new_meta,
+    )
+
+    # proposal 갱신 — validation_errors 보존 (clear 안 함).
+    proposal.status = "approved"
+    proposal.reviewed_by = user if user is not None and getattr(user, "id", None) else None
+    proposal.reviewed_at = timezone.now()
+    proposal.promoted_problem = new_problem
+    proposal.save(update_fields=[
+        "status", "reviewed_by", "reviewed_at", "promoted_problem", "updated_at",
+    ])
+
+    logger.info(
+        "approve_proposal | id=%s → problem_id=%s | doc=%s page=%s num=%s engine=%s by_user=%s",
+        proposal_id, new_problem.id, proposal.document_id, proposal.page_number,
+        proposal.detected_problem_number, proposal.engine,
+        getattr(user, "id", None) if user else None,
+    )
+
+    return new_problem
+
+
+@transaction.atomic
+def reject_proposal(
+    proposal_id: int,
+    user,
+    *,
+    reason: str = "",
+    code: str = "manual_reject",
+):
+    """proposal status='rejected' + audit 기록. MatchupProblem 생성 없음.
+
+    Args:
+        proposal_id: ProblemSegmentationProposal id.
+        user: 거절자 (User 또는 None).
+        reason: 거절 사유 (audit log).
+        code: 거절 분류 (default 'manual_reject'. 'incorrect_segmentation' 등).
+
+    Raises:
+        ProposalApprovalError:
+            - approved 상태는 reject 불가 (이미 운영 풀 진입).
+
+    Side effects (transaction.atomic):
+        - validation_errors append (기존 errors 보존).
+        - status='rejected', reviewed_by, reviewed_at 갱신.
+        - MatchupProblem 변경/생성 X.
+        - selected_problem_ids 미접근.
+
+    rejected → rejected 재호출은 idempotent (추가 reason 만 append).
+    """
+    from django.utils import timezone
+    from apps.domains.matchup.models import ProblemSegmentationProposal
+
+    proposal = ProblemSegmentationProposal.objects.select_for_update().get(id=proposal_id)
+
+    if proposal.status == "approved":
+        raise ProposalApprovalError(
+            f"approved proposal cannot be rejected (id={proposal_id}) — "
+            f"이미 운영 풀에 승격됨"
+        )
+
+    errors = list(proposal.validation_errors or [])
+    errors.append({
+        "code": code,
+        "detail": reason,
+        "by_user_id": user.id if user is not None and getattr(user, "id", None) else None,
+    })
+    proposal.validation_errors = errors
+    proposal.status = "rejected"
+    proposal.reviewed_by = user if user is not None and getattr(user, "id", None) else None
+    proposal.reviewed_at = timezone.now()
+    proposal.save(update_fields=[
+        "status", "reviewed_by", "reviewed_at", "validation_errors", "updated_at",
+    ])
+
+    logger.info(
+        "reject_proposal | id=%s | code=%s | reason=%s | by_user=%s",
+        proposal_id, code, reason, getattr(user, "id", None) if user else None,
+    )
+
+    return proposal
