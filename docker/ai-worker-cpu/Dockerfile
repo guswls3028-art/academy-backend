@@ -47,20 +47,20 @@ RUN pip install --user --no-cache-dir \
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2'); SentenceTransformer('clip-ViT-B-32'); print('CLIP+MiniLM cached OK')" \
     || (echo "ERROR: model pre-cache failed" && exit 1)
 
-# YOLO 문항 분리 모델 (V9_combined, 2026-05-06 학습, AWS Batch g4dn.xlarge T4) — 22.6MB.
-# 누적 manual ground truth 46 doc / 1,425 page / 3,207 bbox (T1 학원장 8 doc 695 + T2 직접 cut 38 doc 2,512).
-# 양식 분포: 신과함께 commercial 5 doc 1,402 / 메인자료 academy 14 doc 826 / academy 기타 12 doc 746 /
-# 학생시험사진 5 doc 173 / school_exam_pdf 1 doc 3 / 수능 출제원안 2 doc 39.
-# YOLOv8s + imgsz=1024 + 200 epochs (103 early stop, best epoch 73) + 보수적 augmentation.
-# best mAP50=0.9646 / mAP50-95=0.8655 (val 278 page, 625 instances).
-# 평가지표는 V8s(0.979)보다 약간 낮으나 학습 데이터 4.62배 다양성으로 더 도전적인 val set 평가
-# (commercial 신과함께 다른 학교 양식 + academy 학교별 메인자료 + 학생사진 5학교 등).
-# 운영 추론 검증: T2 sample doc reanalyze로 V8s vs V9 비교 후 진정한 평가.
-# 이전 모델: yolo_v8s_groundtruth.pt (T1 8 doc 695 bbox, mAP50=0.979) — 보존, 회귀 시 즉시 복귀 가능.
-# AIConfig.YOLO_QUESTION_MODEL_PATH ENV로 활성화 — 미설정 시 segment_yolo가
-# YoloNotConfiguredError raise → segment_dispatcher가 OCR/OpenCV로 폴백 (안전).
+# YOLO 문항 분리 모델 (V11_combined, 2026-05-06 학습, AWS Batch g4dn.xlarge T4) — 52.1MB.
+# YOLOv8m + imgsz=1280 격상 (V9 v8s+1024 → param 2.3배, imgsz +25%) + augmentation 보강
+# (mosaic 0.7 / degrees 3.0 / scale 0.4 / mixup 0.1) + V10 정제 풀 3,187 bbox (IOU outlier 20개 제거).
+# 학습: 84 epoch (EarlyStop epoch 54), 3.4시간, T4 GPU.
+# best mAP50=0.9711 / mAP50-95=**0.8750** (val 278 page, 619 instances).
+# V9 비교: mAP50 0.9646 → 0.9711 (+0.7%) / mAP50-95 0.8655 → **0.8750 (+1.1%)** ⭐
+# 정밀도 본질 향상 — bbox 위치 정확도 강화. 사용자 의도 "내 cut으로 AI가 학습" 부합.
+# 학습 풀: 사용자 cut 3,187 bbox (T1 학원장 8 doc + T2 직접 cut 38 doc).
+# 양식 분포: commercial 1,395 / academy 1,581 / student 170 / other 41.
+# 추론 시간: V9 v8s+1024 대비 1.5-2배 (CPU). AI worker 5대 분산으로 운영 영향 작음.
+# 보존 모델: yolo_v9_combined.pt (V9, 0.965/0.867) / yolo_v8s_groundtruth.pt (V8s, 0.979/0.836).
+# AIConfig.YOLO_QUESTION_MODEL_PATH ENV로 활성화 — 회귀 시 V9 환경변수 1줄 복귀 가능.
 COPY --chown=appuser:appuser models ./models
-ENV YOLO_QUESTION_MODEL_PATH=/app/models/yolo_v9_combined.pt
+ENV YOLO_QUESTION_MODEL_PATH=/app/models/yolo_v11_combined.pt
 
 # 앱 코드 (Base에 두지 않음) — 자주 변경되는 레이어를 가장 아래로
 USER root
