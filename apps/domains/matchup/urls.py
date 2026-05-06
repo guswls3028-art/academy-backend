@@ -1,6 +1,6 @@
 # PATH: apps/domains/matchup/urls.py
 from django.urls import path
-from . import views
+from . import views, views_proposal
 
 urlpatterns = [
     # Documents
@@ -43,4 +43,11 @@ urlpatterns = [
     path("problems/presign/", views.ProblemPresignView.as_view()),
     path("problems/<int:problem_id>/", views.ProblemDetailView.as_view()),
     path("problems/<int:problem_id>/similar/", views.SimilarProblemView.as_view()),
+
+    # Stage 3 Phase 3.4 — ProblemSegmentationProposal admin API.
+    # 검수 큐 / approve / reject. Phase 3.3 helper 재사용. callback 미연결.
+    path("proposals/", views_proposal.ProposalListView.as_view()),
+    path("proposals/<int:proposal_id>/", views_proposal.ProposalDetailView.as_view()),
+    path("proposals/<int:proposal_id>/approve/", views_proposal.ProposalApproveView.as_view()),
+    path("proposals/<int:proposal_id>/reject/", views_proposal.ProposalRejectView.as_view()),
 ]
