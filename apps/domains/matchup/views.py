@@ -1716,22 +1716,14 @@ class HitReportDraftView(View):
         except MatchupDocument.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
 
-        # 시험지(test) 또는 exam_sheet만 보고서 작성 가능 (학습자료에 보고서 X)
-        # source_type SSOT 추가 (2026-05-05 운영 fix): document_role 잘못 backfill된 도큐
-        # (예: doc 272 student_exam_photo인데 role=reference_material) 보호. source_type이
-        # school_exam_pdf | student_exam_photo면 시험지로 인정.
-        meta = doc.meta or {}
-        is_test = (
-            (meta.get("upload_intent") or "").lower() == "test"
-            or (meta.get("document_role") or "").lower() == "exam_sheet"
-            or (meta.get("source_type") or "").lower() in ("school_exam_pdf", "student_exam_photo")
-        )
-        if not is_test:
-            return JsonResponse(
-                {"detail": "보고서는 시험지(test) 자료에서만 작성할 수 있습니다.",
-                 "code": "not_test_doc"},
-                status=400,
-            )
+        # source_type 가드 제거 (2026-05-06 fix).
+        #   배경: 이전엔 source_type/document_role/upload_intent 셋 중 하나가 시험지가
+        #   아니면 400 차단. 자동 backfill 분류와 학원장 의도가 충돌해 "이미 만든 보고서
+        #   진입"까지 차단되는 결함 (T2 doc 206 / report 26 등). 손들어간 hit_report
+        #   데이터는 살아있는데 UI 접근만 막혀 가치 0.
+        #   가드의 본래 목적("학습자료 doc에 보고서 만들기 방지")은 frontend MatchupPage
+        #   의 "시험지 마킹" 토글 + 보고서 버튼 노출 조건이 이미 담당. backend hard-block
+        #   은 부수효과만 큼. 학원장이 학습자료에 보고서 만들겠다 결정한 건 본인 의지로 신뢰.
 
         # 강사 scope: 같은 시험지에 강사별로 별개 보고서. 작성자 본인 보고서를 가져온다.
         # admin/owner가 doc 진입 시: author=user로 자기 보고서 작성. 기존 다른 강사 보고서는 영향 없음.

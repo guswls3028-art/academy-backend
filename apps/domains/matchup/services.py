@@ -274,8 +274,21 @@ def find_similar_problems(
         text_sims = (text_sims + 1.0) / 2.0  # cosine_similarity()와 동일 정규화
 
         # 페이지 폴백 마스크 — fb_mask는 1차 선별과 최종 패널티 양쪽에서 사용.
+        # 페이지 폴백 = 자동분리가 페이지 통째를 problem으로 등록한 경우 (anchor 누락 등).
+        # 학원장 노가다 cut(manual=True)은 의도된 정확한 cut이므로 페널티 대상 아님:
+        #   - manually_crop_problem: meta.bbox_norm 보유, meta.bbox 없음
+        #   - paste_image_as_problem: bbox/bbox_norm 둘 다 없으나 사용자 의도된 단일 이미지
+        # 결함 (2026-05-06 측정 + fix): bbox 키 단독 검사로 manual 3,542건 모두 fb_mask=True →
+        #   페널티 -0.10 cap 0.89 → manual_boost +0.30이 1.0으로 saturated → ranking 정보 0.
+        # fix: manual=True 또는 bbox/bbox_norm 보유 = 정상 cut이므로 페널티 X.
         fb_mask = np.array(
-            [(c.meta or {}).get("bbox") is None for c in cand_list], dtype=bool,
+            [
+                not (c.meta or {}).get("manual")
+                and (c.meta or {}).get("bbox") is None
+                and (c.meta or {}).get("bbox_norm") is None
+                for c in cand_list
+            ],
+            dtype=bool,
         )
 
         # 1차 선별 — image fetch 후보 N개 정함 (image lazy fetch 정확도 보존).
@@ -328,13 +341,15 @@ def find_similar_problems(
         penal = np.maximum(0.0, penal)
         sims = np.where(fb_mask, penal, sims)
 
-        # manual=true boost — 학원장 노가다 cut 가치 보호 (2026-05-06 강화).
-        #   배경: 학원장 5시간+ × 3,207 bbox 노가다 cut의 가치 = AI 학습 + 추천 풀 우선순위.
-        #   기존 (ca8770e3): +0.15 boost (재cut mismatch 보강용).
-        #   강화 (P1.4 / α3): +0.30 default (manual cut 절대 우선, 자동분리 자료보다 항상 높음).
-        #   ENV MATCHUP_MANUAL_BOOST 로 운영 튜닝 가능 (per-tenant 미세조정).
-        #   사용자 의도 검증: "내가 자른 걸 AI가 학습 + 추천에 100% 반영" — α1 indexable backfill 후
-        #   추천 풀에서 자동분리 noise 제거됐고, 잔여 자동분리 자료는 manual보다 항상 후순위.
+        # manual=true boost — 학원장 노가다 cut 가치 보호 (saturation 없는 곱셈 형태).
+        #   배경: 학원장 3,500+ bbox 노가다 cut → AI 학습 + 추천 풀 우선순위.
+        #   기존 가산형 (+0.30): raw sim 0.7+ 인 manual 후보 모두 1.0 cap saturation →
+        #     top10 모두 sim=1.0, frontend "100% 직접 적중" 거짓 신호 (2026-05-06 측정).
+        #   현재 곱셈형: sim_new = sim + (1 - sim) * f. raw sim과 1.0 사이 gap의 f% 채움.
+        #     - 1.0 절대 도달 X (saturation 없음, ranking 정보 보존)
+        #     - 같은 raw sim 비교 시 manual이 위 (학원장 cut 우선)
+        #     - raw 매우 높은 (0.95+) 후보는 boost 효과 자연 감소 (이미 충분히 가까움)
+        #   ENV MATCHUP_MANUAL_BOOST 의미 = gap-close 비율 [0..1]. default 0.30.
         manual_mask = np.array(
             [(c.meta or {}).get("manual") is True for c in cand_list], dtype=bool,
         )
@@ -343,7 +358,12 @@ def find_similar_problems(
             _manual_boost = float(_osmb.environ.get("MATCHUP_MANUAL_BOOST", "0.30") or "0.30")
         except ValueError:
             _manual_boost = 0.30
-        sims = np.where(manual_mask, np.minimum(1.0, sims + _manual_boost), sims)
+        _manual_boost = max(0.0, min(1.0, _manual_boost))
+        sims = np.where(
+            manual_mask,
+            sims + (1.0 - sims) * _manual_boost,
+            sims,
+        )
 
         # 휴리스틱 weight 모두 0이라 그대로 sim. 정렬.
         order = np.argsort(-sims)  # desc
@@ -364,7 +384,14 @@ def find_similar_problems(
                 sim = _txt_w * text_sim + _img_w * img_sim
             else:
                 sim = text_sim
-            if (c.meta or {}).get("bbox") is None:
+            # numpy 경로와 동일 폴백 마스크 — manual cut/bbox_norm 보유는 페널티 X.
+            cm = c.meta or {}
+            is_page_fallback = (
+                not cm.get("manual")
+                and cm.get("bbox") is None
+                and cm.get("bbox_norm") is None
+            )
+            if is_page_fallback:
                 sim = max(0.0, min(0.84, sim - 0.15))
             scored.append((c, sim))
         scored.sort(key=lambda x: x[1], reverse=True)
