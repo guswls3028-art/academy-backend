@@ -130,6 +130,20 @@ def find_similar_problems(
         #   추천 0% 결함을 만들었던 결함 (2026-05-05 학원장 실측) fix.
         #   동일 NULL safety — `meta__contains` 사용으로 legacy doc 안전 통과.
         .exclude(document__meta__contains={"indexable": False})
+        # Stage 0 즉시 차단 패치 (사용자 directive 2026-05-06):
+        #   사용자 작성 데이터 immutable 원칙 — AI proposal 미승인 결과가 추천 풀 진입 절대 X.
+        #   pending/needs_review/rejected proposal + page_fallback/no_problems/needs_review/failed
+        #   processing_quality 모두 명시 차단. NULL safety: meta__contains는 정확 매칭 (legacy
+        #   problem 영향 X).
+        #   장기 plan = Stage 4 allowlist (confirmed only) 전환 + ProblemSegmentationProposal
+        #   별도 모델 마이그레이션 (Stage 3).
+        .exclude(meta__contains={"proposal_status": "pending"})
+        .exclude(meta__contains={"proposal_status": "needs_review"})
+        .exclude(meta__contains={"proposal_status": "rejected"})
+        .exclude(meta__contains={"processing_quality": "page_fallback"})
+        .exclude(meta__contains={"processing_quality": "no_problems"})
+        .exclude(meta__contains={"processing_quality": "needs_review"})
+        .exclude(meta__contains={"processing_quality": "failed"})
         .defer("created_at", "updated_at")
     )
 
