@@ -2100,17 +2100,33 @@ class HitReportEntriesUpsertView(View):
                 deleted += d
                 continue
 
-            MatchupHitReportEntry.objects.update_or_create(
+            # Stage 2 (2026-05-06): selected_problem_ids 변경 immutable guard.
+            # update_or_create 대신 명시적 fetch + history append + save 분리.
+            entry, _ = MatchupHitReportEntry.objects.get_or_create(
                 tenant=request.tenant,
                 report=report,
                 exam_problem_id=exam_pid,
                 defaults={
-                    "selected_problem_ids": sel,
-                    "comment": comment,
-                    "order": order,
-                    "excluded": excluded,
+                    "selected_problem_ids": [],
+                    "comment": "",
+                    "order": 0,
+                    "excluded": False,
                 },
             )
+            by_user_id = getattr(request, "user", None)
+            by_user_id = by_user_id.id if by_user_id and getattr(by_user_id, "is_authenticated", False) else None
+            entry.append_selection_history(
+                new_selected_ids=sel,
+                by_user_id=by_user_id,
+                source="user_ui",
+                reason="HitReportEntriesUpsertView upsert",
+            )
+            entry._change_source = "user_ui"
+            entry.selected_problem_ids = sel
+            entry.comment = comment
+            entry.order = order
+            entry.excluded = excluded
+            entry.save()
             upserted += 1
 
         # report.updated_at 갱신

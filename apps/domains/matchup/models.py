@@ -236,6 +236,26 @@ class MatchupHitReportEntry(TimestampModel):
     # PDF 렌더 + 적중률(분모/분자) 모두 skip. UI 좌측 Q 리스트 토글 (2026-05-05).
     excluded = models.BooleanField(default=False)
 
+    # Audit log — 학원장 작성 데이터 immutable 원칙 (Stage 2, 2026-05-06).
+    # 사용자 directive: selected_problem_ids 변경은 모두 history에 추적.
+    # 자동 reanalyze / 자동 매핑 / AI callback 직접 수정 시 source 명시 필수.
+    # PITR 없이도 특정 시점 selected_problem_ids 복원 가능 (selection_history 사용).
+    #
+    # schema:
+    # [{
+    #   "timestamp": "2026-05-06T12:30:00Z",
+    #   "previous_selected_ids": [...],
+    #   "new_selected_ids": [...],
+    #   "changed_by_id": int,
+    #   "change_source": "user_ui" | "admin_pitr_restore" | "admin_repair" | ...,
+    #   "reason": str,
+    # }, ...]
+    selection_history = models.JSONField(default=list, blank=True)
+    last_modified_by = models.ForeignKey(
+        "core.User", on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="modified_matchup_entries",
+    )
+
     class Meta:
         app_label = "matchup"
         ordering = ["order", "id"]
@@ -245,6 +265,43 @@ class MatchupHitReportEntry(TimestampModel):
                 name="unique_hit_report_exam_problem",
             ),
         ]
+
+    def append_selection_history(
+        self,
+        *,
+        new_selected_ids: list,
+        by_user_id: int | None = None,
+        source: str = "user_ui",
+        reason: str = "",
+    ) -> None:
+        """selected_problem_ids 변경 직전 호출 — audit log append.
+
+        Args:
+            new_selected_ids: 새 selected_problem_ids 값
+            by_user_id: 변경자 user.id (사용자 UI / admin)
+            source: "user_ui" / "admin_pitr_restore" / "admin_repair" / "migration"
+            reason: 변경 사유 (PITR 복원, 수동 정정 등)
+
+        주의: 이 함수는 self.selected_problem_ids 자체를 변경하지 않는다.
+        호출자가 history append 후 명시적으로 selected_problem_ids 갱신해야 함.
+        """
+        from django.utils import timezone
+        prev_ids = list(self.selected_problem_ids or [])
+        new_ids = list(new_selected_ids or [])
+        if prev_ids == new_ids:
+            return  # no-op
+        history = list(self.selection_history or [])
+        history.append({
+            "timestamp": timezone.now().isoformat(),
+            "previous_selected_ids": prev_ids,
+            "new_selected_ids": new_ids,
+            "changed_by_id": by_user_id,
+            "change_source": source,
+            "reason": reason,
+        })
+        self.selection_history = history
+        if by_user_id:
+            self.last_modified_by_id = by_user_id
 
     def __str__(self):
         return f"Entry report#{self.report_id} exam_q={self.exam_problem_id}"
