@@ -19,6 +19,7 @@ flow:
 from __future__ import annotations
 
 import re
+import statistics
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
@@ -1598,6 +1599,343 @@ def analyze_pdf_v4(
             "role": role.role,
             "role_confidence": role.confidence,
             "role_debug": role.debug,
+            "anchor_count": len(anchors),
+            "anchors": [asdict(a) for a in anchors],
+            "bbox_candidates": [asdict(c) for c in candidates],
+            "columns": {
+                "count": cols.column_count,
+                "lefts": cols.column_lefts,
+            },
+        })
+
+    return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Stage 5.5.1 v5_1 — manual GT 친화적 fix (2026-05-07)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Stage 5.5 발견:
+#  - v4 manual GT F1@0.5 = 0.049 — 사실상 작동 안 함
+#  - "내지" 류 자료 (manual cut 100% ratio) 가 4-block layout 인데 v4 single_column
+#    잘못 분류 → dedup 으로 350 → 50 sub-sampling
+#  - operating_problem_count 는 자동 분리 결과라 GT 아님 (Stage 5.4.5 paradigm shift)
+#
+# v5_1 보강 (manual GT 학습 친화):
+#  1. layout_v2: x0 cluster 0.05 / 0.50 두 peak → 4-block / two_column 명시 분류
+#  2. safe_dedup: 4 조건 모두 만족 시만 적용 + recall 급락 시 rollback
+#  3. paper_type internal-only: 외부 응답 키 _internal 마킹
+#  4. v5 의 operating_problem_count 기반 trigger 미사용
+#
+# 원칙:
+# - 운영 코드/데이터 미접근
+# - manual cut 미참조 (학습은 Stage 5.5.2+)
+# - 결과는 artifact 만
+
+# 학습자료 layout 후보 — manual cut bbox 분석으로 학습된 4-block 양식 시그널
+LAYOUT_SINGLE_COLUMN = "single_column"
+LAYOUT_TWO_COLUMN = "two_column"
+LAYOUT_FOUR_BLOCK = "four_block"
+LAYOUT_PAGE_LEVEL = "page_level"
+LAYOUT_MIXED = "mixed"
+LAYOUT_UNKNOWN = "unknown"
+
+
+@dataclass
+class LayoutAnalysis:
+    """v5_1 layout 분석 결과 — manual GT 평가 친화."""
+    layout_type: str  # LAYOUT_*
+    confidence: float  # 0~1
+    x0_clusters: list[float]
+    page_bbox_count_p50: float  # 페이지당 bbox 수 median
+    debug: dict
+
+
+def classify_layout_v2(
+    per_page_bboxes: list[list[tuple[float, float, float, float]]],
+    *,
+    page_width: float = 595.0,
+) -> LayoutAnalysis:
+    """페이지별 bbox (norm 좌표) 분포로 layout 분류.
+
+    manual cut 또는 v4 candidate 의 bbox 사용. x0 cluster + page bbox 수로 판단.
+
+    Returns:
+        LayoutAnalysis
+    """
+    if not per_page_bboxes:
+        return LayoutAnalysis(LAYOUT_UNKNOWN, 0.0, [], 0.0, {"reason": "no_bbox"})
+
+    counts = [len(p) for p in per_page_bboxes]
+    if not any(counts):
+        return LayoutAnalysis(LAYOUT_UNKNOWN, 0.0, [], 0.0, {"reason": "all_empty"})
+
+    # x0 모음
+    all_x0: list[float] = []
+    for page in per_page_bboxes:
+        for bbox in page:
+            all_x0.append(bbox[0])
+
+    # 페이지당 bbox 수 — median
+    counts_sorted = sorted(counts)
+    page_p50 = counts_sorted[len(counts_sorted) // 2]
+
+    debug: dict = {"page_p50": page_p50, "x0_count": len(all_x0)}
+
+    # 페이지당 1개 + 전체 bbox 1~2개 = page_level
+    if page_p50 <= 1 and len(all_x0) <= 2:
+        return LayoutAnalysis(LAYOUT_PAGE_LEVEL, 0.7, [], page_p50, debug)
+
+    # x0 cluster 분석
+    if len(all_x0) < 3:
+        return LayoutAnalysis(LAYOUT_SINGLE_COLUMN, 0.5, [statistics.mean(all_x0)] if all_x0 else [], page_p50, debug)
+
+    # 좌측 (x < 0.3) / 우측 (x >= 0.4) 분포
+    left_count = sum(1 for x in all_x0 if x < 0.3)
+    right_count = sum(1 for x in all_x0 if x >= 0.4)
+    middle_count = len(all_x0) - left_count - right_count
+    debug["left_count"] = left_count
+    debug["right_count"] = right_count
+
+    # 양쪽 cluster 가 충분히 분포 (각각 20%+)
+    bilateral = (
+        min(left_count, right_count) >= len(all_x0) * 0.2
+    )
+
+    if bilateral:
+        # 페이지당 4+ bbox + 양쪽 → 4-block
+        if page_p50 >= 3:
+            return LayoutAnalysis(
+                LAYOUT_FOUR_BLOCK, 0.85, [0.05, 0.50], page_p50, debug,
+            )
+        # 페이지당 2~3 bbox + 양쪽 → two_column
+        return LayoutAnalysis(
+            LAYOUT_TWO_COLUMN, 0.85, [0.05, 0.50], page_p50, debug,
+        )
+
+    # bilateral X — 좌측 dominant 면 single_column
+    if left_count >= len(all_x0) * 0.7:
+        return LayoutAnalysis(
+            LAYOUT_SINGLE_COLUMN, 0.8, [statistics.mean([x for x in all_x0 if x < 0.3])],
+            page_p50, debug,
+        )
+
+    return LayoutAnalysis(LAYOUT_UNKNOWN, 0.5, [], page_p50, debug)
+
+
+def safe_dedup_anchors(
+    per_page_anchors: list[list[NumberAnchor]],
+    paper_type: str,
+    layout_type: str,
+) -> tuple[list[list[NumberAnchor]], dict]:
+    """v5_1 안전 dedup — 4 조건 모두 만족 + recall 급락 시 rollback.
+
+    조건 (모두 AND):
+    1. 같은 번호가 여러 페이지에 반복 (duplicate_ratio >= 0.5 — v4 의 0.4 보다 엄격)
+    2. paper_type 이 학습자료 (workbook_main / review_homework / unknown)
+    3. layout_type 이 manual-rich 패턴 아님 (4-block / two_column 제외)
+    4. dedup 후 anchor 수가 dedup 전 50% 이하로 떨어지면 rollback
+
+    Returns:
+        (deduped_per_page_anchors, debug_info).
+    """
+    debug: dict = {"applied": False, "rolled_back": False}
+
+    # 조건 2 — 학습자료만 dedup 대상
+    learning_set = {
+        PAPER_TYPE_REVIEW_HOMEWORK, PAPER_TYPE_WORKBOOK_MAIN, PAPER_TYPE_UNKNOWN,
+    }
+    if paper_type not in learning_set:
+        return per_page_anchors, debug
+
+    # 조건 3 — manual-rich layout 은 dedup 미적용
+    if layout_type in (LAYOUT_FOUR_BLOCK, LAYOUT_TWO_COLUMN):
+        debug["skip_reason"] = f"layout_{layout_type}_no_dedup"
+        return per_page_anchors, debug
+
+    # 조건 1 — duplicate_ratio
+    detected_total = sum(len(a) for a in per_page_anchors)
+    if detected_total == 0:
+        return per_page_anchors, debug
+
+    seen: dict[int, int] = {}
+    duplicates = 0
+    for page_idx, anchors in enumerate(per_page_anchors):
+        for a in anchors:
+            if a.number in seen:
+                duplicates += 1
+            else:
+                seen[a.number] = page_idx
+    duplicate_ratio = duplicates / detected_total
+    debug["duplicate_ratio"] = round(duplicate_ratio, 3)
+
+    if duplicate_ratio < 0.5:
+        debug["skip_reason"] = f"duplicate_ratio_{duplicate_ratio:.2f}_below_0.5"
+        return per_page_anchors, debug
+
+    # dedup 적용
+    deduped: list[list[NumberAnchor]] = []
+    seen_apply: set[int] = set()
+    for page_idx, anchors in enumerate(per_page_anchors):
+        kept: list[NumberAnchor] = []
+        for a in anchors:
+            if a.number in seen_apply:
+                continue
+            seen_apply.add(a.number)
+            kept.append(a)
+        deduped.append(kept)
+
+    deduped_total = sum(len(a) for a in deduped)
+    debug["before"] = detected_total
+    debug["after"] = deduped_total
+    debug["reduction_ratio"] = round(1 - deduped_total / detected_total, 3) if detected_total else 0
+
+    # 조건 4 — recall 급락 safety: dedup 후 50% 이하로 떨어지면 rollback
+    if deduped_total < detected_total * 0.5:
+        debug["rolled_back"] = True
+        debug["rollback_reason"] = "post_dedup_below_50_percent"
+        return per_page_anchors, debug
+
+    debug["applied"] = True
+    return deduped, debug
+
+
+def infer_page_from_bbox_y(
+    bbox_norm: tuple[float, float, float, float],
+    page_count: int,
+) -> Optional[int]:
+    """manual cut bbox_norm y 좌표로 page 추정 (heuristic).
+
+    manual cut 의 meta.page = None 이면 사용. bbox_norm 은 페이지 안 좌표 (0~1)
+    이라 page 정보 없음 → 추정 불가능. heuristic: page_count = 1 이면 page 0,
+    그 외 unknown.
+
+    Returns:
+        page_index (0-based) 또는 None (추정 불가).
+    """
+    if page_count <= 0:
+        return None
+    if page_count == 1:
+        return 0
+    # 다중 페이지에서는 bbox_norm y 만으로 page 추정 불가
+    return None
+
+
+def analyze_pdf_v5_1(
+    pdf_path: str, *, file_name: Optional[str] = None,
+) -> dict[str, Any]:
+    """v5_1 — manual GT 친화 fix.
+
+    v4 base + layout_v2 + safe_dedup + paper_type internal-only.
+
+    output 의 paper_type 키는 _internal_paper_type 으로 마킹 (외부 노출 금지).
+    """
+    import os as _os
+
+    pages = extract_page_blocks(pdf_path)
+    n_pages = len(pages)
+    n_text_pages = sum(1 for p in pages if p.has_embedded_text)
+
+    if file_name is None:
+        file_name = _os.path.basename(pdf_path)
+
+    tier1_required = False
+    tier1_reason = ""
+    if n_pages == 0:
+        tier1_required = True; tier1_reason = "empty_pdf"
+    elif n_text_pages == 0:
+        tier1_required = True; tier1_reason = "scanned_no_text_layer"
+    elif n_text_pages < n_pages * 0.5:
+        tier1_required = True; tier1_reason = "partial_text_layer"
+
+    # 1차 — v2 anchor + paper_type 신호
+    pre_anchors_total = 0
+    full_text_chunks: list[str] = []
+    per_page_columns: list[ColumnLayout] = []
+    pre_per_page_bboxes: list[list[tuple[float, float, float, float]]] = []
+    for page in pages:
+        cols = detect_columns(page.word_blocks, page.page_width)
+        per_page_columns.append(cols)
+        v2_anchors = detect_problem_anchors_v2(page, cols)
+        pre_anchors_total += len(v2_anchors)
+        full_text_chunks.append(
+            " ".join(b.get("text", "") for b in page.text_blocks)[:300]
+        )
+        # 사전 candidate 의 bbox_norm 으로 layout 추정
+        pre_bboxes = []
+        for a in v2_anchors:
+            bbox_norm = (
+                a.bbox[0] / page.page_width if page.page_width else 0,
+                a.bbox[1] / page.page_height if page.page_height else 0,
+                (a.bbox[2] - a.bbox[0]) / page.page_width if page.page_width else 0,
+                (a.bbox[3] - a.bbox[1]) / page.page_height if page.page_height else 0,
+            )
+            pre_bboxes.append(bbox_norm)
+        pre_per_page_bboxes.append(pre_bboxes)
+    full_text = " ".join(full_text_chunks)
+
+    paper_type, pt_conf, pt_debug = classify_paper_type_v4(
+        file_name=file_name,
+        pages_full_text=full_text,
+        total_anchors=pre_anchors_total,
+        page_count=n_pages,
+    )
+
+    # v5_1 layout 분류 — pre_per_page_bboxes 사용
+    layout = classify_layout_v2(pre_per_page_bboxes)
+
+    # 2차 — paper_type-aware anchor (v3 정책)
+    per_page_anchors: list[list[NumberAnchor]] = []
+    for page, cols in zip(pages, per_page_columns):
+        anchors = detect_problem_anchors_v3(page, cols, paper_type)
+        per_page_anchors.append(anchors)
+
+    # v5_1 safe dedup
+    per_page_anchors_dedup, dedup_debug = safe_dedup_anchors(
+        per_page_anchors, paper_type, layout.layout_type,
+    )
+
+    cross = cross_page_validate(per_page_anchors_dedup)
+
+    out: dict[str, Any] = {
+        "version": "v5_1",
+        "pdf_path": pdf_path,
+        "file_name": file_name,
+        "page_count": n_pages,
+        "text_pages": n_text_pages,
+        # paper_type internal-only — 외부 응답 키 _internal 마킹
+        "_internal_paper_type": paper_type,
+        "_internal_paper_type_confidence": pt_conf,
+        "_internal_paper_type_debug": pt_debug,
+        "layout_v2": {
+            "type": layout.layout_type,
+            "confidence": layout.confidence,
+            "x0_clusters": layout.x0_clusters,
+            "page_p50": layout.page_bbox_count_p50,
+        },
+        "tier1_required": tier1_required,
+        "tier1_reason": tier1_reason,
+        "doc_dedup_v51": dedup_debug,
+        "pages": [],
+        "cross_page": {
+            "detected_total": cross.detected_total,
+            "expected_max": cross.expected_max,
+            "sequence_continuity": cross.sequence_continuity,
+            "duplicates_dropped": cross.duplicates_dropped,
+            "suspicious_pages": cross.suspicious_pages,
+        },
+    }
+
+    for page, anchors, cols in zip(pages, per_page_anchors_dedup, per_page_columns):
+        role = classify_page_role_v2(page, anchors)
+        candidates = derive_bbox_candidates_v2(anchors, page, cols)
+        out["pages"].append({
+            "page_index": page.page_index,
+            "page_width": page.page_width,
+            "page_height": page.page_height,
+            "has_embedded_text": page.has_embedded_text,
+            "role": role.role,
+            "role_confidence": role.confidence,
             "anchor_count": len(anchors),
             "anchors": [asdict(a) for a in anchors],
             "bbox_candidates": [asdict(c) for c in candidates],
