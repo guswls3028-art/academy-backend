@@ -1305,3 +1305,306 @@ def analyze_pdf_v3(pdf_path: str, *, file_name: Optional[str] = None) -> dict[st
         })
 
     return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Stage 5.4 v4 — paper_type 키워드 보강 + doc-level dedup + density policy
+# ════════════════════════════════════════════════════════════════════════════
+#
+# v3 한계 (Stage 5.3 평가):
+#  - id 121 ("중철물" 키워드 누락): paper_type=exam 오분류 → recall 4.32x
+#  - id 127/300 ("개념완성 문항편" workbook 정확 분류했지만 page anchor 적어 max 검증 통과):
+#     duplicates_dropped 82/100 (82%) — 같은 number 가 여러 페이지에 반복 (학습자료 본문 항목번호)
+#  - 핵심 신호: cross_page.duplicates_dropped 비율
+#
+# v4 보강:
+#  1. _FILENAME_HINTS_V4 — "중철물" 등 운영 자료 키워드 추가
+#  2. doc-level duplicate dropping (학습자료) — 같은 number 첫 등장만 유지
+#  3. expected_max 추정 — 학습자료 paper_type 별 sane upper bound
+#  4. doc-level over-detection guard — anchor / expected_max > 3 면 strict dedup
+#  5. v3 와 동일한 격리 (운영 코드 미참조)
+
+# v4 추가 filename hint — 운영 자료 기반.
+# 주의: 단원명 키워드 ("별의 진화", "화학결합", "주기적 성질") 는 모의고사/킬러 파일명에도
+# 등장 가능 (예: "신민 모의고사 별의 진화") — v3 hint 인 "모의고사"/"킬러"/"중간고사" 가
+# 먼저 매칭되어야 함. classify_paper_type_v4 에서 v3 매칭 우선 + v4 보조 검사.
+_FILENAME_HINTS_V4 = (
+    # 가장 강한 시그널 — 학원 전용 자료 (v3 hint 없는 파일에만 매칭됨)
+    ("중철물", PAPER_TYPE_WORKBOOK_MAIN),  # id 121
+    # 학년도 — 시험지
+    ("학년도", PAPER_TYPE_EXAM),  # "2024학년도 1학기 중간고사"
+    # 단원명 키워드는 v3 hint 매칭 안 된 자료에 한해 보조 분류
+    # (모의고사/킬러/시험지 파일명에 단원명이 들어가도 v3 우선)
+    ("기본량", PAPER_TYPE_WORKBOOK_MAIN),
+    ("측정과 표준", PAPER_TYPE_WORKBOOK_MAIN),
+    ("주기적 성질", PAPER_TYPE_WORKBOOK_MAIN),
+    ("화학 결합", PAPER_TYPE_WORKBOOK_MAIN),
+    ("화학결합", PAPER_TYPE_WORKBOOK_MAIN),
+    ("별의 진화", PAPER_TYPE_WORKBOOK_MAIN),
+    ("빅뱅과", PAPER_TYPE_WORKBOOK_MAIN),
+)
+
+# paper_type 별 expected_max anchor 추정 (sane upper bound)
+# 운영 _MAX_LEGIT_QUESTION_NUMBER=60, 모의고사 ~22, 시험지 ~30, 복습과제 ~60, 학습자료 ~100
+_PAPER_TYPE_EXPECTED_MAX = {
+    PAPER_TYPE_EXAM: 30,
+    PAPER_TYPE_MOCK_EXAM: 25,
+    PAPER_TYPE_KILLER_TEST: 20,
+    PAPER_TYPE_REVIEW_HOMEWORK: 80,
+    # advanced_material 은 운영 분포 max 193 (id 145) — 200 으로 여유.
+    PAPER_TYPE_ADVANCED_MATERIAL: 200,
+    PAPER_TYPE_WORKBOOK_MAIN: 100,
+    PAPER_TYPE_ANSWER_EXPLANATION: 0,
+    PAPER_TYPE_COVER: 0,
+    PAPER_TYPE_UNKNOWN: 50,
+}
+
+# doc-level over-detection 임계 (detected_total / expected_max 비율)
+_DOC_OVER_DETECT_THRESHOLD = 3.0
+
+# 학습자료에서 doc-level dedup 적용할 duplicates 비율 임계
+_DUPLICATE_RATIO_THRESHOLD = 0.4  # 40% 이상 중복이면 dedup
+
+
+def classify_paper_type_v4(
+    *,
+    file_name: str = "",
+    pages_full_text: str = "",
+    total_anchors: int = 0,
+    page_count: int = 1,
+) -> tuple[str, float, dict]:
+    """v4 paper_type 분류 — v3 hint 우선, v4 hint 보조.
+
+    Stage 5.4 fix: 단원명 키워드 ("별의 진화", "화학결합") 는 모의고사/킬러 파일명에도
+    등장 가능 → v3 hint ("모의고사"/"킬러"/"기출"/"중간고사") 매칭 우선.
+
+    검사 순서:
+      1. v3 prototype hints (모의고사/킬러/기출/복습과제/객서심화/메인자료/내지 등)
+      2. v3 가 unknown 반환 시에만 v4 추가 키워드 (중철물/학년도/단원명) 검사
+    """
+    fn_lower = (file_name or "").lower()
+
+    # 1. v3 hints 우선 — 모의고사/킬러 등 강한 시그널이 단원명 매칭보다 우선.
+    pt_v3, conf_v3, debug_v3 = classify_paper_type_prototype(
+        file_name=file_name, pages_full_text=pages_full_text,
+        total_anchors=total_anchors, page_count=page_count,
+    )
+
+    # 2. v3 가 high confidence (>=0.7) 결과면 그대로 사용.
+    #    파일명 hint 직접 매칭 (0.85) 또는 본문 hint (0.7) 결과는 신뢰.
+    if pt_v3 != PAPER_TYPE_UNKNOWN and conf_v3 >= 0.7:
+        debug_v3["version"] = "v4_via_v3_high_conf"
+        return (pt_v3, conf_v3, debug_v3)
+
+    # 3. v3 가 low confidence (density 휴리스틱) 또는 unknown 이면 v4 hint 보조 검사.
+    #    예: id 121 "중철물" 키워드 — v3 anchor density 가 exam 휴리스틱에 잘못 매칭되어
+    #    conf 0.5 로 exam 분류됨. v4 hint 매칭이 더 강함.
+    debug: dict = {"file_name": file_name, "version": "v4"}
+    for kw, pt in _FILENAME_HINTS_V4:
+        if kw.lower() in fn_lower:
+            debug["filename_match_v4"] = kw
+            debug["overrode_v3"] = pt_v3 if pt_v3 != PAPER_TYPE_UNKNOWN else None
+            return (pt, 0.85, debug)
+
+    # 4. v4 hint 도 안 잡히면 v3 결과 그대로 (low conf 도 fallback 사용).
+    debug_v3["version"] = "v4_via_v3_fallback"
+    return (pt_v3, conf_v3, debug_v3)
+
+
+def doc_level_dedup_anchors(
+    per_page_anchors: list[list[NumberAnchor]],
+    paper_type: str,
+) -> tuple[list[list[NumberAnchor]], dict]:
+    """문서 전체에서 같은 number 가 여러 페이지에 반복되면 dedup (첫 등장만 유지).
+
+    학습자료(workbook/review/advanced) 에서 본문 항목번호 폭증 차단.
+    시험지/모의고사 는 dedup 안 함 (정상적으로 1~N 한 번씩).
+
+    Returns:
+        (deduped_per_page, debug_info).
+    """
+    debug: dict = {"applied": False, "duplicates_removed": 0}
+
+    # 시험지류는 dedup X (정상 시퀀스)
+    if paper_type in _EXAM_PAPER_TYPES:
+        return per_page_anchors, debug
+
+    # answer/cover 는 anchor 0 — dedup 의미 X
+    if paper_type in (PAPER_TYPE_ANSWER_EXPLANATION, PAPER_TYPE_COVER):
+        return per_page_anchors, debug
+
+    # detected_total / expected_max 비율 검사
+    detected_total = sum(len(a) for a in per_page_anchors)
+    expected_max = _PAPER_TYPE_EXPECTED_MAX.get(paper_type, 50)
+    if expected_max <= 0:
+        return per_page_anchors, debug
+
+    over_ratio = detected_total / expected_max
+    debug["over_ratio"] = round(over_ratio, 2)
+    debug["expected_max"] = expected_max
+
+    # duplicate 비율 계산
+    seen_numbers: dict[int, int] = {}  # number → first page_index
+    for page_idx, anchors in enumerate(per_page_anchors):
+        for a in anchors:
+            if a.number not in seen_numbers:
+                seen_numbers[a.number] = page_idx
+    unique_numbers = len(seen_numbers)
+    duplicates = detected_total - unique_numbers
+    duplicate_ratio = duplicates / detected_total if detected_total else 0.0
+    debug["duplicate_ratio"] = round(duplicate_ratio, 3)
+
+    # dedup 적용 조건 — Stage 5.4 fix:
+    # - workbook_main / review_homework 만 dedup (페이지마다 본문 항목번호 반복 패턴).
+    # - advanced_material 은 운영 문항 184~193 까지 가는 큰 자료 — cross-page sequence
+    #   정상이라 dedup 부적합 (dedup 시 under-detection).
+    # - unknown 도 dedup (보수적).
+    # - 추가 조건: duplicate_ratio >= 0.4 OR over_ratio >= 3.0
+    _dedup_target_paper_types = {
+        PAPER_TYPE_WORKBOOK_MAIN,
+        PAPER_TYPE_REVIEW_HOMEWORK,
+        PAPER_TYPE_UNKNOWN,
+    }
+    should_dedup = paper_type in _dedup_target_paper_types and (
+        duplicate_ratio >= _DUPLICATE_RATIO_THRESHOLD
+        or over_ratio >= _DOC_OVER_DETECT_THRESHOLD
+    )
+
+    if not should_dedup:
+        return per_page_anchors, debug
+
+    # dedup — 같은 number 첫 등장 페이지만 유지, 같은 페이지 내에서도 같은 number 1개만
+    deduped: list[list[NumberAnchor]] = []
+    seen_numbers_apply: set[int] = set()
+    removed = 0
+    for page_idx, anchors in enumerate(per_page_anchors):
+        kept: list[NumberAnchor] = []
+        for a in anchors:
+            if a.number in seen_numbers_apply:
+                removed += 1
+                continue
+            seen_numbers_apply.add(a.number)
+            kept.append(a)
+        deduped.append(kept)
+
+    debug["applied"] = True
+    debug["duplicates_removed"] = removed
+    return deduped, debug
+
+
+def analyze_pdf_v4(
+    pdf_path: str, *, file_name: Optional[str] = None,
+) -> dict[str, Any]:
+    """v4 통합 entrypoint — paper_type 키워드 보강 + doc-level dedup + expected_max policy.
+
+    v3 와 동일한 시작점:
+    - extract_page_blocks
+    - tier1_required 분류
+    - paper_type 추정 (v4 키워드 우선)
+    - per-page anchor 검출 (v3 정책)
+
+    v4 추가:
+    - doc_level_dedup_anchors: 학습자료에서 number 중복 dedup
+    - over_ratio / duplicate_ratio 결과 보고
+    - paper_type 별 expected_max
+    """
+    import os as _os
+
+    pages = extract_page_blocks(pdf_path)
+    n_pages = len(pages)
+    n_text_pages = sum(1 for p in pages if p.has_embedded_text)
+
+    if file_name is None:
+        file_name = _os.path.basename(pdf_path)
+
+    tier1_required = False
+    tier1_reason = ""
+    if n_pages == 0:
+        tier1_required = True
+        tier1_reason = "empty_pdf"
+    elif n_text_pages == 0:
+        tier1_required = True
+        tier1_reason = "scanned_no_text_layer"
+    elif n_text_pages < n_pages * 0.5:
+        tier1_required = True
+        tier1_reason = "partial_text_layer"
+
+    # 1차 — v2 anchor 사용해서 paper_type density 신호 수집
+    pre_anchors_total = 0
+    full_text_chunks: list[str] = []
+    per_page_columns: list[ColumnLayout] = []
+    for page in pages:
+        cols = detect_columns(page.word_blocks, page.page_width)
+        per_page_columns.append(cols)
+        v2_anchors = detect_problem_anchors_v2(page, cols)
+        pre_anchors_total += len(v2_anchors)
+        full_text_chunks.append(
+            " ".join(b.get("text", "") for b in page.text_blocks)[:300]
+        )
+    full_text = " ".join(full_text_chunks)
+
+    # paper_type — v4 키워드 우선
+    paper_type, pt_conf, pt_debug = classify_paper_type_v4(
+        file_name=file_name,
+        pages_full_text=full_text,
+        total_anchors=pre_anchors_total,
+        page_count=n_pages,
+    )
+
+    # 2차 — paper_type-aware anchor 검출 (v3 정책)
+    per_page_anchors: list[list[NumberAnchor]] = []
+    for page, cols in zip(pages, per_page_columns):
+        anchors = detect_problem_anchors_v3(page, cols, paper_type)
+        per_page_anchors.append(anchors)
+
+    # 3차 — doc-level dedup (v4 신규)
+    per_page_anchors_dedup, dedup_debug = doc_level_dedup_anchors(
+        per_page_anchors, paper_type,
+    )
+
+    cross = cross_page_validate(per_page_anchors_dedup)
+
+    out: dict[str, Any] = {
+        "version": "v4",
+        "pdf_path": pdf_path,
+        "file_name": file_name,
+        "page_count": n_pages,
+        "text_pages": n_text_pages,
+        "paper_type": paper_type,
+        "paper_type_confidence": pt_conf,
+        "paper_type_debug": pt_debug,
+        "expected_max": _PAPER_TYPE_EXPECTED_MAX.get(paper_type),
+        "tier1_required": tier1_required,
+        "tier1_reason": tier1_reason,
+        "doc_dedup": dedup_debug,
+        "pages": [],
+        "cross_page": {
+            "detected_total": cross.detected_total,
+            "expected_max": cross.expected_max,
+            "sequence_continuity": cross.sequence_continuity,
+            "duplicates_dropped": cross.duplicates_dropped,
+            "suspicious_pages": cross.suspicious_pages,
+        },
+    }
+
+    for page, anchors, cols in zip(pages, per_page_anchors_dedup, per_page_columns):
+        role = classify_page_role_v2(page, anchors)
+        candidates = derive_bbox_candidates_v2(anchors, page, cols)
+        out["pages"].append({
+            "page_index": page.page_index,
+            "page_width": page.page_width,
+            "page_height": page.page_height,
+            "has_embedded_text": page.has_embedded_text,
+            "role": role.role,
+            "role_confidence": role.confidence,
+            "role_debug": role.debug,
+            "anchor_count": len(anchors),
+            "anchors": [asdict(a) for a in anchors],
+            "bbox_candidates": [asdict(c) for c in candidates],
+            "columns": {
+                "count": cols.column_count,
+                "lefts": cols.column_lefts,
+            },
+        })
+
+    return out
