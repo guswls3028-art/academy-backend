@@ -342,6 +342,30 @@ def _validation_errors_have_manual_overlap(validation_errors: list[dict]) -> boo
     return False
 
 
+def _existing_problem_number_conflict(
+    document_id: int, number: int,
+) -> Optional[int]:
+    """document 안에 같은 number 의 MatchupProblem 이 이미 있으면 그 id 반환.
+
+    Stage 6.3N — approve_proposal pre-check (Option A).
+    DB unique(document_id, number) IntegrityError 사전 차단 + 학원장 검수 path 로 유도.
+
+    read-only SELECT — only('id').first(). 변경 없음.
+
+    Returns:
+        존재 시: 기존 MatchupProblem id (int)
+        미존재: None
+    """
+    from apps.domains.matchup.models import MatchupProblem
+    existing = (
+        MatchupProblem.objects
+        .filter(document_id=document_id, number=number)
+        .only("id")
+        .first()
+    )
+    return existing.id if existing else None
+
+
 @transaction.atomic
 def approve_proposal(
     proposal_id: int,
@@ -438,6 +462,33 @@ def approve_proposal(
             image_key_override = adjustments["image_key"]
         if "embedding" in adjustments:
             embedding_override = adjustments["embedding"]
+
+    # Stage 6.3N — number_conflict pre-check (Option A 정책)
+    # MatchupProblem 생성 직전에 unique(document_id, number) 충돌 사전 차단.
+    # 충돌 시 자동 +1 / 901번대 임의 배정 X — 학원장 검수 path 로 유도.
+    target_number = proposal.detected_problem_number
+    conflict_problem_id = _existing_problem_number_conflict(
+        document_id=proposal.document_id, number=target_number,
+    )
+    if conflict_problem_id is not None:
+        # validation_errors 추가 (기존 내용 보존)
+        new_errors = list(proposal.validation_errors or [])
+        new_errors.append({
+            "code": "number_conflict",
+            "detail": (
+                f"document {proposal.document_id} already has number {target_number} "
+                f"(MatchupProblem id={conflict_problem_id})"
+            ),
+            "conflicting_problem_id": conflict_problem_id,
+            "target_number": target_number,
+        })
+        proposal.status = "needs_review"
+        proposal.validation_errors = new_errors
+        proposal.save(update_fields=["status", "validation_errors", "updated_at"])
+        raise ProposalApprovalError(
+            f"number_conflict — document {proposal.document_id} already has number "
+            f"{target_number} (id={proposal_id}, conflict_problem_id={conflict_problem_id})"
+        )
 
     # MatchupProblem 생성 — Stage 4 strict allowlist 통과 자격 부여.
     new_meta = {
