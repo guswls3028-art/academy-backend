@@ -84,6 +84,17 @@ class Command(BaseCommand):
             "--out-json", type=str, default="",
             help="결과 JSON 저장 경로 (선택)",
         )
+        parser.add_argument(
+            "--smoke-truncate-to-cap",
+            dest="smoke_truncate_to_cap",
+            action="store_true",
+            default=False,
+            help=(
+                "Stage 6.4-prep+1 smoke-only opt-in. raw payload count > "
+                "max_payloads 일 때 deterministic 정렬 후 max_payloads 개만 "
+                "adapter 에 전달. 기본 OFF — 운영 코드 미사용."
+            ),
+        )
 
     def handle(self, *args, **options):
         pdf_path = options["pdf_path"]
@@ -101,6 +112,7 @@ class Command(BaseCommand):
             max_payloads=options["max_payloads"],
             mock_ocr_blocks=options["mock_ocr_blocks"],
             mock_vlm_problems=options["mock_vlm_problems"],
+            smoke_truncate_to_cap=options["smoke_truncate_to_cap"],
         )
 
         out_dict = result_to_dict(result)

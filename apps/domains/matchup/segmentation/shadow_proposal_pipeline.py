@@ -52,7 +52,7 @@ from .proposal_insert_adapter import (
 )
 
 
-SCHEMA_VERSION = "6.4-prep-t2-doc-whitelist-1"
+SCHEMA_VERSION = "6.4-prep+1-truncation-flag-1"
 SHADOW_GLOBAL_ENV = "MATCHUP_SHADOW_PROPOSAL_ENABLED"
 DEFAULT_SANDBOX_TENANT_ID = 1
 DEFAULT_MAX_PAYLOADS = 5
@@ -65,6 +65,12 @@ T2_DOC_WHITELIST_ENV = "MATCHUP_SHADOW_T2_DOC_WHITELIST"
 # T2 는 5건 이하 dry-run 만 허용. 운영 데이터 보호용 strict cap (DEFAULT_MAX_PAYLOADS
 # 가 향후 변경되어도 T2 cap 은 독립 유지).
 T2_WHITELIST_MAX_PAYLOADS = 5
+
+# Stage 6.4-prep+1 — smoke-only truncation flag.
+#   기본 OFF. flag 가 ON 일 때만 max_payloads 이하로 잘라서 adapter 에 전달.
+#   flag 가 OFF 면 기존 동작 유지 — adapter 가 fail-closed (count > cap → batch 차단).
+#   actual smoke 시점에서만 사용. 운영 코드 호출 흐름에 영향 없음.
+SMOKE_TRUNCATION_REASON = "stage_6_4_smoke_cap"
 
 
 @dataclass
@@ -164,6 +170,52 @@ def _check_blocking(
     )
 
 
+def _truncate_payloads_for_smoke(
+    payloads: list,
+    max_payloads: int,
+) -> tuple[list, int]:
+    """Stage 6.4-prep+1 smoke-only — deterministic truncation.
+
+    `len(payloads) > max_payloads` 일 때 max_payloads 개로 줄임.
+    아니면 원본 그대로 반환.
+
+    정렬 키 (안정 정렬, 동률 시 원본 순서 보존):
+        (page_number, detected_problem_number, bbox.y, bbox.x)
+
+    이 순서는 Tier 0 / OCR / VLM / YOLO 모든 source 에서 의미 있는 자연 순서:
+    - 윗 페이지 → 아래 페이지
+    - 같은 페이지 내 작은 문항 번호 → 큰 번호
+    - 번호 동률(0=unknown 포함) 시 위쪽 bbox → 아래쪽
+    - 좌측 → 우측
+
+    Returns:
+        (truncated_payloads, skipped_count)
+    """
+    raw_count = len(payloads)
+    if raw_count <= max_payloads:
+        return list(payloads), 0
+
+    def _sort_key(p):
+        bbox = getattr(p, "bbox", None) or {}
+        try:
+            y = float(bbox.get("y", 0.0))
+        except (TypeError, ValueError):
+            y = 0.0
+        try:
+            x = float(bbox.get("x", 0.0))
+        except (TypeError, ValueError):
+            x = 0.0
+        return (
+            int(getattr(p, "page_number", 0) or 0),
+            int(getattr(p, "detected_problem_number", 0) or 0),
+            y, x,
+        )
+
+    sorted_payloads = sorted(payloads, key=_sort_key)
+    truncated = sorted_payloads[:max_payloads]
+    return truncated, raw_count - max_payloads
+
+
 def shadow_proposal_pipeline(
     pdf_path: str,
     *,
@@ -178,6 +230,7 @@ def shadow_proposal_pipeline(
     mock_ocr_blocks: int = DEFAULT_MOCK_OCR_BLOCKS,
     mock_vlm_problems: int = DEFAULT_MOCK_VLM_PROBLEMS,
     static_manual_bboxes: Optional[list[dict]] = None,
+    smoke_truncate_to_cap: bool = False,
 ) -> ShadowPipelineResult:
     """T1 sandbox shadow proposal 생성 pipeline.
 
@@ -193,6 +246,10 @@ def shadow_proposal_pipeline(
         max_payloads: bulk cap (default 5).
         mock_ocr_blocks / mock_vlm_problems: synthetic mock 생성 인자.
         static_manual_bboxes: manual_overlap 검증용 (Stage 5.8 형식).
+        smoke_truncate_to_cap: Stage 6.4-prep+1 smoke-only opt-in. 기본 False.
+            True 면 raw payload count > max_payloads 시 deterministic 정렬 후
+            max_payloads 개로 잘라서 adapter 에 전달. 운영 흐름 미사용 — smoke
+            전용. False 면 기존 동작 그대로 (adapter fail-closed).
 
     Returns:
         ShadowPipelineResult — gate 미통과 시 blocking_reason 포함, dispatcher /
@@ -222,6 +279,7 @@ def shadow_proposal_pipeline(
             "t2_whitelist_env": T2_DOC_WHITELIST_ENV,
             "t2_whitelist_doc": read_t2_doc_whitelist(),
             "t2_max_payloads_cap": T2_WHITELIST_MAX_PAYLOADS,
+            "smoke_truncate_to_cap": smoke_truncate_to_cap,
         },
     )
     if blocking is not None:
@@ -262,17 +320,38 @@ def shadow_proposal_pipeline(
     )
     result.unified_output = unified_to_dict(unified)
 
-    # Step 4 — adapter (dry_run default + sandbox gate)
+    # Step 4 — Stage 6.4-prep+1 smoke-only truncation (opt-in flag).
+    # 기본 OFF: 원본 unified.proposal_payloads 전체를 adapter 에 전달 → adapter 가
+    #   기존처럼 fail-closed (count > max_payload_count 시 batch 차단).
+    # ON: deterministic 정렬 후 max_payloads 개만 adapter 로. 운영 코드 미사용.
+    raw_payloads = list(unified.proposal_payloads)
+    raw_payload_count = len(raw_payloads)
+    if smoke_truncate_to_cap:
+        payloads_for_insert, skipped_by_truncation = _truncate_payloads_for_smoke(
+            raw_payloads, max_payloads,
+        )
+    else:
+        payloads_for_insert = raw_payloads
+        skipped_by_truncation = 0
+
+    # Step 5 — adapter (dry_run default + sandbox gate)
     # sandbox_tenant_ids 는 _check_blocking 을 통과한 tenant 1개만 — 다른 tenant 는
     # 이미 위에서 차단됨. T1 → [1], T2 (whitelist 통과) → [2].
     insert_result = insert_proposal_sandbox(
-        unified.proposal_payloads,
+        payloads_for_insert,
         dry_run=dry_run,
         allow_insert=allow_insert,
         sandbox_tenant_ids=[tenant_id],
         max_payload_count=max_payloads,
     )
     result.insert_result = insert_result_to_dict(insert_result)
+
+    # truncation metadata — dry-run output 에서 시각 확인 가능
+    result.debug["raw_payload_count"] = raw_payload_count
+    result.debug["payloads_for_insert_count"] = len(payloads_for_insert)
+    result.debug["skipped_by_truncation_count"] = skipped_by_truncation
+    if smoke_truncate_to_cap and skipped_by_truncation > 0:
+        result.debug["truncation_reason"] = SMOKE_TRUNCATION_REASON
 
     return result
 
