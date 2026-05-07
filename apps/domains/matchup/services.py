@@ -897,6 +897,129 @@ def _enqueue_manual_problem_index(problem: MatchupProblem) -> None:
         raise RuntimeError(result.get("error", "dispatch failed"))
 
 
+def _bbox_iou_dict(a: Optional[dict], b: Optional[dict]) -> Optional[float]:
+    """두 정규화 bbox dict 의 IoU. 둘 다 {x, y, w, h} 0..1.
+
+    누락/형식 불량 → None. union==0 → None (학습 신호로 의미 없음).
+    """
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return None
+    try:
+        ax, ay = float(a.get("x", 0)), float(a.get("y", 0))
+        aw, ah = float(a.get("w", 0)), float(a.get("h", 0))
+        bx, by = float(b.get("x", 0)), float(b.get("y", 0))
+        bw, bh = float(b.get("w", 0)), float(b.get("h", 0))
+    except (TypeError, ValueError):
+        return None
+    if aw <= 0 or ah <= 0 or bw <= 0 or bh <= 0:
+        return None
+    ix1, iy1 = max(ax, bx), max(ay, by)
+    ix2 = min(ax + aw, bx + bw)
+    iy2 = min(ay + ah, by + bh)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    union = aw * ah + bw * bh - inter
+    if union <= 0:
+        return None
+    return round(inter / union, 4)
+
+
+def _find_ai_proposal_candidate(
+    *, tenant_id: int, document_id: int, page_index: int, number: int,
+):
+    """manual cut 좌표와 비교할 AI proposal 후보 찾기.
+
+    매칭: 같은 (tenant, doc, page, number) + status != rejected (이미 거절된 건 비교 의미 X).
+    여러 건이면 가장 최근. 없으면 None.
+
+    Stage 6.7 (auto-segmentation → proposal queue) wire-in 전에는 보통 None.
+    Stage 6.5 hook 은 이 None 을 self-evident "manual_only" 로 기록.
+    """
+    from .models import ProblemSegmentationProposal
+    return (
+        ProblemSegmentationProposal.objects
+        .filter(
+            tenant_id=tenant_id, document_id=document_id,
+            page_number=page_index, detected_problem_number=number,
+        )
+        .exclude(status="rejected")
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def _record_manual_correction_delta(
+    problem,
+    document: MatchupDocument,
+    *,
+    page_index: int,
+    bbox_norm: Tuple[float, float, float, float],
+    is_recreate: bool,
+    actor=None,
+):
+    """Stage 6.5 — manual_crop 시점에 ManualCorrectionDelta row 기록.
+
+    실패 시 caller 가 try/except 로 흡수 — manual_crop 본 흐름에 영향 0.
+
+    원칙:
+    - 같은 (tenant, doc, page, number) 의 비-rejected AI proposal 이 있으면 IoU 계산
+    - 없으면 manual_only (original_bbox=None, iou_with_ai=None, engine="manual_crop")
+    - 같은 number 재cut → correction_type=bbox_adjust / 신규 → manual_create
+    - selected_problem_ids / hit_report 미접근 (read-only audit log 만)
+    """
+    from .models import ManualCorrectionDelta
+
+    x, y, w, h = bbox_norm
+    corrected_bbox = {
+        "x": float(x), "y": float(y), "w": float(w), "h": float(h),
+        "page": int(page_index), "norm": True,
+    }
+
+    ai_proposal = _find_ai_proposal_candidate(
+        tenant_id=problem.tenant_id,
+        document_id=document.id,
+        page_index=int(page_index),
+        number=int(problem.number),
+    )
+
+    original_bbox = None
+    iou = None
+    engine_at_action = "manual_crop"
+    proposal_obj = None
+    if ai_proposal is not None:
+        proposal_obj = ai_proposal
+        original_bbox = ai_proposal.bbox if isinstance(ai_proposal.bbox, dict) else None
+        iou = _bbox_iou_dict(original_bbox, corrected_bbox)
+        # ai engine 명시 (yolo / vlm / ocr / native_pdf / manual_assist)
+        if ai_proposal.engine:
+            engine_at_action = str(ai_proposal.engine)[:32]
+
+    paper_type = ""
+    try:
+        summary = (document.meta or {}).get("paper_type_summary") or {}
+        paper_type = str(summary.get("primary") or "")[:32]
+    except Exception:
+        paper_type = ""
+
+    correction_type = "bbox_adjust" if is_recreate else "manual_create"
+
+    ManualCorrectionDelta.objects.create(
+        tenant_id=problem.tenant_id,
+        proposal=proposal_obj,
+        problem=problem,
+        document=document,
+        correction_type=correction_type,
+        source="user_ui",
+        original_bbox=original_bbox,
+        corrected_bbox=corrected_bbox,
+        iou_with_ai=iou,
+        paper_type_at_action=paper_type,
+        engine_at_action=engine_at_action,
+        notes="",
+        created_by=actor if (actor is not None and getattr(actor, "is_authenticated", False)) else None,
+    )
+
+
 def manually_crop_problem(
     document: MatchupDocument,
     *,
@@ -904,6 +1027,7 @@ def manually_crop_problem(
     bbox_norm: Tuple[float, float, float, float],
     number: int,
     text: str = "",
+    actor=None,
 ) -> MatchupProblem:
     """document의 page_index 페이지에서 bbox_norm 영역을 잘라 새 problem 등록.
 
@@ -1050,6 +1174,23 @@ def manually_crop_problem(
             invalidate_tenant_similar_cache(document.tenant_id)
         except Exception:
             logger.exception("MATCHUP_CACHE_INVALIDATE_FAILED | tenant=%s", document.tenant_id)
+
+        # Stage 6.5 — manual cut audit hook. 실패 시 manual_crop 본 동작 영향 0.
+        # ManualCorrectionDelta 자동 채움 → V12 학습 / paper_type cluster / iou 측정 토대.
+        try:
+            _record_manual_correction_delta(
+                problem,
+                document,
+                page_index=int(page_index),
+                bbox_norm=bbox_norm,
+                is_recreate=is_recreate,
+                actor=actor,
+            )
+        except Exception:
+            logger.exception(
+                "MATCHUP_MANUAL_CORRECTION_DELTA_FAILED | doc=%s | problem=%s",
+                document.id, problem.id,
+            )
 
         logger.info(
             "MATCHUP_MANUAL_CROP | doc=%s | num=%s | created=%s | bbox=%s",

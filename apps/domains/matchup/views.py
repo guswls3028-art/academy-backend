@@ -965,6 +965,7 @@ class DocumentManualCropView(View):
                 bbox_norm=bbox,
                 number=number,
                 text=text,
+                actor=getattr(request, "user", None),
             )
         except ValueError as e:
             return JsonResponse({"detail": str(e)}, status=400)
