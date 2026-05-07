@@ -122,9 +122,12 @@ class Command(BaseCommand):
         candidates = []
         skip_already = 0
         skip_no_bbox = 0
+        skip_merged = 0  # meta.merged=True + bbox 없음 — merge 결과는 manual_create 부적합
         skip_no_page = 0
         skip_tenant_mismatch = 0
         skip_no_document = 0
+        # skip_merged 케이스 sample 보존 — 보고서 audit trail.
+        merged_samples: list[dict] = []
 
         # iterator + limit — 메모리 안전
         iterated = 0
@@ -146,7 +149,21 @@ class Command(BaseCommand):
                 continue
             meta = p.meta or {}
             bbox = meta.get("bbox_norm")
-            if not isinstance(bbox, list) or len(bbox) < 4:
+            bbox_invalid = (not isinstance(bbox, list) or len(bbox) < 4)
+            if bbox_invalid:
+                # meta.merged=True + bbox 부재 → merge 결과 (단일 bbox 없음).
+                # manual_create backfill 대상 X. 별도 카테고리 + sample 보존.
+                if meta.get("merged") is True:
+                    skip_merged += 1
+                    merged_samples.append({
+                        "problem_id": p.id,
+                        "doc_id": p.document_id,
+                        "number": p.number,
+                        "merged_from": meta.get("merged_from"),
+                        "merged_numbers": meta.get("merged_numbers"),
+                        "image_key": p.image_key,
+                    })
+                    continue
                 skip_no_bbox += 1
                 continue
             page_index = meta.get("page_index")
@@ -168,10 +185,22 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.NOTICE(
             f"iterated={iterated} candidates={len(candidates)} "
-            f"skip_already={skip_already} skip_no_bbox={skip_no_bbox} "
-            f"skip_no_page={skip_no_page} skip_tenant_mismatch={skip_tenant_mismatch} "
+            f"skip_already={skip_already} skip_merged={skip_merged} "
+            f"skip_no_bbox={skip_no_bbox} skip_no_page={skip_no_page} "
+            f"skip_tenant_mismatch={skip_tenant_mismatch} "
             f"skip_no_document={skip_no_document}"
         ))
+        # skip_merged sample 출력 — 추후 stage (correction_type='merge' 정책) 검토용.
+        if merged_samples:
+            self.stdout.write(self.style.NOTICE(
+                f"--- skip_merged sample ({min(len(merged_samples), 10)}) ---"
+            ))
+            for s in merged_samples[:10]:
+                self.stdout.write(
+                    f"  problem#{s['problem_id']} doc#{s['doc_id']} "
+                    f"num={s['number']} merged_from={s['merged_from']} "
+                    f"merged_numbers={s['merged_numbers']} image_key={s['image_key']}"
+                )
 
         if not candidates:
             self.stdout.write(self.style.SUCCESS("no candidates."))
