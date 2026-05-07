@@ -2167,3 +2167,233 @@ def analyze_pdf_v5_2(
         })
 
     return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Stage 5.5.3 v5_3 — TenantSegmentationProfile artifact 주입 (dry-run)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Stage 5.5.2 발견:
+#  - v5_2 가 v5_1 candidate 폭증 fix 했으나 v4 수준 (F1 0.372) 유지에 불과
+#  - 전역 _LAYOUT_X0_ALLOW 고정값으론 학원별 manual cut 위치 학습 불가
+#  - tenant 별 manual bbox 분포로 동적 x0 영역 학습 필요
+#
+# v5_3 정책:
+#  - tenant profile JSON artifact (Stage 5.4.6 모델 schema 와 동일 형태) 인자로 받음
+#  - DB 모델 import 절대 X — JSON dict 만 처리 (read-only artifact)
+#  - profile.paper_type_thresholds[paper_type].x0_allowed_regions 로 _LAYOUT_X0_ALLOW
+#    동적 override
+#  - profile.bbox_stats.width_p50 / height_p50 로 candidate width/height 검증 (선택적)
+#
+# 운영 DB INSERT 0회. 실 TenantSegmentationProfile row 생성 0회.
+# 사용자 명시 승인 후 Stage 5.5.4+ 영역에서 실 row 생성.
+
+
+def get_x0_regions_from_profile(
+    paper_type: str, layout_type: str,
+    profile: Optional[dict],
+) -> list[tuple[float, float]]:
+    """tenant profile artifact 에서 paper_type 별 x0 허용 영역 조회.
+
+    Args:
+        paper_type: PAPER_TYPE_*
+        layout_type: LAYOUT_*
+        profile: artifact dict (또는 None — fallback)
+
+    Returns:
+        list[(low, high)] — _LAYOUT_X0_ALLOW 와 동일 형식
+    """
+    if profile and isinstance(profile, dict):
+        pt_thresholds = profile.get("paper_type_thresholds")
+        if isinstance(pt_thresholds, dict):
+            pt_block = pt_thresholds.get(paper_type)
+            if isinstance(pt_block, dict):
+                regions_raw = pt_block.get("x0_allowed_regions")
+                if regions_raw and isinstance(regions_raw, list):
+                    try:
+                        return [(float(r[0]), float(r[1])) for r in regions_raw if len(r) >= 2]
+                    except (TypeError, ValueError, IndexError):
+                        pass
+
+    # fallback to global _LAYOUT_X0_ALLOW
+    return _LAYOUT_X0_ALLOW.get(layout_type) or _LAYOUT_X0_ALLOW[LAYOUT_UNKNOWN]
+
+
+def filter_anchors_v5_3(
+    per_page_anchors: list[list[NumberAnchor]],
+    paper_type: str,
+    layout_type: str,
+    page_widths: list[float],
+    profile: Optional[dict] = None,
+) -> tuple[list[list[NumberAnchor]], dict]:
+    """v5_3 anchor 필터 — tenant profile artifact 기반 동적 x0 영역.
+
+    v5_2 와 동일 inline overflow 차단 + profile 으로 x0 영역 override.
+    """
+    overflow, ov_debug = estimate_inline_overflow(per_page_anchors)
+    debug: dict = {
+        "overflow": ov_debug, "applied_dedup": False, "demoted_count": 0,
+        "profile_used": profile is not None,
+    }
+
+    if overflow:
+        seen: set[int] = set()
+        deduped: list[list[NumberAnchor]] = []
+        for anchors in per_page_anchors:
+            kept: list[NumberAnchor] = []
+            for a in anchors:
+                if a.number in seen:
+                    continue
+                seen.add(a.number)
+                kept.append(a)
+            deduped.append(kept)
+        per_page_anchors = deduped
+        debug["applied_dedup"] = True
+        debug["after_dedup_total"] = sum(len(a) for a in per_page_anchors)
+
+    # profile 기반 x0 영역 결정
+    x0_regions = get_x0_regions_from_profile(paper_type, layout_type, profile)
+    debug["x0_regions"] = x0_regions
+
+    demoted = 0
+    out: list[list[NumberAnchor]] = []
+    for page_idx, anchors in enumerate(per_page_anchors):
+        page_w = page_widths[page_idx] if page_idx < len(page_widths) else 595.0
+        kept: list[NumberAnchor] = []
+        for a in anchors:
+            x0_norm = a.bbox[0] / page_w if page_w > 0 else 0
+            in_region = any(low <= x0_norm <= high for low, high in x0_regions)
+            if not in_region:
+                new_conf = max(0.0, a.confidence * 0.5)
+                if new_conf < 0.3:
+                    demoted += 1
+                    continue
+                a = NumberAnchor(
+                    number=a.number, page_index=a.page_index,
+                    bbox=a.bbox, text=a.text, style=a.style,
+                    confidence=new_conf,
+                )
+            kept.append(a)
+        out.append(kept)
+    debug["demoted_count"] = demoted
+    return out, debug
+
+
+def analyze_pdf_v5_3(
+    pdf_path: str,
+    *,
+    file_name: Optional[str] = None,
+    profile: Optional[dict] = None,
+) -> dict[str, Any]:
+    """v5_3 — v5_2 base + tenant profile artifact 주입.
+
+    Args:
+        pdf_path: PDF 경로
+        file_name: 분류용 파일명
+        profile: tenant profile dict (artifact). None 이면 v5_2 와 동등 (전역 fallback).
+
+    원칙:
+    - DB 모델 import 0회 — profile 은 JSON dict 만
+    - operating_problem_count 미사용
+    - paper_type 외부 응답 키는 _internal_ 마킹
+    """
+    import os as _os
+
+    pages = extract_page_blocks(pdf_path)
+    n_pages = len(pages)
+    n_text_pages = sum(1 for p in pages if p.has_embedded_text)
+    if file_name is None:
+        file_name = _os.path.basename(pdf_path)
+
+    tier1_required = False
+    tier1_reason = ""
+    if n_pages == 0:
+        tier1_required = True; tier1_reason = "empty_pdf"
+    elif n_text_pages == 0:
+        tier1_required = True; tier1_reason = "scanned_no_text_layer"
+    elif n_text_pages < n_pages * 0.5:
+        tier1_required = True; tier1_reason = "partial_text_layer"
+
+    pre_anchors_total = 0
+    full_text_chunks: list[str] = []
+    per_page_columns: list[ColumnLayout] = []
+    pre_per_page_bboxes: list[list[tuple[float, float, float, float]]] = []
+    page_widths: list[float] = []
+    for page in pages:
+        cols = detect_columns(page.word_blocks, page.page_width)
+        per_page_columns.append(cols)
+        page_widths.append(page.page_width)
+        v2_anchors = detect_problem_anchors_v2(page, cols)
+        pre_anchors_total += len(v2_anchors)
+        full_text_chunks.append(" ".join(b.get("text", "") for b in page.text_blocks)[:300])
+        pre_bboxes = []
+        for a in v2_anchors:
+            bbox_norm = (
+                a.bbox[0] / page.page_width if page.page_width else 0,
+                a.bbox[1] / page.page_height if page.page_height else 0,
+                (a.bbox[2] - a.bbox[0]) / page.page_width if page.page_width else 0,
+                (a.bbox[3] - a.bbox[1]) / page.page_height if page.page_height else 0,
+            )
+            pre_bboxes.append(bbox_norm)
+        pre_per_page_bboxes.append(pre_bboxes)
+    full_text = " ".join(full_text_chunks)
+
+    paper_type, pt_conf, pt_debug = classify_paper_type_v4(
+        file_name=file_name, pages_full_text=full_text,
+        total_anchors=pre_anchors_total, page_count=n_pages,
+    )
+    layout = classify_layout_v2(pre_per_page_bboxes)
+
+    per_page_anchors: list[list[NumberAnchor]] = []
+    for page, cols in zip(pages, per_page_columns):
+        anchors = detect_problem_anchors_v3(page, cols, paper_type)
+        per_page_anchors.append(anchors)
+
+    per_page_anchors_v53, v53_debug = filter_anchors_v5_3(
+        per_page_anchors, paper_type, layout.layout_type, page_widths,
+        profile=profile,
+    )
+    cross = cross_page_validate(per_page_anchors_v53)
+
+    out: dict[str, Any] = {
+        "version": "v5_3",
+        "pdf_path": pdf_path,
+        "file_name": file_name,
+        "page_count": n_pages,
+        "text_pages": n_text_pages,
+        "_internal_paper_type": paper_type,
+        "_internal_paper_type_confidence": pt_conf,
+        "layout_v2": {
+            "type": layout.layout_type, "confidence": layout.confidence,
+            "x0_clusters": layout.x0_clusters, "page_p50": layout.page_bbox_count_p50,
+        },
+        "tier1_required": tier1_required,
+        "tier1_reason": tier1_reason,
+        "anchor_filter_v53": v53_debug,
+        "profile_used": profile is not None,
+        "pages": [],
+        "cross_page": {
+            "detected_total": cross.detected_total,
+            "expected_max": cross.expected_max,
+            "sequence_continuity": cross.sequence_continuity,
+            "duplicates_dropped": cross.duplicates_dropped,
+            "suspicious_pages": cross.suspicious_pages,
+        },
+    }
+
+    for page, anchors, cols in zip(pages, per_page_anchors_v53, per_page_columns):
+        role = classify_page_role_v2(page, anchors)
+        candidates = derive_bbox_candidates_v2(anchors, page, cols)
+        out["pages"].append({
+            "page_index": page.page_index,
+            "page_width": page.page_width,
+            "page_height": page.page_height,
+            "has_embedded_text": page.has_embedded_text,
+            "role": role.role,
+            "role_confidence": role.confidence,
+            "anchor_count": len(anchors),
+            "anchors": [asdict(a) for a in anchors],
+            "bbox_candidates": [asdict(c) for c in candidates],
+        })
+
+    return out

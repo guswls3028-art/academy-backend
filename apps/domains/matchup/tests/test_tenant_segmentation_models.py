@@ -195,18 +195,25 @@ class ParserNoReferenceTests(TestCase):
     이 신 모델을 import 하지 않음 (역참조 방지 — schema 만 추가, 로직 미연결)."""
 
     def test_tier0_does_not_import_new_models(self):
+        """tier0_native_pdf 가 신 모델 import / .objects 호출 X.
+
+        주석/docstring 안 reference 는 허용 (예: profile schema 설명).
+        """
         from apps.domains.matchup.segmentation import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
-        forbidden = (
-            "TenantSegmentationProfile",
-            "LayoutFingerprint",
-            "ManualCorrectionDelta",
+        forbidden_patterns = (
+            "import TenantSegmentationProfile",
+            "import LayoutFingerprint",
+            "import ManualCorrectionDelta",
+            "TenantSegmentationProfile.objects",
+            "LayoutFingerprint.objects",
+            "ManualCorrectionDelta.objects",
         )
-        for token in forbidden:
+        for token in forbidden_patterns:
             self.assertNotIn(
                 token, src,
-                f"tier0_native_pdf 가 신 모델 '{token}' 참조 — 역참조 발생",
+                f"tier0_native_pdf 가 신 모델 '{token}' 호출 — 역참조 발생",
             )
 
     def test_vlm_mock_does_not_import_new_models(self):
