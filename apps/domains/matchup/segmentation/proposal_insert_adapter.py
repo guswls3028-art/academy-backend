@@ -41,12 +41,47 @@ from .proposal_payload_validator import (
 )
 
 
-SCHEMA_VERSION = "6.0-insert-adapter-1"
+SCHEMA_VERSION = "6.2A-insert-adapter-idempotent-1"
 
 # 기본값 — 모두 보수적 (INSERT 차단 우선)
 _DEFAULT_MAX_PAYLOAD_COUNT = 100
 _DEFAULT_DRY_RUN = True
 _DEFAULT_ALLOW_INSERT = False
+_DEFAULT_IDEMPOTENT_CHECK = True   # Stage 6.2A — 같은 payload 재실행 시 duplicate INSERT 차단
+
+
+# ── Stage 6.2A: idempotency key ───────────────────────────────────
+
+
+def _idempotent_key(payload: ProposalPayloadCandidate) -> tuple:
+    """payload 의 idempotent dedup key.
+
+    `analysis_version_key` 가 비어있지 않으면 (tenant, doc, key, page, #) 5-튜플 사용.
+    빈 값이면 fallback: (... , engine, bbox_round_4) 를 추가해 더 보수적 매칭.
+
+    같은 payload 두 번 호출 시 같은 key 반환 → adapter 가 pre-INSERT 검증 시 매칭.
+    """
+    base = (
+        int(payload.tenant_id),
+        int(payload.document_id),
+        str(payload.analysis_version_key or ""),
+        int(payload.page_number),
+        int(payload.detected_problem_number),
+    )
+    if payload.analysis_version_key:
+        return base
+    # fallback — analysis_version_key 없으면 engine + bbox round 추가
+    bbox = payload.bbox or {}
+    try:
+        return base + (
+            str(payload.engine or ""),
+            round(float(bbox.get("x", 0.0)), 4),
+            round(float(bbox.get("y", 0.0)), 4),
+            round(float(bbox.get("w", 0.0)), 4),
+            round(float(bbox.get("h", 0.0)), 4),
+        )
+    except (TypeError, ValueError):
+        return base + (str(payload.engine or ""), 0.0, 0.0, 0.0, 0.0)
 
 
 # ── 결과 schema ───────────────────────────────────────────────────
@@ -58,10 +93,11 @@ class InsertDecision:
     payload_index: int
     status: str            # 'inserted' | 'dry_run' | 'skipped_validation' |
                            # 'skipped_status_approved' | 'skipped_sandbox_gate' |
-                           # 'skipped_overlimit' | 'skipped_blocking'
+                           # 'skipped_overlimit' | 'skipped_blocking' |
+                           # 'skipped_idempotent' (Stage 6.2A)
     reason: str
     payload_status: str    # payload.status (rejected 인 경우 status 유지 검증)
-    inserted_proposal_id: Optional[int] = None
+    inserted_proposal_id: Optional[int] = None    # 신규 INSERT 또는 idempotent 매칭 기존 id
     violations: list[dict] = field(default_factory=list)
 
 
@@ -185,6 +221,8 @@ def insert_proposal_sandbox(
     sandbox_tenant_ids: Optional[Iterable[int]] = None,
     max_payload_count: int = _DEFAULT_MAX_PAYLOAD_COUNT,
     block_approved: bool = True,
+    idempotent_check: bool = _DEFAULT_IDEMPOTENT_CHECK,
+    existing_lookup_fn: Optional[Any] = None,
 ) -> InsertSandboxResult:
     """payload list 를 ProblemSegmentationProposal INSERT path 로 연결 (sandbox-gated).
 
@@ -195,6 +233,14 @@ def insert_proposal_sandbox(
         AND 모든 payload.tenant_id ∈ sandbox_tenant_ids AND
         len(payloads) ≤ max_payload_count AND 각 payload schema/field ok AND
         payload.status != 'approved'
+
+    Stage 6.2A — idempotency guard:
+        idempotent_check=True (default) 면 sandbox INSERT path 에서 payload 별로
+        `_idempotent_key` 일치하는 기존 row 가 있는지 사전 SELECT. 있으면 INSERT 안 함
+        (decision='skipped_idempotent', inserted_proposal_id=existing_id).
+
+        existing_lookup_fn(key_tuple) -> Optional[int] callable 을 호출. None 이면
+        기본 ORM lookup 사용 (lazy import). 호출자가 mock 으로 주입 가능.
 
     INSERT 시점:
         `apps.domains.matchup.proposal_helpers.create_proposal` 호출
@@ -274,9 +320,15 @@ def insert_proposal_sandbox(
 
     # 3) per-payload INSERT (transaction.atomic 은 create_proposal 안에 이미 있음)
     # create_proposal 은 manual_overlap 검출 → status='rejected' 자동
+    # Stage 6.2A — idempotent_check=True 면 sandbox lookup 진입 전에 dedup.
     decisions = []
-    inserted = skipped = rejected = 0
+    inserted = skipped = rejected = idempotent_skipped = 0
     create_proposal_fn = _import_create_proposal()
+    if idempotent_check:
+        lookup_fn = existing_lookup_fn or _default_existing_lookup()
+    else:
+        lookup_fn = None
+
     for i, p in enumerate(payload_list):
         if p.status == "rejected":
             rejected += 1
@@ -291,6 +343,30 @@ def insert_proposal_sandbox(
                 violations=violations,
             ))
             skipped += 1
+            continue
+        # Stage 6.2A — pre-INSERT idempotent check
+        existing_id: Optional[int] = None
+        if lookup_fn is not None:
+            try:
+                key = _idempotent_key(p)
+                existing_id = lookup_fn(key)
+            except Exception as exc:
+                # lookup 실패 시 보수적 — INSERT 차단
+                decisions.append(InsertDecision(
+                    payload_index=i, status="skipped_validation",
+                    reason=f"idempotent lookup failed: {type(exc).__name__}: {exc}",
+                    payload_status=p.status,
+                ))
+                skipped += 1
+                continue
+        if existing_id is not None:
+            decisions.append(InsertDecision(
+                payload_index=i, status="skipped_idempotent",
+                reason=f"existing proposal id={existing_id} matches idempotent key",
+                payload_status=p.status,
+                inserted_proposal_id=existing_id,
+            ))
+            idempotent_skipped += 1
             continue
         try:
             kwargs = prepare_proposal_insert(p)
@@ -315,10 +391,14 @@ def insert_proposal_sandbox(
         dry_run=False, allow_insert=True,
         sandbox_tenant_ids=sandbox_list,
         total_payloads=len(payload_list),
-        inserted_count=inserted, skipped_count=skipped,
+        inserted_count=inserted, skipped_count=skipped + idempotent_skipped,
         rejected_count=rejected, dry_run_count=0,
         decisions=decisions,
-        debug={"mode": "sandbox_insert_path"},
+        debug={
+            "mode": "sandbox_insert_path",
+            "idempotent_check": idempotent_check,
+            "idempotent_skipped": idempotent_skipped,
+        },
     )
 
 
@@ -330,6 +410,45 @@ def _import_create_proposal():
     """
     from apps.domains.matchup.proposal_helpers import create_proposal
     return create_proposal
+
+
+def _default_existing_lookup():
+    """idempotent key → 기존 proposal id (Optional[int]) lookup callable.
+
+    lazy ORM import — sandbox INSERT path 진입 시점만 호출.
+    호출자가 mock 으로 주입 가능 (`existing_lookup_fn`).
+    """
+    def _lookup(key: tuple) -> Optional[int]:
+        from apps.domains.matchup.models import ProblemSegmentationProposal
+        if len(key) >= 5:
+            tenant_id, document_id, version_key, page_number, problem_number = key[:5]
+        else:
+            return None
+        qs = ProblemSegmentationProposal.objects.filter(
+            tenant_id=tenant_id,
+            document_id=document_id,
+            analysis_version_key=version_key,
+            page_number=page_number,
+            detected_problem_number=problem_number,
+        )
+        if len(key) >= 10:
+            # fallback path — engine + bbox 추가 매칭
+            engine, bx, by, bw, bh = key[5:10]
+            qs = qs.filter(engine=engine)
+            for proposal in qs.only("id", "bbox"):
+                bbox = proposal.bbox or {}
+                try:
+                    if (round(float(bbox.get("x", -1)), 4) == bx and
+                            round(float(bbox.get("y", -1)), 4) == by and
+                            round(float(bbox.get("w", -1)), 4) == bw and
+                            round(float(bbox.get("h", -1)), 4) == bh):
+                        return int(proposal.id)
+                except (TypeError, ValueError):
+                    continue
+            return None
+        existing_id = qs.values_list("id", flat=True).first()
+        return int(existing_id) if existing_id is not None else None
+    return _lookup
 
 
 def result_to_dict(r: InsertSandboxResult) -> dict[str, Any]:

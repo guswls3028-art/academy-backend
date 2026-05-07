@@ -219,6 +219,8 @@ class SandboxInsertTests(TestCase):
                 [_ok_payload()],
                 dry_run=False, allow_insert=True,
                 sandbox_tenant_ids=[999],
+                # 기존 mock 테스트는 idempotent ORM lookup 미사용 (DB 미접근)
+                existing_lookup_fn=lambda key: None,
             )
         self.assertEqual(r.inserted_count, 1)
         mock_create.assert_called_once()
@@ -237,6 +239,7 @@ class SandboxInsertTests(TestCase):
                 [_ok_payload(status="approved"), _ok_payload(status="pending")],
                 dry_run=False, allow_insert=True,
                 sandbox_tenant_ids=[999],
+                existing_lookup_fn=lambda key: None,
             )
         # approved 는 skipped_status_approved, pending 은 inserted
         self.assertEqual(r.inserted_count, 1)
@@ -258,6 +261,7 @@ class SandboxInsertTests(TestCase):
                 ])],
                 dry_run=False, allow_insert=True,
                 sandbox_tenant_ids=[999],
+                existing_lookup_fn=lambda key: None,
             )
         # status=rejected payload 도 INSERT 가능 — status 유지
         self.assertEqual(r.rejected_count, 1)
@@ -275,6 +279,7 @@ class SandboxInsertTests(TestCase):
                 [_ok_payload(engine="weird")],
                 dry_run=False, allow_insert=True,
                 sandbox_tenant_ids=[999],
+                existing_lookup_fn=lambda key: None,
             )
         self.assertEqual(r.inserted_count, 0)
         self.assertEqual(r.skipped_count, 1)
@@ -376,3 +381,146 @@ class ResultToDictTests(TestCase):
         self.assertIn("decisions", d)
         import json
         json.dumps(d, default=str)
+
+
+# ── Stage 6.2A: idempotency ──────────────────────────────────────
+
+
+from apps.domains.matchup.segmentation.proposal_insert_adapter import (  # noqa: E402
+    _idempotent_key,
+)
+
+
+class IdempotentKeyTests(TestCase):
+    def test_same_payload_same_key(self):
+        a = _ok_payload()
+        b = _ok_payload()
+        self.assertEqual(_idempotent_key(a), _idempotent_key(b))
+
+    def test_different_page_different_key(self):
+        a = _ok_payload(page_number=0)
+        b = _ok_payload(page_number=1)
+        self.assertNotEqual(_idempotent_key(a), _idempotent_key(b))
+
+    def test_different_problem_number_different_key(self):
+        a = _ok_payload(detected_problem_number=1)
+        b = _ok_payload(detected_problem_number=2)
+        self.assertNotEqual(_idempotent_key(a), _idempotent_key(b))
+
+    def test_different_version_key_different_key(self):
+        a = _ok_payload(analysis_version_key="batch-A")
+        b = _ok_payload(analysis_version_key="batch-B")
+        self.assertNotEqual(_idempotent_key(a), _idempotent_key(b))
+
+    def test_empty_version_key_falls_back_to_engine_bbox(self):
+        # version_key 비어있으면 fallback — engine + bbox 추가
+        a = _ok_payload(analysis_version_key="", engine="vlm")
+        b = _ok_payload(analysis_version_key="", engine="ocr")
+        self.assertNotEqual(_idempotent_key(a), _idempotent_key(b))
+        # 같은 engine + 같은 bbox 면 동일
+        c = _ok_payload(analysis_version_key="", engine="vlm")
+        self.assertEqual(_idempotent_key(a), _idempotent_key(c))
+
+    def test_empty_version_key_different_bbox_different_key(self):
+        a = _ok_payload(analysis_version_key="",
+                        bbox={"x": 0.1, "y": 0.1, "w": 0.5, "h": 0.5, "norm": True})
+        b = _ok_payload(analysis_version_key="",
+                        bbox={"x": 0.2, "y": 0.2, "w": 0.5, "h": 0.5, "norm": True})
+        self.assertNotEqual(_idempotent_key(a), _idempotent_key(b))
+
+
+class IdempotentSandboxTests(TestCase):
+    def test_existing_lookup_skips_insert(self):
+        # existing_lookup_fn 이 id 반환 → INSERT 안 함, decision='skipped_idempotent'
+        mock_create = MagicMock(return_value=MagicMock(id=99))
+        with patch(
+            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            return_value=mock_create,
+        ):
+            r = insert_proposal_sandbox(
+                [_ok_payload()],
+                dry_run=False, allow_insert=True,
+                sandbox_tenant_ids=[999],
+                existing_lookup_fn=lambda key: 12345,   # 기존 id
+            )
+        self.assertEqual(r.inserted_count, 0)
+        self.assertEqual(r.skipped_count, 1)
+        mock_create.assert_not_called()
+        d = r.decisions[0]
+        self.assertEqual(d.status, "skipped_idempotent")
+        self.assertEqual(d.inserted_proposal_id, 12345)
+
+    def test_idempotent_check_disabled(self):
+        # idempotent_check=False → lookup 미호출 / INSERT 진행
+        mock_create = MagicMock(return_value=MagicMock(id=42))
+        called: list[Any] = []
+        def lookup(key):
+            called.append(key)
+            return 12345
+        with patch(
+            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            return_value=mock_create,
+        ):
+            r = insert_proposal_sandbox(
+                [_ok_payload()],
+                dry_run=False, allow_insert=True,
+                sandbox_tenant_ids=[999],
+                idempotent_check=False,
+                existing_lookup_fn=lookup,
+            )
+        self.assertEqual(called, [])  # idempotent_check=False → lookup 미호출
+        self.assertEqual(r.inserted_count, 1)
+
+    def test_lookup_returning_none_inserts(self):
+        # existing_lookup_fn 이 None 반환 → INSERT 진행
+        mock_create = MagicMock(return_value=MagicMock(id=42))
+        with patch(
+            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            return_value=mock_create,
+        ):
+            r = insert_proposal_sandbox(
+                [_ok_payload()],
+                dry_run=False, allow_insert=True,
+                sandbox_tenant_ids=[999],
+                existing_lookup_fn=lambda key: None,
+            )
+        self.assertEqual(r.inserted_count, 1)
+        self.assertEqual(r.skipped_count, 0)
+
+    def test_lookup_raising_skips_safely(self):
+        # lookup 예외 → 보수적 skipped_validation (INSERT 안 함)
+        mock_create = MagicMock(return_value=MagicMock(id=42))
+        with patch(
+            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            return_value=mock_create,
+        ):
+            r = insert_proposal_sandbox(
+                [_ok_payload()],
+                dry_run=False, allow_insert=True,
+                sandbox_tenant_ids=[999],
+                existing_lookup_fn=lambda key: (_ for _ in ()).throw(RuntimeError("db")),
+            )
+        self.assertEqual(r.inserted_count, 0)
+        self.assertEqual(r.skipped_count, 1)
+        mock_create.assert_not_called()
+
+    def test_default_lookup_fn_is_lazy(self):
+        """idempotent_check=True 인데 existing_lookup_fn=None 면 _default_existing_lookup 사용.
+
+        본 unit test 는 ORM 미접근 — sandbox path 진입 자체가 차단되도록 sandbox=[] 로
+        통과 안 하게.
+        """
+        # sandbox 차단된 case 에선 lookup_fn 자체 호출 0회
+        mock_create = MagicMock()
+        with patch(
+            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            return_value=mock_create,
+        ):
+            r = insert_proposal_sandbox(
+                [_ok_payload()],
+                dry_run=False, allow_insert=True,
+                sandbox_tenant_ids=None,  # gate 차단
+            )
+        self.assertEqual(r.inserted_count, 0)
+        self.assertIsNotNone(r.blocking_reason)
+        mock_create.assert_not_called()
