@@ -1020,6 +1020,72 @@ def _record_manual_correction_delta(
     )
 
 
+def _column_count_from_paper_type(paper_type: str) -> int:
+    """Stage 6.6 — paper_type → 추정 column_count.
+
+    classifier 출력값 기준 (paper_type_summary.primary):
+      - clean_pdf_dual / scan_dual → 2
+      - quadrant → 4
+      - 그 외 (clean_pdf_single, scan_single, student_answer_photo,
+        side_notes, non_question, unknown, "") → 1
+    """
+    if paper_type in ("clean_pdf_dual", "scan_dual"):
+        return 2
+    if paper_type == "quadrant":
+        return 4
+    return 1
+
+
+def _record_layout_fingerprint(
+    document: MatchupDocument,
+    *,
+    page_count: int,
+    page_size: dict,
+):
+    """Stage 6.6 V1 — LayoutFingerprint upsert (tenant, document, version=1).
+
+    실패 시 caller 가 try/except 로 흡수 — manual_crop 본 흐름 영향 0.
+
+    원칙:
+    - tenant FK 필수 (cross-tenant 매칭 영구 금지 정책 보존)
+    - update_or_create — same doc 재cut 시 idempotent (paper_type 갱신)
+    - V1 minimum 필드만 채움 (paper_type / page_count / page_size / column_count)
+    - V2 enrichment (text_density / x0_clusters / y_gap_distribution / ...) 자리 default
+    - selected_problem_ids / hit_report 미접근 (read-only audit)
+    """
+    from .models import LayoutFingerprint
+
+    paper_type = ""
+    try:
+        summary = (document.meta or {}).get("paper_type_summary") or {}
+        paper_type = str(summary.get("primary") or "")[:32]
+    except Exception:
+        paper_type = ""
+
+    column_count = _column_count_from_paper_type(paper_type)
+
+    LayoutFingerprint.objects.update_or_create(
+        tenant_id=document.tenant_id,
+        document=document,
+        fingerprint_version=1,
+        defaults={
+            "paper_type": paper_type,
+            "page_count": int(page_count or 0),
+            "page_size": dict(page_size or {}),
+            "column_count": column_count,
+            # V2 enrichment 자리 — 6.6.5 / 6.7 에서 채움
+            "text_density": 0.0,
+            "image_density": 0.0,
+            "anchor_density": 0.0,
+            "x0_clusters": [],
+            "y_gap_distribution": {},
+            "font_size_distribution": {},
+            "filename_patterns": [],
+            "similarity_cluster_id": "",
+        },
+    )
+
+
 def manually_crop_problem(
     document: MatchupDocument,
     *,
@@ -1072,16 +1138,18 @@ def manually_crop_problem(
             from academy.adapters.tools.pymupdf_renderer import PdfDocument
 
             with PdfDocument(local_path) as doc_pdf:
-                if page_index < 0 or page_index >= doc_pdf.page_count():
+                pdf_page_count = doc_pdf.page_count()  # Stage 6.6 fingerprint 용 캐싱
+                if page_index < 0 or page_index >= pdf_page_count:
                     raise ValueError(
                         f"page_index {page_index}가 페이지 범위를 벗어납니다 "
-                        f"(0~{doc_pdf.page_count() - 1})"
+                        f"(0~{pdf_page_count - 1})"
                     )
                 page_img = doc_pdf.render_page(page_index, dpi=200)
         else:
             if page_index != 0:
                 raise ValueError("이미지 문서는 page_index=0만 가능합니다.")
             page_img = Image.open(local_path).convert("RGB")
+            pdf_page_count = 1
 
         pw, ph = page_img.size
         left = max(0, int(round(x * pw)))
@@ -1190,6 +1258,21 @@ def manually_crop_problem(
             logger.exception(
                 "MATCHUP_MANUAL_CORRECTION_DELTA_FAILED | doc=%s | problem=%s",
                 document.id, problem.id,
+            )
+
+        # Stage 6.6 V1 — LayoutFingerprint upsert. 같은 doc 의 cut 마다 idempotent
+        # update_or_create. PDF size + page_count 는 위에서 이미 계산됨 (재계산 비용 0).
+        # 실패 시 manual_crop 본 동작 영향 0.
+        try:
+            _record_layout_fingerprint(
+                document,
+                page_count=int(pdf_page_count),
+                page_size={"width": int(pw), "height": int(ph)},
+            )
+        except Exception:
+            logger.exception(
+                "MATCHUP_LAYOUT_FINGERPRINT_FAILED | doc=%s",
+                document.id,
             )
 
         logger.info(
