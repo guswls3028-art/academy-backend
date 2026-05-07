@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+from typing import Optional
 
 from django.http import JsonResponse
 from django.utils.decorators import method_decorator
@@ -32,6 +33,9 @@ logger = logging.getLogger(__name__)
 
 
 def _serialize_proposal(p: ProblemSegmentationProposal) -> dict:
+    """[Phase 3.4 internal] raw 모든 필드 응답 — admin/debug 용. 외부 endpoint 응답에는
+    `_serialize_proposal_user_v1` (Stage 6.3A) 사용. 본 함수는 backward compat 보존.
+    """
     return {
         "id": p.id,
         "tenant_id": p.tenant_id,
@@ -51,6 +55,178 @@ def _serialize_proposal(p: ProblemSegmentationProposal) -> dict:
         "reviewed_at": p.reviewed_at.isoformat() if p.reviewed_at else None,
         "created_at": p.created_at.isoformat(),
         "updated_at": p.updated_at.isoformat(),
+    }
+
+
+# ── Stage 6.3A — Proposal Review API v1 (user-friendly, sanitized) ─────
+
+
+# UI 표시용 status 한글 라벨 (PROPOSAL_REVIEW_UI_WIREFRAME 정의)
+_UI_STATUS_LABELS = {
+    "pending":      "🟡 검수 대기",
+    "needs_review": "⚠️ 검수 필수",
+    "rejected":     "🔴 거절",
+    "approved":     "🟢 승인 완료",
+    "auto_passed":  "🟢 자동 통과",
+}
+
+# raw confidence float → high/medium/low 추상화 (학원장 UI 정책)
+_CONFIDENCE_HIGH = 0.85
+_CONFIDENCE_MED = 0.50
+
+# 영구 차단 / 사용자 결정 필요 conflict codes (validation_errors[*].code)
+_CONFLICT_CODE_MANUAL_OVERLAP = "manual_overlap"
+_CONFLICT_CODE_NUMBER_CONFLICT = "number_conflict"
+
+# 학원장 UI user_message
+_USER_MSG_MANUAL_OVERLAP = (
+    "기존 수동 문항과 겹쳐 자동 승인할 수 없습니다"
+)
+_USER_MSG_NUMBER_CONFLICT = (
+    "번호 충돌 — 번호 수정 또는 거절이 필요합니다"
+)
+_USER_MSG_ALREADY_APPROVED = "이미 승인된 문항입니다"
+_USER_MSG_ALREADY_REJECTED = "거절된 문항입니다"
+# approvable status 매핑 (proposal_helpers._APPROVABLE_STATUSES mirror)
+_APPROVABLE_STATUSES = frozenset({"pending", "needs_review", "auto_passed"})
+
+
+def _ui_status_label(status: str) -> str:
+    return _UI_STATUS_LABELS.get(status, status)
+
+
+def _confidence_label(value: Optional[float]) -> str:
+    """raw confidence float → 'high' / 'medium' / 'low' / 'unknown'."""
+    if value is None:
+        return "unknown"
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "unknown"
+    if v >= _CONFIDENCE_HIGH:
+        return "high"
+    if v >= _CONFIDENCE_MED:
+        return "medium"
+    return "low"
+
+
+def _validation_errors_have_code(validation_errors, code: str) -> bool:
+    for err in validation_errors or []:
+        if isinstance(err, dict) and err.get("code") == code:
+            return True
+    return False
+
+
+def _detect_conflict_and_actions(p: ProblemSegmentationProposal) -> dict:
+    """validation_errors + status 분석 → conflict_type / user_message /
+    can_approve / can_reject 도출.
+
+    원칙:
+    - manual_overlap → 영구 차단, can_approve=False (proposal_helpers approve_proposal
+      가 동일 정책 적용)
+    - number_conflict (Stage 6.3N) → can_approve=False, 학원장 결정 필요
+    - approved/rejected → can_approve/can_reject False (이미 처리)
+    - pending/needs_review/auto_passed + 충돌 없음 → can_approve=True
+    """
+    errs = p.validation_errors or []
+    has_manual_overlap = _validation_errors_have_code(errs, _CONFLICT_CODE_MANUAL_OVERLAP)
+    has_number_conflict = _validation_errors_have_code(errs, _CONFLICT_CODE_NUMBER_CONFLICT)
+
+    # status 별 분기
+    if p.status == "approved":
+        return {
+            "conflict_type": None,
+            "user_message": _USER_MSG_ALREADY_APPROVED,
+            "can_approve": False,
+            "can_reject": False,
+        }
+    if p.status == "rejected":
+        if has_manual_overlap:
+            return {
+                "conflict_type": _CONFLICT_CODE_MANUAL_OVERLAP,
+                "user_message": _USER_MSG_MANUAL_OVERLAP,
+                "can_approve": False,
+                "can_reject": False,    # 이미 rejected — 재처리 불가
+            }
+        return {
+            "conflict_type": None,
+            "user_message": _USER_MSG_ALREADY_REJECTED,
+            "can_approve": False,
+            "can_reject": False,
+        }
+
+    # pending / needs_review / auto_passed
+    if has_manual_overlap:
+        return {
+            "conflict_type": _CONFLICT_CODE_MANUAL_OVERLAP,
+            "user_message": _USER_MSG_MANUAL_OVERLAP,
+            "can_approve": False,
+            "can_reject": True,
+        }
+    if has_number_conflict:
+        return {
+            "conflict_type": _CONFLICT_CODE_NUMBER_CONFLICT,
+            "user_message": _USER_MSG_NUMBER_CONFLICT,
+            "can_approve": False,
+            "can_reject": True,
+        }
+    if p.status in _APPROVABLE_STATUSES:
+        return {
+            "conflict_type": None,
+            "user_message": None,
+            "can_approve": True,
+            "can_reject": True,
+        }
+    # 알 수 없는 status — 보수적으로 차단
+    return {
+        "conflict_type": None,
+        "user_message": None,
+        "can_approve": False,
+        "can_reject": False,
+    }
+
+
+def _serialize_proposal_user_v1(p: ProblemSegmentationProposal) -> dict:
+    """Stage 6.3A — 학원장/운영자 노출용 sanitized 응답 (Proposal Review API v1).
+
+    숨김 필드 (사용자 directive):
+    - paper_type / engine (raw route) / model_version / raw_response
+    - raw confidence float (→ confidence_label 추상화)
+    - analysis_version_key (internal batch identifier)
+    - validation_errors raw list (→ user_message + conflict_type 변환)
+    - tenant_id / reviewed_by_id (cross-tenant info leak / admin info)
+
+    노출 필드:
+    - id / document_id / page_number / detected_problem_number
+    - status (frontend 가 ui_status_label 매핑)
+    - ui_status_label (한글)
+    - bbox (학원장이 직접 보는 visual 영역)
+    - image_key (preview 용 — frontend 가 signed URL 생성)
+    - confidence_label (high/medium/low/unknown)
+    - conflict_type (None / 'manual_overlap' / 'number_conflict')
+    - user_message (한글 — 충돌/상태 설명)
+    - can_approve / can_reject (UI 버튼 활성화 신호)
+    - promoted_problem_id (승인 후 결과 추적)
+    - reviewed_at / created_at
+    """
+    actions = _detect_conflict_and_actions(p)
+    return {
+        "id": p.id,
+        "document_id": p.document_id,
+        "page_number": p.page_number,
+        "detected_problem_number": p.detected_problem_number,
+        "status": p.status,
+        "ui_status_label": _ui_status_label(p.status),
+        "bbox": p.bbox,
+        "image_key": p.image_key,
+        "confidence_label": _confidence_label(p.confidence),
+        "conflict_type": actions["conflict_type"],
+        "user_message": actions["user_message"],
+        "can_approve": actions["can_approve"],
+        "can_reject": actions["can_reject"],
+        "promoted_problem_id": p.promoted_problem_id,
+        "reviewed_at": p.reviewed_at.isoformat() if p.reviewed_at else None,
+        "created_at": p.created_at.isoformat(),
     }
 
 
@@ -123,7 +299,7 @@ class ProposalListView(View):
         proposals = list(qs.order_by("-created_at")[offset : offset + limit])
 
         return JsonResponse({
-            "proposals": [_serialize_proposal(p) for p in proposals],
+            "proposals": [_serialize_proposal_user_v1(p) for p in proposals],
             "total": total,
             "limit": limit,
             "offset": offset,
@@ -143,7 +319,7 @@ class ProposalDetailView(View):
             )
         except ProblemSegmentationProposal.DoesNotExist:
             return JsonResponse({"detail": "not found"}, status=404)
-        return JsonResponse(_serialize_proposal(p))
+        return JsonResponse(_serialize_proposal_user_v1(p))
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
@@ -199,7 +375,7 @@ class ProposalApproveView(View):
             getattr(request.user, "id", None),
         )
         return JsonResponse({
-            "proposal": _serialize_proposal(proposal),
+            "proposal": _serialize_proposal_user_v1(proposal),
             "promoted_problem_id": new_problem.id,
         })
 
@@ -252,4 +428,4 @@ class ProposalRejectView(View):
             proposal_id, request.tenant.id,
             getattr(request.user, "id", None), code,
         )
-        return JsonResponse({"proposal": _serialize_proposal(proposal)})
+        return JsonResponse({"proposal": _serialize_proposal_user_v1(proposal)})
