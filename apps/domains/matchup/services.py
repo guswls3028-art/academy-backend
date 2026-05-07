@@ -1036,6 +1036,59 @@ def _column_count_from_paper_type(paper_type: str) -> int:
     return 1
 
 
+def _extract_pdf_first_page_metrics(document: MatchupDocument) -> Tuple[int, dict]:
+    """Stage 6.6.5 — document 의 inventory file 에서 PDF first page metrics 추출.
+
+    PDF download → first page render → page_count + page_size dict.
+    이미지 doc 도 동일 처리 (page_count=1, PIL size).
+
+    Returns:
+        (page_count, page_size_dict). page_size = {"width": int, "height": int}.
+
+    Raises:
+        ValueError — inventory_file 없거나 PDF 분석 실패. 호출자가 catch + skip.
+
+    원칙:
+    - R2 read 만 (write 0)
+    - 임시 파일 cleanup 보장
+    - selected_problem_ids / hit_report 미접근
+    """
+    import os
+    import tempfile
+    from PIL import Image
+
+    if document.inventory_file_id is None:
+        raise ValueError("문서에 원본 파일이 연결되어 있지 않습니다.")
+
+    inv_file = document.inventory_file
+    local_path = _download_inventory_to_temp(inv_file)
+    try:
+        is_pdf = (
+            (inv_file.content_type or "").lower() == "application/pdf"
+            or (inv_file.original_name or "").lower().endswith(".pdf")
+        )
+        if is_pdf:
+            from academy.adapters.tools.pymupdf_renderer import PdfDocument
+
+            with PdfDocument(local_path) as doc_pdf:
+                page_count = doc_pdf.page_count()
+                if page_count <= 0:
+                    raise ValueError("PDF 페이지 수가 0 이하입니다.")
+                first_page = doc_pdf.render_page(0, dpi=200)
+                w, h = first_page.size
+        else:
+            page_img = Image.open(local_path).convert("RGB")
+            w, h = page_img.size
+            page_count = 1
+
+        return int(page_count), {"width": int(w), "height": int(h)}
+    finally:
+        try:
+            os.unlink(local_path)
+        except OSError:
+            pass
+
+
 def _record_layout_fingerprint(
     document: MatchupDocument,
     *,
