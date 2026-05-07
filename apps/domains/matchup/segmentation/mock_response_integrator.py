@@ -37,9 +37,15 @@ SCHEMA_VERSION = "5.8-mock-1"
 
 @dataclass
 class OcrTextBlock:
+    """OCR 텍스트 블록 — Stage 5.8 (synthetic) + Stage 6.3F-2 (운영 변환 결과 호환).
+
+    confidence: Optional[float] — 운영 google_ocr_blocks 가 미surface 하므로 None
+    허용. synthetic mock 은 0.85 등 명시 값. None 인 경우 unified candidate 변환 시
+    confidence=0.0 fallback (semantic: 미상 → 가장 낮은 신뢰도로 안전하게 처리).
+    """
     bbox_norm: tuple[float, float, float, float]   # (x, y, w, h) 0~1
     text: str
-    confidence: float = 0.85
+    confidence: Optional[float] = None
 
 
 @dataclass
@@ -85,12 +91,18 @@ class MockVlmResponse:
 
 @dataclass
 class UnifiedCandidate:
-    """단일 후보 bbox — Tier 0 / OCR / VLM / YOLO 어디서 왔는지 source 명시."""
+    """단일 후보 bbox — Tier 0 / OCR / VLM / YOLO 어디서 왔는지 source 명시.
+
+    confidence: Optional[float] — None 은 "신뢰도 정보 없음" 의미 (Stage 6.3F-2).
+    "신뢰도 낮음" 은 0.0 으로 명시 표현. 운영 google_ocr_blocks 가 confidence 를
+    surface 안 하므로 OCR source 변환 시 None 보존 (downstream proposal payload 변환
+    시점에 DB FloatField 호환 위해 0.0 fallback + raw_response 마킹).
+    """
     page_index: int
     bbox_norm: tuple[float, float, float, float]
     number: Optional[int]
     source: str                                 # 'tier0' | 'ocr' | 'vlm' | 'yolo'
-    confidence: float
+    confidence: Optional[float]
     debug: dict = field(default_factory=dict)
 
 
@@ -250,7 +262,12 @@ def manual_overlap_mock_validator(
 
 
 def _ocr_response_to_unified(resp: MockOcrResponse) -> list[UnifiedCandidate]:
-    """OCR text block → unified candidate (numbered text 만 anchor 후보)."""
+    """OCR text block → unified candidate (numbered text 만 anchor 후보).
+
+    Stage 6.3F-2 (A안): blk.confidence 가 None 이면 UnifiedCandidate.confidence 도
+    None 그대로 보존 (의미 = "신뢰도 정보 없음"). 0.0 fallback 은 ProposalPayloadCandidate
+    변환 시점 (DB FloatField 호환) 만 적용.
+    """
     import re
     out: list[UnifiedCandidate] = []
     num_re = re.compile(r"^(\d+)\.\s")
@@ -263,8 +280,11 @@ def _ocr_response_to_unified(resp: MockOcrResponse) -> list[UnifiedCandidate]:
                 bbox_norm=tuple(blk.bbox_norm),
                 number=number,
                 source="ocr",
-                confidence=blk.confidence,
-                debug={"text_preview": (blk.text or "")[:40]},
+                confidence=blk.confidence,    # None 그대로 보존
+                debug={
+                    "text_preview": (blk.text or "")[:40],
+                    "confidence_raw_present": blk.confidence is not None,
+                },
             ))
     return out
 
@@ -324,11 +344,38 @@ def _to_proposal_payload(
     analysis_version_key: str,
     extra_errors: Optional[list[ValidationError]] = None,
 ) -> ProposalPayloadCandidate:
+    """UnifiedCandidate → ProposalPayloadCandidate.
+
+    Stage 6.3F-2 (A안 + B-style 마킹):
+    - UnifiedCandidate.confidence None ("정보 없음") 일 때 ProposalPayloadCandidate.confidence
+      는 0.0 으로 변환 (DB FloatField 호환 — `models.FloatField(default=0.0)` NOT NULL).
+    - 단 raw_response 에 confidence_missing=True / confidence_strategy="missing_to_zero_for_db_compat"
+      / source_confidence=None 마킹 → audit / debug 가 "낮음" 과 "정보 없음" 구분 가능.
+    - UI 노출 정책: raw confidence 노출 X (PROPOSAL_REVIEW_UI_WIREFRAME 정의 — high/medium/low 추상화).
+    """
     bx, by, bw, bh = c.bbox_norm
     status = "pending"
     errors = list(extra_errors or [])
     if any(e.code == "manual_overlap" for e in errors):
         status = "rejected"
+
+    # confidence None 처리 (A안 + audit 마킹)
+    raw_response = dict(c.debug)
+    if c.confidence is None:
+        confidence_db = 0.0
+        raw_response["confidence_missing"] = True
+        raw_response["confidence_strategy"] = "missing_to_zero_for_db_compat"
+        raw_response["source_confidence"] = None
+        raw_response.setdefault(
+            "TODO_ranking_interpretation",
+            "confidence=0 here means INFO_MISSING, not LOW. Ranking layer must "
+            "treat differently — see PROPOSAL_NUMBER_NAMESPACE_POLICY follow-up.",
+        )
+    else:
+        confidence_db = float(c.confidence)
+        raw_response.setdefault("confidence_missing", False)
+        raw_response.setdefault("source_confidence", float(c.confidence))
+
     return ProposalPayloadCandidate(
         tenant_id=tenant_id, document_id=document_id,
         page_number=c.page_index,
@@ -340,11 +387,11 @@ def _to_proposal_payload(
         },
         engine=_engine_for_source(c.source),
         model_version="",
-        confidence=round(float(c.confidence), 4),
+        confidence=round(confidence_db, 4),
         status=status,
         analysis_version_key=analysis_version_key,
         image_key="",
-        raw_response=c.debug,
+        raw_response=raw_response,
         validation_errors=errors,
     )
 
