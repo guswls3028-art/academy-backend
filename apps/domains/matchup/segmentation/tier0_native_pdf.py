@@ -2397,3 +2397,774 @@ def analyze_pdf_v5_3(
         })
 
     return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Stage 5.5.4 v5_4 — Profile precision (layout × cluster_pattern × percentile)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# Stage 5.5.3 진단:
+#  - v5_3 == v5_2 (paper_type_thresholds.x0_allowed_regions == default _LAYOUT_X0_ALLOW)
+#  - profile.x0_clusters [0.093, 0.509] / x0_distribution.p90=0.508
+#  - 내지류 4 doc (166/302/284/305) precision 0.36~0.57 — FP 잔존
+#  - 39 doc fingerprint 안에 sub-pattern 두 종 존재:
+#    * single_column__single (메인자료, x0~0.03, w~0.94)
+#    * single_column__bilateral (내지, x0~{0.10, 0.49}, w~0.77)
+#
+# v5_4 정책:
+#  - profile.layout_thresholds[layout__pattern].x0_allowed_regions 우선 사용
+#    (layout × cluster_pattern percentile p05~p95 + margin)
+#  - anchor 의 x0 분포로 doc-level cluster_pattern 추정 (bilateral / single)
+#  - profile.layout_thresholds.bbox_w_p50 으로 column override hint:
+#    * expected_w >= 0.6 + columns.column_count > 1 → single column 강제 (1단)
+#    * 0.30 <= expected_w <= 0.55 + columns.column_count == 1 + bilateral anchors → 2단 강제
+#  - layout_thresholds 미존재 시 v5_3 fallback (paper_type_thresholds + _LAYOUT_X0_ALLOW)
+#  - 영역 밖 anchor 는 confidence × 0.3 (v5_3 의 0.5 보다 강한 demotion)
+#
+# 원칙 (사용자 directive):
+#  - DB 모델 (TenantSegmentationProfile / LayoutFingerprint / ManualCorrectionDelta)
+#    import / row 생성 절대 X — JSON dict 만
+#  - operating_problem_count GT 사용 X
+#  - paper_type 외부 응답 키 _internal_ 마킹 유지
+
+# 단일 cluster fallback width
+_V54_SINGLE_CLUSTER_HALF_WIDTH = 0.05
+_V54_SINGLE_CLUSTER_RIGHT_EXTEND = 0.10
+# bbox_w 기반 column override 경계
+_V54_WIDE_COL_THRESHOLD = 0.60   # expected_w >= 0.60 → single column
+_V54_NARROW_COL_LO = 0.30        # 0.30 <= expected_w <= 0.55 → 2 column
+_V54_NARROW_COL_HI = 0.55
+
+
+def _detect_anchor_cluster_pattern(
+    per_page_anchors: list[list["NumberAnchor"]],
+    page_widths: list[float],
+) -> str:
+    """anchor x0 분포로 doc-level cluster_pattern 추정.
+
+    Returns:
+        "bilateral" — 좌측 (<0.30) + 우측 (>=0.40) 둘 다 >= 20%
+        "single" — 그 외 (대부분 좌측)
+    """
+    all_x0 = []
+    for page_idx, anchors in enumerate(per_page_anchors):
+        if not anchors:
+            continue
+        page_w = page_widths[page_idx] if page_idx < len(page_widths) else 595.0
+        for a in anchors:
+            if page_w > 0:
+                all_x0.append(a.bbox[0] / page_w)
+    if not all_x0:
+        return "single"
+    n = len(all_x0)
+    left = sum(1 for x in all_x0 if x < 0.30)
+    right = sum(1 for x in all_x0 if x >= 0.40)
+    if min(left, right) >= n * 0.20 and right >= 3:
+        return "bilateral"
+    return "single"
+
+
+def _merge_overlapping_regions(
+    regions: list[tuple[float, float]],
+) -> list[tuple[float, float]]:
+    """겹치는 region 합치기."""
+    if not regions:
+        return []
+    sorted_r = sorted(regions, key=lambda r: r[0])
+    merged: list[tuple[float, float]] = [sorted_r[0]]
+    for cur in sorted_r[1:]:
+        last = merged[-1]
+        if cur[0] <= last[1]:
+            merged[-1] = (last[0], max(last[1], cur[1]))
+        else:
+            merged.append(cur)
+    return merged
+
+
+def derive_x0_regions_v5_4(
+    profile: Optional[dict],
+    paper_type: str,
+    layout_type: str,
+    cluster_pattern: str,
+) -> tuple[list[tuple[float, float]], dict]:
+    """v5_4: profile.layout_thresholds[layout__*] UNION + bbox_w hint, fallback to clusters.
+
+    같은 layout 안의 sub-pattern (single / bilateral) 두 group 의 region 을 UNION 으로
+    합쳐 anchor 검출 단계에서 더 관대하게 허용 (recall 보호). bbox_w hint 는 anchor
+    cluster_pattern 매칭 group 에서 우선 사용.
+    """
+    debug: dict = {}
+
+    # 1. layout_thresholds — UNION across same layout
+    if profile and isinstance(profile, dict):
+        lt = profile.get("layout_thresholds")
+        if isinstance(lt, dict):
+            matched_keys: list[str] = []
+            all_regions: list[tuple[float, float]] = []
+            primary_block: Optional[dict] = None
+            for key, block in lt.items():
+                if not isinstance(block, dict):
+                    continue
+                if block.get("layout_type") != layout_type:
+                    continue
+                regions_raw = block.get("x0_allowed_regions")
+                if not regions_raw or not isinstance(regions_raw, list):
+                    continue
+                try:
+                    parsed = [(float(r[0]), float(r[1])) for r in regions_raw if len(r) >= 2]
+                except (TypeError, ValueError, IndexError):
+                    parsed = []
+                if not parsed:
+                    continue
+                matched_keys.append(key)
+                all_regions.extend(parsed)
+                # primary block: anchor cluster_pattern 매칭 우선
+                if block.get("cluster_pattern") == cluster_pattern and primary_block is None:
+                    primary_block = block
+            if not primary_block and matched_keys:
+                primary_block = lt.get(matched_keys[0])
+            if all_regions:
+                regions = _merge_overlapping_regions(all_regions)
+                debug["source"] = "layout_thresholds_union"
+                debug["matched_keys"] = matched_keys
+                if primary_block:
+                    debug["primary_pattern"] = primary_block.get("cluster_pattern")
+                    debug["bbox_w_p50"] = primary_block.get("bbox_w_p50")
+                    debug["bbox_w_p25"] = primary_block.get("bbox_w_p25")
+                    debug["bbox_w_p75"] = primary_block.get("bbox_w_p75")
+                return regions, debug
+
+        # 2. clusters fallback (v5_3 cluster 방식)
+        clusters = profile.get("x0_clusters")
+        if isinstance(clusters, list) and len(clusters) >= 2:
+            regions = []
+            for c in clusters:
+                try:
+                    cf = float(c)
+                except (TypeError, ValueError):
+                    continue
+                low = max(0.0, cf - _V54_SINGLE_CLUSTER_HALF_WIDTH)
+                high = min(1.0, cf + _V54_SINGLE_CLUSTER_HALF_WIDTH)
+                regions.append((low, high))
+            if regions:
+                debug["source"] = "clusters_bilateral"
+                debug["cluster_count"] = len(clusters)
+                return regions, debug
+
+        if isinstance(clusters, list) and len(clusters) == 1:
+            try:
+                cf = float(clusters[0])
+                low = max(0.0, cf - _V54_SINGLE_CLUSTER_HALF_WIDTH)
+                high = min(1.0, cf + _V54_SINGLE_CLUSTER_RIGHT_EXTEND)
+                debug["source"] = "clusters_single"
+                return [(low, high)], debug
+            except (TypeError, ValueError):
+                pass
+
+    # 3. fallback to v5_3
+    regions = get_x0_regions_from_profile(paper_type, layout_type, profile)
+    debug["source"] = "fallback_v5_3"
+    return regions, debug
+
+
+def filter_anchors_v5_4(
+    per_page_anchors: list[list[NumberAnchor]],
+    paper_type: str,
+    layout_type: str,
+    page_widths: list[float],
+    profile: Optional[dict] = None,
+) -> tuple[list[list[NumberAnchor]], dict]:
+    """v5_4 anchor 필터 — layout × cluster_pattern percentile 정밀 영역."""
+    overflow, ov_debug = estimate_inline_overflow(per_page_anchors)
+    cluster_pattern = _detect_anchor_cluster_pattern(per_page_anchors, page_widths)
+    debug: dict = {
+        "overflow": ov_debug, "applied_dedup": False, "demoted_count": 0,
+        "profile_used": profile is not None,
+        "anchor_cluster_pattern": cluster_pattern,
+    }
+
+    if overflow:
+        # bilateral cluster (manual-rich 양식) 은 conservative dedup — recall 보호
+        if cluster_pattern == "bilateral":
+            debug["dedup_skip_reason"] = "bilateral_cluster_no_dedup"
+        else:
+            seen: set[int] = set()
+            deduped: list[list[NumberAnchor]] = []
+            for anchors in per_page_anchors:
+                kept: list[NumberAnchor] = []
+                for a in anchors:
+                    if a.number in seen:
+                        continue
+                    seen.add(a.number)
+                    kept.append(a)
+                deduped.append(kept)
+            per_page_anchors = deduped
+            debug["applied_dedup"] = True
+            debug["after_dedup_total"] = sum(len(a) for a in per_page_anchors)
+
+    # v5_4 — layout × pattern percentile 영역
+    x0_regions, region_debug = derive_x0_regions_v5_4(
+        profile, paper_type, layout_type, cluster_pattern,
+    )
+    debug["x0_regions"] = x0_regions
+    debug["region_source"] = region_debug.get("source")
+    debug["region_matched_key"] = region_debug.get("matched_key")
+    debug["bbox_w_p50_expected"] = region_debug.get("bbox_w_p50")
+    debug["bbox_w_p25_expected"] = region_debug.get("bbox_w_p25")
+    debug["bbox_w_p75_expected"] = region_debug.get("bbox_w_p75")
+
+    # v5_4 — 영역 밖 demotion × 0.3, < 0.3 drop
+    demote_factor = 0.3
+    drop_threshold = 0.3
+    demoted = 0
+    out: list[list[NumberAnchor]] = []
+    for page_idx, anchors in enumerate(per_page_anchors):
+        page_w = page_widths[page_idx] if page_idx < len(page_widths) else 595.0
+        kept: list[NumberAnchor] = []
+        for a in anchors:
+            x0_norm = a.bbox[0] / page_w if page_w > 0 else 0
+            in_region = any(low <= x0_norm <= high for low, high in x0_regions)
+            if not in_region:
+                new_conf = max(0.0, a.confidence * demote_factor)
+                if new_conf < drop_threshold:
+                    demoted += 1
+                    continue
+                a = NumberAnchor(
+                    number=a.number, page_index=a.page_index,
+                    bbox=a.bbox, text=a.text, style=a.style,
+                    confidence=new_conf,
+                )
+            kept.append(a)
+        out.append(kept)
+    debug["demoted_count"] = demoted
+    return out, debug
+
+
+def _maybe_override_columns_v5_4(
+    columns: ColumnLayout,
+    page_anchors: list[NumberAnchor],
+    page_width: float,
+    expected_w: Optional[float],
+) -> tuple[ColumnLayout, str]:
+    """v5_4: profile.bbox_w_p50 hint 로 column_count override.
+
+    Returns:
+        (columns, action) — action: "kept" | "forced_single" | "forced_double"
+    """
+    if expected_w is None or page_width <= 0:
+        return columns, "kept"
+
+    # 1) wide expected 인데 현재 column 다중 → 1단 강제
+    if expected_w >= _V54_WIDE_COL_THRESHOLD and columns.column_count > 1:
+        forced = ColumnLayout(
+            column_count=1, column_lefts=[0.0], column_width=page_width,
+        )
+        return forced, "forced_single"
+
+    # 2) narrow expected 인데 현재 1단 → anchor x0 분포로 2단 추정
+    if (
+        _V54_NARROW_COL_LO <= expected_w <= _V54_NARROW_COL_HI
+        and columns.column_count == 1
+        and page_anchors
+    ):
+        xs = [a.bbox[0] for a in page_anchors]
+        left_xs = [x for x in xs if x < page_width * 0.40]
+        right_xs = [x for x in xs if x >= page_width * 0.40]
+        if left_xs and right_xs and len(right_xs) >= 1:
+            forced = ColumnLayout(
+                column_count=2,
+                column_lefts=[
+                    statistics.median(left_xs), statistics.median(right_xs),
+                ],
+                column_width=page_width / 2,
+            )
+            return forced, "forced_double"
+
+    return columns, "kept"
+
+
+def analyze_pdf_v5_4(
+    pdf_path: str,
+    *,
+    file_name: Optional[str] = None,
+    profile: Optional[dict] = None,
+) -> dict[str, Any]:
+    """v5_4 — v5_3 base + profile.layout_thresholds (layout × cluster_pattern) +
+    bbox_w expectation 으로 column override.
+
+    Args:
+        pdf_path: PDF 경로
+        file_name: 분류용 파일명
+        profile: tenant profile dict (layout_thresholds / x0_distribution / bbox_stats 활용)
+
+    원칙:
+    - DB 모델 import 0회
+    - operating_problem_count 미사용
+    - paper_type 외부 응답 키는 _internal_ 마킹
+    """
+    import os as _os
+
+    pages = extract_page_blocks(pdf_path)
+    n_pages = len(pages)
+    n_text_pages = sum(1 for p in pages if p.has_embedded_text)
+    if file_name is None:
+        file_name = _os.path.basename(pdf_path)
+
+    tier1_required = False
+    tier1_reason = ""
+    if n_pages == 0:
+        tier1_required = True; tier1_reason = "empty_pdf"
+    elif n_text_pages == 0:
+        tier1_required = True; tier1_reason = "scanned_no_text_layer"
+    elif n_text_pages < n_pages * 0.5:
+        tier1_required = True; tier1_reason = "partial_text_layer"
+
+    pre_anchors_total = 0
+    full_text_chunks: list[str] = []
+    per_page_columns: list[ColumnLayout] = []
+    pre_per_page_bboxes: list[list[tuple[float, float, float, float]]] = []
+    page_widths: list[float] = []
+    for page in pages:
+        cols = detect_columns(page.word_blocks, page.page_width)
+        per_page_columns.append(cols)
+        page_widths.append(page.page_width)
+        v2_anchors = detect_problem_anchors_v2(page, cols)
+        pre_anchors_total += len(v2_anchors)
+        full_text_chunks.append(" ".join(b.get("text", "") for b in page.text_blocks)[:300])
+        pre_bboxes = []
+        for a in v2_anchors:
+            bbox_norm = (
+                a.bbox[0] / page.page_width if page.page_width else 0,
+                a.bbox[1] / page.page_height if page.page_height else 0,
+                (a.bbox[2] - a.bbox[0]) / page.page_width if page.page_width else 0,
+                (a.bbox[3] - a.bbox[1]) / page.page_height if page.page_height else 0,
+            )
+            pre_bboxes.append(bbox_norm)
+        pre_per_page_bboxes.append(pre_bboxes)
+    full_text = " ".join(full_text_chunks)
+
+    paper_type, pt_conf, pt_debug = classify_paper_type_v4(
+        file_name=file_name, pages_full_text=full_text,
+        total_anchors=pre_anchors_total, page_count=n_pages,
+    )
+    layout = classify_layout_v2(pre_per_page_bboxes)
+
+    per_page_anchors: list[list[NumberAnchor]] = []
+    for page, cols in zip(pages, per_page_columns):
+        anchors = detect_problem_anchors_v3(page, cols, paper_type)
+        per_page_anchors.append(anchors)
+
+    per_page_anchors_v54, v54_debug = filter_anchors_v5_4(
+        per_page_anchors, paper_type, layout.layout_type, page_widths,
+        profile=profile,
+    )
+    cross = cross_page_validate(per_page_anchors_v54)
+
+    expected_w = v54_debug.get("bbox_w_p50_expected")
+    column_overrides: list[str] = []
+
+    out: dict[str, Any] = {
+        "version": "v5_4",
+        "pdf_path": pdf_path,
+        "file_name": file_name,
+        "page_count": n_pages,
+        "text_pages": n_text_pages,
+        "_internal_paper_type": paper_type,
+        "_internal_paper_type_confidence": pt_conf,
+        "layout_v2": {
+            "type": layout.layout_type, "confidence": layout.confidence,
+            "x0_clusters": layout.x0_clusters, "page_p50": layout.page_bbox_count_p50,
+        },
+        "tier1_required": tier1_required,
+        "tier1_reason": tier1_reason,
+        "anchor_filter_v54": v54_debug,
+        "profile_used": profile is not None,
+        "pages": [],
+        "cross_page": {
+            "detected_total": cross.detected_total,
+            "expected_max": cross.expected_max,
+            "sequence_continuity": cross.sequence_continuity,
+            "duplicates_dropped": cross.duplicates_dropped,
+            "suspicious_pages": cross.suspicious_pages,
+        },
+    }
+
+    # v5_4: bbox_h_p50 hint 기반 candidate height 검증 gate
+    # profile.bbox_stats.height_p50 (전역) 또는 layout_thresholds[primary].bbox_h_p50
+    expected_h = None
+    if profile and isinstance(profile, dict):
+        bs = profile.get("bbox_stats") or {}
+        expected_h = bs.get("height_p50")
+        # layout_thresholds 의 bbox_h_p50 우선
+        lt = profile.get("layout_thresholds") or {}
+        for key, block in lt.items():
+            if isinstance(block, dict) and block.get("layout_type") == layout.layout_type:
+                if block.get("bbox_h_p50") is not None:
+                    expected_h = block.get("bbox_h_p50")
+                    break
+
+    h_filter_drops = 0
+    h_filter_kept = 0
+    for page, anchors, cols in zip(pages, per_page_anchors_v54, per_page_columns):
+        # v5_4: column override 는 recall 손실이 커서 비활성.
+        column_overrides.append("kept")
+        role = classify_page_role_v2(page, anchors)
+        candidates = derive_bbox_candidates_v2(anchors, page, cols)
+
+        # height filter: candidate.bbox_norm[3] 가 expected_h 의 [0.10x, 4.0x] 밖이면 drop
+        if expected_h is not None and expected_h > 0:
+            kept_candidates = []
+            for c in candidates:
+                ch = c.bbox_norm[3] if len(c.bbox_norm) >= 4 else None
+                if ch is None or ch <= 0:
+                    kept_candidates.append(c)
+                    continue
+                ratio = ch / expected_h
+                if 0.10 <= ratio <= 4.0:
+                    kept_candidates.append(c)
+                    h_filter_kept += 1
+                else:
+                    h_filter_drops += 1
+            candidates = kept_candidates
+
+        out["pages"].append({
+            "page_index": page.page_index,
+            "page_width": page.page_width,
+            "page_height": page.page_height,
+            "has_embedded_text": page.has_embedded_text,
+            "role": role.role,
+            "role_confidence": role.confidence,
+            "anchor_count": len(anchors),
+            "anchors": [asdict(a) for a in anchors],
+            "bbox_candidates": [asdict(c) for c in candidates],
+            "v54_column_override": "kept",
+        })
+
+    out["v54_h_filter"] = {
+        "expected_h": expected_h,
+        "drops": h_filter_drops,
+        "kept": h_filter_kept,
+    }
+
+    out["column_overrides_summary"] = {
+        "kept": column_overrides.count("kept"),
+        "forced_single": column_overrides.count("forced_single"),
+        "forced_double": column_overrides.count("forced_double"),
+    }
+
+    return out
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Stage 5.5.5 v5_5 — Anchor recall boundary test (Tier 0 plateau 검증)
+# ════════════════════════════════════════════════════════════════════════════
+#
+# 본 함수는 **실험적 버전**임 — 운영 default 로 wiring 하지 말 것.
+# 운영 진입점은 v5_4 (analyze_pdf_v5_4) 까지만 사용.
+#
+# Stage 5.5.4 FN analysis (내지 4 doc, 1202 FN records) 결과:
+#  - REGEX_MISS (bare_digit "02"/"1"): 65% / UNKNOWN (v2 dedup 폐기): 26%
+#  - MAX_NUMBER_EXCEEDED (>60): 1% / NO_CHOICE_NEARBY: 5% / NOT_LINE_LEADING: 2%
+#
+# 1차 시도 (bare_digit + per-page dedup relax + choice range 40) → F1 -0.024 회귀.
+# 2차 시도 (max_number 60 → 100 만) → F1 -0.005 (소폭 회귀, 1 doc 만 marginal 개선).
+#
+# 채택된 변경: max_number 60 → 100 만. 나머지는 모두 reject (FP 폭증).
+# 결론: Tier 0 단독 plateau. Stage 5.6 OCR/VLM fallback 으로 분기.
+#
+# 거부된 변경 (dead code 로 남기지 않음 — 보존은 STAGE_5_5_5_*.md / unit test 에서):
+#  - bare_digit anchor (regex `^0?\d+$`) — 본문 inline 숫자 폭발적 admit
+#  - per-page same-number dedup relax — 페이지 푸터/번호 추가 admit
+#  - _LEARNING_STRICT_NEIGHBOR_RANGE 20 → 40 — 본문 word 가 false admit
+
+_V55_MAX_LEGIT_QUESTION_NUMBER = 100
+_V55_CAND_EXPLOSION_RATIO = 2.5    # v5_4 cand 대비 >2.5x 면 explosion 마킹
+
+
+def detect_problem_anchors_v5_5(
+    page: PageBlocks, columns: ColumnLayout, paper_type: str,
+) -> list[NumberAnchor]:
+    """v5_5 anchor 검출 — v3 base + 안전 변경만 (max_number 100 + choice range 40).
+
+    Stage 5.5.5 1차 시도 (bare_digit / dedup relax) 는 FP 폭증으로 F1 회귀 →
+    안전 변경만 유지:
+    - _MAX_LEGIT_QUESTION_NUMBER_V2 60 → 100 (학습자료 본문 100문항 대응)
+    - _LEARNING_STRICT_NEIGHBOR_RANGE 20 → 40 (선택지 검색 확장)
+
+    Drop (1차 시도에서 FP 유발):
+    - bare_digit anchor (FP source: 본문 inline 02/03 등 무관 숫자)
+    - per-page same-number dedup relax (FP source: 페이지 푸터/번호 중복)
+    """
+    if paper_type in (PAPER_TYPE_ANSWER_EXPLANATION, PAPER_TYPE_COVER):
+        return []
+
+    blocked, _ = _is_answer_or_explanation_page(page)
+    if blocked:
+        return []
+
+    anchors: list[NumberAnchor] = []
+    all_words = page.word_blocks
+    col_tol = page.page_width * 0.05
+    column_starts = columns.column_lefts
+
+    for w in all_words:
+        text = (w.get("text") or "").strip()
+        if not text:
+            continue
+
+        match_n: Optional[int] = None
+        match_style: Optional[str] = None
+        match_conf = 0.0
+
+        if text in _CIRCLED:
+            match_n = _CIRCLED[text]
+            match_style = "circled"
+            match_conf = 0.9
+        elif text in _PARENED:
+            match_n = _PARENED[text]
+            match_style = "parened"
+            match_conf = 0.9
+        elif (m := _NUM_ARABIC_DOT.match(text)):
+            match_n = int(m.group(1))
+            match_style = "arabic_dot"
+            match_conf = 0.85
+        elif (m := _NUM_ARABIC_PAREN.match(text)):
+            match_n = int(m.group(1))
+            match_style = "arabic_paren"
+            match_conf = 0.8
+        elif (m := _NUM_ARABIC_BUNG.match(text)):
+            match_n = int(m.group(1))
+            match_style = "arabic_bung"
+            match_conf = 0.8
+        elif (m := _NUM_ARABIC_INPAREN.match(text)):
+            match_n = int(m.group(1))
+            match_style = "arabic_inparen"
+            match_conf = 0.75
+
+        if match_n is None:
+            continue
+
+        # v5_5 — number 상한 100 (v3 의 60 → 100)
+        if not (1 <= match_n <= _V55_MAX_LEGIT_QUESTION_NUMBER):
+            continue
+
+        # line_start strict (v2/v3 그대로)
+        if not _is_line_leading_word(w, all_words):
+            continue
+
+        # column 시작 x0 근접도 (v2/v3 그대로)
+        is_at_column_start = any(
+            abs(w["x0"] - col_x) < col_tol for col_x in column_starts
+        )
+        if not is_at_column_start:
+            if columns.column_count == 1 and w["x0"] < page.page_width * 0.5:
+                pass
+            else:
+                continue
+
+        if is_at_column_start:
+            match_conf = min(1.0, match_conf + 0.05)
+
+        anchors.append(NumberAnchor(
+            number=match_n, page_index=page.page_index,
+            bbox=(w["x0"], w["y0"], w["x1"], w["y1"]),
+            text=text, style=match_style, confidence=match_conf,
+        ))
+
+    # 같은 페이지 안 같은 number — v2 와 동일 (가장 conf 높은 것만)
+    by_number: dict[int, NumberAnchor] = {}
+    for a in anchors:
+        prev = by_number.get(a.number)
+        if not prev or a.confidence > prev.confidence:
+            by_number[a.number] = a
+    deduped = list(by_number.values())
+    deduped.sort(key=lambda a: (a.bbox[1], a.bbox[0]))
+
+    # v3 의 학습자료 strict — v3 와 동일 (choice range ±20 유지, 확장은 FP 폭증).
+    if paper_type in _LEARNING_MATERIAL_PAPER_TYPES:
+        with_choice = [
+            a for a in deduped
+            if _has_choice_pattern_nearby(a, page.word_blocks)
+        ]
+        if with_choice:
+            deduped = with_choice
+        else:
+            return []
+
+    if paper_type in _LEARNING_MATERIAL_PAPER_TYPES or paper_type == PAPER_TYPE_UNKNOWN:
+        deduped = _filter_anchors_by_y_gap(deduped)
+
+    if paper_type in _LEARNING_MATERIAL_PAPER_TYPES or paper_type == PAPER_TYPE_UNKNOWN:
+        if len(deduped) > _MAX_ANCHORS_PER_PAGE:
+            deduped = []
+
+    return deduped
+
+
+def analyze_pdf_v5_5(
+    pdf_path: str,
+    *,
+    file_name: Optional[str] = None,
+    profile: Optional[dict] = None,
+) -> dict[str, Any]:
+    """v5_5 — v5_4 base + anchor recall 보강 (bare_digit / max=100 / dedup relax / choice range).
+
+    Args:
+        pdf_path: PDF 경로
+        file_name: 분류용 파일명
+        profile: tenant profile dict (v5_4 와 동일 형식)
+
+    원칙:
+    - DB 모델 import 0회
+    - operating_problem_count 미사용
+    - paper_type 외부 응답 키 _internal_ 마킹
+    - v5_4 의 x0 region / overflow / height filter 모두 유지 (FP 폭증 방어)
+    """
+    import os as _os
+
+    pages = extract_page_blocks(pdf_path)
+    n_pages = len(pages)
+    n_text_pages = sum(1 for p in pages if p.has_embedded_text)
+    if file_name is None:
+        file_name = _os.path.basename(pdf_path)
+
+    tier1_required = False
+    tier1_reason = ""
+    if n_pages == 0:
+        tier1_required = True; tier1_reason = "empty_pdf"
+    elif n_text_pages == 0:
+        tier1_required = True; tier1_reason = "scanned_no_text_layer"
+    elif n_text_pages < n_pages * 0.5:
+        tier1_required = True; tier1_reason = "partial_text_layer"
+
+    pre_anchors_total = 0
+    full_text_chunks: list[str] = []
+    per_page_columns: list[ColumnLayout] = []
+    pre_per_page_bboxes: list[list[tuple[float, float, float, float]]] = []
+    page_widths: list[float] = []
+    for page in pages:
+        cols = detect_columns(page.word_blocks, page.page_width)
+        per_page_columns.append(cols)
+        page_widths.append(page.page_width)
+        v2_anchors = detect_problem_anchors_v2(page, cols)
+        pre_anchors_total += len(v2_anchors)
+        full_text_chunks.append(" ".join(b.get("text", "") for b in page.text_blocks)[:300])
+        pre_bboxes = []
+        for a in v2_anchors:
+            bbox_norm = (
+                a.bbox[0] / page.page_width if page.page_width else 0,
+                a.bbox[1] / page.page_height if page.page_height else 0,
+                (a.bbox[2] - a.bbox[0]) / page.page_width if page.page_width else 0,
+                (a.bbox[3] - a.bbox[1]) / page.page_height if page.page_height else 0,
+            )
+            pre_bboxes.append(bbox_norm)
+        pre_per_page_bboxes.append(pre_bboxes)
+    full_text = " ".join(full_text_chunks)
+
+    paper_type, pt_conf, pt_debug = classify_paper_type_v4(
+        file_name=file_name, pages_full_text=full_text,
+        total_anchors=pre_anchors_total, page_count=n_pages,
+    )
+    layout = classify_layout_v2(pre_per_page_bboxes)
+
+    # v5_5 anchor 검출 (v3 보강 버전)
+    per_page_anchors_v55_raw: list[list[NumberAnchor]] = []
+    for page, cols in zip(pages, per_page_columns):
+        anchors = detect_problem_anchors_v5_5(page, cols, paper_type)
+        per_page_anchors_v55_raw.append(anchors)
+
+    # v5_4 filter 그대로 적용 (FP 방어)
+    per_page_anchors_v55, v55_filter_debug = filter_anchors_v5_4(
+        per_page_anchors_v55_raw, paper_type, layout.layout_type, page_widths,
+        profile=profile,
+    )
+    cross = cross_page_validate(per_page_anchors_v55)
+
+    # v5_4 cand 와 비교용 (explosion 마킹)
+    v54_anchors_cmp: list[list[NumberAnchor]] = []
+    for page, cols in zip(pages, per_page_columns):
+        v54_anchors_cmp.append(detect_problem_anchors_v3(page, cols, paper_type))
+    v54_filtered, _ = filter_anchors_v5_4(
+        v54_anchors_cmp, paper_type, layout.layout_type, page_widths, profile=profile,
+    )
+    v54_cand_total = sum(len(a) for a in v54_filtered)
+    v55_cand_total = sum(len(a) for a in per_page_anchors_v55)
+    explosion = (
+        v54_cand_total > 0 and v55_cand_total / v54_cand_total > _V55_CAND_EXPLOSION_RATIO
+    )
+
+    # height filter setup (v5_4 동일)
+    expected_h = None
+    if profile and isinstance(profile, dict):
+        bs = profile.get("bbox_stats") or {}
+        expected_h = bs.get("height_p50")
+        lt = profile.get("layout_thresholds") or {}
+        for key, block in lt.items():
+            if isinstance(block, dict) and block.get("layout_type") == layout.layout_type:
+                if block.get("bbox_h_p50") is not None:
+                    expected_h = block.get("bbox_h_p50")
+                    break
+
+    out: dict[str, Any] = {
+        "version": "v5_5",
+        "pdf_path": pdf_path,
+        "file_name": file_name,
+        "page_count": n_pages,
+        "text_pages": n_text_pages,
+        "_internal_paper_type": paper_type,
+        "_internal_paper_type_confidence": pt_conf,
+        "layout_v2": {
+            "type": layout.layout_type, "confidence": layout.confidence,
+            "x0_clusters": layout.x0_clusters, "page_p50": layout.page_bbox_count_p50,
+        },
+        "tier1_required": tier1_required,
+        "tier1_reason": tier1_reason,
+        "anchor_filter_v55": v55_filter_debug,
+        "v55_cand_total": v55_cand_total,
+        "v54_cand_total_for_compare": v54_cand_total,
+        "v55_explosion_marker": explosion,
+        "profile_used": profile is not None,
+        "pages": [],
+        "cross_page": {
+            "detected_total": cross.detected_total,
+            "expected_max": cross.expected_max,
+            "sequence_continuity": cross.sequence_continuity,
+            "duplicates_dropped": cross.duplicates_dropped,
+            "suspicious_pages": cross.suspicious_pages,
+        },
+    }
+
+    h_filter_drops = 0; h_filter_kept = 0
+    for page, anchors, cols in zip(pages, per_page_anchors_v55, per_page_columns):
+        role = classify_page_role_v2(page, anchors)
+        candidates = derive_bbox_candidates_v2(anchors, page, cols)
+
+        if expected_h is not None and expected_h > 0:
+            kept_candidates = []
+            for c in candidates:
+                ch = c.bbox_norm[3] if len(c.bbox_norm) >= 4 else None
+                if ch is None or ch <= 0:
+                    kept_candidates.append(c); continue
+                ratio = ch / expected_h
+                if 0.10 <= ratio <= 4.0:
+                    kept_candidates.append(c); h_filter_kept += 1
+                else:
+                    h_filter_drops += 1
+            candidates = kept_candidates
+
+        out["pages"].append({
+            "page_index": page.page_index,
+            "page_width": page.page_width,
+            "page_height": page.page_height,
+            "has_embedded_text": page.has_embedded_text,
+            "role": role.role,
+            "role_confidence": role.confidence,
+            "anchor_count": len(anchors),
+            "anchors": [asdict(a) for a in anchors],
+            "bbox_candidates": [asdict(c) for c in candidates],
+        })
+
+    out["v55_h_filter"] = {
+        "expected_h": expected_h, "drops": h_filter_drops, "kept": h_filter_kept,
+    }
+    return out
