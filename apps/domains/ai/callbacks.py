@@ -589,6 +589,32 @@ def _handle_matchup_ai_result(
         "status", "problem_count", "error_message", "meta", "updated_at",
     ])
 
+    # Stage 6.3V — LayoutFingerprint 측정 누적 (운영 영향 0 instrumentation).
+    #   본 호출은 read-only measurement + UPSERT 만. 어떤 예외도 본 흐름에 전파되지
+    #   않는다 (collect_and_save 가 모두 swallow + warning log). doc.status="done"
+    #   확정 후 + tenant 검증 통과 후 + transaction 안에서 호출.
+    try:
+        from apps.domains.matchup.segmentation.fingerprint_collector import (
+            collect_and_save as _collect_fingerprint,
+        )
+        cropped_count = MatchupProblem.objects.filter(
+            document=doc,
+        ).exclude(
+            meta__bbox__isnull=True,
+        ).count()
+        _collect_fingerprint(
+            doc=doc,
+            result_payload=result_payload,
+            problem_count=doc.problem_count,
+            cropped_problem_count=cropped_count,
+        )
+    except Exception as _fp_err:  # noqa: BLE001
+        # 호출 자체가 실패해도 본 callback 흐름은 영향 0
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_FINGERPRINT_OUTER_FAIL | job_id=%s | doc_id=%s | err=%s",
+            job_id, source_id, _fp_err,
+        )
+
     logger.info(
         "AI_CALLBACK_MATCHUP_SUCCESS | job_id=%s | doc_id=%s | problems=%d | seg=%s",
         job_id, source_id, len(problem_objs), seg_method,
