@@ -1,6 +1,6 @@
 # PATH: apps/domains/matchup/urls.py
 from django.urls import path
-from . import views, views_proposal
+from . import views, views_hit_report, views_proposal
 
 urlpatterns = [
     # Documents
@@ -21,17 +21,17 @@ urlpatterns = [
     path("documents/<int:doc_id>/cross-matches/", views.DocumentCrossMatchesView.as_view()),
     path("documents/<int:doc_id>/job/", views.DocumentJobView.as_view()),
     path("documents/<int:doc_id>/retry/", views.DocumentRetryView.as_view()),
-    path("documents/<int:doc_id>/hit-report.pdf", views.DocumentHitReportPdfView.as_view()),
-    path("documents/<int:doc_id>/hit-report-draft/", views.HitReportDraftView.as_view()),
+    path("documents/<int:doc_id>/hit-report.pdf", views_hit_report.DocumentHitReportPdfView.as_view()),
+    path("documents/<int:doc_id>/hit-report-draft/", views_hit_report.HitReportDraftView.as_view()),
 
     # Curated hit reports — 강사 1인 매치업 적중 보고서 (수업 히스토리 + 학원 KPI + 신뢰자료)
-    path("hit-reports/", views.HitReportListView.as_view()),
-    path("hit-reports/<int:report_id>/", views.HitReportDetailView.as_view()),
-    path("hit-reports/<int:report_id>/entries/", views.HitReportEntriesUpsertView.as_view()),
-    path("hit-reports/<int:report_id>/submit/", views.HitReportSubmitView.as_view()),
-    path("hit-reports/<int:report_id>/curated.pdf", views.HitReportPdfView.as_view()),
+    path("hit-reports/", views_hit_report.HitReportListView.as_view()),
+    path("hit-reports/<int:report_id>/", views_hit_report.HitReportDetailView.as_view()),
+    path("hit-reports/<int:report_id>/entries/", views_hit_report.HitReportEntriesUpsertView.as_view()),
+    path("hit-reports/<int:report_id>/submit/", views_hit_report.HitReportSubmitView.as_view()),
+    path("hit-reports/<int:report_id>/curated.pdf", views_hit_report.HitReportPdfView.as_view()),
     # 카페·블로그 게시용 raw asset (PNG + summary.md). 강사가 본인 명의로 자유 게시.
-    path("hit-reports/<int:report_id>/share.zip", views.HitReportZipExportView.as_view()),
+    path("hit-reports/<int:report_id>/share.zip", views_hit_report.HitReportZipExportView.as_view()),
 
     # Categories
     path("categories/", views.CategoryListView.as_view()),
