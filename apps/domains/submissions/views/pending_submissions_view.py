@@ -198,6 +198,14 @@ class PendingSubmissionsView(APIView):
             if file_key and "." in file_key:
                 file_type = file_key.rsplit(".", 1)[-1].lower()
 
+            # 🚦 target_resolved: Exam/Homework 본체 + 세션/강의 매칭이 모두 살아있는지.
+            # 미식별/orphan row 운영자에게 적절한 action(폐기 vs 학생지정 vs 결과보기)을 분기시키는 단일 기준.
+            target_resolved = bool(
+                target_info.get("target_title")
+                and target_info.get("lecture_id")
+                and target_info.get("session_id")
+            )
+
             items.append(
                 {
                     "id": s.id,
@@ -216,6 +224,7 @@ class PendingSubmissionsView(APIView):
                     "lecture_id": target_info.get("lecture_id"),
                     "lecture_title": target_info.get("lecture_title", ""),
                     "session_id": target_info.get("session_id"),
+                    "target_resolved": target_resolved,
                     "file_key": file_key,
                     "file_type": file_type or s.file_type or "",
                     "file_size": s.file_size,
