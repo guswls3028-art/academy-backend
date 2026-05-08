@@ -19,6 +19,7 @@ from .serializers import MatchupHitReportSerializer
 from .views import (
     _jwt_required,
     _tenant_required,
+    _is_tenant_staff,
     _is_tenant_admin,
     _hit_report_writable,
 )
