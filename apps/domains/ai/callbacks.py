@@ -14,6 +14,8 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
+from django.db import close_old_connections
+
 logger = logging.getLogger(__name__)
 
 
@@ -443,6 +445,8 @@ def _handle_matchup_ai_result(
     """
     from apps.domains.matchup.models import MatchupDocument, MatchupProblem
 
+    close_old_connections()
+
     if not source_id:
         logger.warning("AI_CALLBACK_MATCHUP_NO_SOURCE_ID | job_id=%s", job_id)
         return
@@ -499,7 +503,7 @@ def _handle_matchup_ai_result(
 
     # bulk create
     problem_objs = []
-    for p in problems_data:
+    for idx, p in enumerate(problems_data, start=1):
         problem_objs.append(MatchupProblem(
             tenant_id=doc.tenant_id,
             document=doc,
@@ -510,6 +514,8 @@ def _handle_matchup_ai_result(
             image_embedding=p.get("image_embedding"),
             meta=p.get("meta", {}),
         ))
+        if idx % 50 == 0:
+            close_old_connections()
 
     if problem_objs:
         MatchupProblem.objects.bulk_create(problem_objs, ignore_conflicts=True)
@@ -584,6 +590,34 @@ def _handle_matchup_ai_result(
     paper_type_summary = result_payload.get("paper_type_summary")
     if paper_type_summary:
         meta["paper_type_summary"] = paper_type_summary
+
+    # Phase 1 (2026-05-09 학원장 directive) — paper_type 신호로 source_type 보정.
+    # 학원장이 자료 유형 7가지를 인지할 필요 없음. 시스템이 자동 분류.
+    # 보정 정책 (academy/domain/tools/source_type_derive.py):
+    # - source_type_origin == "user" 면 보호 (chip 으로 명시 변경한 값).
+    # - 이미 specific value(student_exam_photo 등) 면 보호.
+    # - paper_type 매핑이 confidence 100% 인 경우만 보정 (모호하면 유지).
+    # - 라벨만 갱신. 워커 strategy 라우팅 영향 없음 (분석은 이미 끝).
+    # 학원장 명시 변경 마커 — 두 가지 모두 보호 (legacy + 신규).
+    _is_user_set = bool(
+        meta.get("source_type_origin") == "user"
+        or meta.get("source_type_user_override")
+    )
+    if paper_type_summary and not _is_user_set:
+        from academy.domain.tools.source_type_derive import (
+            derive_source_type_from_paper_type,
+        )
+        primary = paper_type_summary.get("primary") if isinstance(paper_type_summary, dict) else None
+        cur_st = meta.get("source_type")
+        derived = derive_source_type_from_paper_type(primary, cur_st)
+        if derived:
+            meta["source_type"] = derived
+            meta["source_type_origin"] = "paper_type_derived"
+            logger.info(
+                "MATCHUP_SOURCE_TYPE_DERIVED | doc=%s | %s -> %s | paper_type_primary=%s",
+                doc.id, cur_st, derived, primary,
+            )
+
     doc.meta = meta
     doc.save(update_fields=[
         "status", "problem_count", "error_message", "meta", "updated_at",
@@ -619,6 +653,7 @@ def _handle_matchup_ai_result(
         "AI_CALLBACK_MATCHUP_SUCCESS | job_id=%s | doc_id=%s | problems=%d | seg=%s",
         job_id, source_id, len(problem_objs), seg_method,
     )
+    close_old_connections()
 
 
 def _handle_qna_matchup_search_result(
@@ -685,6 +720,8 @@ def _handle_matchup_index_result(
     """
     from apps.domains.matchup.models import MatchupProblem
 
+    close_old_connections()
+
     if status == "FAILED":
         logger.warning(
             "AI_CALLBACK_MATCHUP_INDEX_FAILED | job_id=%s | exam_id=%s | error=%s",
@@ -721,7 +758,7 @@ def _handle_matchup_index_result(
     ).delete()
 
     problem_objs = []
-    for p in problems_data:
+    for idx, p in enumerate(problems_data, start=1):
         problem_objs.append(MatchupProblem(
             tenant_id=tenant_id,
             document=None,
@@ -737,6 +774,8 @@ def _handle_matchup_index_result(
             source_session_title=p.get("session_title", ""),
             source_exam_title=p.get("exam_title", ""),
         ))
+        if idx % 50 == 0:
+            close_old_connections()
 
     if problem_objs:
         MatchupProblem.objects.bulk_create(problem_objs, ignore_conflicts=True)
@@ -745,6 +784,7 @@ def _handle_matchup_index_result(
         "AI_CALLBACK_MATCHUP_INDEX_SUCCESS | job_id=%s | exam_id=%s | indexed=%d",
         job_id, exam_id, len(problem_objs),
     )
+    close_old_connections()
 
 
 def _handle_matchup_manual_result(

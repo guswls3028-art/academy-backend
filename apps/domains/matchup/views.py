@@ -480,6 +480,7 @@ class DocumentDetailView(View):
             )
             # 학원장 직접 변경 마커 (백필 마커 우선순위 낮춤)
             meta["source_type_user_override"] = True
+            meta["source_type_origin"] = "user"  # paper_type derive 보호 마커 (2026-05-09)
             meta.pop("source_type_backfilled", None)
             doc.meta = meta
             update_fields.append("meta")
