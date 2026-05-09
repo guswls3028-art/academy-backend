@@ -1831,9 +1831,12 @@ def _upload_cropped_images(
                 # 추가 directive: '2분할 / 4분할 자료에서 다른 문항 침범 X'.
                 # ENV flag default off → T1 점진 → T2.
                 if os.environ.get("MATCHUP_OVER_CROP_PADDING", "0") == "1":
+                    # 자가 검수 (2026-05-10 doc 615 num=1 보기 ㄴ 잘림) 결과 padding
+                    # 부족 발견. pad_y_bottom h*7%→15% min 12→30px (~1줄) 강화.
+                    # auto-merge 가 fragment 합치기 + padding 이 마지막 줄 안전망.
                     pad_x = max(int(w * 0.05), 8)
                     pad_y_top = max(int(h * 0.03), 6)
-                    pad_y_bottom = max(int(h * 0.07), 12)
+                    pad_y_bottom = max(int(h * 0.15), 30)
 
                     # column-aware: 현재 box 가 속한 column 의 좌우 경계 안으로 padding clip.
                     # paper_type=clean_pdf_dual → 2 column → 좌측 box 의 우측 padding 이
