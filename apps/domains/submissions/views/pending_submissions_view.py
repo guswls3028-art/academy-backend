@@ -216,6 +216,15 @@ class PendingSubmissionsView(APIView):
             else:
                 target_resolved_reason = "session_missing"
 
+            # 🗑 discarded 메타: status=FAILED 중 운영자/시스템 폐기 처리 본 row 식별.
+            # 진짜 처리 실패 vs 폐기를 UI 에서 구분하기 위함.
+            meta_obj = s.meta or {}
+            discarded_meta = meta_obj.get("discarded") if isinstance(meta_obj, dict) else None
+            is_discarded = isinstance(discarded_meta, dict)
+            discard_reason_value: Optional[str] = (
+                str(discarded_meta.get("reason") or "") if is_discarded else None
+            ) or None
+
             items.append(
                 {
                     "id": s.id,
@@ -236,6 +245,8 @@ class PendingSubmissionsView(APIView):
                     "session_id": target_info.get("session_id"),
                     "target_resolved": target_resolved,
                     "target_resolved_reason": target_resolved_reason,
+                    "is_discarded": is_discarded,
+                    "discard_reason": discard_reason_value,
                     "file_key": file_key,
                     "file_type": file_type or s.file_type or "",
                     "file_size": s.file_size,
