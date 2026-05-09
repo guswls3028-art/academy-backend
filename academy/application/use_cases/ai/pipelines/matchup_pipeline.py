@@ -409,6 +409,123 @@ def run_matchup_pipeline(
             )
         questions_raw = kept_after_area
 
+    # Auto-merge fragment 후처리 (2026-05-10 자가 검수 fix) — V11 over-segmentation
+    # 으로 한 문항이 발문/보기/선택지 fragment 로 쪼개진 case 자동 합침.
+    # 알고리즘:
+    #   1. page_index 별 그룹 → column-aware 그룹 (clean_pdf_dual=2 / quadrant=4)
+    #   2. column 안 y_top sort
+    #   3. 인접 box (y_gap < threshold) + 다른 number 인 case 만 합침 보류 (false merge 방지)
+    #   4. 같은 number 또는 number 0 (미부여) 인 fragment 만 vertical union
+    # ENV flag MATCHUP_AUTO_MERGE_FRAGMENT (default off). T1 점진.
+    if os.environ.get("MATCHUP_AUTO_MERGE_FRAGMENT", "0") == "1":
+        try:
+            primary_pt = (paper_type_summary or {}).get("primary") or ""
+            cc = 1
+            if primary_pt in ("clean_pdf_dual", "scan_dual"):
+                cc = 2
+            elif primary_pt == "quadrant":
+                cc = 4
+            # page_index → list of question ref
+            from collections import defaultdict
+            by_page = defaultdict(list)
+            for _q in questions_raw:
+                pi = (_q.get("meta") or {}).get("page_index")
+                if isinstance(pi, int):
+                    by_page[pi].append(_q)
+            merged_count = 0
+            kept_after_merge = []
+            already_merged = set()  # id(q) of merged-into-others
+            for pi, page_qs in by_page.items():
+                # column 별 grouping
+                # column width 는 page width 기준 — page render 시 1700px standard
+                # 여기서 normalized 0~1 가정 (worker bbox 가 px 인지 norm 인지 확인 필요)
+                # 보수적 처리: bbox=(x,y,w,h) px 가정 (matchup_pipeline 표준)
+                # 같은 column 인지 = box center x / page_width / cc 로 col_idx 비교
+                # page width 추정 = max box (x+w)
+                if not page_qs:
+                    continue
+                page_width = max(
+                    (q.get("bbox") or [0, 0, 0, 0])[0] + (q.get("bbox") or [0, 0, 0, 0])[2]
+                    for q in page_qs if q.get("bbox")
+                ) or 1
+                col_buckets = defaultdict(list)
+                for q in page_qs:
+                    bbox = q.get("bbox")
+                    if not bbox:
+                        kept_after_merge.append(q)
+                        continue
+                    bx, by_, bw, bh = bbox
+                    cx = bx + bw / 2
+                    col_idx = max(0, min(cc - 1, int(cx / (page_width / cc))))
+                    col_buckets[col_idx].append((by_, q))
+                for col_idx, items in col_buckets.items():
+                    # y_top 기준 sort
+                    items.sort(key=lambda kv: kv[0])
+                    i = 0
+                    while i < len(items):
+                        _, q = items[i]
+                        if id(q) in already_merged:
+                            i += 1
+                            continue
+                        bbox = q.get("bbox")
+                        if not bbox:
+                            kept_after_merge.append(q)
+                            i += 1
+                            continue
+                        cur_x, cur_y, cur_w, cur_h = bbox
+                        cur_num = q.get("number") or 0
+                        # 다음 box 와 합침 시도 — 같은 number 또는 둘 다 number 0
+                        j = i + 1
+                        while j < len(items):
+                            _, nq = items[j]
+                            if id(nq) in already_merged:
+                                j += 1
+                                continue
+                            nb = nq.get("bbox")
+                            if not nb:
+                                break
+                            nx, ny, nw, nh = nb
+                            nnum = nq.get("number") or 0
+                            # number 다른데 둘 다 양수면 다른 문항 — skip
+                            if cur_num and nnum and cur_num != nnum:
+                                break
+                            # vertical 인접 (gap 작음) — gap 기준 = 현재 box height 의 30% 이내
+                            gap = ny - (cur_y + cur_h)
+                            if gap < 0:
+                                # overlap - merge 후보
+                                pass
+                            elif gap > cur_h * 0.30:
+                                break
+                            # 합침 — bbox union
+                            new_x = min(cur_x, nx)
+                            new_y = cur_y
+                            new_x2 = max(cur_x + cur_w, nx + nw)
+                            new_y2 = ny + nh
+                            cur_x, cur_w = new_x, new_x2 - new_x
+                            cur_h = new_y2 - cur_y
+                            if not cur_num and nnum:
+                                cur_num = nnum
+                            already_merged.add(id(nq))
+                            merged_count += 1
+                            j += 1
+                        # update q in-place with merged bbox
+                        q["bbox"] = (cur_x, cur_y, cur_w, cur_h)
+                        if cur_num:
+                            q["number"] = cur_num
+                        kept_after_merge.append(q)
+                        i = j
+            if merged_count > 0:
+                logger.info(
+                    "MATCHUP_AUTO_MERGE_FRAGMENT | doc=%s | merged=%d | total_after=%d",
+                    document_id, merged_count, len(kept_after_merge),
+                )
+                questions_raw = kept_after_merge
+        except Exception as _merge_err:  # noqa: BLE001
+            logger.warning(
+                "AUTO_MERGE_FRAGMENT_OUTER_FAIL | doc=%s | err=%s",
+                document_id, _merge_err,
+            )
+
     # Hybrid VLM verifier (2026-05-09 basic_definition_2026_05_09 SSOT) —
     # YOLO false positive 후처리. PoC v3 검증 prec 0.55→0.97. ENV flag
     # MATCHUP_HYBRID_VLM_TENANTS 매치 시만 적용. fail-soft.
