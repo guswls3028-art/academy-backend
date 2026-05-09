@@ -435,6 +435,12 @@ class SubmissionViewSet(ModelViewSet):
         ids = request.data.get("submission_ids") or []
         if not isinstance(ids, list) or not ids:
             return Response({"detail": "submission_ids 필수"}, status=400)
+        # 운영자 misuse 방지 — 1회 호출당 최대 500건. 그 이상은 분할 요청 강제.
+        if len(ids) > 500:
+            return Response(
+                {"detail": "한 번에 폐기 가능한 최대 건수는 500건입니다.", "code": "BATCH_TOO_LARGE"},
+                status=400,
+            )
         try:
             ids = [int(x) for x in ids]
         except (TypeError, ValueError):
