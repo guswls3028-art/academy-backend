@@ -1,16 +1,16 @@
 ## V1.1.0 CI Build — latest + sha 이미지 푸시 증거 (OIDC)
 
-**Generated:** 2026-05-09T22:59:40+00:00
+**Generated:** 2026-05-09T23:29:07+00:00
 **SSOT:** docs/00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md
 **Region:** ap-northeast-2
-**gitSha:** 51cc9a1717809b50fb14dfab27cfc3ca71ffef85
-**shortSha:** 51cc9a17
+**gitSha:** 5127f8a2c519e02de9bde94072e3b7b620692ffd
+**shortSha:** 5127f8a2
 **Changes:** api=true video=true messaging=true ai=true force_full=true
 
 | repo | tags | imageDigest |
 |------|------|-------------|
-| academy-base | latest, sha-51cc9a17 | sha256:f3db54e43d19b49da8904de938ab53a9210f50a713797bc4532b9ef29dd7ca00 |
-| academy-api | latest, sha-51cc9a17 | sha256:a11fb21ddf707ba1c568dd3472fcab6842b92e6d3dd24877026d906a5ce4b7bd |
-| academy-video-worker | latest, sha-51cc9a17 | sha256:c64ae7e648939a5a10d53d2c7f3862dc52a5ec44e2ec806961475dac92394e72 |
-| academy-messaging-worker | latest, sha-51cc9a17 | sha256:3eadf8903e260fd4d2af6c0e1432937d001f98e65515db61f38eeb0478fc14e3 |
-| academy-ai-worker-cpu | latest, sha-51cc9a17 | sha256:b9c256fa5526e3a179793f3e4f4dfd05662fa87217045f098c5ff39fa0771bcd |
+| academy-base | latest, sha-5127f8a2 | sha256:f3db54e43d19b49da8904de938ab53a9210f50a713797bc4532b9ef29dd7ca00 |
+| academy-api | latest, sha-5127f8a2 | sha256:c824032a71f83070836430c8ee9437a485a1469cbc10238fc89edd8103749ad3 |
+| academy-video-worker | latest, sha-5127f8a2 | sha256:ba76de458c69ca101db031502a800584344775eedac563d277b6ac0e3347d872 |
+| academy-messaging-worker | latest, sha-5127f8a2 | sha256:a0fae4e4ad78824bcaa44b1de54f5890199280bf9d8d0273a0ca9503ab46c710 |
+| academy-ai-worker-cpu | latest, sha-5127f8a2 | sha256:ded73899645447b3bc7270ad05358154c5a868cbcfa694225639412f4a11ffff |
