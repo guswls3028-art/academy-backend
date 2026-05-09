@@ -612,6 +612,59 @@ def _handle_matchup_ai_result(
     if problem_objs:
         MatchupProblem.objects.bulk_create(problem_objs, ignore_conflicts=True)
 
+    # AutoSegmentationSnapshot instrument (V11 BOTTLENECK §7.1, 2026-05-10) —
+    # 자동 cut audit 행. ManualCorrectionDelta hook 이 이후 IoU 매칭으로
+    # original_bbox/iou_with_ai/proposal_fk 자동 채우는 base. fine-tune loop 가동.
+    # try/except fail-soft — 본 callback path 영향 0 (instrument only).
+    try:
+        from apps.domains.matchup.models import AutoSegmentationSnapshot
+
+        engine_used = (result_payload.get("segmentation_method") or "").lower()
+        if engine_used and "yolo" in engine_used:
+            engine_used = "yolo_v11"  # 운영 V11 그대로
+        elif not engine_used:
+            engine_used = "unknown"
+        engine_version = (result_payload.get("model_version") or "")[:64]
+
+        snapshot_objs = []
+        for p in problems_data:
+            meta_p = p.get("meta") or {}
+            bbox = meta_p.get("bbox")
+            if not bbox:
+                continue  # bbox null = page-fallback / Phase C 차단됨
+            snapshot_objs.append(AutoSegmentationSnapshot(
+                tenant_id=doc.tenant_id,
+                document=doc,
+                job_id=str(job_id or "")[:64],
+                page_index=int(meta_p.get("page_index") or 0),
+                detected_problem_number=int(p.get("number") or 0),
+                bbox=bbox if isinstance(bbox, dict) else {"raw": list(bbox)[:4]},
+                engine=(
+                    engine_used if engine_used in
+                    {"yolo", "yolo_v11", "yolo_v12", "yolo_v13", "vlm",
+                     "ocr", "native_pdf", "hybrid", "manual_assist", "unknown"}
+                    else "unknown"
+                ),
+                engine_version=engine_version,
+                confidence=float(meta_p.get("confidence") or 0.0),
+                class_id=int(meta_p.get("class_id") or 0),
+                class_name=(meta_p.get("class_name") or "problem")[:32],
+                post_process_stage=(meta_p.get("post_process_stage") or "")[:32],
+            ))
+        if snapshot_objs:
+            AutoSegmentationSnapshot.objects.bulk_create(
+                snapshot_objs, ignore_conflicts=True,
+            )
+            logger.info(
+                "AUTO_SEGMENTATION_SNAPSHOT | doc=%s | rows=%d | engine=%s",
+                doc.id, len(snapshot_objs), engine_used,
+            )
+    except Exception:
+        logger.exception(
+            "AUTO_SEGMENTATION_SNAPSHOT_FAIL | doc=%s | continuing legacy path",
+            doc.id,
+        )
+
     # bulk_create + ignore_conflicts로 unique(document, number) 충돌 row가
     # silent drop될 수 있음 (segmentation 중복 번호 등). UI 좌측 라벨이
     # 디스패치 수가 아닌 실제 DB row 수와 일치하도록 재카운트.

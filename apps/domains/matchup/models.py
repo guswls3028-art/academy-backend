@@ -742,3 +742,111 @@ class MatchupPageState(TimestampModel):
 
     def __str__(self):
         return f"PageState doc={self.document_id} p{self.page_index} {self.state}"
+
+
+class AutoSegmentationSnapshot(TimestampModel):
+    """자동분리 결과 스냅샷 — fine-tune loop 가동 base (V11 BOTTLENECK §7.1).
+
+    문제:
+      callback `_handle_matchup_ai_result` 가 자동 cut 결과를 MatchupProblem 으로
+      bulk_create 만 하고 끝 — 학원장이 manual cut 으로 덮어쓰면 자동 cut 이 어떤
+      box 였는지 audit 없음. ManualCorrectionDelta 의 `original_bbox` /
+      `iou_with_ai` / `proposal_fk` 모두 0% 보존 (실측, 2026-05-08).
+      → "manual 이 어떻게 자동을 교정했는가" 학습 신호 끊김.
+
+    해결:
+      callback 안에서 problems_data → AutoSegmentationSnapshot bulk_create.
+      manual_crop hook 안에서 같은 (document, page_index) snapshot 찾아 IoU 비교
+      → ManualCorrectionDelta.original_bbox / iou_with_ai 자동 채움.
+
+    fine-tune loop:
+      Snapshot (자동 cut) ↔ ManualCorrectionDelta (학원장 교정) → V13/V14 학습 시
+      'manual diff' 직접 신호로 사용. paradigm 한계 돌파 path.
+
+    blast radius:
+      신규 모델만 추가. 기존 callback / MatchupProblem / ManualCorrectionDelta
+      schema 변경 0. callback 안 bulk_create instrument 만 추가 (default on,
+      try/except fail-soft).
+    """
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="auto_segmentation_snapshots",
+        db_index=True,
+    )
+    document = models.ForeignKey(
+        MatchupDocument,
+        on_delete=models.CASCADE,
+        related_name="auto_segmentation_snapshots",
+    )
+
+    # AI dispatch job id — 같은 reanalyze 의 snapshot 묶음 그룹화 / rerun 비교용.
+    job_id = models.CharField(max_length=64, blank=True, default="", db_index=True)
+
+    # bbox 기준 페이지. ManualCorrectionDelta lookup key.
+    page_index = models.PositiveIntegerField(db_index=True)
+
+    # 자동 cut 의 원 number (V11 detect 결과). manual 시점 매칭에 보조.
+    detected_problem_number = models.IntegerField(default=0)
+
+    # bbox JSON: {x, y, w, h, page} 또는 {x_norm, y_norm, ...}.
+    # callback 시점 problems_data[].meta.bbox 와 동일 schema 보존 (변환 X).
+    bbox = models.JSONField(default=dict, blank=True)
+
+    # 분리 엔진 (yolo_v11 / yolo_v12 / vlm / hybrid / native_pdf 등).
+    # ProblemSegmentationProposal.ENGINE_CHOICES 와 align.
+    ENGINE_CHOICES = [
+        ("yolo", "YOLO segmentation"),
+        ("yolo_v11", "YOLO V11"),
+        ("yolo_v12", "YOLO V12"),
+        ("yolo_v13", "YOLO V13"),
+        ("vlm", "VLM (Gemini)"),
+        ("ocr", "OCR + layout heuristic"),
+        ("native_pdf", "Native PDF parser"),
+        ("hybrid", "Hybrid (YOLO + VLM verifier)"),
+        ("manual_assist", "사용자 수동 자르기 보조"),
+        ("unknown", "엔진 미상"),
+    ]
+    engine = models.CharField(
+        max_length=32,
+        choices=ENGINE_CHOICES,
+        default="unknown",
+        db_index=True,
+    )
+    engine_version = models.CharField(max_length=64, blank=True, default="")
+
+    confidence = models.FloatField(default=0.0)
+
+    # multi-class 학습 대비 (현재 single-class 'problem' 만, 향후 확장).
+    class_id = models.IntegerField(default=0)
+    class_name = models.CharField(max_length=32, default="problem")
+
+    # 후처리 stage 표식 (학습 신호용):
+    #   raw_yolo / hybrid_filtered / auto_merged / area_filtered / over_crop_padded
+    # 학습 시 어떤 후처리 단계에서 keep/drop 됐는지 audit.
+    post_process_stage = models.CharField(max_length=32, blank=True, default="")
+
+    # MatchupProblem 으로 승격됐는지 추적 (callback 의 bulk_create 결과 매칭).
+    promoted_problem = models.ForeignKey(
+        "MatchupProblem",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="source_snapshots",
+    )
+
+    class Meta:
+        app_label = "matchup"
+        ordering = ["document_id", "page_index", "detected_problem_number"]
+        indexes = [
+            models.Index(fields=["tenant", "document", "page_index"]),
+            models.Index(fields=["tenant", "engine", "engine_version"]),
+            models.Index(fields=["job_id"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"AutoSnapshot doc={self.document_id} p{self.page_index} "
+            f"#{self.detected_problem_number} {self.engine}@{self.engine_version}"
+        )

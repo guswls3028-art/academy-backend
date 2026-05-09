@@ -1276,6 +1276,57 @@ def _record_manual_correction_delta(
         # ai engine 명시 (yolo / vlm / ocr / native_pdf / manual_assist)
         if ai_proposal.engine:
             engine_at_action = str(ai_proposal.engine)[:32]
+    else:
+        # AutoSegmentationSnapshot fallback (V11 BOTTLENECK §7.1, 2026-05-10) —
+        # Proposal 없으면 callback 이 instrument 한 snapshot 매칭. fine-tune loop 가동.
+        # 매칭 우선순위: same (doc, page, number) → IoU 계산.
+        #              none → same (doc, page) + max IoU box.
+        try:
+            from .models import AutoSegmentationSnapshot
+            snap = (
+                AutoSegmentationSnapshot.objects
+                .filter(
+                    tenant_id=problem.tenant_id,
+                    document_id=document.id,
+                    page_index=int(page_index),
+                    detected_problem_number=int(problem.number),
+                )
+                .order_by("-created_at")
+                .first()
+            )
+            if snap is None:
+                # number 미부여 / fragment 합쳐진 case — same page 의 max IoU 박스
+                page_snaps = list(
+                    AutoSegmentationSnapshot.objects
+                    .filter(
+                        tenant_id=problem.tenant_id,
+                        document_id=document.id,
+                        page_index=int(page_index),
+                    )
+                    .order_by("-created_at")[:30]
+                )
+                best_iou = 0.0
+                best_snap = None
+                for s in page_snaps:
+                    if not isinstance(s.bbox, dict):
+                        continue
+                    cand_iou = _bbox_iou_dict(s.bbox, corrected_bbox)
+                    if cand_iou and cand_iou > best_iou:
+                        best_iou = cand_iou
+                        best_snap = s
+                if best_snap is not None and best_iou > 0:
+                    snap = best_snap
+                    iou = best_iou
+            if snap is not None:
+                if isinstance(snap.bbox, dict):
+                    original_bbox = snap.bbox
+                if iou is None:
+                    iou = _bbox_iou_dict(original_bbox, corrected_bbox)
+                if snap.engine:
+                    engine_at_action = str(snap.engine)[:32]
+        except Exception:
+            # snapshot lookup 실패 시 manual_only 그대로 (기존 path)
+            pass
 
     paper_type = ""
     try:
