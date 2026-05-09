@@ -610,10 +610,22 @@ def get_page_states(document: MatchupDocument) -> list[dict]:
       - excluded_pages 안에 있으면 state='skip'
       - 그 외 state='auto'
     UI 가 PageState 모델 직접 모르는 상태에서 동등하게 사용 가능.
+
+    page_count 산출 우선순위 (P0 BUG fix 2026-05-09):
+      1. meta.page_image_keys 길이 — worker 가 캐시한 PDF 실 페이지 수 (가장 정확).
+         기존 doc.meta.page_count 가 problem max idx+1 로 잘못 설정된 사고 회피.
+      2. meta.page_count (legacy 호환).
+      3. problems max page_index + 1 (최후 fallback).
     """
     from .models import MatchupPageState
 
-    page_count = int((document.meta or {}).get("page_count") or 0)
+    meta = document.meta or {}
+    page_keys = meta.get("page_image_keys") or []
+    page_count = 0
+    if isinstance(page_keys, list) and len(page_keys) > 0:
+        page_count = len(page_keys)
+    if page_count <= 0:
+        page_count = int(meta.get("page_count") or 0)
     if page_count <= 0:
         # fallback — InventoryFile 페이지 수가 없으면 problems 의 max page_index+1
         max_idx = -1
@@ -772,38 +784,82 @@ def bulk_set_page_states(
 
 
 def auto_recommend_page_states(document: MatchupDocument) -> list[dict]:
-    """paper_type_summary 기반 자동 skip 추천 (학원장 클릭 줄이기).
+    """페이지별 skip 자동 추천 — 학원장 클릭 줄이기.
 
-    추천 로직:
-      - paper_type_summary.pages[i].paper_type ∈ {explanation, answer_key, cover, index}
-        → state='skip' 추천 (auto_reason='paper_type_<role>')
-      - 그 외 → 추천 안 함 (default auto)
+    합격선 정렬 (basic_definition_2026_05_09): "자동 60-80% + 한 클릭 표지 제거"
+    의 자동 60-80% 핵심. paper_type_summary.pages 가 있으면 paper_type 기반,
+    없으면 problem-free 페이지 휴리스틱 fallback (P0 fix 2026-05-09).
 
-    side effect 0 — 추천 list 만 반환. set_page_state 또는 bulk_set_page_states
-    로 별도 적용. 학원장이 화면에서 보고 confirm/reject 하는 흐름.
+    추천 로직 (우선순위 순):
+      1. paper_type_summary.pages[i].paper_type ∈ {explanation, answer_key, cover, index, non_question}
+         → state='skip' 추천 (auto_reason='paper_type_<role>')
+      2. (1) 추천 0건이면 fallback: PDF 실 페이지 중 problem 0건 페이지 자동 skip
+         → state='skip' (auto_reason='no_problem_detected'). 학원장이 잘못 추천 시
+         체크박스 해제 1 클릭 가능.
+
+    side effect 0 — 추천 list 만 반환. 적용은 별도 호출 (학원장 confirm 후).
     """
-    summary = (document.meta or {}).get("paper_type_summary") or {}
-    if not isinstance(summary, dict):
-        return []
-    pages = summary.get("pages") or []
-    if not isinstance(pages, list):
+    meta = document.meta or {}
+    summary = meta.get("paper_type_summary") or {}
+    SKIP_ROLES = {"explanation", "answer_key", "cover", "index", "non_question"}
+
+    recommendations: list[dict] = []
+
+    # 우선순위 1: paper_type_summary.pages 기반
+    if isinstance(summary, dict):
+        pages = summary.get("pages") or []
+        if isinstance(pages, list):
+            for entry in pages:
+                if not isinstance(entry, dict):
+                    continue
+                idx = entry.get("page_index")
+                ptype = entry.get("paper_type") or entry.get("primary")
+                if not isinstance(idx, int) or not isinstance(ptype, str):
+                    continue
+                if ptype in SKIP_ROLES:
+                    recommendations.append({
+                        "page_index": idx,
+                        "state": PAGE_STATE_SKIP,
+                        "auto_reason": f"paper_type_{ptype}",
+                    })
+
+    if recommendations:
+        return recommendations
+
+    # 우선순위 2 (fallback): problem 없는 페이지 = skip 추천 (휴리스틱)
+    # 사용자 directive: 'AI 가 완벽히 자동 cut' X, '학원장 최소 노동 + 자동 60-80%'.
+    # paper_type_summary 부재 doc 도 학원장 검수 노동 절감.
+
+    # PDF 실 페이지 수 산출 (get_page_states 와 동일 우선순위)
+    page_keys = meta.get("page_image_keys") or []
+    if isinstance(page_keys, list) and len(page_keys) > 0:
+        page_count = len(page_keys)
+    else:
+        page_count = int(meta.get("page_count") or 0)
+    if page_count <= 0:
         return []
 
-    SKIP_ROLES = {"explanation", "answer_key", "cover", "index", "non_question"}
-    recommendations: list[dict] = []
-    for entry in pages:
-        if not isinstance(entry, dict):
+    # problem 가진 페이지 set
+    pages_with_problem: set[int] = set()
+    for p in document.problems.all():
+        pi = (p.meta or {}).get("page_index")
+        if isinstance(pi, int):
+            pages_with_problem.add(pi)
+
+    # problem 없고 manual 보호 영향 없는 페이지 → skip 추천
+    # 안전 margin: problem 가진 페이지가 0건 (학원장이 아직 cut 안 한 doc) 이면 추천 X
+    # — 추천 신뢰도 부족.
+    if len(pages_with_problem) == 0:
+        return []
+
+    for idx in range(page_count):
+        if idx in pages_with_problem:
             continue
-        idx = entry.get("page_index")
-        ptype = entry.get("paper_type") or entry.get("primary")
-        if not isinstance(idx, int) or not isinstance(ptype, str):
-            continue
-        if ptype in SKIP_ROLES:
-            recommendations.append({
-                "page_index": idx,
-                "state": PAGE_STATE_SKIP,
-                "auto_reason": f"paper_type_{ptype}",
-            })
+        recommendations.append({
+            "page_index": idx,
+            "state": PAGE_STATE_SKIP,
+            "auto_reason": "no_problem_detected",
+        })
     return recommendations
 
 
