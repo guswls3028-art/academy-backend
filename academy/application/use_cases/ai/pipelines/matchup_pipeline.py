@@ -372,9 +372,47 @@ def run_matchup_pipeline(
     # ── Step 4: 이미지 업로드 (90%) ──
     # "이미지 저장" 라벨은 사용자가 의미를 알기 어려워 "썸네일/이미지 캐시"로 명시.
     # 78페이지 PDF에서 5분간 "이미지 저장 85%" 정체로 보이던 UX 정체 해소를 위해
+    # Box minimum area filter (2026-05-10 자가 시각 검수 fix) — fragment box 사전 reject.
+    # V11 over-segmentation 으로 발문만/보기만/선택지만 cut 되는 fragment 가 다수.
+    # 면적 너무 작거나 aspect ratio 비정상 box 는 Hybrid VLM 호출 전 silent drop.
+    # ENV flag MATCHUP_BOX_AREA_MIN_RATIO (default off if "0", on with "0.05" 등).
+    box_area_min_ratio_raw = os.environ.get("MATCHUP_BOX_AREA_MIN_RATIO", "0")
+    try:
+        box_area_min_ratio = float(box_area_min_ratio_raw)
+    except (TypeError, ValueError):
+        box_area_min_ratio = 0.0
+    if box_area_min_ratio > 0:
+        import cv2 as _cv2_for_area
+        before_filter = len(questions_raw)
+        kept_after_area = []
+        rejected_area = 0
+        for _q in questions_raw:
+            try:
+                _img = _cv2_for_area.imread(_q.get("image_path", ""))
+                if _img is None or not _q.get("bbox"):
+                    kept_after_area.append(_q)
+                    continue
+                _ih, _iw = _img.shape[:2]
+                _x, _y, _w, _h = _q["bbox"]
+                page_area = _ih * _iw
+                box_area = _w * _h
+                if page_area > 0 and (box_area / page_area) < box_area_min_ratio:
+                    rejected_area += 1
+                    continue
+                kept_after_area.append(_q)
+            except Exception:
+                kept_after_area.append(_q)
+        if rejected_area > 0:
+            logger.info(
+                "MATCHUP_BOX_AREA_FILTER | doc=%s | before=%d | rejected=%d | min_ratio=%s",
+                document_id, before_filter, rejected_area, box_area_min_ratio,
+            )
+        questions_raw = kept_after_area
+
     # Hybrid VLM verifier (2026-05-09 basic_definition_2026_05_09 SSOT) —
     # YOLO false positive 후처리. PoC v3 검증 prec 0.55→0.97. ENV flag
     # MATCHUP_HYBRID_VLM_TENANTS 매치 시만 적용. fail-soft.
+    # 2026-05-10 자가 검수 후 prompt 강화 — problem_fragment 카테고리 reject.
     try:
         from academy.adapters.ai.detection.hybrid_vlm_classifier import (
             is_hybrid_vlm_enabled_for_tenant,
