@@ -485,11 +485,36 @@ def _handle_matchup_ai_result(
 
     problems_data = result_payload.get("problems", [])
 
+    # Phase C (2026-05-09 basic_definition_2026_05_09 SSOT) — page-fallback 차단.
+    # 사용자 directive: "페이지 전체 crop 기본 금지". bbox=null 또는 면적 95%+ box 는
+    # 학원장 노동 가치 0 (페이지 통째 problem = 매치업 노이즈) — silent drop.
+    # ENV flag MATCHUP_BLOCK_PAGE_FALLBACK 점진 rollout. default off → 운영 영향 0.
+    import os
+    if os.environ.get("MATCHUP_BLOCK_PAGE_FALLBACK", "0") == "1":
+        def _is_page_fallback(p):
+            meta_p = p.get("meta") or {}
+            bbox = meta_p.get("bbox")
+            if not bbox:
+                return True  # bbox null = 페이지 전체로 worker 가 fallback 한 case
+            if isinstance(bbox, dict):
+                w = float(bbox.get("w") or 0)
+                h = float(bbox.get("h") or 0)
+                if w >= 0.95 and h >= 0.95:
+                    return True  # 페이지 면적 95%+ = 페이지 통째
+            return False
+        before_count = len(problems_data)
+        problems_data = [p for p in problems_data if not _is_page_fallback(p)]
+        blocked_count = before_count - len(problems_data)
+        if blocked_count > 0:
+            logger.info(
+                "MATCHUP_PAGE_FALLBACK_BLOCKED | doc=%s | blocked=%d / total=%d",
+                doc.id, blocked_count, before_count,
+            )
+
     # Phase E (2026-05-09 basic_definition_2026_05_09 SSOT) — Proposal-first path 점진 rollout.
     # ENV flag MATCHUP_PROPOSAL_FIRST_TENANTS (콤마 구분 tenant id list) 매치 시
     # 신규 path. default 빈 list → 모든 doc 기존 path (운영 영향 0).
     # 점진: T1 sandbox 검증 → 사용자 명시 승인 → T2.
-    import os
     proposal_first_tenants_raw = os.environ.get("MATCHUP_PROPOSAL_FIRST_TENANTS", "")
     proposal_first_tenants = {
         int(t) for t in proposal_first_tenants_raw.split(",") if t.strip().isdigit()
