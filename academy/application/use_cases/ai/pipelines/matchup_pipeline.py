@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
@@ -371,6 +372,33 @@ def run_matchup_pipeline(
     # ── Step 4: 이미지 업로드 (90%) ──
     # "이미지 저장" 라벨은 사용자가 의미를 알기 어려워 "썸네일/이미지 캐시"로 명시.
     # 78페이지 PDF에서 5분간 "이미지 저장 85%" 정체로 보이던 UX 정체 해소를 위해
+    # Hybrid VLM verifier (2026-05-09 basic_definition_2026_05_09 SSOT) —
+    # YOLO false positive 후처리. PoC v3 검증 prec 0.55→0.97. ENV flag
+    # MATCHUP_HYBRID_VLM_TENANTS 매치 시만 적용. fail-soft.
+    try:
+        from academy.adapters.ai.detection.hybrid_vlm_classifier import (
+            is_hybrid_vlm_enabled_for_tenant,
+            filter_questions_by_hybrid_vlm,
+        )
+        if is_hybrid_vlm_enabled_for_tenant(tenant_id):
+            before_count = len(questions_raw)
+            questions_raw, hvlm_stats = filter_questions_by_hybrid_vlm(
+                questions_raw,
+                document_id=document_id,
+                tenant_id=tenant_id,
+                cost_cap_calls=200,
+            )
+            logger.info(
+                "HYBRID_VLM_FILTERED | doc=%s | before=%d | after=%d | stats=%s",
+                document_id, before_count, len(questions_raw), hvlm_stats,
+            )
+    except Exception as _hvlm_err:  # noqa: BLE001
+        # fail-soft — filter 자체 실패 시 raw questions_raw 그대로
+        logger.warning(
+            "HYBRID_VLM_OUTER_FAIL | doc=%s | err=%s",
+            document_id, _hvlm_err,
+        )
+
     # 이미지 업로드 / CLIP 임베딩 / 페이지 캐시 3단계로 진행률 분산.
     record_progress(
         job_id, "upload_images", 85,
@@ -1610,6 +1638,22 @@ def _upload_cropped_images(
             if q.get("bbox"):
                 x, y, w, h = q["bbox"]
                 img_h, img_w = img.shape[:2]
+
+                # Phase C step 2 (2026-05-09 basic_definition_2026_05_09 SSOT) —
+                # over-crop padding. 사용자 directive: '작게 잘라 손상 = 실패.
+                # 조금 크게 잘라 여백/출처 = 허용'. 학원장 manual cut 절감 + 가로
+                # 반토막 / 세로 잘림 사고 직격 방지.
+                # 절대 minimum + 비율 max 둘 다 적용 — 작은 박스도 충분 padding.
+                # ENV flag default off → T1 점진 → T2.
+                if os.environ.get("MATCHUP_OVER_CROP_PADDING", "0") == "1":
+                    pad_x = max(int(w * 0.05), 8)
+                    pad_y_top = max(int(h * 0.03), 6)
+                    pad_y_bottom = max(int(h * 0.07), 12)
+                    x = x - pad_x
+                    y = y - pad_y_top
+                    w = w + pad_x * 2
+                    h = h + pad_y_top + pad_y_bottom
+
                 x, y = max(0, int(x)), max(0, int(y))
                 x2, y2 = min(img_w, x + int(w)), min(img_h, y + int(h))
                 if x2 > x and y2 > y:
