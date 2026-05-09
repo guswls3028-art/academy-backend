@@ -485,8 +485,35 @@ def _handle_matchup_ai_result(
 
     problems_data = result_payload.get("problems", [])
 
-    # 기존 문제 삭제 (재시도 시 중복 방지). manual=true는 학원장이 ManualCropModal에서
-    # 직접 자른 것이라 보존 — 검수 모달의 "재분석" 후에도 학원장 작업이 살아있어야.
+    # Phase E (2026-05-09 basic_definition_2026_05_09 SSOT) — Proposal-first path 점진 rollout.
+    # ENV flag MATCHUP_PROPOSAL_FIRST_TENANTS (콤마 구분 tenant id list) 매치 시
+    # 신규 path. default 빈 list → 모든 doc 기존 path (운영 영향 0).
+    # 점진: T1 sandbox 검증 → 사용자 명시 승인 → T2.
+    import os
+    proposal_first_tenants_raw = os.environ.get("MATCHUP_PROPOSAL_FIRST_TENANTS", "")
+    proposal_first_tenants = {
+        int(t) for t in proposal_first_tenants_raw.split(",") if t.strip().isdigit()
+    }
+    if doc.tenant_id in proposal_first_tenants:
+        try:
+            from apps.domains.matchup.services_proposal import handle_matchup_proposal_path
+            handle_matchup_proposal_path(
+                job_id=job_id,
+                doc=doc,
+                problems_data=problems_data,
+                result_payload=result_payload,
+            )
+        except Exception:
+            logger.exception(
+                "PROPOSAL_FIRST_PATH_FAILED | job_id=%s | doc_id=%s | falling back to legacy path",
+                job_id, doc.id,
+            )
+            # fail-soft: helper 실패 시 legacy path 로 대체 (운영 흐름 보호)
+        else:
+            return  # proposal path 성공 — legacy bulk_create skip
+
+    # 기존 문제 삭제 (재시도 시 중복 방지). manual=true / manual_owner_pinned=true 둘 다
+    # 보호 — 학원장이 ManualCropModal 또는 적중보고서에서 직접 자른/별 토글한 problem 보존.
     # 아래 bulk_create(ignore_conflicts=True)가 unique(document, number) 충돌을
     # silent drop하므로, 같은 번호의 자동 결과는 자연스럽게 manual에 우선권을 양보.
     #
@@ -496,10 +523,19 @@ def _handle_matchup_ai_result(
     # → delete 0건 → 이후 bulk_create가 unique(doc, number) 충돌로 silent drop →
     # skeleton row가 영구히 살아남음. T2 1355 problems가 dead state로 invalid 인덱싱.
     # ID 기반 명시 exclude로 NULL semantics 우회.
+    #
+    # pinned_ids 보호 (Phase E side fix, 2026-05-09): services.retry_document 는
+    # manual_ids ∪ pinned_ids 둘 다 protected, 그러나 callback 은 manual_ids 만 보호
+    # 하던 결함. 학원장이 적중 보고서에서 별 토글한 problem (manual_owner_pinned=true)
+    # 이 reanalyze 후 callback 단계에서 손실되는 위험 차단.
     manual_ids = list(
         doc.problems.filter(meta__manual=True).values_list("id", flat=True)
     )
-    doc.problems.exclude(id__in=manual_ids).delete()
+    pinned_ids = list(
+        doc.problems.filter(meta__manual_owner_pinned=True).values_list("id", flat=True)
+    )
+    protected_ids = list(set(manual_ids) | set(pinned_ids))
+    doc.problems.exclude(id__in=protected_ids).delete()
 
     # bulk create
     problem_objs = []
