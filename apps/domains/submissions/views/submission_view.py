@@ -81,6 +81,10 @@ class SubmissionViewSet(ModelViewSet):
         except (TypeError, ValueError):
             return Response({"detail": "target_id must be an integer"}, status=400)
 
+        # cross-tenant 방어: 자기 학원 소속 exam_id 인지 검증.
+        if not self._validate_target_tenant(Submission.TargetType.EXAM, exam_id, tenant):
+            return Response({"detail": "대상이 해당 학원에 속하지 않습니다."}, status=403)
+
         payload = {}
         if request.data.get("sheet_id"):
             try:
@@ -406,16 +410,87 @@ class SubmissionViewSet(ModelViewSet):
             }
         )
 
+    # 폐기 사유 enum — 운영자 audit 용 세분화. 외 값은 "other" 로 fold.
+    _DISCARD_REASONS = {
+        "scan_quality",       # 스캔/사진 품질 불량
+        "wrong_upload",       # 오업로드
+        "duplicate",          # 중복 업로드
+        "target_missing",     # 원본 시험/과제 없음 (orphan)
+        "operator_discarded", # 단순 운영자 폐기 (default)
+        "other",
+    }
+
+    @action(detail=False, methods=["post"], url_path="discard-batch")
+    def discard_batch(self, request):
+        """
+        여러 답안지를 일괄 폐기.
+        body: {"submission_ids": [int, ...], "reason": "operator_discarded" | ...}
+        - 본인 tenant 의 submission 만 처리. 그 외는 silent skip + skipped 카운트로 보고.
+        - 이미 DONE/SUPERSEDED 는 transition 차단되어 skipped 처리.
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant required"}, status=403)
+
+        ids = request.data.get("submission_ids") or []
+        if not isinstance(ids, list) or not ids:
+            return Response({"detail": "submission_ids 필수"}, status=400)
+        try:
+            ids = [int(x) for x in ids]
+        except (TypeError, ValueError):
+            return Response({"detail": "submission_ids 는 정수 배열"}, status=400)
+
+        raw_reason = str(request.data.get("reason") or "operator_discarded").strip()
+        reason = raw_reason if raw_reason in self._DISCARD_REASONS else "other"
+
+        qs = Submission.objects.filter(tenant=tenant, id__in=ids)
+        discarded = 0
+        skipped: list[dict] = []
+        now = timezone.now()
+        for s in qs.select_for_update() if False else qs:  # SELECT FOR UPDATE 제외 — 단발 폐기
+            try:
+                transit_save(
+                    s, Submission.Status.FAILED,
+                    admin_override=True,
+                    error_message=f"discarded:{reason}",
+                    actor=f"admin.discard_batch.user_{getattr(request.user, 'id', '?')}",
+                )
+            except InvalidTransitionError as e:
+                skipped.append({"id": s.id, "reason": str(e)})
+                continue
+
+            meta = dict(s.meta or {})
+            meta["discarded"] = {
+                "at": now.isoformat(),
+                "by_user_id": getattr(request.user, "id", None),
+                "reason": reason,
+                "batch": True,
+            }
+            meta.setdefault("manual_review", {})
+            meta["manual_review"]["required"] = False
+            meta["manual_review"]["resolved_at"] = now.isoformat()
+            s.meta = meta
+            s.save(update_fields=["meta", "updated_at"])
+            discarded += 1
+
+        return Response({
+            "discarded": discarded,
+            "skipped_count": len(skipped),
+            "skipped": skipped[:20],
+            "reason": reason,
+        }, status=200)
+
     @action(detail=True, methods=["post"], url_path="discard")
     def discard(self, request, pk=None):
         """
         OMR 답안지 폐기 — 스캔 품질 불량/오업로드/중복 등으로 채점 대상에서 제외.
         - 상태 FAILED로 전환하고 meta.discarded 기록 (감사 목적).
         - 본 제출에 매칭된 enrollment_id는 유지(기록용)하되 채점 미시행.
-        body (optional): {"reason": "scan_quality"}
+        body (optional): {"reason": "scan_quality" | "wrong_upload" | "duplicate" | "target_missing" | "other"}
         """
         submission: Submission = self.get_object()
-        reason = str(request.data.get("reason") or "operator_discarded").strip() or "operator_discarded"
+        raw_reason = str(request.data.get("reason") or "operator_discarded").strip()
+        reason = raw_reason if raw_reason in self._DISCARD_REASONS else "other"
 
         try:
             transit_save(

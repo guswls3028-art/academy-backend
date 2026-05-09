@@ -200,11 +200,21 @@ class PendingSubmissionsView(APIView):
 
             # 🚦 target_resolved: Exam/Homework 본체 + 세션/강의 매칭이 모두 살아있는지.
             # 미식별/orphan row 운영자에게 적절한 action(폐기 vs 학생지정 vs 결과보기)을 분기시키는 단일 기준.
-            target_resolved = bool(
-                target_info.get("target_title")
-                and target_info.get("lecture_id")
-                and target_info.get("session_id")
-            )
+            #
+            # target_resolved_reason: !target_resolved 일 때 운영자/디버깅용 사유.
+            #   target_missing  — Exam/Homework 본체가 없음 (삭제 또는 cross-tenant)
+            #   session_missing — Exam/Homework 는 있으나 sessions 매칭 실패
+            #   (target_resolved=True 일 때는 None)
+            target_title = target_info.get("target_title")
+            target_lecture_id = target_info.get("lecture_id")
+            target_session_id = target_info.get("session_id")
+            target_resolved = bool(target_title and target_lecture_id and target_session_id)
+            if target_resolved:
+                target_resolved_reason = None
+            elif not target_title:
+                target_resolved_reason = "target_missing"
+            else:
+                target_resolved_reason = "session_missing"
 
             items.append(
                 {
@@ -225,6 +235,7 @@ class PendingSubmissionsView(APIView):
                     "lecture_title": target_info.get("lecture_title", ""),
                     "session_id": target_info.get("session_id"),
                     "target_resolved": target_resolved,
+                    "target_resolved_reason": target_resolved_reason,
                     "file_key": file_key,
                     "file_type": file_type or s.file_type or "",
                     "file_size": s.file_size,

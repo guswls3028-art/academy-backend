@@ -11,6 +11,7 @@ from .views.homework_submissions_list_view import HomeworkSubmissionsListView
 from .views.exam_omr_batch_upload_view import ExamOMRBatchUploadView
 from .views.pending_submissions_view import PendingSubmissionsView
 from .views.exam_candidates_view import ExamCandidatesView
+from .views.homework_candidates_view import HomeworkCandidatesView
 
 router = DefaultRouter()
 router.register("submissions", SubmissionViewSet, basename="submissions")
@@ -57,6 +58,13 @@ urlpatterns = [
         "submissions/exams/<int:exam_id>/candidates/",
         ExamCandidatesView.as_view(),
         name="exam-candidates",
+    ),
+
+    # ✅ Homework 검토 학생 picker: GET /submissions/homework/{homeworkId}/candidates/?q=검색어
+    path(
+        "submissions/homework/<int:homework_id>/candidates/",
+        HomeworkCandidatesView.as_view(),
+        name="homework-candidates",
     ),
 ]
 
