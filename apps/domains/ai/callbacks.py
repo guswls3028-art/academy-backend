@@ -485,6 +485,37 @@ def _handle_matchup_ai_result(
 
     problems_data = result_payload.get("problems", [])
 
+    # Phase D (2026-05-09 basic_definition_2026_05_09 SSOT) — PageState='manual'
+    # 페이지의 자동 cut 결과 silent drop. 사용자 directive 의 핵심:
+    # 'auto + manual 결과 = 같은 최종 problem set 으로 병합. state=manual 페이지는
+    # 학원장 manual cut 만 final, 자동 cut noise 차단'.
+    # default on (ENV flag X). PageState row 없는 doc 은 manual_pages 빈 → no-op.
+    # safe 변경 — 기존 자료 영향 0 (PageState 도입 전 자료 모두 row 0).
+    try:
+        from apps.domains.matchup.models import MatchupPageState
+        manual_pages = set(
+            MatchupPageState.objects.filter(
+                document=doc, state="manual",
+            ).values_list("page_index", flat=True)
+        )
+        if manual_pages:
+            before = len(problems_data)
+            problems_data = [
+                p for p in problems_data
+                if (p.get("meta") or {}).get("page_index") not in manual_pages
+            ]
+            dropped = before - len(problems_data)
+            if dropped > 0:
+                logger.info(
+                    "MATCHUP_MANUAL_PAGE_DROP | doc=%s | dropped=%d/%d | manual_pages=%s",
+                    doc.id, dropped, before, sorted(manual_pages),
+                )
+    except Exception:
+        logger.exception(
+            "MATCHUP_MANUAL_PAGE_DROP_FAIL | doc=%s | continuing with raw problems_data",
+            doc.id,
+        )
+
     # Phase C (2026-05-09 basic_definition_2026_05_09 SSOT) — page-fallback 차단.
     # 사용자 directive: "페이지 전체 crop 기본 금지". bbox=null 또는 면적 95%+ box 는
     # 학원장 노동 가치 0 (페이지 통째 problem = 매치업 노이즈) — silent drop.
