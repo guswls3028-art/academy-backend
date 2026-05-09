@@ -416,6 +416,7 @@ def run_matchup_pipeline(
             step_percent=int(done / total * 33) if total else 0,
             tenant_id=tenant_id,
         ),
+        paper_type_summary=paper_type_summary,
     )
 
     # 이미지 CLIP 임베딩 — cropped 영역을 시각 임베딩으로 변환. 카메라 사진/
@@ -1603,17 +1604,40 @@ def _upload_page_images_for_modal_cache(
     return page_keys, page_dimensions
 
 
+def _column_count_for_paper_type(paper_type: str) -> int:
+    """paper_type → column_count. 2분할/4분할 자료 column-aware crop 위해.
+
+    basic_definition_2026_05_09 SSOT 사용자 directive: '문항 + 다른 문항 일부 → 주의'.
+    좌측 column 의 box padding 이 우측 column 침범 방지 = 다른 문항 손상 0.
+
+    매핑:
+      clean_pdf_dual / scan_dual → 2 column
+      quadrant → 4 column (현재 표본 X, 정책만)
+      그 외 → 1 column (전체 폭)
+    """
+    pt = (paper_type or "").lower()
+    if pt in ("clean_pdf_dual", "scan_dual"):
+        return 2
+    if pt == "quadrant":
+        return 4
+    return 1
+
+
 def _upload_cropped_images(
     questions: List[Dict],
     tenant_id: str | None,
     document_id: str,
     job_id: str,
     on_progress: Optional[Callable[[int, int], None]] = None,
+    paper_type_summary: Optional[Dict[str, Any]] = None,
 ) -> None:
     """크롭된 문제 이미지를 R2에 업로드 (in-place로 image_key 설정).
 
     부수효과: q["cropped_image_path"]에 임시 파일 경로 저장. 이미지 임베딩이
     페이지 전체가 아닌 cropped 영역을 사용하도록 — 시각 매칭 정확도 향상.
+
+    paper_type_summary (2026-05-09 사용자 directive): column-aware crop 위해 전달.
+    primary paper_type 기반 column_count 결정. None 이면 default 1 (single column).
     """
     import cv2
     import os as _os
@@ -1629,6 +1653,13 @@ def _upload_cropped_images(
     uuid_prefix = str(_uuid.uuid4())
     total = len(questions)
 
+    # Column-aware padding: paper_type 기반 column_count 산출.
+    # paper_type_summary.primary 또는 pages[i].paper_type 우선. fallback = 1.
+    primary_paper_type = ""
+    if isinstance(paper_type_summary, dict):
+        primary_paper_type = str(paper_type_summary.get("primary") or "")
+    default_column_count = _column_count_for_paper_type(primary_paper_type)
+
     for processed, q in enumerate(questions, 1):
         try:
             img = cv2.imread(q["image_path"])
@@ -1640,18 +1671,35 @@ def _upload_cropped_images(
                 img_h, img_w = img.shape[:2]
 
                 # Phase C step 2 (2026-05-09 basic_definition_2026_05_09 SSOT) —
-                # over-crop padding. 사용자 directive: '작게 잘라 손상 = 실패.
-                # 조금 크게 잘라 여백/출처 = 허용'. 학원장 manual cut 절감 + 가로
-                # 반토막 / 세로 잘림 사고 직격 방지.
-                # 절대 minimum + 비율 max 둘 다 적용 — 작은 박스도 충분 padding.
+                # over-crop padding + column-aware boundary clip.
+                # 사용자 directive: '작게 잘라 손상 = 실패. 조금 크게 잘라 여백/출처 = 허용'.
+                # 추가 directive: '2분할 / 4분할 자료에서 다른 문항 침범 X'.
                 # ENV flag default off → T1 점진 → T2.
                 if os.environ.get("MATCHUP_OVER_CROP_PADDING", "0") == "1":
                     pad_x = max(int(w * 0.05), 8)
                     pad_y_top = max(int(h * 0.03), 6)
                     pad_y_bottom = max(int(h * 0.07), 12)
-                    x = x - pad_x
+
+                    # column-aware: 현재 box 가 속한 column 의 좌우 경계 안으로 padding clip.
+                    # paper_type=clean_pdf_dual → 2 column → 좌측 box 의 우측 padding 이
+                    # 페이지 중앙 (img_w/2) 못 넘게. 4분할 (quadrant) 동일 원리.
+                    cc = default_column_count
+                    if cc >= 2:
+                        column_w = img_w / cc
+                        box_center_x = x + w / 2
+                        col_idx = int(box_center_x / column_w)
+                        col_idx = max(0, min(cc - 1, col_idx))  # clip 0~cc-1
+                        col_left = col_idx * column_w
+                        col_right = (col_idx + 1) * column_w
+                        new_x = max(col_left, x - pad_x)
+                        new_x2 = min(col_right, x + w + pad_x)
+                        x = new_x
+                        w = max(0, new_x2 - new_x)
+                    else:
+                        x = x - pad_x
+                        w = w + pad_x * 2
+
                     y = y - pad_y_top
-                    w = w + pad_x * 2
                     h = h + pad_y_top + pad_y_bottom
 
                 x, y = max(0, int(x)), max(0, int(y))
