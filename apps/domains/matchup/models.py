@@ -656,3 +656,89 @@ class ManualCorrectionDelta(TimestampModel):
             f"CorrectionDelta tenant={self.tenant_id} type={self.correction_type} "
             f"proposal={self.proposal_id} problem={self.problem_id}"
         )
+
+
+class MatchupPageState(TimestampModel):
+    """페이지별 처리 상태 — 학원장이 자동/수동/제외를 페이지 단위로 결정.
+
+    matchup 분리 기능 base (2026-05-09 사용자 directive):
+      합격선 = 'AI 가 완벽히 자동 cut' 이 아니라 '최종 Problem Image Set
+      을 학원장이 최소 노동으로 확정' 이다. 그 1단계가 page-level 분기.
+
+    state 종류:
+      auto    — 자동분리 실행 (현행 default). YOLO/VLM/OCR 후보 → 검수 → 최종.
+      skip    — 매치업 인덱싱 X (표지/목차/해설/답안지 등 비문항 페이지).
+                기존 doc.meta.excluded_pages 와 호환 — 동기화 helper 가 양방향 변환.
+      manual  — 자동분리 X. 학원장 manual cut 만 final 로 사용 (자동 noise 차단).
+
+    backward compat:
+      doc.meta.excluded_pages 가 SSOT 역할을 그대로 유지 (worker 기존 path).
+      PageState.state='skip' 인 page_index 는 excluded_pages 에 동기화.
+      신규 코드는 PageState 우선 — sync helper 가 단방향(state→meta) 갱신.
+
+    blast radius 격리:
+      신규 모델만 추가. 기존 MatchupProblem / MatchupDocument / callback 변경 0.
+      worker 가 PageState 를 직접 읽을지는 후속 Phase D (feature flag).
+    """
+    objects = TenantQuerySet.as_manager()
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="matchup_page_states",
+        db_index=True,
+    )
+    document = models.ForeignKey(
+        MatchupDocument,
+        on_delete=models.CASCADE,
+        related_name="page_states",
+    )
+    page_index = models.PositiveIntegerField()
+
+    STATE_CHOICES = [
+        ("auto", "자동 분리"),
+        ("skip", "건너뛰기"),
+        ("manual", "직접 자르기만"),
+    ]
+    state = models.CharField(
+        max_length=10,
+        choices=STATE_CHOICES,
+        default="auto",
+        db_index=True,
+    )
+
+    # 마지막 변경 사용자 audit (학원장 vs 시스템 자동 추천 구분).
+    # 자동 추천 (paper_type_summary 기반 cover/explanation skip 자동) = NULL.
+    updated_by = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+        help_text="마지막 변경 사용자. NULL=시스템 자동 추천.",
+    )
+
+    # 시스템 자동 추천일 때 근거. 학원장이 수동 변경 시 클리어.
+    # 가능 값: paper_type_cover / paper_type_explanation / paper_type_answer_key /
+    #         paper_type_index / vlm_classify_<role> / 기타.
+    auto_reason = models.CharField(
+        max_length=64, blank=True, default="",
+        help_text="자동 state 추천 근거. 학원장 수동 변경 시 클리어.",
+    )
+
+    class Meta:
+        app_label = "matchup"
+        ordering = ["document_id", "page_index"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document", "page_index"],
+                name="unique_matchup_page_state",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "document"]),
+            models.Index(fields=["tenant", "state"]),
+        ]
+
+    def __str__(self):
+        return f"PageState doc={self.document_id} p{self.page_index} {self.state}"

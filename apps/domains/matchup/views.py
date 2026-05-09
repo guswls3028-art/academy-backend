@@ -33,6 +33,11 @@ from .services import (
     paste_image_as_problem,
     merge_problems,
     delete_problem_with_r2,
+    get_page_states,
+    set_page_state,
+    bulk_set_page_states,
+    auto_recommend_page_states,
+    PAGE_STATE_VALUES,
 )
 from apps.shared.utils.vector import cosine_similarity
 
@@ -1434,6 +1439,132 @@ class DocumentReanalyzeView(View):
 
         doc.refresh_from_db()
         return JsonResponse({**MatchupDocumentSerializer(doc).data, "job_id": job_id})
+
+
+# ── Phase A (2026-05-09) — page-level state API ──────────────
+#
+# basic_definition_2026_05_09 SSOT MVP 1단계:
+#   학원장이 페이지별 auto/skip/manual 선택 → 자동 결과 + manual 결과 = 최종 problem set.
+#
+# backward compat: meta.excluded_pages 가 worker SSOT 그대로. PageState 변경 시
+# excluded_pages 자동 동기화 (services.set_page_state). 신규 UI 가 없는 시점에도
+# 기존 exclude 흐름과 충돌 0.
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentPageStatesView(View):
+    """GET/POST /api/v1/matchup/documents/<doc_id>/page-states/
+
+    GET: 전체 page state list (legacy excluded_pages 기반 fallback 포함).
+    POST: bulk upsert. body {items: [{page_index, state, auto_reason?}], auto_recommend?: bool}
+          - auto_recommend=true 시 paper_type_summary 기반 추천도 함께 반환 (적용은 별도).
+    """
+
+    def get(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        states = get_page_states(doc)
+        recommendations = auto_recommend_page_states(doc)
+        return JsonResponse({
+            "doc_id": doc.id,
+            "page_count": len(states),
+            "states": states,
+            "recommendations": recommendations,
+        })
+
+    def post(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        items = body.get("items") or []
+        if not isinstance(items, list):
+            return JsonResponse({"detail": "items must be a list"}, status=400)
+        if len(items) > 1000:
+            return JsonResponse({"detail": "items too large (max 1000)"}, status=400)
+
+        try:
+            result = bulk_set_page_states(
+                doc, items, actor=getattr(request, "user", None),
+            )
+        except ValueError as e:
+            return JsonResponse({"detail": str(e)}, status=400)
+        except Exception:
+            logger.exception("bulk_set_page_states failed (doc=%s)", doc.id)
+            return JsonResponse({"detail": "page state 저장 실패"}, status=500)
+
+        return JsonResponse({
+            "ok": True,
+            "doc_id": doc.id,
+            **result,
+        })
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentPageStateSingleView(View):
+    """POST /api/v1/matchup/documents/<doc_id>/page-states/<page_idx>/
+
+    단일 page state upsert. body {state: 'auto'|'skip'|'manual', auto_reason?}
+    응답: {state, auto_reason, created}
+    """
+
+    def post(self, request, doc_id, page_idx):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        try:
+            page_idx_i = int(page_idx)
+            state = str(body.get("state", "")).strip()
+            if state not in PAGE_STATE_VALUES:
+                return JsonResponse({"detail": "state 값이 잘못됨"}, status=400)
+            auto_reason = str(body.get("auto_reason", ""))[:64]
+        except (TypeError, ValueError) as e:
+            return JsonResponse({"detail": f"잘못된 요청: {e}"}, status=400)
+
+        try:
+            result = set_page_state(
+                doc,
+                page_idx_i,
+                state,
+                actor=getattr(request, "user", None),
+                auto_reason=auto_reason,
+            )
+        except ValueError as e:
+            return JsonResponse({"detail": str(e)}, status=400)
+        except Exception:
+            logger.exception(
+                "set_page_state failed (doc=%s page=%s)", doc.id, page_idx,
+            )
+            return JsonResponse({"detail": "page state 저장 실패"}, status=500)
+
+        return JsonResponse({
+            "ok": True,
+            "doc_id": doc.id,
+            **result,
+        })
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")

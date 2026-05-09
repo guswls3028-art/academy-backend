@@ -13,6 +13,9 @@ urlpatterns = [
     path("documents/<int:doc_id>/pages/<int:page_idx>/exclude/", views.DocumentPageExcludeView.as_view()),
     path("documents/<int:doc_id>/pages/<int:page_idx>/include/", views.DocumentPageIncludeView.as_view()),
     path("documents/<int:doc_id>/pages/<int:page_idx>/vlm-classify/", views.DocumentPageVlmClassifyView.as_view()),
+    # Phase A (2026-05-09) — page-level state (auto/skip/manual). basic_definition SSOT MVP 1단계.
+    path("documents/<int:doc_id>/page-states/", views.DocumentPageStatesView.as_view()),
+    path("documents/<int:doc_id>/page-states/<int:page_idx>/", views.DocumentPageStateSingleView.as_view()),
     path("documents/<int:doc_id>/reanalyze/", views.DocumentReanalyzeView.as_view()),
     path("documents/<int:doc_id>/manual-crop/", views.DocumentManualCropView.as_view()),
     path("documents/<int:doc_id>/paste-problem/", views.DocumentPasteProblemView.as_view()),

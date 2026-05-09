@@ -580,6 +580,233 @@ def include_page_to_matchup(
     return {"excluded_pages": excluded, "requires_reanalyze": True}
 
 
+# ── Phase A (2026-05-09) — page-level state 도입 ───────────────────────
+#
+# basic_definition_2026_05_09 SSOT: 합격선 = '최종 Problem Image Set 학원장
+# 최소 노동'. 그 1단계 = page-level 분기 (auto/skip/manual).
+#
+# backward compat:
+#   - meta.excluded_pages 가 worker 측 SSOT 그대로. PageState.state='skip' 변경
+#     시 excluded_pages 동기화. PageState 부재 시 기존 excluded_pages 그대로 동작.
+#   - PageState 가 도입되어도 worker / callback / segment_dispatcher 변경 0
+#     (Phase D 에서 worker 가 PageState 직접 읽도록 점진 전환).
+
+PAGE_STATE_AUTO = "auto"
+PAGE_STATE_SKIP = "skip"
+PAGE_STATE_MANUAL = "manual"
+PAGE_STATE_VALUES = (PAGE_STATE_AUTO, PAGE_STATE_SKIP, PAGE_STATE_MANUAL)
+
+
+def _validate_page_state(state: str) -> str:
+    if state not in PAGE_STATE_VALUES:
+        raise ValueError(f"page state 값이 잘못됨: {state!r}")
+    return state
+
+
+def get_page_states(document: MatchupDocument) -> list[dict]:
+    """문서의 page state 전체 list (page_index 0 ~ N-1).
+
+    PageState row 가 없는 page 는 backward compat 적용:
+      - excluded_pages 안에 있으면 state='skip'
+      - 그 외 state='auto'
+    UI 가 PageState 모델 직접 모르는 상태에서 동등하게 사용 가능.
+    """
+    from .models import MatchupPageState
+
+    page_count = int((document.meta or {}).get("page_count") or 0)
+    if page_count <= 0:
+        # fallback — InventoryFile 페이지 수가 없으면 problems 의 max page_index+1
+        max_idx = -1
+        for p in document.problems.all():
+            pi = (p.meta or {}).get("page_index")
+            if isinstance(pi, int) and pi > max_idx:
+                max_idx = pi
+        page_count = max_idx + 1 if max_idx >= 0 else 0
+
+    excluded = set(int(x) for x in ((document.meta or {}).get("excluded_pages") or []))
+    db_states = {
+        ps.page_index: ps
+        for ps in MatchupPageState.objects.filter(document=document)
+    }
+
+    result: list[dict] = []
+    for idx in range(page_count):
+        ps = db_states.get(idx)
+        if ps is not None:
+            result.append({
+                "page_index": idx,
+                "state": ps.state,
+                "auto_reason": ps.auto_reason,
+                "updated_by_id": ps.updated_by_id,
+                "updated_at": ps.updated_at.isoformat() if ps.updated_at else None,
+                "source": "db",
+            })
+        else:
+            inferred = PAGE_STATE_SKIP if idx in excluded else PAGE_STATE_AUTO
+            result.append({
+                "page_index": idx,
+                "state": inferred,
+                "auto_reason": "legacy_excluded_pages" if inferred == PAGE_STATE_SKIP else "",
+                "updated_by_id": None,
+                "updated_at": None,
+                "source": "legacy_meta" if inferred == PAGE_STATE_SKIP else "default",
+            })
+    return result
+
+
+def set_page_state(
+    document: MatchupDocument,
+    page_index: int,
+    state: str,
+    *,
+    actor=None,
+    auto_reason: str = "",
+    sync_excluded_pages: bool = True,
+) -> dict:
+    """단일 페이지 state upsert.
+
+    - state='skip' 이면 meta.excluded_pages 에도 page_index 추가 (worker 호환).
+    - state='auto'/'manual' 이면 meta.excluded_pages 에서 page_index 제거.
+    - actor 가 있으면 학원장 수동 변경 (auto_reason 클리어), 없으면 시스템 추천.
+    """
+    from .models import MatchupPageState
+
+    if not isinstance(page_index, int) or page_index < 0 or page_index > 999:
+        raise ValueError("page_index 범위를 벗어남")
+    _validate_page_state(state)
+
+    actor_user = actor if actor is not None and getattr(actor, "is_authenticated", False) else None
+    cleared_reason = "" if actor_user is not None else auto_reason
+
+    ps, created = MatchupPageState.objects.update_or_create(
+        document=document,
+        page_index=int(page_index),
+        defaults={
+            "tenant_id": document.tenant_id,
+            "state": state,
+            "auto_reason": cleared_reason,
+            "updated_by": actor_user,
+        },
+    )
+
+    if sync_excluded_pages:
+        meta = dict(document.meta or {})
+        excluded = list(meta.get("excluded_pages") or [])
+        if state == PAGE_STATE_SKIP:
+            if page_index not in excluded:
+                excluded.append(int(page_index))
+                excluded.sort()
+        else:
+            excluded = [p for p in excluded if int(p) != int(page_index)]
+        meta["excluded_pages"] = excluded
+        document.meta = meta
+        document.save(update_fields=["meta", "updated_at"])
+
+    return {
+        "page_index": int(page_index),
+        "state": ps.state,
+        "auto_reason": ps.auto_reason,
+        "created": created,
+    }
+
+
+def bulk_set_page_states(
+    document: MatchupDocument,
+    items: list[dict],
+    *,
+    actor=None,
+) -> dict:
+    """다중 페이지 state 일괄 upsert.
+
+    items = [{page_index: int, state: str, auto_reason?: str}, ...]
+
+    실패는 부분 적용 — 가능한 것 적용, 실패 list 반환.
+    meta.excluded_pages 는 마지막에 한 번만 동기화 (성능).
+    """
+    from .models import MatchupPageState
+
+    actor_user = actor if actor is not None and getattr(actor, "is_authenticated", False) else None
+
+    applied: list[int] = []
+    failed: list[dict] = []
+    skip_indexes: set[int] = set()
+    non_skip_indexes: set[int] = set()
+
+    for item in items:
+        try:
+            pi = int(item.get("page_index"))
+            state = _validate_page_state(item.get("state", ""))
+            reason = item.get("auto_reason", "") if actor_user is None else ""
+        except (TypeError, ValueError) as e:
+            failed.append({"item": item, "error": str(e)})
+            continue
+        if pi < 0 or pi > 999:
+            failed.append({"item": item, "error": "page_index 범위"})
+            continue
+        MatchupPageState.objects.update_or_create(
+            document=document,
+            page_index=pi,
+            defaults={
+                "tenant_id": document.tenant_id,
+                "state": state,
+                "auto_reason": reason,
+                "updated_by": actor_user,
+            },
+        )
+        applied.append(pi)
+        if state == PAGE_STATE_SKIP:
+            skip_indexes.add(pi)
+        else:
+            non_skip_indexes.add(pi)
+
+    # 마지막에 meta.excluded_pages 동기화
+    meta = dict(document.meta or {})
+    excluded = set(int(x) for x in (meta.get("excluded_pages") or []))
+    excluded |= skip_indexes
+    excluded -= non_skip_indexes
+    meta["excluded_pages"] = sorted(excluded)
+    document.meta = meta
+    document.save(update_fields=["meta", "updated_at"])
+
+    return {"applied": sorted(applied), "failed": failed, "excluded_pages": meta["excluded_pages"]}
+
+
+def auto_recommend_page_states(document: MatchupDocument) -> list[dict]:
+    """paper_type_summary 기반 자동 skip 추천 (학원장 클릭 줄이기).
+
+    추천 로직:
+      - paper_type_summary.pages[i].paper_type ∈ {explanation, answer_key, cover, index}
+        → state='skip' 추천 (auto_reason='paper_type_<role>')
+      - 그 외 → 추천 안 함 (default auto)
+
+    side effect 0 — 추천 list 만 반환. set_page_state 또는 bulk_set_page_states
+    로 별도 적용. 학원장이 화면에서 보고 confirm/reject 하는 흐름.
+    """
+    summary = (document.meta or {}).get("paper_type_summary") or {}
+    if not isinstance(summary, dict):
+        return []
+    pages = summary.get("pages") or []
+    if not isinstance(pages, list):
+        return []
+
+    SKIP_ROLES = {"explanation", "answer_key", "cover", "index", "non_question"}
+    recommendations: list[dict] = []
+    for entry in pages:
+        if not isinstance(entry, dict):
+            continue
+        idx = entry.get("page_index")
+        ptype = entry.get("paper_type") or entry.get("primary")
+        if not isinstance(idx, int) or not isinstance(ptype, str):
+            continue
+        if ptype in SKIP_ROLES:
+            recommendations.append({
+                "page_index": idx,
+                "state": PAGE_STATE_SKIP,
+                "auto_reason": f"paper_type_{ptype}",
+            })
+    return recommendations
+
+
 def reanalyze_document(document: MatchupDocument) -> str:
     """status 무관하게 매치업 문서 재분석 — Phase 5-deep 검수 UI.
 
