@@ -234,6 +234,10 @@ def main() -> int:
 
     try:
         hls_path, duration = process_video(job=job_dict, cfg=cfg, progress=progress)
+        # ffmpeg + R2 업로드 동안 메인 스레드 커넥션이 RDS Proxy IdleClientTimeout(30분)에
+        # 의해 끊겼을 수 있다. 다음 DB 작업 전에 stale 커넥션을 회수한다.
+        from django.db import close_old_connections
+        close_old_connections()
         if not _video_still_exists(job_obj.video_id):
             _log_json("WORKER_CANCELLED_BY_VIDEO_DELETE", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, reason="video_deleted_before_complete")
             return 0
@@ -271,6 +275,13 @@ def main() -> int:
 
     except Exception as e:
         logger.exception("BATCH_JOB_FAILED | job_id=%s | error=%s", job_id, e)
+        # 메인 스레드 커넥션이 stale 상태에서 예외가 발생했을 수 있다. job_fail_retry가
+        # 재차 'connection already closed'로 죽으면 attempt_count를 못 올려 무한 재시도된다.
+        try:
+            from django.db import close_old_connections
+            close_old_connections()
+        except Exception:
+            pass
         job_fail_retry(job_id, str(e)[:2000])
         job_after = job_get_by_id(job_id)
         if job_after and job_after.attempt_count >= VIDEO_JOB_MAX_ATTEMPTS:

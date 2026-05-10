@@ -22,7 +22,17 @@ logger = logging.getLogger(__name__)
 
 
 def _check_abort(job: dict) -> None:
-    """재시도로 취소 요청이 들어오면 중단 (handler가 skip 처리)."""
+    """재시도로 취소 요청이 들어오면 중단 (handler가 skip 처리).
+
+    `_cancel_check` 콜백은 통상 DB를 조회한다. 장시간 ffmpeg 직후 호출되면 메인 스레드의
+    Django 커넥션이 RDS Proxy IdleClientTimeout(30분)에 의해 닫혀있어 OperationalError가
+    발생한다. close_old_connections()로 stale 커넥션을 회수해 다음 쿼리에서 새로 연다.
+    """
+    try:
+        from django.db import close_old_connections
+        close_old_connections()
+    except Exception:
+        pass
     check = job.get("_cancel_check")
     if check and callable(check) and check():
         raise CancelledError("Retry requested; aborting current job")
