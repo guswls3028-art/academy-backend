@@ -1259,8 +1259,8 @@ class HitReportLandingPublicPdfView(View):
             f"inline; filename=\"hit-report-{report.id}.pdf\"; "
             f"filename*=UTF-8''{safe_name}.pdf"
         )
-        # 5분 cache — 학원장이 picker에서 빼면 5분 내 무효화. 동시 부하 완충.
-        resp["Cache-Control"] = "public, max-age=300"
+        # 학원장이 picker에서 빼면 즉시 비공개돼야 함 — public cache 비활성, 브라우저 short-cache만.
+        resp["Cache-Control"] = "private, no-cache, must-revalidate"
         return resp
 
 
