@@ -822,15 +822,16 @@ jobs:
     needs: [detect-changes, build-and-push]
     if: needs.detect-changes.outputs.build_video == 'true' || needs.detect-changes.outputs.force_full == 'true'
     env:
+      # 2026-05-10: long path 폐기됨. long-jobdef 제거.
       VIDEO_JOB_DEFS: >-
         academy-v1-video-batch-jobdef
-        academy-v1-video-batch-long-jobdef
         academy-v1-video-ops-scanstuck
         academy-v1-video-ops-reconcile
         academy-v1-video-ops-netprobe
         academy-v1-video-ops-enqueue-uploaded
         academy-v1-video-ops-purge-raw
         academy-v1-video-ops-detect-stuck
+        academy-v1-video-ops-recover-dead
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -903,7 +904,7 @@ jobs:
 
       - name: Verify Batch compute environments
         run: |
-          for CE in academy-v1-video-batch-ce-200gb academy-v1-video-batch-long-ce-200gb academy-v1-video-ops-ce; do
+          for CE in academy-v1-video-batch-ce-200gb academy-v1-video-ops-ce; do
             STATUS=$(aws batch describe-compute-environments \
               --compute-environments "$CE" \
               --query 'computeEnvironments[0].status' --output text 2>/dev/null)
