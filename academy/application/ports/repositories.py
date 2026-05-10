@@ -7,7 +7,7 @@ from abc import abstractmethod
 from datetime import datetime
 from typing import Optional, Protocol
 
-from academy.domain.ai.entities import AIJob, AIJobStatus
+from academy.domain.ai.entities import AIJob
 
 
 class AIJobRepository(Protocol):

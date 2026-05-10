@@ -26,11 +26,11 @@ from unittest import TestCase
 from unittest.mock import patch
 
 from apps.domains.matchup.segmentation.shadow_proposal_pipeline import (
-    DEFAULT_MAX_PAYLOADS, DEFAULT_SANDBOX_TENANT_ID, SCHEMA_VERSION,
+    DEFAULT_SANDBOX_TENANT_ID, SCHEMA_VERSION,
     SHADOW_GLOBAL_ENV, SMOKE_TRUNCATION_REASON,
     T2_DOC_WHITELIST_ENV, T2_PRODUCTION_TENANT_ID,
     T2_WHITELIST_MAX_PAYLOADS,
-    ShadowPipelineResult, _truncate_payloads_for_smoke,
+    _truncate_payloads_for_smoke,
     is_globally_enabled, read_t2_doc_whitelist,
     result_to_dict, shadow_proposal_pipeline,
 )

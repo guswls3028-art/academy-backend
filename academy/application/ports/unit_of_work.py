@@ -3,7 +3,6 @@ Unit of Work 포트 — 트랜잭션 경계 (Django 미사용)
 """
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from typing import Protocol
 
 from academy.application.ports.repositories import AIJobRepository

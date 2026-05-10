@@ -1,8 +1,7 @@
 # PATH: apps/domains/lectures/views.py
 
 from django.db import transaction, IntegrityError
-from django.db.models import Max, Count, Avg, Q
-from django.db.models.functions import Coalesce
+from django.db.models import Max, Count, Q
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
@@ -24,7 +23,6 @@ from .serializers import (
 )
 
 from apps.core.models import TenantMembership
-from apps.domains.attendance.models import Attendance
 from apps.domains.enrollment.models import Enrollment
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff

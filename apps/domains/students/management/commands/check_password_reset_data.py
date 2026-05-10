@@ -15,7 +15,7 @@
 """
 import re
 from django.core.management.base import BaseCommand
-from django.db.models import Count, Q
+from django.db.models import Count
 
 from apps.domains.students.models import Student
 from apps.domains.parents.models import Parent

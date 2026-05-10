@@ -20,10 +20,9 @@ B. 원장 API (6개) — TenantResolvedAndOwner/Staff
    13. POST /api/v1/billing/cancel/revoke/
 """
 
-from datetime import date, timedelta
+from datetime import date
 
 from django.contrib.auth import get_user_model
-from rest_framework import status
 from rest_framework.test import APITestCase
 
 from apps.billing.models import Invoice

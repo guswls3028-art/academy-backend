@@ -148,7 +148,6 @@ def _pick_urls(video, request=None) -> Tuple[Optional[str], Optional[str]]:
     - hls_url: CDN 기반 HLS URL (VideoPlaybackMixin._public_play_url 로직 사용)
     - mp4_url: MP4 URL (현재는 미지원)
     """
-    from django.conf import settings
     from django.utils import timezone
     from apps.domains.video.views.playback_mixin import VideoPlaybackMixin
     
@@ -427,10 +426,8 @@ class StudentVideoStatsView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request):
-        from django.db.models import Count, Sum, Case, When, IntegerField, F, Value
-        from apps.domains.lectures.models import Lecture, Session
         from apps.domains.enrollment.models import Enrollment
-        from apps.domains.video.models import Video, VideoProgress
+        from apps.domains.video.models import VideoProgress
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -549,7 +546,6 @@ def _students_for_request(request):
     student = get_request_student(request)
     if student:
         return [student]
-    from apps.domains.parents.models import Parent
     parent = getattr(request.user, "parent_profile", None)
     if parent:
         return list(parent.students.filter(deleted_at__isnull=True))
@@ -982,7 +978,6 @@ class StudentVideoProgressView(APIView):
     def post(self, request, video_id: int):
         Video, VideoPermission = _import_media_models()
         from apps.domains.video.models import VideoProgress
-        from apps.domains.enrollment.models import Enrollment
 
         enrollment_id = _get_student_enrollment_id(request)
 

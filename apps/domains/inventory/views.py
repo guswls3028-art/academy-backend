@@ -5,13 +5,11 @@ from django.http import JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
-from django.views.decorators.http import require_http_methods
 from django.conf import settings
 
 from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
 
 from apps.core.models import Program
-from .models import InventoryFolder, InventoryFile
 from .r2_path import build_r2_key, safe_filename, folder_path_string
 from academy.adapters.db.django import repositories_inventory as inv_repo
 from .services import (

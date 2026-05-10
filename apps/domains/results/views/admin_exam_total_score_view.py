@@ -14,7 +14,7 @@ from rest_framework import status as drf_status
 from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
+from apps.domains.results.models import Result, ResultFact, ExamAttempt
 
 from apps.domains.exams.models import Exam
 

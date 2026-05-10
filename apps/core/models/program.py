@@ -1,7 +1,6 @@
 # PATH: apps/core/models/program.py
 from __future__ import annotations
 
-from datetime import date
 
 from django.db import models
 from django.utils import timezone

@@ -108,7 +108,7 @@ class Command(BaseCommand):
         if running_stale:
             self.stdout.write(self.style.WARNING(f"RUNNING without heartbeat: {len(running_stale)} jobs"))
         if fix and running_stale and not dry_run:
-            from academy.adapters.db.django.repositories_video import job_mark_dead, job_fail_retry
+            from academy.adapters.db.django.repositories_video import job_mark_dead
             from apps.domains.video.services.batch_submit import submit_batch_job
             STUCK_MAX_ATTEMPTS = 5
             for job_id, video_id, hb, attempt_count in running_stale:

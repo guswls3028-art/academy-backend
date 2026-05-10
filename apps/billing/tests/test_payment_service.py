@@ -8,7 +8,6 @@ from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
 from django.test import TestCase, override_settings
-from django.utils import timezone
 
 from apps.billing.models import BillingKey, BillingProfile, Invoice, PaymentTransaction
 from apps.billing.services import payment_service

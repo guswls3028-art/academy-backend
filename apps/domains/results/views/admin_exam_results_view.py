@@ -11,7 +11,6 @@ from apps.domains.results.serializers.admin_exam_result_row import (
     AdminExamResultRowSerializer,
 )
 
-from apps.domains.lectures.models import Session
 from apps.domains.submissions.models import Submission
 from apps.domains.exams.models import Exam
 from apps.domains.enrollment.models import Enrollment

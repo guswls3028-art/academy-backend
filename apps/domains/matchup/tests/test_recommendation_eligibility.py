@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import os
 from unittest import TestCase
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from apps.domains.matchup.services import eligible_for_recommendation_qs
 

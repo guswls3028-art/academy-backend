@@ -27,6 +27,7 @@ from datetime import timedelta
 
 from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
+from django.db.models import Q
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -77,8 +78,12 @@ class Command(BaseCommand):
 
         from apps.domains.video.models import Video
 
+        # 살아있는 영상은 모든 status 보존. soft-deleted는 READY만 180일 retention 명분으로 보존.
+        # FAILED/UPLOADED/PENDING + deleted_at = 복구 가치 0 → orphan으로 잡아 raw 즉시 정리.
         db_raw_keys = set(
-            Video.all_with_deleted.exclude(file_key="").values_list("file_key", flat=True)
+            Video.all_with_deleted.exclude(file_key="")
+            .filter(Q(deleted_at__isnull=True) | Q(status=Video.Status.READY))
+            .values_list("file_key", flat=True)
         )
         valid_hls_roots: set[str] = set()
         for hp in Video.all_with_deleted.exclude(hls_path="").values_list("hls_path", flat=True):

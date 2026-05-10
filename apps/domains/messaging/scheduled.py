@@ -83,7 +83,6 @@ def process_due_notifications(batch_size: int = 100) -> dict:
     Returns:
         {"processed": int, "sent": int, "failed": int}
     """
-    from django.db import transaction
     from apps.domains.messaging.models import ScheduledNotification
     from apps.domains.messaging.services import enqueue_sms
 

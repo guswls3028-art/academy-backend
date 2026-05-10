@@ -46,7 +46,6 @@ def send_event_notification(
     from apps.domains.messaging.policy import get_owner_tenant_id, is_messaging_disabled, MessagingPolicyError, is_event_dry_run, can_send_sms
     from apps.domains.messaging.alimtalk_content_builders import (
         get_solapi_template_id as get_unified_tid,
-        get_template_type,
         build_unified_replacements,
     )
     from .queue_service import enqueue_sms

@@ -273,7 +273,7 @@ class AnalyzePdfIntegrationTests(TestCase):
         page.insert_text((50, 300), "2. 다음 그림은 무슨 식물인가?", fontsize=12)
         page.insert_text((50, 500), "3. 다음 시는 누가 썼는가?", fontsize=12)
         # tmp file write
-        import tempfile, os
+        import tempfile
         tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
         tmp.close()
         doc.save(tmp.name)

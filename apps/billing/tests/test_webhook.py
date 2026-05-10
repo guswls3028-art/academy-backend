@@ -15,12 +15,10 @@ import json
 from datetime import date, timedelta
 
 from django.test import TestCase, override_settings
-from django.urls import reverse
 from rest_framework.test import APIClient
 
 from apps.billing.adapters.toss_payments import verify_webhook_signature
 from apps.billing.models import BillingKey, BillingProfile, Invoice, PaymentTransaction
-from apps.billing.services import webhook_service
 from apps.core.models import Tenant
 from apps.core.models.program import Program
 

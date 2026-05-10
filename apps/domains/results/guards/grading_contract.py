@@ -1,7 +1,6 @@
 # PATH: apps/domains/results/guards/grading_contract.py
 from __future__ import annotations
 
-from typing import Dict
 
 from django.core.exceptions import ValidationError
 

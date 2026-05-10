@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from unittest import TestCase
 
 from apps.domains.matchup.segmentation.mock_response_integrator import (
-    MockVlmResponse, UnifiedCandidate, VlmDetectedProblem, VlmPageResult,
+    MockVlmResponse, UnifiedCandidate, VlmDetectedProblem,
 )
 from apps.domains.matchup.segmentation.vlm_schema_normalizer import (
     SCHEMA_VERSION,

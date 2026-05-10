@@ -2,7 +2,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 
-from apps.core.models import Attendance, Expense, TenantMembership, Program
+from apps.core.models import Attendance, Expense, Program
 from academy.adapters.db.django import repositories_core as core_repo
 from apps.infrastructure.storage import r2 as r2_storage
 

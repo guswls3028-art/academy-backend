@@ -60,7 +60,7 @@ class SendExistingCredentialsView(APIView):
         if not send_to or len(send_to) != 11:
             return Response({"detail": "등록된 전화번호가 없어 발송할 수 없습니다."}, status=400)
 
-        from apps.domains.messaging.policy import MessagingPolicyError, is_messaging_disabled
+        from apps.domains.messaging.policy import is_messaging_disabled
 
         if is_messaging_disabled(tenant.id):
             return Response({"message": "아이디/비밀번호가 발송되었습니다."}, status=200)

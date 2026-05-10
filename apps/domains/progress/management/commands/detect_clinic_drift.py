@@ -37,7 +37,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from apps.domains.progress.models import ClinicLink, SessionProgress
-        from apps.domains.results.models import ExamAttempt, Result
+        from apps.domains.results.models import ExamAttempt
         from apps.domains.enrollment.models import Enrollment
 
         tenant_id = options.get("tenant")

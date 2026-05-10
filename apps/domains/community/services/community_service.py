@@ -1,5 +1,4 @@
 from django.db import transaction
-from django.db.models import Q
 
 from apps.domains.community.models import PostEntity, PostMapping, ScopeNode
 

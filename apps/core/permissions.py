@@ -4,7 +4,6 @@ from rest_framework.permissions import BasePermission
 
 from django.conf import settings
 
-from apps.core.models import TenantMembership
 
 
 def _get_client_ip(request):

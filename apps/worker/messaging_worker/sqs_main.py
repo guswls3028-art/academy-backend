@@ -539,9 +539,7 @@ def main() -> int:
                                 deduct_credits,
                                 rollback_credits,
                             )
-                            from apps.domains.messaging.models import NotificationLog
                             from apps.domains.messaging.policy import resolve_kakao_channel, get_tenant_provider, get_tenant_own_credentials
-                            from apps.core.models import Tenant
                             info = get_tenant_messaging_info(int(tenant_id))
                             if info:
                                 base_price = info["base_price"]

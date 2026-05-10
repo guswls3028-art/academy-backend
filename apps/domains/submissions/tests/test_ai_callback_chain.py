@@ -2,8 +2,7 @@
 """
 AI 결과 → Submission 상태 전이 체인 테스트.
 """
-import pytest
-from unittest.mock import patch, MagicMock, call
+from unittest.mock import patch
 
 from apps.domains.ai.callbacks import (
     dispatch_ai_result_to_domain,

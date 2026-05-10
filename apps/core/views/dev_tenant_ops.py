@@ -16,7 +16,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 logger = logging.getLogger(__name__)
 
-from apps.core.models import OpsAuditLog, Program, Tenant, TenantMembership
+from apps.core.models import OpsAuditLog, TenantMembership
 from apps.core.permissions import IsPlatformAdmin
 from apps.core.services.ops_audit import record_audit
 from academy.adapters.db.django import repositories_core as core_repo

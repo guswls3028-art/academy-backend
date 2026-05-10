@@ -12,7 +12,6 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import MessageTemplate
 from apps.domains.messaging.credit_services import (
     charge_credits as do_charge,
-    get_tenant_messaging_info,
 )
 from apps.domains.messaging.serializers import (
     MessagingInfoSerializer,

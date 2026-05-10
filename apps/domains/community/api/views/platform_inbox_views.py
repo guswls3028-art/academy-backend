@@ -34,7 +34,6 @@ class PlatformInboxListView(APIView):
 
     def get(self, request):
         from django.db.models import Count, Prefetch
-        from apps.core.models import Tenant
 
         post_type_filter = (request.query_params.get("type") or "all").strip().lower()
 

@@ -3,19 +3,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from django.db import transaction
 
 # ======================================================
 # 🔽 submissions 도메인 (raw input)
 # ======================================================
-from apps.domains.submissions.models import Submission, SubmissionAnswer
-from apps.domains.submissions.services.transition import transit_save
 
 # ======================================================
 # 🔽 results 도메인 (apply / attempt)
 # ======================================================
-from apps.domains.results.services.applier import ResultApplier
-from apps.domains.results.services.attempt_service import ExamAttemptService
 
 # ======================================================
 # 🔽 exams 도메인 (정답 / 문제 정의)
@@ -30,7 +25,6 @@ except Exception:  # pragma: no cover
 # ======================================================
 # 🔽 progress pipeline (side-effect)
 # ======================================================
-from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
 # ======================================================
 # Constants (STEP 1 고정)

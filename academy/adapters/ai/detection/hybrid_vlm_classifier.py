@@ -27,7 +27,6 @@ default 빈 list → 모든 doc no-op (운영 영향 0).
 """
 from __future__ import annotations
 
-import io
 import logging
 import os
 from typing import Any, Dict, List, Optional, Tuple

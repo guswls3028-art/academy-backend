@@ -19,8 +19,7 @@ import tempfile
 from unittest import TestCase
 
 from apps.domains.matchup.segmentation.dispatcher_mock import (
-    MockDispatcherOutput, SCHEMA_VERSION, ValidationMarks,
-    dispatch_mock, output_to_dict,
+    MockDispatcherOutput, SCHEMA_VERSION, dispatch_mock, output_to_dict,
 )
 
 

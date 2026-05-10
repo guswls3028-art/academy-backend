@@ -242,7 +242,6 @@ class ApproveDoesNotTouchUserDataTests(TestCase):
 
         새 problem 생성 (.create) 만 호출되어야 함.
         """
-        from apps.domains.matchup.models import MatchupProblem
 
         prop = _make_proposal(status="pending")
         captured: dict = {}

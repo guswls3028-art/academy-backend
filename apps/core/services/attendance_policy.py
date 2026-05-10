@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, time
 from typing import Optional, Union
 
-from apps.core.models import Program, Tenant
+from apps.core.models import Tenant
 
 
 TimeLike = Union[str, time]

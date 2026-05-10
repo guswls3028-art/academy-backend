@@ -58,7 +58,6 @@ import json
 import logging
 from collections import Counter
 from pathlib import Path
-from typing import Optional
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -116,8 +115,6 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from apps.domains.matchup.models import (
             ManualCorrectionDelta,
-            MatchupDocument,
-            MatchupProblem,
         )
 
         tenant_id: int = int(options["tenant_id"])

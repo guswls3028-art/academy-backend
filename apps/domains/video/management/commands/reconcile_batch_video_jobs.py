@@ -104,7 +104,6 @@ def _describe_jobs_boto3(aws_job_ids: list[str]) -> list:
     if not aws_job_ids:
         return []
     import boto3
-    from botocore.exceptions import ClientError
 
     client = boto3.client("batch", region_name=REGION)
     resp = client.describe_jobs(jobs=aws_job_ids)
@@ -138,12 +137,6 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from academy.adapters.db.django.repositories_video import (
-            job_fail_retry,
-            job_mark_dead,
-            job_set_running,
-        )
-        from apps.domains.video.services.batch_submit import terminate_batch_job
 
         dry_run = options["dry_run"]
         older_than_minutes = options["older_than_minutes"]
@@ -406,7 +399,6 @@ class Command(BaseCommand):
     def _run_orphan_terminate(self, dry_run: bool) -> None:
         """Terminate Batch jobs in video queue that have no DB row (orphans). Skips RUNNABLE jobs
         that are still pending scale-up (young or CE desiredvCpus=0)."""
-        from datetime import datetime
         import boto3
         batch_client = boto3.client("batch", region_name=REGION)
 

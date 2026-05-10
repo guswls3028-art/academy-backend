@@ -12,7 +12,7 @@ SubscriptionService 단위 테스트.
 
 from datetime import date, timedelta
 
-from django.test import TestCase, override_settings
+from django.test import TestCase
 
 from apps.billing.services import subscription_service
 from apps.billing.services.subscription_service import SubscriptionTransitionError

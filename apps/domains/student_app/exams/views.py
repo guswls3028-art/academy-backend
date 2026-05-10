@@ -155,7 +155,6 @@ class StudentExamQuestionsView(APIView):
 def _get_enrollment_for_exam(user, exam_id, tenant=None):
     """시험 응시 권한이 있는 enrollment 한 개 반환. (enrollment, tenant) 또는 (None, None)."""
     from apps.domains.exams.models import ExamEnrollment
-    from apps.domains.enrollment.models import Enrollment
     from apps.domains.students.models import Student
 
     student = getattr(user, "student_profile", None)

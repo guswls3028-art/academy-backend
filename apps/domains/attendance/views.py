@@ -22,8 +22,8 @@ from .filters import AttendanceFilter
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 
-from apps.domains.lectures.models import Lecture, Session
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.lectures.models import Session
+from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import ExamEnrollment
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.ai.gateway import dispatch_job

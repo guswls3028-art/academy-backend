@@ -9,11 +9,16 @@ Upload Complete → Create VideoTranscodeJob → DDB lock(video_id) → submit_b
 from __future__ import annotations
 
 import logging
-from typing import NamedTuple, Optional
+from typing import TYPE_CHECKING, NamedTuple, Optional
 
 from django.db import transaction
 
 from apps.domains.video.models import Video
+
+if TYPE_CHECKING:
+    # forward-ref only — JobResult.job 의 타입 힌트용. runtime 에는 caller 가
+    # VideoTranscodeJob 인스턴스를 그대로 전달.
+    from apps.domains.video.models import VideoTranscodeJob  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

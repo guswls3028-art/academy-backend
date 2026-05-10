@@ -10,7 +10,6 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from django.db import transaction
 
 from apps.domains.submissions.models import Submission
 

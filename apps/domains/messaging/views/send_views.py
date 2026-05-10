@@ -50,7 +50,7 @@ class SendMessageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from apps.domains.messaging.services import enqueue_sms, get_site_url, get_tenant_site_url
+        from apps.domains.messaging.services import enqueue_sms, get_tenant_site_url
         from apps.domains.messaging.policy import MessagingPolicyError
 
         # Rate limit: max 500 messages per tenant per hour
@@ -354,7 +354,7 @@ class SendMessageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from apps.domains.messaging.services import enqueue_sms, get_site_url, get_tenant_site_url
+        from apps.domains.messaging.services import enqueue_sms, get_tenant_site_url
         from apps.domains.messaging.policy import MessagingPolicyError
 
         enqueued = 0

@@ -50,7 +50,6 @@ class Command(BaseCommand):
         from apps.domains.lectures.models import Session
         from apps.domains.homework.models import HomeworkAssignment
         from apps.domains.homework_results.models import HomeworkScore, Homework
-        from apps.domains.enrollment.models import Enrollment
         from apps.domains.messaging.selectors import get_auto_send_config
         from apps.domains.messaging.services import send_event_notification
         from apps.domains.messaging.policy import get_owner_tenant_id

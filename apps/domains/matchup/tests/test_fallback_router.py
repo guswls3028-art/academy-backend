@@ -12,10 +12,7 @@ from __future__ import annotations
 from unittest import TestCase
 
 from apps.domains.matchup.segmentation.fallback_router import (
-    CostCapMock,
     FallbackRouteDecision,
-    OcrMockRequest,
-    VlmMockRequest,
     decision_to_dict,
     route_fallback,
 )

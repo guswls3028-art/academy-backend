@@ -1,7 +1,6 @@
 # apps/domains/submissions/services/processor/video.py
 from __future__ import annotations
 
-from typing import Iterable, Dict, Any
 
 from apps.domains.submissions.services.processor.base import BaseSubmissionProcessor
 

@@ -7,7 +7,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from apps.core.models.user import user_display_username, user_internal_username
-from apps.domains.student_app.permissions import IsStudent, IsStudentOrParent, get_request_student
+from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from django.contrib.auth import get_user_model
 
 User = get_user_model()

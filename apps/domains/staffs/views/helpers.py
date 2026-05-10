@@ -7,7 +7,6 @@ from django.db.models import Sum
 from rest_framework.permissions import BasePermission
 from rest_framework.exceptions import ValidationError
 
-from ..models import Staff
 from academy.adapters.db.django import repositories_staffs as staff_repo
 from academy.adapters.db.django import repositories_core as core_repo
 from apps.core.models import TenantMembership

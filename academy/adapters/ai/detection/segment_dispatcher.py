@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2  # type: ignore
-import numpy as np  # type: ignore
 
 from academy.adapters.ai.config import AIConfig
 from academy.adapters.ai.detection.segment_opencv import segment_questions_opencv

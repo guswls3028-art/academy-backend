@@ -4,10 +4,9 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from django.db.models import Count
 from django.utils import timezone
 
-from apps.domains.lectures.models import Lecture, Session
+from apps.domains.lectures.models import Session
 from apps.domains.progress.models import SessionProgress, ClinicLink
 
 from apps.domains.results.utils.session_exam import get_exams_for_session

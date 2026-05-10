@@ -15,7 +15,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection, transaction
 from django.test import TransactionTestCase
 
-from apps.core.models import Tenant, TenantMembership
+from apps.core.models import Tenant
 from apps.domains.exams.models import Exam
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment

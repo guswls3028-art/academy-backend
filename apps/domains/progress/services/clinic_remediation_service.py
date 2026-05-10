@@ -66,7 +66,7 @@ class ClinicRemediationService:
         4. ExamResult 생성 (total_score=score, is_passed 계산)
         5. is_passed=True → ClinicLink 자동 해소
         """
-        from apps.domains.results.models import ExamAttempt, ExamResult
+        from apps.domains.results.models import ExamAttempt
         from apps.domains.exams.models import Exam
 
         # 1. ClinicLink 조회 — resolved 여부를 분리 검사하여 운영 메시지 명확화

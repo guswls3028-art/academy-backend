@@ -12,8 +12,6 @@ from academy.adapters.ai.ocr.tesseract import tesseract_ocr
 from academy.adapters.ai.detection.segment_dispatcher import (
     begin_pdf_seg_scope,
     cleanup_registered_pdf_seg_tmp_dirs,
-    segment_questions,
-    segment_questions_multipage,
 )
 from academy.adapters.ai.handwriting.detector import analyze_handwriting
 from academy.adapters.ai.embedding.service import get_embeddings
@@ -272,7 +270,6 @@ def handle_ai_job(job: AIJob) -> AIResult:
               }
             """
             # 7단계: 다운로드(완료), 메타가져오기, 이미지로드, 정렬, ROI빌드, 식별자감지, 답안감지
-            import cv2  # type: ignore
 
             from academy.adapters.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
             from academy.adapters.ai.omr.warp import align_to_a4_landscape

@@ -11,15 +11,14 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
 from academy.adapters.ai.omr.marker_detector import (
     detect_markers,
-    MarkerDetectionResult,
 )
 
 logger = logging.getLogger(__name__)

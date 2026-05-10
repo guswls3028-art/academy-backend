@@ -12,7 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from rest_framework.pagination import PageNumberPagination
 
-from apps.core.permissions import TenantResolvedAndStaff, TenantResolvedAndMember, IsStudent
+from apps.core.permissions import TenantResolvedAndStaff, TenantResolvedAndMember
 
 
 class FeesLargePagination(PageNumberPagination):

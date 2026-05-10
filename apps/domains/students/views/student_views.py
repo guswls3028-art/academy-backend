@@ -29,7 +29,7 @@ from apps.domains.ai.gateway import dispatch_job
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 
 from academy.adapters.db.django import repositories_students as student_repo
-from ..models import Student, StudentRegistrationRequest
+from ..models import Student
 from ..filters import StudentFilter
 from ..services import normalize_school_from_name
 from apps.domains.enrollment.models import Enrollment
@@ -1174,7 +1174,6 @@ class StudentViewSet(ModelViewSet):
         삭제된 학생 중 (이름+학부모전화) 중복 검사 — 고객 셀프 복구용.
         GET → { "duplicate_groups": int, "records_to_remove": int }
         """
-        from django.db.models import Count, Min
 
         tenant = request.tenant
         dup_groups = student_repo.student_filter_tenant_deleted_dup_groups(tenant)

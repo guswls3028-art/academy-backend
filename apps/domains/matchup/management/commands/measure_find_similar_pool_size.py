@@ -37,7 +37,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **opts):
-        from apps.domains.matchup.models import MatchupDocument, MatchupProblem
+        from apps.domains.matchup.models import MatchupDocument
 
         doc_qs = MatchupDocument.objects.filter(status="done")
         if opts.get("tenant"):

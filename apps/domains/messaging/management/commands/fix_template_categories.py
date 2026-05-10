@@ -10,7 +10,7 @@
 """
 from django.core.management.base import BaseCommand
 
-from apps.domains.messaging.models import MessageTemplate, AutoSendConfig
+from apps.domains.messaging.models import AutoSendConfig
 from apps.domains.messaging.default_templates import DEFAULT_TEMPLATES
 
 

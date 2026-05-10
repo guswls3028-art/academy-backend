@@ -3,7 +3,6 @@
 메시지 템플릿 CRUD 뷰 — 목록, 상세, 기본 지정, 복제, 검수 신청
 """
 
-import re
 
 from rest_framework import status
 from rest_framework.views import APIView

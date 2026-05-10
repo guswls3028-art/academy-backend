@@ -12,16 +12,12 @@ G. HomeworkScore score > max_score validation
 """
 from __future__ import annotations
 
-import threading
-from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.db import IntegrityError, connection, transaction
+from django.db import IntegrityError, transaction
 from django.test import TestCase, TransactionTestCase
 
-from rest_framework.exceptions import ValidationError as DRFValidationError
-from rest_framework.test import APITestCase
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.exams.models import Exam
@@ -165,9 +161,6 @@ class TestRetakeScenario(TransactionTestCase, BaseTestMixin):
 
     def test_sync_result_does_not_rollback_representative(self):
         """sync_result_from_exam_submission should not clobber existing attempts."""
-        from apps.domains.results.services.sync_result_from_submission import (
-            sync_result_from_exam_submission,
-        )
 
         exam = self._create_exam(allow_retake=True, max_attempts=3)
 

@@ -1,7 +1,7 @@
 # PATH: apps/domains/results/aggregations/lecture_results.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from django.db.models import Avg, Min, Max, Count
 from django.utils import timezone

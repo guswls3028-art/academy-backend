@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-from django.db import models
 
 
 def change_password(user, new_password: str) -> None:

@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from PIL import Image, ImageEnhance, ImageFilter, ImageOps, ImageStat
+from PIL import Image, ImageEnhance, ImageOps, ImageStat
 
 
 def preprocess_for_export(img: Image.Image) -> Image.Image:

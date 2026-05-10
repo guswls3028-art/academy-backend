@@ -9,7 +9,7 @@ import datetime
 import threading
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, connection
+from django.db import IntegrityError
 from django.test import TestCase, TransactionTestCase, RequestFactory
 from django.utils import timezone
 

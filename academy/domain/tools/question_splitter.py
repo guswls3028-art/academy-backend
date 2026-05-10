@@ -8,7 +8,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    # forward-ref only — runtime 에는 caller (segment_dispatcher / pipeline) 가
+    # PaperTypeResult 인스턴스를 그대로 전달.
+    from academy.domain.tools.paper_type import PaperTypeResult  # noqa: F401
 
 
 # 시험지 문항 번호 현실 상한.

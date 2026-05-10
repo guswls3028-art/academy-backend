@@ -20,7 +20,7 @@ from datetime import timedelta
 
 import pytest
 from django.contrib.auth import get_user_model
-from django.db import close_old_connections, connection
+from django.db import close_old_connections
 from django.test import TransactionTestCase
 from django.utils import timezone
 
@@ -48,7 +48,6 @@ class FeesConcurrencyPGTest(TransactionTestCase):
     # 모든 INSTALLED_APPS를 동적으로 로드해 동기화 부담 회피.
     @classmethod
     def setUpClass(cls):
-        from django.conf import settings as dj_settings
         from django.apps import apps as dj_apps
         installed_names = {ac.name for ac in dj_apps.get_app_configs()}
         # third-party 앱은 제외(예: rest_framework)하면 truncate 대상에서 빠지면

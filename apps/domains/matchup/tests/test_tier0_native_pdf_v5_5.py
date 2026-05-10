@@ -14,13 +14,9 @@ from __future__ import annotations
 from unittest import TestCase
 
 from apps.domains.matchup.segmentation.tier0_native_pdf import (
-    LAYOUT_SINGLE_COLUMN,
-    NumberAnchor,
     PAPER_TYPE_EXAM,
-    PAPER_TYPE_WORKBOOK_MAIN,
     _V55_MAX_LEGIT_QUESTION_NUMBER,
     detect_problem_anchors_v5_5,
-    filter_anchors_v5_4,
 )
 
 

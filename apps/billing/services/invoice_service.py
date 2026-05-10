@@ -18,7 +18,6 @@ InvoiceService — 인보이스 생성/상태 전이의 유일한 진입점.
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import date, datetime, timedelta
 from typing import TYPE_CHECKING
 

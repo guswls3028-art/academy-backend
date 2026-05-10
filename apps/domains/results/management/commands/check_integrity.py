@@ -3,7 +3,7 @@ Data integrity check for P0/P1 bug fixes.
 Usage: python manage.py check_integrity
 """
 from django.core.management.base import BaseCommand
-from django.db.models import Count, Q, F, Max
+from django.db.models import Count, Q, F
 
 
 class Command(BaseCommand):

@@ -49,7 +49,9 @@ def resolve_access_mode(
 
     progress = video_repo.video_progress_get(video, enrollment)
 
-    # 90% 이상 시청 시 무제한(FREE_REVIEW) 자동 전환
+    # 90% 이상 시청 = 의무 완수. FREE_REVIEW로 자동 전환.
+    # 동기화는 progress_views.VideoProgressViewSet.perform_update에서 proctored_completed_at에 시각을
+    # 박아 두므로, Redis/DB lag 상황에도 다음 resolve가 안정적으로 FREE_REVIEW를 반환한다.
     if progress and (progress.completed or (progress.progress is not None and float(progress.progress) >= 0.9)):
         return AccessMode.FREE_REVIEW
 

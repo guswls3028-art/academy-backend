@@ -114,7 +114,6 @@ class OverlapsExistingManualTests(TestCase):
 
     def _patch_doc_and_manuals(self, doc_meta=None, manuals=None):
         """document.objects.only().get() + problems filter 둘 다 mock."""
-        from apps.domains.matchup import proposal_helpers as ph
         from apps.domains.matchup.models import MatchupDocument, MatchupProblem
 
         doc_mock = MagicMock()

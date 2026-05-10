@@ -12,8 +12,6 @@ from __future__ import annotations
 from unittest import TestCase
 
 from apps.domains.matchup.segmentation.tier0_native_pdf import (
-    _DUPLICATE_RATIO_THRESHOLD,
-    _DOC_OVER_DETECT_THRESHOLD,
     _FILENAME_HINTS_V4,
     _PAPER_TYPE_EXPECTED_MAX,
     PAPER_TYPE_ADVANCED_MATERIAL,

@@ -5,7 +5,7 @@ AI 도메인 엔티티 — 순수 파이썬 (Django/ORM/requests/boto3 미사용
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any, Optional

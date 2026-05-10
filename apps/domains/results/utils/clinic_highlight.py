@@ -13,7 +13,7 @@ name_highlight_clinic_target = True 조건:
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Set
 
 from apps.domains.progress.models import ClinicLink
 from apps.domains.clinic.models import SessionParticipant

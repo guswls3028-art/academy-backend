@@ -15,7 +15,7 @@ from django.db.models import (
     IntegerField,
 )
 
-from apps.domains.results.models import Result, ResultItem, ResultFact
+from apps.domains.results.models import Result, ResultItem
 from apps.domains.progress.models import ProgressPolicy, SessionProgress
 from apps.domains.lectures.models import Session
 from apps.domains.students.models import Student

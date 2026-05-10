@@ -13,7 +13,6 @@ from django.db import IntegrityError
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.test import APIRequestFactory, force_authenticate
-from rest_framework.exceptions import ValidationError
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
@@ -24,7 +23,7 @@ from apps.domains.lectures.serializers import (
     SessionSerializer,
     SectionAssignmentSerializer,
 )
-from apps.domains.lectures.views import SectionAssignmentViewSet, SessionViewSet
+from apps.domains.lectures.views import SectionAssignmentViewSet
 from apps.domains.enrollment.models import Enrollment
 
 User = get_user_model()

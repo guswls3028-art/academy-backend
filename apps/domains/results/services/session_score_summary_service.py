@@ -1,7 +1,7 @@
 # apps/domains/results/services/session_score_summary_service.py
 from __future__ import annotations
 
-from django.db.models import Avg, Min, Max, Count
+from django.db.models import Count
 
 from apps.domains.results.models import ExamAttempt
 from apps.domains.progress.models import SessionProgress

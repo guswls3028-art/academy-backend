@@ -17,8 +17,6 @@ from ..models import (
     Video,
     VideoPlaybackSession,
     VideoPlaybackEvent,
-    VideoProgress,
-    VideoAccess,
     AccessMode,
 )
 from academy.adapters.db.django import repositories_video as video_repo
@@ -189,12 +187,14 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         # Only create DB session for PROCTORED_CLASS
         student_id = enrollment.student_id
         if monitoring_enabled:
+            from ..services.playback_session import get_tenant_session_limits
+            max_sessions, max_devices = get_tenant_session_limits(getattr(request, "tenant", None))
             ok, sess, err = issue_session(
                 student_id=student_id,
                 device_id=device_id,
                 ttl_seconds=ttl,
-                max_sessions=int(getattr(settings, "VIDEO_MAX_SESSIONS", 9999)),
-                max_devices=int(getattr(settings, "VIDEO_MAX_DEVICES", 9999)),
+                max_sessions=max_sessions,
+                max_devices=max_devices,
             )
 
             if not ok:

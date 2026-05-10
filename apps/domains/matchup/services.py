@@ -949,7 +949,7 @@ def retry_document(document: MatchupDocument) -> str:
     # 본 document 의 problem 을 selected_problem_ids 로 가리키면 자동 pin. 학원장이
     # 5/6 사고 직후 보고서를 손대지 않고 reanalyze 만 트리거하는 경우(write-side 가
     # 한 번도 호출 안 됐던 legacy 보고서)도 보호. 멱등 — 이미 pinned 면 no-op.
-    from .models import MatchupHitReportEntry, MatchupHitReport
+    from .models import MatchupHitReportEntry
     legacy_curated_ids: set = set()
     legacy_entries = MatchupHitReportEntry.objects.filter(
         tenant_id=document.tenant_id,

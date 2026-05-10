@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from django.urls import path
 
 # ==================================================
 # ✅ HTTP Polling 엔드포인트 제거됨 (SQS 기반 아키텍처로 전환)

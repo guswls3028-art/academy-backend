@@ -10,10 +10,9 @@ from django.contrib.auth import get_user_model
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
-from apps.domains.staffs.models import Staff, WorkType, StaffWorkType
+from apps.domains.staffs.models import Staff
 from apps.domains.staffs.serializers import StaffCreateUpdateSerializer, StaffListSerializer
 from apps.domains.teachers.models import Teacher
-from academy.adapters.db.django import repositories_teachers as teacher_repo
 
 User = get_user_model()
 

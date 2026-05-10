@@ -3,7 +3,13 @@ Video / Session / Enrollment 등 DB 조회 — .objects. 접근을 adapters 내�
 """
 from __future__ import annotations
 
-from typing import Optional
+import logging
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from apps.domains.video.models import VideoTranscodeJob  # noqa: F401  (forward-ref)
+
+logger = logging.getLogger(__name__)
 
 
 def get_video_status(video_id: int) -> Optional[str]:
@@ -975,7 +981,6 @@ def job_cancel(job_id: str) -> bool:
 def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") -> bool:
     """Job DEAD. Transactional: Job + Video 원자적 업데이트. Terminal 상태(SUCCEEDED, DEAD, CANCELLED)는 보호."""
     from django.db import transaction
-    from django.utils import timezone
     from apps.domains.video.models import Video, VideoTranscodeJob
 
     TERMINAL_STATES = {

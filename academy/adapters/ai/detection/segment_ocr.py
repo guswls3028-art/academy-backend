@@ -13,9 +13,13 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Tuple
 
 import cv2  # type: ignore
+
+if TYPE_CHECKING:
+    # forward-ref only — runtime 에는 caller 가 TextBlock 인스턴스를 그대로 전달.
+    from academy.domain.tools.question_splitter import TextBlock as SplitterTextBlock  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

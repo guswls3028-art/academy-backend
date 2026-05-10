@@ -21,12 +21,11 @@ from apps.domains.matchup.segmentation.mock_response_integrator import (
 from apps.domains.matchup.segmentation.proposal_payload_validator import (
     APPROVABLE_STATUSES, ENGINE_CHOICES, MANUAL_OVERLAP_IOU_THRESHOLD,
     PERMANENTLY_BLOCKING_CODES, SCHEMA_VERSION, STATUS_CHOICES,
-    BatchValidationReport, PayloadValidationResult,
     apply_manual_overlap_via_provider,
     assert_selected_problem_ids_independence,
     has_blocking_error, is_approvable, report_to_dict,
     static_manual_overlap_provider,
-    validate_batch, validate_payload, validate_payload_fields,
+    validate_batch, validate_payload_fields,
     validate_payload_schema, validate_status_transition,
 )
 

@@ -15,7 +15,6 @@ from apps.domains.matchup.segmentation.tier0_native_pdf import (
     LAYOUT_FOUR_BLOCK,
     LAYOUT_PAGE_LEVEL,
     LAYOUT_SINGLE_COLUMN,
-    LAYOUT_TWO_COLUMN,
     LAYOUT_UNKNOWN,
     NumberAnchor,
     estimate_inline_overflow,

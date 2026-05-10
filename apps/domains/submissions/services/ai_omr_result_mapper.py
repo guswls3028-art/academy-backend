@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from django.db import transaction
 
 from apps.domains.submissions.models import Submission, SubmissionAnswer
-from apps.domains.submissions.services.transition import transit, InvalidTransitionError
+from apps.domains.submissions.services.transition import transit
 
 logger = logging.getLogger(__name__)
 

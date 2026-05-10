@@ -46,7 +46,6 @@ def get_request_student(request):
     user = request.user
     if hasattr(user, "student_profile") and user.student_profile:
         return user.student_profile
-    from apps.domains.parents.models import Parent
     parent = getattr(user, "parent_profile", None)
     if not parent:
         return None

@@ -106,7 +106,6 @@ def _patch_objects_get(proposal_or_none):
 
     objects = MagicMock()
     if proposal_or_none is None:
-        from apps.domains.matchup.models import ProblemSegmentationProposal as cls
         # DoesNotExist 흉내 — 진짜 exception class 사용
         objects.get = MagicMock(side_effect=ProblemSegmentationProposal.DoesNotExist)
     else:

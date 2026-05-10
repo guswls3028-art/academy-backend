@@ -12,7 +12,7 @@ ProcessVideoJobHandler - Video 작업 처리 유스케이스
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from academy.application.ports.idempotency import IIdempotency
 from academy.application.ports.progress import IProgress

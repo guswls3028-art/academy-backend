@@ -1,6 +1,6 @@
 # apps/domains/student_app/dashboard/views.py
 import re
-from datetime import date, time as dt_time
+from datetime import time as dt_time
 from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -8,7 +8,6 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.domains.community.selectors import get_notice_posts_for_tenant
-from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.lectures.models import Session as LectureSession
 from apps.domains.clinic.models import SessionParticipant
 from .serializers import StudentDashboardSerializer

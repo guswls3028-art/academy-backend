@@ -9,7 +9,7 @@ InvoiceService 단위 테스트.
 - exempt 테넌트 제외
 """
 
-from datetime import date, timedelta
+from datetime import date
 
 from django.test import TestCase, override_settings
 

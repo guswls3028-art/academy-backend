@@ -1,7 +1,6 @@
 # PATH: apps/core/views/expense.py
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.core.serializers import ExpenseSerializer

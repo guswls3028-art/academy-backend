@@ -23,7 +23,7 @@ from apps.domains.matchup.segmentation.mock_response_integrator import (
     ProposalPayloadCandidate, ValidationError,
 )
 from apps.domains.matchup.segmentation.proposal_insert_adapter import (
-    InsertDecision, InsertSandboxResult, SCHEMA_VERSION,
+    SCHEMA_VERSION,
     insert_proposal_sandbox, prepare_proposal_insert,
     result_to_dict, validate_before_insert,
 )

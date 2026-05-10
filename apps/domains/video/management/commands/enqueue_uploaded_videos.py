@@ -15,7 +15,6 @@ Run via cron or EventBridge (e.g. every 10 min):
 """
 from django.core.management.base import BaseCommand
 from django.db import transaction
-from django.db.models import Q
 
 from apps.domains.video.models import Video, VideoTranscodeJob
 from apps.domains.video.services.video_encoding import create_job_and_submit_batch

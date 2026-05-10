@@ -41,10 +41,11 @@ extend-exclude = [
 select = ["F821"]
 
 [tool.ruff.lint.per-file-ignores]
-# F821 — 별 도메인 forward-ref 결함 (모듈에 같은 이름 클래스 2종 — 매치업 외 작업).
-# 매치업 hot-fix scope 와 분리. 별 작업 cycle 에서 TYPE_CHECKING import 정리 필요.
-"apps/domains/progress/services/progress_pipeline.py" = ["F821"]
-"apps/domains/video/services/video_encoding.py" = ["F821"]
-# academy/ (헥사고날 도메인) — 별 도메인 forward-ref + 1 진짜 logger 결함
-# (`repositories_video.py:759`). 매치업 hot-fix scope 와 분리. 별 cycle 에서 정리.
-"academy/**" = ["F821"]
+# (Phase 2 정리 2026-05-10) 모든 forward-ref 가 TYPE_CHECKING import 추가로 해소.
+# repositories_video.py logger 결함도 모듈 레벨 logger 정의 추가로 해소.
+# 매치업 hot-fix 사이클에서 미뤘던 잔존 결함 모두 본 commit 에서 정리.
+# F821 우회 ignore 0 — 신규 결함은 빌드 단계에서 차단.
+
+# F401 — `__init__.py` 의 re-export 패턴은 정상. ruff 공식 권장 ignore.
+# Python 관용: `from X import Y` 후 다른 모듈에서 `from package import Y` 가능하도록.
+"**/__init__.py" = ["F401"]

@@ -6,12 +6,10 @@
 DB 없이 transition 레이어에서 검증한다.
 """
 import pytest
-from unittest.mock import patch, MagicMock
 
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.transition import (
-    transit, transit_save, InvalidTransitionError, STATUS_FLOW,
-    ADMIN_OVERRIDE_FLOW, can_transit,
+    transit, InvalidTransitionError, STATUS_FLOW,
 )
 
 S = Submission.Status

@@ -34,7 +34,7 @@ from collections import Counter
 from django.core.management.base import BaseCommand, CommandError
 
 from apps.domains.matchup.models import (
-    ManualCorrectionDelta, MatchupDocument, MatchupProblem,
+    ManualCorrectionDelta, MatchupProblem,
 )
 from apps.domains.matchup.services import _record_manual_correction_delta
 

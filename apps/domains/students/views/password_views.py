@@ -34,8 +34,7 @@ class StudentPasswordFindRequestView(APIView):
 
     def post(self, request):
         from django.core.cache import cache
-        from apps.domains.messaging.selectors import get_auto_send_config
-        from apps.domains.messaging.policy import MessagingPolicyError, is_messaging_disabled
+        from apps.domains.messaging.policy import is_messaging_disabled
 
         name = (request.data.get("name") or "").strip()
         phone = (request.data.get("phone") or "").replace(" ", "").replace("-", "").replace(".", "")
@@ -282,7 +281,7 @@ class StudentPasswordResetSendView(APIView):
 
         # 알림톡 발송
         from apps.domains.messaging.selectors import get_auto_send_config
-        from apps.domains.messaging.policy import MessagingPolicyError, is_messaging_disabled
+        from apps.domains.messaging.policy import is_messaging_disabled
 
         if is_messaging_disabled(tenant.id):
             return Response(

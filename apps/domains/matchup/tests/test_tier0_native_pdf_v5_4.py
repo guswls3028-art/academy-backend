@@ -13,10 +13,8 @@ from __future__ import annotations
 from unittest import TestCase
 
 from apps.domains.matchup.segmentation.tier0_native_pdf import (
-    LAYOUT_FOUR_BLOCK,
     LAYOUT_SINGLE_COLUMN,
     LAYOUT_TWO_COLUMN,
-    LAYOUT_UNKNOWN,
     NumberAnchor,
     PAPER_TYPE_EXAM,
     PAPER_TYPE_REVIEW_HOMEWORK,

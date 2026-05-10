@@ -21,7 +21,6 @@ from apps.domains.matchup.segmentation.tier0_native_pdf import (
     PAPER_TYPE_ADVANCED_MATERIAL,
     PAPER_TYPE_EXAM,
     PAPER_TYPE_REVIEW_HOMEWORK,
-    PAPER_TYPE_UNKNOWN,
     PAPER_TYPE_WORKBOOK_MAIN,
     NumberAnchor,
     classify_layout_v2,

@@ -4,8 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from django.db.models import Q
-from django.utils import timezone
 
 from apps.domains.results.models import ResultFact
 from apps.domains.exams.models import ExamQuestion, AnswerKey, Exam

@@ -12,7 +12,6 @@ from apps.core.permissions import (
     is_platform_admin_tenant,
 )
 from apps.core.services.ops_audit import record_audit
-from academy.adapters.db.django import repositories_core as core_repo
 
 
 # --------------------------------------------------

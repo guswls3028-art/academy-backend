@@ -9,7 +9,6 @@ Billing API Views.
 import json
 import logging
 
-from django.conf import settings as django_settings
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import generics, status
@@ -18,7 +17,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.billing.adapters.toss_payments import verify_webhook_signature
-from apps.billing.models import Invoice, PaymentTransaction, BillingKey, BillingProfile
+from apps.billing.models import Invoice, BillingKey, BillingProfile
 from apps.billing.serializers import (
     BillingKeySerializer,
     BillingProfileSerializer,
@@ -26,8 +25,6 @@ from apps.billing.serializers import (
     ExtendSubscriptionSerializer,
     InvoiceDetailSerializer,
     InvoiceListSerializer,
-    MarkPaidSerializer,
-    PaymentTransactionSerializer,
     TenantSubscriptionSummarySerializer,
 )
 from apps.billing.services import (
@@ -41,7 +38,6 @@ from apps.core.permissions import (
     IsSuperuserOnly,
     TenantResolvedAndOwner,
     TenantResolvedAndStaff,
-    is_platform_admin_tenant,
 )
 from apps.core.services.ops_audit import record_audit
 
@@ -243,7 +239,7 @@ class AdminDashboardView(APIView):
     def get(self, request):
         from datetime import timedelta
         from django.conf import settings
-        from django.db.models import Count, Sum, Q
+        from django.db.models import Count, Sum
         from django.utils import timezone
 
         today = timezone.localdate()

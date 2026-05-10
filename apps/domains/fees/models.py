@@ -8,7 +8,6 @@
 
 from django.db import models
 from django.db.models import Q
-from django.utils import timezone
 
 from apps.core.models.base import TimestampModel
 from apps.core.db.tenant_queryset import TenantQuerySet

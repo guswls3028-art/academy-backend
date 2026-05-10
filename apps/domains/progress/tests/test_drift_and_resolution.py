@@ -14,21 +14,15 @@
 """
 from __future__ import annotations
 
-import datetime
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from django.utils import timezone
 
-from apps.core.models import Tenant
 from apps.domains.clinic.tests import ClinicTestMixin
-from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import Exam
-from apps.domains.lectures.models import Lecture, Session as LectureSession
 from apps.domains.progress.models import (
     ClinicLink,
     ProgressPolicy,
-    SessionProgress,
 )
 from apps.domains.progress.services.clinic_remediation_service import (
     ClinicRemediationService,

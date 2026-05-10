@@ -11,7 +11,6 @@ import io
 import logging
 import os
 import shutil
-import tempfile
 import uuid
 
 from apps.shared.contracts.ai_result import AIResult

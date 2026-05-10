@@ -15,14 +15,13 @@ import tempfile
 from unittest import TestCase
 
 from apps.domains.matchup.segmentation.mock_response_integrator import (
-    MockOcrResponse, MockVlmResponse, OcrPageResult, OcrTextBlock,
-    ProposalPayloadCandidate, SCHEMA_VERSION, UnifiedCandidate,
-    UnifiedDispatcherOutput, ValidationError, VlmDetectedProblem, VlmPageResult,
+    MockOcrResponse, MockVlmResponse, ProposalPayloadCandidate, SCHEMA_VERSION, UnifiedCandidate,
+    VlmDetectedProblem, VlmPageResult,
     integrate_full_dryrun, integrate_responses, make_mock_ocr_response,
     make_mock_vlm_response, manual_overlap_mock_validator, unified_to_dict,
 )
 from apps.domains.matchup.segmentation.dispatcher_mock import (
-    MockDispatcherOutput, ValidationMarks, dispatch_mock,
+    dispatch_mock,
 )
 
 

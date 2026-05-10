@@ -16,9 +16,6 @@ from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from .models import Enrollment, SessionEnrollment
 from .serializers import EnrollmentSerializer, SessionEnrollmentSerializer
 from .filters import EnrollmentFilter
-from apps.domains.lectures.models import Session, Lecture
-from apps.domains.students.models import Student
-from apps.domains.attendance.models import Attendance
 from apps.domains.ai.gateway import dispatch_job
 from django.conf import settings
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel

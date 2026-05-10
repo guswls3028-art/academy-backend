@@ -34,7 +34,6 @@ import logging
 import random
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Optional
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -91,8 +90,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from apps.domains.matchup.models import (
-            ManualCorrectionDelta, MatchupDocument, MatchupProblem,
-            LayoutFingerprint,
+            ManualCorrectionDelta, LayoutFingerprint,
         )
 
         tenant_id: int = options["tenant_id"]

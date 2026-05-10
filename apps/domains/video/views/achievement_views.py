@@ -2,12 +2,10 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from django.db.models import Avg, Sum
 
 from apps.core.permissions import TenantResolvedAndStaff
 
 from academy.adapters.db.django import repositories_video as video_repo
-from ..models import VideoProgress
 
 
 class VideoAchievementView(APIView):

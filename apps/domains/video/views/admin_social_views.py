@@ -14,7 +14,7 @@ from rest_framework.views import APIView
 from rest_framework.exceptions import PermissionDenied
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.video.models import Video, VideoComment, VideoLike
+from apps.domains.video.models import Video, VideoComment
 
 
 def _get_video_with_tenant_check(video_id, request):

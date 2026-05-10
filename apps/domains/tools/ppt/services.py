@@ -13,7 +13,7 @@ import io
 import logging
 from typing import Literal
 
-from PIL import Image, ImageOps, ImageEnhance, ImageStat, ImageFilter
+from PIL import Image, ImageOps, ImageEnhance, ImageStat
 from pptx import Presentation
 from pptx.util import Inches
 from pptx.dml.color import RGBColor

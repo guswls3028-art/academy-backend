@@ -2,16 +2,20 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional, List
+from typing import TYPE_CHECKING, Optional, List
 
 from django.db import transaction
-from django.utils import timezone
 
 from apps.domains.progress.services.session_calculator import SessionProgressCalculator
 from apps.domains.progress.services.lecture_calculator import LectureProgressCalculator
 from apps.domains.progress.services.risk_evaluator import RiskEvaluator
 from apps.domains.progress.services.clinic_trigger_service import ClinicTriggerService
 from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+
+if TYPE_CHECKING:
+    # forward-ref only — runtime 에는 _find_sessions_for_exam/_homework 안에서
+    # `from apps.domains.lectures.models import Session` lazy import.
+    from apps.domains.lectures.models import Session  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +99,6 @@ class ProgressPipelineService:
     def _apply_by_submission(self, *, submission_id: int) -> None:
         # imports inside to avoid cycles
         from apps.domains.submissions.models import Submission  # type: ignore
-        from apps.domains.lectures.models import Session, Lecture  # type: ignore
 
         sub = Submission.objects.select_for_update().filter(id=int(submission_id)).first()
         if not sub:
