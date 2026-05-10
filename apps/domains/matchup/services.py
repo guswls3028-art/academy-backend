@@ -863,6 +863,55 @@ def auto_recommend_page_states(document: MatchupDocument) -> list[dict]:
     return recommendations
 
 
+def pin_problems_as_owner_curated(
+    *,
+    tenant_id: int,
+    problem_ids,
+) -> int:
+    """학원장이 적중 보고서에서 selected 한 problem 을 dangling 사고로부터 보호.
+
+    효과:
+        - MatchupProblem.meta.manual_owner_pinned=True 마킹.
+        - retry_document / _handle_matchup_ai_result / proposal-rebuild 모두 본
+          flag 가 박힌 problem 은 hard delete 하지 않는다.
+
+    배경 (2026-05-06 사고): 학원장이 보고서에 selected 한 problem 을 reanalyze 가
+        무차별 hard delete → entries.selected_problem_ids 가 stale 한 dead pid 만
+        가리키는 dangling 발생. 사고 직후 read-side guard 4곳 추가했으나 *write-side*
+        가 누락 → 실제로는 보호 0. 본 helper 가 write-side SSOT.
+
+    원칙:
+        - 한 번 pinned 된 problem 은 unpin 하지 않는다 (다른 entry/보고서에서
+          참조될 수 있고, 학원장 데이터 보호는 보수적으로 가는 것이 정도).
+        - 트랜잭션 외부에서도 호출 가능 — 호출자가 atomic 안에서 묶을지 결정.
+        - tenant 격리 강제 — cross-tenant pid 무시.
+
+    Returns:
+        새로 pin 한 problem 수 (이미 pinned 면 카운트 안 함).
+    """
+    if not problem_ids:
+        return 0
+    pinned = 0
+    qs = MatchupProblem.objects.filter(
+        tenant_id=tenant_id,
+        id__in=list(problem_ids),
+    ).only("id", "meta")
+    for p in qs:
+        meta = dict(p.meta or {})
+        if meta.get("manual_owner_pinned") is True:
+            continue
+        meta["manual_owner_pinned"] = True
+        p.meta = meta
+        p.save(update_fields=["meta", "updated_at"])
+        pinned += 1
+    if pinned:
+        logger.info(
+            "MATCHUP_PIN_OWNER_CURATED | tenant=%s | newly_pinned=%d | total_ids=%d",
+            tenant_id, pinned, len(problem_ids),
+        )
+    return pinned
+
+
 def reanalyze_document(document: MatchupDocument) -> str:
     """status 무관하게 매치업 문서 재분석 — Phase 5-deep 검수 UI.
 
@@ -896,6 +945,28 @@ def retry_document(document: MatchupDocument) -> str:
     # selected_problem_ids 가리키는 problem은 reanalyze 시 삭제 안 함 (selected_problem_ids
     # 무효화 차단). MatchupHitReportEntry → manual_owner_pinned=true 마킹 + 본 exclude.
     # 학원장 어제 작성 보고서 가치 보호.
+    # Backfill 안전망 (2026-05-10): 본 retry 직전 시점에 어떤 hit_report entry 라도
+    # 본 document 의 problem 을 selected_problem_ids 로 가리키면 자동 pin. 학원장이
+    # 5/6 사고 직후 보고서를 손대지 않고 reanalyze 만 트리거하는 경우(write-side 가
+    # 한 번도 호출 안 됐던 legacy 보고서)도 보호. 멱등 — 이미 pinned 면 no-op.
+    from .models import MatchupHitReportEntry, MatchupHitReport
+    legacy_curated_ids: set = set()
+    legacy_entries = MatchupHitReportEntry.objects.filter(
+        tenant_id=document.tenant_id,
+        report__document_id=document.id,
+    ).only("selected_problem_ids")
+    for e in legacy_entries:
+        for pid in (e.selected_problem_ids or []):
+            try:
+                legacy_curated_ids.add(int(pid))
+            except (TypeError, ValueError):
+                pass
+    if legacy_curated_ids:
+        pin_problems_as_owner_curated(
+            tenant_id=document.tenant_id,
+            problem_ids=list(legacy_curated_ids),
+        )
+
     manual_ids = list(
         document.problems.filter(meta__manual=True).values_list("id", flat=True)
     )

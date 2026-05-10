@@ -586,65 +586,84 @@ class HitReportEntriesUpsertView(View):
             )
         valid_selected = set(selected_qs.values_list("id", flat=True))
 
+        # 트랜잭션 atomic — 학원장 큐레이션의 부분 커밋 방지 (entry1 save 성공,
+        # entry2 FK 실패 시 양쪽 모두 rollback). 학원장 데이터 무결성 supreme.
+        from django.db import transaction
+        from .services import pin_problems_as_owner_curated
+
         upserted = 0
         deleted = 0
-        for e in entries:
-            try:
-                exam_pid = int(e.get("exam_problem_id"))
-            except (TypeError, ValueError):
-                continue
-            if exam_pid not in valid_exam_pids:
-                continue
-            sel = [
-                pid for pid in (e.get("selected_problem_ids") or [])
-                if isinstance(pid, int) and pid in valid_selected
-            ]
-            comment = (e.get("comment") or "")[:5000]
-            excluded = bool(e.get("excluded", False))
-            try:
-                order = int(e.get("order", 0))
-            except (TypeError, ValueError):
-                order = 0
+        ids_to_pin: set = set()
+        with transaction.atomic():
+            for e in entries:
+                try:
+                    exam_pid = int(e.get("exam_problem_id"))
+                except (TypeError, ValueError):
+                    continue
+                if exam_pid not in valid_exam_pids:
+                    continue
+                sel = [
+                    pid for pid in (e.get("selected_problem_ids") or [])
+                    if isinstance(pid, int) and pid in valid_selected
+                ]
+                comment = (e.get("comment") or "")[:5000]
+                excluded = bool(e.get("excluded", False))
+                try:
+                    order = int(e.get("order", 0))
+                except (TypeError, ValueError):
+                    order = 0
 
-            if not sel and not comment.strip() and not excluded:
-                # 빈 엔트리(선택/코멘트/PDF 제외 의사 모두 없음) → 기존 삭제
-                d, _ = MatchupHitReportEntry.objects.filter(
-                    report=report, exam_problem_id=exam_pid,
-                ).delete()
-                deleted += d
-                continue
+                if not sel and not comment.strip() and not excluded:
+                    # 빈 엔트리(선택/코멘트/PDF 제외 의사 모두 없음) → 기존 삭제
+                    d, _ = MatchupHitReportEntry.objects.filter(
+                        report=report, exam_problem_id=exam_pid,
+                    ).delete()
+                    deleted += d
+                    continue
 
-            # Stage 2 (2026-05-06): selected_problem_ids 변경 immutable guard.
-            # update_or_create 대신 명시적 fetch + history append + save 분리.
-            entry, _ = MatchupHitReportEntry.objects.get_or_create(
-                tenant=request.tenant,
-                report=report,
-                exam_problem_id=exam_pid,
-                defaults={
-                    "selected_problem_ids": [],
-                    "comment": "",
-                    "order": 0,
-                    "excluded": False,
-                },
-            )
-            by_user_id = getattr(request, "user", None)
-            by_user_id = by_user_id.id if by_user_id and getattr(by_user_id, "is_authenticated", False) else None
-            entry.append_selection_history(
-                new_selected_ids=sel,
-                by_user_id=by_user_id,
-                source="user_ui",
-                reason="HitReportEntriesUpsertView upsert",
-            )
-            entry._change_source = "user_ui"
-            entry.selected_problem_ids = sel
-            entry.comment = comment
-            entry.order = order
-            entry.excluded = excluded
-            entry.save()
-            upserted += 1
+                # Stage 2 (2026-05-06): selected_problem_ids 변경 immutable guard.
+                # update_or_create 대신 명시적 fetch + history append + save 분리.
+                entry, _ = MatchupHitReportEntry.objects.get_or_create(
+                    tenant=request.tenant,
+                    report=report,
+                    exam_problem_id=exam_pid,
+                    defaults={
+                        "selected_problem_ids": [],
+                        "comment": "",
+                        "order": 0,
+                        "excluded": False,
+                    },
+                )
+                by_user_id = getattr(request, "user", None)
+                by_user_id = by_user_id.id if by_user_id and getattr(by_user_id, "is_authenticated", False) else None
+                entry.append_selection_history(
+                    new_selected_ids=sel,
+                    by_user_id=by_user_id,
+                    source="user_ui",
+                    reason="HitReportEntriesUpsertView upsert",
+                )
+                entry._change_source = "user_ui"
+                entry.selected_problem_ids = sel
+                entry.comment = comment
+                entry.order = order
+                entry.excluded = excluded
+                entry.save()
+                upserted += 1
+                # selected_problem_ids 가리키는 problem 모두 dangling 사고 보호 대상.
+                # entry 가 sel 을 가지는 한 retry_document/reanalyze 가 hard delete X.
+                ids_to_pin.update(sel)
 
-        # report.updated_at 갱신
-        report.save(update_fields=["updated_at"])
+            # 트랜잭션 안에서 owner-curated pin 마킹 — 부분 pin 방지.
+            # 5/6 사고의 진짜 write-side: entry write 와 problem.meta.manual_owner_pinned
+            # 가 동일 트랜잭션. 학원장 selected 토글 즉시 보호.
+            if ids_to_pin:
+                pin_problems_as_owner_curated(
+                    tenant_id=request.tenant.id,
+                    problem_ids=list(ids_to_pin),
+                )
+
+            # report.updated_at 갱신
+            report.save(update_fields=["updated_at"])
         return JsonResponse({"upserted": upserted, "deleted": deleted})
 
 
