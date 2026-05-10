@@ -128,9 +128,15 @@ jobs:
           echo "build_api=$API" >> $GITHUB_OUTPUT
 
           # Video worker
+          # NOTE: video-worker 컨테이너는 manage.py로 video 도메인 관리 명령
+          # (recover_dead_video_jobs, scan_stuck_video_jobs, reconcile_batch_video_jobs 등)을
+          # 실행한다. 따라서 apps/domains/video/ 변경도 video 이미지 재빌드 + jobdef
+          # rev 갱신이 필요하다. 2026-05-10: recover_dead_video_jobs 신규 시 trigger 누락
+          # 사고로 ops jobdef가 옛 image를 가리킨 적 있음.
           VIDEO=false
           echo "$CHANGED" | grep -qE "^apps/worker/video_worker/" && VIDEO=true
           echo "$CHANGED" | grep -qE "^apps/support/video/" && VIDEO=true
+          echo "$CHANGED" | grep -qE "^apps/domains/video/" && VIDEO=true
           echo "$CHANGED" | grep -qE "^docker/video-worker/" && VIDEO=true
           echo "$CHANGED" | grep -qE "^requirements/worker-video\.txt$" && VIDEO=true
           echo "build_video=$VIDEO" >> $GITHUB_OUTPUT
