@@ -217,6 +217,26 @@ def _validate_config(data: dict) -> list[str]:
     if cta_link and not (cta_link.startswith("/") or cta_link.startswith("https://") or cta_link.startswith("tel:") or cta_link.startswith("mailto:")):
         errors.append("CTA 링크는 /로 시작하거나 https://·tel:·mailto: URL이어야 합니다.")
 
+    # 개인 휴대폰 번호 가드 — tel: 010-xxxx-xxxx 또는 010xxxxxxxx 패턴은 학원 대표번호 X.
+    # 학원장 사고 방지: 외부 노출되면 안 되는 개인 폰을 cta/contact에 박지 않게.
+    import re
+    _personal_mobile = re.compile(r"01[016789][- ]?\d{3,4}[- ]?\d{4}")
+    if cta_link.startswith("tel:") and _personal_mobile.match(cta_link[4:].replace("-", "").replace(" ", "")):
+        # 010/011/016/017/018/019 시작 = 개인 휴대폰. 학원 대표번호(02-/0n-)만 허용.
+        digits = cta_link[4:].replace("-", "").replace(" ", "").replace("+82", "0")
+        if digits.startswith(("010", "011", "016", "017", "018", "019")):
+            errors.append("CTA 링크에 개인 휴대폰 번호는 사용할 수 없습니다. 학원 대표번호(02-, 031- 등)를 사용해주세요.")
+    contact = data.get("contact") or {}
+    if isinstance(contact, dict):
+        for k in ("phone", "email"):
+            v = str(contact.get(k) or "")
+            digits = re.sub(r"[^\d]", "", v)
+            if digits and len(digits) >= 10 and digits[:3] in ("010", "011", "016", "017", "018", "019"):
+                # email 필드는 "010-xxxx-xxxx (문자전용)" 같은 학원 별도 안내용 번호로 사용 가능 — 경고만, 차단 X.
+                # phone(메인 대표번호)에 개인 휴대폰 박는 건 차단.
+                if k == "phone":
+                    errors.append(f"문의 전화번호({k})에 개인 휴대폰 번호는 사용할 수 없습니다. 학원 대표번호를 사용해주세요.")
+
     return errors
 
 
