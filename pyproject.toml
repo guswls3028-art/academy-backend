@@ -7,3 +7,69 @@ python_classes = ["Test*"]
 python_functions = ["test_*"]
 # Fail fast, verbose output
 addopts = "-v --tb=short -x"
+
+
+# ── ruff: 정적 검증 (도입 사유 2026-05-10) ────────────────────────
+# `views_hit_report.py` 의 MatchupProblem 미정의로 학원장 적중보고서 진입 500 사고
+# 발생. D-9 분리(2026-05-08) 직후 동일 패턴(_is_tenant_staff 미정의) hotfix 한 번 더
+# 있었음. CI/lint 부재가 진짜 구조 결함 → ruff 도입.
+#
+# 점진적 정책:
+#   - F821 (undefined-name): 운영 NameError 직결 — 무조건 차단
+#   - F401 (unused-import): 코드 위생 — 매치업 도메인부터 적용, 점진 확장
+#   - 다른 룰(스타일 등) 은 별 사이클에서 도입
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = [
+    ".venv",
+    "venv",
+    "migrations",
+    "node_modules",
+    "build",
+    "dist",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+# F821 (undefined-name): 전 도메인 — 운영 NameError 직결, 무조건 차단.
+# F401 (unused-import): 도메인별 점진 도입. select-on 이 default 이고
+# `extend-select` 로 도메인 추가하는 식이 더 안전하나, 현재 단계는 명시적 ignore 로
+# 깔끔하게 가져간다.
+select = ["F821", "F401"]
+
+[tool.ruff.lint.per-file-ignores]
+# F821 — 별 도메인 forward-ref 결함 (모듈에 같은 이름 클래스 2종 — 매치업 외 작업).
+# 매치업 hot-fix scope 와 분리. 별 작업 cycle 에서 TYPE_CHECKING import 정리 필요.
+"apps/domains/progress/services/progress_pipeline.py" = ["F821"]
+"apps/domains/video/services/video_encoding.py" = ["F821"]
+
+# F401 — 점진 도입: 매치업 핵심(views/services/serializers/signals/models) +
+# admin_exam_item_score_view 만 strict. 나머지 backend 는 후속 cycle 에서 정리.
+# 신규 결함 발생 시 도메인 단위로 ignore 제거하며 확장.
+"apps/**/management/commands/*" = ["F401"]
+"apps/**/tests/*" = ["F401"]
+"apps/**/migrations/*" = ["F401"]
+"apps/api/**" = ["F401"]
+"apps/core/**" = ["F401"]
+"apps/domains/ai/**" = ["F401"]
+"apps/domains/clinic/**" = ["F401"]
+"apps/domains/community/**" = ["F401"]
+"apps/domains/exams/**" = ["F401"]
+"apps/domains/homework/**" = ["F401"]
+"apps/domains/lectures/**" = ["F401"]
+"apps/domains/messaging/**" = ["F401"]
+"apps/domains/notifications/**" = ["F401"]
+"apps/domains/progress/**" = ["F401"]
+"apps/domains/results/views/admin_exam_item_score_view.py" = []  # strict 유지
+"apps/domains/results/**" = ["F401"]
+"apps/domains/scores/**" = ["F401"]
+"apps/domains/submissions/**" = ["F401"]
+"apps/domains/timer/**" = ["F401"]
+"apps/domains/tenancy/**" = ["F401"]
+"apps/domains/video/**" = ["F401"]
+"apps/infrastructure/**" = ["F401"]
+"apps/integrations/**" = ["F401"]
+"apps/shared/**" = ["F401"]
+"apps/worker/**" = ["F401"]
+"academy/**" = ["F401"]

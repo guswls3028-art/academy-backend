@@ -20,7 +20,7 @@ conf / text_density / line_spacing) 은 다음 stage 에서 워커 측 측정 wi
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -178,7 +178,6 @@ def save_fingerprint(measurement: FingerprintMeasurement) -> bool:
     """
     try:
         from apps.domains.matchup.models import LayoutFingerprint, MatchupDocument
-        from apps.core.models.tenant import Tenant
     except Exception as e:  # noqa: BLE001
         logger.warning(
             "FINGERPRINT_IMPORT_FAIL | doc_id=%s | err=%s",

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from apps.shared.utils.vector import cosine_similarity
 from .models import MatchupDocument, MatchupProblem
@@ -1388,7 +1388,6 @@ def _extract_pdf_first_page_metrics(document: MatchupDocument) -> Tuple[int, dic
     - selected_problem_ids / hit_report 미접근
     """
     import os
-    import tempfile
     from PIL import Image
 
     if document.inventory_file_id is None:
@@ -1498,7 +1497,6 @@ def manually_crop_problem(
     """
     import io
     import os
-    import tempfile
     from PIL import Image
 
     from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage

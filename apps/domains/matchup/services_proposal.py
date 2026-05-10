@@ -20,7 +20,7 @@ manual / pinned 보호:
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,6 @@ def handle_matchup_proposal_path(
     from django.db import transaction
 
     from apps.domains.matchup.models import (
-        MatchupDocument,
         MatchupProblem,
         ProblemSegmentationProposal,
     )

@@ -4,8 +4,12 @@
 
 from __future__ import annotations
 
+import logging
+
 from django.db import transaction
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 from rest_framework.views import APIView
 from rest_framework.response import Response

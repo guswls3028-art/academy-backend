@@ -5,20 +5,18 @@ from __future__ import annotations
 
 import logging
 
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse
 from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
 from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
 
-from .models import MatchupDocument, MatchupProblem, MatchupHitReport, MatchupHitReportEntry
+from .models import MatchupDocument, MatchupProblem
 from .serializers import (
     MatchupDocumentSerializer,
     MatchupDocumentUpdateSerializer,
     MatchupProblemSerializer,
-    SimilarProblemSerializer,
-    MatchupHitReportSerializer,
 )
 from .services import (
     find_similar_problems,

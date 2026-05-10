@@ -129,6 +129,63 @@ class TestTenantIsolation(TestCase):
                 self.fail(f"{path} does not resolve (404)")
 
 
+class TestMatchupHitReportViewsImportable(TestCase):
+    """매치업 적중보고서 view 모듈은 NameError 없이 import 되어야 한다.
+
+    배경 (2026-05-10): D-9 분리 후 `views_hit_report.py` 에서 `MatchupProblem`
+    module-level import 누락으로 학원장 보고서 진입 500 사고. 분리 직후 동일 패턴
+    `_is_tenant_staff` 미정의 hotfix 한 번 더. 이 test 는 import 시점 NameError 와
+    URL resolution 실패를 deploy gate 단계에서 차단한다.
+
+    검증:
+    - module import (NameError 발생 시 ImportError 로 fail)
+    - 모든 hit-report 엔드포인트 URL resolution
+    - View 클래스가 .as_view() 호출 가능 (module-level 의존성 모두 해소됨)
+    """
+
+    def test_views_hit_report_module_imports(self):
+        from apps.domains.matchup import views_hit_report  # noqa: F401
+
+    def test_hit_report_endpoints_resolve(self):
+        from django.urls import resolve, Resolver404
+
+        paths = [
+            "/api/v1/matchup/documents/1/hit-report.pdf",
+            "/api/v1/matchup/documents/1/hit-report-draft/",
+            "/api/v1/matchup/hit-reports/",
+            "/api/v1/matchup/hit-reports/1/",
+            "/api/v1/matchup/hit-reports/1/entries/",
+            "/api/v1/matchup/hit-reports/1/submit/",
+            "/api/v1/matchup/hit-reports/1/curated.pdf",
+            "/api/v1/matchup/hit-reports/1/share.zip",
+        ]
+        for path in paths:
+            try:
+                match = resolve(path)
+            except Resolver404:
+                self.fail(f"{path} does not resolve (404)")
+            self.assertIsNotNone(match, f"{path} resolved to None")
+
+    def test_hit_report_view_classes_callable(self):
+        from apps.domains.matchup import views_hit_report
+
+        view_classes = [
+            "HitReportListView",
+            "HitReportDraftView",
+            "HitReportDetailView",
+            "HitReportEntriesUpsertView",
+            "HitReportSubmitView",
+            "HitReportPdfView",
+            "HitReportZipExportView",
+            "DocumentHitReportPdfView",
+        ]
+        for name in view_classes:
+            cls = getattr(views_hit_report, name, None)
+            self.assertIsNotNone(cls, f"{name} not exported")
+            view_fn = cls.as_view()
+            self.assertTrue(callable(view_fn), f"{name}.as_view() not callable")
+
+
 class TestCorsPolicy(TestCase):
     """CORS must not allow all origins."""
 

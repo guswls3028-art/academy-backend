@@ -26,7 +26,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Iterable, Optional
 
 from .mock_response_integrator import (
-    ProposalPayloadCandidate, UnifiedCandidate, ValidationError,
+    ProposalPayloadCandidate, ValidationError,
     _bbox_iou_norm,
 )
 

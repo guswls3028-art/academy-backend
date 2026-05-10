@@ -164,6 +164,35 @@ jobs:
           echo "Detection complete: api=$API video=$VIDEO messaging=$MSG ai=$AI"
 
   # ============================================================
+  # Phase 1.4: Static lint (deploy gate)
+  # ----------------------------------------------------------------
+  # 도입 배경 (2026-05-10): D-9 분리 후 `MatchupProblem` 미정의로 학원장 적중보고서
+  # 진입 500 사고 발생. 같은 분리 직후 `_is_tenant_staff` 미정의 hotfix 한 번 더.
+  # CI 정적 검증 부재가 진짜 구조 결함 → ruff F821(undefined-name) + F401
+  # (unused-import) 활성화. 도메인별 점진 도입 (pyproject.toml `per-file-ignores`).
+  # 신규 NameError 결함은 무조건 빌드/배포 차단.
+  # ============================================================
+  run-lint:
+    name: Ruff lint (deploy gate)
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install --quiet ruff
+
+      - name: Run ruff
+        run: |
+          ruff check apps/ academy/
+
+  # ============================================================
   # Phase 1.5: Run smoke tests (deploy gate)
   # ============================================================
   run-tests:
@@ -209,7 +238,7 @@ jobs:
   # ============================================================
   build-and-push:
     runs-on: ubuntu-latest
-    needs: [detect-changes, run-tests]
+    needs: [detect-changes, run-lint, run-tests]
     env:
       # Job-level env guarantees docker/build-push-action@v6 sees these regardless of
       # workflow-vs-step env precedence subtleties. RECORD_UPLOAD=false stops the

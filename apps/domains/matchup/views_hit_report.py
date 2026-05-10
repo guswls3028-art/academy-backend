@@ -14,7 +14,12 @@ from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
-from .models import MatchupDocument, MatchupHitReport, MatchupHitReportEntry
+from .models import (
+    MatchupDocument,
+    MatchupHitReport,
+    MatchupHitReportEntry,
+    MatchupProblem,
+)
 from .serializers import MatchupHitReportSerializer
 from .views import (
     _jwt_required,
@@ -714,7 +719,7 @@ def _notify_hit_report_submitted(report, request) -> None:
         get_solapi_template_id, build_unified_replacements,
     )
     from apps.domains.messaging.policy import is_messaging_disabled
-    from apps.core.models import TenantMembership, Tenant
+    from apps.core.models import TenantMembership
 
     trigger = "matchup_report_submitted"
     tenant = report.tenant
@@ -931,7 +936,6 @@ def _build_hit_report_share_zip(report) -> bytes:
     from datetime import datetime
 
     from .pdf_report import generate_curated_hit_report_pdf, _compute_display_sim
-    from .models import MatchupProblem
     from academy.adapters.tools.pymupdf_renderer import PdfDocument
 
     pdf_bytes = generate_curated_hit_report_pdf(report)

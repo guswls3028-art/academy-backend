@@ -37,7 +37,7 @@ from typing import Any, Iterable, Optional
 
 from .mock_response_integrator import ProposalPayloadCandidate
 from .proposal_payload_validator import (
-    APPROVABLE_STATUSES, validate_payload,
+    validate_payload,
 )
 
 
