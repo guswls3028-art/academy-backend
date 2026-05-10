@@ -864,16 +864,29 @@ jobs:
               | if .secrets == [] then del(.secrets) else . end
               | if .logConfiguration.secretOptions == [] then .logConfiguration |= del(.secretOptions) else . end
             ' > "$TMPFILE"
+            # Preserve retryStrategy / timeout from previous revision — register-job-definition
+            # 는 미지정 시 NULL로 떨어진다. 운영 환경에서 spot 회수/timeout 설정이 풀리면 안 됨.
+            RETRY_FILE=$(mktemp /tmp/retry-XXXXXX.json)
+            TIMEOUT_FILE=$(mktemp /tmp/timeout-XXXXXX.json)
+            echo "$CURRENT" | jq -e '.retryStrategy' > "$RETRY_FILE" 2>/dev/null || rm -f "$RETRY_FILE"
+            echo "$CURRENT" | jq -e '.timeout' > "$TIMEOUT_FILE" 2>/dev/null || rm -f "$TIMEOUT_FILE"
             # Force EC2 — all video batch CEs are EC2. Prevents FARGATE propagation bug.
             PLATFORM="EC2"
-            ERR=$(aws batch register-job-definition \
-              --job-definition-name "$JOBDEF_NAME" \
-              --type container \
-              --platform-capabilities "$PLATFORM" \
-              --container-properties "file://$TMPFILE" \
-              --output text --query 'jobDefinitionArn' 2>&1)
+            REGISTER_ARGS=(
+              --job-definition-name "$JOBDEF_NAME"
+              --type container
+              --platform-capabilities "$PLATFORM"
+              --container-properties "file://$TMPFILE"
+            )
+            if [ -f "$RETRY_FILE" ]; then
+              REGISTER_ARGS+=(--retry-strategy "file://$RETRY_FILE")
+            fi
+            if [ -f "$TIMEOUT_FILE" ]; then
+              REGISTER_ARGS+=(--timeout "file://$TIMEOUT_FILE")
+            fi
+            ERR=$(aws batch register-job-definition "${REGISTER_ARGS[@]}" --output text --query 'jobDefinitionArn' 2>&1)
             RC=$?
-            rm -f "$TMPFILE"
+            rm -f "$TMPFILE" "$RETRY_FILE" "$TIMEOUT_FILE" 2>/dev/null || true
             if [ $RC -eq 0 ]; then
               echo "  ✅ $ERR"
               SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
