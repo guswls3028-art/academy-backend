@@ -104,29 +104,18 @@ class Command(BaseCommand):
                     job.locked_until = None
                     job.save(update_fields=["state", "attempt_count", "locked_by", "locked_until", "updated_at"])
 
-                    # In daemon mode, short videos (known duration <= max) are picked up by daemon polling.
-                    # Submit to Batch for: long videos, unknown-duration videos, or batch mode.
-                    worker_mode = getattr(settings, "VIDEO_WORKER_MODE", "batch")
-                    daemon_max = int(getattr(settings, "DAEMON_MAX_DURATION_SECONDS", 5400))
-                    use_batch = (worker_mode != "daemon") or (duration_sec is None) or (duration_sec > daemon_max)
-
-                    if use_batch:
-                        aws_job_id, submit_err = submit_batch_job(str(job.id), duration_seconds=duration_sec)
-                        if aws_job_id:
-                            job.aws_batch_job_id = aws_job_id
-                            job.save(update_fields=["aws_batch_job_id", "updated_at"])
-                            self.stdout.write(
-                                self.style.SUCCESS(f"RETRY_WAIT + BATCH_SUBMIT | job_id={job.id} video_id={job.video_id} attempt={attempt_after}")
-                            )
-                        else:
-                            job.error_code = "BATCH_SUBMIT_FAILED"
-                            job.error_message = (submit_err or "submit failed")[:2000]
-                            job.save(update_fields=["error_code", "error_message", "updated_at"])
-                            self.stderr.write(f"RETRY_WAIT (batch submit failed) | job_id={job.id} video_id={job.video_id}")
-                    else:
+                    aws_job_id, submit_err = submit_batch_job(str(job.id), duration_seconds=duration_sec)
+                    if aws_job_id:
+                        job.aws_batch_job_id = aws_job_id
+                        job.save(update_fields=["aws_batch_job_id", "updated_at"])
                         self.stdout.write(
-                            self.style.SUCCESS(f"RETRY_WAIT (daemon will poll) | job_id={job.id} video_id={job.video_id} attempt={attempt_after}")
+                            self.style.SUCCESS(f"RETRY_WAIT + BATCH_SUBMIT | job_id={job.id} video_id={job.video_id} attempt={attempt_after}")
                         )
+                    else:
+                        job.error_code = "BATCH_SUBMIT_FAILED"
+                        job.error_message = (submit_err or "submit failed")[:2000]
+                        job.save(update_fields=["error_code", "error_message", "updated_at"])
+                        self.stderr.write(f"RETRY_WAIT (batch submit failed) | job_id={job.id} video_id={job.video_id}")
                 recovered += 1
 
         self.stdout.write(

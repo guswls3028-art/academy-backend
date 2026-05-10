@@ -1,12 +1,9 @@
 """
-Video Encoding - DB → Batch or Daemon.
+Video Encoding - DB → AWS Batch.
 
-Upload Complete → Create VideoTranscodeJob → DDB lock(video_id) → submit (Batch or daemon poll).
+Upload Complete → Create VideoTranscodeJob → DDB lock(video_id) → submit_batch_job.
 1 video 1 job: DynamoDB lock key=video_id, TTL 12h+, heartbeat로 lease 연장.
-
-VIDEO_WORKER_MODE:
-  "daemon" → Job만 DB 생성, Batch 제출 안 함. daemon_main이 폴링하여 처리.
-  "batch"  → 기존대로 AWS Batch 제출 (기본값).
+모든 영상은 AWS Batch로 처리. (daemon mode는 2026-05-10 폐기.)
 """
 
 from __future__ import annotations
@@ -140,29 +137,7 @@ def create_job_and_submit_batch(video: Video) -> JobResult:
             logger.info("create_job_and_submit_batch: video %s DDB lock failed, returning existing=%s", video.id, existing_after.id if existing_after else None)
             return JobResult(existing_after, None if existing_after else REASON_SUBMIT_FAILED)
 
-        # Worker mode routing:
-        # - daemon mode + known duration <= 30min: daemon polls DB
-        # - daemon mode + duration > 30min OR unknown (NULL): auto-fallback to Batch
-        #   (NULL duration = ffprobe failed or not yet probed → treat as potentially long → Batch is safer)
-        # - batch mode: always submit to Batch
-        worker_mode = getattr(settings, "VIDEO_WORKER_MODE", "batch")
-        daemon_max_duration = int(getattr(settings, "DAEMON_MAX_DURATION_SECONDS", 5400))
-        video_duration = video.duration  # None if unknown
-
-        if worker_mode == "daemon" and video_duration is not None and video_duration <= daemon_max_duration:
-            logger.info(
-                "create_job_and_submit_batch: DAEMON mode — job %s created, skipping Batch submit (video %s, duration=%s)",
-                job.id, video.id, video.duration,
-            )
-            return JobResult(job, None)
-
-        if worker_mode == "daemon":
-            reason = "duration unknown (NULL)" if video_duration is None else f"duration {video_duration}s > {daemon_max_duration}s"
-            logger.info(
-                "create_job_and_submit_batch: DAEMON mode but %s — fallback to Batch (video %s, job %s)",
-                reason, video.id, job.id,
-            )
-
+        # 모든 영상은 AWS Batch로 제출. (daemon mode는 폐기됨 — 운영 EC2 부재 + 동일 파이프라인)
         try:
             aws_job_id, submit_error = submit_batch_job(str(job.id), duration_seconds=video.duration if video.duration else None)
         except Exception as exc:

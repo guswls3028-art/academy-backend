@@ -34,8 +34,7 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD kill -0 1 2>/dev/null || exit 1
 
 # Video Worker 실행
-# ENTRYPOINT: SSM /academy/workers/env fetch 후 워커 실행
-# Daemon mode (기본): 상주 프로세스로 DB 폴링하여 30분 이하 영상 처리
-# Batch mode: ["python", "-m", "apps.worker.video_worker.batch_main", "Ref::job_id"]
+# ENTRYPOINT: SSM /academy/workers/env fetch 후 batch_main exec.
+# AWS Batch는 jobdef containerProperties.command로 항상 ["python","-m","...batch_main","Ref::job_id"]를 명시 → CMD는 fallback일 뿐.
 ENTRYPOINT ["python", "-m", "apps.worker.video_worker.batch_entrypoint"]
-CMD ["python", "-m", "apps.worker.video_worker.daemon_main"]
+CMD ["python", "-m", "apps.worker.video_worker.batch_main"]

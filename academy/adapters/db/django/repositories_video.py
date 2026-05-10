@@ -938,9 +938,17 @@ def job_is_cancel_requested(job_id) -> bool:
 
 
 def job_cancel(job_id: str) -> bool:
-    """Job CANCELLED (재시도 버튼으로 사용자가 취소 요청 시). Terminal 상태는 보호."""
+    """Job CANCELLED (재시도 버튼으로 사용자가 취소 요청 시). Terminal 상태는 보호.
+
+    CANCELLED는 terminal이므로 video_id에 걸린 DDB lock도 해제. 안 풀면 12h TTL이
+    만료되기 전엔 같은 video를 재업로드해도 새 job 생성이 거부된다 (existing 락 충돌).
+    """
     from django.utils import timezone
     from apps.domains.video.models import VideoTranscodeJob
+
+    job = VideoTranscodeJob.objects.filter(pk=job_id).first()
+    if not job:
+        return False
 
     n = VideoTranscodeJob.objects.filter(
         pk=job_id,
@@ -955,6 +963,12 @@ def job_cancel(job_id: str) -> bool:
         locked_until=None,
         updated_at=timezone.now(),
     )
+    if n == 1:
+        try:
+            from apps.domains.video.services.video_job_lock import release as lock_release
+            lock_release(job.video_id)
+        except Exception:
+            pass
     return n == 1
 
 

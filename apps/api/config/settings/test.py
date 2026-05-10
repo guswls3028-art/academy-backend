@@ -71,9 +71,6 @@ INTERNAL_WORKER_TOKEN = "test-worker-token"
 AI_WORKER_INSTANCE_ID = None
 VIDEO_WORKER_INSTANCE_ID = None
 
-# Video worker
-VIDEO_WORKER_MODE = "batch"
-
 # Solapi — disabled
 SOLAPI_API_KEY = ""
 SOLAPI_API_SECRET = ""

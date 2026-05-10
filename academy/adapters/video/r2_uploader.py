@@ -35,6 +35,7 @@ def upload_directory(
     retry_max: int = 5,
     backoff_base: float = 0.5,
     backoff_cap: float = 10.0,
+    progress_callback=None,
 ) -> None:
     """
     HLS 출력물 R2 업로드 (병렬).
@@ -118,6 +119,11 @@ def upload_directory(
             completed += 1
             if completed == 1 or completed == total or completed % 500 == 0:
                 logger.info("[R2_UPLOAD] Progress: %d/%d files uploaded", completed, total)
+            if progress_callback is not None:
+                try:
+                    progress_callback(completed, total)
+                except Exception:
+                    pass
 
     logger.info("[R2_UPLOAD] Upload complete: %d files", total)
 

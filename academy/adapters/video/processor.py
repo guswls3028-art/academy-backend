@@ -401,6 +401,42 @@ def process_video(
             },
             tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
+        import time as _time_mod
+        _upload_started_at = _time_mod.monotonic()
+        _last_upload_log = [0.0]
+
+        def _upload_progress(uploaded: int, total: int) -> None:
+            now = _time_mod.monotonic()
+            # 매 0.5초 또는 5% 단위로만 갱신 (Redis write 부담 최소화)
+            if (now - _last_upload_log[0]) < 0.5 and uploaded != total:
+                return
+            _last_upload_log[0] = now
+            elapsed = now - _upload_started_at
+            rate = uploaded / elapsed if elapsed > 0 else 0
+            remaining_files = max(0, total - uploaded)
+            remaining_sec = int(remaining_files / rate) if rate > 0 else 30
+            step_pct = int(100 * uploaded / total) if total > 0 else 100
+            step_pct = min(100, max(0, step_pct))
+            overall = int(95 + 5 * uploaded / total) if total > 0 else 100
+            overall = min(100, max(95, overall))
+            progress.record_progress(
+                job_id,
+                "uploading",
+                {
+                    "hls_prefix": hls_prefix,
+                    "percent": overall,
+                    "remaining_seconds": remaining_sec,
+                    "step_index": 7,
+                    "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                    "step_name": "uploading",
+                    "step_name_display": "업로드",
+                    "step_percent": step_pct,
+                    "uploaded_files": uploaded,
+                    "total_files": total,
+                },
+                tenant_id=tenant_id_str,
+            )
+
         upload_directory(
             local_dir=out_dir,
             bucket=cfg.R2_BUCKET,
@@ -413,6 +449,7 @@ def process_video(
             retry_max=int(cfg.RETRY_MAX_ATTEMPTS),
             backoff_base=float(cfg.BACKOFF_BASE_SECONDS),
             backoff_cap=float(cfg.BACKOFF_CAP_SECONDS),
+            progress_callback=_upload_progress,
         )
         from academy.adapters.video.r2_uploader import (
             publish_tmp_to_final,

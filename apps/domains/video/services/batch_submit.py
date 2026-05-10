@@ -18,11 +18,14 @@ logger = logging.getLogger(__name__)
 def submit_batch_job(video_job_id: str, duration_seconds: int | None = None) -> tuple[Optional[str], Optional[str]]:
     """
     VideoTranscodeJob에 대해 AWS Batch Job 제출.
-    duration_seconds >= VIDEO_LONG_DURATION_THRESHOLD_SECONDS 이면 long 큐/JobDef 사용.
+
+    short / long 분리는 폐기됨 (2026-05-10). 모든 영상이 c6g.4xlarge VCPU=8 + 병렬
+    R2 업로드 파이프라인을 거치며, jobdef timeout(2시간)이 안전망. 4시간+ 영상이 들어오면
+    timeout으로 자동 종료되고 reconcile/scan_stuck이 재시도.
 
     Args:
         video_job_id: VideoTranscodeJob.id (UUID 문자열)
-        duration_seconds: 비디오 길이(초). None이면 standard 큐 사용.
+        duration_seconds: (옛 long 라우팅용 인자, 현재는 관측만)
 
     Returns:
         (aws_job_id, None) 성공 시. (None, error_message) 실패 시.
@@ -34,18 +37,12 @@ def submit_batch_job(video_job_id: str, duration_seconds: int | None = None) -> 
     if not getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", None):
         raise ImproperlyConfigured("VIDEO_BATCH_JOB_DEFINITION is missing")
 
-    long_threshold = int(getattr(settings, "VIDEO_LONG_DURATION_THRESHOLD_SECONDS", 10800))
-    use_long = duration_seconds is not None and duration_seconds >= long_threshold
+    queue_name = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
+    job_def_name = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
     logger.info(
-        "BATCH_SUBMIT_ROUTE | job_id=%s | duration_sec=%s | threshold=%s | use_long=%s",
-        video_job_id, duration_seconds, long_threshold, use_long,
+        "BATCH_SUBMIT_ROUTE | job_id=%s | duration_sec=%s | queue=%s",
+        video_job_id, duration_seconds, queue_name,
     )
-    if use_long:
-        queue_name = getattr(settings, "VIDEO_BATCH_JOB_QUEUE_LONG", "academy-v1-video-batch-long-queue")
-        job_def_name = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION_LONG", "academy-v1-video-batch-long-jobdef")
-    else:
-        queue_name = getattr(settings, "VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
-        job_def_name = getattr(settings, "VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
 
     import boto3
     from botocore.exceptions import ClientError
@@ -70,8 +67,8 @@ def submit_batch_job(video_job_id: str, duration_seconds: int | None = None) -> 
         )
         aws_job_id = resp.get("jobId")
         logger.info(
-            "BATCH_SUBMIT | job_id=%s | aws_job_id=%s | queue=%s | long=%s",
-            video_job_id, aws_job_id, queue_name, use_long,
+            "BATCH_SUBMIT | job_id=%s | aws_job_id=%s | queue=%s",
+            video_job_id, aws_job_id, queue_name,
         )
         return (aws_job_id, None)
     except ClientError as e:
