@@ -38,13 +38,25 @@ ALLOWED_COLORS = {
     "#D946EF",  # Fuchsia
 }
 
-SECTION_TYPES = {
-    "hero", "features", "testimonials", "about", "programs", "faq", "contact", "notice",
-    # v1.2.x 추가 — 1인 강사 사이트 풀 보강용
-    "hit_reports", "instructor_profile", "management_system", "process_timeline",
-}
-MAX_SECTION_ITEMS = 12  # process_timeline은 7주 + 직보 = 7+, management_system은 6 카드 — 6은 너무 빡빡
-MAX_SECTIONS = 14       # 신규 섹션 4종 추가 + 여유
+# 섹션 타입 SSOT — 추가는 SECTION_TYPES_ORDERED 한 곳만 수정.
+# (frontend types/index.ts SECTION_META와 list 동기화 필요 — 두 언어 사이 자동 import 불가)
+SECTION_TYPES_ORDERED = [
+    "hero",
+    "features",
+    "instructor_profile",   # v1.2.x 1인 강사 사이트 보강
+    "about",
+    "management_system",    # v1.2.x
+    "process_timeline",     # v1.2.x
+    "testimonials",
+    "hit_reports",          # v1.2.x
+    "programs",
+    "faq",
+    "contact",
+    "notice",
+]
+SECTION_TYPES = set(SECTION_TYPES_ORDERED)
+MAX_SECTION_ITEMS = 12  # process_timeline 7+주차 / management_system 6+카드 수용
+MAX_SECTIONS = len(SECTION_TYPES_ORDERED) + 2  # 자동 — 신규 추가 시 자동 갱신
 
 # ─────────────────────────────────────────────────
 # 템플릿 메타데이터 (프론트 갤러리용)
@@ -116,9 +128,8 @@ def _default_draft_config(tenant):
     }
 
 
-# 모든 신규/기존 학원 draft에 보장되어야 할 섹션 타입 — 새 섹션 추가 시 여기에 등록.
-# LandingAdminView GET 호출마다 missing 섹션을 enabled=False로 자동 backfill.
-_REQUIRED_SECTION_TYPES = ["hero", "features", "instructor_profile", "about", "management_system", "process_timeline", "testimonials", "hit_reports", "programs", "faq", "contact"]
+# SECTION_TYPES_ORDERED를 SSOT으로 사용 — notice는 default backfill 대상에서 제외 (학원 자율 추가).
+_REQUIRED_SECTION_TYPES = [t for t in SECTION_TYPES_ORDERED if t != "notice"]
 
 
 def _backfill_missing_sections(draft: dict) -> dict:
