@@ -185,7 +185,7 @@ python manage.py submit_all_templates_review
 
 | 용도 | 경로 |
 |------|------|
-| 가비아 네임서버 안내용 문서 | `backend/docs/02-OPERATIONS/테넌트-도메인-가비아-네임서버.md` |
+| 가비아 네임서버 안내용 문서 | `backend/docs/operations/tenants/gabia-nameserver.md` |
 | Cloudflare zone 추가 | `backend/scripts/add-cloudflare-zone.ps1` |
 | Pages 커스텀 도메인 + zone CNAME(1014·1016 방지) | `backend/scripts/pages-add-custom-domain.ps1` |
 | zone DNS에 Pages CNAME만 추가(1016 시 보정용) | `backend/scripts/zone-dns-add-pages-cname.ps1` |

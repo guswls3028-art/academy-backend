@@ -64,7 +64,7 @@
 - **deploy.ps1 내장:** After-Deploy Verification에서 ASG desired/inService, ALB target health, Batch Video CE/Queue 상태 출력. 실패 시 경고.
 - **수동 검증:** tenant·API 동작 확인이 필요하면
   `pwsh scripts/v1/run-qna-e2e-verify.ps1 -AwsProfile default`
-- **이미지 digest:** `docs/00-SSOT/v1/reports/ci-build.latest.md`의 academy-api digest vs 서버 `docker inspect academy-api --format '{{.RepoDigests}}'`.
+- **이미지 digest:** `docs/v1/reports/ci-build.latest.md`의 academy-api digest vs 서버 `docker inspect academy-api --format '{{.RepoDigests}}'`.
 
 ---
 
@@ -77,6 +77,6 @@
 
 ## 7. 관련 문서
 
-- `docs/02-OPERATIONS/DEPLOYMENT-MODES.md` — 배포 방식 개요
-- `docs/02-OPERATIONS/CI-CD-분석-및-보강안.md` — CI 빌드·deploy-api-refresh 흐름
-- `.cursor/rules/07_deployment_orchestrator.mdc`
+- `docs/operations/deployment-modes.md` — 배포 방식 개요
+- `docs/operations/배포.md` — 인프라 부트스트랩 (RDS/SQS/EC2/IAM)
+- `.github/workflows/v1-build-and-push-latest.yml` — CI 빌드·deploy-api-refresh 흐름

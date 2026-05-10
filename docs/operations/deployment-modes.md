@@ -71,7 +71,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 | 목적 | 방법 |
 |------|------|
 | 배포 후 API·인프라 상태 | deploy.ps1 출력의 After-Deploy Verification. 필요 시 `run-qna-e2e-verify.ps1`. |
-| CI 빌드 digest와 서버 이미지 일치 | `docs/00-SSOT/v1/reports/ci-build.latest.md`의 academy-api digest vs 서버 `docker inspect academy-api --format '{{.RepoDigests}}'`. |
+| CI 빌드 digest와 서버 이미지 일치 | `docs/v1/reports/ci-build.latest.md`의 academy-api digest vs 서버 `docker inspect academy-api --format '{{.RepoDigests}}'`. |
 | API health | ALB DNS 또는 API 공개 URL로 `/health` 200 확인. |
 
 ---
@@ -88,10 +88,9 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 | 문서 | 내용 |
 |------|------|
-| `docs/02-OPERATIONS/FORMAL-DEPLOY.md` | 수동 정식 배포 상세: 목적, 실행 방식, 검증, 주의. |
-| `docs/02-OPERATIONS/CI-CD-분석-및-보강안.md` | CI 빌드·ECR·deploy-api-refresh 흐름. |
-| `.cursor/rules/07_deployment_orchestrator.mdc` | 배포 진입점 구분. |
-| `.cursor/rules/09_multitenant_isolation.mdc` | 멀티테넌트 격리·배포 검증 원칙. |
+| `docs/operations/formal-deploy.md` | 수동 정식 배포 상세: 목적, 실행 방식, 검증, 주의. |
+| `docs/operations/배포.md` | 인프라 부트스트랩 (RDS/SQS/EC2/IAM 처음부터). |
+| `.github/workflows/v1-build-and-push-latest.yml` | CI 빌드·ECR·deploy-api-refresh 흐름. |
 
 ---
 

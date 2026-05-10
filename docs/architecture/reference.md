@@ -1,6 +1,6 @@
 # Academy Backend — 참조 문서 (단일 SSOT)
 
-실제 코드·설정 기준만 기술. Cursor·개발 시 이 파일 + 루트 README + docs/02-OPERATIONS/배포.md 등만 보면 됨.
+실제 코드·설정 기준만 기술. Cursor·개발 시 이 파일 + 루트 README + docs/operations/배포.md 등만 보면 됨.
 
 ---
 
@@ -45,12 +45,12 @@
 
 ## 4. 배포 요약
 
-**상세**: `docs/02-OPERATIONS/배포.md`. 리전 ap-northeast-2(서울).
+**상세**: `docs/operations/배포.md`. 리전 ap-northeast-2(서울).
 
 - 순서: RDS → SQS → IAM → 보안그룹 → EC2 API(Messaging/Video/AI). Video 4GB+100GB EBS, /mnt/transcode.
 - Docker: docker/Dockerfile.base, docker/api/Dockerfile, docker/messaging-worker/, docker/video-worker/, docker/ai-worker-cpu/. ECR 푸시 후 EC2에서 pull, .env, migrate, health.
 - 환경: `scripts/prepare_deploy_env.py -o .env.deploy`. EC2 API 자동 배포: scripts/auto_deploy_cron_on.sh, auto_deploy_cron_off.sh (cron 1분마다 origin/main 감지).
-- **인프라 원테이크 검증**: `docs/02-OPERATIONS/INFRA_VERIFICATION_SCRIPTS.md` — 비디오 원테이크(`production_done_check.ps1`), 원테이크 전체 감사(`infra_one_take_full_audit.ps1`) 기록.
+- **인프라 원테이크 검증**: `docs/operations/INFRA_VERIFICATION_SCRIPTS.md` — 비디오 원테이크(`production_done_check.ps1`), 원테이크 전체 감사(`infra_one_take_full_audit.ps1`) 기록.
 
 ---
 

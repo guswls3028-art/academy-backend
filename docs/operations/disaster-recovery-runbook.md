@@ -215,6 +215,6 @@ Q1 / Q2 / Q3 / Q4 의 중간 토요일 03:00 KST (peak 회피).
 
 ## 8. 참고
 
-- [RDS Proxy 도입](../00-SSOT/v1.1.0/INFRASTRUCTURE-OPTIMIZATION.md) — 2026-04-29 connection pool 만석 사고 대응.
-- [Operations Baseline](OPERATIONS-BASELINE.md) — 일상 운영·헬스체크.
-- [Incidents Runbook](../00-SSOT/v1.1.0/RUNBOOK-INCIDENTS.md) — 사고 일반 대응.
+- [RDS Proxy 도입](../infrastructure/infrastructure-optimization.md) — 2026-04-29 connection pool 만석 사고 대응.
+- [Operations Baseline](../domain/operations-baseline.md) — 일상 운영·헬스체크.
+- [Incidents Runbook](../infrastructure/runbook-incidents.md) — 사고 일반 대응.

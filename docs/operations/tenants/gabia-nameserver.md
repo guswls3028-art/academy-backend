@@ -43,5 +43,5 @@ cd backend
 
 ## 4. 전체 흐름
 
-- **새 테넌트 커스텀 도메인 추가** 전체 절차는 `backend/docs/02-OPERATIONS/새-테넌트-커스텀-도메인-추가-메뉴얼.md` 참고.
+- **새 테넌트 커스텀 도메인 추가** 전체 절차는 `backend/docs/operations/tenants/custom-domain.md` 참고.
 - Cursor 룰: `.cursor/rules/14_tenant_custom_domain_add.mdc`.

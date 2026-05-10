@@ -72,4 +72,4 @@ RDS를 쓰지 않고 로컬에서만 개발할 때:
 ## 참고
 
 - RDS 보안 그룹 이름: **academy-rds** (ID: sg-06cfb1f23372e2597)
-- 인벤토리: `docs/00-SSOT/v1/reports/aws-resource-inventory.latest.md`
+- 인벤토리: `docs/v1/reports/aws-resource-inventory.latest.md`
