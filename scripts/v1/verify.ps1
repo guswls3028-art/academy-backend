@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # Academy v1 — 새 PC 5단계 검증 자동화.
 # 1) bootstrap  2) deploy -Plan  3) deploy -PruneLegacy  4) deploy 재실행(No-op)  5) Evidence 위치 안내
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않음.
@@ -62,7 +62,7 @@ try {
         Pop-Location
         $planOut
     } "deploy -Plan failed. Check drift/params."
-    $results += [PSCustomObject]@{ Step = "2) deploy -Plan"; Result = "OK"; Detail = "Reports: docs/00-SSOT/reports/" }
+    $results += [PSCustomObject]@{ Step = "2) deploy -Plan"; Result = "OK"; Detail = "Reports: docs/reports/" }
 
     # 3) deploy -PruneLegacy
     $null = Run-Step "3) deploy.ps1 -PruneLegacy" {
@@ -93,7 +93,7 @@ try {
     $results += [PSCustomObject]@{ Step = "4) deploy (No-op)"; Result = if ($noOp) { "OK" } else { "CHECK" }; Detail = if ($noOp) { "No-op confirmed" } else { "See log" } }
 
     # 5) Evidence 위치
-    $results += [PSCustomObject]@{ Step = "5) Evidence"; Result = "-"; Detail = "docs/00-SSOT/reports/, deploy stdout" }
+    $results += [PSCustomObject]@{ Step = "5) Evidence"; Result = "-"; Detail = "docs/reports/, deploy stdout" }
 }
 catch {
     Write-Log "`n=== VERIFY STOPPED ==="

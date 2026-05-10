@@ -15,5 +15,5 @@ homework_results 도메인 — 과제 정의 + 점수 스냅샷.
 ⚠️ 향후 homework 도메인으로 통합 예정 (옵션 B, multi-PR).
 신규 코드는 homework 도메인과의 경계를 새로 만들지 않는다.
 
-평가 5도메인 책임 분담은 backend/docs/00-SSOT/v1.1.1/HEXAGONAL-CUTOVER-POLICY.md §8 참조.
+평가 5도메인 책임 분담은 backend/docs/domain/hexagonal-cutover-policy.md §8 참조.
 """

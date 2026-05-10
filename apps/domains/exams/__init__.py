@@ -11,5 +11,5 @@ exams 도메인 — 출제(question authoring) SSOT.
 - 채점·결과·집계: results 도메인.
 - 숙제(Homework): homework / homework_results 도메인.
 
-평가 5도메인 책임 분담은 backend/docs/00-SSOT/v1.1.1/HEXAGONAL-CUTOVER-POLICY.md §8 참조.
+평가 5도메인 책임 분담은 backend/docs/domain/hexagonal-cutover-policy.md §8 참조.
 """

@@ -1,5 +1,5 @@
 # ==============================================================================
-# SSOT v3 Full Rebuild — single entry. Create/Recreate/Drift convergence. See docs/00-SSOT/INFRA-SSOT-V3.*
+# SSOT v3 Full Rebuild — single entry. Create/Recreate/Drift convergence. See docs/INFRA-SSOT-V3.*
 # Usage: .\scripts_v3\deploy.ps1 [-Env prod] [-EcrRepoUri ...] [-AllowRebuild] [-SkipNetprobe]
 # ==============================================================================
 [CmdletBinding()]

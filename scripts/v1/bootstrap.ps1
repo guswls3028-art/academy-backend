@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # Academy v1 — 새 PC 준비. aws cli, pwsh, 인증, region·권한 확인.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않음.
 # Usage: pwsh scripts/v1/bootstrap.ps1
@@ -54,7 +54,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "OK: Minimal describe permission" -ForegroundColor Green
 
 # params.yaml
-$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\params.yaml"
+$ParamsPath = Join-Path $RepoRoot "docs\ssot\params.yaml"
 if (-not (Test-Path $ParamsPath)) {
     Write-Host "FAIL: params.yaml not found at $ParamsPath" -ForegroundColor Red
     exit 1

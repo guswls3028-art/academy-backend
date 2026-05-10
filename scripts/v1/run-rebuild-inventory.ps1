@@ -1,10 +1,10 @@
-﻿# V1 Stateless Compute 재구축 — 인벤토리 스냅샷 (read-only)
-# 결과: docs/00-SSOT/reports/rebuild-inventory.latest.md 갱신
+# V1 Stateless Compute 재구축 — 인벤토리 스냅샷 (read-only)
+# 결과: docs/reports/rebuild-inventory.latest.md 갱신
 param([string]$AwsProfile = "")
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-$ReportsDir = Join-Path $RepoRoot "docs\00-SSOT\reports"
+$ReportsDir = Join-Path $RepoRoot "docs\reports"
 $OutPath = Join-Path $ReportsDir "rebuild-inventory.latest.md"
 
 . (Join-Path $ScriptRoot "core\env.ps1")
@@ -25,7 +25,7 @@ if (-not $R -or $R.Trim() -eq "") {
 $R = $R.Trim()
 if (-not $R) {
     try {
-        $raw2 = Get-Content (Join-Path $RepoRoot "docs/00-SSOT/params.yaml") -Raw
+        $raw2 = Get-Content (Join-Path $RepoRoot "docs/ssot/params.yaml") -Raw
         if ($raw2 -match '(?m)^\s*region:\s*([a-z0-9-]+)\s*$') { $R = $matches[1].Trim() }
     } catch { }
 }
@@ -33,7 +33,7 @@ if (-not $R) { $R = "ap-northeast-2" }
 $VpcId = $script:VpcId
 if (-not $VpcId -or $VpcId.Trim() -eq "") {
     try {
-        $raw = Get-Content (Join-Path $RepoRoot "docs/00-SSOT/params.yaml") -Raw
+        $raw = Get-Content (Join-Path $RepoRoot "docs/ssot/params.yaml") -Raw
         if ($raw -match 'vpcId:\s*\"(vpc-[a-zA-Z0-9]+)\"') { $VpcId = $matches[1] }
     } catch { }
 }
@@ -181,7 +181,7 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("**Generated:** $generated  ")
 [void]$sb.AppendLine("**리전:** $R  ")
-[void]$sb.AppendLine("**SSOT:** docs/00-SSOT/params.yaml")
+[void]$sb.AppendLine("**SSOT:** docs/ssot/params.yaml")
 [void]$sb.AppendLine("")
 
 [void]$sb.AppendLine("## EC2 running (Project=academy)")

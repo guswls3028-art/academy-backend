@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # SSM /academy/api/env 에 SQS 큐 이름 + Video Batch(SSOT) + Redis(선택) 주입
 # ==============================================================================
 # deploy.ps1 실행 시 인프라 Ensure 후 Invoke-SyncEnvFromSSOT 가 자동으로 API/Workers env를
@@ -75,4 +75,4 @@ if ($script:VideoLongQueueName) {
     Write-Host "  Video Batch Long: VIDEO_BATCH_JOB_QUEUE_LONG=$($script:VideoLongQueueName)" -ForegroundColor Gray
 }
 Write-Host "`nAPI 인스턴스 refresh-api-env.ps1 실행 또는 instance-refresh 후 적용됨." -ForegroundColor Cyan
-Write-Host "연결 참조 대조: docs/00-SSOT/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md" -ForegroundColor Cyan
+Write-Host "연결 참조 대조: docs/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md" -ForegroundColor Cyan

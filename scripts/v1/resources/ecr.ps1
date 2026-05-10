@@ -1,10 +1,10 @@
-﻿# ECR: Ensure repos exist. No delete. Apply lifecycle policy for cost optimization (no unnecessary images).
+# ECR: Ensure repos exist. No delete. Apply lifecycle policy for cost optimization (no unnecessary images).
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
 
 function Get-ECRLifecyclePolicyPath {
     $repoRoot = (Get-Item $PSScriptRoot).Parent.Parent.Parent.FullName
-    $path = Join-Path $repoRoot "docs\00-SSOT\scripts\ecr-lifecycle-policy.json"
+    $path = Join-Path $repoRoot "docs\scripts\ecr-lifecycle-policy.json"
     if (Test-Path -LiteralPath $path) { return $path }
     return $null
 }

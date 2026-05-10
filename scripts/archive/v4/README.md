@@ -7,7 +7,7 @@
 **딸깍 5단계** (과거 v4 기준, 참고용):
 
 1. **bootstrap** — `pwsh scripts/archive/v4/bootstrap.ps1`  
-   AWS CLI, 인증, region, `docs/00-SSOT/archive/v4/params.yaml` 존재 확인.
+   AWS CLI, 인증, region, `docs/releases/archive/v4/params.yaml` 존재 확인.
 
 2. **deploy -Plan** — `pwsh scripts/archive/v4/deploy.ps1 -Plan`  
    AWS 변경 없이 표/리포트만 출력. Drift·Evidence 확인.
@@ -18,13 +18,13 @@
 4. **deploy 재실행 (No-op)** — `pwsh scripts/archive/v4/deploy.ps1`  
    변경 없이 완료되는지 확인. 출력에 "Idempotent: No changes required" 확인.
 
-5. **Evidence 확인** — `docs/00-SSOT/archive/v4/reports/` 및 deploy stdout의 Evidence 테이블.
+5. **Evidence 확인** — `docs/releases/archive/v4/reports/` 및 deploy stdout의 Evidence 테이블.
 
 ---
 
 ## params.yaml
 
-- **위치**: `docs/00-SSOT/archive/v4/params.yaml`
+- **위치**: `docs/releases/archive/v4/params.yaml`
 - **수정**: 환경별 값(리전, 계정, VPC 등)만 변경. 스크립트는 이 파일만 참조.
 
 ---

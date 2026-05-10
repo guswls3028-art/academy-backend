@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # API ↔ Video Batch 연결 상태 점검
 # ==============================================================================
 # AWS 프로필: 반드시 default. (스크립트 내부에서 --profile default 사용)
@@ -97,4 +97,4 @@ try {
 }
 
 Write-Host "`n=== 점검 완료 ===" -ForegroundColor Cyan
-Write-Host "연결 참조 문서: docs/00-SSOT/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md" -ForegroundColor Gray
+Write-Host "연결 참조 문서: docs/reports/API-VIDEO-BATCH-REDIS-CONNECTION-REFERENCE.md" -ForegroundColor Gray

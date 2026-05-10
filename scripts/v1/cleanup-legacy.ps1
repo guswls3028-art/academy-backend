@@ -1,6 +1,6 @@
-﻿# V1 Legacy 리소스 정리 — SSOT에 없는 리소스만 대상. 삭제 전 reports 기록 필수.
+# V1 Legacy 리소스 정리 — SSOT에 없는 리소스만 대상. 삭제 전 reports 기록 필수.
 # 기능: orphan EIP release, orphan EBS volume delete, unused SG delete, legacy EC2 terminate, legacy ASG inventory/remove.
-# 실행 결과: docs/00-SSOT/reports/cleanup-run.latest.md, resource-cleanup.latest.md 갱신.
+# 실행 결과: docs/reports/cleanup-run.latest.md, resource-cleanup.latest.md 갱신.
 param(
     [switch]$DryRun = $true,
     [switch]$Execute,
@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-$ReportsDir = Join-Path $RepoRoot "docs\00-SSOT\reports"
+$ReportsDir = Join-Path $RepoRoot "docs\reports"
 $InventoryPath = Join-Path $ReportsDir "aws-resource-inventory.latest.md"
 $PlanPath = Join-Path $ReportsDir "resource-cleanup-plan.latest.md"
 $CleanupRunPath = Join-Path $ReportsDir "cleanup-run.latest.md"
@@ -295,7 +295,7 @@ if (-not $DryRun -and ($runEIPReleased.Count -gt 0 -or $runVolumesDeleted.Count 
     $rcSb = [System.Text.StringBuilder]::new()
     $rcSb.AppendLine("# V1 리소스 정리 기록 (증거)")
     $rcSb.AppendLine("")
-    $rcSb.AppendLine("**리전:** $R **갱신:** $runAt **SSOT:** docs/00-SSOT/params.yaml")
+    $rcSb.AppendLine("**리전:** $R **갱신:** $runAt **SSOT:** docs/ssot/params.yaml")
     $rcSb.AppendLine("")
     $rcSb.AppendLine("## Elastic IP (released)")
     $rcSb.AppendLine("| AllocationId | PublicIp | 조치 | 시각 |")

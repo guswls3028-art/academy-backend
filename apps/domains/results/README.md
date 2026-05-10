@@ -16,7 +16,7 @@ RESULTS 도메인 단일진실(SSOT) 봉인 문서
 본 도메인의 모든 모델·서비스·집계는 Exam 단위 결과만 처리한다.
 
 평가 5도메인 (exams / submissions / results / homework / homework_results) 책임 분담은
-`backend/docs/00-SSOT/v1.1.1/HEXAGONAL-CUTOVER-POLICY.md §8` 참조.
+`backend/docs/domain/hexagonal-cutover-policy.md §8` 참조.
 
 이 문서가 존재하는 한:
 

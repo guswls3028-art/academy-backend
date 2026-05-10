@@ -45,7 +45,7 @@ if ($DryRun) {
     Write-Host "`n--- Delete order (when PruneLegacy) ---" -ForegroundColor Cyan
     Write-Host "  EventBridge -> Queue -> CE -> JobDef -> ASG -> ECS cluster -> IAM -> EIP"
     Write-Host "  (After each delete: describe polling Wait only. No fixed sleep.)"
-    Write-Host "  Details: docs/00-SSOT/PRUNE-DELETE-ORDER-AND-RISKS.md"
+    Write-Host "  Details: docs/PRUNE-DELETE-ORDER-AND-RISKS.md"
     Write-Host "1. EventBridge (remove targets then delete rule)"
     Write-Host "2. Batch Queue (DISABLED -> delete)"
     Write-Host "3. Batch CE (DISABLED -> delete -> Wait)"

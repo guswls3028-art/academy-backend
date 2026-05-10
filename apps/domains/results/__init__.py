@@ -19,5 +19,5 @@ results 도메인 — 시험(Exam) 결과 SSOT + Aggregation 단일 책임지.
 ❌ Result.student_id FK 금지. 항상 enrollment_id.
 ❌ View/Serializer/Model 안에서 집계 금지. 집계는 aggregations/ 만.
 
-평가 5도메인 책임 분담은 backend/docs/00-SSOT/v1.1.1/HEXAGONAL-CUTOVER-POLICY.md §8 참조.
+평가 5도메인 책임 분담은 backend/docs/domain/hexagonal-cutover-policy.md §8 참조.
 """

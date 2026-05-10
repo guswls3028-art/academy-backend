@@ -1,6 +1,6 @@
 # ==============================================================================
 # V1 ECR build/push + selective deploy — OIDC 전용. Access Key 미사용.
-# Backend repo: guswls3028-art/academy-backend. SSOT: docs/00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md
+# Backend repo: guswls3028-art/academy-backend. SSOT: docs/infrastructure/deployment-architecture.md
 # 5개 이미지 linux/arm64 빌드·푸시 (latest + sha 태그). 변경된 서비스만 ASG refresh.
 # V1.1.0: Zero-downtime deployment — SHA tagging, selective worker deploy,
 #          pre-deploy migration, deploy verification.
@@ -342,14 +342,14 @@ jobs:
           BUILD_TIME=$(date -Iseconds)
           SHA="${{ github.sha }}"
           SHORT_SHA="${SHA:0:8}"
-          REPORTS_DIR="docs/00-SSOT/v1.1.0/reports"
+          REPORTS_DIR="docs/reports"
           mkdir -p "$REPORTS_DIR"
 
           cat > "$REPORTS_DIR/ci-build.latest.md" <<HEREDOC
           ## V1.1.0 CI Build — latest + sha 이미지 푸시 증거 (OIDC)
 
           **Generated:** $BUILD_TIME
-          **SSOT:** docs/00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md
+          **SSOT:** docs/infrastructure/deployment-architecture.md
           **Region:** ${{ env.AWS_REGION }}
           **gitSha:** $SHA
           **shortSha:** $SHORT_SHA
@@ -376,20 +376,20 @@ jobs:
           echo "**Commit:** ${{ github.sha }} (sha-${{ needs.detect-changes.outputs.short_sha }})" >> $GITHUB_STEP_SUMMARY
           echo "**Changes:** api=${{ needs.detect-changes.outputs.build_api }} video=${{ needs.detect-changes.outputs.build_video }} messaging=${{ needs.detect-changes.outputs.build_messaging }} ai=${{ needs.detect-changes.outputs.build_ai }} force_full=${{ needs.detect-changes.outputs.force_full }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          cat docs/00-SSOT/v1.1.0/reports/ci-build.latest.md >> $GITHUB_STEP_SUMMARY
+          cat docs/reports/ci-build.latest.md >> $GITHUB_STEP_SUMMARY
 
       - name: Upload ci-build.latest.md artifact
         uses: actions/upload-artifact@v4
         with:
           name: ci-build-report
-          path: docs/00-SSOT/v1.1.0/reports/ci-build.latest.md
+          path: docs/reports/ci-build.latest.md
           retention-days: 7
 
       - name: Commit and push ci-build.latest.md
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/00-SSOT/v1.1.0/reports/ci-build.latest.md
+          git add docs/reports/ci-build.latest.md
           if git diff --staged --quiet; then
             echo "No change to ci-build.latest.md"
           else

@@ -33,7 +33,7 @@ v1 제외한 모든 스크립트는 **scripts/archive/** 아래에 보관했다.
 
 ## 관련 문서
 
-- 정식 SSOT 인덱스: [docs/00-SSOT/README.md](../docs/00-SSOT/README.md)
-- 실행 SSOT 파라미터: [docs/00-SSOT/params.yaml](../docs/00-SSOT/params.yaml)
-- 배포 아키텍처 기준: [docs/00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md](../docs/00-SSOT/v1.1.0/DEPLOYMENT-ARCHITECTURE.md)
+- 정식 SSOT 인덱스: [docs/README.md](../docs/README.md)
+- 실행 SSOT 파라미터: [docs/ssot/params.yaml](../docs/ssot/params.yaml)
+- 배포 아키텍처 기준: [docs/infrastructure/deployment-architecture.md](../docs/infrastructure/deployment-architecture.md)
 - 문서 인덱스: [docs/README.md](../docs/README.md)

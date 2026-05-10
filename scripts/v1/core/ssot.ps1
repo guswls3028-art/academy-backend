@@ -1,9 +1,9 @@
-﻿# params.yaml loader — sets script: variables. Single source of truth; no env/prod.ps1.
+# params.yaml loader — sets script: variables. Single source of truth; no env/prod.ps1.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
 $SsotDir = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $SsotDir "..\..\..")).Path
-$ParamsPath = Join-Path $RepoRoot "docs\00-SSOT\params.yaml"
+$ParamsPath = Join-Path $RepoRoot "docs\ssot\params.yaml"
 
 if (-not (Test-Path $ParamsPath)) { throw "params.yaml not found: $ParamsPath" }
 

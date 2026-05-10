@@ -1,4 +1,4 @@
-﻿# API: ALB + ASG (Step D). EIP 제거. Private subnet + sg-app, health /health.
+# API: ALB + ASG (Step D). EIP 제거. Private subnet + sg-app, health /health.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
 
@@ -187,7 +187,7 @@ function Invoke-CollectRuntimeImagesReport {
     }
     $ciDigest = $null
     $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-    $ciPath = Join-Path $repoRoot "docs\00-SSOT\reports\ci-build.latest.md"
+    $ciPath = Join-Path $repoRoot "docs\reports\ci-build.latest.md"
     if (Test-Path $ciPath) {
         $ciContent = Get-Content -Path $ciPath -Raw -ErrorAction SilentlyContinue
         if ($ciContent -match '\|\s*academy-api\s*\|\s*latest\s*\|\s*(sha256:[a-fA-F0-9]+)\s*\|') {
@@ -204,7 +204,7 @@ function Invoke-CollectRuntimeImagesReport {
     [void]$sb.AppendLine("# V1 Runtime Images — API 인스턴스 실제 실행 이미지")
     [void]$sb.AppendLine("")
     [void]$sb.AppendLine("**Generated:** $generated")
-    [void]$sb.AppendLine("**SSOT:** docs/00-SSOT/params.yaml")
+    [void]$sb.AppendLine("**SSOT:** docs/ssot/params.yaml")
     [void]$sb.AppendLine("")
     if ($null -ne $ciDigest -and -not $anyMatch) {
         [void]$sb.AppendLine("### CI vs Runtime")

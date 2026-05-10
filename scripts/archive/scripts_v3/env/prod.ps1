@@ -1,4 +1,4 @@
-# SSOT v3 env — prod. Keep in sync with docs/00-SSOT/INFRA-SSOT-V3.params.yaml
+# SSOT v3 env — prod. Keep in sync with docs/INFRA-SSOT-V3.params.yaml
 $ErrorActionPreference = "Stop"
 $script:Region = "ap-northeast-2"
 $script:AccountId = "809466760795"

@@ -1,6 +1,6 @@
 # ==============================================================================
 # FullStack current state gather — no code changes, Describe/List only, output report.
-# Output: docs/00-SSOT/FULLSTACK-CURRENT-STATE-REPORT.md
+# Output: docs/FULLSTACK-CURRENT-STATE-REPORT.md
 # Usage: .\scripts_v3\gather_fullstack_state.ps1 [-Region ap-northeast-2] [-OutDir docs/00-SSOT]
 # ==============================================================================
 [CmdletBinding()]

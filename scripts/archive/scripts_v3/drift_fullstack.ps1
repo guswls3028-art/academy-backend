@@ -1,6 +1,6 @@
 # ==============================================================================
 # FullStack Drift — compare actual AWS to params.yaml (env/prod.ps1), output 3-class table.
-# Output: console + docs/00-SSOT/FULLSTACK-DRIFT-TABLE.md
+# Output: console + docs/FULLSTACK-DRIFT-TABLE.md
 # Usage: .\scripts_v3\drift_fullstack.ps1 [-Region ap-northeast-2]
 # ==============================================================================
 [CmdletBinding()]

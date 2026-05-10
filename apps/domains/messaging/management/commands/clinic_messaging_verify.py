@@ -36,7 +36,7 @@ CLINIC_NOT_IMPLEMENTED: frozenset[str] = frozenset({"clinic_reminder"})
 
 
 class Command(BaseCommand):
-    help = "Clinic auto messaging: audit-config or check-logs (see docs/02-OPERATIONS/clinic-messaging-production-verification.md)."
+    help = "Clinic auto messaging: audit-config or check-logs (see docs/operations/clinic-messaging-production-verification.md)."
 
     def add_arguments(self, parser):
         parser.add_argument(

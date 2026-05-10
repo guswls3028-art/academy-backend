@@ -1,5 +1,5 @@
-﻿# V1 배포 검증 자동화 — 인프라/기능/Evidence 수집 후 최종 보고서 생성.
-# 리소스 변경 없음. 검증만 수행. 결과: docs/00-SSOT/reports/deploy-verification-latest.md, V1-FINAL-REPORT.md, audit.latest.md, drift.latest.md 갱신.
+# V1 배포 검증 자동화 — 인프라/기능/Evidence 수집 후 최종 보고서 생성.
+# 리소스 변경 없음. 검증만 수행. 결과: docs/reports/deploy-verification-latest.md, V1-FINAL-REPORT.md, audit.latest.md, drift.latest.md 갱신.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않는다.
 # 사용: pwsh -File scripts/v1/run-deploy-verification.ps1 [-AwsProfile default] (run-with-env 권장)
 param([string]$AwsProfile = "")
@@ -384,7 +384,7 @@ $consistencySb = [System.Text.StringBuilder]::new()
 [void]$consistencySb.AppendLine("# SSOT ↔ 실제 인프라 ↔ 합의사항 정합성")
 [void]$consistencySb.AppendLine("")
 [void]$consistencySb.AppendLine("**Generated:** $(Get-Date -Format 'o')")
-[void]$consistencySb.AppendLine("**SSOT:** docs/00-SSOT/params.yaml (prod)")
+[void]$consistencySb.AppendLine("**SSOT:** docs/ssot/params.yaml (prod)")
 [void]$consistencySb.AppendLine("")
 [void]$consistencySb.AppendLine("## 합의사항 체크리스트")
 [void]$consistencySb.AppendLine("| 항목 | 기대 | 실제 | 결과 |")
@@ -465,7 +465,7 @@ elseif ($finalStatus -eq "WARNING") { $goNoGo = "CONDITIONAL GO"; $goNoGoDetail 
 $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("# V1 Deployment Verification Report")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("**명칭:** V1 통일 (V1.1 미사용). **SSOT:** docs/00-SSOT/params.yaml. **리전:** $R. **전제:** 사용자 1,000~1,500, 동시 50~300 버스트, 운영 1인, 장애 대응 10~60분.")
+[void]$sb.AppendLine("**명칭:** V1 통일 (V1.1 미사용). **SSOT:** docs/ssot/params.yaml. **리전:** $R. **전제:** 사용자 1,000~1,500, 동시 50~300 버스트, 운영 1인, 장애 대응 10~60분.")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## 배포 정보")
 [void]$sb.AppendLine("| 항목 | 값 |")
@@ -581,7 +581,7 @@ if ($findings.Count -gt 0) {
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("**연관 보고서:** audit.latest.md, drift.latest.md (동시 갱신됨).")
 
-$reportPath = Join-Path $RepoRoot "docs\00-SSOT\reports"
+$reportPath = Join-Path $RepoRoot "docs\reports"
 if (-not (Test-Path $reportPath)) { New-Item -ItemType Directory -Path $reportPath -Force | Out-Null }
 Save-DeployVerificationReport -MarkdownContent $sb.ToString()
 
@@ -592,7 +592,7 @@ if ($eipCountTotal -gt 0) { if ($consistencySummary -eq "PASS") { $consistencySu
 $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("# V1 최종 배포 검증 보고서")
 [void]$finalSb.AppendLine("")
-[void]$finalSb.AppendLine("**명칭:** V1 통일. **SSOT:** docs/00-SSOT/params.yaml. **배포:** scripts/v1/deploy.ps1. **리전:** $R.")
+[void]$finalSb.AppendLine("**명칭:** V1 통일. **SSOT:** docs/ssot/params.yaml. **배포:** scripts/v1/deploy.ps1. **리전:** $R.")
 [void]$finalSb.AppendLine("")
 [void]$finalSb.AppendLine("## 요약")
 [void]$finalSb.AppendLine("| 항목 | 값 |")
@@ -648,8 +648,8 @@ Save-V1FinalReportInReports -MarkdownContent $finalSb.ToString()
 Write-Host "`n=== 검증 완료 ===" -ForegroundColor Green
 Write-Host "  최종 상태: $finalStatus" -ForegroundColor $(if ($finalStatus -eq "PASS") { "Green" } elseif ($finalStatus -eq "WARNING") { "Yellow" } else { "Red" })
 Write-Host "  GO/NO-GO: $goNoGo" -ForegroundColor Cyan
-Write-Host "  보고서: docs/00-SSOT/reports/deploy-verification-latest.md" -ForegroundColor Cyan
-Write-Host "  V1 최종: docs/00-SSOT/reports/V1-FINAL-REPORT.md" -ForegroundColor Cyan
+Write-Host "  보고서: docs/reports/deploy-verification-latest.md" -ForegroundColor Cyan
+Write-Host "  V1 최종: docs/reports/V1-FINAL-REPORT.md" -ForegroundColor Cyan
 Write-Host "  audit.latest.md, drift.latest.md, consistency.latest.md, front-connection.latest.md 갱신됨." -ForegroundColor Gray
 if ($findings.Count -gt 0) {
     Write-Host "  발견 사항: $($findings.Count)건" -ForegroundColor Yellow

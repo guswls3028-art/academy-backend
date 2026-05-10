@@ -1,5 +1,5 @@
-﻿# V1 AWS 리소스 인벤토리 수집 및 SSOT 비교 · 정리 계획 생성.
-# 리전 ap-northeast-2, SSOT docs/00-SSOT/params.yaml 기준.
+# V1 AWS 리소스 인벤토리 수집 및 SSOT 비교 · 정리 계획 생성.
+# 리전 ap-northeast-2, SSOT docs/ssot/params.yaml 기준.
 # 출력: aws-resource-inventory.latest.md, resource-cleanup-plan.latest.md
 # 사용: pwsh -File scripts/v1/run-resource-inventory.ps1 [-AwsProfile default] (run-with-env 권장)
 param([string]$AwsProfile = "")
@@ -177,7 +177,7 @@ foreach ($rev in (Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Na
 }
 
 # --- aws-resource-inventory.latest.md ---
-$invPath = Join-Path $RepoRoot "docs\00-SSOT\reports\aws-resource-inventory.latest.md"
+$invPath = Join-Path $RepoRoot "docs\reports\aws-resource-inventory.latest.md"
 $invDir = Split-Path $invPath -Parent
 if (-not (Test-Path $invDir)) { New-Item -ItemType Directory -Path $invDir -Force | Out-Null }
 $sb = [System.Text.StringBuilder]::new()
@@ -234,7 +234,7 @@ Set-Content -Path $invPath -Value $sb.ToString() -Encoding UTF8 -Force
 Write-Host '  Inventory:' $invPath -ForegroundColor Green
 
 # --- resource-cleanup-plan.latest.md ---
-$planPath = Join-Path $RepoRoot "docs\00-SSOT\reports\resource-cleanup-plan.latest.md"
+$planPath = Join-Path $RepoRoot "docs\reports\resource-cleanup-plan.latest.md"
 $planSb = [System.Text.StringBuilder]::new()
 [void]$planSb.AppendLine("# V1 리소스 정리 계획 (비용 절감)")
 [void]$planSb.AppendLine("")

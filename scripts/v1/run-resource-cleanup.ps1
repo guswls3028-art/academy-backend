@@ -1,8 +1,8 @@
-﻿# V1 불필요 리소스 정리 — 돈 새는 리소스 우선. 배포 수정 전 실행 권장.
+# V1 불필요 리소스 정리 — 돈 새는 리소스 우선. 배포 수정 전 실행 권장.
 # PHASE 1: EIP 전부 release (association 없음)
 # PHASE 2: ENI에 연결되지 않은 Security Group 삭제 (SSOT 유지 SG 제외)
 # PHASE 3: API ASG 축소 (min=1 desired=1 max=2)
-# PHASE 4: describe-* 로 재검증 후 docs/00-SSOT/reports/resource-cleanup.latest.md 기록
+# PHASE 4: describe-* 로 재검증 후 docs/reports/resource-cleanup.latest.md 기록
 # 사용: pwsh -File scripts/v1/run-resource-cleanup.ps1 [-AwsProfile default] [-Execute]
 param(
     [string]$AwsProfile = "",
@@ -11,7 +11,7 @@ param(
 $ErrorActionPreference = "Stop"
 $ScriptRoot = $PSScriptRoot
 $RepoRoot = (Resolve-Path (Join-Path $ScriptRoot "..\..")).Path
-$ReportsDir = Join-Path $RepoRoot "docs\00-SSOT\reports"
+$ReportsDir = Join-Path $RepoRoot "docs\reports"
 $ResourceCleanupPath = Join-Path $ReportsDir "resource-cleanup.latest.md"
 
 . (Join-Path $ScriptRoot "core\env.ps1")
@@ -158,7 +158,7 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("# V1 리소스 정리·재검증 결과")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("**리전:** $R **갱신:** $runAt **모드:** $(if ($Execute) { 'Execute' } else { 'DryRun' })")
-[void]$sb.AppendLine("**SSOT:** docs/00-SSOT/params.yaml")
+[void]$sb.AppendLine("**SSOT:** docs/ssot/params.yaml")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## 요약")
 [void]$sb.AppendLine("| 항목 | 값 | 목표(V1 정상) |")
