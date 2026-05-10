@@ -1128,3 +1128,71 @@ class DocumentHitReportPdfView(View):
         )
 
 
+# ── 공개 랜딩 페이지용 적중보고서 카드 메타 ────────────
+#
+# 학원장이 자기 랜딩 페이지에 매치업 적중 사례를 마케팅 카드로 노출하는 용도.
+# 인증 없음(공개), tenant 격리는 subdomain 기반 _tenant_required로 강제.
+# 카드 메타만 노출(시험명/학교/적중수/총문항수). PDF/이미지 본문은 노출 안 함.
+
+@method_decorator([csrf_exempt, _tenant_required], name="dispatch")
+class HitReportLandingPublicView(View):
+    """GET /api/v1/matchup/landing/public/?ids=1,2,3
+
+    공개 랜딩 페이지용 적중보고서 카드 메타.
+
+    - **테넌트 격리 절대**: subdomain → tenant resolve. 다른 tenant의 보고서 ID 요청해도 무조건 빈 결과.
+    - **노출 데이터 최소화**: 카드 메타(시험명/카테고리/적중수/총문항수/적중률)만. entry 본문/PDF/이미지 일체 노출 안 함.
+    - **상한**: 한 요청에 최대 12개 ID.
+    - 응답 순서는 ids 파라미터 순서 보존.
+    """
+
+    def get(self, request):
+        ids_param = (request.GET.get("ids") or "").strip()
+        if not ids_param:
+            return JsonResponse({"reports": []})
+        try:
+            ids = [int(x) for x in ids_param.split(",") if x.strip()]
+        except ValueError:
+            return JsonResponse({"reports": []})
+        ids = ids[:12]
+
+        reports = list(
+            MatchupHitReport.objects.filter(
+                tenant=request.tenant, id__in=ids,
+            ).select_related("document")
+        )
+
+        # 적중수 = excluded=False entry 중 selected_problem_ids 또는 comment가 있는 것.
+        # HitReportListView의 curated_by_report 정의와 동일.
+        entries = MatchupHitReportEntry.objects.filter(
+            tenant=request.tenant,
+            report_id__in=[r.id for r in reports],
+            excluded=False,
+        ).only("id", "report_id", "selected_problem_ids", "comment")
+        curated_count: dict = {}
+        for e in entries:
+            if (e.selected_problem_ids or []) or (e.comment or "").strip():
+                curated_count[e.report_id] = curated_count.get(e.report_id, 0) + 1
+
+        result = []
+        for r in reports:
+            doc = r.document
+            total = (doc.problem_count if doc else 0) or 0
+            hit = curated_count.get(r.id, 0)
+            rate = round((hit / total * 100) if total else 0, 1)
+            result.append({
+                "id": r.id,
+                "doc_title": (doc.title if doc else "") or "",
+                "doc_category": (doc.category if doc else "") or "",
+                "hit_count": hit,
+                "total_problems": total,
+                "hit_rate_pct": rate,
+                "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            })
+        # 요청 ID 순서 보존
+        order_map = {rid: i for i, rid in enumerate(ids)}
+        result.sort(key=lambda x: order_map.get(x["id"], 999))
+        return JsonResponse({"reports": result})
+
+

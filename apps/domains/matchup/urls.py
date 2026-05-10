@@ -35,6 +35,8 @@ urlpatterns = [
     path("hit-reports/<int:report_id>/curated.pdf", views_hit_report.HitReportPdfView.as_view()),
     # 카페·블로그 게시용 raw asset (PNG + summary.md). 강사가 본인 명의로 자유 게시.
     path("hit-reports/<int:report_id>/share.zip", views_hit_report.HitReportZipExportView.as_view()),
+    # 공개 랜딩 페이지용 적중보고서 카드 메타 (인증 X, 테넌트 격리 절대)
+    path("landing/public/", views_hit_report.HitReportLandingPublicView.as_view()),
 
     # Categories
     path("categories/", views.CategoryListView.as_view()),
