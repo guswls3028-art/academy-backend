@@ -104,11 +104,45 @@ def _default_draft_config(tenant):
             ]},
             {"type": "about", "enabled": True, "order": 2, "title": "소개", "description": ""},
             {"type": "testimonials", "enabled": False, "order": 3, "items": []},
-            {"type": "programs", "enabled": False, "order": 4, "items": []},
-            {"type": "faq", "enabled": False, "order": 5, "items": []},
-            {"type": "contact", "enabled": True, "order": 6},
+            {"type": "hit_reports", "enabled": False, "order": 4, "title": "최근 적중 사례", "description": "우리 학원의 시험지 적중 결과를 소개합니다.", "items": []},
+            {"type": "programs", "enabled": False, "order": 5, "items": []},
+            {"type": "faq", "enabled": False, "order": 6, "items": []},
+            {"type": "contact", "enabled": True, "order": 7},
         ],
     }
+
+
+# 모든 신규/기존 학원 draft에 보장되어야 할 섹션 타입 — 새 섹션 추가 시 여기에 등록.
+# LandingAdminView GET 호출마다 missing 섹션을 enabled=False로 자동 backfill.
+_REQUIRED_SECTION_TYPES = ["hero", "features", "about", "testimonials", "hit_reports", "programs", "faq", "contact"]
+
+
+def _backfill_missing_sections(draft: dict) -> dict:
+    """기존 학원 draft에 신규 섹션 타입을 enabled=False로 자동 추가.
+
+    학원장이 어드민 콘솔 진입 시 새로 추가된 섹션(예: hit_reports)이 sidebar nav에 즉시 노출되도록 보장.
+    값 변경 X — 누락 섹션만 추가, 기존 섹션은 그대로.
+    """
+    sections = list(draft.get("sections") or [])
+    existing_types = {s.get("type") for s in sections if isinstance(s, dict)}
+    max_order = max((s.get("order", 0) for s in sections), default=-1)
+    for sec_type in _REQUIRED_SECTION_TYPES:
+        if sec_type in existing_types:
+            continue
+        max_order += 1
+        if sec_type == "hit_reports":
+            sections.append({"type": "hit_reports", "enabled": False, "order": max_order, "title": "최근 적중 사례", "description": "우리 학원의 시험지 적중 결과를 소개합니다.", "items": []})
+        elif sec_type == "about":
+            sections.append({"type": "about", "enabled": False, "order": max_order, "title": "소개", "description": ""})
+        elif sec_type == "contact":
+            sections.append({"type": "contact", "enabled": False, "order": max_order})
+        elif sec_type == "hero":
+            sections.append({"type": "hero", "enabled": False, "order": max_order})
+        else:
+            sections.append({"type": sec_type, "enabled": False, "order": max_order, "items": []})
+    if len(sections) != len(draft.get("sections") or []):
+        draft = {**draft, "sections": sections}
+    return draft
 
 
 def _resolve_image_urls(config: dict) -> dict:
@@ -256,6 +290,11 @@ class LandingAdminView(APIView):
             tenant=tenant,
             defaults={"draft_config": _default_draft_config(tenant)},
         )
+        # 신규 섹션 타입(hit_reports 등) 자동 backfill — 기존 학원도 nav에 즉시 노출.
+        backfilled = _backfill_missing_sections(landing.draft_config)
+        if backfilled is not landing.draft_config:
+            landing.draft_config = backfilled
+            landing.save(update_fields=["draft_config", "updated_at"])
         draft = _resolve_image_urls(landing.draft_config)
         published = _resolve_image_urls(landing.published_config) if landing.published_config else None
 
