@@ -37,34 +37,45 @@ def upload_directory(
     backoff_cap: float = 10.0,
 ) -> None:
     """
-    업로드 정책 (요구사항 반영):
+    HLS 출력물 R2 업로드 (병렬).
+
+    HLS 세그먼트가 영상 길이에 비례해 수천 개(80분 영상 ~2,400개) 생성된다. 파일 단위
+    ThreadPoolExecutor 병렬 업로드로 wall time이 1/N 수준이 된다. 세그먼트 자체는
+    multipart_threshold(8MB) 미만이라 multipart split이 안 일어나고, TransferConfig의
+    use_threads는 의미 없으므로 끈다 (file-level만 병렬).
+
+    boto3 S3 client는 low-level이라 thread-safe. urllib3 풀 사이즈를 워커 수에 맞춰 키운다.
+
+    업로드 정책:
     - Content-Type 정확히
-    - Cache-Control 전략 포함
-      - .m3u8 : no-cache
-      - .ts   : public, max-age=31536000, immutable
-      - thumb : 7d
-    - 부분 업로드 방지:
-      - boto3 multipart 실패 시 예외 / retry
-      - 동일 Key에 overwrite는 허용 (idempotent)
+    - Cache-Control: .m3u8 no-cache / .ts immutable 1y / thumb 7d
+    - 동일 Key overwrite 허용 (idempotent)
+    - boto3 자체 retry 끄고 명시적 backoff/retry 운용
     """
+    import botocore.config
+
+    workers = max(1, int(max_concurrency))
+
     s3 = boto3.client(
         "s3",
         endpoint_url=endpoint_url,
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
         region_name=region,
+        config=botocore.config.Config(
+            max_pool_connections=workers * 2,
+            retries={"max_attempts": 1, "mode": "standard"},
+        ),
     )
 
     transfer_cfg = TransferConfig(
-        max_concurrency=max_concurrency,
         multipart_threshold=8 * 1024 * 1024,
         multipart_chunksize=8 * 1024 * 1024,
-        use_threads=True,
+        use_threads=False,
     )
 
     local_dir = local_dir.resolve()
 
-    # Collect all files first for progress logging
     all_files = []
     for root, _, files in os.walk(local_dir):
         for name in files:
@@ -74,14 +85,14 @@ def upload_directory(
             all_files.append((full_path, key, name))
 
     total = len(all_files)
-    logger.info("[R2_UPLOAD] Starting upload: %d files to %s", total, prefix)
+    logger.info("[R2_UPLOAD] Starting upload: %d files to %s (workers=%d)", total, prefix, workers)
 
-    for idx, (full_path, key, name) in enumerate(all_files, 1):
+    def _upload_one(item):
+        full_path, key, name = item
         extra = {
             "ContentType": guess_content_type(name),
             "CacheControl": cache_control_for_object(name),
         }
-
         attempt = 0
         while True:
             try:
@@ -92,16 +103,21 @@ def upload_directory(
                     ExtraArgs=extra,
                     Config=transfer_cfg,
                 )
-                break
+                return key
             except Exception as e:
                 attempt += 1
                 if attempt >= retry_max:
                     raise UploadError(f"upload failed key={key} err={trim_tail(str(e))}") from e
                 backoff_sleep(attempt, backoff_base, backoff_cap)
 
-        # Log progress every 500 files or at start/end
-        if idx == 1 or idx == total or idx % 500 == 0:
-            logger.info("[R2_UPLOAD] Progress: %d/%d files uploaded", idx, total)
+    completed = 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_upload_one, item) for item in all_files]
+        for fut in as_completed(futures):
+            fut.result()
+            completed += 1
+            if completed == 1 or completed == total or completed % 500 == 0:
+                logger.info("[R2_UPLOAD] Progress: %d/%d files uploaded", completed, total)
 
     logger.info("[R2_UPLOAD] Upload complete: %d files", total)
 
