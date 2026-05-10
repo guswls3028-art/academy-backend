@@ -300,6 +300,11 @@ class HitReportDraftView(View):
             cand = []
             sim_results = sim_by_eid.get(ep.id, [])
             for cp, sim in sim_results:
+                # page_index 노출 (2026-05-11): 학원장이 보고서에서 후보 "다시 자르기"
+                # 진입 시 ManualCropModal 의 initialPage 로 활용 → thumbnail 클릭 1단계 절감.
+                # cp.meta 는 dict 또는 None. page_index 미존재 시 None (frontend null 처리).
+                cp_meta = cp.meta if isinstance(cp.meta, dict) else {}
+                page_index = cp_meta.get("page_index")
                 cand.append({
                     "id": cp.id,
                     "document_id": cp.document_id,
@@ -307,6 +312,7 @@ class HitReportDraftView(View):
                     "text_preview": (cp.text or "")[:120],
                     "similarity": round(sim, 4),
                     "image_key": cp.image_key,
+                    "page_index": int(page_index) if isinstance(page_index, int) else None,
                 })
                 all_candidate_ids.add(cp.id)
 
@@ -349,7 +355,7 @@ class HitReportDraftView(View):
                     pid for e in entries_by_pid.values()
                     for pid in (e.selected_problem_ids or [])
                 ],
-            ).only("id", "image_key", "document_id", "number", "text")
+            ).only("id", "image_key", "document_id", "number", "text", "meta")
             extra_meta = {p.id: p for p in extra_qs}
             for p in extra_qs:
                 if p.image_key:
@@ -415,6 +421,12 @@ class HitReportDraftView(View):
                     "text_preview": (p.text or "")[:120],
                     "image_key": p.image_key,
                     "image_url": url_map.get(p.image_key) if p.image_key else None,
+                    "page_index": (
+                        int((p.meta or {}).get("page_index"))
+                        if isinstance(p.meta, dict)
+                        and isinstance((p.meta or {}).get("page_index"), int)
+                        else None
+                    ),
                     **_doc_label(p.document_id),
                 }
                 for p in extra_meta.values()
