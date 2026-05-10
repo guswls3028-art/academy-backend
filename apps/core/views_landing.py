@@ -114,7 +114,7 @@ def _default_draft_config(tenant):
 
 # 모든 신규/기존 학원 draft에 보장되어야 할 섹션 타입 — 새 섹션 추가 시 여기에 등록.
 # LandingAdminView GET 호출마다 missing 섹션을 enabled=False로 자동 backfill.
-_REQUIRED_SECTION_TYPES = ["hero", "features", "about", "testimonials", "hit_reports", "programs", "faq", "contact"]
+_REQUIRED_SECTION_TYPES = ["hero", "features", "instructor_profile", "about", "management_system", "process_timeline", "testimonials", "hit_reports", "programs", "faq", "contact"]
 
 
 def _backfill_missing_sections(draft: dict) -> dict:
@@ -132,6 +132,12 @@ def _backfill_missing_sections(draft: dict) -> dict:
         max_order += 1
         if sec_type == "hit_reports":
             sections.append({"type": "hit_reports", "enabled": False, "order": max_order, "title": "최근 적중 사례", "description": "우리 학원의 시험지 적중 결과를 소개합니다.", "items": []})
+        elif sec_type == "instructor_profile":
+            sections.append({"type": "instructor_profile", "enabled": False, "order": max_order, "title": "강사 프로필", "description": "", "items": []})
+        elif sec_type == "management_system":
+            sections.append({"type": "management_system", "enabled": False, "order": max_order, "title": "학생 관리 시스템", "description": "수업 외 시간에도 학생을 끊김 없이 챙깁니다.", "items": []})
+        elif sec_type == "process_timeline":
+            sections.append({"type": "process_timeline", "enabled": False, "order": max_order, "title": "수업 진행 흐름", "description": "한 사이클이 어떻게 진행되는지 한눈에 보세요.", "items": []})
         elif sec_type == "about":
             sections.append({"type": "about", "enabled": False, "order": max_order, "title": "소개", "description": ""})
         elif sec_type == "contact":

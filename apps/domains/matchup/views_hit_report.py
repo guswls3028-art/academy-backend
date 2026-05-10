@@ -1196,3 +1196,71 @@ class HitReportLandingPublicView(View):
         return JsonResponse({"reports": result})
 
 
+def _is_report_in_published_landing(tenant, report_id: int) -> bool:
+    """학원장이 자기 published 랜딩의 hit_reports section에 박은 보고서 ID인지 확인.
+
+    이게 True인 보고서만 외부 학부모/학생에게 본문(PDF) 공개. 학원장 picker 빼면 즉시 비공개.
+    """
+    from apps.core.models import LandingPage
+    try:
+        landing = LandingPage.objects.get(tenant=tenant, is_published=True)
+    except LandingPage.DoesNotExist:
+        return False
+    pub = landing.published_config or {}
+    for sec in (pub.get("sections") or []):
+        if sec.get("type") != "hit_reports" or not sec.get("enabled"):
+            continue
+        for it in (sec.get("items") or []):
+            try:
+                if int(it.get("report_id")) == int(report_id):
+                    return True
+            except (TypeError, ValueError):
+                continue
+    return False
+
+
+@method_decorator([csrf_exempt, _tenant_required], name="dispatch")
+class HitReportLandingPublicPdfView(View):
+    """GET /api/v1/matchup/landing/public/<report_id>/curated.pdf
+
+    학원 공개 랜딩에서 카드 클릭 시 노출되는 보고서 본문 PDF.
+
+    - 인증 X (외부 학부모/학생 대상)
+    - **공개 게이트**: 학원장이 자기 published 랜딩의 hit_reports section에 직접 picker로 등록한 ID만.
+      picker에서 빼는 즉시 비공개 (다른 보고서 본문 노출 차단).
+    - tenant 격리: subdomain → tenant resolve. 다른 tenant 보고서는 무조건 404.
+    - PDF 응답: 시험지 문항 ↔ 강사 매칭 자료 좌우 비교 + 강사 코멘트.
+    """
+
+    def get(self, request, report_id):
+        tenant = request.tenant
+        if not _is_report_in_published_landing(tenant, report_id):
+            return JsonResponse({"detail": "Not found"}, status=404)
+        try:
+            report = MatchupHitReport.objects.select_related("document", "author").get(
+                id=report_id, tenant=tenant,
+            )
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        try:
+            from .pdf_report import generate_curated_hit_report_pdf
+            pdf_bytes = generate_curated_hit_report_pdf(report)
+        except Exception:
+            logger.exception("public_landing_pdf failed (report=%s)", report.id)
+            return JsonResponse({"detail": "PDF 생성 실패"}, status=500)
+
+        from urllib.parse import quote
+        title = report.title or (report.document.title if report.document else "") or f"hit-report-{report.id}"
+        safe_name = quote(title[:80])
+        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+        # inline → 브라우저에서 바로 미리보기 (다운로드 아님). 학부모가 새 탭에서 즉시 확인.
+        resp["Content-Disposition"] = (
+            f"inline; filename=\"hit-report-{report.id}.pdf\"; "
+            f"filename*=UTF-8''{safe_name}.pdf"
+        )
+        # 5분 cache — 학원장이 picker에서 빼면 5분 내 무효화. 동시 부하 완충.
+        resp["Cache-Control"] = "public, max-age=300"
+        return resp
+
+
