@@ -38,9 +38,13 @@ ALLOWED_COLORS = {
     "#D946EF",  # Fuchsia
 }
 
-SECTION_TYPES = {"hero", "features", "testimonials", "about", "programs", "faq", "contact", "notice"}
-MAX_SECTION_ITEMS = 6
-MAX_SECTIONS = 8
+SECTION_TYPES = {
+    "hero", "features", "testimonials", "about", "programs", "faq", "contact", "notice",
+    # v1.2.x 추가 — 1인 강사 사이트 풀 보강용
+    "hit_reports", "instructor_profile", "management_system", "process_timeline",
+}
+MAX_SECTION_ITEMS = 12  # process_timeline은 7주 + 직보 = 7+, management_system은 6 카드 — 6은 너무 빡빡
+MAX_SECTIONS = 14       # 신규 섹션 4종 추가 + 여유
 
 # ─────────────────────────────────────────────────
 # 템플릿 메타데이터 (프론트 갤러리용)
@@ -197,10 +201,10 @@ def _validate_config(data: dict) -> list[str]:
     if tagline and len(tagline) > 100:
         errors.append("한 줄 소개는 100자 이내여야 합니다.")
 
-    # cta_link XSS 방지: / 또는 https:// 로 시작해야 함
+    # cta_link XSS 방지: 허용된 프로토콜만 (내부 path / https / tel / mailto)
     cta_link = data.get("cta_link", "")
-    if cta_link and not (cta_link.startswith("/") or cta_link.startswith("https://")):
-        errors.append("CTA 링크는 /로 시작하거나 https:// URL이어야 합니다.")
+    if cta_link and not (cta_link.startswith("/") or cta_link.startswith("https://") or cta_link.startswith("tel:") or cta_link.startswith("mailto:")):
+        errors.append("CTA 링크는 /로 시작하거나 https://·tel:·mailto: URL이어야 합니다.")
 
     return errors
 
