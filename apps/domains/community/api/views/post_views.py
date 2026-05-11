@@ -22,7 +22,7 @@ from apps.domains.community.selectors import (
     get_post_counts_by_node,
 )
 from apps.domains.community.services import CommunityService
-from apps.domains.community.models import PostReply, PostAttachment
+from apps.domains.community.models import PostReply, PostAttachment, PostLike, PostReplyLike
 from apps.domains.student_app.permissions import get_request_student
 from apps.core.permissions import TenantResolvedAndMember
 
@@ -630,6 +630,64 @@ class PostViewSet(viewsets.ModelViewSet):
             serializer.validated_data["content"] = sanitize_html(content)
         serializer.save()
         return Response(serializer.data)
+
+    @action(detail=True, methods=["post", "delete"], url_path="like")
+    def like(self, request, pk=None):
+        """POST/DELETE /posts/:id/like/ — 글 좋아요 토글.
+
+        - 인증 필수(TenantResolvedAndMember). 비로그인 외부인 차단.
+        - unique (post, user): 같은 사용자가 같은 글에 좋아요 1회.
+        - POST: 좋아요 생성(이미 있으면 그대로). DELETE: 좋아요 제거.
+        - 응답: {liked: bool, count: int}
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post = get_post_by_id(tenant, int(pk))
+        if not post:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if request.method == "DELETE":
+            PostLike.objects.filter(post=post, user=user, tenant=tenant).delete()
+            liked = False
+        else:
+            PostLike.objects.get_or_create(post=post, user=user, defaults={"tenant": tenant})
+            liked = True
+
+        count = PostLike.objects.filter(post=post, tenant=tenant).count()
+        return Response({"liked": liked, "count": count})
+
+    @action(detail=True, methods=["post", "delete"], url_path=r"replies/(?P<reply_id>[^/.]+)/like")
+    def reply_like(self, request, pk=None, reply_id=None):
+        """POST/DELETE /posts/:id/replies/:reply_id/like/ — 댓글 좋아요 토글."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post = get_post_by_id(tenant, int(pk))
+        if not post:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            reply = PostReply.objects.get(post=post, id=int(reply_id), tenant=tenant)
+        except (PostReply.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if request.method == "DELETE":
+            PostReplyLike.objects.filter(reply=reply, user=user, tenant=tenant).delete()
+            liked = False
+        else:
+            PostReplyLike.objects.get_or_create(reply=reply, user=user, defaults={"tenant": tenant})
+            liked = True
+
+        count = PostReplyLike.objects.filter(reply=reply, tenant=tenant).count()
+        return Response({"liked": liked, "count": count})
 
 
 def _dispatch_qna_matchup(post, attachments, tenant):

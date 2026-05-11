@@ -4,6 +4,7 @@ from .post_mapping import PostMapping
 from .post_template import PostTemplate
 from .reply import PostReply
 from .attachment import PostAttachment
+from .like import PostLike, PostReplyLike
 
 __all__ = [
     "ScopeNode",
@@ -12,5 +13,7 @@ __all__ = [
     "PostTemplate",
     "PostReply",
     "PostAttachment",
+    "PostLike",
+    "PostReplyLike",
     "POST_TYPE_CHOICES",
 ]

@@ -30,11 +30,33 @@ class PostReplySerializer(serializers.ModelSerializer):
     """QnA 답변 조회/생성. question 필드는 프론트 Answer 타입 호환용(post_id)."""
     question = serializers.IntegerField(source="post_id", read_only=True)
     created_by_display = serializers.SerializerMethodField(read_only=True)
+    like_count = serializers.SerializerMethodField(read_only=True)
+    is_liked = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = PostReply
-        fields = ["id", "post", "question", "content", "created_by", "created_by_display", "author_role", "created_at"]
+        fields = ["id", "post", "question", "content", "created_by", "created_by_display", "author_role", "created_at", "like_count", "is_liked"]
         read_only_fields = ["post", "created_by", "created_at"]
+
+    def get_like_count(self, obj):
+        # annotation 우선, 미존재 시 count() fallback (단건 조회 path)
+        n = getattr(obj, "like_count_anno", None)
+        if n is not None:
+            return n
+        try:
+            return obj.likes.count()
+        except Exception:
+            return 0
+
+    def get_is_liked(self, obj):
+        request = self.context.get("request") if hasattr(self, "context") else None
+        user = getattr(request, "user", None) if request else None
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
+        try:
+            return obj.likes.filter(user_id=user.id).exists()
+        except Exception:
+            return False
 
     def get_created_by_display(self, obj):
         author_role = (getattr(obj, "author_role", None) or "").lower()
@@ -86,6 +108,27 @@ class PostEntitySerializer(serializers.ModelSerializer):
     replies_count = serializers.SerializerMethodField(read_only=True)
     created_by_display = serializers.SerializerMethodField(read_only=True)
     created_by_deleted = serializers.SerializerMethodField(read_only=True)
+    like_count = serializers.SerializerMethodField(read_only=True)
+    is_liked = serializers.SerializerMethodField(read_only=True)
+
+    def get_like_count(self, obj):
+        n = getattr(obj, "like_count_anno", None)
+        if n is not None:
+            return n
+        try:
+            return obj.likes.count()
+        except Exception:
+            return 0
+
+    def get_is_liked(self, obj):
+        request = self.context.get("request") if hasattr(self, "context") else None
+        user = getattr(request, "user", None) if request else None
+        if not user or not getattr(user, "is_authenticated", False):
+            return False
+        try:
+            return obj.likes.filter(user_id=user.id).exists()
+        except Exception:
+            return False
 
     def get_post_type_label(self, obj):
         return obj.get_post_type_display() if getattr(obj, "post_type", None) else None
@@ -145,6 +188,8 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "published_at",
             "created_at",
             "replies_count",
+            "like_count",
+            "is_liked",
             "mappings",
             "attachments",
             "meta",
