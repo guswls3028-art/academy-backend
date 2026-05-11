@@ -22,7 +22,7 @@ from apps.domains.community.selectors import (
     get_post_counts_by_node,
 )
 from apps.domains.community.services import CommunityService
-from apps.domains.community.models import PostReply, PostAttachment, PostLike, PostReplyLike, CommunityReport
+from apps.domains.community.models import PostEntity, PostReply, PostAttachment, PostLike, PostReplyLike, CommunityReport
 from apps.domains.student_app.permissions import get_request_student
 from apps.core.permissions import TenantResolvedAndMember
 

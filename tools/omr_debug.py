@@ -282,7 +282,7 @@ if __name__ == "__main__":
     elif args.cmd == "coords":
         cmd_coords(args)
     elif args.cmd == "batch":
-        cmd_batch(args)
+        cmd_batch(args)  # noqa: F821 (cmd_batch 정의는 main 다음에 위치 — 호출 시점엔 모듈 로드 완료)
     else:
         parser.print_help()
 
