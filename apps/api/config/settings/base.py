@@ -44,6 +44,9 @@ VIDEO_WORKER_INSTANCE_ID = os.getenv("VIDEO_WORKER_INSTANCE_ID")
 LAMBDA_INTERNAL_API_KEY = os.environ.get("LAMBDA_INTERNAL_API_KEY")
 # Internal API 허용 소스 CIDR (쉼표 구분). Lambda VPC(10.1.0.0/16) + API VPC(172.30.0.0/16). 비어 있으면 IP 검사 생략.
 INTERNAL_API_ALLOW_IPS = os.environ.get("INTERNAL_API_ALLOW_IPS", "").strip()
+# 신뢰 프록시 CIDR (쉼표 구분). 이 범위에서 직접 연결한 peer 의 X-Forwarded-For 만 신뢰.
+# 비어 있으면 후방 호환을 위해 XFF 우선 사용 (운영 환경에서는 ALB VPC CIDR 명시 권장).
+TRUSTED_PROXY_CIDRS = os.environ.get("TRUSTED_PROXY_CIDRS", "").strip()
 
 # ==================================================
 # MULTI TENANT (SSOT – Host Based Only)
@@ -189,6 +192,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "apps.api.common.middleware.SentryContextMiddleware",
+    "apps.api.common.middleware.MustChangePasswordGate",
     "apps.api.common.middleware.UnhandledExceptionMiddleware",
 ]
 

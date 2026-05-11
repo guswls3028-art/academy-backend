@@ -215,11 +215,16 @@ def run_matchup_manual_index(
     except Exception:
         pass
 
-    # 이미지 CLIP 임베딩 — OCR 텍스트 약해도 시각 매칭 보강
-    # Stage 6.3S: CLIP 입력은 raw crop 그대로. _preprocess_camera_image (CLAHE+deskew+Unsharp)
-    # 결과는 OCR 정확도 향상용이며, CLIP image embedding 입력으로 쓰면 auto problem
-    # (raw crop 입력) 과 distribution shift → manual ↔ auto cross matching 정확도 저하.
-    # backfill_manual_clip_embedding cmd 로 코드 fix 이전 manual problem 재계산 가능.
+    # 이미지 CLIP 임베딩 — OCR 텍스트 약해도 시각 매칭 보강.
+    #
+    # CLIP raw-crop contract (Stage 6.3S, 2026-05-07):
+    #   이전 결함: is_camera_capture 일 때 _preprocess_camera_image (CLAHE + deskew +
+    #   Unsharp) 결과를 CLIP image embedding 입력에도 그대로 사용. OCR 정확도엔 도움
+    #   되지만 CLIP backbone 은 raw crop color distribution / edge texture 학습 분포에
+    #   민감 → manual ↔ auto cross matching 정확도 저하.
+    #   preprocessing_input_contract.EmbeddingInputImage 는 raw crop 우선 + 최대 mild
+    #   CLAHE 만 허용 (binary / strong contrast / deskew 금지).
+    # fix: CLIP 입력은 항상 raw local_path2. _preprocess_camera_image 결과는 OCR 만.
     image_embedding = None
     try:
         from academy.adapters.ai.embedding.image_service import get_image_embeddings
