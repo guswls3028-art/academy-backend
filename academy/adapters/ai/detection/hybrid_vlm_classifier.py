@@ -91,12 +91,16 @@ def classify_box_image(
         {"inline_data": {"mime_type": "image/jpeg", "data": image_b64}},
     ]
     try:
+        # enforce_per_doc_cap=False (2026-05-11): VLM auto-split 이 같은 doc 의 50 cap
+        # 소진 후 Hybrid filter 가 RuntimeError 로 fail-soft keep 하던 결함 fix.
+        # Hybrid 는 자체 cost_cap_calls + tenant daily cap 으로 안전 관리.
         resp = _gemini_request(
             model="gemini-2.5-flash",
             parts=parts,
             response_schema_hint='{"classification": "..."}',
             document_id=document_id,
             tenant_id=tenant_id,
+            enforce_per_doc_cap=False,
         )
     except Exception as e:
         return f"_error:{type(e).__name__}"

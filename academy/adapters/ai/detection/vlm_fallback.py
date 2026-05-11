@@ -291,6 +291,7 @@ def _gemini_request(
     response_schema_hint: str = "",
     document_id: str | int | None = None,
     tenant_id: str | int | None = None,
+    enforce_per_doc_cap: bool = True,
 ) -> Dict[str, Any]:
     """Gemini generateContent REST 호출. JSON 응답 강제.
 
@@ -303,6 +304,13 @@ def _gemini_request(
     Cost cap (P0-2, 2026-05-04):
     - doc별: _check_doc_quota (ASG 재기동 시 reset)
     - tenant별 일별: _check_tenant_quota (date key 변경 시 자동 reset)
+
+    enforce_per_doc_cap (2026-05-11):
+    - True (default): VLM auto-split path — doc 50 cap 적용 (cost 보호 본 의도).
+    - False: 동일 doc의 별도 path (Hybrid VLM verifier 등) — doc cap 우회.
+      tenant cap (daily 500) + 호출자 자체 cost_cap_calls 는 그대로 적용.
+      사유: auto-split 이 doc cap 소진 후 Hybrid filter 가 같은 doc 의 모든 box 를
+      RuntimeError 로 fail-soft keep → filter 효과 0 결함 fix.
     """
     import json as _json
     import time as _time
@@ -314,7 +322,8 @@ def _gemini_request(
         raise RuntimeError("GEMINI_API_KEY not set (SSM /academy/workers/env 확인)")
 
     _check_tenant_quota(tenant_id)  # tenant cap 먼저 (광범위)
-    _check_doc_quota(document_id)
+    if enforce_per_doc_cap:
+        _check_doc_quota(document_id)
 
     # DB 영구 카운터 — quota service 통합 (모니터링 + enforcement 가능, P0-2 보강)
     # tenant context 없으면 silent skip (admin script 등에서 호출 시).
