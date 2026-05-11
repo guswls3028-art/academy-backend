@@ -1744,6 +1744,43 @@ class HitReportShareMetaView(View):
             other_ids = []
         other_ids = other_ids[:6]
 
+        # 다른 보고서 카드 메타 inline — frontend가 별도 /matchup/landing/public 호출 안 하게 끔.
+        # 학생 share page 첫 진입 latency: 2 round-trip → 1 round-trip (#67 cycle 9, 2026-05-12).
+        other_reports: list[dict] = []
+        if other_ids:
+            sib_reports = list(
+                MatchupHitReport.objects.filter(
+                    tenant=tenant, id__in=other_ids,
+                ).select_related("document")
+            )
+            sib_entries = MatchupHitReportEntry.objects.filter(
+                tenant=tenant,
+                report_id__in=[r.id for r in sib_reports],
+                excluded=False,
+            ).only("id", "report_id", "selected_problem_ids", "comment")
+            sib_curated: dict = {}
+            for e in sib_entries:
+                if (e.selected_problem_ids or []) or (e.comment or "").strip():
+                    sib_curated[e.report_id] = sib_curated.get(e.report_id, 0) + 1
+            # 응답 순서 = ordered_ids 보존 (학원장이 picker에 박은 순서).
+            by_id = {r.id: r for r in sib_reports}
+            for rid in other_ids:
+                r = by_id.get(rid)
+                if not r:
+                    continue
+                d = r.document
+                tot = (d.problem_count if d else 0) or 0
+                ht = sib_curated.get(r.id, 0)
+                rp = round((ht / tot * 100) if tot else 0, 1)
+                other_reports.append({
+                    "id": r.id,
+                    "doc_title": (d.title if d else "") or "",
+                    "doc_category": (d.category if d else "") or "",
+                    "hit_count": ht,
+                    "total_problems": tot,
+                    "hit_rate_pct": rp,
+                })
+
         return JsonResponse({
             "id": report.id,
             "title": (report.title or "")[:200],
@@ -1758,7 +1795,9 @@ class HitReportShareMetaView(View):
             "tenant_name": getattr(tenant, "display_name", "") or getattr(tenant, "name", "") or "",
             "tenant_code": getattr(tenant, "code", "") or "",
             "pdf_url": f"/api/v1/matchup/share/{token}/curated.pdf",
+            # backward-compat: 기존 frontend가 other_report_ids로 fetch 했음. inline cards 추가로 round-trip 1회 절약.
             "other_report_ids": other_ids,
+            "other_reports": other_reports,
         })
 
 
