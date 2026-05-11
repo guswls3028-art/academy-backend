@@ -204,6 +204,14 @@ class PostViewSet(viewsets.ModelViewSet):
                 Q(mappings__isnull=True) | Q(id__in=scoped_post_ids)
             ).distinct()
 
+        # 검색 q — 제목/내용 icontains. tenant scope는 이미 위에서 적용됨.
+        # 2026-05-11 보안 리뷰 M2: frontend가 q 파라미터를 보내지만 server는 무시했음.
+        q = (request.query_params.get("q") or "").strip()[:100]
+        if q:
+            qs = qs.filter(
+                Q(title__icontains=q) | Q(content__icontains=q) | Q(author_display_name__icontains=q)
+            ).distinct()
+
         try:
             page_size = min(int(request.query_params.get("page_size") or 50), 200)
         except (TypeError, ValueError):
