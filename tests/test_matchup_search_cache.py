@@ -14,7 +14,7 @@ import pytest
 
 
 def test_cache_module_get_set_roundtrip():
-    """redis client 정상 동작 시 set → get 동일 [(id, score)] 반환."""
+    """redis client 정상 동작 시 set → get 동일 [(id, score, breakdown)] 반환."""
     from apps.domains.matchup import cache as mc
 
     fake_redis = MagicMock()
@@ -30,20 +30,24 @@ def test_cache_module_get_set_roundtrip():
     fake_redis.set.side_effect = _set
     fake_redis.get.side_effect = _get
 
+    bd1 = {"text_sim": 0.92, "image_sim": 0.81, "is_manual": True, "is_page_fallback": False}
+    bd2 = {"text_sim": 0.85, "image_sim": None, "is_manual": False, "is_page_fallback": False}
+    bd3 = {"text_sim": 0.79, "image_sim": 0.70, "is_manual": False, "is_page_fallback": True}
+
     with patch("apps.domains.matchup.cache.get_redis_client", return_value=fake_redis):
         mc.set_cached_similar(
             tenant_id=1, problem_id=42, top_k=10, author_id=7,
-            results=[(101, 0.95), (102, 0.88), (103, 0.81)],
+            results=[(101, 0.95, bd1), (102, 0.88, bd2), (103, 0.81, bd3)],
         )
         result = mc.get_cached_similar(
             tenant_id=1, problem_id=42, top_k=10, author_id=7,
         )
 
-    assert result == [(101, 0.95), (102, 0.88), (103, 0.81)]
-    # TTL 1h 적용 확인
+    assert result == [(101, 0.95, bd1), (102, 0.88, bd2), (103, 0.81, bd3)]
+    # TTL 5분 (2026-05-05 학원장 결함 fix: manual cut 즉시 반영 위해 단축)
     fake_redis.set.assert_called_once()
     _, kwargs = fake_redis.set.call_args
-    assert kwargs["ex"] == 3600
+    assert kwargs["ex"] == 300
 
 
 def test_cache_key_includes_all_params():
@@ -78,7 +82,8 @@ def test_cache_fail_open_when_redis_unavailable():
         # set 도 예외 없이 silent return
         mc.set_cached_similar(
             tenant_id=1, problem_id=42, top_k=10, author_id=None,
-            results=[(101, 0.9)],
+            results=[(101, 0.9, {"text_sim": 0.9, "image_sim": None,
+                                  "is_manual": False, "is_page_fallback": False})],
         )
 
     assert result is None

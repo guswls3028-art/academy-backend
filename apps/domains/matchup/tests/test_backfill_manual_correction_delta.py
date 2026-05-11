@@ -179,3 +179,68 @@ class CommandLogicTests(TestCase):
     def test_default_sample_reasonable(self):
         self.assertGreaterEqual(cmd_module.DEFAULT_SAMPLE, 0)
         self.assertLessEqual(cmd_module.DEFAULT_SAMPLE, 50)
+
+
+class SkipClassificationTests(TestCase):
+    """skip_merged 분류 정적 검증 — meta.merged=True + bbox 없음 → skip_merged.
+
+    command source 의 분류 로직을 정적 검사 + integration smoke 로 검증.
+    """
+
+    def test_skip_merged_category_exists_in_source(self):
+        src = inspect.getsource(cmd_module)
+        # skip_merged 카운터 정의 + 분류 분기 + sample 보존
+        self.assertIn("skip_merged", src)
+        self.assertIn('meta.get("merged") is True', src)
+        self.assertIn("merged_samples", src)
+
+    def test_skip_merged_sample_records_audit_fields(self):
+        """sample dict 가 problem_id / doc_id / number / merged_from /
+        merged_numbers / image_key 을 audit trail 로 보존."""
+        src = inspect.getsource(cmd_module)
+        # sample 구성 키 확인
+        for required_key in (
+            '"problem_id"', '"doc_id"', '"number"',
+            '"merged_from"', '"merged_numbers"', '"image_key"',
+        ):
+            self.assertIn(required_key, src,
+                          f"merged_samples 에 {required_key} 보존 안 됨")
+
+    def test_general_no_bbox_still_classified_as_skip_no_bbox(self):
+        """merge 가 아닌 일반 manual=True + bbox 없음 — skip_no_bbox 유지."""
+        src = inspect.getsource(cmd_module)
+        # merge 가 False 인 경우 skip_no_bbox 분기 유지
+        self.assertIn("skip_no_bbox += 1", src)
+        # bbox_invalid + meta.merged != True path 가 skip_no_bbox 로 떨어지는지
+        # 간접 검증 — 현재 구현이 "if meta.get('merged') is True: skip_merged ...
+        # continue / skip_no_bbox += 1" 순서. order 검증.
+        merged_idx = src.find('meta.get("merged") is True')
+        no_bbox_first = src.find("skip_no_bbox += 1", merged_idx)
+        self.assertGreater(no_bbox_first, merged_idx,
+                           "skip_no_bbox 분기가 skip_merged 분기 뒤에 와야 함")
+
+    def test_skip_merged_does_not_trigger_actual_insert(self):
+        """skip_merged path 는 candidates 에 추가 X — actual INSERT 대상 아님.
+
+        merged 분기 (`if meta.get("merged") is True:` ... `continue`) 안에
+        candidates.append 가 없어야 함.
+        """
+        src = inspect.getsource(cmd_module)
+        merged_block_start = src.find('if meta.get("merged") is True:')
+        # merged 분기는 첫 `continue` 로 끝남 (분기 내부에 한 번)
+        first_continue = src.find("continue", merged_block_start)
+        self.assertGreater(first_continue, merged_block_start,
+                           "merged 분기 안에 continue 가 있어야")
+        merged_block = src[merged_block_start:first_continue + len("continue")]
+        self.assertNotIn("candidates.append", merged_block,
+                         "skip_merged 분기 안에서 candidates.append 가 있으면 안 됨")
+        # candidates.append 는 dedup/insert path 의 마지막에만 1회 (skip 분기 외부)
+        self.assertEqual(
+            src.count("candidates.append"), 1,
+            "candidates.append 는 정확히 1곳 (정상 path 끝) 에서만 호출",
+        )
+
+    def test_skip_merged_summary_in_stdout_writer(self):
+        """summary 출력에 skip_merged 항목 포함 (운영자 가시성)."""
+        src = inspect.getsource(cmd_module)
+        self.assertIn("skip_merged={skip_merged}", src)

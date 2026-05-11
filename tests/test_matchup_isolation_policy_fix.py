@@ -151,7 +151,7 @@ def test_test_paper_source_isolated_within_category(tenant, author):
         author_id=author.id,
     )
 
-    found_ids = {p.id for p, _ in results}
+    found_ids = {p.id for p, _, _ in results}
     assert ref_same_cat.id in found_ids, "같은 카테고리 자료는 후보로 떠야 함"
     assert ref_other_cat.id not in found_ids, (
         "다른 카테고리 자료는 cross-school 격리로 후보에서 제외 (db8ecb77 회귀 락)"
@@ -199,7 +199,7 @@ def test_reference_source_stays_within_category(tenant, author):
         author_id=author.id,
     )
 
-    found_ids = {p.id for p, _ in results}
+    found_ids = {p.id for p, _, _ in results}
     assert ref_same_cat.id in found_ids, "자료 source 는 같은 카테고리 자료를 후보로 받아야 함"
     assert ref_other_cat.id not in found_ids, (
         "자료 source 는 다른 카테고리 자료를 후보에서 제외해야 함 (회귀 락)"
@@ -256,7 +256,7 @@ def test_test_paper_self_doc_excluded(tenant, author):
         author_id=author.id,
     )
 
-    found_ids = {p.id for p, _ in results}
+    found_ids = {p.id for p, _, _ in results}
     assert p2_same_doc.id not in found_ids, "self-doc trap — 자기 doc problem 은 후보에서 제외"
     assert ref_other_doc.id in found_ids, "다른 doc 의 자료는 후보로 떠야 함"
 
@@ -294,5 +294,5 @@ def test_author_isolation_preserved(tenant):
         author_id=author_a.id,
     )
 
-    found_ids = {p.id for p, _ in results}
+    found_ids = {p.id for p, _, _ in results}
     assert ref_b.id not in found_ids, "다른 강사 자료는 후보 풀에서 제외 (강사 1인 격리 SSOT)"
