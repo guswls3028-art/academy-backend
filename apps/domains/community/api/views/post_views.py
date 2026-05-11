@@ -246,6 +246,65 @@ class PostViewSet(viewsets.ModelViewSet):
     def materials(self, request):
         """GET /community/posts/materials/ — 자료실 목록."""
         return self._list_by_type(request, "materials")
+    @action(detail=False, methods=["get"], url_path="my-activity")
+    def my_activity(self, request):
+        """GET /community/posts/my-activity/?days=30
+        본인 활동 카운트 + 학생 ranking 등수(학생인 경우만). 학생/학부모/staff 모두 사용 가능.
+        SSOT: AdminCommunityStatsView의 top_students 알고리즘 재사용.
+        """
+        from datetime import timedelta
+        from django.db.models import Count, F, Q
+        from django.utils import timezone
+        from apps.domains.community.models import PostLike, PostReplyLike
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            days = max(1, min(int(request.query_params.get("days") or 30), 365))
+        except (TypeError, ValueError):
+            days = 30
+        since = timezone.now() - timedelta(days=days)
+
+        request_student = get_request_student(request)
+        if request_student is None:
+            # staff 본인: 본인 PostEntity(created_by=null이지만 author_display_name + author_role=staff) 카운트는 별도. 단순화: staff는 본인 활동 X.
+            return Response({"is_student": False, "days": days, "post_count": 0, "reply_count": 0, "received_likes": 0, "rank": None, "total_active_students": 0})
+
+        # 학생 본인 카운트
+        post_count = PostEntity.objects.filter(tenant=tenant, created_by=request_student, created_at__gte=since).count()
+        reply_count = PostReply.objects.filter(tenant=tenant, created_by=request_student, created_at__gte=since).count()
+        # 받은 좋아요 (본인 글 + 댓글)
+        received_post_likes = PostLike.objects.filter(tenant=tenant, post__created_by=request_student, created_at__gte=since).count()
+        received_reply_likes = PostReplyLike.objects.filter(tenant=tenant, reply__created_by=request_student, created_at__gte=since).count()
+        received_likes = received_post_likes + received_reply_likes
+
+        # ranking — 본인 score + 본인보다 높은 점수 학생 수
+        from apps.domains.students.models import Student
+        ranking_qs = (
+            Student.objects.filter(tenant=tenant, deleted_at__isnull=True)
+            .annotate(
+                pc=Count("post_entities", filter=Q(post_entities__created_at__gte=since), distinct=True),
+                rc=Count("post_replies", filter=Q(post_replies__created_at__gte=since), distinct=True),
+            )
+            .annotate(activity_score=F("pc") + F("rc"))
+            .filter(activity_score__gt=0)
+        )
+        my_score = post_count + reply_count
+        rank = None
+        total_active = ranking_qs.count()
+        if my_score > 0:
+            higher = ranking_qs.filter(activity_score__gt=my_score).count()
+            rank = higher + 1
+        return Response({
+            "is_student": True,
+            "days": days,
+            "post_count": post_count,
+            "reply_count": reply_count,
+            "received_likes": received_likes,
+            "score": my_score,
+            "rank": rank,
+            "total_active_students": total_active,
+        })
 
     @action(detail=False, methods=["get"], url_path="counts")
     def counts(self, request):

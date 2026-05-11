@@ -58,6 +58,26 @@ class AdminPostViewSet(viewsets.GenericViewSet):
             return get_empty_post_queryset()
         return get_all_posts_for_tenant(tenant, include_unpublished=True)
 
+    @action(detail=False, methods=["post"], url_path="bulk-status")
+    def bulk_status(self, request):
+        """POST /community/admin/posts/bulk-status/ — 다중 선택 글 일괄 status 변경.
+
+        학원장 운영 도구(#41): 오래된 글 일괄 archive, draft 일괄 게시 등.
+        body: {ids: [int], status: "published"|"archived"|"draft"}
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        ids = request.data.get("ids") or []
+        new_status = (request.data.get("status") or "").strip().lower()
+        if not isinstance(ids, list) or not ids:
+            return Response({"detail": "ids 비어있습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        if new_status not in {"published", "archived", "draft"}:
+            return Response({"detail": f"허용되지 않는 status: {new_status}"}, status=status.HTTP_400_BAD_REQUEST)
+        # tenant 격리 보장 — 입력 id가 다른 tenant의 글이어도 update 안 됨
+        updated = PostEntity.objects.filter(tenant=tenant, id__in=ids).update(status=new_status)
+        return Response({"updated": updated, "status": new_status})
+
 
 class AdminReportsViewSet(viewsets.GenericViewSet):
     """학원장 admin: 신고함 console.
