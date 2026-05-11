@@ -4,6 +4,8 @@ from .views import (
     PostViewSet, AdminPostViewSet, AdminReportsViewSet, CommunityStatsView, CommunityUserBlockView, ScopeNodeViewSet, PostTemplateViewSet,
     PlatformInboxListView, PlatformInboxReplyView, PlatformInboxDeleteReplyView,
     PlatformInboxAttachmentDownloadView,
+    CommunityNotificationListView, CommunityNotificationUnreadCountView,
+    CommunityNotificationReadView, CommunityNotificationMarkAllReadView,
 )
 
 router = DefaultRouter()
@@ -21,6 +23,11 @@ urlpatterns = [
     path("admin/stats/", CommunityStatsView.as_view(), name="community-admin-stats"),
     path("admin/user-blocks/", CommunityUserBlockView.as_view(), name="community-admin-user-block-list"),
     path("admin/user-blocks/<int:user_id>/", CommunityUserBlockView.as_view(), name="community-admin-user-block-detail"),
+    # Notifications (학생/학부모/staff 본인 알림)
+    path("notifications/", CommunityNotificationListView.as_view(), name="community-notification-list"),
+    path("notifications/unread-count/", CommunityNotificationUnreadCountView.as_view(), name="community-notification-unread-count"),
+    path("notifications/<int:pk>/read/", CommunityNotificationReadView.as_view(), name="community-notification-read"),
+    path("notifications/mark-all-read/", CommunityNotificationMarkAllReadView.as_view(), name="community-notification-mark-all-read"),
     # Platform inbox (superuser only — dev_app)
     path("platform/inbox/", PlatformInboxListView.as_view(), name="platform-inbox-list"),
     path("platform/inbox/<int:post_id>/replies/", PlatformInboxReplyView.as_view(), name="platform-inbox-reply"),

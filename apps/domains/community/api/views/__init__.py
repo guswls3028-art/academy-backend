@@ -8,6 +8,12 @@ from .platform_inbox_views import (
     PlatformInboxDeleteReplyView,
     PlatformInboxAttachmentDownloadView,
 )
+from .notification_views import (
+    CommunityNotificationListView,
+    CommunityNotificationUnreadCountView,
+    CommunityNotificationReadView,
+    CommunityNotificationMarkAllReadView,
+)
 
 __all__ = [
     "PostViewSet",
@@ -21,4 +27,8 @@ __all__ = [
     "PlatformInboxReplyView",
     "PlatformInboxDeleteReplyView",
     "PlatformInboxAttachmentDownloadView",
+    "CommunityNotificationListView",
+    "CommunityNotificationUnreadCountView",
+    "CommunityNotificationReadView",
+    "CommunityNotificationMarkAllReadView",
 ]

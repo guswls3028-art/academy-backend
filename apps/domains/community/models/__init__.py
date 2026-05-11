@@ -7,6 +7,7 @@ from .attachment import PostAttachment
 from .like import PostLike, PostReplyLike
 from .report import CommunityReport
 from .user_block import CommunityUserBlock
+from .notification import CommunityNotification
 
 __all__ = [
     "ScopeNode",
@@ -19,5 +20,6 @@ __all__ = [
     "PostReplyLike",
     "CommunityReport",
     "CommunityUserBlock",
+    "CommunityNotification",
     "POST_TYPE_CHOICES",
 ]
