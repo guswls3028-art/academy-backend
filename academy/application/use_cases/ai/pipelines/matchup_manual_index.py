@@ -216,23 +216,19 @@ def run_matchup_manual_index(
         pass
 
     # 이미지 CLIP 임베딩 — OCR 텍스트 약해도 시각 매칭 보강
+    # Stage 6.3S: CLIP 입력은 raw crop 그대로. _preprocess_camera_image (CLAHE+deskew+Unsharp)
+    # 결과는 OCR 정확도 향상용이며, CLIP image embedding 입력으로 쓰면 auto problem
+    # (raw crop 입력) 과 distribution shift → manual ↔ auto cross matching 정확도 저하.
+    # backfill_manual_clip_embedding cmd 로 코드 fix 이전 manual problem 재계산 가능.
     image_embedding = None
     try:
         from academy.adapters.ai.embedding.image_service import get_image_embeddings
         # local_path는 이미 cleanup_tmp_for_path로 정리됐을 수 있음. 다시 다운로드.
         local_path2 = download_to_tmp(download_url=url, job_id=job_id + "_img")
         try:
-            ocr_input_path2 = local_path2
-            if is_camera_capture:
-                pre = _preprocess_camera_image(local_path2)
-                if pre != local_path2:
-                    ocr_input_path2 = pre
-            batch = get_image_embeddings([ocr_input_path2])
+            batch = get_image_embeddings([local_path2])
             if batch.vectors and batch.vectors[0]:
                 image_embedding = batch.vectors[0]
-            if ocr_input_path2 != local_path2:
-                try: os.unlink(ocr_input_path2)
-                except OSError: pass
         finally:
             cleanup_tmp_for_path(local_path2)
     except Exception:
