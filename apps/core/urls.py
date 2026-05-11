@@ -41,6 +41,10 @@ from apps.core.views_landing import (
     LandingUnpublishView,
     LandingUploadImageView,
     LandingTemplatesView,
+    LandingConsultPublicView,
+    LandingConsultAdminListView,
+    LandingConsultAdminDetailView,
+    LandingSitemapView,
 )
 
 router = DefaultRouter()
@@ -84,5 +88,11 @@ urlpatterns = [
     path("landing/unpublish/", LandingUnpublishView.as_view(), name="core-landing-unpublish"),
     path("landing/upload-image/", LandingUploadImageView.as_view(), name="core-landing-upload-image"),
     path("landing/templates/", LandingTemplatesView.as_view(), name="core-landing-templates"),
+    # 상담 요청 form (외부 학부모 → 학원장)
+    path("landing/consult/", LandingConsultPublicView.as_view(), name="core-landing-consult-public"),
+    path("landing/admin/consult/", LandingConsultAdminListView.as_view(), name="core-landing-consult-admin-list"),
+    path("landing/admin/consult/<int:item_id>/", LandingConsultAdminDetailView.as_view(), name="core-landing-consult-admin-detail"),
+    # SEO sitemap.xml
+    path("landing/sitemap.xml", LandingSitemapView.as_view(), name="core-landing-sitemap"),
     path("", include(router.urls)),
 ]

@@ -5,6 +5,7 @@ from .tenant_membership import TenantMembership
 from .user import User, Attendance, Expense
 from .program import Program
 from .landing_page import LandingPage
+from .landing_consult import LandingConsultRequest
 from .ops_audit import OpsAuditLog
 from .worker_heartbeat import WorkerHeartbeatModel
 
@@ -17,6 +18,7 @@ __all__ = [
     "Expense",
     "Program",
     "LandingPage",
+    "LandingConsultRequest",
     "OpsAuditLog",
     "WorkerHeartbeatModel",
 ]

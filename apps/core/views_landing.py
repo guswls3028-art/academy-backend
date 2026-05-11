@@ -519,3 +519,188 @@ class LandingTemplatesView(APIView):
 
     def get(self, request):
         return Response({"templates": TEMPLATE_META})
+
+
+# ─────────────────────────────────────────────────
+# 상담 요청 (학원 홈페이지 contact form)
+# ─────────────────────────────────────────────────
+
+import re as _re
+
+_PERSONAL_MOBILE_PREFIX = ("010", "011", "016", "017", "018", "019")
+_NAME_MAX = 50
+_INTEREST_MAX = 80
+_MESSAGE_MAX = 2000
+
+
+def _validate_consult(data: dict) -> list[str]:
+    errs: list[str] = []
+    name = str(data.get("name") or "").strip()
+    phone = str(data.get("phone") or "").strip()
+    interest = str(data.get("interest") or "").strip()
+    message = str(data.get("message") or "").strip()
+    if not name or len(name) > _NAME_MAX:
+        errs.append(f"이름은 1~{_NAME_MAX}자여야 합니다.")
+    digits = _re.sub(r"[^\d]", "", phone)
+    if not digits or len(digits) < 9 or len(digits) > 15:
+        errs.append("올바른 전화번호를 입력해주세요.")
+    elif not (digits.startswith(_PERSONAL_MOBILE_PREFIX) or digits.startswith("02") or digits[0] == "0"):
+        errs.append("올바른 전화번호 형식이 아닙니다.")
+    if interest and len(interest) > _INTEREST_MAX:
+        errs.append(f"관심 분야는 {_INTEREST_MAX}자 이내여야 합니다.")
+    if message and len(message) > _MESSAGE_MAX:
+        errs.append(f"메시지는 {_MESSAGE_MAX}자 이내여야 합니다.")
+    return errs
+
+
+# 간단한 in-memory rate limit — IP당 1분에 5건. 외부 form spam 완화.
+_consult_rate_window: dict[str, list[float]] = {}
+
+
+def _client_ip(request) -> str:
+    xff = request.META.get("HTTP_X_FORWARDED_FOR") or ""
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.META.get("REMOTE_ADDR") or "unknown"
+
+
+def _is_rate_limited(ip: str, limit: int = 5, window_sec: int = 60) -> bool:
+    import time
+    now = time.time()
+    bucket = _consult_rate_window.setdefault(ip, [])
+    # 윈도우 밖 항목 제거
+    cutoff = now - window_sec
+    bucket[:] = [t for t in bucket if t > cutoff]
+    if len(bucket) >= limit:
+        return True
+    bucket.append(now)
+    return False
+
+
+class LandingConsultPublicView(APIView):
+    """
+    POST /api/v1/core/landing/consult/
+    공개 상담 요청 폼 — 인증 X, tenant 격리(subdomain), rate limit 적용.
+    """
+    permission_classes = [TenantResolved]
+    authentication_classes = []  # 인증 없이 작동
+
+    def post(self, request):
+        ip = _client_ip(request)
+        if _is_rate_limited(ip):
+            return Response({"detail": "너무 빠른 요청입니다. 잠시 후 다시 시도해주세요."}, status=429)
+
+        errs = _validate_consult(request.data or {})
+        if errs:
+            return Response({"detail": errs}, status=400)
+
+        from apps.core.models import LandingConsultRequest
+        obj = LandingConsultRequest.objects.create(
+            tenant=request.tenant,
+            name=str(request.data.get("name") or "").strip()[:_NAME_MAX],
+            phone=str(request.data.get("phone") or "").strip()[:20],
+            interest=str(request.data.get("interest") or "").strip()[:_INTEREST_MAX],
+            message=str(request.data.get("message") or "").strip()[:_MESSAGE_MAX],
+            source=str(request.data.get("source") or "landing").strip()[:40],
+        )
+        logger.info("LandingConsultRequest created tenant=%s id=%s ip=%s", request.tenant.id, obj.id, ip)
+        return Response({"id": obj.id, "ok": True}, status=201)
+
+
+class LandingConsultAdminListView(APIView):
+    """
+    GET /api/v1/core/landing/admin/consult/
+    학원 owner/admin이 받은 상담 요청 리스트.
+    PATCH /api/v1/core/landing/admin/consult/<id>/  → 읽음/메모 update.
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not _check_landing_admin_role(request):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("상담 요청 조회는 원장/관리자만 가능합니다.")
+
+    def get(self, request):
+        from apps.core.models import LandingConsultRequest
+        qs = LandingConsultRequest.objects.filter(tenant=request.tenant)[:200]
+        items = [{
+            "id": r.id,
+            "name": r.name,
+            "phone": r.phone,
+            "interest": r.interest,
+            "message": r.message,
+            "source": r.source,
+            "read_at": r.read_at.isoformat() if r.read_at else None,
+            "admin_memo": r.admin_memo,
+            "created_at": r.created_at.isoformat(),
+        } for r in qs]
+        unread = sum(1 for r in qs if r.read_at is None)
+        return Response({"items": items, "summary": {"total": len(items), "unread": unread}})
+
+
+class LandingConsultAdminDetailView(APIView):
+    """PATCH /api/v1/core/landing/admin/consult/<id>/ — 읽음/메모 update."""
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not _check_landing_admin_role(request):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("상담 요청 처리는 원장/관리자만 가능합니다.")
+
+    def patch(self, request, item_id):
+        from apps.core.models import LandingConsultRequest
+        from django.utils import timezone
+        try:
+            r = LandingConsultRequest.objects.get(id=item_id, tenant=request.tenant)
+        except LandingConsultRequest.DoesNotExist:
+            return Response({"detail": "Not found"}, status=404)
+        data = request.data or {}
+        if "mark_read" in data and data["mark_read"]:
+            r.read_at = r.read_at or timezone.now()
+        if "admin_memo" in data:
+            r.admin_memo = str(data["admin_memo"] or "")[:2000]
+        r.save(update_fields=["read_at", "admin_memo", "updated_at"])
+        return Response({"ok": True})
+
+
+# ─────────────────────────────────────────────────
+# SEO sitemap.xml — 학원 도메인 단위
+# ─────────────────────────────────────────────────
+
+class LandingSitemapView(APIView):
+    """GET /api/v1/core/landing/sitemap.xml — 학원 홈페이지 + 적중 보고서 URL 모음."""
+    permission_classes = [TenantResolved]
+    authentication_classes = []
+    renderer_classes = []  # plain HttpResponse
+
+    def get(self, request):
+        from apps.core.models import LandingPage
+        from django.http import HttpResponse
+        host = request.get_host()
+        scheme = "https"
+        urls = [f"{scheme}://{host}/landing"]
+        try:
+            lp = LandingPage.objects.get(tenant=request.tenant, is_published=True)
+            pub = lp.published_config or {}
+            for sec in (pub.get("sections") or []):
+                if sec.get("type") == "hit_reports" and sec.get("enabled"):
+                    items = sec.get("items") or []
+                    if items:
+                        urls.append(f"{scheme}://{host}/landing/reports")
+                        for it in items:
+                            rid = it.get("report_id")
+                            if isinstance(rid, int):
+                                urls.append(f"{scheme}://{host}/landing/reports/{rid}")
+                    break
+        except LandingPage.DoesNotExist:
+            pass
+
+        body = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        for u in urls:
+            body += f"  <url><loc>{u}</loc></url>\n"
+        body += "</urlset>\n"
+        resp = HttpResponse(body, content_type="application/xml; charset=utf-8")
+        resp["Cache-Control"] = "public, max-age=600"
+        return resp
