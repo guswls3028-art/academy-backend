@@ -1511,22 +1511,26 @@ from django.views.decorators.clickjacking import xframe_options_exempt as _xfram
 
 
 def _resolve_landing_pdf_tenant(request):
-    """iframe raw GET (X-Tenant-Code 헤더 없음) 대응 — ?tenant=<code> query param fallback.
+    """iframe raw GET (X-Tenant-Code 헤더 없음) 대응 — ?tenant=<code> query param 우선.
 
-    학원 도메인 frontend에서 cross-origin api.hakwonplus.com PDF iframe 호출 시 헤더 없으니
-    URL에 tenant code를 query param으로 박아 보냄. 공개 endpoint이므로 안전.
+    P0 fix (2026-05-12): API host(api.hakwonplus.com) middleware 가 default tenant
+    (hakwonplus T1)으로 resolve 하므로 request.tenant 우선 path 는 학원 도메인 iframe
+    호출 시 다른 tenant 의 보고서로 매칭 시도 → 404. 학원 frontend 가 부착한
+    ?tenant=<code> 가 진짜 의도 신호이므로 query 우선.
+
+    공개 endpoint: `_is_report_in_published_landing` 가 그 tenant 의 published 보고서만
+    노출 → 임의 tenant 지정해도 학원장이 picker 박은 ID 만 접근 (보안 영향 0).
     """
-    tenant = getattr(request, "tenant", None)
-    if tenant is not None:
-        return tenant
     code = (request.GET.get("tenant") or "").strip()
-    if not code:
-        return None
-    try:
-        from apps.core.models import Tenant
-        return Tenant.objects.filter(code=code, is_active=True).first()
-    except Exception:
-        return None
+    if code:
+        try:
+            from apps.core.models import Tenant
+            t = Tenant.objects.filter(code=code, is_active=True).first()
+            if t:
+                return t
+        except Exception:
+            pass
+    return getattr(request, "tenant", None)
 
 
 @method_decorator([csrf_exempt, _xframe_exempt], name="dispatch")
