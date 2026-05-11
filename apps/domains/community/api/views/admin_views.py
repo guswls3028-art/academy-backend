@@ -1,5 +1,5 @@
 from datetime import timedelta
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -66,6 +66,15 @@ class AdminReportsViewSet(viewsets.GenericViewSet):
     PATCH  /community/admin/reports/<id>/   — status 변경 (resolved/dismissed)
     """
     permission_classes = [TenantResolvedAndStaff]
+
+    @action(detail=False, methods=["get"], url_path="pending-count")
+    def pending_count(self, request):
+        """학원장 알림 헤더용 — pending 신고 카운트만(빠른 응답)."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"count": 0})
+        c = CommunityReport.objects.filter(tenant=tenant, status=CommunityReport.STATUS_PENDING).count()
+        return Response({"count": c})
 
     def list(self, request, *args, **kwargs):
         tenant = getattr(request, "tenant", None)
@@ -195,6 +204,23 @@ class CommunityStatsView(APIView):
             .values("id", "title", "post_type", "period_likes", "period_replies")[:5]
         )
 
+        # top 활동 학생 (이번 기간 글 + 댓글 합산 상위 5명) — 활동 점수 시스템 #15
+        from apps.domains.students.models import Student
+        top_students_qs = (
+            Student.objects.filter(tenant=tenant, deleted_at__isnull=True)
+            .annotate(
+                post_count=Count("post_entities", filter=Q(post_entities__created_at__gte=since), distinct=True),
+                reply_count=Count("post_replies", filter=Q(post_replies__created_at__gte=since), distinct=True),
+            )
+            .annotate(activity_score=F("post_count") + F("reply_count"))
+            .filter(activity_score__gt=0)
+            .order_by("-activity_score", "name")[:5]
+        )
+        top_students = [
+            {"id": s.id, "name": s.name, "post_count": s.post_count, "reply_count": s.reply_count, "score": s.activity_score}
+            for s in top_students_qs
+        ]
+
         return Response({
             "days": days,
             "posts": {
@@ -212,4 +238,5 @@ class CommunityStatsView(APIView):
                 "by_status": reports_by_status,
             },
             "top_posts": top_posts,
+            "top_students": top_students,
         })
