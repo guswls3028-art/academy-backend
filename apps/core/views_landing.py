@@ -820,6 +820,92 @@ class LandingTestimonialPublicListView(APIView):
         return Response({"items": items})
 
 
+class LandingHitReportToggleView(APIView):
+    """
+    POST /api/v1/core/landing/admin/hit-report-toggle/
+    body: { report_id: int, action: "add"|"remove", auto_publish?: bool=true }
+
+    학원장(owner/admin)이 적중보고서 리스트에서 한 클릭으로 홈페이지 노출 토글.
+    - draft_config.sections[hit_reports].items에 add/remove
+    - hit_reports section 자동 enable
+    - auto_publish=True (기본): publish 즉시 외부 노출 갱신
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not _check_landing_admin_role(request):
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("홈페이지 노출 토글은 원장/관리자만 가능합니다.")
+
+    def post(self, request):
+        try:
+            report_id = int(request.data.get("report_id"))
+        except (TypeError, ValueError):
+            return Response({"detail": "report_id 필수"}, status=400)
+        action = (request.data.get("action") or "").strip()
+        if action not in ("add", "remove"):
+            return Response({"detail": "action은 add 또는 remove"}, status=400)
+        auto_publish = request.data.get("auto_publish", True)
+
+        # 보고서 검증 — 본 학원 보고서만
+        from apps.domains.matchup.models import MatchupHitReport
+        try:
+            MatchupHitReport.objects.get(id=report_id, tenant=request.tenant)
+        except MatchupHitReport.DoesNotExist:
+            return Response({"detail": "보고서를 찾을 수 없습니다"}, status=404)
+
+        landing, _ = LandingPage.objects.get_or_create(
+            tenant=request.tenant,
+            defaults={"draft_config": _default_draft_config(request.tenant)},
+        )
+        # backfill — hit_reports section이 없으면 추가
+        landing.draft_config = _backfill_missing_sections(landing.draft_config)
+        sections = list(landing.draft_config.get("sections") or [])
+        # hit_reports 섹션 찾기
+        hit_idx = None
+        for i, s in enumerate(sections):
+            if s.get("type") == "hit_reports":
+                hit_idx = i; break
+        if hit_idx is None:
+            return Response({"detail": "hit_reports 섹션 누락(backfill 실패)"}, status=500)
+        hit_sec = dict(sections[hit_idx])
+        items = list(hit_sec.get("items") or [])
+        existing_ids = [int(it.get("report_id")) for it in items if isinstance(it.get("report_id"), int)]
+
+        changed = False
+        MAX_REPORTS = 12
+        if action == "add":
+            if report_id in existing_ids:
+                return Response({"ok": True, "noop": True, "registered": True})
+            if len(existing_ids) >= MAX_REPORTS:
+                return Response({"detail": f"홈페이지에는 최대 {MAX_REPORTS}개 보고서까지 노출 가능합니다."}, status=400)
+            items.append({"report_id": report_id})
+            hit_sec["items"] = items
+            hit_sec["enabled"] = True  # auto-enable
+            changed = True
+        else:  # remove
+            if report_id not in existing_ids:
+                return Response({"ok": True, "noop": True, "registered": False})
+            items = [it for it in items if int(it.get("report_id") or -1) != report_id]
+            hit_sec["items"] = items
+            changed = True
+
+        if changed:
+            sections[hit_idx] = hit_sec
+            landing.draft_config = {**landing.draft_config, "sections": sections}
+            landing.save(update_fields=["draft_config", "updated_at"])
+            if auto_publish:
+                landing.publish()
+
+        return Response({
+            "ok": True,
+            "registered": action == "add",
+            "total_registered": len([it for it in (hit_sec.get("items") or []) if isinstance(it.get("report_id"), int)]),
+            "published": auto_publish and landing.is_published,
+        })
+
+
 @method_decorator([csrf_exempt, _tenant_required], name="dispatch")
 class LandingSitemapView(View):
     """GET /api/v1/core/landing/sitemap.xml — 학원 홈페이지 + 적중 보고서 URL 모음.
