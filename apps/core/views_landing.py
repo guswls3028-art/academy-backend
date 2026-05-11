@@ -490,6 +490,10 @@ class LandingUploadImageView(APIView):
         ext = (file.name or "").rsplit(".", 1)[-1].lower()
         if ext not in ("png", "jpg", "jpeg", "gif", "webp"):
             return Response({"detail": "허용되지 않는 파일 형식입니다. (PNG, JPG, GIF, WebP)"}, status=400)
+        # 매직바이트 검증 — Content-Type 위장 차단.
+        from apps.api.common.image_validator import is_real_image
+        if not is_real_image(file):
+            return Response({"detail": "이미지 파일이 손상되었거나 이미지 형식이 아닙니다."}, status=400)
 
         if field not in ("hero", "logo"):
             return Response({"detail": "field는 'hero' 또는 'logo'여야 합니다."}, status=400)

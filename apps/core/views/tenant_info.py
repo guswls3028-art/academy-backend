@@ -130,6 +130,8 @@ class TenantInfoView(APIView):
             "og_title": (getattr(tenant, "og_title", None) or "").strip(),
             "og_description": (getattr(tenant, "og_description", None) or "").strip(),
             "og_image_url": (getattr(tenant, "og_image_url", None) or "").strip(),
+            "video_max_sessions": int(getattr(tenant, "video_max_sessions", 2) or 0),
+            "video_max_devices": int(getattr(tenant, "video_max_devices", 2) or 0),
         })
 
     def patch(self, request):
@@ -170,6 +172,22 @@ class TenantInfoView(APIView):
             if og_field in request.data:
                 setattr(tenant, og_field, (request.data.get(og_field) or "").strip()[:max_len])
                 update_fields.append(og_field)
+
+        # 영상 정책 (동시시청·동시디바이스). 0~10 범위로 클램프. 0=무제한 fallback(settings).
+        for vf in ("video_max_sessions", "video_max_devices"):
+            if vf in request.data:
+                try:
+                    v = int(request.data.get(vf) or 0)
+                except (TypeError, ValueError):
+                    return Response(
+                        {"detail": f"{vf} 는 숫자여야 합니다."}, status=400
+                    )
+                if v < 0 or v > 10:
+                    return Response(
+                        {"detail": f"{vf} 는 0~10 사이여야 합니다."}, status=400
+                    )
+                setattr(tenant, vf, v)
+                update_fields.append(vf)
 
         if update_fields:
             tenant.save(update_fields=update_fields)

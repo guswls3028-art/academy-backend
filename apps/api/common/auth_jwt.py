@@ -1,6 +1,8 @@
 # JWT 발급 시 테넌트별 User 조회. 1테넌트=1프로그램 격리.
 from __future__ import annotations
 
+from django.conf import settings
+
 from academy.adapters.db.django import repositories_core as core_repo
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
@@ -8,7 +10,49 @@ from rest_framework import serializers
 
 
 def _tenant_for_auth(request):
-    """로그인 요청에서 테넌트 결정: X-Tenant-Code 헤더 또는 body tenant_code."""
+    """
+    로그인 시 테넌트 결정 (SSOT — host 우선).
+
+    /api/v1/token/ 은 TenantMiddleware bypass 경로라 request.tenant 가 None.
+    여기서 다음 우선순위로 직접 resolve:
+
+    1) request.tenant: 만약 미들웨어가 이미 결정한 경우 그대로 사용 (안전망).
+    2) host → TenantDomain 매핑이 있으면 그 테넌트 (운영 SSOT — tchul.com / limglish.kr 등).
+    3) host 가 header-allowed 목록(api.hakwonplus.com / localhost / *.elb.amazonaws.com)인
+       경우에만 X-Tenant-Code 헤더 또는 body tenant_code 를 사용.
+    4) 그 외 host 에서 헤더/body 입력은 무시 — 임의 도메인에서 다른 테넌트 계정으로의
+       로그인 시도(테넌트 enumeration / 브루트포스 표면 확장)를 차단.
+    """
+    tenant = getattr(request, "tenant", None)
+    if tenant is not None:
+        return tenant
+
+    host = ""
+    try:
+        host = (request.get_host() or "").split(":")[0].strip().lower()
+    except Exception:
+        host = ""
+
+    # 2) host → TenantDomain (운영 도메인은 여기서 결정)
+    if host:
+        try:
+            from apps.core.tenant.resolver import _resolve_tenant_from_host
+            t = _resolve_tenant_from_host(host)
+            if t is not None:
+                return t
+        except Exception:
+            pass
+
+    # 3) header-allowed host 에서만 헤더/body fallback
+    allowed_hosts = getattr(
+        settings,
+        "TENANT_HEADER_CODE_ALLOWED_HOSTS",
+        ("api.hakwonplus.com",),
+    )
+    allowed = host in allowed_hosts or host.endswith(".elb.amazonaws.com")
+    if not allowed:
+        return None
+
     raw = (
         (request.META.get("HTTP_X_TENANT_CODE") or "").strip()
         or (getattr(request, "data", None) or {}).get("tenant_code") or ""
@@ -69,6 +113,11 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         tv = getattr(user, "token_version", 0) or 0
         refresh["token_version"] = tv
         refresh.access_token["token_version"] = tv
+        # mcp(must_change_password) — 초기 비번 강제 변경 게이트(MustChangePasswordGate)에서 사용.
+        # change_password 후 토큰 무효화 → 새 토큰엔 mcp=0 으로 자동 반영.
+        mcp = bool(getattr(user, "must_change_password", False))
+        refresh["mcp"] = mcp
+        refresh.access_token["mcp"] = mcp
         return {
             "refresh": str(refresh),
             "access": str(refresh.access_token),

@@ -1,6 +1,7 @@
 # PATH: apps/domains/parents/management/commands/reset_all_parent_passwords.py
 """
-모든 학부모 계정 비밀번호를 "0000"으로 초기화.
+모든 학부모 계정 비밀번호를 학부모 전화번호 마지막 4자리로 초기화.
+must_change_password=True 도 함께 설정 — 첫 로그인 시 비밀번호 변경 강제.
 
 사용:
   python manage.py reset_all_parent_passwords --dry-run    # 대상만 확인
@@ -8,13 +9,14 @@
 """
 from django.core.management.base import BaseCommand
 from django.contrib.auth.hashers import make_password
+from django.db import transaction
 
 from apps.domains.parents.models import Parent
-from apps.domains.parents.services import PARENT_DEFAULT_PASSWORD
+from apps.domains.parents.services import parent_initial_password
 
 
 class Command(BaseCommand):
-    help = "모든 학부모 계정 비밀번호를 0000으로 초기화"
+    help = "모든 학부모 비밀번호를 전화번호 마지막 4자리로 초기화 + must_change_password=True"
 
     def add_arguments(self, parser):
         parser.add_argument("--dry-run", action="store_true", help="대상만 출력")
@@ -44,12 +46,20 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING("--dry-run: 실제 변경 없음."))
             return
 
-        # 일괄 업데이트 (해시 한 번만 생성)
-        hashed = make_password(PARENT_DEFAULT_PASSWORD)
-        from django.contrib.auth import get_user_model
-        User = get_user_model()
+        # 학부모마다 phone 마지막 4자리가 다르므로 행 단위 업데이트.
+        updated = 0
+        with transaction.atomic():
+            for p in parents_with_user.iterator():
+                user = p.user
+                if not user:
+                    continue
+                user.password = make_password(parent_initial_password(p.phone))
+                user.must_change_password = True
+                user.save(update_fields=["password", "must_change_password"])
+                updated += 1
 
-        user_ids = list(parents_with_user.values_list("user_id", flat=True))
-        updated = User.objects.filter(id__in=user_ids).update(password=hashed)
-
-        self.stdout.write(self.style.SUCCESS(f"완료: {updated}명 학부모 비밀번호 → 0000 초기화"))
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"완료: {updated}명 학부모 비밀번호 → 전화번호 뒤 4자리, must_change_password=True"
+            )
+        )

@@ -7,6 +7,7 @@ from django.db.models import Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.exceptions import ValidationError
 
 from apps.domains.community.api.serializers import (
     PostEntitySerializer,
@@ -25,6 +26,7 @@ from apps.domains.community.services import CommunityService
 from apps.domains.community.models import PostEntity, PostReply, PostAttachment, PostLike, PostReplyLike, CommunityReport, CommunityUserBlock, CommunityNotification
 from apps.domains.student_app.permissions import get_request_student
 from apps.core.permissions import TenantResolvedAndMember
+from apps.core.parsing import parse_bool
 
 from ._common import (
     _get_tenant_from_request,
@@ -421,6 +423,12 @@ class PostViewSet(viewsets.ModelViewSet):
         raw_content = serializer.validated_data["content"]
         safe_content = sanitize_html(raw_content) if raw_content else ""
 
+        try:
+            is_urgent = parse_bool(request.data.get("is_urgent", False), field_name="is_urgent")
+            is_pinned = parse_bool(request.data.get("is_pinned", False), field_name="is_pinned")
+        except ValidationError as e:
+            return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+
         data = {
             "post_type": post_type,
             "title": serializer.validated_data["title"],
@@ -429,8 +437,8 @@ class PostViewSet(viewsets.ModelViewSet):
             "created_by": created_by,
             "author_display_name": author_display_name,
             "author_role": author_role,
-            "is_urgent": bool(request.data.get("is_urgent", False)),
-            "is_pinned": bool(request.data.get("is_pinned", False)),
+            "is_urgent": is_urgent,
+            "is_pinned": is_pinned,
             "status": request.data.get("status", "published"),
             "published_at": request.data.get("published_at") or None,
         }

@@ -22,12 +22,15 @@ def change_password(user, new_password: str) -> None:
 
 def force_reset_password(user, new_password: str) -> None:
     """
-    관리자에 의한 강제 비밀번호 리셋.
-    must_change_password는 건드리지 않는다 (호출자가 필요 시 별도 설정).
+    관리자에 의한 강제 임시 비밀번호 리셋.
+
+    임시 비번은 정의상 1회용이므로 must_change_password=True 강제 설정.
+    MustChangePasswordGate 가 첫 로그인 후 비번 변경 외 모든 요청 차단.
     """
     user.set_password(new_password)
     user.token_version = (getattr(user, "token_version", 0) or 0) + 1
-    user.save(update_fields=["password", "token_version"])
+    user.must_change_password = True
+    user.save(update_fields=["password", "token_version", "must_change_password"])
 
 
 def rollback_password(user, old_password_hash: str) -> None:

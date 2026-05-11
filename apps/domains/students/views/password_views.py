@@ -8,8 +8,10 @@ from django.contrib.auth import get_user_model
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
 
 from apps.core.permissions import TenantResolved
+from apps.core.parsing import parse_bool
 from apps.api.common.throttles import SmsEndpointThrottle
 from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
@@ -47,18 +49,21 @@ class StudentPasswordFindRequestView(APIView):
         if not tenant:
             return Response({"detail": "Tenant를 확인할 수 없습니다."}, status=400)
 
-        student = Student.objects.filter(
+        candidates = Student.objects.filter(
             tenant=tenant,
             deleted_at__isnull=True,
             name=name,
         ).filter(
             Q(phone=phone) | Q(parent_phone=phone)
-        ).select_related("user").first()
+        ).select_related("user").order_by("id")
+
+        count = candidates.count()
+        if count != 1:
+            # 계정 존재 여부 노출 방지 + 다건 매칭(동명이인/공유번호) 안전 차단
+            return Response({"message": "인증번호가 발송되었습니다."}, status=200)
+        student = candidates.first()
         if not student or not getattr(student, "user", None):
-            return Response(
-                {"detail": "해당 이름과 전화번호로 등록된 학생이 없습니다."},
-                status=404,
-            )
+            return Response({"message": "인증번호가 발송되었습니다."}, status=200)
         import secrets
         code = "".join([str(secrets.randbelow(10)) for _ in range(6)])
         key = _pw_reset_cache_key(tenant.id, phone)
@@ -99,8 +104,12 @@ class StudentPasswordFindRequestView(APIView):
 
 
 class StudentPasswordFindVerifyView(APIView):
-    """POST: phone, code, new_password → 인증번호 확인 후 비밀번호 변경."""
+    """POST: phone, code, new_password → 인증번호 확인 후 비밀번호 변경.
+
+    OTP brute-force 방어: throttle + 검증 실패 누적 5회 시 캐시 키 invalidate.
+    """
     permission_classes = [AllowAny, TenantResolved]
+    throttle_classes = [SmsEndpointThrottle]
 
     def get_authenticators(self):
         return []  # 비로그인 요청 허용, 만료 JWT 시 401 방지
@@ -121,6 +130,20 @@ class StudentPasswordFindVerifyView(APIView):
         key = _pw_reset_cache_key(tenant.id, phone)
         payload = cache.get(key)
         if not payload or payload.get("code") != code:
+            # 실패 누적 카운트 — 5회 초과 시 OTP 키 무효화 (brute-force 차단).
+            fail_key = f"{key}:fail"
+            try:
+                fails = cache.incr(fail_key)
+            except ValueError:
+                cache.set(fail_key, 1, timeout=600)
+                fails = 1
+            if fails >= 5:
+                cache.delete(key)
+                cache.delete(fail_key)
+                return Response(
+                    {"detail": "인증 실패 횟수를 초과했습니다. 인증번호를 다시 발급해 주세요."},
+                    status=400,
+                )
             return Response({"detail": "인증번호가 일치하지 않거나 만료되었습니다."}, status=400)
         user_id = payload.get("user_id")
         if not user_id:
@@ -132,6 +155,7 @@ class StudentPasswordFindVerifyView(APIView):
         from apps.core.services.password import change_password
         change_password(user, new_password)
         cache.delete(key)
+        cache.delete(f"{key}:fail")
         return Response({"message": "비밀번호가 변경되었습니다."}, status=200)
 
 
@@ -275,7 +299,14 @@ class StudentPasswordResetSendView(APIView):
         force_reset_password(user, temp_password)
 
         # skip_notify: 비밀번호만 변경, 알림톡 발송 안 함 (관리자 전용)
-        skip_notify = bool(request.data.get("skip_notify", False)) and is_staff_request
+        try:
+            skip_notify_requested = parse_bool(
+                request.data.get("skip_notify", False),
+                field_name="skip_notify",
+            )
+        except ValidationError as e:
+            return Response(e.detail, status=400)
+        skip_notify = skip_notify_requested and is_staff_request
         if skip_notify:
             return Response({"message": "비밀번호가 변경되었습니다. (알림톡 미발송)"}, status=200)
 

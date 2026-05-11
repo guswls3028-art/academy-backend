@@ -35,11 +35,14 @@ class SendExistingCredentialsView(APIView):
 
         if not phone or len(phone) != 11:
             return Response({"detail": "전화번호를 입력해 주세요."}, status=400)
+        # 이름 필수: phone-only 일치로 임의 학생 비밀번호를 강제 재설정(=lock-out DoS) 방어.
+        if not name:
+            return Response({"detail": "학생 이름을 입력해 주세요."}, status=400)
 
-        # 학생 조회 (전화번호 또는 학부모전화번호 + 이름)
-        qs = Student.objects.filter(tenant=tenant, deleted_at__isnull=True)
-        if name:
-            qs = qs.filter(name__iexact=name)
+        # 학생 조회 (이름 필수 + 전화번호 또는 학부모전화번호 매칭)
+        qs = Student.objects.filter(
+            tenant=tenant, deleted_at__isnull=True, name__iexact=name,
+        )
         student = qs.filter(
             Q(phone=phone) | Q(parent_phone=phone)
         ).select_related("user").first()

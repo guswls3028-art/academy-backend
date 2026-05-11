@@ -108,6 +108,20 @@ class Tenant(models.Model):
         help_text="True면 학생 가입 신청을 즉시 자동 승인합니다.",
     )
 
+    # ---------- 영상 시청 정책 (테넌트별) ----------
+    # 학생 1인당 동시 활성 재생 세션 수 (계정 공유 방지).
+    # 기본 0 = 제한 없음(settings.VIDEO_MAX_SESSIONS fallback). 운영자가 어드민 UI에서
+    # 명시적으로 1~10을 입력해야 제한이 켜짐 — 운영 학원에 사전 공지 없이 영향 0.
+    video_max_sessions = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="학생 1인당 동시 재생 세션 수. 0=제한 없음(권장: 명시 ON 전까지). 1~10=제한.",
+    )
+    # 학생 1인당 동시 활성 디바이스 수
+    video_max_devices = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="학생 1인당 동시 디바이스 수. 0=제한 없음. 1~10=제한.",
+    )
+
     # ---------- OG(Open Graph) 미리보기 ----------
     og_title = models.CharField(
         max_length=100, blank=True, default="",

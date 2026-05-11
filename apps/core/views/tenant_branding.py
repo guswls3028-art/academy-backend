@@ -113,6 +113,20 @@ class TenantBrandingUploadLogoView(APIView):
         ext = (file.name or "").split(".")[-1].lower() or "png"
         if ext not in ("png", "jpg", "jpeg", "gif", "webp", "svg"):
             ext = "png"
+        # 매직바이트 검증 (svg 는 텍스트 기반이라 별도 처리 — 여기선 첫 토큰 체크).
+        if ext == "svg":
+            try:
+                head = file.read(256)
+                file.seek(0)
+            except Exception:
+                head = b""
+            stripped = head.lstrip().lower()
+            if not (stripped.startswith(b"<svg") or stripped.startswith(b"<?xml")):
+                return Response({"detail": "유효한 SVG 파일이 아닙니다."}, status=400)
+        else:
+            from apps.api.common.image_validator import is_real_image
+            if not is_real_image(file):
+                return Response({"detail": "이미지 파일이 손상되었거나 이미지 형식이 아닙니다."}, status=400)
         key = f"tenant-logos/{tenant_id}/logo.{ext}"
 
         from apps.infrastructure.storage import r2 as r2_storage
