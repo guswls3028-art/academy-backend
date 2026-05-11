@@ -1278,22 +1278,44 @@ def _is_report_in_published_landing(tenant, report_id: int) -> bool:
 from django.views.decorators.clickjacking import xframe_options_exempt as _xframe_exempt
 
 
-@method_decorator([csrf_exempt, _tenant_required, _xframe_exempt], name="dispatch")
+def _resolve_landing_pdf_tenant(request):
+    """iframe raw GET (X-Tenant-Code 헤더 없음) 대응 — ?tenant=<code> query param fallback.
+
+    학원 도메인 frontend에서 cross-origin api.hakwonplus.com PDF iframe 호출 시 헤더 없으니
+    URL에 tenant code를 query param으로 박아 보냄. 공개 endpoint이므로 안전.
+    """
+    tenant = getattr(request, "tenant", None)
+    if tenant is not None:
+        return tenant
+    code = (request.GET.get("tenant") or "").strip()
+    if not code:
+        return None
+    try:
+        from apps.core.models import Tenant
+        return Tenant.objects.filter(code=code, is_active=True).first()
+    except Exception:
+        return None
+
+
+@method_decorator([csrf_exempt, _xframe_exempt], name="dispatch")
 class HitReportLandingPublicPdfView(View):
-    """GET /api/v1/matchup/landing/public/<report_id>/curated.pdf
+    """GET /api/v1/matchup/landing/public/<report_id>/curated.pdf?tenant=<code>
 
     학원 공개 랜딩에서 카드 클릭 시 노출되는 보고서 본문 PDF.
 
     - 인증 X (외부 학부모/학생 대상)
     - iframe embed 허용 (xframe_options_exempt) — 학원 도메인 hover thumbnail + 상세 페이지 PDF viewer.
+    - tenant 결정: request.tenant(헤더/host) 우선 → ?tenant query param fallback (iframe raw GET 대응).
     - **공개 게이트**: 학원장이 자기 published 랜딩의 hit_reports section에 직접 picker로 등록한 ID만.
       picker에서 빼는 즉시 비공개 (다른 보고서 본문 노출 차단).
-    - tenant 격리: subdomain → tenant resolve. 다른 tenant 보고서는 무조건 404.
+    - tenant 격리: 다른 tenant 보고서는 무조건 404.
     - PDF 응답: 시험지 문항 ↔ 강사 매칭 자료 좌우 비교 + 강사 코멘트.
     """
 
     def get(self, request, report_id):
-        tenant = request.tenant
+        tenant = _resolve_landing_pdf_tenant(request)
+        if tenant is None:
+            return JsonResponse({"detail": "Tenant required"}, status=400)
         if not _is_report_in_published_landing(tenant, report_id):
             return JsonResponse({"detail": "Not found"}, status=404)
         try:
