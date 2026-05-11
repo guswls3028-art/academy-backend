@@ -1298,13 +1298,8 @@ class DocumentHitReportPdfView(View):
         )
 
 
-# ── 공개 랜딩 페이지용 적중보고서 카드 메타 ────────────
-#
-# 학원장이 자기 랜딩 페이지에 매치업 적중 사례를 마케팅 카드로 노출하는 용도.
-# 인증 없음(공개), tenant 격리는 subdomain 기반 _tenant_required로 강제.
-# 카드 메타만 노출(시험명/학교/적중수/총문항수). PDF/이미지 본문은 노출 안 함.
+# ── admin 포탈 widget — 학원 홈페이지 게시 적중보고서 mini list ────────────
 
-@method_decorator([csrf_exempt, _tenant_required], name="dispatch")
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class HitReportBoardPreviewView(View):
     """GET /api/v1/matchup/hit-reports/board-preview/?limit=5
@@ -1426,6 +1421,12 @@ class HitReportBoardPreviewView(View):
         })
 
 
+# ── 공개 랜딩 페이지용 적중보고서 카드 메타 ────────────
+# 학원장이 자기 랜딩 페이지에 매치업 적중 사례를 마케팅 카드로 노출하는 용도.
+# 인증 없음(공개), tenant 격리는 subdomain 기반 _tenant_required로 강제.
+# 카드 메타만 노출(시험명/학교/적중수/총문항수). PDF/이미지 본문은 노출 안 함.
+
+@method_decorator([csrf_exempt, _tenant_required], name="dispatch")
 class HitReportLandingPublicView(View):
     """GET /api/v1/matchup/landing/public/?ids=1,2,3
 
