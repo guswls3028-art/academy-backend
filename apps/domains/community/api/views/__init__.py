@@ -1,5 +1,5 @@
 from .post_views import PostViewSet
-from .admin_views import AdminPostViewSet
+from .admin_views import AdminPostViewSet, AdminReportsViewSet, CommunityStatsView
 from .scope_node_views import ScopeNodeViewSet
 from .template_views import PostTemplateViewSet
 from .platform_inbox_views import (
@@ -12,6 +12,8 @@ from .platform_inbox_views import (
 __all__ = [
     "PostViewSet",
     "AdminPostViewSet",
+    "AdminReportsViewSet",
+    "CommunityStatsView",
     "ScopeNodeViewSet",
     "PostTemplateViewSet",
     "PlatformInboxListView",
