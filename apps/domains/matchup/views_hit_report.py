@@ -196,6 +196,9 @@ class HitReportListView(View):
                 "curated_progress": round(curated_progress, 1),
                 "hit_count": hit_count,
                 "hit_rate": round(hit_rate, 1),
+                # share_token 활성 여부만 노출 (token 자체는 노출 X — 학원장이 chip 클릭 시 generate API로 fetch).
+                # frontend chip이 "활성/비활성" 표기 분기에만 사용.
+                "has_share_token": bool(r.share_token),
                 "created_at": r.created_at.isoformat(),
                 "updated_at": r.updated_at.isoformat(),
             })
@@ -1142,7 +1145,7 @@ def _build_hit_report_share_zip(report) -> bytes:
             for i in range(doc_pdf.page_count()):
                 page_img = doc_pdf.render_page(i, dpi=200)
                 buf = io.BytesIO()
-                page_img.save(buf, "PNG", optimize=True, compress_level=9)
+                page_img.save(buf, "PNG", optimize=True)
                 page_pngs.append(buf.getvalue())
     finally:
         if tmp_path:
@@ -1632,16 +1635,20 @@ class HitReportShareLinkView(View):
 
         import uuid
         rotate = (request.GET.get("rotate") or "").strip() in {"1", "true", "yes"}
+        had_token = bool(report.share_token)
         rotated = False
+        created = False
         if not report.share_token or rotate:
             report.share_token = uuid.uuid4()
             report.save(update_fields=["share_token", "updated_at"])
-            rotated = bool(rotate)
+            rotated = bool(rotate) and had_token
+            created = not had_token  # 첫 발급 vs 회전 vs 기존
 
         return JsonResponse({
             "share_token": str(report.share_token),
             "share_url": f"/landing/share/{report.share_token}",
             "rotated": rotated,
+            "created": created,
         })
 
     def delete(self, request, report_id):
@@ -1708,6 +1715,30 @@ class HitReportShareMetaView(View):
             author_name = report.submitted_by_name or ""
 
         tenant = report.tenant
+
+        # "다른 보고서" 섹션 — 학원 published landing 의 hit_reports section items 중 같은 본 보고서 제외.
+        # 학생이 카톡 링크 진입 후 자연스럽게 학원 다른 적중 사례로 확장 둘러보기.
+        other_ids: list[int] = []
+        try:
+            from apps.core.models import LandingPage
+            lp = LandingPage.objects.filter(tenant=tenant, is_published=True).first()
+            if lp:
+                pub = lp.published_config or {}
+                for sec in (pub.get("sections") or []):
+                    if sec.get("type") != "hit_reports" or not sec.get("enabled"):
+                        continue
+                    for it in (sec.get("items") or []):
+                        try:
+                            rid = int(it.get("report_id"))
+                            if rid and rid != report.id:
+                                other_ids.append(rid)
+                        except (TypeError, ValueError):
+                            continue
+                    break
+        except Exception:
+            other_ids = []
+        other_ids = other_ids[:6]
+
         return JsonResponse({
             "id": report.id,
             "title": (report.title or "")[:200],
@@ -1722,6 +1753,7 @@ class HitReportShareMetaView(View):
             "tenant_name": getattr(tenant, "display_name", "") or getattr(tenant, "name", "") or "",
             "tenant_code": getattr(tenant, "code", "") or "",
             "pdf_url": f"/api/v1/matchup/share/{token}/curated.pdf",
+            "other_report_ids": other_ids,
         })
 
 
