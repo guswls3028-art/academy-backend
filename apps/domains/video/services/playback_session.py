@@ -1,16 +1,13 @@
-# PATH: apps/support/video/services/playback_session.py
 
 import uuid
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple
 from datetime import timedelta
 
 from django.conf import settings
 from django.utils import timezone
 from django.db import transaction
-from django.db.models import Q, Count
 
 from academy.adapters.db.django import repositories_video as video_repo
-from apps.domains.enrollment.models import Enrollment
 from apps.domains.video.models import VideoPlaybackSession
 
 # Redis 보호 레이어 (선택적, 장애 시 DB fallback)
@@ -47,6 +44,23 @@ except ImportError:
 
 def _cleanup_expired_sessions(student_id: int) -> None:
     video_repo.playback_session_cleanup_expired(student_id)
+
+
+def get_tenant_session_limits(tenant) -> Tuple[int, int]:
+    """
+    테넌트 정책 우선, 미설정(0)이면 settings fallback.
+    Returns (max_sessions, max_devices).
+    """
+    fallback_sessions = int(getattr(settings, "VIDEO_MAX_SESSIONS", 9999))
+    fallback_devices = int(getattr(settings, "VIDEO_MAX_DEVICES", 9999))
+    if tenant is None:
+        return fallback_sessions, fallback_devices
+    ms = int(getattr(tenant, "video_max_sessions", 0) or 0)
+    md = int(getattr(tenant, "video_max_devices", 0) or 0)
+    return (
+        ms if ms > 0 else fallback_sessions,
+        md if md > 0 else fallback_devices,
+    )
 
 
 def issue_session(
@@ -336,12 +350,18 @@ def create_playback_session(
 
     ttl = int(getattr(settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600))
 
+    tenant = (
+        getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant", None)
+        or getattr(video, "tenant", None)
+    )
+    max_sessions, max_devices = get_tenant_session_limits(tenant)
+
     ok, sess, err = issue_session(
         student_id=enrollment.student_id,
         device_id=device_id,
         ttl_seconds=ttl,
-        max_sessions=int(getattr(settings, "VIDEO_MAX_SESSIONS", 9999)),
-        max_devices=int(getattr(settings, "VIDEO_MAX_DEVICES", 9999)),
+        max_sessions=max_sessions,
+        max_devices=max_devices,
     )
 
     if not ok:

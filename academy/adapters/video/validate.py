@@ -1,4 +1,3 @@
-# PATH: apps/worker/video_worker/video/validate.py
 
 from __future__ import annotations
 

@@ -24,8 +24,9 @@ logger.setLevel(logging.INFO)
 REGION = os.environ.get("AWS_REGION", "ap-northeast-2")
 AI_QUEUE_LITE = os.environ.get("AI_QUEUE_LITE", "academy-v1-ai-queue")
 AI_QUEUE_BASIC = os.environ.get("AI_QUEUE_BASIC", "academy-v1-ai-queue")
-# Video는 Batch 전용 (SQS 큐 미사용). ENABLE_VIDEO_METRICS=false일 때 조회 안 함.
-VIDEO_QUEUE = os.environ.get("VIDEO_QUEUE", "academy-video-jobs")
+# Video는 Batch 전용 (SQS 큐 미사용 — daemon 폐기 2026-05-10). ENABLE_VIDEO_METRICS=false 가 기본.
+# 디폴트 큐 이름은 placeholder — 실제 미존재. 향후 ENABLE_VIDEO_METRICS 켤 일 있으면 env 명시 필수.
+VIDEO_QUEUE = os.environ.get("VIDEO_QUEUE", "academy-video-jobs-DEPRECATED-DO-NOT-USE")
 MESSAGING_QUEUE = os.environ.get("MESSAGING_QUEUE", "academy-v1-messaging-queue")
 NAMESPACE = os.environ.get("METRIC_NAMESPACE", "Academy/Workers")
 METRIC_NAME = os.environ.get("METRIC_NAME", "QueueDepth")

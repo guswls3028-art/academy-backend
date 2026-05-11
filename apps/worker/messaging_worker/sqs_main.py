@@ -3,7 +3,7 @@
 Messaging Worker - SQS 기반 메시지 발송
 
 SQS academy-messaging-jobs 에서 수신 → Solapi SMS/LMS 발송
-video_worker sqs_main 과 동일한 패턴 (Long Polling, Graceful shutdown)
+SQS Long Polling + SIGTERM/SIGINT graceful shutdown 패턴.
 """
 
 from __future__ import annotations

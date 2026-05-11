@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/detect_stuck_videos.py
 """
 Stuck video detector — 운영 신뢰성 모니터링.
 

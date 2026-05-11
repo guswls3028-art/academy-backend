@@ -11,9 +11,9 @@ from django.core.management.base import BaseCommand
 
 
 # Progress endpoint module — DO NOT ADD DB ACCESS HERE
-PROGRESS_VIEWS_PATH = "apps/support/video/views/progress_views.py"
-REDIS_PROGRESS_ADAPTER_PATH = "src/infrastructure/cache/redis_progress_adapter.py"
-REDIS_STATUS_CACHE_PATH = "apps/support/video/redis_status_cache.py"
+PROGRESS_VIEWS_PATH = "apps/domains/video/views/progress_views.py"
+REDIS_PROGRESS_ADAPTER_PATH = "academy/adapters/cache/redis_progress_adapter.py"
+REDIS_STATUS_CACHE_PATH = "apps/domains/video/redis_status_cache.py"
 REPOSITORIES_VIDEO_PATH = "academy/adapters/db/django/repositories_video.py"
 
 # Patterns that must NOT appear in progress endpoint (VideoProgressView.get path)
@@ -145,7 +145,8 @@ class Command(BaseCommand):
     def _find_repo_root(self):
         cur = os.path.dirname(os.path.abspath(__file__))
         for _ in range(12):
-            if os.path.isdir(os.path.join(cur, "apps", "support", "video")):
+            # backend/ root: contains both academy/ and apps/domains/video/
+            if os.path.isdir(os.path.join(cur, "academy")) and os.path.isdir(os.path.join(cur, "apps", "domains", "video")):
                 return cur
             parent = os.path.dirname(cur)
             if parent == cur:

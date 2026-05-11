@@ -1,4 +1,3 @@
-# PATH: apps/support/video/services/access_resolver.py
 
 """
 Single Source of Truth for video access mode resolution.

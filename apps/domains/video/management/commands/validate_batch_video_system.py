@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/validate_batch_video_system.py
 """
 AWS Batch video transcoding system health check.
 Run: python manage.py validate_batch_video_system

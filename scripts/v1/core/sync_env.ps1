@@ -57,14 +57,13 @@ function Sync-ApiEnvFromSSOT {
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_LITE" -NotePropertyValue $script:AiSqsQueueName -Force
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_PREMIUM" -NotePropertyValue $script:AiSqsQueueName -Force
 
-    # SSOT: Video Batch
+    # SSOT: Video Batch (long path 폐기 2026-05-10 — short queue/jobdef 단일 운영)
     $obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_QUEUE" -NotePropertyValue $script:VideoQueueName -Force
     $obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_DEFINITION" -NotePropertyValue $script:VideoJobDefName -Force
     $obj | Add-Member -NotePropertyName "VIDEO_BATCH_COMPUTE_ENV_NAME" -NotePropertyValue $script:VideoCEName -Force
-    if ($script:VideoLongQueueName) {
-        $obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_QUEUE_LONG" -NotePropertyValue $script:VideoLongQueueName -Force
-        $obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_DEFINITION_LONG" -NotePropertyValue $script:VideoLongJobDefName -Force
-    }
+    # 옛 SSM 잔재 청소 (long 키가 박혀 있었으면 제거).
+    $obj.PSObject.Properties.Remove("VIDEO_BATCH_JOB_QUEUE_LONG") | Out-Null
+    $obj.PSObject.Properties.Remove("VIDEO_BATCH_JOB_DEFINITION_LONG") | Out-Null
 
     # Redis: discovered from replication group (SSOT)
     $redisEp = Get-RedisPrimaryEndpoint
@@ -123,6 +122,9 @@ function Sync-WorkersEnvFromSSOT {
         $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_LITE" -NotePropertyValue $script:AiSqsQueueName -Force
         $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_PREMIUM" -NotePropertyValue $script:AiSqsQueueName -Force
     }
+    # 옛 long path SSM 잔재 청소 (workers env). API env 동기와 동일 패턴.
+    $obj.PSObject.Properties.Remove("VIDEO_BATCH_JOB_QUEUE_LONG") | Out-Null
+    $obj.PSObject.Properties.Remove("VIDEO_BATCH_JOB_DEFINITION_LONG") | Out-Null
 
     # Redis: discovered from replication group
     $redisEp = Get-RedisPrimaryEndpoint

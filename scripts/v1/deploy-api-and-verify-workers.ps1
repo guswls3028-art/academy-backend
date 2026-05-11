@@ -380,11 +380,10 @@ try {
     }
     $ssmObj = $ssmJson | ConvertFrom-Json
 
+    # long path 폐기 (2026-05-10): VIDEO_BATCH_JOB_QUEUE_LONG / *_LONG 키는 검증 대상 아님.
     $batchKeys = @{
         "VIDEO_BATCH_JOB_QUEUE"          = "academy-v1-video-batch-queue"
         "VIDEO_BATCH_JOB_DEFINITION"     = "academy-v1-video-batch-jobdef"
-        "VIDEO_BATCH_JOB_QUEUE_LONG"     = "academy-v1-video-batch-long-queue"
-        "VIDEO_BATCH_JOB_DEFINITION_LONG"= "academy-v1-video-batch-long-jobdef"
     }
     foreach ($kv in $batchKeys.GetEnumerator()) {
         $actual = $ssmObj.PSObject.Properties[$kv.Key].Value

@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/expire_playback_sessions.py
 """
 Mark expired VideoPlaybackSession rows: ACTIVE with expires_at < now -> EXPIRED.
 

@@ -408,14 +408,28 @@ VIDEO_SQS_QUEUE_DELETE_R2 = os.getenv("VIDEO_SQS_QUEUE_DELETE_R2", "academy-vide
 VIDEO_BATCH_JOB_QUEUE = os.getenv("VIDEO_BATCH_JOB_QUEUE", "academy-v1-video-batch-queue")
 VIDEO_BATCH_JOB_DEFINITION = os.getenv("VIDEO_BATCH_JOB_DEFINITION", "academy-v1-video-batch-jobdef")
 VIDEO_BATCH_COMPUTE_ENV_NAME = os.getenv("VIDEO_BATCH_COMPUTE_ENV_NAME", "academy-v1-video-batch-ce-200gb")
-# EventBridge + Ops JobDef (reconcile, scanstuck)
+# EventBridge + Ops JobDef. cron 7종 SSOT: backend/docs/infrastructure/video-cron-jobs.md
 VIDEO_RECONCILE_RULE_NAME = os.getenv("VIDEO_RECONCILE_RULE_NAME", "academy-v1-reconcile-video-jobs")
 VIDEO_SCAN_STUCK_RULE_NAME = os.getenv("VIDEO_SCAN_STUCK_RULE_NAME", "academy-v1-video-scan-stuck-rate")
+VIDEO_ENQUEUE_UPLOADED_RULE_NAME = os.getenv("VIDEO_ENQUEUE_UPLOADED_RULE_NAME", "academy-v1-enqueue-uploaded-videos")
+VIDEO_DETECT_STUCK_RULE_NAME = os.getenv("VIDEO_DETECT_STUCK_RULE_NAME", "academy-v1-detect-stuck-videos")
+VIDEO_RECOVER_DEAD_RULE_NAME = os.getenv("VIDEO_RECOVER_DEAD_RULE_NAME", "academy-v1-recover-dead-video-jobs")
+VIDEO_PURGE_RAW_RULE_NAME = os.getenv("VIDEO_PURGE_RAW_RULE_NAME", "academy-v1-purge-raw-videos")
+VIDEO_CLEANUP_ORPHAN_RULE_NAME = os.getenv("VIDEO_CLEANUP_ORPHAN_RULE_NAME", "academy-v1-cleanup-orphan-video-storage")
 VIDEO_OPS_JOB_DEF_RECONCILE = os.getenv("VIDEO_OPS_JOB_DEF_RECONCILE", "academy-v1-video-ops-reconcile")
 VIDEO_OPS_JOB_DEF_SCANSTUCK = os.getenv("VIDEO_OPS_JOB_DEF_SCANSTUCK", "academy-v1-video-ops-scanstuck")
+VIDEO_OPS_JOB_DEF_ENQUEUE_UPLOADED = os.getenv("VIDEO_OPS_JOB_DEF_ENQUEUE_UPLOADED", "academy-v1-video-ops-enqueue-uploaded")
+VIDEO_OPS_JOB_DEF_DETECT_STUCK = os.getenv("VIDEO_OPS_JOB_DEF_DETECT_STUCK", "academy-v1-video-ops-detect-stuck")
+VIDEO_OPS_JOB_DEF_RECOVER_DEAD = os.getenv("VIDEO_OPS_JOB_DEF_RECOVER_DEAD", "academy-v1-video-ops-recover-dead")
+VIDEO_OPS_JOB_DEF_PURGE_RAW = os.getenv("VIDEO_OPS_JOB_DEF_PURGE_RAW", "academy-v1-video-ops-purge-raw")
+# cleanup-orphan 은 EventBridge → SSM RunShellScript 패턴이라 Batch jobdef 없음. (cron 7종 중 6종만 Batch 기반.)
 VIDEO_OPS_JOB_DEFS = (
-    os.getenv("VIDEO_OPS_JOB_DEF_RECONCILE", "academy-v1-video-ops-reconcile"),
-    os.getenv("VIDEO_OPS_JOB_DEF_SCANSTUCK", "academy-v1-video-ops-scanstuck"),
+    VIDEO_OPS_JOB_DEF_RECONCILE,
+    VIDEO_OPS_JOB_DEF_SCANSTUCK,
+    VIDEO_OPS_JOB_DEF_ENQUEUE_UPLOADED,
+    VIDEO_OPS_JOB_DEF_DETECT_STUCK,
+    VIDEO_OPS_JOB_DEF_RECOVER_DEAD,
+    VIDEO_OPS_JOB_DEF_PURGE_RAW,
 )
 # Stuck 판정: heartbeat_age 기반. 일반 20분, 긴 영상(3시간+) 45분.
 # 임계값(VIDEO_LONG_DURATION_THRESHOLD_SECONDS)은 stuck threshold 분기에만 사용.

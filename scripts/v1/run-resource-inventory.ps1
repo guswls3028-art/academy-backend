@@ -25,14 +25,13 @@ $KeepASG = @(
 )
 $KeepALB = @($script:ApiAlbName)
 $KeepTG = @($script:ApiTargetGroupName)
+# long path 폐기 (2026-05-10): VideoLongCE / VideoLongQueue 인벤토리 keep 대상 아님.
 $KeepBatchCE = @(
     $script:VideoCEName,
-    $script:VideoLongCEName,
     $script:OpsCEName
 ) | Where-Object { $_ -and $_.Trim() -ne "" }
 $KeepBatchQueue = @(
     $script:VideoQueueName,
-    $script:VideoLongQueueName,
     $script:OpsQueueName
 ) | Where-Object { $_ -and $_.Trim() -ne "" }
 $KeepSGNames = @("academy-v1-sg-app", "academy-v1-sg-batch", "academy-v1-sg-data", "default")

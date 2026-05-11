@@ -1,4 +1,3 @@
-# PATH: apps/support/video/views/internal_views.py
 
 from __future__ import annotations
 

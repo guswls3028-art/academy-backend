@@ -1,13 +1,12 @@
 """
 VideoProcessor - 실제 비디오 처리 (다운로드, 트랜스코딩, R2 업로드)
 
-진행률은 IProgress에 기록 (Write-Behind, Redis 우선).
-완료는 호출부(Handler)에서 repo.complete_video() 호출.
+진행률은 IProgress 에 기록 (Write-Behind, Redis 우선).
+완료(`Video.status = READY`)는 호출부 worker entry 가 repositories_video.job_complete 로 처리.
 
-R2 raw 삭제: Lifecycle만 믿지 않고, 인코딩 성공 직후 반드시 삭제.
-  → 구현 위치: 워커 성공 콜백 (apps/worker/video_worker/sqs_main.py).
-  → 순서: HLS 업로드 완료(process_video) → DB 상태 '완료'(handler/repo.complete_video) → R2 raw_key 삭제(sqs_main).
-  → 3시간 영상도 인코딩 직후 수 GB 즉시 반환.
+R2 raw 삭제 정책: 인코딩 성공 직후 즉시 삭제하지 않고, `purge_raw_videos` cron(매일 18:00)이
+3일 경과한 raw 객체를 일괄 정리. 학원장이 인코딩 직후 원본을 다시 받아야 하는 운영 케이스를
+허용하기 위한 의도된 지연. 자세한 책임 분담은 `backend/docs/infrastructure/video-cron-jobs.md`.
 """
 from __future__ import annotations
 
@@ -16,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from academy.application.ports.progress import IProgress
-from academy.application.video.handler import CancelledError
+from academy.application.video import CancelledError
 
 logger = logging.getLogger(__name__)
 

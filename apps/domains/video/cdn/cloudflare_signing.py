@@ -1,4 +1,3 @@
-# PATH: apps/support/video/cdn/cloudflare_signing.py
 
 from __future__ import annotations
 

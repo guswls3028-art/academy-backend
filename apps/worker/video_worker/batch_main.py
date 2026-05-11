@@ -38,7 +38,7 @@ from academy.adapters.video.config import load_config
 from academy.adapters.video.processor import process_video
 from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
 from apps.domains.video.redis_status_cache import cache_video_status
-from academy.application.video.handler import CancelledError
+from academy.application.video import CancelledError
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("video_worker_batch")
@@ -86,10 +86,21 @@ def _try_enqueue_next_for_tenant(tenant_id: int) -> None:
 
 
 def _handle_term(signum: int, frame: object) -> None:
-    """SIGTERM/SIGINT 수신 시 DB에 종료 반영 후 즉시 종료 (Spot/scale-in/terminate-job 대응)."""
+    """SIGTERM/SIGINT 수신 시 DB에 종료 반영 후 즉시 종료 (Spot/scale-in/terminate-job 대응).
+
+    장시간 ffmpeg/업로드 도중 시그널이 들어오면 메인 스레드의 Django 커넥션이 RDS Proxy
+    IdleClientTimeout(30분)으로 닫혀 있을 수 있다 (v1.2.0 사고와 동일 패턴). job_fail_retry
+    호출 전에 close_old_connections() 으로 stale 커넥션을 회수해야 OperationalError 로
+    상태 전환을 놓치지 않는다.
+    """
     _shutdown_event.set()
     jid = _current_job_id[0]
     if jid:
+        try:
+            from django.db import close_old_connections
+            close_old_connections()
+        except Exception:
+            pass
         try:
             # 현재 상태 확인 후 RUNNING일 때만 RETRY_WAIT로 전환 (SUCCEEDED 덮어쓰기 방지)
             job_obj = job_get_by_id(jid)

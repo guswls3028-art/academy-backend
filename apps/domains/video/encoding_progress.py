@@ -1,4 +1,3 @@
-# PATH: apps/support/video/encoding_progress.py
 # Redis 기반 영상 인코딩 진행률 조회 (워커 job:video:{id}:progress 키와 동일 포맷)
 
 from __future__ import annotations

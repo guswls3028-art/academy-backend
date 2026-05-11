@@ -1,4 +1,3 @@
-# PATH: apps/support/video/urls_internal.py
 
 from __future__ import annotations
 

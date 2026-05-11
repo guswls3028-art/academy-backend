@@ -87,9 +87,13 @@ def submit_batch_job(video_job_id: str, duration_seconds: int | None = None) -> 
         return (None, err_msg)
 
 
-def terminate_batch_job(video_job_id: str, reason: str = "superseded") -> bool:
+def terminate_video_job(video_job_id: str, reason: str = "superseded") -> bool:
     """
-    AWS Batch Job 종료 (orphan 취소 또는 retry 시 이전 job 대체용).
+    VideoTranscodeJob.id 로 DB lookup 후 AWS Batch terminate (orphan 취소 / retry 시 이전 job 대체).
+
+    같은 도메인의 `batch_control.terminate_aws_batch_job` (raw `aws_batch_job_id` 받아 best-effort terminate
+    + describe-first idempotency + ops_event 기록) 과 혼동 금지. 시그니처가 달라서 인자 순서를 잘못
+    넘기면 무음 실패한다.
 
     Args:
         video_job_id: VideoTranscodeJob.id (UUID 문자열). DB에서 aws_batch_job_id 조회.

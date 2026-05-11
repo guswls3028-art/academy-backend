@@ -13,7 +13,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from apps.core.permissions import TenantResolvedAndStaff as _TenantResolvedAndStaff
 
 from django.utils import timezone
-from ..models import VideoProgress, VideoAccess, AccessMode
+from ..models import VideoAccess, AccessMode
 from ..serializers import VideoProgressSerializer
 from academy.adapters.db.django import repositories_video as video_repo
 from apps.domains.video.encoding_progress import (
@@ -194,7 +194,6 @@ class VideoProgressViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, _TenantResolvedAndStaff]
 
     def get_queryset(self):
-        from apps.core.permissions import TenantResolvedAndStaff  # noqa: avoid circular
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return video_repo.video_progress_all().none()
@@ -205,19 +204,39 @@ class VideoProgressViewSet(ModelViewSet):
     def perform_update(self, serializer):
         vp = serializer.instance
         prev_completed = vp.completed
+        prev_progress = float(vp.progress or 0.0)
 
         vp = serializer.save()
 
-        # PROCTORED_CLASS → FREE_REVIEW on completion (SSOT)
-        if not prev_completed and vp.completed:
+        # PROCTORED_CLASS → FREE_REVIEW SSOT.
+        # Trigger: completed=True OR progress crosses 0.9 (의무 완수 기준; access_resolver.py와 동일).
+        # progress가 Redis-DB lag로 흔들릴 때 proctored_completed_at을 박아두면
+        # 다음 resolve가 안정적으로 FREE_REVIEW를 반환.
+        cur_progress = float(vp.progress or 0.0)
+        crossed_threshold = prev_progress < 0.9 <= cur_progress
+        just_completed = (not prev_completed) and vp.completed
+
+        if just_completed or crossed_threshold:
             now = timezone.now()
-            video_repo.video_access_filter(vp.video, vp.enrollment).filter(
-                access_mode=AccessMode.PROCTORED_CLASS,
-            ).update(
-                access_mode=AccessMode.FREE_REVIEW,
-                proctored_completed_at=now,
-                is_override=False,
-            )
-            video_repo.video_access_filter(vp.video, vp.enrollment).filter(
-                rule="once",
-            ).update(rule="free", is_override=False)
+            existing = video_repo.video_access_filter(vp.video, vp.enrollment)
+            if existing.exists():
+                existing.filter(access_mode=AccessMode.PROCTORED_CLASS).update(
+                    access_mode=AccessMode.FREE_REVIEW,
+                    proctored_completed_at=now,
+                    is_override=False,
+                )
+                existing.filter(rule="once").update(rule="free", is_override=False)
+                # PROCTORED 외 모드여도 시간만 기록 (감사 추적)
+                existing.filter(proctored_completed_at__isnull=True).update(
+                    proctored_completed_at=now,
+                )
+            else:
+                # access 레코드가 없는 학생 — 명시적으로 완료 시간 기록
+                # (access_resolver는 perm 없으면 attendance 기반 평가 → 다음 resolve에서 FREE_REVIEW)
+                VideoAccess.objects.create(
+                    video=vp.video,
+                    enrollment=vp.enrollment,
+                    access_mode=AccessMode.FREE_REVIEW,
+                    proctored_completed_at=now,
+                    is_override=False,
+                )

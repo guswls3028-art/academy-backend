@@ -11,7 +11,7 @@
 | API | academy-api | academy-v1-api-asg | academy-api | Django REST API (Gunicorn) |
 | Messaging Worker | academy-messaging-worker | academy-v1-messaging-worker-asg | academy-messaging-worker | SQS message processing |
 | AI Worker | academy-ai-worker-cpu | academy-v1-ai-worker-asg | academy-ai-worker-cpu | AI task processing |
-| Video Worker | academy-video-worker | AWS Batch CE (`academy-v1-video-batch-ce-200gb`, c6g.4xlarge primary) | — | 영상 인코딩. 1 video = 1 Batch job. VCPU=8 / MEM=16GB / timeout=2h |
+| Video Worker | academy-video-worker | AWS Batch CE (`academy-v1-video-batch-ce-200gb`, c6g.4xlarge primary) | — | 영상 인코딩. 1 video = 1 Batch job. VCPU=8 / MEM=16GB / timeout=6h |
 | Base | academy-base | — | — | Shared base image for all services |
 
 **Note (2026-05-10):** Daemon mode 폐기. 모든 영상은 AWS Batch로 1-shot 처리. long path 도 폐기되어 short queue/jobdef만 사용 — 4시간+ 영상은 jobdef timeout(2h)에 걸려 종료 후 reconcile/scan_stuck이 재시도. ffmpeg는 `c6g.4xlarge` VCPU=8 + R2 병렬 업로드(16 worker)로 처리.

@@ -1,7 +1,7 @@
 """
 Video 삭제 시 AWS Batch Terminate 호출 검증.
 
-- boto3 / batch_control.terminate_batch_job 모킹.
+- boto3 / batch_control.terminate_aws_batch_job 모킹.
 - RUNNING/QUEUED/RETRY_WAIT + aws_batch_job_id 있으면 terminate 호출.
 - SUCCEEDED 이면 terminate 미호출.
 """
@@ -43,7 +43,7 @@ class VideoDeleteTerminateTest(TestCase):
         video_id_before = self.video.id
         job_id_str = str(job.id)
 
-        with patch("apps.domains.video.services.batch_control.terminate_batch_job") as mock_terminate:
+        with patch("apps.domains.video.services.batch_control.terminate_aws_batch_job") as mock_terminate:
             with patch("apps.infrastructure.storage.r2.delete_object_r2_video"), patch("apps.infrastructure.storage.r2.delete_prefix_r2_video"):
                 view = VideoViewSet()
                 view.perform_destroy(self.video)
@@ -65,7 +65,7 @@ class VideoDeleteTerminateTest(TestCase):
         self.video.current_job_id = job.id
         self.video.save(update_fields=["current_job_id"])
 
-        with patch("apps.domains.video.services.batch_control.terminate_batch_job") as mock_terminate:
+        with patch("apps.domains.video.services.batch_control.terminate_aws_batch_job") as mock_terminate:
             with patch("apps.infrastructure.storage.r2.delete_object_r2_video"), patch("apps.infrastructure.storage.r2.delete_prefix_r2_video"):
                 view = VideoViewSet()
                 view.perform_destroy(self.video)
@@ -82,7 +82,7 @@ class VideoDeleteTerminateTest(TestCase):
         self.video.current_job_id = job.id
         self.video.save(update_fields=["current_job_id"])
 
-        with patch("apps.domains.video.services.batch_control.terminate_batch_job") as mock_terminate:
+        with patch("apps.domains.video.services.batch_control.terminate_aws_batch_job") as mock_terminate:
             with patch("apps.infrastructure.storage.r2.delete_object_r2_video"), patch("apps.infrastructure.storage.r2.delete_prefix_r2_video"):
                 view = VideoViewSet()
                 view.perform_destroy(self.video)
@@ -100,7 +100,7 @@ class VideoDeleteTerminateTest(TestCase):
         self.video.current_job_id = job.id
         self.video.save(update_fields=["current_job_id"])
 
-        with patch("apps.domains.video.services.batch_control.terminate_batch_job") as mock_terminate:
+        with patch("apps.domains.video.services.batch_control.terminate_aws_batch_job") as mock_terminate:
             mock_terminate.side_effect = Exception("network error")
             with patch("apps.infrastructure.storage.r2.delete_object_r2_video"), patch("apps.infrastructure.storage.r2.delete_prefix_r2_video"):
                 view = VideoViewSet()

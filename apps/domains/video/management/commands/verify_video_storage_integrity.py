@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/verify_video_storage_integrity.py
 """
 Optional post-READY validation: iterate READY videos, check master.m3u8 exists, at least N segments.
 Report corrupted prefixes. No automatic repair.

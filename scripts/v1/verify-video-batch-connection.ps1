@@ -18,18 +18,15 @@ try {
         try { $json = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($raw)) } catch { }
     }
     $obj = $json | ConvertFrom-Json
+    # long path 폐기 (2026-05-10): VIDEO_BATCH_JOB_QUEUE_LONG / VIDEO_BATCH_JOB_DEFINITION_LONG 검증 안 함.
     $keys = @(
         "VIDEO_BATCH_JOB_QUEUE",
         "VIDEO_BATCH_JOB_DEFINITION",
-        "VIDEO_BATCH_JOB_QUEUE_LONG",
-        "VIDEO_BATCH_JOB_DEFINITION_LONG",
         "VIDEO_BATCH_COMPUTE_ENV_NAME"
     )
     $expected = @{
         VIDEO_BATCH_JOB_QUEUE = "academy-v1-video-batch-queue"
         VIDEO_BATCH_JOB_DEFINITION = "academy-v1-video-batch-jobdef"
-        VIDEO_BATCH_JOB_QUEUE_LONG = "academy-v1-video-batch-long-queue"
-        VIDEO_BATCH_JOB_DEFINITION_LONG = "academy-v1-video-batch-long-jobdef"
         VIDEO_BATCH_COMPUTE_ENV_NAME = "academy-v1-video-batch-ce-200gb"
     }
     $allOk = $true

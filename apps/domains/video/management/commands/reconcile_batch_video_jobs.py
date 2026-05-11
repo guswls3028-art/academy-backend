@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/reconcile_batch_video_jobs.py
 """
 Batch → DB 정합성 복구 (reconcile). Production-grade: Single-flight, conservative.
 
@@ -168,7 +167,7 @@ class Command(BaseCommand):
             job_mark_dead,
             job_set_running,
         )
-        from apps.domains.video.services.batch_submit import terminate_batch_job
+        from apps.domains.video.services.batch_submit import terminate_video_job
         from django.db.models import Count
 
         # ----- Duplicate active jobs: keep most recent, mark older DEAD -----
@@ -202,7 +201,7 @@ class Command(BaseCommand):
             for job in older:
                 if not dry_run:
                     if (job.aws_batch_job_id or "").strip():
-                        terminate_batch_job(str(job.id), reason="reconcile_duplicate")
+                        terminate_video_job(str(job.id), reason="reconcile_duplicate")
                     job_mark_dead(
                         str(job.id),
                         error_code="RECONCILE_DUPLICATE",

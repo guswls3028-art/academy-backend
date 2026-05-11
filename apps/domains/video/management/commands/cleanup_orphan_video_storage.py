@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/cleanup_orphan_video_storage.py
 """
 R2 video 버킷에서 DB와 매칭되지 않는 orphan 파일 정리.
 

@@ -113,4 +113,48 @@ function Ensure-EventBridgeRules {
         } finally { Remove-Item $tmpFile3 -Force -ErrorAction SilentlyContinue }
         Write-Ok "EventBridge $($script:EventBridgeEnqueueUploadedRule) targets updated"
     }
+
+    # --- 신규 3종 (2026-05-11 IaC 보강): video-cron-jobs.md 의 7종 SSOT 중 Batch target 분 ---
+    # detect-stuck / recover-dead / purge-raw 만 여기서 ensure.
+    # cleanup-orphan 은 EventBridge → SSM RunShellScript (API EC2에서 `docker exec academy-api python manage.py
+    # cleanup_orphan_video_storage --apply` 직접 실행) 패턴으로 운영자가 의도적으로 분리. 이 IaC 함수는 cleanup-orphan
+    # 의 schedule/target 을 건드리지 않는다. cleanup-orphan rule 자체의 schedule 정정/장애 대응은 manual or 별도 SSM IaC.
+    $extraRules = @(
+        @{ Name = $script:EventBridgeDetectStuckRule;     Schedule = $script:EventBridgeDetectStuckSchedule;     State = $script:EventBridgeDetectStuckState;     Template = "detect_stuck_to_batch_target.json";     Label = "detect-stuck" }
+        @{ Name = $script:EventBridgeRecoverDeadRule;     Schedule = $script:EventBridgeRecoverDeadSchedule;     State = $script:EventBridgeRecoverDeadState;     Template = "recover_dead_to_batch_target.json";     Label = "recover-dead" }
+        @{ Name = $script:EventBridgePurgeRawRule;        Schedule = $script:EventBridgePurgeRawSchedule;        State = $script:EventBridgePurgeRawState;        Template = "purge_raw_to_batch_target.json";        Label = "purge-raw" }
+    )
+    foreach ($r in $extraRules) {
+        if (-not $r.Name) { continue }
+        $tgtPath = Join-Path $EventBridgePath $r.Template
+        if (-not (Test-Path $tgtPath)) {
+            Write-Warn "EventBridge target template missing: $($r.Template)  (skipping rule $($r.Name))"
+            continue
+        }
+        $tgtJson = (Get-Content $tgtPath -Raw) -replace "PLACEHOLDER_JOB_QUEUE_ARN", $JobQueueArn -replace "PLACEHOLDER_EVENTBRIDGE_BATCH_ROLE_ARN", $EventsRoleArn
+        $rExists = $false
+        try { $cur = Invoke-AwsJson @("events", "describe-rule", "--name", $r.Name, "--region", $script:Region, "--output", "json"); $rExists = ($null -ne $cur) } catch { }
+        $desiredState = if ($r.State -eq "DISABLED") { "DISABLED" } else { "ENABLED" }
+        if (-not $rExists) {
+            Write-Host "  Creating rule $($r.Name)  (schedule=$($r.Schedule), state=$desiredState)" -ForegroundColor Yellow
+            $script:ChangesMade = $true
+            Invoke-Aws @("events", "put-rule", "--name", $r.Name, "--schedule-expression", $r.Schedule, "--state", $desiredState, "--region", $script:Region) | Out-Null
+        } else {
+            $scheduleDrift = ($cur.ScheduleExpression -ne $r.Schedule)
+            if ($cur.State -ne $desiredState -or $scheduleDrift) {
+                if ($scheduleDrift) { Write-Host "  $($r.Label) rule schedule drift: $($cur.ScheduleExpression) -> $($r.Schedule)" -ForegroundColor Yellow }
+                if ($cur.State -ne $desiredState) { Write-Host "  Setting rule $($r.Name) to $desiredState (was $($cur.State))" -ForegroundColor Yellow }
+                $script:ChangesMade = $true
+                Invoke-Aws @("events", "put-rule", "--name", $r.Name, "--schedule-expression", $r.Schedule, "--state", $desiredState, "--region", $script:Region) | Out-Null
+            }
+        }
+        $tgtObj = $tgtJson | ConvertFrom-Json
+        $tgtInput = @{ Rule = $r.Name; Targets = @($tgtObj) } | ConvertTo-Json -Depth 15 -Compress
+        $tmp = [System.IO.Path]::GetTempFileName()
+        try {
+            [System.IO.File]::WriteAllText($tmp, $tgtInput, [System.Text.UTF8Encoding]::new($false))
+            Invoke-Aws @("events", "put-targets", "--cli-input-json", "file://$($tmp -replace '\\','/')", "--region", $script:Region) -ErrorMessage "put-targets $($r.Label)"
+        } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+        Write-Ok "EventBridge $($r.Name) targets updated"
+    }
 }

@@ -1,12 +1,12 @@
 # Video Encoding Cron Jobs — SSOT
 
-**Date:** 2026-05-10
+**Date:** 2026-05-11 (count 정정: 7종)
 **Status:** Active
 
-영상 인코딩 파이프라인 주변에서 도는 EventBridge cron 5종의 책임 분리 SSOT.
+영상 인코딩 파이프라인 주변에서 도는 EventBridge cron 7종의 책임 분리 SSOT.
 한 video가 여러 cron에 동시에 픽업되지 않도록 각 cron은 명확히 다른 상태 집합을 본다.
 
-## Cron 6종
+## Cron 7종
 
 | Rule (EventBridge) | 주기 | 관리 명령 | 대상 상태 | 책임 |
 |---|---|---|---|---|
@@ -15,8 +15,8 @@
 | `academy-v1-video-scan-stuck-rate` | 1시간 | `scan_stuck_video_jobs` | `Job.state=RUNNING` AND last_heartbeat_at 오래됨 | heartbeat 끊긴 RUNNING job → RETRY_WAIT + Batch 재제출 또는 DEAD |
 | `academy-v1-reconcile-video-jobs` | 1시간 | `reconcile_batch_video_jobs` | `Job.state IN (QUEUED,RUNNING,RETRY_WAIT)` AND aws_batch_job_id 존재 | DB 상태 ↔ AWS Batch 실제 상태 동기화. Batch FAILED 감지 시 자동 재제출 (5회 한도 후 DEAD) |
 | `academy-v1-recover-dead-video-jobs` | 2시간 | `recover_dead_video_jobs` | `Job.state=DEAD` AND error_code IN (transient set) AND age<7d AND auto_recovered 마킹 없음 | DEAD 도달한 transient 실패 영상을 1회에 한해 자동 재시도 (loop 방지 마킹) |
-| `academy-v1-purge-raw-videos` | 매일 18:00 | `purge_raw_videos` | R2 raw 객체 (3일+ 경과) | 인코딩 완료 후 원본 .mkv/.mp4 청소 |
-| `academy-v1-cleanup-orphan-video-storage` | 토요일 19:00 | `cleanup_orphan_video_storage` | R2 orphan HLS prefix | DB에 매칭되는 Video 없는 HLS prefix 청소 |
+| `academy-v1-purge-raw-videos` | 매일 03:00 KST (UTC 18) | `purge_raw_videos` | R2 raw 객체 (3일+ 경과) | 인코딩 완료 후 원본 .mkv/.mp4 청소 |
+| `academy-v1-cleanup-orphan-video-storage` (SSM, not Batch) | 일요일 04:00 KST (UTC SAT 19) | `cleanup_orphan_video_storage` (API EC2에서 `docker exec ... manage.py ... --apply --min-age-hours=72` SSM RunShellScript) | R2 orphan HLS prefix | DB에 매칭되는 Video 없는 HLS prefix 청소. Batch jobdef 없음. |
 
 ## 책임 경계 — 한 영상이 어느 cron에 잡히는가
 
@@ -50,7 +50,7 @@ state=SUCCEEDED → Video.status=READY
 ## 운영 주의사항
 
 - **모든 cron은 `--dry-run` 지원**. 영향 큰 작업(재제출, DELETE)은 dry-run으로 먼저 확인.
-- **6개 cron 모두 lock 또는 conditional UPDATE로 중복 처리 차단**. 동일 영상이 두 cron에 동시 픽업돼도 둘 중 하나만 성공.
+- **7개 cron 모두 lock 또는 conditional UPDATE로 중복 처리 차단**. 동일 영상이 두 cron에 동시 픽업돼도 둘 중 하나만 성공.
 - **Reconcile 5회 재시도 한도 + recover-dead 1회 자동 회복**. 자동 회복도 실패하면 admin UI에서 수동 재업로드. DEAD job 누적 모니터링 필요.
 
 ## 관련 파일

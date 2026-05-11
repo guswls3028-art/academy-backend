@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/purge_raw_videos.py
 """
 Delete R2 raw files for READY videos older than N days.
 

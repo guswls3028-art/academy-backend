@@ -97,9 +97,6 @@ $script:RelaxedValidation = $RelaxedValidation
 $script:MinimalDeploy = $MinimalDeploy
 if ($MinimalDeploy) {
     $script:SkipEcrVpcEndpoints = $true
-    $script:VideoLongCEName = $null
-    $script:VideoLongQueueName = $null
-    $script:VideoLongJobDefName = $null
     $script:OpsCEName = $null
     $script:OpsQueueName = $null
 }
@@ -225,19 +222,22 @@ try {
     Ensure-DynamoUploadCheckpointTable
     Ensure-ASGAi
     Ensure-ASGMessaging
+    # long path 폐기 (2026-05-10): VideoLongCE/Queue/JobDef ensure 제거.
     Ensure-VideoCE
-    if ($script:VideoLongCEName) { Ensure-VideoLongCE }
     if (-not $script:MinimalDeploy) { Ensure-OpsCE }
     Ensure-VideoQueue
-    if ($script:VideoLongQueueName) { Ensure-VideoLongQueue }
     if (-not $script:MinimalDeploy) { Ensure-OpsQueue }
     Ensure-VideoJobDef
-    if ($script:VideoLongJobDefName) { Ensure-VideoLongJobDef }
     if (-not $script:MinimalDeploy) {
         Ensure-OpsJobDefReconcile
         Ensure-OpsJobDefScanStuck
         Ensure-OpsJobDefNetprobe
         Ensure-OpsJobDefEnqueueUploaded
+        # 2026-05-11 IaC 보강: cron 7종 SSOT 중 Batch 패턴 3종 jobdef 추가.
+        # cleanup-orphan 은 SSM RunShellScript 운영이라 Batch jobdef 없음 (eventbridge.ps1 도 그 rule 건드리지 않음).
+        Ensure-OpsJobDefDetectStuck
+        Ensure-OpsJobDefRecoverDead
+        Ensure-OpsJobDefPurgeRaw
         Ensure-EventBridgeRules
     }
     Ensure-VideoBatchLogRetention

@@ -2,9 +2,22 @@
 
 **Version:** V1.1.0
 **Date:** 2026-03-15
-**SSOT Status:** Active
+**SSOT Status:** ⚠️ HISTORICAL — superseded by V1.2.0 (2026-04-30) + 영상 파이프라인 대정비 (2026-05-10).
 **Scope:** Performance, Cost, Stability, Operational Safety
-**Review Status:** Substantially Complete 2026-03-15. ECR lifecycle CONFIRMED working 2026-03-17 (lastEvaluatedAt: 2026-03-17T05:02:57).
+**Review Status:** Substantially Complete 2026-03-15. ECR lifecycle CONFIRMED working 2026-03-17.
+
+> **주의 (2026-05-11):** 본 문서는 V1.1.0 시점의 설계 기록이며 현재 운영 상태와 다른 부분이 다수 있다.
+> - **VIDEO_WORKER_MODE / DAEMON_MAX_DURATION_SECONDS:** 2026-05-10 daemon mode 폐기. 모든 영상이 AWS Batch 처리.
+> - **video long path:** 2026-05-10 폐기. queue/CE/jobdef 모두 AWS 에서 삭제.
+> - **VCPU=8, MEM=16GB, jobdef timeout 6h, R2 병렬 업로드:** 2026-05-10 적용. 본 문서 수치와 다름.
+>
+> 현재 운영 SSOT:
+> - `backend/docs/releases/v1.2.0.md` (V1.2.0 봉인)
+> - `backend/docs/infrastructure/video-cron-jobs.md` (cron 7종 책임 분담)
+> - `backend/apps/worker/video_worker/README.md` (batch_main 단독)
+> - 영상 파이프라인 대정비 메모 (2026-05-10)
+>
+> 본 문서는 *왜 그 시점에 그렇게 결정했는지* 의 history 가 필요할 때만 참조.
 
 > **Current State vs. Target State:**
 > This document describes both current infrastructure reality and proposed improvements.

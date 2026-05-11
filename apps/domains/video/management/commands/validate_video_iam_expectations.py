@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/validate_video_iam_expectations.py
 """
 Print required AWS IAM actions per role for video Batch pipeline (static list from code usage).
 No AWS calls; used to verify IAM policies match code requirements.

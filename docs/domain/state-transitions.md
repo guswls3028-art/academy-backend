@@ -294,10 +294,10 @@ CANCELLED  → {} (종단)
 | 전이 | 주체 |
 |------|------|
 | → QUEUED | video encoding service |
-| → RUNNING | daemon/batch worker (job_set_running) |
+| → RUNNING | AWS Batch worker (`batch_main.job_set_running`) — daemon 폐기 2026-05-10 |
 | → SUCCEEDED | worker (job_complete) |
-| → RETRY_WAIT | worker (job_fail_retry) / scan_stuck_video_jobs |
-| → DEAD | scan_stuck_video_jobs / retry API (stale detection) |
+| → RETRY_WAIT | worker (job_fail_retry) / scan_stuck_video_jobs / reconcile_batch_video_jobs (Batch FAILED 자동 재제출) |
+| → DEAD | scan_stuck (MAX_ATTEMPTS) / reconcile (RECONCILE_MAX_ATTEMPTS) / retry API (stale detection) / cleanup_orphan (Video soft-delete) |
 | → CANCELLED | retry API (기존 작업 취소) / 영상 삭제 |
 
 #### 백엔드 불변조건

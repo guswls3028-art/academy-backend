@@ -1,4 +1,3 @@
-# PATH: apps/support/video/views/video_views.py
 
 import logging
 from uuid import uuid4
@@ -23,7 +22,8 @@ from rest_framework.parsers import (
 )
 from django_filters.rest_framework import DjangoFilterBackend
 
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
+from apps.core.parsing import parse_bool
 
 from libs.r2_client.presign import (
     create_presigned_put_url,
@@ -36,20 +36,15 @@ from libs.r2_client.presign import (
 from libs.r2_client.client import head_object
 
 
-from apps.core.r2_paths import video_raw_key, video_hls_prefix
+from apps.core.r2_paths import video_raw_key
 from apps.core.permissions import IsStudent, TenantResolvedAndStaff
 from apps.core.authentication import CsrfExemptSessionAuthentication
 
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.attendance.models import Attendance
 
 from academy.adapters.db.django import repositories_video as video_repo
 from ..models import (
     Video,
-    VideoAccess,
-    VideoProgress,
-    VideoPlaybackEvent,
     VideoFolder,
 )
 from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
@@ -193,7 +188,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         # block tenant concurrency slots indefinitely.
         try:
             from apps.domains.video.models import VideoTranscodeJob
-            from apps.domains.video.services.batch_control import terminate_batch_job
+            from apps.domains.video.services.batch_control import terminate_aws_batch_job
             from academy.adapters.db.django.repositories_video import job_mark_dead_if_active
 
             active_jobs = VideoTranscodeJob.objects.filter(
@@ -208,7 +203,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 aws_batch_job_id = (getattr(cur, "aws_batch_job_id", None) or "").strip()
                 if aws_batch_job_id:
                     try:
-                        terminate_batch_job(
+                        terminate_aws_batch_job(
                             aws_batch_job_id,
                             "video_deleted",
                             video_id=video_id,
@@ -246,9 +241,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         title = request.data.get("title")
         filename = request.data.get("filename")
 
-        allow_skip = bool(request.data.get("allow_skip", False))
+        allow_skip = parse_bool(request.data.get("allow_skip", False), field_name="allow_skip")
         max_speed = float(request.data.get("max_speed", 1.0) or 1.0)
-        show_watermark = bool(request.data.get("show_watermark", True))
+        show_watermark = parse_bool(
+            request.data.get("show_watermark", True),
+            field_name="show_watermark",
+        )
 
         if not session_id or not title or not filename:
             return Response(
@@ -273,6 +271,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
         tenant_code = tenant.code
         tenant_id = tenant.id
+        # same session 내 동시 업로드 시 order max+1 충돌 방지
+        session = Session.objects.select_for_update().select_related("lecture__tenant").get(pk=session.pk)
         order = (
             session.videos.aggregate(max_order=models.Max("order")).get("max_order") or 0
         ) + 1
@@ -799,7 +799,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
     def retry(self, request, pk=None):
         from academy.adapters.db.django.repositories_video import job_mark_dead, job_set_cancel_requested
         from apps.domains.video.models import VideoTranscodeJob
-        from apps.domains.video.services.batch_submit import terminate_batch_job
+        from apps.domains.video.services.batch_submit import terminate_video_job
 
         try:
             video = Video.objects.select_for_update(of=("self",)).select_related("tenant", "session__lecture__tenant").get(
@@ -841,7 +841,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                             "VIDEO_RETRY_STALE_RUNNING | job_id=%s | video_id=%s | last_activity=%s",
                             cur.id, video.id, last_activity,
                         )
-                        terminate_batch_job(str(cur.id), reason="stale_running_superseded")
+                        terminate_video_job(str(cur.id), reason="stale_running_superseded")
                         job_mark_dead(
                             str(cur.id),
                             error_code="STALE_RUNNING",
@@ -871,7 +871,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     elif cur.updated_at >= stale_cutoff:
                         raise ValidationError("Already in backlog (job queued or retry wait)")
                     else:
-                        terminate_batch_job(str(cur.id), reason="superseded")
+                        terminate_video_job(str(cur.id), reason="superseded")
                         job_mark_dead(
                             str(cur.id),
                             error_code="STALE_RETRY",
@@ -882,7 +882,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                         video.status = Video.Status.UPLOADED
                         video.save(update_fields=["current_job_id", "status", "updated_at"])
                 elif cur and cur.state == VideoTranscodeJob.State.RUNNING:
-                    terminate_batch_job(str(cur.id), reason="superseded")
+                    terminate_video_job(str(cur.id), reason="superseded")
                     job_set_cancel_requested(cur.id)
 
             if video.status not in (Video.Status.READY, Video.Status.FAILED):

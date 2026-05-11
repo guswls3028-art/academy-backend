@@ -1,4 +1,3 @@
-# PATH: apps/support/video/views/admin_social_views.py
 """
 Admin-side video social API (comments, engagement stats).
 Teachers can view/reply to student comments on videos.

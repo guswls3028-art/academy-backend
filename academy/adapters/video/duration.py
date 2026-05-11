@@ -1,4 +1,3 @@
-# PATH: apps/worker/video_worker/video/duration.py
 #
 # PURPOSE:
 # - 로컬 영상 파일에서 ffprobe로 duration(초) 추출

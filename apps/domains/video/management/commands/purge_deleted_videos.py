@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/purge_deleted_videos.py
 """
 Permanently delete soft-deleted videos whose retention period has expired.
 

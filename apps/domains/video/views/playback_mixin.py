@@ -1,15 +1,12 @@
-# PATH: apps/support/video/views/playback_mixin.py
 
-import time
 
 from django.conf import settings
 from rest_framework.response import Response
 
 
-from ..models import Video, VideoAccess, VideoProgress, AccessMode
+from ..models import Video, AccessMode
 from academy.adapters.db.django import repositories_video as video_repo
 from ..serializers import VideoSerializer
-from ..drm import create_playback_token, verify_playback_token
 from ..services.access_resolver import resolve_access_mode, get_effective_access_mode
 
 # ✅ 추가: Cloudflare signed url (있으면 사용, 없으면 기존 public)
@@ -151,11 +148,18 @@ class VideoPlaybackMixin:
                 "mode": "overlay",
                 "fields": ["user_id"],
             },
-            "concurrency": {
-                "max_sessions": int(getattr(settings, "VIDEO_MAX_SESSIONS", 9999)),
-                "max_devices": int(getattr(settings, "VIDEO_MAX_DEVICES", 9999)),
-            },
+            "concurrency": self._concurrency_for_video(video),
         }
+
+    def _concurrency_for_video(self, video):
+        """테넌트 정책 우선, 미설정 시 settings fallback."""
+        from ..services.playback_session import get_tenant_session_limits
+        tenant = (
+            getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant", None)
+            or getattr(video, "tenant", None)
+        )
+        max_sessions, max_devices = get_tenant_session_limits(tenant)
+        return {"max_sessions": max_sessions, "max_devices": max_devices}
 
     # ==================================================
     # HLS / CDN

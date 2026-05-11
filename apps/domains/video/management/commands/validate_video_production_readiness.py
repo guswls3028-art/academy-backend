@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/validate_video_production_readiness.py
 """
 Production completeness check: Batch CE ACTIVE, Job Queue ENABLED, Job Definition ACTIVE,
 EventBridge reconcile + scan-stuck ENABLED, IAM roles attached, SSM parameter exists,

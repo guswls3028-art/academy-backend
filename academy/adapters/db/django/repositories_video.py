@@ -489,75 +489,6 @@ class DjangoVideoRepository:
         )
         return True
 
-    def try_claim_video(
-        self, video_id: int, worker_id: str, lease_seconds: int = 14400
-    ) -> bool:
-        """
-        UPLOADED → PROCESSING 원자 변경 + leased_by, leased_until 설정.
-        이미 PROCESSING/READY면 False (다른 워커가 처리 중이거나 완료).
-        빠른 ACK + DB lease 패턴용.
-        """
-        from django.db import transaction
-        from django.utils import timezone
-        from datetime import timedelta
-        from apps.domains.video.models import Video
-
-        with transaction.atomic():
-            video = get_video_for_update(video_id)
-            if not video:
-                return False
-            if video.status == Video.Status.PROCESSING:
-                return False
-            if video.status == Video.Status.READY:
-                return False
-            if video.status != Video.Status.UPLOADED:
-                import logging
-                logging.getLogger(__name__).warning(
-                    "try_claim_video: video %s status=%s (expected UPLOADED)",
-                    video_id,
-                    video.status,
-                )
-                return False
-            video.status = Video.Status.PROCESSING
-            if hasattr(video, "processing_started_at"):
-                video.processing_started_at = timezone.now()
-            video.leased_by = str(worker_id)[:64]
-            video.leased_until = timezone.now() + timedelta(seconds=lease_seconds)
-            update_fields = ["status", "leased_by", "leased_until"]
-            if hasattr(video, "processing_started_at"):
-                update_fields.append("processing_started_at")
-            video.save(update_fields=update_fields)
-            tenant_id = _tenant_id_from_video(video)
-        _cache_video_status_safe(
-            video_id, tenant_id,
-            getattr(Video.Status.PROCESSING, "value", "PROCESSING"),
-            ttl=21600,
-        )
-        return True
-
-    def try_reclaim_video(self, video_id: int, *, force: bool = False) -> bool:
-        """
-        PROCESSING 이지만 leased_until < now (또는 force=True) 인 경우 UPLOADED로 되돌림.
-        force=True: heartbeat 없음 등으로 worker 사망 판단 시 lease 무시하고 reclaim.
-        """
-        from django.db import transaction
-        from django.utils import timezone
-        from apps.domains.video.models import Video
-
-        with transaction.atomic():
-            video = get_video_for_update(video_id)
-            if not video:
-                return False
-            if video.status != Video.Status.PROCESSING:
-                return False
-            if not force and (video.leased_until is None or video.leased_until >= timezone.now()):
-                return False
-            video.status = Video.Status.UPLOADED
-            video.leased_by = ""
-            video.leased_until = None
-            video.save(update_fields=["status", "leased_by", "leased_until"])
-        return True
-
     def complete_video(
         self,
         video_id: int,
@@ -1102,18 +1033,6 @@ def job_mark_dead_if_active(
             except Exception:
                 pass
     return True, n
-
-
-def job_count_backlog() -> int:
-    """BacklogCount: QUEUED + RETRY_WAIT (RUNNING은 backlog 아님)."""
-    from apps.domains.video.models import VideoTranscodeJob
-
-    return VideoTranscodeJob.objects.filter(
-        state__in=[
-            VideoTranscodeJob.State.QUEUED,
-            VideoTranscodeJob.State.RETRY_WAIT,
-        ]
-    ).count()
 
 
 def job_compute_backlog_score() -> float:

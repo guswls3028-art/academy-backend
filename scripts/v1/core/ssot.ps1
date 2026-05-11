@@ -180,21 +180,21 @@ function Load-SSOT {
     $script:VideoJobTimeoutStandardSeconds = Coerce-Int $(if ($vb["jobTimeoutStandardSeconds"]) { $vb["jobTimeoutStandardSeconds"] } elseif ($vbs["jobTimeoutSeconds"]) { $vbs["jobTimeoutSeconds"] } else { 21600 }) 21600
     $script:VideoStuckHeartbeatAgeStandardMinutes = Coerce-Int $(if ($vb["stuckHeartbeatAgeStandardMinutes"]) { $vb["stuckHeartbeatAgeStandardMinutes"] } elseif ($vbs["stuckHeartbeatAgeMinutes"]) { $vbs["stuckHeartbeatAgeMinutes"] } else { 20 }) 20
     $script:VideoUseSpot = ($vbs["useSpot"] -eq $true -or $vbs["useSpot"] -eq "true")
-    if ($vbl) {
-        $script:VideoLongCEName = $vbl["computeEnvironmentName"]
-        $script:VideoLongQueueName = $vbl["videoQueueName"]
-        $script:VideoLongJobDefName = $vbl["workerJobDefName"]
-        $script:VideoLongMinvCpus = Coerce-Int $vbl["minvCpus"] 0
-        $script:VideoLongMaxvCpus = Coerce-Int $vbl["maxvCpus"] 80
-        $script:VideoLongInstanceType = if ($vbl["instanceType"]) { $vbl["instanceType"] } else { "c6g.xlarge" }
-        $script:VideoLongRootVolumeSizeGb = Coerce-Int $(if ($vbl["rootVolumeSizeGb"]) { $vbl["rootVolumeSizeGb"] } else { 300 }) 300
-        $script:VideoJobTimeoutLongSeconds = Coerce-Int $(if ($vb["jobTimeoutLongSeconds"]) { $vb["jobTimeoutLongSeconds"] } elseif ($vbl["jobTimeoutSeconds"]) { $vbl["jobTimeoutSeconds"] } else { 43200 }) 43200
-        $script:VideoStuckHeartbeatAgeLongMinutes = Coerce-Int $(if ($vb["stuckHeartbeatAgeLongMinutes"]) { $vb["stuckHeartbeatAgeLongMinutes"] } elseif ($vbl["stuckHeartbeatAgeMinutes"]) { $vbl["stuckHeartbeatAgeMinutes"] } else { 45 }) 45
-        $script:VideoLongUseSpot = ($vbl["useSpot"] -eq $true -or $vbl["useSpot"] -eq "true")
-    } else {
-        $script:VideoLongCEName = if ($vb["longComputeEnvironmentName"]) { $vb["longComputeEnvironmentName"] } else { $null }
-        $script:VideoLongQueueName = if ($vb["longQueueName"]) { $vb["longQueueName"] } else { $null }
-        $script:VideoLongJobDefName = if ($vb["longWorkerJobDefName"]) { $vb["longWorkerJobDefName"] } else { $null }
+    # long path 폐기 (2026-05-10): SSOT 에 long.* 가 박혀 있어도 무시. 모든 영상이 short queue/jobdef.
+    # 변수 자체는 남겨 둔다 — 다른 deploy/inventory 스크립트가 `if ($script:VideoLongQueueName)` 가드로
+    # 분기하므로 $null 이면 자연스럽게 skip.
+    $script:VideoLongCEName = $null
+    $script:VideoLongQueueName = $null
+    $script:VideoLongJobDefName = $null
+    $script:VideoLongMinvCpus = 0
+    $script:VideoLongMaxvCpus = 0
+    $script:VideoLongInstanceType = $null
+    $script:VideoLongRootVolumeSizeGb = 0
+    $script:VideoJobTimeoutLongSeconds = 0
+    $script:VideoStuckHeartbeatAgeLongMinutes = Coerce-Int $(if ($vb["stuckHeartbeatAgeLongMinutes"]) { $vb["stuckHeartbeatAgeLongMinutes"] } else { 45 }) 45
+    $script:VideoLongUseSpot = $false
+    if ($vbl -or $vb["longQueueName"] -or $vb["longWorkerJobDefName"] -or $vb["longComputeEnvironmentName"]) {
+        Write-Host "  (SSOT 에 video long path 정의가 있으나 long path 가 폐기된 상태라 무시함. SSOT 에서 제거 권장.)" -ForegroundColor Yellow
     }
     $script:OpsCEName = $p["videoBatch"]["opsComputeEnvironmentName"]
     $script:OpsQueueName = $p["videoBatch"]["opsQueueName"]
@@ -208,6 +208,14 @@ function Load-SSOT {
     if ($raw -match 'netprobe:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefNetprobe = $matches[1] }
     $script:OpsJobDefEnqueueUploaded = "academy-v1-video-ops-enqueue-uploaded"
     if ($raw -match 'enqueueUploaded:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefEnqueueUploaded = $matches[1] }
+    # 신규 4종 (2026-05-11 IaC 보강): detect-stuck / recover-dead / purge-raw / cleanup-orphan
+    $script:OpsJobDefDetectStuck = "academy-v1-video-ops-detect-stuck"
+    if ($raw -match 'detectStuck:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefDetectStuck = $matches[1] }
+    $script:OpsJobDefRecoverDead = "academy-v1-video-ops-recover-dead"
+    if ($raw -match 'recoverDead:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefRecoverDead = $matches[1] }
+    $script:OpsJobDefPurgeRaw = "academy-v1-video-ops-purge-raw"
+    if ($raw -match 'purgeRaw:\s*([a-zA-Z0-9-]+)') { $script:OpsJobDefPurgeRaw = $matches[1] }
+    # cleanup-orphan 은 SSM RunShellScript 패턴이라 Batch jobdef 없음. 변수 자체 제거.
 
     $script:EventBridgeReconcileRule = $p["eventBridge"]["reconcileRuleName"]
     $script:EventBridgeScanStuckRule = $p["eventBridge"]["scanStuckRuleName"]
@@ -219,6 +227,22 @@ function Load-SSOT {
     $script:EventBridgeEnqueueUploadedRule = if ($p["eventBridge"]["enqueueUploadedRuleName"]) { $p["eventBridge"]["enqueueUploadedRuleName"] } else { "academy-v1-enqueue-uploaded-videos" }
     $script:EventBridgeEnqueueUploadedSchedule = if ($p["eventBridge"]["enqueueUploadedSchedule"]) { $p["eventBridge"]["enqueueUploadedSchedule"] } else { "rate(10 minutes)" }
     $script:EventBridgeEnqueueUploadedState = if ($p["eventBridge"]["enqueueUploadedState"]) { $p["eventBridge"]["enqueueUploadedState"] } else { "ENABLED" }
+    # 신규 4종 rule (2026-05-11 IaC 보강).
+    # KST 기준 시간을 cron(UTC) 으로 변환: KST 18:00 → UTC 09:00, KST 19:00 → UTC 10:00.
+    $script:EventBridgeDetectStuckRule = if ($p["eventBridge"]["detectStuckRuleName"]) { $p["eventBridge"]["detectStuckRuleName"] } else { "academy-v1-detect-stuck-videos" }
+    $script:EventBridgeDetectStuckSchedule = if ($p["eventBridge"]["detectStuckSchedule"]) { $p["eventBridge"]["detectStuckSchedule"] } else { "rate(30 minutes)" }
+    $script:EventBridgeDetectStuckState = if ($p["eventBridge"]["detectStuckState"]) { $p["eventBridge"]["detectStuckState"] } else { "ENABLED" }
+    $script:EventBridgeRecoverDeadRule = if ($p["eventBridge"]["recoverDeadRuleName"]) { $p["eventBridge"]["recoverDeadRuleName"] } else { "academy-v1-recover-dead-video-jobs" }
+    $script:EventBridgeRecoverDeadSchedule = if ($p["eventBridge"]["recoverDeadSchedule"]) { $p["eventBridge"]["recoverDeadSchedule"] } else { "rate(2 hours)" }
+    $script:EventBridgeRecoverDeadState = if ($p["eventBridge"]["recoverDeadState"]) { $p["eventBridge"]["recoverDeadState"] } else { "ENABLED" }
+    $script:EventBridgePurgeRawRule = if ($p["eventBridge"]["purgeRawRuleName"]) { $p["eventBridge"]["purgeRawRuleName"] } else { "academy-v1-purge-raw-videos" }
+    # purge-raw: UTC 18:00 = KST 03:00 (저부하 새벽 시간에 정리. AWS 실측 일치.)
+    $script:EventBridgePurgeRawSchedule = if ($p["eventBridge"]["purgeRawSchedule"]) { $p["eventBridge"]["purgeRawSchedule"] } else { "cron(0 18 * * ? *)" }
+    $script:EventBridgePurgeRawState = if ($p["eventBridge"]["purgeRawState"]) { $p["eventBridge"]["purgeRawState"] } else { "ENABLED" }
+    $script:EventBridgeCleanupOrphanRule = if ($p["eventBridge"]["cleanupOrphanRuleName"]) { $p["eventBridge"]["cleanupOrphanRuleName"] } else { "academy-v1-cleanup-orphan-video-storage" }
+    # cleanup-orphan: UTC SAT 19:00 = KST SUN 04:00 (주간 새벽 정리. AWS 실측 일치.)
+    $script:EventBridgeCleanupOrphanSchedule = if ($p["eventBridge"]["cleanupOrphanSchedule"]) { $p["eventBridge"]["cleanupOrphanSchedule"] } else { "cron(0 19 ? * SAT *)" }
+    $script:EventBridgeCleanupOrphanState = if ($p["eventBridge"]["cleanupOrphanState"]) { $p["eventBridge"]["cleanupOrphanState"] } else { "ENABLED" }
 
     $script:DynamoLockTableName = if ($p["dynamodb"]["lockTableName"]) { $p["dynamodb"]["lockTableName"] } else { "video_job_lock" }
     $script:DynamoLockTtlAttribute = if ($p["dynamodb"]["lockTableTtlAttribute"]) { $p["dynamodb"]["lockTableTtlAttribute"] } else { "ttl" }
@@ -290,15 +314,29 @@ function Load-SSOT {
     $script:VideoLogGroup = "/aws/batch/academy-video-worker"
     $script:OpsLogGroup = "/aws/batch/academy-video-ops"
 
+    # long path 폐기 (2026-05-10): SSOT_* 인벤토리에서 long CE/queue/jobdef 제외.
+    # 2026-05-11 보강: detect-stuck / recover-dead / purge-raw / cleanup-orphan jobdef 추가.
     $script:SSOT_CE = @($script:VideoCEName, $script:OpsCEName)
     $script:SSOT_Queue = @($script:VideoQueueName, $script:OpsQueueName)
-    $script:SSOT_JobDef = @($script:VideoJobDefName, $script:OpsJobDefReconcile, $script:OpsJobDefScanStuck, $script:OpsJobDefNetprobe, $script:OpsJobDefEnqueueUploaded)
-    if ($script:VideoLongCEName) {
-        $script:SSOT_CE = @($script:VideoCEName, $script:VideoLongCEName, $script:OpsCEName)
-        $script:SSOT_Queue = @($script:VideoQueueName, $script:VideoLongQueueName, $script:OpsQueueName)
-        $script:SSOT_JobDef = @($script:VideoJobDefName, $script:VideoLongJobDefName, $script:OpsJobDefReconcile, $script:OpsJobDefScanStuck, $script:OpsJobDefNetprobe, $script:OpsJobDefEnqueueUploaded)
-    }
-    $script:SSOT_EventBridgeRule = @($script:EventBridgeReconcileRule, $script:EventBridgeScanStuckRule, $script:EventBridgeEnqueueUploadedRule)
+    $script:SSOT_JobDef = @(
+        $script:VideoJobDefName,
+        $script:OpsJobDefReconcile,
+        $script:OpsJobDefScanStuck,
+        $script:OpsJobDefNetprobe,
+        $script:OpsJobDefEnqueueUploaded,
+        $script:OpsJobDefDetectStuck,
+        $script:OpsJobDefRecoverDead,
+        $script:OpsJobDefPurgeRaw
+    )
+    $script:SSOT_EventBridgeRule = @(
+        $script:EventBridgeReconcileRule,
+        $script:EventBridgeScanStuckRule,
+        $script:EventBridgeEnqueueUploadedRule,
+        $script:EventBridgeDetectStuckRule,
+        $script:EventBridgeRecoverDeadRule,
+        $script:EventBridgePurgeRawRule,
+        $script:EventBridgeCleanupOrphanRule
+    )
     $script:SSOT_ASG = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName)
     $script:SSOT_RDS = @($script:RdsDbIdentifier)
     $script:SSOT_Redis = @($script:RedisReplicationGroupId)

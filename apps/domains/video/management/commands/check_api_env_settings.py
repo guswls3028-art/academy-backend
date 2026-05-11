@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/check_api_env_settings.py
 """
 Verify API runtime environment variables (DB, Redis, R2, Batch, AWS).
 

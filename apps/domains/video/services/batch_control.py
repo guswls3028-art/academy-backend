@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 _BATCH_JOB_TERMINAL = frozenset({"SUCCEEDED", "FAILED"})
 
 
-def terminate_batch_job(
+def terminate_aws_batch_job(
     aws_batch_job_id: str,
     reason: str,
     *,
@@ -28,6 +28,9 @@ def terminate_batch_job(
 ) -> None:
     """
     AWS Batch Job을 즉시 종료. Best-effort; 예외를 발생시키지 않음.
+
+    첫 인자는 AWS Batch jobId (`aws_batch_job_id`). 같은 도메인의 `batch_submit.terminate_video_job`
+    (Django UUID `video_job_id` 받아 DB lookup 후 terminate) 과 혼동 금지.
 
     - Optionally describes job first; if already SUCCEEDED/FAILED, skips terminate (idempotent).
     - Retries up to 3 times with exponential backoff + jitter on transient errors.

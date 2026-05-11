@@ -1,4 +1,4 @@
-# PATH: apps/worker/video_worker/config.py
+"""Video worker config (academy adapter). batch_main.load_config() 진입점."""
 from __future__ import annotations
 
 import os

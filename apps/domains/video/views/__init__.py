@@ -1,4 +1,3 @@
-# PATH: apps/support/video/views/__init__.py
 
 from .video_policy_impact import VideoPolicyImpactAPIView
 

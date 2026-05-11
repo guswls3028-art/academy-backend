@@ -117,11 +117,11 @@ services:
       CDN_HLS_BASE_URL: ${CDN_HLS_BASE_URL}
       CDN_HLS_SIGNING_SECRET: ${CDN_HLS_SIGNING_SECRET:-}
       CDN_HLS_SIGNING_KEY_ID: ${CDN_HLS_SIGNING_KEY_ID:-v1}
-      # SQS
-      VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-v1-video-batch-queue}
+      # SQS — 영상 인코딩은 SQS 미사용(AWS Batch 전용). delete_r2 정리만 SQS 사용.
       AI_SQS_QUEUE_NAME_LITE: ${AI_SQS_QUEUE_NAME_LITE:-academy-v1-ai-queue}
       AI_SQS_QUEUE_NAME_BASIC: ${AI_SQS_QUEUE_NAME_BASIC:-academy-v1-ai-queue}
       AI_SQS_QUEUE_NAME_PREMIUM: ${AI_SQS_QUEUE_NAME_PREMIUM:-academy-v1-ai-queue}
+      VIDEO_SQS_QUEUE_DELETE_R2: ${VIDEO_SQS_QUEUE_DELETE_R2:-academy-video-delete-r2}
       # Worker 통신
       INTERNAL_WORKER_TOKEN: ${INTERNAL_WORKER_TOKEN}
       # Site
@@ -141,8 +141,10 @@ services:
     logging: *default-logging
 
   # ============================================================================
-  # Video Worker
+  # Video Worker — AWS Batch image (로컬 dev 시 VIDEO_JOB_ID 명시해야 동작)
   # ============================================================================
+  # 운영은 AWS Batch에서만 실행. 로컬에서 떠 있어도 VIDEO_JOB_ID 없으면 batch_main 즉시 종료.
+  # daemon mode + SQS pull 경로는 2026-05-10 폐기 (FAST_ACK / SQS_QUEUE_NAME / EC2_IDLE_STOP_THRESHOLD 모두 무관).
   video-worker:
     build:
       <<: *base-build
@@ -153,10 +155,6 @@ services:
     environment:
       <<: *worker-env
       WORKER_ID: ${VIDEO_WORKER_ID:-video-worker-1}
-      EC2_IDLE_STOP_THRESHOLD: ${EC2_IDLE_STOP_THRESHOLD:-5}
-      VIDEO_FAST_ACK: ${VIDEO_FAST_ACK:-1}
-      SQS_WAIT_TIME_SECONDS: ${SQS_WAIT_TIME_SECONDS:-20}
-      VIDEO_SQS_QUEUE_NAME: ${VIDEO_SQS_QUEUE_NAME:-academy-v1-video-batch-queue}
       # R2 Video
       R2_BUCKET: ${R2_VIDEO_BUCKET:-academy-video}
       R2_PREFIX: ${R2_PREFIX:-media/hls/videos}

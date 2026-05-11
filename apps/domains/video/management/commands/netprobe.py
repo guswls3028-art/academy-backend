@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/netprobe.py
 """
 Network probe for Batch nodes: TCP to DB/REDIS, GET API health. Outputs JSON to stdout.
 Used by academy-video-ops-netprobe job to prove Batch->RDS/Redis/API connectivity.

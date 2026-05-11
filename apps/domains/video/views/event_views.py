@@ -1,4 +1,3 @@
-# PATH: apps/support/video/views/event_views.py
 
 import csv
 from datetime import timedelta

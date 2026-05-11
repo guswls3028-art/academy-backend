@@ -100,7 +100,7 @@
 |------|-------------------|------------------------|------|
 | `ai` | `domain/ai/entities,errors` + `adapters/ai/sqs_adapter` + `application/use_cases/ai/` (오케스트레이션) | `models, gateway, services, queueing, callbacks` (HTTP/모델/디스패치) | **공존 OK** — 책임 분리됨 (오케스트레이션 vs HTTP/모델). 신규 인프라 호출은 `academy/`, 신규 HTTP/모델은 `apps/`. |
 | `tools` | `domain/tools/{image_preprocessor, ppt_composer, question_splitter}` (순수 알고리즘) + `adapters/tools/{pptx_writer, pymupdf_renderer}` | `ppt/, services/, timer_*` (HTTP 뷰 + 도메인 서비스) | **공존 OK** — academy 쪽은 알고리즘 코어, apps 쪽은 HTTP 표면. |
-| `video` | `application/video/handler.py` + `adapters/video/processor.py` | `apps/support/video/`, `apps/worker/video_worker/` | **공존 OK** — academy 쪽이 정본 처리, support/worker는 entry. |
+| `video` | `application/video/cancellation.py` (CancelledError) + `adapters/video/processor.py`·`transcoder.py`·`r2_uploader.py` | `apps/domains/video/` (모델·HTTP·서비스), `apps/worker/video_worker/batch_main.py` (entry) | **공존 OK** — adapter 가 정본 인코딩 처리, worker entry 가 SSM env load + signal/heartbeat, apps/domains 가 모델·HTTP. (이전 `application/video/handler.py` 의 ProcessVideoJobHandler 는 SQS daemon 폐기와 함께 2026-05-10 폐기.) |
 
 → 충돌이 아니라 **레이어 분담**이다. 위 표에서 정의한 경계를 지키면 된다.
 
@@ -212,3 +212,4 @@
 - **2026-04-28**: 평가 5도메인 audit. `homework/views/homework_score_viewset.py` + `homework/filters.py` + `homework/serializers/core` 의 HomeworkScore 부분을 `homework_results/` 로 이관. HomeworkPolicy 재계산 로직은 `homework_results/services/policy_recalc.py` 로 분리. URL `/api/v1/homework/scores/` 와 `/api/v1/homeworks/` 모두 보존(프론트 영향 0). HomeworkQuickPatchSerializer 중복 제거(meta_status 인터페이스를 master로). Migration 0건.
 - **2026-04-28**: §8 평가 5도메인 책임 분담 표 추가. results 도메인 명칭 오해 + homework/homework_results 자의적 분리 부채 명문화. 머지/분리 audit 결과 (옵션 A 즉시 적용 + 옵션 B multi-PR 후속).
 - **2026-05-07**: §10 매치업 도메인 책임 분담 표 추가. 매치업 신규 segmentation 인프라 9 모듈 (총 6,239 줄) 이 §3 결정 트리 위반으로 `apps/domains/matchup/segmentation/` 에 누적된 부채 명문화. 운영 callback wiring 0 (mock-only) 이라 운영 영향 없음. 이전 마감 2026-05-31 (P1) — Stage 6.4 (callback wiring) 직전 일괄 이전.
+- **2026-05-11**: §5 video 행 갱신 — `academy/application/video/handler.py` (ProcessVideoJobHandler) 폐기. CancelledError 만 `cancellation.py` 로 분리. 인코딩 본 경로는 worker entry → adapter 직호출 (use-case 객체 없음).

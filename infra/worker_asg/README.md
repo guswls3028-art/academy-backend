@@ -1,11 +1,16 @@
 # Worker ASG (Target Tracking, Min=0)
 
-SQS 큐 깊이 기반 ASG 오토스케일링. 설계: [ARCH_CHANGE_PROPOSAL_LAMBDA_TO_ASG.md](../../docs/SSOT_0215/IMPORTANT/ARCH_CHANGE_PROPOSAL_LAMBDA_TO_ASG.md)
+SQS 큐 깊이 기반 ASG 오토스케일링.
+
+> **2026-05-11 업데이트:** Video ASG 경로는 폐기됐다 (2026-05-10 daemon mode 폐기 + AWS Batch 전용 컷오버).
+> `video_worker_user_data.sh`, `academy-video-worker-asg`, queue_depth_lambda 의 `ENABLE_VIDEO_METRICS`,
+> worker_autoscale_lambda 의 `ENABLE_VIDEO_WAKE` 는 모두 stale 또는 default-off. AI/Messaging ASG 만 활성.
+> 인코딩 본 경로는 `apps/worker/video_worker/batch_main.py` (AWS Batch) — `infra/worker_asg/` 와 무관.
 
 ## 구성
 
-- **queue_depth_lambda**: 1분마다 SQS visible 메시지 수를 CloudWatch `Academy/Workers` 네임스페이스에 퍼블리시 (AI = lite+basic 합산, Video = academy-video-jobs).
-- **user_data**: Launch Template용 부팅 스크립트 (Docker, ECR pull, 컨테이너 실행, EC2_IDLE_STOP_THRESHOLD=0).
+- **queue_depth_lambda**: 1분마다 SQS visible 메시지 수를 CloudWatch `Academy/Workers` 네임스페이스에 퍼블리시 (AI = lite+basic 합산, Messaging). Video metric 은 default-off.
+- **user_data**: AI/Messaging Launch Template 용 부팅 스크립트 (Docker, ECR pull, 컨테이너 실행, EC2_IDLE_STOP_THRESHOLD=0). Video user_data 는 stale 잔재.
 - **배포**: `scripts/deploy_worker_asg.ps1`
 
 ## 사전 조건
@@ -47,8 +52,8 @@ cd C:\academy
 |--------|------|
 | Lambda | academy-worker-queue-depth-metric |
 | EventBridge Rule | academy-worker-queue-depth-rate (rate 1 min) |
-| Launch Template | academy-ai-worker-asg, academy-video-worker-asg |
-| ASG | academy-ai-worker-asg, academy-video-worker-asg |
+| Launch Template | academy-ai-worker-asg, academy-messaging-worker-asg (Video ASG 폐기) |
+| ASG | academy-ai-worker-asg, academy-messaging-worker-asg (Video ASG 폐기) |
 | Scaling Policy | QueueDepthTargetTracking (Target Tracking) |
 
 ## 전환 시 (기존 Lambda 스케일 제거)

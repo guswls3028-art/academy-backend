@@ -1,4 +1,3 @@
-# PATH: apps/support/video/views/playback_views.py
 
 import uuid
 

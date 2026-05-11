@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/validate_video_system.py
 """
 System validation: consistency checks for video encoding state.
 
@@ -173,7 +172,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.WARNING(f"Duplicate active jobs: {len(dupes)} videos"))
         if fix and dupes and not dry_run:
             from academy.adapters.db.django.repositories_video import job_mark_dead
-            from apps.domains.video.services.batch_submit import terminate_batch_job
+            from apps.domains.video.services.batch_submit import terminate_video_job
             for row in dupes:
                 video_id = row["video_id"]
                 jobs = list(
@@ -187,7 +186,7 @@ class Command(BaseCommand):
                 keep, older = jobs[0], jobs[1:]
                 for job in older:
                     if (job.aws_batch_job_id or "").strip():
-                        terminate_batch_job(str(job.id), reason="validate_video_system_duplicate")
+                        terminate_video_job(str(job.id), reason="validate_video_system_duplicate")
                     job_mark_dead(str(job.id), error_code="VALIDATE_FIX_DUPLICATE", error_message="Duplicate active job; kept latest")
                     self.stdout.write(self.style.SUCCESS(f"FIX: job_id={job.id} video_id={video_id} DEAD (duplicate)"))
 

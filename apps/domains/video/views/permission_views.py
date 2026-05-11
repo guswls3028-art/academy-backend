@@ -1,4 +1,3 @@
-# PATH: apps/support/video/views/permission_views.py
 
 from django.db import models, transaction
 from rest_framework.viewsets import ModelViewSet

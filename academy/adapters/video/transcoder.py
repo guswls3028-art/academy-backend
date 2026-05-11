@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from academy.application.video.handler import CancelledError
+from academy.application.video import CancelledError
 from academy.adapters.video.utils import ensure_dir, trim_tail
 import logging
 
@@ -135,13 +135,6 @@ def _compute_output_resolution(input_w: int, input_h: int) -> tuple[int, int]:
     out_w -= out_w % 2
     out_h -= out_h % 2
     return out_w, out_h
-
-
-def prepare_output_dirs(output_root: Path, variants: List[dict]) -> None:
-    """Legacy: kept for backward compatibility. Use direct ensure_dir for new pipeline."""
-    ensure_dir(output_root)
-    for v in variants:
-        ensure_dir(output_root / f"v{v['name']}")
 
 
 def has_audio_stream(*, input_path: str, ffprobe_bin: str, timeout: int) -> bool:

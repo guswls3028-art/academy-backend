@@ -1,5 +1,3 @@
-# PATH: apps/support/video/views/video_policy_impact.py
-# PATH: apps/support/video/views/video_policy_impact.py
 
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated

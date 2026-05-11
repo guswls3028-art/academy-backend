@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/scan_stuck_video_jobs.py
 """
 Stuck Scanner: RUNNING인데 last_heartbeat_at 기준 heartbeat_age가 threshold 초과 → RETRY_WAIT, attempt_count++.
 Stuck 판정은 실행시간이 아니라 heartbeat_age 기반만 사용. standard 20분, long(3h+ 영상) 45분.

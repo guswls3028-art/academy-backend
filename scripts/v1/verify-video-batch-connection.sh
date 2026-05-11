@@ -22,11 +22,10 @@ else
 import sys, json
 try:
     d = json.load(sys.stdin)
+    # long path 폐기 (2026-05-10): VIDEO_BATCH_JOB_QUEUE_LONG / VIDEO_BATCH_JOB_DEFINITION_LONG 검증 안 함.
     expected = {
         'VIDEO_BATCH_JOB_QUEUE': 'academy-v1-video-batch-queue',
         'VIDEO_BATCH_JOB_DEFINITION': 'academy-v1-video-batch-jobdef',
-        'VIDEO_BATCH_JOB_QUEUE_LONG': 'academy-v1-video-batch-long-queue',
-        'VIDEO_BATCH_JOB_DEFINITION_LONG': 'academy-v1-video-batch-long-jobdef',
     }
     for k, exp in expected.items():
         v = d.get(k, '')

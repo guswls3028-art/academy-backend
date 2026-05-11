@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/check_batch_settings.py
 """
 Verify AWS Batch Video Job runtime settings.
 

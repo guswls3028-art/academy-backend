@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/diagnose_video_retry.py
 """
 진단: retry 실패 원인 확인용.
 지정한 video_id들의 status, file_key, current_job_id, R2 원본 객체 존재 여부를 출력.

@@ -1,4 +1,3 @@
-# PATH: apps/support/video/management/commands/enqueue_uploaded_videos.py
 """
 Enqueue UPLOADED (and optionally FAILED) videos that have no active job.
 

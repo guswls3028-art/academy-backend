@@ -25,9 +25,11 @@ logger.setLevel(logging.INFO)
 REGION = os.environ.get("AWS_REGION", "ap-northeast-2")
 AI_QUEUE_LITE = os.environ.get("AI_QUEUE_LITE", "academy-ai-jobs-lite")
 AI_QUEUE_BASIC = os.environ.get("AI_QUEUE_BASIC", "academy-ai-jobs-basic")
-VIDEO_QUEUE = os.environ.get("VIDEO_QUEUE", "academy-video-jobs")
+# Video는 Batch 전용 (daemon 폐기 2026-05-10). ENABLE_VIDEO_WAKE=false 기본. 디폴트는 placeholder.
+VIDEO_QUEUE = os.environ.get("VIDEO_QUEUE", "academy-video-jobs-DEPRECATED-DO-NOT-USE")
 AI_WORKER_NAME_TAG = os.environ.get("AI_WORKER_NAME_TAG", "academy-ai-worker-cpu")
-VIDEO_WORKER_NAME_TAG = os.environ.get("VIDEO_WORKER_NAME_TAG", "academy-video-worker")
+# academy-video-worker EC2 인스턴스 ASG는 폐기됨 (daemon 미운용). 향후 hybrid 도입 시에만 env 명시.
+VIDEO_WORKER_NAME_TAG = os.environ.get("VIDEO_WORKER_NAME_TAG", "academy-video-worker-DEPRECATED")
 MIN_MESSAGES = int(os.environ.get("MIN_MESSAGES_TO_START", "1"))
 MAX_INSTANCES_PER_TYPE = int(os.environ.get("MAX_INSTANCES_PER_TYPE", "1"))
 COOLDOWN_SECONDS = int(os.environ.get("COOLDOWN_SECONDS", "120"))

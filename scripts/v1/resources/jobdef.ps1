@@ -86,8 +86,13 @@ function Ensure-JobDefOne { param([string]$JobDefName, [string]$TemplateFileName
 }
 
 function Ensure-VideoJobDef { Ensure-JobDefOne -JobDefName $script:VideoJobDefName -TemplateFileName "video_job_definition.json" | Out-Null }
-function Ensure-VideoLongJobDef { if ($script:VideoLongJobDefName) { Ensure-JobDefOne -JobDefName $script:VideoLongJobDefName -TemplateFileName "video_job_definition_long.json" | Out-Null } }
+# long path 폐기 (2026-05-10): Ensure-VideoLongJobDef 제거. video_job_definition_long.json 도 함께 삭제됨.
 function Ensure-OpsJobDefReconcile { Ensure-JobDefOne -JobDefName $script:OpsJobDefReconcile -TemplateFileName "video_ops_job_definition_reconcile.json" | Out-Null }
 function Ensure-OpsJobDefScanStuck { Ensure-JobDefOne -JobDefName $script:OpsJobDefScanStuck -TemplateFileName "video_ops_job_definition_scanstuck.json" | Out-Null }
 function Ensure-OpsJobDefNetprobe { Ensure-JobDefOne -JobDefName $script:OpsJobDefNetprobe -TemplateFileName "video_ops_job_definition_netprobe.json" | Out-Null }
 function Ensure-OpsJobDefEnqueueUploaded { if ($script:OpsJobDefEnqueueUploaded) { Ensure-JobDefOne -JobDefName $script:OpsJobDefEnqueueUploaded -TemplateFileName "video_ops_job_definition_enqueue_uploaded.json" | Out-Null } }
+# 신규 3종 (2026-05-11 IaC 보강): video-cron-jobs.md 의 Batch 패턴 cron 과 1:1 매칭.
+# cleanup-orphan 은 EventBridge → SSM RunShellScript (API EC2 컨테이너에서 manage.py 직접 실행) 으로 다르게 운영 — Batch jobdef 없음.
+function Ensure-OpsJobDefDetectStuck { if ($script:OpsJobDefDetectStuck) { Ensure-JobDefOne -JobDefName $script:OpsJobDefDetectStuck -TemplateFileName "video_ops_job_definition_detect_stuck.json" | Out-Null } }
+function Ensure-OpsJobDefRecoverDead { if ($script:OpsJobDefRecoverDead) { Ensure-JobDefOne -JobDefName $script:OpsJobDefRecoverDead -TemplateFileName "video_ops_job_definition_recover_dead.json" | Out-Null } }
+function Ensure-OpsJobDefPurgeRaw { if ($script:OpsJobDefPurgeRaw) { Ensure-JobDefOne -JobDefName $script:OpsJobDefPurgeRaw -TemplateFileName "video_ops_job_definition_purge_raw.json" | Out-Null } }

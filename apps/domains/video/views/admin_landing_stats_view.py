@@ -1,4 +1,3 @@
-# PATH: apps/support/video/views/admin_landing_stats_view.py
 """
 Admin Videos Landing Stats
 
@@ -29,9 +28,32 @@ PROCESSING_STATUSES = [
 ]
 
 
+def _humanize_error_reason(raw: str) -> str:
+    """백엔드 error_reason → 비기술 사용자용 한국어 사유."""
+    if not raw:
+        return ""
+    s = str(raw).lower()
+    if "source_not_found" in s or "s3 object not found" in s:
+        return "원본 파일을 찾을 수 없습니다 (저장소에서 사라짐)"
+    if "ffprobe_failed" in s or "no_video_stream" in s or "duration_invalid" in s:
+        return "영상 형식을 인식할 수 없습니다 (손상된 파일일 수 있음)"
+    if "duration_missing" in s:
+        return "영상 길이를 읽을 수 없습니다"
+    if "presigned_get_failed" in s:
+        return "스토리지 접근 실패 (잠시 후 다시 시도)"
+    if "tenant_limit" in s:
+        return "처리 대기열이 가득 찼습니다"
+    if "global_limit" in s:
+        return "전체 처리 대기열이 가득 찼습니다"
+    if "stale_running" in s:
+        return "이전 처리가 멈춰 자동 정리됨"
+    return raw[:80]  # 알 수 없는 사유는 원문 일부만 노출
+
+
 def _serialize_video_summary(v: Video) -> dict:
     session = getattr(v, "session", None)
     lecture = getattr(session, "lecture", None) if session else None
+    raw_reason = getattr(v, "error_reason", "") or ""
     return {
         "id": int(v.id),
         "title": v.title or "",
@@ -42,6 +64,8 @@ def _serialize_video_summary(v: Video) -> dict:
         "session_order": int(session.order) if session and getattr(session, "order", None) else None,
         "created_at": v.created_at.isoformat() if v.created_at else None,
         "view_count": int(v.view_count) if v.view_count is not None else 0,
+        "error_reason": _humanize_error_reason(raw_reason),
+        "error_reason_raw": raw_reason,
     }
 
 

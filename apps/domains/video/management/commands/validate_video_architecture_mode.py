@@ -44,7 +44,7 @@ class Command(BaseCommand):
                     errors.append(f"Lambda path reference: {path}")
 
         # EventBridge target JSONs must point to Batch (Arn contains batch or job-queue)
-        eventbridge_path = os.path.join(repo_root, "scripts", "infra", "eventbridge")
+        eventbridge_path = os.path.join(repo_root, "scripts", "v1", "templates", "eventbridge")
         if os.path.isdir(eventbridge_path):
             for name in os.listdir(eventbridge_path):
                 if not name.endswith(".json"):
@@ -70,7 +70,8 @@ class Command(BaseCommand):
     def _find_repo_root(self):
         cur = os.path.dirname(os.path.abspath(__file__))
         for _ in range(10):
-            if os.path.isdir(os.path.join(cur, "scripts", "infra")):
+            # backend/ root: contains scripts/v1/ (current SSOT) and apps/.
+            if os.path.isdir(os.path.join(cur, "scripts", "v1")):
                 return cur
             parent = os.path.dirname(cur)
             if parent == cur:
