@@ -461,6 +461,90 @@ def _types_compatible(detected: str, expected: str) -> bool:
     return False
 
 
+def _compute_orientation_residual_mm(
+    assigned: Dict[str, "_Candidate"],
+    orientation: int,
+    meta: Dict[str, Any],
+) -> float:
+    """
+    각 orientation 후보에 대해 src(image px) → dst(mm) homography reprojection 오차를 mm 단위로 산출.
+
+    n_matched가 같은 orientation 후보 간 tie-break용. residual이 낮을수록 실제 종이 배치에 가까움.
+    잘못된 orientation은 corner 매핑이 어긋나 residual이 폭증한다.
+    """
+    if len(assigned) < 3:
+        return float("inf")
+
+    page = meta.get("page") or {}
+    size = page.get("size") or page
+    try:
+        page_w_mm = float(size.get("width") or _A4_W_MM)
+        page_h_mm = float(size.get("height") or _A4_H_MM)
+    except Exception:
+        page_w_mm, page_h_mm = _A4_W_MM, _A4_H_MM
+
+    markers_meta = meta.get("markers") or {}
+    if any(k in markers_meta for k in ("TL", "TR", "BL", "BR")):
+        corners_meta = markers_meta
+    else:
+        corners_meta = markers_meta.get("corners") or {}
+
+    if not corners_meta:
+        return float("inf")
+
+    # image-corner → document-corner 매핑 (CW rotation, warp.py와 동일 규칙)
+    _CO = ["TL", "TR", "BR", "BL"]
+    rot_steps = {0: 0, 90: 1, 180: 2, 270: 3}.get(orientation, 0)
+
+    src_list: List[Tuple[float, float]] = []
+    dst_list: List[Tuple[float, float]] = []  # mm
+
+    for i, img_corner in enumerate(_CO):
+        cand = assigned.get(img_corner)
+        if cand is None:
+            continue
+        doc_corner = _CO[(i + rot_steps) % 4]
+        cm = corners_meta.get(doc_corner) or {}
+        pos = cm.get("position") or cm.get("center") or {}
+        try:
+            x_mm = float(pos.get("x") or 0)
+            y_mm = float(pos.get("y") or 0)
+        except Exception:
+            continue
+        if x_mm <= 0 or y_mm <= 0:
+            # meta에 명시 안 된 경우 5% inset로 fallback
+            x_mm = page_w_mm * 0.05 if doc_corner in ("TL", "BL") else page_w_mm * 0.95
+            y_mm = page_h_mm * 0.05 if doc_corner in ("TL", "TR") else page_h_mm * 0.95
+        src_list.append((float(cand.center[0]), float(cand.center[1])))
+        dst_list.append((x_mm, y_mm))
+
+    if len(src_list) < 3:
+        return float("inf")
+
+    src_arr = np.array(src_list, dtype=np.float32)
+    dst_arr = np.array(dst_list, dtype=np.float32)
+
+    try:
+        if len(src_list) >= 4:
+            H, _ = cv2.findHomography(src_arr, dst_arr, cv2.RANSAC, 5.0)
+        else:
+            M_aff = cv2.getAffineTransform(src_arr[:3], dst_arr[:3])
+            H = np.vstack([M_aff, [0.0, 0.0, 1.0]]).astype(np.float64)
+    except cv2.error:
+        return float("inf")
+
+    if H is None:
+        return float("inf")
+
+    # Reproject src → dst, compute mean error in mm
+    src_h = np.hstack([src_arr, np.ones((len(src_arr), 1))]).T
+    proj = H @ src_h
+    proj = proj[:2] / (proj[2:3] + 1e-12)
+    proj = proj.T
+    errors = np.sqrt(np.sum((np.asarray(proj, dtype=np.float32) - dst_arr) ** 2, axis=1))
+    return float(np.mean(errors))
+
+
 def _assign_candidates_to_corners(
     candidates: List[_Candidate],
     img_w: int,
@@ -581,9 +665,22 @@ def detect_markers(
         if n_matched == 0:
             continue
 
-        # Score: number of corners matched + average confidence
+        # Tie-break: 동일한 n_matched 안에서는 homography reprojection error(mm)가 작은 쪽이 정답.
+        # 이전에는 avg_conf(코너 anchor 거리 기반)로만 골라 4개 다 잡힌 잘못된 orientation이
+        # 우승하는 경우가 있었음. residual은 종이 실제 배치와 호환되는 orientation만 낮게 나옴.
+        residual_mm = _compute_orientation_residual_mm(assigned, angle, meta)
         avg_conf = sum(c.confidence for c in assigned.values()) / n_matched
-        score = n_matched * 10.0 + avg_conf  # heavily weight number of corners
+
+        # Score: prioritize n_matched, then minimize residual.
+        # residual_mm 이 무한대면 해당 orientation 후보 폐기 효과.
+        if math.isinf(residual_mm):
+            continue
+        # n_matched 가중치를 매우 크게(1e6) → residual은 같은 n_matched 안에서만 비교
+        score = n_matched * 1_000_000.0 - residual_mm * 100.0 + avg_conf
+        logger.debug(
+            "marker_detector: angle=%d n=%d residual=%.2fmm avg_conf=%.2f score=%.1f",
+            angle, n_matched, residual_mm, avg_conf, score,
+        )
 
         if score > best_score:
             best_score = score

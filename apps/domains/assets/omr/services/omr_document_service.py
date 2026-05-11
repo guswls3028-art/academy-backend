@@ -7,15 +7,58 @@ OMR Document 서비스 — OMRDocument DTO 생성 SSOT
 from __future__ import annotations
 
 import base64
+import ipaddress
 import logging
 import os
+import socket
 from typing import Optional
+from urllib.parse import urlparse
 
 import requests
 
 from apps.domains.assets.omr.dto.omr_document import OMRDocument
 
 logger = logging.getLogger(__name__)
+
+
+def _is_safe_external_url(url: str) -> bool:
+    """
+    SSRF 방어 — 다음 조건 모두 충족 시에만 fetch 허용:
+    - https 스킴 (http 도 거부: 운영 R2/CloudFront 모두 https)
+    - host 가 RFC1918/loopback/link-local/multicast 가 아닌 public IP 로 resolve
+    - 사용자 입력(테넌트 logo_url)이라도 내부 메타데이터/사설망 접근 차단
+
+    실패 시 False — 호출 측은 정적 fallback 로 안전하게 우회.
+    """
+    try:
+        parsed = urlparse(url)
+        if parsed.scheme != "https":
+            return False
+        host = parsed.hostname or ""
+        if not host:
+            return False
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except socket.gaierror:
+            return False
+        for info in infos:
+            ip_str = info[4][0]
+            try:
+                ip = ipaddress.ip_address(ip_str)
+            except ValueError:
+                return False
+            if (
+                ip.is_private
+                or ip.is_loopback
+                or ip.is_link_local
+                or ip.is_multicast
+                or ip.is_reserved
+                or ip.is_unspecified
+            ):
+                return False
+        return True
+    except Exception:
+        return False
 
 # 기본 로고 경로 (테넌트 로고가 없을 때 사용)
 _DEFAULT_LOGO_PATH = os.path.join(
@@ -191,14 +234,18 @@ class OMRDocumentService:
         로고가 없거나 다운로드 실패 시 테넌트 정적 로고 → 기본 로고 순서로 폴백.
         """
         # 1) 절대 URL인 테넌트 로고가 있으면 다운로드 시도 (R2 업로드 로고)
+        # SSRF 방어: https + public host 만 허용. 내부망/메타데이터 endpoint 차단.
         if doc.logo_url and doc.logo_url.startswith("http"):
-            try:
-                resp = requests.get(doc.logo_url, timeout=5)
-                resp.raise_for_status()
-                mime = resp.headers.get("Content-Type", "image/png").split(";")[0].strip()
-                return doc.with_logo_bytes(resp.content, mime)
-            except Exception:
-                logger.warning("OMR 로고 다운로드 실패: %s", doc.logo_url, exc_info=True)
+            if not _is_safe_external_url(doc.logo_url):
+                logger.warning("OMR 로고 URL 거부(SSRF 방어): %s", doc.logo_url)
+            else:
+                try:
+                    resp = requests.get(doc.logo_url, timeout=5, allow_redirects=False)
+                    resp.raise_for_status()
+                    mime = resp.headers.get("Content-Type", "image/png").split(";")[0].strip()
+                    return doc.with_logo_bytes(resp.content, mime)
+                except Exception:
+                    logger.warning("OMR 로고 다운로드 실패: %s", doc.logo_url, exc_info=True)
 
         # 2) data URI (정적 로고가 base64로 이미 임베드된 경우)
         if doc.logo_url and doc.logo_url.startswith("data:"):

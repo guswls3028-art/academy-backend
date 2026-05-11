@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -49,7 +50,7 @@ class JobStatusView(APIView):
             return Response(build_job_status_response(job, result_payload=result_payload))
         except Exception as e:
             logger.exception("JobStatusView get job_id=%s: %s", job_id, e)
-            return Response(
-                {"detail": "job 상태 조회 중 오류가 발생했습니다.", "error": str(e)},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            payload = {"detail": "job 상태 조회 중 오류가 발생했습니다."}
+            if settings.DEBUG:
+                payload["error"] = str(e)
+            return Response(payload, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

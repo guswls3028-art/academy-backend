@@ -20,20 +20,32 @@ _ALREADY_PROCESSED_STATUSES = frozenset({
 })
 
 
+def _hamming(a: str, b: str) -> int:
+    """동일 길이 문자열 간 Hamming 거리. 길이 다르면 큰 값."""
+    if len(a) != len(b):
+        return max(len(a), len(b))
+    return sum(1 for x, y in zip(a, b) if x != y)
+
+
 def _resolve_enrollment_by_phone(
     *,
     exam_id: int,
     phone_last8: str,
     tenant,
-) -> int | None:
+) -> tuple[int | None, str]:
     """
     전화번호 뒤 8자리로 해당 시험의 enrollment을 찾는다.
 
     매칭 순서:
-    1. 학생 본인 휴대폰 뒤 8자리
-    2. 학부모 휴대폰 뒤 8자리
+    1. 정확 매칭 (학생 본인 휴대폰 → 학부모 휴대폰)
+    2. 정확 매칭 0건일 때만 fuzzy fallback: Hamming 거리 ≤1 후보 검색.
+       후보가 정확히 1명일 때만 자동 매칭, 그 외(0/2+)는 None → 수동 식별.
 
-    중복 시 None 반환 (수동 매칭 필요).
+    Returns:
+        (enrollment_id | None, match_kind)
+          - "exact" : 정확 매칭 1건
+          - "fuzzy" : Hamming≤1 fallback 1건 (운영자 확인 권장)
+          - "none"  : 매칭 실패 (0건 또는 다수)
     """
     from apps.domains.enrollment.models import Enrollment
 
@@ -43,7 +55,9 @@ def _resolve_enrollment_by_phone(
         tenant=tenant,
     ).select_related("student").distinct()
 
-    matches = []
+    exact_matches: list[int] = []
+    fuzzy_candidates: list[tuple[int, int]] = []  # (enrollment_id, hamming_distance)
+
     for enr in enrollments:
         student = getattr(enr, "student", None)
         if not student:
@@ -51,16 +65,42 @@ def _resolve_enrollment_by_phone(
         s_phone = str(getattr(student, "phone", "") or "").replace("-", "").strip()
         p_phone = str(getattr(student, "parent_phone", "") or "").replace("-", "").strip()
 
-        if s_phone and s_phone[-8:] == phone_last8:
-            matches.append(enr.id)
-        elif p_phone and p_phone[-8:] == phone_last8:
-            matches.append(enr.id)
+        s_tail = s_phone[-8:] if s_phone else ""
+        p_tail = p_phone[-8:] if p_phone else ""
 
-    if len(matches) == 1:
-        return matches[0]
+        if s_tail == phone_last8 or p_tail == phone_last8:
+            exact_matches.append(enr.id)
+            continue
+
+        # fuzzy 후보: 길이 8이고 Hamming 거리 ≤1
+        if len(s_tail) == 8:
+            d = _hamming(s_tail, phone_last8)
+            if d <= 1:
+                fuzzy_candidates.append((enr.id, d))
+                continue
+        if len(p_tail) == 8:
+            d = _hamming(p_tail, phone_last8)
+            if d <= 1:
+                fuzzy_candidates.append((enr.id, d))
+
+    # 1) 정확 매칭이 정확히 1건이면 채택
+    if len(exact_matches) == 1:
+        return exact_matches[0], "exact"
+    if len(exact_matches) >= 2:
+        return None, "none"  # 정확 매칭 다수 → 수동
+
+    # 2) 정확 매칭 0건일 때만 fuzzy fallback (1자리 OMR 인식 오류 흡수)
+    fuzzy_unique = {eid for eid, _ in fuzzy_candidates}
+    if len(fuzzy_unique) == 1:
+        eid = next(iter(fuzzy_unique))
+        logger.info(
+            "ai_omr_result_mapper: fuzzy phone match (hamming<=1) accepted | exam=%s | enr=%s",
+            exam_id, eid,
+        )
+        return eid, "fuzzy"
 
     # 0 또는 2+ 매칭 → 수동 식별 필요
-    return None
+    return None, "none"
 
 
 @transaction.atomic
@@ -134,6 +174,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     # AI 엔진은 question_id = question_number(1,2,3...)를 반환한다.
     # SubmissionAnswer.exam_question_id는 ExamQuestion PK여야 하므로 변환 필요.
     qnum_to_pk: dict[int, int] = {}
+    qnum_map_built = False
     if submission.target_type == "exam" and submission.target_id:
         try:
             from apps.domains.exams.models import Sheet, ExamQuestion
@@ -147,6 +188,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
                 if sheet:
                     for q in ExamQuestion.objects.filter(sheet=sheet).only("id", "number"):
                         qnum_to_pk[int(q.number)] = int(q.id)
+                    qnum_map_built = True
         except Exception:
             logger.exception(
                 "apply_omr_ai_result: failed to build qnum→pk map for submission %s",
@@ -155,6 +197,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
 
     manual_required = False
     reasons = []
+    unmapped_questions: list[int] = []
 
     # 자동채점 통계: 운영자가 시험별 인식률을 한눈에 볼 수 있도록 aggregate 저장.
     answer_stats: Dict[str, Any] = {
@@ -168,8 +211,23 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         if not raw_id:
             continue
 
-        # question_number → ExamQuestion PK 변환 (매핑이 있으면 사용)
-        eqid = qnum_to_pk.get(int(raw_id), int(raw_id))
+        # question_number → ExamQuestion PK 변환.
+        # qnum 매핑이 구축되었지만 해당 번호가 매핑에 없으면 다른 시험 PK 충돌 위험 → skip.
+        # 매핑 자체가 미구축(qnum_map_built=False)인 구버전 데이터에서만 raw_id를 PK로 fallback.
+        raw_id_int = int(raw_id)
+        if qnum_map_built:
+            eqid_opt = qnum_to_pk.get(raw_id_int)
+            if eqid_opt is None:
+                unmapped_questions.append(raw_id_int)
+                logger.warning(
+                    "apply_omr_ai_result: question %s not in sheet | submission=%s | exam=%s",
+                    raw_id_int, submission_id, submission.target_id,
+                )
+                continue
+            eqid = eqid_opt
+        else:
+            # 매핑 미구축: 구버전 호환 fallback
+            eqid = raw_id_int
 
         # v10.1: worker가 raw 안에 제공하는 bubble_rects/rect (검토 UI BBox overlay)
         raw_payload = a.get("raw") or {}
@@ -246,33 +304,69 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     answer_stats.pop("n_conf", None)
 
     # ✅ 식별자 → enrollment 매칭 (전화번호 뒤 8자리 → 학생 자동 식별)
+    # status가 ok가 아니어도 raw_identifier에 8자리 모두 결정됐으면 best-effort 매칭 시도.
+    # 한 자리만 ambiguous인 경우에도 정확/fuzzy 매칭이 단일 학생을 가리키면 자동 식별 가능.
     enrollment_id = None
     identifier_status = "missing"
+    identifier_match_kind = "none"
 
-    if isinstance(identifier, dict) and identifier.get("status") == "ok":
-        detected_code = str(identifier.get("identifier") or "").strip()
-        identifier_status = "detected"
+    if isinstance(identifier, dict):
+        ident_status = str(identifier.get("status") or "").lower()
+        # raw_identifier에 ?(blank) 없는 경우만 시도 (ambiguous는 통과, blank/error는 차단)
+        detected_code = str(
+            identifier.get("identifier")
+            or identifier.get("raw_identifier")
+            or ""
+        ).strip()
+        ident_complete = (
+            len(detected_code) == 8
+            and "?" not in detected_code
+            and ident_status in ("ok", "ambiguous")
+        )
+        if ident_status in ("ok", "ambiguous"):
+            identifier_status = "detected"
 
-        if detected_code and len(detected_code) == 8 and submission.target_id:
-            # 전화번호 뒤 8자리로 enrollment 조회
-            enrollment_id = _resolve_enrollment_by_phone(
+        if ident_complete and submission.target_id:
+            # 전화번호 뒤 8자리로 enrollment 조회 (정확 매칭 → fuzzy fallback)
+            enrollment_id, identifier_match_kind = _resolve_enrollment_by_phone(
                 exam_id=int(submission.target_id),
                 phone_last8=detected_code,
                 tenant=submission.tenant,
             )
-            if enrollment_id:
-                identifier_status = "matched"
+            ambiguous_ident = ident_status == "ambiguous"
+            if enrollment_id and identifier_match_kind == "exact":
+                if ambiguous_ident:
+                    # 1자리가 ambiguous였지만 정확 매칭 단일 후보 → 자동 식별 + 운영자 확인
+                    identifier_status = "matched_ambiguous"
+                    manual_required = True
+                    reasons.append("IDENTIFIER_AMBIGUOUS_DIGIT")
+                else:
+                    identifier_status = "matched"
+            elif enrollment_id and identifier_match_kind == "fuzzy":
+                # 자동 매칭은 하되 운영자 확인을 권장 (1자리 OMR 인식 오류 흡수)
+                identifier_status = "matched_fuzzy"
+                manual_required = True
+                reasons.append("IDENTIFIER_FUZZY_MATCH")
+                if ambiguous_ident:
+                    reasons.append("IDENTIFIER_AMBIGUOUS_DIGIT")
             else:
                 identifier_status = "no_match"
                 reasons.append("IDENTIFIER_NO_ENROLLMENT_MATCH")
 
     identifier_ok = enrollment_id is not None
 
+    if unmapped_questions:
+        manual_required = True
+        reasons.append("ANSWER_QNUM_NOT_IN_SHEET")
+
     meta.setdefault("manual_review", {})
     meta["manual_review"]["required"] = bool(manual_required or not identifier_ok)
     meta["manual_review"]["reasons"] = sorted(set(reasons))
     meta["manual_review"]["updated_at"] = datetime.now(timezone.utc).isoformat()
+    if unmapped_questions:
+        meta["manual_review"]["unmapped_questions"] = sorted(set(unmapped_questions))
     meta["identifier_status"] = identifier_status
+    meta["identifier_match_kind"] = identifier_match_kind
     meta["answer_stats"] = answer_stats
 
     submission.meta = meta

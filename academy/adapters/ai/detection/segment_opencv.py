@@ -22,6 +22,28 @@ import numpy as np  # type: ignore
 BBox = Tuple[int, int, int, int]
 
 
+def _apply_lab_clahe_mild(img_bgr: np.ndarray) -> np.ndarray:
+    """LAB color space의 L 채널에 mild CLAHE 적용 — 좌표계 보존, 그림자/조명 불균일 보정.
+
+    Stage 6.3P dry-run 측정 (3 sample / scan PDF):
+      - contour count +67% (285 → 476)
+      - text_density +54%
+      - bbox IoU 0.988 (좌표 변동 거의 없음)
+      - clipLimit=2.0 / tileGridSize=(8,8) 가 best 임계 (clipLimit 4.0+ 은 노이즈 폭증).
+
+    카메라 사진 단독 적용은 IoU 0.18 (deskew 결합 필요) — Stage 6.3R 영역.
+
+    좌표계 안전성: LAB 변환 → L 채널 in-place equalize → BGR 역변환. resize/rotate/warp 0.
+    """
+    if img_bgr is None or len(img_bgr.shape) != 3:
+        return img_bgr
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
+    L, A, B = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    L_eq = clahe.apply(L)
+    return cv2.cvtColor(cv2.merge((L_eq, A, B)), cv2.COLOR_LAB2BGR)
+
+
 def detect_chapter_divider(image_path: str) -> bool:
     """페이지가 chapter divider (단일 색 background) 인지 추정.
 
@@ -133,15 +155,19 @@ def estimate_handwriting_score(image_path: str) -> float:
     return float(min(1.0, max(0.0, score)))
 
 
-def detect_dual_column_pixel(image_path: str) -> bool:
+def detect_dual_column_pixel(image_path: str, *, apply_clahe: bool = False) -> bool:
     """이미지 픽셀 기반 dual-col 감지 (paper_type 분류기 백업 신호).
 
     OCR 블록 분포 휴리스틱이 부족한 폰사진/저해상도 스캔본에서 dual-col을
     잡기 위한 백업. 기존 _detect_columns 로직 재사용.
+
+    apply_clahe: dispatcher 의 ENV gate 가 결정 (Stage 6.3Q). scan/photo 경로에서만 True.
     """
     image_bgr = cv2.imread(image_path)
     if image_bgr is None:
         return False
+    if apply_clahe:
+        image_bgr = _apply_lab_clahe_mild(image_bgr)
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     h_img, w_img = gray.shape[:2]
     if w_img < 200 or h_img < 200:
@@ -155,15 +181,23 @@ def detect_dual_column_pixel(image_path: str) -> bool:
     return len(columns) >= 2
 
 
-def segment_questions_opencv(image_path: str) -> List[BBox]:
+def segment_questions_opencv(image_path: str, *, apply_clahe: bool = False) -> List[BBox]:
     """
     프로젝션 기반 문항 세그멘테이션.
     입력: image_path
     출력: [(x, y, w, h), ...] — 문항 영역 바운딩 박스 (좌상단 기준)
+
+    apply_clahe: scan/photo 경로 신호. dispatcher (segment_dispatcher._should_apply_opencv_clahe)
+    가 ENV `MATCHUP_SEGMENT_OPENCV_CLAHE` + has_embedded_text + source_type 으로 결정. clean
+    text PDF 페이지에는 항상 False.
     """
     image_bgr = cv2.imread(image_path)
     if image_bgr is None:
         return []
+
+    # Stage 6.3Q: scan/photo 경로 한정 LAB-CLAHE. 좌표계 보존 (in-place equalize 만).
+    if apply_clahe:
+        image_bgr = _apply_lab_clahe_mild(image_bgr)
 
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     h_img, w_img = gray.shape[:2]

@@ -48,10 +48,12 @@ def test_collect_pdf_pages_returns_validated_regions():
     regions_p0 = [_r(2, 0), _r(3, 0)]
     regions_p1 = [_r(3, 1), _r(4, 1)]
 
-    def fake_pdf_to_images(_path):
+    def fake_pdf_to_images(_path, **_kwargs):
+        # 운영 시그니처는 (pdf_path, *, handwriting_bias=...). 향후 kwarg 추가에도 안전.
         return fake_pages, "/tmp/dummy"
 
-    def fake_boxes_and_regions(info, page_idx):
+    def fake_boxes_and_regions(info, page_idx, **_kwargs):
+        # 운영 시그니처는 (info, page_idx, *, handwriting_bias, source_type, ...).
         if page_idx == 0:
             return boxes_p0, regions_p0
         return boxes_p1, regions_p1
@@ -79,10 +81,10 @@ def test_segment_questions_multipage_propagates_numbers():
     regions_p0 = [_r(2, 0), _r(3, 0)]
     regions_p1 = [_r(3, 1), _r(4, 1)]
 
-    def fake_pdf_to_images(_path):
+    def fake_pdf_to_images(_path, **_kwargs):
         return fake_pages, "/tmp/dummy"
 
-    def fake_boxes_and_regions(info, page_idx):
+    def fake_boxes_and_regions(info, page_idx, **_kwargs):
         if page_idx == 0:
             return boxes_p0, regions_p0
         return boxes_p1, regions_p1

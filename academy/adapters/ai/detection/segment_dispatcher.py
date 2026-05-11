@@ -52,6 +52,47 @@ def _bias_handwriting_score(source_type: Optional[str]) -> Optional[float]:
     return None
 
 
+# Stage 6.3Q (2026-05-07) — segment_opencv mild LAB-CLAHE wiring
+#
+# manual/auto 전처리 비대칭 fix. manual cut 경로 (matchup_manual_index._preprocess_camera_image)
+# 만 CLAHE+deskew+Unsharp 적용되고 auto 경로는 raw 였음 → 학원장 노가다 의존 비대칭.
+# Stage 6.3P dry-run 측정 (3 sample): mild LAB-CLAHE 가 scan PDF 에서 contour +67%, IoU 0.988.
+# 카메라 단독 적용은 IoU 0.18 (deskew 결합 필요 — Stage 6.3R 영역).
+#
+# ENV gate `MATCHUP_SEGMENT_OPENCV_CLAHE`:
+#   "disabled" (default) — 회귀 0, manual 경로만 보존
+#   "scan_only"          — has_embedded_text=False (스캔 PDF) 또는
+#                          source_type=student_exam_photo 일 때만 적용
+#   "all"                — 모든 segment_opencv 호출에 적용 (실험용)
+#
+# 회귀 임계 (dry-run 측정): 카메라 IoU>=0.5 / 스캔본 IoU>=0.95 / 깨끗 PDF IoU>=0.85.
+# clean text PDF 페이지는 OCR 경로 안 타고 text_boxes 가 우선 — opencv 폴백 도달 자체가 드물지만
+# scan_only 모드는 has_embedded_text=True 인 페이지를 자동 제외.
+def _segment_opencv_clahe_mode() -> str:
+    return (os.environ.get("MATCHUP_SEGMENT_OPENCV_CLAHE", "disabled") or "disabled").lower()
+
+
+def _should_apply_opencv_clahe(
+    *,
+    has_embedded_text: bool,
+    source_type: Optional[str],
+) -> bool:
+    """ENV gate + has_embedded_text + source_type 으로 CLAHE 적용 여부 결정.
+
+    호출자: _segment_single_image / _boxes_and_regions_for_pdf_page (opencv 폴백 진입 시).
+    detect_dual_column_pixel (paper_type 백업 분류기) 도 같은 게이트.
+    """
+    mode = _segment_opencv_clahe_mode()
+    if mode == "disabled":
+        return False
+    if mode == "all":
+        return True
+    if mode == "scan_only":
+        # 스캔 PDF (text 없음) 또는 학생 시험지 사진. clean text PDF 는 미적용.
+        return (not has_embedded_text) or (source_type == "student_exam_photo")
+    return False
+
+
 # 워커 작업당 생성된 pdf-seg-* tmp 디렉터리들을 추적 → dispatcher의 finally가 일괄 정리.
 # 작업이 동시 실행되더라도 각 작업이 독립 contextvar token을 보유하므로 안전.
 _PDF_SEG_TMP_DIRS: "contextvars.ContextVar[List[str] | None]" = contextvars.ContextVar(
@@ -248,6 +289,7 @@ def _segment_single_image(
     skip_ocr: bool = False,
     is_pdf_page: bool = False,
     source_type: str | None = None,
+    has_embedded_text: bool = False,
 ) -> List[BBox]:
     """
     단일 이미지에 대한 세그멘테이션 (엔진 자동 선택).
@@ -263,12 +305,18 @@ def _segment_single_image(
     source_type: 양식 신호 (P1.5, 2026-05-06) — segment_questions_yolo 양식별 conf 분기.
                  commercial_workbook / academy_workbook / student_exam_photo / school_exam_pdf.
                  호출 chain 점진 적용 — None 시 default conf (회귀 0).
+    has_embedded_text: PDF 페이지에 embedded text가 있는지 (Stage 6.3Q). opencv 폴백 진입 시
+                       _should_apply_opencv_clahe 게이트 입력. 단일 이미지는 항상 False.
     """
     cfg = AIConfig.load()
     engine = (cfg.QUESTION_SEGMENTATION_ENGINE or "auto").lower()
 
+    apply_clahe = _should_apply_opencv_clahe(
+        has_embedded_text=has_embedded_text, source_type=source_type,
+    )
+
     if engine == "opencv":
-        return segment_questions_opencv(image_path)
+        return segment_questions_opencv(image_path, apply_clahe=apply_clahe)
     if engine == "yolo":
         return segment_questions_yolo(image_path, source_type=source_type)
     if engine == "ocr":
@@ -291,13 +339,14 @@ def _segment_single_image(
         except Exception as e:
             logger.warning("OCR_SEGMENT_AUTO_FAIL | path=%s | error=%s", image_path, e)
 
-    return segment_questions_opencv(image_path)
+    return segment_questions_opencv(image_path, apply_clahe=apply_clahe)
 
 
 def _boxes_and_regions_for_pdf_page(
     page_info: Dict, page_index: int,
     *,
     handwriting_bias: Optional[float] = None,
+    source_type: Optional[str] = None,
 ) -> Tuple[List[BBox], List]:
     """
     PDF 페이지 1개에 대한 최종 박스 + QuestionRegion (번호 포함) 반환.
@@ -359,7 +408,13 @@ def _boxes_and_regions_for_pdf_page(
 
     # 텍스트 있지만 분할 실패 OR OCR 크레덴셜 없음 OR OCR 예외
     skip_ocr = page_info["has_embedded_text"]
-    boxes = _segment_single_image(image_path, skip_ocr=skip_ocr, is_pdf_page=True)
+    boxes = _segment_single_image(
+        image_path,
+        skip_ocr=skip_ocr,
+        is_pdf_page=True,
+        source_type=source_type,
+        has_embedded_text=bool(page_info.get("has_embedded_text")),
+    )
     boxes = _filter_cover_like_boxes(boxes, image_path, page_index)
     # OpenCV fallback / OCR 예외 경로도 paper_type 분류 시도 (image_path 기반).
     _classify_and_record_paper_type(
@@ -465,7 +520,9 @@ def _collect_pdf_pages(
     regions_per_page: List[List] = []
     for page_idx, info in enumerate(page_infos):
         boxes, regions = _boxes_and_regions_for_pdf_page(
-            info, page_idx, handwriting_bias=handwriting_bias,
+            info, page_idx,
+            handwriting_bias=handwriting_bias,
+            source_type=source_type,
         )
         boxes_per_page.append(boxes)
         regions_per_page.append(regions)
@@ -525,7 +582,13 @@ def segment_questions(image_path: str, *, source_type: Optional[str] = None) -> 
         finally:
             cleanup_pdf_seg_tmp_dirs([tmp_dir])
 
-    return _segment_single_image(image_path)
+    # 단일 이미지 (학생 시험지 사진 등) — source_type 신호 그대로 전달.
+    # has_embedded_text 는 단일 이미지엔 없음 (False) → scan_only 모드에서 CLAHE 활성화.
+    return _segment_single_image(
+        image_path,
+        source_type=source_type,
+        has_embedded_text=False,
+    )
 
 
 def segment_questions_multipage(
@@ -595,7 +658,12 @@ def segment_questions_multipage(
         return {"pages": pages, "total_boxes": total, "is_pdf": True, "tmp_dirs": [tmp_dir]}
 
     # 단일 이미지 — 번호 없음. tmp_dir 없음(원본 image_path 그대로 사용).
-    boxes = _segment_single_image(image_path)
+    # source_type=student_exam_photo 면 scan_only 게이트가 mild CLAHE 활성화 (Stage 6.3Q).
+    boxes = _segment_single_image(
+        image_path,
+        source_type=source_type,
+        has_embedded_text=False,
+    )
     # 단일 이미지 경로에서도 paper_type을 분류 — 학생답안지 폰사진이 보통 단일 이미지.
     # source_type=student_exam_photo + handwriting_bias로 STUDENT_ANSWER_PHOTO 강제.
     single_info: Dict = {"image_path": image_path}

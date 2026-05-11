@@ -31,7 +31,8 @@ logger = logging.getLogger(__name__)
 class AnswerDetectConfig:
     """객관식 버블 감지 설정."""
     # ROI 확장 계수 (버블 반지름 x k)
-    roi_expand_k: float = 1.2
+    # 1.05: 인접 행/열 버블 침범 방지 + warp residual 1mm 허용 (1.2는 ~6mm 행 간격에서 침범)
+    roi_expand_k: float = 1.05
     # blank 판단: 최고 score가 이 값 미만이면 blank
     blank_threshold: float = 0.08
     # ambiguous 판단: top-2 gap이 이 값 미만이면 ambiguous
@@ -127,17 +128,20 @@ def detect_omr_answers_v7(
         raw_transforms = _compute_column_transforms(
             gray=gray, scale=scale, columns_meta=meta["columns"],
         )
-        # 잘못된 앵커 감지로 인한 과도한 displacement 필터링.
-        # marker_homography가 이미 정밀 워핑을 수행하면 column transform이
-        # 오히려 좌표를 어긋나게 함. 최대 5px 이내만 허용.
-        _MAX_COL_DISPLACEMENT_PX = 5.0
+        # marker_homography 이후 잔여 warp 보정. 실 종이 왜곡은 보통 2mm 이하,
+        # anchor 오검출은 5mm(search_radius) 근처에서 튐 → 3mm 임계로 분리.
+        # 5px 절대값(=0.42mm @300dpi)은 비현실적으로 빡빡해서 사실상 모든 보정 reject.
+        _MAX_COL_DISPLACEMENT_PX = 3.0 * scale.sx  # 3mm를 픽셀로 환산
         for ci, M in raw_transforms.items():
             # displacement = M @ [0,0,1] 의 translation 성분
             dx, dy = abs(M[0, 2]), abs(M[1, 2])
             if dx <= _MAX_COL_DISPLACEMENT_PX and dy <= _MAX_COL_DISPLACEMENT_PX:
                 col_transforms[ci] = M
             else:
-                logger.debug("Column %d transform rejected: dx=%.1f dy=%.1f exceeds threshold", ci, dx, dy)
+                logger.debug(
+                    "Column %d transform rejected: dx=%.1f dy=%.1f exceeds %.1fpx (3mm)",
+                    ci, dx, dy, _MAX_COL_DISPLACEMENT_PX,
+                )
 
     results: List[OMRAnswerV1] = []
 
@@ -520,19 +524,29 @@ def _detect_single_question(
         "rect": question_rect,
     }
 
-    # ── 판정 (v10 개선: IQR 기반 noise floor) ──
-    # 노이즈 바닥을 IQR로 추정하여 동적 threshold 적용.
+    # ── 판정 (v15: 강건한 noise floor 추정) ──
+    # 노이즈는 "마킹 안 된 버블들"의 점수 분포여야 한다. 이중마킹/삼중마킹이 있으면
+    # 전체 IQR이 폭증해 blank threshold가 비현실적으로 커진다 → bottom-half에서만
+    # noise를 추정해 bimodal에 강건하게.
+    # v14까지 있던 `top_score < 0.35` 절대 임계값은 폐기 — 저농도 인쇄/연필 마킹에서
+    # 정상 마크가 0.35 미만이면 항상 blank로 오판하던 false negative 차단.
     scores_arr = np.array([s for _, s, _ in fills])
-    q1 = float(np.percentile(scores_arr, 25))
-    q3 = float(np.percentile(scores_arr, 75))
-    iqr = q3 - q1
-    noise_std = iqr / 1.35  # IQR→σ 근사 (정규분포 가정)
-    median_score = float(np.median(scores_arr))
+    sorted_asc = np.sort(scores_arr)
+    half = max(2, len(sorted_asc) // 2)  # 5지선다 → 하위 2개를 noise로
+    noise_pool = sorted_asc[:half]
+    noise_median = float(np.median(noise_pool))
+    if len(noise_pool) >= 2:
+        n_q1 = float(np.percentile(noise_pool, 25))
+        n_q3 = float(np.percentile(noise_pool, 75))
+        noise_std = (n_q3 - n_q1) / 1.35
+    else:
+        noise_std = 0.0
+    median_score = noise_median  # noise 바닥을 비교 baseline으로
     relative_top = top_score - median_score
 
     # Blank: 최고 점수가 noise floor 대비 유의미하게 높지 않으면 blank
     _REL_BLANK_TH = max(0.04, 2.0 * noise_std)  # 동적 threshold
-    is_blank = relative_top < _REL_BLANK_TH and top_score < 0.35
+    is_blank = relative_top < _REL_BLANK_TH
 
     if is_blank:
         return OMRAnswerV1(

@@ -229,6 +229,19 @@ def _try_marker_homography(
     warped = cv2.warpPerspective(image_bgr, H, (out_w, out_h))
     residual = _compute_residual(H, src_arr, dst_arr)
 
+    # Quality gate: 4-marker perspective의 residual이 5mm를 넘으면 garbage homography.
+    # 잘못된 마커 검출(인쇄 노이즈/로고 블롭)로 4점이 잡혔지만 페이지 배치와 호환 안 됨.
+    # 픽셀로 환산: A4 297mm × out_w/out_w mm → 5mm ≈ out_w * 5/297 px.
+    # 3-marker affine은 항상 residual=0이라 gate skip.
+    px_per_mm = out_w / 297.0
+    _MAX_HOMOGRAPHY_RESIDUAL_PX = 5.0 * px_per_mm
+    if len(src_pts) >= 4 and residual > _MAX_HOMOGRAPHY_RESIDUAL_PX:
+        logger.warning(
+            "warp: %s residual %.1fpx exceeds %.1fpx (5mm) — rejecting and falling through",
+            method_name, residual, _MAX_HOMOGRAPHY_RESIDUAL_PX,
+        )
+        return None
+
     logger.info(
         "warp: %s success orientation=%d residual=%.2f (%d markers)",
         method_name, detection.orientation, residual, len(src_pts),
@@ -308,29 +321,52 @@ def _try_contour_warp(
 
 def _try_rotation_only(
     image_bgr: np.ndarray,
+    meta: Dict[str, Any],
     out_w: int,
     out_h: int,
 ) -> Optional[AlignmentResult]:
     """
-    If the image is portrait, rotate 90° CW and resize.
-    For landscape images that failed contour detection, just resize.
+    Portrait 이미지면 90° CW 회전 후 marker → contour → resize 순으로 재정렬.
+
+    이전 버전은 회전 후 단순 resize만 했지만, OMR sheet의 마커는 회전 후 재검출이
+    가능하므로 정밀 정렬 기회를 그냥 버리지 않도록 chain.
     """
     h, w = image_bgr.shape[:2]
+    if h <= w:
+        return None  # already landscape
 
-    if h > w:
-        # Portrait → landscape via 90° CW rotation
-        rotated = cv2.rotate(image_bgr, cv2.ROTATE_90_CLOCKWISE)
-        resized = cv2.resize(rotated, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
-        logger.info("warp: rotation_only (portrait→landscape)")
-        return AlignmentResult(
-            image=resized,
-            success=True,
-            method="rotation_only",
-            orientation=90,
-            residual_error=float("inf"),
-        )
+    rotated = cv2.rotate(image_bgr, cv2.ROTATE_90_CLOCKWISE)
 
-    return None
+    # 1) 회전 후 marker homography 재시도
+    try:
+        result = _try_marker_homography(rotated, meta, out_w, out_h)
+        if result is not None:
+            logger.info("warp: rotation_then_marker success")
+            result.method = f"rotation_then_{result.method}"
+            return result
+    except Exception:
+        logger.exception("warp: rotation_then_marker failed")
+
+    # 2) 회전 후 contour fallback
+    try:
+        result = _try_contour_warp(rotated, out_w, out_h)
+        if result is not None:
+            logger.info("warp: rotation_then_contour success")
+            result.method = "rotation_then_contour"
+            return result
+    except Exception:
+        logger.exception("warp: rotation_then_contour failed")
+
+    # 3) 최후: 회전 + 단순 resize
+    resized = cv2.resize(rotated, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
+    logger.info("warp: rotation_only (portrait→landscape, no marker/contour)")
+    return AlignmentResult(
+        image=resized,
+        success=True,
+        method="rotation_only",
+        orientation=90,
+        residual_error=float("inf"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -386,7 +422,7 @@ def align_to_a4_landscape(
 
     # --- Strategy 3: Rotation + resize ---
     try:
-        result = _try_rotation_only(image_bgr, out_w, out_h)
+        result = _try_rotation_only(image_bgr, meta, out_w, out_h)
         if result is not None:
             return result
     except Exception:

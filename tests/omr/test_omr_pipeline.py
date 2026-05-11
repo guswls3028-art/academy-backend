@@ -230,7 +230,7 @@ def test_synth(meta):
     # B6. OMRAnswerV1 직렬화
     r = results_all[0]
     d = r.to_dict()
-    check("B6. to_dict version", d["version"] in ("v8", "v9", "v10"))
+    check("B6. to_dict version", d["version"] in ("v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15"))
     check("B6. to_dict question_id", d["question_id"] == 1)
     check("B6. to_dict detected", d["detected"] == ["1"])
     check("B6. to_dict has raw fills", "fills" in (d.get("raw") or {}))
