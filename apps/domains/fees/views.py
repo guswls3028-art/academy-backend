@@ -9,6 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
 
 from rest_framework.pagination import PageNumberPagination
 
@@ -22,6 +23,7 @@ class FeesLargePagination(PageNumberPagination):
     max_page_size = 2000
 
 from .models import FeeTemplate, StudentFee, StudentInvoice, FeePayment
+from apps.domains.students.models import Student
 
 
 def _fees_enabled(request) -> bool:
@@ -48,6 +50,22 @@ from .serializers import (
 from . import services
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_fee_template_lecture_tenant(*, tenant, lecture):
+    if lecture is None:
+        return
+    if lecture.tenant_id != tenant.id:
+        raise ValidationError({"lecture": "다른 테넌트의 강의는 연결할 수 없습니다."})
+
+
+def _validate_student_fee_tenant_consistency(*, tenant, student, fee_template, enrollment):
+    if student.tenant_id != tenant.id:
+        raise ValidationError({"student": "다른 테넌트의 학생은 지정할 수 없습니다."})
+    if fee_template.tenant_id != tenant.id:
+        raise ValidationError({"fee_template": "다른 테넌트의 비목은 지정할 수 없습니다."})
+    if enrollment is not None and enrollment.tenant_id != tenant.id:
+        raise ValidationError({"enrollment": "다른 테넌트의 수강정보는 지정할 수 없습니다."})
 
 
 # ========================================================
@@ -85,7 +103,14 @@ class FeeTemplateViewSet(ModelViewSet):
         return qs.order_by("-created_at")
 
     def perform_create(self, serializer):
+        lecture = serializer.validated_data.get("lecture")
+        _validate_fee_template_lecture_tenant(tenant=self.request.tenant, lecture=lecture)
         serializer.save(tenant=self.request.tenant)
+
+    def perform_update(self, serializer):
+        lecture = serializer.validated_data.get("lecture", serializer.instance.lecture)
+        _validate_fee_template_lecture_tenant(tenant=self.request.tenant, lecture=lecture)
+        serializer.save()
 
     def perform_destroy(self, instance):
         # Soft deactivate instead of hard delete
@@ -127,7 +152,23 @@ class StudentFeeViewSet(ModelViewSet):
         return qs.order_by("student__name")
 
     def perform_create(self, serializer):
+        _validate_student_fee_tenant_consistency(
+            tenant=self.request.tenant,
+            student=serializer.validated_data["student"],
+            fee_template=serializer.validated_data["fee_template"],
+            enrollment=serializer.validated_data.get("enrollment"),
+        )
         serializer.save(tenant=self.request.tenant)
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        _validate_student_fee_tenant_consistency(
+            tenant=self.request.tenant,
+            student=serializer.validated_data.get("student", instance.student),
+            fee_template=serializer.validated_data.get("fee_template", instance.fee_template),
+            enrollment=serializer.validated_data.get("enrollment", instance.enrollment),
+        )
+        serializer.save()
 
     @action(detail=False, methods=["post"], url_path="bulk-assign")
     def bulk_assign(self, request):
@@ -145,7 +186,6 @@ class StudentFeeViewSet(ModelViewSet):
             return Response({"detail": "비목을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         # 학생 ID가 해당 테넌트 소속인지 검증 (크로스 테넌트 방지)
-        from apps.domains.students.models import Student
         valid_student_ids = set(
             Student.objects.filter(
                 id__in=student_ids, tenant=tenant, deleted_at__isnull=True,

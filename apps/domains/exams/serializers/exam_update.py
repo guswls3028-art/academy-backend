@@ -63,8 +63,14 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
 
         tid = attrs.get("template_exam_id")
         if tid is not None:
+            # cross-tenant 차단: 자기 테넌트의 template 만 허용.
+            request = self.context.get("request") if hasattr(self, "context") else None
+            tenant = getattr(request, "tenant", None) or getattr(exam, "tenant", None)
+            qs = Exam.objects.all()
+            if tenant is not None:
+                qs = qs.filter(tenant=tenant)
             try:
-                t = Exam.objects.get(id=int(tid))
+                t = qs.get(id=int(tid))
             except (TypeError, ValueError, Exam.DoesNotExist):
                 raise serializers.ValidationError({"template_exam_id": "invalid"})
             if t.exam_type != Exam.ExamType.TEMPLATE:

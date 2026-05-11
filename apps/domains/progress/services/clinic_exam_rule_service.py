@@ -40,13 +40,14 @@ class ClinicExamRuleService:
             }
 
         # ----------------------
-        # 2️⃣ OMR 신뢰도 낮음
+        # 2️⃣ OMR 신뢰도 낮음 (LOW_CONFIDENCE = conf<threshold,
+        #     AMBIGUOUS_SINGLE = top-2 gap 작음 — 둘 다 AI 불확실 신호)
         # ----------------------
         low_conf = ResultFact.objects.filter(
             enrollment_id=enrollment_id,
             target_type="exam",
             target_id=exam_id,
-            meta__grading__invalid_reason="LOW_CONFIDENCE",
+            meta__grading__invalid_reason__in=["LOW_CONFIDENCE", "AMBIGUOUS_SINGLE"],
         ).count()
 
         if low_conf >= cls.LOW_CONF_THRESHOLD:

@@ -22,7 +22,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 from django.utils.decorators import method_decorator
 
-from rest_framework_simplejwt.authentication import JWTAuthentication
+from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 logger = logging.getLogger(__name__)

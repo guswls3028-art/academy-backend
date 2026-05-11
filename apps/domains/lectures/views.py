@@ -253,22 +253,33 @@ class SessionViewSet(ModelViewSet):
             if section.tenant_id != self.request.tenant.id:
                 raise PermissionDenied("다른 학원의 반에 세션을 추가할 수 없습니다.")
 
-        order = serializer.validated_data.get("order")
-        if order is None:
-            if section:
-                # section_mode: 반 내 순번
-                agg = Session.objects.filter(
-                    lecture=lecture, section=section,
-                ).aggregate(max_order=Max("order"))
-            else:
-                agg = enroll_repo.session_aggregate_max_order(lecture)
-            order = (agg["max_order"] or 0) + 1
-        try:
-            serializer.save(order=order)
-        except IntegrityError:
+        requested_order = serializer.validated_data.get("order")
+        with transaction.atomic():
+            # same lecture session insert 직렬화: max(order)+1 레이스 방지
+            Lecture.objects.select_for_update().filter(pk=lecture.pk).exists()
+            for _ in range(3):
+                order = requested_order
+                if order is None:
+                    if section:
+                        # section_mode: 반 내 순번
+                        agg = Session.objects.filter(
+                            lecture=lecture, section=section,
+                        ).aggregate(max_order=Max("order"))
+                    else:
+                        agg = enroll_repo.session_aggregate_max_order(lecture)
+                    order = (agg["max_order"] or 0) + 1
+                try:
+                    serializer.save(order=order)
+                    return
+                except IntegrityError:
+                    if requested_order is not None:
+                        section_label = f" ({section.label}반)" if section else ""
+                        raise ValidationError(
+                            {"order": f"이 강의{section_label}에 이미 {order}차시가 존재합니다."}
+                        )
             section_label = f" ({section.label}반)" if section else ""
             raise ValidationError(
-                {"order": f"이 강의{section_label}에 이미 {order}차시가 존재합니다."}
+                {"order": f"차시 순번 계산 중 충돌이 발생했습니다. 다시 시도해 주세요. (강의{section_label})"}
             )
 
     def perform_update(self, serializer):
@@ -359,6 +370,8 @@ class SectionViewSet(ModelViewSet):
 
         created = []
         with transaction.atomic():
+            # 같은 강의의 동시 차시 일괄생성 직렬화
+            Lecture.objects.select_for_update().filter(pk=lecture.pk).exists()
             for label, date_str in dates.items():
                 section = section_map.get(label)
                 if not section:

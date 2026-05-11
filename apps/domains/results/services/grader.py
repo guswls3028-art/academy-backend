@@ -1,4 +1,13 @@
 # apps/domains/results/services/grader.py
+"""
+⚠️ NOTE: 이 모듈의 _grade_choice_v1 / _grade_short_v1은 현재 production 채점 경로에서
+   사용되지 않는다. 실제 OMR/객관식 채점은 ExamGradingService._compute_score
+   (results/services/exam_grading_service.py)가 수행하며, 거기서는
+   SubmissionAnswer.answer 문자열만 AnswerKey와 비교한다 (status/confidence 무관 best-effort).
+
+   본 함수들은 향후 grader 정책 통합 시 참조 SSOT로 두고, test_omr_pipeline.py A9이
+   소스 존재만 검증하므로 보존. 변경 시 두 곳을 함께 갱신할 것.
+"""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -89,40 +98,56 @@ def _grade_choice_v1(
     original_meta: Any,
 ) -> Tuple[bool, float, Dict[str, Any]]:
     """
-    OMR 객관식 채점 v1 (STEP 1 고정)
+    OMR 객관식 채점 v2 (best-effort + manual_review)
 
     ✅ 정책:
-    - status != ok -> 무효 (0점)
-    - marking blank/multi -> 무효 (0점)
-    - confidence < threshold -> 무효 (0점) + LOW_CONFIDENCE 사유 저장  ⭐⭐⭐
-    - detected != 1개 -> 무효 (0점)
+    - status == error        -> 무효 (0점)         — 인식 자체 실패
+    - marking blank/multi    -> 무효 (0점)         — 학생이 답을 안 함/이중 마킹
+    - detected != 1개        -> 무효 (0점)         — 출력 contract 위반
+    - status == ambiguous + single detected -> best-effort + AMBIGUOUS_SINGLE 사유 ⭐
+    - confidence < threshold -> best-effort 채점 + LOW_CONFIDENCE 사유  ⭐⭐⭐
+        · 점수는 정답 일치 여부로 산출 (자동 0점 폐기 — v1 정책 변경)
+        · 사유는 그대로 남아 clinic/manual_review 트리거 유지
+        · 운영자는 OMR 검토 UI에서 confirm 또는 수정 → 재채점
+
+    근거: low_conf로 자동 0점 처리하면 흐린 마킹 학생 다수가 사실상 자동채점 무력화.
+    AI 결과를 best-effort로 사용하고 review UI를 통해 확정하는 흐름이 운영 정확도 ↑.
+    status=ambiguous라도 detected==[1개]면 본질은 low_conf와 동일 (gap만 작음).
     """
     st = (status or "").lower()
     mk = (marking or "").lower()
 
-    # 1) status가 ok가 아니면 무효
-    if st != "ok":
-        return False, 0.0, _with_invalid_reason(original_meta, "OMR_STATUS_NOT_OK")
+    # 1) status가 error/blank이면 무효 (인식 실패)
+    if st == "error":
+        return False, 0.0, _with_invalid_reason(original_meta, "OMR_STATUS_ERROR")
+    if st == "blank":
+        return False, 0.0, _with_invalid_reason(original_meta, "OMR_BLANK")
 
-    # 2) blank/multi는 무효
+    # 2) marking이 blank/multi면 무효 (학생이 답을 안 함/다중 마킹)
     if mk in ("blank", "multi"):
         reason = "OMR_BLANK" if mk == "blank" else "OMR_MULTI"
         return False, 0.0, _with_invalid_reason(original_meta, reason)
 
-    # 3) 신뢰도 체크 (STEP 1: low confidence 자동 0점 + 사유 저장)
-    conf = float(confidence) if confidence is not None else 0.0
-    if conf < OMR_CONF_THRESHOLD_V1:
-        return False, 0.0, _with_invalid_reason(original_meta, "LOW_CONFIDENCE")
-
-    # 4) detected 1개 강제
+    # 3) detected 1개 강제
     if not detected or len(detected) != 1:
         return False, 0.0, _with_invalid_reason(original_meta, "OMR_DETECTED_INVALID")
 
+    # 4) best-effort 채점
     ans = _norm(detected[0])
     cor = _norm(correct_answer)
-
     is_correct = ans != "" and cor != "" and ans == cor
-    return is_correct, (float(max_score) if is_correct else 0.0), _ensure_dict(original_meta)
+    score = float(max_score) if is_correct else 0.0
+
+    # 5) ambiguous(top-2 gap이 작음)도 single이면 best-effort
+    if st == "ambiguous":
+        return is_correct, score, _with_invalid_reason(original_meta, "AMBIGUOUS_SINGLE")
+
+    # 6) low_conf는 review 사유만 남기고 점수는 best-effort 유지
+    conf = float(confidence) if confidence is not None else 0.0
+    if conf < OMR_CONF_THRESHOLD_V1:
+        return is_correct, score, _with_invalid_reason(original_meta, "LOW_CONFIDENCE")
+
+    return is_correct, score, _ensure_dict(original_meta)
 
 
 def _grade_short_v1(

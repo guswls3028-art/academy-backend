@@ -5,6 +5,7 @@ import hashlib
 import logging
 import uuid
 
+from django.conf import settings
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -98,7 +99,10 @@ class PdfQuestionExtractView(APIView):
 
         except Exception as e:
             logger.exception("PDF question extract failed: %s", e)
+            detail = (
+                f"PDF 처리 중 오류: {str(e)}" if settings.DEBUG else "PDF 처리 중 오류가 발생했습니다."
+            )
             return Response(
-                {"detail": f"PDF 처리 중 오류: {str(e)}"},
+                {"detail": detail},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

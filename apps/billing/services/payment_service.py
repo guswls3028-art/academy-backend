@@ -24,7 +24,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from apps.billing.adapters.toss_payments import TossPaymentsClient
@@ -65,6 +65,8 @@ def _create_pending_tx(invoice: Invoice, billing_key: BillingKey) -> PaymentTran
     PENDING 상태 트랜잭션 생성. idempotency_key = provider_order_id.
 
     이미 동일 idempotency_key로 PENDING/SUCCESS tx가 있으면 그대로 재사용.
+    동시성 race 시 unique 제약(idempotency_key)이 IntegrityError 를 발생시키므로,
+    예외를 잡고 기존 row 를 다시 조회해서 멱등 동작을 유지한다.
     """
     existing = PaymentTransaction.objects.filter(
         idempotency_key=invoice.provider_order_id,
@@ -72,23 +74,31 @@ def _create_pending_tx(invoice: Invoice, billing_key: BillingKey) -> PaymentTran
     if existing:
         return existing
 
-    return PaymentTransaction.objects.create(
-        tenant_id=invoice.tenant_id,
-        invoice=invoice,
-        provider="tosspayments",
-        payment_method="card",
-        provider_order_id=invoice.provider_order_id,
-        idempotency_key=invoice.provider_order_id,
-        amount=invoice.total_amount,
-        status="PENDING",
-        card_company=billing_key.card_company,
-        card_number_masked=billing_key.card_number_masked,
-        request_payload={
-            "billing_key_id": billing_key.id,
-            "amount": invoice.total_amount,
-            "order_id": invoice.provider_order_id,
-        },
-    )
+    try:
+        return PaymentTransaction.objects.create(
+            tenant_id=invoice.tenant_id,
+            invoice=invoice,
+            provider="tosspayments",
+            payment_method="card",
+            provider_order_id=invoice.provider_order_id,
+            idempotency_key=invoice.provider_order_id,
+            amount=invoice.total_amount,
+            status="PENDING",
+            card_company=billing_key.card_company,
+            card_number_masked=billing_key.card_number_masked,
+            request_payload={
+                "billing_key_id": billing_key.id,
+                "amount": invoice.total_amount,
+                "order_id": invoice.provider_order_id,
+            },
+        )
+    except IntegrityError:
+        existing = PaymentTransaction.objects.filter(
+            idempotency_key=invoice.provider_order_id,
+        ).first()
+        if existing:
+            return existing
+        raise
 
 
 @transaction.atomic

@@ -19,7 +19,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Max
 
 from apps.domains.progress.models import ClinicLink
@@ -93,32 +93,40 @@ class ClinicRemediationService:
         if max_score_val > 0 and score > max_score_val:
             raise ValueError(f"점수({score})가 만점({max_score_val})을 초과할 수 없습니다.")
 
-        # 2. 다음 attempt_index 계산
-        max_attempt = (
-            ExamAttempt.objects.filter(
-                exam_id=exam.id,
-                enrollment_id=link.enrollment_id,
-            ).aggregate(Max("attempt_index"))["attempt_index__max"]
-        ) or 0
-        next_attempt = max_attempt + 1
-
-        # 3. ExamAttempt 생성 (is_representative=False: 성적 산출에 포함 안 됨)
-        attempt = ExamAttempt.objects.create(
-            exam_id=exam.id,
-            enrollment_id=link.enrollment_id,
-            submission_id=None,  # 클리닉 직접 입력 — submission 없음
-            attempt_index=next_attempt,
-            is_retake=True,
-            is_representative=False,  # ← 핵심: 성적 산출 제외
-            clinic_link=link,
-            status="done",
-            meta={
-                "source": "clinic_remediation",
-                "graded_by_user_id": graded_by_user_id,
-                "total_score": score,
-                "pass_score": pass_score,
-            },
-        )
+        # 2~3. 다음 attempt_index 계산 + 생성 (동시성 충돌 재시도)
+        attempt = None
+        next_attempt = 0
+        for _ in range(3):
+            max_attempt = (
+                ExamAttempt.objects.filter(
+                    exam_id=exam.id,
+                    enrollment_id=link.enrollment_id,
+                ).aggregate(Max("attempt_index"))["attempt_index__max"]
+            ) or 0
+            next_attempt = max_attempt + 1
+            try:
+                attempt = ExamAttempt.objects.create(
+                    exam_id=exam.id,
+                    enrollment_id=link.enrollment_id,
+                    submission_id=None,  # 클리닉 직접 입력 — submission 없음
+                    attempt_index=next_attempt,
+                    is_retake=True,
+                    is_representative=False,  # ← 핵심: 성적 산출 제외
+                    clinic_link=link,
+                    status="done",
+                    meta={
+                        "source": "clinic_remediation",
+                        "graded_by_user_id": graded_by_user_id,
+                        "total_score": score,
+                        "pass_score": pass_score,
+                    },
+                )
+                break
+            except IntegrityError:
+                # unique_together(exam, enrollment, attempt_index) 충돌: 재계산 후 재시도
+                continue
+        if attempt is None:
+            raise ValueError("재시도 차수 생성 중 충돌이 발생했습니다. 다시 시도해 주세요.")
 
         # 4. 합격 판정
         is_passed = score >= pass_score  # pass_score=0 → 모든 점수 합격
@@ -221,15 +229,8 @@ class ClinicRemediationService:
         if max_score > 0 and score > max_score:
             raise ValueError(f"점수({score})가 만점({max_score})을 초과할 수 없습니다.")
 
-        # 2. 다음 attempt_index 계산
-        max_attempt = (
-            HomeworkScore.objects.filter(
-                enrollment_id=link.enrollment_id,
-                session=session,
-                homework=homework,
-            ).aggregate(Max("attempt_index"))["attempt_index__max"]
-        ) or 0
-        next_attempt = max_attempt + 1
+        # 2. 다음 attempt_index 계산 (생성 시 충돌 가능성 대비 재시도)
+        next_attempt = 0
 
         # 3. 합격 판정
         passed, _, _ = calc_homework_passed_and_clinic(
@@ -238,19 +239,36 @@ class ClinicRemediationService:
             max_score=max_score,
         )
 
-        # 4. HomeworkScore 생성
-        HomeworkScore.objects.create(
-            enrollment_id=link.enrollment_id,
-            session=session,
-            homework=homework,
-            attempt_index=next_attempt,
-            clinic_link=link,
-            score=score,
-            max_score=max_score,
-            passed=passed,
-            clinic_required=False,  # 클리닉 재시도는 clinic_required 의미 없음
-            updated_by_user_id=graded_by_user_id,
-        )
+        # 4. HomeworkScore 생성 (attempt_index 충돌 재시도)
+        created = False
+        for _ in range(3):
+            max_attempt = (
+                HomeworkScore.objects.filter(
+                    enrollment_id=link.enrollment_id,
+                    session=session,
+                    homework=homework,
+                ).aggregate(Max("attempt_index"))["attempt_index__max"]
+            ) or 0
+            next_attempt = max_attempt + 1
+            try:
+                HomeworkScore.objects.create(
+                    enrollment_id=link.enrollment_id,
+                    session=session,
+                    homework=homework,
+                    attempt_index=next_attempt,
+                    clinic_link=link,
+                    score=score,
+                    max_score=max_score,
+                    passed=passed,
+                    clinic_required=False,  # 클리닉 재시도는 clinic_required 의미 없음
+                    updated_by_user_id=graded_by_user_id,
+                )
+                created = True
+                break
+            except IntegrityError:
+                continue
+        if not created:
+            raise ValueError("재시도 차수 생성 중 충돌이 발생했습니다. 다시 시도해 주세요.")
 
         # 5. 합격 시 ClinicLink 해소
         result = RetakeResult(

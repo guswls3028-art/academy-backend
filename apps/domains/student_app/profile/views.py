@@ -91,6 +91,10 @@ class StudentProfileView(APIView):
                 return Response({"detail": "이미지 파일만 업로드할 수 있습니다."}, status=400)
             if photo.size and photo.size > 10 * 1024 * 1024:  # 10MB
                 return Response({"detail": "프로필 사진은 10MB 이하만 업로드할 수 있습니다."}, status=400)
+            # 매직바이트 검증 — Content-Type 위장 차단.
+            from apps.api.common.image_validator import is_real_image
+            if not is_real_image(photo):
+                return Response({"detail": "이미지 파일이 손상되었거나 이미지 형식이 아닙니다."}, status=400)
             # R2에 업로드
             try:
                 import uuid

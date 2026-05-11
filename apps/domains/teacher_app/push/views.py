@@ -25,10 +25,10 @@ class PushSubscribeView(APIView):
         d = ser.validated_data
 
         sub, created = PushSubscription.objects.update_or_create(
+            tenant=request.tenant,
             user=request.user,
             endpoint=d["endpoint"],
             defaults={
-                "tenant": request.tenant,
                 "p256dh_key": d["p256dh_key"],
                 "auth_key": d["auth_key"],
                 "user_agent": d.get("user_agent", ""),
@@ -50,6 +50,7 @@ class PushUnsubscribeView(APIView):
         ser = PushUnsubscribeSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         deleted, _ = PushSubscription.objects.filter(
+            tenant=request.tenant,
             user=request.user,
             endpoint=ser.validated_data["endpoint"],
         ).delete()
