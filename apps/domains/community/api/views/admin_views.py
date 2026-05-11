@@ -117,11 +117,11 @@ class AdminReportsViewSet(viewsets.GenericViewSet):
         offset = (page - 1) * page_size
         items = list(qs[offset : offset + page_size])
 
-        # target 글/댓글 fetch — 한 번에 (N+1 방지)
+        # target 글/댓글 fetch — 한 번에 (N+1 방지). Student.user_id 차단 액션에 필요.
         post_ids = [r.target_id for r in items if r.target_type == CommunityReport.TARGET_POST]
         reply_ids = [r.target_id for r in items if r.target_type == CommunityReport.TARGET_REPLY]
-        posts_map = {p.id: p for p in PostEntity.objects.filter(tenant=tenant, id__in=post_ids).only("id", "title", "post_type", "status")} if post_ids else {}
-        replies_map = {r.id: r for r in PostReply.objects.filter(tenant=tenant, id__in=reply_ids).select_related("post").only("id", "content", "post_id", "post__post_type", "post__title")} if reply_ids else {}
+        posts_map = {p.id: p for p in PostEntity.objects.filter(tenant=tenant, id__in=post_ids).select_related("created_by").only("id", "title", "post_type", "status", "created_by", "created_by__user_id", "created_by__name")} if post_ids else {}
+        replies_map = {r.id: r for r in PostReply.objects.filter(tenant=tenant, id__in=reply_ids).select_related("post", "created_by").only("id", "content", "post_id", "created_by", "created_by__user_id", "created_by__name", "post__post_type", "post__title")} if reply_ids else {}
 
         from apps.domains.community.services.report_triage import triage_report
         results = []
@@ -131,12 +131,16 @@ class AdminReportsViewSet(viewsets.GenericViewSet):
             if r.target_type == CommunityReport.TARGET_POST:
                 p = posts_map.get(r.target_id)
                 if p:
-                    target_info = {"kind": "post", "id": p.id, "title": p.title, "post_type": p.post_type, "status": p.status}
+                    author_user_id = getattr(getattr(p, "created_by", None), "user_id", None)
+                    author_name = getattr(getattr(p, "created_by", None), "name", None)
+                    target_info = {"kind": "post", "id": p.id, "title": p.title, "post_type": p.post_type, "status": p.status, "author_user_id": author_user_id, "author_name": author_name}
                     target_excerpt = (p.title or "")
             elif r.target_type == CommunityReport.TARGET_REPLY:
                 rep = replies_map.get(r.target_id)
                 if rep:
-                    target_info = {"kind": "reply", "id": rep.id, "post_id": rep.post_id, "post_title": rep.post.title, "post_type": rep.post.post_type, "content_excerpt": (rep.content or "")[:200]}
+                    author_user_id = getattr(getattr(rep, "created_by", None), "user_id", None)
+                    author_name = getattr(getattr(rep, "created_by", None), "name", None)
+                    target_info = {"kind": "reply", "id": rep.id, "post_id": rep.post_id, "post_title": rep.post.title, "post_type": rep.post.post_type, "content_excerpt": (rep.content or "")[:200], "author_user_id": author_user_id, "author_name": author_name}
                     target_excerpt = (rep.content or "")[:200]
             verdict = triage_report(r.reason, r.detail or "", target_excerpt)
             results.append({
