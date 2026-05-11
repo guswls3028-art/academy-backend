@@ -32,6 +32,7 @@ urlpatterns = [
     path("hit-reports/<int:report_id>/", views_hit_report.HitReportDetailView.as_view()),
     path("hit-reports/<int:report_id>/entries/", views_hit_report.HitReportEntriesUpsertView.as_view()),
     path("hit-reports/<int:report_id>/submit/", views_hit_report.HitReportSubmitView.as_view()),
+    path("hit-reports/<int:report_id>/unsubmit/", views_hit_report.HitReportUnsubmitView.as_view()),
     path("hit-reports/<int:report_id>/curated.pdf", views_hit_report.HitReportPdfView.as_view()),
     # 카페·블로그 게시용 raw asset (PNG + summary.md). 강사가 본인 명의로 자유 게시.
     path("hit-reports/<int:report_id>/share.zip", views_hit_report.HitReportZipExportView.as_view()),

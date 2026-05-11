@@ -733,6 +733,50 @@ class HitReportSubmitView(View):
         return JsonResponse(MatchupHitReportSerializer(report).data)
 
 
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class HitReportUnsubmitView(View):
+    """POST /api/v1/matchup/hit-reports/<id>/unsubmit/
+
+    제출 잠금 해제 — submitted 보고서를 다시 draft로 복귀.
+    작성자 본인 또는 학원 admin/owner. 실수로 submit 클릭한 케이스 셀프 복구
+    (2026-05-11 박철T 사고 — admin manage.py shell 없이는 못 풀어내는 product 결함).
+
+    정책: submitted_by_id/name 히스토리는 유지 (재제출 시 덮어씀). submitted_at만 None.
+    알림톡 발송 X (학원장이 "보고서 사라졌네"라고 인지하지 못해도 OK — 1인 강사 학원 다수).
+    """
+
+    def post(self, request, report_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+        try:
+            report = MatchupHitReport.objects.get(id=report_id, tenant=request.tenant)
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+        if not _hit_report_writable(request, report):
+            return JsonResponse(
+                {"detail": "다른 강사의 보고서는 잠금 해제할 수 없습니다."},
+                status=403,
+            )
+        if report.status != "submitted":
+            return JsonResponse(
+                {
+                    "detail": "이미 작성 중인 보고서입니다.",
+                    "code": "not_submitted",
+                },
+                status=400,
+            )
+
+        report.status = "draft"
+        report.submitted_at = None
+        report.save(update_fields=["status", "submitted_at", "updated_at"])
+        logger.info(
+            "HIT_REPORT_UNSUBMIT | report_id=%s tenant_id=%s author_id=%s by_user_id=%s",
+            report.id, report.tenant_id, report.author_id,
+            getattr(getattr(request, "user", None), "id", None),
+        )
+        return JsonResponse(MatchupHitReportSerializer(report).data)
+
+
 def _notify_hit_report_submitted(report, request) -> None:
     """매치업 보고서 학원 제출 시 owner/admin 알림톡 발송.
 
