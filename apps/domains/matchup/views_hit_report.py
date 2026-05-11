@@ -1690,6 +1690,14 @@ class HitReportShareMetaView(View):
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
 
+        # ETag 캐싱 (cycle 10) — 변경 없으면 304 + body 없이 응답.
+        etag = _share_etag(report)
+        if request.META.get("HTTP_IF_NONE_MATCH") == etag:
+            r304 = HttpResponse(status=304)
+            r304["ETag"] = etag
+            r304["Cache-Control"] = "private, must-revalidate"
+            return r304
+
         doc = report.document
         total = (doc.problem_count if doc else 0) or 0
 
@@ -1781,7 +1789,7 @@ class HitReportShareMetaView(View):
                     "hit_rate_pct": rp,
                 })
 
-        return JsonResponse({
+        resp = JsonResponse({
             "id": report.id,
             "title": (report.title or "")[:200],
             "doc_title": (doc.title if doc else "") or "",
@@ -1799,6 +1807,20 @@ class HitReportShareMetaView(View):
             "other_report_ids": other_ids,
             "other_reports": other_reports,
         })
+        resp["ETag"] = etag
+        resp["Cache-Control"] = "private, must-revalidate"
+        return resp
+
+
+def _share_etag(report) -> str:
+    """share PDF/meta 응답 ETag SSOT.
+
+    구성: token + updated_at(분 단위) — 학원장이 회전(token 교체)하거나 entry 수정 시 변경.
+    PDF generation 비용 큼 → 304 응답으로 재생성 건너뛰면 latency 큰 폭 절약.
+    """
+    import hashlib
+    raw = f"{report.share_token}:{report.updated_at.isoformat() if report.updated_at else 'x'}".encode()
+    return f'W/"{hashlib.sha1(raw).hexdigest()[:16]}"'
 
 
 @method_decorator([csrf_exempt, _xframe_exempt], name="dispatch")
@@ -1807,6 +1829,11 @@ class HitReportSharePdfView(View):
 
     공개 share PDF. token UUID 만으로 통과 (picker 등록 무관).
     iframe embed 허용. 학원장이 회전/취소하면 즉시 차단.
+
+    ETag 캐싱 (#67 cycle 10, 2026-05-12):
+      - W/"sha1(token+updated_at)" 약형 ETag.
+      - 브라우저 재방문 시 If-None-Match → 일치하면 304 + PDF body 없이 응답.
+      - PDF generate (큰 비용) 건너뜀.
     """
 
     def get(self, request, token):
@@ -1816,6 +1843,14 @@ class HitReportSharePdfView(View):
             )
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
+
+        # ETag 비교 — 304 단축 응답으로 PDF generate 비용 회피.
+        etag = _share_etag(report)
+        if request.META.get("HTTP_IF_NONE_MATCH") == etag:
+            r304 = HttpResponse(status=304)
+            r304["ETag"] = etag
+            r304["Cache-Control"] = "private, must-revalidate"
+            return r304
 
         try:
             from .pdf_report import generate_curated_hit_report_pdf
@@ -1832,7 +1867,9 @@ class HitReportSharePdfView(View):
             f"inline; filename=\"hit-report-{report.id}.pdf\"; "
             f"filename*=UTF-8''{safe_name}.pdf"
         )
-        resp["Cache-Control"] = "private, no-cache, must-revalidate"
+        # ETag + must-revalidate — 브라우저 재방문 시 If-None-Match 비교, 변경 없으면 304.
+        resp["ETag"] = etag
+        resp["Cache-Control"] = "private, must-revalidate"
         if "X-Frame-Options" in resp:
             del resp["X-Frame-Options"]
         return resp
