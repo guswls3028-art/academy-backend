@@ -44,6 +44,10 @@ from apps.core.views_landing import (
     LandingConsultPublicView,
     LandingConsultAdminListView,
     LandingConsultAdminDetailView,
+    LandingTestimonialPublicView,
+    LandingTestimonialPublicListView,
+    LandingTestimonialAdminListView,
+    LandingTestimonialAdminDetailView,
     LandingSitemapView,
 )
 
@@ -92,6 +96,11 @@ urlpatterns = [
     path("landing/consult/", LandingConsultPublicView.as_view(), name="core-landing-consult-public"),
     path("landing/admin/consult/", LandingConsultAdminListView.as_view(), name="core-landing-consult-admin-list"),
     path("landing/admin/consult/<int:item_id>/", LandingConsultAdminDetailView.as_view(), name="core-landing-consult-admin-detail"),
+    # 학부모 후기 — 공개 제출 + 어드민 승인
+    path("landing/testimonial/", LandingTestimonialPublicView.as_view(), name="core-landing-testimonial-public"),
+    path("landing/testimonial/public/", LandingTestimonialPublicListView.as_view(), name="core-landing-testimonial-public-list"),
+    path("landing/admin/testimonial/", LandingTestimonialAdminListView.as_view(), name="core-landing-testimonial-admin-list"),
+    path("landing/admin/testimonial/<int:item_id>/", LandingTestimonialAdminDetailView.as_view(), name="core-landing-testimonial-admin-detail"),
     # SEO sitemap.xml
     path("landing/sitemap.xml", LandingSitemapView.as_view(), name="core-landing-sitemap"),
     path("", include(router.urls)),

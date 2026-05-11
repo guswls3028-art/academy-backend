@@ -6,6 +6,7 @@ from .user import User, Attendance, Expense
 from .program import Program
 from .landing_page import LandingPage
 from .landing_consult import LandingConsultRequest
+from .landing_testimonial import LandingTestimonialSubmission
 from .ops_audit import OpsAuditLog
 from .worker_heartbeat import WorkerHeartbeatModel
 
@@ -19,6 +20,7 @@ __all__ = [
     "Program",
     "LandingPage",
     "LandingConsultRequest",
+    "LandingTestimonialSubmission",
     "OpsAuditLog",
     "WorkerHeartbeatModel",
 ]
