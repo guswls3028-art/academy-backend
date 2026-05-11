@@ -1631,7 +1631,7 @@ def manually_crop_problem(
         crop = page_img.crop((left, top, right, bottom))
 
         buf = io.BytesIO()
-        crop.save(buf, "PNG")
+        crop.save(buf, "PNG", optimize=True, compress_level=9)
         buf.seek(0)
 
         # r2 키 prefix 추출 — 기존 문서 key에서 uuid prefix 재사용.
@@ -1804,7 +1804,7 @@ def paste_image_as_problem(
             if img.mode not in ("RGB", "RGBA"):
                 img = img.convert("RGB")
             buf = io.BytesIO()
-            img.save(buf, "PNG")
+            img.save(buf, "PNG", optimize=True, compress_level=9)
             buf.seek(0)
     except (UnidentifiedImageError, OSError) as e:
         raise ValueError(f"이미지 디코드 실패: {e}")
@@ -1942,7 +1942,7 @@ def _render_and_upload_pages(
                 for i in range(doc_pdf.page_count()):
                     page_img = doc_pdf.render_page(i, dpi=150)  # 캔버스용은 150 충분
                     buf = io.BytesIO()
-                    page_img.save(buf, "PNG")
+                    page_img.save(buf, "PNG", optimize=True, compress_level=9)
                     buf.seek(0)
                     key = f"tenants/{document.tenant_id}/matchup/{prefix}/pages/{i:03d}.png"
                     upload_fileobj_to_r2_storage(
@@ -1953,7 +1953,7 @@ def _render_and_upload_pages(
         else:
             img = Image.open(local_path).convert("RGB")
             buf = io.BytesIO()
-            img.save(buf, "PNG")
+            img.save(buf, "PNG", optimize=True, compress_level=9)
             buf.seek(0)
             key = f"tenants/{document.tenant_id}/matchup/{prefix}/pages/000.png"
             upload_fileobj_to_r2_storage(
@@ -2115,7 +2115,7 @@ def merge_problems(
         cur_y += h + GAP
 
     buf = io.BytesIO()
-    canvas.save(buf, "PNG")
+    canvas.save(buf, "PNG", optimize=True, compress_level=9)
     buf.seek(0)
 
     # R2 prefix — manually_crop_problem과 동일 규칙.

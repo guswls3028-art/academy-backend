@@ -1142,7 +1142,7 @@ def _build_hit_report_share_zip(report) -> bytes:
             for i in range(doc_pdf.page_count()):
                 page_img = doc_pdf.render_page(i, dpi=200)
                 buf = io.BytesIO()
-                page_img.save(buf, "PNG", optimize=True)
+                page_img.save(buf, "PNG", optimize=True, compress_level=9)
                 page_pngs.append(buf.getvalue())
     finally:
         if tmp_path:

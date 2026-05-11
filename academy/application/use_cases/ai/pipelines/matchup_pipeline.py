@@ -1753,7 +1753,7 @@ def _upload_page_images_for_modal_cache(
                 im.load()
                 w, h = im.size
                 buf = _io.BytesIO()
-                im.save(buf, "PNG")
+                im.save(buf, "PNG", optimize=True, compress_level=9)
                 buf.seek(0)
             key = f"tenants/{tenant_id}/matchup/{prefix}/pages/{idx:03d}.png"
             upload_fileobj_to_r2_storage(
@@ -1884,7 +1884,9 @@ def _upload_cropped_images(
                 if x2 > x and y2 > y:
                     img = img[y:y2, x:x2]
 
-            success, buf = cv2.imencode(".png", img)
+            success, buf = cv2.imencode(
+                ".png", img, [cv2.IMWRITE_PNG_COMPRESSION, 9]
+            )
             if not success:
                 continue
 
