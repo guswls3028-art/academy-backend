@@ -56,6 +56,7 @@ ALLOWED_COLORS = {
 # (frontend types/index.ts SECTION_META와 list 동기화 필요 — 두 언어 사이 자동 import 불가)
 SECTION_TYPES_ORDERED = [
     "hero",
+    "hero_carousel",        # 2026-05-12 #63 — 매치업 외 일반 게시물·커스텀 카드 mix
     "features",
     "instructor_profile",   # v1.2.x 1인 강사 사이트 보강
     "about",
