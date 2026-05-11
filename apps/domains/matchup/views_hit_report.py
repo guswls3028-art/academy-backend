@@ -1231,13 +1231,17 @@ def _is_report_in_published_landing(tenant, report_id: int) -> bool:
     return False
 
 
-@method_decorator([csrf_exempt, _tenant_required], name="dispatch")
+from django.views.decorators.clickjacking import xframe_options_exempt as _xframe_exempt
+
+
+@method_decorator([csrf_exempt, _tenant_required, _xframe_exempt], name="dispatch")
 class HitReportLandingPublicPdfView(View):
     """GET /api/v1/matchup/landing/public/<report_id>/curated.pdf
 
     학원 공개 랜딩에서 카드 클릭 시 노출되는 보고서 본문 PDF.
 
     - 인증 X (외부 학부모/학생 대상)
+    - iframe embed 허용 (xframe_options_exempt) — 학원 도메인 hover thumbnail + 상세 페이지 PDF viewer.
     - **공개 게이트**: 학원장이 자기 published 랜딩의 hit_reports section에 직접 picker로 등록한 ID만.
       picker에서 빼는 즉시 비공개 (다른 보고서 본문 노출 차단).
     - tenant 격리: subdomain → tenant resolve. 다른 tenant 보고서는 무조건 404.
@@ -1273,6 +1277,9 @@ class HitReportLandingPublicPdfView(View):
         )
         # 학원장이 picker에서 빼면 즉시 비공개돼야 함 — public cache 비활성, 브라우저 short-cache만.
         resp["Cache-Control"] = "private, no-cache, must-revalidate"
+        # iframe embed 허용 (학원 도메인 hover preview + 상세 페이지 viewer). xframe_options_exempt와 함께 보강.
+        if "X-Frame-Options" in resp:
+            del resp["X-Frame-Options"]
         return resp
 
 
