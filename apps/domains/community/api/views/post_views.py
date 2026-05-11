@@ -734,6 +734,48 @@ class PostViewSet(viewsets.ModelViewSet):
         count = PostReplyLike.objects.filter(reply=reply, tenant=tenant).count()
         return Response({"liked": liked, "count": count})
 
+    @action(detail=True, methods=["get"], url_path="neighbors")
+    def neighbors(self, request, pk=None):
+        """GET /posts/:id/neighbors/ — 같은 post_type/published 내 prev/next 글 id+title.
+
+        cafe.naver 스타일 글 상세 하단 "◀ 이전글 / 다음글 ▶". 가시성 게이트 적용.
+        ordering: -created_at(default). 학생 시점은 STUDENT_PUBLIC_POST_TYPES만 보임.
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post = get_post_by_id(tenant, int(pk))
+        if not post or not self._post_visible_to_request(request, post):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        # 학생 권한 시 STUDENT_PUBLIC_POST_TYPES만, staff는 모든 post_type 동일 그룹.
+        from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
+        from apps.domains.community.models import PostEntity
+        from django.db.models import Q as _Q
+        siblings = PostEntity.objects.filter(tenant=tenant, post_type=post.post_type, status="published")
+        if not self._is_staff_request(request):
+            # 학생/외부: STUDENT_PUBLIC_POST_TYPES만 그룹화 + 자신 작성 외 비공개 차단
+            if post.post_type not in STUDENT_PUBLIC_POST_TYPES:
+                # qna/counsel은 본인 작성만 — 본인 글 그룹 내 prev/next
+                rs = get_request_student(request)
+                if rs is None:
+                    return Response({"prev": None, "next": None})
+                siblings = siblings.filter(created_by=rs)
+            siblings = siblings.filter(_Q(created_by__isnull=True) | _Q(created_by__deleted_at__isnull=True))
+        # prev = 더 이전(작은 created_at), next = 더 이후(큰 created_at)
+        prev_post = (
+            siblings.filter(created_at__lt=post.created_at)
+            .order_by("-created_at").values("id", "title").first()
+        )
+        next_post = (
+            siblings.filter(created_at__gt=post.created_at)
+            .order_by("created_at").values("id", "title").first()
+        )
+        return Response({
+            "prev": prev_post,
+            "next": next_post,
+        })
+
     @action(detail=True, methods=["post"], url_path="report")
     def report_post(self, request, pk=None):
         """POST /posts/:id/report/ — 글 신고. body: {reason, detail?}. unique(post, user)."""
