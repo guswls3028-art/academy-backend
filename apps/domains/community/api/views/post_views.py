@@ -70,6 +70,24 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
         return super().destroy(request, *args, **kwargs)
 
+    def _post_visible_to_request(self, request, post) -> bool:
+        """단건 가시성 SSOT — retrieve/replies/like/reply_like/reply_detail 공용.
+        staff: 모두 OK. 학생: published & (공개 타입 OR 본인 글). 학부모: 자녀 권한 등 별도 분기 없이 학생 기준 적용.
+
+        2026-05-11 보안 리뷰 결과: like/reply_like/replies/reply_detail에서 visibility 우회 가능했음.
+        helper로 일관 적용해서 학생 권한 누출(student A → student B의 QnA reaction) 차단.
+        """
+        if self._is_staff_request(request):
+            return True
+        request_student = get_request_student(request)
+        is_own = request_student is not None and getattr(post, "created_by_id", None) == request_student.id
+        if is_own:
+            return True
+        if getattr(post, "status", "") != "published":
+            return False
+        from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
+        return getattr(post, "post_type", "") in STUDENT_PUBLIC_POST_TYPES
+
     def retrieve(self, request, *args, **kwargs):
         """단건 조회: 학생/학부모는 published 공개 타입 또는 본인 작성 글만 허용."""
         tenant = _get_tenant_from_request(request)
@@ -77,21 +95,8 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         pk = int(kwargs.get("pk", 0))
         post = get_post_by_id(tenant, pk)
-        if not post:
+        if not post or not self._post_visible_to_request(request, post):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-        # staff가 아닌 사용자: published만 조회 가능 + 공개 타입 또는 본인 글
-        if not self._is_staff_request(request):
-            # unpublished 차단 (본인 글은 draft라도 볼 수 있음)
-            request_student = get_request_student(request)
-            is_own = request_student is not None and getattr(post, "created_by_id", None) == request_student.id
-            if not is_own and getattr(post, "status", "") != "published":
-                return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-            # 비공개 타입(qna/counsel)은 본인 글만
-            if not is_own:
-                from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
-                is_public = getattr(post, "post_type", "") in STUDENT_PUBLIC_POST_TYPES
-                if not is_public:
-                    return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         serializer = self.get_serializer(post)
         return Response(serializer.data)
 
@@ -361,7 +366,8 @@ class PostViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         post = get_post_by_id(tenant, int(pk))
-        if not post:
+        # 가시성 게이트 — 학생이 다른 학생의 QnA/counsel 댓글 조회/작성 차단(2026-05-11 보안 리뷰).
+        if not post or not self._post_visible_to_request(request, post):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         if request.method == "GET":
@@ -411,10 +417,9 @@ class PostViewSet(viewsets.ModelViewSet):
             elif request.user:
                 author_display_name = f"{request.user.last_name}{request.user.first_name}".strip() or None
 
-        # 🔐 XSS 방지: 댓글 content sanitize
-        content = serializer.validated_data.get("content", "")
-        if content:
-            serializer.validated_data["content"] = sanitize_html(content)
+        # 🔐 XSS 방지: 댓글 content sanitize (2026-05-11 보안 리뷰 H2: 무조건 적용)
+        # frontend는 plain text textarea를 보내고 HTML 렌더이므로 빈 문자열도 sanitize 통과 — defense in depth.
+        serializer.validated_data["content"] = sanitize_html(serializer.validated_data.get("content") or "")
 
         reply = serializer.save(
             post=post, tenant=tenant, created_by=created_by,
@@ -606,7 +611,8 @@ class PostViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         post = get_post_by_id(tenant, int(pk))
-        if not post:
+        # 가시성 게이트 — 학생이 타인 비공개 글 댓글 수정/삭제 차단(2026-05-11 보안 리뷰).
+        if not post or not self._post_visible_to_request(request, post):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
             reply = PostReply.objects.get(post=post, id=int(reply_id), tenant=tenant)
@@ -624,10 +630,9 @@ class PostViewSet(viewsets.ModelViewSet):
         # PATCH
         serializer = PostReplySerializer(reply, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
-        # 🔐 XSS 방지: 댓글 수정 시에도 content sanitize
-        content = serializer.validated_data.get("content")
-        if content:
-            serializer.validated_data["content"] = sanitize_html(content)
+        # 🔐 XSS 방지: 댓글 수정 시에도 content sanitize (2026-05-11 보안 리뷰 H2: 무조건 적용)
+        if "content" in serializer.validated_data:
+            serializer.validated_data["content"] = sanitize_html(serializer.validated_data.get("content") or "")
         serializer.save()
         return Response(serializer.data)
 
@@ -636,6 +641,8 @@ class PostViewSet(viewsets.ModelViewSet):
         """POST/DELETE /posts/:id/like/ — 글 좋아요 토글.
 
         - 인증 필수(TenantResolvedAndMember). 비로그인 외부인 차단.
+        - 가시성 게이트(2026-05-11 보안 리뷰): retrieve와 동일한 visibility 적용 →
+          타인 QnA/counsel 같은 비공개 글에 학생이 reaction 우회 차단.
         - unique (post, user): 같은 사용자가 같은 글에 좋아요 1회.
         - POST: 좋아요 생성(이미 있으면 그대로). DELETE: 좋아요 제거.
         - 응답: {liked: bool, count: int}
@@ -644,7 +651,7 @@ class PostViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         post = get_post_by_id(tenant, int(pk))
-        if not post:
+        if not post or not self._post_visible_to_request(request, post):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         user = request.user
@@ -655,7 +662,8 @@ class PostViewSet(viewsets.ModelViewSet):
             PostLike.objects.filter(post=post, user=user, tenant=tenant).delete()
             liked = False
         else:
-            PostLike.objects.get_or_create(post=post, user=user, defaults={"tenant": tenant})
+            # 방어적: tenant까지 lookup에 포함해 cross-tenant 잔존 row가 reuse되지 않도록.
+            PostLike.objects.get_or_create(post=post, user=user, tenant=tenant)
             liked = True
 
         count = PostLike.objects.filter(post=post, tenant=tenant).count()
@@ -663,12 +671,15 @@ class PostViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post", "delete"], url_path=r"replies/(?P<reply_id>[^/.]+)/like")
     def reply_like(self, request, pk=None, reply_id=None):
-        """POST/DELETE /posts/:id/replies/:reply_id/like/ — 댓글 좋아요 토글."""
+        """POST/DELETE /posts/:id/replies/:reply_id/like/ — 댓글 좋아요 토글.
+
+        post visibility 게이트 동일 적용(2026-05-11 보안 리뷰).
+        """
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         post = get_post_by_id(tenant, int(pk))
-        if not post:
+        if not post or not self._post_visible_to_request(request, post):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         try:
             reply = PostReply.objects.get(post=post, id=int(reply_id), tenant=tenant)
@@ -683,7 +694,7 @@ class PostViewSet(viewsets.ModelViewSet):
             PostReplyLike.objects.filter(reply=reply, user=user, tenant=tenant).delete()
             liked = False
         else:
-            PostReplyLike.objects.get_or_create(reply=reply, user=user, defaults={"tenant": tenant})
+            PostReplyLike.objects.get_or_create(reply=reply, user=user, tenant=tenant)
             liked = True
 
         count = PostReplyLike.objects.filter(reply=reply, tenant=tenant).count()

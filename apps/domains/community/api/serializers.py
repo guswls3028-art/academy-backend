@@ -49,12 +49,15 @@ class PostReplySerializer(serializers.ModelSerializer):
             return 0
 
     def get_is_liked(self, obj):
+        # 2026-05-11 보안 리뷰 H1: 방어적 tenant_id 필터 추가.
+        # 현 모델은 obj.likes(=related_name=likes)가 이미 FK 통해 obj의 tenant로 제약되지만,
+        # 향후 모델 리팩토링에 견고하도록 명시적 tenant 필터를 둠.
         request = self.context.get("request") if hasattr(self, "context") else None
         user = getattr(request, "user", None) if request else None
         if not user or not getattr(user, "is_authenticated", False):
             return False
         try:
-            return obj.likes.filter(user_id=user.id).exists()
+            return obj.likes.filter(user_id=user.id, tenant_id=getattr(obj, "tenant_id", None)).exists()
         except Exception:
             return False
 
@@ -121,12 +124,15 @@ class PostEntitySerializer(serializers.ModelSerializer):
             return 0
 
     def get_is_liked(self, obj):
+        # 2026-05-11 보안 리뷰 H1: 방어적 tenant_id 필터 추가.
+        # 현 모델은 obj.likes(=related_name=likes)가 이미 FK 통해 obj의 tenant로 제약되지만,
+        # 향후 모델 리팩토링에 견고하도록 명시적 tenant 필터를 둠.
         request = self.context.get("request") if hasattr(self, "context") else None
         user = getattr(request, "user", None) if request else None
         if not user or not getattr(user, "is_authenticated", False):
             return False
         try:
-            return obj.likes.filter(user_id=user.id).exists()
+            return obj.likes.filter(user_id=user.id, tenant_id=getattr(obj, "tenant_id", None)).exists()
         except Exception:
             return False
 
