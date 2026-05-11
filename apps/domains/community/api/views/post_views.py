@@ -22,7 +22,7 @@ from apps.domains.community.selectors import (
     get_post_counts_by_node,
 )
 from apps.domains.community.services import CommunityService
-from apps.domains.community.models import PostReply, PostAttachment, PostLike, PostReplyLike
+from apps.domains.community.models import PostReply, PostAttachment, PostLike, PostReplyLike, CommunityReport
 from apps.domains.student_app.permissions import get_request_student
 from apps.core.permissions import TenantResolvedAndMember
 
@@ -212,6 +212,14 @@ class PostViewSet(viewsets.ModelViewSet):
                 Q(title__icontains=q) | Q(content__icontains=q) | Q(author_display_name__icontains=q)
             ).distinct()
 
+        # 정렬 ordering — latest(default) / replies / likes
+        # P3 follow-up: like_count_anno/replies_count는 _base_queryset 이미 annotate.
+        ordering = (request.query_params.get("ordering") or "").strip().lower()
+        if ordering == "likes":
+            qs = qs.order_by("-like_count_anno", "-created_at")
+        elif ordering == "replies":
+            qs = qs.order_by("-replies_count", "-created_at")
+
         try:
             page_size = min(int(request.query_params.get("page_size") or 50), 200)
         except (TypeError, ValueError):
@@ -379,8 +387,15 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         if request.method == "GET":
-            qs = PostReply.objects.filter(post=post, tenant=tenant).select_related("created_by").order_by("created_at")
-            serializer = PostReplySerializer(qs, many=True)
+            # like_count annotation 추가(2026-05-11 latency 최적화 — N+1 제거)
+            from django.db.models import Count
+            qs = (
+                PostReply.objects.filter(post=post, tenant=tenant)
+                .select_related("created_by")
+                .annotate(like_count_anno=Count("likes", distinct=True))
+                .order_by("created_at")
+            )
+            serializer = PostReplySerializer(qs, many=True, context={"request": request})
             return Response(serializer.data)
 
         # POST: 답변 등록
@@ -410,6 +425,16 @@ class PostViewSet(viewsets.ModelViewSet):
         serializer = PostReplySerializer(data=request.data, partial=False)
         serializer.is_valid(raise_exception=True)
 
+        # 답글 nesting (2026-05-11): parent_reply_id 받아서 답글로 저장.
+        # 잘못된 ID/타 post의 reply 차단 — 같은 post의 reply만 허용. depth 1까지만 (답글의 답글 X).
+        parent_reply = serializer.validated_data.get("parent_reply") if hasattr(serializer, "validated_data") else None
+        if parent_reply is not None:
+            if parent_reply.post_id != post.id or parent_reply.tenant_id != tenant.id:
+                return Response({"detail": "답글 대상이 잘못되었습니다."}, status=status.HTTP_400_BAD_REQUEST)
+            # depth 제한: 답글에 답글은 차단 (UI 복잡도 + nesting 폭주 방지)
+            if parent_reply.parent_reply_id is not None:
+                return Response({"detail": "답글에는 다시 답글을 등록할 수 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+
         created_by = None
         author_display_name = None
         author_role = "staff"
@@ -432,6 +457,7 @@ class PostViewSet(viewsets.ModelViewSet):
         reply = serializer.save(
             post=post, tenant=tenant, created_by=created_by,
             author_display_name=author_display_name, author_role=author_role,
+            parent_reply=parent_reply,
         )
 
         # 알림톡: staff가 학생/학부모 글(QnA/상담)에 답변 등록 시 발송.
@@ -707,6 +733,60 @@ class PostViewSet(viewsets.ModelViewSet):
 
         count = PostReplyLike.objects.filter(reply=reply, tenant=tenant).count()
         return Response({"liked": liked, "count": count})
+
+    @action(detail=True, methods=["post"], url_path="report")
+    def report_post(self, request, pk=None):
+        """POST /posts/:id/report/ — 글 신고. body: {reason, detail?}. unique(post, user)."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post = get_post_by_id(tenant, int(pk))
+        if not post or not self._post_visible_to_request(request, post):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        reason = (request.data.get("reason") or CommunityReport.REASON_OTHER).strip()[:20]
+        if reason not in dict(CommunityReport.REASON_CHOICES):
+            reason = CommunityReport.REASON_OTHER
+        detail = (request.data.get("detail") or "").strip()[:1000]
+        _, created = CommunityReport.objects.get_or_create(
+            tenant=tenant,
+            target_type=CommunityReport.TARGET_POST,
+            target_id=post.id,
+            reporter=user,
+            defaults={"reason": reason, "detail": detail},
+        )
+        return Response({"reported": True, "duplicate": not created})
+
+    @action(detail=True, methods=["post"], url_path=r"replies/(?P<reply_id>[^/.]+)/report")
+    def report_reply(self, request, pk=None, reply_id=None):
+        """POST /posts/:id/replies/:reply_id/report/ — 댓글 신고."""
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        post = get_post_by_id(tenant, int(pk))
+        if not post or not self._post_visible_to_request(request, post):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            reply = PostReply.objects.get(post=post, id=int(reply_id), tenant=tenant)
+        except (PostReply.DoesNotExist, ValueError, TypeError):
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        reason = (request.data.get("reason") or CommunityReport.REASON_OTHER).strip()[:20]
+        if reason not in dict(CommunityReport.REASON_CHOICES):
+            reason = CommunityReport.REASON_OTHER
+        detail = (request.data.get("detail") or "").strip()[:1000]
+        _, created = CommunityReport.objects.get_or_create(
+            tenant=tenant,
+            target_type=CommunityReport.TARGET_REPLY,
+            target_id=reply.id,
+            reporter=user,
+            defaults={"reason": reason, "detail": detail},
+        )
+        return Response({"reported": True, "duplicate": not created})
 
 
 def _dispatch_qna_matchup(post, attachments, tenant):

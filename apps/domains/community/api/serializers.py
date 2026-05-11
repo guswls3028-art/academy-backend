@@ -35,7 +35,7 @@ class PostReplySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = PostReply
-        fields = ["id", "post", "question", "content", "created_by", "created_by_display", "author_role", "created_at", "like_count", "is_liked"]
+        fields = ["id", "post", "question", "content", "created_by", "created_by_display", "author_role", "created_at", "like_count", "is_liked", "parent_reply"]
         read_only_fields = ["post", "created_by", "created_at"]
 
     def get_like_count(self, obj):
@@ -85,13 +85,18 @@ class PostReplySerializer(serializers.ModelSerializer):
         tenant = validated_data.pop("tenant", None)
         author_display_name = validated_data.pop("author_display_name", None)
         author_role = validated_data.pop("author_role", "staff")
+        parent_reply = validated_data.pop("parent_reply", None)
+        # 추가 sanitize defense — view에서 이미 적용되지만 create path 직접 호출에도 안전 (보안 H2 follow-up).
+        from apps.domains.community.services.html_sanitizer import sanitize_html
+        safe_content = sanitize_html(validated_data.get("content") or "")
         return PostReply.objects.create(
             post=post,
             tenant_id=tenant.id if tenant else post.tenant_id,
-            content=validated_data["content"],
+            content=safe_content,
             created_by=created_by,
             author_display_name=author_display_name,
             author_role=author_role,
+            parent_reply=parent_reply,
         )
 
 

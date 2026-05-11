@@ -5,6 +5,7 @@ from .post_template import PostTemplate
 from .reply import PostReply
 from .attachment import PostAttachment
 from .like import PostLike, PostReplyLike
+from .report import CommunityReport
 
 __all__ = [
     "ScopeNode",
@@ -15,5 +16,6 @@ __all__ = [
     "PostAttachment",
     "PostLike",
     "PostReplyLike",
+    "CommunityReport",
     "POST_TYPE_CHOICES",
 ]

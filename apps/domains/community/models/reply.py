@@ -34,6 +34,15 @@ class PostReply(models.Model):
         max_length=20, default="staff", blank=True,
         help_text="작성자 역할 (staff/student)",
     )
+    parent_reply = models.ForeignKey(
+        "self",
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="child_replies",
+        db_index=True,
+        help_text="답글 — null이면 최상위 댓글, 값 있으면 해당 댓글의 답글 (2026-05-11 도입).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

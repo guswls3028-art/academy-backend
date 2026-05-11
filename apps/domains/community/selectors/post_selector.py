@@ -10,10 +10,17 @@ _EXCLUDE_DELETED_AUTHOR = Q(created_by__isnull=True) | Q(created_by__deleted_at_
 
 
 def _base_queryset(qs: QuerySet) -> QuerySet:
-    """공통 prefetch/annotate — replies_count, mappings, attachments, created_by."""
+    """공통 prefetch/annotate — replies_count, like_count, mappings, attachments, created_by.
+
+    2026-05-11: like_count annotation 추가(N+1 제거). E2E latency 706ms 측정 후 최적화.
+    is_liked는 user 의존이라 serializer context에서 단건 조회(글 상세 path 한정 — N 영향 X).
+    """
     return (
         qs
-        .annotate(replies_count=Count("replies", distinct=True))
+        .annotate(
+            replies_count=Count("replies", distinct=True),
+            like_count_anno=Count("likes", distinct=True),
+        )
         .select_related("created_by")
         .prefetch_related(
             Prefetch(
