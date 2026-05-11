@@ -22,7 +22,7 @@ from apps.domains.community.selectors import (
     get_post_counts_by_node,
 )
 from apps.domains.community.services import CommunityService
-from apps.domains.community.models import PostEntity, PostReply, PostAttachment, PostLike, PostReplyLike, CommunityReport
+from apps.domains.community.models import PostEntity, PostReply, PostAttachment, PostLike, PostReplyLike, CommunityReport, CommunityUserBlock
 from apps.domains.student_app.permissions import get_request_student
 from apps.core.permissions import TenantResolvedAndMember
 
@@ -69,6 +69,14 @@ class PostViewSet(viewsets.ModelViewSet):
         if request_student is not None and getattr(instance, "created_by_id", None) != request_student.id:
             return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
         return super().destroy(request, *args, **kwargs)
+
+    def _is_user_blocked(self, request) -> bool:
+        """사용자 커뮤니티 차단 check (#49 G2). 차단된 사용자는 write/reaction 차단."""
+        tenant = getattr(request, "tenant", None)
+        user = getattr(request, "user", None)
+        if not tenant or not user or not getattr(user, "is_authenticated", False):
+            return False
+        return CommunityUserBlock.objects.filter(tenant=tenant, user=user).exists()
 
     def _post_visible_to_request(self, request, post) -> bool:
         """단건 가시성 SSOT — retrieve/replies/like/reply_like/reply_detail 공용.
@@ -278,6 +286,23 @@ class PostViewSet(viewsets.ModelViewSet):
         received_reply_likes = PostReplyLike.objects.filter(tenant=tenant, reply__created_by=request_student, created_at__gte=since).count()
         received_likes = received_post_likes + received_reply_likes
 
+        # 누적 카운트 (전체 기간) — 배지 산정용 (#52)
+        lifetime_post = PostEntity.objects.filter(tenant=tenant, created_by=request_student).count()
+        lifetime_reply = PostReply.objects.filter(tenant=tenant, created_by=request_student).count()
+        lifetime_received_likes = (
+            PostLike.objects.filter(tenant=tenant, post__created_by=request_student).count()
+            + PostReplyLike.objects.filter(tenant=tenant, reply__created_by=request_student).count()
+        )
+        # 배지 규칙 (단순 threshold)
+        badges = []
+        if lifetime_post >= 1: badges.append({"key": "first_post", "label": "✏️ 첫 글 작성"})
+        if lifetime_post >= 10: badges.append({"key": "active_writer", "label": "🔥 활동 작가 (글 10+)"})
+        if lifetime_post >= 50: badges.append({"key": "veteran_writer", "label": "📚 베테랑 (글 50+)"})
+        if lifetime_reply >= 1: badges.append({"key": "first_reply", "label": "💬 첫 댓글"})
+        if lifetime_reply >= 20: badges.append({"key": "helpful_commenter", "label": "🤝 적극 참여 (댓글 20+)"})
+        if lifetime_received_likes >= 10: badges.append({"key": "loved", "label": "❤️ 사랑받는 (♥ 10+)"})
+        if lifetime_received_likes >= 50: badges.append({"key": "popular", "label": "🌟 인기 (♥ 50+)"})
+
         # ranking — 본인 score + 본인보다 높은 점수 학생 수
         from apps.domains.students.models import Student
         ranking_qs = (
@@ -304,6 +329,12 @@ class PostViewSet(viewsets.ModelViewSet):
             "score": my_score,
             "rank": rank,
             "total_active_students": total_active,
+            "lifetime": {
+                "post_count": lifetime_post,
+                "reply_count": lifetime_reply,
+                "received_likes": lifetime_received_likes,
+            },
+            "badges": badges,
         })
 
     @action(detail=False, methods=["get"], url_path="counts")
@@ -326,6 +357,9 @@ class PostViewSet(viewsets.ModelViewSet):
         return Response(data)
 
     def create(self, request, *args, **kwargs):
+        # 사용자 커뮤니티 차단 check(#49)
+        if self._is_user_blocked(request):
+            return Response({"detail": "학원 운영진에 의해 커뮤니티 작성이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
         # 학부모 write 차단 — 학부모는 읽기 전용
         if getattr(request.user, "parent_profile", None) is not None:
             return Response(
@@ -458,6 +492,9 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
 
         # POST: 답변 등록
+        # 사용자 커뮤니티 차단 check(#49)
+        if self._is_user_blocked(request):
+            return Response({"detail": "학원 운영진에 의해 커뮤니티 작성이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
         # 자료실은 일방향 다운로드용 — 모든 사용자(staff 포함) 댓글 차단
         # (정책 SSOT: models/post.py:DOWNLOAD_ONLY_POST_TYPES)
         from apps.domains.community.models.post import DOWNLOAD_ONLY_POST_TYPES
@@ -750,6 +787,9 @@ class PostViewSet(viewsets.ModelViewSet):
         user = request.user
         if not user or not user.is_authenticated:
             return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        # 차단 사용자 reaction 차단(#49) — POST에서만 (DELETE는 본인 좋아요 취소 허용)
+        if request.method == "POST" and self._is_user_blocked(request):
+            return Response({"detail": "학원 운영진에 의해 커뮤니티 활동이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
 
         if request.method == "DELETE":
             PostLike.objects.filter(post=post, user=user, tenant=tenant).delete()
@@ -782,6 +822,9 @@ class PostViewSet(viewsets.ModelViewSet):
         user = request.user
         if not user or not user.is_authenticated:
             return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        # 차단 사용자 reaction 차단(#49) — POST에서만
+        if request.method == "POST" and self._is_user_blocked(request):
+            return Response({"detail": "학원 운영진에 의해 커뮤니티 활동이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
 
         if request.method == "DELETE":
             PostReplyLike.objects.filter(reply=reply, user=user, tenant=tenant).delete()

@@ -7,7 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.domains.community.api.serializers import PostEntitySerializer
-from apps.domains.community.models import CommunityReport, PostEntity, PostReply, PostLike, PostReplyLike
+from apps.domains.community.models import CommunityReport, PostEntity, PostReply, PostLike, PostReplyLike, CommunityUserBlock
 from apps.domains.community.selectors import (
     get_admin_post_list,
     get_all_posts_for_tenant,
@@ -123,17 +123,22 @@ class AdminReportsViewSet(viewsets.GenericViewSet):
         posts_map = {p.id: p for p in PostEntity.objects.filter(tenant=tenant, id__in=post_ids).only("id", "title", "post_type", "status")} if post_ids else {}
         replies_map = {r.id: r for r in PostReply.objects.filter(tenant=tenant, id__in=reply_ids).select_related("post").only("id", "content", "post_id", "post__post_type", "post__title")} if reply_ids else {}
 
+        from apps.domains.community.services.report_triage import triage_report
         results = []
         for r in items:
             target_info = None
+            target_excerpt = ""
             if r.target_type == CommunityReport.TARGET_POST:
                 p = posts_map.get(r.target_id)
                 if p:
                     target_info = {"kind": "post", "id": p.id, "title": p.title, "post_type": p.post_type, "status": p.status}
+                    target_excerpt = (p.title or "")
             elif r.target_type == CommunityReport.TARGET_REPLY:
                 rep = replies_map.get(r.target_id)
                 if rep:
                     target_info = {"kind": "reply", "id": rep.id, "post_id": rep.post_id, "post_title": rep.post.title, "post_type": rep.post.post_type, "content_excerpt": (rep.content or "")[:200]}
+                    target_excerpt = (rep.content or "")[:200]
+            verdict = triage_report(r.reason, r.detail or "", target_excerpt)
             results.append({
                 "id": r.id,
                 "target_type": r.target_type,
@@ -148,6 +153,7 @@ class AdminReportsViewSet(viewsets.GenericViewSet):
                 "status_label": r.get_status_display(),
                 "created_at": r.created_at.isoformat() if r.created_at else None,
                 "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+                "triage": verdict,
             })
 
         return Response({"results": results, "count": total})
@@ -168,6 +174,67 @@ class AdminReportsViewSet(viewsets.GenericViewSet):
             r.resolved_at = timezone.now()
         r.save(update_fields=["status", "resolved_at"])
         return Response({"id": r.id, "status": r.status})
+
+
+class CommunityUserBlockView(APIView):
+    """학원장 사용자 차단 admin(#49 G2).
+
+    POST   /api/v1/community/admin/user-blocks/   body: {user_id, reason?}  — 차단
+    DELETE /api/v1/community/admin/user-blocks/<user_id>/                    — 차단 해제
+    GET    /api/v1/community/admin/user-blocks/                              — 차단 사용자 list
+    """
+    permission_classes = [TenantResolvedAndStaff]
+
+    def get(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        items = (
+            CommunityUserBlock.objects.filter(tenant=tenant)
+            .select_related("user", "blocked_by").order_by("-created_at")[:200]
+        )
+        return Response({
+            "results": [{
+                "id": b.id,
+                "user_id": b.user_id,
+                "user_name": getattr(b.user, "username", None) or getattr(b.user, "email", None) or None,
+                "blocked_by_id": b.blocked_by_id,
+                "blocked_by_name": getattr(b.blocked_by, "username", None) if b.blocked_by_id else None,
+                "reason": b.reason,
+                "created_at": b.created_at.isoformat() if b.created_at else None,
+            } for b in items]
+        })
+
+    def post(self, request):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            user_id = int(request.data.get("user_id"))
+        except (TypeError, ValueError):
+            return Response({"detail": "user_id 필수."}, status=status.HTTP_400_BAD_REQUEST)
+        if user_id <= 0:
+            return Response({"detail": "user_id 잘못됨."}, status=status.HTTP_400_BAD_REQUEST)
+        # 자기 자신 차단 방지
+        if request.user.id == user_id:
+            return Response({"detail": "본인은 차단할 수 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        reason = (request.data.get("reason") or "").strip()[:500]
+        obj, created = CommunityUserBlock.objects.get_or_create(
+            tenant=tenant, user_id=user_id,
+            defaults={"blocked_by": request.user, "reason": reason},
+        )
+        return Response({"id": obj.id, "user_id": obj.user_id, "created": created}, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+
+    def delete(self, request, user_id=None):
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            uid = int(user_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "user_id 잘못됨."}, status=status.HTTP_400_BAD_REQUEST)
+        deleted, _ = CommunityUserBlock.objects.filter(tenant=tenant, user_id=uid).delete()
+        return Response({"deleted": deleted})
 
 
 class CommunityStatsView(APIView):
@@ -241,6 +308,9 @@ class CommunityStatsView(APIView):
             for s in top_students_qs
         ]
 
+        # hot keywords (#57) — 글 title+content tokenize → freq top 20
+        hot_keywords = self._compute_hot_keywords(tenant, since)
+
         return Response({
             "days": days,
             "posts": {
@@ -259,4 +329,39 @@ class CommunityStatsView(APIView):
             },
             "top_posts": top_posts,
             "top_students": top_students,
+            "hot_keywords": hot_keywords,
         })
+
+    # 한국어 stopword(빈도 매우 높고 의미 약함). 보수적 — over-filter 회피.
+    _STOPWORDS = frozenset({
+        "그리고", "그래서", "하지만", "근데", "오늘", "내일", "어제", "있다", "없다", "하다", "되다",
+        "이다", "있는", "없는", "하는", "되는", "같은", "수업", "강의", "선생님", "학생",
+        "the", "and", "for", "with", "this", "that", "have", "will", "your", "from", "are", "was", "were",
+    })
+
+    @staticmethod
+    def _tokenize(text: str) -> list[str]:
+        import re
+        # 한국어/영문 2자 이상 토큰. HTML 태그 제거 후.
+        text = re.sub(r"<[^>]+>", " ", text or "")
+        return [t for t in re.findall(r"[가-힣]{2,}|[A-Za-z]{3,}", text)]
+
+    def _compute_hot_keywords(self, tenant, since):
+        from collections import Counter
+        from apps.domains.community.models import PostEntity
+        # title + content 합쳐 tokenize. 글 100개 한정 — 비용 제어.
+        rows = (
+            PostEntity.objects.filter(tenant=tenant, status="published", created_at__gte=since)
+            .only("title", "content")
+            .order_by("-created_at")[:200]
+        )
+        counter: Counter[str] = Counter()
+        for p in rows:
+            tokens = self._tokenize((p.title or "") + " " + (p.content or ""))
+            for t in tokens:
+                low = t.lower()
+                if low in self._STOPWORDS:
+                    continue
+                counter[t] += 1
+        top = counter.most_common(20)
+        return [{"keyword": k, "count": v} for k, v in top]

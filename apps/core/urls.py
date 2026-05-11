@@ -49,6 +49,7 @@ from apps.core.views_landing import (
     LandingTestimonialAdminListView,
     LandingTestimonialAdminDetailView,
     LandingSitemapView,
+    LandingManifestView,
     LandingHitReportToggleView,
 )
 
@@ -104,6 +105,7 @@ urlpatterns = [
     path("landing/admin/testimonial/<int:item_id>/", LandingTestimonialAdminDetailView.as_view(), name="core-landing-testimonial-admin-detail"),
     # SEO sitemap.xml
     path("landing/sitemap.xml", LandingSitemapView.as_view(), name="core-landing-sitemap"),
+    path("landing/manifest.json", LandingManifestView.as_view(), name="core-landing-manifest"),
     # 적중보고서 한 클릭 토글 (어드민 적중보고서 리스트에서 직접 토글)
     path("landing/admin/hit-report-toggle/", LandingHitReportToggleView.as_view(), name="core-landing-hit-report-toggle"),
     path("", include(router.urls)),

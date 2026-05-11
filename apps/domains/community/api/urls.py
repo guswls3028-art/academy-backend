@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
-    PostViewSet, AdminPostViewSet, AdminReportsViewSet, CommunityStatsView, ScopeNodeViewSet, PostTemplateViewSet,
+    PostViewSet, AdminPostViewSet, AdminReportsViewSet, CommunityStatsView, CommunityUserBlockView, ScopeNodeViewSet, PostTemplateViewSet,
     PlatformInboxListView, PlatformInboxReplyView, PlatformInboxDeleteReplyView,
     PlatformInboxAttachmentDownloadView,
 )
@@ -19,6 +19,8 @@ urlpatterns = [
     path("", include(router.urls)),
     path("admin/", include(admin_router.urls)),
     path("admin/stats/", CommunityStatsView.as_view(), name="community-admin-stats"),
+    path("admin/user-blocks/", CommunityUserBlockView.as_view(), name="community-admin-user-block-list"),
+    path("admin/user-blocks/<int:user_id>/", CommunityUserBlockView.as_view(), name="community-admin-user-block-detail"),
     # Platform inbox (superuser only — dev_app)
     path("platform/inbox/", PlatformInboxListView.as_view(), name="platform-inbox-list"),
     path("platform/inbox/<int:post_id>/replies/", PlatformInboxReplyView.as_view(), name="platform-inbox-reply"),
