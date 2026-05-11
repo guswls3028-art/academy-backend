@@ -529,17 +529,26 @@ def exclude_page_from_matchup(
     document.meta = meta
 
     # 해당 페이지 problems 즉시 제거 — meta.page_index로 매칭.
-    # manual=true 보호 (운영 위험 fix 2026-05-05): 학원장이 직접 자른 problem은 페이지 제외에서도 보존.
-    # 학원장이 자기가 자른 page를 실수로 exclude해도 manual cut 결과는 살림.
-    target_problems = [
+    # 보호:
+    #   manual=True (운영 위험 fix 2026-05-05): 학원장이 직접 자른 problem 보존.
+    #   manual_owner_pinned=True (P0 fix 2026-05-11): 적중보고서 selected_problem_ids
+    #     가 가리키는 자동 problem 도 페이지 exclude 에서 보존. 미보호 시
+    #     selected_problem_ids 가 dead pid 만 가리키는 dangling 재발 위험
+    #     (project_matchup_hitreport_dangling_recovery_2026_05_06 사고 클래스).
+    page_problems = [
         p for p in document.problems.all()
         if (p.meta or {}).get("page_index") == int(page_index)
-        and not (p.meta or {}).get("manual")
     ]
-    preserved_manual = sum(
-        1 for p in document.problems.all()
-        if (p.meta or {}).get("page_index") == int(page_index)
-        and (p.meta or {}).get("manual")
+    target_problems = [
+        p for p in page_problems
+        if not (p.meta or {}).get("manual")
+        and not (p.meta or {}).get("manual_owner_pinned")
+    ]
+    preserved_manual = sum(1 for p in page_problems if (p.meta or {}).get("manual"))
+    preserved_pinned = sum(
+        1 for p in page_problems
+        if (p.meta or {}).get("manual_owner_pinned")
+        and not (p.meta or {}).get("manual")
     )
     removed = 0
     for p in target_problems:
@@ -547,7 +556,12 @@ def exclude_page_from_matchup(
         removed += 1
 
     document.save(update_fields=["meta", "updated_at"])
-    return {"removed_problems": removed, "excluded_pages": excluded, "preserved_manual": preserved_manual}
+    return {
+        "removed_problems": removed,
+        "excluded_pages": excluded,
+        "preserved_manual": preserved_manual,
+        "preserved_pinned": preserved_pinned,
+    }
 
 
 def include_page_to_matchup(
@@ -2030,6 +2044,20 @@ def merge_problems(
     primary = ordered_problems[0]
     others = ordered_problems[1:]
 
+    # P0 보호 (2026-05-11): others 안에 manual_owner_pinned=True 가 있으면 차단.
+    # others 는 transaction 안에서 단순 p.delete() 되므로, 학원장 적중보고서의
+    # selected_problem_ids 가 dead pid 만 가리키는 dangling 재발 위험
+    # (project_matchup_hitreport_dangling_recovery_2026_05_06 사고 클래스).
+    # primary 자신이 pinned 인 case 는 허용 — PID 가 보존되므로 dangling 0,
+    # image / embedding 만 갱신되며 보고서 참조 관계는 살아 있음.
+    pinned_others = [p for p in others if (p.meta or {}).get("manual_owner_pinned")]
+    if pinned_others:
+        nums = ", ".join(f"Q{p.number}" for p in pinned_others)
+        raise ValueError(
+            f"적중보고서에 사용 중인 문항({nums})은 합칠 수 없습니다. "
+            f"먼저 보고서에서 해당 문항의 별 표시를 해제해주세요."
+        )
+
     # target_number가 다른 (이 doc에 잔존할) problem과 충돌하면 차단.
     # 합쳐서 사라질 problem들의 number는 충돌 대상에서 제외.
     merged_ids_set = {p.id for p in others}
@@ -2179,6 +2207,15 @@ def merge_problems(
             document.id, primary.id,
         )
 
+    # 검색 캐시 무효화 (P1 fix 2026-05-11): merge 후 풀에서 others 삭제 + primary
+    # 이미지/임베딩 변경. 캐시가 dead pid 또는 stale embedding 반환하면 학원장
+    # 추천 결과 망가짐. manual_crop / paste 와 동일 정책.
+    try:
+        from .cache import invalidate_tenant_similar_cache
+        invalidate_tenant_similar_cache(document.tenant_id)
+    except Exception:
+        logger.exception("MATCHUP_CACHE_INVALIDATE_FAILED | tenant=%s", document.tenant_id)
+
     logger.info(
         "MATCHUP_MERGE | doc=%s | primary=%s | merged=%s | target_number=%s",
         document.id, primary.id, [p.id for p in others], target_number,
@@ -2209,3 +2246,11 @@ def delete_problem_with_r2(problem: MatchupProblem) -> None:
             doc.save(update_fields=["problem_count", "updated_at"])
         except MatchupDocument.DoesNotExist:
             pass
+    # 검색 캐시 무효화 (P1 fix 2026-05-11): 삭제된 problem pid 가 캐시에서 dead
+    # reference 로 잔존 → in_bulk lookup 으로 그 entry 만 drop 되지만, 풀 자체가
+    # 변경됐으므로 그대로 두면 ranking 이 stale. tenant 전체 invalidate.
+    try:
+        from .cache import invalidate_tenant_similar_cache
+        invalidate_tenant_similar_cache(tenant_id)
+    except Exception:
+        logger.exception("MATCHUP_CACHE_INVALIDATE_FAILED | tenant=%s", tenant_id)

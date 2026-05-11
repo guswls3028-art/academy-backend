@@ -36,6 +36,9 @@ urlpatterns = [
     path("hit-reports/<int:report_id>/curated.pdf", views_hit_report.HitReportPdfView.as_view()),
     # 카페·블로그 게시용 raw asset (PNG + summary.md). 강사가 본인 명의로 자유 게시.
     path("hit-reports/<int:report_id>/share.zip", views_hit_report.HitReportZipExportView.as_view()),
+    # admin 포탈 widget — 학원 홈페이지에 게시된 보고서 mini list (적중보고서 탭 상단 띠).
+    # 학원장 mental model 정합 (2026-05-11): admin 작성/관리 자리에서 게시 결과 즉시 확인.
+    path("hit-reports/board-preview/", views_hit_report.HitReportBoardPreviewView.as_view()),
     # 공개 랜딩 페이지용 적중보고서 카드 메타 (인증 X, 테넌트 격리 절대)
     path("landing/public/", views_hit_report.HitReportLandingPublicView.as_view()),
     # 학원장 picker에 박은 보고서만 본문 PDF 공개 (외부 학부모/학생 신뢰 확보 동선)

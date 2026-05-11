@@ -683,8 +683,19 @@ class HitReportEntriesUpsertView(View):
 class HitReportSubmitView(View):
     """POST /api/v1/matchup/hit-reports/<id>/submit/
 
-    상태를 submitted로 전환 + 제출자/제출시각 기록.
-    강사가 작성을 마치고 소속 학원에 제출했다는 표식 (KPI 보고).
+    학원장 mental model (2026-05-11 정정): submit = **학원 홈페이지에 게시**.
+    1인 학원 (강사=학원장) 케이스에서 "학원 KPI 제출" 단어가 논리적 모순이라 정정.
+    내부 status='submitted' 표식은 유지하되 액션 의미는 publish 통합.
+
+    동작:
+      1. report.status='submitted' + submitted_at/by 기록 (내부 표식, schema 변경 0)
+      2. body publish_to_landing=True (default) — 자동으로 학원 홈페이지 hit_reports
+         섹션에 add + landing publish (toggle_hit_report_on_landing helper 재사용)
+      3. alimtalk — 1인 학원 silent suppress (author 외 owner/admin 0명이면 noise)
+      4. 응답: report + landing_url + total_published + published_to_landing
+
+    body params:
+      - publish_to_landing: bool=True — 게시 토글 (학원장이 게시 안 원하면 False).
     """
 
     def post(self, request, report_id):
@@ -696,9 +707,19 @@ class HitReportSubmitView(View):
             return JsonResponse({"detail": "Not found"}, status=404)
         if not _hit_report_writable(request, report):
             return JsonResponse(
-                {"detail": "다른 강사의 보고서는 제출할 수 없습니다."},
+                {"detail": "다른 강사의 보고서는 게시할 수 없습니다."},
                 status=403,
             )
+
+        # body parse — publish_to_landing default True (학원장 mental model = submit이 게시)
+        publish_to_landing = True
+        try:
+            import json as _json
+            body = _json.loads((request.body or b"").decode("utf-8") or "{}")
+            if isinstance(body, dict) and "publish_to_landing" in body:
+                publish_to_landing = bool(body.get("publish_to_landing"))
+        except (ValueError, TypeError, UnicodeDecodeError):
+            pass
 
         # 중복 발송 방지: status 전이(draft→submitted) 1회만 알림. 이미 submitted 호출 시 알림 skip.
         was_already_submitted = report.status == "submitted"
@@ -722,15 +743,52 @@ class HitReportSubmitView(View):
             "status", "submitted_at", "submitted_by_id", "submitted_by_name", "author", "updated_at",
         ])
 
+        # 학원 홈페이지 자동 게시 — submit 의미 통합 (학원장 mental model).
+        # 권한: owner/admin (학원장) 만. 강사 권한은 status 변경만 (게시는 학원장 책임).
+        # fail-soft: 게시 실패해도 submit 자체는 성공 (상태 보호).
+        landing_info = {
+            "published_to_landing": False,
+            "total_published": 0,
+            "landing_url": "",
+            "landing_error": "",
+        }
+        if publish_to_landing and _is_tenant_admin(request):
+            try:
+                from apps.core.views_landing import (
+                    toggle_hit_report_on_landing,
+                    LandingHitReportError,
+                )
+                try:
+                    res = toggle_hit_report_on_landing(
+                        request.tenant, report.id, action="add",
+                        auto_publish=True,
+                    )
+                    landing_info["published_to_landing"] = bool(res.get("registered"))
+                    landing_info["total_published"] = int(res.get("total_registered") or 0)
+                    landing_info["landing_url"] = f"/landing/reports/{report.id}"
+                except LandingHitReportError as e:
+                    landing_info["landing_error"] = e.detail
+                    logger.warning(
+                        "HIT_REPORT_LANDING_PUBLISH_FAILED | report=%s | %s",
+                        report.id, e.detail,
+                    )
+            except Exception:
+                logger.exception(
+                    "HIT_REPORT_LANDING_PUBLISH_UNEXPECTED | report=%s", report.id,
+                )
+
         # B-2: 학원 owner/admin에게 알림톡 (학원별 AutoSendConfig 토글 — 기본 OFF).
-        # 첫 제출 1회만 발송 (status 재진입 보호). 실패는 silent — 보고서 제출 자체는 성공.
+        # 첫 제출 1회만 발송 (status 재진입 보호). 1인 학원 silent suppress (_notify 내부 처리).
         if not was_already_submitted:
             try:
                 _notify_hit_report_submitted(report, request)
             except Exception:
                 logger.exception("HIT_REPORT_NOTIFY_FAILED | report_id=%s", report.id)
 
-        return JsonResponse(MatchupHitReportSerializer(report).data)
+        payload = MatchupHitReportSerializer(report).data
+        if isinstance(payload, dict):
+            payload.update(landing_info)
+        return JsonResponse(payload)
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
@@ -769,12 +827,48 @@ class HitReportUnsubmitView(View):
         report.status = "draft"
         report.submitted_at = None
         report.save(update_fields=["status", "submitted_at", "updated_at"])
+
+        # 게시 의미 통합 (2026-05-11): unsubmit = 게시 취소 + 편집. 학원 홈페이지
+        # hit_reports 섹션에서도 자동 제거 (학원장 mental model 일관). fail-soft —
+        # 게시판 제거 실패해도 status 복귀 자체는 성공.
+        landing_info = {
+            "unpublished_from_landing": False,
+            "total_published": 0,
+            "landing_error": "",
+        }
+        if _is_tenant_admin(request):
+            try:
+                from apps.core.views_landing import (
+                    toggle_hit_report_on_landing,
+                    LandingHitReportError,
+                )
+                try:
+                    res = toggle_hit_report_on_landing(
+                        request.tenant, report.id, action="remove",
+                        auto_publish=True,
+                    )
+                    landing_info["unpublished_from_landing"] = not bool(res.get("registered"))
+                    landing_info["total_published"] = int(res.get("total_registered") or 0)
+                except LandingHitReportError as e:
+                    landing_info["landing_error"] = e.detail
+                    logger.warning(
+                        "HIT_REPORT_LANDING_UNPUBLISH_FAILED | report=%s | %s",
+                        report.id, e.detail,
+                    )
+            except Exception:
+                logger.exception(
+                    "HIT_REPORT_LANDING_UNPUBLISH_UNEXPECTED | report=%s", report.id,
+                )
+
         logger.info(
             "HIT_REPORT_UNSUBMIT | report_id=%s tenant_id=%s author_id=%s by_user_id=%s",
             report.id, report.tenant_id, report.author_id,
             getattr(getattr(request, "user", None), "id", None),
         )
-        return JsonResponse(MatchupHitReportSerializer(report).data)
+        payload = MatchupHitReportSerializer(report).data
+        if isinstance(payload, dict):
+            payload.update(landing_info)
+        return JsonResponse(payload)
 
 
 def _notify_hit_report_submitted(report, request) -> None:
@@ -855,6 +949,23 @@ def _notify_hit_report_submitted(report, request) -> None:
     if not memberships:
         logger.info("hit_report_notify: no owner/admin in tenant %s", tenant_id)
         return
+
+    # 1인 학원 silent suppress (2026-05-11 학원장 mental model 정정):
+    # 1인 학원 (강사=학원장) 케이스에서 author 가 유일한 owner/admin 이면
+    # 본인 자신에게 "본인이 게시했습니다" 알림 = noise. 멀티 owner/admin 학원에서만
+    # 발송 (강사 → 학원 owner KPI 보고 의미 살아있음).
+    if report.author_id:
+        non_author_recipients = [
+            m for m in memberships
+            if getattr(getattr(m, "user", None), "id", None) != report.author_id
+        ]
+        if not non_author_recipients:
+            logger.info(
+                "hit_report_notify suppressed: solo academy (author=%s sole owner/admin), tenant=%s",
+                report.author_id, tenant_id,
+            )
+            return
+        memberships = non_author_recipients
 
     solapi_tid = get_solapi_template_id(trigger)
     sent_count = 0
@@ -1191,6 +1302,127 @@ class DocumentHitReportPdfView(View):
 # 카드 메타만 노출(시험명/학교/적중수/총문항수). PDF/이미지 본문은 노출 안 함.
 
 @method_decorator([csrf_exempt, _tenant_required], name="dispatch")
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class HitReportBoardPreviewView(View):
+    """GET /api/v1/matchup/hit-reports/board-preview/?limit=5
+
+    admin 포탈 widget — 학원 홈페이지에 게시된 적중보고서 mini list.
+    적중보고서 탭(HitReportListPage) 상단 띠에서 cafe 게시판 분위기로 노출.
+
+    학원장 mental model (2026-05-11): "작성/관리(admin) ↔ 학원 게시판(landing) ↔ 외부 공유"
+    단일 흐름. submit 후 결과 즉시 확인 + 게시판 entry 차례 시각화.
+
+    동작:
+      - LandingPage.published_config.sections[hit_reports].items 순회
+      - tenant 격리 + owner/admin 권한
+      - 응답 schema: HitReportLandingPublicView 와 align (frontend 재사용)
+        + author_name, landing_url, published_at(섹션 진입 시각 추정)
+      - limit 1~12 (MAX_REPORTS 정합), default 5
+
+    fail-soft: 게시판 정보 없으면 빈 list 반환 (404 X — UI 그래도 띠 자리 보존).
+    """
+
+    def get(self, request):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        # limit clamp 1..12 (chip toggle MAX_REPORTS 정합)
+        try:
+            limit = int(request.GET.get("limit") or 5)
+        except ValueError:
+            limit = 5
+        limit = max(1, min(limit, 12))
+
+        # 학원 LandingPage.published_config 의 hit_reports section items
+        ordered_ids: list[int] = []
+        try:
+            from apps.core.models import LandingPage
+            try:
+                lp = LandingPage.objects.get(tenant=request.tenant, is_published=True)
+            except LandingPage.DoesNotExist:
+                lp = None
+            if lp is not None:
+                pub = lp.published_config or {}
+                for sec in (pub.get("sections") or []):
+                    if sec.get("type") != "hit_reports":
+                        continue
+                    if not sec.get("enabled"):
+                        continue
+                    for it in (sec.get("items") or [])[:limit]:
+                        try:
+                            ordered_ids.append(int(it.get("report_id")))
+                        except (TypeError, ValueError):
+                            continue
+                    break
+        except Exception:
+            logger.exception(
+                "HIT_REPORT_BOARD_PREVIEW_LP_FETCH_FAIL | tenant=%s",
+                getattr(request.tenant, "id", "?"),
+            )
+
+        if not ordered_ids:
+            return JsonResponse({"reports": [], "total_published": 0})
+
+        # 카드 메타 fetch — HitReportLandingPublicView 와 동일 schema (frontend 재사용)
+        reports = list(
+            MatchupHitReport.objects.filter(
+                tenant=request.tenant, id__in=ordered_ids,
+            ).select_related("document", "author")
+        )
+
+        entries = MatchupHitReportEntry.objects.filter(
+            tenant=request.tenant,
+            report_id__in=[r.id for r in reports],
+            excluded=False,
+        ).only("id", "report_id", "selected_problem_ids", "comment")
+        curated_count: dict = {}
+        for e in entries:
+            if (e.selected_problem_ids or []) or (e.comment or "").strip():
+                curated_count[e.report_id] = curated_count.get(e.report_id, 0) + 1
+
+        result = []
+        for r in reports:
+            doc = r.document
+            total = (doc.problem_count if doc else 0) or 0
+            hit = curated_count.get(r.id, 0)
+            rate = round((hit / total * 100) if total else 0, 1)
+            author_name = ""
+            if r.author is not None:
+                try:
+                    from apps.core.models.user import user_display_username
+                    author_name = (
+                        getattr(r.author, "name", None)
+                        or user_display_username(r.author)
+                        or ""
+                    )
+                except Exception:
+                    author_name = getattr(r.author, "username", "") or ""
+            if not author_name:
+                author_name = r.submitted_by_name or ""
+
+            result.append({
+                "id": r.id,
+                "doc_title": (doc.title if doc else "") or "",
+                "doc_category": (doc.category if doc else "") or "",
+                "hit_count": hit,
+                "total_problems": total,
+                "hit_rate_pct": rate,
+                "author_name": author_name[:40],
+                "title": (r.title or "")[:200],
+                "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "landing_url": f"/landing/reports/{r.id}",
+            })
+        # 게시 순서 (LandingPage items 순서) 보존
+        order_map = {rid: i for i, rid in enumerate(ordered_ids)}
+        result.sort(key=lambda x: order_map.get(x["id"], 9999))
+
+        return JsonResponse({
+            "reports": result,
+            "total_published": len(ordered_ids),
+        })
+
+
 class HitReportLandingPublicView(View):
     """GET /api/v1/matchup/landing/public/?ids=1,2,3
 

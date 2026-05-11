@@ -115,3 +115,66 @@ def test_exclude_then_include_round_trip():
     include_result = include_page_to_matchup(doc, 5)
     assert include_result["excluded_pages"] == []
     assert include_result["requires_reanalyze"] is True
+
+
+# ── P0 보호 회귀 락 (2026-05-11) ─────────────────────────────────
+#
+# 매치업 도메인 dangling 사고 클래스 차단:
+#   1. 자동 problem 이 적중보고서 selected_problem_ids 로 별 토글 (manual_owner_pinned=True)
+#   2. 학원장이 해당 페이지를 실수로 exclude 하면 pinned problem 삭제 → dead pid 만 가리키는 dangling
+# 참조: project_matchup_hitreport_dangling_recovery_2026_05_06 사고 메모리.
+
+
+def _make_problem(*, pid, page_index, manual=False, pinned=False):
+    """MatchupProblem mock — meta 만 사용."""
+    p = MagicMock()
+    p.id = pid
+    p.meta = {
+        "page_index": page_index,
+        **({"manual": True} if manual else {}),
+        **({"manual_owner_pinned": True} if pinned else {}),
+    }
+    return p
+
+
+def test_exclude_page_preserves_manual_owner_pinned():
+    """manual_owner_pinned=True 자동 problem 은 페이지 exclude 에서도 보존.
+
+    실패하면: 적중보고서 selected_problem_ids 가 dead pid 가리키는 dangling 재발.
+    """
+    from apps.domains.matchup.services import exclude_page_from_matchup
+
+    doc = _make_doc(meta={})
+    pinned = _make_problem(pid=1, page_index=2, pinned=True)
+    auto = _make_problem(pid=2, page_index=2)
+    other_page = _make_problem(pid=3, page_index=5)  # 다른 페이지 — 영향 X
+    doc.problems.all.return_value = [pinned, auto, other_page]
+
+    with patch("apps.domains.matchup.services.delete_problem_with_r2") as mock_del:
+        result = exclude_page_from_matchup(doc, 2)
+
+    assert result["removed_problems"] == 1
+    assert result["preserved_pinned"] == 1
+    assert result["preserved_manual"] == 0
+    # auto 만 삭제 — pinned 와 다른 페이지는 보존
+    mock_del.assert_called_once_with(auto)
+
+
+def test_exclude_page_preserves_manual_and_pinned_both():
+    """manual=True 와 manual_owner_pinned=True 둘 다 보호 — 정책 일관."""
+    from apps.domains.matchup.services import exclude_page_from_matchup
+
+    doc = _make_doc(meta={})
+    manual = _make_problem(pid=1, page_index=2, manual=True)
+    pinned = _make_problem(pid=2, page_index=2, pinned=True)
+    both = _make_problem(pid=3, page_index=2, manual=True, pinned=True)
+    auto = _make_problem(pid=4, page_index=2)
+    doc.problems.all.return_value = [manual, pinned, both, auto]
+
+    with patch("apps.domains.matchup.services.delete_problem_with_r2") as mock_del:
+        result = exclude_page_from_matchup(doc, 2)
+
+    assert result["removed_problems"] == 1  # auto 만 삭제
+    assert result["preserved_manual"] == 2  # manual + both (manual 카운트)
+    assert result["preserved_pinned"] == 1  # pinned 만 (manual 겹침 제외)
+    mock_del.assert_called_once_with(auto)

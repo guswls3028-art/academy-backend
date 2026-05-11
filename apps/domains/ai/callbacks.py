@@ -794,6 +794,18 @@ def _handle_matchup_ai_result(
             job_id, source_id, _fp_err,
         )
 
+    # 검색 캐시 무효화 (P1 fix 2026-05-11): reanalyze 가 problem 풀 재구성하므로
+    # 기존 캐시는 dead pid + stale embedding 보유. manual_crop / merge / delete
+    # path 와 일관. fail-soft — invalidate 실패가 callback 본 흐름에 영향 0.
+    try:
+        from apps.domains.matchup.cache import invalidate_tenant_similar_cache
+        invalidate_tenant_similar_cache(doc.tenant_id)
+    except Exception:
+        logger.exception(
+            "AI_CALLBACK_MATCHUP_CACHE_INVALIDATE_FAILED | doc_id=%s | tenant=%s",
+            source_id, doc.tenant_id,
+        )
+
     logger.info(
         "AI_CALLBACK_MATCHUP_SUCCESS | job_id=%s | doc_id=%s | problems=%d | seg=%s",
         job_id, source_id, len(problem_objs), seg_method,

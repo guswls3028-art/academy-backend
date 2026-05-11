@@ -820,6 +820,106 @@ class LandingTestimonialPublicListView(APIView):
         return Response({"items": items})
 
 
+class LandingHitReportError(Exception):
+    """toggle helper 도메인 에러 — 상위에서 status code + detail 매핑."""
+    def __init__(self, status_code: int, detail: str, code: str = ""):
+        self.status_code = status_code
+        self.detail = detail
+        self.code = code
+        super().__init__(detail)
+
+
+def toggle_hit_report_on_landing(
+    tenant, report_id: int, action: str,
+    *, auto_publish: bool = True,
+) -> dict:
+    """학원 홈페이지(LandingPage) 에 적중보고서 add/remove + auto-publish.
+
+    LandingHitReportToggleView.post 의 핵심 로직을 helper 로 추출 — 매치업 submit
+    (HitReportSubmitView) 흐름에서도 동일 path 사용 (2026-05-11 학원장 mental model 정합:
+    submit=학원 홈페이지 게시).
+
+    Returns: {ok, registered, noop, total_registered, published, max_reached}
+    Raises: LandingHitReportError — 보고서 없음(404) / action 잘못(400) / 상한 초과(400).
+    """
+    from apps.domains.matchup.models import MatchupHitReport
+
+    if action not in ("add", "remove"):
+        raise LandingHitReportError(400, "action은 add 또는 remove")
+
+    # 보고서 검증 — 본 학원 보고서만
+    try:
+        MatchupHitReport.objects.get(id=int(report_id), tenant=tenant)
+    except MatchupHitReport.DoesNotExist:
+        raise LandingHitReportError(404, "보고서를 찾을 수 없습니다")
+
+    landing, _ = LandingPage.objects.get_or_create(
+        tenant=tenant,
+        defaults={"draft_config": _default_draft_config(tenant)},
+    )
+    # backfill — hit_reports section이 없으면 추가
+    landing.draft_config = _backfill_missing_sections(landing.draft_config)
+    sections = list(landing.draft_config.get("sections") or [])
+    hit_idx = None
+    for i, s in enumerate(sections):
+        if s.get("type") == "hit_reports":
+            hit_idx = i
+            break
+    if hit_idx is None:
+        raise LandingHitReportError(500, "hit_reports 섹션 누락(backfill 실패)")
+    hit_sec = dict(sections[hit_idx])
+    items = list(hit_sec.get("items") or [])
+    existing_ids = [
+        int(it.get("report_id"))
+        for it in items
+        if isinstance(it.get("report_id"), int)
+    ]
+
+    changed = False
+    MAX_REPORTS = 12
+    rid = int(report_id)
+    if action == "add":
+        if rid in existing_ids:
+            return {"ok": True, "noop": True, "registered": True,
+                    "total_registered": len(existing_ids),
+                    "published": landing.is_published}
+        if len(existing_ids) >= MAX_REPORTS:
+            raise LandingHitReportError(
+                400,
+                f"홈페이지에는 최대 {MAX_REPORTS}개 보고서까지 노출 가능합니다.",
+                code="max_reached",
+            )
+        items.append({"report_id": rid})
+        hit_sec["items"] = items
+        hit_sec["enabled"] = True  # auto-enable
+        changed = True
+    else:  # remove
+        if rid not in existing_ids:
+            return {"ok": True, "noop": True, "registered": False,
+                    "total_registered": len(existing_ids),
+                    "published": landing.is_published}
+        items = [it for it in items if int(it.get("report_id") or -1) != rid]
+        hit_sec["items"] = items
+        changed = True
+
+    if changed:
+        sections[hit_idx] = hit_sec
+        landing.draft_config = {**landing.draft_config, "sections": sections}
+        landing.save(update_fields=["draft_config", "updated_at"])
+        if auto_publish:
+            landing.publish()
+
+    return {
+        "ok": True,
+        "registered": action == "add",
+        "total_registered": len([
+            it for it in (hit_sec.get("items") or [])
+            if isinstance(it.get("report_id"), int)
+        ]),
+        "published": auto_publish and landing.is_published,
+    }
+
+
 class LandingHitReportToggleView(APIView):
     """
     POST /api/v1/core/landing/admin/hit-report-toggle/
@@ -829,6 +929,8 @@ class LandingHitReportToggleView(APIView):
     - draft_config.sections[hit_reports].items에 add/remove
     - hit_reports section 자동 enable
     - auto_publish=True (기본): publish 즉시 외부 노출 갱신
+
+    내부 로직은 toggle_hit_report_on_landing helper — 매치업 submit 흐름에서도 재사용.
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -844,66 +946,16 @@ class LandingHitReportToggleView(APIView):
         except (TypeError, ValueError):
             return Response({"detail": "report_id 필수"}, status=400)
         action = (request.data.get("action") or "").strip()
-        if action not in ("add", "remove"):
-            return Response({"detail": "action은 add 또는 remove"}, status=400)
-        auto_publish = request.data.get("auto_publish", True)
+        auto_publish = bool(request.data.get("auto_publish", True))
 
-        # 보고서 검증 — 본 학원 보고서만
-        from apps.domains.matchup.models import MatchupHitReport
         try:
-            MatchupHitReport.objects.get(id=report_id, tenant=request.tenant)
-        except MatchupHitReport.DoesNotExist:
-            return Response({"detail": "보고서를 찾을 수 없습니다"}, status=404)
-
-        landing, _ = LandingPage.objects.get_or_create(
-            tenant=request.tenant,
-            defaults={"draft_config": _default_draft_config(request.tenant)},
-        )
-        # backfill — hit_reports section이 없으면 추가
-        landing.draft_config = _backfill_missing_sections(landing.draft_config)
-        sections = list(landing.draft_config.get("sections") or [])
-        # hit_reports 섹션 찾기
-        hit_idx = None
-        for i, s in enumerate(sections):
-            if s.get("type") == "hit_reports":
-                hit_idx = i; break
-        if hit_idx is None:
-            return Response({"detail": "hit_reports 섹션 누락(backfill 실패)"}, status=500)
-        hit_sec = dict(sections[hit_idx])
-        items = list(hit_sec.get("items") or [])
-        existing_ids = [int(it.get("report_id")) for it in items if isinstance(it.get("report_id"), int)]
-
-        changed = False
-        MAX_REPORTS = 12
-        if action == "add":
-            if report_id in existing_ids:
-                return Response({"ok": True, "noop": True, "registered": True})
-            if len(existing_ids) >= MAX_REPORTS:
-                return Response({"detail": f"홈페이지에는 최대 {MAX_REPORTS}개 보고서까지 노출 가능합니다."}, status=400)
-            items.append({"report_id": report_id})
-            hit_sec["items"] = items
-            hit_sec["enabled"] = True  # auto-enable
-            changed = True
-        else:  # remove
-            if report_id not in existing_ids:
-                return Response({"ok": True, "noop": True, "registered": False})
-            items = [it for it in items if int(it.get("report_id") or -1) != report_id]
-            hit_sec["items"] = items
-            changed = True
-
-        if changed:
-            sections[hit_idx] = hit_sec
-            landing.draft_config = {**landing.draft_config, "sections": sections}
-            landing.save(update_fields=["draft_config", "updated_at"])
-            if auto_publish:
-                landing.publish()
-
-        return Response({
-            "ok": True,
-            "registered": action == "add",
-            "total_registered": len([it for it in (hit_sec.get("items") or []) if isinstance(it.get("report_id"), int)]),
-            "published": auto_publish and landing.is_published,
-        })
+            result = toggle_hit_report_on_landing(
+                request.tenant, report_id, action,
+                auto_publish=auto_publish,
+            )
+        except LandingHitReportError as e:
+            return Response({"detail": e.detail, "code": e.code}, status=e.status_code)
+        return Response(result)
 
 
 @method_decorator([csrf_exempt, _tenant_required], name="dispatch")

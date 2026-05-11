@@ -169,6 +169,17 @@ def handle_matchup_proposal_path(
         "status", "problem_count", "error_message", "meta", "updated_at",
     ])
 
+    # 검색 캐시 무효화 (P1 fix 2026-05-11): proposal path 도 protected_ids 제외
+    # bulk_create 로 problem 풀 재구성. legacy callback path 와 일관 정책.
+    try:
+        from apps.domains.matchup.cache import invalidate_tenant_similar_cache
+        invalidate_tenant_similar_cache(doc.tenant_id)
+    except Exception:
+        logger.exception(
+            "PROPOSAL_PATH_CACHE_INVALIDATE_FAILED | doc=%s | tenant=%s",
+            doc.id, doc.tenant_id,
+        )
+
     logger.info(
         "PROPOSAL_PATH_COMPLETE | doc=%s | proposals=%d (pending=%d / auto_passed=%d) | "
         "final_problems=%d (manual+pinned=%d + auto=%d)",

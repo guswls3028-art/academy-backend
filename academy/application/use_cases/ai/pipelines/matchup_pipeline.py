@@ -818,6 +818,24 @@ def _aggregate_paper_types(pages: List[Dict]) -> Dict[str, Any]:
         # 20% 이상 페이지가 low_conf → review_required 경고 추가
         warnings.append("review_required")
 
+    # auto_recommend_page_states 우선순위 1 지원 (P1 fix 2026-05-11):
+    #   services.auto_recommend_page_states 가 paper_type_summary["pages"][i].paper_type
+    #   lookup 으로 explanation/answer_key/cover/index/non_question 페이지 skip 추천.
+    #   기존 schema 에 pages 필드 부재로 dead branch — fallback(problem 0 페이지)만
+    #   작동. SKIP_RELEVANT 페이지만 추출해 doc.meta payload 영향 최소화
+    #   (대부분 doc 5~20개 entry).
+    SKIP_RELEVANT_TYPES = {
+        "explanation", "answer_key", "cover", "index", "non_question",
+    }
+    pages_skip_hint = [
+        {
+            "page_index": p.get("page_index", idx),
+            "paper_type": p.get("paper_type") or "unknown",
+        }
+        for idx, p in enumerate(pages)
+        if (p.get("paper_type") or "") in SKIP_RELEVANT_TYPES
+    ]
+
     return {
         "distribution": dict(counter),
         "low_confidence_ratio": round(low_conf_ratio, 3),
@@ -825,6 +843,7 @@ def _aggregate_paper_types(pages: List[Dict]) -> Dict[str, Any]:
         "warnings": warnings,
         "low_conf_pages": low_conf_pages,
         "page_confidence_avg": avg_conf,
+        "pages": pages_skip_hint,
     }
 
 
