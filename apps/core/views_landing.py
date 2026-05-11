@@ -698,6 +698,7 @@ _TEST_TEXT_MAX = 1000
 
 
 def _validate_testimonial(data: dict) -> list[str]:
+    """학부모 후기 제출 검증."""
     errs: list[str] = []
     name = str(data.get("name") or "").strip()
     text = str(data.get("text") or "").strip()
