@@ -600,6 +600,11 @@ class LandingConsultPublicView(APIView):
     authentication_classes = []  # 인증 없이 작동
 
     def post(self, request):
+        # honeypot — 사람은 안 채우는 hidden field. 채워졌으면 봇으로 간주, 201처럼 위장 응답 후 무시.
+        if (request.data or {}).get("website") or (request.data or {}).get("hp"):
+            logger.info("CONSULT_HONEYPOT_TRAP ip=%s", _client_ip(request))
+            return Response({"id": 0, "ok": True}, status=201)
+
         ip = _client_ip(request)
         if _is_rate_limited(ip):
             return Response({"detail": "너무 빠른 요청입니다. 잠시 후 다시 시도해주세요."}, status=429)
