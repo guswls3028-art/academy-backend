@@ -705,7 +705,9 @@ class HitReportSubmitView(View):
         if not _is_tenant_staff(request):
             return JsonResponse({"detail": "Staff only"}, status=403)
         try:
-            report = MatchupHitReport.objects.get(id=report_id, tenant=request.tenant)
+            report = MatchupHitReport.objects.select_related(
+                "document", "author",
+            ).get(id=report_id, tenant=request.tenant)
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
         if not _hit_report_writable(request, report):
@@ -810,7 +812,9 @@ class HitReportUnsubmitView(View):
         if not _is_tenant_staff(request):
             return JsonResponse({"detail": "Staff only"}, status=403)
         try:
-            report = MatchupHitReport.objects.get(id=report_id, tenant=request.tenant)
+            report = MatchupHitReport.objects.select_related(
+                "document", "author",
+            ).get(id=report_id, tenant=request.tenant)
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
         if not _hit_report_writable(request, report):
