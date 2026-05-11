@@ -44,6 +44,12 @@ urlpatterns = [
     # 학원장 picker에 박은 보고서만 본문 PDF 공개 (외부 학부모/학생 신뢰 확보 동선)
     path("landing/public/<int:report_id>/curated.pdf", views_hit_report.HitReportLandingPublicPdfView.as_view()),
 
+    # 1클릭 공유 토큰 (#67, 2026-05-12) — 선생→학생 카톡 링크 한 번 클릭 PDF.
+    # 관리: 학원장/admin/author 만. public: token UUID 만으로 통과.
+    path("hit-reports/<int:report_id>/share-link/", views_hit_report.HitReportShareLinkView.as_view()),
+    path("share/<uuid:token>/", views_hit_report.HitReportShareMetaView.as_view()),
+    path("share/<uuid:token>/curated.pdf", views_hit_report.HitReportSharePdfView.as_view()),
+
     # Categories
     path("categories/", views.CategoryListView.as_view()),
     path("categories/rename/", views.CategoryRenameView.as_view()),

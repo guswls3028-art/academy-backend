@@ -189,6 +189,10 @@ class MatchupHitReport(TimestampModel):
     submitted_by_id = models.IntegerField(null=True, blank=True)
     submitted_by_name = models.CharField(max_length=100, blank=True, default="")
 
+    # 1클릭 공유 토큰 (#67, 2026-05-12). 학원장 spec: 선생이 학생에게 카톡으로 링크만 보내면
+    # 학생이 로그인 없이 본문 PDF 보기. AddField nullable — 학원장이 명시적 generate 시만 채워짐.
+    share_token = models.UUIDField(null=True, blank=True, unique=True, db_index=True)
+
     class Meta:
         app_label = "matchup"
         ordering = ["-updated_at"]

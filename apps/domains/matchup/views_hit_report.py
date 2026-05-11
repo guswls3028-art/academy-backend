@@ -1585,3 +1585,178 @@ class HitReportLandingPublicPdfView(View):
         return resp
 
 
+# ── 1클릭 공유 토큰 (#67, 2026-05-12) ─────────────────────────────────
+#
+# 학원장 spec:
+#   선생이 학생/학부모한테 카톡으로 "이거 보면 돼" 링크만 보내면, 학생은 로그인이나
+#   학원 가입 없이 클릭 한 번으로 PDF 본문 즉시 확인.
+#
+# 보안 모델:
+#   - share_token = UUID4 (전역 unique, 추측 불가). DB index.
+#   - 학원장/admin/author 만 생성·회전·취소.
+#   - public endpoint 는 token 만으로 통과 (picker 등록 무관). 학원장이 회전/취소하면 즉시 차단.
+#   - PDF 본문은 카드 메타와 다르게 카탈로그(다른 학원 노출)에 절대 안 들어감.
+
+def _can_manage_share_token(request, report) -> bool:
+    """share_token 생성/회전/취소 권한.
+
+    - tenant admin/owner: 무조건 가능.
+    - author 본인: 가능 (강사 자기 보고서 한정).
+    """
+    if _is_tenant_admin(request):
+        return True
+    user = getattr(request, "user", None)
+    if user and report.author_id and report.author_id == getattr(user, "id", None):
+        return True
+    return False
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class HitReportShareLinkView(View):
+    """POST/DELETE /api/v1/matchup/hit-reports/<report_id>/share-link/
+
+    POST   : 없으면 generate, 있으면 그대로 반환. ?rotate=1 이면 신규 UUID 로 회전.
+    DELETE : share_token 제거 (취소). 이후 token URL 403.
+
+    Response (POST):
+      { "share_token": "<uuid>", "share_url": "/landing/share/<uuid>", "rotated": bool }
+    """
+
+    def post(self, request, report_id):
+        try:
+            report = MatchupHitReport.objects.get(id=report_id, tenant=request.tenant)
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+        if not _can_manage_share_token(request, report):
+            return JsonResponse({"detail": "Forbidden"}, status=403)
+
+        import uuid
+        rotate = (request.GET.get("rotate") or "").strip() in {"1", "true", "yes"}
+        rotated = False
+        if not report.share_token or rotate:
+            report.share_token = uuid.uuid4()
+            report.save(update_fields=["share_token", "updated_at"])
+            rotated = bool(rotate)
+
+        return JsonResponse({
+            "share_token": str(report.share_token),
+            "share_url": f"/landing/share/{report.share_token}",
+            "rotated": rotated,
+        })
+
+    def delete(self, request, report_id):
+        try:
+            report = MatchupHitReport.objects.get(id=report_id, tenant=request.tenant)
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+        if not _can_manage_share_token(request, report):
+            return JsonResponse({"detail": "Forbidden"}, status=403)
+
+        if report.share_token:
+            report.share_token = None
+            report.save(update_fields=["share_token", "updated_at"])
+        return JsonResponse({"share_token": None, "share_url": None})
+
+
+@method_decorator([csrf_exempt], name="dispatch")
+class HitReportShareMetaView(View):
+    """GET /api/v1/matchup/share/<uuid:token>/
+
+    공개 share 메타. 인증/테넌트 X. token UUID 만으로 통과.
+
+    Response:
+      { id, title, doc_title, doc_category, hit_count, total_problems,
+        hit_rate_pct, author_name, submitted_at, created_at, tenant_name,
+        tenant_code, pdf_url }
+    """
+
+    def get(self, request, token):
+        try:
+            report = MatchupHitReport.objects.select_related(
+                "document", "author", "tenant",
+            ).get(share_token=token)
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        doc = report.document
+        total = (doc.problem_count if doc else 0) or 0
+
+        # 적중 수 — HitReportLandingPublicView 와 동일 정의.
+        entries = MatchupHitReportEntry.objects.filter(
+            tenant=report.tenant_id,
+            report_id=report.id,
+            excluded=False,
+        ).only("id", "selected_problem_ids", "comment")
+        hit = 0
+        for e in entries:
+            if (e.selected_problem_ids or []) or (e.comment or "").strip():
+                hit += 1
+        rate = round((hit / total * 100) if total else 0, 1)
+
+        author_name = ""
+        if report.author is not None:
+            try:
+                from apps.core.models.user import user_display_username
+                author_name = (
+                    getattr(report.author, "name", None)
+                    or user_display_username(report.author)
+                    or ""
+                )
+            except Exception:
+                author_name = getattr(report.author, "username", "") or ""
+        if not author_name:
+            author_name = report.submitted_by_name or ""
+
+        tenant = report.tenant
+        return JsonResponse({
+            "id": report.id,
+            "title": (report.title or "")[:200],
+            "doc_title": (doc.title if doc else "") or "",
+            "doc_category": (doc.category if doc else "") or "",
+            "hit_count": hit,
+            "total_problems": total,
+            "hit_rate_pct": rate,
+            "author_name": author_name[:40],
+            "submitted_at": report.submitted_at.isoformat() if report.submitted_at else None,
+            "created_at": report.created_at.isoformat() if report.created_at else None,
+            "tenant_name": getattr(tenant, "display_name", "") or getattr(tenant, "name", "") or "",
+            "tenant_code": getattr(tenant, "code", "") or "",
+            "pdf_url": f"/api/v1/matchup/share/{token}/curated.pdf",
+        })
+
+
+@method_decorator([csrf_exempt, _xframe_exempt], name="dispatch")
+class HitReportSharePdfView(View):
+    """GET /api/v1/matchup/share/<uuid:token>/curated.pdf
+
+    공개 share PDF. token UUID 만으로 통과 (picker 등록 무관).
+    iframe embed 허용. 학원장이 회전/취소하면 즉시 차단.
+    """
+
+    def get(self, request, token):
+        try:
+            report = MatchupHitReport.objects.select_related("document", "author", "tenant").get(
+                share_token=token,
+            )
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        try:
+            from .pdf_report import generate_curated_hit_report_pdf
+            pdf_bytes = generate_curated_hit_report_pdf(report)
+        except Exception:
+            logger.exception("share_pdf failed (report=%s token=%s)", report.id, token)
+            return JsonResponse({"detail": "PDF 생성 실패"}, status=500)
+
+        from urllib.parse import quote
+        title = report.title or (report.document.title if report.document else "") or f"hit-report-{report.id}"
+        safe_name = quote(title[:80])
+        resp = HttpResponse(pdf_bytes, content_type="application/pdf")
+        resp["Content-Disposition"] = (
+            f"inline; filename=\"hit-report-{report.id}.pdf\"; "
+            f"filename*=UTF-8''{safe_name}.pdf"
+        )
+        resp["Cache-Control"] = "private, no-cache, must-revalidate"
+        if "X-Frame-Options" in resp:
+            del resp["X-Frame-Options"]
+        return resp
