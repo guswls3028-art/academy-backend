@@ -431,11 +431,8 @@ def main() -> int:
                     time.sleep(10)  # back-off to avoid tight loop during Redis outage
                     continue
                 if not lock_acquired:
-                    # 중복 메시지: 다른 워커가 이미 처리 중 → 삭제
-                    queue_client.delete_message(
-                        queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
-                        receipt_handle=receipt_handle,
-                    )
+                    # 중복 메시지: 다른 워커가 처리 중일 수 있으므로 즉시 삭제하지 않고 재시도 기회 유지
+                    logger.info("Duplicate in-flight message detected, keep for retry job_id=%s", job_id)
                     continue
 
                 global _current_receipt_handle

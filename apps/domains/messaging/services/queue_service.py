@@ -34,7 +34,7 @@ def enqueue_sms(
         text: 본문
         sender: 발신 번호
         reservation_id: 예약 ID 있으면 워커에서 취소 여부 Double Check 후 발송/스킵
-        message_mode: "sms" | "alimtalk"
+        message_mode: "sms" | "alimtalk" (운영 발송은 alimtalk, SMS는 검증/레거시 전용)
         alimtalk_replacements: 알림톡 템플릿 치환
         template_id: 알림톡 템플릿 ID (선택)
         event_type: 비즈니스 이벤트 유형 (멱등성 키용, 예: "check_in_complete")
@@ -64,9 +64,9 @@ def enqueue_sms(
         logger.info("enqueue_sms blocked: recipient %s not in test whitelist", (to or "")[:4] + "****")
         return False
 
-    mode = (message_mode or "").strip().lower() or "sms"
+    mode = (message_mode or "").strip().lower() or "alimtalk"
     if mode not in ("sms", "alimtalk"):
-        mode = "sms"
+        mode = "alimtalk"
 
     # SMS 모드: 자체 키 보유 또는 OWNER 테넌트만 허용
     if mode == "sms":

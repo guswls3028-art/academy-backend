@@ -33,22 +33,13 @@ class SendMessageView(APIView):
         data = ser.validated_data
         tenant = request.tenant
         send_to = data["send_to"]
-        message_mode = (data.get("message_mode") or "alimtalk").strip().lower()
-        if message_mode not in ("sms", "alimtalk"):
-            message_mode = "alimtalk"
+        message_mode = "alimtalk"
         template_id = data.get("template_id")
         raw_body = (data.get("raw_body") or "").strip()
         raw_subject = (data.get("raw_subject") or "").strip()
 
-        # 발신번호: 알림톡 전용이면 선택, SMS면 필수
+        # 알림톡 전용 정책: 발신번호는 선택값이다.
         sender = (tenant.messaging_sender or "").strip()
-        if not sender and message_mode != "alimtalk":
-            return Response(
-                {
-                    "detail": "발신번호가 등록되지 않았습니다. 메시지 > 설정 탭에서 발신번호를 등록·저장한 뒤 발송해 주세요.",
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
         from apps.domains.messaging.services import enqueue_sms, get_tenant_site_url
         from apps.domains.messaging.policy import MessagingPolicyError
@@ -155,7 +146,7 @@ class SendMessageView(APIView):
 
         if message_mode == "alimtalk" and not solapi_template_id:
             return Response(
-                {"detail": "알림톡 모드는 검수 승인된 템플릿이 필요합니다. 템플릿을 선택하거나 SMS 모드로 발송하세요."},
+                {"detail": "알림톡 발송에는 검수 승인된 템플릿이 필요합니다. 템플릿 검수를 먼저 신청해 주세요."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -344,7 +335,7 @@ class SendMessageView(APIView):
 
         if message_mode == "alimtalk" and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
             return Response(
-                {"detail": "알림톡 모드는 검수 승인된 템플릿이 필요합니다. 템플릿을 선택하거나 SMS 모드로 발송하세요."},
+                {"detail": "알림톡 발송에는 검수 승인된 템플릿이 필요합니다. 템플릿 검수를 먼저 신청해 주세요."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

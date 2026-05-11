@@ -204,6 +204,11 @@ class AISQSQueue:
                     job_data = json.loads(body)
                 except json.JSONDecodeError:
                     logger.error("Invalid JSON in message: %s", body)
+                    if receipt_handle:
+                        try:
+                            self.queue_client.delete_message(queue_name=queue_name, receipt_handle=receipt_handle)
+                        except Exception:
+                            pass
                     return None
             else:
                 job_data = body

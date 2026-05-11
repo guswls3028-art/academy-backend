@@ -91,14 +91,14 @@ class MessagingSQSQueue:
             alimtalk_replacements: 알림톡 치환 [{"key": "학생이름2", "value": "길동"}, ...]
             template_id: 알림톡 템플릿 ID (미지정 시 워커 기본값 사용)
         """
-        mode = (message_mode or "").strip().lower() or "sms"
+        mode = (message_mode or "").strip().lower() or "alimtalk"
         if mode not in ("sms", "alimtalk"):
             import logging
             logging.getLogger(__name__).warning(
-                "Invalid message_mode '%s' downgraded to 'sms' (tenant=%s, to=%s)",
+                "Invalid message_mode '%s' downgraded to 'alimtalk' (tenant=%s, to=%s)",
                 message_mode, tenant_id, to,
             )
-            mode = "sms"
+            mode = "alimtalk"
 
         message = {
             "tenant_id": int(tenant_id),
@@ -186,7 +186,7 @@ class MessagingSQSQueue:
                 "message_id": raw.get("MessageId"),
                 "created_at": data.get("created_at"),
                 "reservation_id": data.get("reservation_id"),
-                "message_mode": (data.get("message_mode") or "").strip().lower() or "sms",
+                "message_mode": (data.get("message_mode") or "").strip().lower() or "alimtalk",
                 "template_id": data.get("template_id"),
                 "alimtalk_replacements": data.get("alimtalk_replacements") or [],
             }

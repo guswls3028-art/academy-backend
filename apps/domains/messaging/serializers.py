@@ -147,10 +147,10 @@ class SendMessageRequestSerializer(serializers.Serializer):
         help_text="학생/학부모/직원 번호로 보낼지",
     )
     message_mode = serializers.ChoiceField(
-        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만")],
-        default="sms",
+        choices=[("alimtalk", "알림톡만")],
+        default="alimtalk",
         required=False,
-        help_text="sms | alimtalk",
+        help_text="alimtalk",
     )
     template_id = serializers.IntegerField(required=False, allow_null=True)
     raw_body = serializers.CharField(required=False, allow_blank=True)
@@ -238,7 +238,7 @@ class AutoSendConfigUpdateSerializer(serializers.Serializer):
     template_id = serializers.IntegerField(required=False, allow_null=True)
     enabled = serializers.BooleanField(required=False)
     message_mode = serializers.ChoiceField(
-        choices=[("sms", "SMS만"), ("alimtalk", "알림톡만"), ("both", "둘 다")],
+        choices=[("alimtalk", "알림톡만")],
         required=False,
     )
     minutes_before = serializers.IntegerField(required=False, allow_null=True, min_value=0)

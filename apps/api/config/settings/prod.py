@@ -183,5 +183,11 @@ INTERNAL_WORKER_TOKEN = os.environ.get("INTERNAL_WORKER_TOKEN", "")
 
 assert DEBUG is False, "prod.py must run with DEBUG=False"
 assert API_BASE_URL.startswith("https://"), "API_BASE_URL must be HTTPS"
-# SECRET_KEY: SSM Parameter Store에서 주입. 환경변수 미설정 시 base.py 기본값 사용.
-# 별도 assert 제거 — 프로덕션 환경에서 SSM 주입 경로가 정상이면 문제 없음.
+# SECRET_KEY 강제: env 미설정 또는 base.py dev 기본값 fallthrough 차단 (JWT 서명/세션 보호).
+# SSM 주입이 실패한 채 기동되면 fail-closed.
+_secret_env = os.getenv("SECRET_KEY", "")
+if not _secret_env or _secret_env == "dev-secret-key" or len(_secret_env) < 32:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "SECRET_KEY must be set via SSM/env (>=32 chars, not the dev default) in production."
+    )
