@@ -1,0 +1,42 @@
+# Evidence / Audit
+**Generated:** 2026-05-05T09:17:58.4486018+09:00
+
+- **batchVideoCeArn:** arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-batch-ce-200gb
+- **batchVideoCeStatus:** VALID
+- **batchVideoCeState:** ENABLED
+- **batchVideoLongCeArn:** arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-batch-long-ce-200gb
+- **batchVideoLongCeStatus:** VALID
+- **videoLongQueueArn:** arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-batch-long-queue
+- **videoLongQueueState:** ENABLED
+- **opsCeArn:** arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-ops-ce
+- **opsCeStatus:** VALID
+- **opsCeState:** ENABLED
+- **videoQueueArn:** arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-batch-queue
+- **videoQueueState:** ENABLED
+- **opsQueueArn:** arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-ops-queue
+- **opsQueueState:** ENABLED
+- **videoJobDefRevision:** 140
+- **videoJobDefVcpus:** 
+- **videoJobDefMemory:** 
+- **eventBridgeReconcileState:** ENABLED
+- **eventBridgeScanStuckState:** ENABLED
+- **netprobeJobId:** 48103ecd-041e-4ee7-b7fd-c7ec2471f67f
+- **netprobeStatus:** failed
+- **asgMessagingDesired:** 1
+- **asgMessagingMin:** 1
+- **asgMessagingMax:** 3
+- **asgMessagingLtVersion:** 6
+- **asgAiDesired:** 5
+- **asgAiMin:** 1
+- **asgAiMax:** 5
+- **asgAiLtVersion:** 4
+- **apiInstanceId:** n/a (EIP not used)
+- **apiAsgDesired:** 1
+- **apiAsgMin:** 1
+- **apiAsgMax:** 2
+- **apiAsgLtVersion:** $Latest
+- **apiBaseUrl:** http://academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com
+- **apiHealth:** unreachable
+- **ssmWorkersEnvExists:** yes
+- **ssmShapeCheck:** PASS
+- **sqsScalingEnforced:** NO - SQS scaling NOT enforced
