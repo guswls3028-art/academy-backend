@@ -6,6 +6,7 @@ from .views import (
     PlatformInboxAttachmentDownloadView,
     CommunityNotificationListView, CommunityNotificationUnreadCountView,
     CommunityNotificationReadView, CommunityNotificationMarkAllReadView,
+    LandingPublicPostsView,
 )
 
 router = DefaultRouter()
@@ -28,6 +29,8 @@ urlpatterns = [
     path("notifications/unread-count/", CommunityNotificationUnreadCountView.as_view(), name="community-notification-unread-count"),
     path("notifications/<int:pk>/read/", CommunityNotificationReadView.as_view(), name="community-notification-read"),
     path("notifications/mark-all-read/", CommunityNotificationMarkAllReadView.as_view(), name="community-notification-mark-all-read"),
+    # Landing public — 비로그인 외부 학부모 접근 가능 (hero_carousel post kind용)
+    path("landing/public-posts/", LandingPublicPostsView.as_view(), name="community-landing-public-posts"),
     # Platform inbox (superuser only — dev_app)
     path("platform/inbox/", PlatformInboxListView.as_view(), name="platform-inbox-list"),
     path("platform/inbox/<int:post_id>/replies/", PlatformInboxReplyView.as_view(), name="platform-inbox-reply"),

@@ -1,4 +1,4 @@
-"""커뮤니티 사용자 알림 endpoints (#62 N, 2026-05-12).
+"""커뮤니티 사용자 알림 endpoints + landing public posts (2026-05-12).
 
 GET    /community/notifications/?unread=true&page=1   — 본인 알림 list (최근 60일)
 GET    /community/notifications/unread-count/         — 미읽음 카운트 (헤더 종 아이콘용)

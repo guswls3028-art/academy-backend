@@ -14,6 +14,7 @@ from .notification_views import (
     CommunityNotificationReadView,
     CommunityNotificationMarkAllReadView,
 )
+from .landing_public_views import LandingPublicPostsView
 
 __all__ = [
     "PostViewSet",
@@ -31,4 +32,5 @@ __all__ = [
     "CommunityNotificationUnreadCountView",
     "CommunityNotificationReadView",
     "CommunityNotificationMarkAllReadView",
+    "LandingPublicPostsView",
 ]
