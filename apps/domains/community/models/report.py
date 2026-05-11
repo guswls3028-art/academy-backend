@@ -63,8 +63,11 @@ class CommunityReport(models.Model):
         db_table = "community_report"
         ordering = ["-created_at"]
         constraints = [
+            # 2026-05-11 보안 리뷰 M1: tenant도 unique에 포함(defensive).
+            # 현재 PostEntity/PostReply.id가 globally unique BigAutoField라 (target_type+target_id)만으로도
+            # cross-tenant 충돌 위험 X지만, 향후 per-tenant ID sequence 도입 가능성 대비.
             models.UniqueConstraint(
-                fields=["target_type", "target_id", "reporter"],
+                fields=["tenant", "target_type", "target_id", "reporter"],
                 name="unique_report_per_target_reporter",
             ),
         ]

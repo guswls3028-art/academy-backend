@@ -33,6 +33,24 @@ class PostReplySerializer(serializers.ModelSerializer):
     like_count = serializers.SerializerMethodField(read_only=True)
     is_liked = serializers.SerializerMethodField(read_only=True)
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 2026-05-11 보안 리뷰 M2: parent_reply queryset을 tenant + post로 scope.
+        # DRF 기본은 PrimaryKeyRelatedField가 global queryset 사용 → cross-tenant ID 존재 여부 timing 누출.
+        # context에서 tenant + post 받으면 그에 맞춰 제한. view에서 직접 추가 검증도 유지(defense in depth).
+        request = self.context.get("request") if hasattr(self, "context") else None
+        tenant = getattr(request, "tenant", None) if request else None
+        view = self.context.get("view") if hasattr(self, "context") else None
+        if tenant and "parent_reply" in self.fields:
+            try:
+                post_id = view.kwargs.get("pk") if view else None
+                qs = PostReply.objects.filter(tenant=tenant)
+                if post_id:
+                    qs = qs.filter(post_id=int(post_id))
+                self.fields["parent_reply"].queryset = qs
+            except (AttributeError, TypeError, ValueError):
+                pass  # context 없으면 그대로(view-level 검증으로 차단)
+
     class Meta:
         model = PostReply
         fields = ["id", "post", "question", "content", "created_by", "created_by_display", "author_role", "created_at", "like_count", "is_liked", "parent_reply"]
