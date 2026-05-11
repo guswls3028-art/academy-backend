@@ -54,13 +54,27 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--tenant", type=int, default=None,
-            help="Scan only this tenant id (default: all).",
+            help="Scan only this tenant id. REQUIRED — set explicitly to avoid "
+                 "accidental cross-tenant scan that could expose 학원장 cuts as orphan.",
+        )
+        parser.add_argument(
+            "--allow-all-tenants", action="store_true",
+            help="Bypass tenant requirement and scan ALL tenants (DANGER: 학원장 manual "
+                 "cut keys in other tenants will appear in the report).",
         )
 
     def handle(self, *args, **opts):
         min_age = timedelta(hours=opts["min_age_hours"])
         sample_size = int(opts["sample_size"])
         only_tenant = opts["tenant"]
+        allow_all = opts["allow_all_tenants"]
+
+        if only_tenant is None and not allow_all:
+            raise CommandError(
+                "--tenant <id> required. Use --allow-all-tenants only if you "
+                "intend to scan every tenant (dry-run still). 학원장 manual cut "
+                "보호를 위해 명시적 tenant 지정 필수."
+            )
 
         bucket = getattr(settings, "R2_STORAGE_BUCKET", None)
         if not bucket:
@@ -79,6 +93,10 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.HTTP_INFO("=== DB known keys ==="))
         self.stdout.write(f"total db-known keys (matchup-related): {len(db_keys)}")
+        manual_n = getattr(self, "_manual_protected_count", 0)
+        self.stdout.write(self.style.SUCCESS(
+            f"  ↳ 학원장 manual cut/paste protected: {manual_n} keys"
+        ))
 
         now = timezone.now()
         total_objects = 0
@@ -165,11 +183,15 @@ class Command(BaseCommand):
         return "(root)"
 
     def _collect_db_keys(self, only_tenant: int | None) -> set[str]:
+        """모든 매치업 관련 R2 키 수집. 학원장 manual cut(meta.manual=True) 키는
+        명시적으로 protected set으로도 따로 카운트해서 report에 노출 → false orphan 0 보장.
+        """
         from apps.domains.matchup.models import (
             MatchupDocument,
             MatchupProblem,
         )
         keys: set[str] = set()
+        manual_keys: set[str] = set()  # 학원장 직접 cut/paste keys — 절대 orphan 아님
 
         doc_qs = MatchupDocument.objects.all()
         if only_tenant is not None:
@@ -185,11 +207,19 @@ class Command(BaseCommand):
                     if isinstance(k, str) and k:
                         keys.add(k)
 
-        # 2. MatchupProblem.image_key
+        # 2. MatchupProblem.image_key (+ manual=True 별도 set)
         prob_qs = MatchupProblem.objects.exclude(image_key="")
         if only_tenant is not None:
             prob_qs = prob_qs.filter(tenant_id=only_tenant)
-        keys.update(prob_qs.values_list("image_key", flat=True))
+        # 전체 keys + manual subset 동시 수집
+        for image_key, meta in prob_qs.values_list("image_key", "meta"):
+            if not image_key:
+                continue
+            keys.add(image_key)
+            if isinstance(meta, dict) and meta.get("manual"):
+                manual_keys.add(image_key)
+        self._manual_protected_count = len(manual_keys)
+        self._manual_protected_keys = manual_keys
 
         # 3. ProblemSegmentationProposal.image_key (있으면)
         try:
