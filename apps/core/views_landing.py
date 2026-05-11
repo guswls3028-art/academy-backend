@@ -7,12 +7,26 @@
 import copy
 import logging
 
+from django.http import HttpResponse
+from django.utils.decorators import method_decorator
+from django.views import View
+from django.views.decorators.csrf import csrf_exempt
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.models import LandingPage
 from apps.core.permissions import TenantResolved, TenantResolvedAndStaff
+
+
+def _tenant_required(view_func):
+    """Plain Django view용 tenant 가드."""
+    from django.http import JsonResponse
+    def wrapped(request, *args, **kwargs):
+        if not getattr(request, "tenant", None):
+            return JsonResponse({"detail": "Tenant required"}, status=400)
+        return view_func(request, *args, **kwargs)
+    return wrapped
 
 logger = logging.getLogger(__name__)
 
@@ -669,15 +683,15 @@ class LandingConsultAdminDetailView(APIView):
 # SEO sitemap.xml — 학원 도메인 단위
 # ─────────────────────────────────────────────────
 
-class LandingSitemapView(APIView):
-    """GET /api/v1/core/landing/sitemap.xml — 학원 홈페이지 + 적중 보고서 URL 모음."""
-    permission_classes = [TenantResolved]
-    authentication_classes = []
-    renderer_classes = []  # plain HttpResponse
+@method_decorator([csrf_exempt, _tenant_required], name="dispatch")
+class LandingSitemapView(View):
+    """GET /api/v1/core/landing/sitemap.xml — 학원 홈페이지 + 적중 보고서 URL 모음.
+
+    plain Django View — DRF renderer 미사용 (xml 직접 반환).
+    """
 
     def get(self, request):
         from apps.core.models import LandingPage
-        from django.http import HttpResponse
         host = request.get_host()
         scheme = "https"
         urls = [f"{scheme}://{host}/landing"]
