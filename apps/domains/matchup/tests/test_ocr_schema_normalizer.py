@@ -15,10 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.mock_response_integrator import (
+from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
     MockOcrResponse, OcrPageResult, OcrTextBlock, UnifiedCandidate,
 )
-from apps.domains.matchup.segmentation.ocr_schema_normalizer import (
+from academy.adapters.ai.ocr.schema_normalizer import (
     SCHEMA_VERSION,
     normalize_pixel_corner_to_norm_xywh,
     real_ocr_block_to_mock_block,
@@ -296,7 +296,7 @@ class OcrTextBlockOptionalConfidenceTests(TestCase):
 
         '신뢰도 정보 없음' 과 '낮은 신뢰도(0.0)' 의미 분리.
         """
-        from apps.domains.matchup.segmentation.mock_response_integrator import (
+        from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
             _ocr_response_to_unified,
         )
         resp = MockOcrResponse(
@@ -320,7 +320,7 @@ class ProposalPayloadConfidenceMarkingTests(TestCase):
     """
 
     def test_none_unified_confidence_falls_to_zero_with_marking(self):
-        from apps.domains.matchup.segmentation.mock_response_integrator import (
+        from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
             UnifiedCandidate, _to_proposal_payload,
         )
         c = UnifiedCandidate(
@@ -345,7 +345,7 @@ class ProposalPayloadConfidenceMarkingTests(TestCase):
         self.assertIn("TODO_ranking_interpretation", payload.raw_response)
 
     def test_explicit_confidence_no_missing_marking(self):
-        from apps.domains.matchup.segmentation.mock_response_integrator import (
+        from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
             UnifiedCandidate, _to_proposal_payload,
         )
         c = UnifiedCandidate(
@@ -363,7 +363,7 @@ class ProposalPayloadConfidenceMarkingTests(TestCase):
 
     def test_zero_confidence_distinct_from_none(self):
         """confidence=0.0 (명시 낮음) 은 confidence=None (정보 없음) 과 다름."""
-        from apps.domains.matchup.segmentation.mock_response_integrator import (
+        from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
             UnifiedCandidate, _to_proposal_payload,
         )
         c_zero = UnifiedCandidate(
@@ -381,10 +381,10 @@ class ProposalPayloadConfidenceMarkingTests(TestCase):
 
     def test_validator_accepts_zero_confidence_payload(self):
         """ProposalPayloadCandidate.confidence=0.0 은 validator 통과 (DB compat)."""
-        from apps.domains.matchup.segmentation.mock_response_integrator import (
+        from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
             UnifiedCandidate, _to_proposal_payload,
         )
-        from apps.domains.matchup.segmentation.proposal_payload_validator import (
+        from academy.application.use_cases.ai.segmentation.proposal_payload_validator import (
             validate_payload,
         )
         c = UnifiedCandidate(
@@ -406,7 +406,7 @@ class ProposalPayloadConfidenceMarkingTests(TestCase):
 class IntegrationCompatibilityTests(TestCase):
     def test_synthetic_and_real_produce_same_unified_schema(self):
         """synthetic mock generator 와 real → mock 변환이 동일 unified schema 출력."""
-        from apps.domains.matchup.segmentation.mock_response_integrator import (
+        from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
             make_mock_ocr_response, _ocr_response_to_unified,
         )
         # synthetic
@@ -432,7 +432,7 @@ class IntegrationCompatibilityTests(TestCase):
 
 class NormalizerRegressionTests(TestCase):
     def test_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import ocr_schema_normalizer
+        from academy.adapters.ai.ocr import schema_normalizer
         import inspect
         src = inspect.getsource(ocr_schema_normalizer)
         if src.startswith('"""'):
@@ -452,7 +452,7 @@ class NormalizerRegressionTests(TestCase):
                              f"normalizer 에서 실 SDK import '{token}' 발견")
 
     def test_no_operating_helper_imports(self):
-        from apps.domains.matchup.segmentation import ocr_schema_normalizer
+        from academy.adapters.ai.ocr import schema_normalizer
         import inspect
         src = inspect.getsource(ocr_schema_normalizer)
         if src.startswith('"""'):

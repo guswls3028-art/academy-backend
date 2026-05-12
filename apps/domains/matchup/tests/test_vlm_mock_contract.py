@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.vlm_mock_contract import (
+from academy.adapters.ai.vlm.mock_contract import (
     MockVlmClient,
     VlmBbox,
     VlmPageRequest,
@@ -186,7 +186,7 @@ class NoRealApiContractTests(TestCase):
     """
 
     def test_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import vlm_mock_contract
+        from academy.adapters.ai.vlm import mock_contract
         import inspect
         src = inspect.getsource(vlm_mock_contract)
         forbidden = (
@@ -212,7 +212,7 @@ class NoRealApiContractTests(TestCase):
         주석/docstring 안에 reference 로 언급된 클래스명 (예: ProblemSegmentationProposal)
         은 허용 — 실 호출 token 만 검사.
         """
-        from apps.domains.matchup.segmentation import vlm_mock_contract
+        from academy.adapters.ai.vlm import mock_contract
         import inspect
         src = inspect.getsource(vlm_mock_contract)
         # 코드 import / 호출 패턴만 검사 (주석 reference 는 허용)

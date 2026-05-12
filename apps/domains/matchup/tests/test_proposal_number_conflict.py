@@ -320,7 +320,7 @@ class TestStatusChoicesEnumSanity:
     def test_validator_mirror_includes_needs_review(self):
         """proposal_payload_validator 의 STATUS_CHOICES mirror 와 운영 정의 일치."""
         from apps.domains.matchup.models import ProblemSegmentationProposal
-        from apps.domains.matchup.segmentation.proposal_payload_validator import (
+        from academy.application.use_cases.ai.segmentation.proposal_payload_validator import (
             STATUS_CHOICES as MIRROR,
         )
         operating = set(dict(ProblemSegmentationProposal.STATUS_CHOICES).keys())

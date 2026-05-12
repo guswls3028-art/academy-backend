@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.tier0_native_pdf import (
+from academy.adapters.ai.detection.tier0_native_pdf import (
     _FILENAME_HINTS_V4,
     _PAPER_TYPE_EXPECTED_MAX,
     PAPER_TYPE_ADVANCED_MATERIAL,
@@ -180,7 +180,7 @@ class AnalyzePdfV4IntegrationTests(TestCase):
         deterministic 단언은 unit test (doc_level_dedup_anchors 직접 호출) 에서.
         여기서는 통합 흐름 / output schema 만 검증.
         """
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v4
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v4
         import os
         pdf = self._make_workbook_pdf_with_repeat()
         try:
@@ -196,7 +196,7 @@ class AnalyzePdfV4IntegrationTests(TestCase):
             os.unlink(pdf)
 
     def test_v4_output_has_expected_max(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v4
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v4
         import os
         pdf = self._make_workbook_pdf_with_repeat()
         try:
@@ -209,7 +209,7 @@ class AnalyzePdfV4IntegrationTests(TestCase):
 
 class V4RegressionTests(TestCase):
     def test_v1_v2_v3_v4_callable(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import (
+        from academy.adapters.ai.detection.tier0_native_pdf import (
             analyze_pdf, analyze_pdf_v2, analyze_pdf_v3, analyze_pdf_v4,
             classify_paper_type_prototype, classify_paper_type_v4,
             detect_problem_anchors, detect_problem_anchors_v2, detect_problem_anchors_v3,
@@ -222,7 +222,7 @@ class V4RegressionTests(TestCase):
             self.assertTrue(callable(fn))
 
     def test_v4_does_not_import_orm(self):
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden = (

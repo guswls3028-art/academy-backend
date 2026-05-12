@@ -15,10 +15,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.mock_response_integrator import (
+from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
     MockVlmResponse, UnifiedCandidate, VlmDetectedProblem,
 )
-from apps.domains.matchup.segmentation.vlm_schema_normalizer import (
+from academy.adapters.ai.vlm.schema_normalizer import (
     SCHEMA_VERSION,
     normalize_pixel_xywh_to_norm,
     real_vlm_problem_to_mock,
@@ -300,7 +300,7 @@ class RealProblemsLightApiTests(TestCase):
 
 class NormalizerRegressionTests(TestCase):
     def test_no_vlm_sdk_imports(self):
-        from apps.domains.matchup.segmentation import vlm_schema_normalizer
+        from academy.adapters.ai.vlm import schema_normalizer
         import inspect
         src = inspect.getsource(vlm_schema_normalizer)
         if src.startswith('"""'):
@@ -321,7 +321,7 @@ class NormalizerRegressionTests(TestCase):
             )
 
     def test_no_operating_vlm_helper_imports(self):
-        from apps.domains.matchup.segmentation import vlm_schema_normalizer
+        from academy.adapters.ai.vlm import schema_normalizer
         import inspect
         src = inspect.getsource(vlm_schema_normalizer)
         if src.startswith('"""'):

@@ -18,7 +18,7 @@ import os
 import tempfile
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.dispatcher_mock import (
+from academy.application.use_cases.ai.segmentation.dispatcher_mock import (
     MockDispatcherOutput, SCHEMA_VERSION, dispatch_mock, output_to_dict,
 )
 
@@ -215,7 +215,7 @@ class OutputSerializationTests(TestCase):
 
 class DispatcherRegressionTests(TestCase):
     def test_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import dispatcher_mock
+        from academy.application.use_cases.ai.segmentation import dispatcher_mock
         import inspect
         src = inspect.getsource(dispatcher_mock)
         if src.startswith('"""'):
@@ -237,7 +237,7 @@ class DispatcherRegressionTests(TestCase):
 
     def test_no_db_model_or_operational_dispatch(self):
         """DB 모델 / 운영 dispatcher / proposal / callback import 0회."""
-        from apps.domains.matchup.segmentation import dispatcher_mock
+        from academy.application.use_cases.ai.segmentation import dispatcher_mock
         import inspect
         src = inspect.getsource(dispatcher_mock)
         if src.startswith('"""'):
@@ -269,7 +269,7 @@ class DispatcherRegressionTests(TestCase):
 
     def test_dispatcher_uses_only_tier0_and_router(self):
         """dispatcher_mock 의 import 는 tier0_native_pdf + fallback_router 만."""
-        from apps.domains.matchup.segmentation import dispatcher_mock
+        from academy.application.use_cases.ai.segmentation import dispatcher_mock
         import inspect
         src = inspect.getsource(dispatcher_mock)
         # 명시 import 체크

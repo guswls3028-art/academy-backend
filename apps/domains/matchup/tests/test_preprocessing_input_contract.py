@@ -21,7 +21,7 @@ import sys
 from dataclasses import FrozenInstanceError
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.preprocessing_input_contract import (
+from academy.domain.tools.preprocessing.contract import (
     DIRECT_HIT_LABEL_ALLOWED_FOR_FALLBACK,
     PAGE_LEVEL_FALLBACK_IS_SUCCESS,
     TEXT_DENSITY_THRESHOLD,
@@ -447,7 +447,7 @@ class TestNoOperationalDeps(TestCase):
     """
 
     def test_no_segment_dispatcher_or_vlm_or_ocr_imported(self):
-        mod_name = "apps.domains.matchup.segmentation.preprocessing_input_contract"
+        mod_name = "academy.domain.tools.preprocessing.contract"
         # 깨끗한 상태에서 다시 로드
         if mod_name in sys.modules:
             del sys.modules[mod_name]
@@ -470,7 +470,7 @@ class TestNoOperationalDeps(TestCase):
 
     def test_no_django_orm_import(self):
         # django.db.models 가 transitive 하게 끌려오면 본 contract 가 model 의존 회귀
-        mod_name = "apps.domains.matchup.segmentation.preprocessing_input_contract"
+        mod_name = "academy.domain.tools.preprocessing.contract"
         if mod_name in sys.modules:
             del sys.modules[mod_name]
         # Django 자체는 conftest 에서 setup 됐을 수 있으므로 import 자체로 판단 X.
@@ -492,14 +492,14 @@ class TestNoOperationalDeps(TestCase):
 
 class TestStageEnumCoverage(TestCase):
     def test_all_stages_have_allowed_set(self):
-        from apps.domains.matchup.segmentation.preprocessing_input_contract import (
+        from academy.domain.tools.preprocessing.contract import (
             _ALLOWED_TRANSFORMS_BY_STAGE,
         )
         for stage in PreprocessingStage:
             self.assertIn(stage, _ALLOWED_TRANSFORMS_BY_STAGE)
 
     def test_raw_stage_allows_only_none(self):
-        from apps.domains.matchup.segmentation.preprocessing_input_contract import (
+        from academy.domain.tools.preprocessing.contract import (
             _ALLOWED_TRANSFORMS_BY_STAGE,
         )
         self.assertEqual(

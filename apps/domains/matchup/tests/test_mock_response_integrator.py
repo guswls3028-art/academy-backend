@@ -14,13 +14,13 @@ import os
 import tempfile
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.mock_response_integrator import (
+from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
     MockOcrResponse, MockVlmResponse, ProposalPayloadCandidate, SCHEMA_VERSION, UnifiedCandidate,
     VlmDetectedProblem, VlmPageResult,
     integrate_full_dryrun, integrate_responses, make_mock_ocr_response,
     make_mock_vlm_response, manual_overlap_mock_validator, unified_to_dict,
 )
-from apps.domains.matchup.segmentation.dispatcher_mock import (
+from academy.application.use_cases.ai.segmentation.dispatcher_mock import (
     dispatch_mock,
 )
 
@@ -265,7 +265,7 @@ class UnifiedToDictTests(TestCase):
 
 class IntegratorRegressionTests(TestCase):
     def test_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import mock_response_integrator
+        from academy.application.use_cases.ai.segmentation import mock_response_integrator
         import inspect
         src = inspect.getsource(mock_response_integrator)
         if src.startswith('"""'):
@@ -286,7 +286,7 @@ class IntegratorRegressionTests(TestCase):
                              f"integrator 에서 실 SDK import '{token}' 발견")
 
     def test_no_db_or_callback_imports(self):
-        from apps.domains.matchup.segmentation import mock_response_integrator
+        from academy.application.use_cases.ai.segmentation import mock_response_integrator
         import inspect
         src = inspect.getsource(mock_response_integrator)
         if src.startswith('"""'):

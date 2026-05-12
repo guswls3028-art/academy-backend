@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.tier0_native_pdf import (
+from academy.adapters.ai.detection.tier0_native_pdf import (
     PAPER_TYPE_EXAM,
     _V55_MAX_LEGIT_QUESTION_NUMBER,
     detect_problem_anchors_v5_5,
@@ -39,7 +39,7 @@ class V55AnchorMaxNumberTests(TestCase):
         return tmp.name
 
     def test_v5_5_admits_number_70(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import (
+        from academy.adapters.ai.detection.tier0_native_pdf import (
             extract_page_blocks, detect_columns,
         )
         import os
@@ -56,7 +56,7 @@ class V55AnchorMaxNumberTests(TestCase):
             os.unlink(pdf)
 
     def test_v5_5_rejects_number_above_100(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import (
+        from academy.adapters.ai.detection.tier0_native_pdf import (
             extract_page_blocks, detect_columns,
         )
         import os
@@ -73,7 +73,7 @@ class V55AnchorMaxNumberTests(TestCase):
 
     def test_v5_5_rejects_bare_digit(self):
         """v5_5 1차 시도에서 bare_digit 추가는 FP 폭증으로 reject 됨 — 채택 X."""
-        from apps.domains.matchup.segmentation.tier0_native_pdf import (
+        from academy.adapters.ai.detection.tier0_native_pdf import (
             extract_page_blocks, detect_columns,
         )
         import fitz, tempfile, os
@@ -111,7 +111,7 @@ class V55AnalyzePdfTests(TestCase):
         return tmp.name
 
     def test_v5_5_returns_v5_5_version(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v5_5
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_5
         import os
         pdf = self._make_simple_pdf()
         try:
@@ -128,7 +128,7 @@ class V55AnalyzePdfTests(TestCase):
             os.unlink(pdf)
 
     def test_v5_5_paper_type_internal_only(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v5_5
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_5
         import os
         pdf = self._make_simple_pdf()
         try:
@@ -141,7 +141,7 @@ class V55AnalyzePdfTests(TestCase):
 
 class V55RegressionTests(TestCase):
     def test_v1_to_v5_5_callable(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import (
+        from academy.adapters.ai.detection.tier0_native_pdf import (
             analyze_pdf, analyze_pdf_v2, analyze_pdf_v3, analyze_pdf_v4,
             analyze_pdf_v5_1, analyze_pdf_v5_2, analyze_pdf_v5_3, analyze_pdf_v5_4,
             analyze_pdf_v5_5,
@@ -152,7 +152,7 @@ class V55RegressionTests(TestCase):
             self.assertTrue(callable(fn))
 
     def test_v5_5_no_db_model_imports(self):
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden_patterns = (
@@ -167,7 +167,7 @@ class V55RegressionTests(TestCase):
             self.assertNotIn(token, src, f"v5_5 신모델 import '{token}' 발견")
 
     def test_v5_5_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden = (

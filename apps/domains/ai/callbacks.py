@@ -773,7 +773,7 @@ def _handle_matchup_ai_result(
     #   않는다 (collect_and_save 가 모두 swallow + warning log). doc.status="done"
     #   확정 후 + tenant 검증 통과 후 + transaction 안에서 호출.
     try:
-        from apps.domains.matchup.segmentation.fingerprint_collector import (
+        from academy.application.use_cases.ai.segmentation.fingerprint_collector import (
             collect_and_save as _collect_fingerprint,
         )
         cropped_count = MatchupProblem.objects.filter(

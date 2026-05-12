@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.tier0_native_pdf import (
+from academy.adapters.ai.detection.tier0_native_pdf import (
     PageBlocks,
     classify_page_role,
     derive_bbox_candidates,
@@ -281,7 +281,7 @@ class AnalyzePdfIntegrationTests(TestCase):
         return tmp.name
 
     def test_analyze_pdf_extracts_three_anchors(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf
         import os
 
         pdf_path = self._make_pdf_with_anchors()
@@ -336,7 +336,7 @@ class RunnerNoDbWriteTests(TestCase):
 
     def test_tier0_module_does_not_touch_orm(self):
         """tier0_native_pdf 모듈도 ORM import 0회."""
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
 
         src = inspect.getsource(tier0_native_pdf)

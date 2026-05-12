@@ -28,7 +28,7 @@ from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
 
-from apps.domains.matchup.segmentation.shadow_proposal_pipeline import (
+from academy.application.use_cases.ai.segmentation.shadow_proposal_pipeline import (
     DEFAULT_MAX_PAYLOADS, DEFAULT_MOCK_OCR_BLOCKS, DEFAULT_MOCK_VLM_PROBLEMS,
     DEFAULT_SANDBOX_TENANT_ID, SHADOW_GLOBAL_ENV,
     result_to_dict, shadow_proposal_pipeline,

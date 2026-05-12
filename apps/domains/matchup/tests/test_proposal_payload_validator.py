@@ -15,10 +15,10 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.mock_response_integrator import (
+from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
     ProposalPayloadCandidate, ValidationError,
 )
-from apps.domains.matchup.segmentation.proposal_payload_validator import (
+from academy.application.use_cases.ai.segmentation.proposal_payload_validator import (
     APPROVABLE_STATUSES, ENGINE_CHOICES, MANUAL_OVERLAP_IOU_THRESHOLD,
     PERMANENTLY_BLOCKING_CODES, SCHEMA_VERSION, STATUS_CHOICES,
     apply_manual_overlap_via_provider,
@@ -310,7 +310,7 @@ class ValidateBatchTests(TestCase):
 
 class ValidatorRegressionTests(TestCase):
     def test_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import proposal_payload_validator
+        from academy.application.use_cases.ai.segmentation import proposal_payload_validator
         import inspect
         src = inspect.getsource(proposal_payload_validator)
         if src.startswith('"""'):
@@ -333,7 +333,7 @@ class ValidatorRegressionTests(TestCase):
 
         호환성은 STATUS_CHOICES / ENGINE_CHOICES / APPROVABLE_STATUSES mirror constants 로 보장.
         """
-        from apps.domains.matchup.segmentation import proposal_payload_validator
+        from academy.application.use_cases.ai.segmentation import proposal_payload_validator
         import inspect
         src = inspect.getsource(proposal_payload_validator)
         if src.startswith('"""'):

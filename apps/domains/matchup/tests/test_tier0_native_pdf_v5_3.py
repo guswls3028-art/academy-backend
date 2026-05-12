@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.tier0_native_pdf import (
+from academy.adapters.ai.detection.tier0_native_pdf import (
     LAYOUT_FOUR_BLOCK,
     LAYOUT_SINGLE_COLUMN,
     LAYOUT_UNKNOWN,
@@ -144,7 +144,7 @@ class AnalyzePdfV53Tests(TestCase):
         return tmp.name
 
     def test_v53_no_profile(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v5_3
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_3
         import os
         pdf = self._make_simple_pdf()
         try:
@@ -157,7 +157,7 @@ class AnalyzePdfV53Tests(TestCase):
             os.unlink(pdf)
 
     def test_v53_with_profile(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v5_3
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_3
         import os
         pdf = self._make_simple_pdf()
         profile = {
@@ -181,7 +181,7 @@ class AnalyzePdfV53Tests(TestCase):
 
 class V53RegressionTests(TestCase):
     def test_v1_to_v53_callable(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import (
+        from academy.adapters.ai.detection.tier0_native_pdf import (
             analyze_pdf, analyze_pdf_v2, analyze_pdf_v3, analyze_pdf_v4,
             analyze_pdf_v5_1, analyze_pdf_v5_2, analyze_pdf_v5_3,
         )
@@ -192,7 +192,7 @@ class V53RegressionTests(TestCase):
     def test_no_db_model_imports(self):
         """v5_3 가 TenantSegmentationProfile / LayoutFingerprint / ManualCorrectionDelta
         모델 클래스 import 하지 않음 — JSON dict 만 사용."""
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden_patterns = (
@@ -207,7 +207,7 @@ class V53RegressionTests(TestCase):
             self.assertNotIn(token, src, f"v5_3 신모델 import '{token}' 발견")
 
     def test_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden = (

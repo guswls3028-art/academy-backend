@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.tier0_native_pdf import (
+from academy.adapters.ai.detection.tier0_native_pdf import (
     LAYOUT_FOUR_BLOCK,
     LAYOUT_PAGE_LEVEL,
     LAYOUT_SINGLE_COLUMN,
@@ -240,7 +240,7 @@ class AnalyzePdfV51IntegrationTests(TestCase):
 
     def test_v51_internal_paper_type_marking(self):
         """paper_type 외부 노출 X — _internal_paper_type 키 사용."""
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v5_1
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_1
         import os
         pdf = self._make_simple_pdf()
         try:
@@ -256,7 +256,7 @@ class AnalyzePdfV51IntegrationTests(TestCase):
             os.unlink(pdf)
 
     def test_v51_layout_v2_in_output(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v5_1
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_1
         import os
         pdf = self._make_simple_pdf()
         try:
@@ -268,7 +268,7 @@ class AnalyzePdfV51IntegrationTests(TestCase):
             os.unlink(pdf)
 
     def test_v51_doc_dedup_v51_in_output(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v5_1
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_1
         import os
         pdf = self._make_simple_pdf()
         try:
@@ -283,14 +283,14 @@ class AnalyzePdfV51IntegrationTests(TestCase):
 
 class V51RegressionTests(TestCase):
     def test_v1_to_v51_callable(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import (
+        from academy.adapters.ai.detection.tier0_native_pdf import (
             analyze_pdf, analyze_pdf_v2, analyze_pdf_v3, analyze_pdf_v4, analyze_pdf_v5_1,
         )
         for fn in (analyze_pdf, analyze_pdf_v2, analyze_pdf_v3, analyze_pdf_v4, analyze_pdf_v5_1):
             self.assertTrue(callable(fn))
 
     def test_no_orm_write(self):
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden_patterns = (
@@ -305,7 +305,7 @@ class V51RegressionTests(TestCase):
             self.assertNotIn(token, src, f"v5_1 추가 후 ORM '{token}'")
 
     def test_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden = (
@@ -332,7 +332,7 @@ class ManualGtEvaluatorTests(TestCase):
         단 dispatcher 호출자가 외부에서 비교하는 건 허용 (artifact JSON 등).
         모듈 자체에는 operating_problem_count > total_anchors 같은 baseline 분기가 없어야.
         """
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         # under_detection 관련 baseline 분기 패턴 검사

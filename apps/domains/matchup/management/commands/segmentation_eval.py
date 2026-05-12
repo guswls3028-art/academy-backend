@@ -60,7 +60,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf
 
         pdf = options.get("pdf")
         pdf_dir = options.get("pdf_dir")

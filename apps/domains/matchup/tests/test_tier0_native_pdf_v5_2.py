@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.tier0_native_pdf import (
+from academy.adapters.ai.detection.tier0_native_pdf import (
     LAYOUT_FOUR_BLOCK,
     LAYOUT_PAGE_LEVEL,
     LAYOUT_SINGLE_COLUMN,
@@ -139,7 +139,7 @@ class AnalyzePdfV52IntegrationTests(TestCase):
         return tmp.name
 
     def test_v52_internal_paper_type(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v5_2
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_2
         import os
         pdf = self._make_simple_pdf()
         try:
@@ -151,7 +151,7 @@ class AnalyzePdfV52IntegrationTests(TestCase):
             os.unlink(pdf)
 
     def test_v52_anchor_filter_in_output(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v5_2
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_2
         import os
         pdf = self._make_simple_pdf()
         try:
@@ -164,7 +164,7 @@ class AnalyzePdfV52IntegrationTests(TestCase):
 
 class V52RegressionTests(TestCase):
     def test_v1_to_v52_callable(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import (
+        from academy.adapters.ai.detection.tier0_native_pdf import (
             analyze_pdf, analyze_pdf_v2, analyze_pdf_v3, analyze_pdf_v4,
             analyze_pdf_v5_1, analyze_pdf_v5_2,
         )
@@ -173,7 +173,7 @@ class V52RegressionTests(TestCase):
             self.assertTrue(callable(fn))
 
     def test_no_orm_write(self):
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden = (
@@ -187,7 +187,7 @@ class V52RegressionTests(TestCase):
             self.assertNotIn(token, src)
 
     def test_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden = (

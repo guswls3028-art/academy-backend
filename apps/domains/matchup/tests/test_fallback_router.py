@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.fallback_router import (
+from academy.application.use_cases.ai.segmentation.fallback_router import (
     FallbackRouteDecision,
     decision_to_dict,
     route_fallback,
@@ -210,7 +210,7 @@ class RouterRegressionTests(TestCase):
 
         docstring / engine label string mention 은 제외 — 실제 import 또는 호출만 검사.
         """
-        from apps.domains.matchup.segmentation import fallback_router
+        from academy.application.use_cases.ai.segmentation import fallback_router
         import inspect
         src = inspect.getsource(fallback_router)
         # docstring 제거
@@ -250,7 +250,7 @@ class RouterRegressionTests(TestCase):
 
         docstring / 주석 mention 은 허용 (사용자 directive 준수 명시).
         """
-        from apps.domains.matchup.segmentation import fallback_router
+        from academy.application.use_cases.ai.segmentation import fallback_router
         import inspect
         src = inspect.getsource(fallback_router)
         # docstring 제거 — 첫 번째 triple-quoted block 통째로 제거

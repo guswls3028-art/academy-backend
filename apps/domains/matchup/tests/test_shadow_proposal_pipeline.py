@@ -25,7 +25,7 @@ import tempfile
 from unittest import TestCase
 from unittest.mock import patch
 
-from apps.domains.matchup.segmentation.shadow_proposal_pipeline import (
+from academy.application.use_cases.ai.segmentation.shadow_proposal_pipeline import (
     DEFAULT_SANDBOX_TENANT_ID, SCHEMA_VERSION,
     SHADOW_GLOBAL_ENV, SMOKE_TRUNCATION_REASON,
     T2_DOC_WHITELIST_ENV, T2_PRODUCTION_TENANT_ID,
@@ -34,7 +34,7 @@ from apps.domains.matchup.segmentation.shadow_proposal_pipeline import (
     is_globally_enabled, read_t2_doc_whitelist,
     result_to_dict, shadow_proposal_pipeline,
 )
-from apps.domains.matchup.segmentation.mock_response_integrator import (
+from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
     ProposalPayloadCandidate,
 )
 
@@ -483,7 +483,7 @@ class TestPipelineSerializable(TestCase):
 
 class TestPipelineRegression(TestCase):
     def test_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import shadow_proposal_pipeline
+        from academy.application.use_cases.ai.segmentation import shadow_proposal_pipeline
         import inspect
         src = inspect.getsource(shadow_proposal_pipeline)
         if src.startswith('"""'):
@@ -505,7 +505,7 @@ class TestPipelineRegression(TestCase):
             )
 
     def test_no_operational_callback_or_dispatcher_imports(self):
-        from apps.domains.matchup.segmentation import shadow_proposal_pipeline
+        from academy.application.use_cases.ai.segmentation import shadow_proposal_pipeline
         import inspect
         src = inspect.getsource(shadow_proposal_pipeline)
         if src.startswith('"""'):
@@ -533,7 +533,7 @@ class TestPipelineRegression(TestCase):
     def test_no_db_model_or_helper_module_imports_at_module_level(self):
         """module-level 에 ProblemSegmentationProposal / proposal_helpers /
         MatchupProblem 등 직접 import 0회 (지연 import 는 adapter 안에서 lazy)."""
-        from apps.domains.matchup.segmentation import shadow_proposal_pipeline
+        from academy.application.use_cases.ai.segmentation import shadow_proposal_pipeline
         import inspect
         src = inspect.getsource(shadow_proposal_pipeline)
         # module-level (첫 함수 def 전) 만 검사

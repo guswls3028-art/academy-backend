@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.tier0_native_pdf import (
+from academy.adapters.ai.detection.tier0_native_pdf import (
     PAPER_TYPE_ADVANCED_MATERIAL,
     PAPER_TYPE_ANSWER_EXPLANATION,
     PAPER_TYPE_COVER,
@@ -323,7 +323,7 @@ class AnalyzePdfV3IntegrationTests(TestCase):
         return tmp.name
 
     def test_v3_classifies_review_homework_filename(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v3
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v3
         import os
         pdf = self._make_review_homework_pdf()
         try:
@@ -335,7 +335,7 @@ class AnalyzePdfV3IntegrationTests(TestCase):
             os.unlink(pdf)
 
     def test_v3_classifies_exam_filename(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v3
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v3
         import os
         pdf = self._make_exam_pdf()
         try:
@@ -345,7 +345,7 @@ class AnalyzePdfV3IntegrationTests(TestCase):
             os.unlink(pdf)
 
     def test_v3_paper_type_in_output(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v3
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v3
         import os
         pdf = self._make_exam_pdf()
         try:
@@ -361,7 +361,7 @@ class AnalyzePdfV3IntegrationTests(TestCase):
 class V3RegressionTests(TestCase):
     def test_v3_does_not_import_orm(self):
         """v3 추가 후에도 tier0_native_pdf 모듈 ORM 미import."""
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden = (
@@ -378,7 +378,7 @@ class V3RegressionTests(TestCase):
 
     def test_v1_v2_v3_all_callable(self):
         """v1/v2/v3 모두 호출 가능 (regression)."""
-        from apps.domains.matchup.segmentation.tier0_native_pdf import (
+        from academy.adapters.ai.detection.tier0_native_pdf import (
             analyze_pdf, analyze_pdf_v2, analyze_pdf_v3,
             detect_problem_anchors, detect_problem_anchors_v2, detect_problem_anchors_v3,
         )

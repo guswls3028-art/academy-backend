@@ -19,7 +19,7 @@ from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
 
-from apps.domains.matchup.segmentation.fingerprint_collector import (
+from academy.application.use_cases.ai.segmentation.fingerprint_collector import (
     FingerprintMeasurement,
     collect_and_save,
     measure_from_callback,
@@ -200,7 +200,7 @@ class TestCollectAndSave(TestCase):
     def test_swallows_save_exception(self):
         doc = _make_doc()
         with patch(
-            "apps.domains.matchup.segmentation.fingerprint_collector.save_fingerprint",
+            "academy.application.use_cases.ai.segmentation.fingerprint_collector.save_fingerprint",
             side_effect=RuntimeError("simulated save failure"),
         ):
             ok = collect_and_save(doc=doc, result_payload={}, problem_count=5)
@@ -209,7 +209,7 @@ class TestCollectAndSave(TestCase):
     def test_returns_true_on_success(self):
         doc = _make_doc(meta={"processing_quality": "precise_split"})
         with patch(
-            "apps.domains.matchup.segmentation.fingerprint_collector.save_fingerprint",
+            "academy.application.use_cases.ai.segmentation.fingerprint_collector.save_fingerprint",
             return_value=True,
         ):
             ok = collect_and_save(doc=doc, result_payload={}, problem_count=3)
@@ -220,7 +220,7 @@ class TestCollectAndSave(TestCase):
 
 class TestNoOperationalDeps(TestCase):
     def test_no_segment_dispatcher_or_vlm_or_ocr(self):
-        mod_name = "apps.domains.matchup.segmentation.fingerprint_collector"
+        mod_name = "academy.application.use_cases.ai.segmentation.fingerprint_collector"
         if mod_name in sys.modules:
             del sys.modules[mod_name]
         importlib.import_module(mod_name)
@@ -240,7 +240,7 @@ class TestNoOperationalDeps(TestCase):
     def test_module_uses_lazy_django_import(self):
         # save_fingerprint 호출 전엔 Django model import 가 sys.modules 에 없어야 한다
         # (collect_and_save 가 호출 시점에만 lazy import — 모듈 로드 자체로는 0 의존)
-        mod_name = "apps.domains.matchup.segmentation.fingerprint_collector"
+        mod_name = "academy.application.use_cases.ai.segmentation.fingerprint_collector"
         if mod_name in sys.modules:
             del sys.modules[mod_name]
         # 운영 import 후 source 검사 — 함수 안에서만 model 을 import 하는지

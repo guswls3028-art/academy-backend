@@ -19,10 +19,10 @@ from typing import Any
 from unittest import TestCase
 from unittest.mock import patch, MagicMock
 
-from apps.domains.matchup.segmentation.mock_response_integrator import (
+from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
     ProposalPayloadCandidate, ValidationError,
 )
-from apps.domains.matchup.segmentation.proposal_insert_adapter import (
+from academy.adapters.db.django.repositories_matchup_proposal import (
     SCHEMA_VERSION,
     insert_proposal_sandbox, prepare_proposal_insert,
     result_to_dict, validate_before_insert,
@@ -114,7 +114,7 @@ class DryRunDefaultTests(TestCase):
     def test_dry_run_true_default_no_insert(self):
         # 기본값 dry_run=True / allow_insert=False
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
         ) as mock_import:
             r = insert_proposal_sandbox([_ok_payload(), _ok_payload()])
             mock_import.assert_not_called()  # create_proposal import 도 안 함
@@ -128,7 +128,7 @@ class DryRunDefaultTests(TestCase):
     def test_allow_insert_false_no_insert_even_when_dry_run_false(self):
         # dry_run=False 라도 allow_insert=False 면 INSERT 0회
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
         ) as mock_import:
             r = insert_proposal_sandbox(
                 [_ok_payload()],
@@ -153,7 +153,7 @@ class DryRunDefaultTests(TestCase):
 class SandboxGateTests(TestCase):
     def test_no_sandbox_tenant_ids_blocks(self):
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
         ) as mock_import:
             r = insert_proposal_sandbox(
                 [_ok_payload()],
@@ -168,7 +168,7 @@ class SandboxGateTests(TestCase):
 
     def test_empty_sandbox_tenant_ids_blocks(self):
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
         ) as mock_import:
             r = insert_proposal_sandbox(
                 [_ok_payload()],
@@ -181,7 +181,7 @@ class SandboxGateTests(TestCase):
 
     def test_payload_tenant_not_in_sandbox_blocks(self):
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
         ) as mock_import:
             r = insert_proposal_sandbox(
                 [_ok_payload(tenant_id=2)],   # production tenant
@@ -196,7 +196,7 @@ class SandboxGateTests(TestCase):
     def test_max_payload_count_blocks(self):
         payloads = [_ok_payload() for _ in range(101)]
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
         ) as mock_import:
             r = insert_proposal_sandbox(
                 payloads, dry_run=False, allow_insert=True,
@@ -213,7 +213,7 @@ class SandboxInsertTests(TestCase):
         # mock create_proposal 으로 INSERT path 만 검증 (실 DB X)
         mock_create = MagicMock(return_value=MagicMock(id=42))
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
             return_value=mock_create,
         ):
             r = insert_proposal_sandbox(
@@ -233,7 +233,7 @@ class SandboxInsertTests(TestCase):
         # approved status payload 는 INSERT 안 함
         mock_create = MagicMock(return_value=MagicMock(id=42))
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
             return_value=mock_create,
         ):
             r = insert_proposal_sandbox(
@@ -253,7 +253,7 @@ class SandboxInsertTests(TestCase):
         # rejected payload 는 INSERT 가능 (status='rejected' 그대로)
         mock_create = MagicMock(return_value=MagicMock(id=42))
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
             return_value=mock_create,
         ):
             r = insert_proposal_sandbox(
@@ -273,7 +273,7 @@ class SandboxInsertTests(TestCase):
     def test_invalid_payload_skipped_validation(self):
         mock_create = MagicMock(return_value=MagicMock(id=42))
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
             return_value=mock_create,
         ):
             r = insert_proposal_sandbox(
@@ -294,7 +294,7 @@ class SandboxInsertTests(TestCase):
 class RegressionTests(TestCase):
     def test_no_callback_imports(self):
         """운영 callback path import 0회 — _handle_matchup_* 어디서도 안 보임."""
-        from apps.domains.matchup.segmentation import proposal_insert_adapter
+        from academy.adapters.db.django import repositories_matchup_proposal
         import inspect
         src = inspect.getsource(proposal_insert_adapter)
         if src.startswith('"""'):
@@ -313,7 +313,7 @@ class RegressionTests(TestCase):
                              f"adapter 에서 운영 callback access '{token}' 발견")
 
     def test_no_real_api_imports(self):
-        from apps.domains.matchup.segmentation import proposal_insert_adapter
+        from academy.adapters.db.django import repositories_matchup_proposal
         import inspect
         src = inspect.getsource(proposal_insert_adapter)
         if src.startswith('"""'):
@@ -338,7 +338,7 @@ class RegressionTests(TestCase):
         docstring / 주석 mention 은 허용 (사용자 directive 준수 명시 목적).
         AST 로 Attribute / Name / Call 검사.
         """
-        from apps.domains.matchup.segmentation import proposal_insert_adapter
+        from academy.adapters.db.django import repositories_matchup_proposal
         import ast, inspect
         tree = ast.parse(inspect.getsource(proposal_insert_adapter))
 
@@ -365,7 +365,7 @@ class RegressionTests(TestCase):
 
     def test_lazy_import_only_in_sandbox_path(self):
         """create_proposal import 가 module-level 이 아니라 함수 내부에 있는지."""
-        from apps.domains.matchup.segmentation import proposal_insert_adapter
+        from academy.adapters.db.django import repositories_matchup_proposal
         import inspect
         # module-level import 검사 (함수 def 시작 전)
         src = inspect.getsource(proposal_insert_adapter)
@@ -387,7 +387,7 @@ class ResultToDictTests(TestCase):
 # ── Stage 6.2A: idempotency ──────────────────────────────────────
 
 
-from apps.domains.matchup.segmentation.proposal_insert_adapter import (  # noqa: E402
+from academy.adapters.db.django.repositories_matchup_proposal import (  # noqa: E402
     _idempotent_key,
 )
 
@@ -435,7 +435,7 @@ class IdempotentSandboxTests(TestCase):
         # existing_lookup_fn 이 id 반환 → INSERT 안 함, decision='skipped_idempotent'
         mock_create = MagicMock(return_value=MagicMock(id=99))
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
             return_value=mock_create,
         ):
             r = insert_proposal_sandbox(
@@ -459,7 +459,7 @@ class IdempotentSandboxTests(TestCase):
             called.append(key)
             return 12345
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
             return_value=mock_create,
         ):
             r = insert_proposal_sandbox(
@@ -476,7 +476,7 @@ class IdempotentSandboxTests(TestCase):
         # existing_lookup_fn 이 None 반환 → INSERT 진행
         mock_create = MagicMock(return_value=MagicMock(id=42))
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
             return_value=mock_create,
         ):
             r = insert_proposal_sandbox(
@@ -492,7 +492,7 @@ class IdempotentSandboxTests(TestCase):
         # lookup 예외 → 보수적 skipped_validation (INSERT 안 함)
         mock_create = MagicMock(return_value=MagicMock(id=42))
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
             return_value=mock_create,
         ):
             r = insert_proposal_sandbox(
@@ -514,7 +514,7 @@ class IdempotentSandboxTests(TestCase):
         # sandbox 차단된 case 에선 lookup_fn 자체 호출 0회
         mock_create = MagicMock()
         with patch(
-            "apps.domains.matchup.segmentation.proposal_insert_adapter._import_create_proposal",
+            "academy.adapters.db.django.repositories_matchup_proposal._import_create_proposal",
             return_value=mock_create,
         ):
             r = insert_proposal_sandbox(

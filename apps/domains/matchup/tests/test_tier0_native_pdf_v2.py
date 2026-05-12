@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
-from apps.domains.matchup.segmentation.tier0_native_pdf import (
+from academy.adapters.ai.detection.tier0_native_pdf import (
     PageBlocks,
     _MAX_LEGIT_QUESTION_NUMBER_V2,
     _is_answer_or_explanation_page,
@@ -324,7 +324,7 @@ class AnalyzePdfV2IntegrationTests(TestCase):
         return tmp.name
 
     def test_text_pdf_not_tier1_required(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v2
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v2
         import os
         pdf = self._make_text_pdf()
         try:
@@ -342,7 +342,7 @@ class AnalyzePdfV2IntegrationTests(TestCase):
             os.unlink(pdf)
 
     def test_image_only_pdf_marked_tier1_required(self):
-        from apps.domains.matchup.segmentation.tier0_native_pdf import analyze_pdf_v2
+        from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v2
         import os
         pdf = self._make_image_only_pdf()
         try:
@@ -358,7 +358,7 @@ class V2RegressionTests(TestCase):
 
     def test_v2_does_not_import_orm(self):
         """v2 함수 추가 후에도 tier0_native_pdf 모듈은 ORM/모델 미import."""
-        from apps.domains.matchup.segmentation import tier0_native_pdf
+        from academy.adapters.ai.detection import tier0_native_pdf
         import inspect
         src = inspect.getsource(tier0_native_pdf)
         forbidden = (
@@ -379,7 +379,7 @@ class V2RegressionTests(TestCase):
 
     def test_v1_functions_still_present(self):
         """v2 추가가 v1 함수를 깨뜨리지 않음 (regression)."""
-        from apps.domains.matchup.segmentation.tier0_native_pdf import (
+        from academy.adapters.ai.detection.tier0_native_pdf import (
             analyze_pdf,
             classify_page_role,
             derive_bbox_candidates,
