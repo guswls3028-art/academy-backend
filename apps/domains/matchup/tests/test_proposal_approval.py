@@ -18,7 +18,7 @@ DB 무관 mock 기반.
 """
 from __future__ import annotations
 
-from unittest import TestCase
+from django.test import TestCase  # 2026-05-12: unittest.TestCase → django.test.TestCase. transaction.atomic / select_for_update 사용 코드 경로가 connection.get_autocommit 호출 → DB 필요. Django TestCase 는 자동 transaction rollback.
 from unittest.mock import MagicMock, patch
 
 from apps.domains.matchup.proposal_helpers import (
@@ -68,7 +68,13 @@ def _patch_proposal_get(proposal_mock):
 
 
 def _patch_problem_create(captured: dict):
-    """MatchupProblem.objects.create — 호출 인자 포착."""
+    """MatchupProblem.objects.create — 호출 인자 포착.
+
+    2026-05-12: Stage 6.3N 추가된 `_existing_problem_number_conflict` 가
+    MatchupProblem.objects.filter().only().first() 를 호출 → 기본 MagicMock 은
+    .id 가 또 다른 MagicMock 이라 conflict 오탐. filter chain 의 first() 를
+    명시적으로 None 반환하도록 설정해 number_conflict pre-check 를 우회.
+    """
     from apps.domains.matchup.models import MatchupProblem
 
     def fake_create(**kwargs):
@@ -80,6 +86,10 @@ def _patch_problem_create(captured: dict):
 
     objects = MagicMock()
     objects.create = MagicMock(side_effect=fake_create)
+    # number_conflict pre-check 우회 — filter().only().first() = None
+    _no_conflict = MagicMock()
+    _no_conflict.only = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+    objects.filter = MagicMock(return_value=_no_conflict)
     return patch.object(MatchupProblem, "objects", objects), objects
 
 

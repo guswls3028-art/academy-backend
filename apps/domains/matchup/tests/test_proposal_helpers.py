@@ -13,7 +13,7 @@ DB 격리: 일부 테스트는 mock, 일부는 in-memory 격리.
 """
 from __future__ import annotations
 
-from unittest import TestCase
+from django.test import TestCase  # 2026-05-12: unittest.TestCase → django.test.TestCase. CreateProposalContractTests 가 transaction.atomic 경유로 DB connection 필요.
 from unittest.mock import MagicMock, patch
 
 from apps.domains.matchup.proposal_helpers import (

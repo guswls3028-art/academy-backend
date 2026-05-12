@@ -15,6 +15,9 @@
 import pytest
 from django.contrib.auth import get_user_model
 
+# 2026-05-12: 파일 단위 django_db mark. Phase A page-state 모델 INSERT/UPSERT DB 필요.
+pytestmark = pytest.mark.django_db
+
 from apps.core.models import Tenant
 from apps.domains.inventory.models import InventoryFile, InventoryFolder
 from apps.domains.matchup.models import MatchupDocument, MatchupPageState
@@ -34,7 +37,7 @@ pytestmark = pytest.mark.django_db
 
 @pytest.fixture
 def tenant():
-    return Tenant.objects.create(name="t-page", subdomain="t-page")
+    return Tenant.objects.create(name="t-page", code="t-page")  # 2026-05-12: Tenant.subdomain 필드 없음. code unique=True 가 식별자.
 
 
 @pytest.fixture
