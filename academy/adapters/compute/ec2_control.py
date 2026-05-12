@@ -1,5 +1,11 @@
-# PATH: apps/domains/ai/services/worker_instance_control.py
+# PATH: academy/adapters/compute/ec2_control.py
+"""
+AI Worker ASG/EC2 제어 어댑터.
 
+이관 이력:
+- 2026-05-12: `apps/domains/ai/services/worker_instance_control.py` 에서 이관.
+  헥사고날 §6: `apps/domains/<x>/` boto3 직접 호출 금지 정책 준수.
+"""
 import os
 import boto3
 import logging
@@ -45,7 +51,6 @@ def start_ai_worker_instance():
         desired = group["DesiredCapacity"]
         instances = group.get("Instances", [])
 
-        # ASG desired가 0이면 1로 올림
         if desired == 0:
             logger.info("[AI] ASG desired=0 → setting to 1")
             asg.set_desired_capacity(
@@ -54,7 +59,6 @@ def start_ai_worker_instance():
             )
             return
 
-        # 인스턴스가 있으면 stopped 상태인지 확인하여 start
         ec2 = _aws_client("ec2")
         for inst in instances:
             iid = inst["InstanceId"]

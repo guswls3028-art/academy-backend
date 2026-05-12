@@ -17,8 +17,8 @@ from apps.infrastructure.storage.r2 import generate_presigned_get_url
 from apps.domains.ai.gateway import dispatch_job
 from apps.domains.results.services.grading_service import grade_submission
 
-# ✅ [추가] AI 워커 EC2 제어
-from apps.domains.ai.services.worker_instance_control import start_ai_worker_instance
+# AI 워커 EC2 제어 (2026-05-12: apps/domains/ai/services -> academy/adapters/compute 이관)
+from academy.adapters.compute.ec2_control import start_ai_worker_instance
 
 logger = logging.getLogger(__name__)
 
