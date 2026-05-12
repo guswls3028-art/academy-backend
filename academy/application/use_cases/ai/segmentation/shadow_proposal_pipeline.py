@@ -47,7 +47,7 @@ from .mock_response_integrator import (
     integrate_responses, make_mock_ocr_response, make_mock_vlm_response,
     unified_to_dict,
 )
-from .proposal_insert_adapter import (
+from academy.adapters.db.django.repositories_matchup_proposal import (
     insert_proposal_sandbox, result_to_dict as insert_result_to_dict,
 )
 

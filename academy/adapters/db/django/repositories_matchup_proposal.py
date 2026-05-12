@@ -35,8 +35,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterable, Optional
 
-from .mock_response_integrator import ProposalPayloadCandidate
-from .proposal_payload_validator import (
+from academy.application.use_cases.ai.segmentation.mock_response_integrator import ProposalPayloadCandidate
+from academy.application.use_cases.ai.segmentation.proposal_payload_validator import (
     validate_payload,
 )
 

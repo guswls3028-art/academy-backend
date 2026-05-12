@@ -34,7 +34,7 @@ from typing import Any, Optional
 from .fallback_router import (
     FallbackRouteDecision, decision_to_dict, route_fallback,
 )
-from .tier0_native_pdf import analyze_pdf_v5_4
+from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_4
 
 SCHEMA_VERSION = "5.7-mock-1"
 
