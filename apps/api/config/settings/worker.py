@@ -46,6 +46,7 @@ INSTALLED_APPS = [
     "apps.domains.attendance",
     "apps.domains.schedule",
     "apps.domains.community",
+    "apps.domains.landing_public",
     "apps.domains.exams",
     "apps.domains.homework",
     "apps.domains.submissions",

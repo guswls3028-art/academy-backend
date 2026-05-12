@@ -10,6 +10,7 @@ class MatchupDocumentSerializer(serializers.ModelSerializer):
         model = MatchupDocument
         fields = [
             "id", "title", "category", "subject", "grade_level",
+            "exam_cycle", "exam_year",
             "original_name", "size_bytes", "content_type",
             "status", "ai_job_id", "problem_count", "error_message",
             "meta",
@@ -24,6 +25,12 @@ class MatchupDocumentUpdateSerializer(serializers.Serializer):
     category = serializers.CharField(max_length=100, required=False, allow_blank=True)
     subject = serializers.CharField(max_length=100, required=False, allow_blank=True)
     grade_level = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    # 2026-05-12 #15 — 학원장이 시험 회차/연도 분류 입력 (랜딩 학교별 grouping)
+    exam_cycle = serializers.ChoiceField(
+        choices=["", "midterm", "final", "mock", "other"],
+        required=False, allow_blank=True,
+    )
+    exam_year = serializers.IntegerField(required=False, min_value=0, max_value=2100)
     # legacy 2-value (호환 유지)
     intent = serializers.ChoiceField(choices=["reference", "test"], required=False)
     # 7-value SSOT — Phase 1A. 학원장이 잘못 백필된 doc 라벨 즉시 보정 가능.

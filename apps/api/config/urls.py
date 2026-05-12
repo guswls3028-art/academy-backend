@@ -58,3 +58,15 @@ urlpatterns += static(
     settings.MEDIA_URL,
     document_root=settings.MEDIA_ROOT,
 )
+
+# =========================
+# debug_toolbar (dev only) — 2026-05-13: djdt namespace 등록.
+# 미등록 시 toolbar middleware 가 응답에 inject 하다 NoReverseMatch.
+# settings.DEBUG=True && debug_toolbar installed 일 때만 활성화.
+# =========================
+if settings.DEBUG:
+    try:
+        import debug_toolbar  # noqa: F401
+        urlpatterns += [path("__debug__/", include("debug_toolbar.urls"))]
+    except ImportError:
+        pass

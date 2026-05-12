@@ -69,6 +69,11 @@ urlpatterns = [
     path("community/", include("apps.domains.community.api.urls")),
 
     # =========================
+    # Landing Public Community (외부 공개 — 자유게시판/수강후기)
+    # =========================
+    path("landing-public/", include("apps.domains.landing_public.api.urls")),
+
+    # =========================
     # Messaging (알림톡 잔액/충전/연동/로그)
     # =========================
     path("messaging/", include("apps.domains.messaging.urls")),

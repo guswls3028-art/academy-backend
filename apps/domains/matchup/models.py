@@ -39,9 +39,28 @@ class MatchupDocument(TimestampModel):
     )
     title = models.CharField(max_length=255)
     # 섹션/카테고리 (예: 중대부고, 숙명여고). 같은 카테고리끼리만 추천에 사용.
+    # 2026-05-12 #15 — 랜딩 grouping("학교별 → 중간/기말 cycle") 키로도 활용.
     category = models.CharField(max_length=100, blank=True, default="", db_index=True)
     subject = models.CharField(max_length=100, blank=True, default="")
     grade_level = models.CharField(max_length=50, blank=True, default="")
+    # 2026-05-12 #15 — 시험 회차 분류. 학원장 입력(선택). 랜딩에서 학교별 grouping
+    # 안에서 중간/기말/모의/기타 cycle 순서로 노출. blank 허용 — 기존 데이터 영향 X.
+    EXAM_CYCLE_CHOICES = [
+        ("", "미지정"),
+        ("midterm", "중간고사"),
+        ("final", "기말고사"),
+        ("mock", "모의고사"),
+        ("other", "기타"),
+    ]
+    exam_cycle = models.CharField(
+        max_length=20, blank=True, default="",
+        choices=EXAM_CYCLE_CHOICES, db_index=True,
+        help_text="시험 회차 분류 (랜딩 학교별 grouping)",
+    )
+    exam_year = models.PositiveSmallIntegerField(
+        default=0,
+        help_text="시험 연도 (예: 2025). 0=미지정. 학교별 grouping 시간순 정렬.",
+    )
     r2_key = models.CharField(max_length=512, unique=True, db_index=True)
     original_name = models.CharField(max_length=255)
     size_bytes = models.BigIntegerField(default=0)

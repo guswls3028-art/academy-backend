@@ -975,6 +975,14 @@ def _notify_hit_report_submitted(report, request) -> None:
         memberships = non_author_recipients
 
     solapi_tid = get_solapi_template_id(trigger)
+    if not solapi_tid:
+        # 카카오 검수 통과된 양식이 없으면 알림톡 발송 미수행 (silent).
+        # 옛 score 좀비 fallback 종료 — 운영자가 새 양식 검수 받으면 매핑 추가.
+        logger.info(
+            "hit_report_notify suppressed: no approved alimtalk template for %s (tenant=%s)",
+            trigger, tenant_id,
+        )
+        return
     sent_count = 0
     sent_user_ids: list[int] = []
     for m in memberships:
@@ -990,23 +998,22 @@ def _notify_hit_report_submitted(report, request) -> None:
 
         recipient_name = getattr(u, "name", None) or getattr(u, "username", "") or ""
 
+        replacements = build_unified_replacements(
+            trigger=trigger,
+            content_body=template_body,
+            context=context,
+            tenant_name=tenant_name,
+            student_name=recipient_name,
+            site_url=site_url,
+        )
         sms_kwargs = dict(
             tenant_id=tenant_id,
             to=phone,
             text=template_body,
             message_mode="alimtalk",
+            template_id=solapi_tid,
+            alimtalk_replacements=replacements,
         )
-        if solapi_tid:
-            replacements = build_unified_replacements(
-                trigger=trigger,
-                content_body=template_body,
-                context=context,
-                tenant_name=tenant_name,
-                student_name=recipient_name,  # score 템플릿 수신자 슬롯
-                site_url=site_url,
-            )
-            sms_kwargs["template_id"] = solapi_tid
-            sms_kwargs["alimtalk_replacements"] = replacements
 
         try:
             ok = enqueue_sms(**sms_kwargs)
@@ -1496,22 +1503,37 @@ def _is_report_in_published_landing(tenant, report_id: int) -> bool:
     """학원장이 자기 published 랜딩의 hit_reports section에 박은 보고서 ID인지 확인.
 
     이게 True인 보고서만 외부 학부모/학생에게 본문(PDF) 공개. 학원장 picker 빼면 즉시 비공개.
+
+    2026-05-12 #14: 학원장이 item.published_until 지정 시 해당 날짜(KST) 이후 False 반환.
+    카드 메타는 그대로 노출되되 PDF 본문은 차단되어 "% 요약만" UX 정합.
     """
+    from datetime import date
     from apps.core.models import LandingPage
     try:
         landing = LandingPage.objects.get(tenant=tenant, is_published=True)
     except LandingPage.DoesNotExist:
         return False
     pub = landing.published_config or {}
+    today = date.today()  # naive KST (settings.TIME_ZONE)
     for sec in (pub.get("sections") or []):
         if sec.get("type") != "hit_reports" or not sec.get("enabled"):
             continue
         for it in (sec.get("items") or []):
             try:
-                if int(it.get("report_id")) == int(report_id):
-                    return True
+                if int(it.get("report_id")) != int(report_id):
+                    continue
             except (TypeError, ValueError):
                 continue
+            # 종료 날짜 체크 — past면 본문 차단 (카드 메타는 별도 endpoint이므로 영향 X)
+            published_until = it.get("published_until")
+            if published_until:
+                try:
+                    end = date.fromisoformat(str(published_until)[:10])
+                    if today > end:
+                        return False  # 종료 날짜 지남 → 외부 차단
+                except (TypeError, ValueError):
+                    pass  # 형식 잘못이면 보수적으로 통과
+            return True
     return False
 
 

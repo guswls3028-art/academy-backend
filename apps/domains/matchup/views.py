@@ -462,7 +462,7 @@ class DocumentDetailView(View):
             return JsonResponse(ser.errors, status=400)
 
         update_fields = ["updated_at"]
-        for field in ("title", "category", "subject", "grade_level"):
+        for field in ("title", "category", "subject", "grade_level", "exam_cycle", "exam_year"):
             if field in ser.validated_data:
                 setattr(doc, field, ser.validated_data[field])
                 update_fields.append(field)
