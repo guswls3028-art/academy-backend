@@ -99,7 +99,7 @@ def _get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_i
 def _build_thumbnail_url(video) -> Optional[str]:
     """
     VideoSerializer.get_thumbnail_url 과 동일 로직.
-    CDN_HLS_BASE_URL 기반 썸네일 URL 구성.
+    CDN_HLS_BASE_URL 기반 썸네일 URL 구성 + 서명 시크릿 있으면 HMAC 부착.
     """
     from django.conf import settings
 
@@ -120,9 +120,31 @@ def _build_thumbnail_url(video) -> Optional[str]:
         except Exception:
             return 0
 
+    def _build(rel_path: str) -> str:
+        path = "/" + rel_path.lstrip("/")
+        version = _ver()
+        secret = getattr(settings, "CDN_HLS_SIGNING_SECRET", "") or ""
+        if not secret:
+            return f"{cdn}{path}?v={version}"
+        from apps.domains.video.cdn.cloudflare_signing import CloudflareSignedURL
+        from django.utils import timezone
+        ttl = int(getattr(settings, "CDN_HLS_LIST_URL_TTL_SECONDS", 6 * 3600))
+        expires_at = int(timezone.now().timestamp()) + ttl
+        signer = CloudflareSignedURL(
+            secret=str(secret),
+            key_id=str(getattr(settings, "CDN_HLS_SIGNING_KEY_ID", "v1")),
+        )
+        return signer.build_url(
+            cdn_base=cdn,
+            path=path,
+            expires_at=expires_at,
+            user_id=None,
+            extra_query={"v": str(version)},
+        )
+
     # 1) explicit thumbnail field
     if video.thumbnail:
-        return f"{cdn}/{_norm(video.thumbnail.name)}?v={_ver()}"
+        return _build(_norm(video.thumbnail.name))
 
     # 2) READY → convention-based path
     if getattr(video, "status", None) == video.Status.READY:
@@ -134,8 +156,7 @@ def _build_thumbnail_url(video) -> Optional[str]:
                 return None
             tenant_id = getattr(tenant, "id", None) or getattr(tenant, "pk", None)
             from apps.core.r2_paths import video_hls_prefix
-            path = _norm(f"{video_hls_prefix(tenant_id=tenant_id, video_id=video.id)}/thumbnail.jpg")
-            return f"{cdn}/{path}?v={_ver()}"
+            return _build(_norm(f"{video_hls_prefix(tenant_id=tenant_id, video_id=video.id)}/thumbnail.jpg"))
         except Exception:
             return None
 

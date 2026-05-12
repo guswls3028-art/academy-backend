@@ -219,6 +219,32 @@ class VideoSerializer(serializers.ModelSerializer):
         except Exception:
             return 0
 
+    def _build_cdn_url(self, cdn: str, rel_path: str, *, version: int) -> str:
+        """
+        cdn base + path 를 합치고, 서명 시크릿이 있으면 HMAC 쿼리를 부착한다.
+        CDN Worker 가 sig/exp 를 검증하므로, signing_secret 가 비어 있으면
+        unsigned URL 을 그대로 돌려 보내 R2 public 단계와 호환 유지.
+        """
+        path = "/" + rel_path.lstrip("/")
+        secret = getattr(settings, "CDN_HLS_SIGNING_SECRET", "") or ""
+        if not secret:
+            return f"{cdn}{path}?v={version}"
+        from .cdn.cloudflare_signing import CloudflareSignedURL
+        from django.utils import timezone
+        ttl = int(getattr(settings, "CDN_HLS_LIST_URL_TTL_SECONDS", 6 * 3600))
+        expires_at = int(timezone.now().timestamp()) + ttl
+        signer = CloudflareSignedURL(
+            secret=str(secret),
+            key_id=str(getattr(settings, "CDN_HLS_SIGNING_KEY_ID", "v1")),
+        )
+        return signer.build_url(
+            cdn_base=cdn,
+            path=path,
+            expires_at=expires_at,
+            user_id=None,
+            extra_query={"v": str(version)},
+        )
+
     # ---------------------------
     # CDN fields
     # ---------------------------
@@ -228,16 +254,16 @@ class VideoSerializer(serializers.ModelSerializer):
         if not cdn:
             return None
 
+        version = self._cache_version(obj)
+
         # 1️⃣ thumbnail_r2_key (SSOT — Worker가 항상 채움)
         r2_key = (getattr(obj, "thumbnail_r2_key", "") or "").strip()
         if r2_key:
-            path = self._normalize_media_path(r2_key)
-            return f"{cdn}/{path}?v={self._cache_version(obj)}"
+            return self._build_cdn_url(cdn, self._normalize_media_path(r2_key), version=version)
 
         # 2️⃣ legacy ImageField (deprecated, 점진 제거)
         if obj.thumbnail:
-            path = self._normalize_media_path(obj.thumbnail.name)
-            return f"{cdn}/{path}?v={self._cache_version(obj)}"
+            return self._build_cdn_url(cdn, self._normalize_media_path(obj.thumbnail.name), version=version)
 
         # 3️⃣ READY fallback — video.tenant_id 직접 (V1.1 SSOT). session 체인 폐기.
         if obj.status == obj.Status.READY:
@@ -245,10 +271,10 @@ class VideoSerializer(serializers.ModelSerializer):
             if tenant_id is None:
                 return None
             from apps.core.r2_paths import video_hls_prefix
-            path = self._normalize_media_path(
+            rel = self._normalize_media_path(
                 f"{video_hls_prefix(tenant_id=tenant_id, video_id=obj.id)}/thumbnail.jpg"
             )
-            return f"{cdn}/{path}?v={self._cache_version(obj)}"
+            return self._build_cdn_url(cdn, rel, version=version)
 
         return None
 
@@ -260,8 +286,11 @@ class VideoSerializer(serializers.ModelSerializer):
         if not cdn:
             return None
 
-        path = self._normalize_media_path(str(obj.hls_path))
-        return f"{cdn}/{path}?v={self._cache_version(obj)}"
+        return self._build_cdn_url(
+            cdn,
+            self._normalize_media_path(str(obj.hls_path)),
+            version=self._cache_version(obj),
+        )
 
 
 class VideoDetailSerializer(VideoSerializer):

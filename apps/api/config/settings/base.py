@@ -351,7 +351,12 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 # VIDEO / CDN
 # ==================================================
 
-CDN_HLS_BASE_URL = "https://pub-54ae4dcb984d4491b08f6c57023a1621.r2.dev"
+CDN_HLS_BASE_URL = os.getenv(
+    "CDN_HLS_BASE_URL",
+    "https://pub-54ae4dcb984d4491b08f6c57023a1621.r2.dev",
+)
+CDN_HLS_SIGNING_SECRET = os.getenv("CDN_HLS_SIGNING_SECRET", "")
+CDN_HLS_SIGNING_KEY_ID = os.getenv("CDN_HLS_SIGNING_KEY_ID", "v1")
 VIDEO_PLAYBACK_TTL_SECONDS = int(os.getenv("VIDEO_PLAYBACK_TTL_SECONDS", "600"))
 
 # ==================================================

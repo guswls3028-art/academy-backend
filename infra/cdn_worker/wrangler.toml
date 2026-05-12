@@ -18,7 +18,7 @@ bucket_name = "academy-video"
 # Secrets (set via `wrangler secret put CDN_HLS_SIGNING_SECRET`)
 # Must match backend SSM /academy/api/env → CDN_HLS_SIGNING_SECRET
 
-# Route (uncomment and adjust zone_id after first deploy + DNS confirm)
-# [[routes]]
-# pattern = "cdn.hakwonplus.com/tenants/*"
-# zone_name = "hakwonplus.com"
+# Route — cdn.hakwonplus.com → signed Worker proxy
+[[routes]]
+pattern = "cdn.hakwonplus.com/tenants/*"
+zone_name = "hakwonplus.com"

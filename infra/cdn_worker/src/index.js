@@ -49,9 +49,13 @@ export default {
       return new Response("invalid signature", { status: 403 });
     }
 
-    // 5) Fetch from R2 (path strips leading slash)
+    // 5) Fetch from R2 (path strips leading slash; honor client Range header)
     const r2Key = path.replace(/^\/+/, "");
-    const obj = await env.R2_VIDEO.get(r2Key);
+    const rangeHeader = request.headers.get("Range");
+    const getOpts = {};
+    const parsedRange = rangeHeader ? parseRangeHeader(rangeHeader) : null;
+    if (parsedRange) getOpts.range = parsedRange;
+    const obj = await env.R2_VIDEO.get(r2Key, getOpts);
     if (!obj || !obj.body) {
       return new Response("not found", { status: 404 });
     }
@@ -62,12 +66,56 @@ export default {
     headers.set("ETag", obj.httpEtag);
     headers.set("Cache-Control", obj.httpMetadata?.cacheControl || cacheControlFor(r2Key));
     headers.set("Accept-Ranges", "bytes");
-    if (obj.range) {
-      headers.set("Content-Range", `bytes ${obj.range.offset}-${obj.range.end}/${obj.size}`);
+
+    // Only emit Content-Range + 206 on a real (and honored) Range request.
+    let status = 200;
+    if (parsedRange) {
+      let start, length;
+      if (Number.isFinite(parsedRange.suffix)) {
+        start = Math.max(0, obj.size - parsedRange.suffix);
+        length = obj.size - start;
+      } else if (Number.isFinite(parsedRange.offset) && Number.isFinite(parsedRange.length)) {
+        start = parsedRange.offset;
+        length = parsedRange.length;
+      } else if (Number.isFinite(parsedRange.offset)) {
+        start = parsedRange.offset;
+        length = obj.size - start;
+      }
+      if (Number.isFinite(start) && Number.isFinite(length) && length > 0) {
+        const end = start + length - 1;
+        headers.set("Content-Range", `bytes ${start}-${end}/${obj.size}`);
+        headers.set("Content-Length", String(length));
+        status = 206;
+      } else {
+        headers.set("Content-Length", String(obj.size));
+      }
+    } else {
+      headers.set("Content-Length", String(obj.size));
     }
-    return new Response(obj.body, { headers, status: 200 });
+    return new Response(obj.body, { headers, status });
   },
 };
+
+// Parse RFC 7233 single-range header. Returns {offset, length} or null.
+function parseRangeHeader(value) {
+  const m = /^bytes=(\d*)-(\d*)$/.exec(String(value).trim());
+  if (!m) return null;
+  const startStr = m[1];
+  const endStr = m[2];
+  if (startStr === "" && endStr === "") return null;
+  if (startStr === "") {
+    // suffix range: last N bytes — R2 supports via { suffix: N }
+    const n = parseInt(endStr, 10);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return { suffix: n };
+  }
+  const start = parseInt(startStr, 10);
+  if (!Number.isFinite(start) || start < 0) return null;
+  if (endStr === "") return { offset: start };
+  const end = parseInt(endStr, 10);
+  if (!Number.isFinite(end) || end < start) return null;
+  return { offset: start, length: end - start + 1 };
+}
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
