@@ -138,11 +138,11 @@ class SendMessageView(APIView):
                 # 시스템 기본양식: 자체 Solapi 템플릿 유지
                 solapi_template_id = (t.solapi_template_id or "").strip()
             else:
-                # 카테고리 매핑 없음 → score로 fallback
-                use_unified = True
-                unified_template_type = "score"
-                from apps.domains.messaging.alimtalk_content_builders import TEMPLATE_TYPE_TO_SOLAPI_ID, TYPE_SCORE
-                solapi_template_id = TEMPLATE_TYPE_TO_SOLAPI_ID.get(TYPE_SCORE, "")
+                # 카테고리 매핑 없음 + 자체 솔라피 템플릿 없음 → 통합 알림톡 미사용.
+                # (구) score("[성적표 안내]") 좀비 fallback 패턴 종료.
+                # 카카오 검수 통과된 살아있는 양식이 없으면 통합 알림톡 발송하지 않음.
+                use_unified = False
+                solapi_template_id = (t.solapi_template_id or "").strip() if t else ""
 
         if message_mode == "alimtalk" and not solapi_template_id:
             return Response(

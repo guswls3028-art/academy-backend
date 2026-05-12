@@ -21,26 +21,45 @@ from __future__ import annotations
 # 미승인 상태에서 True로 두면 Solapi 발송 거부됨 — 반드시 승인 확인 후 변경
 UNIFIED_TEMPLATES_ENABLED = True
 
+# ITEM_LIST 4종 — header/highlight/item.list 자동 렌더, "[성적표 안내]" 등 카테고리 prefix가 카카오 측에 박혀있음
 SOLAPI_CLINIC_INFO = "KA01TP2604061058318608Hy40ZnTFZT"      # 클리닉 일정 안내
 SOLAPI_CLINIC_CHANGE = "KA01TP260406110706969XS06XRZveEk"    # 클리닉 일정 변경
-SOLAPI_SCORE = "KA01TP260406105458211774JKJ3OU55"            # 성적표발송
+SOLAPI_SCORE = "KA01TP260406105458211774JKJ3OU55"            # 성적표발송 — 진짜 성적 트리거 전용
 SOLAPI_ATTENDANCE = "KA01TP260406121126868FGddLmrDFUC"       # 수업출석안내
+
+# NONE 2종 — emphasizeType=NONE, "안녕하세요, #{학원명}입니다. / #{학생이름2}학생님, ... / ... / #{사이트링크}"
+# 카카오 검수 통과 + 살아있는 양식만. (clinic/exam/assignment/generic NONE은 사용자가 정리하며 삭제했음)
+SOLAPI_NOTICE_WITHDRAWAL = "KA01TP260324051933087KD2pyRhJonv"   # [HakwonPlus] 퇴원 처리 완료
+SOLAPI_NOTICE_PAYMENT    = "KA01TP260324051931785RmT8G8389tA"   # [HakwonPlus] 결제 완료 안내
 
 # ──────────────────────────────────────────
 # 템플릿 타입 상수
 # ──────────────────────────────────────────
 
+# ITEM_LIST 4종 — 카카오 측에 카테고리 prefix("[성적표 안내]" 등)가 박혀있어 의미 일치 트리거만 사용
 TYPE_CLINIC_INFO = "clinic_info"        # 장소/날짜/시간
 TYPE_CLINIC_CHANGE = "clinic_change"    # 기존일정/변동사항/수정자
-TYPE_SCORE = "score"                    # 강의명/차시명
+TYPE_SCORE = "score"                    # 강의명/차시명 — 진짜 성적 안내만 ("[성적표 안내]" prefix)
 TYPE_ATTENDANCE = "attendance"          # 강의명/차시명/강의날짜/강의시간
+
+# NONE 2종 — 본문 고정형, 사이트링크/학생이름2/학원명만 변수
+TYPE_NOTICE_WITHDRAWAL = "notice_withdrawal"
+TYPE_NOTICE_PAYMENT    = "notice_payment"
 
 TEMPLATE_TYPE_TO_SOLAPI_ID = {
     TYPE_CLINIC_INFO: SOLAPI_CLINIC_INFO,
     TYPE_CLINIC_CHANGE: SOLAPI_CLINIC_CHANGE,
     TYPE_SCORE: SOLAPI_SCORE,
     TYPE_ATTENDANCE: SOLAPI_ATTENDANCE,
+    TYPE_NOTICE_WITHDRAWAL: SOLAPI_NOTICE_WITHDRAWAL,
+    TYPE_NOTICE_PAYMENT: SOLAPI_NOTICE_PAYMENT,
 }
+
+# NONE 양식 식별 (ITEM_LIST 변수 23자 제한 / item.list 자동 렌더 미적용)
+NONE_TEMPLATE_TYPES = frozenset({
+    TYPE_NOTICE_WITHDRAWAL,
+    TYPE_NOTICE_PAYMENT,
+})
 
 # ──────────────────────────────────────────
 # 트리거 → 템플릿 타입 매핑
@@ -66,32 +85,22 @@ TRIGGER_TO_TEMPLATE_TYPE: dict[str, str] = {
     "absent_occurred": TYPE_ATTENDANCE,
     "lecture_session_reminder": TYPE_ATTENDANCE,
 
-    # 성적표발송 (강의명/차시명)
-    "exam_scheduled_days_before": TYPE_SCORE,
-    "exam_start_minutes_before": TYPE_SCORE,
-    "exam_not_taken": TYPE_SCORE,
+    # 성적표발송 — 진짜 성적 통보만 (강의명/차시명 + "[성적표 안내]" prefix 의미상 일치)
     "exam_score_published": TYPE_SCORE,
-    "retake_assigned": TYPE_SCORE,
-    "assignment_registered": TYPE_SCORE,
-    "assignment_due_hours_before": TYPE_SCORE,
-    "assignment_not_submitted": TYPE_SCORE,
     "monthly_report_generated": TYPE_SCORE,
 
-    # 퇴원/결제 — score 템플릿 (범용 ITEM_LIST)
-    "withdrawal_complete": TYPE_SCORE,
-    "payment_complete": TYPE_SCORE,
-    "payment_due_days_before": TYPE_SCORE,
+    # 퇴원 / 결제 — 카테고리별 전용 NONE 양식
+    "withdrawal_complete": TYPE_NOTICE_WITHDRAWAL,
+    "payment_complete": TYPE_NOTICE_PAYMENT,
+    "payment_due_days_before": TYPE_NOTICE_PAYMENT,
 
-    # 영상 — score 템플릿 (강의명/차시명)
-    "video_encoding_complete": TYPE_SCORE,
-
-    # 매치업 — score 템플릿 재사용 (학원/시험지/강사명을 ITEM_LIST 슬롯에)
-    # 사용자 정책 (B-2 / 메모리 community_alimtalk 패턴): 신규 카카오 검수 회피.
-    "matchup_report_submitted": TYPE_SCORE,
-
-    # 커뮤니티 — score 템플릿 (강의명/차시명 슬롯에 카테고리/제목 사용)
-    "qna_answered": TYPE_SCORE,
-    "counsel_answered": TYPE_SCORE,
+    # ── 매핑 의도적 제외 (카카오 등록 양식 부재) ─────────────────────
+    # 시험/과제/영상/매치업/커뮤니티 트리거는 의미상 일치하는 살아있는 양식이 없음.
+    # 옛 score("성적표 안내") fallback 좀비 패턴 종료. 운영자가 새 양식 검수 받으면 여기에 추가.
+    # 영향: exam_scheduled, exam_start, exam_not_taken, retake_assigned,
+    #       assignment_registered, assignment_due_hours_before, assignment_not_submitted,
+    #       video_encoding_complete, matchup_report_submitted, qna_answered, counsel_answered
+    #     → 통합 알림톡 비활성. 자체 솔라피 템플릿 ID가 등록돼있으면 그쪽 사용, 없으면 발송 차단.
 }
 
 
@@ -116,18 +125,15 @@ def get_solapi_template_id(trigger: str) -> str | None:
 # 시스템 기본양식(signup)은 자체 Solapi 템플릿 유지 → 매핑에서 제외.
 
 CATEGORY_TO_TEMPLATE_TYPE: dict[str, str] = {
-    "grades": TYPE_SCORE,
-    "exam": TYPE_SCORE,
-    "assignment": TYPE_SCORE,
-    "attendance": TYPE_ATTENDANCE,
-    "lecture": TYPE_ATTENDANCE,
-    "clinic": TYPE_CLINIC_INFO,
-    "payment": TYPE_SCORE,
-    "notice": TYPE_SCORE,
-    "community": TYPE_SCORE,
-    "staff": TYPE_SCORE,
-    "default": TYPE_SCORE,
-    "student": TYPE_SCORE,
+    "grades": TYPE_SCORE,                       # 진짜 성적 통보 ("[성적표 안내]" prefix 의미 일치)
+    "attendance": TYPE_ATTENDANCE,              # 출결 (강의명/차시명/날짜/시간)
+    "lecture": TYPE_ATTENDANCE,                 # 수업
+    "clinic": TYPE_CLINIC_INFO,                 # 클리닉 (장소/날짜/시간) — name 변경/취소 시 clinic_change
+    "payment": TYPE_NOTICE_PAYMENT,             # 결제/납부 (NONE 양식)
+    # ── 매핑 의도적 제외 (카카오 등록 양식 부재) ─────────────────────
+    # exam/assignment/notice/community/staff/default/student
+    #   → "[성적표 안내]" 좀비 fallback 종료. 살아있는 양식 없으면 통합 알림톡 미사용.
+    # 운영자가 새 양식 검수 받으면 여기에 추가.
 }
 
 # 시스템 기본양식 — 통합 4종 대신 자체 Solapi 템플릿 유지
@@ -241,20 +247,24 @@ def build_manual_replacements(
     built_content = re.sub(r"#\{[^}]+\}", "", built_content)
     built_content = re.sub(r"\n{3,}", "\n\n", built_content).strip()
 
-    # ── 선생님메모 = body 치환 결과만 (ITEM_LIST가 장소/날짜/시간 자동 표시) ──
+    # NONE 양식은 #{공지내용}으로, ITEM_LIST 양식은 #{선생님메모}로 들어감
+    all_vars["공지내용"] = built_content
     memo_value = built_content
 
-    # Solapi replacements — ITEM_LIST 변수 23자 제한 적용
+    # Solapi replacements — ITEM_LIST 변수 23자 제한 (선생님메모/사이트링크/공지내용 제외)
+    is_none_type = template_type in NONE_TEMPLATE_TYPES
     registered_vars = TEMPLATE_TYPE_VARIABLES.get(template_type, [])
     replacements = []
     for var_name in registered_vars:
         if var_name == "선생님메모":
             replacements.append({"key": var_name, "value": memo_value})
+        elif var_name == "공지내용":
+            replacements.append({"key": var_name, "value": built_content})
         elif var_name == "사이트링크":
             replacements.append({"key": var_name, "value": site_url})
         elif var_name in all_vars:
             val = all_vars[var_name]
-            if len(val) > ITEM_LIST_VAR_MAX_LEN:
+            if not is_none_type and len(val) > ITEM_LIST_VAR_MAX_LEN:
                 val = val[:ITEM_LIST_VAR_MAX_LEN - 1] + "…"
             replacements.append({"key": var_name, "value": val})
         else:
@@ -284,6 +294,9 @@ TEMPLATE_TYPE_VARIABLES: dict[str, list[str]] = {
     TYPE_ATTENDANCE: [
         "학원이름", "학생이름", "강의명", "차시명", "강의날짜", "강의시간", "선생님메모", "사이트링크",
     ],
+    # NONE 2종 — 카카오 등록 variables (Solapi 상세 조회로 검증된 set)
+    TYPE_NOTICE_WITHDRAWAL: ["학원명", "학생이름2"],                  # 본문 고정, 사이트링크 없음
+    TYPE_NOTICE_PAYMENT:    ["학원명", "학생이름2", "사이트링크"],     # 본문 고정 + 사이트링크
 }
 
 # ITEM_LIST 변수 값 길이 제한 (카카오 정책: 23자)
@@ -381,24 +394,25 @@ def build_unified_replacements(
     built_content = re.sub(r"#\{[^}]+\}", "", built_content)
     built_content = re.sub(r"\n{3,}", "\n\n", built_content).strip()
 
-    # ── 선생님메모 = body 치환 결과만 ──
-    # ITEM_LIST 템플릿이 header(학원이름), highlight(학생이름), item.list(장소/날짜/시간)를
-    # 자동 렌더링하므로, 선생님메모에 동일 정보를 넣으면 중복 표시됨.
-    # 선생님메모에는 body(선생님 편집 가능)의 변수 치환 결과만 넣는다.
+    # NONE 양식은 #{공지내용}으로, ITEM_LIST 양식은 #{선생님메모}로 들어감
+    all_vars["공지내용"] = built_content
     memo_value = built_content
 
     # Solapi replacements 빌드 — 등록된 모든 변수에 값 제공
-    # ITEM_LIST 변수는 23자 이하로 잘라야 함 (선생님메모/사이트링크 제외)
+    # ITEM_LIST 변수는 23자 이하로 잘라야 함 (선생님메모/사이트링크/공지내용 제외)
+    is_none_type = template_type in NONE_TEMPLATE_TYPES
     registered_vars = TEMPLATE_TYPE_VARIABLES.get(template_type, [])
     replacements = []
     for var_name in registered_vars:
         if var_name == "선생님메모":
             replacements.append({"key": var_name, "value": memo_value})
+        elif var_name == "공지내용":
+            replacements.append({"key": var_name, "value": built_content})
         elif var_name == "사이트링크":
             replacements.append({"key": var_name, "value": site_url})
         elif var_name in all_vars:
             val = all_vars[var_name]
-            if len(val) > ITEM_LIST_VAR_MAX_LEN:
+            if not is_none_type and len(val) > ITEM_LIST_VAR_MAX_LEN:
                 val = val[:ITEM_LIST_VAR_MAX_LEN - 1] + "…"
             replacements.append({"key": var_name, "value": val})
         else:
