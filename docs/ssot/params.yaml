@@ -175,10 +175,11 @@ videoBatch:
     failedJobsAlarmThreshold: 5
     stuckDetectedAlarmEnabled: true
     logRetentionDays: 30
-  # Ops: lightweight hourly recovery. 1 instance max (maxvCpus=2), scale to 0 when idle. ECS_AL2023: t4g 미지원 → m6g.medium.
+  # Ops: lightweight hourly recovery. 1 instance max (maxvCpus=2), scale to 0 when idle.
+  # 2026-05-12 audit: m6g.medium → t4g.medium. ECS_AL2023 ARM AMI(`/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended`) t4g 지원 검증. t4g.medium = 2 vCPU + 4GB RAM (m6g.medium = 1 vCPU + 4GB) + ~13% cheap. cron 잡 4-6분이라 burstable 충분.
   opsComputeEnvironmentName: academy-v1-video-ops-ce
   opsQueueName: academy-v1-video-ops-queue
-  opsInstanceType: m6g.medium
+  opsInstanceType: t4g.medium
   opsMaxvCpus: 2
   opsJobDefs:
     reconcile: academy-v1-video-ops-reconcile
