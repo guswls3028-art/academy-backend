@@ -108,7 +108,8 @@ IMPLEMENTED_AUTO_TRIGGERS: frozenset = frozenset([
     "clinic_self_study_completed",
     "clinic_result_notification",
     # 시험/과제/퇴원/결제 (즉시 발화)
-    "exam_score_published",
+    # exam_score_published 제거 (2026-05-12): 정책 SSOT "저장과 발송은 분리" — 점수 저장은 알림 트리거 아님.
+    # 학원장이 "수업결과 발송" 버튼으로 SendMessageModal 또는 manual-notification preview/confirm 통해 명시 발송.
     "withdrawal_complete",
     "payment_complete",
     "assignment_not_submitted",  # management command (cron)

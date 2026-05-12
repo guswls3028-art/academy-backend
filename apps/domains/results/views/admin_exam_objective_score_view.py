@@ -185,46 +185,8 @@ class AdminExamObjectiveScoreView(APIView):
                 logger.exception("progress pipeline dispatch failed (exam=%s, submission=%s)", _eid, _sid)
         transaction.on_commit(_dispatch_progress)
 
-        # 성적 공개 알림톡 (best-effort)
-        _new_total = float(result.total_score or 0.0)
-        _max = float(result.max_score or max_score)
-        _exam_title = str(getattr(exam, "title", "") or "")
-        _enrollment_id = enrollment_id
-        _tenant = request.tenant
-        def _send_score_notification():
-            try:
-                from apps.domains.enrollment.models import Enrollment as _Enr
-                from apps.domains.messaging.services import send_event_notification
-                enr = _Enr.objects.select_related("student", "lecture").filter(
-                    id=_enrollment_id, tenant=_tenant
-                ).first()
-                if enr and enr.student:
-                    # 차시명: exam → sessions에서 첫 번째 session title
-                    _session_title = ""
-                    try:
-                        from apps.domains.exams.models import Exam as _Exam
-                        _first_session = _Exam.objects.filter(id=_eid).values_list(
-                            "sessions__title", flat=True
-                        ).first()
-                        _session_title = str(_first_session or "")
-                    except Exception:
-                        pass
-                    send_event_notification(
-                        tenant=_tenant,
-                        trigger="exam_score_published",
-                        student=enr.student,
-                        send_to="parent",
-                        context={
-                            "시험명": _exam_title,
-                            "강의명": str(getattr(enr.lecture, "title", "") or ""),
-                            "차시명": _session_title,
-                            "시험성적": f"{int(_new_total)}/{int(_max)}",
-                            "_domain_object_id": str(_eid),
-                        },
-                    )
-            except Exception:
-                logger.debug("exam_score_published notification failed", exc_info=True)
-        transaction.on_commit(_send_score_notification)
+        # 정책 SSOT: messaging-policy.md "저장과 발송은 분리" — 점수 저장 자체는 알림 트리거 아님.
+        # exam_score_published = MANUAL_DEFAULT. 학원장이 명시적으로 발송 버튼 클릭(preview→confirm)할 때만 발송.
 
         return Response(
             {

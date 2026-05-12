@@ -243,49 +243,8 @@ class AdminExamTotalScoreView(APIView):
             logger.exception("progress pipeline failed (exam=%s, submission=%s)", exam_id, submission_id)
             progress_error = str(exc)[:200]
 
-        # -------------------------------------------------
-        # 7️⃣ 성적 공개 알림톡 (best-effort, on_commit)
-        # -------------------------------------------------
-        _notif_tenant = request.tenant
-        _notif_exam_id = int(exam_id)
-        _notif_enrollment_id = int(enrollment_id)
-        _notif_exam_title = str(getattr(exam, "title", "") or "")
-        _notif_score = int(new_score)
-        _notif_max = int(effective_max)
-        def _send_score_notification():
-            try:
-                from apps.domains.enrollment.models import Enrollment
-                from apps.domains.messaging.services import send_event_notification
-
-                enrollment_obj = Enrollment.objects.select_related("student", "lecture").filter(
-                    id=_notif_enrollment_id, tenant=_notif_tenant
-                ).first()
-                if enrollment_obj and enrollment_obj.student:
-                    # 차시명: exam → sessions M2M에서 첫 번째 session의 title
-                    _session_title = ""
-                    try:
-                        _first_session = Exam.objects.filter(id=_notif_exam_id).values_list(
-                            "sessions__title", flat=True
-                        ).first()
-                        _session_title = str(_first_session or "")
-                    except Exception:
-                        pass
-                    send_event_notification(
-                        tenant=_notif_tenant,
-                        trigger="exam_score_published",
-                        student=enrollment_obj.student,
-                        send_to="parent",
-                        context={
-                            "시험명": _notif_exam_title,
-                            "강의명": str(getattr(enrollment_obj.lecture, "title", "") or ""),
-                            "차시명": _session_title,
-                            "시험성적": f"{_notif_score}/{_notif_max}",
-                            "_domain_object_id": str(_notif_exam_id),
-                        },
-                    )
-            except Exception:
-                logger.debug("exam_score_published notification failed (exam=%s)", _notif_exam_id, exc_info=True)
-        transaction.on_commit(_send_score_notification)
+        # 정책 SSOT: messaging-policy.md "저장과 발송은 분리" — 점수 저장 자체는 알림 트리거 아님.
+        # exam_score_published = MANUAL_DEFAULT. 학원장이 명시적으로 발송 버튼 클릭(preview→confirm)할 때만 발송.
 
         return Response(
             {
