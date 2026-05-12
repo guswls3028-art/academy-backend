@@ -82,8 +82,8 @@ def recalc_scores_for_policy_change(*, policy) -> int:
             else:
                 rounded = int(round(float(percent) / float(round_unit)) * float(round_unit))
                 threshold = int(cutline_value or 0)
-                if threshold <= 0:
-                    threshold = 80
+                # 학원장이 의도적으로 0 설정한 케이스 = "커트라인 없음(전원 합격)"으로 존중.
+                # 과거 'threshold<=0이면 80으로 덮어쓰기' 로직은 학원장 입력 무시 버그였음.
                 passed = bool(rounded >= threshold)
                 clinic_required = bool(clinic_enabled and clinic_on_fail and (not passed))
 

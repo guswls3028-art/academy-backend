@@ -101,7 +101,13 @@ def calc_homework_passed_and_clinic(
             },
         )
         mode = getattr(policy, "cutline_mode", None) or "PERCENT"
-        cutline_value = int(getattr(policy, "cutline_value", 0) or policy.cutline_percent or 80)
+        # 0은 학원장이 의도적으로 "커트라인 없음"으로 설정한 값 — 80 fallback 금지.
+        # cutline_value 컬럼이 None인 legacy 케이스에만 cutline_percent로 fallback.
+        _cv_raw = getattr(policy, "cutline_value", None)
+        if _cv_raw is None:
+            cutline_value = int(getattr(policy, "cutline_percent", 80) or 80)
+        else:
+            cutline_value = int(_cv_raw)
         round_unit = int(getattr(policy, "round_unit_percent", 5) or 5)
         clinic_enabled = bool(getattr(policy, "clinic_enabled", True))
         clinic_on_fail = bool(getattr(policy, "clinic_on_fail", True))
@@ -123,7 +129,8 @@ def calc_homework_passed_and_clinic(
         if percent is None:
             return False, False, None
         rounded = _round_percent(percent, round_unit)
-        threshold = int(cutline_value if cutline_value else (getattr(policy, "cutline_percent", 80) if policy else 80))
+        # 0은 학원장이 명시 설정한 "커트라인 없음" — 그대로 사용 (전원 합격).
+        threshold = int(cutline_value)
         passed = bool(rounded >= threshold)
         clinic_required = bool(
             clinic_enabled and clinic_on_fail and (not passed)

@@ -256,12 +256,27 @@ class MyGradesSummaryView(APIView):
             else:
                 achievement = "FAIL"
 
+            # max_score: HomeworkScore.max_score가 null인 경우 (퍼센트 입력) Homework.meta.default_max_score로 fallback.
+            # 학원장이 만점=20점으로 설정한 과제가 학생 화면에서 100점으로 잘못 보이는 버그 fix.
+            effective_max = hs.max_score
+            if effective_max is None and hs.homework:
+                _meta = getattr(hs.homework, "meta", None) or {}
+                if isinstance(_meta, dict):
+                    _dms = _meta.get("default_max_score")
+                    if _dms is not None:
+                        try:
+                            _v = float(_dms)
+                            if _v > 0:
+                                effective_max = _v
+                        except (TypeError, ValueError):
+                            pass
+
             homework_list.append({
                 "homework_id": hs.homework_id,
                 "enrollment_id": hs.enrollment_id,
                 "title": hs.homework.title if hs.homework else f"과제 #{hs.homework_id}",
                 "score": hs.score,
-                "max_score": hs.max_score,
+                "max_score": effective_max,
                 "passed": is_pass_1st,
                 "achievement": achievement,
                 "retake_count": max_attempt,
