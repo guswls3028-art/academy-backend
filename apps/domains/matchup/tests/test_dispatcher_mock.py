@@ -274,4 +274,4 @@ class DispatcherRegressionTests(TestCase):
         src = inspect.getsource(dispatcher_mock)
         # 명시 import 체크
         self.assertIn("from .fallback_router import", src)
-        self.assertIn("from .tier0_native_pdf import analyze_pdf_v5_4", src)
+        self.assertIn("from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_4", src)
