@@ -135,6 +135,12 @@ class Student(TimestampModel):
         help_text="삭제일시. 설정 시 30일 보관 후 자동 삭제",
     )
 
+    schedule_hidden_before = models.DateField(
+        null=True,
+        blank=True,
+        help_text="학생앱 일정 휴지통: 이 날짜를 포함하여 그 이전 차시/클리닉 예약은 학생 화면에서 숨김. 실제 데이터는 그대로 유지.",
+    )
+
     tags = models.ManyToManyField(
         "Tag",
         through="StudentTag",

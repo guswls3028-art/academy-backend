@@ -2,7 +2,12 @@
 from django.urls import path
 
 from .dashboard.views import StudentDashboardView
-from .sessions.views import StudentSessionListView, StudentSessionDetailView, StudentAttendanceSummaryView
+from .sessions.views import (
+    StudentSessionListView,
+    StudentSessionDetailView,
+    StudentAttendanceSummaryView,
+    StudentSessionClearPastView,
+)
 from .exams.views import (
     StudentExamListView,
     StudentExamDetailView,
@@ -43,6 +48,7 @@ urlpatterns = [
 
     # Sessions
     path("sessions/me/", StudentSessionListView.as_view()),
+    path("sessions/clear-past/", StudentSessionClearPastView.as_view()),
     path("sessions/<int:pk>/", StudentSessionDetailView.as_view()),
 
     # Attendance summary (학생 본인 출결 누적)

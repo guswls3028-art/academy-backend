@@ -1,8 +1,9 @@
 # apps/domains/student_app/sessions/views.py
 import re
-from datetime import time as dt_time
+from datetime import date as dt_date, time as dt_time
 
 from django.db.models import Count, Q
+from django.utils import timezone
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -42,6 +43,9 @@ class StudentSessionListView(APIView):
         if not tenant:
             return Response(StudentSessionSerializer([], many=True).data)
 
+        # 학생이 휴지통으로 비운 cutoff (포함, 이 날짜 이하는 숨김)
+        hidden_before: dt_date | None = getattr(student, "schedule_hidden_before", None)
+
         # 1) 강의 차시
         session_ids = (
             SessionEnrollment.objects.filter(
@@ -52,11 +56,14 @@ class StudentSessionListView(APIView):
             .values_list("session_id", flat=True)
             .distinct()
         )
-        sessions = (
+        sessions_qs = (
             LectureSession.objects.filter(id__in=session_ids)
             .select_related("lecture")
             .order_by("date", "order", "id")
         )
+        if hidden_before is not None:
+            sessions_qs = sessions_qs.exclude(date__lte=hidden_before)
+        sessions = sessions_qs
         data = [
             {
                 "id": s.id,
@@ -85,6 +92,8 @@ class StudentSessionListView(APIView):
         )
         for cp in clinic_participants:
             sess = cp.session
+            if hidden_before is not None and sess and sess.date and sess.date <= hidden_before:
+                continue
             status_label = "대기 중" if cp.status == "pending" else "예약됨"
             data.append({
                 "id": cp.id * -1,  # 음수 ID로 클리닉 구분
@@ -99,6 +108,35 @@ class StudentSessionListView(APIView):
         # 날짜 정렬
         data.sort(key=lambda x: x.get("date") or "9999-99-99")
         return Response(StudentSessionSerializer(data, many=True).data)
+
+
+class StudentSessionClearPastView(APIView):
+    """
+    POST /student/sessions/clear-past/
+    학생 본인(또는 학부모 대리 계정)이 "내 일정" 휴지통을 눌렀을 때 호출.
+    오늘 이전(어제까지) 차시/클리닉 예약을 화면에서 모두 숨김.
+    실제 차시/예약 데이터는 학원/선생 소유이므로 절대 삭제하지 않고,
+    Student.schedule_hidden_before 컷오프만 갱신.
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def post(self, request):
+        from datetime import timedelta
+
+        student = get_request_student(request)
+        if not student:
+            return Response({"detail": "Not found."}, status=404)
+        tenant = getattr(request, "tenant", None)
+        if not tenant or student.tenant_id != getattr(tenant, "id", None):
+            return Response({"detail": "Not found."}, status=404)
+
+        # 오늘은 "지난"이 아니므로 어제까지만 숨김 cutoff 로 잡음.
+        cutoff = timezone.localdate() - timedelta(days=1)
+
+        student.schedule_hidden_before = cutoff
+        student.save(update_fields=["schedule_hidden_before", "updated_at"])
+        return Response({"hidden_before": cutoff.isoformat()})
 
 
 class StudentAttendanceSummaryView(APIView):
