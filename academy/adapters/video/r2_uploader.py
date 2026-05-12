@@ -277,3 +277,10 @@ def verify_hls_integrity_r2(
                         raise UploadIntegrityError(f"segment missing: {seg_key}")
     if segment_count < min_segments:
         raise UploadIntegrityError(f"segment count {segment_count} < min_segments {min_segments}")
+    # 썸네일 invariant: 모바일 카드 UI가 thumbnail 비어있는 영상을 "처리안됨"으로
+    # 인식하므로 hls 와 동급으로 final prefix 에 thumbnail.jpg 가 반드시 존재해야 한다.
+    thumb_key = prefix + "thumbnail.jpg"
+    try:
+        client.head_object(Bucket=bucket, Key=thumb_key)
+    except Exception:
+        raise UploadIntegrityError(f"thumbnail.jpg missing: {thumb_key}")

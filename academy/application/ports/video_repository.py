@@ -26,8 +26,13 @@ class IVideoRepository(ABC):
         video_id: int,
         hls_path: str,
         duration: int | None = None,
+        thumbnail_r2_key: str | None = None,
     ) -> tuple[bool, str]:
-        """비디오 처리 완료 (READY 상태로 전환)"""
+        """비디오 처리 완료 (READY 상태로 전환).
+
+        thumbnail_r2_key: Worker가 R2에 올린 thumbnail.jpg 의 key. 비어 있으면
+        모바일 카드 UI에 회색 placeholder 만 보이므로 invariant 상 항상 전달돼야 한다.
+        """
         pass
 
     @abstractmethod

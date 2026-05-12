@@ -126,10 +126,19 @@ class Video(TimestampModel):
     comment_count = models.PositiveIntegerField(default=0, help_text="댓글 수")
 
     # 썸네일은 Worker가 생성
+    # legacy ImageField (Django default storage 가정). 신규 코드는 thumbnail_r2_key 사용.
     thumbnail = models.ImageField(
         upload_to="thumbnails/",
         null=True,
         blank=True,
+    )
+
+    # Worker가 R2에 올린 thumbnail.jpg 의 key (SSOT). complete_video 시 채워짐.
+    thumbnail_r2_key = models.CharField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="R2 key of generated thumbnail. Worker invariant: 항상 채워짐.",
     )
 
     status = models.CharField(

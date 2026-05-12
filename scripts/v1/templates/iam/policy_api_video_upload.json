@@ -2,22 +2,30 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "BatchSubmitVideoJob",
+      "Sid": "BatchMutateScopedJobs",
       "Effect": "Allow",
-      "Action": [
-        "batch:SubmitJob",
-        "batch:TerminateJob",
-        "batch:DescribeJobs",
-        "batch:DescribeJobQueues",
-        "batch:DescribeJobDefinitions"
-      ],
+      "Action": ["batch:SubmitJob", "batch:TerminateJob"],
       "Resource": [
         "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-v1-video-batch-jobdef",
-        "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-v1-video-batch-long-jobdef",
+        "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-v1-video-batch-jobdef:*",
+        "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-v1-video-ops-recover-dead",
+        "arn:aws:batch:ap-northeast-2:809466760795:job-definition/academy-v1-video-ops-recover-dead:*",
         "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-batch-queue",
-        "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-batch-long-queue",
+        "arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-ops-queue",
         "arn:aws:batch:ap-northeast-2:809466760795:job/*"
       ]
+    },
+    {
+      "Sid": "BatchReadAllResources",
+      "Effect": "Allow",
+      "Action": [
+        "batch:DescribeJobs",
+        "batch:ListJobs",
+        "batch:DescribeJobQueues",
+        "batch:DescribeJobDefinitions",
+        "batch:DescribeComputeEnvironments"
+      ],
+      "Resource": "*"
     },
     {
       "Sid": "BatchPassRole",

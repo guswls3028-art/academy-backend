@@ -78,6 +78,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "max_speed",
             "show_watermark",
             "thumbnail",
+            "thumbnail_r2_key",
             "thumbnail_url",
             "hls_path",
             "hls_url",
@@ -92,6 +93,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
             "thumbnail",
+            "thumbnail_r2_key",
             "hls_path",
             "thumbnail_url",
             "hls_url",
@@ -226,35 +228,26 @@ class VideoSerializer(serializers.ModelSerializer):
         if not cdn:
             return None
 
-        # 1️⃣ explicit thumbnail
+        # 1️⃣ thumbnail_r2_key (SSOT — Worker가 항상 채움)
+        r2_key = (getattr(obj, "thumbnail_r2_key", "") or "").strip()
+        if r2_key:
+            path = self._normalize_media_path(r2_key)
+            return f"{cdn}/{path}?v={self._cache_version(obj)}"
+
+        # 2️⃣ legacy ImageField (deprecated, 점진 제거)
         if obj.thumbnail:
             path = self._normalize_media_path(obj.thumbnail.name)
             return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
-        # 2️⃣ READY fallback (경로 통일: tenants/{id}/video/hls/...) — session/lecture/tenant 없으면 None
+        # 3️⃣ READY fallback — video.tenant_id 직접 (V1.1 SSOT). session 체인 폐기.
         if obj.status == obj.Status.READY:
-            try:
-                session = getattr(obj, "session", None)
-                lecture = getattr(session, "lecture", None) if session else None
-                tenant = getattr(lecture, "tenant", None) if lecture else None
-                if tenant is None:
-                    return None
-                tenant_id = getattr(tenant, "id", None) or getattr(tenant, "pk", None)
-                from apps.core.r2_paths import video_hls_prefix
-                path = self._normalize_media_path(
-                    f"{video_hls_prefix(tenant_id=tenant_id, video_id=obj.id)}/thumbnail.jpg"
-                )
-            except Exception:
-                try:
-                    code = getattr(getattr(getattr(obj, "session", None), "lecture", None), "tenant", None)
-                    code = getattr(code, "code", None) if code else None
-                    if code is None:
-                        return None
-                    path = self._normalize_media_path(
-                        f"media/hls/videos/{code}/videos/{obj.id}/thumbnail.jpg"
-                    )
-                except Exception:
-                    return None
+            tenant_id = getattr(obj, "tenant_id", None)
+            if tenant_id is None:
+                return None
+            from apps.core.r2_paths import video_hls_prefix
+            path = self._normalize_media_path(
+                f"{video_hls_prefix(tenant_id=tenant_id, video_id=obj.id)}/thumbnail.jpg"
+            )
             return f"{cdn}/{path}?v={self._cache_version(obj)}"
 
         return None

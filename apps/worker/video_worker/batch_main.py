@@ -196,7 +196,12 @@ def main() -> int:
 
     video = job_obj.video
     if video and video.status == "READY" and video.hls_path:
-        job_complete(job_id, video.hls_path, video.duration)
+        # 이미 READY 인 경우에도 thumbnail_r2_key 누락 invariant 회복: 비어 있으면 final prefix 의 thumbnail.jpg 키로 채운다.
+        existing_thumb = (getattr(video, "thumbnail_r2_key", "") or "").strip()
+        if not existing_thumb:
+            from apps.core.r2_paths import video_hls_prefix
+            existing_thumb = f"{video_hls_prefix(tenant_id=job_obj.tenant_id, video_id=job_obj.video_id).rstrip('/')}/thumbnail.jpg"
+        job_complete(job_id, video.hls_path, video.duration, thumbnail_r2_key=existing_thumb)
         _log_json("IDEMPOTENT_READY", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, reason="video_already_ready")
         return 0
 
@@ -244,7 +249,7 @@ def main() -> int:
     heartbeat_thread.start()
 
     try:
-        hls_path, duration = process_video(job=job_dict, cfg=cfg, progress=progress)
+        hls_path, duration, thumbnail_r2_key = process_video(job=job_dict, cfg=cfg, progress=progress)
         # ffmpeg + R2 업로드 동안 메인 스레드 커넥션이 RDS Proxy IdleClientTimeout(30분)에
         # 의해 끊겼을 수 있다. 다음 DB 작업 전에 stale 커넥션을 회수한다.
         from django.db import close_old_connections
@@ -252,7 +257,7 @@ def main() -> int:
         if not _video_still_exists(job_obj.video_id):
             _log_json("WORKER_CANCELLED_BY_VIDEO_DELETE", job_id=job_id, tenant_id=job_obj.tenant_id, video_id=job_obj.video_id, aws_batch_job_id=aws_batch_job_id, reason="video_deleted_before_complete")
             return 0
-        ok, reason = job_complete(job_id, hls_path, duration)
+        ok, reason = job_complete(job_id, hls_path, duration, thumbnail_r2_key=thumbnail_r2_key)
         if not ok:
             raise RuntimeError(f"job_complete failed: {reason}")
 

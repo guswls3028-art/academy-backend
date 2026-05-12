@@ -494,6 +494,7 @@ class DjangoVideoRepository:
         video_id: int,
         hls_path: str,
         duration: Optional[int] = None,
+        thumbnail_r2_key: Optional[str] = None,
     ) -> tuple[bool, str]:
         from django.db import transaction
         from apps.domains.video.models import Video
@@ -521,6 +522,8 @@ class DjangoVideoRepository:
             video.hls_path = str(hls_path)
             if duration is not None and duration >= 0:
                 video.duration = int(duration)
+            if thumbnail_r2_key:
+                video.thumbnail_r2_key = str(thumbnail_r2_key)[:500]
             video.status = Video.Status.READY
             if hasattr(video, "leased_until"):
                 video.leased_until = None
@@ -529,6 +532,8 @@ class DjangoVideoRepository:
             update_fields = ["hls_path", "status"]
             if duration is not None and duration >= 0:
                 update_fields.append("duration")
+            if thumbnail_r2_key:
+                update_fields.append("thumbnail_r2_key")
             if hasattr(video, "leased_until"):
                 update_fields.append("leased_until")
             if hasattr(video, "leased_by"):
@@ -629,11 +634,19 @@ def job_heartbeat(job_id, lease_seconds: int = 3600) -> bool:
     return n == 1
 
 
-def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> tuple[bool, str]:
+def job_complete(
+    job_id: str,
+    hls_path: str,
+    duration: Optional[int] = None,
+    thumbnail_r2_key: Optional[str] = None,
+) -> tuple[bool, str]:
     """
     Job SUCCEEDED + Video READY commit. Transactional.
     업로드+검증 완료 후 마지막에 READY 조건부 업데이트 (같은 트랜잭션 내에서 job state·hls_path 반영 후 status=READY).
     Idempotent: 이미 SUCCEEDED+READY이면 True 반환 (중복 실행 시 안전).
+
+    thumbnail_r2_key: Worker가 R2에 올린 thumbnail.jpg 의 key. 비어 있으면
+    모바일 카드 UI에 회색 placeholder 만 보이므로 invariant 상 항상 전달돼야 한다.
     """
     from django.db import transaction
     from apps.domains.video.models import Video, VideoTranscodeJob
@@ -660,13 +673,18 @@ def job_complete(job_id: str, hls_path: str, duration: Optional[int] = None) -> 
         video.hls_path = str(hls_path)
         if duration is not None and duration >= 0:
             video.duration = int(duration)
+        if thumbnail_r2_key:
+            video.thumbnail_r2_key = str(thumbnail_r2_key)[:500]
         video.status = Video.Status.READY
         video.error_reason = ""
         if hasattr(video, "leased_until"):
             video.leased_until = None
         if hasattr(video, "leased_by"):
             video.leased_by = ""
-        video.save(update_fields=["hls_path", "duration", "status", "error_reason", "leased_until", "leased_by"])
+        update_fields = ["hls_path", "duration", "status", "error_reason", "leased_until", "leased_by"]
+        if thumbnail_r2_key:
+            update_fields.append("thumbnail_r2_key")
+        video.save(update_fields=update_fields)
         job.state = VideoTranscodeJob.State.SUCCEEDED
         job.locked_by = ""
         job.locked_until = None

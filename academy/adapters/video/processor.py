@@ -54,12 +54,13 @@ def process_video(
     job: dict,
     cfg: Any,
     progress: IProgress,
-) -> tuple[str, int]:
+) -> tuple[str, int, str]:
     """
     비디오 처리: 다운로드 -> 트랜스코드 -> R2 업로드
 
     Returns:
-        (hls_master_path, duration_seconds)
+        (hls_master_path, duration_seconds, thumbnail_r2_key)
+        - thumbnail_r2_key 는 항상 채워진다. 실패 시 RuntimeError raise.
     """
     from academy.adapters.video.downloader import download_to_file
     from academy.adapters.video.utils import temp_workdir, trim_tail
@@ -334,16 +335,19 @@ def process_video(
             },
             tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
-        try:
-            at = float(cfg.THUMBNAIL_AT_SECONDS)
-            if duration >= 10:
-                at = float(int(duration * 0.5))
-            elif duration >= 3:
-                at = float(max(1, duration // 2))
-            else:
-                at = 0.0
+        # 썸네일은 invariant: 실패 시 영상 처리 자체를 실패로 간주.
+        # 모바일/카드 UI가 thumbnail 없는 영상을 "처리안됨"으로 인식하므로
+        # status=READY 인데 thumbnail 없는 상태가 절대 만들어지면 안 된다.
+        at = float(cfg.THUMBNAIL_AT_SECONDS)
+        if duration >= 10:
+            at = float(int(duration * 0.5))
+        elif duration >= 3:
+            at = float(max(1, duration // 2))
+        else:
+            at = 0.0
 
-            thumb_path = out_dir / "thumbnail.jpg"
+        thumb_path = out_dir / "thumbnail.jpg"
+        try:
             generate_thumbnail(
                 input_path=str(src_path),
                 output_path=thumb_path,
@@ -351,38 +355,24 @@ def process_video(
                 at_seconds=float(at),
                 timeout=min(int(cfg.FFMPEG_TIMEOUT_SECONDS), 120),
             )
-            # ✅ 단계 완료: 100%
-            progress.record_progress(
-                job_id,
-                "thumbnail",
-                {
-                    "percent": 90,
-                    "remaining_seconds": 30,
-                    "step_index": 6,
-                    "step_total": VIDEO_ENCODING_STEP_TOTAL,
-                    "step_name": "thumbnail",
-                    "step_name_display": "썸네일",
-                    "step_percent": 100,
-                },
-                tenant_id=tenant_id_str,
-            )
         except Exception as e:
-            logger.warning("thumbnail failed video_id=%s err=%s", video_id, e)
-            # 실패해도 100%로 표시 (다음 단계로 진행)
-            progress.record_progress(
-                job_id,
-                "thumbnail",
-                {
-                    "percent": 90,
-                    "remaining_seconds": 30,
-                    "step_index": 6,
-                    "step_total": VIDEO_ENCODING_STEP_TOTAL,
-                    "step_name": "thumbnail",
-                    "step_name_display": "썸네일",
-                    "step_percent": 100,
-                },
-                tenant_id=tenant_id_str,
-            )
+            raise RuntimeError(f"thumbnail_generation_failed:{trim_tail(str(e))}") from e
+        if not thumb_path.exists() or thumb_path.stat().st_size <= 0:
+            raise RuntimeError("thumbnail_generation_failed:empty_output")
+        progress.record_progress(
+            job_id,
+            "thumbnail",
+            {
+                "percent": 90,
+                "remaining_seconds": 30,
+                "step_index": 6,
+                "step_total": VIDEO_ENCODING_STEP_TOTAL,
+                "step_name": "thumbnail",
+                "step_name_display": "썸네일",
+                "step_percent": 100,
+            },
+            tenant_id=tenant_id_str,
+        )
 
         _check_abort(job)
         progress.record_progress(
@@ -527,4 +517,6 @@ def process_video(
         },
         tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
     )
-    return hls_master_path, int(duration)
+    # thumbnail.jpg 는 hls 디렉토리와 함께 final prefix 로 publish 되었다.
+    thumbnail_r2_key = f"{hls_prefix.rstrip('/')}/thumbnail.jpg"
+    return hls_master_path, int(duration), thumbnail_r2_key
