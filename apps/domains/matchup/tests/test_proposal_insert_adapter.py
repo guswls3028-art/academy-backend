@@ -294,7 +294,7 @@ class SandboxInsertTests(TestCase):
 class RegressionTests(TestCase):
     def test_no_callback_imports(self):
         """운영 callback path import 0회 — _handle_matchup_* 어디서도 안 보임."""
-        from academy.adapters.db.django import repositories_matchup_proposal
+        from academy.adapters.db.django import repositories_matchup_proposal as proposal_insert_adapter
         import inspect
         src = inspect.getsource(proposal_insert_adapter)
         if src.startswith('"""'):
@@ -313,7 +313,7 @@ class RegressionTests(TestCase):
                              f"adapter 에서 운영 callback access '{token}' 발견")
 
     def test_no_real_api_imports(self):
-        from academy.adapters.db.django import repositories_matchup_proposal
+        from academy.adapters.db.django import repositories_matchup_proposal as proposal_insert_adapter
         import inspect
         src = inspect.getsource(proposal_insert_adapter)
         if src.startswith('"""'):
@@ -338,7 +338,7 @@ class RegressionTests(TestCase):
         docstring / 주석 mention 은 허용 (사용자 directive 준수 명시 목적).
         AST 로 Attribute / Name / Call 검사.
         """
-        from academy.adapters.db.django import repositories_matchup_proposal
+        from academy.adapters.db.django import repositories_matchup_proposal as proposal_insert_adapter
         import ast, inspect
         tree = ast.parse(inspect.getsource(proposal_insert_adapter))
 
@@ -365,7 +365,7 @@ class RegressionTests(TestCase):
 
     def test_lazy_import_only_in_sandbox_path(self):
         """create_proposal import 가 module-level 이 아니라 함수 내부에 있는지."""
-        from academy.adapters.db.django import repositories_matchup_proposal
+        from academy.adapters.db.django import repositories_matchup_proposal as proposal_insert_adapter
         import inspect
         # module-level import 검사 (함수 def 시작 전)
         src = inspect.getsource(proposal_insert_adapter)

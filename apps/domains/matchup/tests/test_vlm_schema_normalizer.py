@@ -300,7 +300,7 @@ class RealProblemsLightApiTests(TestCase):
 
 class NormalizerRegressionTests(TestCase):
     def test_no_vlm_sdk_imports(self):
-        from academy.adapters.ai.vlm import schema_normalizer
+        from academy.adapters.ai.vlm import schema_normalizer as vlm_schema_normalizer
         import inspect
         src = inspect.getsource(vlm_schema_normalizer)
         if src.startswith('"""'):
@@ -321,7 +321,7 @@ class NormalizerRegressionTests(TestCase):
             )
 
     def test_no_operating_vlm_helper_imports(self):
-        from academy.adapters.ai.vlm import schema_normalizer
+        from academy.adapters.ai.vlm import schema_normalizer as vlm_schema_normalizer
         import inspect
         src = inspect.getsource(vlm_schema_normalizer)
         if src.startswith('"""'):

@@ -217,7 +217,7 @@ class ParserNoReferenceTests(TestCase):
             )
 
     def test_vlm_mock_does_not_import_new_models(self):
-        from academy.adapters.ai.vlm import mock_contract
+        from academy.adapters.ai.vlm import mock_contract as vlm_mock_contract
         import inspect
         src = inspect.getsource(vlm_mock_contract)
         forbidden = (

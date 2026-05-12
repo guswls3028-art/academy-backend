@@ -432,7 +432,7 @@ class IntegrationCompatibilityTests(TestCase):
 
 class NormalizerRegressionTests(TestCase):
     def test_no_real_api_imports(self):
-        from academy.adapters.ai.ocr import schema_normalizer
+        from academy.adapters.ai.ocr import schema_normalizer as ocr_schema_normalizer
         import inspect
         src = inspect.getsource(ocr_schema_normalizer)
         if src.startswith('"""'):
@@ -452,7 +452,7 @@ class NormalizerRegressionTests(TestCase):
                              f"normalizer 에서 실 SDK import '{token}' 발견")
 
     def test_no_operating_helper_imports(self):
-        from academy.adapters.ai.ocr import schema_normalizer
+        from academy.adapters.ai.ocr import schema_normalizer as ocr_schema_normalizer
         import inspect
         src = inspect.getsource(ocr_schema_normalizer)
         if src.startswith('"""'):
