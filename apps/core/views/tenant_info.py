@@ -132,6 +132,8 @@ class TenantInfoView(APIView):
             "og_image_url": (getattr(tenant, "og_image_url", None) or "").strip(),
             "video_max_sessions": int(getattr(tenant, "video_max_sessions", 2) or 0),
             "video_max_devices": int(getattr(tenant, "video_max_devices", 2) or 0),
+            "pass_label": (getattr(tenant, "pass_label", None) or "").strip(),
+            "fail_label": (getattr(tenant, "fail_label", None) or "").strip(),
         })
 
     def patch(self, request):
@@ -172,6 +174,13 @@ class TenantInfoView(APIView):
             if og_field in request.data:
                 setattr(tenant, og_field, (request.data.get(og_field) or "").strip()[:max_len])
                 update_fields.append(og_field)
+
+        # 합/불 라벨 커스텀 (학원장이 자유 텍스트로 지정. 빈값=기본값)
+        for label_field in ("pass_label", "fail_label"):
+            if label_field in request.data:
+                v = (request.data.get(label_field) or "").strip()[:20]
+                setattr(tenant, label_field, v)
+                update_fields.append(label_field)
 
         # 영상 정책 (동시시청·동시디바이스). 0~10 범위로 클램프. 0=무제한 fallback(settings).
         for vf in ("video_max_sessions", "video_max_devices"):

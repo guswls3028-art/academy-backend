@@ -287,4 +287,8 @@ class MyGradesSummaryView(APIView):
         return Response({
             "exams": exam_list,
             "homeworks": homework_list,
+            "labels": {
+                "pass": (getattr(tenant, "pass_label", None) or "").strip(),
+                "fail": (getattr(tenant, "fail_label", None) or "").strip(),
+            },
         })

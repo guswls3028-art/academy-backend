@@ -122,6 +122,18 @@ class Tenant(models.Model):
         help_text="학생 1인당 동시 디바이스 수. 0=제한 없음. 1~10=제한.",
     )
 
+    # ---------- 합격/불합격 라벨 (테넌트별 커스텀) ----------
+    # 학원장이 합/불 라벨을 자유 텍스트로 지정 가능.
+    # 예: "통과/재시험", "OK/재학습". 빈 문자열이면 기본값("합격"/"불합격") 사용.
+    pass_label = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="합격 표기 라벨 커스텀. 빈값=기본값 '합격'.",
+    )
+    fail_label = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="불합격 표기 라벨 커스텀. 빈값=기본값 '불합격'.",
+    )
+
     # ---------- OG(Open Graph) 미리보기 ----------
     og_title = models.CharField(
         max_length=100, blank=True, default="",
