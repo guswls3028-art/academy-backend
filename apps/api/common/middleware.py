@@ -129,6 +129,68 @@ class SentryContextMiddleware:
         return self.get_response(request)
 
 
+class MustChangePasswordGate:
+    """JWT mcp=True 클레임 보유 시 비밀번호 변경/로그아웃/refresh/me 외 모든 경로 403.
+
+    의도(2026-05-12 직전 rebase commit 잔재):
+    - 신규 가입 학생 등에게 임시 비밀번호 부여 → mcp 클레임 박힌 토큰 발급 →
+      로그인된 상태에서도 다른 데이터 접근 금지, 비번 변경 강제.
+    - 토큰에 mcp가 없거나 False면 무조건 통과(기존 사용자 영향 0).
+    - Authorization 헤더 없으면 통과(인증 단계는 DRF가 처리).
+
+    회귀 spec: apps/api/common/tests/test_must_change_password_gate.py
+    """
+
+    BYPASS_PREFIXES = (
+        "/admin",                  # Django admin
+        "/api/v1/internal",        # 내부 운영 호출
+        "/health",
+        "/healthz",
+        "/readyz",
+        "/api/v1/token",           # JWT refresh
+        "/api/v1/auth/logout",     # 로그아웃 허용
+        "/api/v1/auth/login",      # 로그인 자체는 게이트 무관
+    )
+    ALLOW_EXACT = (
+        "/api/v1/auth/change-password/",
+        "/api/v1/auth/change-password",
+        "/api/v1/core/me/profile/change-password/",
+        "/api/v1/core/me/profile/change-password",
+        "/api/v1/core/me/",
+        "/api/v1/core/me",
+    )
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        auth = request.META.get("HTTP_AUTHORIZATION") or ""
+        if not auth.startswith("Bearer "):
+            return self.get_response(request)
+        path = request.path or ""
+        # bypass prefix 우선 — admin/internal/health/token 등은 비번 변경 게이트와 무관.
+        for p in self.BYPASS_PREFIXES:
+            if path.startswith(p):
+                return self.get_response(request)
+        # mcp 클레임 추출 — 토큰 파싱 실패는 게이트 통과(DRF 단계에서 401 처리).
+        try:
+            from rest_framework_simplejwt.tokens import UntypedToken
+            raw = auth.split(" ", 1)[1].strip()
+            tok = UntypedToken(raw)
+            mcp = bool(tok.get("mcp"))
+        except Exception:
+            return self.get_response(request)
+        if not mcp:
+            return self.get_response(request)
+        # mcp=True — 정확 일치 경로만 통과.
+        if path in self.ALLOW_EXACT:
+            return self.get_response(request)
+        return JsonResponse(
+            {"code": "must_change_password", "detail": "비밀번호를 먼저 변경해야 합니다."},
+            status=403,
+        )
+
+
 class UnhandledExceptionMiddleware:
     """미처리 예외를 500 JSON으로 변환. process_exception 응답에 CORS 헤더를 직접 붙임."""
 
