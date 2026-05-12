@@ -118,6 +118,7 @@ def _default_draft_config(tenant):
         "subtitle": "",
         "primary_color": "#2563EB",
         "hero_image_url": "",
+        "hero_images": [],
         "logo_url": "",
         "cta_text": "로그인",
         "cta_link": "/login",
@@ -192,6 +193,19 @@ def _resolve_image_urls(config: dict) -> dict:
             result[field] = r2_storage.generate_presigned_get_url_admin(
                 key=val, expires_in=86400 * 7
             )
+    hero_images = result.get("hero_images") or []
+    if isinstance(hero_images, list):
+        resolved = []
+        for v in hero_images:
+            if isinstance(v, str) and v.startswith("landing/"):
+                resolved.append(
+                    r2_storage.generate_presigned_get_url_admin(
+                        key=v, expires_in=86400 * 7
+                    )
+                )
+            elif isinstance(v, str):
+                resolved.append(v)
+        result["hero_images"] = resolved
     return result
 
 
@@ -226,6 +240,18 @@ def _validate_config(data: dict) -> list[str]:
     tagline = data.get("tagline", "")
     if tagline and len(tagline) > 100:
         errors.append("한 줄 소개는 100자 이내여야 합니다.")
+
+    hero_images = data.get("hero_images")
+    if hero_images is not None:
+        if not isinstance(hero_images, list):
+            errors.append("hero_images는 배열이어야 합니다.")
+        elif len(hero_images) > 6:
+            errors.append("히어로 이미지는 최대 6장입니다.")
+        else:
+            for v in hero_images:
+                if not isinstance(v, str) or len(v) > 600:
+                    errors.append("히어로 이미지 값이 올바르지 않습니다.")
+                    break
 
     # cta_link XSS 방지: 허용된 프로토콜만 (내부 path / https / tel / mailto)
     cta_link = data.get("cta_link", "")
@@ -495,10 +521,20 @@ class LandingUploadImageView(APIView):
         if not is_real_image(file):
             return Response({"detail": "이미지 파일이 손상되었거나 이미지 형식이 아닙니다."}, status=400)
 
-        if field not in ("hero", "logo"):
-            return Response({"detail": "field는 'hero' 또는 'logo'여야 합니다."}, status=400)
-
-        key = f"landing/{tenant.id}/{field}.{ext}"
+        # field=hero_slot 의미: 다중 히어로 슬롯(0~5). slot 인덱스를 같이 받음.
+        # field=hero / logo 는 기존 단일 이미지(backward compat).
+        if field == "hero_slot":
+            try:
+                slot = int(request.data.get("slot", -1))
+            except (TypeError, ValueError):
+                return Response({"detail": "slot은 정수여야 합니다."}, status=400)
+            if not (0 <= slot <= 5):
+                return Response({"detail": "slot은 0~5 사이여야 합니다."}, status=400)
+            key = f"landing/{tenant.id}/hero_{slot}.{ext}"
+        elif field in ("hero", "logo"):
+            key = f"landing/{tenant.id}/{field}.{ext}"
+        else:
+            return Response({"detail": "field는 'hero' | 'logo' | 'hero_slot' 이어야 합니다."}, status=400)
 
         from apps.infrastructure.storage import r2 as r2_storage
         r2_storage.upload_fileobj_to_r2_admin(
@@ -509,7 +545,9 @@ class LandingUploadImageView(APIView):
 
         url = r2_storage.generate_presigned_get_url_admin(key=key, expires_in=86400 * 7)
 
-        # draft_config에 URL 자동 반영
+        # draft_config 자동 반영 정책:
+        # - hero/logo: 단일 필드 set (legacy)
+        # - hero_slot: hero_images[slot] set (배열 길이 자동 확장)
         landing, _ = LandingPage.objects.get_or_create(
             tenant=tenant,
             defaults={"draft_config": _default_draft_config(tenant)},
@@ -517,8 +555,19 @@ class LandingUploadImageView(APIView):
         draft = dict(landing.draft_config or {})
         if field == "hero":
             draft["hero_image_url"] = key
-        else:
+        elif field == "logo":
             draft["logo_url"] = key
+        elif field == "hero_slot":
+            try:
+                slot = int(request.data.get("slot", -1))
+            except (TypeError, ValueError):
+                slot = -1
+            arr = list(draft.get("hero_images") or [])
+            if 0 <= slot <= 5:
+                while len(arr) <= slot:
+                    arr.append("")
+                arr[slot] = key
+                draft["hero_images"] = arr
         landing.draft_config = draft
         landing.save(update_fields=["draft_config", "updated_at"])
 
