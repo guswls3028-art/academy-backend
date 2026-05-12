@@ -281,6 +281,50 @@ try {
 }
 
 # ==============================================================================
+# STAGE 3.5: DB Migration Drift Check (api-side schema vs container code)
+# ==============================================================================
+# 컨테이너가 health 200을 반환해도 0015 같은 신규 migration 미적용 시 ORM 쿼리에서
+# 컬럼 부재로 깨질 수 있음 (2026-05-12 thumbnail_r2_key 사고). showmigrations 으로
+# 모든 [X] 적용 상태인지 확인하고 [ ] 미적용 1건이라도 발견되면 FAIL.
+Write-Host "`n=== STAGE 3.5: DB Migration Drift Check ===" -ForegroundColor Cyan
+
+try {
+    $apiIds = @(Get-APIASGInstanceIds | Where-Object { $_ -and $_.Trim() -ne "" })
+    if (-not $apiIds -or $apiIds.Count -eq 0) {
+        Add-Result "3.5-MIGRATE" "showmigrations" "WARN" "No API EC2 to query"
+    } else {
+        $targetId = $apiIds[0]
+        $migrateScript = @'
+sudo docker exec academy-api python manage.py showmigrations 2>&1 | grep -E "^ \[ \]" | head -20
+'@
+        $cmdJson = @{ commands = @($migrateScript) } | ConvertTo-Json -Compress
+        $cmdId = Invoke-Aws @("ssm", "send-command",
+            "--instance-ids", $targetId,
+            "--document-name", "AWS-RunShellScript",
+            "--parameters", $cmdJson,
+            "--query", "Command.CommandId",
+            "--output", "text",
+            "--region", $Region) -ErrorMessage "ssm-send-migrate-check"
+        Start-Sleep -Seconds 8
+        $migOut = Invoke-Aws @("ssm", "get-command-invocation",
+            "--command-id", $cmdId.Trim(),
+            "--instance-id", $targetId,
+            "--query", "StandardOutputContent",
+            "--output", "text",
+            "--region", $Region) -ErrorMessage "ssm-get-migrate-result"
+        $unapplied = @($migOut -split "`n" | Where-Object { $_ -match "^ \[ \]" })
+        if ($unapplied.Count -eq 0) {
+            Add-Result "3.5-MIGRATE" "showmigrations" "PASS" "no pending migrations"
+        } else {
+            $detail = ($unapplied | Select-Object -First 5) -join "; "
+            Add-Result "3.5-MIGRATE" "showmigrations" "FAIL" "$($unapplied.Count) unapplied: $detail"
+        }
+    }
+} catch {
+    Add-Result "3.5-MIGRATE" "showmigrations" "WARN" "$_"
+}
+
+# ==============================================================================
 # STAGE 4: Worker ASG Status
 # ==============================================================================
 Write-Host "`n=== STAGE 4: Worker ASG Status ===" -ForegroundColor Cyan

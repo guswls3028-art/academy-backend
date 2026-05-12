@@ -1,8 +1,15 @@
 #!/bin/bash
-# API 서버에서: 정석 배포와 동일 — SSM → /opt/api.env, ECR pull, 재시작 (빌드 없음).
-# DISABLED IN PRODUCTION: In-place container replace is disabled. Use CI/CD formal deploy only.
+# ============================================================================
+# DEPRECATED 2026-05-12 — DO NOT USE. DEAD CODE.
+# 본 스크립트는 production 에서 `exit 1` 로 hard-disabled 되어 있음.
+# 호출처(scripts/hot_deploy_watch.sh)도 함께 deprecate.
+# 공식 배포 경로: .github/workflows/v1-build-and-push-latest.yml (ECR push → migration → ASG refresh).
+# 긴급 수동 배포가 필요하면 scripts/v1/deploy-api-and-verify-workers.ps1 사용.
+# 본 파일은 commit history 보존 + 잠재적 미래 활용을 위해 잔존.
+# ============================================================================
+# (Legacy) API 서버에서: 정석 배포와 동일 — SSM → /opt/api.env, ECR pull, 재시작 (빌드 없음).
 set -e
-echo "Rapid deploy is disabled in production. Use CI/CD formal deploy (GitHub Actions → ECR push → ASG instance refresh)." >&2
+echo "DEPRECATED: scripts/deploy_api_on_server.sh is dead code. Use CI/CD (.github/workflows/v1-build-and-push-latest.yml) or scripts/v1/deploy-api-and-verify-workers.ps1." >&2
 exit 1
 
 REGION="${AWS_REGION:-ap-northeast-2}"

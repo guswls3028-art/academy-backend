@@ -1,18 +1,17 @@
 #!/bin/bash
-# hot_deploy_watch.sh — ECR image digest watcher for API hot deploy
-# Triggered by cron every 2 minutes via hot_deploy_on.sh
-#
-# Behavior:
-#   - Fetches current ECR digest for academy-api:latest
-#   - Compares with last deployed digest in STATE_FILE
-#   - NEW image  → calls deploy_api_on_server.sh, then updates state
-#   - SAME image → logs "no change", exits 0 (no deploy, no restart)
-#   - API only: workers are never referenced or restarted
-#   - Infinite restart loop prevented: state only written after successful deploy
-#
-# Usage (direct):  bash scripts/hot_deploy_watch.sh
-# Usage (via on):  hot_deploy_on.sh registers this in crontab
+# ============================================================================
+# DEPRECATED 2026-05-12 — DO NOT USE. DEAD CODE.
+# 호출 대상 scripts/deploy_api_on_server.sh 가 production 에서 hard-disabled (exit 1).
+# 따라서 본 watcher 가 cron 에 등록되어 있어도 결과적으로 아무 배포도 일으키지 못함.
+# 공식 배포 경로: .github/workflows/v1-build-and-push-latest.yml (CI/CD 가 ECR push → migration → ASG refresh 처리).
+# 본 파일은 commit history 보존 + 잠재적 미래 활용을 위해 잔존.
+# ============================================================================
+# hot_deploy_watch.sh — ECR image digest watcher for API hot deploy (LEGACY)
 
+echo "DEPRECATED: scripts/hot_deploy_watch.sh is dead code (deploy_api_on_server.sh disabled). No-op." >&2
+exit 0
+
+# ↓↓↓ Below is the original (now unreachable) code for reference. ↓↓↓
 set -euo pipefail
 
 REGION="${AWS_REGION:-ap-northeast-2}"

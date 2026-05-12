@@ -1,13 +1,11 @@
 #!/bin/bash
+# ============================================================================
+# DEPRECATED 2026-05-12 — but FUNCTIONAL as cleanup.
+# 본 스크립트는 legacy hot-deploy cron 잔재가 EC2 에 등록되어 있을 때 안전하게 제거.
+# `hot_deploy_on.sh` 는 deprecated 되었고, off 만 cleanup 용도로 유효.
+# 공식 배포 경로: .github/workflows/v1-build-and-push-latest.yml.
+# ============================================================================
 # hot_deploy_off.sh — Disable ECR-digest-based hot deploy cron (OFF)
-#
-# Removes the hot_deploy_watch.sh cron entry.
-# Idempotent: safe to run even if cron is not registered.
-#
-# Usage:
-#   bash scripts/hot_deploy_off.sh
-#
-# Remote control: pwsh scripts/v1/hot-deploy-remote.ps1 -Action Off
 
 set -e
 

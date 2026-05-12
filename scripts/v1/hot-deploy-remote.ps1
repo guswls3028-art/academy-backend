@@ -1,28 +1,14 @@
 ﻿# ==============================================================================
-# Hot Deploy 원격 제어 (API only — ECR image digest 기반)
+# DEPRECATED 2026-05-12 — DO NOT USE. DEAD PATH.
+# 본 스크립트가 EC2에서 호출하는 hot_deploy_on.sh → hot_deploy_watch.sh →
+# deploy_api_on_server.sh 체인의 마지막이 production hard-disabled (exit 1).
+# 따라서 -Action On 으로 cron 을 등록해도 결과적으로 아무 배포도 일어나지 않음.
+# -Action Off 만 잔존 cron 제거용으로 유효.
+# 공식 배포 경로: .github/workflows/v1-build-and-push-latest.yml (CI/CD 자동 처리).
+# 긴급 수동 배포: scripts/v1/deploy-api-and-verify-workers.ps1.
+# 본 파일은 commit history 보존 + Off 동작 보존을 위해 잔존.
 # ==============================================================================
-# ECR에 새 academy-api 이미지가 push된 경우에만 API 컨테이너를 pull/restart.
-# git SHA 비교 방식(api-auto-deploy-remote.ps1)과 분리된 별도 메커니즘.
-# Workers(ai/video/messaging)는 절대 건드리지 않는다.
-#
-# 사용:
-#   Hot Deploy ON:     pwsh scripts/v1/hot-deploy-remote.ps1 -Action On  -AwsProfile default
-#   Hot Deploy OFF:    pwsh scripts/v1/hot-deploy-remote.ps1 -Action Off -AwsProfile default
-#   상태 확인:         pwsh scripts/v1/hot-deploy-remote.ps1 -Action Status -AwsProfile default
-#
-# ON 동작:
-#   1) EC2에 repo가 없으면 clone, 있으면 git pull
-#   2) bash scripts/hot_deploy_on.sh 실행 → cron 등록 (2분마다 ECR digest 체크)
-#
-# OFF 동작:
-#   1) EC2에서 bash scripts/hot_deploy_off.sh 실행 → cron 제거
-#
-# Status 동작:
-#   crontab -l + state file + 현재 실행 중인 컨테이너 이미지 정보 출력
-#
-# 기존 api-auto-deploy-remote.ps1(git SHA 기반)과 충돌 없음:
-#   - 락 파일이 다름: /tmp/academy_hot_deploy.lock (신규) vs /tmp/academy_deploy.lock (기존)
-#   - 두 메커니즘 동시 활성화 비권장 (중복 배포 가능)
+# (Legacy) Hot Deploy 원격 제어 (API only — ECR image digest 기반)
 # ==============================================================================
 [CmdletBinding()]
 param(

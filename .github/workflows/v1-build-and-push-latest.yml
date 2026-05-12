@@ -1068,3 +1068,39 @@ jobs:
           python3 scripts/v1/ecr-cleanup.py --execute --keep 10
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| ECR cleanup | manifest-aware, keep=10 — see step log for per-repo totals |" >> $GITHUB_STEP_SUMMARY
+
+  # ============================================================
+  # Phase 6: Failure notification (any preceding job failed)
+  # ============================================================
+  # 2026-05-12 사고: CI 실패 7일간 알람 부재. 본 job이 workflow 실패 시 SNS academy-ops-alerts 로
+  # publish. detect-changes 이외의 어떤 job 이라도 failure 결과면 발화.
+  notify-on-failure:
+    name: Notify on failure
+    runs-on: ubuntu-latest
+    needs: [detect-changes, run-lint, run-tests, build-and-push, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-video, verify-deployment]
+    if: always() && contains(needs.*.result, 'failure')
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Publish SNS alert
+        run: |
+          FAILED_JOBS=""
+          for j in run-lint run-tests build-and-push run-migrations deploy-api deploy-messaging deploy-ai deploy-video verify-deployment; do
+            R=$(echo '${{ toJson(needs) }}' | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$j', {}).get('result',''))")
+            if [ "$R" = "failure" ]; then
+              FAILED_JOBS="${FAILED_JOBS}${j} "
+            fi
+          done
+          SHA="${GITHUB_SHA:0:8}"
+          RUN_URL="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          MSG=$(printf '[FAIL] v1-build-and-push-latest\nsha=%s actor=%s\nfailed_jobs=%s\nrun=%s' "$SHA" "${GITHUB_ACTOR}" "$FAILED_JOBS" "$RUN_URL")
+          aws sns publish \
+            --region "${AWS_REGION}" \
+            --topic-arn arn:aws:sns:ap-northeast-2:809466760795:academy-ops-alerts \
+            --subject "Academy CI/CD FAIL: ${SHA}" \
+            --message "$MSG"
+          echo "$MSG"

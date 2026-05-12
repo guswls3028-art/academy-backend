@@ -1,15 +1,13 @@
 #!/bin/bash
-# hot_deploy_on.sh — Enable ECR-digest-based hot deploy cron (ON)
-#
-# Registers a cron job that runs hot_deploy_watch.sh every 2 minutes.
-# Only deploys if ECR has a new academy-api image. Workers are never touched.
-# Idempotent: safe to run multiple times.
-#
-# Usage:
-#   bash scripts/hot_deploy_on.sh
-#   REPO_DIR=/home/ec2-user/academy bash scripts/hot_deploy_on.sh
-#
-# Remote control: pwsh scripts/v1/hot-deploy-remote.ps1 -Action On
+# ============================================================================
+# DEPRECATED 2026-05-12 — DO NOT USE. DEAD CODE.
+# hot_deploy_watch.sh 가 호출하는 deploy_api_on_server.sh 가 production hard-disabled.
+# 본 스크립트는 cron 등록만 할 뿐 결과적으로 아무 배포도 일어나지 않음.
+# 공식 배포 경로: .github/workflows/v1-build-and-push-latest.yml (CI/CD 자동 처리).
+# ============================================================================
+# hot_deploy_on.sh — Enable ECR-digest-based hot deploy cron (ON) — LEGACY
+echo "DEPRECATED: scripts/hot_deploy_on.sh is dead code. Use CI/CD instead. No-op." >&2
+exit 0
 
 set -e
 
