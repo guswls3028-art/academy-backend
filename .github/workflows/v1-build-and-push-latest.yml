@@ -142,9 +142,14 @@ jobs:
           echo "build_video=$VIDEO" >> $GITHUB_OUTPUT
 
           # Messaging worker
+          # 헥사고날 cutover 후 apps/support/messaging/ → apps/domains/messaging/ 이동.
+          # 워커가 alimtalk_content_builders / notification_dispatch / queue_service 등을
+          # 직접 import하므로 도메인 코드 변경도 워커 이미지 재빌드 + ASG refresh 필요.
+          # 누락 시 새 매핑/양식이 API에만 들어가고 워커는 옛 매핑으로 enqueue 처리 → 실효 X.
           MSG=false
           echo "$CHANGED" | grep -qE "^apps/worker/messaging_worker/" && MSG=true
           echo "$CHANGED" | grep -qE "^apps/support/messaging/" && MSG=true
+          echo "$CHANGED" | grep -qE "^apps/domains/messaging/" && MSG=true
           echo "$CHANGED" | grep -qE "^docker/messaging-worker/" && MSG=true
           echo "$CHANGED" | grep -qE "^requirements/worker-messaging\.txt$" && MSG=true
           echo "build_messaging=$MSG" >> $GITHUB_OUTPUT
