@@ -1,0 +1,24 @@
+# Cloudflare Worker — Academy Video CDN signed proxy
+# Deploy: wrangler deploy
+# Routes: cdn.hakwonplus.com/* (configure in dashboard or via routes table below)
+
+name = "academy-cdn-video"
+main = "src/index.js"
+compatibility_date = "2024-09-23"
+
+# Workers logs (free tier OK)
+[observability]
+enabled = true
+
+# R2 binding — bucket must be 'academy-video' (private)
+[[r2_buckets]]
+binding = "R2_VIDEO"
+bucket_name = "academy-video"
+
+# Secrets (set via `wrangler secret put CDN_HLS_SIGNING_SECRET`)
+# Must match backend SSM /academy/api/env → CDN_HLS_SIGNING_SECRET
+
+# Route (uncomment and adjust zone_id after first deploy + DNS confirm)
+# [[routes]]
+# pattern = "cdn.hakwonplus.com/tenants/*"
+# zone_name = "hakwonplus.com"

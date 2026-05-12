@@ -1,0 +1,116 @@
+// ============================================================================
+// Academy Video CDN Worker — HLS signed URL gateway
+// ============================================================================
+// 백엔드(playback_mixin.py:206 → cloudflare_signing.py)가 생성한 서명을
+// 본 Worker 가 검증한 뒤 R2 private bucket 에서 fetch 해 응답.
+//
+// URL 형식 (백엔드 build_url 과 1:1 일치):
+//   https://cdn.hakwonplus.com/{path}?exp=<unix>&sig=<b64url>&kid=v1&uid=<user_id>
+//
+// 서명 메시지: `{path}|{exp}|{kid}|{uid}` (uid 없으면 빈 문자열)
+// HMAC-SHA256(secret, message) → urlsafe_b64encode without padding
+//
+// 환경 변수 (wrangler.toml secret + binding):
+//   CDN_HLS_SIGNING_SECRET — 백엔드 SSM /academy/api/env 의 CDN_HLS_SIGNING_SECRET 과 동일
+//   R2_VIDEO              — R2 bucket binding (private, no public access)
+// ============================================================================
+
+export default {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    const path = url.pathname;
+    const sig = url.searchParams.get("sig");
+    const exp = url.searchParams.get("exp");
+    const kid = url.searchParams.get("kid") || "v1";
+    const uid = url.searchParams.get("uid") || "";
+
+    // 1) Required query params
+    if (!sig || !exp) {
+      return new Response("missing signature", { status: 401 });
+    }
+
+    // 2) Expiry check
+    const now = Math.floor(Date.now() / 1000);
+    const expNum = parseInt(exp, 10);
+    if (!Number.isFinite(expNum) || expNum < now) {
+      return new Response("signature expired", { status: 401 });
+    }
+
+    // 3) Compute expected HMAC
+    const secret = env.CDN_HLS_SIGNING_SECRET;
+    if (!secret) {
+      return new Response("worker misconfigured: secret missing", { status: 500 });
+    }
+    const message = `${path}|${expNum}|${kid}|${uid}`;
+    const expected = await hmacSha256B64url(secret, message);
+
+    // 4) Timing-safe compare
+    if (!timingSafeEqual(sig, expected)) {
+      return new Response("invalid signature", { status: 403 });
+    }
+
+    // 5) Fetch from R2 (path strips leading slash)
+    const r2Key = path.replace(/^\/+/, "");
+    const obj = await env.R2_VIDEO.get(r2Key);
+    if (!obj || !obj.body) {
+      return new Response("not found", { status: 404 });
+    }
+
+    // 6) Response with cache headers
+    const headers = new Headers();
+    headers.set("Content-Type", obj.httpMetadata?.contentType || guessContentType(r2Key));
+    headers.set("ETag", obj.httpEtag);
+    headers.set("Cache-Control", obj.httpMetadata?.cacheControl || cacheControlFor(r2Key));
+    headers.set("Accept-Ranges", "bytes");
+    if (obj.range) {
+      headers.set("Content-Range", `bytes ${obj.range.offset}-${obj.range.end}/${obj.size}`);
+    }
+    return new Response(obj.body, { headers, status: 200 });
+  },
+};
+
+// ─── helpers ────────────────────────────────────────────────────────────────
+
+async function hmacSha256B64url(secret, message) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const macBuf = await crypto.subtle.sign("HMAC", key, enc.encode(message));
+  return b64urlNoPad(macBuf);
+}
+
+function b64urlNoPad(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  const b64 = btoa(bin);
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function timingSafeEqual(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+function guessContentType(key) {
+  if (key.endsWith(".m3u8")) return "application/vnd.apple.mpegurl";
+  if (key.endsWith(".ts")) return "video/mp2t";
+  if (key.endsWith(".jpg") || key.endsWith(".jpeg")) return "image/jpeg";
+  if (key.endsWith(".png")) return "image/png";
+  return "application/octet-stream";
+}
+
+function cacheControlFor(key) {
+  // master.m3u8 / variant index.m3u8 — short cache (manifests can be updated)
+  if (key.endsWith(".m3u8")) return "public, max-age=60";
+  // segments / thumbnails — long cache (immutable by HLS spec convention)
+  if (key.endsWith(".ts") || key.endsWith(".jpg")) return "public, max-age=604800, immutable";
+  return "public, max-age=300";
+}
