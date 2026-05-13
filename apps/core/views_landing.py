@@ -620,10 +620,14 @@ def _validate_consult(data: dict) -> list[str]:
     return errs
 
 
-# Rate limit — Django cache backend 공유 (Redis/Memcached) 기반.
-# P0 audit (2026-05-13): 이전 process-local dict 패턴은 ASG 3 인스턴스 운영 시
-# 인스턴스마다 별도 dict → IP당 사실상 limit×3 허용 + restart 시 reset.
-# cache backend로 공유 → 3 인스턴스 일관 + 인스턴스 재기동 무관.
+# Rate limit — DB-level dedup (LandingConsultRequest row 자체).
+# P0 audit (2026-05-13 → 2026-05-14): cache backend 도입 시도했으나 settings.CACHES
+# 미설정 → Django default LocMemCache(process-local) → ASG 3 인스턴스 결국 같은 문제.
+# DB-level 이 ASG 다중 인스턴스 자연 공유 + Redis 인프라 추가 부담 X.
+# 정합: (tenant, phone, created_at) 으로 같은 학원에 같은 phone 1분 내 limit 초과면 차단.
+#
+# 본 패턴 한계: 봇이 phone 다양화 시 우회. 실 spam 방어는 Cloudflare/WAF rate limit
+# 인프라 단으로 보강. 정상 사용자 실수 중복 클릭 + 단순 봇은 본 fix 로 충분.
 
 
 def _client_ip(request) -> str:
@@ -633,30 +637,26 @@ def _client_ip(request) -> str:
     return request.META.get("REMOTE_ADDR") or "unknown"
 
 
-def _is_rate_limited(ip: str, limit: int = 5, window_sec: int = 60) -> bool:
-    """IP당 window_sec 안 limit 건 초과 시 True. cache backend 가 ASG 다중 인스턴스 공유.
+def _is_rate_limited(tenant, phone: str, limit: int = 5, window_sec: int = 60) -> bool:
+    """tenant + phone 별 window_sec 안 limit 초과면 True.
 
-    cache.add + incr 패턴 — Redis/Memcached atomic INCR + initial TTL.
+    ASG 3 인스턴스에서 공유되는 RDS row 자체를 카운터로 사용 → 자연 공유.
+    인덱스: (tenant, -created_at) 기존 — 1분 cutoff 범위라 100건/일 학원 부담 0.
     """
-    from django.core.cache import cache
-    key = f"consult_rl:{ip}"
-    try:
-        # 1번째 호출이면 add → 카운터 0 + TTL set. 이후 incr.
-        if cache.add(key, 0, timeout=window_sec):
-            cache.incr(key)
-            return False
-        try:
-            count = cache.incr(key)
-        except ValueError:
-            # key TTL 만료된 직후 incr → add로 재 시작
-            cache.set(key, 1, timeout=window_sec)
-            return False
-        return count > limit
-    except Exception:
-        # cache backend 장애 시 fail-open (안전 운영 우선 — 학원장 폼 닫지 않음).
-        # honeypot + 검증은 이미 위에서 차단.
-        logger.exception("CONSULT_RATE_LIMIT_CACHE_FAIL ip=%s", ip)
+    if not phone:
         return False
+    from datetime import timedelta
+    from django.utils import timezone as dj_tz
+    from apps.core.models import LandingConsultRequest
+    cutoff = dj_tz.now() - timedelta(seconds=window_sec)
+    try:
+        count = LandingConsultRequest.objects.filter(
+            tenant=tenant, phone=phone, created_at__gte=cutoff,
+        ).count()
+        return count >= limit
+    except Exception:
+        logger.exception("CONSULT_RATE_LIMIT_DB_FAIL phone=%s", phone[-4:])
+        return False  # fail-open
 
 
 class LandingConsultPublicView(APIView):
@@ -673,8 +673,9 @@ class LandingConsultPublicView(APIView):
             logger.info("CONSULT_HONEYPOT_TRAP ip=%s", _client_ip(request))
             return Response({"id": 0, "ok": True}, status=201)
 
-        ip = _client_ip(request)
-        if _is_rate_limited(ip):
+        # rate limit — tenant + phone 기준 (DB-level). phone 없으면 validate 에서 차단.
+        phone_raw = str((request.data or {}).get("phone") or "").strip()
+        if phone_raw and _is_rate_limited(request.tenant, phone_raw):
             return Response({"detail": "너무 빠른 요청입니다. 잠시 후 다시 시도해주세요."}, status=429)
 
         errs = _validate_consult(request.data or {})
@@ -792,9 +793,9 @@ class LandingTestimonialPublicView(APIView):
             logger.info("TESTIMONIAL_HONEYPOT_TRAP ip=%s", _client_ip(request))
             return Response({"id": 0, "ok": True}, status=201)
 
-        ip = _client_ip(request)
-        if _is_rate_limited(ip):
-            return Response({"detail": "너무 빠른 요청입니다. 잠시 후 다시 시도해주세요."}, status=429)
+        # testimonial 은 phone 필드 없음 — rate limit 적용 불가. 학원장이 검수 stage
+        # 에서 reject 가능 (pending status). spam 보호 본질은 honeypot + validate 로 차단.
+        # 본격 spam 방어는 별 cycle에서 testimonial 전용 dedup (name+text hash) 도입.
 
         errs = _validate_testimonial(request.data or {})
         if errs:
