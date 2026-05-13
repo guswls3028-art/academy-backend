@@ -38,7 +38,7 @@ class StudentEnrollmentMatrixView(views.APIView):
         from apps.domains.enrollment.models import Enrollment, SessionEnrollment
         from apps.domains.lectures.models import Lecture, Session
         from apps.domains.exams.models import Exam, ExamEnrollment
-        from apps.domains.homework.models import HomeworkEnrollment
+        from apps.domains.homework.models import HomeworkAssignment
 
         try:
             student = Student.objects.get(id=student_id, tenant=tenant, deleted_at__isnull=True)
@@ -86,7 +86,9 @@ class StudentEnrollmentMatrixView(views.APIView):
             ).values_list("exam_id", flat=True)
         )
 
-        # Homework — session FK 단일 (homework_results 도메인)
+        # Homework — SSOT: HomeworkAssignment (homework-level enrollment).
+        # session_scores_view 와 동일 SSOT. HomeworkEnrollment(session 단위) 사용 시
+        # 같은 session N개 homework 가 enrolled 상태를 공유해 부정확.
         from apps.domains.homework_results.models import Homework
         homeworks_by_session: dict[int, list] = {}
         for hw in Homework.objects.filter(session_id__in=session_ids).values(
@@ -94,12 +96,12 @@ class StudentEnrollmentMatrixView(views.APIView):
         ):
             homeworks_by_session.setdefault(hw["session_id"], []).append(hw)
 
-        enrolled_hw_keys = set(
-            HomeworkEnrollment.objects.filter(
+        enrolled_hw_ids: set[int] = set(
+            HomeworkAssignment.objects.filter(
                 tenant=tenant,
                 enrollment=enrollment,
                 session_id__in=session_ids,
-            ).values_list("session_id", flat=True)
+            ).values_list("homework_id", flat=True)
         )
 
         result_sessions = []
@@ -115,7 +117,7 @@ class StudentEnrollmentMatrixView(views.APIView):
                     for e in exams_by_session.get(sid, [])
                 ],
                 "homeworks": [
-                    {"id": h["id"], "title": h["title"], "enrolled": sid in enrolled_hw_keys}
+                    {"id": h["id"], "title": h["title"], "enrolled": h["id"] in enrolled_hw_ids}
                     for h in homeworks_by_session.get(sid, [])
                 ],
             })
@@ -154,7 +156,7 @@ class StudentEnrollmentMatrixToggleView(views.APIView):
         from apps.domains.lectures.models import Lecture
         from apps.domains.exams.models import Exam, ExamEnrollment
         from apps.domains.homework_results.models import Homework
-        from apps.domains.homework.models import HomeworkEnrollment
+        from apps.domains.homework.models import HomeworkAssignment
 
         try:
             student = Student.objects.get(id=student_id, tenant=tenant)
@@ -196,6 +198,8 @@ class StudentEnrollmentMatrixToggleView(views.APIView):
                 else:
                     ExamEnrollment.objects.filter(exam=exam, enrollment=enrollment).delete()
             else:  # homework
+                # SSOT: HomeworkAssignment (homework-level). HomeworkEnrollment(session 단위)
+                # 는 같은 session 의 다른 homework 까지 영향 → 부정확.
                 try:
                     hw = Homework.objects.get(id=target_id, tenant=tenant)
                 except Homework.DoesNotExist:
@@ -204,12 +208,18 @@ class StudentEnrollmentMatrixToggleView(views.APIView):
                     SessionEnrollment.objects.get_or_create(
                         tenant=tenant, enrollment=enrollment, session_id=hw.session_id,
                     )
-                    HomeworkEnrollment.objects.get_or_create(
-                        tenant=tenant, enrollment=enrollment, session_id=hw.session_id,
+                    HomeworkAssignment.objects.get_or_create(
+                        tenant=tenant,
+                        homework_id=hw.id,
+                        session_id=hw.session_id,
+                        enrollment=enrollment,
                     )
                 else:
-                    HomeworkEnrollment.objects.filter(
-                        tenant=tenant, enrollment=enrollment, session_id=hw.session_id,
+                    HomeworkAssignment.objects.filter(
+                        tenant=tenant,
+                        homework_id=hw.id,
+                        session_id=hw.session_id,
+                        enrollment=enrollment,
                     ).delete()
 
         return Response({"ok": True, "target_type": target_type, "target_id": target_id, "action": action})

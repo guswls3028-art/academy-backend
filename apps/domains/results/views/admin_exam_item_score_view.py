@@ -227,11 +227,29 @@ class AdminExamItemScoreView(APIView):
             item.save(update_fields=update_fields)
 
         # -------------------------------------------------
-        # 6️⃣ total_score 재계산 (sum of all ResultItems — objective 이미 포함)
+        # 6️⃣ total_score 재계산
+        # ResultItem 에 question_id=0 주관식 합계 행이 있으면 items 가 객관식 전체를
+        # 표현하지 않음 → total = objective_score + sum(items).
+        # 없으면 items 가 모든 문항(객관식 자동채점)을 표현 → total = sum(items).
+        # (admin_exam_subjective_score_view 가 ResultItem 을 wipe + Q=0 단일 행으로
+        #  교체하는 패턴에 대응 — 이전엔 objective_score 가 total 에서 누락됐음)
         # -------------------------------------------------
-        agg = ResultItem.objects.filter(result=result)
-        total_score = sum(float(x.score or 0.0) for x in agg)
-        max_total = sum(float(x.max_score or 0.0) for x in agg)
+        agg_items = list(ResultItem.objects.filter(result=result))
+        items_sum = sum(float(x.score or 0.0) for x in agg_items)
+        items_max_sum = sum(float(x.max_score or 0.0) for x in agg_items)
+        has_subjective_aggregate = any(int(x.question_id or 0) == 0 for x in agg_items)
+
+        if has_subjective_aggregate:
+            # items 가 객관식을 표현하지 않음 → objective_score 별도 보존
+            obj_score = float(result.objective_score or 0.0)
+            total_score = obj_score + items_sum
+            # 만점: exam.max_score 유지 (items_max 는 부분 합일 수 있음)
+            from apps.domains.exams.models import Exam as _Exam
+            exam_obj_for_max = _Exam.objects.filter(id=exam_id).first()
+            max_total = float(getattr(exam_obj_for_max, "max_score", 0.0) or 0.0) or items_max_sum
+        else:
+            total_score = items_sum
+            max_total = items_max_sum
 
         result.total_score = float(total_score)
         result.max_score = float(max_total)

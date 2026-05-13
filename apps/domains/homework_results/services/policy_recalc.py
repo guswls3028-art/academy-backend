@@ -4,13 +4,22 @@ HomeworkPolicy 변경 시 HomeworkScore 스냅샷(passed/clinic_required) 재계
 
 분리 사유: HomeworkPolicy(homework 도메인)는 HomeworkScore(homework_results 도메인)를 직접 조작하면 안 된다.
 정책 변경 → 결과 갱신은 homework_results 도메인의 책임이므로 service로 격리한다.
+
+2026-05-13: passed=False → True 로 전환되는 row 에 대해 ClinicLink 자동 해소.
+학원장 mental model — 커트라인 하향 시 학생들이 새로 합격되고 clinic 대상에서 빠짐.
+이전엔 HomeworkScore.passed/clinic_required 만 갱신하고 ClinicLink 잔존 → 셀은 PASS
+표시되지만 학생 이름 형광펜 + clinic 큐 잔존하는 결함이 있었음.
 """
 
 from __future__ import annotations
 
+import logging
+
 from django.utils import timezone
 
 from apps.domains.homework_results.models import HomeworkScore
+
+logger = logging.getLogger(__name__)
 
 
 def recalc_scores_for_policy_change(*, policy) -> int:
@@ -49,6 +58,7 @@ def recalc_scores_for_policy_change(*, policy) -> int:
 
     now = timezone.now()
     changed: list[HomeworkScore] = []
+    newly_passed: list[HomeworkScore] = []
 
     for hs in qs.iterator(chunk_size=500):
         score = hs.score
@@ -88,6 +98,9 @@ def recalc_scores_for_policy_change(*, policy) -> int:
                 clinic_required = bool(clinic_enabled and clinic_on_fail and (not passed))
 
         if hs.passed != bool(passed) or hs.clinic_required != bool(clinic_required):
+            # passed False → True 전환 row 추적: 정책 하향에 의한 신규 합격
+            if (not hs.passed) and bool(passed):
+                newly_passed.append(hs)
             hs.passed = bool(passed)
             hs.clinic_required = bool(clinic_required)
             hs.updated_at = now
@@ -99,5 +112,27 @@ def recalc_scores_for_policy_change(*, policy) -> int:
             fields=["passed", "clinic_required", "updated_at"],
             batch_size=500,
         )
+
+    # 정책 하향으로 신규 합격된 row 의 미해소 ClinicLink 자동 해소.
+    # ClinicResolutionService.resolve_by_homework_pass 호출 (per-source).
+    if newly_passed:
+        from apps.domains.progress.services.clinic_resolution_service import (
+            ClinicResolutionService,
+        )
+        for hs in newly_passed:
+            try:
+                ClinicResolutionService.resolve_by_homework_pass(
+                    enrollment_id=int(hs.enrollment_id),
+                    session_id=int(hs.session_id),
+                    homework_id=int(hs.homework_id),
+                    score=hs.score,
+                    max_score=hs.max_score,
+                )
+            except Exception:
+                logger.exception(
+                    "recalc_scores: resolve_by_homework_pass failed "
+                    "(hs=%s, enrollment=%s, homework=%s)",
+                    hs.id, hs.enrollment_id, hs.homework_id,
+                )
 
     return len(changed)

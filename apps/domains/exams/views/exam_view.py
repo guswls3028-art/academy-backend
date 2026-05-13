@@ -165,15 +165,46 @@ class ExamViewSet(ModelViewSet):
         exam.sessions.add(session)
 
     # ================================
-    # UPDATE 방어
+    # UPDATE 방어 + pass_score 변경 시 ClinicLink 해소 재계산
     # ================================
     def update(self, request, *args, **kwargs):
         self._reject_immutable_fields_on_update(request)
-        return super().update(request, *args, **kwargs)
+        return self._update_with_recalc(super().update, request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
         self._reject_immutable_fields_on_update(request)
-        return super().partial_update(request, *args, **kwargs)
+        return self._update_with_recalc(super().partial_update, request, *args, **kwargs)
+
+    def _update_with_recalc(self, upstream, request, *args, **kwargs):
+        """
+        2026-05-13: pass_score 변경 시 progress pipeline 재실행.
+        ClinicTriggerService.auto_create_per_exam 가 exam_meta.passed 기준으로
+        ClinicLink 생성/해소를 idempotent 하게 처리하므로, pipeline 만 트리거하면
+        하향(예: 70→50) 시 PASS 학생의 미해소 ClinicLink 가 자동 해소됨.
+        """
+        try:
+            obj: Exam = self.get_object()
+            prev_pass = float(getattr(obj, "pass_score", 0) or 0)
+        except Exception:
+            prev_pass = None
+
+        response = upstream(request, *args, **kwargs)
+
+        try:
+            new_pass = response.data.get("pass_score") if hasattr(response, "data") else None
+            if prev_pass is not None and new_pass is not None and float(new_pass) != prev_pass:
+                from apps.domains.progress.dispatcher import dispatch_progress_pipeline
+                exam_id_for_pipeline = int(response.data.get("id") or kwargs.get("pk") or 0)
+                if exam_id_for_pipeline:
+                    dispatch_progress_pipeline(exam_id=exam_id_for_pipeline)
+        except Exception:
+            # progress pipeline 실패해도 update 자체는 유지 (응답 반영됨)
+            import logging
+            logging.getLogger(__name__).exception(
+                "ExamViewSet update: progress dispatch after pass_score change failed"
+            )
+
+        return response
 
     # ================================
     # DELETE 봉인
