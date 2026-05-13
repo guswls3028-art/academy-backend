@@ -250,19 +250,26 @@ class MessageTemplateSubmitReviewView(APIView):
 
 class SolapiSyncTemplatesView(APIView):
     """
-    POST: 솔라피 콘솔의 알림톡 템플릿을 SaaS DB와 동기화.
+    POST: 솔라피 콘솔의 검수 상태(solapi_status)를 SaaS DB로 동기화.
 
     학원장 임근혁 보고 (2026-05-13): "솔라피에 내가 남긴 템플릿이랑 시스템에 있는
-    프로그램 템플릿이 일치하지 않는다." — 솔라피 콘솔에서 직접 본문/상태가 변경되거나
-    검수 결과(APPROVED/REJECTED)가 갱신돼도 SaaS DB가 그걸 모르고 stale 상태로 남는
-    구조였음. 본 뷰가 GET API로 콘솔의 진실을 끌어와서 SaaS DB를 truth와 맞춤.
+    프로그램 템플릿이 일치하지 않는다." — 솔라피 콘솔에서 카카오 검수 결과
+    (APPROVED/REJECTED)가 갱신돼도 SaaS DB가 stale PENDING으로 남던 결함.
 
     매칭: solapi_template_id 키.
-    - SaaS DB에 같은 templateId 있음 → name/body/solapi_status 갱신 (솔라피=truth)
-    - SaaS DB에 없음 → solapi_only에 기록, import 안 함 (이름 기반 자동 매칭은 위험)
-      → 학원장이 응답을 보고 필요하면 별도 import 로직(Phase 2)으로
+    - SaaS DB에 같은 templateId 있음 → **solapi_status만** 갱신.
+    - SaaS DB에 없음 → solapi_only에 기록 + 응답으로 미리보기 노출만 (import X).
 
-    API 키·PFID 결정 우선순위:
+    **본문(body)·이름(name)은 절대 덮어쓰지 않음** —
+    `MessageTemplate.body` 는 학원장이 SaaS에서 작성·편집하는 사용자 영역.
+    [[domain-policy.md §1 학원장 작성 데이터 immutable]]
+    [[domain-policy.md §5 알림톡 본문 — 사용자 영역 보호]]
+    [[anti-avoidance.md §8 학원장 데이터 자동 변경 금지]]
+    솔라피 콘솔에서 본문이 다르게 보여도 학원장이 SaaS에서 편집한 것이 truth.
+    실제 카카오 발송 시 본문은 ITEM_LIST 양식의 `#{선생님메모}` 자리에 학원장
+    본문이 그대로 박혀 전달됨 (notification_dispatch.py SSOT).
+
+    API 키·PFID:
     - 자체 연동 학원: own_solapi_* + tenant.kakao_pfid
     - 시스템 채널 폴백 학원: settings.SOLAPI_API_KEY/SECRET + settings.SOLAPI_KAKAO_PF_ID
     """
@@ -356,20 +363,13 @@ class SolapiSyncTemplatesView(APIView):
                 })
                 continue
 
-            update_fields: list[str] = []
-            if name and tpl.name != name:
-                tpl.name = name
-                update_fields.append("name")
-            if content and tpl.body != content:
-                tpl.body = content
-                update_fields.append("body")
+            # 학원장 작성 데이터 보호 — name/body 자동 덮어쓰기 금지.
+            # [[domain-policy.md §1 §5]] / [[anti-avoidance.md §8]]
+            # solapi_status (카카오 검수 결과) 만 동기화 — 이건 사용자 영역 아님.
             if mapped_status and tpl.solapi_status != mapped_status:
                 tpl.solapi_status = mapped_status
-                update_fields.append("solapi_status")
-            if update_fields:
-                update_fields.append("updated_at")
                 try:
-                    tpl.save(update_fields=update_fields)
+                    tpl.save(update_fields=["solapi_status", "updated_at"])
                     updated_count += 1
                 except Exception as e:  # noqa: BLE001
                     errors.append(f"templateId={tid}: {e}")
