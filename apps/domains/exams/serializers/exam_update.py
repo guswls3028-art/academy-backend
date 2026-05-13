@@ -7,6 +7,8 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
     수정 전용 serializer
     - exam_type, subject 직접 변경 ❌
     - template_exam_id: regular 시험에서 시험 설정으로 템플릿 지정 가능 (한 번만)
+    - 2026-05-13 학원장 결정: 시험 단위 status(OPEN/CLOSED) 폐기.
+      학생별 Achievement SSOT 가 단일 진실. status 필드는 PATCH 대상에서 제외.
     """
 
     class Meta:
@@ -15,7 +17,7 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
             "title",
             "description",
             "is_active",
-            "status",
+            # "status",  # 폐기 (2026-05-13). 학생별 Achievement SSOT.
             "template_exam_id",
             "subject",
             "allow_retake",
@@ -30,16 +32,6 @@ class ExamUpdateSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         exam: Exam = self.instance
-
-        # 상태 전이 제한: CLOSED → OPEN (채점 결과 있으면 불가)
-        new_status = attrs.get("status")
-        if new_status and exam.status == Exam.Status.CLOSED:
-            if new_status == Exam.Status.OPEN:
-                from apps.domains.results.models import ExamResult
-                if ExamResult.objects.filter(exam=exam).exists():
-                    raise serializers.ValidationError(
-                        {"status": "채점 결과가 있는 마감 시험은 다시 열 수 없습니다."}
-                    )
 
         # P1-5: 시험 유효성 검증
         max_attempts = attrs.get("max_attempts", exam.max_attempts)

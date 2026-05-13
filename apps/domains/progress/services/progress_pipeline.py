@@ -148,6 +148,7 @@ class ProgressPipelineService:
 
             return
 
+        # homework 외 unknown target — sub.target_type 이 enum 변경 등으로 처리 안 됨
         logger.info("progress pipeline: unsupported target_type=%s (submission_id=%s)", target_type, submission_id)
 
     # ---------------------------------------------------------
@@ -206,24 +207,40 @@ class ProgressPipelineService:
 
     def _find_sessions_for_homework(self, *, homework_id: int) -> List["Session"]:
         """
-        Homework ↔ Session mapping is project-specific.
-        If you have a SSOT util, plug it here.
+        Homework ↔ Session 매핑.
+        SSOT: `Homework.session` (FK, 단일). M2M sessions (legacy) 있으면 합집합.
         """
         from apps.domains.lectures.models import Session  # type: ignore
+        from apps.domains.homework_results.models import Homework  # type: ignore
 
-        try:
-            from apps.domains.results.utils.session_homework import get_session_ids_for_homework  # type: ignore
-            session_ids = get_session_ids_for_homework(int(homework_id))
-            if session_ids:
-                return list(Session.objects.filter(id__in=[int(x) for x in session_ids]).select_related("lecture"))
-        except Exception:
-            pass
-
-        # fallback (if legacy schema)
-        try:
-            return list(Session.objects.filter(homework__id=int(homework_id)).select_related("lecture").distinct())
-        except Exception:
+        hw = (
+            Homework.objects
+            .filter(id=int(homework_id))
+            .only("id", "session_id")
+            .first()
+        )
+        if not hw:
             return []
+
+        session_ids: set[int] = set()
+        if hw.session_id:
+            session_ids.add(int(hw.session_id))
+
+        # M2M sessions (legacy/optional). related_manager 없으면 skip.
+        try:
+            m2m_mgr = getattr(hw, "sessions", None)
+            if m2m_mgr is not None and hasattr(m2m_mgr, "values_list"):
+                session_ids.update(int(x) for x in m2m_mgr.values_list("id", flat=True))
+        except Exception:
+            logger.debug(
+                "homework m2m sessions lookup failed (homework_id=%s)", homework_id
+            )
+
+        if not session_ids:
+            return []
+        return list(
+            Session.objects.filter(id__in=session_ids).select_related("lecture")
+        )
 
     # ---------------------------------------------------------
     # Recompute core
@@ -234,25 +251,47 @@ class ProgressPipelineService:
         enrollment_id: int,
         session,
         exam_id: Optional[int] = None,
-        homework_submitted: bool = False,
+        homework_submitted: Optional[bool] = None,
     ) -> None:
         """
         Recompute:
         1) SessionProgress (exam aggregate uses Result SSOT)
         2) Clinic triggers (failed / exam risk)
         3) LectureProgress + Risk evaluation
+
+        Args:
+            homework_submitted:
+                - True: 제출 사실 반영(예: submission DONE 시그널)
+                - False: 제출 취소 등 명시적 해제
+                - None: 변경 없음 (기존 SessionProgress 값 그대로 유지)
         """
         # 기존 SessionProgress에서 출결/영상/과제 상태를 보존 (덮어쓰기 방지)
         from apps.domains.progress.models import SessionProgress as _SP
         _existing = _SP.objects.filter(
             enrollment_id=int(enrollment_id), session=session,
         ).first()
+
+        # attendance_type/video_progress_rate:
+        # 신규 SessionProgress 행이면 모델 default(ONLINE/0)에 맡긴다.
+        # 강제 "online" 박기 금지 — 학원장이 출석을 입력하지 않은 빈 상태를 유지.
+        _attendance = _existing.attendance_type if _existing else _SP.AttendanceType.ONLINE
+        _video_rate = int(_existing.video_progress_rate or 0) if _existing else 0
+
+        # homework_submitted:
+        #   None  → 기존 값 유지 (OR-merge 금지: 한 번 True 가 잠기지 않도록)
+        #   True  → 덮어쓰기 (제출됨)
+        #   False → 덮어쓰기 (해제됨; 제출 취소·삭제 path 에서 사용 가능)
+        if homework_submitted is None:
+            _hw_submitted = bool(_existing.homework_submitted) if _existing else False
+        else:
+            _hw_submitted = bool(homework_submitted)
+
         sp = SessionProgressCalculator.calculate(
             enrollment_id=int(enrollment_id),
             session=session,
-            attendance_type=getattr(_existing, "attendance_type", "online") or "online",
-            video_progress_rate=getattr(_existing, "video_progress_rate", 0) or 0,
-            homework_submitted=bool(homework_submitted) or getattr(_existing, "homework_submitted", False),
+            attendance_type=_attendance,
+            video_progress_rate=_video_rate,
+            homework_submitted=_hw_submitted,
         )
 
         # failed trigger (idempotent via get_or_create in service)

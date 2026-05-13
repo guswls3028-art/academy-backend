@@ -178,11 +178,19 @@ class AdminExamResultsView(ListAPIView):
 
             # ✅ 성취 SSOT 계산: student_result_service와 동일 유틸 사용으로
             #    관리자 목록과 학생 상세 뷰의 드리프트를 구조적으로 차단.
+            # 미응시·미채점 케이스에서 0 coerce 금지 — None 그대로 유지해
+            # achievement 판정과 화면 표시가 모순되지 않도록.
+            raw_total_score = (
+                float(r.total_score) if r.total_score is not None else None
+            )
+            raw_max_score = (
+                float(r.max_score) if r.max_score is not None else None
+            )
             achievement_data = compute_exam_achievement(
                 enrollment_id=enrollment_id,
                 exam_id=exam_id,
                 session=session,
-                total_score=float(r.total_score or 0.0),
+                total_score=raw_total_score,
                 pass_score=pass_score,
                 attempt_id=getattr(r, "attempt_id", None),
             )
@@ -207,10 +215,11 @@ class AdminExamResultsView(ListAPIView):
                 "enrollment_id": enrollment_id,
                 "student_name": student_name,
 
-                "exam_score": float(r.total_score or 0.0),
-                "exam_max_score": float(r.max_score or 0.0),
+                # None 보존: 미응시·미채점 행은 점수 셀이 "미응시/미채점"로 표시되어야 함.
+                "exam_score": raw_total_score,
+                "exam_max_score": raw_max_score,
 
-                "final_score": float(r.total_score or 0.0),
+                "final_score": raw_total_score,
 
                 "passed": passed,
                 "clinic_required": clinic_required,

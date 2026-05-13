@@ -177,11 +177,10 @@ class ClinicTriggerService:
         if not reasons:
             return
 
+        # 단일 atomic: select_for_update lock ↔ create 간 race window 차단.
+        # (분리된 atomic 두 블록 사이에서 lock 이 풀려 동시 worker 가 동일 row 를
+        # 둘 다 신규 생성으로 진입할 수 있던 결함을 제거.)
         with transaction.atomic():
-            # 미해소 link가 있으면 meta만 갱신
-            # ✅ select_for_update: 동시 파이프라인 실행 시 meta merge race 방어.
-            #    lock 없이 SELECT 시 두 thread가 같은 existing을 읽어 각자 merge →
-            #    last-write-wins로 한쪽 kinds/reasons가 소실됨.
             existing = ClinicLink.objects.select_for_update().filter(
                 enrollment_id=int(enrollment_id),
                 session=session,
@@ -192,8 +191,6 @@ class ClinicTriggerService:
 
             if existing:
                 # meta merge: 기존 kind 보존 + kinds 배열에 EXAM_RISK 누적
-                # auto_create_if_failed(EXAM_FAILED, score/pass_score) → 이 경로 호출 시
-                # 덮어쓰지 않고 exam_reasons만 추가 (근거 데이터 보존)
                 merged = dict(existing.meta or {})
                 kinds = list(merged.get("kinds") or [])
                 legacy_kind = merged.get("kind")
@@ -202,7 +199,7 @@ class ClinicTriggerService:
                 if "EXAM_RISK" not in kinds:
                     kinds.append("EXAM_RISK")
                 merged["kinds"] = kinds
-                merged.setdefault("kind", "EXAM_RISK")  # 하위 호환: 기존 kind 우선
+                merged.setdefault("kind", "EXAM_RISK")  # 하위 호환
                 merged["exam_id"] = int(exam_id)
                 merged["exam_reasons"] = reasons
                 existing.meta = merged
@@ -210,17 +207,18 @@ class ClinicTriggerService:
                 existing.save(update_fields=["meta", "is_auto", "updated_at"])
                 return
 
-        # 새로 생성 (idempotent helper 사용)
-        _idempotent_create_clinic_link(
-            enrollment_id=int(enrollment_id),
-            session=session,
-            source_type="exam",
-            source_id=int(exam_id),
-            reason=ClinicLink.Reason.AUTO_FAILED,
-            meta={
-                "kind": "EXAM_RISK",
-                "kinds": ["EXAM_RISK"],
-                "exam_id": int(exam_id),
-                "exam_reasons": reasons,
-            },
-        )
+            # 같은 atomic 안에서 새로 생성. unique constraint 위반 시 helper 가
+            # IntegrityError 를 catch 해 None 반환 (idempotent).
+            _idempotent_create_clinic_link(
+                enrollment_id=int(enrollment_id),
+                session=session,
+                source_type="exam",
+                source_id=int(exam_id),
+                reason=ClinicLink.Reason.AUTO_FAILED,
+                meta={
+                    "kind": "EXAM_RISK",
+                    "kinds": ["EXAM_RISK"],
+                    "exam_id": int(exam_id),
+                    "exam_reasons": reasons,
+                },
+            )

@@ -11,10 +11,12 @@ class AdminExamResultRowSerializer(serializers.Serializer):
     # - SessionScores / AdminExamResults 공용 계약
     # - 프론트 수정 없이 확장 가능
     # =====================================
-    exam_score = serializers.FloatField()
-    exam_max_score = serializers.FloatField()
+    # 미응시(NOT_SUBMITTED)·미채점(provisional) 케이스에서 0 으로 coerce 하면
+    # "0/100" 으로 잘못 표시되므로 None 그대로 보존.
+    exam_score = serializers.FloatField(allow_null=True)
+    exam_max_score = serializers.FloatField(allow_null=True)
 
-    final_score = serializers.FloatField()
+    final_score = serializers.FloatField(allow_null=True)
     passed = serializers.BooleanField(allow_null=True)
     clinic_required = serializers.BooleanField()
 

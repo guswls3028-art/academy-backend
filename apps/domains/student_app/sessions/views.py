@@ -337,13 +337,15 @@ class StudentSessionDetailView(APIView):
         session = LectureSession.objects.filter(id=pk).select_related("lecture").first()
         if not session:
             return Response({"detail": "Not found."}, status=404)
-        # 차시에 연결된 운영 시험(regular) 중 활성/마감 — 학생 측 시험 진입 분기용.
+        # 차시에 연결된 운영 시험(regular) 중 활성 — 학생 측 시험 진입 분기용.
+        # 2026-05-13 학원장 결정: 시험 단위 status 폐기. status 기반 exclude 제거.
+        # 학생별 Achievement SSOT 가 단일 진실 (응시/이수/판정은 attempt 차원).
         exam_ids = list(
             session.exams.filter(
                 tenant=tenant,
                 exam_type="regular",
                 is_active=True,
-            ).exclude(status="DRAFT").values_list("id", flat=True)
+            ).values_list("id", flat=True)
         )
         data = {
             "id": session.id,

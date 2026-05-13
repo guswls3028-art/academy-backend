@@ -60,9 +60,22 @@ class SessionEnrollmentSerializer(serializers.ModelSerializer):
         ]
 
     def get_student_school(self, obj):
+        """
+        school_type SSOT 우선. school_type 이 가리키는 필드 1개만 노출.
+        과거 데이터가 high_school·middle_school 모두에 남아있어도
+        현재 학교급에 맞는 학교명을 정확히 표시.
+        """
         student = getattr(getattr(obj, "enrollment", None), "student", None)
         if student is None:
             return None
+        stype = (getattr(student, "school_type", "") or "").upper()
+        if stype == "HIGH":
+            return getattr(student, "high_school", None) or None
+        if stype == "MIDDLE":
+            return getattr(student, "middle_school", None) or None
+        if stype == "ELEMENTARY":
+            return getattr(student, "elementary_school", None) or None
+        # school_type 미설정 데이터 fallback (일관성 위해 학교급 순서대로)
         return (
             getattr(student, "high_school", None)
             or getattr(student, "middle_school", None)

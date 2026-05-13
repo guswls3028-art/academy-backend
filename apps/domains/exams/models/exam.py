@@ -171,14 +171,16 @@ class Exam(BaseModel):
             raise ValueError("This operation is allowed only for regular exams.")
 
     def should_show_answers(self) -> bool:
-        """정답 공개 여부를 answer_visibility 정책에 따라 판단."""
+        """
+        정답 공개 여부를 answer_visibility + close_at 정책으로 판단.
+        2026-05-13 학원장 결정: 시험 단위 status 폐기. AFTER_CLOSED 는 close_at
+        시간 비교만으로 판정 (status==CLOSED 분기 제거).
+        """
         from django.utils import timezone
 
         if self.answer_visibility == self.AnswerVisibility.ALWAYS:
             return True
         if self.answer_visibility == self.AnswerVisibility.AFTER_CLOSED:
-            if self.status == self.Status.CLOSED:
-                return True
             if self.close_at and self.close_at <= timezone.now():
                 return True
         return False
