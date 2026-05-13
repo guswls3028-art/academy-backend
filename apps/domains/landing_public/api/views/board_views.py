@@ -49,20 +49,20 @@ class PublicBoardPostViewSet(viewsets.GenericViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return PublicBoardPost.objects.none()
+        # P0 audit (2026-05-13): 단일 qs 분기. 이전: line 58에서 filter 후 line 62-65에서
+        # filter 재할당으로 throwaway. 가독성 + 디버깅 정합 위해 단일 분기.
         qs = PublicBoardPost.objects.filter(tenant=tenant).exclude(status=PublicBoardPost.Status.DELETED)
         user = self.request.user
-        # 비로그인 또는 family-non-staff: external_visible + published 만
         is_authed = bool(user and user.is_authenticated)
         viewer_role = _resolve_role(user, tenant) if is_authed else ""
         if not _is_staff_role(viewer_role):
-            qs = qs.filter(external_visible=True, status=PublicBoardPost.Status.PUBLISHED)
-            # hidden 상태는 작성자 본인만 노출
+            from django.db.models import Q
+            visible_q = Q(external_visible=True, status=PublicBoardPost.Status.PUBLISHED)
             if is_authed:
-                from django.db.models import Q
-                qs = PublicBoardPost.objects.filter(tenant=tenant).filter(
-                    Q(external_visible=True, status=PublicBoardPost.Status.PUBLISHED) |
-                    Q(author=user)
-                ).exclude(status=PublicBoardPost.Status.DELETED)
+                # 본인 작성 글은 hidden 도 노출
+                qs = qs.filter(visible_q | Q(author=user))
+            else:
+                qs = qs.filter(visible_q)
         # 카테고리 필터
         category = (self.request.query_params.get("category") or "").strip()
         if category:

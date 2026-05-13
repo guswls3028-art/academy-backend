@@ -26,6 +26,23 @@ from ...models import (
 )
 
 
+def _is_user_in_tenant(tenant, user) -> bool:
+    """user가 본 학원 멤버인지 확인 (cross-tenant 블랙리스트 차단용, P0 audit 2026-05-13).
+
+    1) 핵사고날 repo의 membership_exists 우선 — 정도 패턴.
+    2) fallback: user.tenant_id == tenant.id (legacy User 모델).
+    """
+    if user is None or tenant is None:
+        return False
+    try:
+        from academy.adapters.db.django import repositories_core as core_repo
+        if core_repo.membership_exists(tenant=tenant, user=user):
+            return True
+    except Exception:
+        pass
+    return getattr(user, "tenant_id", None) == getattr(tenant, "id", None)
+
+
 def _get_client_ip(request) -> str | None:
     forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
     if forwarded:
@@ -247,6 +264,11 @@ class PublicUserBlockView(APIView):
         try:
             u = User.objects.get(pk=user_id)
         except User.DoesNotExist:
+            return Response({"detail": "사용자가 없습니다"}, status=drf_status.HTTP_404_NOT_FOUND)
+        # P0 audit (2026-05-13): cross-tenant 블랙리스트 차단. user_id가 다른 학원 사용자면
+        # 본 학원 staff가 임의 ID guess/leak로 차단 처리할 수 없도록 tenant 멤버십 검증.
+        # 이전: User.objects.get 만 검사 → 다른 학원 user 도 본 학원에 차단 row 생성 가능.
+        if not _is_user_in_tenant(tenant, u):
             return Response({"detail": "사용자가 없습니다"}, status=drf_status.HTTP_404_NOT_FOUND)
         reason = (request.data.get("reason") or "")[:200]
         obj, _created = PublicUserBlock.objects.get_or_create(

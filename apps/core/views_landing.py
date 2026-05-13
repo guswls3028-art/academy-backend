@@ -523,6 +523,10 @@ class LandingUploadImageView(APIView):
 
         # field=hero_slot 의미: 다중 히어로 슬롯(0~5). slot 인덱스를 같이 받음.
         # field=hero / logo 는 기존 단일 이미지(backward compat).
+        # P0 audit (2026-05-13): slot 파싱 단일 + R2 업로드 + draft 갱신을 transaction
+        # 안에서 select_for_update 로 묶음. 이전: slot 두 번 재파싱 + read-modify-write
+        # 비원자 → 동시 hero_slot upload 시 slot 덮어쓰임 + R2 객체만 잔존 가능.
+        slot: int | None = None
         if field == "hero_slot":
             try:
                 slot = int(request.data.get("slot", -1))
@@ -545,31 +549,26 @@ class LandingUploadImageView(APIView):
 
         url = r2_storage.generate_presigned_get_url_admin(key=key, expires_in=86400 * 7)
 
-        # draft_config 자동 반영 정책:
-        # - hero/logo: 단일 필드 set (legacy)
-        # - hero_slot: hero_images[slot] set (배열 길이 자동 확장)
-        landing, _ = LandingPage.objects.get_or_create(
-            tenant=tenant,
-            defaults={"draft_config": _default_draft_config(tenant)},
-        )
-        draft = dict(landing.draft_config or {})
-        if field == "hero":
-            draft["hero_image_url"] = key
-        elif field == "logo":
-            draft["logo_url"] = key
-        elif field == "hero_slot":
-            try:
-                slot = int(request.data.get("slot", -1))
-            except (TypeError, ValueError):
-                slot = -1
-            arr = list(draft.get("hero_images") or [])
-            if 0 <= slot <= 5:
+        # draft_config 자동 반영 — 동시 upload race 방어용 atomic + select_for_update.
+        from django.db import transaction
+        with transaction.atomic():
+            landing, _ = LandingPage.objects.select_for_update().get_or_create(
+                tenant=tenant,
+                defaults={"draft_config": _default_draft_config(tenant)},
+            )
+            draft = dict(landing.draft_config or {})
+            if field == "hero":
+                draft["hero_image_url"] = key
+            elif field == "logo":
+                draft["logo_url"] = key
+            elif field == "hero_slot" and slot is not None:
+                arr = list(draft.get("hero_images") or [])
                 while len(arr) <= slot:
                     arr.append("")
                 arr[slot] = key
                 draft["hero_images"] = arr
-        landing.draft_config = draft
-        landing.save(update_fields=["draft_config", "updated_at"])
+            landing.draft_config = draft
+            landing.save(update_fields=["draft_config", "updated_at"])
 
         return Response({
             "key": key,
@@ -621,8 +620,10 @@ def _validate_consult(data: dict) -> list[str]:
     return errs
 
 
-# 간단한 in-memory rate limit — IP당 1분에 5건. 외부 form spam 완화.
-_consult_rate_window: dict[str, list[float]] = {}
+# Rate limit — Django cache backend 공유 (Redis/Memcached) 기반.
+# P0 audit (2026-05-13): 이전 process-local dict 패턴은 ASG 3 인스턴스 운영 시
+# 인스턴스마다 별도 dict → IP당 사실상 limit×3 허용 + restart 시 reset.
+# cache backend로 공유 → 3 인스턴스 일관 + 인스턴스 재기동 무관.
 
 
 def _client_ip(request) -> str:
@@ -633,16 +634,29 @@ def _client_ip(request) -> str:
 
 
 def _is_rate_limited(ip: str, limit: int = 5, window_sec: int = 60) -> bool:
-    import time
-    now = time.time()
-    bucket = _consult_rate_window.setdefault(ip, [])
-    # 윈도우 밖 항목 제거
-    cutoff = now - window_sec
-    bucket[:] = [t for t in bucket if t > cutoff]
-    if len(bucket) >= limit:
-        return True
-    bucket.append(now)
-    return False
+    """IP당 window_sec 안 limit 건 초과 시 True. cache backend 가 ASG 다중 인스턴스 공유.
+
+    cache.add + incr 패턴 — Redis/Memcached atomic INCR + initial TTL.
+    """
+    from django.core.cache import cache
+    key = f"consult_rl:{ip}"
+    try:
+        # 1번째 호출이면 add → 카운터 0 + TTL set. 이후 incr.
+        if cache.add(key, 0, timeout=window_sec):
+            cache.incr(key)
+            return False
+        try:
+            count = cache.incr(key)
+        except ValueError:
+            # key TTL 만료된 직후 incr → add로 재 시작
+            cache.set(key, 1, timeout=window_sec)
+            return False
+        return count > limit
+    except Exception:
+        # cache backend 장애 시 fail-open (안전 운영 우선 — 학원장 폼 닫지 않음).
+        # honeypot + 검증은 이미 위에서 차단.
+        logger.exception("CONSULT_RATE_LIMIT_CACHE_FAIL ip=%s", ip)
+        return False
 
 
 class LandingConsultPublicView(APIView):

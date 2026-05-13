@@ -118,10 +118,6 @@ def _parse_dt(raw: Any):
     return None
 
 
-# xframe_options_exempt 를 dispatch 에 적용 — DRF ViewSet 의 action method 직접 타겟은
-# 작동 안 함 (DRF가 wraps + initial 처리 후 view_func 호출이라 method_decorator 잘 못 잡음).
-# dispatch level이라 list/retrieve 도 iframe embed 가능 — JSON API 라 보안 영향 0.
-@method_decorator(xframe_options_exempt, name="dispatch")
 class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
     """공개 매치업 적중보고서 게시판.
 
@@ -193,6 +189,7 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
         return Response(payload)
 
     @action(detail=True, methods=["get"], url_path="pdf")
+    @method_decorator(xframe_options_exempt)
     def pdf_stream(self, request, pk=None):
         """게시물 스냅샷 PDF stream. iframe embed 용 (xframe_exempt).
 
