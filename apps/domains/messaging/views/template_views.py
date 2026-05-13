@@ -336,10 +336,41 @@ class SolapiSyncTemplatesView(APIView):
         VALID_STATUSES = {"APPROVED", "PENDING", "REJECTED", "INSPECTING"}
         STATUS_NORMALIZE = {"INSPECTING": "PENDING"}
 
+        # 솔라피 콘솔의 templateId 셋 — orphan 청소 판별용
+        solapi_ids: set[str] = set()
+        for item in solapi_list:
+            tid = (item.get("templateId") or item.get("id") or "").strip()
+            if tid:
+                solapi_ids.add(tid)
+
         updated_count = 0
         unchanged_count = 0
+        orphan_cleaned: list[dict] = []
         solapi_only: list[dict] = []
         errors: list[str] = []
+
+        # ─── Orphan 청소 ───
+        # 학원장이 SaaS에서 검수 신청한 templateId가 카카오 검수에서 reject되거나
+        # 솔라피 콘솔에서 학원장이 직접 삭제한 경우, 솔라피 GET 응답에 templateId가 없음.
+        # 이 경우 SaaS DB는 영영 PENDING stale 상태로 남음 (학원장 호소의 진짜 원인).
+        # solapi_template_id / solapi_status 둘 다 reset 해서 검수 미신청 상태로 복구.
+        # body / name 은 학원장 영역이라 절대 안 건드림 [[domain-policy.md §1·§5]].
+        for tid, tpl in existing_by_solapi_id.items():
+            if tid in solapi_ids:
+                continue  # 솔라피에 존재 — 정상 매칭, sync 단계로 진행
+            # orphan — 솔라피 콘솔에 templateId 없음
+            try:
+                tpl.solapi_template_id = ""
+                tpl.solapi_status = ""
+                tpl.save(update_fields=["solapi_template_id", "solapi_status", "updated_at"])
+                orphan_cleaned.append({
+                    "tenant_id": tpl.tenant_id,
+                    "id": tpl.id,
+                    "name": tpl.name,
+                    "previous_template_id": tid,
+                })
+            except Exception as e:  # noqa: BLE001
+                errors.append(f"orphan cleanup templateId={tid}: {e}")
 
         for item in solapi_list:
             tid = (item.get("templateId") or item.get("id") or "").strip()
@@ -377,6 +408,8 @@ class SolapiSyncTemplatesView(APIView):
                 unchanged_count += 1
 
         detail_parts = [f"업데이트 {updated_count}건", f"변경 없음 {unchanged_count}건"]
+        if orphan_cleaned:
+            detail_parts.append(f"검수 누락 양식 {len(orphan_cleaned)}건 상태 초기화")
         if solapi_only:
             detail_parts.append(f"SaaS 미등록 {len(solapi_only)}건")
         if errors:
@@ -387,8 +420,10 @@ class SolapiSyncTemplatesView(APIView):
             "detail": detail,
             "updated": updated_count,
             "unchanged": unchanged_count,
+            "orphan_cleaned_count": len(orphan_cleaned),
+            "orphan_cleaned": orphan_cleaned,
             "solapi_only_count": len(solapi_only),
-            "solapi_only": solapi_only[:20],  # 응답 크기 제한
+            "solapi_only": solapi_only[:20],
             "errors": errors,
             "credential_source": credential_source,
             "pfid": pfid,
