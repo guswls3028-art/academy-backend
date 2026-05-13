@@ -3,8 +3,10 @@
 # 선생님별 랜딩페이지 API.
 # - Public: 게시된 랜딩 조회 (인증 불필요)
 # - Admin: Draft CRUD, Publish/Unpublish, 이미지 업로드
+#
+# 2026-05-14 P1 audit 점진 리팩토링 — Manifest/Sitemap/Consult/Testimonial/Config helper
+# 는 apps/core/landing/ 패키지로 분리. 본 파일은 view 잔재 + facade re-export.
 
-import copy
 import logging
 
 from django.http import HttpResponse
@@ -18,267 +20,27 @@ from rest_framework.views import APIView
 from apps.core.models import LandingPage
 from apps.core.permissions import TenantResolved, TenantResolvedAndStaff
 
-
-def _tenant_required(view_func):
-    """Plain Django view용 tenant 가드."""
-    from django.http import JsonResponse
-    def wrapped(request, *args, **kwargs):
-        if not getattr(request, "tenant", None):
-            return JsonResponse({"detail": "Tenant required"}, status=400)
-        return view_func(request, *args, **kwargs)
-    return wrapped
+# config 도메인 상수 + helper 패키지로 분리 — alias 로 옛 이름 보존.
+from apps.core.landing.config_helpers import (
+    ALLOWED_COLORS,  # noqa: F401 — TEMPLATE_META 같이 외부 참조 보존
+    SECTION_TYPES_ORDERED,  # noqa: F401
+    SECTION_TYPES,  # noqa: F401
+    MAX_SECTION_ITEMS,  # noqa: F401
+    MAX_SECTIONS,  # noqa: F401
+    TEMPLATE_META,
+    default_draft_config as _default_draft_config,
+    backfill_missing_sections as _backfill_missing_sections,
+    resolve_image_urls as _resolve_image_urls,
+    validate_config as _validate_config,
+)
+# tenant_required + admin role check — _helpers 공용.
+from apps.core.landing._helpers import (
+    tenant_required as _tenant_required,
+    check_landing_admin_role as _check_landing_admin_role,
+    LANDING_ADMIN_ROLES,  # noqa: F401
+)
 
 logger = logging.getLogger(__name__)
-
-# ─────────────────────────────────────────────────
-# 허용 색상 팔레트 (가드레일)
-# ─────────────────────────────────────────────────
-ALLOWED_COLORS = {
-    "#2563EB",  # Blue
-    "#4F46E5",  # Indigo
-    "#7C3AED",  # Purple
-    "#EC4899",  # Pink
-    "#EF4444",  # Red
-    "#F97316",  # Orange
-    "#F59E0B",  # Amber
-    "#10B981",  # Emerald
-    "#14B8A6",  # Teal
-    "#06B6D4",  # Cyan
-    "#1E3A5F",  # Navy
-    "#475569",  # Slate
-    "#18181B",  # Black
-    "#0EA5E9",  # Sky
-    "#8B5CF6",  # Violet
-    "#D946EF",  # Fuchsia
-}
-
-# 섹션 타입 SSOT — 추가는 SECTION_TYPES_ORDERED 한 곳만 수정.
-# (frontend types/index.ts SECTION_META와 list 동기화 필요 — 두 언어 사이 자동 import 불가)
-SECTION_TYPES_ORDERED = [
-    "hero",
-    "hero_carousel",        # 2026-05-12 #63 — 매치업 외 일반 게시물·커스텀 카드 mix
-    "features",
-    "instructor_profile",   # v1.2.x 1인 강사 사이트 보강
-    "about",
-    "management_system",    # v1.2.x
-    "process_timeline",     # v1.2.x
-    "testimonials",
-    "hit_reports",          # v1.2.x
-    "programs",
-    "faq",
-    "contact",
-    "notice",
-]
-SECTION_TYPES = set(SECTION_TYPES_ORDERED)
-MAX_SECTION_ITEMS = 12  # process_timeline 7+주차 / management_system 6+카드 수용
-MAX_SECTIONS = len(SECTION_TYPES_ORDERED) + 2  # 자동 — 신규 추가 시 자동 갱신
-
-# ─────────────────────────────────────────────────
-# 템플릿 메타데이터 (프론트 갤러리용)
-# ─────────────────────────────────────────────────
-TEMPLATE_META = [
-    {
-        "key": "minimal_tutor",
-        "name": "Minimal Tutor",
-        "description": "밝고 깔끔한 미니멀 디자인. 넓은 여백과 신뢰감 있는 톤.",
-        "mood": "밝음 · 깔끔 · 신뢰",
-        "preview_color": "#2563EB",
-    },
-    {
-        "key": "premium_dark",
-        "name": "Premium Dark",
-        "description": "네이비/다크 기반의 세련된 프리미엄 톤.",
-        "mood": "프리미엄 · 세련 · 고급",
-        "preview_color": "#1E3A5F",
-    },
-    {
-        "key": "academic_trust",
-        "name": "Academic Trust",
-        "description": "성적 관리와 체계적 교육을 강조하는 신뢰형 디자인.",
-        "mood": "체계 · 관리 · 성과",
-        "preview_color": "#4F46E5",
-    },
-    {
-        "key": "program_promo",
-        "name": "Program Promo",
-        "description": "프로그램 설명과 CTA 중심의 홍보형 디자인.",
-        "mood": "홍보 · 활기 · 행동유도",
-        "preview_color": "#F97316",
-    },
-]
-
-# ─────────────────────────────────────────────────
-# 기본 draft config (새 랜딩 생성 시)
-# ─────────────────────────────────────────────────
-def _default_draft_config(tenant):
-    """tenant 정보 기반 기본 draft config 생성."""
-    return {
-        "brand_name": tenant.name or "",
-        "tagline": "",
-        "subtitle": "",
-        "primary_color": "#2563EB",
-        "hero_image_url": "",
-        "hero_images": [],
-        "logo_url": "",
-        "cta_text": "로그인",
-        "cta_link": "/login",
-        "contact": {
-            "phone": tenant.phone or "",
-            "email": "",
-            "address": tenant.address or "",
-        },
-        "sections": [
-            {"type": "hero", "enabled": True, "order": 0},
-            {"type": "features", "enabled": True, "order": 1, "items": [
-                {"icon": "book", "title": "체계적인 커리큘럼", "description": "학생 수준에 맞춘 단계별 학습 설계"},
-                {"icon": "chart", "title": "성적 관리", "description": "실시간 성적 추적과 분석 리포트"},
-                {"icon": "users", "title": "소통과 상담", "description": "학부모님과의 원활한 소통 채널"},
-            ]},
-            {"type": "about", "enabled": True, "order": 2, "title": "소개", "description": ""},
-            {"type": "testimonials", "enabled": False, "order": 3, "items": []},
-            {"type": "hit_reports", "enabled": False, "order": 4, "title": "최근 적중 사례", "description": "우리 학원의 시험지 적중 결과를 소개합니다.", "items": []},
-            {"type": "programs", "enabled": False, "order": 5, "items": []},
-            {"type": "faq", "enabled": False, "order": 6, "items": []},
-            {"type": "contact", "enabled": True, "order": 7},
-        ],
-    }
-
-
-# SECTION_TYPES_ORDERED를 SSOT으로 사용 — notice는 default backfill 대상에서 제외 (학원 자율 추가).
-_REQUIRED_SECTION_TYPES = [t for t in SECTION_TYPES_ORDERED if t != "notice"]
-
-
-def _backfill_missing_sections(draft: dict) -> dict:
-    """기존 학원 draft에 신규 섹션 타입을 enabled=False로 자동 추가.
-
-    학원장이 어드민 콘솔 진입 시 새로 추가된 섹션(예: hit_reports)이 sidebar nav에 즉시 노출되도록 보장.
-    값 변경 X — 누락 섹션만 추가, 기존 섹션은 그대로.
-    """
-    sections = list(draft.get("sections") or [])
-    existing_types = {s.get("type") for s in sections if isinstance(s, dict)}
-    max_order = max((s.get("order", 0) for s in sections), default=-1)
-    for sec_type in _REQUIRED_SECTION_TYPES:
-        if sec_type in existing_types:
-            continue
-        max_order += 1
-        if sec_type == "hit_reports":
-            sections.append({"type": "hit_reports", "enabled": False, "order": max_order, "title": "최근 적중 사례", "description": "우리 학원의 시험지 적중 결과를 소개합니다.", "items": []})
-        elif sec_type == "instructor_profile":
-            sections.append({"type": "instructor_profile", "enabled": False, "order": max_order, "title": "강사 프로필", "description": "", "items": []})
-        elif sec_type == "management_system":
-            sections.append({"type": "management_system", "enabled": False, "order": max_order, "title": "학생 관리 시스템", "description": "수업 외 시간에도 학생을 끊김 없이 챙깁니다.", "items": []})
-        elif sec_type == "process_timeline":
-            sections.append({"type": "process_timeline", "enabled": False, "order": max_order, "title": "수업 진행 흐름", "description": "한 사이클이 어떻게 진행되는지 한눈에 보세요.", "items": []})
-        elif sec_type == "about":
-            sections.append({"type": "about", "enabled": False, "order": max_order, "title": "소개", "description": ""})
-        elif sec_type == "contact":
-            sections.append({"type": "contact", "enabled": False, "order": max_order})
-        elif sec_type == "hero":
-            sections.append({"type": "hero", "enabled": False, "order": max_order})
-        else:
-            sections.append({"type": sec_type, "enabled": False, "order": max_order, "items": []})
-    if len(sections) != len(draft.get("sections") or []):
-        draft = {**draft, "sections": sections}
-    return draft
-
-
-def _resolve_image_urls(config: dict) -> dict:
-    """R2 key → presigned URL 변환."""
-    from apps.infrastructure.storage import r2 as r2_storage
-
-    result = copy.deepcopy(config)
-    for field in ("hero_image_url", "logo_url"):
-        val = result.get(field, "")
-        if val and val.startswith("landing/"):
-            result[field] = r2_storage.generate_presigned_get_url_admin(
-                key=val, expires_in=86400 * 7
-            )
-    hero_images = result.get("hero_images") or []
-    if isinstance(hero_images, list):
-        resolved = []
-        for v in hero_images:
-            if isinstance(v, str) and v.startswith("landing/"):
-                resolved.append(
-                    r2_storage.generate_presigned_get_url_admin(
-                        key=v, expires_in=86400 * 7
-                    )
-                )
-            elif isinstance(v, str):
-                resolved.append(v)
-        result["hero_images"] = resolved
-    return result
-
-
-def _validate_config(data: dict) -> list[str]:
-    """draft config 유효성 검증. 위반 사항 목록 반환."""
-    errors = []
-    color = data.get("primary_color", "")
-    if color and color not in ALLOWED_COLORS:
-        errors.append(f"허용되지 않은 색상입니다: {color}")
-
-    sections = data.get("sections", [])
-    if not isinstance(sections, list):
-        errors.append("sections는 배열이어야 합니다.")
-        return errors
-    if len(sections) > MAX_SECTIONS:
-        errors.append(f"섹션은 최대 {MAX_SECTIONS}개까지 가능합니다.")
-
-    for sec in sections:
-        if not isinstance(sec, dict):
-            errors.append("각 섹션은 객체여야 합니다.")
-            continue
-        stype = sec.get("type", "")
-        if stype not in SECTION_TYPES:
-            errors.append(f"알 수 없는 섹션 타입: {stype}")
-        items = sec.get("items", [])
-        if len(items) > MAX_SECTION_ITEMS:
-            errors.append(f"'{stype}' 섹션의 항목은 최대 {MAX_SECTION_ITEMS}개입니다.")
-
-    brand_name = data.get("brand_name", "")
-    if brand_name and len(brand_name) > 50:
-        errors.append("브랜드명은 50자 이내여야 합니다.")
-    tagline = data.get("tagline", "")
-    if tagline and len(tagline) > 100:
-        errors.append("한 줄 소개는 100자 이내여야 합니다.")
-
-    hero_images = data.get("hero_images")
-    if hero_images is not None:
-        if not isinstance(hero_images, list):
-            errors.append("hero_images는 배열이어야 합니다.")
-        elif len(hero_images) > 6:
-            errors.append("히어로 이미지는 최대 6장입니다.")
-        else:
-            for v in hero_images:
-                if not isinstance(v, str) or len(v) > 600:
-                    errors.append("히어로 이미지 값이 올바르지 않습니다.")
-                    break
-
-    # cta_link XSS 방지: 허용된 프로토콜만 (내부 path / https / tel / mailto)
-    cta_link = data.get("cta_link", "")
-    if cta_link and not (cta_link.startswith("/") or cta_link.startswith("https://") or cta_link.startswith("tel:") or cta_link.startswith("mailto:")):
-        errors.append("CTA 링크는 /로 시작하거나 https://·tel:·mailto: URL이어야 합니다.")
-
-    # 개인 휴대폰 번호 가드 — tel: 010-xxxx-xxxx 또는 010xxxxxxxx 패턴은 학원 대표번호 X.
-    # 학원장 사고 방지: 외부 노출되면 안 되는 개인 폰을 cta/contact에 박지 않게.
-    import re
-    _personal_mobile = re.compile(r"01[016789][- ]?\d{3,4}[- ]?\d{4}")
-    if cta_link.startswith("tel:") and _personal_mobile.match(cta_link[4:].replace("-", "").replace(" ", "")):
-        # 010/011/016/017/018/019 시작 = 개인 휴대폰. 학원 대표번호(02-/0n-)만 허용.
-        digits = cta_link[4:].replace("-", "").replace(" ", "").replace("+82", "0")
-        if digits.startswith(("010", "011", "016", "017", "018", "019")):
-            errors.append("CTA 링크에 개인 휴대폰 번호는 사용할 수 없습니다. 학원 대표번호(02-, 031- 등)를 사용해주세요.")
-    contact = data.get("contact") or {}
-    if isinstance(contact, dict):
-        for k in ("phone", "email"):
-            v = str(contact.get(k) or "")
-            digits = re.sub(r"[^\d]", "", v)
-            if digits and len(digits) >= 10 and digits[:3] in ("010", "011", "016", "017", "018", "019"):
-                # email 필드는 "010-xxxx-xxxx (문자전용)" 같은 학원 별도 안내용 번호로 사용 가능 — 경고만, 차단 X.
-                # phone(메인 대표번호)에 개인 휴대폰 박는 건 차단.
-                if k == "phone":
-                    errors.append(f"문의 전화번호({k})에 개인 휴대폰 번호는 사용할 수 없습니다. 학원 대표번호를 사용해주세요.")
-
-    return errors
 
 
 # ─────────────────────────────────────────────────
@@ -336,21 +98,8 @@ class LandingHasPublishedView(APIView):
 
 # ─────────────────────────────────────────────────
 # Admin API (owner/admin 전용)
+# — LANDING_ADMIN_ROLES + _check_landing_admin_role 은 _helpers 에서 import 됨 (상단 참조)
 # ─────────────────────────────────────────────────
-
-LANDING_ADMIN_ROLES = {"owner", "admin"}
-
-
-def _check_landing_admin_role(request):
-    """owner/admin만 랜딩 편집 허용. teacher/staff 차단."""
-    from apps.core.models import TenantMembership
-    tenant = request.tenant
-    user = request.user
-    try:
-        membership = TenantMembership.objects.get(user=user, tenant=tenant, is_active=True)
-    except TenantMembership.DoesNotExist:
-        return False
-    return membership.role in LANDING_ADMIN_ROLES
 
 
 class LandingAdminView(APIView):
