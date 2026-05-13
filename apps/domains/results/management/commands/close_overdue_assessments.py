@@ -21,7 +21,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Iterable
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.utils import timezone
 
@@ -65,6 +65,16 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        # 2026-05-13 학원장 결정 (project_exam_status_deprecated_2026_05_13): 시험·과제 전체 단위
+        # status(OPEN/CLOSED) 폐기. 자동 마감 정책 폐기. EventBridge cron DISABLED + 67건 OPEN 일괄 복구.
+        # 본 management command 호출 시 학원장 환경 모든 시험·과제를 또 CLOSED로 일괄 마감 → 학원장 의도
+        # 정면 위반. raise + 파일 보존(legacy 데이터 마이그레이션 시 참고 가능, 운영 호출 영구 차단).
+        raise CommandError(
+            "DEPRECATED (2026-05-13): 시험·과제 status 폐기 정책 시행. "
+            "이 command 호출은 학원장 결정 위반 (모든 OPEN → CLOSED 일괄 마감 시도). "
+            "관련: project_exam_status_deprecated_2026_05_13 / infra/terraform/purge_schedule.tf"
+        )
+        # 아래 로직은 legacy 보존용 (호출되지 않음).
         dry = bool(options.get("dry_run"))
         today = timezone.localdate()
 

@@ -126,30 +126,7 @@ resource "aws_cloudwatch_event_target" "cleanup_orphan_video_storage" {
 # Trigger: EventBridge → SSM RunCommand → API EC2(docker exec)
 # ──────────────────────────────────────────────
 
-# 2026-05-13 학원장 결정: 시험 단위 status (OPEN/CLOSED) 폐기, 학생별 Achievement SSOT 통합.
-# 자동 마감 cron 은 학원장 의도 ("시험 만들면 영구 운영, 학생별로 진행/이수/판정") 와 충돌 →
-# state=DISABLED. frontend SessionAssessmentSidePanel 의 자동 마감 useEffect 도 동시 제거.
-resource "aws_cloudwatch_event_rule" "close_overdue_assessments" {
-  name                = "${var.naming_prefix}-close-overdue-assessments"
-  description         = "DEPRECATED (2026-05-13): 시험 단위 status 폐기 후 비활성. 학원장 결정."
-  schedule_expression = "cron(30 18 * * ? *)" # 18:30 UTC = 03:30 KST
-  state               = "DISABLED"
-}
-
-resource "aws_cloudwatch_event_target" "close_overdue_assessments" {
-  rule      = aws_cloudwatch_event_rule.close_overdue_assessments.name
-  target_id = "SsmRunCommandCloseOverdueAssessments"
-  arn       = "arn:aws:ssm:${var.aws_region}::document/AWS-RunShellScript"
-  role_arn  = aws_iam_role.eventbridge_ssm_purge.arn
-
-  run_command_targets {
-    key    = "tag:Name"
-    values = ["academy-v1-api"]
-  }
-
-  input = jsonencode({
-    commands = [
-      "docker exec academy-api python manage.py close_overdue_assessments"
-    ]
-  })
-}
+# 2026-05-13 학원장 결정 시행 — close_overdue_assessments EventBridge rule 자체 삭제.
+# 직전 state=DISABLED 만 했으나, 다른 에이전트가 무심코 ENABLED 복귀 시 학원장 의도 위반 위험.
+# resource block 완전 제거. management command 도 raise CommandError 처리 (영구 차단).
+# Backup terraform 정의: `git log --oneline -- infra/terraform/purge_schedule.tf` 에서 조회 가능.
