@@ -35,7 +35,10 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
         return [TenantResolvedAndStaff()]
 
     def _viewer_is_staff(self, request) -> bool:
-        """학원 staff(owner/admin) 인지. list/retrieve 일관 사용."""
+        """학원 staff(owner/admin/staff/teacher) 인지. list/retrieve 일관 사용.
+        이전 retrieve 가 동일 roles 검사하던 것과 정합. owner/admin 외 staff/teacher 도
+        자기 학원 미공개 showcase 풀 열람 권한 보유 (학원장 spec — 학원 내부 운영진).
+        """
         user = request.user
         if not user.is_authenticated:
             return False
@@ -48,7 +51,7 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
             from academy.adapters.db.django import repositories_core as core_repo
             return core_repo.membership_exists_staff(
                 tenant=tenant, user=user,
-                staff_roles=("owner", "admin"),
+                staff_roles=("owner", "admin", "staff", "teacher"),
             )
         except Exception:
             return False

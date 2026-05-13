@@ -29,6 +29,7 @@ from django.views.decorators.clickjacking import xframe_options_exempt
 from django.utils.decorators import method_decorator
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.core.permissions import TenantResolved, TenantResolvedAndStaff
@@ -268,7 +269,12 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
         )
         return Response(self._serialize_card(obj, viewer_is_staff=True), status=status.HTTP_201_CREATED)
 
-    @action(detail=False, methods=["post"], url_path="publish-upload", parser_classes=[])
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="publish-upload",
+        parser_classes=[MultiPartParser, FormParser, JSONParser],
+    )
     def publish_upload(self, request):
         """학원장이 PC에서 직접 편집한 PDF 업로드 path (Phase #71, 2026-05-13).
 
@@ -286,10 +292,6 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
 
         snapshot_pdf_key = 업로드한 그대로의 R2 key. server PDF generate 안 함.
         """
-        from rest_framework.parsers import MultiPartParser, FormParser
-        # 이 action 만 multipart 허용 (DRF default JSON parser는 multipart 거부)
-        request.parsers = [MultiPartParser(), FormParser()]
-
         tenant = request.tenant
         upload = request.FILES.get("file")
         if not upload:

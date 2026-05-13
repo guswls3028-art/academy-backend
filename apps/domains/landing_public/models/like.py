@@ -31,7 +31,10 @@ class PublicPostLike(TimestampModel):
 
     class Meta:
         db_table = "landing_public_post_like"
-        unique_together = [("user", "target_kind", "target_id")]
+        # tenant 포함 — 같은 user가 다른 학원의 같은 pk를 누를 수 있어야 함
+        # (core.md §1 tenant isolation absolute). 이전: ("user","target_kind","target_id") 만 →
+        # cross-tenant 시도 시 UNIQUE violation. 2026-05-13 P0 audit fix.
+        unique_together = [("tenant", "user", "target_kind", "target_id")]
         indexes = [
             models.Index(fields=["tenant", "target_kind", "target_id"]),
         ]
