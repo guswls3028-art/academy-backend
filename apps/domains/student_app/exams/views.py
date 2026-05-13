@@ -24,7 +24,13 @@ from .serializers import StudentExamSerializer
 
 
 def _exam_queryset_for_user(user, tenant):
-    """Enrollment 기준: student.user + tenant 로 연결."""
+    """Enrollment 기준: student.user + tenant 로 연결.
+
+    2026-05-13 학원장 결정 정합: Exam.status 단위 폐기 → 학생별 Achievement SSOT.
+    이전엔 `.exclude(status=CLOSED)` 로 학생 화면에서 CLOSED 시험을 숨겼으나,
+    학원장 결정(시험 만들면 영구 운영)과 충돌하므로 제거.
+    학원장이 의도적으로 응시 윈도를 좁히려면 open_at/close_at 시간 필드를 명시.
+    """
     now = timezone.now()
     return (
         Exam.objects.filter(
@@ -34,7 +40,6 @@ def _exam_queryset_for_user(user, tenant):
             exam_enrollments__enrollment__status="ACTIVE",  # ✅ 퇴원 학생 방어
             is_active=True,
         )
-        .exclude(status=Exam.Status.CLOSED)
         .filter(
             Q(open_at__isnull=True) | Q(open_at__lte=now),
             Q(close_at__isnull=True) | Q(close_at__gte=now),
