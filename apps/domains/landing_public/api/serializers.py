@@ -35,9 +35,34 @@ def _is_staff_role(role: str) -> bool:
     return (role or "").lower() in _STAFF_ROLES
 
 
+def _is_liked_by_me(context, kind: str, target_id: int) -> bool:
+    """현재 viewer가 본 target에 좋아요했는지. SerializerMethodField 헬퍼 (P1 audit fix).
+
+    list view (N+1 회피): context["liked_target_ids"] = set 미리 주입 시 그것 사용.
+    detail view: 직접 DB lookup.
+    tenant 필터로 cross-tenant 결과 제외 (core.md §1 isolation).
+    """
+    request = context.get("request") if context else None
+    if not request or not getattr(request, "user", None) or not request.user.is_authenticated:
+        return False
+    # list view에서 prefetch한 set 우선
+    prefetched = context.get(f"liked_target_ids_{kind}")
+    if prefetched is not None:
+        return target_id in prefetched
+    # detail view fallback — 1건만이라 N+1 영향 없음
+    tenant = getattr(request, "tenant", None)
+    if not tenant:
+        return False
+    return PublicPostLike.objects.filter(
+        tenant=tenant, user=request.user,
+        target_kind=kind, target_id=target_id,
+    ).exists()
+
+
 class PublicBoardPostListSerializer(serializers.ModelSerializer):
     """list/preview용 — content 제외, 메타 + 카운트만."""
     display_name = serializers.SerializerMethodField()
+    is_liked_by_me = serializers.SerializerMethodField()
 
     class Meta:
         model = PublicBoardPost
@@ -48,12 +73,16 @@ class PublicBoardPostListSerializer(serializers.ModelSerializer):
             "like_count", "reply_count", "view_count",
             "external_visible", "status",
             "created_at", "updated_at",
+            "is_liked_by_me",
         )
 
     def get_display_name(self, obj: PublicBoardPost) -> str:
         if obj.is_anonymous:
             return "익명"
         return obj.author_display_name or "익명"
+
+    def get_is_liked_by_me(self, obj: PublicBoardPost) -> bool:
+        return _is_liked_by_me(self.context, PublicPostLike.TargetKind.BOARD, obj.pk)
 
 
 class PublicBoardPostDetailSerializer(PublicBoardPostListSerializer):
@@ -84,6 +113,7 @@ class PublicBoardPostWriteSerializer(serializers.ModelSerializer):
 
 class PublicReviewListSerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
+    is_liked_by_me = serializers.SerializerMethodField()
 
     class Meta:
         model = PublicReview
@@ -95,12 +125,16 @@ class PublicReviewListSerializer(serializers.ModelSerializer):
             "is_pinned", "is_verified", "status",
             "like_count", "reply_count",
             "created_at", "updated_at",
+            "is_liked_by_me",
         )
 
     def get_display_name(self, obj: PublicReview) -> str:
         if obj.is_anonymous:
             return "익명"
         return obj.author_display_name or "익명"
+
+    def get_is_liked_by_me(self, obj: PublicReview) -> bool:
+        return _is_liked_by_me(self.context, PublicPostLike.TargetKind.REVIEW, obj.pk)
 
 
 class PublicReviewDetailSerializer(PublicReviewListSerializer):
@@ -140,6 +174,7 @@ class PublicReviewModerateSerializer(serializers.ModelSerializer):
 class PublicPostReplySerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
     is_mine = serializers.SerializerMethodField()
+    is_liked_by_me = serializers.SerializerMethodField()
 
     class Meta:
         model = PublicPostReply
@@ -148,9 +183,12 @@ class PublicPostReplySerializer(serializers.ModelSerializer):
             "display_name", "author_role", "is_anonymous", "is_owner_reply",
             "content", "parent_reply",
             "is_hidden", "like_count", "created_at",
-            "is_mine",
+            "is_mine", "is_liked_by_me",
         )
-        read_only_fields = ("is_owner_reply", "is_hidden", "like_count", "is_mine")
+        read_only_fields = ("is_owner_reply", "is_hidden", "like_count", "is_mine", "is_liked_by_me")
+
+    def get_is_liked_by_me(self, obj: PublicPostReply) -> bool:
+        return _is_liked_by_me(self.context, PublicPostLike.TargetKind.REPLY, obj.pk)
 
     def get_display_name(self, obj: PublicPostReply) -> str:
         if obj.is_anonymous:
