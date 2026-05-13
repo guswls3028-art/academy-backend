@@ -19,6 +19,7 @@ from ..serializers import (
 )
 from ...models import PublicBoardPost, PublicPostLike, PublicUserBlock
 from ...services.matchup_guard import filter_allowed_report_ids
+from ..pagination import LandingPublicPagination
 
 
 class PublicBoardPostViewSet(viewsets.GenericViewSet):
@@ -32,6 +33,7 @@ class PublicBoardPostViewSet(viewsets.GenericViewSet):
     """
 
     queryset = PublicBoardPost.objects.all()
+    pagination_class = LandingPublicPagination
     lookup_field = "pk"
 
     # ─── Permissions per action ───

@@ -134,7 +134,10 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
         if not title:
             return Response({"detail": "title 필수."}, status=status.HTTP_400_BAD_REQUEST)
         description = (request.data.get("description") or "").strip()
-        anonymization_mode = (request.data.get("anonymization_mode") or "initial").strip()
+        # P1 audit (2026-05-14): 익명화 default 강화 — pseudonym 권장.
+        # 이전: default "initial" (성+○○). 작은 학원(<10명)에서 박씨 1명이면 즉시 식별.
+        # 학원장이 명시 mode 안 주면 "pseudonym" — small-N PII 보호.
+        anonymization_mode = (request.data.get("anonymization_mode") or "pseudonym").strip()
         if anonymization_mode not in {c[0] for c in PublicExamShowcase.AnonymizationMode.choices}:
             return Response({"detail": "anonymization_mode 잘못됨."}, status=status.HTTP_400_BAD_REQUEST)
         published_until_raw = request.data.get("published_until")

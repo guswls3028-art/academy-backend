@@ -16,6 +16,7 @@ from ..serializers import (
     _resolve_role,
 )
 from ...models import PublicPostLike, PublicReview, PublicUserBlock
+from ..pagination import LandingPublicPagination
 
 
 class PublicReviewViewSet(viewsets.GenericViewSet):
@@ -28,6 +29,7 @@ class PublicReviewViewSet(viewsets.GenericViewSet):
     """
 
     queryset = PublicReview.objects.all()
+    pagination_class = LandingPublicPagination
 
     def get_permissions(self):
         if self.action in ("list", "retrieve", "summary"):
