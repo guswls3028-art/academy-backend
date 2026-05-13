@@ -139,6 +139,7 @@ class PublicReviewModerateSerializer(serializers.ModelSerializer):
 
 class PublicPostReplySerializer(serializers.ModelSerializer):
     display_name = serializers.SerializerMethodField()
+    is_mine = serializers.SerializerMethodField()
 
     class Meta:
         model = PublicPostReply
@@ -147,13 +148,22 @@ class PublicPostReplySerializer(serializers.ModelSerializer):
             "display_name", "author_role", "is_anonymous", "is_owner_reply",
             "content", "parent_reply",
             "is_hidden", "like_count", "created_at",
+            "is_mine",
         )
-        read_only_fields = ("is_owner_reply", "is_hidden", "like_count")
+        read_only_fields = ("is_owner_reply", "is_hidden", "like_count", "is_mine")
 
     def get_display_name(self, obj: PublicPostReply) -> str:
         if obj.is_anonymous:
             return "익명"
         return obj.author_display_name or "익명"
+
+    def get_is_mine(self, obj: PublicPostReply) -> bool:
+        """현재 viewer가 본 댓글 작성자 본인인가. frontend에서 '내 댓글 삭제' 버튼 노출용.
+        author_id 자체를 노출하지 않고 boolean 만 — 익명/타인 식별 정보 누출 회피."""
+        request = self.context.get("request") if hasattr(self, "context") else None
+        if not request or not getattr(request, "user", None) or not request.user.is_authenticated:
+            return False
+        return obj.author_id == request.user.id
 
 
 __all__ = [

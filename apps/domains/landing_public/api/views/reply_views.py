@@ -134,7 +134,9 @@ class PublicPostReplyViewSet(viewsets.GenericViewSet):
     def like_toggle(self, request, pk=None):
         obj = self.get_object()
         user = request.user
+        # tenant 필터 — cross-tenant 누수 차단(core.md §1)
         existing = PublicPostLike.objects.filter(
+            tenant=request.tenant,
             user=user, target_kind=PublicPostLike.TargetKind.REPLY, target_id=obj.pk,
         ).first()
         if existing:

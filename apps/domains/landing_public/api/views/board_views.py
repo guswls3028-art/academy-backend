@@ -166,6 +166,7 @@ class PublicBoardPostViewSet(viewsets.GenericViewSet):
                     new_meta.pop("matchup_report_ids", None)
                 ser.validated_data["meta"] = new_meta
         ser.save()
+        obj.refresh_from_db()  # like_count 등 cached 값 stale 회피
         return Response(PublicBoardPostDetailSerializer(obj, context={"request": request}).data)
 
     def destroy(self, request, *args, **kwargs):
@@ -191,7 +192,10 @@ class PublicBoardPostViewSet(viewsets.GenericViewSet):
     def like_toggle(self, request, pk=None):
         obj = self.get_object()
         user = request.user
+        # tenant 필터 — cross-tenant 누수 차단(core.md §1). 같은 user가 다른 학원에서 같은
+        # board pk를 누른 적이 있더라도 본 학원의 like만 lookup.
         existing = PublicPostLike.objects.filter(
+            tenant=request.tenant,
             user=user, target_kind=PublicPostLike.TargetKind.BOARD, target_id=obj.pk,
         ).first()
         if existing:

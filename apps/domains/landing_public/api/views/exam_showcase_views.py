@@ -34,15 +34,33 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
             return [TenantResolved()]
         return [TenantResolvedAndStaff()]
 
+    def _viewer_is_staff(self, request) -> bool:
+        """학원 staff(owner/admin) 인지. list/retrieve 일관 사용."""
+        user = request.user
+        if not user.is_authenticated:
+            return False
+        if getattr(user, "is_superuser", False):
+            return True
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return False
+        try:
+            from academy.adapters.db.django import repositories_core as core_repo
+            return core_repo.membership_exists_staff(
+                tenant=tenant, user=user,
+                staff_roles=("owner", "admin"),
+            )
+        except Exception:
+            return False
+
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return PublicExamShowcase.objects.none()
         qs = PublicExamShowcase.objects.filter(tenant=tenant)
-        # 외부 시점: published 또는 expired 만 노출 (draft/hidden 제외)
-        user = self.request.user
-        is_staff = user.is_authenticated and bool(getattr(user, "is_superuser", False))
-        if not is_staff:
+        # 외부 시점: published 또는 expired 만 노출. staff(owner/admin)는 draft/hidden 까지.
+        # 이전: is_superuser만 검사해 학원 owner/admin이 자기 draft 못 봤음(retrieve 와 정합 X).
+        if not self._viewer_is_staff(self.request):
             qs = qs.filter(status__in=[
                 PublicExamShowcase.Status.PUBLISHED,
                 PublicExamShowcase.Status.EXPIRED,
@@ -75,19 +93,8 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
         expired = self._is_expired(obj)
-        # expired 시 rows 노출 차단 (staff 만 열람 가능)
-        user = request.user
-        viewer_is_staff = user.is_authenticated and bool(getattr(user, "is_superuser", False))
-        # staff 체크 단순화 — TenantResolved 통과한 유저 중 학원 staff role 인지 별도 검사 필요
-        if not viewer_is_staff and user.is_authenticated:
-            try:
-                from academy.adapters.db.django import repositories_core as core_repo
-                viewer_is_staff = core_repo.membership_exists_staff(
-                    tenant=request.tenant, user=user,
-                    staff_roles=("owner", "admin", "staff", "teacher"),
-                )
-            except Exception:
-                viewer_is_staff = False
+        # expired 시 rows 노출 차단 (staff 만 열람 가능). list 와 동일한 _viewer_is_staff 사용.
+        viewer_is_staff = self._viewer_is_staff(request)
 
         # view_count + (작성자 본인 제외 추후)
         if not viewer_is_staff:
