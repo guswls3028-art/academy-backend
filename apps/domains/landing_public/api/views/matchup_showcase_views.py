@@ -219,6 +219,9 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
     def publish(self, request):
         """staff publish (1버튼). body:
         { hit_report_id, title?, description?, published_at?, published_until? }
+
+        server-side PDF generate path. 학원장이 콘솔에서 작성한 적중보고서를
+        그 자체로 게시 (서버가 curated PDF generate → R2 copy).
         """
         tenant = request.tenant
         try:
@@ -261,6 +264,138 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             snapshot_pdf_bytes=snapshot_bytes,
             snapshot_meta=snapshot_meta,
             snapshot_at=now,
+            created_by=request.user if request.user.is_authenticated else None,
+        )
+        return Response(self._serialize_card(obj, viewer_is_staff=True), status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=["post"], url_path="publish-upload", parser_classes=[])
+    def publish_upload(self, request):
+        """학원장이 PC에서 직접 편집한 PDF 업로드 path (Phase #71, 2026-05-13).
+
+        본질 (박철T 학원장 호소): 작성한 적중보고서 PDF를 다운받아 출처 부분 등을
+        포토샵으로 지우고 다시 업로드 — "내가 만든 PDF 게시판에 직접 올림".
+
+        multipart/form-data:
+          - file (required): PDF 파일 (application/pdf, ≤20MB)
+          - title (optional): 게시 제목 (비우면 파일명)
+          - description (optional)
+          - published_at / published_until (optional ISO)
+          - source_hit_report_id (optional): 원본 적중보고서 ID 참조 (학원장이 어떤 보고서를
+            편집했는지 추적용. server-side regenerate 안 함)
+          - meta (optional JSON string): { hit_count, exam_count, document_title, author_name, ... }
+
+        snapshot_pdf_key = 업로드한 그대로의 R2 key. server PDF generate 안 함.
+        """
+        from rest_framework.parsers import MultiPartParser, FormParser
+        # 이 action 만 multipart 허용 (DRF default JSON parser는 multipart 거부)
+        request.parsers = [MultiPartParser(), FormParser()]
+
+        tenant = request.tenant
+        upload = request.FILES.get("file")
+        if not upload:
+            return Response({"detail": "PDF 파일이 필요합니다 (field: file)."}, status=status.HTTP_400_BAD_REQUEST)
+        # 크기 제한 20MB
+        if upload.size > 20 * 1024 * 1024:
+            return Response({"detail": "PDF는 20MB 이하만 업로드 가능합니다."}, status=status.HTTP_400_BAD_REQUEST)
+        # content-type 또는 확장자 검증
+        ct = (upload.content_type or "").lower()
+        name = (upload.name or "").lower()
+        if not (ct in ("application/pdf", "application/x-pdf") or name.endswith(".pdf")):
+            return Response({"detail": "PDF 파일만 업로드 가능합니다."}, status=status.HTTP_400_BAD_REQUEST)
+
+        title = (request.data.get("title") or "").strip() or (upload.name.rsplit(".", 1)[0] if upload.name else "게시물")
+        description = (request.data.get("description") or "").strip()
+        published_at = _parse_dt(request.data.get("published_at")) or timezone.now()
+        published_until = _parse_dt(request.data.get("published_until"))
+
+        source_hit_report_id: int | None = None
+        raw_src = request.data.get("source_hit_report_id")
+        if raw_src:
+            try:
+                source_hit_report_id = int(raw_src)
+            except (TypeError, ValueError):
+                source_hit_report_id = None
+
+        # meta — optional JSON string 또는 dict
+        meta: dict[str, Any] = {}
+        raw_meta = request.data.get("meta")
+        if raw_meta:
+            try:
+                if isinstance(raw_meta, str):
+                    import json
+                    meta = json.loads(raw_meta) or {}
+                elif isinstance(raw_meta, dict):
+                    meta = raw_meta
+            except (ValueError, TypeError):
+                meta = {}
+        # 원본 보고서 참조 시 메타 일부 자동 채움 (학원장이 source_hit_report_id만 던지면 자동 enrich)
+        if source_hit_report_id and not meta:
+            try:
+                from apps.domains.matchup.models import MatchupHitReport
+                report = MatchupHitReport.objects.select_related("document", "author").filter(
+                    id=source_hit_report_id, tenant=tenant,
+                ).first()
+                if report:
+                    entries_qs = report.entries.all()
+                    total_entries = entries_qs.count()
+                    excluded = entries_qs.filter(excluded=True).count()
+                    counted = total_entries - excluded
+                    hit = sum(
+                        1 for e in entries_qs
+                        if not e.excluded and isinstance(e.selected_problem_ids, list)
+                        and len(e.selected_problem_ids) > 0
+                    )
+                    meta = {
+                        "document_title": (report.document.title or "") if report.document_id else "",
+                        "document_id": report.document_id,
+                        "author_name": (
+                            report.author.name if report.author and getattr(report.author, "name", None)
+                            else (report.submitted_by_name or "")
+                        ),
+                        "report_title": report.title or "",
+                        "total_entries": total_entries,
+                        "counted_entries": counted,
+                        "hit_count": hit,
+                        "hit_rate": round(hit / counted, 3) if counted else 0.0,
+                        "source": "user_upload_with_ref",
+                    }
+            except Exception:
+                logger.exception("matchup_showcase_meta_enrich_failed source=%s", source_hit_report_id)
+        meta.setdefault("source", "user_upload")
+        meta["snapshot_at_iso"] = timezone.now().isoformat()
+
+        # R2 upload — 사용자 PDF 그대로
+        try:
+            from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+            now = timezone.now()
+            key = (
+                f"matchup-showcase-snapshots/tenant_{tenant.id}/"
+                f"user_upload/{int(now.timestamp())}_{upload.name[:60]}"
+            )
+            # InMemory 또는 TemporaryUploaded — read() 후 BytesIO로 재포장 또는 직접 fileobj 사용
+            upload.seek(0)
+            upload_fileobj_to_r2_storage(
+                fileobj=upload,
+                key=key,
+                content_type="application/pdf",
+            )
+            size = upload.size
+        except Exception:
+            logger.exception("matchup_showcase_user_pdf_upload_failed")
+            return Response({"detail": "PDF 업로드 실패"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        obj = PublicMatchupShowcase.objects.create(
+            tenant=tenant,
+            hit_report_id_ref=source_hit_report_id,
+            title=title[:200],
+            description=description,
+            status=PublicMatchupShowcase.Status.PUBLISHED,
+            published_at=published_at,
+            published_until=published_until,
+            snapshot_pdf_key=key,
+            snapshot_pdf_bytes=size,
+            snapshot_meta=meta,
+            snapshot_at=timezone.now(),
             created_by=request.user if request.user.is_authenticated else None,
         )
         return Response(self._serialize_card(obj, viewer_is_staff=True), status=status.HTTP_201_CREATED)
