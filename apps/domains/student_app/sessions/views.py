@@ -45,6 +45,10 @@ class StudentSessionListView(APIView):
 
         # 학생이 휴지통으로 비운 cutoff (포함, 이 날짜 이하는 숨김)
         hidden_before: dt_date | None = getattr(student, "schedule_hidden_before", None)
+        # 학생이 스와이프로 개별 숨김한 id 집합 (양수=session id, 음수=clinic participant id*-1)
+        raw_hidden_ids = getattr(student, "schedule_hidden_ids", None) or []
+        hidden_session_ids = {int(x) for x in raw_hidden_ids if isinstance(x, int) and x > 0}
+        hidden_clinic_participant_ids = {-int(x) for x in raw_hidden_ids if isinstance(x, int) and x < 0}
 
         # 1) 강의 차시
         session_ids = (
@@ -63,6 +67,8 @@ class StudentSessionListView(APIView):
         )
         if hidden_before is not None:
             sessions_qs = sessions_qs.exclude(date__lte=hidden_before)
+        if hidden_session_ids:
+            sessions_qs = sessions_qs.exclude(id__in=hidden_session_ids)
         sessions = sessions_qs
         data = [
             {
@@ -93,6 +99,8 @@ class StudentSessionListView(APIView):
         for cp in clinic_participants:
             sess = cp.session
             if hidden_before is not None and sess and sess.date and sess.date <= hidden_before:
+                continue
+            if cp.id in hidden_clinic_participant_ids:
                 continue
             status_label = "대기 중" if cp.status == "pending" else "예약됨"
             data.append({
@@ -134,9 +142,113 @@ class StudentSessionClearPastView(APIView):
         # 오늘은 "지난"이 아니므로 어제까지만 숨김 cutoff 로 잡음.
         cutoff = timezone.localdate() - timedelta(days=1)
 
+        # 일괄 비우기 시 cutoff 이전 개별 숨김은 cutoff 로 흡수되므로 제거.
+        # cutoff 이후(미래 일정)에 대한 개별 숨김은 유지 — 학생 의사 존중.
+        raw_hidden_ids = list(getattr(student, "schedule_hidden_ids", None) or [])
+        future_hidden_session_ids = {
+            int(x) for x in raw_hidden_ids if isinstance(x, int) and x > 0
+        }
+        future_hidden_clinic_participant_ids = {
+            -int(x) for x in raw_hidden_ids if isinstance(x, int) and x < 0
+        }
+        keep: list[int] = []
+        if future_hidden_session_ids:
+            future_sessions = LectureSession.objects.filter(
+                id__in=future_hidden_session_ids,
+            ).exclude(date__lte=cutoff).values_list("id", flat=True)
+            keep.extend(int(i) for i in future_sessions)
+        if future_hidden_clinic_participant_ids:
+            future_clinic = (
+                SessionParticipant.objects
+                .filter(id__in=future_hidden_clinic_participant_ids)
+                .exclude(session__date__lte=cutoff)
+                .values_list("id", flat=True)
+            )
+            keep.extend(-int(i) for i in future_clinic)
+
         student.schedule_hidden_before = cutoff
-        student.save(update_fields=["schedule_hidden_before", "updated_at"])
-        return Response({"hidden_before": cutoff.isoformat()})
+        student.schedule_hidden_ids = keep
+        student.save(update_fields=["schedule_hidden_before", "schedule_hidden_ids", "updated_at"])
+        return Response({"hidden_before": cutoff.isoformat(), "hidden_ids": keep})
+
+
+class StudentSessionHideView(APIView):
+    """
+    POST /student/sessions/hide/  body: {"id": <int>}
+    학생이 일정 카드를 스와이프하여 개별 숨김. 양수=LectureSession.id, 음수=ClinicSessionParticipant.id*-1.
+    실제 데이터는 그대로 두고 학생 본인 schedule_hidden_ids 에만 dedupe append.
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def post(self, request):
+        student = get_request_student(request)
+        if not student:
+            return Response({"detail": "Not found."}, status=404)
+        tenant = getattr(request, "tenant", None)
+        if not tenant or student.tenant_id != getattr(tenant, "id", None):
+            return Response({"detail": "Not found."}, status=404)
+
+        raw = request.data.get("id")
+        try:
+            target_id = int(raw)
+        except (TypeError, ValueError):
+            return Response({"detail": "id must be an integer."}, status=400)
+        if target_id == 0:
+            return Response({"detail": "id must be non-zero."}, status=400)
+
+        # 본인 소유 일정만 숨길 수 있도록 검증
+        if target_id > 0:
+            owns = SessionEnrollment.objects.filter(
+                enrollment__student=student,
+                enrollment__tenant=tenant,
+                session_id=target_id,
+            ).exists()
+        else:
+            owns = SessionParticipant.objects.filter(
+                tenant=tenant,
+                student=student,
+                id=-target_id,
+            ).exists()
+        if not owns:
+            return Response({"detail": "Not found."}, status=404)
+
+        current = list(getattr(student, "schedule_hidden_ids", None) or [])
+        if target_id not in current:
+            current.append(target_id)
+            student.schedule_hidden_ids = current
+            student.save(update_fields=["schedule_hidden_ids", "updated_at"])
+        return Response({"hidden_ids": current})
+
+
+class StudentSessionUnhideView(APIView):
+    """
+    POST /student/sessions/unhide/  body: {"id": <int>}
+    숨김 토스트의 "되돌리기"가 호출. hidden_ids 에서 해당 id 제거.
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def post(self, request):
+        student = get_request_student(request)
+        if not student:
+            return Response({"detail": "Not found."}, status=404)
+        tenant = getattr(request, "tenant", None)
+        if not tenant or student.tenant_id != getattr(tenant, "id", None):
+            return Response({"detail": "Not found."}, status=404)
+
+        raw = request.data.get("id")
+        try:
+            target_id = int(raw)
+        except (TypeError, ValueError):
+            return Response({"detail": "id must be an integer."}, status=400)
+
+        current = list(getattr(student, "schedule_hidden_ids", None) or [])
+        if target_id in current:
+            current = [x for x in current if x != target_id]
+            student.schedule_hidden_ids = current
+            student.save(update_fields=["schedule_hidden_ids", "updated_at"])
+        return Response({"hidden_ids": current})
 
 
 class StudentAttendanceSummaryView(APIView):

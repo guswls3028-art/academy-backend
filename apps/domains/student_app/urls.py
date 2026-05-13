@@ -7,6 +7,8 @@ from .sessions.views import (
     StudentSessionDetailView,
     StudentAttendanceSummaryView,
     StudentSessionClearPastView,
+    StudentSessionHideView,
+    StudentSessionUnhideView,
 )
 from .exams.views import (
     StudentExamListView,
@@ -49,6 +51,8 @@ urlpatterns = [
     # Sessions
     path("sessions/me/", StudentSessionListView.as_view()),
     path("sessions/clear-past/", StudentSessionClearPastView.as_view()),
+    path("sessions/hide/", StudentSessionHideView.as_view()),
+    path("sessions/unhide/", StudentSessionUnhideView.as_view()),
     path("sessions/<int:pk>/", StudentSessionDetailView.as_view()),
 
     # Attendance summary (학생 본인 출결 누적)
