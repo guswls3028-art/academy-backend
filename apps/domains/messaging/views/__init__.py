@@ -22,6 +22,7 @@ from .template_views import (
     MessageTemplateSetDefaultView,
     MessageTemplateDuplicateView,
     MessageTemplateSubmitReviewView,
+    SolapiSyncTemplatesView,
 )
 from .send_views import (
     SendMessageView,
@@ -44,6 +45,7 @@ __all__ = [
     "MessageTemplateSetDefaultView",
     "MessageTemplateDuplicateView",
     "MessageTemplateSubmitReviewView",
+    "SolapiSyncTemplatesView",
     "SendMessageView",
     "AutoSendConfigView",
     "ProvisionDefaultTemplatesView",

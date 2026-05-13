@@ -13,6 +13,7 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import MessageTemplate
 from apps.domains.messaging.solapi_template_client import (
     create_kakao_template,
+    list_kakao_templates,
     validate_template_variables,
 )
 from apps.domains.messaging.serializers import MessageTemplateSerializer
@@ -245,3 +246,150 @@ class MessageTemplateSubmitReviewView(APIView):
             {"detail": "검수 신청이 완료되었습니다. 카카오 검수는 영업일 기준 1~3일 소요됩니다.", "template": serializer.data},
             status=status.HTTP_200_OK,
         )
+
+
+class SolapiSyncTemplatesView(APIView):
+    """
+    POST: 솔라피 콘솔의 알림톡 템플릿을 SaaS DB와 동기화.
+
+    학원장 임근혁 보고 (2026-05-13): "솔라피에 내가 남긴 템플릿이랑 시스템에 있는
+    프로그램 템플릿이 일치하지 않는다." — 솔라피 콘솔에서 직접 본문/상태가 변경되거나
+    검수 결과(APPROVED/REJECTED)가 갱신돼도 SaaS DB가 그걸 모르고 stale 상태로 남는
+    구조였음. 본 뷰가 GET API로 콘솔의 진실을 끌어와서 SaaS DB를 truth와 맞춤.
+
+    매칭: solapi_template_id 키.
+    - SaaS DB에 같은 templateId 있음 → name/body/solapi_status 갱신 (솔라피=truth)
+    - SaaS DB에 없음 → solapi_only에 기록, import 안 함 (이름 기반 자동 매칭은 위험)
+      → 학원장이 응답을 보고 필요하면 별도 import 로직(Phase 2)으로
+
+    API 키·PFID 결정 우선순위:
+    - 자체 연동 학원: own_solapi_* + tenant.kakao_pfid
+    - 시스템 채널 폴백 학원: settings.SOLAPI_API_KEY/SECRET + settings.SOLAPI_KAKAO_PF_ID
+    """
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def post(self, request):
+        from django.conf import settings
+
+        tenant = request.tenant
+        provider = (tenant.messaging_provider or "solapi").strip().lower()
+        if provider != "solapi":
+            return Response(
+                {"detail": "솔라피 외 공급자는 자동 동기화를 지원하지 않습니다. 뿌리오는 관리자 페이지에서 직접 확인해 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # API 키: 자체 > 시스템
+        if tenant.own_solapi_api_key and tenant.own_solapi_api_secret:
+            api_key = tenant.own_solapi_api_key
+            api_secret = tenant.own_solapi_api_secret
+            credential_source = "tenant"
+        else:
+            api_key = (getattr(settings, "SOLAPI_API_KEY", None) or "").strip()
+            api_secret = (getattr(settings, "SOLAPI_API_SECRET", None) or "").strip()
+            credential_source = "system"
+        if not api_key or not api_secret:
+            return Response(
+                {"detail": "솔라피 API 키가 설정되지 않았습니다. 메시징 설정에서 연동 정보를 등록해 주세요."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        # PFID: 자체 > 시스템
+        pfid = (tenant.kakao_pfid or "").strip()
+        if not pfid:
+            pfid = (getattr(settings, "SOLAPI_KAKAO_PF_ID", None) or "").strip()
+        if not pfid:
+            return Response(
+                {"detail": "카카오 채널(PFID)이 설정되지 않았습니다. 메시징 설정에서 PFID를 등록해 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 솔라피 콘솔에서 GET
+        try:
+            solapi_list = list_kakao_templates(api_key, api_secret, pfid)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # sync 대상 tenant — 시스템 채널 학원은 owner tenant 양식도 함께 갱신
+        # (오너 양식이 시스템 4종 SSOT이므로 솔라피 변경 시 모든 학원에 반영)
+        from apps.domains.messaging.policy import get_owner_tenant_id
+        owner_id = get_owner_tenant_id()
+        target_tenant_ids = {tenant.id}
+        if credential_source == "system":
+            target_tenant_ids.add(owner_id)
+
+        existing_by_solapi_id: dict[str, MessageTemplate] = {}
+        for t in MessageTemplate.objects.filter(
+            tenant_id__in=target_tenant_ids,
+        ).exclude(solapi_template_id=""):
+            tid = (t.solapi_template_id or "").strip()
+            if tid:
+                existing_by_solapi_id[tid] = t
+
+        VALID_STATUSES = {"APPROVED", "PENDING", "REJECTED", "INSPECTING"}
+        STATUS_NORMALIZE = {"INSPECTING": "PENDING"}
+
+        updated_count = 0
+        unchanged_count = 0
+        solapi_only: list[dict] = []
+        errors: list[str] = []
+
+        for item in solapi_list:
+            tid = (item.get("templateId") or item.get("id") or "").strip()
+            if not tid:
+                continue
+            content = (item.get("content") or "").strip()
+            name = (item.get("name") or "").strip()
+            raw_status = (item.get("status") or "").upper().strip()
+            mapped_status = STATUS_NORMALIZE.get(raw_status, raw_status)
+            if mapped_status not in VALID_STATUSES and mapped_status:
+                # 알 수 없는 상태는 보존하지 않고 빈 값으로
+                mapped_status = ""
+
+            tpl = existing_by_solapi_id.get(tid)
+            if not tpl:
+                solapi_only.append({
+                    "templateId": tid,
+                    "name": name,
+                    "status": raw_status,
+                    "content_preview": content[:80],
+                })
+                continue
+
+            update_fields: list[str] = []
+            if name and tpl.name != name:
+                tpl.name = name
+                update_fields.append("name")
+            if content and tpl.body != content:
+                tpl.body = content
+                update_fields.append("body")
+            if mapped_status and tpl.solapi_status != mapped_status:
+                tpl.solapi_status = mapped_status
+                update_fields.append("solapi_status")
+            if update_fields:
+                update_fields.append("updated_at")
+                try:
+                    tpl.save(update_fields=update_fields)
+                    updated_count += 1
+                except Exception as e:  # noqa: BLE001
+                    errors.append(f"templateId={tid}: {e}")
+            else:
+                unchanged_count += 1
+
+        detail_parts = [f"업데이트 {updated_count}건", f"변경 없음 {unchanged_count}건"]
+        if solapi_only:
+            detail_parts.append(f"SaaS 미등록 {len(solapi_only)}건")
+        if errors:
+            detail_parts.append(f"오류 {len(errors)}건")
+        detail = "솔라피 동기화 완료 — " + ", ".join(detail_parts) + "."
+
+        return Response({
+            "detail": detail,
+            "updated": updated_count,
+            "unchanged": unchanged_count,
+            "solapi_only_count": len(solapi_only),
+            "solapi_only": solapi_only[:20],  # 응답 크기 제한
+            "errors": errors,
+            "credential_source": credential_source,
+            "pfid": pfid,
+        })

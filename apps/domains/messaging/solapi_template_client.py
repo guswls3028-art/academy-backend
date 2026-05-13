@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 SOLAPI_BASE = "https://api.solapi.com"
 TEMPLATE_CREATE_PATH = "/kakao/v2/templates"
+TEMPLATE_LIST_PATH = "/kakao/v2/templates"
 
 # #{변수명} 형식 검증 시 참고 (필요 시 확장)
 VARIABLE_PATTERN = re.compile(r"#\{[^}]+\}")
@@ -143,3 +144,91 @@ def create_kakao_template(
     if not template_id:
         raise ValueError("솔라피 응답에 templateId가 없습니다.")
     return {"templateId": template_id, "raw": data}
+
+
+@circuit_breaker(
+    name="solapi_template_list",
+    failure_threshold=5,
+    window_seconds=30,
+    cooldown_seconds=60,
+    expected_exceptions=[requests.RequestException, ValueError],
+)
+def list_kakao_templates(
+    api_key: str,
+    api_secret: str,
+    channel_id: str,
+    limit: int = 100,
+    status_filter: str | None = None,
+) -> list[dict]:
+    """
+    솔라피 알림톡 템플릿 목록 조회 — 콘솔에 등록된 양식 전체.
+
+    학원장이 솔라피 콘솔에서 직접 만들거나 검수 신청한 양식이 SaaS DB와
+    drift할 때 pull sync 용도. 검수 상태(APPROVED/PENDING/REJECTED)도 함께
+    가져와서 SaaS DB의 solapi_status를 최신화.
+
+    Returns:
+        [{"templateId": ..., "name": ..., "content": ..., "status": ..., ...}, ...]
+        솔라피 페이지네이션은 startKey 방식 — 최대 5페이지 (500건) 안전 한도.
+    """
+    channel_id = (channel_id or "").strip()
+    if not channel_id:
+        raise ValueError("channelId(PFID)가 필요합니다.")
+
+    url = SOLAPI_BASE + TEMPLATE_LIST_PATH
+    headers = {"Authorization": _create_auth_header(api_key, api_secret)}
+    params: dict = {"channelId": channel_id, "limit": min(max(limit, 1), 100)}
+    if status_filter:
+        params["status"] = status_filter
+
+    collected: list[dict] = []
+    seen_ids: set[str] = set()
+    page = 0
+    start_key: str | None = None
+    while page < 5:  # 안전 한도 — 500건 초과는 별도 페이지네이션 필요
+        page += 1
+        # 매번 새 인증 헤더 (signature 재사용 방지 — solapi 4xx)
+        headers["Authorization"] = _create_auth_header(api_key, api_secret)
+        if start_key:
+            params["startKey"] = start_key
+        logger.info("Solapi template list request channelId=%s page=%d", channel_id, page)
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        if resp.status_code != 200:
+            try:
+                err_body = resp.json()
+                msg = err_body.get("errorMessage") or err_body.get("message") or resp.text
+            except Exception:
+                msg = resp.text
+            logger.warning(
+                "Solapi template list failed status=%s body=%s", resp.status_code, msg,
+            )
+            raise ValueError(f"솔라피 템플릿 조회 실패: {msg}")
+        data = resp.json()
+        items = data.get("templateList") or data.get("list") or data.get("data") or []
+        if not isinstance(items, list):
+            if isinstance(items, dict):
+                items = list(items.values())
+            else:
+                items = []
+        # 중복 차단 — solapi가 nextKey를 응답하지 않거나 같은 페이지를 반환하는 경우 안전망
+        new_chunk = []
+        for it in items:
+            tid = (it.get("templateId") or it.get("id") or "").strip()
+            if not tid or tid in seen_ids:
+                continue
+            seen_ids.add(tid)
+            new_chunk.append(it)
+        if not new_chunk:
+            # 새 양식이 0개면 페이지네이션 종료 (무한루프 방지)
+            break
+        collected.extend(new_chunk)
+        # 페이지네이션 키 추출
+        next_key = (
+            data.get("nextKey")
+            or (data.get("paging") or {}).get("nextKey")
+            or None
+        )
+        if not next_key or next_key == start_key:
+            break
+        start_key = next_key
+    return collected

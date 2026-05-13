@@ -28,6 +28,11 @@ urlpatterns = [
         views.MessageTemplateDuplicateView.as_view(),
         name="messaging-template-duplicate",
     ),
+    path(
+        "templates/sync-solapi/",
+        views.SolapiSyncTemplatesView.as_view(),
+        name="messaging-template-sync-solapi",
+    ),
     path("auto-send/", views.AutoSendConfigView.as_view(), name="messaging-auto-send"),
     path("provision-defaults/", views.ProvisionDefaultTemplatesView.as_view(), name="messaging-provision-defaults"),
     path("test-credentials/", views.TestCredentialsView.as_view(), name="messaging-test-credentials"),
