@@ -99,10 +99,11 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
         # expired 시 rows 노출 차단 (staff 만 열람 가능). list 와 동일한 _viewer_is_staff 사용.
         viewer_is_staff = self._viewer_is_staff(request)
 
-        # view_count + (작성자 본인 제외 추후)
+        # view_count + (작성자 본인 제외 추후). P2 audit: refresh로 stale -1 회피.
         if not viewer_is_staff:
             from django.db.models import F
             PublicExamShowcase.objects.filter(pk=obj.pk).update(view_count=F("view_count") + 1)
+            obj.refresh_from_db(fields=["view_count"])
 
         payload = {
             "id": obj.id,

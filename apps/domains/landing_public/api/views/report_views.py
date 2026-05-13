@@ -121,12 +121,15 @@ class PublicReportViewSet(viewsets.GenericViewSet):
         if dup_q.exists():
             return Response({"detail": "이미 신고된 글입니다. 학원장이 곧 검토합니다."}, status=drf_status.HTTP_409_CONFLICT)
 
+        # P2 audit (2026-05-14): 로그인 유저도 reporter_ip 저장 — 사후 spam 패턴 분석
+        # (단일 user가 동일 IP로 다수 신고 등) 시 admin UI 노출은 별도 정책 (현재 모두 노출).
+        # 익명/로그인 모두 ip 보존 → reporter+ip dedup 일관성.
         obj = PublicReport.objects.create(
             tenant=tenant,
             target_kind=kind,
             target_id=target_id,
             reporter=user,
-            reporter_ip=ip if user is None else None,  # 로그인 유저는 IP 저장 X
+            reporter_ip=ip,
             reason=reason,
             description=description[:2000],
         )

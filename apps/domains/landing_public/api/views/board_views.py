@@ -107,11 +107,14 @@ class PublicBoardPostViewSet(viewsets.GenericViewSet):
         # 비공개/숨김 가드 (staff/작성자 우회는 get_queryset에서 처리됨)
         viewer_role = _resolve_role(request.user, getattr(request, "tenant", None)) if request.user.is_authenticated else ""
         ctx = {"request": request, "viewer_role": viewer_role}
-        # view count 증가 (작성자 본인 제외)
+        # view count 증가 (작성자 본인 제외).
+        # P2 audit (2026-05-14): F+1 update 후 refresh_from_db 없으면 obj.view_count 가
+        # stale 한 상태로 serialize → 응답에 -1 view_count 노출. refresh.
         if request.user.is_authenticated and obj.author_id == request.user.id:
             pass
         else:
             PublicBoardPost.objects.filter(pk=obj.pk).update(view_count=F("view_count") + 1)
+            obj.refresh_from_db(fields=["view_count"])
         ser = PublicBoardPostDetailSerializer(obj, context=ctx)
         return Response(ser.data)
 

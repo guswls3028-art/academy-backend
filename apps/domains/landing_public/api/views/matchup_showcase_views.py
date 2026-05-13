@@ -173,11 +173,13 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
         viewer_is_staff = _viewer_is_staff(request)
-        payload = self._serialize_card(obj, viewer_is_staff=viewer_is_staff)
-        # 상세 진입 시 view_count + (staff 본인 제외)
+        # 상세 진입 시 view_count + (staff 본인 제외). serialize 전에 update + refresh.
+        # P2 audit (2026-05-14): 이전엔 serialize 후 update → 응답 view_count -1 stale.
         if not viewer_is_staff:
             from django.db.models import F
             PublicMatchupShowcase.objects.filter(pk=obj.pk).update(view_count=F("view_count") + 1)
+            obj.refresh_from_db(fields=["view_count"])
+        payload = self._serialize_card(obj, viewer_is_staff=viewer_is_staff)
         # PDF URL — 일반 외부 visible 시점에만 inclusion. staff는 항상.
         if payload["visible"]:
             payload["pdf_url"] = (

@@ -611,7 +611,14 @@ def _validate_consult(data: dict) -> list[str]:
     digits = _re.sub(r"[^\d]", "", phone)
     if not digits or len(digits) < 9 or len(digits) > 15:
         errs.append("올바른 전화번호를 입력해주세요.")
-    elif not (digits.startswith(_PERSONAL_MOBILE_PREFIX) or digits.startswith("02") or digits[0] == "0"):
+    # P2 audit (2026-05-14): +82 외국인 학부모 prefix 통과.
+    # +82 10..., +82 2... → digits에 "82..." 잔존. 0으로 정규화 후 검증.
+    elif not (
+        digits.startswith(_PERSONAL_MOBILE_PREFIX)
+        or digits.startswith("02")
+        or digits[0] == "0"
+        or digits.startswith("82")  # +82 외국인/해외 학부모
+    ):
         errs.append("올바른 전화번호 형식이 아닙니다.")
     if interest and len(interest) > _INTEREST_MAX:
         errs.append(f"관심 분야는 {_INTEREST_MAX}자 이내여야 합니다.")

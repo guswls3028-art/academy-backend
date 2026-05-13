@@ -102,18 +102,20 @@ def _on_report_save_autohide(sender, instance: PublicReport, created, **kwargs):
     if pending_count < AUTO_HIDE_THRESHOLD:
         return
     # 대상별 자동 hide. 이미 hidden 상태면 noop.
+    # P2 audit (2026-05-14): 학원장 본인 작성 글은 auto-hide 면제 — 악성 결탁(3명) 으로
+    # 학원장 공지/이벤트 자동 숨김 사고 회피. 정상 학원장 글은 학원장 직접 운영.
     if instance.target_kind == PublicReport.TargetKind.BOARD:
         PublicBoardPost.objects.filter(
             tenant=instance.tenant, pk=instance.target_id, status=PublicBoardPost.Status.PUBLISHED,
-        ).update(status=PublicBoardPost.Status.HIDDEN)
+        ).exclude(author_role__in=["owner", "admin"]).update(status=PublicBoardPost.Status.HIDDEN)
     elif instance.target_kind == PublicReport.TargetKind.REVIEW:
         PublicReview.objects.filter(
             tenant=instance.tenant, pk=instance.target_id, status=PublicReview.Status.APPROVED,
-        ).update(status=PublicReview.Status.HIDDEN)
+        ).exclude(author_role__in=["owner", "admin"]).update(status=PublicReview.Status.HIDDEN)
     elif instance.target_kind == PublicReport.TargetKind.REPLY:
         PublicPostReply.objects.filter(
             tenant=instance.tenant, pk=instance.target_id, is_hidden=False,
-        ).update(is_hidden=True)
+        ).exclude(author_role__in=["owner", "admin"]).update(is_hidden=True)
 
 
 # Phase 4-A: verified 자동 — PublicReview 등록 시 author가 학원 family 활성 member면 ✓ 수강 인증.
