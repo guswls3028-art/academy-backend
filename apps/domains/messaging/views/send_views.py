@@ -175,25 +175,29 @@ class SendMessageView(APIView):
             academy_name = (tenant.name or "").strip()
 
             # 학생별 개별 변수 merge
-            student_extra = extra_vars_per_student.get(s.id, {})
+            student_extra = dict(extra_vars_per_student.get(s.id, {}))
+
+            # SSOT (2026-05-13): 학생별 치환된 본문 우선. frontend SessionScoresEntryPage 일괄 path가
+            # substituteScoreVars 결과를 _body_subst 로 보냄. backend가 그대로 사용 → 모든 score
+            # sub-variable(#{시험1명}, #{시험1점수}, #{과제N...}, #{시험총점}) 치환됨. 학원장 limglish 보고
+            # "본문 변수 미치환 → 빈 자리" 결함 fix.
+            student_body = student_extra.pop("_body_subst", None) or body_base
+
             merged_context = {**alimtalk_extra_vars, **student_extra}
 
-            # SMS용 text: 변수 치환
+            # SMS용 text: 변수 치환 — merged_context 전체 key 순회 (고정 list 제거).
             text = (
-                body_base.replace("#{학생이름}", name)
+                student_body.replace("#{학생이름}", name)
                 .replace("#{학생이름2}", name_2)
                 .replace("#{학생이름3}", name_3)
                 .replace("#{학원명}", academy_name)
                 .replace("#{학원이름}", academy_name)
                 .replace("#{사이트링크}", site_url)
             )
-            for var in ("강의명", "차시명", "시험명", "과제명", "클리닉명", "장소", "날짜", "시간",
-                        "시험성적", "클리닉합불", "공지내용", "내용",
-                        "클리닉장소", "클리닉날짜", "클리닉시간",
-                        "클리닉기존일정", "클리닉변동사항", "클리닉수정자",
-                        "강의날짜", "강의시간"):
-                val = merged_context.get(var, "")
-                text = text.replace(f"#{{{var}}}", val)
+            for var_key, var_val in merged_context.items():
+                if var_key.startswith("_"):
+                    continue  # internal hint (e.g. _body_subst) skip
+                text = text.replace(f"#{{{var_key}}}", str(var_val or ""))
             text = re.sub(r"#\{[^}]+\}", "", text)
             text = re.sub(r"\n{3,}", "\n\n", text).strip()
             if subject_base:
@@ -207,9 +211,11 @@ class SendMessageView(APIView):
 
                 if use_unified and unified_template_type:
                     # ── 통합 4종: build_manual_replacements로 정확한 변수 세트 빌드 ──
+                    # SSOT (2026-05-13): student_body (학생별 치환된 본문) 사용 → 봉투의 #{선생님메모} 변수에
+                    # 정확한 학생별 점수가 들어감.
                     alimtalk_replacements = build_manual_replacements(
                         template_type=unified_template_type,
-                        content_body=body_base,
+                        content_body=student_body,
                         context=merged_context,
                         tenant_name=academy_name,
                         student_name=name,
@@ -225,6 +231,8 @@ class SendMessageView(APIView):
                         {"key": "사이트링크", "value": site_url},
                     ]
                     for var_key, var_val in merged_context.items():
+                        if var_key.startswith("_"):
+                            continue  # internal hint
                         if var_val and var_key not in ("학생이름", "학생이름2", "학생이름3", "사이트링크"):
                             alimtalk_replacements.append({"key": var_key, "value": str(var_val)})
 
