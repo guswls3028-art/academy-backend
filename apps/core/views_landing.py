@@ -691,7 +691,7 @@ class LandingConsultPublicView(APIView):
             message=str(request.data.get("message") or "").strip()[:_MESSAGE_MAX],
             source=str(request.data.get("source") or "landing").strip()[:40],
         )
-        logger.info("LandingConsultRequest created tenant=%s id=%s ip=%s", request.tenant.id, obj.id, ip)
+        logger.info("LandingConsultRequest created tenant=%s id=%s ip=%s", request.tenant.id, obj.id, _client_ip(request))
         return Response({"id": obj.id, "ok": True}, status=201)
 
 
