@@ -126,11 +126,14 @@ resource "aws_cloudwatch_event_target" "cleanup_orphan_video_storage" {
 # Trigger: EventBridge → SSM RunCommand → API EC2(docker exec)
 # ──────────────────────────────────────────────
 
+# 2026-05-13 학원장 결정: 시험 단위 status (OPEN/CLOSED) 폐기, 학생별 Achievement SSOT 통합.
+# 자동 마감 cron 은 학원장 의도 ("시험 만들면 영구 운영, 학생별로 진행/이수/판정") 와 충돌 →
+# state=DISABLED. frontend SessionAssessmentSidePanel 의 자동 마감 useEffect 도 동시 제거.
 resource "aws_cloudwatch_event_rule" "close_overdue_assessments" {
   name                = "${var.naming_prefix}-close-overdue-assessments"
-  description         = "Daily auto-close of overdue exams/homeworks at 03:30 KST"
+  description         = "DEPRECATED (2026-05-13): 시험 단위 status 폐기 후 비활성. 학원장 결정."
   schedule_expression = "cron(30 18 * * ? *)" # 18:30 UTC = 03:30 KST
-  state               = "ENABLED"
+  state               = "DISABLED"
 }
 
 resource "aws_cloudwatch_event_target" "close_overdue_assessments" {
