@@ -261,7 +261,13 @@ class SessionScoresView(APIView):
                 if row["rep_max"] is not None:
                     hw_max_scores[int(row["homework_id"])] = float(row["rep_max"])
 
+        # SSOT (2026-05-13): 발송 컨텍스트 — frontend가 어디서든 정확히 강의명/차시명 인용 가능하도록 응답 meta에 항상 포함.
+        # 직전 결함: drawer 발송 path가 row.lecture_title / qc.getQueryData fallback에 의존 → 캐시 miss 시 알림톡 봉투 변수 빈 값으로 발송 (학원장 limglish 보고).
+        _session_lecture = getattr(session, "lecture", None)
         meta = {
+            "session_title": str(getattr(session, "title", "") or ""),
+            "lecture_title": str(getattr(_session_lecture, "title", "") or ""),
+            "lecture_id": int(_session_lecture.id) if _session_lecture is not None else None,
             "exams": [
                 {
                     "exam_id": int(ex.id),
