@@ -155,6 +155,16 @@ class SendMessageRequestSerializer(serializers.Serializer):
     template_id = serializers.IntegerField(required=False, allow_null=True)
     raw_body = serializers.CharField(required=False, allow_blank=True)
     raw_subject = serializers.CharField(required=False, allow_blank=True, default="")
+    block_category = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        help_text=(
+            "frontend 발송 진입점의 블록 카테고리 (grades/attendance/clinic 등). "
+            "template_id 누락 또는 t.category 매핑 안 될 때 unified 봉투 fallback 매칭에 사용. "
+            "학원장 본문 어떻게 수정해도 봉투(검수 양식)는 유지되어 발송 (domain-policy.md §5)."
+        ),
+    )
     alimtalk_extra_vars = serializers.DictField(
         child=serializers.CharField(allow_blank=True),
         required=False,

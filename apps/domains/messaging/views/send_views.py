@@ -138,11 +138,21 @@ class SendMessageView(APIView):
                 # 시스템 기본양식: 자체 Solapi 템플릿 유지
                 solapi_template_id = (t.solapi_template_id or "").strip()
             else:
-                # 카테고리 매핑 없음 + 자체 솔라피 템플릿 없음 → 통합 알림톡 미사용.
-                # (구) score("[성적표 안내]") 좀비 fallback 패턴 종료.
-                # 카카오 검수 통과된 살아있는 양식이 없으면 통합 알림톡 발송하지 않음.
-                use_unified = False
-                solapi_template_id = (t.solapi_template_id or "").strip() if t else ""
+                # SSOT (2026-05-14, domain-policy §5): 학원장이 본문 어떻게 수정해도 봉투
+                # (검수 양식)는 유지되어 발송. t.category 매핑 없거나 t=None 일 때
+                # frontend가 보낸 block_category로 unified 매칭 재시도.
+                # 학원장 limglish 보고 "테스트1 후 테스트2 발송 검수 에러"의 root cause:
+                # frontend race / 양식 변경으로 template_id 누락 시 검수 에러 차단.
+                block_category = (data.get("block_category") or "").strip()
+                if block_category:
+                    fb_tt, fb_sid = get_unified_for_category(block_category, tpl_name, alimtalk_extra_vars)
+                    if fb_tt and fb_sid:
+                        use_unified = True
+                        unified_template_type = fb_tt
+                        solapi_template_id = fb_sid
+                if not solapi_template_id:
+                    use_unified = False
+                    solapi_template_id = (t.solapi_template_id or "").strip() if t else ""
 
         if message_mode == "alimtalk" and not solapi_template_id:
             return Response(
