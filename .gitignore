@@ -82,3 +82,6 @@ test-results/
 _inspect_imgs/
 _dev_stdout.log
 _dev_stderr.log
+
+# Cloudflare Worker 로컬 빌드 cache (frontend .gitignore와 동일)
+.wrangler/
