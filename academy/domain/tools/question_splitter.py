@@ -270,17 +270,27 @@ _MARGINAL_NUMBER_PATTERN = re.compile(
 
 
 def _extract_marginal_question_number(text: str) -> Optional[int]:
-    """짧은 standalone 'N.' / 'N' block 에서 큰 문제 번호 추출.
+    """짧은 standalone 'N.' / 'N' block (또는 multi-line block 첫 줄) 에서 큰 문제 번호 추출.
 
     워크북 marginal column 의 main question anchor 용. 본문 sub-item anchor 와 구분.
+
+    Production text extraction (`page.get_text("blocks")`) 은 마진 "3." 와 본문 첫 줄
+    "그림은 화산..." 을 한 block 으로 묶어 반환한다 (multi-line block). local fixture
+    diag 의 `get_text("dict")` 와 다르다. 따라서 block.text 의 **첫 줄** 만 분리해
+    marginal 패턴 검사.
+
     조건:
-      - text length 검사: ≤ 5 char (e.g. "3.", "12.", "3")
-      - regex: 숫자 + 선택적 점 + 공백 외 다른 문자 없음
+      - 첫 줄 length ≤ 5 char (e.g. "3.", "12.", "3")
+      - 첫 줄 regex: 숫자 + 선택적 점 + 공백 외 다른 문자 없음
     """
     stripped = text.strip()
-    if not stripped or len(stripped) > 5:
+    if not stripped:
         return None
-    m = _MARGINAL_NUMBER_PATTERN.match(text)
+    # multi-line block 첫 줄 추출 (production blocks 모드 대응).
+    first_line = stripped.split("\n", 1)[0].strip()
+    if not first_line or len(first_line) > 5:
+        return None
+    m = _MARGINAL_NUMBER_PATTERN.match(first_line)
     if not m:
         return None
     try:
