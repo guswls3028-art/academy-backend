@@ -265,9 +265,11 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
             })
 
     # ── Phase 2: doc-level workbook(per-page-restart) 감지 ──
-    # 페이지마다 marginal column 짧은 standalone "N." block 수를 세서, 일정 임계 이상의
-    # 페이지에 marginal block 이 분포하면 워크북 doc. split_questions 에 prefer_marginal=True
-    # 전달 → marginal anchor 만 사용해 sub-item over-detection 차단.
+    # 신호 A: 페이지마다 marginal column "N." block 분포 (PyMuPDF block 추출 결과
+    #         의존 — 페이지별 일관성 변동 큼).
+    # 신호 B: 1차 split 결과 anchor number 분포 (per-page-restart 패턴 — 페이지마다
+    #         anchor 1, 2, 3... 리셋). marginal block 검출 불안정 보완.
+    # 둘 중 하나라도 True → workbook 강제 → 2차 split(prefer_marginal=True).
     pages_with_marginal = 0
     eligible_pages = 0  # text 있고 non-question 아닌 페이지
     for p in phase1:
@@ -279,29 +281,69 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
         )
         if m_count >= 1:
             pages_with_marginal += 1
-    workbook_doc = False
+    signal_a = False
     if eligible_pages >= 5:
         ratio = pages_with_marginal / eligible_pages
-        # 워크북 임계 (보수적) — 30%+ 페이지 marginal 분포 AND 절대 3+ 페이지.
-        # 시험지에 우연히 standalone "1." 1-2 page 등장해도 임계 미달 → 시험지 보호.
-        workbook_doc = ratio >= 0.3 and pages_with_marginal >= 3
+        signal_a = ratio >= 0.3 and pages_with_marginal >= 3
+
+    # 1차 split (prefer_marginal=False) — anchor 분포 수집.
+    first_pass_regions: List[List] = []
+    for p in phase1:
+        if not p["has_text"] or p["is_skip_page"] or not p["text_blocks"]:
+            first_pass_regions.append([])
+            continue
+        try:
+            regions = split_questions(
+                p["text_blocks"], p["page_width"], p["page_height"],
+                page_index=p["page_index"],
+                paper_type=p["paper_type_result"],
+                prefer_marginal=False,
+            )
+            first_pass_regions.append(list(regions))
+        except Exception:
+            first_pass_regions.append([])
+
+    # 신호 B — per-page-restart 패턴 (page-level dedup 안 한 anchor list 기반).
+    pages_per_number_b: dict = {}
+    for page_regions in first_pass_regions:
+        for n in {r.number for r in page_regions}:
+            pages_per_number_b[n] = pages_per_number_b.get(n, 0) + 1
+    pages_with_low_b = sum(
+        1 for page_regions in first_pass_regions
+        if {r.number for r in page_regions} & {1, 2, 3}
+    )
+    eligible_with_anchors = sum(1 for r in first_pass_regions if r)
+    signal_b = False
+    if eligible_with_anchors >= 5:
+        # anchor 1/2/3 이 30%+ 페이지에 등장 AND 절대 3+ 페이지 = workbook 패턴
+        ratio_low = pages_with_low_b / eligible_with_anchors
+        signal_b = ratio_low >= 0.3 and pages_with_low_b >= 3
+
+    workbook_doc = signal_a or signal_b
     logger.info(
-        "PDF_WORKBOOK_DETECT | eligible_pages=%d | pages_with_marginal=%d | workbook=%s",
-        eligible_pages, pages_with_marginal, workbook_doc,
+        "PDF_WORKBOOK_DETECT | eligible=%d/%d | marginal_pages=%d | "
+        "low_anchor_pages=%d | signal_a=%s | signal_b=%s | workbook=%s",
+        eligible_with_anchors, eligible_pages, pages_with_marginal,
+        pages_with_low_b, signal_a, signal_b, workbook_doc,
     )
 
-    # ── Phase 3: split_questions 호출 (prefer_marginal=workbook_doc) ──
-    for p in phase1:
+    # ── Phase 3: 2차 split (workbook 일 때 prefer_marginal=True) ──
+    for idx, p in enumerate(phase1):
         text_boxes: List[BBox] = []
         text_regions: List = []
         if p["has_text"] and not p["is_skip_page"] and p["text_blocks"]:
             try:
-                regions = split_questions(
-                    p["text_blocks"], p["page_width"], p["page_height"],
-                    page_index=p["page_index"],
-                    paper_type=p["paper_type_result"],
-                    prefer_marginal=workbook_doc,
-                )
+                if workbook_doc:
+                    # 워크북: marginal anchor 우선 — Q 단위 cut.
+                    regions = split_questions(
+                        p["text_blocks"], p["page_width"], p["page_height"],
+                        page_index=p["page_index"],
+                        paper_type=p["paper_type_result"],
+                        prefer_marginal=True,
+                    )
+                else:
+                    # 시험지: 1차 결과 그대로.
+                    regions = first_pass_regions[idx]
                 text_regions = list(regions)
                 scale = _PDF_TO_PIXEL_SCALE
                 for r in regions:
