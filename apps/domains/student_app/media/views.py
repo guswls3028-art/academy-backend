@@ -634,18 +634,29 @@ class StudentSessionVideoListView(APIView):
         else:
             enrollment_obj = None
             lecture_id_val = getattr(lecture, "id", None)
-            if enrollment_id:
+
+            # query param 으로 명시 전달된 enrollment 만 strict 검증.
+            # student attr default 픽은 신뢰하지 않는다 (학생 N개 강의 enrolled 시 mismatch 400 결함 fix).
+            raw_q = request.query_params.get("enrollment")
+            explicit_enrollment_id = None
+            if raw_q:
+                try:
+                    explicit_enrollment_id = int(raw_q)
+                except Exception:
+                    explicit_enrollment_id = None
+
+            if explicit_enrollment_id:
                 enrollment_obj, err = _get_enrollment_for_student(
-                    request, enrollment_id, lecture_id=lecture_id_val
+                    request, explicit_enrollment_id, lecture_id=lecture_id_val
                 )
                 if err:
                     return err
-            # enrollment_id 미전달 시에만 강의 기준 자동 매칭 (명시적 enrollment_id가 실패한 경우 대체하지 않음)
-            if enrollment_obj is None and not enrollment_id and lecture_id_val:
+
+            # session lecture 기준 학생 ACTIVE enrollment 자동 검색 (default path)
+            if enrollment_obj is None and lecture_id_val:
                 from apps.domains.enrollment.models import Enrollment as _Enroll
                 _student = get_request_student(request)
                 if _student:
-                    # Deterministic ordering: latest enrollment first (prevents ambiguity)
                     enrollment_obj = _Enroll.objects.filter(
                         student=_student, lecture_id=lecture_id_val, status="ACTIVE",
                     ).order_by("-id").first()
@@ -755,20 +766,32 @@ class StudentVideoPlaybackView(APIView):
             if not student or getattr(student, "tenant_id", None) != video_tenant_id:
                 raise PermissionDenied("공개 영상은 해당 학원 소속 학생만 시청할 수 있습니다.")
         else:
-            # 일반 영상: enrollment 자동 매칭 (enrollment_id 누락/불일치 시 강의 기준 자동 탐색)
+            # 일반 영상: enrollment 자동 매칭 — video 의 lecture 에 맞는 학생 enrollment 를 항상 찾는다.
+            # 학생이 N개 강의 enrolled 시 student attr default 가 영상의 lecture 와 다른 강의를 가리켜
+            # mismatch 400 으로 막히던 결함 fix (2026-05-15, 이은호 학생 lecture 198 영상 시청 차단 root cause).
             from apps.domains.enrollment.models import Enrollment as _Enrollment
             lecture_id = getattr(video.session.lecture, "id", None) if video.session and video.session.lecture else None
 
-            if enrollment_id:
-                enrollment_obj, err = _get_enrollment_for_student(request, enrollment_id, lecture_id=lecture_id)
+            # query param 으로 명시 전달된 enrollment 만 strict 검증.
+            # student attr 자동 픽 (lecture 무관) 은 신뢰하지 않는다.
+            raw_q = request.query_params.get("enrollment")
+            explicit_enrollment_id = None
+            if raw_q:
+                try:
+                    explicit_enrollment_id = int(raw_q)
+                except Exception:
+                    explicit_enrollment_id = None
+
+            if explicit_enrollment_id:
+                enrollment_obj, err = _get_enrollment_for_student(request, explicit_enrollment_id, lecture_id=lecture_id)
                 if err:
                     return err
 
-            # enrollment_id 미전달 시에만 자동 매칭 (명시적 enrollment_id가 실패한 경우 대체하지 않음)
-            if not enrollment_obj and not enrollment_id and lecture_id:
+            # 명시 query 없거나 (있어도 위에서 enrollment_obj None 인 케이스는 없음) 일반 경로:
+            # video lecture 기준으로 학생의 ACTIVE enrollment 자동 검색.
+            if not enrollment_obj and lecture_id:
                 _student = get_request_student(request)
                 if _student:
-                    # Deterministic ordering: latest enrollment first (prevents ambiguity)
                     enrollment_obj = _Enrollment.objects.filter(
                         student=_student, lecture_id=lecture_id, status="ACTIVE",
                     ).order_by("-id").first()
