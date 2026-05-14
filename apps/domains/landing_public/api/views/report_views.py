@@ -136,16 +136,18 @@ class PublicReportViewSet(viewsets.GenericViewSet):
         return Response({"id": obj.id, "status": obj.status}, status=drf_status.HTTP_201_CREATED)
 
     def list(self, request, *args, **kwargs):
+        tenant = request.tenant
         qs = self.get_queryset()
         page = self.paginate_queryset(qs)
         items = page if page is not None else qs[:50]
         # target preview inline (제목/카테고리)
+        # tenant 필터 명시 — target_id가 PositiveIntegerField(FK 아님)라 future drift 방어
         board_ids = [r.target_id for r in items if r.target_kind == PublicReport.TargetKind.BOARD]
         review_ids = [r.target_id for r in items if r.target_kind == PublicReport.TargetKind.REVIEW]
         reply_ids = [r.target_id for r in items if r.target_kind == PublicReport.TargetKind.REPLY]
-        boards = {p.id: p for p in PublicBoardPost.objects.filter(pk__in=board_ids).only("id", "title", "status")}
-        reviews = {p.id: p for p in PublicReview.objects.filter(pk__in=review_ids).only("id", "title", "rating", "status")}
-        replies = {p.id: p for p in PublicPostReply.objects.filter(pk__in=reply_ids).only("id", "content", "is_hidden")}
+        boards = {p.id: p for p in PublicBoardPost.objects.filter(tenant=tenant, pk__in=board_ids).only("id", "title", "status")}
+        reviews = {p.id: p for p in PublicReview.objects.filter(tenant=tenant, pk__in=review_ids).only("id", "title", "rating", "status")}
+        replies = {p.id: p for p in PublicPostReply.objects.filter(tenant=tenant, pk__in=reply_ids).only("id", "content", "is_hidden")}
 
         results = []
         for r in items:
