@@ -132,8 +132,30 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             return [TenantResolved()]
         return [TenantResolvedAndStaff()]
 
-    def get_queryset(self):
+    def _resolve_tenant_for_public_access(self):
+        """학생 카톡 share URL (iframe PDF) 비로그인 진입 path 보장.
+
+        - iframe.src 는 browser native fetch — custom header X-Tenant-Code 박을 수 없음
+        - retrieve 응답의 pdf_url 은 `?tenant=<code>` query param 만 박혀있음
+        - middleware `_resolve_tenant_from_header` 는 query param 인식 안 함 → 비로그인 학생 click 시 404
+
+        Fix: query param `?tenant=<code>` 도 인식. tenant scoped queryset 이므로 cross-tenant leak X.
+        """
         tenant = getattr(self.request, "tenant", None)
+        if tenant:
+            return tenant
+        code = (self.request.GET.get("tenant") or "").strip()
+        if not code:
+            return None
+        from academy.adapters.db.django import repositories_core as core_repo
+        resolved = core_repo.tenant_get_by_code(code)
+        if resolved:
+            # downstream (retrieve _serialize_card / pdf_url 빌드) 가 request.tenant 참조 — 채워넣음
+            self.request.tenant = resolved
+        return resolved
+
+    def get_queryset(self):
+        tenant = self._resolve_tenant_for_public_access()
         if not tenant:
             return PublicMatchupShowcase.objects.none()
         qs = PublicMatchupShowcase.objects.filter(tenant=tenant)
