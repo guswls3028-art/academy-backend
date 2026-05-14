@@ -78,12 +78,14 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
             return True
 
     # ── 해설지 페이지 감지 ──
-    # 운영 케이스 (Tenant 2 doc#120 p112-116): "10. 정답 ④ 문제 해설 ...",
-    # "Step 3. 수능완성 1. 정답 ③ 문제 해설 ..." 패턴 다수 등장.
-    # is_non_question_page 미차단 시 학습자료 over-extraction 주범.
-    # 패턴: "N. 정답" 또는 "N. 정답　④" 또는 "Step N. ... 정답" 5+ 반복.
+    # 운영 케이스:
+    #   1. Tenant 2 doc#120 p112-116: "10. 정답 ④ 문제 해설 ..."
+    #   2. Step 3. 수능완성 1. 정답 ③ 문제 해설 ..."
+    #   3. T1 doc 772 (지권의 변화 메인자료) p72 정답해설지: "30. [정답] 영덕"
+    #      / "31. [정답] (가)는 ..." — N. 와 정답 사이 "[" 또는 "(" prefix 등장.
+    # 패턴: "N. 정답" / "N. [정답]" / "N. (정답)" / "N. 문제 해설" 5+ 반복.
     explanation_answer = re.findall(
-        r"\b\d{1,3}\s*\.\s*(?:정\s*답|문제\s*해설)",
+        r"\b\d{1,3}\s*\.\s*[\[\(\s]*(?:정\s*답|문제\s*해설)",
         full_text,
     )
     if len(explanation_answer) >= 3:
@@ -94,6 +96,18 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     # "정답 ③", "정답 ⑤" 만 반복되는 페이지. 일반 본문에는 "정답"이 3+ 등장하지 않음.
     standalone_answer = re.findall(r"정\s*답\s*[①②③④⑤]", full_text)
     if len(standalone_answer) >= 3:
+        return True
+
+    # ── 해설지 OX 마커 패턴 — T1 doc 772 p56 케이스 ──
+    # 운영 케이스 (지권의 변화 메인자료 p56 정답+문제 해설 페이지):
+    #   "7. 그림은 ... | 1. A-C 지역... (O) | 2. 규모는 ... (X) | 3. ... (X) | ..."
+    # 워크북 본문 페이지에는 "(O/X)" 가 표시 영역 placeholder 로만 등장 (학원장이
+    # 채우기 전). 해설지에는 "(O)" / "(X)" / "(✓)" 단독 마커가 정답으로 채워져 있어
+    # 본문 페이지보다 단독 OX 마커 빈도가 훨씬 높다.
+    # 임계: 단독 OX 마커 (괄호 안 단일 O / X / ✓) 가 6+ 등장 + "정답" / "해설" 단어 동반.
+    standalone_ox = re.findall(r"[\(（][\s]*[OX✓×][\s]*[\)）]", full_text)
+    has_answer_word = "정답" in full_text or "해설" in full_text
+    if len(standalone_ox) >= 6 and has_answer_word:
         return True
 
     # ── 학습자료 본문 항목번호 (zb\d+ ID) 페이지 감지 ──
