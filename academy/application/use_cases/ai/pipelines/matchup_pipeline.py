@@ -530,12 +530,21 @@ def run_matchup_pipeline(
     # YOLO false positive 후처리. PoC v3 검증 prec 0.55→0.97. ENV flag
     # MATCHUP_HYBRID_VLM_TENANTS 매치 시만 적용. fail-soft.
     # 2026-05-10 자가 검수 후 prompt 강화 — problem_fragment 카테고리 reject.
+    #
+    # 2026-05-15 workbook source_type skip — academy_workbook / commercial_workbook 는
+    # marginal anchor main 단위 cut (그림+stem+sub-items 통째) 의도. VLM 이 main 박스를
+    # "problem_fragment" 로 잘못 분류해 reject 하는 결함 (운영 doc 774: 105 → 60, 42 fragment
+    # 거짓 reject). VLM 은 시험지 sub-item cut 단위 학습 — 워크북 main 단위 와 호환 X.
+    WORKBOOK_VLM_SKIP_TYPES = {"academy_workbook", "commercial_workbook"}
     try:
         from academy.adapters.ai.detection.hybrid_vlm_classifier import (
             is_hybrid_vlm_enabled_for_tenant,
             filter_questions_by_hybrid_vlm,
         )
-        if is_hybrid_vlm_enabled_for_tenant(tenant_id):
+        if (
+            is_hybrid_vlm_enabled_for_tenant(tenant_id)
+            and source_type not in WORKBOOK_VLM_SKIP_TYPES
+        ):
             before_count = len(questions_raw)
             questions_raw, hvlm_stats = filter_questions_by_hybrid_vlm(
                 questions_raw,
@@ -546,6 +555,12 @@ def run_matchup_pipeline(
             logger.info(
                 "HYBRID_VLM_FILTERED | doc=%s | before=%d | after=%d | stats=%s",
                 document_id, before_count, len(questions_raw), hvlm_stats,
+            )
+        elif source_type in WORKBOOK_VLM_SKIP_TYPES:
+            logger.info(
+                "HYBRID_VLM_SKIP_WORKBOOK | doc=%s | source_type=%s | "
+                "main 단위 cut 보존 (VLM 적용 X)",
+                document_id, source_type,
             )
     except Exception as _hvlm_err:  # noqa: BLE001
         # fail-soft — filter 자체 실패 시 raw questions_raw 그대로
