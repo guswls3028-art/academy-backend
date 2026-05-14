@@ -1028,6 +1028,33 @@ jobs:
 
           echo "asg_pass=$PASS" >> $GITHUB_OUTPUT
 
+      # ----------------------------------------------------------------
+       # Phase 5.5: Student video playback chain smoke (mechanical gate)
+       # 5/13 R2 보호 + Worker 전환 작업 후 박철T 학생 영상 100% 차단 사고
+       # (master.m3u8 200 OK + variant URL relative+no sig → Worker 401).
+       # master 200 만 보고 "fix 완료" 보고한 게 근본 신뢰 파괴 본질.
+       # 본 step 은 학생 시점 실 chain (master → variant → segment) 단호한
+       # assert. FAIL → conclusion=failure → notify-on-failure SNS 발화 +
+       # 다음 push 까지 같은 결함 재배포 차단.
+       # ----------------------------------------------------------------
+      - name: Verify student video playback chain (mechanical gate)
+        if: |
+          steps.health.outputs.health_pass == 'true' &&
+          steps.asg.outputs.asg_pass == 'true' &&
+          (needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true')
+        env:
+          E2E_STUDENT_USER: ${{ secrets.E2E_STUDENT_USER }}
+          E2E_STUDENT_PASS: ${{ secrets.E2E_STUDENT_PASS }}
+          E2E_API_URL: https://api.hakwonplus.com
+          E2E_CDN_URL: https://cdn.hakwonplus.com
+          E2E_TENANT_CODE: hakwonplus
+        run: |
+          if [ -z "$E2E_STUDENT_USER" ] || [ -z "$E2E_STUDENT_PASS" ]; then
+            echo "::warning::E2E_STUDENT_USER/PASS secret 미설정 — chain smoke skip"
+            exit 0
+          fi
+          python3 scripts/post_deploy_smoke/video_playback_chain.py
+
       - name: Deployment summary
         run: |
           echo "## V1.1.0 Deploy Verification" >> $GITHUB_STEP_SUMMARY
