@@ -118,11 +118,16 @@ def _parse_dt(raw: Any):
     return None
 
 
+@method_decorator(xframe_options_exempt, name="dispatch")
 class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
     """공개 매치업 적중보고서 게시판.
 
     list/retrieve/pdf_stream: 비로그인 OK (PUBLISHED + window 만 노출 / EXPIRED는 카드만)
     publish/unpublish/destroy/partial_update: staff (owner/admin) only
+
+    xframe_exempt: pdf_stream 학생 카톡 iframe embed 용. DRF action method-level
+    @method_decorator는 dispatch 우회되어 미작동 — class-level dispatch decorator로 강제.
+    (commit 4638d55a)
     """
 
     queryset = PublicMatchupShowcase.objects.all()
@@ -213,7 +218,6 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
         return Response(payload)
 
     @action(detail=True, methods=["get"], url_path="pdf")
-    @method_decorator(xframe_options_exempt)
     def pdf_stream(self, request, pk=None):
         """게시물 스냅샷 PDF stream. iframe embed 용 (xframe_exempt).
 
