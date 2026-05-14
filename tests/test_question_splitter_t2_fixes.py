@@ -282,6 +282,107 @@ def test_validate_per_page_restart_still_drops_outliers_per_page():
         assert nums == [1, 2, 3, 4, 5], f"page {i}: {nums}"
 
 
+def test_marginal_anchor_extracts_standalone_number():
+    """marginal column standalone 'N.' / 'N' block 만 인식, 본문 anchor 거부."""
+    from academy.domain.tools.question_splitter import _extract_marginal_question_number
+
+    # accept
+    assert _extract_marginal_question_number("3.") == 3
+    assert _extract_marginal_question_number("3") == 3
+    assert _extract_marginal_question_number("10.") == 10
+    assert _extract_marginal_question_number("3 . ") == 3
+    # reject (본문 anchor 형태)
+    assert _extract_marginal_question_number("3. 다음") is None
+    assert _extract_marginal_question_number("3.0") is None
+    assert _extract_marginal_question_number("1)") is None
+    assert _extract_marginal_question_number("125.") is None  # > 60 (max legit)
+
+
+def test_split_questions_prefer_marginal_workbook_main_only():
+    """workbook 모드: marginal anchor 만 사용, 본문 sub-item anchor reject.
+
+    학원장 mental model: Q3 (그림+sub-items 1-7) = 1 problem. sub-item 1, 2, ...
+    들은 Q3 의 부분이지 독립 문제 아님.
+    """
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 595.0, 842.0
+    blocks = [
+        # Q3 marginal big number
+        TextBlock(text="3.", x0=28, y0=80, x1=42, y1=95),
+        # Q3 stem + sub-items
+        TextBlock(text="그림은 화산 활동에 관한 여러 가지 현상", x0=60, y0=80, x1=500, y1=95),
+        TextBlock(text="1. 화산 분출물 (O/X)", x0=80, y0=120, x1=500, y1=135),
+        TextBlock(text="2. 자연 현상 (O/X)", x0=80, y0=140, x1=500, y1=155),
+        TextBlock(text="3. 마그마 (O/X)", x0=80, y0=160, x1=500, y1=175),
+        # Q4 marginal big number
+        TextBlock(text="4.", x0=28, y0=420, x1=42, y1=435),
+        TextBlock(text="그림은 한 경계에서", x0=60, y0=420, x1=500, y1=435),
+        TextBlock(text="1. A는 발산형 (O/X)", x0=80, y0=460, x1=500, y1=475),
+        TextBlock(text="2. B는 보존형 (O/X)", x0=80, y0=480, x1=500, y1=495),
+    ]
+    regions = split_questions(
+        blocks, pw, ph, page_index=5, prefer_marginal=True,
+    )
+    # 2 main anchors (Q3, Q4) only, sub-items rejected
+    assert len(regions) == 2
+    nums = sorted(r.number for r in regions)
+    assert nums == [3, 4]
+    # Q3 bbox spans from marginal "3." through sub-items down to before "4."
+    q3 = [r for r in regions if r.number == 3][0]
+    assert q3.bbox[1] < 100  # starts at top of page
+    assert q3.bbox[3] > 200  # extends well past sub-items
+
+
+def test_split_questions_prefer_marginal_threshold_one_anchor():
+    """prefer_marginal=True 면 marginal 1 개라도 있을 때 marginal-only.
+
+    표지 페이지 + Q1 만 있는 워크북 첫 페이지 케이스. Q1 marginal "1." 만 keep,
+    표지 텍스트에 잡힌 false anchor (body) 들 reject.
+    """
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 595.0, 842.0
+    blocks = [
+        TextBlock(text="1.", x0=28, y0=200, x1=42, y1=215),
+        TextBlock(text="2025년 5월 27일 기말고사 1차시 실시", x0=60, y0=200, x1=500, y1=215),
+        # 표지에 false body anchor 잡힘
+        TextBlock(text="3. 다음 항목을 모두 작성하시오", x0=80, y0=400, x1=500, y1=415),
+    ]
+    regions = split_questions(
+        blocks, pw, ph, page_index=0, prefer_marginal=True,
+    )
+    # marginal anchor 1 만 keep
+    assert len(regions) == 1
+    assert regions[0].number == 1
+
+
+def test_split_questions_no_prefer_marginal_school_exam_unchanged():
+    """prefer_marginal=False (시험지 default) — marginal 1 개만 있어도 body anchor 그대로 사용.
+
+    시험지에 우연히 standalone "1." 한 줄 등장해도 marginal-only 로 전환되지 않음.
+    """
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 595.0, 842.0
+    blocks = [
+        # 우연한 marginal block (시험지 페이지 좌측 1번 표지)
+        TextBlock(text="1.", x0=28, y0=80, x1=42, y1=95),
+        # 시험지 본문 anchors
+        TextBlock(text="2. 다음 문제를 풀이하시오", x0=60, y0=200, x1=500, y1=215),
+        TextBlock(text="3. 다음 그림은 무엇을 나타내는가", x0=60, y0=400, x1=500, y1=415),
+        TextBlock(text="4. 다음 중 옳은 것은", x0=60, y0=600, x1=500, y1=615),
+    ]
+    # prefer_marginal=False (default 시험지 모드): marginal 1 개 < 임계 2 → body 도 사용.
+    # marginal "1." + body "2."/"3."/"4." 모두 keep → 4 regions.
+    regions = split_questions(
+        blocks, pw, ph, page_index=0, prefer_marginal=False,
+    )
+    assert len(regions) == 4
+    nums = sorted(r.number for r in regions)
+    assert nums == [1, 2, 3, 4]
+
+
 def test_validate_detection_threshold_protects_school_exam():
     """시험지에 본문 오탐으로 anchor 1개가 한 번 더 잡혀도 per-page-restart 로 오인식되면 안 됨.
 

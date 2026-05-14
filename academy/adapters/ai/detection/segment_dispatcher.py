@@ -185,6 +185,7 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
         classify_paper_type,
     )
     from academy.domain.tools.question_splitter import (
+        count_marginal_anchor_candidates,
         split_questions,
         TextBlock as SplitterTextBlock,
     )
@@ -196,6 +197,9 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
     # (cleanup은 prefix + 존재 여부 검증 후 rmtree, 동일 dir 두 번 처리해도 ignore_errors).
     register_pdf_seg_tmp_dirs([tmp_dir])
 
+    # ── Phase 1: 페이지별 텍스트 + paper_type 수집 (split_questions 호출 X) ──
+    # Phase 2 doc-level workbook 감지 후 Phase 3 에서 일괄 split.
+    phase1: List[Dict] = []
     with PdfDocument(pdf_path) as doc:
         page_count = doc.page_count()
         logger.info("PDF_TO_IMAGES | pages=%d | path=%s", page_count, pdf_path)
@@ -205,22 +209,19 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
             out_path = os.path.join(tmp_dir, f"page_{i:03d}.png")
             pil_img.save(out_path, "PNG")
 
-            # 텍스트 존재 여부 검사 — 스캔본이면 False
             has_text = False
-            text_boxes: List[BBox] = []
             try:
                 raw_blocks = doc.extract_text_blocks(i)
                 has_text = len(raw_blocks) > 0
             except Exception:
                 raw_blocks = []
 
-            # 텍스트 PDF의 경우 text-based 분할을 시도해서 per-question 박스 사전 계산.
-            # paper_type 분류기가 NON_QUESTION으로 판정하면 표지/목차/안내/해설 — 이 페이지는
-            # OCR/OpenCV 안전망에서도 problem으로 잘리지 않도록 plain "skip" 플래그를 표시.
-            text_regions: List = []  # QuestionRegion in points (for cross-page validation)
-            is_skip_page = False
-            page_paper_type: str = PaperType.UNKNOWN.value
+            tbs: List[SplitterTextBlock] = []
+            pw, ph = 0.0, 0.0
+            page_paper_type = PaperType.UNKNOWN.value
             paper_type_debug: Dict = {}
+            pt = None
+            is_skip_page = False
             if has_text:
                 try:
                     tbs = [
@@ -245,40 +246,92 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
                             "paper_type=%s",
                             i, page_paper_type,
                         )
-                    else:
-                        regions = split_questions(
-                            tbs, pw, ph, page_index=i, paper_type=pt,
-                        )
-                        text_regions = list(regions)
-                        scale = _PDF_TO_PIXEL_SCALE
-                        for r in regions:
-                            rx0, ry0, rx1, ry1 = r.bbox
-                            text_boxes.append((
-                                int(rx0 * scale),
-                                int(ry0 * scale),
-                                int((rx1 - rx0) * scale),
-                                int((ry1 - ry0) * scale),
-                            ))
-                        logger.info(
-                            "PDF_TEXT_LAYOUT | page=%d | paper_type=%s | "
-                            "regions=%d | dual=%s | quad=%s",
-                            i, page_paper_type, len(regions),
-                            pt.is_dual_column, pt.is_quadrant,
-                        )
                 except Exception as e:
                     logger.warning(
-                        "PDF_TEXT_BOXES_ERROR | page=%d | error=%s", i, e,
+                        "PDF_TEXT_CLASSIFY_ERROR | page=%d | error=%s", i, e,
                     )
 
-            results.append({
+            phase1.append({
+                "page_index": i,
                 "image_path": out_path,
-                "has_embedded_text": has_text,
-                "text_boxes": text_boxes,
-                "text_regions": text_regions,  # QuestionRegion[] — aligned with text_boxes
-                "is_skip_page": is_skip_page,  # 비문항 페이지 (표지/목차/안내). 안전망 우회 금지.
+                "has_text": has_text,
+                "text_blocks": tbs,
+                "page_width": pw,
+                "page_height": ph,
                 "paper_type": page_paper_type,
                 "paper_type_debug": paper_type_debug,
+                "paper_type_result": pt,
+                "is_skip_page": is_skip_page,
             })
+
+    # ── Phase 2: doc-level workbook(per-page-restart) 감지 ──
+    # 페이지마다 marginal column 짧은 standalone "N." block 수를 세서, 일정 임계 이상의
+    # 페이지에 marginal block 이 분포하면 워크북 doc. split_questions 에 prefer_marginal=True
+    # 전달 → marginal anchor 만 사용해 sub-item over-detection 차단.
+    pages_with_marginal = 0
+    eligible_pages = 0  # text 있고 non-question 아닌 페이지
+    for p in phase1:
+        if not p["has_text"] or p["is_skip_page"] or not p["text_blocks"]:
+            continue
+        eligible_pages += 1
+        m_count = count_marginal_anchor_candidates(
+            p["text_blocks"], p["page_width"],
+        )
+        if m_count >= 1:
+            pages_with_marginal += 1
+    workbook_doc = False
+    if eligible_pages >= 5:
+        ratio = pages_with_marginal / eligible_pages
+        # 워크북 임계 (보수적) — 30%+ 페이지 marginal 분포 AND 절대 3+ 페이지.
+        # 시험지에 우연히 standalone "1." 1-2 page 등장해도 임계 미달 → 시험지 보호.
+        workbook_doc = ratio >= 0.3 and pages_with_marginal >= 3
+    logger.info(
+        "PDF_WORKBOOK_DETECT | eligible_pages=%d | pages_with_marginal=%d | workbook=%s",
+        eligible_pages, pages_with_marginal, workbook_doc,
+    )
+
+    # ── Phase 3: split_questions 호출 (prefer_marginal=workbook_doc) ──
+    for p in phase1:
+        text_boxes: List[BBox] = []
+        text_regions: List = []
+        if p["has_text"] and not p["is_skip_page"] and p["text_blocks"]:
+            try:
+                regions = split_questions(
+                    p["text_blocks"], p["page_width"], p["page_height"],
+                    page_index=p["page_index"],
+                    paper_type=p["paper_type_result"],
+                    prefer_marginal=workbook_doc,
+                )
+                text_regions = list(regions)
+                scale = _PDF_TO_PIXEL_SCALE
+                for r in regions:
+                    rx0, ry0, rx1, ry1 = r.bbox
+                    text_boxes.append((
+                        int(rx0 * scale),
+                        int(ry0 * scale),
+                        int((rx1 - rx0) * scale),
+                        int((ry1 - ry0) * scale),
+                    ))
+                logger.info(
+                    "PDF_TEXT_LAYOUT | page=%d | paper_type=%s | regions=%d | "
+                    "workbook=%s",
+                    p["page_index"], p["paper_type"], len(regions), workbook_doc,
+                )
+            except Exception as e:
+                logger.warning(
+                    "PDF_TEXT_BOXES_ERROR | page=%d | error=%s",
+                    p["page_index"], e,
+                )
+
+        results.append({
+            "image_path": p["image_path"],
+            "has_embedded_text": p["has_text"],
+            "text_boxes": text_boxes,
+            "text_regions": text_regions,
+            "is_skip_page": p["is_skip_page"],
+            "paper_type": p["paper_type"],
+            "paper_type_debug": p["paper_type_debug"],
+        })
 
     return results, tmp_dir
 

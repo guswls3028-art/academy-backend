@@ -261,6 +261,37 @@ _SECTION_PATTERN = re.compile(
 )
 
 
+# Marginal 큰 번호 패턴 — 워크북/메인자료 페이지 좌측 marginal column 에 standalone
+# "3." / "4." 형식으로 박힌 큰 번호. 학원장 mental model 의 "한 문제 단위" anchor.
+# 본문 sub-item anchor ("1. 다음 글은...") 와 구분하기 위해 매우 짧은 standalone block 만 인정.
+_MARGINAL_NUMBER_PATTERN = re.compile(
+    r"^\s*(\d{1,3})\s*\.?\s*$"
+)
+
+
+def _extract_marginal_question_number(text: str) -> Optional[int]:
+    """짧은 standalone 'N.' / 'N' block 에서 큰 문제 번호 추출.
+
+    워크북 marginal column 의 main question anchor 용. 본문 sub-item anchor 와 구분.
+    조건:
+      - text length 검사: ≤ 5 char (e.g. "3.", "12.", "3")
+      - regex: 숫자 + 선택적 점 + 공백 외 다른 문자 없음
+    """
+    stripped = text.strip()
+    if not stripped or len(stripped) > 5:
+        return None
+    m = _MARGINAL_NUMBER_PATTERN.match(text)
+    if not m:
+        return None
+    try:
+        num = int(m.group(1))
+        if 1 <= num <= _MAX_LEGIT_QUESTION_NUMBER:
+            return num
+    except ValueError:
+        pass
+    return None
+
+
 def _extract_question_number(text: str) -> Optional[int]:
     """Extract question number from text block content.
 
@@ -378,12 +409,35 @@ def _detect_quad_layout(
     return in_h_gutter <= threshold and in_v_gutter <= threshold
 
 
+def count_marginal_anchor_candidates(
+    text_blocks: List[TextBlock],
+    page_width: float,
+) -> int:
+    """페이지에서 marginal column 큰 번호 anchor 후보 개수.
+
+    `_pdf_to_images` 의 phase 1 (doc-level workbook 감지) 에서 사용.
+    페이지마다 short standalone "N." block (x0 < 15% page width, text ≤ 5 char)
+    개수를 센다. 모든 페이지에 marginal block 이 분포하면 워크북 doc.
+    """
+    if not text_blocks or page_width <= 0:
+        return 0
+    threshold_x = page_width * 0.15
+    count = 0
+    for b in text_blocks:
+        if b.x0 >= threshold_x:
+            continue
+        if _extract_marginal_question_number(b.text) is not None:
+            count += 1
+    return count
+
+
 def split_questions(
     text_blocks: List[TextBlock],
     page_width: float,
     page_height: float,
     page_index: int = 0,
     paper_type: Optional["PaperTypeResult"] = None,
+    prefer_marginal: bool = False,
 ) -> List[QuestionRegion]:
     """Split a page into question regions based on detected question numbers.
 
@@ -396,6 +450,11 @@ def split_questions(
                     If provided, the dual/quad detection heuristics are bypassed
                     and the explicit layout is used. None → fall back to the
                     in-module heuristics for backward compatibility.
+        prefer_marginal: 워크북/메인자료 doc-level 신호. True 면 페이지에 marginal
+                    column 큰 번호 standalone "N." block 이 있으면 그것만 anchor 로 사용
+                    (본문 sub-item anchor 들 reject). 학원장 mental model "한 문제 =
+                    Q3 (그림+설명+sub-items 통째)" 정합. False (시험지) 면 marginal
+                    1개 이상이면 marginal 만 사용 (보수적 임계), 0~1 개면 body 사용.
 
     Returns:
         List of QuestionRegion sorted by question number.
@@ -426,16 +485,41 @@ def split_questions(
 
     sorted_blocks = strategy.sort_blocks(text_blocks, mid_x, mid_y)
 
-    # Find question start positions
-    question_starts: List[Tuple[int, int]] = []  # (question_number, block_index)
+    # Find question start positions — marginal/body candidates 구분 수집.
+    # marginal = 페이지 좌측 marginal column 의 짧은 standalone "N." block.
+    #           워크북/메인자료 의 "큰 번호" main question anchor.
+    # body = "1. 다음 글은..." 처럼 anchor 뒤 문장이 이어지는 일반 시험지 anchor.
+    marginal_threshold_x = page_width * 0.15
+    candidates: List[Tuple[int, int, bool]] = []  # (qnum, block_idx, is_marginal)
     for idx, block in enumerate(sorted_blocks):
-        qnum = _extract_question_number(block.text)
-        if qnum is not None:
-            question_starts.append((qnum, idx))
+        # marginal candidate 우선 검사 (짧은 standalone block).
+        marginal_num = _extract_marginal_question_number(block.text)
+        if (
+            marginal_num is not None
+            and block.x0 < marginal_threshold_x
+        ):
+            candidates.append((marginal_num, idx, True))
+            continue
+        # body anchor (current regex).
+        body_num = _extract_question_number(block.text)
+        if body_num is not None:
+            candidates.append((body_num, idx, False))
 
-    if not question_starts:
-        # No questions detected — skip this page (table of contents, cover, etc.)
+    if not candidates:
         return []
+
+    # Marginal preference 분기:
+    # - prefer_marginal=True (워크북 doc-level 신호): marginal candidate 1+ 면 마진만.
+    #   페이지에 main question 1 개 (Q1) 만 있는 케이스도 학원장 mental model 의
+    #   "한 문제" 단위 = marginal anchor.
+    # - prefer_marginal=False (시험지): marginal 2+ 인 경우만 마진 preference (보수적
+    #   임계). 시험지에 standalone "N." block 우연히 1개 있는 경우 본문 anchor 도 사용.
+    marginal_count = sum(1 for _, _, m in candidates if m)
+    marginal_threshold = 1 if prefer_marginal else 2
+    if marginal_count >= marginal_threshold:
+        candidates = [c for c in candidates if c[2]]
+
+    question_starts: List[Tuple[int, int]] = [(qn, ix) for qn, ix, _ in candidates]
 
     # 페이지 내 중복 번호 제거. 본문 내 "그림 4는..." 같은 표현이 regex와
     # 매치되는 경우, layout 순서상 먼저 나온 것을 실제 문항 앵커로 간주.
