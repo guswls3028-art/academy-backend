@@ -73,6 +73,14 @@ COPY --chown=appuser:appuser scripts ./scripts
 
 USER appuser
 
+# HF Hub offline — runtime 에 cache 된 model 만 사용 (HEAD 검증 skip).
+# 사고(2026-05-14 doc 773): image 에 CLIP pre-cache 됐는데 runtime 이 sentence-transformers/clip-ViT-B-32
+# subdirectory config 들을 HF Hub 에 HEAD polling. rate limit (HF_TOKEN 없음) + network 지연으로
+# 1 시간+ stall → SQS visibility timeout → message retry loop. 이 ENV 가 HEAD 검증 자체를 차단 →
+# 즉시 cache hit → CLIP/MiniLM 모델 로드 수 초 이내.
+ENV HF_HUB_OFFLINE=1
+ENV TRANSFORMERS_OFFLINE=1
+
 # Excel 파싱 워커 의존: apps.infrastructure.storage.r2_adapter (apps SSOT)
 RUN python -c "from apps.infrastructure.storage.r2_adapter import R2ObjectStorageAdapter" || (echo "ERROR: R2ObjectStorageAdapter not importable" && exit 1)
 # AI 파이프라인 의존: academy.adapters.ai.storage.downloader
