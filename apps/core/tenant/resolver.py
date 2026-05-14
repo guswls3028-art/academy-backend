@@ -95,6 +95,28 @@ def _resolve_tenant_from_header(request) -> Optional[Tenant]:
     return tenant
 
 
+# 학생 카톡 share URL (iframe PDF) — landing-public path 한정 query param tenant resolve.
+# iframe.src 는 browser native fetch — custom header X-Tenant-Code 박을 수 없음.
+# 학원장이 "🔗 링크 복사" → 학생 카톡 → 클릭 시 비로그인 + query param 만으로 PDF 노출 필요.
+# cross-tenant 보안: landing-public path 만 적용, 각 endpoint 는 tenant scoped queryset 사용.
+_QUERY_PARAM_TENANT_PATH_PREFIXES = (
+    "/api/v1/landing-public/",
+)
+
+
+def _resolve_tenant_from_query_param(request) -> Optional[Tenant]:
+    path = getattr(request, "path", "") or "/"
+    if not any(path.startswith(p) for p in _QUERY_PARAM_TENANT_PATH_PREFIXES):
+        return None
+    try:
+        raw = (request.GET.get("tenant") or "").strip()
+    except Exception:
+        return None
+    if not raw:
+        return None
+    return core_repo.tenant_get_by_code(raw)
+
+
 def resolve_tenant_from_request(request) -> Optional[Tenant]:
     """
     Enterprise Resolver (Domain 1:1 with operational flexibility)
@@ -111,6 +133,11 @@ def resolve_tenant_from_request(request) -> Optional[Tenant]:
 
     # 1) Host가 허용 목록이고 X-Tenant-Code 있으면 → 헤더로 테넌트 결정
     tenant = _resolve_tenant_from_header(request)
+    if tenant:
+        return tenant
+
+    # 1b) landing-public path + `?tenant=<code>` query param → 비로그인 iframe PDF share URL 대응
+    tenant = _resolve_tenant_from_query_param(request)
     if tenant:
         return tenant
 
