@@ -502,40 +502,69 @@ def split_questions(
     return regions
 
 
-def validate_anchors_across_pages(
-    regions_per_page: List[List[QuestionRegion]],
-) -> List[List[QuestionRegion]]:
+def _detect_per_page_restart(
+    regions_per_page: List[List["QuestionRegion"]],
+) -> bool:
+    """페이지별/섹션별 anchor 번호 리셋 패턴 감지 (global dedup 끄기 여부).
+
+    Why: 시험지(continuous numbering)는 cross-page dedup 이 false anchor("그림 4는") 를 잘 거른다.
+    하지만 페이지/섹션별 anchor 번호가 리셋되는 doc 들 (워크북·메인자료·여러 섹션 모아둔 자료) 에서는
+    같은 dedup 이 후속 페이지 anchor 를 전부 drop 시켜 catastrophic under-cut 을 일으킨다
+    (T2 운영 1 doc 단위 81% drop 실측, 24% clean_pdf_dual 학원장 manual_create 의 본질).
+
+    감지 대상:
+      A. 페이지별 리셋 워크북 (지권의 변화 메인자료) — 같은 1, 2, 3 시퀀스가 N 페이지에 반복.
+      B. 섹션별 리셋 / 멀티-섹션 자료 (빅뱅 복습과제) — 큰 번호 범위가 두 번 이상 등장.
+      C. 일반 시험지 false anchor (개포고 시험지 마지막 2 페이지에 "1.","2.","3." OCR 오탐) — 회피.
+
+    Heuristic (3-신호 OR):
+      1. anchor 가 있는 페이지가 5+ 개여야 함 (너무 작은 doc 은 시험지 protect).
+      2. **신호 A (페이지 리셋)**: anchor 1, 2, 3 중 하나라도 포함된 페이지가
+         (a) 절대 ≥ 5 페이지 AND (b) anchor 보유 페이지의 40% 이상.
+      3. **신호 B (섹션 리셋)**: 2 페이지 이상에 걸쳐 등장하는 anchor 가
+         (a) 절대 ≥ 5 개 AND (b) 전체 unique anchor 의 30% 이상.
+
+    A 또는 B 하나라도 True 면 per-page-restart 로 간주 (global dedup off).
+    개포고 시험지: pages_with_low=3 (5 미만) AND repeated=3 (5 미만) → A,B 모두 False → continuous 유지.
     """
-    여러 페이지의 anchor를 모아 문서 전역 검증.
+    pages_with_anchors = sum(1 for p in regions_per_page if p)
+    if pages_with_anchors < 5:
+        return False
 
-    드롭되는 패턴:
-      1. 크로스-페이지 중복 — 동일 번호가 여러 페이지에 등장하면
-         layout 순서상 가장 앞선 페이지의 것만 유지. 후속 페이지의
-         중복은 본문 내 "그림 4는", "표 2에" 등으로 오탐된 것.
-      2. 시퀀스 outlier — sorted unique 번호의 최대 gap이 비정상적으로
-         크면(median gap 대비 >= 5배 & 절대값 >= 5) 이탈값을 제거.
-         예: [3, 4, 5, 6, 7, 46] → 46 드롭.
-
-    입력 형식: [per_page_regions]
-    반환: 필터링된 [per_page_regions] (페이지 구조 유지, 내부 regions만 필터)
-    """
-    if not regions_per_page:
-        return regions_per_page
-
-    # ── 1. 크로스-페이지 중복 제거 ──
-    seen_numbers: set[int] = set()
-    filtered: List[List[QuestionRegion]] = []
+    # 신호 A — low anchor 가 많은 페이지에 분산 (페이지 리셋)
+    pages_with_low = 0
+    pages_per_number: dict[int, int] = {}
     for page_regions in regions_per_page:
-        kept: List[QuestionRegion] = []
-        for r in page_regions:
-            if r.number in seen_numbers:
-                continue
-            seen_numbers.add(r.number)
-            kept.append(r)
-        filtered.append(kept)
+        nums = {r.number for r in page_regions}
+        if nums & {1, 2, 3}:
+            pages_with_low += 1
+        for n in nums:
+            pages_per_number[n] = pages_per_number.get(n, 0) + 1
 
-    # ── 2. 시퀀스 outlier 제거 (선택형/서술형/논술형 각 number-space별 개별 적용) ──
-    # number-space는 100 단위로 분리 (선택형 <100, 서술형 100~199, 논술형 200~299 등).
+    threshold_low = max(5, int(pages_with_anchors * 0.4))
+    signal_a = pages_with_low >= threshold_low
+
+    # 신호 B — multi-page anchor 비율이 높음 (섹션 리셋)
+    repeated = sum(1 for cnt in pages_per_number.values() if cnt >= 2)
+    unique = len(pages_per_number)
+    signal_b = (
+        repeated >= 5
+        and unique > 0
+        and (repeated / unique) >= 0.3
+    )
+
+    return signal_a or signal_b
+
+
+def _drop_outliers_in_seen(
+    seen_numbers: set[int],
+) -> set[int]:
+    """sorted-unique number-space 별 sequence outlier 식별.
+
+    100 단위 number-space 분리 (선택형 <100 / 서술형 100~ / 논술형 200~ / 단답 300~).
+    median gap 대비 5x + abs >= 5 인 gap 이후의 모든 번호를 outlier 로 표시.
+    예: [3, 4, 5, 6, 7, 46] → 46 드롭.
+    """
     outlier_nums: set[int] = set()
     by_space: dict[int, List[int]] = {}
     for n in sorted(seen_numbers):
@@ -550,10 +579,57 @@ def validate_anchors_across_pages(
         median_gap = sorted_gaps[len(sorted_gaps) // 2]
         for i, gap in enumerate(gaps):
             if gap >= 5 and gap >= median_gap * 5:
-                # 이탈값 이후 전부 outlier로 처리 (연속 이탈 가능성).
                 outlier_nums.update(space_nums[i + 1:])
                 break
+    return outlier_nums
 
+
+def validate_anchors_across_pages(
+    regions_per_page: List[List[QuestionRegion]],
+) -> List[List[QuestionRegion]]:
+    """
+    여러 페이지의 anchor를 모아 문서 전역 검증.
+
+    두 모드:
+      A. **Continuous numbering (시험지)** — 기본 모드.
+         1. 크로스-페이지 중복 → 처음 등장 page 만 유지. 본문 내 "그림 4는" 같은 오탐 제거.
+         2. Sequence outlier (median gap × 5 + abs ≥ 5) 드롭.
+      B. **Per-page-restart (워크북/메인자료)** — `_detect_per_page_restart` 가 True 일 때.
+         페이지마다 anchor 1, 2, 3... 가 리셋되는 doc 이라 global dedup 이 후속 페이지를 전부
+         drop 시키는 결함을 방지. 페이지간 dedup 을 끄고 page-local outlier 만 적용.
+
+    입력 형식: [per_page_regions]
+    반환: 필터링된 [per_page_regions] (페이지 구조 유지, 내부 regions만 필터)
+    """
+    if not regions_per_page:
+        return regions_per_page
+
+    # ── Per-page-restart 감지 — workbook/메인자료 페이지 리셋 패턴 ──
+    is_per_page_restart = _detect_per_page_restart(regions_per_page)
+
+    if is_per_page_restart:
+        # 페이지간 dedup OFF — 각 페이지 anchor 그대로 유지.
+        # outlier 는 페이지 안에서만 적용 (페이지 내 false anchor 잔존 방지).
+        filtered: List[List[QuestionRegion]] = []
+        for page_regions in regions_per_page:
+            page_nums = {r.number for r in page_regions}
+            page_outliers = _drop_outliers_in_seen(page_nums)
+            filtered.append([r for r in page_regions if r.number not in page_outliers])
+        return filtered
+
+    # ── Continuous mode — 기존 시험지 dedup ──
+    seen_numbers: set[int] = set()
+    filtered = []
+    for page_regions in regions_per_page:
+        kept: List[QuestionRegion] = []
+        for r in page_regions:
+            if r.number in seen_numbers:
+                continue
+            seen_numbers.add(r.number)
+            kept.append(r)
+        filtered.append(kept)
+
+    outlier_nums = _drop_outliers_in_seen(seen_numbers)
     if outlier_nums:
         filtered = [
             [r for r in page_regions if r.number not in outlier_nums]

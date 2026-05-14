@@ -230,6 +230,89 @@ def test_validate_drops_outlier_after_gap():
     assert 46 not in nums_kept
 
 
+def test_validate_preserves_per_page_restart_workbook():
+    """워크북/메인자료처럼 각 페이지가 anchor 1부터 다시 시작하는 doc은
+    cross-page dedup으로 후속 페이지 anchor를 전부 drop 시키지 않아야 한다.
+
+    실측 (T2 sample 지권의 변화 메인자료, 73 페이지): pre-fix 264 → 48 (81.8% drop).
+    이 결함이 학원장 manual_create 4096건 (24% clean_pdf_dual under-cut) 의 본질.
+    """
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    # 5 페이지 × anchor [1, 2, 3] 리셋 (전형적 워크북 패턴)
+    pages = [
+        [
+            QuestionRegion(number=n, bbox=(0, 0, 500, 100), page_index=i)
+            for n in (1, 2, 3)
+        ]
+        for i in range(5)
+    ]
+    out = validate_anchors_across_pages(pages)
+    # 페이지마다 anchor 3개 전부 유지 — 15 region 총합
+    total = sum(len(p) for p in out)
+    assert total == 15, f"per-page-restart 패턴 워크북 anchor 손실: total={total}"
+    # 각 페이지 anchor 1, 2, 3 그대로
+    for i, page in enumerate(out):
+        assert [r.number for r in page] == [1, 2, 3], (
+            f"page {i}: {[r.number for r in page]}"
+        )
+
+
+def test_validate_per_page_restart_still_drops_outliers_per_page():
+    """per-page-restart 모드에서도 페이지 안 outlier (예: 46) 는 drop.
+
+    Why: 페이지 안에 "1, 2, 3, 4, 5, 46" 처럼 본문 false anchor 가 잡혔으면
+    여전히 outlier 제거가 필요. global dedup 만 끄고 outlier 는 유지.
+    """
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    # per-page-restart 패턴 — 각 페이지가 1-5 + outlier 46
+    pages = [
+        [
+            QuestionRegion(number=n, bbox=(0, 0, 500, 100), page_index=i)
+            for n in (1, 2, 3, 4, 5, 46)
+        ]
+        for i in range(5)
+    ]
+    out = validate_anchors_across_pages(pages)
+    # outlier 46 은 각 페이지에서 drop, 1-5 는 유지
+    for i, page in enumerate(out):
+        nums = [r.number for r in page]
+        assert 46 not in nums, f"page {i} outlier 46 not dropped: {nums}"
+        assert nums == [1, 2, 3, 4, 5], f"page {i}: {nums}"
+
+
+def test_validate_detection_threshold_protects_school_exam():
+    """시험지에 본문 오탐으로 anchor 1개가 한 번 더 잡혀도 per-page-restart 로 오인식되면 안 됨.
+
+    시험지에서 false anchor 는 isolated 패턴. 임계 (3 anchor × 2 페이지 이상) 미만이면
+    continuous mode 유지.
+    """
+    from academy.domain.tools.question_splitter import (
+        QuestionRegion,
+        _detect_per_page_restart,
+    )
+
+    page0 = [
+        QuestionRegion(number=n, bbox=(0, 0, 500, 100), page_index=0)
+        for n in (1, 2, 3, 4, 5)
+    ]
+    # 본문 오탐: 페이지 1 에 anchor 4 ("그림 4는") 한 번 더 등장
+    page1 = [
+        QuestionRegion(number=4, bbox=(0, 0, 500, 100), page_index=1),
+        QuestionRegion(number=6, bbox=(0, 100, 500, 200), page_index=1),
+        QuestionRegion(number=7, bbox=(0, 200, 500, 300), page_index=1),
+    ]
+    assert not _detect_per_page_restart([page0, page1]), (
+        "single false anchor 가 per-page-restart 로 오감지되면 안 됨"
+    )
+    # validate 가 continuous mode 로 동작 — 중복 anchor 4 drop
+    out = validate_anchors_across_pages([page0, page1])
+    p1_nums = [r.number for r in out[1]]
+    assert 4 not in p1_nums, "중복 anchor 4 dedup 미작동"
+    assert p1_nums == [6, 7]
+
+
 # ── 6. 4분할(quad) layout 감지 ──
 
 def test_quad_layout_detected_and_split():
