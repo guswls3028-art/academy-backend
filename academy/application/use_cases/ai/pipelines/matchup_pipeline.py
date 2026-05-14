@@ -847,15 +847,66 @@ def _aggregate_paper_types(pages: List[Dict]) -> Dict[str, Any]:
     }
 
 
+def _detect_per_page_restart_from_pages(pages: List[Dict]) -> bool:
+    """`pages[].numbers` 로 per-page-restart (워크북/메인자료) 패턴 감지.
+
+    `question_splitter._detect_per_page_restart` 와 같은 2 신호 휴리스틱이지만
+    pipeline 단계에서 page dict 의 `numbers` 필드를 직접 본다 (split_questions 의
+    검증된 후 결과 + cross-page validate 통과 후).
+
+    Why: `_boxes_to_questions` global dedup `seen_numbers` 가 워크북 anchor 를
+    DB unique (doc, number) 위반 방지로 catastrophic drop. 워크북 모드면 counter
+    fallback 으로 강제해 모든 박스 보존.
+    """
+    pages_with_anchors = 0
+    pages_with_low = 0
+    pages_per_number: dict[int, int] = {}
+    for page in pages:
+        nums = page.get("numbers") or []
+        int_nums = {int(n) for n in nums if isinstance(n, int)}
+        if not int_nums:
+            continue
+        pages_with_anchors += 1
+        if int_nums & {1, 2, 3}:
+            pages_with_low += 1
+        for n in int_nums:
+            pages_per_number[n] = pages_per_number.get(n, 0) + 1
+
+    if pages_with_anchors < 5:
+        return False
+
+    threshold_low = max(5, int(pages_with_anchors * 0.4))
+    signal_a = pages_with_low >= threshold_low
+
+    repeated = sum(1 for cnt in pages_per_number.values() if cnt >= 2)
+    unique_anchors = len(pages_per_number)
+    signal_b = (
+        repeated >= 5
+        and unique_anchors > 0
+        and (repeated / unique_anchors) >= 0.3
+    )
+
+    return signal_a or signal_b
+
+
 def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
     """세그멘테이션 결과를 문제 리스트로 변환.
 
     번호 우선순위:
-      1. segment dispatcher가 boxes와 같은 길이로 ``numbers``를 같이 보내줬고
-         값이 모두 정수(=텍스트/OCR 분리 성공)이면 그 번호를 사용. 시험지의
-         실제 문항 번호와 정렬됨.
-      2. ``numbers``가 비어있거나 None이 섞여 있으면 (OpenCV fallback) 박스 순서로
-         1부터 새로 매김.
+      1. **시험지 (continuous numbering)**: segment dispatcher 가 ``numbers`` 를
+         정수 리스트로 보내면 그대로 사용. 시험지 실제 문항 번호와 정렬.
+      2. **워크북/메인자료 (per-page-restart)**: `_detect_per_page_restart_from_pages`
+         감지 시 segment number 무시하고 counter fallback. 각 box 가 unique
+         number 를 얻어 DB unique(doc, number) 제약 위반 없이 모든 박스 보존.
+      3. ``numbers`` 비거나 None 섞여 있으면 (OpenCV fallback) counter fallback.
+
+    Why per-page-restart 분기:
+      - 워크북은 페이지마다 anchor 1, 2, 3... 리셋 → segment number 그대로 쓰면
+        후속 페이지 anchor 가 `seen_numbers` 충돌로 drop (운영 doc 768 73 페이지
+        실측 262 anchor → 27 problem catastrophic drop).
+      - counter fallback 으로 1, 2, ..., N (anchor 총 수) 순차 부여 → 충돌 없음.
+        UI display 가 페이지-로컬 anchor 와 다르긴 하지만 학원장 manual_create
+        부담 0 으로 가는 가치가 훨씬 큼 ([[basic_definition]] 합격선 = 학원장 노동).
 
     이전엔 항상 (2)만 사용해서, 텍스트/OCR이 어떤 박스를 누락하면 그 이후의 모든
     번호가 시험지 실제 번호와 어긋났다 (DB Q10 = 시험지 11번 문제 식). 이 fix로
@@ -873,6 +924,15 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
         "non_question", "explanation", "answer_key",
         "cover", "index",
     }
+
+    # ── Per-page-restart 감지 — 워크북/메인자료에서 segment number 충돌 회피 ──
+    is_per_page_restart = _detect_per_page_restart_from_pages(pages)
+    if is_per_page_restart:
+        logger.info(
+            "MATCHUP_PER_PAGE_RESTART_DETECTED | total_pages=%d | counter mode (segment numbers 무시)",
+            len(pages),
+        )
+
     for page in pages:
         page_idx = page["page_index"]
         img_path = page["image_path"]
@@ -886,8 +946,11 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
             )
             continue
         # 번호가 boxes와 같은 길이이고 모두 정수면 신뢰. 그렇지 않으면 fallback.
+        # 단, per-page-restart 패턴이면 segment 번호 그대로 쓰면 cross-page 충돌 발생 →
+        # 강제 counter mode.
         use_segment_numbers = (
-            len(numbers) == len(boxes)
+            (not is_per_page_restart)
+            and len(numbers) == len(boxes)
             and all(isinstance(n, int) for n in numbers)
         )
         for i, bbox in enumerate(boxes):
@@ -908,12 +971,16 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
                 )
                 continue
             seen_numbers.add(num)
-            questions.append({
+            # per-page-restart 인 경우 local_number 를 meta 에 보존 (학원장 검수 시 참조용)
+            entry = {
                 "number": num,
                 "page_index": page_idx,
                 "image_path": img_path,
                 "bbox": list(bbox),
-            })
+            }
+            if is_per_page_restart and i < len(numbers) and isinstance(numbers[i], int):
+                entry["local_number"] = int(numbers[i])
+            questions.append(entry)
     return questions
 
 
