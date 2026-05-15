@@ -81,6 +81,11 @@ def _real_vlm_vision_configured() -> bool:
     return adapter.startswith("gemini") and bool(os.environ.get("GEMINI_API_KEY"))
 
 
+def _real_vlm_text_configured() -> bool:
+    adapter = os.environ.get("MATCHUP_VLM_TEXT_ADAPTER", "mock").strip().lower()
+    return adapter.startswith("gemini") and bool(os.environ.get("GEMINI_API_KEY"))
+
+
 # ── 텍스트 정제 + format 감지 ──────────────────────────
 #
 # 목적: 임베딩의 품질을 형식적 텍스트(서답형 헤더, 시험지 푸터, 페이지 번호 등)에서
@@ -1138,6 +1143,65 @@ def _detect_page_with_vlm(
     return result, raw_paper_type
 
 
+def _page_text_for_vlm(page: Dict) -> str:
+    """페이지 role 분류에 넘길 텍스트를 만든다.
+
+    `segment_dispatcher`가 text-PDF에서 추출한 page_text를 우선 사용한다. 이미지
+    전용 문서는 여기서 OCR을 새로 호출하지 않는다. page-role filter의 목적은
+    비문항 페이지 제거라서, 비싼 vision bbox 호출은 명시 opt-in으로만 둔다.
+    """
+    text = str(page.get("page_text") or "").strip()
+    if text:
+        return text[:8000]
+
+    blocks = page.get("text_blocks") or []
+    parts: List[str] = []
+    for block in blocks:
+        value = getattr(block, "text", None)
+        if value is None and isinstance(block, dict):
+            value = block.get("text")
+        if value:
+            parts.append(str(value))
+    return "\n".join(parts).strip()[:8000]
+
+
+def _classify_page_role_with_vlm_text(
+    page: Dict,
+    document_id,
+    tenant_id: str | int | None = None,
+) -> Optional[Any]:
+    """Gemini Flash-Lite text 분류로 page_role을 판정한다.
+
+    real Gemini 응답만 운영 판단에 사용한다. Gemini 실패 후 mock fallback은 보수적으로
+    무시해서 기존 boxes를 지우지 않는다.
+    """
+    page_text = _page_text_for_vlm(page)
+    if not page_text:
+        return None
+
+    try:
+        from academy.adapters.ai.detection.vlm_fallback import classify_page_role_text
+        result = classify_page_role_text(
+            ocr_text=page_text,
+            page_meta={
+                "document_id": document_id,
+                "tenant_id": tenant_id,
+                "page_index": page.get("page_index"),
+            },
+        )
+    except Exception as e:
+        logger.warning(
+            "MATCHUP_VLM_TEXT_ROLE_FAIL | doc=%s | page=%s | err=%s",
+            document_id, page.get("page_index"), e,
+        )
+        return None
+
+    adapter = (getattr(result, "debug", {}) or {}).get("adapter", "")
+    if adapter != "gemini":
+        return None
+    return result
+
+
 def _vlm_result_role_value(result: Any) -> str:
     role = getattr(result, "page_role", "")
     return str(getattr(role, "value", role) or "").strip().lower()
@@ -1160,7 +1224,10 @@ def _apply_vlm_page_role_filter(
         return None
     if not document_id:
         return {"enabled": True, "skipped_reason": "no_document_id"}
-    if not _real_vlm_vision_configured():
+    use_vision_fallback = _env_flag("MATCHUP_VLM_PAGE_ROLE_USE_VISION_FALLBACK", False)
+    if not _real_vlm_text_configured() and not (
+        use_vision_fallback and _real_vlm_vision_configured()
+    ):
         return {"enabled": True, "skipped_reason": "real_vlm_not_configured"}
     if not _tenant_gate_allows("MATCHUP_VLM_PAGE_ROLE_FILTER_TENANTS", tenant_id):
         return {"enabled": True, "skipped_reason": "tenant_not_enabled"}
@@ -1185,10 +1252,14 @@ def _apply_vlm_page_role_filter(
         "enabled": True,
         "candidates": 0,
         "attempted": 0,
+        "text_attempted": 0,
+        "vision_attempted": 0,
+        "text_missing": 0,
         "skipped_pages": 0,
         "paper_type_updates": 0,
         "cost_cap_hit": False,
         "min_confidence": min_conf,
+        "vision_fallback": use_vision_fallback,
     }
 
     for page in pages:
@@ -1205,13 +1276,25 @@ def _apply_vlm_page_role_filter(
             continue
 
         stats["candidates"] += 1
-        stats["attempted"] += 1
-        result, raw_paper_type = _detect_page_with_vlm(
-            page, document_id, tenant_id=tenant_id,
-        )
-        if raw_paper_type:
-            page["paper_type"] = raw_paper_type
-            stats["paper_type_updates"] += 1
+        result = None
+        raw_paper_type = None
+        if _page_text_for_vlm(page) and _real_vlm_text_configured():
+            stats["attempted"] += 1
+            stats["text_attempted"] += 1
+            result = _classify_page_role_with_vlm_text(
+                page, document_id, tenant_id=tenant_id,
+            )
+        elif use_vision_fallback:
+            stats["attempted"] += 1
+            stats["vision_attempted"] += 1
+            result, raw_paper_type = _detect_page_with_vlm(
+                page, document_id, tenant_id=tenant_id,
+            )
+            if raw_paper_type:
+                page["paper_type"] = raw_paper_type
+                stats["paper_type_updates"] += 1
+        else:
+            stats["text_missing"] += 1
 
         if result is None:
             continue

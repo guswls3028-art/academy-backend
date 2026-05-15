@@ -18,6 +18,7 @@ import pytest
 
 from academy.adapters.ai.detection.vlm_fallback import (
     PageRole,
+    PageRoleResult,
     ProblemBbox,
     ProblemBboxResult,
 )
@@ -490,21 +491,20 @@ def test_vlm_page_role_filter_skips_non_problem_page(monkeypatch):
         "numbers": [1],
         "text_regions": ["region"],
         "paper_type": "clean_pdf_dual",
+        "page_text": "정답 및 해설\n1. 정답 ④ 문제 해설\n2. 정답 ③ 문제 해설",
     }
-    result = ProblemBboxResult(
+    result = PageRoleResult(
         page_role=PageRole.EXPLANATION,
         should_skip=True,
-        problems=[],
         confidence=0.91,
-        paper_type="non_question",
         debug={"adapter": "gemini"},
     )
     monkeypatch.setenv("MATCHUP_VLM_PAGE_ROLE_FILTER", "1")
-    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("MATCHUP_VLM_TEXT_ADAPTER", "gemini_flash_lite")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(
-        matchup_pipeline, "_detect_page_with_vlm",
-        lambda page, doc_id, tenant_id=None: (result, "non_question"),
+        matchup_pipeline, "_classify_page_role_with_vlm_text",
+        lambda page, doc_id, tenant_id=None: result,
     )
 
     stats = matchup_pipeline._apply_vlm_page_role_filter(
@@ -520,6 +520,8 @@ def test_vlm_page_role_filter_skips_non_problem_page(monkeypatch):
     assert page["text_regions"] == []
     assert page["is_skip_page"] is True
     assert page["paper_type"] == "non_question"
+    assert stats["text_attempted"] == 1
+    assert stats["vision_attempted"] == 0
 
 
 def test_vlm_page_role_filter_disabled_by_default(monkeypatch):
@@ -556,21 +558,23 @@ def test_vlm_page_role_filter_requires_real_gemini_config(monkeypatch):
     from academy.application.use_cases.ai.pipelines import matchup_pipeline
 
     monkeypatch.setenv("MATCHUP_VLM_PAGE_ROLE_FILTER", "1")
+    monkeypatch.delenv("MATCHUP_VLM_TEXT_ADAPTER", raising=False)
     monkeypatch.delenv("MATCHUP_VLM_VISION_ADAPTER", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     called = {"value": False}
 
-    def fake_detect(*args, **kwargs):
+    def fake_classify(*args, **kwargs):
         called["value"] = True
-        return None, None
+        return None
 
-    monkeypatch.setattr(matchup_pipeline, "_detect_page_with_vlm", fake_detect)
+    monkeypatch.setattr(matchup_pipeline, "_classify_page_role_with_vlm_text", fake_classify)
     page = {
         "page_index": 0,
         "image_path": "/fake/path.png",
         "boxes": [(10, 10, 100, 100)],
         "numbers": [1],
         "paper_type": "clean_pdf_dual",
+        "page_text": "정답 및 해설",
     }
 
     stats = matchup_pipeline._apply_vlm_page_role_filter(
@@ -582,6 +586,44 @@ def test_vlm_page_role_filter_requires_real_gemini_config(monkeypatch):
 
     assert stats["skipped_reason"] == "real_vlm_not_configured"
     assert called["value"] is False
+    assert page["boxes"] == [(10, 10, 100, 100)]
+
+
+def test_vlm_page_role_filter_does_not_use_vision_by_default(monkeypatch):
+    """page-role filter는 기본적으로 비싼 vision bbox 호출을 쓰지 않는다."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    monkeypatch.setenv("MATCHUP_VLM_PAGE_ROLE_FILTER", "1")
+    monkeypatch.setenv("MATCHUP_VLM_TEXT_ADAPTER", "gemini_flash_lite")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.delenv("MATCHUP_VLM_PAGE_ROLE_USE_VISION_FALLBACK", raising=False)
+    called = {"vision": False}
+
+    def fake_detect(*args, **kwargs):
+        called["vision"] = True
+        return None, None
+
+    monkeypatch.setattr(matchup_pipeline, "_detect_page_with_vlm", fake_detect)
+    page = {
+        "page_index": 0,
+        "image_path": "/fake/path.png",
+        "boxes": [(10, 10, 100, 100)],
+        "numbers": [1],
+        "paper_type": "scan_dual",
+        "page_text": "",
+    }
+
+    stats = matchup_pipeline._apply_vlm_page_role_filter(
+        [page],
+        source_type="school_exam_pdf",
+        document_id="doc-1",
+        tenant_id=1,
+    )
+
+    assert stats["attempted"] == 0
+    assert stats["text_missing"] == 1
+    assert called["vision"] is False
     assert page["boxes"] == [(10, 10, 100, 100)]
 
 

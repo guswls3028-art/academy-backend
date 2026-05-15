@@ -256,6 +256,7 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
                 "image_path": out_path,
                 "has_text": has_text,
                 "text_blocks": tbs,
+                "page_text": "\n".join(b.text for b in tbs)[:8000] if tbs else "",
                 "page_width": pw,
                 "page_height": ph,
                 "paper_type": page_paper_type,
@@ -370,6 +371,7 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
             "has_embedded_text": p["has_text"],
             "text_boxes": text_boxes,
             "text_regions": text_regions,
+            "page_text": p.get("page_text") or "",
             "is_skip_page": p["is_skip_page"],
             "paper_type": p["paper_type"],
             "paper_type_debug": p["paper_type_debug"],
@@ -747,6 +749,7 @@ def segment_questions_multipage(
                 # PDF 텍스트/OCR/OpenCV 경로 모두 _classify_and_record_paper_type으로 채움.
                 "paper_type": info.get("paper_type") or "unknown",
                 "paper_type_debug": info.get("paper_type_debug") or {},
+                "page_text": info.get("page_text") or "",
             })
             total += len(boxes)
 
