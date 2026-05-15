@@ -74,6 +74,25 @@ def test_non_question_answer_table():
     assert result.paper_type is PaperType.NON_QUESTION
 
 
+def test_non_question_chapter_concept_page():
+    """개념/추가설명 본문 페이지 → NON_QUESTION."""
+    blocks = _blocks(
+        "CHAPTER 04 지구 시스템의 구성요소와 상호작용",
+        "추가 설명",
+        "Ⅰ. 지구 시스템의 구성 요소",
+        "지구계 계(system): 상호작용하는 구성 요소들의 집합",
+        "1) 외권: 지표로부터 약 1천 킬로미터 이상의 우주 공간",
+        "2) 지권: 지각과 지구 내부를 포함하는 영역",
+    )
+    result = classify_paper_type(
+        text_blocks=blocks,
+        page_width=500.0,
+        page_height=700.0,
+        has_embedded_text=True,
+    )
+    assert result.paper_type is PaperType.NON_QUESTION
+
+
 # ── 3. STUDENT_ANSWER_PHOTO (handwriting + 스캔본) ──
 
 def test_student_answer_photo_high_handwriting_scan():

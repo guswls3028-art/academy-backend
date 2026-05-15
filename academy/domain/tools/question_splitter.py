@@ -33,6 +33,63 @@ class TextBlock:
     y1: float
 
 
+def _looks_like_learning_concept_page(
+    full_text: str,
+    *,
+    has_choices: bool,
+    has_question_indicator: bool,
+) -> bool:
+    """개념/본문 설명 페이지를 문제 후보에서 제외한다.
+
+    교재 내지에는 CHAPTER/개념/추가 설명/정의형 본문이 많고, 섹션 번호
+    ``1)`` / ``2)`` 가 문항 anchor처럼 보인다. 강한 문항 신호가 있으면
+    보존하고, 설명형 신호가 충분히 누적된 페이지만 비문항으로 본다.
+    """
+    if has_choices or has_question_indicator:
+        return False
+    if len(full_text) < 120:
+        return False
+
+    chapter_or_unit = bool(
+        re.search(
+            r"(?:\bCHAPTER\b|\bUNIT\b|\bLESSON\b|"
+            r"대\s*단원|중\s*단원|소\s*단원|"
+            r"Step\s*\d+\s*[.:]?\s*(?:개념|내신|수능)\s*완성)",
+            full_text,
+            re.IGNORECASE,
+        )
+    )
+    learning_markers = re.findall(
+        r"(?:개념\s*(?:완성|정리|학습)?|핵심\s*(?:개념|정리)?|"
+        r"추가\s*설명|학습\s*목표|용어\s*정리|탐구\s*(?:활동|자료)?|"
+        r"구성\s*요소|상호\s*작용|계\s*\(\s*system\s*\)|"
+        r"PROJECT|과학\s*개념)",
+        full_text,
+        re.IGNORECASE,
+    )
+    definition_markers = re.findall(
+        r"(?:^|\s)[가-힣A-Za-z0-9() ]{1,24}\s*[:：]\s*",
+        full_text,
+    )
+    list_markers = re.findall(
+        r"(?:^|\s)(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]\s*[.)．]?|\d+\)|[-*ㆍ•]\s+)",
+        full_text,
+    )
+    explanatory_markers = re.findall(
+        r"(?:이다|있다|있음|된다|작용|구성|영역|포함|관련된|중심부)",
+        full_text,
+    )
+
+    structural_count = len(definition_markers) + len(list_markers)
+    explanation_count = structural_count + len(explanatory_markers)
+
+    if chapter_or_unit and len(learning_markers) >= 2 and explanation_count >= 4:
+        return True
+    if len(learning_markers) >= 4 and structural_count >= 3:
+        return True
+    return False
+
+
 def is_non_question_page(blocks: List[TextBlock]) -> bool:
     """
     비문항 페이지 감지 — 표지, 진도표, 안내문, 정답지, 해설지 등.
@@ -125,8 +182,17 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     question_indicators = [
         "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
         "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
+        "물음에 답", "답하시오", "설명하시오", "쓰시오", "나열하시오",
+        "옳지 않은 것", "서술형", "단답형", "약술형", "무엇인가",
     ]
     has_question_indicator = any(kw in full_text for kw in question_indicators)
+
+    if _looks_like_learning_concept_page(
+        full_text,
+        has_choices=has_choices,
+        has_question_indicator=has_question_indicator,
+    ):
+        return True
 
     if has_choices or has_question_indicator:
         return False

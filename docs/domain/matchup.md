@@ -101,3 +101,19 @@ Gemini VLM을 먼저 운영 실험할 때는 전체 문서를 VLM primary로 바
 - 해설지/정답지/표지/목차는 매칭 대상에서 제외하거나 별도 상태로 분류해야 한다.
 - 수업자료와 실제 학교 시험지는 역할이 다르므로, 문서의 `source_type`과 리포트에서의 의미를 구분해야 한다.
 - 학생 QnA 유사문제 검색은 매치업 DB를 활용하는 부가 흐름일 수 있으나, 매치업 도메인의 중심 목적은 수업자료 대비 실제 시험 분석 리포트다.
+
+## 8. 실사용 레벨 문항분리 설계
+
+[COMPLETED 2026-05-16] 현재 dispatcher는 `classify_paper_type()`이 페이지를 `non_question`으로 판정하면 해당 페이지를 자르지 않고 skip한다. T1 doc 615에서 확인된 남은 실패 유형은 `CHAPTER / 개념 / 추가 설명 / 정의형 본문` 페이지가 섹션 번호 `1)`, `2)` 때문에 문제 1개로 잘리는 false-positive였다. 이를 막기 위해 `question_splitter.is_non_question_page()`에 개념/본문 페이지 전용 gate를 추가했다. 단, `①~⑤`, `옳은 것`, `답하시오`, `서술하시오` 같은 강한 문항 신호가 있으면 문제 페이지로 유지한다.
+
+[CURRENT] 양식 다양성에 대한 기본 구조는 다음 순서다.
+
+1. 페이지 역할 분류: 표지, 목차, 개념 본문, 해설, 정답, 실제 문제를 먼저 가른다.
+2. 레이아웃 라우팅: `source_type`, `paper_type`, 텍스트/스캔 여부, 1단/2단/4분할/사진 여부로 splitter 전략을 나눈다.
+3. 후보 생성: 텍스트 PDF, OCR/OpenCV, YOLO, VLM을 한 엔진으로 통일하지 않고 유형별 후보 생성기로 사용한다.
+4. 품질 게이트: 빈 페이지, 과잉 박스, 조각 박스, 비문항 박스는 조용히 인덱싱하지 않고 skip 또는 검수 후보로 남긴다.
+5. 운영 평가: 대표 PDF golden set에서 page-role, 문항 수, 박스 위치, false-positive/false-negative 페이지 목록을 비교한다.
+
+[PROPOSED] 실사용 기준까지 올리려면 golden set 평가 runner가 필요하다. 최소 세트는 `academy_workbook`, `commercial_workbook`, `school_exam_pdf`, `student_exam_photo`, `scan_dual`, `clean_pdf_dual`, `concept/explanation`, `answer_key`, `cover/index`를 각각 포함해야 한다. 평가는 모델 mAP가 아니라 문서별 검수 부담을 줄이는 지표로 본다: 문제 페이지 누락, 비문항 페이지 오인식, 문항 수 차이, bbox IoU, low-quality 비율, 수동 수정 필요 페이지 목록.
+
+[PROPOSED] 수동 보정 이력은 학습 데이터로 연결해야 한다. 자동 후보 bbox와 강사 최종 bbox를 같이 저장해야 같은 양식의 다음 업로드에서 fingerprint/profile 기반 재사용이나 모델 재학습이 가능하다.

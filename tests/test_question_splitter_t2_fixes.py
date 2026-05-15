@@ -140,6 +140,22 @@ def test_skip_zb_marker_page():
     assert is_non_question_page(blocks) is True
 
 
+def test_skip_chapter_concept_page_without_question_signal():
+    """T1 doc 615 p101: CHAPTER 개념/추가설명 페이지가 문제 1개로 들어가던 회귀 차단."""
+    blocks = _blocks(
+        "CHAPTER 04 지구 시스템의 구성요소와 상호작용",
+        "추가 설명",
+        "Ⅰ. 지구 시스템의 구성 요소",
+        "지구계 계(system): 상호작용하는 구성 요소들의 집합",
+        "- 지구계 구성 요소 5개",
+        "1) 외권: 지표로부터 약 1천 킬로미터 이상의 우주 공간",
+        "외권은 지구상에 존재하는 4개의 권역과 모두 상호작용할 수 있음",
+        "2) 지권: 지각과 지구 내부를 포함하는 영역",
+        "지구 내부 에너지 맨틀의 대류로 인한 지각 변동이 일어남",
+    )
+    assert is_non_question_page(blocks) is True
+
+
 def test_skip_standalone_jeongdap_answer_page():
     """OCR layout 깨진 해설지: "정답 ③" 만 3+ 반복 (N. 접두어 없음)."""
     blocks = _blocks(
@@ -181,6 +197,20 @@ def test_keeps_short_question_page_with_indicator():
     blocks = _blocks(
         "1. 다음 중 옳은 것은?",
         "① A ② B ③ C ④ D ⑤ E",
+    )
+    assert is_non_question_page(blocks) is False
+
+
+def test_keeps_chapter_header_page_with_real_questions():
+    """CHAPTER/개념 헤더가 있어도 보기와 문항 지시문이 있으면 문제 페이지로 유지."""
+    blocks = _blocks(
+        "CHAPTER 04 지구 시스템의 구성요소와 상호작용",
+        "개념완성",
+        "1. 그림은 지구 시스템의 구성 요소를 나타낸 것이다.",
+        "이에 대한 설명으로 옳은 것만을 <보기>에서 있는 대로 고른 것은?",
+        "ㄱ. 외권은 기권 밖의 우주 공간이다.",
+        "ㄴ. 지권은 지구 내부를 포함한다.",
+        "① ㄱ ② ㄴ ③ ㄱ, ㄴ ④ ㄴ, ㄷ ⑤ ㄱ, ㄴ, ㄷ",
     )
     assert is_non_question_page(blocks) is False
 
