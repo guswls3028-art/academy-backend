@@ -3,8 +3,7 @@
 PATCH /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/subjective/
 
 주관식 점수(합계)만 입력. total_score = objective_score + subjective_score 로 동기화.
-- ResultItem은 question_id=0 인 단일 항목(주관식 합계)으로 유지하여
-  sum(ResultItem) === subjective_score, total === objective + subjective 보장.
+ResultItem은 실제 ExamQuestion FK만 허용하므로 합계 입력은 Result.total_score로 보존한다.
 """
 
 from __future__ import annotations
@@ -23,15 +22,11 @@ from rest_framework import status as drf_status
 from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
+from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.exams.models import Exam
 from apps.domains.submissions.models import Submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 from django.db.models import Max
-
-# 주관식 합계용 플레이스홀더(문항별가 아닌 한 칸 입력 시)
-SUBJECTIVE_AGGREGATE_QUESTION_ID = 0
-
 
 class AdminExamSubjectiveScoreView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
@@ -156,7 +151,7 @@ class AdminExamSubjectiveScoreView(APIView):
             enrollment_id=enrollment_id,
             submission_id=submission_id,
             attempt_id=int(result.attempt_id),
-            question_id=SUBJECTIVE_AGGREGATE_QUESTION_ID,
+            question_id=0,
             answer="",
             is_correct=bool(float(new_total) >= float(pass_score)),
             score=float(new_subjective),
@@ -169,21 +164,17 @@ class AdminExamSubjectiveScoreView(APIView):
             },
         )
 
-        # 주관식 합계 한 칸 입력: question_id=0 단일 ResultItem으로 유지 (total = objective + subjective 보장)
-        ResultItem.objects.filter(result=result).delete()
-        ResultItem.objects.create(
-            result=result,
-            question_id=SUBJECTIVE_AGGREGATE_QUESTION_ID,
-            answer="",
-            is_correct=bool(new_subjective >= max_score),
-            score=float(new_subjective),
-            max_score=float(max_score),
-            source="manual_subjective",
-        )
-
         result.total_score = float(new_total)
         result.max_score = float(max_score)
         result.save(update_fields=["total_score", "max_score", "updated_at"])
+
+        if attempt and attempt.is_representative:
+            attempt.meta = attempt.meta or {}
+            attempt.meta["total_score"] = float(new_total)
+            attempt.meta["subjective_score"] = float(new_subjective)
+            attempt.meta["synced_from_result"] = True
+            attempt.meta.pop("status", None)
+            attempt.save(update_fields=["meta", "updated_at"])
 
         _sid = int(submission_id) if submission_id else 0
         _eid = int(exam_id)

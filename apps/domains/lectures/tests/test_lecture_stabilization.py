@@ -16,6 +16,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
+from apps.core.models.program import Program
 from apps.domains.students.models import Student
 from apps.domains.lectures.models import Lecture, Session, Section, SectionAssignment
 from apps.domains.lectures.serializers import (
@@ -24,7 +25,10 @@ from apps.domains.lectures.serializers import (
     SectionAssignmentSerializer,
 )
 from apps.domains.lectures.views import SectionAssignmentViewSet
+from apps.domains.lectures.views import LectureViewSet
+from apps.domains.lectures.views import SessionViewSet
 from apps.domains.enrollment.models import Enrollment
+from apps.domains.video.models import Video, VideoProgress
 
 User = get_user_model()
 
@@ -43,6 +47,17 @@ class LectureTestBase(TestCase):
         )
         TenantMembership.ensure_active(
             tenant=self.tenant, user=self.admin, role="owner",
+        )
+        Program.objects.update_or_create(
+            tenant=self.tenant,
+            defaults={
+                "display_name": "TestAcademy",
+                "brand_key": "test_lec",
+                "feature_flags": {
+                    "section_mode": True,
+                    "clinic_mode": "regular",
+                },
+            },
         )
         self.lecture = Lecture.objects.create(
             tenant=self.tenant, name="TestLecture", title="TestLecture",
@@ -102,6 +117,33 @@ class TestSessionOrderUnique(LectureTestBase):
             has_order_error or has_non_field_error,
             f"Expected order or non_field_errors error, got: {serializer.errors}",
         )
+
+
+class TestSessionListNoPagination(LectureTestBase):
+    """차시 목록은 성적/시험/영상 트리 진입점에서 전체가 필요하다."""
+
+    def test_session_list_returns_all_rows_over_global_page_size(self):
+        """전역 PAGE_SIZE=20을 넘어도 같은 강의의 모든 차시를 반환."""
+        for i in range(25):
+            Session.objects.create(
+                lecture=self.lecture,
+                order=i + 1,
+                title=f"{i + 1}차시",
+            )
+
+        request = self.factory.get(
+            f"/api/v1/lectures/sessions/?lecture={self.lecture.id}"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsInstance(response.data, list)
+        self.assertEqual(len(response.data), 25)
+        self.assertEqual(response.data[0]["order"], 1)
+        self.assertEqual(response.data[-1]["order"], 25)
 
 
 class TestAutoAssignConcurrency(LectureTestBase):
@@ -349,3 +391,102 @@ class TestDateValidation(LectureTestBase):
             end_date="2026-05-01",
         )
         self.assertEqual(lec.start_date, lec.end_date)
+
+
+class TestLectureReportProgress(LectureTestBase):
+    """F. 강의 리포트 영상 진척률 계산"""
+
+    def setUp(self):
+        super().setUp()
+        self.session = Session.objects.create(
+            lecture=self.lecture,
+            order=1,
+            title="1차시",
+        )
+        self.video1 = Video.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="V1",
+            file_key="",
+            order=1,
+            status=Video.Status.READY,
+        )
+        self.video2 = Video.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="V2",
+            file_key="",
+            order=2,
+            status=Video.Status.READY,
+        )
+        self.enrollments = []
+        for i in range(2):
+            user = User.objects.create_user(
+                username=f"report_stu_{i}",
+                password="test1234",
+                tenant=self.tenant,
+                name=f"ReportStudent{i}",
+            )
+            student = Student.objects.create(
+                tenant=self.tenant,
+                user=user,
+                ps_number=f"R{i:03d}",
+                name=f"ReportStudent{i}",
+                phone=f"0103333{i:04d}",
+                parent_phone=f"0104444{i:04d}",
+                omr_code=f"3333{i:04d}",
+            )
+            enrollment = Enrollment.objects.create(
+                tenant=self.tenant,
+                lecture=self.lecture,
+                student=student,
+                status="ACTIVE",
+            )
+            self.enrollments.append(enrollment)
+
+    def test_report_uses_real_video_progress(self):
+        """placeholder 0.0 대신 VideoProgress 기반 평균/완료 수를 반환"""
+        first, second = self.enrollments
+        VideoProgress.objects.create(
+            video=self.video1,
+            enrollment=first,
+            progress=1.0,
+            completed=True,
+        )
+        VideoProgress.objects.create(
+            video=self.video2,
+            enrollment=first,
+            progress=0.95,
+            completed=True,
+        )
+        VideoProgress.objects.create(
+            video=self.video1,
+            enrollment=second,
+            progress=0.25,
+            completed=False,
+        )
+
+        request = self.factory.get(
+            f"/api/v1/lectures/lectures/{self.lecture.id}/report/"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = LectureViewSet.as_view({"get": "report"})(
+            request,
+            pk=self.lecture.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["summary"]["total_videos"], 2)
+        self.assertEqual(response.data["summary"]["avg_video_progress"], 55.0)
+        self.assertEqual(response.data["summary"]["completed_students"], 1)
+
+        rows = {
+            row["enrollment"]: row
+            for row in response.data["students"]
+        }
+        self.assertEqual(rows[first.id]["avg_progress"], 97.5)
+        self.assertEqual(rows[first.id]["completed_videos"], 2)
+        self.assertEqual(rows[second.id]["avg_progress"], 12.5)
+        self.assertEqual(rows[second.id]["completed_videos"], 0)

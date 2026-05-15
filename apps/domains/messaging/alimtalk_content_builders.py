@@ -1,7 +1,17 @@
 # apps/support/messaging/alimtalk_content_builders.py
-# SSOT 문서: backend/.claude/domains/messaging.md (수정 시 문서도 동기화)
+# SSOT 문서: backend/docs/domain/messaging-alimtalk.md §0 (학원장 mental model 박스 필독)
 """
 통합 알림톡 템플릿 — 4개 범용 Solapi ITEM_LIST 템플릿으로 모든 자동발송 커버.
+
+🚨 학원장 mental model (절대 원칙):
+  카카오 검수 통과 4종 양식 = 장식이 다른 4가지 봉투
+  #{선생님메모} 한 자리 = 봉투 안에 들어가는 자유 편지 (학원장 무제한 자유 편집)
+
+  선생님이 양식 UI에서 변수블록 추가/제거/문구변경하는 모든 행위 = #{선생님메모} 한 자리 안에서 일어남.
+  header/highlight/item.list/prefix는 카카오에 박혀있어 변경 불가 = 봉투의 장식.
+
+  → 새 카테고리 안내 필요 시: 의미 가까운 봉투 선택 + #{선생님메모} 자유 작성. 봉투 새로 만들지 X.
+  → "양식이 없다 / 새 템플릿 검수 신청" 추론 영구 금지. 학원장 한 달 반 격분 누적 이력.
 
 구조:
   Solapi 템플릿 본문 = "#{선생님메모}\n#{사이트링크}"
@@ -10,6 +20,13 @@
 
 트리거별 기본 #{선생님메모} 컨텐츠는 default_templates.py의 body에 정의.
 선생님이 편집한 body는 MessageTemplate.body에 저장됨.
+
+NONE 2종 (notice_withdrawal/notice_payment):
+  카카오 등록 본문 자체에 #{선생님메모}/#{공지내용} 자리 미등록 = 학원장 편집 영역 X.
+  자동발송 매핑(withdrawal_complete/payment_complete/payment_due_days_before) 유지 = 시스템 안내 자동발송.
+  AI가 본문 미반영을 결함으로 분류 + 매핑 제거 = 영구 금지 (2026-05-13 revert 이력).
+
+참조: backend/docs/domain/messaging-alimtalk.md §0, .claude/rules/domain-policy.md §5/§5.5
 """
 
 from __future__ import annotations
@@ -89,18 +106,21 @@ TRIGGER_TO_TEMPLATE_TYPE: dict[str, str] = {
     "exam_score_published": TYPE_SCORE,
     "monthly_report_generated": TYPE_SCORE,
 
-    # 퇴원 / 결제 — 카테고리별 전용 NONE 양식
+    # 퇴원 / 결제 — 카테고리별 전용 NONE 양식 (본문 고정 시스템 안내)
     "withdrawal_complete": TYPE_NOTICE_WITHDRAWAL,
     "payment_complete": TYPE_NOTICE_PAYMENT,
     "payment_due_days_before": TYPE_NOTICE_PAYMENT,
 
-    # ── 매핑 의도적 제외 (카카오 등록 양식 부재) ─────────────────────
-    # 시험/과제/영상/매치업/커뮤니티 트리거는 의미상 일치하는 살아있는 양식이 없음.
-    # 옛 score("성적표 안내") fallback 좀비 패턴 종료. 운영자가 새 양식 검수 받으면 여기에 추가.
-    # 영향: exam_scheduled, exam_start, exam_not_taken, retake_assigned,
-    #       assignment_registered, assignment_due_hours_before, assignment_not_submitted,
-    #       video_encoding_complete, matchup_report_submitted, qna_answered, counsel_answered
-    #     → 통합 알림톡 비활성. 자체 솔라피 템플릿 ID가 등록돼있으면 그쪽 사용, 없으면 발송 차단.
+    # ── 매핑 의도적 제외 (의미상 맞는 살아있는 봉투 없음) ───────────────
+    # NONE 양식은 위 시스템 안내 3종에만 사용한다.
+    # 시험/과제/영상/매치업/커뮤니티 트리거는 현행 4종 ITEM_LIST 봉투와 의미가 맞지 않아
+    # 자동 통합 매핑을 두지 않는다. 별도 승인 템플릿이 있으면 기존 경로를 사용한다.
+    #
+    # 영향 트리거: exam_scheduled_days_before / exam_start_minutes_before /
+    #   exam_not_taken / retake_assigned / assignment_registered / assignment_due_hours_before /
+    #   assignment_not_submitted / video_encoding_complete / matchup_report_submitted /
+    #   qna_answered / counsel_answered
+    # → 통합 알림톡 비활성. 자체 솔라피 양식 ID가 등록돼 있으면 그쪽 사용, 없으면 발송 차단.
 }
 
 
@@ -129,11 +149,10 @@ CATEGORY_TO_TEMPLATE_TYPE: dict[str, str] = {
     "attendance": TYPE_ATTENDANCE,              # 출결 (강의명/차시명/날짜/시간)
     "lecture": TYPE_ATTENDANCE,                 # 수업
     "clinic": TYPE_CLINIC_INFO,                 # 클리닉 (장소/날짜/시간) — name 변경/취소 시 clinic_change
-    "payment": TYPE_NOTICE_PAYMENT,             # 결제/납부 (NONE 양식)
-    # ── 매핑 의도적 제외 (카카오 등록 양식 부재) ─────────────────────
-    # exam/assignment/notice/community/staff/default/student
-    #   → "[성적표 안내]" 좀비 fallback 종료. 살아있는 양식 없으면 통합 알림톡 미사용.
-    # 운영자가 새 양식 검수 받으면 여기에 추가.
+    "payment": TYPE_NOTICE_PAYMENT,             # 결제/납부 (NONE 양식, 본문 고정 시스템 안내)
+    # ── 매핑 의도적 제외 (domain-policy.md §5.5) ─────────────────────
+    # exam/assignment/notice/community/staff/default/student: 카카오 등록 양식 부재.
+    # 학원장이 명시 요청 시 §5.5 따라 기존 4종 양식 + 본문 변수 재활용으로 확장.
 }
 
 # 시스템 기본양식 — 통합 4종 대신 자체 Solapi 템플릿 유지

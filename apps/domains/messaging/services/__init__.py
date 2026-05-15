@@ -1,7 +1,8 @@
 # apps/support/messaging/services/__init__.py
 """
 Re-export all public symbols for backward compatibility.
-Usage: ``from apps.domains.messaging.services import enqueue_sms``
+`enqueue_sms` is the historical public API name; it enqueues either SMS or
+Alimtalk depending on `message_mode`.
 """
 
 from .solapi_client import (

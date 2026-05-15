@@ -2,7 +2,7 @@
 """
 PATCH /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/objective/
 
-객관식 점수만 입력. total_score = objective_score + sum(ResultItem) 로 동기화.
+객관식 점수만 입력. total_score = objective_score + 기존 주관식 합계로 동기화.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from rest_framework import status as drf_status
 from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
+from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.exams.models import Exam
 from apps.domains.submissions.models import Submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
@@ -127,11 +127,10 @@ class AdminExamObjectiveScoreView(APIView):
                 status=drf_status.HTTP_409_CONFLICT,
             )
 
-        subjective_sum = sum(
-            float(x.score or 0.0)
-            for x in ResultItem.objects.filter(result=result)
-        )
-        new_total = new_objective + subjective_sum
+        current_objective = float(getattr(result, "objective_score", 0.0) or 0.0)
+        current_total = float(getattr(result, "total_score", 0.0) or 0.0)
+        current_subjective = max(0.0, current_total - current_objective)
+        new_total = new_objective + current_subjective
         exam = Exam.objects.filter(id=exam_id).first()
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
@@ -172,6 +171,13 @@ class AdminExamObjectiveScoreView(APIView):
         result.total_score = float(new_total)
         result.max_score = float(result.max_score or max_score)
         result.save(update_fields=["objective_score", "total_score", "max_score", "updated_at"])
+
+        if attempt and attempt.is_representative:
+            attempt.meta = attempt.meta or {}
+            attempt.meta["total_score"] = float(new_total)
+            attempt.meta["synced_from_result"] = True
+            attempt.meta.pop("status", None)
+            attempt.save(update_fields=["meta", "updated_at"])
 
         _sid = int(submission_id) if submission_id else 0
         _eid = int(exam_id)

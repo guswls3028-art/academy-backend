@@ -31,10 +31,6 @@ CLINIC_MESSAGING_TRIGGERS: tuple[str, ...] = (
     "clinic_result_notification",
 )
 
-# 코드상 미구현: 실제 발송 검증 불가
-CLINIC_NOT_IMPLEMENTED: frozenset[str] = frozenset({"clinic_reminder"})
-
-
 class Command(BaseCommand):
     help = "Clinic auto messaging: audit-config or check-logs (see docs/operations/clinic-messaging-production-verification.md)."
 
@@ -78,9 +74,6 @@ class Command(BaseCommand):
 
         self.stdout.write(f"=== clinic_* AutoSendConfig (tenant_id={tenant_id}) ===")
         for trigger in CLINIC_MESSAGING_TRIGGERS:
-            if trigger in CLINIC_NOT_IMPLEMENTED:
-                self.stdout.write(f"  {trigger}: (코드 미구현: 세션 send_reminder 501)")
-                continue
             row = (
                 AutoSendConfig.objects.filter(tenant_id=tenant_id, trigger=trigger)
                 .select_related("template")

@@ -6,6 +6,8 @@ from apps.domains.messaging.alimtalk_content_builders import (
     get_template_type,
     get_unified_for_category,
     SOLAPI_SCORE,
+    TYPE_NOTICE_PAYMENT,
+    TYPE_NOTICE_WITHDRAWAL,
     TYPE_SCORE,
 )
 
@@ -69,3 +71,25 @@ class TestCommunityTriggers(TestCase):
             site_url="https://hakwonplus.com",
         )
         self.assertEqual(replacements, [])
+
+
+class TestSystemNoticeMappings(TestCase):
+    """퇴원/결제 NONE 양식은 고정 본문 시스템 안내로 계속 라우팅한다."""
+
+    def test_withdrawal_complete_uses_withdrawal_notice(self):
+        self.assertEqual(
+            get_template_type("withdrawal_complete"),
+            TYPE_NOTICE_WITHDRAWAL,
+        )
+        self.assertTrue(bool(get_solapi_template_id("withdrawal_complete")))
+
+    def test_payment_triggers_use_payment_notice(self):
+        for trigger in ("payment_complete", "payment_due_days_before"):
+            with self.subTest(trigger=trigger):
+                self.assertEqual(get_template_type(trigger), TYPE_NOTICE_PAYMENT)
+                self.assertTrue(bool(get_solapi_template_id(trigger)))
+
+    def test_payment_category_uses_payment_notice(self):
+        tt, sid = get_unified_for_category("payment")
+        self.assertEqual(tt, TYPE_NOTICE_PAYMENT)
+        self.assertTrue(bool(sid))

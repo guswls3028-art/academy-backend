@@ -1,6 +1,9 @@
 # apps/support/messaging/services/queue_service.py
 """
-SQS 큐 기반 메시지 발송 — enqueue_sms, is_reservation_cancelled
+SQS 큐 기반 메시지 발송.
+
+`enqueue_sms`는 기존 public API 이름이며, 실제로는 message_mode에 따라
+SMS 또는 알림톡을 큐에 넣는다.
 """
 
 import logging
@@ -26,7 +29,7 @@ def enqueue_sms(
     occurrence_key: Optional[str] = None,
 ) -> bool:
     """
-    SMS/알림톡 발송을 SQS에 넣어 워커가 비동기로 발송하도록 함.
+    메시지(SMS/알림톡)를 SQS에 넣어 워커가 비동기로 발송하도록 함.
 
     Args:
         tenant_id: 테넌트 ID (워커에서 잔액/PFID 조회)
@@ -34,7 +37,7 @@ def enqueue_sms(
         text: 본문
         sender: 발신 번호
         reservation_id: 예약 ID 있으면 워커에서 취소 여부 Double Check 후 발송/스킵
-        message_mode: "sms" | "alimtalk" (운영 발송은 alimtalk, SMS는 검증/레거시 전용)
+        message_mode: "sms" | "alimtalk" (기본값: alimtalk)
         alimtalk_replacements: 알림톡 템플릿 치환
         template_id: 알림톡 템플릿 ID (선택)
         event_type: 비즈니스 이벤트 유형 (멱등성 키용, 예: "check_in_complete")

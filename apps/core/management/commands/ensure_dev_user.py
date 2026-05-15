@@ -5,13 +5,14 @@
 - Tenant(code=admin97) 없으면 생성
 - Program(tenant 1:1) 없으면 생성
 - localhost, 127.0.0.1 → 해당 테넌트로 TenantDomain 연결
-- username=admin97 유저 있으면 비밀번호만 kjkszpj123으로 맞추고 TenantMembership(admin) 연결
+- username=admin97 표시 아이디를 tenant 내부 저장형(t{id}_admin97)으로 맞추고 비밀번호·TenantMembership(admin) 연결
   없으면 User 생성 (이름 개발용) + 비밀번호 + TenantMembership
 
 사용 (이미 ID admin97 이름 개발용 유저 있을 때):
   python manage.py ensure_dev_user --tenant=admin97 --password=kjkszpj123 --username=admin97 --name=개발용
 """
-from django.core.management.base import BaseCommand
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 from django.contrib.auth import get_user_model
 
@@ -59,6 +60,11 @@ class Command(BaseCommand):
             default="localhost,127.0.0.1",
             help="Comma-separated hosts to map to this tenant (default: localhost,127.0.0.1)",
         )
+        parser.add_argument(
+            "--allow-remote-db",
+            action="store_true",
+            help="Allow running against a non-local database host. Dangerous; local dev command normally refuses this.",
+        )
 
     def handle(self, *args, **options):
         tenant_code = (options["tenant"] or "admin97").strip()
@@ -67,6 +73,19 @@ class Command(BaseCommand):
         display_name = (options["name"] or "개발용").strip()
         hosts_str = options["hosts"] or "localhost,127.0.0.1"
         hosts = [normalize_host(h) for h in hosts_str.split(",") if normalize_host(h)]
+        allow_remote_db = bool(options.get("allow_remote_db"))
+
+        db = settings.DATABASES.get("default", {})
+        db_engine = str(db.get("ENGINE") or "").lower()
+        db_host = normalize_host(str(db.get("HOST") or ""))
+        is_sqlite = "sqlite" in db_engine
+        is_local_db = is_sqlite or db_host in {"", "localhost", "127.0.0.1", "::1"}
+        if not is_local_db and not allow_remote_db:
+            raise CommandError(
+                "ensure_dev_user refused to run against non-local database host "
+                f"'{db_host}'. Set DJANGO_SETTINGS_MODULE/.env.local to a local DB, "
+                "or pass --allow-remote-db only for an intentional one-off repair."
+            )
 
         from apps.core.models import Program
 
@@ -129,10 +148,13 @@ class Command(BaseCommand):
                     else:
                         self.stdout.write(f"TenantDomain already exists: {host} -> {tenant.code}")
 
-            # 4) User (기존 admin97 / 개발용 있으면 비밀번호만 맞추고, 없으면 생성)
+            # 4) User (tenant-scoped login username -> internal username)
+            from apps.core.models.user import user_internal_username
+            internal_username = user_internal_username(tenant, username)
             user, user_created = core_repo.user_get_or_create(
-                username,
+                internal_username,
                 defaults={
+                    "tenant": tenant,
                     "is_active": True,
                     "is_staff": True,
                     "is_superuser": False,
@@ -141,15 +163,25 @@ class Command(BaseCommand):
                 },
             )
             user.set_password(password)
+            user.tenant = tenant
             user.is_active = True
             user.is_staff = True
             if user.name != display_name and not user_created:
                 user.name = display_name
-            user.save(update_fields=["password", "is_active", "is_staff", "name"])
+            user.save(update_fields=["password", "tenant", "is_active", "is_staff", "name"])
             if user_created:
-                self.stdout.write(self.style.SUCCESS(f"Created User: username={username}, name={display_name}"))
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"Created User: username={username} (stored={internal_username}), name={display_name}"
+                    )
+                )
             else:
-                self.stdout.write(self.style.SUCCESS(f"Updated User: username={username}, password set, name={getattr(user, 'name', display_name)}"))
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"Updated User: username={username} (stored={internal_username}), password set, "
+                        f"name={getattr(user, 'name', display_name)}"
+                    )
+                )
 
             # 5) TenantMembership (admin)
             membership = core_repo.membership_ensure_active(tenant=tenant, user=user, role="admin")

@@ -18,15 +18,19 @@ from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase, TransactionTestCase
 
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.exams.models import Exam
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
-from apps.domains.results.models import ExamAttempt, ExamResult
+from apps.domains.results.models import ExamAttempt, ExamResult, Result
 from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.services.exam_grading_service import ExamGradingService
+from apps.domains.results.views.admin_exam_objective_score_view import AdminExamObjectiveScoreView
+from apps.domains.results.views.admin_exam_subjective_score_view import AdminExamSubjectiveScoreView
+from apps.domains.results.views.admin_exam_total_score_view import AdminExamTotalScoreView
 from apps.domains.submissions.models import Submission
 
 
@@ -299,6 +303,69 @@ class TestManualOverrideMaxScore(TestCase, BaseTestMixin):
         # Total: 3 + 5 = 8, Max: 5 + 5 = 10
         self.assertEqual(result.total_score, 8)
         self.assertEqual(result.max_score, 10)
+
+
+class TestManualScoreClearsNotSubmitted(TestCase, BaseTestMixin):
+    """Manual score edits must clear the prior NOT_SUBMITTED marker."""
+
+    def setUp(self):
+        self._create_fixtures()
+        self.factory = APIRequestFactory()
+
+    def _patch(self, view_cls, exam, data):
+        request = self.factory.patch("/results/admin/exams/score/", data, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+        response = view_cls.as_view()(
+            request,
+            exam_id=exam.id,
+            enrollment_id=self.enrollment.id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        return response
+
+    def _mark_not_submitted(self, exam):
+        self._patch(
+            AdminExamTotalScoreView,
+            exam,
+            {"meta_status": "NOT_SUBMITTED"},
+        )
+        attempt = ExamAttempt.objects.get(exam=exam, enrollment=self.enrollment)
+        self.assertEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
+        return attempt
+
+    def test_objective_score_clears_not_submitted_marker(self):
+        exam = self._create_exam(title="Objective clears absent")
+        self._mark_not_submitted(exam)
+
+        self._patch(AdminExamObjectiveScoreView, exam, {"score": 26})
+
+        attempt = ExamAttempt.objects.get(exam=exam, enrollment=self.enrollment)
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+        )
+        self.assertNotEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
+        self.assertEqual((attempt.meta or {}).get("total_score"), 26.0)
+        self.assertEqual(float(result.objective_score), 26.0)
+        self.assertEqual(float(result.total_score), 26.0)
+
+    def test_subjective_score_clears_not_submitted_marker(self):
+        exam = self._create_exam(title="Subjective clears absent")
+        self._mark_not_submitted(exam)
+
+        self._patch(AdminExamSubjectiveScoreView, exam, {"score": 14})
+
+        attempt = ExamAttempt.objects.get(exam=exam, enrollment=self.enrollment)
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+        )
+        self.assertNotEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
+        self.assertEqual((attempt.meta or {}).get("total_score"), 14.0)
+        self.assertEqual(float(result.total_score), 14.0)
 
 
 # ============================================================

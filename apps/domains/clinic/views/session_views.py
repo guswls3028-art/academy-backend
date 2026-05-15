@@ -214,9 +214,9 @@ class SessionViewSet(viewsets.ModelViewSet):
         """
         session = self.get_object()
         result = send_clinic_reminder_for_students(session_id=session.id)
-        if result.get("status") == "not_implemented":
-            return Response(result, status=status.HTTP_501_NOT_IMPLEMENTED)
-        return Response({"ok": True})
+        if result.get("status") == "not_found":
+            return Response(result, status=status.HTTP_404_NOT_FOUND)
+        return Response({"ok": True, **result})
 
     # ------------------------------------------------------------
     # 운영 페이지 좌측 트리 전용 API

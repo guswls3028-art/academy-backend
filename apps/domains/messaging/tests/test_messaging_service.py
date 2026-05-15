@@ -61,6 +61,7 @@ def _make_config(trigger, enabled=True, message_mode="alimtalk",
 _SEL = "apps.domains.messaging.selectors"
 _POL = "apps.domains.messaging.policy"
 _SVC = "apps.domains.messaging.services"
+_QSV = "apps.domains.messaging.services.queue_service"
 _SQS = "apps.domains.messaging.sqs_queue"
 
 
@@ -71,7 +72,7 @@ _SQS = "apps.domains.messaging.sqs_queue"
 class TestSendEventNotification(TestCase):
     """send_event_notification 핵심 경로 테스트."""
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -102,7 +103,7 @@ class TestSendEventNotification(TestCase):
         self.assertEqual(kw["template_id"], "KA01TP260406121126868FGddLmrDFUC")
         # SMS fallback text
         self.assertIn("학원플러스", kw["text"])
-        self.assertIn("홍길", kw["text"])
+        self.assertIn("길동", kw["text"])
         self.assertIn("수학A반", kw["text"])
         # alimtalk replacements
         reps = {r["key"]: r["value"] for r in kw["alimtalk_replacements"]}
@@ -111,7 +112,7 @@ class TestSendEventNotification(TestCase):
         self.assertEqual(reps["학생이름"], "홍길동")
         self.assertEqual(reps["강의명"], "수학A반")
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -132,7 +133,7 @@ class TestSendEventNotification(TestCase):
         self.assertTrue(result)
         self.assertEqual(mock_enqueue.call_args.kwargs["to"], "01099998888")
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -149,7 +150,7 @@ class TestSendEventNotification(TestCase):
         self.assertFalse(result)
         mock_enqueue.assert_not_called()
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config", return_value=None)
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -164,7 +165,7 @@ class TestSendEventNotification(TestCase):
         self.assertFalse(result)
         mock_enqueue.assert_not_called()
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -186,7 +187,7 @@ class TestSendEventNotification(TestCase):
             "KA01TP260406121126868FGddLmrDFUC",
         )
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -216,7 +217,7 @@ class TestSendEventNotification(TestCase):
 
         self.assertFalse(result)
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -252,7 +253,7 @@ class TestTenantIsolation(TestCase):
         result = is_reservation_cancelled(reservation_id=123, tenant_id=None)
         self.assertFalse(result)
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -271,7 +272,7 @@ class TestTenantIsolation(TestCase):
 
         self.assertEqual(mock_enqueue.call_args.kwargs["tenant_id"], 2)
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -311,7 +312,12 @@ class TestEnqueueSmsPolicy(TestCase):
         mock_queue_cls.return_value = mock_queue
 
         from apps.domains.messaging.services import enqueue_sms
-        result = enqueue_sms(tenant_id=1, to="01012345678", text="테스트")
+        result = enqueue_sms(
+            tenant_id=1,
+            to="01012345678",
+            text="테스트",
+            message_mode="sms",
+        )
 
         self.assertTrue(result)
         mock_can.assert_called_once_with(1)
@@ -379,12 +385,12 @@ class TestMessagingProviderResolution(TestCase):
 class TestTemplateVariableSubstitution(TestCase):
     """알림톡 템플릿 변수 치환 검증."""
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
-    def test_all_standard_vars_substituted(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
-        """학원명, 학생이름, 학생이름2, 사이트링크 모두 치환."""
+    def test_none_notice_uses_registered_replacements(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
+        """NONE 고정 본문은 등록 변수 replacements로만 값을 전달."""
         tenant = _make_tenant(name="수학왕학원")
         student = _make_student(name="김철수")
         config = _make_config(
@@ -397,14 +403,16 @@ class TestTemplateVariableSubstitution(TestCase):
         from apps.domains.messaging.services import send_event_notification
         send_event_notification(tenant=tenant, trigger="withdrawal_complete", student=student)
 
-        text = mock_enqueue.call_args.kwargs["text"]
-        self.assertIn("수학왕학원", text)
-        self.assertIn("김철", text)
-        self.assertIn("김철수", text)
-        self.assertIn("hakwonplus.com", text)
-        self.assertNotIn("#{", text)
+        reps = {
+            item["key"]: item["value"]
+            for item in mock_enqueue.call_args.kwargs["alimtalk_replacements"]
+        }
+        self.assertEqual(reps, {
+            "학원명": "수학왕학원",
+            "학생이름2": "철수",
+        })
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -432,7 +440,7 @@ class TestTemplateVariableSubstitution(TestCase):
         self.assertIn("14:00", text)
         self.assertNotIn("#{", text)
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -459,12 +467,12 @@ class TestTemplateVariableSubstitution(TestCase):
         self.assertIn("85/100", text)
         self.assertNotIn("#{", text)
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     def test_single_char_name_safe(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
-        """1글자 이름도 안전하게 처리."""
+        """1글자 이름도 NONE 고정 본문 replacements에서 안전하게 처리."""
         tenant = _make_tenant()
         student = _make_student(name="이")
         config = _make_config("withdrawal_complete", body="#{학생이름2}님 안녕")
@@ -474,8 +482,11 @@ class TestTemplateVariableSubstitution(TestCase):
         from apps.domains.messaging.services import send_event_notification
         send_event_notification(tenant=tenant, trigger="withdrawal_complete", student=student)
 
-        text = mock_enqueue.call_args.kwargs["text"]
-        self.assertIn("이님 안녕", text)
+        reps = {
+            item["key"]: item["value"]
+            for item in mock_enqueue.call_args.kwargs["alimtalk_replacements"]
+        }
+        self.assertEqual(reps["학생이름2"], "이")
 
 
 # ──────────────────────────────────────────
@@ -585,7 +596,7 @@ class TestWorkerTenantIdEnforcement(TestCase):
 class TestRegistrationMessages(TestCase):
     """가입 승인 알림톡 회귀 테스트."""
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     @patch(f"{_SEL}.get_auto_send_config")
     def test_send_registration_approved_student(self, mock_config, mock_owner, mock_enqueue):
@@ -613,7 +624,7 @@ class TestRegistrationMessages(TestCase):
         self.assertIn("홍길동", text)
         self.assertIn("PS001", text)
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     @patch(f"{_SEL}.get_auto_send_config")
     def test_send_welcome_no_students(self, mock_config, mock_owner, mock_enqueue):
@@ -630,7 +641,7 @@ class TestRegistrationMessages(TestCase):
 class TestEnrollmentAndWithdrawalNotifications(TestCase):
     """반 등록 완료, 퇴원 알림 테스트."""
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -656,7 +667,7 @@ class TestEnrollmentAndWithdrawalNotifications(TestCase):
         self.assertEqual(reps["학원명"], "학원플러스")
         self.assertEqual(reps["학생이름2"], "길동")
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -677,10 +688,12 @@ class TestEnrollmentAndWithdrawalNotifications(TestCase):
         )
 
         self.assertTrue(result)
-        text = mock_enqueue.call_args.kwargs["text"]
-        self.assertIn("학원플러스", text)
-        self.assertIn("길동", text)
-        self.assertNotIn("#{", text)
+        reps = {
+            item["key"]: item["value"]
+            for item in mock_enqueue.call_args.kwargs["alimtalk_replacements"]
+        }
+        self.assertEqual(reps["학원명"], "학원플러스")
+        self.assertEqual(reps["학생이름2"], "길동")
 
 
 # ──────────────────────────────────────────
@@ -728,7 +741,7 @@ class TestTimeGuard(TestCase):
 class TestIdempotencyMetadata(TestCase):
     """send_event_notification이 멱등성 메타데이터를 enqueue_sms에 전달."""
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -813,7 +826,7 @@ class TestDryRunMode(TestCase):
         from apps.domains.messaging.policy import is_event_dry_run
         self.assertFalse(is_event_dry_run("check_in_complete"))
 
-    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -834,17 +847,15 @@ class TestDryRunMode(TestCase):
         mock_enqueue.assert_not_called()
 
 
-class TestAttendanceNoNotification(TestCase):
-    """일반 강의 출결 변경 시 알림톡 미발송 확인."""
+class TestAttendanceNotificationHook(TestCase):
+    """일반 출결 상태 변경 시 현재 알림톡 훅이 유지되는지 확인."""
 
     @patch(f"{_SVC}.send_event_notification")
-    def test_partial_update_no_notification(self, mock_send):
-        """partial_update에서 알림톡 호출 코드가 제거되었는지 확인."""
-        # attendance/views.py의 partial_update에서 _send_attendance_notification 호출이 제거됨
-        # 이 테스트는 코드 제거를 문서화
+    def test_partial_update_keeps_notification_hook(self, mock_send):
+        """partial_update는 PRESENT/ABSENT 전환 시 알림 훅을 유지한다."""
         from apps.domains.attendance import views as att_views
         import inspect
         source = inspect.getsource(att_views.AttendanceViewSet.partial_update)
-        self.assertNotIn("_send_attendance_notification", source)
-        self.assertNotIn("check_in_complete", source)
-        self.assertNotIn("absent_occurred", source)
+        self.assertIn("_send_attendance_notification", source)
+        self.assertIn("check_in_complete", source)
+        self.assertIn("absent_occurred", source)

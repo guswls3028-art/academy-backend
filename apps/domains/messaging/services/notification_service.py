@@ -9,15 +9,62 @@ import re
 logger = logging.getLogger(__name__)
 
 
-def send_clinic_reminder_for_students(*args, **kwargs):
+def send_clinic_reminder_for_students(*, session_id: int):
     """
-    클리닉 리마인더 발송 — 미구현 상태.
-    호출 시 not_implemented 상태를 반환하여 프론트엔드에 알림.
+    클리닉 리마인더 발송.
+
+    예약 확정(booked) 참가자에게 승인된 clinic_info 알림톡 템플릿을 사용한다.
     """
-    logger.info("send_clinic_reminder_for_students: feature not yet implemented")
+    from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
+
+    session = (
+        ClinicSession.objects
+        .select_related("tenant")
+        .filter(id=int(session_id))
+        .first()
+    )
+    if not session:
+        return {"status": "not_found", "message": "클리닉 세션을 찾을 수 없습니다."}
+
+    participants = (
+        SessionParticipant.objects
+        .select_related("student")
+        .filter(
+            tenant_id=session.tenant_id,
+            session_id=session.id,
+            status=SessionParticipant.Status.BOOKED,
+        )
+    )
+
+    context = {
+        "클리닉명": (session.title or "클리닉").strip(),
+        "장소": session.location or "",
+        "날짜": session.date.isoformat() if session.date else "",
+        "시간": session.start_time.strftime("%H:%M") if session.start_time else "",
+        "_domain_object_id": f"clinic_session:{session.id}:reminder",
+    }
+
+    attempted = 0
+    sent = 0
+    for participant in participants:
+        student = participant.student
+        if not student:
+            continue
+        attempted += 1
+        if send_event_notification(
+            tenant=session.tenant,
+            trigger="clinic_reminder",
+            student=student,
+            send_to="parent",
+            context=context,
+        ):
+            sent += 1
+
     return {
-        "status": "not_implemented",
-        "message": "클리닉 알림 기능이 아직 준비 중입니다.",
+        "status": "ok",
+        "attempted": attempted,
+        "sent": sent,
+        "skipped": max(0, attempted - sent),
     }
 
 

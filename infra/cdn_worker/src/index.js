@@ -50,14 +50,28 @@ export default {
     }
 
     // 5) Fetch from R2 (path strips leading slash; honor client Range header)
+    // m3u8 은 작은 파일 + body rewrite 필요 → Range 무시 + 전체 body 가져옴.
+    // segment/jpg 등 binary 만 Range 적용.
     const r2Key = path.replace(/^\/+/, "");
+    const isM3u8 = r2Key.endsWith(".m3u8");
     const rangeHeader = request.headers.get("Range");
     const getOpts = {};
-    const parsedRange = rangeHeader ? parseRangeHeader(rangeHeader) : null;
+    let parsedRange = (!isM3u8 && rangeHeader) ? parseRangeHeader(rangeHeader) : null;
     if (parsedRange) getOpts.range = parsedRange;
     const obj = await env.R2_VIDEO.get(r2Key, getOpts);
     if (!obj || !obj.body) {
       return new Response("not found", { status: 404 });
+    }
+
+    // 5.5) m3u8 body rewrite — propagate sig to relative variant/segment URLs.
+    // HLS spec drops query on relative URL resolve; without rewrite player gets
+    // 401 "missing signature" on variant/segment fetch. (Root cause of 2026-05-15
+    // video playback outage: master.m3u8 200 OK but `v2/index.m3u8` etc. 401.)
+    // 2026-05-15 추가 fix: m3u8 은 항상 rewrite (Range request 무시 — 위 isM3u8 분기에서 처리).
+    let m3u8Body = null;
+    if (isM3u8) {
+      const text = await new Response(obj.body).text();
+      m3u8Body = await rewriteM3u8(text, path, expNum, kid, uid, secret);
     }
 
     // 6) Response with cache headers
@@ -66,6 +80,12 @@ export default {
     headers.set("ETag", obj.httpEtag);
     headers.set("Cache-Control", obj.httpMetadata?.cacheControl || cacheControlFor(r2Key));
     headers.set("Accept-Ranges", "bytes");
+
+    if (m3u8Body !== null) {
+      const buf = new TextEncoder().encode(m3u8Body);
+      headers.set("Content-Length", String(buf.byteLength));
+      return new Response(buf, { headers, status: 200 });
+    }
 
     // Only emit Content-Range + 206 on a real (and honored) Range request.
     let status = 200;
@@ -115,6 +135,62 @@ function parseRangeHeader(value) {
   const end = parseInt(endStr, 10);
   if (!Number.isFinite(end) || end < start) return null;
   return { offset: start, length: end - start + 1 };
+}
+
+// ─── m3u8 body rewrite ──────────────────────────────────────────────────────
+
+// Rewrite relative URLs inside an m3u8 manifest to include the same signed
+// query (exp/sig/kid/uid) so HLS clients can fetch variants/segments without
+// losing the signature across `urljoin`. Absolute URLs (http*) and comments
+// (`#…`) pass through unchanged.
+async function rewriteM3u8(text, currentPath, exp, kid, uid, secret) {
+  // base dir = currentPath up to and including final "/"
+  const slash = currentPath.lastIndexOf("/");
+  const baseDir = slash >= 0 ? currentPath.substring(0, slash + 1) : "/";
+  const lines = text.split("\n");
+  const out = [];
+  for (const raw of lines) {
+    const trimmed = raw.trim();
+    if (trimmed === "" || trimmed.startsWith("#")) {
+      out.push(raw);
+      continue;
+    }
+    if (/^https?:\/\//i.test(trimmed)) {
+      // absolute URL — leave alone (already cross-origin or pre-signed)
+      out.push(raw);
+      continue;
+    }
+    // resolve relative against baseDir
+    let resolved;
+    if (trimmed.startsWith("/")) resolved = trimmed;
+    else resolved = baseDir + trimmed;
+    // normalize ".." / "."
+    resolved = normalizeUrlPath(resolved);
+    const sigNew = await hmacSha256B64url(secret, `${resolved}|${exp}|${kid}|${uid}`);
+    const qs = `exp=${exp}&sig=${encodeURIComponent(sigNew)}&kid=${encodeURIComponent(kid)}` +
+      (uid ? `&uid=${encodeURIComponent(uid)}` : "");
+    out.push(trimmed + "?" + qs);
+  }
+  return out.join("\n");
+}
+
+function normalizeUrlPath(p) {
+  const parts = p.split("/");
+  const stack = [];
+  for (const seg of parts) {
+    if (seg === "" || seg === ".") {
+      if (stack.length === 0) stack.push("");
+      continue;
+    }
+    if (seg === "..") {
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    stack.push(seg);
+  }
+  let out = stack.join("/");
+  if (!out.startsWith("/")) out = "/" + out;
+  return out;
 }
 
 // ─── helpers ────────────────────────────────────────────────────────────────

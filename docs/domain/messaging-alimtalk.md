@@ -1,7 +1,62 @@
 # 메시징 도메인 SSOT (알림톡/SMS 발송 시스템)
 
-> 최종 갱신: 2026-04-09
+> 최종 갱신: 2026-05-13 (학원장 mental model "봉투/편지" 박스 추가, §0 강제 박스)
 > 근거: 코드 직접 확인. 추측 없음.
+
+---
+
+## 🚨 §0. 학원장 mental model (절대 원칙, 모든 알림톡 작업의 base)
+
+이 박스를 **반드시 먼저 읽고** 알림톡/메시징 작업 진행. AI가 한 달 반 동안 학원장 의도를 못 따라가서 격분 누적된 핵심 원칙. 메모리 [[feedback_alimtalk_template_prefix_immutable]] 1:1 동기화.
+
+### 비유: 봉투와 편지
+
+- **카카오 검수 통과 ITEM_LIST 4종 양식 = 장식이 다른 4가지 봉투** (header/highlight/item.list/prefix는 카카오에 박혀있어 변경 불가 = 봉투의 장식)
+- **`#{선생님메모}` 한 자리 = 봉투 안에 들어가는 자유 편지** (학원장 자유 편집, 무제한 길이)
+
+선생님이 양식 UI에서 하는 모든 행위 — 변수블록 추가/제거, 문구 변경, 새 카테고리 안내, 양식 디자인 — 은 **전부 `#{선생님메모}` 한 자리 안에서 일어남**. 봉투 자체는 장식, 변경 불가.
+
+### 봉투 의미 매칭 (학원장이 카테고리 선택 = 봉투 선택)
+
+| 봉투 | prefix (장식 고정) | 자동 슬롯 (장식) | 학원장 자유 편지 |
+|---|---|---|---|
+| **score** | `[성적표 안내]` | 학원이름/학생이름/강의명/차시명 | `#{선생님메모}` |
+| **attendance** | `[출석 안내]` | 학원이름/학생이름/강의명/차시명/날짜/시간 | `#{선생님메모}` |
+| **clinic_info** | `[클리닉 안내]` | 학원이름/학생이름/장소/날짜/시간 | `#{선생님메모}` |
+| **clinic_change** | `[일정 변경 안내]` | 학원이름/학생이름/기존일정/변동사항/수정자 | `#{선생님메모}` |
+| NONE notice_withdrawal | `[HakwonPlus] 퇴원 처리 완료` | 학원명/학생이름2 | **없음** (시스템 안내) |
+| NONE notice_payment | `[HakwonPlus] 결제 완료 안내` | 학원명/학생이름2/사이트링크 | **없음** (시스템 안내) |
+
+성적 관련 안내 → score 봉투. 클리닉 관련 → clinic_info 봉투. 출석 → attendance 봉투. 클리닉 일정 변경/취소 → clinic_change 봉투. **봉투 안 편지(`#{선생님메모}`)는 무제한 자유.**
+
+### 영구 금지 패턴 (응답/제안/백로그에 떠오르면 즉시 멈춤)
+
+- ❌ "이 트리거는 양식이 없다 → 카카오 검수 신청하자"
+- ❌ "exam/assignment/notice/community/staff 카테고리에 매핑이 없으니 추가하자"
+- ❌ "새로운 양식이 필요하니 Solapi에 등록하자 / 봉투 새로 만들자"
+- ❌ "신규 알림톡 템플릿 만들자"
+- ❌ "fallback 양식이 필요할 수도 있다" 추론
+- ❌ NONE 양식 본문 미반영을 결함으로 분류 / 매핑 제거 시도
+- ❌ 양식 추가 / 신규 검수를 backlog · P1 · P2 · 개선안으로 적기
+
+### 학원장 톡 원문 (한 달 반 격분 끝에 박힌 mental model)
+
+- "우리가 만드는 양식 수정은 사실 `#{선생님메모}` 안에만 들어가는거임 ㅇㅋ?"
+- "선생님이 변수블록 추가 제거 문구변경등을 하는건 모두 `#{선생님메모}` 여기 안에서 일어나는거라고 이걸 이해시키는데에 1달 반이 걸렸다"
+- "계속 양식이없다고 탬플릿 추가해야한다고 하는데 `#{선생님메모}` 여기에 박으면된다고 우리가 프로그램에서 선생님 통해 제작한 풀 템플릿을 그럼 무제한으로 쓸 수 있잖아"
+- "`#{선생님메모}` 여기를 제외한건 그냥 일종의 껍데기 UI라고 생각해도됨. 그냥 장식마냥"
+- "근데 이제 장식이 용도에 맞게 배치되어야하니까. 성적 관련된건 성적쪽 `#{선생님메모}` // 클리닉 관련된건 클리닉쪽 `#{선생님메모}`"
+- "이 내용 전달이 너무 어려웠음 아무리 말해도 계속 탬플릿 추가하려고 하니까 미쳐버리는거임"
+
+### How to apply (모든 알림톡 작업 진행 전 자기 검토)
+
+1. 내가 양식 추가 / 카카오 검수 / 새 템플릿 / 새 봉투 권유하려 하나? → **멈춤**
+2. 모든 새 안내 문구 / 카테고리 / 트리거 → 4종 봉투 중 의미 가까운 것 선택 + `#{선생님메모}` 본문 자유 작성으로 cover
+3. 학원장이 명시적으로 "새 카카오 양식 검수 받자" 한 경우만 신규 검수 진행
+4. NONE 자동발송 매핑(withdrawal_complete/payment_complete/payment_due_days_before) 제거 금지 — 시스템 안내 자동발송이 정상
+5. UI에서 양식 본문 편집 잠금 금지 — domain-policy.md §5 "잠금/플래그 강제 금지" 정신
+
+관련: [[domain-policy.md §5 / §5.5]] / [[feedback_alimtalk_template_prefix_immutable]] / [[project_alimtalk_audit_2026_05_13]]
 
 ---
 
@@ -104,31 +159,47 @@
 
 ## 3. 트리거 -> 템플릿 매핑 (TRIGGER_TO_TEMPLATE_TYPE)
 
-출처: `alimtalk_content_builders.py:48-78`
+출처: `alimtalk_content_builders.py:68-104` (2026-05-13 기준)
 
-| 트리거 | 템플릿 타입 | 비고 |
-|--------|------------|------|
-| `clinic_reservation_created` | clinic_info | |
-| `clinic_reminder` | clinic_info | |
-| `clinic_check_in` | clinic_info | |
-| `clinic_absent` | clinic_info | |
-| `clinic_self_study_completed` | clinic_info | clinic_check_out 통합 |
-| `clinic_result_notification` | clinic_info | |
-| `counseling_reservation_created` | clinic_info | |
-| `clinic_reservation_changed` | clinic_change | 기존일정/변동사항/수정자 변수 사용 |
-| `clinic_cancelled` | clinic_change | |
-| `check_in_complete` | attendance | |
-| `absent_occurred` | attendance | |
-| `lecture_session_reminder` | attendance | |
-| `exam_scheduled_days_before` | score | |
-| `exam_start_minutes_before` | score | |
-| `exam_not_taken` | score | |
-| `exam_score_published` | score | |
-| `retake_assigned` | score | |
-| `assignment_registered` | score | |
-| `assignment_due_hours_before` | score | |
-| `assignment_not_submitted` | score | |
-| `monthly_report_generated` | score | |
+| 트리거 | 템플릿 타입 | 자동 발화 | 비고 |
+|--------|------------|---|------|
+| `clinic_reservation_created` | clinic_info | ✅ | |
+| `clinic_reminder` | clinic_info | manual | minutes_before 스케줄러 미구현 |
+| `clinic_check_in` | clinic_info | ✅ | |
+| `clinic_absent` | clinic_info | ✅ | ⚠️ 결석 통보를 "[클리닉 안내]" prefix — 의미 검토 |
+| `clinic_self_study_completed` | clinic_info | ✅ | clinic_check_out 통합. ⚠️ "완료"를 "안내" prefix — 의미 검토 |
+| `clinic_result_notification` | clinic_info | ✅ | ⚠️ "결과"를 "안내" prefix — 의미 검토 |
+| `counseling_reservation_created` | clinic_info | ✅ | ⚠️ "상담"이 "[클리닉 안내]" prefix — 학부모 혼동 가능 |
+| `clinic_reservation_changed` | clinic_change | ✅ | 기존일정/변동사항/수정자 변수 사용 |
+| `clinic_cancelled` | clinic_change | ✅ | |
+| `check_in_complete` | attendance | ✅ | |
+| `absent_occurred` | attendance | ✅ | |
+| `lecture_session_reminder` | attendance | manual | minutes_before 스케줄러 미구현 |
+| `exam_score_published` | score | manual (정책: 저장≠발송) | "[성적표 안내]" prefix 의미 일치 |
+| `monthly_report_generated` | score | manual | ⚠️ 월간 집계를 강의명/차시명 단일 변수에 매핑 — 의미 약함 |
+| `withdrawal_complete` | notice_withdrawal | manual | NONE 고정 본문 시스템 안내 |
+| `payment_complete` | notice_payment | manual | NONE 고정 본문 시스템 안내 |
+| `payment_due_days_before` | notice_payment | manual | NONE 고정 본문 시스템 안내 |
+
+### 의도적으로 매핑 제외된 트리거 (`alimtalk_content_builders.py:92-104` 주석)
+
+다음 트리거들은 코드 자동 발화 (`IMPLEMENTED_AUTO_TRIGGERS`) 또는 수동 발송 진입(`ALLOWED_TRIGGERS`) 대상이지만 통합 4종 매핑은 의도적으로 제외:
+
+| 트리거 | 매핑 제외 사유 |
+|---|---|
+| `exam_scheduled_days_before` / `exam_start_minutes_before` / `exam_not_taken` / `retake_assigned` | score 매핑 한때 있었으나 자동 발화 결함 회피 위해 제거 (`ff2a3f93` / `2cfaea34`) |
+| `assignment_registered` / `assignment_due_hours_before` / `assignment_not_submitted` | 동일 |
+| `video_encoding_complete` / `matchup_report_submitted` | "[성적표 안내]" prefix 의미 불일치 (강사 본인/owner/admin 알림) |
+| `qna_answered` / `counsel_answered` | 한 때 TYPE_SCORE 재사용 ([[v1_2_0_seal_2026_04_30]] §6) 이었으나 prefix 의미 불일치로 매핑 제거. test_alimtalk_content_builders.py:55-60 None assert 적용 |
+
+### 매핑 X 트리거의 실제 발송 path
+
+`build_unified_replacements` (line 333-335) → trigger 매핑 X → `return []` (빈 replacements). 이후 `notification_service.send_event_notification` (line 175-223) "기존 모드" 진입:
+1. 자체 tenant template 의 solapi_template_id + status==APPROVED 사용 (있는 경우)
+2. 없으면 owner tenant (T1 hakwonplus) 의 같은 trigger AutoSendConfig template fallback (line 103-117)
+3. owner 에도 없으면 발송 차단 (`return False`)
+
+→ 즉, 위 매핑 제외 trigger 들의 실제 운영 발송 여부 = owner tenant AutoSendConfig 의 별도 승인 template 등록 상태에 의존. **운영 검증 시점에 trigger 별로 owner config 존재 + solapi_status=APPROVED 확인 필요**.
 
 **참고:** `clinic_reservation_changed`와 `clinic_cancelled`는 `clinic_change` 템플릿을 사용하여 기존일정/변동사항/수정자 변수를 ITEM_LIST에 표시.
 
@@ -238,24 +309,26 @@
 
 ### CATEGORY_TO_TEMPLATE_TYPE 매핑
 
-출처: `alimtalk_content_builders.py:101-114`
+출처: `alimtalk_content_builders.py:127-136` (2026-05-13 정정 — 8 카테고리 제거)
 
-| 카테고리 | 템플릿 타입 |
-|----------|------------|
-| grades | score |
-| exam | score |
-| assignment | score |
-| attendance | attendance |
-| lecture | attendance |
-| clinic | clinic_info (또는 clinic_change*) |
-| payment | score |
-| notice | score |
-| community | score |
-| staff | score |
-| default | score |
-| student | score |
+| 카테고리 | 템플릿 타입 | 비고 |
+|----------|------------|---|
+| grades | score | "[성적표 안내]" prefix 의미 일치 |
+| attendance | attendance | |
+| lecture | attendance | |
+| clinic | clinic_info (또는 clinic_change*) | |
+| payment | notice_payment | NONE 고정 본문 시스템 안내 |
 
-*clinic 카테고리: template_name에 "변경/취소/change/cancel/reschedule" 키워드가 있거나, extra_vars에 클리닉기존일정/클리닉변동사항/클리닉수정자가 있으면 clinic_change. 그 외 clinic_info. (`get_unified_for_category` line 142-164)
+### 매핑 의도적 제외 카테고리
+
+다음 카테고리는 코드 매핑 없음. `get_unified_for_category` → `(None, None)` 반환:
+
+- **exam / assignment**: score 매핑 한때 있었으나 의미 일치 검토 보류 — 필요 시 §5.5 정책 따라 기존 4종 양식 + 본문 변수 재활용으로 확장
+- **notice / community / staff / default / student**: 카카오 등록 양식 부재
+
+→ 위 카테고리로 호출 시 `get_unified_for_category` 가 (None, None) 반환. SendMessageView 가 fallback score 로 처리하던 과거 동작 (legacy `views.py:567-571` 추정) 도 코드에서 제거되었거나 비활성 — 운영 시점 검증 필요.
+
+*clinic 카테고리: template_name에 "변경/취소/change/cancel/reschedule" 키워드가 있거나, extra_vars에 클리닉기존일정/클리닉변동사항/클리닉수정자가 있으면 clinic_change. 그 외 clinic_info. (`get_unified_for_category` line 163-189)
 
 ### 시스템 기본양식 (통합 4종 제외)
 

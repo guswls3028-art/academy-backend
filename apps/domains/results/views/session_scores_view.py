@@ -538,10 +538,11 @@ class SessionScoresView(APIView):
                         passed = None
 
                     items_list = list(r.items.all()) if hasattr(r, "items") else []
-                    subjective_sum = sum(
-                        float(ri.score or 0.0) for ri in items_list
-                    )
                     objective_val = float(getattr(r, "objective_score", 0.0) or 0.0)
+                    subjective_val = max(
+                        0.0,
+                        float(r.total_score or 0.0) - objective_val,
+                    )
 
                     block = {
                         "score": None if is_not_submitted else float(r.total_score or 0.0),
@@ -551,7 +552,7 @@ class SessionScoresView(APIView):
                         "is_locked": locked,
                         "lock_reason": "GRADING" if locked else None,
                         "objective_score": None if is_not_submitted else objective_val,
-                        "subjective_score": None if is_not_submitted else subjective_sum,
+                        "subjective_score": None if is_not_submitted else subjective_val,
                         "meta": {"status": "NOT_SUBMITTED"} if is_not_submitted else None,
                     }
                     updated_at = r.updated_at

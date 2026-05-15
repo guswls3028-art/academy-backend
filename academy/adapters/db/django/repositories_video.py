@@ -203,6 +203,14 @@ def video_progress_filter_video_enrollment_ids(video, enrollment_ids):
     return qs
 
 
+def video_progress_filter_video_ids_enrollment_ids(video_ids, enrollment_ids):
+    from apps.domains.video.models import VideoProgress
+    return VideoProgress.objects.filter(
+        video_id__in=list(video_ids),
+        enrollment_id__in=list(enrollment_ids),
+    )
+
+
 def video_get_by_id(video_id):
     from apps.domains.video.models import Video
     return Video.objects.filter(id=int(video_id)).first()

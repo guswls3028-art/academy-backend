@@ -121,12 +121,16 @@ class LectureViewSet(ModelViewSet):
 
         # 수강생 수 (일단 삭제 학생 제외)
         enrollments = enroll_repo.enrollment_filter_lecture_active_students(tenant, lecture)
+        enrollment_list = list(enrollments)
+        enrollment_ids = [enrollment.id for enrollment in enrollment_list]
 
         # 세션 수
         sessions = enroll_repo.get_sessions_by_lecture(lecture)
 
         # 비디오 수
         videos = video_repo.video_filter_by_lecture(lecture)
+        video_list = list(videos)
+        video_ids = [video.id for video in video_list]
 
         # 출결 통계 — single aggregate query instead of 10 separate .filter().count()
         attendances = enroll_repo.get_attendances_for_lecture(
@@ -153,31 +157,80 @@ class LectureViewSet(ModelViewSet):
             if enrollment_id not in latest_attendance_by_enrollment:
                 latest_attendance_by_enrollment[enrollment_id] = status
 
-        # Video count — same for every student, fetch once outside the loop
-        total_videos = videos.count()
+        # Video progress: VideoProgress.progress is stored as 0..1.
+        total_videos = len(video_list)
+        progress_by_enrollment = {
+            enrollment_id: {"progress_sum": 0.0, "completed_count": 0}
+            for enrollment_id in enrollment_ids
+        }
+        if total_videos > 0 and enrollment_ids:
+            progress_rows = (
+                video_repo.video_progress_filter_video_ids_enrollment_ids(
+                    video_ids, enrollment_ids
+                )
+                .values_list("enrollment_id", "progress", "completed")
+            )
+            for enrollment_id, progress, completed in progress_rows:
+                bucket = progress_by_enrollment.get(enrollment_id)
+                if bucket is None:
+                    continue
+                progress_value = float(progress or 0.0)
+                progress_value = max(0.0, min(1.0, progress_value))
+                bucket["progress_sum"] += progress_value
+                if completed:
+                    bucket["completed_count"] += 1
 
         # 학생별 리포트 데이터
         students_data = []
-        for enrollment in enrollments:
+        for enrollment in enrollment_list:
             student = enrollment.student
+            progress_bucket = progress_by_enrollment.get(
+                enrollment.id,
+                {"progress_sum": 0.0, "completed_count": 0},
+            )
+            avg_progress = (
+                round((progress_bucket["progress_sum"] / total_videos) * 100, 1)
+                if total_videos > 0
+                else 0.0
+            )
 
             students_data.append({
                 "enrollment": enrollment.id,
                 "student_id": student.id,
                 "student_name": student.name,
-                "avg_progress": 0.0,
-                "completed_videos": 0,
+                "avg_progress": avg_progress,
+                "completed_videos": progress_bucket["completed_count"],
                 "total_videos": total_videos,
                 "last_attendance_status": latest_attendance_by_enrollment.get(enrollment.id),
             })
 
+        progress_denominator = len(enrollment_list) * total_videos
+        total_progress = sum(
+            bucket["progress_sum"]
+            for bucket in progress_by_enrollment.values()
+        )
+        avg_video_progress = (
+            round((total_progress / progress_denominator) * 100, 1)
+            if progress_denominator > 0
+            else 0.0
+        )
+        completed_students = (
+            sum(
+                1
+                for bucket in progress_by_enrollment.values()
+                if total_videos > 0 and bucket["completed_count"] >= total_videos
+            )
+            if total_videos > 0
+            else 0
+        )
+
         # 요약 통계
         summary = {
-            "total_students": enrollments.count(),
+            "total_students": len(enrollment_list),
             "total_sessions": sessions.count(),
-            "total_videos": videos.count(),
-            "avg_video_progress": 0.0,  # TODO: 실제 평균 진행률 계산
-            "completed_students": 0,  # TODO: 완료 학생 수 계산
+            "total_videos": total_videos,
+            "avg_video_progress": avg_video_progress,
+            "completed_students": completed_students,
         }
 
         return Response({
@@ -196,6 +249,9 @@ class LectureViewSet(ModelViewSet):
 class SessionViewSet(ModelViewSet):
     serializer_class = SessionSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    # 강의/차시 트리, 성적, 시험, 영상 진입점은 차시 전체가 보여야 한다.
+    # 전역 PAGE_SIZE=20이 적용되면 21번째 이후 차시가 UI에서 사라진다.
+    pagination_class = None
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_fields = ["lecture", "date", "section"]
