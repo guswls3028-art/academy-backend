@@ -21,6 +21,65 @@ from apps.shared.contracts.ai_result import AIResult
 
 logger = logging.getLogger(__name__)
 
+_TRUTHY_ENV = {"1", "true", "yes", "y", "on"}
+_NON_PROBLEM_PAGE_TYPES = {
+    "non_question", "explanation", "answer_key",
+    "cover", "index",
+}
+_NON_PROBLEM_PAGE_ROLES = {
+    "cover", "index", "explanation", "answer_key",
+}
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in _TRUTHY_ENV
+
+
+def _env_csv(name: str, default: Tuple[str, ...] = ()) -> set[str]:
+    raw = os.environ.get(name)
+    if raw is None:
+        return set(default)
+    return {part.strip() for part in raw.split(",") if part.strip()}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _tenant_gate_allows(name: str, tenant_id: str | int | None) -> bool:
+    raw = os.environ.get(name, "").strip()
+    if not raw or raw == "*":
+        return True
+    allowed = {part.strip() for part in raw.split(",") if part.strip()}
+    return str(tenant_id) in allowed
+
+
+def _source_type_gate_allows(
+    name: str,
+    source_type: str,
+    default: Tuple[str, ...],
+) -> bool:
+    allowed = _env_csv(name, default)
+    return "*" in allowed or source_type in allowed
+
+
+def _real_vlm_vision_configured() -> bool:
+    adapter = os.environ.get("MATCHUP_VLM_VISION_ADAPTER", "mock").strip().lower()
+    return adapter.startswith("gemini") and bool(os.environ.get("GEMINI_API_KEY"))
+
 
 # ── 텍스트 정제 + format 감지 ──────────────────────────
 #
@@ -289,7 +348,11 @@ def run_matchup_pipeline(
     #   - school_exam_pdf: anchor OCR 일부 번호 누락 시 fallback counter가 잘못
     #     매핑 (doc 204 Q24 자리에 시험지 27번 들어감)
     #   _pages_via_vlm 안의 page_role D-3 게이트 + VLM 정확 number 매핑이 본질 fix.
-    force_vlm_primary = source_type in ("commercial_workbook", "school_exam_pdf")
+    force_vlm_primary = _source_type_gate_allows(
+        "MATCHUP_VLM_FORCE_PRIMARY_TYPES",
+        source_type,
+        ("commercial_workbook", "school_exam_pdf"),
+    ) and _real_vlm_vision_configured()
     if force_vlm_primary:
         logger.info(
             "MATCHUP_FORCE_VLM_PRIMARY | job=%s | doc=%s | source=%s "
@@ -302,6 +365,16 @@ def run_matchup_pipeline(
             p["numbers"] = []
         total_boxes = 0
 
+    vlm_page_role_stats: Optional[Dict[str, Any]] = None
+    if not force_vlm_primary:
+        vlm_page_role_stats = _apply_vlm_page_role_filter(
+            pages,
+            source_type=source_type,
+            document_id=document_id,
+            tenant_id=tenant_id,
+        )
+        total_boxes = sum(len(p.get("boxes") or []) for p in pages)
+
     if total_boxes == 0:
         logger.info(
             "MATCHUP_NO_BOXES | job_id=%s | VLM 시도 (page-as-problem 폴백 폐기됨)",
@@ -310,9 +383,23 @@ def run_matchup_pipeline(
         questions_raw, vlm_stats = _pages_via_vlm(
             pages, document_id, job_id, tenant_id=tenant_id,
         )
+        paper_type_summary = _aggregate_paper_types(pages)
         paper_type_summary["vlm_auto_split"] = vlm_stats
     else:
         questions_raw = _boxes_to_questions(pages)
+        vlm_empty_stats = _augment_questions_with_vlm_for_empty_pages(
+            pages,
+            questions_raw,
+            document_id=document_id,
+            job_id=job_id,
+            tenant_id=tenant_id,
+        )
+        paper_type_summary = _aggregate_paper_types(pages)
+        if vlm_empty_stats:
+            paper_type_summary["vlm_empty_page_fill"] = vlm_empty_stats
+
+    if vlm_page_role_stats:
+        paper_type_summary["vlm_page_role_filter"] = vlm_page_role_stats
 
     if not questions_raw:
         return AIResult.done(job_id, {
@@ -541,9 +628,22 @@ def run_matchup_pipeline(
             is_hybrid_vlm_enabled_for_tenant,
             filter_questions_by_hybrid_vlm,
         )
+        hybrid_source_allowed = _source_type_gate_allows(
+            "MATCHUP_HYBRID_VLM_SOURCE_TYPES",
+            source_type,
+            tuple(
+                sorted(
+                    {
+                        "student_exam_photo",
+                        "school_exam_pdf",
+                        "other",
+                    }
+                )
+            ),
+        )
         if (
             is_hybrid_vlm_enabled_for_tenant(tenant_id)
-            and source_type not in WORKBOOK_VLM_SKIP_TYPES
+            and hybrid_source_allowed
         ):
             before_count = len(questions_raw)
             questions_raw, hvlm_stats = filter_questions_by_hybrid_vlm(
@@ -556,10 +656,15 @@ def run_matchup_pipeline(
                 "HYBRID_VLM_FILTERED | doc=%s | before=%d | after=%d | stats=%s",
                 document_id, before_count, len(questions_raw), hvlm_stats,
             )
-        elif source_type in WORKBOOK_VLM_SKIP_TYPES:
+        elif source_type in WORKBOOK_VLM_SKIP_TYPES and not hybrid_source_allowed:
             logger.info(
                 "HYBRID_VLM_SKIP_WORKBOOK | doc=%s | source_type=%s | "
                 "main 단위 cut 보존 (VLM 적용 X)",
+                document_id, source_type,
+            )
+        elif not hybrid_source_allowed:
+            logger.info(
+                "HYBRID_VLM_SKIP_SOURCE_TYPE | doc=%s | source_type=%s",
                 document_id, source_type,
             )
     except Exception as _hvlm_err:  # noqa: BLE001
@@ -935,11 +1040,6 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
     #   = cover/index/끝부분 페이지에서 가짜 problem. anchor splitter가 비-문항
     #   페이지의 box를 problem으로 등록하던 결함. 페이지 단위 paper_type이
     #   non_question/explanation/answer_key/cover/index면 boxes skip.
-    _NON_PROBLEM_PAGE_TYPES = {
-        "non_question", "explanation", "answer_key",
-        "cover", "index",
-    }
-
     # ── Per-page-restart 감지 — 워크북/메인자료에서 segment number 충돌 회피 ──
     is_per_page_restart = _detect_per_page_restart_from_pages(pages)
     if is_per_page_restart:
@@ -997,6 +1097,237 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
                 entry["local_number"] = int(numbers[i])
             questions.append(entry)
     return questions
+
+
+def _detect_page_with_vlm(
+    page: Dict,
+    document_id,
+    tenant_id: str | int | None = None,
+) -> Tuple[Optional[Any], Optional[str]]:
+    """Gemini vision으로 page_role/paper_type/bbox 후보를 한 번 받아온다.
+
+    반환 result는 real Gemini 응답일 때만 제공한다. mock 또는 gemini 실패 후 mock
+    fallback은 운영 판단 신호로 쓰지 않는다.
+    """
+    try:
+        from academy.adapters.ai.detection.vlm_fallback import detect_problems_vision
+        result = detect_problems_vision(
+            image_path=page["image_path"],
+            page_meta={
+                "document_id": document_id,
+                "tenant_id": tenant_id,
+                "page_index": page["page_index"],
+                "page_width": page.get("width"),
+                "page_height": page.get("height"),
+            },
+        )
+    except Exception as e:
+        logger.warning(
+            "MATCHUP_VLM_PAGE_DETECT_FAIL | doc=%s | page=%s | err=%s",
+            document_id, page.get("page_index"), e,
+        )
+        return None, None
+
+    adapter = (result.debug or {}).get("adapter", "")
+    if adapter != "gemini":
+        return None, None
+
+    raw_paper_type = getattr(result, "paper_type", None)
+    if not raw_paper_type or raw_paper_type == "unknown":
+        raw_paper_type = None
+    return result, raw_paper_type
+
+
+def _vlm_result_role_value(result: Any) -> str:
+    role = getattr(result, "page_role", "")
+    return str(getattr(role, "value", role) or "").strip().lower()
+
+
+def _apply_vlm_page_role_filter(
+    pages: List[Dict],
+    *,
+    source_type: str,
+    document_id,
+    tenant_id: str | int | None = None,
+) -> Optional[Dict[str, Any]]:
+    """Gemini page-role로 표지/목차/해설/정답 페이지를 자동 제외한다.
+
+    기본 off. `MATCHUP_VLM_PAGE_ROLE_FILTER=1`일 때만 동작한다. 이 경로는
+    기존 박스를 VLM bbox로 대체하지 않고, skip 확신이 높은 페이지의 기존
+    boxes/text_regions만 제거한다.
+    """
+    if not _env_flag("MATCHUP_VLM_PAGE_ROLE_FILTER", False):
+        return None
+    if not document_id:
+        return {"enabled": True, "skipped_reason": "no_document_id"}
+    if not _real_vlm_vision_configured():
+        return {"enabled": True, "skipped_reason": "real_vlm_not_configured"}
+    if not _tenant_gate_allows("MATCHUP_VLM_PAGE_ROLE_FILTER_TENANTS", tenant_id):
+        return {"enabled": True, "skipped_reason": "tenant_not_enabled"}
+    if not _source_type_gate_allows(
+        "MATCHUP_VLM_PAGE_ROLE_FILTER_SOURCE_TYPES",
+        source_type,
+        (
+            "academy_workbook",
+            "commercial_workbook",
+            "school_exam_pdf",
+            "student_exam_photo",
+        ),
+    ):
+        return {"enabled": True, "skipped_reason": "source_type_not_enabled"}
+
+    max_calls = max(0, _env_int("MATCHUP_VLM_PAGE_ROLE_MAX_CALLS", 50))
+    min_conf = max(
+        0.0,
+        min(1.0, _env_float("MATCHUP_VLM_PAGE_ROLE_MIN_CONFIDENCE", 0.75)),
+    )
+    stats: Dict[str, Any] = {
+        "enabled": True,
+        "candidates": 0,
+        "attempted": 0,
+        "skipped_pages": 0,
+        "paper_type_updates": 0,
+        "cost_cap_hit": False,
+        "min_confidence": min_conf,
+    }
+
+    for page in pages:
+        if stats["attempted"] >= max_calls:
+            stats["cost_cap_hit"] = True
+            break
+
+        boxes = page.get("boxes") or []
+        text_regions = page.get("text_regions") or []
+        page_type = (page.get("paper_type") or "").strip().lower()
+        if page.get("is_skip_page") or page_type in _NON_PROBLEM_PAGE_TYPES:
+            continue
+        if not boxes and not text_regions:
+            continue
+
+        stats["candidates"] += 1
+        stats["attempted"] += 1
+        result, raw_paper_type = _detect_page_with_vlm(
+            page, document_id, tenant_id=tenant_id,
+        )
+        if raw_paper_type:
+            page["paper_type"] = raw_paper_type
+            stats["paper_type_updates"] += 1
+
+        if result is None:
+            continue
+
+        role_value = _vlm_result_role_value(result)
+        confidence = float(getattr(result, "confidence", 0.0) or 0.0)
+        should_skip = bool(getattr(result, "should_skip", False))
+
+        debug = page.setdefault("paper_type_debug", {})
+        debug["vlm_page_role_filter"] = {
+            "role": role_value,
+            "confidence": round(confidence, 3),
+            "should_skip": should_skip,
+        }
+
+        if (
+            confidence >= min_conf
+            and (should_skip or role_value in _NON_PROBLEM_PAGE_ROLES)
+        ):
+            page["boxes"] = []
+            page["numbers"] = []
+            page["text_regions"] = []
+            page["is_skip_page"] = True
+            page["paper_type"] = raw_paper_type or "non_question"
+            stats["skipped_pages"] += 1
+
+    return stats
+
+
+def _augment_questions_with_vlm_for_empty_pages(
+    pages: List[Dict],
+    questions: List[Dict],
+    *,
+    document_id,
+    job_id: str,
+    tenant_id: str | int | None = None,
+) -> Optional[Dict[str, Any]]:
+    """일부 페이지만 자동분리 실패한 문서에서 빈 페이지를 Gemini로 보정한다."""
+    if not _env_flag("MATCHUP_VLM_AUTO_SPLIT", True):
+        return None
+    if not _env_flag("MATCHUP_VLM_FILL_EMPTY_PAGES", True):
+        return None
+    if not document_id:
+        return None
+    if not _real_vlm_vision_configured():
+        return {
+            "enabled": True,
+            "skipped_reason": "real_vlm_not_configured",
+            "candidates": 0,
+            "attempted": 0,
+            "added": 0,
+        }
+    if not _tenant_gate_allows("MATCHUP_VLM_FILL_EMPTY_PAGE_TENANTS", tenant_id):
+        return None
+
+    max_calls = max(0, _env_int("MATCHUP_VLM_EMPTY_PAGE_MAX_CALLS", 30))
+    candidates: List[Dict] = []
+    cost_cap_hit = False
+    for page in pages:
+        if len(candidates) >= max_calls:
+            cost_cap_hit = True
+            break
+        page_type = (page.get("paper_type") or "").strip().lower()
+        if page.get("is_skip_page") or page_type in _NON_PROBLEM_PAGE_TYPES:
+            continue
+        if page.get("boxes") or page.get("text_regions"):
+            continue
+        candidates.append(page)
+
+    if not candidates:
+        return {
+            "enabled": True,
+            "candidates": 0,
+            "attempted": 0,
+            "added": 0,
+        }
+
+    vlm_questions, vlm_stats = _pages_via_vlm(
+        candidates, document_id, job_id, tenant_id=tenant_id,
+    )
+    used_numbers = {
+        int(q.get("number"))
+        for q in questions
+        if str(q.get("number", "")).lstrip("-").isdigit()
+    }
+    next_number = 1
+    remapped = 0
+    added = 0
+    for q in vlm_questions:
+        try:
+            proposed = int(q.get("number") or 0)
+        except (TypeError, ValueError):
+            proposed = 0
+        if proposed <= 0 or proposed in used_numbers:
+            while next_number in used_numbers:
+                next_number += 1
+            q.setdefault("meta_extra", {})["original_vlm_number"] = proposed
+            q["number"] = next_number
+            proposed = next_number
+            remapped += 1
+        used_numbers.add(proposed)
+        q.setdefault("meta_extra", {})["engine"] = "vlm"
+        q["meta_extra"]["vlm_reason"] = "empty_page_fallback"
+        questions.append(q)
+        added += 1
+
+    stats: Dict[str, Any] = {
+        "enabled": True,
+        "candidates": len(candidates),
+        "attempted": len(candidates),
+        "added": added,
+        "remapped_numbers": remapped,
+        "cost_cap_hit": cost_cap_hit,
+    }
+    stats.update({f"vlm_{k}": v for k, v in vlm_stats.items()})
+    return stats
 
 
 def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any]:
@@ -1149,31 +1480,14 @@ def _try_vlm_problem_bboxes(
       2차 게이트: _validate_vlm_bboxes (D-1~D-4)
       통과 시 result, 실패 시 None.
     """
-    try:
-        from academy.adapters.ai.detection.vlm_fallback import detect_problems_vision
-        result = detect_problems_vision(
-            image_path=page["image_path"],
-            page_meta={
-                "document_id": document_id,
-                "tenant_id": tenant_id,
-                "page_index": page["page_index"],
-                "page_width": page.get("width"),
-                "page_height": page.get("height"),
-            },
-        )
-    except Exception as e:
-        logger.warning("MATCHUP_VLM_AUTO_FAIL | doc=%s | page=%s | err=%s",
-                       document_id, page.get("page_index"), e)
-        return None, None
-
-    adapter = (result.debug or {}).get("adapter", "")
-    raw_paper_type = getattr(result, "paper_type", None)
-    # mock 폴백이거나 unknown이면 paper_type 신호 무효
-    if adapter != "gemini" or not raw_paper_type or raw_paper_type == "unknown":
-        raw_paper_type = None
+    result, raw_paper_type = _detect_page_with_vlm(
+        page, document_id, tenant_id=tenant_id,
+    )
+    if result is None:
+        return None, raw_paper_type
 
     # bbox 게이트는 별도 — paper_type은 응답 받자마자 보존
-    if adapter != "gemini" or result.should_skip:
+    if result.should_skip:
         return None, raw_paper_type
     # 1차 게이트 완화 (2026-05-05): `< 2` → `< 1`.
     # 박철 수제작 1-문항/페이지 layout (doc#327 등 73 doc) 차단 결함 fix.
@@ -1236,6 +1550,7 @@ def _pages_via_vlm(
                     "page_index": page_idx,
                     "image_path": img_path,
                     "bbox": bbox_px,
+                    "meta_extra": {"engine": "native_pdf"},
                 })
             continue
 
@@ -1272,6 +1587,10 @@ def _pages_via_vlm(
                         "page_index": page_idx,
                         "image_path": img_path,
                         "bbox": list(prob.bbox),
+                        "meta_extra": {
+                            "engine": "vlm",
+                            "vlm_reason": "auto_split",
+                        },
                     }
                     shared = list(getattr(prob, "shared_with", []) or [])
                     if shared:

@@ -479,6 +479,173 @@ def test_pages_via_vlm_no_paper_type_response_no_override(monkeypatch):
     assert page.get("paper_type_debug") is None or "vlm_override" not in page.get("paper_type_debug", {})
 
 
+def test_vlm_page_role_filter_skips_non_problem_page(monkeypatch):
+    """Gemini page-role filter는 확신 높은 해설/정답/표지 페이지만 기존 box를 제거."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    page = {
+        "page_index": 2,
+        "image_path": "/fake/path.png",
+        "boxes": [(10, 10, 100, 100)],
+        "numbers": [1],
+        "text_regions": ["region"],
+        "paper_type": "clean_pdf_dual",
+    }
+    result = ProblemBboxResult(
+        page_role=PageRole.EXPLANATION,
+        should_skip=True,
+        problems=[],
+        confidence=0.91,
+        paper_type="non_question",
+        debug={"adapter": "gemini"},
+    )
+    monkeypatch.setenv("MATCHUP_VLM_PAGE_ROLE_FILTER", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_detect_page_with_vlm",
+        lambda page, doc_id, tenant_id=None: (result, "non_question"),
+    )
+
+    stats = matchup_pipeline._apply_vlm_page_role_filter(
+        [page],
+        source_type="commercial_workbook",
+        document_id="doc-1",
+        tenant_id=1,
+    )
+
+    assert stats["skipped_pages"] == 1
+    assert page["boxes"] == []
+    assert page["numbers"] == []
+    assert page["text_regions"] == []
+    assert page["is_skip_page"] is True
+    assert page["paper_type"] == "non_question"
+
+
+def test_vlm_page_role_filter_disabled_by_default(monkeypatch):
+    """기본값은 off라 기존 운영 path에 VLM 호출을 추가하지 않는다."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    monkeypatch.delenv("MATCHUP_VLM_PAGE_ROLE_FILTER", raising=False)
+    called = {"value": False}
+
+    def fake_detect(*args, **kwargs):
+        called["value"] = True
+        return None, None
+
+    monkeypatch.setattr(matchup_pipeline, "_detect_page_with_vlm", fake_detect)
+    stats = matchup_pipeline._apply_vlm_page_role_filter(
+        [{
+            "page_index": 0,
+            "image_path": "/fake/path.png",
+            "boxes": [(10, 10, 100, 100)],
+            "numbers": [1],
+            "paper_type": "clean_pdf_dual",
+        }],
+        source_type="commercial_workbook",
+        document_id="doc-1",
+        tenant_id=1,
+    )
+
+    assert stats is None
+    assert called["value"] is False
+
+
+def test_vlm_page_role_filter_requires_real_gemini_config(monkeypatch):
+    """Gemini key/adapter가 없으면 page-role filter가 기존 box를 건드리지 않는다."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    monkeypatch.setenv("MATCHUP_VLM_PAGE_ROLE_FILTER", "1")
+    monkeypatch.delenv("MATCHUP_VLM_VISION_ADAPTER", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    called = {"value": False}
+
+    def fake_detect(*args, **kwargs):
+        called["value"] = True
+        return None, None
+
+    monkeypatch.setattr(matchup_pipeline, "_detect_page_with_vlm", fake_detect)
+    page = {
+        "page_index": 0,
+        "image_path": "/fake/path.png",
+        "boxes": [(10, 10, 100, 100)],
+        "numbers": [1],
+        "paper_type": "clean_pdf_dual",
+    }
+
+    stats = matchup_pipeline._apply_vlm_page_role_filter(
+        [page],
+        source_type="commercial_workbook",
+        document_id="doc-1",
+        tenant_id=1,
+    )
+
+    assert stats["skipped_reason"] == "real_vlm_not_configured"
+    assert called["value"] is False
+    assert page["boxes"] == [(10, 10, 100, 100)]
+
+
+def test_vlm_empty_page_fill_appends_and_remaps_duplicate(monkeypatch):
+    """일부 실패 페이지는 VLM bbox로 보강하고 기존 번호와 충돌하면 안전하게 재번호화."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    pages = [
+        {
+            "page_index": 0,
+            "image_path": "/fake/p0.png",
+            "boxes": [(10, 10, 100, 100)],
+            "numbers": [1],
+            "paper_type": "clean_pdf_single",
+        },
+        {
+            "page_index": 1,
+            "image_path": "/fake/p1.png",
+            "boxes": [],
+            "numbers": [],
+            "text_regions": [],
+            "paper_type": "unknown",
+        },
+    ]
+    questions = [{
+        "number": 1,
+        "page_index": 0,
+        "image_path": "/fake/p0.png",
+        "bbox": [10, 10, 100, 100],
+    }]
+
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_EMPTY_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline, "_pages_via_vlm",
+        lambda pages, document_id, job_id, tenant_id=None: (
+            [{
+                "number": 1,
+                "page_index": 1,
+                "image_path": "/fake/p1.png",
+                "bbox": [20, 20, 120, 120],
+            }],
+            {"pages_attempted": 1, "pages_used": 1, "problems_added": 1},
+        ),
+    )
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_empty_pages(
+        pages,
+        questions,
+        document_id="doc-1",
+        job_id="job-1",
+        tenant_id=1,
+    )
+
+    assert stats["added"] == 1
+    assert stats["remapped_numbers"] == 1
+    assert len(questions) == 2
+    assert questions[1]["number"] == 2
+    assert questions[1]["meta_extra"]["engine"] == "vlm"
+    assert questions[1]["meta_extra"]["original_vlm_number"] == 1
+
+
 def test_mock_vision_adapter_paper_type_default():
     """MockVLMVisionAdapter도 paper_type 필드 보유 (하위호환)."""
     from academy.adapters.ai.detection.vlm_fallback import MockVLMVisionAdapter
