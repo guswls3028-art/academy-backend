@@ -4,6 +4,8 @@ AI 결과 → Submission 상태 전이 체인 테스트.
 """
 from unittest.mock import patch
 
+import pytest
+
 from apps.domains.ai.callbacks import (
     dispatch_ai_result_to_domain,
     _handle_submission_ai_result,
@@ -64,10 +66,16 @@ class TestDispatchRouting:
 # apply_ai_result = apply_omr_ai_result (alias). 데코레이터 때문에 alias를 mock해야 함
 _MOD = "apps.domains.submissions.services.ai_omr_result_mapper"
 _GRADE_MOCK = "apps.domains.results.tasks.grading_tasks.grade_submission_task"
-_SUB_MODEL_MOCK = "apps.domains.submissions.models.submission.Submission"
+_SUB_MODEL_MOCK = "apps.domains.submissions.models.Submission"
+_AI_JOB_MODEL_MOCK = "apps.domains.ai.models.AIJobModel"
 
 
 class TestHandleSubmission:
+    @pytest.fixture(autouse=True)
+    def _mock_ai_job_model(self):
+        with patch(_AI_JOB_MODEL_MOCK) as m_job:
+            m_job.objects.filter.return_value.first.return_value = None
+            yield
 
     @patch(f"{_MOD}.apply_ai_result")
     def test_done_calls_apply_with_correct_payload(self, m_apply):

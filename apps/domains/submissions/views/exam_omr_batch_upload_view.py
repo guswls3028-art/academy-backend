@@ -8,7 +8,10 @@ from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.serializers.submission import SubmissionCreateSerializer
-from apps.domains.submissions.services.dispatcher import dispatch_submission
+from apps.domains.submissions.services.dispatcher import (
+    dispatch_submission,
+    resolve_omr_sheet_for_exam,
+)
 
 
 class ExamOMRBatchUploadView(APIView):
@@ -70,7 +73,17 @@ class ExamOMRBatchUploadView(APIView):
             try:
                 payload["sheet_id"] = int(sheet_id)
             except Exception:
-                payload["sheet_id"] = sheet_id
+                return Response({"detail": "sheet_id must be integer"}, status=400)
+
+        try:
+            sheet = resolve_omr_sheet_for_exam(
+                tenant=tenant,
+                exam_id=int(exam_id),
+                requested_sheet_id=payload.get("sheet_id"),
+            )
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+        payload["sheet_id"] = int(sheet.id)
 
         created_ids = []
 

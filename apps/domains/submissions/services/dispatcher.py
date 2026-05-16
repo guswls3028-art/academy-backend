@@ -40,6 +40,60 @@ def _safe_int(v: Any) -> Optional[int]:
         return None
 
 
+def resolve_omr_sheet_for_exam(
+    *,
+    tenant,
+    exam_id: int,
+    requested_sheet_id: Optional[int],
+) -> Sheet:
+    """
+    Resolve the OMR sheet for an exam with tenant/exam scoping.
+
+    OMR coordinates are as sensitive as the answer key: using another exam's
+    sheet can map bubbles to the wrong questions. Fail closed instead of
+    silently falling back to a generic 30-question template.
+    """
+    from apps.domains.exams.models import Exam
+
+    exam = Exam.objects.filter(
+        id=int(exam_id),
+        tenant=tenant,
+    ).first()
+    if not exam:
+        raise ValueError("OMR target exam not found for tenant")
+
+    allowed_exam_ids = {int(exam.id), int(exam.effective_template_exam_id)}
+    qs = Sheet.objects.select_related("exam").filter(
+        exam_id__in=allowed_exam_ids,
+        exam__tenant=tenant,
+    )
+
+    if requested_sheet_id:
+        sheet = qs.filter(id=int(requested_sheet_id)).first()
+        if not sheet:
+            raise ValueError("sheet_id does not belong to this exam")
+        return sheet
+
+    preferred = qs.filter(exam_id=int(exam.effective_template_exam_id)).first()
+    sheet = preferred or qs.first()
+    if not sheet:
+        raise ValueError("OMR sheet not found for this exam")
+    return sheet
+
+
+def resolve_omr_sheet_for_submission(
+    submission: Submission,
+    requested_sheet_id: Optional[int],
+) -> Sheet:
+    if submission.target_type != Submission.TargetType.EXAM:
+        raise ValueError("OMR submission target_type must be exam")
+    return resolve_omr_sheet_for_exam(
+        tenant=submission.tenant,
+        exam_id=int(submission.target_id),
+        requested_sheet_id=requested_sheet_id,
+    )
+
+
 def _build_ai_payload(submission: Submission) -> Dict[str, Any]:
     payload = dict(submission.payload or {})
 
@@ -47,22 +101,22 @@ def _build_ai_payload(submission: Submission) -> Dict[str, Any]:
     if mode not in ("scan", "photo", "auto"):
         mode = "auto"
 
-    sheet_id = _safe_int(payload.get("sheet_id"))
-
-    # sheet_id가 없으면 exam에서 자동 탐색
-    if not sheet_id and submission.target_type == "exam":
-        from apps.domains.exams.models import Exam
-        exam = Exam.objects.filter(id=int(submission.target_id)).first()
-        if exam:
-            sheet = Sheet.objects.filter(exam=exam).first()
-            if not sheet and getattr(exam, "template_exam_id", None):
-                sheet = Sheet.objects.filter(exam_id=exam.template_exam_id).first()
-            if sheet:
-                sheet_id = sheet.id
+    raw_sheet_id = payload.get("sheet_id")
+    sheet_id = _safe_int(raw_sheet_id)
+    if (
+        submission.source == Submission.Source.OMR_SCAN
+        and raw_sheet_id not in (None, "")
+        and sheet_id is None
+    ):
+        raise ValueError("sheet_id must be integer")
+    sheet: Sheet | None = None
+    if submission.source == Submission.Source.OMR_SCAN:
+        sheet = resolve_omr_sheet_for_submission(submission, sheet_id)
+        sheet_id = int(sheet.id)
 
     questions_payload = []
     if sheet_id:
-        qs = ExamQuestion.objects.filter(sheet_id=sheet_id).order_by("number")
+        qs = ExamQuestion.objects.filter(sheet_id=int(sheet_id)).order_by("number")
         for q in qs:
             region_meta = getattr(q, "region_meta", None) or getattr(q, "meta", None)
             questions_payload.append(
@@ -94,10 +148,7 @@ def _build_ai_payload(submission: Submission) -> Dict[str, Any]:
     )
 
     if submission.source == Submission.Source.OMR_SCAN and sheet_id:
-        qc = 0
-        sh = Sheet.objects.filter(id=sheet_id).first()
-        if sh:
-            qc = int(getattr(sh, "total_questions", 0) or 0)
+        qc = int(getattr(sheet, "total_questions", 0) or 0) if sheet else 0
 
         # v10: 모든 문항수에 template_meta 전달 (기존 10/20/30 제한 제거)
         if qc > 0:
@@ -147,7 +198,16 @@ def dispatch_submission(submission: Submission) -> None:
     # DB commit 이전에 워커가 메시지를 받는 race condition을 방지한다.
     # ==================================================
     job_type = _infer_ai_job_type(submission)
-    payload = _build_ai_payload(submission)
+    try:
+        payload = _build_ai_payload(submission)
+    except ValueError as e:
+        transit_save(
+            submission,
+            Submission.Status.FAILED,
+            error_message=str(e),
+            actor="dispatcher.payload",
+        )
+        return
     source_id = str(submission.id)
 
     dispatch_job(

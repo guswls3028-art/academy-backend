@@ -29,6 +29,39 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+def _is_pdf_path(path: str) -> bool:
+    try:
+        with open(path, "rb") as f:
+            if f.read(5) == b"%PDF-":
+                return True
+    except Exception:
+        pass
+    return str(path).lower().endswith(".pdf")
+
+
+def _load_omr_image_bgr(local_path: str) -> tuple[Any, Dict[str, Any]]:
+    """Load an OMR upload as BGR. Single-page PDFs are rendered at 300 DPI."""
+    if _is_pdf_path(local_path):
+        from academy.adapters.tools.pymupdf_renderer import PdfDocument
+        import cv2  # type: ignore
+        import numpy as np  # type: ignore
+
+        with PdfDocument(local_path) as doc:
+            page_count = doc.page_count()
+            if page_count != 1:
+                raise ValueError("OMR PDF must contain exactly one page")
+            pil_img = doc.render_page(0, dpi=300)
+        arr = np.array(pil_img.convert("RGB"))
+        return cv2.cvtColor(arr, cv2.COLOR_RGB2BGR), {
+            "input_format": "pdf",
+            "pdf_page_count": page_count,
+            "render_dpi": 300,
+        }
+
+    return imread_exif_aware(local_path), {"input_format": "image"}
+
+
 # 구간별 진행률 기록 함수 (공통)
 def _record_progress(
     job_id: str,
@@ -285,7 +318,10 @@ def handle_ai_job(job: AIJob) -> AIResult:
             meta = payload.get("template_meta")
 
             if not meta:
-                qc = int(payload.get("question_count") or payload.get("mc_count") or 30)
+                qc_raw = payload.get("question_count") or payload.get("mc_count")
+                if qc_raw is None:
+                    return AIResult.failed(job.id, "OMR question_count required")
+                qc = int(qc_raw)
                 ec = int(payload.get("essay_count") or 0)
                 nc = int(payload.get("n_choices") or 5)
                 meta = build_omr_meta(question_count=qc, n_choices=nc, essay_count=ec)
@@ -294,7 +330,10 @@ def handle_ai_job(job: AIJob) -> AIResult:
 
             # 2) 이미지 로드 및 리사이징 — EXIF orientation 자동 보정 (휴대폰 사진 대응)
             _record_progress(job.id, "loading", 35, step_index=3, step_total=7, step_name_display="이미지로드", step_percent=0, tenant_id=tenant_id)
-            img_bgr = imread_exif_aware(local_path)
+            try:
+                img_bgr, input_meta = _load_omr_image_bgr(local_path)
+            except Exception as e:
+                return AIResult.failed(job.id, f"cannot read OMR input: {e}")
             if img_bgr is None:
                 return AIResult.failed(job.id, "cannot read image")
             
@@ -344,6 +383,7 @@ def handle_ai_job(job: AIJob) -> AIResult:
                     "mode": mode,
                     "aligned": align_result.success,
                     "alignment_method": align_result.method,
+                    "input": input_meta,
                     "identifier": ident,
                     "answers": answers,
                 },

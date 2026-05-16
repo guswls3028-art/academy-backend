@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 import cv2
 import numpy as np
+import pytest
 
 from apps.domains.assets.omr.services.meta_generator import build_omr_meta
 from academy.adapters.ai.omr.meta_px import build_page_scale_from_meta
@@ -31,6 +32,11 @@ from academy.adapters.ai.omr.roi_builder import build_questions_payload_from_met
 PASS = 0
 FAIL = 0
 SKIP = 0
+
+
+@pytest.fixture
+def meta():
+    return build_omr_meta(question_count=30, n_choices=5, essay_count=5)
 
 
 def check(name, condition, detail=""):
@@ -121,7 +127,7 @@ def test_struct():
     check("A9. grader handles v8", "_grade_choice_v1" in grader_src)
 
     # A10. dispatcher v7 imports
-    with open("apps/worker/ai_worker/ai/pipelines/dispatcher.py", encoding="utf-8") as f:
+    with open("academy/application/use_cases/ai/pipelines/dispatcher.py", encoding="utf-8") as f:
         disp_src = f.read()
     check("A10. dispatcher detect_omr_answers_v7", "detect_omr_answers_v7" in disp_src)
     check("A10. dispatcher AnswerDetectConfig", "AnswerDetectConfig" in disp_src)
@@ -133,8 +139,6 @@ def test_struct():
         mapper_src = f.read()
     check("A11. mapper question_id fallback", 'a.get("question_id")' in mapper_src)
     check("A11. mapper enrollment resolver", "_resolve_enrollment_by_phone" in mapper_src)
-
-    return meta
 
 
 # ══════════════════════════════════════════
@@ -266,8 +270,6 @@ def test_synth(meta):
         ok_mc = sum(1 for r in results_mc if r.status == "ok")
         check(f"B8. {mc}문항 전마킹 감지", ok_mc == mc, f"ok={ok_mc}/{mc}")
 
-    return True
-
 
 # ══════════════════════════════════════════
 # C. 회귀 방지 fixture 저장
@@ -281,7 +283,7 @@ def save_fixtures():
     meta = build_omr_meta(question_count=30, n_choices=5)
 
     # fixture: 기대 좌표
-    with open(os.path.join(fixture_dir, "meta_30q_5c.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(fixture_dir, "meta_30q_5c.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
     # fixture: Q1 선택지 좌표 스냅샷 (레이아웃 변경 시 깨짐 감지)
@@ -294,7 +296,7 @@ def save_fixtures():
             for c in q1["choices"]
         ],
     }
-    with open(os.path.join(fixture_dir, "q1_coordinate_snapshot.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(fixture_dir, "q1_coordinate_snapshot.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(snapshot, f, indent=2, ensure_ascii=False)
 
     # fixture: identifier digit 0 스냅샷
@@ -304,12 +306,12 @@ def save_fixtures():
         "bubble_0_center": d0["bubbles"][0]["center"],
         "bubble_9_center": d0["bubbles"][9]["center"],
     }
-    with open(os.path.join(fixture_dir, "id_digit0_snapshot.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(fixture_dir, "id_digit0_snapshot.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(id_snapshot, f, indent=2, ensure_ascii=False)
 
     # fixture: 기대답안 예시
     expected = {str(i): str((i % 5) + 1) for i in range(1, 31)}
-    with open(os.path.join(fixture_dir, "expected_all_marked.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(fixture_dir, "expected_all_marked.json"), "w", encoding="utf-8", newline="\n") as f:
         json.dump(expected, f, indent=2, ensure_ascii=False)
 
     print(f"  fixture 저장: {fixture_dir}/")
@@ -349,7 +351,8 @@ if __name__ == "__main__":
     print("=" * 60)
 
     try:
-        meta = test_struct()
+        test_struct()
+        meta = build_omr_meta(question_count=30, n_choices=5, essay_count=5)
         test_synth(meta)
         save_fixtures()
         report_scan_needed()

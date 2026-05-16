@@ -4,7 +4,10 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
-from apps.domains.submissions.services.dispatcher import dispatch_submission
+from apps.domains.submissions.services.dispatcher import (
+    dispatch_submission,
+    resolve_omr_sheet_for_exam,
+)
 
 
 class ExamOMRSubmitView(APIView):
@@ -37,6 +40,15 @@ class ExamOMRSubmitView(APIView):
         if not Exam.objects.filter(id=exam_id, tenant=tenant).exists():
             return Response({"detail": "해당 시험을 찾을 수 없습니다."}, status=400)
 
+        try:
+            sheet = resolve_omr_sheet_for_exam(
+                tenant=tenant,
+                exam_id=int(exam_id),
+                requested_sheet_id=int(sheet_id),
+            )
+        except (TypeError, ValueError) as e:
+            return Response({"detail": str(e)}, status=400)
+
         submission = Submission.objects.create(
             tenant=tenant,
             user=request.user,
@@ -45,10 +57,11 @@ class ExamOMRSubmitView(APIView):
             target_id=int(exam_id),
             source=Submission.Source.OMR_SCAN,
             file_key=str(file_key),
-            payload={"sheet_id": int(sheet_id)},
+            payload={"sheet_id": int(sheet.id)},
         )
 
         dispatch_submission(submission)
+        submission.refresh_from_db(fields=["status"])
 
         return Response(
             {"submission_id": submission.id, "status": submission.status}, status=201

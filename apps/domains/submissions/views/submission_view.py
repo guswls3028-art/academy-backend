@@ -16,7 +16,10 @@ from apps.domains.submissions.serializers.submission import (
     SubmissionSerializer,
     SubmissionCreateSerializer,
 )
-from apps.domains.submissions.services.dispatcher import dispatch_submission
+from apps.domains.submissions.services.dispatcher import (
+    dispatch_submission,
+    resolve_omr_sheet_for_exam,
+)
 from apps.domains.submissions.services.transition import (
     transit_save,
     InvalidTransitionError,
@@ -90,7 +93,16 @@ class SubmissionViewSet(ModelViewSet):
             try:
                 payload["sheet_id"] = int(request.data.get("sheet_id"))
             except (TypeError, ValueError):
-                pass
+                return Response({"detail": "sheet_id must be integer"}, status=400)
+        try:
+            sheet = resolve_omr_sheet_for_exam(
+                tenant=tenant,
+                exam_id=exam_id,
+                requested_sheet_id=payload.get("sheet_id"),
+            )
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+        payload["sheet_id"] = int(sheet.id)
 
         ser = SubmissionCreateSerializer(
             data={
@@ -105,6 +117,7 @@ class SubmissionViewSet(ModelViewSet):
         ser.is_valid(raise_exception=True)
         submission = ser.save(user=request.user, tenant=tenant)
         dispatch_submission(submission)
+        submission.refresh_from_db(fields=["status"])
 
         return Response(
             {"submission_id": submission.id, "status": submission.status},

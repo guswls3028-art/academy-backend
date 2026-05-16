@@ -72,3 +72,31 @@ def test_engine_version_dynamic():
     src = inspect.getsource(engine)
     # 하드코딩 "v9"로 OMRAnswerV1을 만드는 경로가 사라졌는지 (5곳 전부 meta_version)
     assert src.count('version="v9"') == 0, "engine에 version=\"v9\" 하드코딩 잔재"
+
+
+def test_omr_dispatcher_sheet_scope_contract():
+    import inspect
+    from apps.domains.submissions.services import dispatcher
+    src = inspect.getsource(dispatcher)
+    assert "resolve_omr_sheet_for_exam" in src
+    assert "exam__tenant" in src
+    assert "effective_template_exam_id" in src
+    assert "silently falling back" in src
+
+
+def test_omr_worker_pdf_contract():
+    from pathlib import Path
+    src = Path("academy/application/use_cases/ai/pipelines/dispatcher.py").read_text(encoding="utf-8")
+    assert "_load_omr_image_bgr" in src
+    assert "PdfDocument" in src
+    assert "exactly one page" in src
+    assert "OMR question_count required" in src
+
+
+def test_manual_review_blocks_student_result_sync_contract():
+    import inspect
+    from apps.domains.results.services import grading_service
+    src = inspect.getsource(grading_service.grade_submission)
+    assert "manual_review" in src
+    assert "sync_result_from_exam_submission" in src
+    assert src.index("manual_review") < src.index("sync_result_from_exam_submission")
