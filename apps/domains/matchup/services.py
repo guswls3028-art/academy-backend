@@ -157,14 +157,14 @@ def find_similar_problems(
     cached = get_cached_similar(tenant_id, problem_id, top_k, author_id)
     if cached is not None:
         # 캐시된 ID로 problem 객체 단일 PK 쿼리 — DB pool fetch 회피.
-        cached_ids = [pid for pid, _ in cached]
+        cached_ids = [int(entry[0]) for entry in cached]
         if not cached_ids:
             return []
         problems_by_id = MatchupProblem.objects.in_bulk(cached_ids)
         return [
-            (problems_by_id[pid], score)
-            for pid, score in cached
-            if pid in problems_by_id
+            (problems_by_id[int(entry[0])], float(entry[1]))
+            for entry in cached
+            if int(entry[0]) in problems_by_id
         ]
 
     source_category = ""

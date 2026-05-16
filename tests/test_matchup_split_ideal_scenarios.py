@@ -550,13 +550,17 @@ def test_find_similar_problems_excludes_not_indexable_docs():
     from apps.domains.matchup import services
 
     src = inspect.getsource(services.find_similar_problems)
+    gate_src = inspect.getsource(services.eligible_for_recommendation_qs)
     has_indexable_filter = (
-        'document__meta__contains={"indexable": False}' in src
-        or "document__meta__contains={'indexable': False}" in src
-        or "document__meta__indexable=False" in src
+        'document__meta__contains={"indexable": False}' in gate_src
+        or "document__meta__contains={'indexable': False}" in gate_src
+        or "document__meta__indexable=False" in gate_src
+    )
+    assert "eligible_for_recommendation_qs" in src, (
+        "find_similar_problems가 추천 풀 자격 SSOT helper를 호출하지 않음"
     )
     assert has_indexable_filter, (
-        "find_similar_problems candidates 쿼리에 document__meta indexable 필터 누락"
+        "추천 풀 자격 SSOT에 document__meta indexable 필터 누락"
     )
 
 
@@ -572,9 +576,13 @@ def test_find_similar_uses_contains_not_eq_to_avoid_null_exclusion():
     from apps.domains.matchup import services
 
     src = inspect.getsource(services.find_similar_problems)
+    gate_src = inspect.getsource(services.eligible_for_recommendation_qs)
     # meta__contains 패턴이 있어야 — 직접 = 비교는 NULL 결함 위험
-    assert 'meta__contains={"low_quality": True}' in src or "meta__contains={'low_quality': True}" in src, (
+    assert 'meta__contains={"low_quality": True}' in gate_src or "meta__contains={'low_quality': True}" in gate_src, (
         "low_quality 필터 meta__contains 패턴이 아님 — NULL 행 제외 결함 위험"
+    )
+    assert "eligible_for_recommendation_qs" in src, (
+        "find_similar_problems가 추천 풀 자격 SSOT helper를 호출하지 않음"
     )
     # 직접 meta__low_quality=True 사용 차단 (NULL 결함 회귀 방지) — 주석 제외
     code_lines = [

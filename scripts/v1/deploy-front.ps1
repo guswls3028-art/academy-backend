@@ -5,7 +5,7 @@
 $ErrorActionPreference = "Stop"
 param(
     [string]$RepoRoot = "",
-    [string]$FrontRepoPath = "",  # 비어 있으면 $RepoRoot\..\academyfront
+    [string]$FrontRepoPath = "",  # 비어 있으면 $RepoRoot\..\frontend
     [switch]$SkipBuild = $false,
     [switch]$SkipUpload = $false,
     [switch]$SkipPurge = $false,
@@ -18,9 +18,9 @@ if (-not (Test-Path $ParamsPath)) {
     Write-Host "params.yaml not found: $ParamsPath" -ForegroundColor Yellow
     exit 0
 }
-if (-not $FrontRepoPath) { $FrontRepoPath = Join-Path (Split-Path $RepoRoot -Parent) "academyfront" }
+if (-not $FrontRepoPath) { $FrontRepoPath = Join-Path (Split-Path $RepoRoot -Parent) "frontend" }
 if (-not (Test-Path $FrontRepoPath)) {
-    Write-Host "Front repo not found: $FrontRepoPath. Set -FrontRepoPath or place academyfront next to academy." -ForegroundColor Yellow
+    Write-Host "Front repo not found: $FrontRepoPath. Set -FrontRepoPath or place frontend next to backend." -ForegroundColor Yellow
     exit 0
 }
 

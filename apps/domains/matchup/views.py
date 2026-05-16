@@ -249,8 +249,11 @@ class DocumentUploadView(View):
         grade_level = request.POST.get("grade_level", "")
         # source_type 7-value SSOT (2026-05-02~) — legacy 2-value 입력도 매핑 수용.
         # 학원장 directive: 자료 유형이 분리 strategy 분기의 1순위 신호.
-        from apps.domains.matchup.source_types import normalize_source_type
-        upload_intent = normalize_source_type(request.POST.get("intent") or request.POST.get("source_type"))
+        from apps.domains.matchup.source_types import resolve_upload_source_type
+        upload_intent = resolve_upload_source_type(
+            request.POST.get("source_type"),
+            request.POST.get("intent"),
+        )
 
         # 1) /매치업-업로드/{YYYY-MM}/ 폴더에 InventoryFile 생성
         from apps.domains.inventory.r2_path import build_r2_key, safe_filename, folder_path_string
@@ -381,8 +384,11 @@ class DocumentPromoteFromInventoryView(View):
         subject = body.get("subject", "")
         grade_level = body.get("grade_level", "")
         # source_type 7-value SSOT (2026-05-02~) — legacy 2-value 입력도 매핑 수용.
-        from apps.domains.matchup.source_types import normalize_source_type
-        upload_intent = normalize_source_type(body.get("intent") or body.get("source_type"))
+        from apps.domains.matchup.source_types import resolve_upload_source_type
+        upload_intent = resolve_upload_source_type(
+            body.get("source_type"),
+            body.get("intent"),
+        )
 
         # Race-safe 승격 — 사전 검사 후 race가 통과해도 OneToOne unique IntegrityError로 차단.
         try:
@@ -1656,4 +1662,3 @@ class ProblemPresignView(View):
             key=problem.image_key, expires_in=3600
         )
         return JsonResponse({"url": url})
-

@@ -65,5 +65,5 @@
 
 ## 6. 프론트·인프라 계약
 
-- **CORS/도메인**: 새 프론트 도메인 사용 시 CORS_ALLOWED_ORIGINS, CSRF_TRUSTED_ORIGINS 추가. 프론트 구현 사실: **academyfront/docs/REFERENCE.md**.
+- **CORS/도메인**: 새 프론트 도메인 사용 시 CORS_ALLOWED_ORIGINS, CSRF_TRUSTED_ORIGINS 추가. 프론트 구현 사실: **frontend/docs/README.md** 및 **frontend/e2e/README.md**.
 - **엑셀 파싱**: `application/services/excel_parsing_service.py`. parse_student_excel_file 결과 비어 있으면 `ValueError("등록할 학생 데이터가 없습니다.")` — 프론트와 동일 메시지. 강의 수강생 일괄 등록용.

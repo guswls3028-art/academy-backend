@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Sequence, Tuple
 
 from libs.redis import get_redis_client
 
@@ -19,6 +19,9 @@ _KEY_PREFIX = "matchup:similar:v1"
 # 5분 = redis hit률 유지 + 신규 manual 빠른 반영 균형점.
 _TTL_SECONDS = 300  # 5분
 
+SimilarityBreakdown = dict[str, Any]
+SimilarCacheEntry = Tuple[int, float] | Tuple[int, float, SimilarityBreakdown]
+
 
 def _key(tenant_id: int, problem_id: int, top_k: int, author_id: Optional[int]) -> str:
     return f"{_KEY_PREFIX}:{tenant_id}:{problem_id}:{top_k}:{author_id or 0}"
@@ -26,8 +29,8 @@ def _key(tenant_id: int, problem_id: int, top_k: int, author_id: Optional[int]) 
 
 def get_cached_similar(
     tenant_id: int, problem_id: int, top_k: int, author_id: Optional[int],
-) -> Optional[List[Tuple[int, float]]]:
-    """캐시 hit: [(problem_id, score), ...]. miss/redis 장애 시 None.
+) -> Optional[List[SimilarCacheEntry]]:
+    """캐시 hit: [(problem_id, score[, breakdown]), ...]. miss/redis 장애 시 None.
 
     fail-OPEN: redis 미사용/오류는 None → 호출부가 DB 풀 fetch fallback.
     """
@@ -43,7 +46,7 @@ def get_cached_similar(
         return None
     try:
         data = json.loads(raw)
-        return [(int(pid), float(score)) for pid, score in data]
+        return [_decode_entry(item) for item in data]
     except (ValueError, TypeError) as e:
         logger.warning("matchup cache decode failed key=%s: %s",
                        _key(tenant_id, problem_id, top_k, author_id), e)
@@ -52,14 +55,14 @@ def get_cached_similar(
 
 def set_cached_similar(
     tenant_id: int, problem_id: int, top_k: int, author_id: Optional[int],
-    results: List[Tuple[int, float]],
+    results: List[SimilarCacheEntry],
 ) -> None:
-    """[(problem_id, score), ...] 캐싱. redis 미사용/오류 시 silent."""
+    """[(problem_id, score[, breakdown]), ...] 캐싱. redis 미사용/오류 시 silent."""
     client = get_redis_client()
     if client is None:
         return
     try:
-        payload = json.dumps([[int(pid), float(score)] for pid, score in results])
+        payload = json.dumps([_encode_entry(entry) for entry in results])
         client.set(
             _key(tenant_id, problem_id, top_k, author_id),
             payload,
@@ -67,6 +70,27 @@ def set_cached_similar(
         )
     except Exception as e:
         logger.warning("matchup cache set failed: %s", e)
+
+
+def _encode_entry(entry: Sequence[Any]) -> list[Any]:
+    if len(entry) < 2:
+        raise ValueError("cache entry must contain problem_id and score")
+    encoded: list[Any] = [int(entry[0]), float(entry[1])]
+    if len(entry) >= 3:
+        breakdown = entry[2]
+        if breakdown is not None:
+            encoded.append(breakdown if isinstance(breakdown, dict) else {})
+    return encoded
+
+
+def _decode_entry(item: Sequence[Any]) -> SimilarCacheEntry:
+    if len(item) < 2:
+        raise ValueError("cache entry must contain problem_id and score")
+    base = (int(item[0]), float(item[1]))
+    if len(item) >= 3:
+        breakdown = item[2] if isinstance(item[2], dict) else {}
+        return (base[0], base[1], breakdown)
+    return base
 
 
 def invalidate_tenant_similar_cache(tenant_id: int) -> int:

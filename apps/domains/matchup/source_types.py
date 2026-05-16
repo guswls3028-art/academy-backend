@@ -95,6 +95,18 @@ def normalize_source_type(value: str | None) -> str:
     return "other"
 
 
+def resolve_upload_source_type(source_type: str | None, intent: str | None) -> str:
+    """Resolve upload/promotion input with 7-value source_type precedence.
+
+    Frontend uploads may include both `source_type` and legacy `intent`.
+    The 7-value source_type is the routing signal; legacy intent is only a
+    fallback for older clients.
+    """
+    if source_type and source_type.strip():
+        return normalize_source_type(source_type)
+    return normalize_source_type(intent)
+
+
 def is_valid_source_type(value: str | None) -> bool:
     """값이 7-value enum에 속하는지 (legacy 매핑 X, 그대로 일치)."""
     return bool(value) and value in SOURCE_TYPES

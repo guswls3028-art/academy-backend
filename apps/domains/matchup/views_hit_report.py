@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import io
 import logging
 
 from django.http import JsonResponse, HttpResponse
@@ -35,10 +37,12 @@ try:
     from apps.infrastructure.storage.r2 import (
         upload_fileobj_to_r2_storage,
         generate_presigned_get_url_storage,
+        get_object_bytes_r2_storage,
     )
 except ImportError:
     upload_fileobj_to_r2_storage = None
     generate_presigned_get_url_storage = None
+    get_object_bytes_r2_storage = None
 
 
 # ── Curated Hit Report (강사 1인의 매치업 적중 보고서) ────────────
@@ -250,6 +254,27 @@ class HitReportDraftView(View):
             author=getattr(request, "user", None),
             defaults={"title": doc.title or ""},
         )
+
+        mode = (request.GET.get("mode") or "").strip().lower()
+        if mode in ("pins", "summary"):
+            entries = [
+                {
+                    "id": e.id,
+                    "exam_problem_id": e.exam_problem_id,
+                    "selected_problem_ids": e.selected_problem_ids or [],
+                    "comment": e.comment or "",
+                    "order": e.order,
+                    "excluded": bool(e.excluded),
+                }
+                for e in report.entries.only(
+                    "id", "exam_problem_id", "selected_problem_ids",
+                    "comment", "order", "excluded",
+                )
+            ]
+            return JsonResponse({
+                "report": MatchupHitReportSerializer(report).data,
+                "entries": entries,
+            })
 
         # 시험지 problems
         exam_problems = list(
@@ -1034,6 +1059,73 @@ def _notify_hit_report_submitted(report, request) -> None:
     )
 
 
+def _hit_report_pdf_version(report) -> str:
+    """PDF 내용 버전.
+
+    MatchupHitReportEntry 저장 시 report.updated_at을 함께 갱신하므로, 보고서 본문 변경은
+    이 값에 반영된다. document.updated_at도 포함해 시험지 재분석 후 stale PDF를 피한다.
+    """
+    doc = getattr(report, "document", None)
+    raw = "|".join([
+        str(getattr(report, "tenant_id", "")),
+        str(getattr(report, "id", "")),
+        getattr(getattr(report, "updated_at", None), "isoformat", lambda: "x")(),
+        str(getattr(report, "document_id", "")),
+        getattr(getattr(doc, "updated_at", None), "isoformat", lambda: "x")(),
+    ])
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def _hit_report_pdf_etag(report) -> str:
+    return f'W/"mhr-pdf-{_hit_report_pdf_version(report)[:16]}"'
+
+
+def _hit_report_pdf_cache_key(report) -> str:
+    version = _hit_report_pdf_version(report)[:20]
+    return (
+        "matchup/hit-report-pdf-cache/"
+        f"tenant-{getattr(report, 'tenant_id', 'unknown')}/"
+        f"report-{getattr(report, 'id', 'unknown')}-{version}.pdf"
+    )
+
+
+def _get_or_generate_curated_hit_report_pdf(report) -> tuple[bytes, str]:
+    """Return PDF bytes and cache state.
+
+    The cache is an R2 object keyed by report/document update timestamps. It does not
+    mutate MatchupHitReport rows, keeping 학원장-authored report data read-only.
+    """
+    cache_key = _hit_report_pdf_cache_key(report)
+    if get_object_bytes_r2_storage is not None:
+        try:
+            cached = get_object_bytes_r2_storage(key=cache_key)
+            if cached:
+                return cached, "hit"
+        except Exception:
+            logger.warning(
+                "HIT_REPORT_PDF_CACHE_READ_FAIL | report=%s key=%s",
+                getattr(report, "id", "?"), cache_key, exc_info=True,
+            )
+
+    from .pdf_report import generate_curated_hit_report_pdf
+    pdf_bytes = generate_curated_hit_report_pdf(report)
+
+    if upload_fileobj_to_r2_storage is not None:
+        try:
+            upload_fileobj_to_r2_storage(
+                fileobj=io.BytesIO(pdf_bytes),
+                key=cache_key,
+                content_type="application/pdf",
+            )
+        except Exception:
+            logger.warning(
+                "HIT_REPORT_PDF_CACHE_WRITE_FAIL | report=%s key=%s",
+                getattr(report, "id", "?"), cache_key, exc_info=True,
+            )
+            return pdf_bytes, "bypass"
+    return pdf_bytes, "miss"
+
+
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class HitReportPdfView(View):
     """GET /api/v1/matchup/hit-reports/<id>/curated.pdf
@@ -1058,9 +1150,15 @@ class HitReportPdfView(View):
                 status=403,
             )
 
+        etag = _hit_report_pdf_etag(report)
+        if request.META.get("HTTP_IF_NONE_MATCH") == etag:
+            r304 = HttpResponse(status=304)
+            r304["ETag"] = etag
+            r304["Cache-Control"] = "private, must-revalidate"
+            return r304
+
         try:
-            from .pdf_report import generate_curated_hit_report_pdf
-            pdf_bytes = generate_curated_hit_report_pdf(report)
+            pdf_bytes, cache_state = _get_or_generate_curated_hit_report_pdf(report)
         except Exception:
             logger.exception("curated_hit_report_pdf failed (report=%s)", report.id)
             return JsonResponse({"detail": "PDF 생성 실패"}, status=500)
@@ -1073,7 +1171,9 @@ class HitReportPdfView(View):
             f"attachment; filename=\"matchup-hitreport-{report.id}.pdf\"; "
             f"filename*=UTF-8''{safe_name}.pdf"
         )
-        resp["Cache-Control"] = "private, no-cache"
+        resp["ETag"] = etag
+        resp["Cache-Control"] = "private, must-revalidate"
+        resp["X-Matchup-Pdf-Cache"] = cache_state
         return resp
 
 
@@ -1591,9 +1691,17 @@ class HitReportLandingPublicPdfView(View):
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
 
+        etag = _hit_report_pdf_etag(report)
+        if request.META.get("HTTP_IF_NONE_MATCH") == etag:
+            r304 = HttpResponse(status=304)
+            r304["ETag"] = etag
+            r304["Cache-Control"] = "private, must-revalidate"
+            if "X-Frame-Options" in r304:
+                del r304["X-Frame-Options"]
+            return r304
+
         try:
-            from .pdf_report import generate_curated_hit_report_pdf
-            pdf_bytes = generate_curated_hit_report_pdf(report)
+            pdf_bytes, cache_state = _get_or_generate_curated_hit_report_pdf(report)
         except Exception:
             logger.exception("public_landing_pdf failed (report=%s)", report.id)
             return JsonResponse({"detail": "PDF 생성 실패"}, status=500)
@@ -1607,8 +1715,10 @@ class HitReportLandingPublicPdfView(View):
             f"inline; filename=\"hit-report-{report.id}.pdf\"; "
             f"filename*=UTF-8''{safe_name}.pdf"
         )
-        # 학원장이 picker에서 빼면 즉시 비공개돼야 함 — public cache 비활성, 브라우저 short-cache만.
-        resp["Cache-Control"] = "private, no-cache, must-revalidate"
+        resp["ETag"] = etag
+        # 학원장이 picker에서 빼면 즉시 비공개돼야 함 — 재방문은 304로만 단축.
+        resp["Cache-Control"] = "private, must-revalidate"
+        resp["X-Matchup-Pdf-Cache"] = cache_state
         # iframe embed 허용 (학원 도메인 hover preview + 상세 페이지 viewer). xframe_options_exempt와 함께 보강.
         if "X-Frame-Options" in resp:
             del resp["X-Frame-Options"]
@@ -1837,11 +1947,10 @@ class HitReportShareMetaView(View):
 def _share_etag(report) -> str:
     """share PDF/meta 응답 ETag SSOT.
 
-    구성: token + updated_at(분 단위) — 학원장이 회전(token 교체)하거나 entry 수정 시 변경.
+    token 회전 + 보고서/문서 내용 버전이 바뀌면 변경된다.
     PDF generation 비용 큼 → 304 응답으로 재생성 건너뛰면 latency 큰 폭 절약.
     """
-    import hashlib
-    raw = f"{report.share_token}:{report.updated_at.isoformat() if report.updated_at else 'x'}".encode()
+    raw = f"{report.share_token}:{_hit_report_pdf_version(report)}".encode()
     return f'W/"{hashlib.sha1(raw).hexdigest()[:16]}"'
 
 
@@ -1853,7 +1962,7 @@ class HitReportSharePdfView(View):
     iframe embed 허용. 학원장이 회전/취소하면 즉시 차단.
 
     ETag 캐싱 (#67 cycle 10, 2026-05-12):
-      - W/"sha1(token+updated_at)" 약형 ETag.
+      - W/"sha1(token+content_version)" 약형 ETag.
       - 브라우저 재방문 시 If-None-Match → 일치하면 304 + PDF body 없이 응답.
       - PDF generate (큰 비용) 건너뜀.
     """
@@ -1875,8 +1984,7 @@ class HitReportSharePdfView(View):
             return r304
 
         try:
-            from .pdf_report import generate_curated_hit_report_pdf
-            pdf_bytes = generate_curated_hit_report_pdf(report)
+            pdf_bytes, cache_state = _get_or_generate_curated_hit_report_pdf(report)
         except Exception:
             logger.exception("share_pdf failed (report=%s token=%s)", report.id, token)
             return JsonResponse({"detail": "PDF 생성 실패"}, status=500)
@@ -1892,6 +2000,7 @@ class HitReportSharePdfView(View):
         # ETag + must-revalidate — 브라우저 재방문 시 If-None-Match 비교, 변경 없으면 304.
         resp["ETag"] = etag
         resp["Cache-Control"] = "private, must-revalidate"
+        resp["X-Matchup-Pdf-Cache"] = cache_state
         if "X-Frame-Options" in resp:
             del resp["X-Frame-Options"]
         return resp
