@@ -21,6 +21,7 @@ import pytest
 from django.test import TestCase
 
 from apps.core.models import Tenant
+from apps.domains.ai.callbacks import _handle_matchup_ai_result
 from apps.domains.inventory.models import InventoryFile
 from apps.domains.matchup.models import MatchupDocument, MatchupProblem
 
@@ -134,3 +135,51 @@ class MatchupCallbackManualExcludeTests(TestCase):
         deleted, _ = self.doc.problems.exclude(id__in=manual_ids).delete()
         assert deleted == 0
         assert self.doc.problems.count() == 3
+
+    def test_callback_skips_stale_success_job(self):
+        """늦게 도착한 이전 job callback은 최신 분석 결과를 덮어쓰지 않는다."""
+        self.doc.ai_job_id = "new-job"
+        self.doc.status = "processing"
+        self.doc.save(update_fields=["ai_job_id", "status", "updated_at"])
+
+        _handle_matchup_ai_result(
+            job_id="old-job",
+            status="DONE",
+            result_payload={
+                "segmentation_method": "text",
+                "problems": [
+                    {
+                        "number": 1,
+                        "text": "stale problem",
+                        "image_key": "",
+                        "meta": {"page_index": 0, "bbox": {"x": 0, "y": 0, "w": 0.5, "h": 0.5}},
+                    }
+                ],
+            },
+            error=None,
+            source_id=str(self.doc.id),
+        )
+
+        self.doc.refresh_from_db()
+        assert self.doc.status == "processing"
+        assert self.doc.problem_count == 0
+        assert self.doc.problems.count() == 0
+
+    def test_callback_skips_stale_failed_job(self):
+        """이전 job의 실패 callback이 최신 processing 문서를 failed로 되돌리면 안 된다."""
+        self.doc.ai_job_id = "new-job"
+        self.doc.status = "processing"
+        self.doc.error_message = ""
+        self.doc.save(update_fields=["ai_job_id", "status", "error_message", "updated_at"])
+
+        _handle_matchup_ai_result(
+            job_id="old-job",
+            status="FAILED",
+            result_payload={},
+            error="old failure",
+            source_id=str(self.doc.id),
+        )
+
+        self.doc.refresh_from_db()
+        assert self.doc.status == "processing"
+        assert self.doc.error_message == ""

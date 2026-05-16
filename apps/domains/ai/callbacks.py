@@ -460,6 +460,15 @@ def _handle_matchup_ai_result(
         )
         return
 
+    current_job_id = str(doc.ai_job_id or "")
+    incoming_job_id = str(job_id or "")
+    if incoming_job_id and current_job_id and incoming_job_id != current_job_id:
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_STALE_JOB_SKIP | doc_id=%s | incoming_job_id=%s | current_job_id=%s | status=%s",
+            doc.id, incoming_job_id, current_job_id, status,
+        )
+        return
+
     # 테넌트 교차검증
     if job_id:
         from apps.domains.ai.models import AIJobModel

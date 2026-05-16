@@ -940,101 +940,112 @@ def reanalyze_document(document: MatchupDocument) -> str:
     return retry_document(document)
 
 
-def retry_document(document: MatchupDocument) -> str:
+def retry_document(document: MatchupDocument, *, require_failed: bool = False) -> str:
     """실패한 문서를 재처리. 새 AI job을 디스패치하고 job_id 반환.
 
     manual=true problem (학원장이 ManualCropModal에서 직접 자른 것)은 보존.
     pipeline 결과의 bulk_create는 ignore_conflicts=True라 같은 number 충돌 시
     silent drop되어 manual이 우선권을 가짐.
     """
+    from django.db import transaction
     from apps.domains.ai.gateway import dispatch_job
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
-    # 기존 문제 삭제 — 단, manual=true는 학원장 직접 작업이라 보존.
-    # JSONB NULL semantics 회피 (운영 사고 2026-05-03): manual 키 없는 row가
-    # exclude에서 빠지는 PostgreSQL NULL semantics로 skeleton row가 영구히 살아남는
-    # 결함. ID 기반 명시 exclude로 우회. 자세한 분석은 callbacks.py:_handle_matchup_ai_result.
-    #
-    # manual_owner_pinned 보호 (2026-05-06 위급 fix): 학원장이 적중 보고서에서 별 토글한
-    # selected_problem_ids 가리키는 problem은 reanalyze 시 삭제 안 함 (selected_problem_ids
-    # 무효화 차단). MatchupHitReportEntry → manual_owner_pinned=true 마킹 + 본 exclude.
-    # 학원장 어제 작성 보고서 가치 보호.
-    # Backfill 안전망 (2026-05-10): 본 retry 직전 시점에 어떤 hit_report entry 라도
-    # 본 document 의 problem 을 selected_problem_ids 로 가리키면 자동 pin. 학원장이
-    # 5/6 사고 직후 보고서를 손대지 않고 reanalyze 만 트리거하는 경우(write-side 가
-    # 한 번도 호출 안 됐던 legacy 보고서)도 보호. 멱등 — 이미 pinned 면 no-op.
-    from .models import MatchupHitReportEntry
-    legacy_curated_ids: set = set()
-    legacy_entries = MatchupHitReportEntry.objects.filter(
-        tenant_id=document.tenant_id,
-        report__document_id=document.id,
-    ).only("selected_problem_ids")
-    for e in legacy_entries:
-        for pid in (e.selected_problem_ids or []):
-            try:
-                legacy_curated_ids.add(int(pid))
-            except (TypeError, ValueError):
-                pass
-    if legacy_curated_ids:
-        pin_problems_as_owner_curated(
+    with transaction.atomic():
+        document = MatchupDocument.objects.select_for_update().get(
+            id=document.id,
             tenant_id=document.tenant_id,
-            problem_ids=list(legacy_curated_ids),
+        )
+        if document.status == "processing":
+            raise RuntimeError("이미 처리 중인 문서입니다. 완료 후 다시 시도하세요.")
+        if require_failed and document.status != "failed":
+            raise RuntimeError("재시도는 실패 상태에서만 가능합니다.")
+
+        # 기존 문제 삭제 — 단, manual=true는 학원장 직접 작업이라 보존.
+        # JSONB NULL semantics 회피 (운영 사고 2026-05-03): manual 키 없는 row가
+        # exclude에서 빠지는 PostgreSQL NULL semantics로 skeleton row가 영구히 살아남는
+        # 결함. ID 기반 명시 exclude로 우회. 자세한 분석은 callbacks.py:_handle_matchup_ai_result.
+        #
+        # manual_owner_pinned 보호 (2026-05-06 위급 fix): 학원장이 적중 보고서에서 별 토글한
+        # selected_problem_ids 가리키는 problem은 reanalyze 시 삭제 안 함 (selected_problem_ids
+        # 무효화 차단). MatchupHitReportEntry → manual_owner_pinned=true 마킹 + 본 exclude.
+        # 학원장 어제 작성 보고서 가치 보호.
+        # Backfill 안전망 (2026-05-10): 본 retry 직전 시점에 어떤 hit_report entry 라도
+        # 본 document 의 problem 을 selected_problem_ids 로 가리키면 자동 pin. 학원장이
+        # 5/6 사고 직후 보고서를 손대지 않고 reanalyze 만 트리거하는 경우(write-side 가
+        # 한 번도 호출 안 됐던 legacy 보고서)도 보호. 멱등 — 이미 pinned 면 no-op.
+        from .models import MatchupHitReportEntry
+        legacy_curated_ids: set = set()
+        legacy_entries = MatchupHitReportEntry.objects.filter(
+            tenant_id=document.tenant_id,
+            report__document_id=document.id,
+        ).only("selected_problem_ids")
+        for e in legacy_entries:
+            for pid in (e.selected_problem_ids or []):
+                try:
+                    legacy_curated_ids.add(int(pid))
+                except (TypeError, ValueError):
+                    pass
+        if legacy_curated_ids:
+            pin_problems_as_owner_curated(
+                tenant_id=document.tenant_id,
+                problem_ids=list(legacy_curated_ids),
+            )
+
+        manual_ids = list(
+            document.problems.filter(meta__manual=True).values_list("id", flat=True)
+        )
+        pinned_ids = list(
+            document.problems.filter(meta__manual_owner_pinned=True).values_list("id", flat=True)
+        )
+        protected_ids = list(set(manual_ids) | set(pinned_ids))
+        document.problems.exclude(id__in=protected_ids).delete()
+
+        # presigned URL 6시간 — 큐 적체 시 워커가 1시간 후 picking하면 만료되어
+        # 403 Forbidden으로 doc.status='failed' 반복 사이클 발생 (운영 사고 2026-04-29).
+        # 6시간이면 큐 적체에도 충분.
+        download_url = generate_presigned_get_url_storage(
+            key=document.r2_key, expires_in=21600
         )
 
-    manual_ids = list(
-        document.problems.filter(meta__manual=True).values_list("id", flat=True)
-    )
-    pinned_ids = list(
-        document.problems.filter(meta__manual_owner_pinned=True).values_list("id", flat=True)
-    )
-    protected_ids = list(set(manual_ids) | set(pinned_ids))
-    document.problems.exclude(id__in=protected_ids).delete()
+        # 워커 strategy 라우터 신호 — 7-value source_type SSOT.
+        from apps.domains.matchup.source_types import normalize_source_type
+        meta = document.meta or {}
+        source_type = normalize_source_type(
+            meta.get("source_type") or meta.get("upload_intent") or meta.get("document_role")
+        )
 
-    # presigned URL 6시간 — 큐 적체 시 워커가 1시간 후 picking하면 만료되어
-    # 403 Forbidden으로 doc.status='failed' 반복 사이클 발생 (운영 사고 2026-04-29).
-    # 6시간이면 큐 적체에도 충분.
-    download_url = generate_presigned_get_url_storage(
-        key=document.r2_key, expires_in=21600
-    )
+        # excluded_pages — Phase 5-deep 검수 UI에서 학원장이 제외한 페이지 idx.
+        # 워커가 segmentation 결과에서 해당 페이지 skip → 다시 problem 생성 X.
+        excluded_pages = list((meta.get("excluded_pages") or []))
 
-    # 워커 strategy 라우터 신호 — 7-value source_type SSOT.
-    from apps.domains.matchup.source_types import normalize_source_type
-    meta = document.meta or {}
-    source_type = normalize_source_type(
-        meta.get("source_type") or meta.get("upload_intent") or meta.get("document_role")
-    )
+        result = dispatch_job(
+            job_type="matchup_analysis",
+            payload={
+                "download_url": download_url,
+                "tenant_id": str(document.tenant_id),
+                "document_id": str(document.id),
+                "filename": document.original_name,
+                "upload_intent": source_type,   # legacy alias
+                "source_type": source_type,     # 7-value SSOT
+                "excluded_pages": excluded_pages,
+            },
+            tenant_id=str(document.tenant_id),
+            source_domain="matchup",
+            source_id=str(document.id),
+        )
 
-    # excluded_pages — Phase 5-deep 검수 UI에서 학원장이 제외한 페이지 idx.
-    # 워커가 segmentation 결과에서 해당 페이지 skip → 다시 problem 생성 X.
-    excluded_pages = list((meta.get("excluded_pages") or []))
+        if isinstance(result, dict) and not result.get("ok", True):
+            raise RuntimeError(result.get("error", "dispatch failed"))
 
-    result = dispatch_job(
-        job_type="matchup_analysis",
-        payload={
-            "download_url": download_url,
-            "tenant_id": str(document.tenant_id),
-            "document_id": str(document.id),
-            "filename": document.original_name,
-            "upload_intent": source_type,   # legacy alias
-            "source_type": source_type,     # 7-value SSOT
-            "excluded_pages": excluded_pages,
-        },
-        tenant_id=str(document.tenant_id),
-        source_domain="matchup",
-        source_id=str(document.id),
-    )
+        job_id = result.get("job_id", "") if isinstance(result, dict) else str(result)
+        document.status = "processing"
+        document.ai_job_id = str(job_id)
+        document.error_message = ""
+        document.problem_count = 0
+        document.save(update_fields=["status", "ai_job_id", "error_message", "problem_count", "updated_at"])
 
-    if isinstance(result, dict) and not result.get("ok", True):
-        raise RuntimeError(result.get("error", "dispatch failed"))
-
-    job_id = result.get("job_id", "") if isinstance(result, dict) else str(result)
-    document.status = "processing"
-    document.ai_job_id = str(job_id)
-    document.error_message = ""
-    document.problem_count = 0
-    document.save(update_fields=["status", "ai_job_id", "error_message", "problem_count", "updated_at"])
-
-    return job_id
+        return job_id
 
 
 # ── Storage-as-canonical helpers ─────────────────────────

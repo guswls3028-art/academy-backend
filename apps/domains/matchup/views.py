@@ -766,7 +766,11 @@ class DocumentRetryView(View):
             return JsonResponse({"detail": "재시도는 실패 상태에서만 가능합니다."}, status=400)
 
         try:
-            job_id = retry_document(doc)
+            job_id = retry_document(doc, require_failed=True)
+        except RuntimeError as e:
+            detail = str(e)
+            status = 409 if "처리 중" in detail else 400
+            return JsonResponse({"detail": detail}, status=status)
         except Exception:
             logger.exception("retry_document failed for doc %s", doc.id)
             return JsonResponse({"detail": "재시도 실패"}, status=500)
