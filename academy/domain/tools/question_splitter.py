@@ -313,6 +313,10 @@ _QUESTION_PATTERN = re.compile(
     r"^\s*(?:"
     r"(\d{1,3})\s*[.)](?=\s|[가-힣A-Za-z(<【\[\"'“‘])"  # "1." / "1) " / "12)그림"
     r"|"
+    # OCR이 "1."을 "1 /"처럼 읽는 학생 촬영 시험지 보정. "1/2" 같은 비율은
+    # 숫자 직후라 매치하지 않는다.
+    r"(\d{1,3})\s*/(?=\s|[가-힣A-Za-z(<【\[\"'“‘])"
+    r"|"
     r"\((\d{1,3})\)\s"              # "(1) "
     r"|"
     r"\[(\d{1,3})\]\s"              # "[1] "
@@ -339,6 +343,12 @@ _SECTION_PATTERN = re.compile(
     # OCR이 형을 흘리는 경우는 드물고, 본문에서 "서술/논술/단답" 단어가
     # 숫자 앞에 등장하는 케이스가 더 흔함. 형 없는 패턴은 anchor 후보에서 제외.
     r"\s*형\s*(\d{1,3})"
+)
+
+_SHARED_QUESTION_RANGE_PATTERN = re.compile(
+    r"^\s*[\[【(]\s*"
+    r"(\d{1,3})\s*(?:[,，~\-–]|및)\s*(\d{1,3})"
+    r"\s*[\]】)]?"
 )
 
 
@@ -392,6 +402,22 @@ def _extract_question_number(text: str) -> Optional[int]:
     text = text.strip()
     if not text:
         return None
+
+    # 0. 공통 자료 묶음: "[9, 10] 그림은 ..." → 첫 문항 번호(9)를 anchor로 사용.
+    shared_m = _SHARED_QUESTION_RANGE_PATTERN.match(text)
+    if shared_m:
+        try:
+            start = int(shared_m.group(1))
+            end = int(shared_m.group(2))
+            if (
+                1 <= start <= _MAX_LEGIT_QUESTION_NUMBER
+                and 1 <= end <= _MAX_LEGIT_QUESTION_NUMBER
+                and start < end
+                and end - start <= 10
+            ):
+                return start
+        except ValueError:
+            pass
 
     # 1. 서술형/논술형/단답형/약술형 섹션 패턴 먼저 검사
     sec_m = _SECTION_PATTERN.match(text)
@@ -498,6 +524,130 @@ def _detect_quad_layout(
     )
     threshold = max(2, len(blocks) * 0.06)
     return in_h_gutter <= threshold and in_v_gutter <= threshold
+
+
+def _paper_type_value(paper_type: Optional["PaperTypeResult"]) -> str:
+    if paper_type is None:
+        return ""
+    raw = getattr(paper_type, "paper_type", "")
+    return str(getattr(raw, "value", raw) or "").strip().lower()
+
+
+def _is_continuous_scan_type(paper_type: Optional["PaperTypeResult"]) -> bool:
+    """학교 시험지/학생 촬영 페이지처럼 문항 번호가 연속 증가하는 스캔 계열."""
+    return _paper_type_value(paper_type) in {
+        "scan_single",
+        "scan_dual",
+        "quadrant",
+        "student_answer_photo",
+    }
+
+
+def _filter_continuous_anchor_sequence(
+    candidates: List[Tuple[int, int, bool]],
+) -> List[Tuple[int, int, bool]]:
+    """OCR 잡음 anchor를 분리 전에 제거한다.
+
+    Google Vision은 보기 번호 ⑤/⑦, 주기율표 칸 번호, 손글씨 숫자를 ``5.``/``7.``
+    같은 본문 anchor처럼 반환할 때가 있다. 시험지 스캔은 레이아웃 순서상 문항
+    번호가 거의 항상 연속 증가하므로, 가장 긴 증가 부분수열을 고르되 번호 gap이
+    작은 경로를 우선한다. 워크북/메인자료의 비연속 큰 번호에는 적용하지 않는다.
+    """
+    if len(candidates) < 3:
+        return candidates
+
+    # DP state: (length, -gap_penalty, -last_number, path_indices)
+    best_states: List[Tuple[int, int, int, List[int]]] = []
+    for i, (num, _, _) in enumerate(candidates):
+        state = (1, 0, -num, [i])
+        for j in range(i):
+            prev_num = candidates[j][0]
+            if prev_num >= num:
+                continue
+            prev_len, prev_gap_score, _, prev_path = best_states[j]
+            gap_penalty = max(0, num - prev_num - 1)
+            cand_state = (
+                prev_len + 1,
+                prev_gap_score - gap_penalty,
+                -num,
+                [*prev_path, i],
+            )
+            if cand_state[:3] > state[:3]:
+                state = cand_state
+        best_states.append(state)
+
+    best = max(best_states, key=lambda s: s[:3])
+    # 필터가 실제 정보를 잃지 않게 2개 이하만 남는 극단 케이스는 원본 보존.
+    if best[0] < 3:
+        return candidates
+    keep = set(best[3])
+    return [c for idx, c in enumerate(candidates) if idx in keep]
+
+
+def _extract_shared_question_range(text: str) -> Optional[Tuple[int, int]]:
+    m = _SHARED_QUESTION_RANGE_PATTERN.match((text or "").strip())
+    if not m:
+        return None
+    try:
+        start = int(m.group(1))
+        end = int(m.group(2))
+    except ValueError:
+        return None
+    if (
+        1 <= start <= _MAX_LEGIT_QUESTION_NUMBER
+        and 1 <= end <= _MAX_LEGIT_QUESTION_NUMBER
+        and start < end
+        and end - start <= 10
+    ):
+        return (start, end)
+    return None
+
+
+def _expand_shared_range_regions(
+    regions: List[QuestionRegion],
+    text_blocks: List[TextBlock],
+    *,
+    page_height: float,
+    mid_x: float,
+    margin: float,
+) -> None:
+    """[9,10] 같은 공통 자료 묶음은 각 문항 crop에 공통 자료를 포함시킨다."""
+    if len(regions) < 2:
+        return
+
+    for block in text_blocks:
+        shared_range = _extract_shared_question_range(block.text)
+        if not shared_range:
+            continue
+        start, end = shared_range
+        group = [r for r in regions if start <= r.number <= end]
+        if len(group) < 2:
+            continue
+
+        block_in_left = ((block.x0 + block.x1) / 2) < mid_x
+
+        def _same_column(region: QuestionRegion) -> bool:
+            rx0, _, rx1, _ = region.bbox
+            center = (rx0 + rx1) / 2
+            return (center < mid_x) == block_in_left
+
+        group = [r for r in group if _same_column(r)]
+        if len(group) < 2:
+            continue
+
+        column_regions = [r for r in regions if _same_column(r)]
+        y0 = max(0.0, block.y0 - margin)
+        y1 = page_height
+        for r in sorted(column_regions, key=lambda item: item.bbox[1]):
+            if r.number <= end:
+                continue
+            if r.bbox[1] > block.y0:
+                y1 = max(y0 + 10, r.bbox[1] - margin)
+                break
+
+        for r in group:
+            rx0, _, rx1, _ = r.bbox
+            r.bbox = (rx0, y0, rx1, y1)
 
 
 def count_marginal_anchor_candidates(
@@ -621,9 +771,19 @@ def split_questions(
     # - prefer_marginal=False (시험지): marginal 2+ 인 경우만 마진 preference (보수적
     #   임계). 시험지에 standalone "N." block 우연히 1개 있는 경우 본문 anchor 도 사용.
     marginal_count = sum(1 for _, _, m in candidates if m)
-    marginal_threshold = 1 if prefer_marginal else 2
-    if marginal_count >= marginal_threshold:
+    body_count = len(candidates) - marginal_count
+    scan_continuous = _is_continuous_scan_type(paper_type)
+    if prefer_marginal and marginal_count >= 1:
         candidates = [c for c in candidates if c[2]]
+    elif (
+        not scan_continuous
+        and marginal_count >= 2
+        and body_count == 0
+    ):
+        candidates = [c for c in candidates if c[2]]
+
+    if scan_continuous and not prefer_marginal:
+        candidates = _filter_continuous_anchor_sequence(candidates)
 
     question_starts: List[Tuple[int, int]] = [(qn, ix) for qn, ix, _ in candidates]
 
@@ -685,6 +845,14 @@ def split_questions(
                 page_index=page_index,
             )
         )
+
+    _expand_shared_range_regions(
+        regions,
+        sorted_blocks,
+        page_height=page_height,
+        mid_x=mid_x,
+        margin=margin,
+    )
 
     # Sort by question number, fallback to layout order
     regions.sort(key=lambda r: r.number)

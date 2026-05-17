@@ -115,14 +115,20 @@ class DualColumnStrategy(LayoutStrategy):
 
     name = "dual"
 
+    @staticmethod
+    def _is_left(block, mid_x: float) -> bool:
+        # OCR may return a right-column sub-block whose x0 slightly crosses the
+        # gutter after inline split. Use center for column ownership.
+        return ((block.x0 + block.x1) / 2) < mid_x
+
     def sort_blocks(self, blocks, mid_x: float, mid_y: float) -> list:
         return sorted(
             blocks,
-            key=lambda b: (0 if b.x0 < mid_x else 1, b.y0, b.x0),
+            key=lambda b: (0 if self._is_left(b, mid_x) else 1, b.y0, b.x0),
         )
 
     def compute_x_range(self, start_block, page_width, mid_x, margin):
-        if start_block.x0 < mid_x:
+        if self._is_left(start_block, mid_x):
             return (0.0, mid_x + margin)
         return (mid_x - margin, page_width)
 
@@ -131,8 +137,8 @@ class DualColumnStrategy(LayoutStrategy):
     ) -> float:
         if next_block is None:
             return page_height
-        curr_in_left = start_block.x0 < mid_x
-        next_in_left = next_block.x0 < mid_x
+        curr_in_left = self._is_left(start_block, mid_x)
+        next_in_left = self._is_left(next_block, mid_x)
         if curr_in_left != next_in_left:
             # 컬럼이 다르면 현재 컬럼 끝까지 (그림/표 포함)
             return page_height
@@ -144,7 +150,7 @@ class DualColumnStrategy(LayoutStrategy):
         return y_end
 
     def post_clamp_x(self, start_block, x0, x1, page_width, mid_x, margin):
-        if start_block.x0 < mid_x:
+        if self._is_left(start_block, mid_x):
             return (max(0.0, x0), min(mid_x + margin, x1))
         return (max(mid_x - margin, x0), min(page_width, x1))
 

@@ -29,6 +29,19 @@ def test_split_two_anchors_in_same_line():
     assert out_sorted[0].x0 < out_sorted[1].x0
 
 
+def test_split_shared_range_anchor_in_same_line():
+    """좌/우 컬럼 한 줄에 붙은 '[9, 10]' 공통 자료 anchor도 분할한다."""
+    block = _tb(
+        "6. 그림 ( 가 ) 는 어떤 별의 진화 과정이다 [9, 10] 그림은 주기율표의 일부를 나타낸 것이다",
+        x0=0,
+        x1=2000,
+    )
+    out = _split_multi_anchor_blocks([block])
+    assert len(out) == 2
+    nums = [_extract_question_number(b.text) for b in out]
+    assert nums == [6, 9]
+
+
 def test_section_block_not_split():
     """서답형 헤더 블록은 split되지 않는다 (가드)."""
     block = _tb(

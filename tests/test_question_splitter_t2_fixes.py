@@ -344,6 +344,15 @@ def test_marginal_anchor_extracts_standalone_number():
     assert _extract_marginal_question_number("125.") is None  # > 60 (max legit)
 
 
+def test_question_anchor_accepts_ocr_slash_separator():
+    """학생 시험지 사진 OCR이 '1.'을 '1 /'로 읽어도 문항 anchor로 인정한다."""
+    from academy.domain.tools.question_splitter import _extract_question_number
+
+    assert _extract_question_number("1 / 비생물과 구분되는 생물의 특성") == 1
+    assert _extract_question_number("1/2 비율") is None
+    assert _extract_question_number("[9, 10] 그림은 주기율표의 일부") == 9
+
+
 def test_split_questions_prefer_marginal_workbook_main_only():
     """workbook 모드: marginal anchor 만 사용, 본문 sub-item anchor reject.
 
@@ -473,6 +482,118 @@ def test_split_questions_no_prefer_marginal_school_exam_unchanged():
     assert len(regions) == 4
     nums = sorted(r.number for r in regions)
     assert nums == [1, 2, 3, 4]
+
+
+def test_split_questions_scan_dual_ignores_false_marginal_only_switch():
+    """스캔 시험지는 보기/손글씨 숫자 2개가 standalone이어도 body anchor를 버리지 않는다."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 600.0, 840.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.SCAN_DUAL,
+        confidence=0.85,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=False,
+    )
+    blocks = [
+        TextBlock(text="1. 첫 문항", x0=40, y0=100, x1=260, y1=120),
+        TextBlock(text="2. 둘째 문항", x0=40, y0=360, x1=260, y1=380),
+        TextBlock(text="2", x0=70, y0=700, x1=86, y1=718),  # 보기/손글씨 오인식
+        TextBlock(text="3. 셋째 문항", x0=330, y0=100, x1=560, y1=120),
+        TextBlock(text="2", x0=340, y0=700, x1=356, y1=718),  # 우측 column 오인식
+        TextBlock(text="4. 넷째 문항", x0=330, y0=360, x1=560, y1=380),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=0,
+        paper_type=pt,
+        prefer_marginal=False,
+    )
+
+    assert [r.number for r in regions] == [1, 2, 3, 4]
+
+
+def test_split_questions_scan_dual_filters_choice_number_outliers_before_cut():
+    """보기 ⑤/⑦이 '5.'/'7.'로 OCR돼도 연속 문항 시퀀스만 남긴다."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 600.0, 840.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.SCAN_DUAL,
+        confidence=0.85,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=True,
+        has_embedded_text=False,
+    )
+    blocks = [
+        TextBlock(text="1 / 비생물과 구분되는 생물의 특성", x0=45, y0=120, x1=280, y1=140),
+        TextBlock(text="2. 그림 (가)와 (나)는 각각", x0=45, y0=360, x1=280, y1=380),
+        TextBlock(text="5. (가)와 (나)는 세포막의 유무", x0=60, y0=650, x1=280, y1=670),
+        TextBlock(text="3. 표는 생물의 특성의 예", x0=330, y0=120, x1=560, y1=140),
+        TextBlock(text="7. (가)를 통해 종족을 유지한다", x0=345, y0=240, x1=560, y1=260),
+        TextBlock(text="4. 표는 사람과 소나무 개체", x0=330, y0=360, x1=560, y1=380),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=0,
+        paper_type=pt,
+        prefer_marginal=False,
+    )
+
+    assert [r.number for r in regions] == [1, 2, 3, 4]
+    q2 = next(r for r in regions if r.number == 2)
+    assert q2.bbox[3] == ph  # false 5번 보기 앞에서 잘리지 않아야 함
+
+
+def test_split_questions_scan_dual_expands_shared_range_material():
+    """[9,10] 공통 자료는 묶인 각 문항 crop에 포함한다."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 600.0, 840.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.SCAN_DUAL,
+        confidence=0.85,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=False,
+    )
+    blocks = [
+        TextBlock(text="6. 왼쪽 문항", x0=40, y0=100, x1=260, y1=120),
+        TextBlock(text="7. 왼쪽 둘째", x0=40, y0=400, x1=260, y1=420),
+        TextBlock(text="[9, 10] 그림은 주기율표의 일부", x0=330, y0=100, x1=560, y1=120),
+        TextBlock(text="9. A-D에 대한 설명", x0=330, y0=260, x1=560, y1=280),
+        TextBlock(text="10. C와 D에 대한 설명", x0=330, y0=430, x1=560, y1=450),
+        TextBlock(text="11. 실생활 물질", x0=330, y0=620, x1=560, y1=640),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=0,
+        paper_type=pt,
+        prefer_marginal=False,
+    )
+
+    by_num = {r.number: r for r in regions}
+    assert [r.number for r in regions] == [6, 7, 9, 10, 11]
+    assert by_num[9].bbox[1] < 110
+    assert by_num[10].bbox[1] < 110
+    assert by_num[9].bbox[3] == by_num[10].bbox[3]
+    assert by_num[10].bbox[3] < by_num[11].bbox[1]
 
 
 def test_validate_detection_threshold_protects_school_exam():

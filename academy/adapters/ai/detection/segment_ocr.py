@@ -31,7 +31,15 @@ BBox = Tuple[int, int, int, int]
 # 안에 두 문항 anchor가 동거하면 split_questions가 첫 anchor만 잡고 두 번째는 잃는다.
 # 이를 위해 OCR 결과 블록에서 multi-anchor line을 제2 anchor 위치 기준으로 가상 분할.
 # 운영 doc#329 page 1: "5. ... 7. ..." 한 줄로 묶여 Q7 anchor 손실 → 본 fix로 복구.
-_ANCHOR_INLINE_PATTERN = re.compile(r"\b(\d{1,3})\s*[.)](?=\s|[가-힣A-Za-z(<【\[\"'“‘])")
+_ANCHOR_INLINE_PATTERN = re.compile(
+    r"(?:"
+    r"\b(\d{1,3})\s*[.)](?=\s|[가-힣A-Za-z(<【\[\"'“‘])"
+    r"|"
+    # 공통 자료 묶음: "[9, 10] 그림은 ..." 이 좌/우 컬럼 한 줄로 붙으면
+    # 우측 컬럼 anchor가 통째로 사라진다. 첫 번호를 anchor로 삼아 가상 분할.
+    r"[\[【(]\s*(\d{1,3})\s*(?:[,，~\-–]|및)\s*(\d{1,3})\s*[\]】)]"
+    r")"
+)
 
 
 # 섹션 헤더 키워드 — 이 키워드가 블록 안에 있으면 multi-anchor 분할을 적용하지 않는다.
@@ -74,7 +82,7 @@ def _split_multi_anchor_blocks(blocks: List["SplitterTextBlock"]) -> List["Split
         nums = []
         for m in matches:
             try:
-                n = int(m.group(1))
+                n = int(m.group(1) or m.group(2))
                 if 1 <= n <= 60:
                     nums.append(n)
             except ValueError:
