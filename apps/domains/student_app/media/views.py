@@ -1,3 +1,4 @@
+import math
 from typing import Any, Dict, Optional, Tuple
 
 from django.db.models import Prefetch
@@ -94,6 +95,47 @@ def _get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_i
             status=status.HTTP_400_BAD_REQUEST,
         )
     return enrollment, None
+
+
+def _safe_video_progress(value: Any) -> float:
+    try:
+        progress = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(progress):
+        return 0.0
+    if progress > 1:
+        progress = progress / 100.0
+    return max(0.0, min(1.0, progress))
+
+
+def _safe_video_duration(value: Any) -> int:
+    try:
+        duration = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, duration)
+
+
+def _safe_video_position(value: Any) -> int:
+    try:
+        position = int(float(value or 0))
+    except (TypeError, ValueError):
+        return 0
+    return max(0, position)
+
+
+def _safe_video_completed(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value != 0
+    text = str(value).strip().lower()
+    if text in {"", "0", "false", "f", "no", "n", "off", "none", "null"}:
+        return False
+    return True
 
 
 def _build_thumbnail_url(video) -> Optional[str]:
@@ -504,18 +546,21 @@ class StudentVideoStatsView(APIView):
                 continue
 
             lecture_id = enrollment.lecture_id
-            duration = video.duration or 0
+            duration = _safe_video_duration(getattr(video, "duration", 0))
+            progress = _safe_video_progress(getattr(p, "progress", 0))
+            completed = bool(getattr(p, "completed", False)) or progress >= 0.999
 
             total_videos += 1
             total_content_duration += duration
-            total_watch_duration += int(p.progress * duration)
-            if p.completed:
+            total_watch_duration += int(progress * duration)
+            if completed:
                 completed_videos += 1
 
             if lecture_id not in lecture_stats:
+                lecture_title = getattr(getattr(enrollment, "lecture", None), "title", None)
                 lecture_stats[lecture_id] = {
                     "lecture_id": lecture_id,
-                    "title": enrollment.lecture.title if enrollment.lecture else f"강좌 {lecture_id}",
+                    "title": lecture_title or f"강좌 {lecture_id}",
                     "video_count": 0,
                     "completed_count": 0,
                     "total_duration": 0,
@@ -525,13 +570,13 @@ class StudentVideoStatsView(APIView):
             ls = lecture_stats[lecture_id]
             ls["video_count"] += 1
             ls["total_duration"] += duration
-            ls["watch_duration"] += int(p.progress * duration)
-            if p.completed:
+            ls["watch_duration"] += int(progress * duration)
+            if completed:
                 ls["completed_count"] += 1
 
         # 강좌별 진도율 계산
         lectures_data = []
-        for ls in sorted(lecture_stats.values(), key=lambda x: x["title"]):
+        for ls in sorted(lecture_stats.values(), key=lambda x: str(x.get("title") or "")):
             progress_pct = (
                 round((ls["completed_count"] / ls["video_count"]) * 100)
                 if ls["video_count"] > 0
@@ -747,7 +792,11 @@ class StudentVideoPlaybackView(APIView):
         enrollment_obj = None  # 일반 영상일 때 검증 후 설정, 전체공개는 None
 
         try:
-            video = Video.objects.select_related("session__lecture__tenant").get(id=video_id)
+            video_qs = Video.objects.select_related("tenant", "session__lecture__tenant")
+            tenant = getattr(request, "tenant", None)
+            if tenant is not None:
+                video_qs = video_qs.filter(tenant=tenant)
+            video = video_qs.get(id=video_id)
         except Video.DoesNotExist:
             raise Http404
 
@@ -1026,7 +1075,11 @@ class StudentVideoProgressView(APIView):
         enrollment_id = _get_student_enrollment_id(request)
 
         try:
-            video = Video.objects.select_related("session__lecture").get(id=video_id)
+            video_qs = Video.objects.select_related("tenant", "session__lecture")
+            tenant = getattr(request, "tenant", None)
+            if tenant is not None:
+                video_qs = video_qs.filter(tenant=tenant)
+            video = video_qs.get(id=video_id)
         except Video.DoesNotExist:
             raise Http404
 
@@ -1034,21 +1087,15 @@ class StudentVideoProgressView(APIView):
         if getattr(request.user, "parent_profile", None) is not None:
             progress_value = request.data.get("progress", None)
             completed = request.data.get("completed", False)
-            try:
-                p = float(progress_value) if progress_value is not None else 0.0
-                if p > 1:
-                    p = p / 100.0
-                p = max(0.0, min(1.0, p))
-            except (TypeError, ValueError):
-                p = 0.0
+            p = _safe_video_progress(progress_value)
             return Response({
                 "id": 0,
                 "video_id": video_id,
                 "enrollment_id": enrollment_id or 0,
                 "progress": p,
                 "progress_percent": round(p * 100, 1),
-                "completed": bool(completed),
-                "last_position": int(request.data.get("last_position") or 0),
+                "completed": _safe_video_completed(completed),
+                "last_position": _safe_video_position(request.data.get("last_position")),
             }, status=status.HTTP_200_OK)
 
         # 공개 영상: 수강등록 없이 시청 가능. VideoProgress는 (video, enrollment) 필수라 DB 저장 불가.
@@ -1058,21 +1105,15 @@ class StudentVideoProgressView(APIView):
         if is_public_video:
             progress_value = request.data.get("progress", None)
             completed = request.data.get("completed", False)
-            try:
-                p = float(progress_value) if progress_value is not None else 0.0
-                if p > 1:
-                    p = p / 100.0
-                p = max(0.0, min(1.0, p))
-            except (TypeError, ValueError):
-                p = 0.0
+            p = _safe_video_progress(progress_value)
             return Response({
                 "id": 0,
                 "video_id": video.id,
                 "enrollment_id": 0,
                 "progress": p,
                 "progress_percent": round(p * 100, 1),
-                "completed": bool(completed),
-                "last_position": int(request.data.get("last_position") or 0),
+                "completed": _safe_video_completed(completed),
+                "last_position": _safe_video_position(request.data.get("last_position")),
             }, status=status.HTTP_200_OK)
 
         if not enrollment_id:
@@ -1096,25 +1137,13 @@ class StudentVideoProgressView(APIView):
         completed = request.data.get("completed", None)  # boolean
         last_position = request.data.get("last_position", None)  # seconds
 
-        # progress를 0-1로 정규화
-        if progress_value is not None:
-            if progress_value > 1:
-                progress_value = progress_value / 100.0
-            progress_value = max(0.0, min(1.0, float(progress_value)))
-
         defaults = {}
         if progress_value is not None:
-            defaults["progress"] = progress_value
-        else:
-            defaults["progress"] = 0.0
+            defaults["progress"] = _safe_video_progress(progress_value)
         if completed is not None:
-            defaults["completed"] = completed
-        else:
-            defaults["completed"] = False
+            defaults["completed"] = _safe_video_completed(completed)
         if last_position is not None:
-            defaults["last_position"] = last_position
-        else:
-            defaults["last_position"] = 0
+            defaults["last_position"] = _safe_video_position(last_position)
 
         progress_obj, created = VideoProgress.objects.update_or_create(
             video=video,
