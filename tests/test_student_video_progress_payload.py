@@ -4,6 +4,7 @@ from apps.domains.student_app.media.views import (
     _safe_video_progress,
 )
 from apps.domains.student_app.media.serializers import StudentVideoPlaybackSerializer
+from scripts.post_deploy_smoke.video_playback_chain import _resolve_hls_relative
 
 
 def test_safe_video_progress_accepts_string_percent():
@@ -57,3 +58,12 @@ def test_student_video_playback_serializer_allows_public_video_without_session()
     data = StudentVideoPlaybackSerializer(payload).data
 
     assert data["video"]["session_id"] is None
+
+
+def test_video_smoke_resolves_hls_relative_paths_from_manifest_directory():
+    master = "https://cdn.example.test/tenants/1/video/hls/284/master.m3u8?exp=1&sig=x"
+    variant = _resolve_hls_relative(master, "v2/index.m3u8?exp=2&sig=y")
+    segment = _resolve_hls_relative(variant, "seg-00001.ts?exp=3&sig=z")
+
+    assert variant == "https://cdn.example.test/tenants/1/video/hls/284/v2/index.m3u8?exp=2&sig=y"
+    assert segment == "https://cdn.example.test/tenants/1/video/hls/284/v2/seg-00001.ts?exp=3&sig=z"

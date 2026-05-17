@@ -50,7 +50,7 @@ DEFAULT_TIMEOUT = 20
 
 class SmokeFail(SystemExit):
     def __init__(self, msg: str):
-        sys.stderr.write(f"\n🚨 SMOKE FAIL: {msg}\n")
+        sys.stderr.write(f"\nSMOKE FAIL: {msg}\n")
         super().__init__(1)
 
 
@@ -91,13 +91,13 @@ def _get_json(url: str, *, token: str | None = None) -> tuple[int, dict]:
 
 def login_student() -> str:
     if not STUDENT_USER or not STUDENT_PASS:
-        raise SmokeFail("E2E_STUDENT_USER / E2E_STUDENT_PASS 환경 변수 미설정")
+        raise SmokeFail("E2E_STUDENT_USER / E2E_STUDENT_PASS are required")
     status, body = _post_json(
         f"{API_URL}/api/v1/token/",
         {"username": STUDENT_USER, "password": STUDENT_PASS, "tenant_code": TENANT_CODE},
     )
     if status != 200 or "access" not in body:
-        raise SmokeFail(f"학생 login {status}: {body}")
+        raise SmokeFail(f"student login {status}: {body}")
     print(f"[1/7] student login OK (user={STUDENT_USER})")
     return body["access"]
 
@@ -109,11 +109,11 @@ def find_first_video(token: str) -> tuple[int, int, int]:
         raise SmokeFail(f"/student/video/me/ {status}: {body}")
     lectures = body.get("lectures") or []
     if not lectures:
-        raise SmokeFail(f"학생 enrolled lecture 0개 — E2E_STUDENT_USER={STUDENT_USER} 영상 미등록")
+        raise SmokeFail(f"student has no enrolled lectures with videos - E2E_STUDENT_USER={STUDENT_USER}")
     lec = lectures[0]
     sessions = lec.get("sessions") or []
     if not sessions:
-        raise SmokeFail(f"lecture {lec.get('id')} sessions 0개")
+        raise SmokeFail(f"lecture {lec.get('id')} has no sessions")
     sess = sessions[0]
     print(f"[2/7] enrolled lecture={lec.get('id')} session={sess.get('id')}")
     # 영상 list
@@ -125,7 +125,7 @@ def find_first_video(token: str) -> tuple[int, int, int]:
         raise SmokeFail(f"/sessions/{sess['id']}/videos/ {status}: {body}")
     items = body.get("items") or []
     if not items:
-        raise SmokeFail(f"session {sess['id']} 영상 0개")
+        raise SmokeFail(f"session {sess['id']} has no videos")
     return lec["id"], sess["id"], items[0]["id"]
 
 
@@ -137,8 +137,8 @@ def fetch_play_url(token: str, video_id: int, enrollment_id: int | None) -> str:
         raise SmokeFail(f"playback endpoint {status}: {body}")
     play_url = body.get("play_url") or body.get("hls_url")
     if not play_url:
-        raise SmokeFail(f"playback response 에 play_url/hls_url 없음: {body}")
-    print(f"[3/7] play_url 받음 video={video_id}")
+        raise SmokeFail(f"playback response missing play_url/hls_url: {body}")
+    print(f"[3/7] play_url OK video={video_id}")
     return play_url
 
 
@@ -149,14 +149,13 @@ def fetch_master(play_url: str) -> tuple[str, str]:
         raise SmokeFail(f"master.m3u8 {status} (play_url={play_url})")
     body = data.decode("utf-8", errors="replace")
     if "#EXTM3U" not in body:
-        raise SmokeFail(f"master.m3u8 body 비정상 (no #EXTM3U): {body[:200]}")
+        raise SmokeFail(f"master.m3u8 body invalid (no #EXTM3U): {body[:200]}")
     print(f"[4/7] master.m3u8 200 ({len(body)} bytes)")
     return body, play_url
 
 
 def find_variant_urls(master_body: str, master_url: str) -> list[str]:
     """Returns absolute variant URLs (rewritten ones include sig)."""
-    base = master_url.split("?")[0]
     out = []
     for raw in master_body.splitlines():
         line = raw.strip()
@@ -166,40 +165,45 @@ def find_variant_urls(master_body: str, master_url: str) -> list[str]:
             out.append(line)
             continue
         # relative — resolve against base WITHOUT propagating master query (HLS spec)
-        out.append(urllib.parse.urljoin(base + ("/" if not base.endswith("/") else ""), line))
+        out.append(_resolve_hls_relative(master_url, line))
     return out
+
+
+def _resolve_hls_relative(manifest_url: str, line: str) -> str:
+    """Resolve HLS child paths against the manifest file URL, dropping parent query."""
+    base = manifest_url.split("?")[0]
+    return urllib.parse.urljoin(base, line)
 
 
 def assert_variant_chain(variants: list[str]) -> str:
     """Each variant URL must include ?sig= (Worker m3u8 rewrite gate). Returns first variant body."""
     if not variants:
-        raise SmokeFail("master 안 variant URL 0개 (manifest 비정상)")
+        raise SmokeFail("master manifest has no variant URLs")
     first = variants[0]
     qs = urllib.parse.urlparse(first).query
     qs_keys = set(urllib.parse.parse_qs(qs).keys())
     if "sig" not in qs_keys or "exp" not in qs_keys:
         # 🚨 5/13 사고 root cause 그 자체
         raise SmokeFail(
-            f"variant URL 에 sig/exp 누락 — master.m3u8 body rewrite 결함\n"
+            f"variant URL missing sig/exp - master.m3u8 body rewrite failure\n"
             f"  variant: {first}\n"
             f"  query keys: {qs_keys}\n"
-            f"  → Worker m3u8 body rewrite logic 미배포 또는 회귀"
+            f"  Worker m3u8 body rewrite logic is not deployed or regressed"
         )
-    print(f"[5/7] variant URL 안 sig 박힘 OK ({len(variants)} variants)")
+    print(f"[5/7] variant URL sig/exp OK ({len(variants)} variants)")
     # variant fetch
     status, data, _ = _req("GET", first)
     if status != 200:
         raise SmokeFail(f"variant fetch {status} (url={first})")
     body = data.decode("utf-8", errors="replace")
     if "#EXTM3U" not in body:
-        raise SmokeFail(f"variant body 비정상: {body[:200]}")
+        raise SmokeFail(f"variant body invalid: {body[:200]}")
     print(f"[6/7] variant fetch 200 ({len(body)} bytes)")
     return body, first
 
 
 def assert_segment(variant_body: str, variant_url: str) -> None:
     """First .ts segment fetch 200."""
-    base = variant_url.split("?")[0]
     segs = []
     for raw in variant_body.splitlines():
         line = raw.strip()
@@ -209,21 +213,21 @@ def assert_segment(variant_body: str, variant_url: str) -> None:
             segs.append(line)
             break
     if not segs:
-        raise SmokeFail("variant 안 .ts segment 0개")
+        raise SmokeFail("variant manifest has no .ts segments")
     seg = segs[0]
     if seg.startswith("http"):
         seg_url = seg
     else:
-        seg_url = urllib.parse.urljoin(base + ("/" if not base.endswith("/") else ""), seg)
+        seg_url = _resolve_hls_relative(variant_url, seg)
     # variant rewrite 가 segment URL 에도 sig inject 했어야
     qs_keys = set(urllib.parse.parse_qs(urllib.parse.urlparse(seg_url).query).keys())
     if "sig" not in qs_keys:
-        raise SmokeFail(f"segment URL 에 sig 누락: {seg_url}")
+        raise SmokeFail(f"segment URL missing sig: {seg_url}")
     status, data, _ = _req("GET", seg_url)
     if status != 200:
         raise SmokeFail(f"segment fetch {status} (url={seg_url})")
     if len(data) < 100:
-        raise SmokeFail(f"segment body 너무 작음 ({len(data)} bytes): 비정상")
+        raise SmokeFail(f"segment body too small ({len(data)} bytes): invalid")
     print(f"[7/7] segment fetch 200 ({len(data)} bytes)")
 
 
@@ -252,7 +256,7 @@ def main() -> None:
     variant_body, variant_url = assert_variant_chain(variants)
     assert_segment(variant_body, variant_url)
     print()
-    print(f"✅ ALL PASS — 학생 시점 영상 재생 chain 정상 (lecture={lecture_id} session={session_id} video={video_id})")
+    print(f"ALL PASS - student video playback chain OK (lecture={lecture_id} session={session_id} video={video_id})")
 
 
 if __name__ == "__main__":
