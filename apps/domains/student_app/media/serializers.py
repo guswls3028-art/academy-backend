@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 class StudentVideoListItemSerializer(serializers.Serializer):
     id = serializers.IntegerField()
-    session_id = serializers.IntegerField()
+    session_id = serializers.IntegerField(allow_null=True)
     title = serializers.CharField()
 
     status = serializers.CharField()

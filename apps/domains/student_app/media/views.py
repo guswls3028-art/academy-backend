@@ -1016,7 +1016,7 @@ class StudentVideoPlaybackView(APIView):
         payload = {
             "video": {
                 "id": int(video.id),
-                "session_id": int(video.session_id),
+                "session_id": int(video.session_id) if video.session_id is not None else None,
                 "title": str(video.title),
                 "status": str(getattr(video, "status", "READY")),
                 "thumbnail_url": thumb,
