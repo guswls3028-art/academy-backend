@@ -156,6 +156,22 @@ def test_skip_chapter_concept_page_without_question_signal():
     assert is_non_question_page(blocks) is True
 
 
+def test_skip_chapter_science_basics_scale_concept_page():
+    """T1 doc 615 p6: 과학의 기초/시간·공간 규모 개념 페이지는 문항이 아니다."""
+    blocks = _blocks(
+        "과학의 기초 01 CHAPTER",
+        "1. 시간과 공간 자연 세계 규모(scale): 어떤 자연 현상의 크기 범위",
+        "자연 현상들은 시간 규모와 공간 규모가 매우 다양함",
+        "미시 세계: 아주 작은 물체나 현상을 다루는 세계",
+        "거시 세계: 큰 물체나 현상을 다루는 세계",
+        "Ex) 원자, 분자, 이온 등",
+        "Ex) 나무, 동물, 천체 등",
+        "시간 규모: 나이 - 100억 년",
+        "공간 규모: 지름 - 62 kpc",
+    )
+    assert is_non_question_page(blocks) is True
+
+
 def test_skip_standalone_jeongdap_answer_page():
     """OCR layout 깨진 해설지: "정답 ③" 만 3+ 반복 (N. 접두어 없음)."""
     blocks = _blocks(
@@ -362,6 +378,52 @@ def test_split_questions_prefer_marginal_workbook_main_only():
     q3 = [r for r in regions if r.number == 3][0]
     assert q3.bbox[1] < 100  # starts at top of page
     assert q3.bbox[3] > 200  # extends well past sub-items
+
+
+def test_split_questions_dual_column_marginal_keeps_right_column():
+    """2단 워크북의 우측 column 큰 번호도 marginal anchor로 인정한다.
+
+    T1 실제 자료 `항상성과 호르몬 메인자료` 재처리에서 좌측 Q1/Q2/Q5/Q6만
+    잘리고 우측 Q3/Q4/Q7/Q8이 통째 누락된 회귀를 고정한다.
+    """
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 600.0, 840.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.9,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+    )
+    blocks = [
+        TextBlock(text="1.", x0=24, y0=90, x1=36, y1=105),
+        TextBlock(text="1번 본문", x0=55, y0=90, x1=260, y1=105),
+        TextBlock(text="2.", x0=24, y0=350, x1=36, y1=365),
+        TextBlock(text="2번 본문", x0=55, y0=350, x1=260, y1=365),
+        TextBlock(text="3.", x0=324, y0=90, x1=336, y1=105),
+        TextBlock(text="3번 본문", x0=355, y0=90, x1=560, y1=105),
+        TextBlock(text="4.", x0=324, y0=350, x1=336, y1=365),
+        TextBlock(text="4번 본문", x0=355, y0=350, x1=560, y1=365),
+        # 본문 하위 번호는 main problem이 아니므로 marginal-only에서 제외되어야 한다.
+        TextBlock(text="1. 보기 ㄱ", x0=90, y0=150, x1=250, y1=165),
+        TextBlock(text="2. 보기 ㄴ", x0=390, y0=150, x1=550, y1=165),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=0,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [1, 2, 3, 4]
+    right_regions = [r for r in regions if r.number in (3, 4)]
+    assert all(r.bbox[0] >= pw * 0.5 - 2 for r in right_regions)
 
 
 def test_split_questions_prefer_marginal_threshold_one_anchor():

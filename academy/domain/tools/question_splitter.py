@@ -63,7 +63,8 @@ def _looks_like_learning_concept_page(
         r"(?:개념\s*(?:완성|정리|학습)?|핵심\s*(?:개념|정리)?|"
         r"추가\s*설명|학습\s*목표|용어\s*정리|탐구\s*(?:활동|자료)?|"
         r"구성\s*요소|상호\s*작용|계\s*\(\s*system\s*\)|"
-        r"PROJECT|과학\s*개념)",
+        r"과학\s*의\s*기초|자연\s*세계\s*규모|미시\s*세계|거시\s*세계|"
+        r"시간\s*규모|공간\s*규모|Ex\s*\)|PROJECT|과학\s*개념)",
         full_text,
         re.IGNORECASE,
     )
@@ -580,13 +581,28 @@ def split_questions(
     #           워크북/메인자료 의 "큰 번호" main question anchor.
     # body = "1. 다음 글은..." 처럼 anchor 뒤 문장이 이어지는 일반 시험지 anchor.
     marginal_threshold_x = page_width * 0.15
+
+    def _is_marginal_position(block: TextBlock) -> bool:
+        """문항 큰 번호가 자기 column의 왼쪽 margin에 있는지 판정한다.
+
+        기존 판정은 page-left margin만 marginal로 보아 2단 워크북의 우측 column
+        큰 번호(Q3/Q4 등)를 전부 body anchor로 밀어냈다. marginal-only 모드에서는
+        그 결과 우측 column 전체가 누락되므로, dual/quad layout에서는 우측 column의
+        local-left margin도 같은 신호로 인정한다.
+        """
+        if block.x0 < marginal_threshold_x:
+            return True
+        if (is_dual_column or is_quad_layout) and mid_x <= block.x0 < (mid_x + marginal_threshold_x):
+            return True
+        return False
+
     candidates: List[Tuple[int, int, bool]] = []  # (qnum, block_idx, is_marginal)
     for idx, block in enumerate(sorted_blocks):
         # marginal candidate 우선 검사 (짧은 standalone block).
         marginal_num = _extract_marginal_question_number(block.text)
         if (
             marginal_num is not None
-            and block.x0 < marginal_threshold_x
+            and _is_marginal_position(block)
         ):
             candidates.append((marginal_num, idx, True))
             continue

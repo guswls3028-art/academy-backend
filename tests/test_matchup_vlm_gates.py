@@ -688,6 +688,60 @@ def test_vlm_empty_page_fill_appends_and_remaps_duplicate(monkeypatch):
     assert questions[1]["meta_extra"]["original_vlm_number"] == 1
 
 
+def test_vlm_underfilled_page_fill_appends_missing_and_skips_existing(monkeypatch):
+    """학생 촬영/스캔 페이지가 일부만 잘렸으면 VLM이 찾은 missing number만 추가한다."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    pages = [{
+        "page_index": 0,
+        "image_path": "/fake/student-photo.png",
+        "boxes": [(2600, 3900, 2600, 3100)],  # 기존 OCR은 Q4 하나만 잡은 상태
+        "numbers": [4],
+        "paper_type": "student_answer_photo",
+    }]
+    questions = [{
+        "number": 4,
+        "page_index": 0,
+        "image_path": "/fake/student-photo.png",
+        "bbox": [2600, 3900, 2600, 3100],
+    }]
+
+    monkeypatch.setenv("MATCHUP_VLM_AUTO_SPLIT", "1")
+    monkeypatch.setenv("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", "1")
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini_flash")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    monkeypatch.setattr(
+        matchup_pipeline,
+        "_try_vlm_problem_bboxes",
+        lambda page, document_id, tenant_id=None: (
+            _bbox_result(
+                problems=[
+                    (1, 50, 600, 2400, 1500),
+                    (2, 50, 2300, 2400, 1400),
+                    (4, 2600, 3900, 2600, 3100),  # 기존 OCR box와 overlap → skip
+                ],
+            ),
+            "student_answer_photo",
+        ),
+    )
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        pages,
+        questions,
+        source_type="student_exam_photo",
+        document_id="doc-1",
+        tenant_id=1,
+    )
+
+    assert stats["candidates"] == 1
+    assert stats["attempted"] == 1
+    assert stats["added"] == 2
+    assert stats["overlap_skips"] == 1
+    assert [q["number"] for q in questions] == [4, 1, 2]
+    assert questions[1]["meta_extra"]["engine"] == "vlm"
+    assert questions[1]["meta_extra"]["vlm_reason"] == "underfilled_page_fallback"
+
+
 def test_mock_vision_adapter_paper_type_default():
     """MockVLMVisionAdapter도 paper_type 필드 보유 (하위호환)."""
     from academy.adapters.ai.detection.vlm_fallback import MockVLMVisionAdapter

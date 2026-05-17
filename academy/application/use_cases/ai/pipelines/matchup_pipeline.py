@@ -402,6 +402,15 @@ def run_matchup_pipeline(
         paper_type_summary = _aggregate_paper_types(pages)
         if vlm_empty_stats:
             paper_type_summary["vlm_empty_page_fill"] = vlm_empty_stats
+        vlm_underfilled_stats = _augment_questions_with_vlm_for_underfilled_pages(
+            pages,
+            questions_raw,
+            source_type=source_type,
+            document_id=document_id,
+            tenant_id=tenant_id,
+        )
+        if vlm_underfilled_stats:
+            paper_type_summary["vlm_underfilled_page_fill"] = vlm_underfilled_stats
 
     if vlm_page_role_stats:
         paper_type_summary["vlm_page_role_filter"] = vlm_page_role_stats
@@ -651,11 +660,30 @@ def run_matchup_pipeline(
             and hybrid_source_allowed
         ):
             before_count = len(questions_raw)
-            questions_raw, hvlm_stats = filter_questions_by_hybrid_vlm(
-                questions_raw,
+            vlm_origin_questions = [
+                q for q in questions_raw
+                if _is_vlm_origin_question(q)
+            ]
+            hybrid_candidates = [
+                q for q in questions_raw
+                if not _is_vlm_origin_question(q)
+            ]
+            filtered_candidates, hvlm_stats = filter_questions_by_hybrid_vlm(
+                hybrid_candidates,
                 document_id=document_id,
                 tenant_id=tenant_id,
                 cost_cap_calls=200,
+            )
+            if vlm_origin_questions:
+                hvlm_stats["vlm_origin_bypassed"] = len(vlm_origin_questions)
+            questions_raw = filtered_candidates + vlm_origin_questions
+            questions_raw.sort(
+                key=lambda q: (
+                    int(q.get("page_index") or 0),
+                    int((q.get("bbox") or [0, 0, 0, 0])[1]),
+                    int((q.get("bbox") or [0, 0, 0, 0])[0]),
+                    int(q.get("number") or 0),
+                )
             )
             logger.info(
                 "HYBRID_VLM_FILTERED | doc=%s | before=%d | after=%d | stats=%s",
@@ -1411,6 +1439,190 @@ def _augment_questions_with_vlm_for_empty_pages(
     }
     stats.update({f"vlm_{k}": v for k, v in vlm_stats.items()})
     return stats
+
+
+def _bbox_iou_xywh(a: Any, b: Any) -> float:
+    """(x, y, w, h) bbox IoU. 잘못된 입력은 0으로 취급한다."""
+    try:
+        ax, ay, aw, ah = [float(v) for v in a]
+        bx, by, bw, bh = [float(v) for v in b]
+    except Exception:
+        return 0.0
+    if aw <= 0 or ah <= 0 or bw <= 0 or bh <= 0:
+        return 0.0
+    ax2, ay2 = ax + aw, ay + ah
+    bx2, by2 = bx + bw, by + bh
+    ix1, iy1 = max(ax, bx), max(ay, by)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    union = aw * ah + bw * bh - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _is_vlm_origin_question(question: Dict[str, Any]) -> bool:
+    meta = question.get("meta_extra")
+    return isinstance(meta, dict) and meta.get("engine") == "vlm"
+
+
+def _expected_min_boxes_for_underfilled_page(page: Dict[str, Any], source_type: str) -> int:
+    """VLM 보강을 시도할 만큼 명백히 적게 잘린 페이지의 최소 기대 box 수."""
+    page_type = (page.get("paper_type") or "").strip().lower()
+    if page_type == "student_answer_photo" or source_type == "student_exam_photo":
+        return 4
+    if page_type in ("scan_dual", "quadrant"):
+        return 4
+    if source_type == "school_exam_pdf" and page_type == "scan_single":
+        return 2
+    return 0
+
+
+def _augment_questions_with_vlm_for_underfilled_pages(
+    pages: List[Dict],
+    questions: List[Dict],
+    *,
+    source_type: str,
+    document_id,
+    tenant_id: str | int | None = None,
+) -> Optional[Dict[str, Any]]:
+    """스캔/학생촬영 페이지가 일부만 잘린 경우 Gemini bbox로 누락 문항을 보강한다.
+
+    Empty-page 보강만으로는 운영 T1 학생 촬영 시험지처럼 Q4/Q6/Q8만 잡히고
+    Q1/Q2/Q3/Q5/Q7이 빠지는 under-cut을 복구할 수 없다. 이 경로는 기존 box를
+    지우지 않고 VLM이 찾은 missing number만 추가한다.
+    """
+    if not _env_flag("MATCHUP_VLM_AUTO_SPLIT", True):
+        return None
+    if not _env_flag("MATCHUP_VLM_FILL_UNDERFILLED_PAGES", True):
+        return None
+    if not document_id:
+        return None
+    if source_type not in ("student_exam_photo", "school_exam_pdf"):
+        return None
+    if not _real_vlm_vision_configured():
+        return {
+            "enabled": True,
+            "skipped_reason": "real_vlm_not_configured",
+            "candidates": 0,
+            "attempted": 0,
+            "added": 0,
+        }
+    if not _tenant_gate_allows("MATCHUP_VLM_FILL_EMPTY_PAGE_TENANTS", tenant_id):
+        return None
+
+    max_calls = max(0, _env_int("MATCHUP_VLM_UNDERFILLED_PAGE_MAX_CALLS", 20))
+    candidates: List[Dict] = []
+    cost_cap_hit = False
+    for page in pages:
+        if len(candidates) >= max_calls:
+            cost_cap_hit = True
+            break
+        page_type = (page.get("paper_type") or "").strip().lower()
+        if page.get("is_skip_page") or page_type in _NON_PROBLEM_PAGE_TYPES:
+            continue
+        existing_count = len(page.get("boxes") or [])
+        expected_min = _expected_min_boxes_for_underfilled_page(page, source_type)
+        if expected_min <= 0:
+            continue
+        if 0 < existing_count < expected_min:
+            candidates.append(page)
+
+    if not candidates:
+        return {
+            "enabled": True,
+            "candidates": 0,
+            "attempted": 0,
+            "added": 0,
+            "cost_cap_hit": cost_cap_hit,
+        }
+
+    used_numbers = {
+        int(q.get("number"))
+        for q in questions
+        if str(q.get("number", "")).lstrip("-").isdigit()
+    }
+    next_number = 1
+    added = 0
+    duplicate_number_skips = 0
+    overlap_skips = 0
+    pages_used = 0
+    paper_type_updates = 0
+
+    def _next_free_number() -> int:
+        nonlocal next_number
+        while next_number in used_numbers:
+            next_number += 1
+        value = next_number
+        next_number += 1
+        return value
+
+    for page in candidates:
+        vlm, vlm_paper_type = _try_vlm_problem_bboxes(
+            page, document_id, tenant_id=tenant_id,
+        )
+        if vlm_paper_type:
+            page["paper_type"] = vlm_paper_type
+            debug = page.setdefault("paper_type_debug", {})
+            debug["vlm_underfilled_page_fill"] = {
+                "paper_type": vlm_paper_type,
+                "bbox_validated": vlm is not None,
+            }
+            paper_type_updates += 1
+        if vlm is None:
+            continue
+
+        page_idx = page.get("page_index")
+        existing_page_questions = [
+            q for q in questions
+            if q.get("page_index") == page_idx and q.get("bbox")
+        ]
+        page_added = 0
+        for prob in vlm.problems:
+            bbox = list(prob.bbox)
+            if any(_bbox_iou_xywh(bbox, q.get("bbox")) >= 0.30 for q in existing_page_questions):
+                overlap_skips += 1
+                continue
+            try:
+                proposed = int(prob.number or 0)
+            except (TypeError, ValueError):
+                proposed = 0
+            if proposed > 0 and proposed in used_numbers:
+                duplicate_number_skips += 1
+                continue
+            number = proposed if proposed > 0 else _next_free_number()
+            used_numbers.add(number)
+            q_entry = {
+                "number": number,
+                "page_index": page_idx,
+                "image_path": page["image_path"],
+                "bbox": bbox,
+                "meta_extra": {
+                    "engine": "vlm",
+                    "vlm_reason": "underfilled_page_fallback",
+                },
+            }
+            if proposed <= 0:
+                q_entry["meta_extra"]["original_vlm_number"] = proposed
+            questions.append(q_entry)
+            existing_page_questions.append(q_entry)
+            added += 1
+            page_added += 1
+        if page_added:
+            pages_used += 1
+
+    return {
+        "enabled": True,
+        "candidates": len(candidates),
+        "attempted": len(candidates),
+        "added": added,
+        "pages_used": pages_used,
+        "cost_cap_hit": cost_cap_hit,
+        "duplicate_number_skips": duplicate_number_skips,
+        "overlap_skips": overlap_skips,
+        "paper_type_updates": paper_type_updates,
+    }
 
 
 def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any]:
