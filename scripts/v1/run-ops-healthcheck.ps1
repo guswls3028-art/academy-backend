@@ -41,15 +41,42 @@ $GH_REPO = "guswls3028-art/academy-backend"
 $BUDGET_NAME = "academy-monthly-infra"
 $AWS_ACCOUNT_ID = "809466760795"
 
+# Health thresholds (SSOT: docs/ssot/params.yaml observability.sqsDlqDepthThreshold)
+$DLQ_ISSUE_THRESHOLD = 5
+$RECENT_BATCH_FAILURE_WINDOW_HOURS = 24
+
 # ── 상태 추적 ─────────────────────────────────────────────────
 $script:issues = [System.Collections.ArrayList]::new()
 $script:warnings = [System.Collections.ArrayList]::new()
+$script:costWarnings = [System.Collections.ArrayList]::new()
 
 function Add-Issue($msg) { [void]$script:issues.Add($msg) }
 function Add-Warning($msg) { [void]$script:warnings.Add($msg) }
+function Add-CostWarning($msg) { [void]$script:costWarnings.Add($msg) }
 
 function Write-Check($icon, $msg) {
     Write-Host "  $icon $msg"
+}
+
+function Test-ScalingControlAlarm($alarm) {
+    $name = [string]$alarm.AlarmName
+    $actions = (@($alarm.AlarmActions) -join " ")
+    return (
+        $alarm.Namespace -eq "AWS/SQS" -and
+        $alarm.MetricName -eq "ApproximateNumberOfMessagesVisible" -and
+        $alarm.ComparisonOperator -match "^LessThan" -and
+        ($name -match "scale-in|queue-low" -or $actions -match "scalingPolicy")
+    )
+}
+
+function Test-IgnorableBatchFailure($job, [int64]$cutoffMs) {
+    $jobName = [string]$job.jobName
+    $reason = [string]$job.statusReason
+    $createdAt = [int64]$job.createdAt
+    if ($jobName -like "deploy-verify-test-*" -and $reason -eq "deploy-verify-test-cleanup") {
+        return $true
+    }
+    return $createdAt -lt $cutoffMs
 }
 
 # ── 헤더 ──────────────────────────────────────────────────────
@@ -189,9 +216,12 @@ foreach ($q in $SQS_QUEUES) {
 
         $isDlq = $q.Name -match "dlq"
 
-        if ($isDlq -and $visible -gt 0) {
-            Write-Check "❌" "$($q.Label): 대기 $visible / 처리중 $inFlight (DLQ에 메시지 있음!)"
-            Add-Issue "$($q.Label)에 $visible 건의 실패 메시지 — 원인 조사 필요"
+        if ($isDlq -and $total -ge $DLQ_ISSUE_THRESHOLD) {
+            Write-Check "❌" "$($q.Label): 대기 $visible / 처리중 $inFlight (DLQ 임계치 ${DLQ_ISSUE_THRESHOLD}건 이상)"
+            Add-Issue "$($q.Label)에 $total 건의 실패 메시지 — 원인 조사 필요"
+        } elseif ($isDlq -and $total -gt 0) {
+            Write-Check "⚠️" "$($q.Label): 대기 $visible / 처리중 $inFlight (DLQ 잔여, 임계치 ${DLQ_ISSUE_THRESHOLD}건 미만)"
+            Add-Warning "$($q.Label)에 $total 건의 실패 메시지 잔여"
         } elseif (-not $isDlq -and $visible -gt 100) {
             Write-Check "⚠️" "$($q.Label): 대기 $visible / 처리중 $inFlight (대기열 쌓임)"
             Add-Warning "$($q.Label) 대기열에 $visible 건 대기 중 — 워커 상태 확인"
@@ -462,10 +492,30 @@ try {
     $alarms = ($alarmsJson | ConvertFrom-Json).MetricAlarms
 
     if ($alarms -and $alarms.Count -gt 0) {
-        Write-Check "❌" "$($alarms.Count)개 알람이 ALARM 상태!"
+        $serviceAlarms = @()
+        $controlAlarms = @()
         foreach ($alarm in $alarms) {
-            Write-Check "  🔴" "$($alarm.AlarmName): $($alarm.MetricName) $($alarm.ComparisonOperator) $($alarm.Threshold)"
-            Add-Issue "CloudWatch 알람 발생: $($alarm.AlarmName)"
+            if (Test-ScalingControlAlarm $alarm) {
+                $controlAlarms += $alarm
+            } else {
+                $serviceAlarms += $alarm
+            }
+        }
+
+        if ($serviceAlarms.Count -gt 0) {
+            Write-Check "❌" "$($serviceAlarms.Count)개 서비스 알람이 ALARM 상태!"
+            foreach ($alarm in $serviceAlarms) {
+                Write-Check "  🔴" "$($alarm.AlarmName): $($alarm.MetricName) $($alarm.ComparisonOperator) $($alarm.Threshold)"
+                Add-Issue "CloudWatch 알람 발생: $($alarm.AlarmName)"
+            }
+        } else {
+            Write-Check "✅" "서비스 알람 정상 (서비스 ALARM 상태 없음)"
+        }
+
+        if ($controlAlarms.Count -gt 0) {
+            foreach ($alarm in $controlAlarms) {
+                Write-Check "  ℹ️" "$($alarm.AlarmName): 스케일링 제어 알람 상태=$($alarm.StateValue) ($($alarm.ComparisonOperator) $($alarm.Threshold))"
+            }
         }
     } else {
         Write-Check "✅" "모든 알람 정상 (ALARM 상태 없음)"
@@ -520,7 +570,7 @@ try {
             Add-Issue "AWS 비용이 예산(`$$([math]::Round($limitNum, 0)))을 초과했습니다"
         } elseif ($pct -gt 80) {
             Write-Check "⚠️" "이번 달: `$$([math]::Round($actualNum, 0)) / `$$([math]::Round($limitNum, 0)) ($pct%)"
-            Add-Warning "AWS 비용이 예산의 ${pct}%에 도달"
+            Add-CostWarning "AWS 비용이 예산의 ${pct}%에 도달"
         } else {
             Write-Check "✅" "이번 달: `$$([math]::Round($actualNum, 0)) / `$$([math]::Round($limitNum, 0)) ($pct%)"
         }
@@ -578,8 +628,25 @@ try {
         $failedJobs = ($failedJson | ConvertFrom-Json).jobSummaryList
 
         if ($failedJobs -and $failedJobs.Count -gt 0) {
-            Write-Check "⚠️" "최근 실패한 Batch 작업: $($failedJobs.Count)건"
-            Add-Warning "실패한 비디오 Batch 작업 $($failedJobs.Count)건"
+            $cutoffMs = [DateTimeOffset]::UtcNow.AddHours(-1 * $RECENT_BATCH_FAILURE_WINDOW_HOURS).ToUnixTimeMilliseconds()
+            $actionableFailedJobs = @()
+            $ignoredFailedJobs = @()
+            foreach ($job in $failedJobs) {
+                if (Test-IgnorableBatchFailure $job $cutoffMs) {
+                    $ignoredFailedJobs += $job
+                } else {
+                    $actionableFailedJobs += $job
+                }
+            }
+
+            if ($actionableFailedJobs.Count -gt 0) {
+                Write-Check "⚠️" "최근 실패한 Batch 작업: $($actionableFailedJobs.Count)건"
+                Add-Warning "실패한 비디오 Batch 작업 $($actionableFailedJobs.Count)건"
+            } elseif ($ignoredFailedJobs.Count -gt 0) {
+                Write-Check "✅" "최근 실패한 Batch 작업: 조치 대상 없음 (정리/오래된 실패 $($ignoredFailedJobs.Count)건 제외)"
+            } else {
+                Write-Check "✅" "최근 실패한 Batch 작업: 없음"
+            }
         } else {
             Write-Check "✅" "최근 실패한 Batch 작업: 없음"
         }
@@ -633,6 +700,13 @@ if ($script:issues.Count -gt 0) {
             Write-Host "    ⚠️ $w" -ForegroundColor Yellow
         }
     }
+    if ($script:costWarnings.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  비용 주의:" -ForegroundColor Yellow
+        foreach ($w in $script:costWarnings) {
+            Write-Host "    ⚠️ $w" -ForegroundColor Yellow
+        }
+    }
     Write-Host ""
     Write-Host "  조치: 위 문제를 확인하고 해결하세요." -ForegroundColor Red
     Write-Host "        긴급한 경우 운영자에게 연락하세요." -ForegroundColor Red
@@ -643,8 +717,22 @@ if ($script:issues.Count -gt 0) {
     foreach ($w in $script:warnings) {
         Write-Host "    ⚠️ $w" -ForegroundColor Yellow
     }
+    if ($script:costWarnings.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  비용 주의:" -ForegroundColor Yellow
+        foreach ($w in $script:costWarnings) {
+            Write-Host "    ⚠️ $w" -ForegroundColor Yellow
+        }
+    }
     Write-Host ""
     Write-Host "  조치: 당장 문제는 아니지만 확인이 필요합니다." -ForegroundColor Yellow
+} elseif ($script:costWarnings.Count -gt 0) {
+    Write-Host "  최종 판정: ✅ 운영 정상 / 비용 주의" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  비용 주의:" -ForegroundColor Yellow
+    foreach ($w in $script:costWarnings) {
+        Write-Host "    ⚠️ $w" -ForegroundColor Yellow
+    }
 } else {
     Write-Host "  최종 판정: ✅ 정상" -ForegroundColor Green
     Write-Host ""

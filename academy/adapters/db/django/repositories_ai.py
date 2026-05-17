@@ -144,18 +144,19 @@ class DjangoAIJobRepository:
             return False
         if job.status == "RUNNING":
             # RUNNING 재진입 — 다른 워커가 이미 점유 중이면 중복 처리 방지를 위해 거절.
-            # 같은 워커의 재호출이거나(중복 호출 idempotent), lease 만료(takeover 허용)만 True.
+            # 같은 worker_id라도 lease 만료 전 재진입은 SQS 재배달/중복 수신으로 보고 거절한다.
+            # lease 만료 시에만 takeover 허용.
             same_worker = job.locked_by and str(job.locked_by) == str(worker_id)
             lease_expired = job.lease_expires_at is not None and job.lease_expires_at <= now
-            if same_worker:
-                _log.info("MARK_RUNNING_ALREADY_SAME_WORKER | job_id=%s worker=%s", job_id, worker_id)
-                return True
             if lease_expired:
                 _log.warning(
                     "MARK_RUNNING_LEASE_EXPIRED_TAKEOVER | job_id=%s prev_worker=%s new_worker=%s",
                     job_id, job.locked_by, worker_id,
                 )
                 # fall through to takeover (status 재설정)
+            elif same_worker:
+                _log.warning("MARK_RUNNING_DUPLICATE_SAME_WORKER_REJECTED | job_id=%s worker=%s", job_id, worker_id)
+                return False
             else:
                 _log.warning(
                     "MARK_RUNNING_DUPLICATE_REJECTED | job_id=%s prev_worker=%s new_worker=%s",
