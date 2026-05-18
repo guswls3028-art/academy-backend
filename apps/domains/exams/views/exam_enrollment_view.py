@@ -200,7 +200,12 @@ class ExamEnrollmentManageView(APIView):
         # ✅ 세션 등록 학생에 포함되는 enrollment_id만 허용
         valid_ids = set(
             SessionEnrollment.objects
-            .filter(session_id=session_id)
+            .filter(
+                tenant=tenant,
+                session_id=session_id,
+                enrollment__status="ACTIVE",
+                enrollment__student__deleted_at__isnull=True,
+            )
             .values_list("enrollment_id", flat=True)
         )
 

@@ -14,6 +14,22 @@ from apps.domains.submissions.services.dispatcher import (
 )
 
 
+def _pdf_page_count(upload_file) -> int:
+    pos = upload_file.tell() if hasattr(upload_file, "tell") else 0
+    try:
+        upload_file.seek(0)
+        data = upload_file.read()
+        import fitz  # PyMuPDF
+
+        with fitz.open(stream=data, filetype="pdf") as doc:
+            return len(doc)
+    finally:
+        try:
+            upload_file.seek(pos)
+        except Exception:
+            upload_file.seek(0)
+
+
 class ExamOMRBatchUploadView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -61,6 +77,24 @@ class ExamOMRBatchUploadView(APIView):
                     {"detail": f"파일 '{f.name}'의 형식이 허용되지 않습니다. (허용: JPEG, PNG, TIFF, PDF)"},
                     status=400,
                 )
+            if f.content_type == "application/pdf":
+                try:
+                    page_count = _pdf_page_count(f)
+                except Exception:
+                    return Response(
+                        {"detail": f"파일 '{f.name}'의 PDF를 읽을 수 없습니다."},
+                        status=400,
+                    )
+                if page_count != 1:
+                    return Response(
+                        {
+                            "detail": (
+                                f"파일 '{f.name}'은 {page_count}페이지 PDF입니다. "
+                                "OMR은 답안지 1장당 1개 파일로 업로드해 주세요."
+                            )
+                        },
+                        status=400,
+                    )
 
         # exam 테넌트 검증 — 크로스 테넌트 시험 제출 방지 (tenant FK 직접 검증)
         from apps.domains.exams.models import Exam

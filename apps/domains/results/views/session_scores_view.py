@@ -136,17 +136,32 @@ class SessionScoresView(APIView):
         exam_ids = [int(e.id) for e in exams]
 
         # -------------------------------------------------
-        # 1) Enrollment 모수 (시험 OR 과제)
+        # 1) Enrollment 모수 (현재 차시 수강생 ∩ 시험/과제 대상)
         # -------------------------------------------------
+        active_session_enrollment_ids_qs = (
+            SessionEnrollment.objects
+            .filter(
+                tenant=tenant,
+                session=session,
+                enrollment__status="ACTIVE",
+                enrollment__student__deleted_at__isnull=True,
+            )
+            .values_list("enrollment_id", flat=True)
+            .distinct()
+        )
+        active_session_enrollment_ids = list(active_session_enrollment_ids_qs)
+
         # ❗️FIX: HomeworkEnrollment ❌
         # ✅ 과제 대상자의 단일 진실은 HomeworkAssignment
         hw_enrollment_ids_qs = HomeworkAssignment.objects.filter(
-            session=session
+            session=session,
+            enrollment_id__in=active_session_enrollment_ids,
         ).values_list("enrollment_id", flat=True)
 
         if exam_ids:
             ex_enrollment_ids_qs = ExamEnrollment.objects.filter(
-                exam_id__in=exam_ids
+                exam_id__in=exam_ids,
+                enrollment_id__in=active_session_enrollment_ids,
             ).values_list("enrollment_id", flat=True)
 
             # 🔐 tenant 강제: enrollment_id 참조에 강제 제약 없으므로 명시 차단.
@@ -188,14 +203,9 @@ class SessionScoresView(APIView):
 
         # 시험/과제 연결 전: 세션 수강생(SessionEnrollment) 폴백 — 삭제된 학생·퇴원 학생 제외
         if not enrollment_ids:
-            session_enrollment_ids = list(
-                SessionEnrollment.objects.filter(session=session)
-                .values_list("enrollment_id", flat=True)
-                .distinct()
-            )
             enrollment_ids = list(
                 Enrollment.objects.filter(
-                    id__in=session_enrollment_ids,
+                    id__in=active_session_enrollment_ids,
                     status="ACTIVE",  # ✅ 퇴원(INACTIVE) 수강생 제외
                     tenant=tenant,    # 🔐 tenant 강제
                 )

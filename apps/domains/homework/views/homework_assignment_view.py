@@ -157,6 +157,8 @@ class HomeworkAssignmentManageView(APIView):
             .filter(
                 tenant=tenant,
                 session_id=homework.session_id,
+                enrollment__status="ACTIVE",
+                enrollment__student__deleted_at__isnull=True,
             )
             .values_list("enrollment_id", flat=True)
         )

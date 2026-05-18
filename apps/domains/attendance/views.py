@@ -23,9 +23,10 @@ from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.lectures.models import Session
-from apps.domains.enrollment.models import Enrollment
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import ExamEnrollment
 from apps.domains.homework.models import HomeworkAssignment
+from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.ai.gateway import dispatch_job
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,49 @@ class AttendanceViewSet(ModelViewSet):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Tenant is required.")
         serializer.save(tenant=tenant)
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        tenant = getattr(request, "tenant", None)
+        enrollment = instance.enrollment
+        session = instance.session
+        exam_ids = list(get_exams_for_session(session).values_list("id", flat=True))
+
+        instance.delete()
+
+        session_enrollment_deleted, _ = SessionEnrollment.objects.filter(
+            tenant=tenant,
+            session=session,
+            enrollment=enrollment,
+        ).delete()
+
+        exam_enrollment_deleted = 0
+        if exam_ids:
+            exam_enrollment_deleted, _ = ExamEnrollment.objects.filter(
+                exam_id__in=exam_ids,
+                enrollment=enrollment,
+                enrollment__tenant=tenant,
+            ).delete()
+
+        homework_assignment_deleted, _ = HomeworkAssignment.objects.filter(
+            tenant=tenant,
+            session=session,
+            enrollment=enrollment,
+        ).delete()
+
+        logger.info(
+            "ATTENDANCE_DELETE enrollment_id=%s session_id=%s tenant_id=%s — "
+            "attendance removed, session_enrollments=%s, exam_enrollments=%s, homework_assignments=%s",
+            enrollment.id,
+            session.id,
+            tenant.id if tenant else None,
+            session_enrollment_deleted,
+            exam_enrollment_deleted,
+            homework_assignment_deleted,
+        )
+
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     # =========================================================
     # 0️⃣ 퇴원 처리 (SECESSION → 수강등록 비활성화 + 시험/과제 대상 제외)
