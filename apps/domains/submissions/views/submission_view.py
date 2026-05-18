@@ -266,6 +266,8 @@ class SubmissionViewSet(ModelViewSet):
         # ✅ identifier 검증 + submission.enrollment_id 반영 (tenant 안전성)
         #    { "enrollment_id": N } 형식만 매칭. 이외 형식은 meta로 저장만 하고 enrollment 미반영.
         resolved_enrollment_id: int | None = None
+        exam_enrollment_created = False
+        should_create_exam_enrollment = False
         if isinstance(identifier, dict) and identifier.get("enrollment_id") is not None:
             try:
                 candidate_eid = int(identifier["enrollment_id"])
@@ -295,14 +297,18 @@ class SubmissionViewSet(ModelViewSet):
                 if not in_exam:
                     # fallback: SessionEnrollment
                     in_session = SessionEnrollment.objects.filter(
+                        tenant=tenant,
                         session__exams__id=exam_id,
                         enrollment_id=candidate_eid,
+                        enrollment__status="ACTIVE",
+                        enrollment__student__deleted_at__isnull=True,
                     ).exists()
                     if not in_session:
                         return Response(
                             {"detail": "해당 시험에 등록되지 않은 학생입니다."},
                             status=400,
                         )
+                    should_create_exam_enrollment = True
 
             # ✅ 중복 매칭 차단 (기본): 같은 시험의 다른 submission이 이미 같은 enrollment로 active면 409.
             #    override=1 쿼리파라미터로만 덮어쓰기 허용 (운영자 명시적 선택).
@@ -338,6 +344,11 @@ class SubmissionViewSet(ModelViewSet):
                     )
 
             resolved_enrollment_id = candidate_eid
+            if should_create_exam_enrollment:
+                _, exam_enrollment_created = ExamEnrollment.objects.get_or_create(
+                    exam_id=exam_id,
+                    enrollment_id=candidate_eid,
+                )
 
         # admin_override=True: DONE/FAILED/SUBMITTED/DISPATCHED/NI → ANSWERS_READY 허용
         # GRADING/SUPERSEDED → ANSWERS_READY 차단 (transition.py에서 강제)
@@ -382,6 +393,7 @@ class SubmissionViewSet(ModelViewSet):
                 "updated_answers_count": updated,
                 "identifier": identifier,
                 "resolved_enrollment_id": resolved_enrollment_id,
+                "exam_enrollment_created": exam_enrollment_created,
             }
         )
 
