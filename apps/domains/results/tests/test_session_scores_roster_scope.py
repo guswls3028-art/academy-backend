@@ -3,6 +3,7 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
+from apps.domains.attendance.models import Attendance
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.homework.models import HomeworkAssignment
@@ -55,6 +56,17 @@ class SessionScoresRosterScopeTests(TestCase):
             session=self.session,
             enrollment=self.active_enrollment,
         )
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.stale_enrollment,
+        )
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.active_enrollment,
+            status="PRESENT",
+        )
 
         for enrollment in (self.active_enrollment, self.stale_enrollment):
             ExamEnrollment.objects.create(exam=self.exam, enrollment=enrollment)
@@ -86,7 +98,7 @@ class SessionScoresRosterScopeTests(TestCase):
             status="ACTIVE",
         )
 
-    def test_session_scores_excludes_assignment_without_session_enrollment(self):
+    def test_session_scores_excludes_assignment_without_attendance_row(self):
         request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin)

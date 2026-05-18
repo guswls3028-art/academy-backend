@@ -52,6 +52,7 @@ from apps.domains.clinic.models import SessionParticipant
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework.models import HomeworkAssignment
+from apps.domains.attendance.models import Attendance
 
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import ExamEnrollment, ExamQuestion
@@ -138,7 +139,7 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 1) Enrollment 모수 (현재 차시 수강생 ∩ 시험/과제 대상)
         # -------------------------------------------------
-        active_session_enrollment_ids_qs = (
+        active_session_enrollment_ids = list(
             SessionEnrollment.objects
             .filter(
                 tenant=tenant,
@@ -149,7 +150,19 @@ class SessionScoresView(APIView):
             .values_list("enrollment_id", flat=True)
             .distinct()
         )
-        active_session_enrollment_ids = list(active_session_enrollment_ids_qs)
+        attendance_enrollment_ids = list(
+            Attendance.objects
+            .filter(
+                tenant=tenant,
+                session=session,
+                enrollment__status="ACTIVE",
+                enrollment__student__deleted_at__isnull=True,
+            )
+            .values_list("enrollment_id", flat=True)
+            .distinct()
+        )
+        if attendance_enrollment_ids:
+            active_session_enrollment_ids = attendance_enrollment_ids
 
         # ❗️FIX: HomeworkEnrollment ❌
         # ✅ 과제 대상자의 단일 진실은 HomeworkAssignment
