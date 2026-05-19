@@ -63,6 +63,13 @@ urlpatterns = [
     path("pdf-extract/", PdfQuestionExtractView.as_view()),
 
     # =========================
+    # Template Bundles (묶음)
+    # - 빈 prefix ExamViewSet router가 "bundles"를 pk처럼 먼저 먹지 않도록 router 앞에 둔다.
+    # =========================
+    path("bundles/<int:bundle_id>/apply/", ApplyBundleView.as_view()),
+    path("bundles/", include(bundle_router.urls)),
+
+    # =========================
     # Core
     # =========================
     path("", include(router.urls)),
@@ -119,9 +126,4 @@ urlpatterns = [
     # =========================
     path("me/available/", StudentAvailableExamListView.as_view()),
 
-    # =========================
-    # Template Bundles (묶음)
-    # =========================
-    path("bundles/", include(bundle_router.urls)),
-    path("bundles/<int:bundle_id>/apply/", ApplyBundleView.as_view()),
 ]
