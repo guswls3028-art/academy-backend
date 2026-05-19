@@ -440,6 +440,19 @@ def send_alimtalk_via_owner(trigger: str, to: str, replacements: dict[str, str])
         text = text.replace(placeholder, str(value))
         alimtalk_replacements.append({"key": key, "value": str(value)})
 
+    target_name = (
+        replacements.get("학생이름")
+        or replacements.get("학부모이름")
+        or replacements.get("이름")
+        or ""
+    )
+    target_id = (
+        replacements.get("학생아이디")
+        or replacements.get("학부모아이디")
+        or replacements.get("아이디")
+        or ""
+    )
+
     try:
         return enqueue_sms(
             tenant_id=owner_id,
@@ -448,6 +461,10 @@ def send_alimtalk_via_owner(trigger: str, to: str, replacements: dict[str, str])
             message_mode="alimtalk",
             template_id=solapi_id,
             alimtalk_replacements=alimtalk_replacements,
+            event_type=trigger,
+            target_type="account",
+            target_id=target_id,
+            target_name=target_name,
         )
     except Exception as exc:
         logger.error("send_alimtalk_via_owner: enqueue failed trigger=%s error=%s", trigger, exc)

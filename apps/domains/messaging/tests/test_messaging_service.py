@@ -766,6 +766,86 @@ class TestIdempotencyMetadata(TestCase):
         self.assertTrue(kwargs["occurrence_key"])  # 날짜 기반 키
 
 
+class TestOwnerAlimtalkMetadata(TestCase):
+    """계정/비밀번호 알림톡도 운영 로그 추적 메타데이터를 전달."""
+
+    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_password_reset_passes_event_metadata(
+        self, mock_owner, mock_disabled, mock_config, mock_enqueue
+    ):
+        """비밀번호 재설정 알림톡은 trigger와 계정 식별 정보를 큐에 남김."""
+        config = _make_config(
+            "password_reset_student",
+            solapi_template_id="KA01TP_PASSWORD",
+            body="#{학생이름} #{학생아이디} #{학생비밀번호} #{사이트링크}",
+        )
+        mock_config.return_value = config
+        mock_enqueue.return_value = True
+
+        from apps.domains.messaging.policy import send_alimtalk_via_owner
+        result = send_alimtalk_via_owner(
+            trigger="password_reset_student",
+            to="01031217466",
+            replacements={
+                "학생이름": "전청조",
+                "학생아이디": "jeon-test",
+                "학생비밀번호": "0000",
+                "사이트링크": "https://hakwonplus.com",
+            },
+        )
+
+        self.assertTrue(result)
+        kwargs = mock_enqueue.call_args.kwargs
+        self.assertEqual(kwargs["event_type"], "password_reset_student")
+        self.assertEqual(kwargs["target_type"], "account")
+        self.assertEqual(kwargs["target_id"], "jeon-test")
+        self.assertEqual(kwargs["target_name"], "전청조")
+        self.assertEqual(kwargs["message_mode"], "alimtalk")
+        self.assertEqual(kwargs["template_id"], "KA01TP_PASSWORD")
+
+    @patch(f"{_SVC}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_fallback_template_keeps_original_event_type(
+        self, mock_owner, mock_disabled, mock_config, mock_enqueue
+    ):
+        """fallback 템플릿을 써도 로그 분류는 원래 trigger로 남김."""
+        pending_config = _make_config(
+            "password_find_otp",
+            solapi_template_id="KA01TP_PENDING",
+            solapi_status="PENDING",
+            body="#{인증번호}",
+        )
+        fallback_config = _make_config(
+            "registration_approved_student",
+            solapi_template_id="KA01TP_REGISTRATION",
+            body="#{학생이름} #{학생비밀번호}",
+        )
+        mock_config.side_effect = [pending_config, fallback_config]
+        mock_enqueue.return_value = True
+
+        from apps.domains.messaging.policy import send_alimtalk_via_owner
+        result = send_alimtalk_via_owner(
+            trigger="password_find_otp",
+            to="01031217466",
+            replacements={
+                "학생이름": "전청조",
+                "학생비밀번호": "123456",
+            },
+        )
+
+        self.assertTrue(result)
+        kwargs = mock_enqueue.call_args.kwargs
+        self.assertEqual(kwargs["event_type"], "password_find_otp")
+        self.assertEqual(kwargs["target_type"], "account")
+        self.assertEqual(kwargs["target_name"], "전청조")
+        self.assertEqual(kwargs["template_id"], "KA01TP_REGISTRATION")
+
+
 class TestRecipientWhitelist(TestCase):
     """recipient guard: 테스트 모드에서 whitelist 번호만 발송."""
 
