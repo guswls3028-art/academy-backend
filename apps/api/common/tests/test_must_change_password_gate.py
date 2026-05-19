@@ -67,6 +67,8 @@ class TestMustChangePasswordGate(TestCase):
         self.assertEqual(body.get("code"), "must_change_password")
 
     def test_mcp_true_allows_change_password(self):
+        resp = self.gate(self._request("/api/v1/core/change-password/", auth=_bearer({"mcp": True})))
+        self.assertEqual(resp.status_code, 200)
         resp = self.gate(self._request("/api/v1/auth/change-password/", auth=_bearer({"mcp": True})))
         self.assertEqual(resp.status_code, 200)
         resp = self.gate(self._request(

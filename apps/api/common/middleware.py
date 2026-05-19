@@ -154,6 +154,8 @@ class MustChangePasswordGate:
     ALLOW_EXACT = (
         "/api/v1/auth/change-password/",
         "/api/v1/auth/change-password",
+        "/api/v1/core/change-password/",
+        "/api/v1/core/change-password",
         "/api/v1/core/me/profile/change-password/",
         "/api/v1/core/me/profile/change-password",
         "/api/v1/core/me/",
