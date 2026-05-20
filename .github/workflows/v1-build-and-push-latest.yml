@@ -393,7 +393,7 @@ jobs:
           mkdir -p "$REPORTS_DIR"
 
           cat > "$REPORTS_DIR/ci-build.latest.md" <<HEREDOC
-          ## V1.1.0 CI Build — latest + sha 이미지 푸시 증거 (OIDC)
+          ## V1.1.0 CI Build — latest 이미지 digest 스냅샷 (OIDC)
 
           **Generated:** $BUILD_TIME
           **SSOT:** docs/infrastructure/deployment-architecture.md
@@ -410,8 +410,11 @@ jobs:
           sed -i 's/^          //' "$REPORTS_DIR/ci-build.latest.md"
 
           for repo in academy-base academy-api academy-video-worker academy-messaging-worker academy-ai-worker-cpu; do
-            DIGEST=$(aws ecr describe-images --repository-name "$repo" --image-ids imageTag=latest --region ${{ env.AWS_REGION }} --query 'imageDetails[0].imageDigest' --output text 2>/dev/null || echo "N/A")
-            echo "| $repo | latest, sha-$SHORT_SHA | $DIGEST |" >> "$REPORTS_DIR/ci-build.latest.md"
+            IMAGE_JSON=$(aws ecr describe-images --repository-name "$repo" --image-ids imageTag=latest --region ${{ env.AWS_REGION }} --query 'imageDetails[0]' --output json 2>/dev/null || echo '{}')
+            DIGEST=$(echo "$IMAGE_JSON" | jq -r '.imageDigest // "N/A"')
+            TAGS=$(echo "$IMAGE_JSON" | jq -r '(.imageTags // []) | join(", ")')
+            [ -z "$TAGS" ] && TAGS="N/A"
+            echo "| $repo | $TAGS | $DIGEST |" >> "$REPORTS_DIR/ci-build.latest.md"
           done
 
           echo "buildTime=$BUILD_TIME" >> $GITHUB_OUTPUT
