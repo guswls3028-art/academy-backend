@@ -660,6 +660,7 @@ jobs:
           echo "API ASG instance refresh started: $REFRESH_ID"
 
       - name: Wait for API refresh to complete
+        id: wait_refresh
         run: |
           REFRESH_ID="${{ steps.refresh.outputs.refresh_id }}"
           for i in $(seq 1 30); do
@@ -684,17 +685,27 @@ jobs:
           echo "::error::API ASG refresh timed out after 15 minutes"
           exit 1
 
-      - name: Scale down API ASG after deploy (desired 2→1)
-        if: always() && steps.scaleup.outputs.current_desired == '1'
-        continue-on-error: true  # IAM 권한 없으면 skip (ASG min=1이므로 자동 정리됨)
+      - name: Restore API ASG capacity after deploy (SSOT desired=1)
+        if: always() && steps.wait_refresh.outcome == 'success'
+        continue-on-error: true  # IAM 권한 없으면 경고만 남김. 운영 SSOT는 min/desired=1, max=2.
         run: |
-          echo "Scaling back down to desired=1..."
-          aws autoscaling update-auto-scaling-group \
-            --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
+          CURRENT=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --desired-capacity 1 \
-            --max-size 2
-          echo "API ASG scaled back to desired=1"
+            --query 'AutoScalingGroups[0].{Desired:DesiredCapacity,Max:MaxSize}' \
+            --output json)
+          CURRENT_DESIRED=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Desired"])')
+          CURRENT_MAX=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Max"])')
+          if [ "$CURRENT_DESIRED" != "1" ] || [ "$CURRENT_MAX" != "2" ]; then
+            echo "Restoring API ASG capacity to SSOT desired=1 max=2 (was desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
+            aws autoscaling update-auto-scaling-group \
+              --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
+              --region ${{ env.AWS_REGION }} \
+              --desired-capacity 1 \
+              --max-size 2
+          else
+            echo "API ASG capacity already matches SSOT desired=1 max=2"
+          fi
 
   deploy-messaging:
     name: Deploy Messaging Worker (ASG refresh)
