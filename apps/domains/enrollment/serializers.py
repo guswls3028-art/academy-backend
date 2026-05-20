@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from .models import Enrollment, SessionEnrollment
 from apps.domains.students.models import Student
+from apps.domains.lectures.models import Lecture, Session
 
 
 class StudentShortSerializer(serializers.ModelSerializer):
@@ -28,6 +29,10 @@ class StudentShortSerializer(serializers.ModelSerializer):
 
 class EnrollmentSerializer(serializers.ModelSerializer):
     student = StudentShortSerializer(read_only=True)
+    tenant = serializers.PrimaryKeyRelatedField(read_only=True)
+    lecture = serializers.PrimaryKeyRelatedField(
+        queryset=Lecture.objects.all(),
+    )
 
     class Meta:
         model = Enrollment
@@ -36,8 +41,33 @@ class EnrollmentSerializer(serializers.ModelSerializer):
             "enrolled_at", "created_at", "updated_at",
         ]
 
+    def validate(self, attrs):
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        instance = self.instance
+        lecture = attrs.get("lecture", getattr(instance, "lecture", None))
+
+        if instance is not None and "lecture" in attrs and lecture.id != instance.lecture_id:
+            raise serializers.ValidationError(
+                {"lecture": "수강 등록의 강의는 단건 수정으로 변경할 수 없습니다."}
+            )
+
+        if tenant is not None and lecture is not None and lecture.tenant_id != tenant.id:
+            raise serializers.ValidationError(
+                {"lecture": "현재 학원의 강의만 사용할 수 있습니다."}
+            )
+
+        return attrs
+
 
 class SessionEnrollmentSerializer(serializers.ModelSerializer):
+    tenant = serializers.PrimaryKeyRelatedField(read_only=True)
+    session = serializers.PrimaryKeyRelatedField(
+        queryset=Session.objects.select_related("lecture").all(),
+    )
+    enrollment = serializers.PrimaryKeyRelatedField(
+        queryset=Enrollment.objects.select_related("lecture", "student").all(),
+    )
     student_name = serializers.CharField(
         source="enrollment.student.name", read_only=True
     )
@@ -58,6 +88,42 @@ class SessionEnrollmentSerializer(serializers.ModelSerializer):
             "student_name", "student_id", "student_school", "student_grade",
             "created_at",
         ]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        instance = self.instance
+
+        session = attrs.get("session", getattr(instance, "session", None))
+        enrollment = attrs.get("enrollment", getattr(instance, "enrollment", None))
+
+        if instance is not None:
+            if "session" in attrs and session.id != instance.session_id:
+                raise serializers.ValidationError(
+                    {"session": "차시 수강의 차시는 단건 수정으로 변경할 수 없습니다."}
+                )
+            if "enrollment" in attrs and enrollment.id != instance.enrollment_id:
+                raise serializers.ValidationError(
+                    {"enrollment": "차시 수강의 수강 등록은 단건 수정으로 변경할 수 없습니다."}
+                )
+
+        if tenant is not None:
+            if session is not None and session.lecture.tenant_id != tenant.id:
+                raise serializers.ValidationError(
+                    {"session": "현재 학원의 차시만 사용할 수 있습니다."}
+                )
+            if enrollment is not None and enrollment.tenant_id != tenant.id:
+                raise serializers.ValidationError(
+                    {"enrollment": "현재 학원의 수강 등록만 사용할 수 있습니다."}
+                )
+
+        if session is not None and enrollment is not None:
+            if enrollment.lecture_id != session.lecture_id:
+                raise serializers.ValidationError(
+                    {"enrollment": "해당 차시의 강의에 등록된 수강생만 추가할 수 있습니다."}
+                )
+
+        return attrs
 
     def get_student_school(self, obj):
         """

@@ -137,6 +137,12 @@ class AttendanceViewSet(ModelViewSet):
             raise PermissionDenied("Tenant is required.")
         serializer.save(tenant=tenant)
 
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"detail": "출결 등록은 bulk_create 엔드포인트를 사용해야 합니다."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()

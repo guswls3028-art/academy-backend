@@ -2,9 +2,18 @@
 
 from rest_framework import serializers
 from .models import Attendance
+from apps.domains.enrollment.models import Enrollment
+from apps.domains.lectures.models import Session
 
 
 class AttendanceSerializer(serializers.ModelSerializer):
+    session = serializers.PrimaryKeyRelatedField(
+        queryset=Session.objects.select_related("lecture").all(),
+    )
+    enrollment_id = serializers.PrimaryKeyRelatedField(
+        source="enrollment",
+        queryset=Enrollment.objects.select_related("lecture", "student").all(),
+    )
     student_id = serializers.IntegerField(
         source="enrollment.student_id",
         read_only=True,
@@ -51,6 +60,42 @@ class AttendanceSerializer(serializers.ModelSerializer):
             "profile_photo_url",
             "name_highlight_clinic_target",
         ]
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        instance = self.instance
+
+        session = attrs.get("session", getattr(instance, "session", None))
+        enrollment = attrs.get("enrollment", getattr(instance, "enrollment", None))
+
+        if instance is not None:
+            if "session" in attrs and session and session.id != instance.session_id:
+                raise serializers.ValidationError(
+                    {"session": "출결의 차시는 단건 수정으로 변경할 수 없습니다."}
+                )
+            if "enrollment" in attrs and enrollment and enrollment.id != instance.enrollment_id:
+                raise serializers.ValidationError(
+                    {"enrollment_id": "출결의 수강 등록은 단건 수정으로 변경할 수 없습니다."}
+                )
+
+        if tenant is not None:
+            if session is not None and session.lecture.tenant_id != tenant.id:
+                raise serializers.ValidationError(
+                    {"session": "현재 학원의 차시만 사용할 수 있습니다."}
+                )
+            if enrollment is not None and enrollment.tenant_id != tenant.id:
+                raise serializers.ValidationError(
+                    {"enrollment_id": "현재 학원의 수강 등록만 사용할 수 있습니다."}
+                )
+
+        if session is not None and enrollment is not None:
+            if enrollment.lecture_id != session.lecture_id:
+                raise serializers.ValidationError(
+                    {"enrollment_id": "해당 차시의 강의에 등록된 수강생만 출결에 추가할 수 있습니다."}
+                )
+
+        return attrs
 
     def get_profile_photo_url(self, obj):
         student = getattr(getattr(obj, "enrollment", None), "student", None)
