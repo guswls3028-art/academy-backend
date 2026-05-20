@@ -1,8 +1,10 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
@@ -240,6 +242,95 @@ class TestScopedPostMappingVisibility(CommunityHardeningFixture):
 
 
 class TestParentCommunityReadOnly(CommunityHardeningFixture):
+    def test_parent_board_list_and_counts_follow_child_enrollments(self):
+        board = PostViewSet.as_view({"get": "board"})
+        response = board(
+            self._request("get", self.parent_user, "/api/v1/community/posts/board/?page_size=20")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        ids = {row["id"] for row in response.data["results"]}
+        self.assertIn(self.visible_post.id, ids)
+        self.assertNotIn(self.hidden_post.id, ids)
+
+        counts = PostViewSet.as_view({"get": "counts"})
+        response = counts(
+            self._request("get", self.parent_user, "/api/v1/community/posts/counts/?post_type=board")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["total"], 1)
+        self.assertEqual(response.data["by_node_id"], {self.visible_node.id: 1})
+        self.assertNotIn(self.hidden_node.id, response.data["by_node_id"])
+
+    def test_limited_reader_counts_hide_private_post_types(self):
+        other_student_user = User.objects.create_user(
+            username="comm_other_student",
+            password="pw1234",
+            tenant=self.tenant,
+            name="Other Student",
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=other_student_user,
+            role="student",
+        )
+        other_student = Student.objects.create(
+            tenant=self.tenant,
+            user=other_student_user,
+            ps_number="S002",
+            name="Other Student",
+            phone="01055556666",
+            parent_phone="01077778888",
+            omr_code="22223333",
+        )
+        Enrollment.objects.create(
+            tenant=self.tenant,
+            student=other_student,
+            lecture=self.visible_lecture,
+            status="ACTIVE",
+        )
+        qna = PostEntity.objects.create(
+            tenant=self.tenant,
+            post_type="qna",
+            title="Other qna",
+            content="private",
+            created_by=other_student,
+            author_role="student",
+            status="published",
+        )
+        PostMapping.objects.create(post=qna, node=self.visible_node)
+        PostEntity.objects.create(
+            tenant=self.tenant,
+            post_type="counsel",
+            title="Global counsel",
+            content="private",
+            created_by=other_student,
+            author_role="student",
+            status="published",
+        )
+
+        counts = PostViewSet.as_view({"get": "counts"})
+        for user in (self.student_user, self.parent_user):
+            for post_type in ("qna", "counsel"):
+                response = counts(
+                    self._request(
+                        "get",
+                        user,
+                        f"/api/v1/community/posts/counts/?post_type={post_type}",
+                    )
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.data["total"], 0)
+                self.assertEqual(response.data["global_count"], 0)
+                self.assertEqual(response.data["by_node_id"], {})
+
+        owner_qna_response = counts(
+            self._request("get", self.owner, "/api/v1/community/posts/counts/?post_type=qna")
+        )
+        self.assertEqual(owner_qna_response.status_code, 200)
+        self.assertEqual(owner_qna_response.data["total"], 1)
+
     def test_parent_cannot_write_replies_or_attachments(self):
         reply = PostReply.objects.create(
             tenant=self.tenant,
@@ -420,3 +511,37 @@ class TestCommunityAdminListLimits(CommunityHardeningFixture):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["count"], 122)
         self.assertEqual(len(response.data["results"]), 100)
+
+
+class TestCommunityListQueryShape(CommunityHardeningFixture):
+    def test_board_list_annotates_is_liked_without_per_row_like_queries(self):
+        extra_posts = [
+            PostEntity.objects.create(
+                tenant=self.tenant,
+                post_type="board",
+                title=f"Post {idx}",
+                content="body",
+                author_role="staff",
+                status="published",
+            )
+            for idx in range(12)
+        ]
+        for post in extra_posts[:3]:
+            PostLike.objects.create(tenant=self.tenant, post=post, user=self.owner)
+
+        view = PostViewSet.as_view({"get": "board"})
+        request = self._request("get", self.owner, "/api/v1/community/posts/board/?page_size=20")
+
+        with CaptureQueriesContext(connection) as captured:
+            response = view(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertGreaterEqual(len(response.data["results"]), 12)
+        like_queries = [
+            query["sql"]
+            for query in captured.captured_queries
+            if "community_post_like" in query["sql"]
+        ]
+        self.assertLessEqual(len(like_queries), 2)
+        liked_flags = [row["is_liked"] for row in response.data["results"]]
+        self.assertEqual(sum(1 for flag in liked_flags if flag), 3)

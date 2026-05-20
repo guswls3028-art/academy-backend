@@ -3,7 +3,7 @@ import logging
 
 from django.db import transaction
 from apps.domains.community.services.html_sanitizer import sanitize_html
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -202,6 +202,21 @@ class PostViewSet(viewsets.ModelViewSet):
             role__in=["owner", "admin", "staff"],
         ).exists()
 
+    def _with_is_liked(self, qs, request):
+        user = getattr(request, "user", None)
+        tenant = getattr(request, "tenant", None)
+        if not user or not getattr(user, "is_authenticated", False) or not tenant:
+            return qs
+        return qs.annotate(
+            is_liked_anno=Exists(
+                PostLike.objects.filter(
+                    tenant=tenant,
+                    post_id=OuterRef("pk"),
+                    user_id=user.id,
+                )
+            )
+        )
+
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
@@ -241,7 +256,7 @@ class PostViewSet(viewsets.ModelViewSet):
                 raise ValidationError({"post_type": f"허용되지 않는 타입입니다: {post_type_param}"})
             qs = qs.filter(post_type=post_type_param)
 
-        return qs
+        return self._with_is_liked(qs, self.request)
 
     def list(self, request, *args, **kwargs):
         # 학생 "내 질문" 목록: node_id 없이 호출 시 페이지네이션 없이 전체 반환 (학생 앱에서 한 번에 조회)
@@ -271,28 +286,14 @@ class PostViewSet(viewsets.ModelViewSet):
 
         # 학생이면 수강 기반 스코프 필터링
         request_student = get_request_student(request)
-        if request_student is not None:
-            from apps.domains.enrollment.models import Enrollment
-            from apps.domains.community.models import ScopeNode, PostMapping
-            enrolled_lecture_ids = set(
-                Enrollment.objects.filter(
-                    tenant=tenant, student=request_student, status="ACTIVE"
-                ).values_list("lecture_id", flat=True)
-            )
-            # 학생이 볼 수 있는 node: 수강 강의의 COURSE + SESSION 노드
-            visible_node_ids = set(
-                ScopeNode.objects.filter(
-                    tenant=tenant, lecture_id__in=enrolled_lecture_ids
-                ).values_list("id", flat=True)
-            )
-            # mapping 없는 글(전체글) OR 학생의 visible node에 매핑된 글
-            scoped_post_ids = set(
-                PostMapping.objects.filter(
-                    node_id__in=visible_node_ids
-                ).values_list("post_id", flat=True)
-            )
+        is_limited_reader = (
+            request_student is not None
+            or getattr(request.user, "parent_profile", None) is not None
+        )
+        if is_limited_reader:
+            visible_node_ids = self._visible_node_ids_for_request(request)
             qs = qs.filter(
-                Q(mappings__isnull=True) | Q(id__in=scoped_post_ids)
+                Q(mappings__isnull=True) | Q(mappings__node_id__in=visible_node_ids)
             ).distinct()
 
         # 검색 q — 제목/내용 icontains. tenant scope는 이미 위에서 적용됨.
@@ -321,7 +322,7 @@ class PostViewSet(viewsets.ModelViewSet):
             page = 1
         total = qs.count()
         offset = (page - 1) * page_size
-        page_qs = qs[offset : offset + page_size]
+        page_qs = self._with_is_liked(qs, request)[offset : offset + page_size]
         serializer = self.get_serializer(page_qs, many=True)
         return Response({
             "count": total,
@@ -430,13 +431,23 @@ class PostViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         post_type = (request.query_params.get("post_type") or "").strip().lower()
-        from apps.domains.community.models.post import VALID_POST_TYPES
+        from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES, VALID_POST_TYPES
         if post_type not in VALID_POST_TYPES:
             return Response(
                 {"detail": f"허용되지 않는 post_type입니다: {post_type}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        data = get_post_counts_by_node(tenant, post_type)
+        visible_node_ids = None
+        if not self._is_staff_request(request):
+            if post_type not in STUDENT_PUBLIC_POST_TYPES:
+                return Response({
+                    "total": 0,
+                    "by_node_id": {},
+                    "by_lecture_id": {},
+                    "global_count": 0,
+                })
+            visible_node_ids = self._visible_node_ids_for_request(request)
+        data = get_post_counts_by_node(tenant, post_type, visible_node_ids=visible_node_ids)
         return Response(data)
 
     def create(self, request, *args, **kwargs):
@@ -584,7 +595,16 @@ class PostViewSet(viewsets.ModelViewSet):
             qs = (
                 PostReply.objects.filter(post=post, tenant=tenant)
                 .select_related("created_by")
-                .annotate(like_count_anno=Count("likes", distinct=True))
+                .annotate(
+                    like_count_anno=Count("likes", distinct=True),
+                    is_liked_anno=Exists(
+                        PostReplyLike.objects.filter(
+                            tenant=tenant,
+                            reply_id=OuterRef("pk"),
+                            user_id=request.user.id,
+                        )
+                    ),
+                )
                 .order_by("created_at")
             )
             serializer = PostReplySerializer(qs, many=True, context={"request": request})
@@ -958,6 +978,10 @@ class PostViewSet(viewsets.ModelViewSet):
         from django.db.models import Q as _Q
         siblings = PostEntity.objects.filter(tenant=tenant, post_type=post.post_type, status="published")
         if not self._is_staff_request(request):
+            visible_node_ids = self._visible_node_ids_for_request(request)
+            siblings = siblings.filter(
+                _Q(mappings__isnull=True) | _Q(mappings__node_id__in=visible_node_ids)
+            ).distinct()
             # 학생/외부: STUDENT_PUBLIC_POST_TYPES만 그룹화 + 자신 작성 외 비공개 차단
             if post.post_type not in STUDENT_PUBLIC_POST_TYPES:
                 # qna/counsel은 본인 작성만 — 본인 글 그룹 내 prev/next

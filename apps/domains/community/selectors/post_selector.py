@@ -128,7 +128,7 @@ def get_admin_post_list(
     return qs[offset : offset + page_size], total
 
 
-def get_post_counts_by_node(tenant, post_type: str) -> dict:
+def get_post_counts_by_node(tenant, post_type: str, *, visible_node_ids: set[int] | None = None) -> dict:
     """post_type별 트리 카운트 — 클라이언트가 500건 페치할 필요 없게 단일 집계.
 
     반환:
@@ -143,21 +143,21 @@ def get_post_counts_by_node(tenant, post_type: str) -> dict:
         PostEntity.objects.filter(tenant=tenant, post_type=post_type, status="published")
         .filter(_EXCLUDE_DELETED_AUTHOR)
     )
+    if visible_node_ids is not None:
+        qs = qs.filter(Q(mappings__isnull=True) | Q(mappings__node_id__in=visible_node_ids)).distinct()
     total = qs.count()
     global_count = qs.filter(mappings__isnull=True).distinct().count()
 
-    node_counts = (
-        PostMapping.objects.filter(post__in=qs, post__tenant=tenant)
-        .values("node_id")
-        .annotate(c=Count("post_id", distinct=True))
-    )
+    node_counts_qs = PostMapping.objects.filter(post__in=qs, post__tenant=tenant)
+    if visible_node_ids is not None:
+        node_counts_qs = node_counts_qs.filter(node_id__in=visible_node_ids)
+    node_counts = node_counts_qs.values("node_id").annotate(c=Count("post_id", distinct=True))
     by_node_id = {row["node_id"]: row["c"] for row in node_counts}
 
-    lecture_counts = (
-        PostMapping.objects.filter(post__in=qs, post__tenant=tenant)
-        .values("node__lecture_id")
-        .annotate(c=Count("post_id", distinct=True))
-    )
+    lecture_counts_qs = PostMapping.objects.filter(post__in=qs, post__tenant=tenant)
+    if visible_node_ids is not None:
+        lecture_counts_qs = lecture_counts_qs.filter(node_id__in=visible_node_ids)
+    lecture_counts = lecture_counts_qs.values("node__lecture_id").annotate(c=Count("post_id", distinct=True))
     by_lecture_id = {
         row["node__lecture_id"]: row["c"]
         for row in lecture_counts
