@@ -3,9 +3,10 @@ Messaging 도메인 DB 기록 — .objects. 접근을 adapters 내부로 한정 
 """
 from __future__ import annotations
 
+from datetime import timedelta
 from decimal import Decimal
 
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.utils import timezone as tz
 
 
@@ -58,6 +59,7 @@ def claim_notification_slot(
     business_idempotency_key: str,
     sqs_message_id: str = "",
     recipient_summary: str = "",
+    stale_after_seconds: int = 300,
 ) -> tuple[bool, int | None]:
     """
     Atomic claim: insert a 'processing' row. If unique constraint fails, it's a duplicate.
@@ -72,20 +74,63 @@ def claim_notification_slot(
         # Legacy message without business key — skip claim, fall through to old path
         return True, None
 
+    now = tz.now()
     try:
-        log = NotificationLog.objects.create(
-            tenant_id=tenant_id,
-            message_mode=message_mode[:20] if message_mode else "",
-            business_idempotency_key=business_idempotency_key,
-            status="processing",
-            claimed_at=tz.now(),
-            success=False,
-            amount_deducted=Decimal("0"),
-            recipient_summary=recipient_summary[:500] if recipient_summary else "",
-            sqs_message_id=sqs_message_id[:128] if sqs_message_id else "",
-        )
+        with transaction.atomic():
+            log = NotificationLog.objects.create(
+                tenant_id=tenant_id,
+                message_mode=message_mode[:20] if message_mode else "",
+                business_idempotency_key=business_idempotency_key,
+                status="processing",
+                claimed_at=now,
+                success=False,
+                amount_deducted=Decimal("0"),
+                recipient_summary=recipient_summary[:500] if recipient_summary else "",
+                sqs_message_id=sqs_message_id[:128] if sqs_message_id else "",
+            )
         return True, log.id
     except IntegrityError:
+        existing = (
+            NotificationLog.objects
+            .filter(
+                tenant_id=tenant_id,
+                message_mode=message_mode[:20] if message_mode else "",
+                business_idempotency_key=business_idempotency_key,
+            )
+            .only("id", "status", "sqs_message_id", "claimed_at")
+            .first()
+        )
+        same_sqs_message = bool(
+            existing
+            and sqs_message_id
+            and existing.sqs_message_id == sqs_message_id[:128]
+        )
+        if existing and existing.status == "processing" and same_sqs_message:
+            stale_cutoff = now - timedelta(seconds=max(1, int(stale_after_seconds or 300)))
+            if existing.claimed_at is None or existing.claimed_at <= stale_cutoff:
+                updated = NotificationLog.objects.filter(id=existing.id, status="processing").update(
+                    claimed_at=now,
+                    success=False,
+                    amount_deducted=Decimal("0"),
+                    failure_reason="",
+                    sqs_message_id=sqs_message_id[:128],
+                    recipient_summary=recipient_summary[:500] if recipient_summary else "",
+                )
+                if updated == 1:
+                    return True, existing.id
+            return False, existing.id
+        if existing and existing.status == "failed" and same_sqs_message:
+            updated = NotificationLog.objects.filter(id=existing.id, status="failed").update(
+                status="processing",
+                claimed_at=now,
+                success=False,
+                amount_deducted=Decimal("0"),
+                failure_reason="",
+                sqs_message_id=sqs_message_id[:128],
+                recipient_summary=recipient_summary[:500] if recipient_summary else "",
+            )
+            if updated == 1:
+                return True, existing.id
         return False, None
 
 

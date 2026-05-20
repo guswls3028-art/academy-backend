@@ -14,9 +14,27 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.core.models import TenantMembership
 from apps.domains.messaging.models import NotificationLog, MessageTemplate
 from apps.domains.messaging.serializers import SendMessageRequestSerializer
 from apps.domains.messaging.selectors import resolve_freeform_template
+
+
+MESSAGE_SEND_ROLES = ("owner", "admin", "teacher")
+
+
+def _can_send_messages(request, tenant) -> bool:
+    user = request.user
+    if not user or not user.is_authenticated or not tenant:
+        return False
+    if TenantMembership.objects.filter(
+        tenant=tenant,
+        user=user,
+        is_active=True,
+        role__in=MESSAGE_SEND_ROLES,
+    ).exists():
+        return True
+    return bool(user.is_superuser and getattr(user, "tenant_id", None) == tenant.id)
 
 
 class SendMessageView(APIView):
@@ -28,10 +46,16 @@ class SendMessageView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request):
+        tenant = request.tenant
+        if not _can_send_messages(request, tenant):
+            return Response(
+                {"detail": "메시지 발송 권한이 없습니다. 관리자 또는 강사 권한이 필요합니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         ser = SendMessageRequestSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
-        tenant = request.tenant
         send_to = data["send_to"]
         message_mode = "alimtalk"
         template_id = data.get("template_id")
@@ -85,6 +109,7 @@ class SendMessageView(APIView):
         subject_base = (raw_subject or "").strip()
         t = None
         solapi_template_id = ""
+        user_custom_content = ""
         use_unified = False       # 통합 4종 템플릿 사용 여부
         unified_template_type = None  # score / attendance / clinic_info / clinic_change
 
@@ -103,6 +128,9 @@ class SendMessageView(APIView):
                     {"detail": "템플릿을 찾을 수 없습니다."},
                     status=status.HTTP_404_NOT_FOUND,
                 )
+            tpl_body = t.body or ""
+            if body_base and ("#{공지내용}" in tpl_body or "#{내용}" in tpl_body):
+                user_custom_content = body_base
             if not body_base:
                 body_base = (t.body or "").strip()
             if not subject_base:
@@ -153,6 +181,16 @@ class SendMessageView(APIView):
                 if not solapi_template_id:
                     use_unified = False
                     solapi_template_id = (t.solapi_template_id or "").strip() if t else ""
+
+        # 알림톡 직접 작성: 템플릿 미선택 또는 block_category 미매핑이어도 승인된 자유양식 봉투로 발송한다.
+        if message_mode == "alimtalk" and not solapi_template_id:
+            freeform = resolve_freeform_template(tenant.id)
+            if freeform:
+                t = freeform
+                solapi_template_id = (freeform.solapi_template_id or "").strip()
+                user_custom_content = body_base
+                if not subject_base:
+                    subject_base = (freeform.subject or "").strip()
 
         if message_mode == "alimtalk" and not solapi_template_id:
             return Response(
@@ -245,6 +283,10 @@ class SendMessageView(APIView):
                             continue  # internal hint
                         if var_val and var_key not in ("학생이름", "학생이름2", "학생이름3", "사이트링크"):
                             alimtalk_replacements.append({"key": var_key, "value": str(var_val)})
+                    if user_custom_content:
+                        alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
+                        alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
+                        alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
 
             try:
                 ok = enqueue_sms(

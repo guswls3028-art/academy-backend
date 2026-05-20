@@ -1,7 +1,8 @@
 # PATH: apps/domains/lectures/views.py
 
 from django.db import transaction, IntegrityError
-from django.db.models import Max, Count, Q
+from django.db.models import Case, Count, IntegerField, Max, OuterRef, Q, Subquery, Value, When
+from django.db.models.functions import Coalesce
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
@@ -26,6 +27,64 @@ from apps.core.models import TenantMembership
 from apps.domains.enrollment.models import Enrollment
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
+
+
+def _first_session_delete_blocker(sessions) -> str | None:
+    from apps.domains.attendance.models import Attendance
+    from apps.domains.enrollment.models import SessionEnrollment
+    from apps.domains.exams.models import Exam
+    from apps.domains.homework.models import HomeworkAssignment, HomeworkEnrollment
+    from apps.domains.homework_results.models import Homework, HomeworkScore
+    from apps.domains.progress.models import (
+        ClinicLink,
+        LectureProgress,
+        RiskLog,
+        SessionProgress,
+    )
+    from apps.domains.results.models import ScoreEditDraft
+    from apps.domains.video.models import Video, VideoFolder
+
+    session_ids = sessions.values("id")
+    checks = (
+        ("session enrollments", SessionEnrollment.objects.filter(session_id__in=session_ids)),
+        ("attendance records", Attendance.objects.filter(session_id__in=session_ids)),
+        ("exams", Exam.objects.filter(sessions__in=sessions)),
+        ("homework enrollments", HomeworkEnrollment.objects.filter(session_id__in=session_ids)),
+        ("homework assignments", HomeworkAssignment.objects.filter(session_id__in=session_ids)),
+        ("homeworks", Homework.objects.filter(session_id__in=session_ids)),
+        ("homework scores", HomeworkScore.objects.filter(session_id__in=session_ids)),
+        ("session progress", SessionProgress.objects.filter(session_id__in=session_ids)),
+        ("lecture progress references", LectureProgress.objects.filter(last_session_id__in=session_ids)),
+        ("clinic links", ClinicLink.objects.filter(session_id__in=session_ids)),
+        ("risk logs", RiskLog.objects.filter(session_id__in=session_ids)),
+        ("videos", Video.all_with_deleted.filter(session_id__in=session_ids)),
+        ("video folders", VideoFolder.objects.filter(session_id__in=session_ids)),
+        ("score edit drafts", ScoreEditDraft.objects.filter(session_id__in=session_ids)),
+    )
+    for label, qs in checks:
+        if qs.exists():
+            return label
+    return None
+
+
+def _first_lecture_delete_blocker(lecture: Lecture) -> str | None:
+    if lecture.enrollments.exists():
+        return "lecture enrollments"
+    if lecture.lecture_progress_rows.exists():
+        return "lecture progress"
+    if lecture.clinic_sessions_by_lecture.exists():
+        return "clinic sessions"
+    if SectionAssignment.objects.filter(
+        Q(class_section__lecture=lecture) | Q(clinic_section__lecture=lecture)
+    ).exists():
+        return "section assignments"
+
+    session_blocker = _first_session_delete_blocker(
+        Session.objects.filter(lecture=lecture)
+    )
+    if session_blocker:
+        return f"sessions with {session_blocker}"
+    return None
 
 
 class LectureViewSet(ModelViewSet):
@@ -75,6 +134,15 @@ class LectureViewSet(ModelViewSet):
             serializer.save()
         except IntegrityError as e:
             self._handle_title_integrity_error(e)
+
+    def destroy(self, request, *args, **kwargs):
+        lecture = self.get_object()
+        blocker = _first_lecture_delete_blocker(lecture)
+        if blocker:
+            raise PermissionDenied(
+                f"This lecture has {blocker} and cannot be deleted."
+            )
+        return super().destroy(request, *args, **kwargs)
 
     @action(detail=False, methods=["get"], url_path="instructor-options")
     def instructor_options(self, request):
@@ -284,7 +352,33 @@ class SessionViewSet(ModelViewSet):
 
         # 진척률 옵션 — 선생앱 모바일 "오늘" 카드 등에서만 사용
         if self.request.query_params.get("include_progress") in ("1", "true", "True"):
-            qs = qs.annotate(attendance_filled=Count("attendances", distinct=True))
+            section_total = (
+                SectionAssignment.objects
+                .filter(class_section_id=OuterRef("section_id"), enrollment__status="ACTIVE")
+                .order_by()
+                .values("class_section_id")
+                .annotate(total=Count("id"))
+                .values("total")[:1]
+            )
+            lecture_total = (
+                Enrollment.objects
+                .filter(lecture_id=OuterRef("lecture_id"), status="ACTIVE")
+                .order_by()
+                .values("lecture_id")
+                .annotate(total=Count("id"))
+                .values("total")[:1]
+            )
+            qs = qs.annotate(
+                attendance_filled=Count("attendances", distinct=True),
+                attendance_total=Case(
+                    When(
+                        section_id__isnull=False,
+                        then=Coalesce(Subquery(section_total), Value(0)),
+                    ),
+                    default=Coalesce(Subquery(lecture_total), Value(0)),
+                    output_field=IntegerField(),
+                ),
+            )
 
         return qs.order_by("order", "id")
 
@@ -354,6 +448,17 @@ class SessionViewSet(ModelViewSet):
                 raise PermissionDenied("다른 학원의 반으로 세션을 이동할 수 없습니다.")
 
         serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        session = self.get_object()
+        blocker = _first_session_delete_blocker(
+            Session.objects.filter(pk=session.pk)
+        )
+        if blocker:
+            raise PermissionDenied(
+                f"This session has {blocker} and cannot be deleted."
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class SectionViewSet(ModelViewSet):

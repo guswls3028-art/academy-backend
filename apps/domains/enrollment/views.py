@@ -12,6 +12,12 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import ValidationError, NotFound
 
+from apps.api.common.upload_validation import (
+    DEFAULT_MAX_EXCEL_SIZE,
+    EXCEL_CONTENT_TYPES,
+    EXCEL_EXTENSIONS,
+    validate_uploaded_file,
+)
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from .models import Enrollment, SessionEnrollment
 from .serializers import EnrollmentSerializer, SessionEnrollmentSerializer
@@ -44,6 +50,12 @@ class EnrollmentViewSet(ModelViewSet):
             .select_related("student", "lecture")
         )
 
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"detail": "수강 등록은 bulk_create 엔드포인트를 사용해야 합니다."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
     @transaction.atomic
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):
@@ -52,7 +64,7 @@ class EnrollmentViewSet(ModelViewSet):
         lecture_id = request.data.get("lecture")
         student_ids = request.data.get("students", [])
 
-        if not lecture_id or not isinstance(student_ids, list):
+        if not lecture_id or not isinstance(student_ids, list) or not student_ids:
             return Response(
                 {"detail": "lecture, students(list)는 필수입니다"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -153,6 +165,13 @@ class EnrollmentViewSet(ModelViewSet):
                 {"detail": "initial_password는 4자 이상 필요합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        validate_uploaded_file(
+            upload_file,
+            allowed_extensions=EXCEL_EXTENSIONS,
+            allowed_content_types=EXCEL_CONTENT_TYPES,
+            max_size=DEFAULT_MAX_EXCEL_SIZE,
+            label="엑셀 파일",
+        )
 
         # 강의 소속 tenant 검증
         lecture = enroll_repo.get_lecture_by_id_tenant_raw(lecture_id, tenant)
@@ -212,7 +231,7 @@ class EnrollmentViewSet(ModelViewSet):
             status=status.HTTP_202_ACCEPTED,
         )
 
-    @action(detail=False, methods=["get"], url_path="excel_job_status/<str:job_id>")
+    @action(detail=False, methods=["get"], url_path=r"excel_job_status/(?P<job_id>[^/.]+)")
     def excel_job_status(self, request, job_id=None):
         """
         엑셀 수강등록(excel_parsing) job 상태 조회 (폴링용).
@@ -257,6 +276,12 @@ class SessionEnrollmentViewSet(ModelViewSet):
             )
         )
 
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {"detail": "차시 수강 등록은 bulk_create 엔드포인트를 사용해야 합니다."},
+            status=status.HTTP_405_METHOD_NOT_ALLOWED,
+        )
+
     @transaction.atomic
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):
@@ -290,6 +315,8 @@ class SessionEnrollmentViewSet(ModelViewSet):
         created = []
         for eid in enrollment_ids:
             enrollment = enroll_repo.get_enrollment_by_id_with_lecture(eid, tenant)
+            if enrollment is None:
+                raise ValidationError({"detail": f"수강 등록을 찾을 수 없습니다: {eid}"})
 
             if enrollment.lecture_id != session.lecture_id:
                 raise ValidationError(

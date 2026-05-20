@@ -22,34 +22,6 @@ def payroll_snapshot_exists(tenant, year, month):
     return payroll_snapshot_filter(tenant, year, month).exists()
 
 
-def work_record_filter(tenant, year, month):
-    from apps.domains.staffs.models import WorkRecord
-    return WorkRecord.objects.filter(
-        tenant=tenant,
-        year=int(year),
-        month=int(month),
-    )
-
-
-def expense_record_filter(tenant, year, month):
-    from apps.domains.staffs.models import ExpenseRecord
-    return ExpenseRecord.objects.filter(
-        tenant=tenant,
-        year=int(year),
-        month=int(month),
-    )
-
-
-def payroll_snapshot_create(tenant, year, month, generated_by):
-    from apps.domains.staffs.models import PayrollSnapshot
-    return PayrollSnapshot.objects.create(
-        tenant=tenant,
-        year=int(year),
-        month=int(month),
-        generated_by=generated_by,
-    )
-
-
 def work_type_filter(tenant):
     from apps.domains.staffs.models import WorkType
     return WorkType.objects.filter(tenant=tenant)
@@ -84,38 +56,9 @@ def staff_filter_tenant(tenant):
     return Staff.objects.filter(tenant=tenant)
 
 
-def work_record_filter_staff_month(staff, year, month):
-    from apps.domains.staffs.models import WorkRecord
-    return WorkRecord.objects.filter(
-        staff=staff,
-        year=int(year),
-        month=int(month),
-    )
-
-
-def work_record_create(tenant, staff, year, month, **kwargs):
-    from apps.domains.staffs.models import WorkRecord
-    return WorkRecord.objects.create(
-        tenant=tenant,
-        staff=staff,
-        year=int(year),
-        month=int(month),
-        **kwargs,
-    )
-
-
 def staff_work_type_filter(staff):
     from apps.domains.staffs.models import StaffWorkType
     return StaffWorkType.objects.filter(staff=staff)
-
-
-def expense_record_filter_staff(staff, year, month):
-    from apps.domains.staffs.models import ExpenseRecord
-    return ExpenseRecord.objects.filter(
-        staff=staff,
-        year=int(year),
-        month=int(month),
-    )
 
 
 def work_month_lock_filter_staff_year_month(staff, year, month):

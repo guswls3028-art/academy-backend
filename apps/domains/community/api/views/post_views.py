@@ -80,9 +80,58 @@ class PostViewSet(viewsets.ModelViewSet):
             return False
         return CommunityUserBlock.objects.filter(tenant=tenant, user=user).exists()
 
+    @staticmethod
+    def _parent_read_only_response(action_label: str = "커뮤니티 활동"):
+        return Response(
+            {"detail": f"학부모 계정은 {action_label}이 제한됩니다.", "code": "parent_read_only"},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    def _limited_reader_student_ids(self, request) -> list[int]:
+        """학생/학부모가 볼 수 있는 학생 id 목록. staff는 이 helper를 쓰지 않는다."""
+        request_student = get_request_student(request)
+        if request_student is not None:
+            return [request_student.id]
+
+        parent = getattr(request.user, "parent_profile", None)
+        tenant = getattr(request, "tenant", None)
+        if parent is None or tenant is None:
+            return []
+
+        from apps.domains.students.models import Student
+
+        return list(
+            Student.objects.filter(
+                tenant=tenant,
+                parent=parent,
+                deleted_at__isnull=True,
+            ).values_list("id", flat=True)
+        )
+
+    def _visible_node_ids_for_request(self, request) -> set[int]:
+        tenant = getattr(request, "tenant", None)
+        student_ids = self._limited_reader_student_ids(request)
+        if not tenant or not student_ids:
+            return set()
+
+        from apps.domains.enrollment.models import Enrollment
+        from apps.domains.community.models import ScopeNode
+
+        lecture_ids = Enrollment.objects.filter(
+            tenant=tenant,
+            student_id__in=student_ids,
+            status="ACTIVE",
+        ).values_list("lecture_id", flat=True)
+        return set(
+            ScopeNode.objects.filter(
+                tenant=tenant,
+                lecture_id__in=lecture_ids,
+            ).values_list("id", flat=True)
+        )
+
     def _post_visible_to_request(self, request, post) -> bool:
         """단건 가시성 SSOT — retrieve/replies/like/reply_like/reply_detail 공용.
-        staff: 모두 OK. 학생: published & (공개 타입 OR 본인 글). 학부모: 자녀 권한 등 별도 분기 없이 학생 기준 적용.
+        staff: 모두 OK. 학생/학부모: published & 공개 타입 & 수강 매핑 가시성.
 
         2026-05-11 보안 리뷰 결과: like/reply_like/replies/reply_detail에서 visibility 우회 가능했음.
         helper로 일관 적용해서 학생 권한 누출(student A → student B의 QnA reaction) 차단.
@@ -96,7 +145,17 @@ class PostViewSet(viewsets.ModelViewSet):
         if getattr(post, "status", "") != "published":
             return False
         from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
-        return getattr(post, "post_type", "") in STUDENT_PUBLIC_POST_TYPES
+        if getattr(post, "post_type", "") not in STUDENT_PUBLIC_POST_TYPES:
+            return False
+
+        mappings = list(getattr(post, "mappings", []).all()) if hasattr(getattr(post, "mappings", None), "all") else []
+        if not mappings:
+            return True
+
+        visible_node_ids = self._visible_node_ids_for_request(request)
+        if not visible_node_ids:
+            return False
+        return any(getattr(mapping, "node_id", None) in visible_node_ids for mapping in mappings)
 
     def retrieve(self, request, *args, **kwargs):
         """단건 조회: 학생/학부모는 published 공개 타입 또는 본인 작성 글만 허용."""
@@ -126,30 +185,52 @@ class PostViewSet(viewsets.ModelViewSet):
             role__in=["owner", "admin", "staff", "teacher"],
         ).exists()
 
+    def _can_manage_post_nodes(self, request) -> bool:
+        user = request.user
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser:
+            return True
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return False
+        from apps.core.models import TenantMembership
+        return TenantMembership.objects.filter(
+            tenant=tenant,
+            user=user,
+            is_active=True,
+            role__in=["owner", "admin", "staff"],
+        ).exists()
+
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return get_empty_post_queryset()
         request_student = get_request_student(self.request)
         is_staff = self._is_staff_request(self.request)
+        is_limited_reader = request_student is not None or getattr(self.request.user, "parent_profile", None) is not None
         raw = self.request.query_params.get("node_id")
         try:
             node_id = int(raw) if raw not in (None, "") else None
         except (TypeError, ValueError):
             node_id = None
         if node_id is not None:
+            if is_limited_reader and node_id not in self._visible_node_ids_for_request(self.request):
+                return get_empty_post_queryset()
             qs = get_posts_for_node(tenant, node_id, include_inherited=True, include_unpublished=is_staff)
-            if request_student is not None:
+            if is_limited_reader:
                 from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
-                qs = qs.filter(
-                    Q(post_type__in=STUDENT_PUBLIC_POST_TYPES) |
-                    Q(created_by=request_student)
-                )
+                public_filter = Q(post_type__in=STUDENT_PUBLIC_POST_TYPES)
+                if request_student is not None:
+                    public_filter |= Q(created_by=request_student)
+                qs = qs.filter(public_filter)
         else:
             qs = get_all_posts_for_tenant(tenant, include_unpublished=is_staff)
             # 학생 요청 시 node_id 없으면 본인 작성 글만 반환 (학생 앱 "내 질문" 목록)
             if request_student is not None:
                 qs = qs.filter(created_by=request_student)
+            elif is_limited_reader:
+                qs = qs.none()
 
         # F4: post_type server-side filter
         from apps.domains.community.models.post import VALID_POST_TYPES
@@ -466,9 +547,19 @@ class PostViewSet(viewsets.ModelViewSet):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        if not self._can_manage_post_nodes(request):
+            return Response({"detail": "권한이 없습니다."}, status=status.HTTP_403_FORBIDDEN)
         node_ids = request.data.get("node_ids") or []
         if not isinstance(node_ids, list):
             return Response({"detail": "node_ids must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            node_ids = [int(node_id) for node_id in node_ids]
+        except (TypeError, ValueError):
+            return Response({"detail": "node_ids must be integers"}, status=status.HTTP_400_BAD_REQUEST)
+        from apps.domains.community.models import ScopeNode
+        valid_count = ScopeNode.objects.filter(tenant=tenant, id__in=node_ids).count()
+        if valid_count != len(set(node_ids)):
+            return Response({"detail": "현재 학원에 속하지 않는 노드가 포함되어 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
         svc = CommunityService(tenant)
         svc.update_post_nodes(int(pk), node_ids)
         post = get_post_by_id(tenant, int(pk))
@@ -500,6 +591,8 @@ class PostViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
 
         # POST: 답변 등록
+        if getattr(request.user, "parent_profile", None) is not None:
+            return self._parent_read_only_response("댓글 작성")
         # 사용자 커뮤니티 차단 check(#49)
         if self._is_user_blocked(request):
             return Response({"detail": "학원 운영진에 의해 커뮤니티 작성이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
@@ -600,8 +693,10 @@ class PostViewSet(viewsets.ModelViewSet):
         tenant = _get_tenant_from_request(request)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        if getattr(request.user, "parent_profile", None) is not None:
+            return self._parent_read_only_response("첨부파일 업로드")
         post = get_post_by_id(tenant, int(pk))
-        if not post:
+        if not post or not self._post_visible_to_request(request, post):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         # 학생은 본인 글에만 첨부 가능
@@ -687,17 +782,8 @@ class PostViewSet(viewsets.ModelViewSet):
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
         post = get_post_by_id(tenant, int(pk))
-        if not post:
+        if not post or not self._post_visible_to_request(request, post):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-
-        # 학생 접근 제어: 공지·자료실·게시판 글은 허용, 그 외는 본인 글만
-        request_student = get_request_student(request)
-        if request_student is not None:
-            from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
-            is_public = getattr(post, "post_type", "") in STUDENT_PUBLIC_POST_TYPES
-            is_own = post.created_by_id == request_student.id
-            if not is_public and not is_own:
-                return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         try:
             att = PostAttachment.objects.get(id=int(att_id), post=post, tenant=tenant)
@@ -720,8 +806,10 @@ class PostViewSet(viewsets.ModelViewSet):
         tenant = _get_tenant_from_request(request)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        if getattr(request.user, "parent_profile", None) is not None:
+            return self._parent_read_only_response("첨부파일 삭제")
         post = get_post_by_id(tenant, int(pk))
-        if not post:
+        if not post or not self._post_visible_to_request(request, post):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
         # 학생은 본인 글의 첨부파일만 삭제 가능
@@ -748,6 +836,8 @@ class PostViewSet(viewsets.ModelViewSet):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant required"}, status=status.HTTP_403_FORBIDDEN)
+        if getattr(request.user, "parent_profile", None) is not None:
+            return self._parent_read_only_response("댓글 수정/삭제")
         post = get_post_by_id(tenant, int(pk))
         # 가시성 게이트 — 학생이 타인 비공개 글 댓글 수정/삭제 차단(2026-05-11 보안 리뷰).
         if not post or not self._post_visible_to_request(request, post):
@@ -795,6 +885,8 @@ class PostViewSet(viewsets.ModelViewSet):
         user = request.user
         if not user or not user.is_authenticated:
             return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        if getattr(request.user, "parent_profile", None) is not None:
+            return self._parent_read_only_response("좋아요")
         # 차단 사용자 reaction 차단(#49) — POST에서만 (DELETE는 본인 좋아요 취소 허용)
         if request.method == "POST" and self._is_user_blocked(request):
             return Response({"detail": "학원 운영진에 의해 커뮤니티 활동이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
@@ -830,6 +922,8 @@ class PostViewSet(viewsets.ModelViewSet):
         user = request.user
         if not user or not user.is_authenticated:
             return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        if getattr(request.user, "parent_profile", None) is not None:
+            return self._parent_read_only_response("댓글 좋아요")
         # 차단 사용자 reaction 차단(#49) — POST에서만
         if request.method == "POST" and self._is_user_blocked(request):
             return Response({"detail": "학원 운영진에 의해 커뮤니티 활동이 제한되었습니다.", "code": "user_blocked"}, status=status.HTTP_403_FORBIDDEN)
@@ -898,6 +992,8 @@ class PostViewSet(viewsets.ModelViewSet):
         user = request.user
         if not user or not user.is_authenticated:
             return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        if getattr(request.user, "parent_profile", None) is not None:
+            return self._parent_read_only_response("신고")
         reason = (request.data.get("reason") or CommunityReport.REASON_OTHER).strip()[:20]
         if reason not in dict(CommunityReport.REASON_CHOICES):
             reason = CommunityReport.REASON_OTHER
@@ -927,6 +1023,8 @@ class PostViewSet(viewsets.ModelViewSet):
         user = request.user
         if not user or not user.is_authenticated:
             return Response({"detail": "authentication required"}, status=status.HTTP_401_UNAUTHORIZED)
+        if getattr(request.user, "parent_profile", None) is not None:
+            return self._parent_read_only_response("댓글 신고")
         reason = (request.data.get("reason") or CommunityReport.REASON_OTHER).strip()[:20]
         if reason not in dict(CommunityReport.REASON_CHOICES):
             reason = CommunityReport.REASON_OTHER

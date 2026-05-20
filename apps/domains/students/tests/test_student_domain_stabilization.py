@@ -9,8 +9,12 @@ B10: bulk_resolve_conflicts atomic rollback
 B11/B12: 비인증 엔드포인트 throttle 적용 확인
 """
 from django.test import TestCase, override_settings
+from django.db import connection
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test.utils import CaptureQueriesContext
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from unittest.mock import patch
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
@@ -157,6 +161,85 @@ class TestB1TenantIsolationNegative(TestCase):
         tags_b = Tag.objects.filter(tenant=self.tenant_b)
         self.assertNotIn(tag_a.id, list(tags_b.values_list("id", flat=True)),
                          "CRITICAL: 타 테넌트 태그 누출!")
+
+
+class TestStudentListQueryShape(TestCase):
+    """학생 목록은 태그/수강 정보를 한 번에 가져와 학생 수만큼 쿼리가 늘지 않는다."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = _make_tenant("Query Academy", "query_academy")
+        self.admin = _make_admin(self.tenant, "query_admin")
+        self.tag = Tag.objects.create(
+            tenant=self.tenant,
+            name="관리대상",
+            color="#4f46e5",
+        )
+        for idx in range(12):
+            student = _make_student(
+                self.tenant,
+                f"Q{idx:03d}",
+                phone=f"0109911{idx:04d}",
+                parent_phone=f"0108822{idx:04d}",
+                name=f"학생{idx}",
+            )
+            student.tags.add(self.tag)
+
+    def test_student_list_prefetches_tags(self):
+        request = self.factory.get("/api/v1/students/")
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        with CaptureQueriesContext(connection) as captured:
+            response = StudentViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        results = response.data["results"]
+        self.assertEqual(len(results), 12)
+        self.assertTrue(all(row["tags"] for row in results))
+
+        tag_queries = [
+            query["sql"]
+            for query in captured.captured_queries
+            if "students_tag" in query["sql"].lower()
+            or "students_studenttag" in query["sql"].lower()
+        ]
+        self.assertLessEqual(
+            len(tag_queries),
+            1,
+            f"태그 조회가 학생 수만큼 반복됨: {tag_queries}",
+        )
+
+
+class TestStudentExcelUploadValidation(TestCase):
+    """엑셀 업로드는 확장자/MIME뿐 아니라 파일 서명도 검증한다."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = _make_tenant("Excel Guard Academy", "excel_guard")
+        self.admin = _make_admin(self.tenant, "excel_guard_admin")
+
+    @patch("apps.domains.students.views.student_views.dispatch_job")
+    @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
+    def test_fake_xlsx_is_rejected_before_r2_upload(self, mock_upload, mock_dispatch):
+        upload = SimpleUploadedFile(
+            "bad.xlsx",
+            b"not a real spreadsheet",
+            content_type="application/octet-stream",
+        )
+        request = self.factory.post(
+            "/api/v1/students/bulk_create_from_excel/",
+            data={"file": upload, "initial_password": "0000"},
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_create_from_excel"})(request)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        mock_upload.assert_not_called()
+        mock_dispatch.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════

@@ -90,6 +90,10 @@ class NotificationLogSerializer(serializers.Serializer):
 
 
 class MessageTemplateSerializer(serializers.ModelSerializer):
+    category = serializers.ChoiceField(
+        choices=[*MessageTemplate.Category.choices, ("student", "학생")],
+        required=False,
+    )
     has_content_var = serializers.SerializerMethodField()
 
     class Meta:
@@ -123,6 +127,13 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
         """본문에 #{공지내용} 또는 #{내용} 변수가 있는지 — 자유양식 발송 가능 여부"""
         body = obj.body or ""
         return "#{공지내용}" in body or "#{내용}" in body
+
+    @staticmethod
+    def validate_category(value: str) -> str:
+        # Frontend blockCategory has "student"; persisted template categories do not.
+        if value == "student":
+            return MessageTemplate.Category.DEFAULT
+        return value
 
 
 class SendMessageRequestSerializer(serializers.Serializer):
@@ -195,6 +206,16 @@ class SendMessageRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"raw_body": "직접 입력 본문을 넣거나 템플릿을 선택해 주세요."}
             )
+        if not attrs.get("template_id") and (attrs.get("raw_body") or "").strip():
+            if not (attrs.get("block_category") or "").strip():
+                raise serializers.ValidationError(
+                    {
+                        "block_category": (
+                            "템플릿 없이 직접 발송할 때는 발송 진입점 카테고리가 필요합니다. "
+                            "미리보기/확인 발송 경로를 사용해 주세요."
+                        )
+                    }
+                )
         return attrs
 
 

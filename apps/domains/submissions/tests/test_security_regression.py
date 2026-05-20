@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -26,9 +27,9 @@ from apps.core.models.tenant_membership import TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.domains.students.models import Student
 from apps.domains.lectures.models import Lecture, Session as LectureSession
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.exams.models import Exam
-from apps.domains.submissions.models import Submission
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.exams.models import Exam, ExamQuestion, Sheet
+from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
 from apps.domains.submissions.views.pending_submissions_view import PendingSubmissionsView
 from apps.domains.submissions.views.exam_submissions_list_view import ExamSubmissionsListView
@@ -104,6 +105,11 @@ class _SecurityFixtureMixin:
             tenant=self.tenant, student=self.student,
             lecture=self.lecture, status="ACTIVE",
         )
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
         self.exam = Exam.objects.create(
             tenant=self.tenant,
             title="Test Exam",
@@ -119,6 +125,11 @@ class _SecurityFixtureMixin:
         self.peer_enrollment = Enrollment.objects.create(
             tenant=self.tenant, student=self.peer_student,
             lecture=self.lecture, status="ACTIVE",
+        )
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.peer_enrollment,
         )
         self.peer_submission = Submission.objects.create(
             tenant=self.tenant, user=self.peer_user,
@@ -209,6 +220,64 @@ class TestC1SubmissionViewSetGuard(_SecurityFixtureMixin, TestCase):
                          "CRITICAL: 학생이 타인 답안 manual_edit 가능 — "
                          "다른 학생 성적 덮어쓰기 경로!")
 
+    def test_manual_edit_needs_identification_requires_enrollment(self):
+        """식별 필요 OMR은 학생 매칭 없이 answers_ready/채점으로 넘어갈 수 없다."""
+        sub = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.NEEDS_IDENTIFICATION,
+            enrollment_id=None,
+        )
+        view = SubmissionViewSet.as_view({"post": "manual_edit"})
+        resp = self._call(lambda: view, "post",
+                          f"/api/v1/submissions/submissions/{sub.id}/manual-edit/",
+                          user=self.admin,
+                          data={"answers": []},
+                          pk=sub.id)
+        self.assertEqual(resp.status_code, 400, resp.data)
+
+    def test_manual_edit_rejects_foreign_tenant_question_id(self):
+        """수동 답안 수정은 해당 시험/테넌트 문항 id만 허용한다."""
+        local_sheet = Sheet.objects.create(exam=self.exam, name="MAIN")
+        ExamQuestion.objects.create(sheet=local_sheet, number=1, score=5)
+        other_tenant = _make_tenant("Other Question Tenant", "other_question")
+        other_exam = Exam.objects.create(
+            tenant=other_tenant,
+            title="Other Exam",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        other_sheet = Sheet.objects.create(exam=other_exam, name="MAIN")
+        foreign_question = ExamQuestion.objects.create(sheet=other_sheet, number=1, score=5)
+
+        sub = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            enrollment_id=self.enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.SUBMITTED,
+        )
+
+        view = SubmissionViewSet.as_view({"post": "manual_edit"})
+        resp = self._call(
+            lambda: view,
+            "post",
+            f"/api/v1/submissions/submissions/{sub.id}/manual-edit/",
+            user=self.admin,
+            data={
+                "identifier": {"enrollment_id": self.enrollment.id},
+                "answers": [{"question_id": foreign_question.id, "answer": "1"}],
+            },
+            pk=sub.id,
+        )
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertFalse(SubmissionAnswer.objects.filter(submission=sub).exists())
+
     def test_student_discard_blocked(self):
         """학생 → discard → 403."""
         view = SubmissionViewSet.as_view({"post": "discard"})
@@ -268,6 +337,174 @@ class TestC1bStudentCreateAllowed(_SecurityFixtureMixin, TestCase):
                               })
         self.assertEqual(resp.status_code, 403,
                          "CRITICAL: 학생이 타인 enrollment_id로 제출 가능!")
+
+    def test_create_rejects_enrollment_not_assigned_to_exam(self):
+        """같은 테넌트라도 다른 강의 enrollment로 시험 제출 생성 불가."""
+        other_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="Other Math",
+            name="Other Math",
+            subject="MATH",
+        )
+        other_session = LectureSession.objects.create(
+            lecture=other_lecture,
+            order=1,
+            title="Other S1",
+        )
+        other_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Other Exam",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        other_exam.sessions.add(other_session)
+
+        view = SubmissionViewSet.as_view({"post": "create"})
+        with patch("apps.domains.submissions.views.submission_view.dispatch_submission") as mock_dispatch:
+            resp = self._call(
+                lambda: view,
+                "post",
+                "/api/v1/submissions/submissions/",
+                user=self.student_user,
+                data={
+                    "target_type": "exam",
+                    "target_id": other_exam.id,
+                    "source": "online",
+                    "enrollment_id": self.enrollment.id,
+                    "payload": {"answers": []},
+                },
+            )
+
+        self.assertEqual(resp.status_code, 403, resp.data)
+        mock_dispatch.assert_not_called()
+        self.assertFalse(
+            Submission.objects.filter(
+                tenant=self.tenant,
+                target_type=Submission.TargetType.EXAM,
+                target_id=other_exam.id,
+                enrollment_id=self.enrollment.id,
+            ).exists()
+        )
+
+    def test_teacher_create_cross_tenant_enrollment_blocked(self):
+        """스태프라도 현재 tenant 밖 enrollment_id는 제출에 사용할 수 없다."""
+        other_tenant = _make_tenant("OtherSubmitAcademy", "submit_other")
+        other_user, other_student = _make_student_user_and_profile(
+            other_tenant, "OS001", name="타학원학생",
+        )
+        other_lecture = Lecture.objects.create(
+            tenant=other_tenant, title="Other Math", name="Other Math", subject="MATH",
+        )
+        other_enrollment = Enrollment.objects.create(
+            tenant=other_tenant,
+            student=other_student,
+            lecture=other_lecture,
+            status="ACTIVE",
+        )
+        view = SubmissionViewSet.as_view({"post": "create"})
+        with patch("apps.domains.submissions.views.submission_view.dispatch_submission"):
+            resp = self._call(lambda: view, "post",
+                              "/api/v1/submissions/submissions/",
+                              user=self.teacher,
+                              data={
+                                  "target_type": "exam",
+                                  "target_id": self.exam.id,
+                                  "source": "online",
+                                  "enrollment_id": other_enrollment.id,
+                                  "payload": {"answers": []},
+                              })
+        self.assertEqual(resp.status_code, 403)
+
+    @patch("apps.domains.submissions.views.submission_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_student_create_omr_scan_blocked(self, upload_fileobj_to_r2, dispatch_submission):
+        """학생은 일반 create 경로로 OMR_SCAN/AI job을 만들 수 없다."""
+        view = SubmissionViewSet.as_view({"post": "create"})
+        upload = SimpleUploadedFile("student-omr.png", b"fake-image", content_type="image/png")
+        req = self.factory.post(
+            "/api/v1/submissions/submissions/",
+            data={
+                "target_type": "exam",
+                "target_id": self.exam.id,
+                "source": Submission.Source.OMR_SCAN,
+                "file": upload,
+            },
+            format="multipart",
+        )
+        force_authenticate(req, user=self.student_user)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 403, resp.data)
+        upload_fileobj_to_r2.assert_not_called()
+        dispatch_submission.assert_not_called()
+
+    @patch("apps.domains.submissions.views.submission_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_admin_omr_upload_same_tenant_non_candidate_enrollment_blocked(
+        self,
+        upload_fileobj_to_r2,
+        dispatch_submission,
+    ):
+        """운영자 OMR 업로드도 현재 시험/차시 대상자가 아닌 enrollment_id는 거부한다."""
+        Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=1)
+        other_user, other_student = _make_student_user_and_profile(
+            self.tenant, "S999", name="비대상학생",
+        )
+        other_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="Non Candidate Lecture",
+            name="Non Candidate Lecture",
+            subject="MATH",
+        )
+        non_candidate_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=other_student,
+            lecture=other_lecture,
+            status="ACTIVE",
+        )
+        view = SubmissionViewSet.as_view({"post": "admin_omr_upload"})
+        upload = SimpleUploadedFile("scan.png", b"\x89PNG\r\n\x1a\nfake-image", content_type="image/png")
+        req = self.factory.post(
+            "/api/v1/submissions/submissions/admin/omr-upload/",
+            data={
+                "target_id": self.exam.id,
+                "enrollment_id": non_candidate_enrollment.id,
+                "file": upload,
+            },
+            format="multipart",
+        )
+        force_authenticate(req, user=self.admin)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 403, resp.data)
+        upload_fileobj_to_r2.assert_not_called()
+        dispatch_submission.assert_not_called()
+
+    @patch("apps.domains.submissions.views.submission_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_admin_omr_upload_rejects_malformed_file_before_upload(
+        self,
+        upload_fileobj_to_r2,
+        dispatch_submission,
+    ):
+        view = SubmissionViewSet.as_view({"post": "admin_omr_upload"})
+        upload = SimpleUploadedFile("scan.png", b"not-a-real-image", content_type="image/png")
+        req = self.factory.post(
+            "/api/v1/submissions/submissions/admin/omr-upload/",
+            data={"target_id": self.exam.id, "file": upload},
+            format="multipart",
+        )
+        force_authenticate(req, user=self.admin)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        upload_fileobj_to_r2.assert_not_called()
+        dispatch_submission.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════

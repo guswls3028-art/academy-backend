@@ -15,8 +15,9 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
+from rest_framework.test import APITestCase
 
-from apps.core.models import Tenant
+from apps.core.models import Tenant, TenantMembership
 from apps.domains.fees.models import (
     FeePayment,
     FeeTemplate,
@@ -315,3 +316,79 @@ class TenantIsolationTest(FeesTestMixin, TestCase):
         )
         with self.assertRaises(FeePayment.DoesNotExist):
             cancel_payment(t_b, payment.id)
+
+
+class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
+    """HTTP 경계에서 청구서/수납 무결성 필드가 변조되지 않도록 검증."""
+
+    def setUp(self):
+        self.tenant = self.make_tenant(code="t_fee_api")
+        program = self.tenant.program
+        program.feature_flags = {"fee_management": True}
+        program.save(update_fields=["feature_flags"])
+
+        self.staff = User.objects.create_user(
+            username="fee_api_staff",
+            password="test1234!",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.objects.create(
+            user=self.staff,
+            tenant=self.tenant,
+            role="staff",
+            is_active=True,
+        )
+        self.client.force_authenticate(user=self.staff)
+        self.headers = {"HTTP_HOST": "localhost", "HTTP_X_TENANT_CODE": self.tenant.code}
+
+        self.student = self.make_student(self.tenant, suffix=1)
+        self.other_student = self.make_student(self.tenant, suffix=2)
+        self.invoice = self.make_invoice(self.tenant, self.student, total=100_000)
+
+    def test_invoice_patch_cannot_forge_financial_or_identity_fields(self):
+        url = f"/api/v1/fees/invoices/{self.invoice.id}/"
+        new_due_date = (timezone.localdate() + timedelta(days=20)).isoformat()
+
+        resp = self.client.patch(
+            url,
+            data={
+                "memo": "safe memo",
+                "due_date": new_due_date,
+                "paid_amount": 100_000,
+                "total_amount": 1,
+                "status": "PAID",
+                "student": self.other_student.id,
+            },
+            format="json",
+            **self.headers,
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.memo, "safe memo")
+        self.assertEqual(self.invoice.due_date.isoformat(), new_due_date)
+        self.assertEqual(self.invoice.paid_amount, 0)
+        self.assertEqual(self.invoice.total_amount, 100_000)
+        self.assertEqual(self.invoice.status, "PENDING")
+        self.assertEqual(self.invoice.student_id, self.student.id)
+
+    def test_payment_create_passes_idempotency_key_and_does_not_double_increment(self):
+        payload = {
+            "invoice_id": self.invoice.id,
+            "amount": 40_000,
+            "payment_method": "CASH",
+            "idempotency_key": "api-payment-key-1",
+        }
+
+        first = self.client.post("/api/v1/fees/payments/", data=payload, format="json", **self.headers)
+        second = self.client.post("/api/v1/fees/payments/", data=payload, format="json", **self.headers)
+
+        self.assertEqual(first.status_code, 201, first.content)
+        self.assertEqual(second.status_code, 201, second.content)
+        self.assertEqual(FeePayment.objects.filter(invoice=self.invoice).count(), 1)
+        payment = FeePayment.objects.get(invoice=self.invoice)
+        self.assertEqual(payment.idempotency_key, "api-payment-key-1")
+        self.invoice.refresh_from_db()
+        self.assertEqual(self.invoice.paid_amount, 40_000)
+        self.assertEqual(self.invoice.status, "PARTIAL")

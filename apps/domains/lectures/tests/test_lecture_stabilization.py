@@ -9,9 +9,10 @@ D. section 타입 검증
 E. 날짜 정합성 검증
 """
 from django.test import TestCase
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.test.utils import CaptureQueriesContext
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
@@ -144,6 +145,90 @@ class TestSessionListNoPagination(LectureTestBase):
         self.assertEqual(len(response.data), 25)
         self.assertEqual(response.data[0]["order"], 1)
         self.assertEqual(response.data[-1]["order"], 25)
+
+    def test_include_progress_annotates_total_without_per_session_counts(self):
+        """선생앱 오늘 카드의 출결 총원은 세션 수와 무관하게 한 쿼리에서 계산된다."""
+        students = []
+        enrollments = []
+        for idx in range(3):
+            user = User.objects.create_user(
+                username=f"progress_stu_{idx}",
+                password="test1234",
+                tenant=self.tenant,
+                name=f"Progress Student {idx}",
+            )
+            student = Student.objects.create(
+                tenant=self.tenant,
+                user=user,
+                ps_number=f"P{idx:03d}",
+                name=f"Progress Student {idx}",
+                phone=f"0103311{idx:04d}",
+                parent_phone=f"0104422{idx:04d}",
+                omr_code=f"3311{idx:04d}",
+            )
+            students.append(student)
+            enrollments.append(
+                Enrollment.objects.create(
+                    tenant=self.tenant,
+                    student=student,
+                    lecture=self.lecture,
+                    status="ACTIVE",
+                )
+            )
+
+        section = Section.objects.create(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            label="A",
+            section_type="CLASS",
+            day_of_week=0,
+            start_time="10:00",
+        )
+        SectionAssignment.objects.create(
+            tenant=self.tenant,
+            enrollment=enrollments[0],
+            class_section=section,
+        )
+        SectionAssignment.objects.create(
+            tenant=self.tenant,
+            enrollment=enrollments[1],
+            class_section=section,
+        )
+
+        shared_session = Session.objects.create(
+            lecture=self.lecture,
+            order=1,
+            title="공통 1차시",
+        )
+        section_session = Session.objects.create(
+            lecture=self.lecture,
+            section=section,
+            order=1,
+            title="A반 1차시",
+        )
+        for idx in range(2, 9):
+            Session.objects.create(
+                lecture=self.lecture,
+                order=idx,
+                title=f"공통 {idx}차시",
+            )
+
+        request = self.factory.get("/api/v1/lectures/sessions/?include_progress=1")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        with CaptureQueriesContext(connection) as captured:
+            response = SessionViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        totals = {row["id"]: row["attendance_total"] for row in response.data}
+        self.assertEqual(totals[shared_session.id], 3)
+        self.assertEqual(totals[section_session.id], 2)
+        self.assertLessEqual(
+            len(captured),
+            5,
+            [query["sql"] for query in captured.captured_queries],
+        )
 
 
 class TestAutoAssignConcurrency(LectureTestBase):

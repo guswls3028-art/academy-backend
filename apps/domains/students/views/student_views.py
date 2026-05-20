@@ -19,6 +19,12 @@ from rest_framework.exceptions import NotFound, ValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
+from apps.api.common.upload_validation import (
+    DEFAULT_MAX_EXCEL_SIZE,
+    EXCEL_CONTENT_TYPES,
+    EXCEL_EXTENSIONS,
+    validate_uploaded_file,
+)
 from apps.core.permissions import IsStudent, TenantResolvedAndStaff
 from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
@@ -100,9 +106,9 @@ class StudentViewSet(ModelViewSet):
                 qs = qs.filter(deleted_at__isnull=False)
             else:
                 qs = qs.filter(deleted_at__isnull=True)
-            qs = qs.prefetch_related("enrollments__lecture")
+            qs = qs.prefetch_related("tags", "enrollments__lecture")
         elif self.action == "retrieve":
-            qs = qs.prefetch_related("enrollments__lecture")
+            qs = qs.prefetch_related("tags", "enrollments__lecture")
 
         return qs
 
@@ -188,7 +194,6 @@ class StudentViewSet(ModelViewSet):
         )
         serializer.is_valid(raise_exception=True)
 
-        User = get_user_model()
         data = serializer.validated_data
         send_welcome = data.pop("send_welcome_message", False)
 
@@ -391,6 +396,13 @@ class StudentViewSet(ModelViewSet):
             raise ValidationError({"detail": "file(엑셀)은 필수입니다."})
         if len(initial_password) < 4:
             raise ValidationError({"detail": "initial_password는 4자 이상 필요합니다."})
+        validate_uploaded_file(
+            upload_file,
+            allowed_extensions=EXCEL_EXTENSIONS,
+            allowed_content_types=EXCEL_CONTENT_TYPES,
+            max_size=DEFAULT_MAX_EXCEL_SIZE,
+            label="엑셀 파일",
+        )
 
         try:
             ext = "xlsx"
@@ -483,7 +495,6 @@ class StudentViewSet(ModelViewSet):
                 status=400,
             )
         send_welcome = serializer.validated_data.get("send_welcome_message", False)
-        User = get_user_model()
         tenant = request.tenant
 
         created_count = 0
@@ -657,7 +668,6 @@ class StudentViewSet(ModelViewSet):
             return Response({"detail": "resolutions는 배열이어야 합니다."}, status=400)
 
         tenant = request.tenant
-        User = get_user_model()
         created_count = 0
         restored_count = 0
         failed = []

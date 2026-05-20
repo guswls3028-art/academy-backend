@@ -110,7 +110,11 @@ class AttendanceViewSet(ModelViewSet):
 
     filter_backends = [DjangoFilterBackend, SearchFilter]
     filterset_class = AttendanceFilter
-    search_fields = ["enrollment__student__name"]
+    search_fields = [
+        "enrollment__student__name",
+        "enrollment__student__phone",
+        "enrollment__student__parent_phone",
+    ]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)

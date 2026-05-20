@@ -21,7 +21,9 @@ from apps.core.models.tenant_membership import TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.domains.students.models import Student
 from apps.domains.lectures.models import Lecture
+from apps.domains.exams.models import Exam
 from apps.domains.enrollment.models import Enrollment
+from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
 from apps.domains.results.views.wrong_note_view import WrongNoteView
 from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
 from apps.domains.results.views.student_exam_attempts_view import MyExamAttemptsView
@@ -138,6 +140,112 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         req.tenant = self.tenant
         resp = view(req)
         self.assertEqual(resp.status_code, 403)
+
+    def test_pdf_create_rejects_cross_tenant_lecture_id(self):
+        """enrollment은 본인 것이어도 lecture_id가 다른 테넌트면 Job 생성 금지."""
+        other_tenant = Tenant.objects.create(
+            name="OtherResultsSecAcademy",
+            code="ressec-other",
+            is_active=True,
+        )
+        other_lecture = Lecture.objects.create(
+            tenant=other_tenant,
+            title="Other L",
+            name="Other L",
+            subject="MATH",
+        )
+        view = WrongNotePDFCreateView.as_view()
+        req = self.factory.post(
+            "/api/v1/results/wrong-notes/pdf/",
+            data={
+                "enrollment_id": self.enroll_a.id,
+                "lecture_id": other_lecture.id,
+            },
+            format="json",
+        )
+        force_authenticate(req, user=self.user_a)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(WrongNotePDF.objects.exists())
+
+    def test_pdf_create_rejects_cross_tenant_exam_id(self):
+        """exam_id도 같은 tenant와 같은 lecture/session에 연결된 시험만 허용."""
+        other_tenant = Tenant.objects.create(
+            name="OtherResultsSecAcademy2",
+            code="ressec-other-2",
+            is_active=True,
+        )
+        other_exam = Exam.objects.create(
+            tenant=other_tenant,
+            title="외부시험",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        view = WrongNotePDFCreateView.as_view()
+        req = self.factory.post(
+            "/api/v1/results/wrong-notes/pdf/",
+            data={
+                "enrollment_id": self.enroll_a.id,
+                "lecture_id": self.lecture.id,
+                "exam_id": other_exam.id,
+            },
+            format="json",
+        )
+        force_authenticate(req, user=self.user_a)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(WrongNotePDF.objects.exists())
+
+    def test_pdf_create_staff_without_tenant_membership_rejected(self):
+        """전역 is_staff라도 request.tenant 멤버십 없으면 PDF job 생성 불가."""
+        other_tenant = Tenant.objects.create(
+            name="OtherResultsSecAcademy3",
+            code="ressec-other-3",
+            is_active=True,
+        )
+        other_lecture = Lecture.objects.create(
+            tenant=other_tenant,
+            title="Other L3",
+            name="Other L3",
+            subject="MATH",
+        )
+        _other_user, other_student = _make_student(other_tenant, "O001", "외부학생")
+        other_enroll = Enrollment.objects.create(
+            tenant=other_tenant,
+            student=other_student,
+            lecture=other_lecture,
+            status="ACTIVE",
+        )
+        staff_without_membership = User.objects.create_user(
+            username="staff_without_other_membership",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=staff_without_membership,
+            role="teacher",
+        )
+
+        view = WrongNotePDFCreateView.as_view()
+        req = self.factory.post(
+            "/api/v1/results/wrong-notes/pdf/",
+            data={"enrollment_id": other_enroll.id},
+            format="json",
+        )
+        force_authenticate(req, user=staff_without_membership)
+        req.tenant = other_tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(WrongNotePDF.objects.exists())
 
     def test_attempts_user_b_pk_collision_blocked(self):
         """MyExamAttemptsView에서도 PK 충돌 사용자가 타인 attempts 접근 불가.

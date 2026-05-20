@@ -223,9 +223,15 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             "pay_type",
             "role",
         ]
-        read_only_fields = ["id"]
+        read_only_fields = ["id", "user"]
         ref_name = "StaffWrite"
-        extra_kwargs = {"user": {"required": False}}
+
+    def validate(self, attrs):
+        if "user" in getattr(self, "initial_data", {}):
+            raise serializers.ValidationError(
+                {"user": "직원 계정은 직접 연결할 수 없습니다. 아이디/초기 비밀번호로 생성해 주세요."}
+            )
+        return attrs
 
     # =========================
     # CREATE
@@ -369,14 +375,20 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             instance.delete()
             if user:
                 # User를 hard-delete하지 않고 비활성화 + 해당 테넌트 멤버십만 제거.
-                # hard-delete는 Student, Attendance, 다른 테넌트 Membership 등을
-                # cascade로 파괴할 수 있으므로 절대 금지.
+                # hard-delete는 Student, Attendance 등을 cascade로 파괴할 수 있으므로 절대 금지.
+                # User.is_active/is_staff 는 전역 속성이므로, 다른 테넌트 멤버십이 남아 있거나
+                # User.tenant 가 이 Staff의 tenant가 아니면 절대 변경하지 않는다.
                 TenantMembership.objects.filter(
                     user=user, tenant=instance.tenant,
                 ).delete()
-                user.is_active = False
-                user.is_staff = False
-                user.save(update_fields=["is_active", "is_staff"])
+                has_other_membership = TenantMembership.objects.filter(
+                    user=user,
+                    is_active=True,
+                ).exclude(tenant=instance.tenant).exists()
+                if getattr(user, "tenant_id", None) == instance.tenant_id and not has_other_membership:
+                    user.is_active = False
+                    user.is_staff = False
+                    user.save(update_fields=["is_active", "is_staff"])
 
     # =========================
     # Helpers
@@ -511,6 +523,19 @@ class WorkMonthLockSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["locked_by", "created_at"]
         ref_name = "WorkMonthLock"
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        self.fields["staff"].queryset = Staff.objects.filter(tenant=tenant) if tenant else Staff.objects.none()
+
+    def validate_staff(self, staff):
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        if not tenant or staff.tenant_id != tenant.id:
+            raise serializers.ValidationError("해당 직원을 찾을 수 없습니다.")
+        return staff
 
 
 class PayrollSnapshotSerializer(serializers.ModelSerializer):

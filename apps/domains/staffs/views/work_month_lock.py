@@ -4,6 +4,7 @@ from rest_framework import viewsets, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
+from django.db import transaction
 
 from ..models import Staff
 from ..serializers import WorkMonthLockSerializer
@@ -42,20 +43,21 @@ class WorkMonthLockViewSet(viewsets.ModelViewSet):
         except Staff.DoesNotExist:
             raise ValidationError("해당 직원을 찾을 수 없습니다.")
 
-        obj, _ = staff_repo.work_month_lock_update_or_create_defaults(
-            request.tenant,
-            staff,
-            year,
-            month,
-            defaults={"is_locked": True, "locked_by": request.user},
-        )
+        with transaction.atomic():
+            obj, _ = staff_repo.work_month_lock_update_or_create_defaults(
+                request.tenant,
+                staff,
+                year,
+                month,
+                defaults={"is_locked": True, "locked_by": request.user},
+            )
 
-        generate_payroll_snapshot(
-            staff=staff,
-            year=year,
-            month=month,
-            user=request.user,
-        )
+            generate_payroll_snapshot(
+                staff=staff,
+                year=year,
+                month=month,
+                user=request.user,
+            )
 
         return Response(
             WorkMonthLockSerializer(obj).data,

@@ -48,6 +48,7 @@ from ..models import (
     VideoFolder,
 )
 from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
+from ..services.access_resolver import resolve_access_modes_prefetched
 from ..services.video_encoding import create_job_and_submit_batch
 from .playback_mixin import VideoPlaybackMixin
 
@@ -62,6 +63,24 @@ def _safe_int(v, default=None):
         return int(v)
     except Exception:
         return default
+
+
+def _cache_uploaded_status(video: Video) -> None:
+    """upload_complete 직후 Redis-only progress endpoint가 UPLOADED를 반환하도록 동기화."""
+    tenant_id = getattr(video, "tenant_id", None)
+    if not tenant_id:
+        return
+    try:
+        from apps.domains.video.redis_status_cache import cache_video_status
+        cache_video_status(
+            tenant_id=tenant_id,
+            video_id=video.id,
+            status=Video.Status.UPLOADED,
+            duration=video.duration,
+            ttl=21600,
+        )
+    except Exception as e:
+        logger.debug("VIDEO_UPLOAD_STATUS_CACHE_FAILED | video_id=%s | %s", getattr(video, "id", None), e)
 
 
 def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
@@ -181,7 +200,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         R2 스토리지 정리는 6개월 보관 후 purge_deleted_videos 커맨드에서 수행.
         Terminate 실패해도 삭제 요청은 성공.
         """
-        video = video_repo.get_video_by_pk_with_relations(instance.pk)
         video_id = instance.id
         # Kill ALL active TranscodeJobs for this video (not just current_job).
         # Soft-delete doesn't trigger CASCADE, so zombie RETRY_WAIT jobs can
@@ -269,7 +287,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 {"detail": "다른 프로그램의 차시에는 업로드할 수 없습니다."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        tenant_code = tenant.code
         tenant_id = tenant.id
         # same session 내 동시 업로드 시 order max+1 충돌 방지
         session = Session.objects.select_for_update().select_related("lecture__tenant").get(pk=session.pk)
@@ -736,6 +753,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
             video.save(update_fields=["status", "duration", "error_reason"])
+            _cache_uploaded_status(video)
             logger.info(
                 "VIDEO_UPLOAD_TRACE | before enqueue (ffprobe_fail reason=%s duration=%s) | video_id=%s execution=2_BEFORE_ENQUEUE",
                 reason, duration, video_id,
@@ -757,6 +775,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video.status = Video.Status.UPLOADED
             video.error_reason = ""
             video.save(update_fields=["status", "duration", "error_reason"])
+            _cache_uploaded_status(video)
             _tid = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
             logger.info(
                 "VIDEO_UPLOAD_TRACE | before enqueue (duration<min branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
@@ -775,6 +794,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         video.status = Video.Status.UPLOADED
         video.error_reason = ""
         video.save(update_fields=["status", "duration", "error_reason"])
+        _cache_uploaded_status(video)
         _tid = getattr(getattr(getattr(video, "session", None), "lecture", None), "tenant_id", None)
         logger.info(
             "VIDEO_UPLOAD_TRACE | before enqueue (normal branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
@@ -992,6 +1012,13 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             a.enrollment_id: a.status
             for a in video_repo.get_attendance_for_session(session)
         }
+        access_modes = resolve_access_modes_prefetched(
+            video=video,
+            enrollments=enrollments,
+            progresses_by_enrollment_id=progresses,
+            access_by_enrollment_id=perms,
+            attendance_status_by_enrollment_id=attendance,
+        )
 
         # ✅ 클리닉 하이라이트 일괄 계산
         from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
@@ -1005,10 +1032,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         for e in enrollments:
             vp = progresses.get(e.id)
             perm = perms.get(e.id)
-
-            # Use SSOT access resolver
-            from apps.domains.video.services.access_resolver import resolve_access_mode
-            access_mode = resolve_access_mode(video=video, enrollment=e)
+            access_mode = access_modes[e.id]
 
             # Legacy rule for backward compatibility
             rule = perm.rule if perm else "free"

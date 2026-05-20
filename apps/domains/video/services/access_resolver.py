@@ -11,11 +11,35 @@ Business Logic (SSOT):
 - Offline students: majority, never monitored
 """
 
-from typing import Optional
+from typing import Iterable, Mapping, Optional
 
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.video.models import Video, AccessMode
 from academy.adapters.db.django import repositories_video as video_repo
+
+
+def _resolve_access_mode_loaded(
+    *,
+    perm,
+    attendance_status: Optional[str],
+    progress,
+) -> AccessMode:
+    if perm and perm.access_mode == AccessMode.BLOCKED:
+        return AccessMode.BLOCKED
+
+    if attendance_status != "ONLINE":
+        return AccessMode.FREE_REVIEW
+
+    # 90% 이상 시청 = 의무 완수. FREE_REVIEW로 자동 전환.
+    # 동기화는 progress_views.VideoProgressViewSet.perform_update에서 proctored_completed_at에 시각을
+    # 박아 두므로, Redis/DB lag 상황에도 다음 resolve가 안정적으로 FREE_REVIEW를 반환한다.
+    if progress and (progress.completed or (progress.progress is not None and float(progress.progress) >= 0.9)):
+        return AccessMode.FREE_REVIEW
+
+    if perm and perm.proctored_completed_at is not None:
+        return AccessMode.FREE_REVIEW
+
+    return AccessMode.PROCTORED_CLASS
 
 
 def resolve_access_mode(
@@ -42,22 +66,42 @@ def resolve_access_mode(
 
     session = video.session
     attendance = video_repo.attendance_filter_session_enrollment(session, enrollment).first()
+    attendance_status = attendance.status if attendance else None
 
-    if not attendance or attendance.status != "ONLINE":
-        return AccessMode.FREE_REVIEW
+    progress = None
+    if attendance_status == "ONLINE":
+        progress = video_repo.video_progress_get(video, enrollment)
 
-    progress = video_repo.video_progress_get(video, enrollment)
+    return _resolve_access_mode_loaded(
+        perm=perm,
+        attendance_status=attendance_status,
+        progress=progress,
+    )
 
-    # 90% 이상 시청 = 의무 완수. FREE_REVIEW로 자동 전환.
-    # 동기화는 progress_views.VideoProgressViewSet.perform_update에서 proctored_completed_at에 시각을
-    # 박아 두므로, Redis/DB lag 상황에도 다음 resolve가 안정적으로 FREE_REVIEW를 반환한다.
-    if progress and (progress.completed or (progress.progress is not None and float(progress.progress) >= 0.9)):
-        return AccessMode.FREE_REVIEW
 
-    if perm and perm.proctored_completed_at is not None:
-        return AccessMode.FREE_REVIEW
+def resolve_access_modes_prefetched(
+    *,
+    video: Video,
+    enrollments: Iterable[Enrollment],
+    progresses_by_enrollment_id: Mapping[int, object],
+    access_by_enrollment_id: Mapping[int, object],
+    attendance_status_by_enrollment_id: Mapping[int, Optional[str]],
+    session_id: Optional[int] = None,
+) -> dict[int, AccessMode]:
+    """
+    Bulk resolve access modes from already-loaded stats maps.
 
-    return AccessMode.PROCTORED_CLASS
+    This preserves resolve_access_mode's decision order while avoiding
+    per-enrollment permission/progress/attendance queries in list views.
+    """
+    return {
+        enrollment.id: _resolve_access_mode_loaded(
+            perm=access_by_enrollment_id.get(enrollment.id),
+            attendance_status=attendance_status_by_enrollment_id.get(enrollment.id),
+            progress=progresses_by_enrollment_id.get(enrollment.id),
+        )
+        for enrollment in enrollments
+    }
 
 
 def get_effective_access_mode(

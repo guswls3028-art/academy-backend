@@ -17,12 +17,12 @@ from apps.domains.enrollment.models import Enrollment
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
-from apps.domains.results.utils.clinic import is_clinic_required
+from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.views.session_scores_view import _safe_student_name, _get_enrollment_display_fields
 from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 from apps.domains.results.utils.ranking import compute_exam_rankings
-from apps.domains.results.utils.exam_achievement import compute_exam_achievement
+from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 
 
 class AdminExamResultsView(ListAPIView):
@@ -163,6 +163,26 @@ class AdminExamResultsView(ListAPIView):
         rank_map = compute_exam_rankings(exam_id=exam_id)
 
         # -------------------------------------------------
+        # 성취/클리닉 상태 일괄 계산 (N+1 방지)
+        # -------------------------------------------------
+        achievement_items = []
+        for r in results:
+            achievement_items.append({
+                "enrollment_id": int(r.enrollment_id),
+                "exam_id": exam_id,
+                "total_score": float(r.total_score) if r.total_score is not None else None,
+                "pass_score": pass_score,
+                "attempt_id": getattr(r, "attempt_id", None),
+                "session": session,
+            })
+        achievement_map = compute_exam_achievement_bulk(items=achievement_items)
+        clinic_required_ids = (
+            get_clinic_enrollment_ids_for_session(session=session, include_manual=False)
+            if session
+            else set()
+        )
+
+        # -------------------------------------------------
         # rows 구성 (기존 로직 유지 + 성취 SSOT 필드 주입)
         # -------------------------------------------------
         rows = []
@@ -186,25 +206,11 @@ class AdminExamResultsView(ListAPIView):
             raw_max_score = (
                 float(r.max_score) if r.max_score is not None else None
             )
-            achievement_data = compute_exam_achievement(
-                enrollment_id=enrollment_id,
-                exam_id=exam_id,
-                session=session,
-                total_score=raw_total_score,
-                pass_score=pass_score,
-                attempt_id=getattr(r, "attempt_id", None),
-            )
+            achievement_data = achievement_map[(enrollment_id, exam_id)]
             # passed = 1차 합격(석차 판정용). 기존 응답 호환.
             passed = achievement_data["is_pass"]
 
-            clinic_required = bool(
-                session
-                and is_clinic_required(
-                    session=session,
-                    enrollment_id=enrollment_id,
-                    include_manual=False,
-                )
-            )
+            clinic_required = enrollment_id in clinic_required_ids
 
             # 학생 SSOT 표시용 필드 (아바타 + 강의 딱지)
             display = _get_enrollment_display_fields(enrollment_map.get(enrollment_id))
@@ -218,6 +224,9 @@ class AdminExamResultsView(ListAPIView):
                 # None 보존: 미응시·미채점 행은 점수 셀이 "미응시/미채점"로 표시되어야 함.
                 "exam_score": raw_total_score,
                 "exam_max_score": raw_max_score,
+                # Backward-compatible aliases for older/mobile consumers.
+                "total_score": raw_total_score,
+                "max_score": raw_max_score,
 
                 "final_score": raw_total_score,
 

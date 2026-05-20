@@ -10,16 +10,17 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from django_filters.rest_framework import DjangoFilterBackend
 
-from apps.core.permissions import TenantResolvedAndStaff as _TenantResolvedAndStaff
+from apps.core.permissions import (
+    TenantResolvedAndMember,
+    TenantResolvedAndStaff as _TenantResolvedAndStaff,
+)
 
 from django.utils import timezone
 from ..models import VideoAccess, AccessMode
 from ..serializers import VideoProgressSerializer
 from academy.adapters.db.django import repositories_video as video_repo
 from apps.domains.video.encoding_progress import (
-    get_video_encoding_progress,
-    get_video_encoding_step_detail,
-    get_video_encoding_remaining_seconds,
+    get_video_encoding_snapshot,
 )
 from apps.domains.video.redis_status_cache import (
     get_video_status_from_redis,
@@ -65,7 +66,7 @@ def _unknown_state_response(video_id: int):
 class VideoProgressView(APIView):
     """비디오 진행률/상태 조회 (Redis-only). DB 부하 0. Redis miss 시 state=UNKNOWN 반환."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request, pk):
         # DO NOT ADD DB ACCESS HERE (PROGRESS ENDPOINT)
@@ -91,57 +92,6 @@ class VideoProgressView(APIView):
             return _default_progress_response(video_id)
 
         if cached_status is None:
-            # request.tenant 소속 Video만 조회. 다른 테넌트 영상 진행률 노출 금지(tenant 격리).
-            video = None
-            try:
-                from ..models import Video
-
-                video = (
-                    Video.objects.filter(
-                        tenant=tenant,
-                        pk=video_id,
-                    )
-                    .select_related("tenant")
-                    .first()
-                )
-                if video:
-                    # 동일 테넌트 내에서만 Redis/DB fallback 허용
-                    cached_status = get_video_status_from_redis(tenant.id, video_id)
-            except Exception:
-                pass
-
-        if cached_status is None and video is not None:
-            # Fallback 2: Redis 미사용 시(워커 Redis 미연결 등) DB에서 RUNNING/READY 여부 확인
-            try:
-                from ..models import VideoTranscodeJob
-
-                running = VideoTranscodeJob.objects.filter(
-                    video_id=video_id,
-                    state=VideoTranscodeJob.State.RUNNING,
-                ).exists()
-                if running:
-                    cached_status = {"status": "PROCESSING"}
-                    if video.session and video.session.lecture:
-                        tenant = video.session.lecture.tenant
-                elif str(video.status) == "READY" and video.hls_path:
-                    cached_status = {
-                        "status": "READY",
-                        "hls_path": video.hls_path,
-                        "duration": video.duration,
-                    }
-                    if video.session and video.session.lecture:
-                        tenant = video.session.lecture.tenant
-                elif str(video.status) == "FAILED":
-                    cached_status = {
-                        "status": "FAILED",
-                        "error_reason": getattr(video, "error_reason", "") or "",
-                    }
-                    if video.session and video.session.lecture:
-                        tenant = video.session.lecture.tenant
-            except Exception:
-                pass
-
-        if cached_status is None:
             emit_progress_layer_metrics(progress_requests=1, redis_miss=1, db_hit=0)
             return _unknown_state_response(video_id)
 
@@ -154,9 +104,10 @@ class VideoProgressView(APIView):
 
             if video_status == "PROCESSING":
                 try:
-                    progress = get_video_encoding_progress(video_id, tenant.id)
-                    step_detail = get_video_encoding_step_detail(video_id, tenant.id)
-                    remaining_seconds = get_video_encoding_remaining_seconds(video_id, tenant.id)
+                    snapshot = get_video_encoding_snapshot(video_id, tenant.id)
+                    progress = snapshot.get("progress")
+                    step_detail = snapshot.get("step_detail")
+                    remaining_seconds = snapshot.get("remaining_seconds")
                 except Exception:
                     progress = 0
 

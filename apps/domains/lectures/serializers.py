@@ -65,6 +65,8 @@ class SessionSerializer(serializers.ModelSerializer):
         """
         if not self.context.get("include_progress"):
             return None
+        if "attendance_total" in getattr(obj, "__dict__", {}):
+            return int(obj.attendance_total or 0)
         section = getattr(obj, "section", None)
         if section is not None:
             from apps.domains.lectures.models import SectionAssignment

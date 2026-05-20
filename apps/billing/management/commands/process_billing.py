@@ -16,13 +16,15 @@ Usage:
   python manage.py process_billing --dry-run
 """
 
-from datetime import date, timedelta
+from datetime import timedelta
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 from apps.billing.models import Invoice
 from apps.billing.services import invoice_service, payment_service, subscription_service
+from apps.billing.services.invoice_service import InvoiceTransitionError
 from apps.core.models.program import Program
 
 
@@ -34,7 +36,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         dry_run = options["dry_run"]
-        today = date.today()
+        today = timezone.localdate()
         exempt = settings.BILLING_EXEMPT_TENANT_IDS
         grace_days = settings.BILLING_GRACE_PERIOD_DAYS
         cutoff = today + timedelta(days=7)
@@ -133,7 +135,7 @@ class Command(BaseCommand):
                     self._log(f"    [DRY] Would charge {inv.tenant.code}: {inv.invoice_number} "
                               f"amount={inv.total_amount:,}")
                     continue
-                result = payment_service.execute_auto_payment(inv.pk)
+                result = self._execute_auto_payment_safely(inv)
                 if result.get("success"):
                     paid_cnt += 1
                     self._log(f"    [PAID] {inv.tenant.code}: {inv.invoice_number} "
@@ -161,7 +163,7 @@ class Command(BaseCommand):
                     self._log(f"    [DRY] Would retry {inv.tenant.code}: {inv.invoice_number} "
                               f"attempt={inv.attempt_count + 1}")
                     continue
-                result = payment_service.execute_auto_payment(inv.pk)
+                result = self._execute_auto_payment_safely(inv)
                 if result.get("success"):
                     retry_paid += 1
                     self._log(f"    [RETRY-OK] {inv.tenant.code}: {inv.invoice_number}")
@@ -232,6 +234,32 @@ class Command(BaseCommand):
         if earliest:
             return f"{earliest.tenant.code} on {earliest.next_billing_at}"
         return "none set"
+
+    def _execute_auto_payment_safely(self, invoice):
+        try:
+            return payment_service.execute_auto_payment(invoice.pk)
+        except InvoiceTransitionError as exc:
+            self._log(
+                f"    [SKIP] {invoice.tenant.code}: {invoice.invoice_number} "
+                f"state changed concurrently ({exc})"
+            )
+            return {
+                "success": False,
+                "invoice_id": invoice.pk,
+                "tx_id": None,
+                "reason": f"state_changed: {exc}",
+            }
+        except Exception as exc:
+            self._log(
+                f"    [ERROR] {invoice.tenant.code}: {invoice.invoice_number} "
+                f"{exc.__class__.__name__}: {str(exc)[:120]}"
+            )
+            return {
+                "success": False,
+                "invoice_id": invoice.pk,
+                "tx_id": None,
+                "reason": str(exc)[:500],
+            }
 
     def _log(self, msg):
         try:

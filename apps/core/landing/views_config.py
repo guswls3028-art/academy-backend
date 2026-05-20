@@ -91,12 +91,9 @@ class LandingAdminView(APIView):
             tenant=tenant,
             defaults={"draft_config": default_draft_config(tenant)},
         )
-        # 신규 섹션 타입 자동 backfill — 기존 학원도 nav에 즉시 노출.
-        backfilled = backfill_missing_sections(landing.draft_config)
-        if backfilled is not landing.draft_config:
-            landing.draft_config = backfilled
-            landing.save(update_fields=["draft_config", "updated_at"])
-        draft = resolve_image_urls(landing.draft_config)
+        # 신규 섹션 타입은 응답에서만 보강한다. 학원장이 저장한 draft_config를
+        # GET/publish 부수효과로 덮어쓰지 않는다.
+        draft = resolve_image_urls(backfill_missing_sections(landing.draft_config))
         published = resolve_image_urls(landing.published_config) if landing.published_config else None
 
         return Response({

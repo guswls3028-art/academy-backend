@@ -209,6 +209,28 @@ class ExamViewSet(ModelViewSet):
     # ================================
     # DELETE 봉인
     # ================================
+    def _regular_delete_blocker(self, obj: Exam) -> str | None:
+        from apps.domains.results.models import Result, ResultFact
+        from apps.domains.submissions.models import Submission
+
+        if obj.exam_enrollments.exists():
+            return "exam enrollments"
+        if obj.attempts.exists():
+            return "exam attempts"
+        if Submission.objects.filter(
+            tenant=obj.tenant,
+            target_type=Submission.TargetType.EXAM,
+            target_id=obj.id,
+        ).exists():
+            return "submissions"
+        if obj.results.exists():
+            return "exam results"
+        if Result.objects.filter(target_type="exam", target_id=obj.id).exists():
+            return "results"
+        if ResultFact.objects.filter(target_type="exam", target_id=obj.id).exists():
+            return "result facts"
+        return None
+
     def destroy(self, request, *args, **kwargs):
         obj: Exam = self.get_object()
 
@@ -216,6 +238,13 @@ class ExamViewSet(ModelViewSet):
             raise PermissionDenied(
                 "This template is used by regular exams and cannot be deleted."
             )
+
+        if obj.exam_type == Exam.ExamType.REGULAR:
+            blocker = self._regular_delete_blocker(obj)
+            if blocker:
+                raise PermissionDenied(
+                    f"This regular exam has {blocker} and cannot be deleted."
+                )
 
         return super().destroy(request, *args, **kwargs)
 

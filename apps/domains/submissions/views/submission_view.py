@@ -9,7 +9,14 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
 
+from apps.api.common.upload_validation import (
+    DEFAULT_MAX_OMR_SIZE,
+    OMR_CONTENT_TYPES,
+    OMR_EXTENSIONS,
+    validate_uploaded_file,
+)
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.serializers.submission import (
@@ -78,6 +85,17 @@ class SubmissionViewSet(ModelViewSet):
             return Response({"detail": "target_id (exam_id) required"}, status=400)
         if not file_obj:
             return Response({"detail": "file required"}, status=400)
+        try:
+            validate_uploaded_file(
+                file_obj,
+                allowed_extensions=OMR_EXTENSIONS,
+                allowed_content_types=OMR_CONTENT_TYPES,
+                max_size=DEFAULT_MAX_OMR_SIZE,
+                label="OMR 파일",
+                pdf_single_page=True,
+            )
+        except ValidationError as e:
+            return Response(e.detail, status=400)
 
         try:
             exam_id = int(target_id)
@@ -87,6 +105,36 @@ class SubmissionViewSet(ModelViewSet):
         # cross-tenant 방어: 자기 학원 소속 exam_id 인지 검증.
         if not self._validate_target_tenant(Submission.TargetType.EXAM, exam_id, tenant):
             return Response({"detail": "대상이 해당 학원에 속하지 않습니다."}, status=403)
+        if enrollment_id:
+            try:
+                enrollment_id_int = int(enrollment_id)
+            except (TypeError, ValueError):
+                return Response({"detail": "enrollment_id must be an integer"}, status=400)
+            from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+            from apps.domains.exams.models import ExamEnrollment
+            if not Enrollment.objects.filter(id=enrollment_id_int, tenant=tenant).exists():
+                return Response({"detail": "해당 수강 정보에 접근할 수 없습니다."}, status=403)
+            in_exam = ExamEnrollment.objects.filter(
+                exam_id=exam_id,
+                enrollment_id=enrollment_id_int,
+                enrollment__tenant=tenant,
+            ).exists()
+            if not in_exam:
+                in_session = SessionEnrollment.objects.filter(
+                    tenant=tenant,
+                    session__exams__id=exam_id,
+                    enrollment_id=enrollment_id_int,
+                    enrollment__status="ACTIVE",
+                    enrollment__student__deleted_at__isnull=True,
+                ).exists()
+                if not in_session:
+                    return Response({"detail": "해당 시험에 등록되지 않은 학생입니다."}, status=403)
+                ExamEnrollment.objects.get_or_create(
+                    exam_id=exam_id,
+                    enrollment_id=enrollment_id_int,
+                )
+        else:
+            enrollment_id_int = None
 
         payload = {}
         if request.data.get("sheet_id"):
@@ -106,7 +154,7 @@ class SubmissionViewSet(ModelViewSet):
 
         ser = SubmissionCreateSerializer(
             data={
-                "enrollment_id": int(enrollment_id) if enrollment_id else None,
+                "enrollment_id": enrollment_id_int,
                 "target_type": Submission.TargetType.EXAM,
                 "target_id": exam_id,
                 "source": Submission.Source.OMR_SCAN,
@@ -136,6 +184,11 @@ class SubmissionViewSet(ModelViewSet):
         is_student = getattr(self.request.user, "student_profile", None) is not None
         if is_parent and not is_student:
             raise PermissionDenied("학부모 계정은 시험/과제 제출 권한이 없습니다.")
+        source = serializer.validated_data.get("source")
+        if source == Submission.Source.OMR_SCAN:
+            from apps.core.permissions import is_effective_staff
+            if not is_effective_staff(self.request.user, tenant):
+                raise PermissionDenied("OMR 업로드는 운영자만 사용할 수 있습니다.")
         # target_id(exam/homework)가 해당 테넌트 소속인지 검증
         target_type = serializer.validated_data.get("target_type")
         target_id = serializer.validated_data.get("target_id")
@@ -145,13 +198,23 @@ class SubmissionViewSet(ModelViewSet):
         # enrollment_id 소유권 검증: 학생은 자신의 enrollment만 사용 가능
         enrollment_id = serializer.validated_data.get("enrollment_id")
         if enrollment_id:
+            from apps.domains.enrollment.models import Enrollment
+            if not Enrollment.objects.filter(id=enrollment_id, tenant=tenant).exists():
+                raise PermissionDenied("해당 수강 정보에 접근할 수 없습니다.")
             student = getattr(self.request.user, "student_profile", None)
             if student:
-                from apps.domains.enrollment.models import Enrollment
                 if not Enrollment.objects.filter(
                     id=enrollment_id, student=student, tenant=tenant,
                 ).exists():
                     raise PermissionDenied("해당 수강 정보에 접근할 수 없습니다.")
+            if target_type and target_id and not self._validate_target_enrollment_assignment(
+                target_type,
+                target_id,
+                enrollment_id,
+                tenant,
+                ensure_exam_enrollment=True,
+            ):
+                raise PermissionDenied("해당 시험/과제에 등록되지 않은 수강 정보입니다.")
         submission = serializer.save(user=self.request.user, tenant=tenant)
         dispatch_submission(submission)
 
@@ -173,6 +236,74 @@ class SubmissionViewSet(ModelViewSet):
         except Exception:
             pass
         return False  # 알 수 없는 target_type은 거부 (fail-closed)
+
+    @staticmethod
+    def _validate_target_enrollment_assignment(
+        target_type,
+        target_id,
+        enrollment_id,
+        tenant,
+        *,
+        ensure_exam_enrollment: bool = False,
+    ) -> bool:
+        """target과 enrollment가 같은 수업 배정 맥락인지 검증."""
+        try:
+            target_id_i = int(target_id)
+            enrollment_id_i = int(enrollment_id)
+        except (TypeError, ValueError):
+            return False
+
+        from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+
+        enrollment = (
+            Enrollment.objects
+            .filter(
+                id=enrollment_id_i,
+                tenant=tenant,
+                status="ACTIVE",
+                student__deleted_at__isnull=True,
+            )
+            .select_related("lecture")
+            .first()
+        )
+        if not enrollment:
+            return False
+
+        if target_type == Submission.TargetType.EXAM:
+            from apps.domains.exams.models import ExamEnrollment
+
+            in_exam = ExamEnrollment.objects.filter(
+                exam_id=target_id_i,
+                enrollment_id=enrollment_id_i,
+                enrollment__tenant=tenant,
+            ).exists()
+            if in_exam:
+                return True
+
+            in_session = SessionEnrollment.objects.filter(
+                tenant=tenant,
+                session__exams__id=target_id_i,
+                enrollment_id=enrollment_id_i,
+                enrollment__status="ACTIVE",
+                enrollment__student__deleted_at__isnull=True,
+            ).exists()
+            if in_session and ensure_exam_enrollment:
+                ExamEnrollment.objects.get_or_create(
+                    exam_id=target_id_i,
+                    enrollment_id=enrollment_id_i,
+                )
+            return in_session
+
+        if target_type == Submission.TargetType.HOMEWORK:
+            from apps.domains.homework_results.models import Homework
+
+            return Homework.objects.filter(
+                id=target_id_i,
+                session__lecture_id=enrollment.lecture_id,
+                session__lecture__tenant=tenant,
+            ).exists()
+
+        return False
 
     @action(detail=True, methods=["post"])
     def retry(self, request, pk=None):
@@ -262,6 +393,7 @@ class SubmissionViewSet(ModelViewSet):
         identifier = request.data.get("identifier")
         answers = request.data.get("answers") or []
         note = str(request.data.get("note") or "manual_edit")
+        tenant = submission.tenant
 
         # ✅ identifier 검증 + submission.enrollment_id 반영 (tenant 안전성)
         #    { "enrollment_id": N } 형식만 매칭. 이외 형식은 meta로 저장만 하고 enrollment 미반영.
@@ -281,7 +413,6 @@ class SubmissionViewSet(ModelViewSet):
             from apps.domains.enrollment.models import Enrollment, SessionEnrollment
             from apps.domains.exams.models import ExamEnrollment
 
-            tenant = submission.tenant
             exam_id = int(submission.target_id or 0) if submission.target_type == Submission.TargetType.EXAM else 0
 
             if not Enrollment.objects.filter(id=candidate_eid, tenant=tenant).exists():
@@ -350,6 +481,58 @@ class SubmissionViewSet(ModelViewSet):
                     enrollment_id=candidate_eid,
                 )
 
+        if (
+            submission.status == Submission.Status.NEEDS_IDENTIFICATION
+            and not submission.enrollment_id
+            and resolved_enrollment_id is None
+        ):
+            return Response(
+                {"detail": "학생 식별이 필요한 답안지는 enrollment_id 매칭 후 저장할 수 있습니다."},
+                status=400,
+            )
+
+        validated_answers: list[tuple[int, str]] = []
+        if answers:
+            if submission.target_type != Submission.TargetType.EXAM:
+                return Response({"detail": "시험 제출 답안만 수동 수정할 수 있습니다."}, status=400)
+
+            from apps.domains.exams.models import Exam, ExamQuestion
+
+            exam = (
+                Exam.objects
+                .filter(id=int(submission.target_id or 0), tenant=tenant)
+                .select_related("template_exam")
+                .first()
+            )
+            if not exam:
+                return Response({"detail": "시험을 찾을 수 없습니다."}, status=400)
+
+            sheet_exam_ids = [exam.id]
+            if exam.template_exam_id:
+                sheet_exam_ids.append(exam.template_exam_id)
+            allowed_question_ids = set(
+                ExamQuestion.objects.filter(
+                    sheet__exam_id__in=sheet_exam_ids,
+                    sheet__exam__tenant=tenant,
+                ).values_list("id", flat=True)
+            )
+            if not allowed_question_ids:
+                return Response({"detail": "수동 수정 가능한 시험 문항이 없습니다."}, status=400)
+
+            for a in answers:
+                if not isinstance(a, dict):
+                    continue
+                raw_eqid = a.get("exam_question_id") or a.get("question_id")
+                if not raw_eqid:
+                    continue
+                try:
+                    eqid = int(raw_eqid)
+                except (TypeError, ValueError):
+                    return Response({"detail": "question_id는 정수여야 합니다."}, status=400)
+                if eqid not in allowed_question_ids:
+                    return Response({"detail": "해당 시험의 문항만 수정할 수 있습니다."}, status=400)
+                validated_answers.append((eqid, str(a.get("answer") or "")))
+
         # admin_override=True: DONE/FAILED/SUBMITTED/DISPATCHED/NI → ANSWERS_READY 허용
         # GRADING/SUPERSEDED → ANSWERS_READY 차단 (transition.py에서 강제)
         try:
@@ -363,19 +546,10 @@ class SubmissionViewSet(ModelViewSet):
 
         updated = 0
 
-        for a in answers:
-            if not isinstance(a, dict):
-                continue
-
-            eqid = a.get("exam_question_id")
-            if not eqid:
-                continue
-
-            ans = str(a.get("answer") or "")
-
+        for eqid, ans in validated_answers:
             SubmissionAnswer.objects.update_or_create(
                 submission=submission,
-                exam_question_id=int(eqid),
+                exam_question_id=eqid,
                 defaults={"answer": ans, "tenant": submission.tenant},
             )
             updated += 1
@@ -414,6 +588,7 @@ class SubmissionViewSet(ModelViewSet):
         try:
             result_obj = grade_submission(int(submission.id))
         except Exception:
+            transaction.set_rollback(True)
             return Response(
                 {
                     "submission_id": submission.id,
@@ -424,6 +599,31 @@ class SubmissionViewSet(ModelViewSet):
                 status=500,
             )
 
+        submission.refresh_from_db(fields=["status", "enrollment_id"])
+        synced_score = None
+        synced_max_score = None
+        if submission.target_type == Submission.TargetType.EXAM and submission.enrollment_id:
+            try:
+                from apps.domains.results.models import Result
+                synced_result = (
+                    Result.objects
+                    .filter(
+                        target_type="exam",
+                        target_id=int(submission.target_id),
+                        enrollment_id=int(submission.enrollment_id),
+                        enrollment__tenant=tenant,
+                    )
+                    .only("total_score", "max_score")
+                    .order_by("-id")
+                    .first()
+                )
+                if synced_result:
+                    synced_score = float(synced_result.total_score or 0.0)
+                    synced_max_score = float(synced_result.max_score or 0.0)
+            except Exception:
+                synced_score = None
+                synced_max_score = None
+
         return Response(
             {
                 "submission_id": submission.id,
@@ -432,6 +632,10 @@ class SubmissionViewSet(ModelViewSet):
                 "graded": True,
                 "result_id": getattr(result_obj, "id", None),
                 "resolved_enrollment_id": resolved_enrollment_id,
+                "enrollment_id": submission.enrollment_id,
+                "score": synced_score,
+                "total_score": synced_score,
+                "max_score": synced_max_score,
             }
         )
 
@@ -474,35 +678,36 @@ class SubmissionViewSet(ModelViewSet):
         raw_reason = str(request.data.get("reason") or "operator_discarded").strip()
         reason = raw_reason if raw_reason in self._DISCARD_REASONS else "other"
 
-        qs = Submission.objects.filter(tenant=tenant, id__in=ids)
         discarded = 0
         skipped: list[dict] = []
         now = timezone.now()
-        for s in qs.select_for_update() if False else qs:  # SELECT FOR UPDATE 제외 — 단발 폐기
-            try:
-                transit_save(
-                    s, Submission.Status.FAILED,
-                    admin_override=True,
-                    error_message=f"discarded:{reason}",
-                    actor=f"admin.discard_batch.user_{getattr(request.user, 'id', '?')}",
-                )
-            except InvalidTransitionError as e:
-                skipped.append({"id": s.id, "reason": str(e)})
-                continue
+        with transaction.atomic():
+            qs = Submission.objects.select_for_update().filter(tenant=tenant, id__in=ids)
+            for s in qs:
+                try:
+                    transit_save(
+                        s, Submission.Status.FAILED,
+                        admin_override=True,
+                        error_message=f"discarded:{reason}",
+                        actor=f"admin.discard_batch.user_{getattr(request.user, 'id', '?')}",
+                    )
+                except InvalidTransitionError as e:
+                    skipped.append({"id": s.id, "reason": str(e)})
+                    continue
 
-            meta = dict(s.meta or {})
-            meta["discarded"] = {
-                "at": now.isoformat(),
-                "by_user_id": getattr(request.user, "id", None),
-                "reason": reason,
-                "batch": True,
-            }
-            meta.setdefault("manual_review", {})
-            meta["manual_review"]["required"] = False
-            meta["manual_review"]["resolved_at"] = now.isoformat()
-            s.meta = meta
-            s.save(update_fields=["meta", "updated_at"])
-            discarded += 1
+                meta = dict(s.meta or {})
+                meta["discarded"] = {
+                    "at": now.isoformat(),
+                    "by_user_id": getattr(request.user, "id", None),
+                    "reason": reason,
+                    "batch": True,
+                }
+                meta.setdefault("manual_review", {})
+                meta["manual_review"]["required"] = False
+                meta["manual_review"]["resolved_at"] = now.isoformat()
+                s.meta = meta
+                s.save(update_fields=["meta", "updated_at"])
+                discarded += 1
 
         return Response({
             "discarded": discarded,
@@ -519,31 +724,33 @@ class SubmissionViewSet(ModelViewSet):
         - 본 제출에 매칭된 enrollment_id는 유지(기록용)하되 채점 미시행.
         body (optional): {"reason": "scan_quality" | "wrong_upload" | "duplicate" | "target_missing" | "other"}
         """
-        submission: Submission = self.get_object()
         raw_reason = str(request.data.get("reason") or "operator_discarded").strip()
         reason = raw_reason if raw_reason in self._DISCARD_REASONS else "other"
 
-        try:
-            transit_save(
-                submission, Submission.Status.FAILED,
-                admin_override=True,
-                error_message=f"discarded:{reason}",
-                actor=f"admin.discard.user_{getattr(request.user, 'id', '?')}",
-            )
-        except InvalidTransitionError as e:
-            return Response({"detail": str(e)}, status=409)
+        with transaction.atomic():
+            submission: Submission = self.get_queryset().select_for_update().get(pk=pk)
+            try:
+                transit_save(
+                    submission, Submission.Status.FAILED,
+                    admin_override=True,
+                    error_message=f"discarded:{reason}",
+                    actor=f"admin.discard.user_{getattr(request.user, 'id', '?')}",
+                )
+            except InvalidTransitionError as e:
+                return Response({"detail": str(e)}, status=409)
 
-        meta = dict(submission.meta or {})
-        meta["discarded"] = {
-            "at": timezone.now().isoformat(),
-            "by_user_id": getattr(request.user, "id", None),
-            "reason": reason,
-        }
-        meta.setdefault("manual_review", {})
-        meta["manual_review"]["required"] = False
-        meta["manual_review"]["resolved_at"] = timezone.now().isoformat()
-        submission.meta = meta
-        submission.save(update_fields=["meta", "updated_at"])
+            now = timezone.now()
+            meta = dict(submission.meta or {})
+            meta["discarded"] = {
+                "at": now.isoformat(),
+                "by_user_id": getattr(request.user, "id", None),
+                "reason": reason,
+            }
+            meta.setdefault("manual_review", {})
+            meta["manual_review"]["required"] = False
+            meta["manual_review"]["resolved_at"] = now.isoformat()
+            submission.meta = meta
+            submission.save(update_fields=["meta", "updated_at"])
 
         return Response(
             {

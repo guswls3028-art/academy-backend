@@ -158,6 +158,22 @@ def generate_monthly_invoices(
             try:
                 with transaction.atomic():
                     student = fees[0].student
+                    exists_now = (
+                        StudentInvoice.objects
+                        .select_for_update()
+                        .filter(
+                            tenant=tenant,
+                            student_id=student_id,
+                            billing_year=billing_year,
+                            billing_month=billing_month,
+                        )
+                        .exclude(status="CANCELLED")
+                        .exists()
+                    )
+                    if exists_now:
+                        result["skipped"] += 1
+                        break
+
                     total = sum(sf.effective_amount for sf in fees)
 
                     if total == 0:
@@ -191,6 +207,20 @@ def generate_monthly_invoices(
                     break
 
             except IntegrityError as e:
+                already_created = (
+                    StudentInvoice.objects
+                    .filter(
+                        tenant=tenant,
+                        student_id=student_id,
+                        billing_year=billing_year,
+                        billing_month=billing_month,
+                    )
+                    .exclude(status="CANCELLED")
+                    .exists()
+                )
+                if already_created:
+                    result["skipped"] += 1
+                    break
                 if attempt == 0:
                     logger.warning("Invoice number race for student %s, retrying: %s", student_name, e)
                     continue
@@ -326,10 +356,21 @@ def cancel_payment(tenant, payment_id: int) -> FeePayment:
     수납 기록을 취소한다.
     invoice.paid_amount 재계산.
     """
+    payment_ref = (
+        FeePayment.objects
+        .only("invoice_id")
+        .get(id=payment_id, tenant=tenant)
+    )
+    invoice = (
+        StudentInvoice.objects
+        .select_for_update()
+        .get(id=payment_ref.invoice_id, tenant=tenant)
+    )
     payment = (
         FeePayment.objects
+        .select_for_update()
         .select_related("invoice")
-        .get(id=payment_id, tenant=tenant)
+        .get(id=payment_id, tenant=tenant, invoice=invoice)
     )
 
     if payment.status != "SUCCESS":
@@ -337,12 +378,6 @@ def cancel_payment(tenant, payment_id: int) -> FeePayment:
 
     payment.status = "CANCELLED"
     payment.save(update_fields=["status", "updated_at"])
-
-    invoice = (
-        StudentInvoice.objects
-        .select_for_update()
-        .get(id=payment.invoice_id, tenant=tenant)
-    )
     _recalculate_invoice(invoice)
 
     return payment

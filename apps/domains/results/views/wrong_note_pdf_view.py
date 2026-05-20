@@ -6,10 +6,12 @@ from django.urls import reverse
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from apps.domains.results.permissions import is_teacher_user
+from apps.core.permissions import TenantResolvedAndMember, is_effective_staff
 from apps.domains.enrollment.models import Enrollment
+from apps.domains.exams.models import Exam
+from apps.domains.lectures.models import Lecture
 from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
 
 
@@ -28,43 +30,73 @@ class WrongNotePDFCreateView(APIView):
     }
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
-    def _assert_enrollment_access(self, request, enrollment_id: int) -> None:
+    def _get_allowed_enrollment(self, request, enrollment_id: int) -> Enrollment:
         user = request.user
 
         # ✅ tenant isolation: always verify enrollment belongs to tenant
         qs = Enrollment.objects.filter(id=int(enrollment_id), tenant=request.tenant)
-        if not qs.exists():
+        enrollment = qs.select_related("student", "lecture").first()
+        if not enrollment:
             raise PermissionDenied("You cannot create PDF for this enrollment_id.")
 
-        if is_teacher_user(user):
-            return
+        if is_effective_staff(user, request.tenant):
+            return enrollment
 
         # Enrollment.student_id는 Student.pk이므로 user.pk 비교는 오매칭 버그.
         student = getattr(user, "student_profile", None)
         if not student:
             raise PermissionDenied("You cannot create PDF for this enrollment_id.")
-        if not qs.filter(student_id=student.id).exists():
+        if enrollment.student_id != student.id:
             raise PermissionDenied("You cannot create PDF for this enrollment_id.")
+        return enrollment
+
+    def _validate_scope_ids(self, request, enrollment: Enrollment) -> tuple[int | None, int | None]:
+        lecture_id = request.data.get("lecture_id")
+        exam_id = request.data.get("exam_id")
+
+        lecture_id_i = int(lecture_id) if lecture_id else None
+        if lecture_id_i is not None:
+            if lecture_id_i != enrollment.lecture_id:
+                raise ValidationError({"lecture_id": "수강 등록의 강의와 일치하지 않습니다."})
+            if not Lecture.objects.filter(id=lecture_id_i, tenant=request.tenant).exists():
+                raise ValidationError({"lecture_id": "해당 강의를 찾을 수 없습니다."})
+
+        exam_id_i = int(exam_id) if exam_id else None
+        if exam_id_i is not None:
+            exam = Exam.objects.filter(id=exam_id_i, tenant=request.tenant).first()
+            if not exam:
+                raise ValidationError({"exam_id": "해당 시험을 찾을 수 없습니다."})
+            if not exam.sessions.filter(lecture_id=enrollment.lecture_id).exists():
+                raise ValidationError({"exam_id": "수강 등록의 강의에 연결된 시험만 선택할 수 있습니다."})
+
+        return lecture_id_i, exam_id_i
 
     def post(self, request):
         enrollment_id = request.data.get("enrollment_id")
         if not enrollment_id:
             return Response({"detail": "enrollment_id required"}, status=400)
 
-        enrollment_id_i = int(enrollment_id)
-        self._assert_enrollment_access(request, enrollment_id_i)
+        try:
+            enrollment_id_i = int(enrollment_id)
+            from_order = int(request.data.get("from_session_order", 2) or 2)
+            if from_order < 1:
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValidationError({"detail": "enrollment_id/from_session_order must be valid integers."})
 
-        lecture_id = request.data.get("lecture_id")
-        exam_id = request.data.get("exam_id")
-        from_order = request.data.get("from_session_order", 2)
+        enrollment = self._get_allowed_enrollment(request, enrollment_id_i)
+        try:
+            lecture_id_i, exam_id_i = self._validate_scope_ids(request, enrollment)
+        except ValueError:
+            raise ValidationError({"detail": "lecture_id/exam_id must be valid integers."})
 
         job = WrongNotePDF.objects.create(
             enrollment_id=enrollment_id_i,
-            lecture_id=int(lecture_id) if lecture_id else None,
-            exam_id=int(exam_id) if exam_id else None,
-            from_session_order=int(from_order or 2),
+            lecture_id=lecture_id_i,
+            exam_id=exam_id_i,
+            from_session_order=from_order,
             status=WrongNotePDF.Status.PENDING,  # ✅ enqueue = PENDING
         )
 

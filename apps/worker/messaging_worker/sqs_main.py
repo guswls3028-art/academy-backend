@@ -180,7 +180,7 @@ def send_one_sms_own_solapi(
         from solapi.model import RequestMessage
         from solapi.model.message_type import MessageType
         from solapi import SolapiMessageService
-    except ImportError as e:
+    except ImportError:
         return {"status": "error", "reason": "solapi_not_installed"}
     client = SolapiMessageService(api_key=api_key, api_secret=api_secret)
     sender = (sender or "").strip().replace("-", "")
@@ -575,6 +575,12 @@ def main() -> int:
                                 recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****" if to else ""),
                             )
                             if not claimed:
+                                if claim_log_id is not None:
+                                    logger.warning(
+                                        "Business dedup: key=%s still processing for same SQS message; leaving for retry/DLQ (tenant=%s log_id=%s)",
+                                        business_key[:16], tenant_id, claim_log_id,
+                                    )
+                                    continue
                                 logger.info(
                                     "Business dedup: key=%s already claimed, skipping (tenant=%s)",
                                     business_key[:16], tenant_id,
@@ -587,8 +593,13 @@ def main() -> int:
                                 _current_receipt_handle = None
                                 continue
                         except Exception as e:
-                            logger.warning("Business claim failed (proceeding with legacy path): %s", e)
-                            claim_log_id = None
+                            logger.exception(
+                                "Business claim failed; leaving SQS message for retry: tenant=%s key=%s",
+                                tenant_id, business_key[:16],
+                            )
+                            # DB claim is the durable idempotency guard. If it is unavailable,
+                            # do not fail open and risk duplicate delivery; let SQS redeliver.
+                            continue
                     else:
                         # Legacy DB-level dedup: Redis 장애 복구 후 재처리 시 이미 발송된 메시지 스킵
                         if tenant_id is not None and os.environ.get("DJANGO_SETTINGS_MODULE"):
@@ -626,17 +637,28 @@ def main() -> int:
                                     "tenant_id=%s insufficient_balance balance=%s base_price=%s, skip send",
                                     tenant_id, bal, base_price,
                                 )
-                                create_notification_log(
-                                    tenant_id=int(tenant_id),
-                                    success=False,
-                                    amount_deducted=Decimal("0"),
-                                    recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
-                                    failure_reason="insufficient_balance",
-                                    message_body=text[:2000],
-                                    message_mode=message_mode,
-                                    sqs_message_id=message_id,
-                                    notification_type=event_type_msg,
-                                )
+                                if claim_log_id is not None:
+                                    from academy.adapters.db.django.repositories_messaging import finalize_notification
+                                    finalize_notification(
+                                        claim_log_id,
+                                        success=False,
+                                        amount_deducted=Decimal("0"),
+                                        failure_reason="insufficient_balance",
+                                        message_body=text[:2000],
+                                        notification_type=event_type_msg,
+                                    )
+                                else:
+                                    create_notification_log(
+                                        tenant_id=int(tenant_id),
+                                        success=False,
+                                        amount_deducted=Decimal("0"),
+                                        recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
+                                        failure_reason="insufficient_balance",
+                                        message_body=text[:2000],
+                                        message_mode=message_mode,
+                                        sqs_message_id=message_id,
+                                        notification_type=event_type_msg,
+                                    )
                                 queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
                                     receipt_handle=receipt_handle,
@@ -736,18 +758,30 @@ def main() -> int:
                                 if os.environ.get("DJANGO_SETTINGS_MODULE"):
                                     try:
                                         from decimal import Decimal
-                                        from academy.adapters.db.django.repositories_messaging import create_notification_log
-                                        create_notification_log(
-                                            tenant_id=int(tenant_id),
-                                            success=False,
-                                            amount_deducted=Decimal("0"),
-                                            recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
-                                            failure_reason="sms_not_allowed_for_tenant",
-                                            message_body=text[:2000],
-                                            message_mode=message_mode,
-                                            sqs_message_id=message_id,
-                                            notification_type=event_type_msg,
+                                        from academy.adapters.db.django.repositories_messaging import (
+                                            create_notification_log, finalize_notification,
                                         )
+                                        if claim_log_id is not None:
+                                            finalize_notification(
+                                                claim_log_id,
+                                                success=False,
+                                                amount_deducted=Decimal("0"),
+                                                failure_reason="sms_not_allowed_for_tenant",
+                                                message_body=text[:2000],
+                                                notification_type=event_type_msg,
+                                            )
+                                        else:
+                                            create_notification_log(
+                                                tenant_id=int(tenant_id),
+                                                success=False,
+                                                amount_deducted=Decimal("0"),
+                                                recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
+                                                failure_reason="sms_not_allowed_for_tenant",
+                                                message_body=text[:2000],
+                                                message_mode=message_mode,
+                                                sqs_message_id=message_id,
+                                                notification_type=event_type_msg,
+                                            )
                                     except Exception as e:
                                         logger.warning("create_notification_log failed: %s", e)
                                 queue_client.delete_message(

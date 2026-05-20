@@ -41,6 +41,8 @@ class AdminPostViewSet(viewsets.GenericViewSet):
             page_size = int(request.query_params.get("page_size") or 20)
         except (TypeError, ValueError):
             page, page_size = 1, 20
+        page = max(page, 1)
+        page_size = min(max(page_size, 1), 100)
         qs, total = get_admin_post_list(
             tenant,
             post_type=post_type,
