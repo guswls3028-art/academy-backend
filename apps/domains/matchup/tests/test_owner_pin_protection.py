@@ -207,3 +207,47 @@ class TestPinHelperIntegration:
         remaining = list(doc.problems.values_list("id", flat=True))
         assert p1.id in remaining
         assert p2.id not in remaining
+
+    def test_skeleton_insert_preserves_manual_and_pinned(self):
+        """worker skeleton insert must not delete manual/pinned problem rows."""
+        from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
+            _insert_skeleton_problems,
+        )
+        from apps.domains.matchup.models import MatchupProblem
+
+        tenant, doc, manual, pinned = self._setup_tenant_and_problems()
+        manual.meta = {"manual": True}
+        manual.save(update_fields=["meta"])
+        pinned.meta = {"manual_owner_pinned": True}
+        pinned.save(update_fields=["meta"])
+        auto = MatchupProblem.objects.create(
+            tenant=tenant,
+            document=doc,
+            number=3,
+            text="auto",
+            meta={},
+        )
+
+        _insert_skeleton_problems(
+            [
+                {"number": 1, "page_index": 0, "bbox": {"x": 0, "y": 0, "w": 1, "h": 1}},
+                {"number": 2, "page_index": 0, "bbox": {"x": 1, "y": 0, "w": 1, "h": 1}},
+                {"number": 3, "page_index": 0, "bbox": {"x": 2, "y": 0, "w": 1, "h": 1}},
+                {"number": 4, "page_index": 0, "bbox": {"x": 3, "y": 0, "w": 1, "h": 1}},
+            ],
+            document_id=str(doc.id),
+            tenant_id=str(tenant.id),
+            job_id="skeleton-preserve-test",
+        )
+
+        remaining_ids = set(
+            MatchupProblem.objects.filter(document=doc).values_list("id", flat=True)
+        )
+        assert manual.id in remaining_ids
+        assert pinned.id in remaining_ids
+        assert auto.id not in remaining_ids
+        assert MatchupProblem.objects.filter(
+            document=doc,
+            number=4,
+            meta__is_partial=True,
+        ).exists()

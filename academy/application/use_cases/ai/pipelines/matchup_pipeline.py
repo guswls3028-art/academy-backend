@@ -2651,9 +2651,28 @@ def _insert_skeleton_problems(
         )
         return
 
-    # 재시도 케이스 — 기존 problems 보존하지 않고 새 skeleton으로 갈음.
-    # 최종 callbacks가 어차피 delete + bulk_create하므로 일관됨.
-    MatchupProblem.objects.filter(document=doc).delete()
+    # 재시도 케이스 — auto/partial rows만 새 skeleton으로 갈음한다.
+    # 사용자 수동 편집 또는 학원장 curated row는 skeleton 단계에서도 보존해야
+    # 워커 재시도 중 실제 운영 데이터가 사라지지 않는다.
+    manual_ids = list(
+        MatchupProblem.objects.filter(
+            tenant_id=doc.tenant_id,
+            document=doc,
+            meta__manual=True,
+        ).values_list("id", flat=True)
+    )
+    pinned_ids = list(
+        MatchupProblem.objects.filter(
+            tenant_id=doc.tenant_id,
+            document=doc,
+            meta__manual_owner_pinned=True,
+        ).values_list("id", flat=True)
+    )
+    protected_ids = list(set(manual_ids) | set(pinned_ids))
+    MatchupProblem.objects.filter(
+        tenant_id=doc.tenant_id,
+        document=doc,
+    ).exclude(id__in=protected_ids).delete()
 
     rows = [
         MatchupProblem(
