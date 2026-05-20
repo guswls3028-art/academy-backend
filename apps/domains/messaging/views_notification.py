@@ -24,6 +24,41 @@ from apps.domains.messaging.notification_dispatch import (
 
 logger = logging.getLogger(__name__)
 
+MAX_MANUAL_NOTIFICATION_RECIPIENTS = 200
+_SENSITIVE_RECIPIENT_KEYS = {"phone_raw", "alimtalk_replacements"}
+
+
+def _safe_recipients(recipients):
+    return [
+        {k: v for k, v in recipient.items() if k not in _SENSITIVE_RECIPIENT_KEYS}
+        for recipient in recipients
+    ]
+
+
+def _parse_positive_int(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _normalize_student_ids(raw_ids):
+    if not raw_ids or not isinstance(raw_ids, list):
+        return None, "student_ids 목록이 필요합니다."
+    if len(raw_ids) > MAX_MANUAL_NOTIFICATION_RECIPIENTS:
+        return None, f"한 번에 최대 {MAX_MANUAL_NOTIFICATION_RECIPIENTS}명까지 미리보기할 수 있습니다."
+
+    normalized = []
+    for raw_id in raw_ids:
+        parsed_id = _parse_positive_int(raw_id)
+        if parsed_id is None:
+            return None, "student_ids는 양의 정수 목록이어야 합니다."
+        normalized.append(parsed_id)
+    return list(dict.fromkeys(normalized)), None
+
 
 class AttendanceNotificationPreviewView(APIView):
     """
@@ -63,6 +98,17 @@ class AttendanceNotificationPreviewView(APIView):
                 {"detail": "session_id와 notification_type은 필수입니다."},
                 status=http_status.HTTP_400_BAD_REQUEST,
             )
+        parsed_session_id = _parse_positive_int(session_id)
+        if parsed_session_id is None:
+            return Response(
+                {"detail": "session_id는 양의 정수여야 합니다."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        if send_to not in ("parent", "student"):
+            return Response(
+                {"detail": "send_to는 'parent' 또는 'student'만 가능합니다."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
 
         if notification_type not in ("check_in", "absent"):
             return Response(
@@ -70,7 +116,7 @@ class AttendanceNotificationPreviewView(APIView):
                 status=http_status.HTTP_400_BAD_REQUEST,
             )
 
-        preview = build_attendance_preview(tenant, int(session_id), notification_type, send_to)
+        preview = build_attendance_preview(tenant, parsed_session_id, notification_type, send_to)
 
         if "error" in preview:
             return Response({"detail": preview["error"]}, status=http_status.HTTP_400_BAD_REQUEST)
@@ -79,7 +125,7 @@ class AttendanceNotificationPreviewView(APIView):
             # 발송 대상 없으면 토큰 미발급
             return Response({
                 "preview_token": None,
-                "recipients": preview["recipients"],
+                "recipients": _safe_recipients(preview["recipients"]),
                 "total_count": 0,
                 "excluded_count": preview["excluded_count"],
                 "message_preview": preview.get("message_template_body", ""),
@@ -93,20 +139,14 @@ class AttendanceNotificationPreviewView(APIView):
             preview_data=preview,
             staff_id=staff_id,
             session_type="attendance",
-            session_id=int(session_id),
+            session_id=parsed_session_id,
             notification_type=notification_type,
             send_to=send_to,
         )
 
-        # phone_raw 제거 (프론트에 노출 불필요)
-        safe_recipients = []
-        for r in preview["recipients"]:
-            safe_r = {k: v for k, v in r.items() if k not in ("phone_raw", "alimtalk_replacements")}
-            safe_recipients.append(safe_r)
-
         return Response({
             "preview_token": token,
-            "recipients": safe_recipients,
+            "recipients": _safe_recipients(preview["recipients"]),
             "total_count": preview["total_count"],
             "excluded_count": preview["excluded_count"],
             "message_preview": preview.get("message_template_body", ""),
@@ -206,8 +246,12 @@ class ManualNotificationPreviewView(APIView):
         student_ids = request.data.get("student_ids", [])
         send_to = request.data.get("send_to", "parent")
         context = request.data.get("context") or {}
+        if not isinstance(context, dict):
+            return Response({"detail": "context는 객체여야 합니다."}, status=http_status.HTTP_400_BAD_REQUEST)
         # 학생별 개별 변수 (성적 등) — key: student_id(int)
         raw_ctx_per_student = request.data.get("context_per_student") or {}
+        if not isinstance(raw_ctx_per_student, dict):
+            return Response({"detail": "context_per_student는 객체여야 합니다."}, status=http_status.HTTP_400_BAD_REQUEST)
         context_per_student = {}
         for k, v in raw_ctx_per_student.items():
             try:
@@ -219,8 +263,14 @@ class ManualNotificationPreviewView(APIView):
             return Response({"detail": "trigger는 필수입니다."}, status=http_status.HTTP_400_BAD_REQUEST)
         if trigger not in self.ALLOWED_TRIGGERS:
             return Response({"detail": f"'{trigger}'는 수동 발송 대상이 아닙니다."}, status=http_status.HTTP_400_BAD_REQUEST)
-        if not student_ids or not isinstance(student_ids, list):
-            return Response({"detail": "student_ids 목록이 필요합니다."}, status=http_status.HTTP_400_BAD_REQUEST)
+        if send_to not in ("parent", "student"):
+            return Response(
+                {"detail": "send_to는 'parent' 또는 'student'만 가능합니다."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+        student_ids, ids_error = _normalize_student_ids(student_ids)
+        if ids_error:
+            return Response({"detail": ids_error}, status=http_status.HTTP_400_BAD_REQUEST)
 
         preview = build_student_list_preview(
             tenant=tenant,
@@ -237,7 +287,7 @@ class ManualNotificationPreviewView(APIView):
         if preview["total_count"] == 0:
             return Response({
                 "preview_token": None,
-                "recipients": preview["recipients"],
+                "recipients": _safe_recipients(preview["recipients"]),
                 "total_count": 0,
                 "excluded_count": preview["excluded_count"],
                 "trigger": trigger,
@@ -254,13 +304,9 @@ class ManualNotificationPreviewView(APIView):
             send_to=send_to,
         )
 
-        safe_recipients = []
-        for r in preview["recipients"]:
-            safe_recipients.append({k: v for k, v in r.items() if k not in ("phone_raw", "alimtalk_replacements")})
-
         return Response({
             "preview_token": token,
-            "recipients": safe_recipients,
+            "recipients": _safe_recipients(preview["recipients"]),
             "total_count": preview["total_count"],
             "excluded_count": preview["excluded_count"],
             "trigger": trigger,

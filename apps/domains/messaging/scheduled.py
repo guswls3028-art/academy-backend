@@ -10,6 +10,7 @@ delay_mode:
 import logging
 from datetime import datetime, timedelta, timezone
 
+from django.db import connection, transaction
 from django.utils import timezone as dj_tz
 
 logger = logging.getLogger(__name__)
@@ -89,31 +90,38 @@ def process_due_notifications(batch_size: int = 100) -> dict:
     now = dj_tz.now()
     stats = {"processed": 0, "sent": 0, "failed": 0}
 
-    # pending + send_at 도래 건 조회 (SELECT FOR UPDATE SKIP LOCKED로 동시성 안전)
-    due = (
+    # pending + send_at 도래 건 조회. DB가 지원하면 SELECT FOR UPDATE SKIP LOCKED로 중복 claim 방지.
+    due_qs = (
         ScheduledNotification.objects
         .filter(status=ScheduledNotification.Status.PENDING, send_at__lte=now)
         .order_by("send_at")
-        [:batch_size]
     )
+    if connection.features.has_select_for_update:
+        due_qs = due_qs.select_for_update(
+            skip_locked=connection.features.has_select_for_update_skip_locked
+        )
 
-    for notif in due:
-        stats["processed"] += 1
-        try:
-            enqueue_sms(**notif.payload)
-            notif.status = ScheduledNotification.Status.SENT
-            notif.sent_at = dj_tz.now()
-            notif.save(update_fields=["status", "sent_at"])
-            stats["sent"] += 1
-        except Exception as e:
-            logger.error(
-                "process_due_notifications: failed notif_id=%s trigger=%s error=%s",
-                notif.id, notif.trigger, e,
-            )
-            notif.status = ScheduledNotification.Status.FAILED
-            notif.error_message = str(e)[:500]
-            notif.save(update_fields=["status", "error_message"])
-            stats["failed"] += 1
+    with transaction.atomic():
+        due = list(due_qs[:batch_size])
+        for notif in due:
+            stats["processed"] += 1
+            try:
+                enqueued = enqueue_sms(**notif.payload)
+                if not enqueued:
+                    raise RuntimeError("enqueue_sms returned false")
+                notif.status = ScheduledNotification.Status.SENT
+                notif.sent_at = dj_tz.now()
+                notif.save(update_fields=["status", "sent_at"])
+                stats["sent"] += 1
+            except Exception as e:
+                logger.error(
+                    "process_due_notifications: failed notif_id=%s trigger=%s error=%s",
+                    notif.id, notif.trigger, e,
+                )
+                notif.status = ScheduledNotification.Status.FAILED
+                notif.error_message = str(e)[:500]
+                notif.save(update_fields=["status", "error_message"])
+                stats["failed"] += 1
 
     if stats["processed"]:
         logger.info("process_due_notifications: %s", stats)

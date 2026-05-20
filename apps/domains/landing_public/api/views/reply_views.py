@@ -14,6 +14,33 @@ from ..serializers import (
 from ...models import PublicBoardPost, PublicPostLike, PublicPostReply, PublicReview, PublicUserBlock
 
 
+def _target_visible_to_request(request, kind: str, target_id: int):
+    tenant = request.tenant
+    user = request.user
+    is_authed = bool(user and user.is_authenticated)
+    viewer_role = _resolve_role(user, tenant) if is_authed else ""
+    is_staff = _is_staff_role(viewer_role)
+
+    if kind == PublicPostReply.TargetKind.BOARD:
+        target = PublicBoardPost.objects.filter(tenant=tenant, pk=target_id).first()
+        if not target:
+            return None
+        if is_staff or (is_authed and target.author_id == user.id):
+            return target
+        if target.status == PublicBoardPost.Status.PUBLISHED and target.external_visible:
+            return target
+        return None
+
+    target = PublicReview.objects.filter(tenant=tenant, pk=target_id).first()
+    if not target:
+        return None
+    if is_staff or (is_authed and target.author_id == user.id):
+        return target
+    if target.status == PublicReview.Status.APPROVED:
+        return target
+    return None
+
+
 class PublicPostReplyViewSet(viewsets.GenericViewSet):
     """공용 댓글.
 
@@ -62,6 +89,8 @@ class PublicPostReplyViewSet(viewsets.GenericViewSet):
             target_id = int(raw_id)
         except ValueError:
             return Response({"detail": "target_id가 잘못되었습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        if not _target_visible_to_request(request, kind, target_id):
+            return Response({"detail": "대상이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
         qs = self.get_queryset().filter(target_kind=kind, target_id=target_id).order_by("created_at")
         ser = PublicPostReplySerializer(qs, many=True, context={"request": request})
         return Response({"results": ser.data, "count": qs.count()})
@@ -75,13 +104,8 @@ class PublicPostReplyViewSet(viewsets.GenericViewSet):
             target_id = int(target_id)
         except (TypeError, ValueError):
             return Response({"detail": "target_id 잘못됨."}, status=status.HTTP_400_BAD_REQUEST)
-        # 부모 존재 확인 (tenant 격리)
         tenant = request.tenant
-        if kind == PublicPostReply.TargetKind.BOARD:
-            parent_exists = PublicBoardPost.objects.filter(tenant=tenant, pk=target_id).exists()
-        else:
-            parent_exists = PublicReview.objects.filter(tenant=tenant, pk=target_id).exists()
-        if not parent_exists:
+        if not _target_visible_to_request(request, kind, target_id):
             return Response({"detail": "대상이 존재하지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
         # 블랙리스트 차단 (Phase 4-B)
         if PublicUserBlock.objects.filter(tenant=tenant, blocked_user=request.user).exists():
