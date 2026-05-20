@@ -61,7 +61,7 @@ class StudentSessionListView(APIView):
             .distinct()
         )
         sessions_qs = (
-            LectureSession.objects.filter(id__in=session_ids)
+            LectureSession.objects.filter(id__in=session_ids, lecture__tenant=tenant)
             .select_related("lecture")
             .order_by("date", "order", "id")
         )
@@ -155,6 +155,7 @@ class StudentSessionClearPastView(APIView):
         if future_hidden_session_ids:
             future_sessions = LectureSession.objects.filter(
                 id__in=future_hidden_session_ids,
+                lecture__tenant=tenant,
             ).exclude(date__lte=cutoff).values_list("id", flat=True)
             keep.extend(int(i) for i in future_sessions)
         if future_hidden_clinic_participant_ids:
@@ -202,6 +203,7 @@ class StudentSessionHideView(APIView):
             owns = SessionEnrollment.objects.filter(
                 enrollment__student=student,
                 enrollment__tenant=tenant,
+                session__lecture__tenant=tenant,
                 session_id=target_id,
             ).exists()
         else:
@@ -330,11 +332,15 @@ class StudentSessionDetailView(APIView):
             enrollment__student=student,
             enrollment__tenant=tenant,
             enrollment__status="ACTIVE",  # ✅ 퇴원 학생 제외
+            session__lecture__tenant=tenant,
             session_id=pk,
         ).exists()
         if not has_access:
             return Response({"detail": "Not found."}, status=404)
-        session = LectureSession.objects.filter(id=pk).select_related("lecture").first()
+        session = LectureSession.objects.filter(
+            id=pk,
+            lecture__tenant=tenant,
+        ).select_related("lecture").first()
         if not session:
             return Response({"detail": "Not found."}, status=404)
         # 차시에 연결된 운영 시험(regular) 중 활성 — 학생 측 시험 진입 분기용.

@@ -27,11 +27,12 @@ class IsStudentOrParent(BasePermission):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if hasattr(user, "student_profile"):
-            return True
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return False
+        if hasattr(user, "student_profile"):
+            student = user.student_profile
+            return student.tenant_id == tenant.id
         return TenantMembership.objects.filter(
             tenant=tenant, user=user, is_active=True, role="parent"
         ).exists()
@@ -44,13 +45,16 @@ def get_request_student(request):
     - 학부모: X-Student-Id 헤더가 있으면 해당 자녀(삭제 제외 목록 내), 없으면 연결된 첫 번째 학생
     """
     user = request.user
-    if hasattr(user, "student_profile") and user.student_profile:
-        return user.student_profile
-    parent = getattr(user, "parent_profile", None)
-    if not parent:
-        return None
     tenant = getattr(request, "tenant", None)
     if not tenant:
+        return None
+    if hasattr(user, "student_profile") and user.student_profile:
+        student = user.student_profile
+        if student.tenant_id == tenant.id:
+            return student
+        return None
+    parent = getattr(user, "parent_profile", None)
+    if not parent:
         return None
     qs_filter = {"deleted_at__isnull": True, "tenant": tenant}
     active_students = parent.students.filter(**qs_filter)
