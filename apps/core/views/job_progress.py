@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from academy.adapters.db.django import repositories_ai as ai_repo
+from apps.core.permissions import TenantResolvedAndMember
 
 
 # --------------------------------------------------
@@ -16,7 +17,7 @@ class JobProgressView(APIView):
     GET /api/v1/core/job_progress/<job_id>/
     Redis에 기록된 워커 진행률 조회. tenant 소속 job만 허용.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request, job_id: str):
         from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter

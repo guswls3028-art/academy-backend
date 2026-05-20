@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.ai.redis_status_cache import get_job_status_from_redis
 from academy.adapters.db.django.repositories_ai import get_job_model_for_status
 from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
@@ -12,7 +13,7 @@ from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
 class JobProgressView(APIView):
     """Job 진행률/상태 조회 (Redis 우선, 없으면 DB 폴백으로 완료 상태 반환)"""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request, job_id: str):
         """GET /api/v1/jobs/{job_id}/progress/"""

@@ -11,6 +11,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.permissions import TenantResolvedAndMember
 from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
 from apps.domains.ai.services.job_status_response import build_job_status_response
 
@@ -29,7 +30,7 @@ class JobStatusView(APIView):
     - result.filename: 권장 파일명
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request, job_id: str):
         try:
