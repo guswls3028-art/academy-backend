@@ -71,8 +71,11 @@ class ExamDeleteGuardTests(TestCase):
             pass_score=60,
         )
 
-    def _delete_exam(self, exam: Exam):
-        request = self.factory.delete(f"/api/v1/exams/{exam.id}/")
+    def _delete_exam(self, exam: Exam, session_id: int | None = None):
+        path = f"/api/v1/exams/{exam.id}/"
+        if session_id is not None:
+            path = f"{path}?session_id={session_id}"
+        request = self.factory.delete(path)
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin)
         return ExamViewSet.as_view({"delete": "destroy"})(request, pk=exam.id)
@@ -97,6 +100,73 @@ class ExamDeleteGuardTests(TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertFalse(Exam.objects.filter(id=exam.id).exists())
         self.assertFalse(ExamEnrollment.objects.filter(exam_id=exam.id).exists())
+
+    def test_session_scoped_delete_unlinks_shared_regular_exam(self):
+        session_a = Session.objects.create(
+            lecture=self.lecture,
+            order=1,
+            title="Tenant A Session",
+        )
+        lecture_b = Lecture.objects.create(
+            tenant=self.tenant,
+            title="Delete Guard Lecture B",
+            name="Delete Guard Lecture B",
+            subject="MATH",
+        )
+        session_b = Session.objects.create(
+            lecture=lecture_b,
+            order=1,
+            title="Tenant B Session",
+        )
+        exam = self._create_regular_exam("shared")
+        exam.sessions.add(session_a, session_b)
+        ExamEnrollment.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+        )
+
+        response = self._delete_exam(exam, session_id=session_a.id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["action"], "unlinked")
+        self.assertTrue(Exam.objects.filter(id=exam.id).exists())
+        self.assertFalse(exam.sessions.filter(id=session_a.id).exists())
+        self.assertTrue(exam.sessions.filter(id=session_b.id).exists())
+        self.assertTrue(ExamEnrollment.objects.filter(exam_id=exam.id).exists())
+
+    def test_session_scoped_delete_last_session_deletes_regular_exam(self):
+        session = Session.objects.create(
+            lecture=self.lecture,
+            order=1,
+            title="Only Session",
+        )
+        exam = self._create_regular_exam("last-session")
+        exam.sessions.add(session)
+
+        response = self._delete_exam(exam, session_id=session.id)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Exam.objects.filter(id=exam.id).exists())
+
+    def test_session_scoped_delete_rejects_unlinked_session(self):
+        linked_session = Session.objects.create(
+            lecture=self.lecture,
+            order=1,
+            title="Linked Session",
+        )
+        unlinked_session = Session.objects.create(
+            lecture=self.lecture,
+            order=2,
+            title="Unlinked Session",
+        )
+        exam = self._create_regular_exam("wrong-session")
+        exam.sessions.add(linked_session)
+
+        response = self._delete_exam(exam, session_id=unlinked_session.id)
+
+        self.assertEqual(response.status_code, 404, response.data)
+        self.assertTrue(Exam.objects.filter(id=exam.id).exists())
+        self.assertTrue(exam.sessions.filter(id=linked_session.id).exists())
 
     def test_regular_exam_with_operational_records_cannot_be_deleted(self):
         blockers = (

@@ -229,8 +229,48 @@ class ExamViewSet(ModelViewSet):
             return "result facts"
         return None
 
+    def _delete_session_id(self, request) -> int | None:
+        raw = request.query_params.get("session_id")
+        if raw in (None, ""):
+            return None
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            raise ValidationError({"session_id": "must be integer"})
+
+    def _unlink_from_session_if_shared(self, request, obj: Exam, session_id: int):
+        session = Session.objects.filter(
+            id=session_id,
+            lecture__tenant=request.tenant,
+        ).first()
+        if session is None:
+            raise ValidationError({"session_id": "invalid"})
+        if not obj.sessions.filter(id=session_id).exists():
+            raise ValidationError(
+                {"session_id": "exam is not linked to this session"}
+            )
+
+        if obj.sessions.exclude(id=session_id).exists():
+            obj.sessions.remove(session)
+            return Response(
+                {
+                    "detail": "Exam was removed from this session.",
+                    "action": "unlinked",
+                    "exam_id": int(obj.id),
+                    "session_id": int(session_id),
+                },
+                status=200,
+            )
+        return None
+
     def destroy(self, request, *args, **kwargs):
         obj: Exam = self.get_object()
+        session_id = self._delete_session_id(request)
+
+        if session_id is not None and obj.exam_type != Exam.ExamType.REGULAR:
+            raise ValidationError(
+                {"session_id": "session-scoped delete is allowed only for regular exams"}
+            )
 
         if obj.exam_type == Exam.ExamType.TEMPLATE and obj.derived_exams.exists():
             raise PermissionDenied(
@@ -238,6 +278,11 @@ class ExamViewSet(ModelViewSet):
             )
 
         if obj.exam_type == Exam.ExamType.REGULAR:
+            if session_id is not None:
+                response = self._unlink_from_session_if_shared(request, obj, session_id)
+                if response is not None:
+                    return response
+
             blocker = self._regular_delete_blocker(obj)
             if blocker:
                 raise PermissionDenied(
