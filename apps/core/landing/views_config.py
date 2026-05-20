@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 
+from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -122,6 +123,7 @@ class LandingAdminView(APIView):
             landing.template_key = template_key
 
         if draft_config is not None:
+            draft_config = backfill_missing_sections(draft_config)
             errors = validate_config(draft_config)
             if errors:
                 return Response({"detail": errors}, status=400)
@@ -150,20 +152,24 @@ class LandingPublishView(APIView):
 
     def post(self, request):
         tenant = request.tenant
-        try:
-            landing = LandingPage.objects.get(tenant=tenant)
-        except LandingPage.DoesNotExist:
-            return Response({"detail": "랜딩페이지가 아직 생성되지 않았습니다."}, status=404)
+        with transaction.atomic():
+            try:
+                landing = LandingPage.objects.select_for_update().get(tenant=tenant)
+            except LandingPage.DoesNotExist:
+                return Response({"detail": "랜딩페이지가 아직 생성되지 않았습니다."}, status=404)
 
-        if not landing.draft_config:
-            return Response({"detail": "저장된 초안이 없습니다."}, status=400)
+            if not landing.draft_config:
+                return Response({"detail": "저장된 초안이 없습니다."}, status=400)
 
-        # 게시 전 재검증
-        errors = validate_config(landing.draft_config)
-        if errors:
-            return Response({"detail": errors}, status=400)
+            # 게시 전 재검증. GET에서 보강되는 신규 섹션도 게시 스냅샷에 포함한다.
+            draft_config = backfill_missing_sections(landing.draft_config)
+            errors = validate_config(draft_config)
+            if errors:
+                return Response({"detail": errors}, status=400)
 
-        landing.publish()
+            landing.draft_config = draft_config
+            landing.save(update_fields=["draft_config", "updated_at"])
+            landing.publish()
         logger.info("Landing page published: tenant=%s", tenant.id)
         return Response({
             "is_published": True,

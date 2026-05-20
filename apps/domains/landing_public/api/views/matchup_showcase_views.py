@@ -23,6 +23,7 @@ import logging
 from typing import Any
 
 from django.http import HttpResponse, StreamingHttpResponse
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.views.decorators.clickjacking import xframe_options_exempt
@@ -165,10 +166,17 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             return PublicMatchupShowcase.objects.none()
         qs = PublicMatchupShowcase.objects.filter(tenant=tenant)
         if not _viewer_is_staff(self.request):
-            qs = qs.filter(status__in=[
-                PublicMatchupShowcase.Status.PUBLISHED,
-                PublicMatchupShowcase.Status.EXPIRED,
-            ])
+            now = timezone.now()
+            has_snapshot = ~Q(snapshot_pdf_key="") & Q(snapshot_at__isnull=False)
+            started = Q(published_at__isnull=True) | Q(published_at__lte=now)
+            qs = qs.filter(
+                Q(status=PublicMatchupShowcase.Status.EXPIRED)
+                | (
+                    Q(status=PublicMatchupShowcase.Status.PUBLISHED)
+                    & started
+                    & has_snapshot
+                )
+            )
         return qs.order_by("-published_at", "-created_at")
 
     def _serialize_card(self, obj: PublicMatchupShowcase, *, viewer_is_staff: bool) -> dict:
@@ -451,6 +459,11 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             v = (request.data.get("status") or "").strip()
             if v not in {c[0] for c in PublicMatchupShowcase.Status.choices}:
                 return Response({"detail": "status 잘못됨."}, status=status.HTTP_400_BAD_REQUEST)
+            if v == PublicMatchupShowcase.Status.PUBLISHED:
+                if not obj.snapshot_pdf_key or not obj.snapshot_at:
+                    return Response({"detail": "스냅샷이 없는 게시물은 공개할 수 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+                if "published_at" not in request.data and obj.published_at is None:
+                    updates["published_at"] = timezone.now()
             updates["status"] = v
         if not updates:
             return Response({"detail": "변경 필드 없음."}, status=status.HTTP_400_BAD_REQUEST)

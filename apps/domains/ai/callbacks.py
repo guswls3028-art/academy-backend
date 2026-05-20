@@ -965,6 +965,7 @@ def _handle_matchup_manual_result(
 
     source_id = problem_id. 단일 problem 레코드의 text/embedding/format을 채운다.
     """
+    from apps.domains.ai.models import AIJobModel
     from apps.domains.matchup.models import MatchupProblem
 
     if status == "FAILED":
@@ -974,8 +975,27 @@ def _handle_matchup_manual_result(
         )
         return
 
-    problem_id = result_payload.get("problem_id") or source_id
-    if not problem_id:
+    ai_job = AIJobModel.objects.filter(job_id=job_id).only("tenant_id", "source_id").first()
+    if not ai_job or not ai_job.tenant_id or not ai_job.source_id:
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_MANUAL_NO_JOB_SCOPE | job_id=%s | source_id=%s",
+            job_id, source_id,
+        )
+        return
+
+    problem_id = str(ai_job.source_id)
+    payload_problem_id = result_payload.get("problem_id")
+    if source_id and str(source_id) != problem_id:
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_MANUAL_SOURCE_MISMATCH | job_id=%s | job_source_id=%s | callback_source_id=%s",
+            job_id, problem_id, source_id,
+        )
+        return
+    if payload_problem_id and str(payload_problem_id) != problem_id:
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_MANUAL_PAYLOAD_MISMATCH | job_id=%s | job_source_id=%s | payload_problem_id=%s",
+            job_id, problem_id, payload_problem_id,
+        )
         return
 
     text = (result_payload.get("text") or "").strip()
@@ -984,11 +1004,21 @@ def _handle_matchup_manual_result(
     fmt = result_payload.get("format") or "choice"
 
     try:
-        problem = MatchupProblem.objects.get(id=int(problem_id))
+        scoped_problem_id = int(problem_id)
+        scoped_tenant_id = int(ai_job.tenant_id)
+    except (TypeError, ValueError):
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_MANUAL_BAD_SCOPE | job_id=%s | tenant_id=%s | problem_id=%s",
+            job_id, ai_job.tenant_id, problem_id,
+        )
+        return
+
+    try:
+        problem = MatchupProblem.objects.get(id=scoped_problem_id, tenant_id=scoped_tenant_id)
     except MatchupProblem.DoesNotExist:
         logger.warning(
-            "AI_CALLBACK_MATCHUP_MANUAL_MISSING | job_id=%s | problem_id=%s",
-            job_id, problem_id,
+            "AI_CALLBACK_MATCHUP_MANUAL_MISSING | job_id=%s | tenant_id=%s | problem_id=%s",
+            job_id, scoped_tenant_id, scoped_problem_id,
         )
         return
 
