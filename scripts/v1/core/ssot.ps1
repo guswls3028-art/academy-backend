@@ -11,10 +11,15 @@ function Get-ParamsYaml {
     $lines = Get-Content $ParamsPath -Raw
     $h = @{}
     $section = ""
+    $subsection = ""
+    $listTarget = $null
+    $nestedKeys = @("tags", "standard", "observability", "opsJobDefs", "domains", "cors", "cdnCacheControl", "uploadDownload")
     foreach ($line in ($lines -split "`r?`n")) {
         $l = $line
         if ($l -match '^([a-zA-Z0-9_]+):\s*$') {
             $section = $matches[1]
+            $subsection = ""
+            $listTarget = $null
             if (-not $h[$section]) { $h[$section] = @{} }
             continue
         }
@@ -22,14 +27,43 @@ function Get-ParamsYaml {
             $key = $matches[1]; $val = $matches[2].Trim()
             if ($val -match '#') { $val = ($val -split '#')[0].Trim() }
             if ($val -match '^"(.*)"$') { $val = $matches[1] }
-            if ($section) { $h[$section][$key] = $val }
+            $subsection = ""
+            $listTarget = $null
+            if ($section) {
+                if ($val -eq "" -and $nestedKeys -contains $key) {
+                    if (-not $h[$section][$key]) { $h[$section][$key] = @{} }
+                    $subsection = $key
+                } else {
+                    $h[$section][$key] = $val
+                }
+            }
+            continue
+        }
+        if ($l -match '^\s{4}([a-zA-Z0-9_]+):\s*(.*)$' -and $section -and $subsection) {
+            $key = $matches[1]; $val = $matches[2].Trim()
+            if ($val -match '#') { $val = ($val -split '#')[0].Trim() }
+            if ($val -match '^"(.*)"$') { $val = $matches[1] }
+            if ($val -eq "") {
+                $h[$section][$subsection][$key] = [System.Collections.ArrayList]::new()
+                $listTarget = $h[$section][$subsection][$key]
+            } else {
+                $h[$section][$subsection][$key] = $val
+                $listTarget = $null
+            }
             continue
         }
         if ($l -match '^\s+-\s+(.+)$') {
             $item = $matches[1].Trim()
             if ($item -match '^"(.*)"$') { $item = $matches[1] }
-            if (-not $h[$section]["_list"]) { $h[$section]["_list"] = [System.Collections.ArrayList]::new() }
-            [void]$h[$section]["_list"].Add($item)
+            if ($null -ne $listTarget) {
+                [void]$listTarget.Add($item)
+            } elseif ($section -and $subsection) {
+                if (-not $h[$section][$subsection]["_list"]) { $h[$section][$subsection]["_list"] = [System.Collections.ArrayList]::new() }
+                [void]$h[$section][$subsection]["_list"].Add($item)
+            } elseif ($section) {
+                if (-not $h[$section]["_list"]) { $h[$section]["_list"] = [System.Collections.ArrayList]::new() }
+                [void]$h[$section]["_list"].Add($item)
+            }
             continue
         }
     }
@@ -168,14 +202,22 @@ function Load-SSOT {
     $script:AiVisibilityTimeoutSeconds = Coerce-Int $p["aiWorker"]["visibilityTimeoutSeconds"] 1800
 
     $vb = $p["videoBatch"]
-    $vbs = if ($vb["standard"]) { $vb["standard"] } else { $vb }
+    $vbs = if ($vb.ContainsKey("standard") -and $vb["standard"]) { $vb["standard"] } else { $vb }
     $vbl = $vb["long"]
     $script:VideoCEName = if ($vbs["computeEnvironmentName"]) { $vbs["computeEnvironmentName"] } else { "academy-v1-video-batch-ce-200gb" }
     $script:VideoQueueName = if ($vbs["videoQueueName"]) { $vbs["videoQueueName"] } else { "academy-v1-video-batch-queue" }
     $script:VideoJobDefName = if ($vbs["workerJobDefName"]) { $vbs["workerJobDefName"] } else { "academy-v1-video-batch-jobdef" }
     $script:VideoCEMinvCpus = Coerce-Int $(if ($vbs["minvCpus"]) { $vbs["minvCpus"] } else { 0 }) 0
     $script:VideoCEMaxvCpus = Coerce-Int $(if ($vbs["maxvCpus"]) { $vbs["maxvCpus"] } else { 40 }) 40
-    $script:VideoCEInstanceType = if ($vbs["instanceType"]) { $vbs["instanceType"] } else { "c6g.xlarge" }
+    $videoInstanceTypes = @()
+    if ($vbs["instanceTypes"]) {
+        $videoInstanceTypes = @($vbs["instanceTypes"] | Where-Object { $_ })
+    } elseif ($vbs["instanceType"]) {
+        $videoInstanceTypes = @($vbs["instanceType"])
+    }
+    if (-not $videoInstanceTypes -or $videoInstanceTypes.Count -eq 0) { $videoInstanceTypes = @("c6g.xlarge") }
+    $script:VideoCEInstanceTypes = $videoInstanceTypes
+    $script:VideoCEInstanceType = $videoInstanceTypes[0]
     $script:VideoCERootVolumeSizeGb = Coerce-Int $(if ($vbs["rootVolumeSizeGb"]) { $vbs["rootVolumeSizeGb"] } else { 200 }) 200
     $script:VideoJobTimeoutStandardSeconds = Coerce-Int $(if ($vb["jobTimeoutStandardSeconds"]) { $vb["jobTimeoutStandardSeconds"] } elseif ($vbs["jobTimeoutSeconds"]) { $vbs["jobTimeoutSeconds"] } else { 21600 }) 21600
     $script:VideoStuckHeartbeatAgeStandardMinutes = Coerce-Int $(if ($vb["stuckHeartbeatAgeStandardMinutes"]) { $vb["stuckHeartbeatAgeStandardMinutes"] } elseif ($vbs["stuckHeartbeatAgeMinutes"]) { $vbs["stuckHeartbeatAgeMinutes"] } else { 20 }) 20
@@ -191,7 +233,7 @@ function Load-SSOT {
     $script:VideoLongInstanceType = $null
     $script:VideoLongRootVolumeSizeGb = 0
     $script:VideoJobTimeoutLongSeconds = 0
-    $script:VideoStuckHeartbeatAgeLongMinutes = Coerce-Int $(if ($vb["stuckHeartbeatAgeLongMinutes"]) { $vb["stuckHeartbeatAgeLongMinutes"] } else { 45 }) 45
+    $script:VideoStuckHeartbeatAgeLongMinutes = 0
     $script:VideoLongUseSpot = $false
     if ($vbl -or $vb["longQueueName"] -or $vb["longWorkerJobDefName"] -or $vb["longComputeEnvironmentName"]) {
         Write-Host "  (SSOT 에 video long path 정의가 있으나 long path 가 폐기된 상태라 무시함. SSOT 에서 제거 권장.)" -ForegroundColor Yellow
@@ -355,5 +397,5 @@ function Load-SSOT {
         "academy-eventbridge-batch-video-role"
     )
     $script:SSOT_InstanceProfile = @("academy-batch-ecs-instance-profile")
-    $script:SSOT_ECSClusterPatterns = @("*academy-v1-video-batch-ce*", "*academy-v1-video-batch-long-ce*", "*academy-v1-video-ops-ce*")
+    $script:SSOT_ECSClusterPatterns = @("*academy-v1-video-batch-ce*", "*academy-v1-video-ops-ce*")
 }

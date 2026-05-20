@@ -128,40 +128,25 @@ aiWorker:
   dlqSuffix: -dlq
 
 videoBatch:
-  # standard: 기존 계열 유지. 3시간 이하 일반 작업. maxvCpus=40, Spot 혼합.
+  # standard: all video encode work. Keep c6g.2xlarge+ so 8-vCPU job definitions can place.
   standard:
     computeEnvironmentName: academy-v1-video-batch-ce-200gb
     videoQueueName: academy-v1-video-batch-queue
     workerJobDefName: academy-v1-video-batch-jobdef
     minvCpus: 0
     maxvCpus: 40
-    instanceType: c6g.xlarge
+    instanceTypes:
+      - c6g.4xlarge
+      - c6g.2xlarge
+      - c6g.xlarge
     rootVolumeSizeGb: 200
     jobTimeoutSeconds: 21600
     stuckHeartbeatAgeMinutes: 20
     allocationStrategy: BEST_FIT_PROGRESSIVE
     useSpot: true
-  # long: 3시간 초과·장시간 작업. On-Demand 우선(Spot 중단 리스크 회피). maxvCpus=80.
-  long:
-    computeEnvironmentName: academy-v1-video-batch-long-ce-200gb
-    videoQueueName: academy-v1-video-batch-long-queue
-    workerJobDefName: academy-v1-video-batch-long-jobdef
-    minvCpus: 0
-    maxvCpus: 80
-    instanceType: c6g.xlarge
-    rootVolumeSizeGb: 300
-    jobTimeoutSeconds: 43200
-    stuckHeartbeatAgeMinutes: 45
-    allocationStrategy: BEST_FIT
-    useSpot: false
-  longComputeEnvironmentName: academy-v1-video-batch-long-ce-200gb
-  longQueueName: academy-v1-video-batch-long-queue
-  longWorkerJobDefName: academy-v1-video-batch-long-jobdef
-  # Job timeout / stuck / retry (3시간 영상 기준)
+  # Job timeout / stuck / retry (standard queue only; long path retired 2026-05-10)
   jobTimeoutStandardSeconds: 21600
-  jobTimeoutLongSeconds: 43200
   stuckHeartbeatAgeStandardMinutes: 20
-  stuckHeartbeatAgeLongMinutes: 45
   retryNetworkUploadAttempts: 8
   retryFfmpegContentAttempts: 1
   # R2 업로드 안정화

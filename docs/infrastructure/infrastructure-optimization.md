@@ -138,8 +138,7 @@
 
 | CE | 인스턴스 | max vCPU | 용도 |
 |----|---------|----------|------|
-| academy-v1-video-batch-ce | c6g.xlarge (4 vCPU ARM, 8GB) | 40 | 일반 영상 인코딩 |
-| academy-v1-video-batch-long-ce | c6g.xlarge | 80 | 장시간 영상 (≥3h) |
+| academy-v1-video-batch-ce-200gb | c6g.4xlarge / c6g.2xlarge / c6g.xlarge | 40 | 전체 영상 인코딩 |
 | academy-v1-video-ops-ce | m6g.medium | 2 | scan/reconcile 운영 작업 |
 
 - 전체 min=0 → 영상 없을 때 0대, 비용 없음

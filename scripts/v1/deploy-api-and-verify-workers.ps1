@@ -450,11 +450,14 @@ try {
 }
 
 # Batch queue status
-foreach ($bq in @(
-    @{ Name="standard"; Queue="academy-v1-video-batch-queue" },
-    @{ Name="long";     Queue="academy-v1-video-batch-long-queue" },
-    @{ Name="ops";      Queue="academy-v1-video-ops-queue" }
-)) {
+$batchQueues = @(
+    @{ Name="standard"; Queue=$script:VideoQueueName },
+    @{ Name="ops";      Queue=$script:OpsQueueName }
+)
+if ($script:VideoLongQueueName) {
+    $batchQueues += @{ Name="long"; Queue=$script:VideoLongQueueName }
+}
+foreach ($bq in $batchQueues) {
     try {
         $bqJson = Invoke-Aws @("batch", "describe-job-queues",
             "--job-queues", $bq.Queue,
@@ -472,11 +475,14 @@ foreach ($bq in @(
 }
 
 # Batch CE status
-foreach ($ce in @(
-    @{ Name="standard"; CE="academy-v1-video-batch-ce-200gb" },
-    @{ Name="long";     CE="academy-v1-video-batch-long-ce-200gb" },
-    @{ Name="ops";      CE="academy-v1-video-ops-ce" }
-)) {
+$batchComputeEnvironments = @(
+    @{ Name="standard"; CE=$script:VideoCEName },
+    @{ Name="ops";      CE=$script:OpsCEName }
+)
+if ($script:VideoLongCEName) {
+    $batchComputeEnvironments += @{ Name="long"; CE=$script:VideoLongCEName }
+}
+foreach ($ce in $batchComputeEnvironments) {
     try {
         $ceJson = Invoke-Aws @("batch", "describe-compute-environments",
             "--compute-environments", $ce.CE,

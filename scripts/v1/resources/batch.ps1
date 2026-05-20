@@ -66,7 +66,10 @@ function New-VideoCE {
     $content = $content -replace "PLACEHOLDER_SUBNETS", $subnetArr
     $content = $content -replace "PLACEHOLDER_MIN_VCPUS", $script:VideoCEMinvCpus
     $content = $content -replace "PLACEHOLDER_MAX_VCPUS", $script:VideoCEMaxvCpus
-    $content = $content -replace "PLACEHOLDER_INSTANCE_TYPE", $script:VideoCEInstanceType
+    $videoInstanceTypes = @($script:VideoCEInstanceTypes | Where-Object { $_ })
+    if (-not $videoInstanceTypes -or $videoInstanceTypes.Count -eq 0) { $videoInstanceTypes = @($script:VideoCEInstanceType) }
+    $instanceTypesJson = ($videoInstanceTypes | ForEach-Object { "`"$_`"" }) -join ","
+    $content = $content -replace "PLACEHOLDER_INSTANCE_TYPES", $instanceTypesJson
     $content = $content -replace "PLACEHOLDER_LAUNCH_TEMPLATE_NAME", $ltName
     $tmp = [System.IO.Path]::GetTempFileName()
     [System.IO.File]::WriteAllText($tmp, $content, $utf8NoBom)
@@ -144,11 +147,15 @@ function Ensure-VideoCE {
     $c = $ce.computeEnvironments[0]
     $res = $c.computeResources
     $currentMax = if ($res -and $res.maxvCpus) { [int]$res.maxvCpus } else { 0 }
-    $currentType = if ($res -and $res.instanceTypes -and $res.instanceTypes.Count -gt 0) { $res.instanceTypes[0] } else { $null }
-    $videoCEDrift = ($currentMax -ne $script:VideoCEMaxvCpus) -or ($currentType -ne $script:VideoCEInstanceType)
+    $currentTypes = if ($res -and $res.instanceTypes) { @($res.instanceTypes | Where-Object { $_ }) } else { @() }
+    $desiredTypes = @($script:VideoCEInstanceTypes | Where-Object { $_ })
+    if (-not $desiredTypes -or $desiredTypes.Count -eq 0) { $desiredTypes = @($script:VideoCEInstanceType) }
+    $currentTypesKey = ($currentTypes | Sort-Object) -join ","
+    $desiredTypesKey = ($desiredTypes | Sort-Object) -join ","
+    $videoCEDrift = ($currentMax -ne $script:VideoCEMaxvCpus) -or ($currentTypesKey -ne $desiredTypesKey)
     if ($c.status -eq "INVALID" -or $videoCEDrift) {
         if (-not $script:AllowRebuild) {
-            if ($videoCEDrift) { Write-Warn "Video CE drift (current max=$currentMax type=$currentType, SSOT max=$($script:VideoCEMaxvCpus) type=$($script:VideoCEInstanceType)); run with -AllowRebuild to recreate." }
+            if ($videoCEDrift) { Write-Warn "Video CE drift (current max=$currentMax types=$currentTypesKey, SSOT max=$($script:VideoCEMaxvCpus) types=$desiredTypesKey); run with -AllowRebuild to recreate." }
             else { Write-Warn "Video CE INVALID; skip recreate." }
             return
         }
