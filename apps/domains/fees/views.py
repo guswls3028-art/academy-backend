@@ -43,6 +43,7 @@ from .serializers import (
     StudentFeeBulkAssignSerializer,
     StudentInvoiceListSerializer,
     StudentInvoiceDetailSerializer,
+    StudentInvoiceUpdateSerializer,
     GenerateInvoicesSerializer,
     FeePaymentSerializer,
     RecordPaymentSerializer,
@@ -229,6 +230,8 @@ class StudentInvoiceViewSet(ModelViewSet):
     http_method_names = ["get", "patch", "delete", "post"]
 
     def get_serializer_class(self):
+        if self.action in ("update", "partial_update"):
+            return StudentInvoiceUpdateSerializer
         if self.action == "retrieve":
             return StudentInvoiceDetailSerializer
         return StudentInvoiceListSerializer
@@ -302,8 +305,16 @@ class StudentInvoiceViewSet(ModelViewSet):
         return Response(serializer.data)
 
     def perform_update(self, serializer):
-        # Only allow updating memo and due_date
         serializer.save()
+
+    def update(self, request, *args, **kwargs):
+        partial = kwargs.pop("partial", False)
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        instance.refresh_from_db()
+        return Response(StudentInvoiceDetailSerializer(instance).data)
 
     def perform_destroy(self, instance):
         """청구서 취소 (DELETE)."""
@@ -360,6 +371,14 @@ class FeePaymentViewSet(ModelViewSet):
         """수납 기록 생성."""
         ser = RecordPaymentSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
+        idempotency_key = (
+            ser.validated_data.get("idempotency_key")
+            or request.headers.get("Idempotency-Key")
+            or request.headers.get("X-Idempotency-Key")
+            or ""
+        )
+        if len(idempotency_key) > 100:
+            raise ValidationError({"idempotency_key": "멱등성 키는 100자 이하여야 합니다."})
 
         try:
             payment = services.record_payment(
@@ -371,6 +390,7 @@ class FeePaymentViewSet(ModelViewSet):
                 recorded_by=request.user,
                 receipt_note=ser.validated_data.get("receipt_note", ""),
                 memo=ser.validated_data.get("memo", ""),
+                idempotency_key=idempotency_key,
             )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)

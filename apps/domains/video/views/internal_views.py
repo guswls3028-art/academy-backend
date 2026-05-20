@@ -222,52 +222,39 @@ class VideoDeleteR2InternalView(APIView):
 
 class VideoScanStuckView(APIView):
     """
-    EventBridge Scheduled Lambda: scan_stuck_video_jobs 로직 실행.
+    Internal compatibility endpoint for scan_stuck_video_jobs.
     POST /api/v1/internal/video/scan-stuck/
-    body: {"threshold": 3} (optional, minutes)
+    body: {"threshold": 3, "dry_run": false} (optional)
     """
 
     permission_classes = [IsLambdaInternal]
     authentication_classes = []
 
     def post(self, request):
-        from django.utils import timezone
-        from datetime import timedelta
-        from apps.domains.video.models import VideoTranscodeJob
+        from django.core.management import call_command
+        from io import StringIO
 
         data = getattr(request, "data", None) or {}
-        threshold_minutes = int(data.get("threshold", 3))
-        cutoff = timezone.now() - timedelta(minutes=threshold_minutes)
-        max_attempts = 5
+        out = StringIO()
+        kwargs = {"stdout": out}
 
-        qs = VideoTranscodeJob.objects.filter(
-            state=VideoTranscodeJob.State.RUNNING,
-            last_heartbeat_at__lt=cutoff,
-        ).order_by("id")
+        if data.get("dry_run") is True:
+            kwargs["dry_run"] = True
 
-        recovered = 0
-        dead = 0
+        threshold = data.get("threshold")
+        if threshold not in (None, ""):
+            try:
+                kwargs["threshold"] = int(threshold)
+            except (TypeError, ValueError):
+                return Response({"detail": "threshold must be an integer"}, status=status.HTTP_400_BAD_REQUEST)
 
-        from academy.adapters.db.django.repositories_video import job_mark_dead
+        try:
+            call_command("scan_stuck_video_jobs", **kwargs)
+        except Exception as e:
+            logger.exception("scan_stuck_video_jobs failed: %s", e)
+            return Response({"detail": str(e), "ok": False}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        for job in qs:
-            attempt_after = job.attempt_count + 1
-            if attempt_after >= max_attempts:
-                job_mark_dead(
-                    str(job.id),
-                    error_code="STUCK_MAX_ATTEMPTS",
-                    error_message=f"Stuck (no heartbeat for {threshold_minutes}min)",
-                )
-                dead += 1
-            else:
-                job.state = VideoTranscodeJob.State.RETRY_WAIT
-                job.attempt_count = attempt_after
-                job.locked_by = ""
-                job.locked_until = None
-                job.save(update_fields=["state", "attempt_count", "locked_by", "locked_until", "updated_at"])
-                recovered += 1
-
-        return Response({"recovered": recovered, "dead": dead})
+        return Response({"ok": True, "output": out.getvalue()[:2000]})
 
 
 class VideoReconcileView(APIView):

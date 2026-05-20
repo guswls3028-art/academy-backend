@@ -97,11 +97,28 @@ class Command(BaseCommand):
                         f"DRY-RUN RETRY_WAIT | job_id={job.id} video_id={job.video_id} attempt_count={job.attempt_count}→{attempt_after} threshold={threshold_minutes}min"
                     )
                 else:
+                    aws_batch_job_id = (getattr(job, "aws_batch_job_id", None) or "").strip()
+                    if aws_batch_job_id:
+                        from apps.domains.video.services.batch_submit import terminate_video_job
+                        terminated = terminate_video_job(str(job.id), reason="stuck_resubmit")
+                        if not terminated:
+                            job.error_code = "BATCH_TERMINATE_FAILED"
+                            job.error_message = "Failed to terminate stale AWS Batch job before stuck resubmit"
+                            job.save(update_fields=["error_code", "error_message", "updated_at"])
+                            self.stderr.write(
+                                f"SKIP RESUBMIT (terminate failed) | job_id={job.id} video_id={job.video_id} aws_job_id={aws_batch_job_id}"
+                            )
+                            continue
+
                     job.state = VideoTranscodeJob.State.RETRY_WAIT
                     job.attempt_count = attempt_after
                     job.locked_by = ""
                     job.locked_until = None
-                    job.save(update_fields=["state", "attempt_count", "locked_by", "locked_until", "updated_at"])
+                    update_fields = ["state", "attempt_count", "locked_by", "locked_until", "updated_at"]
+                    if aws_batch_job_id:
+                        job.last_counted_failure_aws_batch_job_id = aws_batch_job_id
+                        update_fields.append("last_counted_failure_aws_batch_job_id")
+                    job.save(update_fields=update_fields)
 
                     aws_job_id, submit_err = submit_batch_job(str(job.id), duration_seconds=duration_sec)
                     if aws_job_id:

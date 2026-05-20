@@ -24,6 +24,7 @@ Toss는 비동기로 결제 상태 변경을 웹훅으로 통지한다.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Any
 
 from django.db import IntegrityError, transaction
@@ -31,6 +32,7 @@ from django.utils import timezone
 
 from apps.billing.models import Invoice, PaymentTransaction
 from apps.billing.services import invoice_service
+from apps.core.models.program import Program
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,64 @@ def _parse_datetime(value: str | None):
         return parse_datetime(value)
     except Exception:
         return None
+
+
+def _latest_paid_invoice_for_tenant(*, tenant_id: int, exclude_invoice_id: int) -> Invoice | None:
+    return (
+        Invoice.objects
+        .select_for_update()
+        .filter(tenant_id=tenant_id, status="PAID")
+        .exclude(pk=exclude_invoice_id)
+        .order_by("-period_end", "-paid_at")
+        .first()
+    )
+
+
+def _reconcile_subscription_after_full_refund(invoice: Invoice) -> None:
+    program = Program.objects.select_for_update().get(tenant_id=invoice.tenant_id)
+
+    # A later paid invoice already extends access beyond the refunded invoice.
+    if program.subscription_expires_at is None or program.subscription_expires_at > invoice.period_end:
+        return
+
+    latest_paid = _latest_paid_invoice_for_tenant(
+        tenant_id=invoice.tenant_id,
+        exclude_invoice_id=invoice.pk,
+    )
+    new_expires_at = latest_paid.period_end if latest_paid else invoice.period_start - timedelta(days=1)
+
+    program.subscription_expires_at = new_expires_at
+    program.next_billing_at = new_expires_at
+    program.subscription_status = "active" if new_expires_at >= timezone.localdate() else "expired"
+    if program.subscription_status == "expired":
+        program.cancel_at_period_end = False
+        program.canceled_at = None
+    program.save(update_fields=[
+        "subscription_status", "subscription_expires_at", "next_billing_at",
+        "cancel_at_period_end", "canceled_at", "updated_at",
+    ])
+
+
+def _void_paid_invoice_after_full_refund(tx: PaymentTransaction) -> None:
+    if not tx.invoice_id:
+        return
+
+    invoice = Invoice.objects.select_for_update().get(pk=tx.invoice_id)
+    if invoice.status == "VOID":
+        return
+    if invoice.status != "PAID":
+        logger.warning(
+            "Refund invoice reconciliation skipped - invoice not PAID: tx=%s invoice=%s status=%s",
+            tx.id, invoice.id, invoice.status,
+        )
+        return
+
+    note = f"Full refund reconciled from payment transaction {tx.id}"
+    invoice.status = "VOID"
+    invoice.paid_at = None
+    invoice.memo = f"{invoice.memo}\n{note}".strip() if invoice.memo else note
+    invoice.save(update_fields=["status", "paid_at", "memo", "updated_at"])
+    _reconcile_subscription_after_full_refund(invoice)
 
 
 @transaction.atomic
@@ -147,6 +207,7 @@ def _handle_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> str:
         "status", "refunded_amount", "refunded_at",
         "response_payload", "raw_response", "updated_at",
     ])
+    _void_paid_invoice_after_full_refund(tx)
 
     logger.info("Webhook CANCELED applied: tx=%s invoice=%s", tx.id, tx.invoice_id)
     return "applied_canceled"
@@ -165,7 +226,7 @@ def _handle_partial_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> st
             tx.id, tx.status,
         )
         return f"non_refundable_{tx.status.lower()}"
-    tx.status = "PARTIALLY_REFUNDED"
+    tx.status = "REFUNDED" if int(total_canceled) >= tx.amount else "PARTIALLY_REFUNDED"
     tx.refunded_amount = int(total_canceled)
     tx.refunded_at = timezone.now()
     tx.response_payload = data
@@ -174,6 +235,9 @@ def _handle_partial_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> st
         "status", "refunded_amount", "refunded_at",
         "response_payload", "raw_response", "updated_at",
     ])
+    if tx.status == "REFUNDED":
+        _void_paid_invoice_after_full_refund(tx)
+        return "applied_full_refund"
     return "applied_partial_refund"
 
 

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from django.db import transaction
 
 from ..models import InventoryFolder, InventoryFile
@@ -38,6 +39,40 @@ def _get_folder_path_str(folder: InventoryFolder | None, tenant: Tenant, scope: 
 def _filename_from_r2_key(r2_key: str) -> str:
     """R2 key에서 마지막 파일명만 추출."""
     return r2_key.split("/")[-1] if r2_key else ""
+
+
+def _move_backup_key(tenant: Tenant, original_key: str) -> str:
+    filename = safe_filename(_filename_from_r2_key(original_key) or "object")
+    return f"tenants/{tenant.id}/inventory/.move-backup/{uuid.uuid4().hex}/{filename}"
+
+
+def _cleanup_backup_keys(backup_plans: list[tuple[str, str]]) -> None:
+    for _, backup_key in backup_plans:
+        try:
+            delete_object_r2_storage(key=backup_key)
+        except Exception:
+            pass
+
+
+def _restore_backups(backup_plans: list[tuple[str, str]]) -> bool:
+    restored = True
+    for original_key, backup_key in backup_plans:
+        try:
+            copy_object_r2_storage(source_key=backup_key, dest_key=original_key)
+        except Exception:
+            restored = False
+    return restored
+
+
+def _cleanup_uncommitted_copies(copied_keys: list[str], backup_plans: list[tuple[str, str]]) -> None:
+    backup_original_keys = {original_key for original_key, _ in backup_plans}
+    for copied_key in copied_keys:
+        if copied_key in backup_original_keys:
+            continue
+        try:
+            delete_object_r2_storage(key=copied_key)
+        except Exception:
+            pass
 
 
 def _check_duplicate_file(target_folder_id: int | None, tenant: Tenant, scope: str, student_ps: str, display_name: str):
@@ -81,14 +116,10 @@ def move_file(
     display_name = source.display_name
 
     existing = _check_duplicate_file(target_folder_id, tenant, scope, student_ps, display_name)
+    overwrite_existing = None
     if existing and existing.id != source_file_id:
         if on_duplicate == "overwrite":
-            existing_key = existing.r2_key
-            existing.delete()
-            try:
-                delete_object_r2_storage(key=existing_key)
-            except Exception:
-                pass
+            overwrite_existing = existing
         elif on_duplicate == "rename":
             base, ext = "", ""
             if "." in display_name:
@@ -110,25 +141,44 @@ def move_file(
     )
 
     old_key = source.r2_key
+    backup_plans: list[tuple[str, str]] = []
+    if overwrite_existing:
+        existing_key = overwrite_existing.r2_key
+        backup_key = _move_backup_key(tenant, existing_key)
+        try:
+            copy_object_r2_storage(source_key=existing_key, dest_key=backup_key)
+        except Exception as e:
+            return {"ok": False, "detail": f"R2 backup failed: {e}", "status": 502}
+        backup_plans.append((existing_key, backup_key))
+
     try:
         copy_object_r2_storage(source_key=old_key, dest_key=new_key)
     except Exception as e:
+        _cleanup_backup_keys(backup_plans)
         return {"ok": False, "detail": f"R2 copy failed: {e}", "status": 502}
 
     try:
         with transaction.atomic():
+            if overwrite_existing:
+                overwrite_existing.delete()
             source.folder_id = target_folder_id
             source.r2_key = new_key
             source.display_name = display_name
             source.save(update_fields=["folder_id", "r2_key", "display_name", "updated_at"])
     except Exception as e:
-        return {"ok": False, "detail": f"DB update failed: {e}", "status": 500}
+        restored = _restore_backups(backup_plans)
+        _cleanup_backup_keys(backup_plans)
+        detail = f"DB update failed: {e}"
+        if not restored:
+            detail = f"{detail}; destination restore failed"
+        return {"ok": False, "detail": detail, "status": 500}
 
     try:
         delete_object_r2_storage(key=old_key)
     except Exception as e:
         return {"ok": False, "detail": f"R2 delete failed (data updated): {e}", "status": 500}
 
+    _cleanup_backup_keys(backup_plans)
     return {"ok": True}
 
 
@@ -275,13 +325,14 @@ def move_folder(
     if source_folder.parent_id == target_folder_id:
         return {"ok": True, "detail": "Already in target"}
 
-    q = inv_repo.inventory_folder_filter_parent_id_name(tenant, target_folder_id, source_folder.name)
+    q = inv_repo.inventory_folder_filter_parent_id_name(tenant, target_folder_id, source_folder.name).filter(scope=scope)
     if scope == "student":
         q = q.filter(student_ps=student_ps)
     existing_sibling = q.order_by("id").first()
+    overwrite_folder = None
     if existing_sibling and existing_sibling.id != source_folder_id:
         if on_duplicate == "overwrite":
-            _delete_folder_tree_r2_and_db(existing_sibling, tenant, scope, student_ps)
+            overwrite_folder = existing_sibling
         elif on_duplicate == "rename":
             source_folder.name = f"{source_folder.name}_복사본"
             source_folder.save(update_fields=["name", "updated_at"])
@@ -314,20 +365,43 @@ def move_folder(
         )
         copy_plans.append((inv_file, old_key, new_key))
 
+    backup_plans: list[tuple[str, str]] = []
+    if overwrite_folder:
+        _, overwrite_files = _collect_folder_tree(overwrite_folder, tenant, scope, student_ps)
+        for existing_file in overwrite_files:
+            existing_key = existing_file.r2_key
+            backup_key = _move_backup_key(tenant, existing_key)
+            try:
+                copy_object_r2_storage(source_key=existing_key, dest_key=backup_key)
+            except Exception as e:
+                _cleanup_backup_keys(backup_plans)
+                return {"ok": False, "detail": f"R2 backup failed: {e}", "status": 502}
+            backup_plans.append((existing_key, backup_key))
+
+    copied_keys: list[str] = []
     for inv_file, old_key, new_key in copy_plans:
         try:
             copy_object_r2_storage(source_key=old_key, dest_key=new_key)
+            copied_keys.append(new_key)
         except Exception as e:
+            _restore_backups(backup_plans)
+            _cleanup_uncommitted_copies(copied_keys, backup_plans)
+            _cleanup_backup_keys(backup_plans)
             return {"ok": False, "detail": f"R2 copy failed: {e}", "status": 502}
 
     try:
         with transaction.atomic():
+            if overwrite_folder:
+                overwrite_folder.delete()
             for inv_file, old_key, new_key in copy_plans:
                 inv_file.r2_key = new_key
                 inv_file.save(update_fields=["r2_key", "updated_at"])
             source_folder.parent = target_folder
             source_folder.save(update_fields=["parent_id", "updated_at"])
     except Exception as e:
+        _restore_backups(backup_plans)
+        _cleanup_uncommitted_copies(copied_keys, backup_plans)
+        _cleanup_backup_keys(backup_plans)
         return {"ok": False, "detail": f"DB update failed: {e}", "status": 500}
 
     for inv_file, old_key, new_key in copy_plans:
@@ -335,5 +409,14 @@ def move_folder(
             delete_object_r2_storage(key=old_key)
         except Exception:
             pass
+    copied_key_set = set(copied_keys)
+    for original_key, _ in backup_plans:
+        if original_key in copied_key_set:
+            continue
+        try:
+            delete_object_r2_storage(key=original_key)
+        except Exception:
+            pass
+    _cleanup_backup_keys(backup_plans)
 
     return {"ok": True}

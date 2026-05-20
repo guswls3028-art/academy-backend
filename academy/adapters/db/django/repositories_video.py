@@ -378,9 +378,7 @@ def playback_session_filter_update(session_id, student_id, **update_kwargs):
 
 
 def playback_session_filter_update_any(session_id, student_id, **update_kwargs):
-    from django.utils import timezone
     from apps.domains.video.models import VideoPlaybackSession
-    now = timezone.now()
     return VideoPlaybackSession.objects.filter(
         session_id=session_id,
         enrollment__student_id=student_id,
@@ -871,12 +869,17 @@ def job_fail_retry(job_id: str, reason: str) -> tuple[bool, str]:
                 "job_fail_retry: job %s already in terminal state %s, skipping", job_id, job.state,
             )
             return False, "already_terminal"
+        failed_aws_id = (getattr(job, "aws_batch_job_id", "") or "").strip()
         job.state = VideoTranscodeJob.State.RETRY_WAIT
         job.attempt_count = F("attempt_count") + 1
         job.error_message = str(reason)[:2000]
         job.locked_by = ""
         job.locked_until = None
-        job.save(update_fields=["state", "attempt_count", "error_message", "locked_by", "locked_until", "updated_at"])
+        update_fields = ["state", "attempt_count", "error_message", "locked_by", "locked_until", "updated_at"]
+        if failed_aws_id:
+            job.last_counted_failure_aws_batch_job_id = failed_aws_id
+            update_fields.append("last_counted_failure_aws_batch_job_id")
+        job.save(update_fields=update_fields)
     return True, "ok"
 
 
@@ -986,6 +989,13 @@ def job_mark_dead(job_id: str, error_code: str = "", error_message: str = "") ->
         )
     except Exception:
         pass
+    _cache_video_status_safe(
+        job.video_id,
+        job.tenant_id,
+        getattr(Video.Status.FAILED, "value", "FAILED"),
+        error_reason=err_msg or job.error_message,
+        ttl=None,
+    )
     try:
         from apps.domains.video.redis_status_cache import delete_video_progress_key
         delete_video_progress_key(job.tenant_id, job.video_id)
@@ -1053,6 +1063,13 @@ def job_mark_dead_if_active(
                 )
             except Exception:
                 pass
+            _cache_video_status_safe(
+                job.video_id,
+                job.tenant_id,
+                getattr(Video.Status.FAILED, "value", "FAILED"),
+                error_reason=err_msg,
+                ttl=None,
+            )
             try:
                 from apps.domains.video.redis_status_cache import delete_video_progress_key
                 delete_video_progress_key(job.tenant_id, job.video_id)

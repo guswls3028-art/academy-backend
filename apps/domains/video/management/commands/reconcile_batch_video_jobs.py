@@ -95,6 +95,11 @@ def _reset_not_found_count(job_id: str) -> None:
         logger.debug("reconcile: not_found count reset failed: %s", e)
 
 
+def _failure_already_counted(job: VideoTranscodeJob, aws_id: str) -> bool:
+    counted_aws_id = (getattr(job, "last_counted_failure_aws_batch_job_id", "") or "").strip()
+    return bool(aws_id and counted_aws_id == aws_id)
+
+
 def _describe_jobs_boto3(aws_job_ids: list[str]) -> list:
     """
     boto3 describe_jobs. On any failure (AccessDenied, Throttling, etc.) raises.
@@ -197,7 +202,7 @@ class Command(BaseCommand):
             )
             if len(jobs) <= 1:
                 continue
-            keep, older = jobs[0], jobs[1:]
+            older = jobs[1:]
             for job in older:
                 if not dry_run:
                     if (job.aws_batch_job_id or "").strip():
@@ -275,14 +280,22 @@ class Command(BaseCommand):
 
             elif status == "FAILED":
                 if not dry_run:
+                    already_counted_failure = _failure_already_counted(job, aws_id)
                     try:
                         from apps.domains.video.services.ops_events import emit_ops_event
-                        emit_ops_event("BATCH_DESYNC", severity="WARNING", tenant_id=job.tenant_id, video_id=job.video_id, job_id=str(job.id), aws_batch_job_id=aws_id, payload={"reason": "Batch FAILED", "status_reason": status_reason[:200]})
+                        emit_ops_event("BATCH_DESYNC", severity="WARNING", tenant_id=job.tenant_id, video_id=job.video_id, job_id=str(job.id), aws_batch_job_id=aws_id, payload={"reason": "Batch FAILED", "status_reason": status_reason[:200], "already_counted": already_counted_failure})
                     except Exception:
                         pass
-                    job_fail_retry(str(job.id), status_reason or "Batch FAILED")
-                    updated += 1
-                    job.refresh_from_db()
+                    if already_counted_failure:
+                        self.stdout.write(f"RECONCILE skip already-counted FAILED job_id={job.id} aws_id={aws_id}")
+                        job.refresh_from_db()
+                    else:
+                        ok, fail_reason = job_fail_retry(str(job.id), status_reason or "Batch FAILED")
+                        if not ok:
+                            self.stdout.write(f"RECONCILE skip fail_retry job_id={job.id} reason={fail_reason}")
+                            continue
+                        updated += 1
+                        job.refresh_from_db()
                     # MAX_ATTEMPTS 체크 — 초과 시 DEAD 처리 (무한 RETRY_WAIT 방지)
                     if job.attempt_count >= MAX_ATTEMPTS:
                         job_mark_dead(
@@ -348,9 +361,17 @@ class Command(BaseCommand):
                         emit_ops_event("BATCH_DESYNC", severity="WARNING", tenant_id=job.tenant_id, video_id=job.video_id, job_id=str(job.id), aws_batch_job_id=aws_id, payload={"reason": "Batch job not found (after threshold)"})
                     except Exception:
                         pass
-                    job_fail_retry(str(job.id), "Reconcile: Batch job not found (after threshold)")
-                    updated += 1
-                    job.refresh_from_db()
+                    already_counted_failure = _failure_already_counted(job, aws_id)
+                    if already_counted_failure:
+                        self.stdout.write(f"RECONCILE skip already-counted not_found job_id={job.id} aws_id={aws_id}")
+                        job.refresh_from_db()
+                    else:
+                        ok, fail_reason = job_fail_retry(str(job.id), "Reconcile: Batch job not found (after threshold)")
+                        if not ok:
+                            self.stdout.write(f"RECONCILE skip not_found fail_retry job_id={job.id} reason={fail_reason}")
+                            continue
+                        updated += 1
+                        job.refresh_from_db()
                     if job.attempt_count >= MAX_ATTEMPTS:
                         job_mark_dead(
                             str(job.id),

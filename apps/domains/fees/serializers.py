@@ -136,6 +136,12 @@ class StudentInvoiceDetailSerializer(serializers.ModelSerializer):
         return FeePaymentSerializer(payments, many=True).data
 
 
+class StudentInvoiceUpdateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = StudentInvoice
+        fields = ["due_date", "memo"]
+
+
 class GenerateInvoicesSerializer(serializers.Serializer):
     billing_year = serializers.IntegerField(min_value=2020, max_value=2100)
     billing_month = serializers.IntegerField(min_value=1, max_value=12)

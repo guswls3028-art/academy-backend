@@ -70,7 +70,7 @@ def _create_pending_tx(invoice: Invoice, billing_key: BillingKey) -> PaymentTran
     """
     existing = PaymentTransaction.objects.filter(
         idempotency_key=invoice.provider_order_id,
-    ).first()
+    ).order_by("id").first()
     if existing:
         return existing
 
@@ -95,7 +95,7 @@ def _create_pending_tx(invoice: Invoice, billing_key: BillingKey) -> PaymentTran
     except IntegrityError:
         existing = PaymentTransaction.objects.filter(
             idempotency_key=invoice.provider_order_id,
-        ).first()
+        ).order_by("id").first()
         if existing:
             return existing
         raise

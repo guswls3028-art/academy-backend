@@ -1,0 +1,347 @@
+from __future__ import annotations
+
+import json
+from unittest.mock import patch
+
+from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import TestCase
+from rest_framework.test import APIRequestFactory
+
+from apps.core.models import Tenant, TenantMembership
+from apps.domains.inventory.models import InventoryFile, InventoryFolder
+from apps.domains.inventory.services import move_file, move_folder
+from apps.domains.inventory.views import FileUploadView, FolderCreateView, PresignView
+from apps.domains.students.models import Student
+
+
+User = get_user_model()
+
+
+class InventoryHardeningViewTests(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = Tenant.objects.create(code="inv-hard", name="Inventory Hardening", is_active=True)
+        self.staff = User.objects.create_user(
+            username="inv-hard-staff",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.staff, role="teacher")
+        self.student_user = User.objects.create_user(
+            username="inv-hard-student",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        self.student = Student.objects.create(
+            tenant=self.tenant,
+            user=self.student_user,
+            ps_number="S001",
+            omr_code="12345678",
+            name="학생",
+        )
+        self.other_student_user = User.objects.create_user(
+            username="inv-hard-student-2",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        self.other_student = Student.objects.create(
+            tenant=self.tenant,
+            user=self.other_student_user,
+            ps_number="S002",
+            omr_code="87654321",
+            name="다른학생",
+        )
+
+    def _json_request(self, path, body, user):
+        request = self.factory.post(path, data=json.dumps(body), content_type="application/json")
+        request.tenant = self.tenant
+        return request
+
+    def _multipart_request(self, path, data):
+        request = self.factory.post(path, data=data, format="multipart")
+        request.tenant = self.tenant
+        return request
+
+    def _auth(self, user):
+        return patch("apps.domains.inventory.views.JWTAuthentication.authenticate", return_value=(user, None))
+
+    def test_presign_requires_inventory_file_for_raw_r2_key(self):
+        request = self._json_request(
+            "/storage/inventory/presign/",
+            {"r2_key": f"tenants/{self.tenant.id}/admin/inventory/orphan.pdf"},
+            self.staff,
+        )
+
+        with self._auth(self.staff), patch("apps.domains.inventory.views.generate_presigned_get_url_storage") as presign:
+            response = PresignView.as_view()(request)
+
+        self.assertEqual(response.status_code, 404)
+        presign.assert_not_called()
+
+    def test_presign_by_file_id_uses_file_row_authorization(self):
+        inv_file = InventoryFile.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            folder=None,
+            display_name="admin.pdf",
+            original_name="admin.pdf",
+            r2_key=f"tenants/{self.tenant.id}/admin/inventory/admin.pdf",
+            content_type="application/pdf",
+        )
+        request = self._json_request(
+            "/storage/inventory/presign/",
+            {"file_id": inv_file.id, "r2_key": inv_file.r2_key},
+            self.staff,
+        )
+
+        with self._auth(self.staff), patch(
+            "apps.domains.inventory.views.generate_presigned_get_url_storage",
+            return_value="https://example.test/signed",
+        ) as presign:
+            response = PresignView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {"url": "https://example.test/signed"})
+        presign.assert_called_once_with(key=inv_file.r2_key, expires_in=3600)
+
+    def test_student_cannot_presign_other_students_file(self):
+        inv_file = InventoryFile.objects.create(
+            tenant=self.tenant,
+            scope="student",
+            student_ps=self.other_student.ps_number,
+            folder=None,
+            display_name="other.pdf",
+            original_name="other.pdf",
+            r2_key=f"tenants/{self.tenant.id}/students/{self.other_student.ps_number}/inventory/other.pdf",
+            content_type="application/pdf",
+        )
+        request = self._json_request("/storage/inventory/presign/", {"file_id": inv_file.id}, self.student_user)
+
+        with self._auth(self.student_user), patch("apps.domains.inventory.views.generate_presigned_get_url_storage") as presign:
+            response = PresignView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)
+        presign.assert_not_called()
+
+    def test_presign_rejects_inventory_row_with_cross_tenant_key_prefix(self):
+        inv_file = InventoryFile.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            folder=None,
+            display_name="bad.pdf",
+            original_name="bad.pdf",
+            r2_key="tenants/999999/admin/inventory/bad.pdf",
+            content_type="application/pdf",
+        )
+        request = self._json_request("/storage/inventory/presign/", {"file_id": inv_file.id}, self.staff)
+
+        with self._auth(self.staff), patch("apps.domains.inventory.views.generate_presigned_get_url_storage") as presign:
+            response = PresignView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)
+        presign.assert_not_called()
+
+    def test_folder_create_rejects_cross_scope_parent(self):
+        parent = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            name="admin-parent",
+        )
+        request = self._json_request(
+            "/storage/inventory/folders/",
+            {"scope": "student", "student_ps": self.student.ps_number, "parent_id": parent.id, "name": "bad-child"},
+            self.staff,
+        )
+
+        with self._auth(self.staff):
+            response = FolderCreateView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(InventoryFolder.objects.filter(tenant=self.tenant, name="bad-child").exists())
+
+    def test_upload_rejects_missing_folder_id_instead_of_uploading_to_root(self):
+        upload = SimpleUploadedFile("x.pdf", b"%PDF-1.4", content_type="application/pdf")
+        request = self._multipart_request(
+            "/storage/inventory/upload/",
+            {"scope": "admin", "folder_id": "999999", "file": upload},
+        )
+
+        with self._auth(self.staff), patch("apps.domains.inventory.views.upload_fileobj_to_r2_storage") as upload_r2:
+            response = FileUploadView.as_view()(request)
+
+        self.assertEqual(response.status_code, 404)
+        upload_r2.assert_not_called()
+        self.assertFalse(InventoryFile.objects.filter(tenant=self.tenant, original_name="x.pdf").exists())
+
+    def test_upload_rejects_cross_scope_folder(self):
+        folder = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            scope="student",
+            student_ps=self.student.ps_number,
+            name="student-folder",
+        )
+        upload = SimpleUploadedFile("x.pdf", b"%PDF-1.4", content_type="application/pdf")
+        request = self._multipart_request(
+            "/storage/inventory/upload/",
+            {"scope": "admin", "folder_id": str(folder.id), "file": upload},
+        )
+
+        with self._auth(self.staff), patch("apps.domains.inventory.views.upload_fileobj_to_r2_storage") as upload_r2:
+            response = FileUploadView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)
+        upload_r2.assert_not_called()
+
+
+class InventoryHardeningMoveTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(code="inv-move-hard", name="Inventory Move Hardening", is_active=True)
+        self.source_folder = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            name="source",
+        )
+        self.target_folder = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            name="target",
+        )
+
+    def test_file_overwrite_backs_up_destination_before_copy_and_deletes_after_db_success(self):
+        source = InventoryFile.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            folder=self.source_folder,
+            display_name="same.pdf",
+            original_name="same.pdf",
+            r2_key=f"tenants/{self.tenant.id}/admin/inventory/source/same.pdf",
+            content_type="application/pdf",
+        )
+        existing = InventoryFile.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            folder=self.target_folder,
+            display_name="same.pdf",
+            original_name="same.pdf",
+            r2_key=f"tenants/{self.tenant.id}/admin/inventory/target/same.pdf",
+            content_type="application/pdf",
+        )
+
+        with patch("apps.domains.inventory.services.copy_object_r2_storage") as copy_r2, patch(
+            "apps.domains.inventory.services.delete_object_r2_storage"
+        ) as delete_r2:
+            result = move_file(
+                tenant=self.tenant,
+                scope="admin",
+                student_ps="",
+                source_file_id=source.id,
+                target_folder_id=self.target_folder.id,
+                on_duplicate="overwrite",
+            )
+
+        self.assertTrue(result["ok"])
+        copy_sources = [call.kwargs["source_key"] for call in copy_r2.call_args_list]
+        self.assertEqual(copy_sources[0], existing.r2_key)
+        self.assertEqual(copy_sources[1], source.r2_key)
+        delete_keys = [call.kwargs["key"] for call in delete_r2.call_args_list]
+        self.assertIn(source.r2_key, delete_keys)
+        self.assertNotIn(existing.r2_key, delete_keys)
+        source.refresh_from_db()
+        self.assertEqual(source.folder_id, self.target_folder.id)
+        self.assertEqual(source.r2_key, existing.r2_key)
+        self.assertFalse(InventoryFile.objects.filter(id=existing.id).exists())
+
+    def test_folder_overwrite_copy_failure_restores_destination_and_keeps_db_rows(self):
+        source_child = InventoryFile.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            folder=self.source_folder,
+            display_name="child.pdf",
+            original_name="child.pdf",
+            r2_key=f"tenants/{self.tenant.id}/admin/inventory/source/child.pdf",
+            content_type="application/pdf",
+        )
+        overwrite_folder = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            parent=self.target_folder,
+            name=self.source_folder.name,
+        )
+        existing_child = InventoryFile.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            folder=overwrite_folder,
+            display_name="child.pdf",
+            original_name="child.pdf",
+            r2_key=f"tenants/{self.tenant.id}/admin/inventory/target/source/child.pdf",
+            content_type="application/pdf",
+        )
+
+        def copy_side_effect(*, source_key, dest_key):
+            if source_key == source_child.r2_key:
+                raise RuntimeError("copy failed")
+
+        with patch("apps.domains.inventory.services.copy_object_r2_storage", side_effect=copy_side_effect) as copy_r2, patch(
+            "apps.domains.inventory.services.delete_object_r2_storage"
+        ) as delete_r2:
+            result = move_folder(
+                tenant=self.tenant,
+                scope="admin",
+                student_ps="",
+                source_folder_id=self.source_folder.id,
+                target_folder_id=self.target_folder.id,
+                on_duplicate="overwrite",
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], 502)
+        self.assertTrue(InventoryFolder.objects.filter(id=overwrite_folder.id).exists())
+        self.assertTrue(InventoryFile.objects.filter(id=existing_child.id).exists())
+        self.assertTrue(InventoryFile.objects.filter(id=source_child.id).exists())
+        copy_sources = [call.kwargs["source_key"] for call in copy_r2.call_args_list]
+        self.assertIn(existing_child.r2_key, copy_sources)
+        delete_r2.assert_called()
+
+    def test_folder_overwrite_duplicate_detection_is_scope_limited(self):
+        source_folder = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            scope="admin",
+            student_ps="",
+            parent=self.target_folder,
+            name="shared",
+        )
+        student_folder = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            scope="student",
+            student_ps="S001",
+            parent=None,
+            name="shared",
+        )
+
+        with patch("apps.domains.inventory.services.copy_object_r2_storage"), patch(
+            "apps.domains.inventory.services.delete_object_r2_storage"
+        ):
+            result = move_folder(
+                tenant=self.tenant,
+                scope="admin",
+                student_ps="",
+                source_folder_id=source_folder.id,
+                target_folder_id=None,
+                on_duplicate="overwrite",
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(InventoryFolder.objects.filter(id=student_folder.id).exists())
+        source_folder.refresh_from_db()
+        self.assertIsNone(source_folder.parent_id)

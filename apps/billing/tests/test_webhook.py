@@ -137,6 +137,20 @@ class TestWebhookDone(TestWebhookEndpointBase):
         self.assertEqual(self.tx.status, "SUCCESS")
         self.assertEqual(self.tx.provider_payment_key, "pay_wh_abc")
 
+    def test_flat_done_payload_without_event_type_is_handled(self):
+        body = json.dumps(self._payload()["data"]).encode()
+        sig = _sign(body)
+        resp = self.client.post(
+            self.url, data=body, content_type="application/json",
+            HTTP_TOSSPAYMENTS_SIGNATURE=sig,
+        )
+        self.assertEqual(resp.status_code, 200, resp.content)
+        self.assertEqual(resp.json().get("result"), "applied_done")
+        self.invoice.refresh_from_db()
+        self.tx.refresh_from_db()
+        self.assertEqual(self.invoice.status, "PAID")
+        self.assertEqual(self.tx.status, "SUCCESS")
+
     def test_invalid_signature_returns_401(self):
         body = json.dumps(self._payload()).encode()
         resp = self.client.post(
@@ -198,6 +212,35 @@ class TestWebhookDone(TestWebhookEndpointBase):
         self.invoice.refresh_from_db()
         self.assertEqual(self.tx.status, "SUCCESS")
         self.assertEqual(self.invoice.status, "PAID")
+
+    def test_canceled_after_success_voids_invoice_and_reconciles_subscription(self):
+        done_body = json.dumps(self._payload()).encode()
+        done_sig = _sign(done_body)
+        done_resp = self.client.post(
+            self.url, data=done_body, content_type="application/json",
+            HTTP_TOSSPAYMENTS_SIGNATURE=done_sig,
+        )
+        self.assertEqual(done_resp.status_code, 200, done_resp.content)
+
+        cancel_payload = self._payload(status="CANCELED")
+        cancel_payload["data"]["canceledAt"] = "2026-04-21T12:34:56+09:00"
+        cancel_body = json.dumps(cancel_payload).encode()
+        cancel_sig = _sign(cancel_body)
+        cancel_resp = self.client.post(
+            self.url, data=cancel_body, content_type="application/json",
+            HTTP_TOSSPAYMENTS_SIGNATURE=cancel_sig,
+        )
+
+        self.assertEqual(cancel_resp.status_code, 200, cancel_resp.content)
+        self.tx.refresh_from_db()
+        self.invoice.refresh_from_db()
+        self.program.refresh_from_db()
+        self.assertEqual(self.tx.status, "REFUNDED")
+        self.assertEqual(self.tx.refunded_amount, self.tx.amount)
+        self.assertEqual(self.invoice.status, "VOID")
+        self.assertIsNone(self.invoice.paid_at)
+        self.assertEqual(self.program.subscription_status, "expired")
+        self.assertEqual(self.program.subscription_expires_at, self.invoice.period_start - timedelta(days=1))
 
 
 @override_settings(TOSS_WEBHOOK_SECRET=WEBHOOK_SECRET)

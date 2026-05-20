@@ -510,7 +510,8 @@ class TossWebhookView(APIView):
         logger.info("Toss webhook received: event=%s orderId=%s status=%s",
                     event_type, data.get("orderId"), data.get("status"))
 
-        if event_type.upper() in ("PAYMENT.STATUS_CHANGED", "PAYMENT_STATUS_CHANGED", "PAYMENT"):
+        is_flat_payment_status = not event_type and data.get("orderId") and data.get("status")
+        if event_type.upper() in ("PAYMENT.STATUS_CHANGED", "PAYMENT_STATUS_CHANGED", "PAYMENT") or is_flat_payment_status:
             result = webhook_service.handle_payment_status(data)
             return Response({"ok": True, **result})
 

@@ -20,6 +20,7 @@ from rest_framework.exceptions import ValidationError, NotFound
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
 from apps.domains.exams.models import ExamQuestion
+from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 
 # ✅ 단일 진실: session 매핑 + progress 트리거
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
@@ -58,11 +59,12 @@ class AdminExamItemScoreView(APIView):
         # ✅ tenant isolation: verify exam belongs to tenant
         from apps.domains.exams.models import Exam
         from django.shortcuts import get_object_or_404
-        get_object_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
+        exam = get_object_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
         from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
         validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
+        validate_exam_enrollment_assigned(exam, enrollment_id)
 
         if "score" not in request.data:
             raise ValidationError({"detail": "score is required", "code": "INVALID"})
@@ -159,7 +161,12 @@ class AdminExamItemScoreView(APIView):
             .first()
         )
         if not item:
-            exam_question = ExamQuestion.objects.filter(id=question_id).first()
+            allowed_exam_ids = {int(exam.id), int(exam.effective_template_exam_id)}
+            exam_question = ExamQuestion.objects.filter(
+                id=question_id,
+                sheet__exam_id__in=allowed_exam_ids,
+                sheet__exam__tenant=request.tenant,
+            ).first()
             if not exam_question:
                 raise NotFound({"detail": "question not found", "code": "NOT_FOUND"})
             max_score = float(getattr(exam_question, "score", 0) or 0.0)

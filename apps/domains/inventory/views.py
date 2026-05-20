@@ -59,18 +59,21 @@ def _jwt_required(view_func):
 
 
 def _is_tenant_staff(request):
-    """요청 사용자가 테넌트의 스태프(owner/admin/teacher/assistant)인지 확인."""
+    """요청 사용자가 테넌트의 스태프(owner/admin/staff/teacher/assistant)인지 확인."""
     user = getattr(request, "user", None)
     tenant = getattr(request, "tenant", None)
     if not user or not tenant:
         return False
-    if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
-        return True
     from apps.core.models import TenantMembership
-    return TenantMembership.objects.filter(
+    if TenantMembership.objects.filter(
         user=user, tenant=tenant, is_active=True,
-        role__in=["owner", "admin", "teacher", "assistant"],
-    ).exists()
+        role__in=["owner", "admin", "staff", "teacher", "assistant"],
+    ).exists():
+        return True
+    return bool(
+        (getattr(user, "is_superuser", False) or getattr(user, "is_staff", False))
+        and getattr(user, "tenant_id", None) == tenant.id
+    )
 
 
 def _check_scope_permission(request, scope=None):
@@ -100,6 +103,50 @@ def _check_scope_permission(request, scope=None):
         if student_ps and student_ps != student_profile.ps_number:
             return JsonResponse({"detail": "다른 학생의 자료에 접근할 수 없습니다."}, status=403)
     return None  # OK
+
+
+def _folder_matches_scope(folder, scope: str, student_ps: str) -> bool:
+    if not folder or folder.scope != scope:
+        return False
+    if scope == "student":
+        return folder.student_ps == student_ps
+    return True
+
+
+def _folder_chain_matches_scope(folder, scope: str, student_ps: str) -> bool:
+    current = folder
+    while current:
+        if not _folder_matches_scope(current, scope, student_ps):
+            return False
+        current = current.parent
+    return True
+
+
+def _inventory_file_permission_error(request, inv_file):
+    if inv_file.scope == "admin":
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "관리자 권한이 필요합니다."}, status=403)
+        return None
+
+    if inv_file.scope != "student":
+        return JsonResponse({"detail": "Invalid scope"}, status=400)
+
+    if _is_tenant_staff(request):
+        return None
+
+    student_profile = getattr(request.user, "student_profile", None)
+    if not student_profile:
+        return JsonResponse({"detail": "학생 정보가 없습니다."}, status=403)
+    if inv_file.student_ps != student_profile.ps_number:
+        return JsonResponse({"detail": "다른 학생의 자료에 접근할 수 없습니다."}, status=403)
+    return None
+
+
+def _find_inventory_file_by_r2_key(tenant, r2_key: str):
+    inv_file = inv_repo.inventory_file_filter(tenant, "admin").filter(r2_key=r2_key).order_by("id").first()
+    if inv_file:
+        return inv_file
+    return inv_repo.inventory_file_filter(tenant, "student").filter(r2_key=r2_key).order_by("id").first()
 
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -224,6 +271,8 @@ class FolderCreateView(View):
         student_ps = (body.get("student_ps") or "").strip()
         parent_id = body.get("parent_id")
         name = (body.get("name") or "").strip()
+        if scope not in ("admin", "student"):
+            return JsonResponse({"detail": "Invalid scope"}, status=400)
         if not name:
             return JsonResponse({"detail": "name required"}, status=400)
         if scope == "student" and not student_ps:
@@ -244,6 +293,8 @@ class FolderCreateView(View):
             parent = inv_repo.inventory_folder_get(tenant, pid)
             if not parent:
                 return JsonResponse({"detail": "Parent folder not found"}, status=404)
+            if not _folder_chain_matches_scope(parent, scope, student_ps):
+                return JsonResponse({"detail": "Parent folder scope mismatch"}, status=403)
 
         try:
             folder = inv_repo.inventory_folder_create(
@@ -270,6 +321,8 @@ class FileUploadView(View):
     def post(self, request):
         scope = (request.POST.get("scope") or "admin").lower()
         student_ps = (request.POST.get("student_ps") or "").strip()
+        if scope not in ("admin", "student"):
+            return JsonResponse({"detail": "Invalid scope"}, status=400)
 
         perm_err = _check_scope_permission(request, scope)
         if perm_err:
@@ -328,14 +381,21 @@ class FileUploadView(View):
         folder = None
         folder_path = ""
         if folder_id:
-            folder = inv_repo.inventory_folder_get(tenant, int(folder_id))
-            if folder:
-                path_parts = []
-                p = folder
-                while p:
-                    path_parts.append(p.name)
-                    p = p.parent
-                folder_path = folder_path_string(reversed(path_parts))
+            try:
+                parsed_folder_id = int(folder_id)
+            except (TypeError, ValueError):
+                return JsonResponse({"detail": "folder_id must be a number"}, status=400)
+            folder = inv_repo.inventory_folder_get(tenant, parsed_folder_id)
+            if not folder:
+                return JsonResponse({"detail": "Folder not found"}, status=404)
+            if not _folder_chain_matches_scope(folder, scope, student_ps):
+                return JsonResponse({"detail": "Folder scope mismatch"}, status=403)
+            path_parts = []
+            p = folder
+            while p:
+                path_parts.append(p.name)
+                p = p.parent
+            folder_path = folder_path_string(reversed(path_parts))
 
         safe_name = safe_filename(file_obj.name)
         r2_key = build_r2_key(
@@ -627,21 +687,45 @@ class PresignView(View):
             body = json.loads(request.body)
         except Exception:
             return JsonResponse({"detail": "Invalid JSON"}, status=400)
-        r2_key = body.get("r2_key")
-        expires_in = min(int(body.get("expires_in") or 3600), 3600)  # cap at 1 hour
-        if not r2_key:
-            return JsonResponse({"detail": "r2_key required"}, status=400)
-        # 🔐 tenant isolation: R2 key must belong to the requesting tenant
         tenant = request.tenant
+        file_id = body.get("file_id") or body.get("fileId")
+        r2_key = (body.get("r2_key") or "").strip()
+        try:
+            expires_in = min(int(body.get("expires_in") or 3600), 3600)  # cap at 1 hour
+        except (TypeError, ValueError):
+            return JsonResponse({"detail": "expires_in must be a number"}, status=400)
+
+        inv_file = None
+        if file_id not in (None, ""):
+            try:
+                parsed_file_id = int(file_id)
+            except (TypeError, ValueError):
+                return JsonResponse({"detail": "file_id must be a number"}, status=400)
+            inv_file = inv_repo.inventory_file_get(tenant, parsed_file_id)
+            if not inv_file:
+                return JsonResponse({"detail": "File not found"}, status=404)
+            if r2_key and inv_file.r2_key != r2_key:
+                return JsonResponse({"detail": "file_id and r2_key mismatch"}, status=400)
+        elif r2_key:
+            inv_file = _find_inventory_file_by_r2_key(tenant, r2_key)
+            if not inv_file:
+                return JsonResponse({"detail": "File not found"}, status=404)
+        else:
+            return JsonResponse({"detail": "file_id required"}, status=400)
+
+        perm_err = _inventory_file_permission_error(request, inv_file)
+        if perm_err:
+            return perm_err
         expected_prefix = f"tenants/{tenant.id}/"
-        if not r2_key.startswith(expected_prefix):
+        if not inv_file.r2_key.startswith(expected_prefix):
             return JsonResponse(
-                {"detail": "Access denied: r2_key does not belong to this tenant"},
+                {"detail": "Access denied: file key does not belong to this tenant"},
                 status=403,
             )
+
         if not generate_presigned_get_url_storage:
             return JsonResponse({"url": ""}, status=200)
-        url = generate_presigned_get_url_storage(key=r2_key, expires_in=expires_in)
+        url = generate_presigned_get_url_storage(key=inv_file.r2_key, expires_in=expires_in)
         return JsonResponse({"url": url})
 
 

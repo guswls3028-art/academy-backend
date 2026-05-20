@@ -23,6 +23,7 @@ from rest_framework.exceptions import ValidationError, NotFound
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.exams.models import Exam
+from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.domains.submissions.models import Submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 from django.db.models import Max
@@ -43,6 +44,7 @@ class AdminExamObjectiveScoreView(APIView):
         # ✅ tenant isolation: verify enrollment belongs to tenant
         from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
         validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
+        validate_exam_enrollment_assigned(exam, enrollment_id)
 
         if "score" not in request.data:
             raise ValidationError({"detail": "score is required", "code": "INVALID"})

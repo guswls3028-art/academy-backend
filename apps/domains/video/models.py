@@ -291,6 +291,8 @@ class VideoTranscodeJob(models.Model):
 
     # AWS Batch 제출 추적 (디버깅/관측용)
     aws_batch_job_id = models.CharField(max_length=256, blank=True, db_index=True)
+    # 동일 AWS Batch 실패를 reconcile/scan_stuck/worker가 중복 카운트하지 않기 위한 marker
+    last_counted_failure_aws_batch_job_id = models.CharField(max_length=256, blank=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
