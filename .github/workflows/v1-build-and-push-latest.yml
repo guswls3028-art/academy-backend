@@ -270,7 +270,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Configure AWS credentials (OIDC only)
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -419,7 +419,7 @@ jobs:
           cat docs/reports/ci-build.latest.md >> $GITHUB_STEP_SUMMARY
 
       - name: Upload ci-build.latest.md artifact
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: ci-build-report
           path: docs/reports/ci-build.latest.md
@@ -450,7 +450,7 @@ jobs:
     if: needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true'
     steps:
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -580,7 +580,7 @@ jobs:
       API_ASG_NAME: academy-v1-api-asg
     steps:
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -735,7 +735,7 @@ jobs:
       MESSAGING_ASG_NAME: academy-v1-messaging-worker-asg
     steps:
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -804,7 +804,7 @@ jobs:
       AI_ASG_NAME: academy-v1-ai-worker-asg
     steps:
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -885,7 +885,7 @@ jobs:
         academy-v1-video-ops-recover-dead
     steps:
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -980,7 +980,7 @@ jobs:
       (needs.deploy-api.result == 'success' || needs.deploy-messaging.result == 'success' || needs.deploy-ai.result == 'success' || needs.deploy-video.result == 'success')
     steps:
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
@@ -1143,7 +1143,7 @@ jobs:
     if: always() && contains(needs.*.result, 'failure')
     steps:
       - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v5
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
