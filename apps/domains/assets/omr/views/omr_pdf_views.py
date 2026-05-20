@@ -2,16 +2,19 @@
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound
-from django.http import FileResponse
+from django.db.models import Q
+from django.http import HttpResponseRedirect
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import ExamAsset as Asset
+from apps.infrastructure.storage.r2 import generate_presigned_get_url
 
 
 class OMRPdfView(APIView):
     """
-    OMR PDF 조회 — 인증 필수, 테넌트 격리 적용, Content-Disposition 명시.
+    OMR PDF 조회 — 인증/테넌트 멤버십 확인 후 R2 presigned URL로 이동.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request, asset_id: int):
         tenant = getattr(request, "tenant", None)
@@ -20,15 +23,17 @@ class OMRPdfView(APIView):
 
         asset = Asset.objects.filter(
             id=asset_id,
-            exam__sessions__lecture__tenant=tenant,
+            asset_type=Asset.AssetType.OMR_SHEET,
+        ).filter(
+            Q(exam__tenant=tenant)
+            | Q(exam__sessions__lecture__tenant=tenant)
+            | Q(exam__derived_exams__sessions__lecture__tenant=tenant)
         ).first()
         if not asset:
             raise NotFound("해당 자료를 찾을 수 없습니다.")
 
-        response = FileResponse(
-            asset.file.open("rb"),
-            content_type="application/pdf",
+        url = generate_presigned_get_url(
+            key=asset.file_key,
+            expires_in=60 * 10,
         )
-        safe_name = f"omr_asset_{asset_id}.pdf"
-        response["Content-Disposition"] = f'inline; filename="{safe_name}"'
-        return response
+        return HttpResponseRedirect(url)

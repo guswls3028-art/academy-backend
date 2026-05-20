@@ -41,6 +41,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.domains.homework_results.models import HomeworkScore, Homework
+from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.serializers import (
     HomeworkScoreSerializer,
     HomeworkQuickPatchSerializer,
@@ -375,6 +376,7 @@ class HomeworkScoreViewSet(ModelViewSet):
 
             homework_id = serializer.validated_data["homework_id"]
             enrollment_id = serializer.validated_data["enrollment_id"]
+            requested_session_id = serializer.validated_data.get("session_id")
 
             validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
 
@@ -383,18 +385,43 @@ class HomeworkScoreViewSet(ModelViewSet):
             meta_status = serializer.validated_data.get("meta_status")
 
             homework = get_object_or_404(
-                Homework.objects.select_related("session", "session__lecture", "session__lecture__tenant").filter(
-                    session__lecture__tenant=self.request.tenant,
-                ),
+                Homework.objects.select_related(
+                    "session",
+                    "session__lecture",
+                    "session__lecture__tenant",
+                ).filter(tenant=self.request.tenant),
                 id=homework_id,
             )
             session = homework.session
+            if session is None:
+                return Response(
+                    {"detail": "템플릿 과제는 점수를 입력할 수 없습니다."},
+                    status=drf_status.HTTP_400_BAD_REQUEST,
+                )
+            if getattr(session.lecture, "tenant_id", None) != request.tenant.id:
+                raise Http404
+            if requested_session_id is not None and requested_session_id != session.id:
+                return Response(
+                    {"session_id": "과제의 차시와 요청 차시가 일치하지 않습니다."},
+                    status=drf_status.HTTP_400_BAD_REQUEST,
+                )
+            if not HomeworkAssignment.objects.filter(
+                tenant=request.tenant,
+                homework=homework,
+                session=session,
+                enrollment_id=enrollment_id,
+            ).exists():
+                return Response(
+                    {"enrollment_id": "이 과제의 배정 대상 수강생만 점수를 입력할 수 있습니다."},
+                    status=drf_status.HTTP_400_BAD_REQUEST,
+                )
 
             with transaction.atomic():
                 obj = (
                     HomeworkScore.objects.select_for_update()
                     .filter(
                         homework_id=homework_id,
+                        session=session,
                         enrollment_id=enrollment_id,
                         attempt_index=1,
                     )
@@ -420,6 +447,7 @@ class HomeworkScoreViewSet(ModelViewSet):
                         obj = (
                             HomeworkScore.objects.filter(
                                 homework_id=homework_id,
+                                session=session,
                                 enrollment_id=enrollment_id,
                                 attempt_index=1,
                             )

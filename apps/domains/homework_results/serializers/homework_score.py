@@ -74,6 +74,7 @@ class HomeworkQuickPatchSerializer(serializers.Serializer):
 
     homework_id = serializers.IntegerField()
     enrollment_id = serializers.IntegerField()
+    session_id = serializers.IntegerField(required=False)
 
     score = serializers.FloatField(allow_null=True, required=False)
     max_score = serializers.FloatField(required=False, allow_null=True)
