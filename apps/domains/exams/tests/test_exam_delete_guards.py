@@ -85,15 +85,21 @@ class ExamDeleteGuardTests(TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertFalse(Exam.objects.filter(id=exam.id).exists())
 
+    def test_regular_exam_with_only_enrollments_remains_deletable(self):
+        exam = self._create_regular_exam("enrollments-only")
+        ExamEnrollment.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+        )
+
+        response = self._delete_exam(exam)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertFalse(Exam.objects.filter(id=exam.id).exists())
+        self.assertFalse(ExamEnrollment.objects.filter(exam_id=exam.id).exists())
+
     def test_regular_exam_with_operational_records_cannot_be_deleted(self):
         blockers = (
-            (
-                "exam enrollment",
-                lambda exam: ExamEnrollment.objects.create(
-                    exam=exam,
-                    enrollment=self.enrollment,
-                ),
-            ),
             (
                 "attempt",
                 lambda exam: ExamAttempt.objects.create(

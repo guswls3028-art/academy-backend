@@ -213,8 +213,6 @@ class ExamViewSet(ModelViewSet):
         from apps.domains.results.models import Result, ResultFact
         from apps.domains.submissions.models import Submission
 
-        if obj.exam_enrollments.exists():
-            return "exam enrollments"
         if obj.attempts.exists():
             return "exam attempts"
         if Submission.objects.filter(
