@@ -59,7 +59,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
     ordering = ["-created_at"]
 
     def get_permissions(self):
-        if self.action in ("update", "partial_update", "destroy"):
+        if self.action in ("update", "partial_update", "destroy", "complete", "uncomplete"):
             return [TenantResolvedAndStaff()]
         return [IsAuthenticated(), TenantResolvedAndMember()]
 
@@ -175,9 +175,8 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                         status=status.HTTP_403_FORBIDDEN,
                     )
             # 정원 체크는 아래 atomic 블록에서 select_for_update와 함께 수행
-            # 학생 신청은 기본적으로 pending 상태
-            if not requested_status or requested_status == SessionParticipant.Status.BOOKED:
-                requested_status = SessionParticipant.Status.PENDING
+            # 학생 신청은 클라이언트가 보낸 status를 신뢰하지 않는다.
+            requested_status = SessionParticipant.Status.PENDING
             # 자동 승인 설정 시 바로 booked로 저장
             if getattr(tenant, "clinic_auto_approve_booking", False):
                 requested_status = SessionParticipant.Status.BOOKED
@@ -213,6 +212,11 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             return Response(
                 {"detail": "student가 필요합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+        if getattr(student, "tenant_id", None) != getattr(tenant, "id", None):
+            return Response(
+                {"detail": "해당 학생에 접근할 권한이 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
             )
 
         # ✅ atomic block: capacity check lock + duplicate check + save를 직렬화

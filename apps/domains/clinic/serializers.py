@@ -271,6 +271,7 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
             tenant = request.tenant
             self.fields["session"].queryset = Session.objects.filter(tenant=tenant)
             self.fields["enrollment_id"].queryset = Enrollment.objects.filter(tenant=tenant)
+            self.fields["student"].queryset = Student.objects.filter(tenant=tenant)
 
     # FK 전환 호환: 프론트가 enrollment_id로 보내면 enrollment FK로 매핑
     enrollment_id = serializers.PrimaryKeyRelatedField(

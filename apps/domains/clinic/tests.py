@@ -9,7 +9,7 @@ import datetime
 import threading
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError
+from django.db import IntegrityError, connection
 from django.test import TestCase, TransactionTestCase, RequestFactory
 from django.utils import timezone
 
@@ -425,7 +425,7 @@ class ResolutionLifecycleTest(TestCase, ClinicTestMixin):
         self.assertEqual(result.resolution_type, "WAIVED")
 
     def test_carry_over_creates_new_cycle(self):
-        """이월 시 기존 link WAIVED + 새 link cycle_no+1"""
+        """이월 시 기존 link CARRIED_OVER + 새 link cycle_no+1"""
         from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
 
         new_link = ClinicResolutionService.carry_over(clinic_link_id=self.link.id)
@@ -438,7 +438,7 @@ class ResolutionLifecycleTest(TestCase, ClinicTestMixin):
         # 기존 link는 해소됨
         self.link.refresh_from_db()
         self.assertIsNotNone(self.link.resolved_at)
-        self.assertEqual(self.link.resolution_type, "WAIVED")
+        self.assertEqual(self.link.resolution_type, "CARRIED_OVER")
         self.assertTrue(self.link.resolution_evidence.get("carried_over"))
 
     def test_homework_resolve(self):
@@ -705,6 +705,9 @@ class ConcurrencyTest(TransactionTestCase, ClinicTestMixin):
 
     def test_concurrent_trigger_creates_one_link(self):
         """두 스레드가 동시에 ClinicLink 생성 시 1건만 남음"""
+        if connection.vendor == "sqlite":
+            self.skipTest("SQLite smoke DB locks tables under threaded ClinicLink writes.")
+
         data = self.setup_full_tenant("conc", student_count=1)
         enrollment = data["enrollments"][0]
         lec_session = data["lec_session"]
@@ -745,6 +748,9 @@ class ConcurrencyTest(TransactionTestCase, ClinicTestMixin):
 
     def test_concurrent_booking_creates_one_participant(self):
         """두 스레드가 동시에 같은 학생 예약 시 1건만 유효"""
+        if connection.vendor == "sqlite":
+            self.skipTest("SQLite smoke DB locks tables under threaded booking writes.")
+
         data = self.setup_full_tenant("conc2", student_count=1)
         student = data["students"][0]
         tenant = data["tenant"]
@@ -1026,6 +1032,26 @@ class TenantIsolationAPITest(APITestCase, ClinicAPITestMixin):
         )
         self.assertEqual(resp.status_code, 200)
 
+    def test_tenant_a_cannot_create_participant_with_tenant_b_student(self):
+        """tenant A session에 tenant B student를 꽂는 교차 테넌트 예약 생성 차단."""
+        self.client.force_authenticate(user=self.a["admin_user"])
+        resp = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": self.a["clinic_session"].id,
+                "student": self.b["students"][0].id,
+            },
+            **self._headers(self.a["tenant"]),
+        )
+        self.assertIn(resp.status_code, [400, 403])
+        self.assertFalse(
+            SessionParticipant.objects.filter(
+                tenant=self.a["tenant"],
+                session=self.a["clinic_session"],
+                student=self.b["students"][0],
+            ).exists()
+        )
+
 
 class DuplicateBookingAPITest(APITestCase, ClinicAPITestMixin):
     """API 레벨 중복 예약 방어."""
@@ -1106,6 +1132,52 @@ class CompleteBlockedAPITest(APITestCase, ClinicAPITestMixin):
         self.assertIsNotNone(p.completed_at)
 
 
+class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
+    """학생 클리닉 예약 권한: 신청만 가능하고 출석/완료 확정은 staff 전용."""
+
+    def setUp(self):
+        self.data = self.setup_api_tenant("student_clinic_api", student_count=1)
+        self.tenant = self.data["tenant"]
+        self.student = self.data["students"][0]
+        self.student.user.tenant = self.tenant
+        self.student.user.save(update_fields=["tenant"])
+        self.client.force_authenticate(user=self.student.user)
+
+    def test_student_create_cannot_force_attended_status(self):
+        resp = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": self.data["clinic_session"].id,
+                "status": "attended",
+            },
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        participant = SessionParticipant.objects.get(id=resp.data["id"])
+        self.assertEqual(participant.student_id, self.student.id)
+        self.assertEqual(participant.status, SessionParticipant.Status.PENDING)
+
+    def test_student_cannot_complete_own_booking(self):
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status="booked",
+        )
+
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{participant.id}/complete/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 403, resp.data)
+        participant.refresh_from_db()
+        self.assertEqual(participant.status, "booked")
+        self.assertIsNone(participant.completed_at)
+
+
 class ScoreValidationAPITest(TestCase, ClinicTestMixin):
     """서비스 레벨 점수 검증 — 만점 초과/음수 점수 거부 확인 (보강)."""
 
@@ -1117,9 +1189,10 @@ class ScoreValidationAPITest(TestCase, ClinicTestMixin):
         self.admin_user = self.make_user("admin_score_api")
 
     def test_negative_score_not_passed(self):
-        """음수 점수 → 불합격 처리 (점수는 기록되지만 해소 안 됨)."""
+        """음수 점수 → 재시도 기록 없이 입력 차단."""
         from apps.domains.exams.models import Exam
         from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
+        from apps.domains.results.models import ExamAttempt
 
         exam = Exam.objects.create(
             tenant=self.tenant, title="음수시험",
@@ -1129,14 +1202,15 @@ class ScoreValidationAPITest(TestCase, ClinicTestMixin):
             self.enrollment, self.lec_session,
             source_type="exam", source_id=exam.id,
         )
-        result = ClinicRemediationService.submit_exam_retake(
-            clinic_link_id=link.id,
-            score=-10.0,
-            graded_by_user_id=self.admin_user.id,
-        )
-        self.assertFalse(result.passed)
+        with self.assertRaises(ValueError):
+            ClinicRemediationService.submit_exam_retake(
+                clinic_link_id=link.id,
+                score=-10.0,
+                graded_by_user_id=self.admin_user.id,
+            )
         link.refresh_from_db()
         self.assertIsNone(link.resolved_at)
+        self.assertFalse(ExamAttempt.objects.filter(clinic_link=link).exists())
 
     def test_zero_score_accepted(self):
         """0점 → 불합격이지만 제출 자체는 성공."""
