@@ -40,7 +40,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 3. `deploy-api-refresh` job → `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg`
 4. 새 API 인스턴스 기동 → UserData로 ECR pull + SSM→/opt/api.env + docker run
 
-**IAM:** `academy-gha-ecr-build` 역할에 ECR 권한 + `autoscaling:StartInstanceRefresh` 등 적용 완료 (2026-03-11).
+**IAM:** `academy-gha-ecr-build` 역할에 ECR 권한 + `autoscaling:StartInstanceRefresh` + 배포 헬스 계측용 ELB target group read 권한 적용 완료 (2026-05-20).
 
 ---
 
