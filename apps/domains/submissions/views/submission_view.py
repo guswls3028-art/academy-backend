@@ -27,6 +27,12 @@ from apps.domains.submissions.services.dispatcher import (
     dispatch_submission,
     resolve_omr_sheet_for_exam,
 )
+from apps.domains.submissions.services.omr_submission_guards import (
+    allow_duplicate_requested,
+    duplicate_conflict_payload,
+    ensure_exam_enrollment_candidate,
+    find_conflicting_exam_submission,
+)
 from apps.domains.submissions.services.transition import (
     transit_save,
     InvalidTransitionError,
@@ -110,29 +116,12 @@ class SubmissionViewSet(ModelViewSet):
                 enrollment_id_int = int(enrollment_id)
             except (TypeError, ValueError):
                 return Response({"detail": "enrollment_id must be an integer"}, status=400)
-            from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-            from apps.domains.exams.models import ExamEnrollment
-            if not Enrollment.objects.filter(id=enrollment_id_int, tenant=tenant).exists():
-                return Response({"detail": "해당 수강 정보에 접근할 수 없습니다."}, status=403)
-            in_exam = ExamEnrollment.objects.filter(
+            if not ensure_exam_enrollment_candidate(
+                tenant=tenant,
                 exam_id=exam_id,
                 enrollment_id=enrollment_id_int,
-                enrollment__tenant=tenant,
-            ).exists()
-            if not in_exam:
-                in_session = SessionEnrollment.objects.filter(
-                    tenant=tenant,
-                    session__exams__id=exam_id,
-                    enrollment_id=enrollment_id_int,
-                    enrollment__status="ACTIVE",
-                    enrollment__student__deleted_at__isnull=True,
-                ).exists()
-                if not in_session:
-                    return Response({"detail": "해당 시험에 등록되지 않은 학생입니다."}, status=403)
-                ExamEnrollment.objects.get_or_create(
-                    exam_id=exam_id,
-                    enrollment_id=enrollment_id_int,
-                )
+            ):
+                return Response({"detail": "해당 시험에 등록되지 않은 학생입니다."}, status=403)
         else:
             enrollment_id_int = None
 
@@ -151,6 +140,14 @@ class SubmissionViewSet(ModelViewSet):
         except ValueError as e:
             return Response({"detail": str(e)}, status=400)
         payload["sheet_id"] = int(sheet.id)
+
+        conflict = find_conflicting_exam_submission(
+            tenant=tenant,
+            exam_id=exam_id,
+            enrollment_id=enrollment_id_int,
+        )
+        if conflict and not allow_duplicate_requested(request):
+            return Response(duplicate_conflict_payload(conflict), status=409)
 
         ser = SubmissionCreateSerializer(
             data={

@@ -621,6 +621,26 @@ class TestParentCommunityReadOnly(CommunityHardeningFixture):
 
 
 class TestCommunityNodeRemapping(CommunityHardeningFixture):
+    def test_create_rejects_invalid_or_foreign_node_without_tenant_wide_fallback(self):
+        view = PostViewSet.as_view({"post": "create"})
+        before = PostEntity.objects.filter(tenant=self.tenant).count()
+        response = view(
+            self._request(
+                "post",
+                self.owner,
+                "/api/v1/community/posts/",
+                {
+                    "title": "Scoped notice",
+                    "content": "body",
+                    "post_type": "board",
+                    "node_ids": [self.visible_node.id, self.foreign_node.id],
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(PostEntity.objects.filter(tenant=self.tenant).count(), before)
+
     def test_teacher_cannot_remap_nodes(self):
         view = PostViewSet.as_view({"patch": "update_nodes"})
         response = view(

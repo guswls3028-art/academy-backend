@@ -467,6 +467,14 @@ class PostViewSet(viewsets.ModelViewSet):
         node_ids = request.data.get("node_ids") or []
         if not isinstance(node_ids, list):
             return Response({"detail": "node_ids must be a list"}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            node_ids = [int(node_id) for node_id in node_ids]
+        except (TypeError, ValueError):
+            return Response({"detail": "node_ids must be integers"}, status=status.HTTP_400_BAD_REQUEST)
+        from apps.domains.community.models import ScopeNode
+        valid_count = ScopeNode.objects.filter(tenant=tenant, id__in=node_ids).count()
+        if valid_count != len(set(node_ids)):
+            return Response({"detail": "현재 학원에 속하지 않는 노드가 포함되어 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
         created_by = serializer.validated_data.get("created_by")
         if request_student is not None:
             created_by = request_student
@@ -530,7 +538,10 @@ class PostViewSet(viewsets.ModelViewSet):
             "published_at": request.data.get("published_at") or None,
         }
         svc = CommunityService(tenant)
-        post = svc.create_post(data, node_ids)
+        try:
+            post = svc.create_post(data, node_ids)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(post).data, status=status.HTTP_201_CREATED)
 
     def perform_update(self, serializer):

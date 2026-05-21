@@ -353,9 +353,14 @@ class StudentInvoiceViewSet(FeeManagementEnabledMixin, ModelViewSet):
         instance.refresh_from_db()
         return Response(StudentInvoiceDetailSerializer(instance).data)
 
-    def perform_destroy(self, instance):
+    def destroy(self, request, *args, **kwargs):
         """청구서 취소 (DELETE)."""
-        services.cancel_invoice(self.request.tenant, instance.id)
+        instance = self.get_object()
+        try:
+            services.cancel_invoice(request.tenant, instance.id)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=["post"])
     def generate(self, request):

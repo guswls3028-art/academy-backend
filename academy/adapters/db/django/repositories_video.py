@@ -48,7 +48,7 @@ def get_session_by_id_with_lecture_tenant(session_id):
     return Session.objects.select_related("lecture", "lecture__tenant").get(id=session_id)
 
 
-def create_video(session, title, file_key, order, status, allow_skip=False, max_speed=1.0, show_watermark=True, visibility=None, tenant=None, uploaded_by=None):
+def create_video(session, title, file_key, order, status, allow_skip=False, max_speed=1.0, show_watermark=True, visibility=None, tenant=None, uploaded_by=None, folder=None):
     from apps.domains.video.models import Video
     kwargs = dict(
         session=session,
@@ -62,6 +62,8 @@ def create_video(session, title, file_key, order, status, allow_skip=False, max_
     )
     if uploaded_by is not None:
         kwargs["uploaded_by"] = uploaded_by
+    if folder is not None:
+        kwargs["folder"] = folder
     if visibility is not None:
         kwargs["visibility"] = visibility
     # tenant: 명시적 전달 우선, 없으면 session→lecture→tenant 자동 추출
@@ -676,6 +678,14 @@ def job_complete(
         video = get_video_for_update(job.video_id)
         if not video:
             return False, "video_not_found"
+        if str(getattr(video, "current_job_id", "") or "") != str(job.id):
+            logger.warning(
+                "job_complete stale job ignored: video_id=%s current_job_id=%s job_id=%s",
+                video.id,
+                getattr(video, "current_job_id", None),
+                job.id,
+            )
+            return False, "stale_job"
         video.hls_path = str(hls_path)
         if duration is not None and duration >= 0:
             video.duration = int(duration)

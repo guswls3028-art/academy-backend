@@ -19,10 +19,15 @@ class CommunityService:
     def _resolve_node_ids_for_mapping(self, node_ids: list[int], *, include_children: bool = False) -> list[int]:
         if not node_ids:
             return []
-        nodes = ScopeNode.objects.filter(id__in=node_ids, tenant=self.tenant).select_related("lecture")
+        unique_ids = list(dict.fromkeys(int(node_id) for node_id in node_ids))
+        nodes = ScopeNode.objects.filter(id__in=unique_ids, tenant=self.tenant).select_related("lecture")
+        nodes_by_id = {int(node.id): node for node in nodes}
+        if len(nodes_by_id) != len(unique_ids):
+            raise ValueError("현재 학원에 속하지 않는 노드가 포함되어 있습니다.")
         seen = set()
         result = []
-        for node in nodes:
+        for node_id in unique_ids:
+            node = nodes_by_id[node_id]
             if node.id in seen:
                 continue
             seen.add(node.id)
@@ -42,14 +47,16 @@ class CommunityService:
         post = PostEntity.objects.filter(id=post_id, tenant=self.tenant).first()
         if not post:
             return
-        unique_ids = list(dict.fromkeys(node_ids))
+        unique_ids = list(dict.fromkeys(int(node_id) for node_id in node_ids))
+        valid_ids = set(ScopeNode.objects.filter(id__in=unique_ids, tenant=self.tenant).values_list("id", flat=True))
+        if len(valid_ids) != len(unique_ids):
+            raise ValueError("현재 학원에 속하지 않는 노드가 포함되어 있습니다.")
         existing = set(PostMapping.objects.filter(post_id=post_id).values_list("node_id", flat=True))
         to_remove = existing - set(unique_ids)
         to_add = [nid for nid in unique_ids if nid not in existing]
         if to_remove:
             PostMapping.objects.filter(post_id=post_id, node_id__in=to_remove).delete()
         if to_add:
-            valid_ids = set(ScopeNode.objects.filter(id__in=to_add, tenant=self.tenant).values_list("id", flat=True))
             PostMapping.objects.bulk_create(
                 [PostMapping(post_id=post_id, node_id=nid) for nid in to_add if nid in valid_ids]
             )

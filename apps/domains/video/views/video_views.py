@@ -304,6 +304,27 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         # 시스템 강의(공개 영상 컨테이너)인 경우 visibility=PUBLIC 자동 설정
         is_public = getattr(session.lecture, "is_system", False)
+        folder = None
+        folder_id = request.data.get("folder")
+        if folder_id not in (None, ""):
+            if not is_public:
+                return Response(
+                    {"detail": "공개 영상 폴더는 전체공개영상에만 사용할 수 있습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                folder = VideoFolder.objects.get(pk=folder_id, tenant=tenant)
+            except (TypeError, ValueError, VideoFolder.DoesNotExist):
+                return Response(
+                    {"detail": "폴더를 찾을 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if folder.session_id and folder.session_id != session.id:
+                return Response(
+                    {"detail": "선택한 폴더가 이 공개 영상 영역에 속하지 않습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
         # uploaded_by: 업로드한 스태프 (인코딩 완료 알림 대상)
         uploaded_by_staff = None
         try:
@@ -324,6 +345,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             visibility=Video.Visibility.PUBLIC if is_public else Video.Visibility.ENROLLED,
             tenant=tenant,
             uploaded_by=uploaded_by_staff,
+            folder=folder,
         )
 
         content_type = (request.data.get("content_type") or "video/mp4").split(";")[0]

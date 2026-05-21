@@ -506,6 +506,60 @@ class TestC1bStudentCreateAllowed(_SecurityFixtureMixin, TestCase):
         upload_fileobj_to_r2.assert_not_called()
         dispatch_submission.assert_not_called()
 
+    @patch("apps.domains.submissions.views.submission_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_admin_omr_upload_duplicate_enrollment_returns_409_before_upload(
+        self,
+        upload_fileobj_to_r2,
+        dispatch_submission,
+    ):
+        """같은 시험+수강생 OMR을 두 번 올리면 두 번째는 명시적 덮어쓰기 전까지 차단한다."""
+        Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=1)
+        view = SubmissionViewSet.as_view({"post": "admin_omr_upload"})
+
+        first = SimpleUploadedFile("scan1.png", b"\x89PNG\r\n\x1a\nfirst", content_type="image/png")
+        req1 = self.factory.post(
+            "/api/v1/submissions/submissions/admin/omr-upload/",
+            data={
+                "target_id": self.exam.id,
+                "enrollment_id": self.enrollment.id,
+                "file": first,
+            },
+            format="multipart",
+        )
+        force_authenticate(req1, user=self.admin)
+        req1.tenant = self.tenant
+        first_response = view(req1)
+
+        second = SimpleUploadedFile("scan2.png", b"\x89PNG\r\n\x1a\nsecond", content_type="image/png")
+        req2 = self.factory.post(
+            "/api/v1/submissions/submissions/admin/omr-upload/",
+            data={
+                "target_id": self.exam.id,
+                "enrollment_id": self.enrollment.id,
+                "file": second,
+            },
+            format="multipart",
+        )
+        force_authenticate(req2, user=self.admin)
+        req2.tenant = self.tenant
+        second_response = view(req2)
+
+        self.assertEqual(first_response.status_code, 201, first_response.data)
+        self.assertEqual(second_response.status_code, 409, second_response.data)
+        self.assertEqual(second_response.data["code"], "DUPLICATE_ENROLLMENT")
+        self.assertEqual(
+            Submission.objects.filter(
+                tenant=self.tenant,
+                target_type=Submission.TargetType.EXAM,
+                target_id=self.exam.id,
+                enrollment_id=self.enrollment.id,
+            ).count(),
+            1,
+        )
+        self.assertEqual(upload_fileobj_to_r2.call_count, 1)
+        self.assertEqual(dispatch_submission.call_count, 1)
+
 
 # ═══════════════════════════════════════════════════
 # C-2 어드민 인박스 3종 — 학생 차단 / 스태프 통과
@@ -590,6 +644,137 @@ class TestC3ExamOMRSubmitGuard(_SecurityFixtureMixin, TestCase):
                                 "file_key": "tenants/x/teacher_upload.png"},
                           exam_id=self.exam.id)
         self.assertNotIn(resp.status_code, (401, 403))
+
+    @patch("apps.domains.submissions.views.exam_omr_submit_view.dispatch_submission")
+    @patch("apps.domains.submissions.serializers.submission.upload_fileobj_to_r2")
+    def test_teacher_omr_submit_accepts_multipart_file_with_default_sheet(
+        self,
+        upload_fileobj_to_r2,
+        dispatch_submission,
+    ):
+        """교사용 OMR 화면은 실제 파일을 보내므로, file_key 없이도 제출이 생성되어야 한다."""
+        sheet = Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=1)
+        view = ExamOMRSubmitView.as_view()
+        upload = SimpleUploadedFile("teacher-omr.png", b"\x89PNG\r\n\x1a\nscan", content_type="image/png")
+        req = self.factory.post(
+            f"/api/v1/submissions/submissions/exams/{self.exam.id}/omr/",
+            data={"enrollment_id": self.enrollment.id, "file": upload},
+            format="multipart",
+        )
+        force_authenticate(req, user=self.teacher)
+        req.tenant = self.tenant
+
+        resp = view(req, exam_id=self.exam.id)
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        submission = Submission.objects.get(id=resp.data["submission_id"])
+        self.assertEqual(submission.enrollment_id, self.enrollment.id)
+        self.assertEqual(submission.payload["sheet_id"], sheet.id)
+        self.assertTrue(submission.file_key)
+        upload_fileobj_to_r2.assert_called_once()
+        dispatch_submission.assert_called_once_with(submission)
+
+    @patch("apps.domains.submissions.views.exam_omr_submit_view.dispatch_submission")
+    def test_teacher_omr_submit_same_tenant_non_candidate_enrollment_blocked(self, dispatch_submission):
+        Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=1)
+        _other_user, other_student = _make_student_user_and_profile(
+            self.tenant, "S777", name="미응시학생",
+        )
+        other_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="Not Exam Lecture",
+            name="Not Exam Lecture",
+            subject="MATH",
+        )
+        other_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=other_student,
+            lecture=other_lecture,
+            status="ACTIVE",
+        )
+        view = ExamOMRSubmitView.as_view()
+
+        resp = self._call(
+            lambda: view,
+            "post",
+            f"/api/v1/submissions/submissions/exams/{self.exam.id}/omr/",
+            user=self.teacher,
+            data={
+                "enrollment_id": other_enrollment.id,
+                "file_key": "tenants/x/non_candidate.png",
+            },
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(resp.status_code, 403, resp.data)
+        self.assertFalse(
+            Submission.objects.filter(
+                tenant=self.tenant,
+                target_type=Submission.TargetType.EXAM,
+                target_id=self.exam.id,
+                enrollment_id=other_enrollment.id,
+            ).exists()
+        )
+        dispatch_submission.assert_not_called()
+
+    @patch("apps.domains.submissions.views.exam_omr_submit_view.dispatch_submission")
+    def test_teacher_omr_submit_duplicate_enrollment_returns_409(self, dispatch_submission):
+        Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=1)
+        Submission.objects.create(
+            tenant=self.tenant,
+            user=self.teacher,
+            enrollment_id=self.enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.DONE,
+            file_key="tenants/x/existing.png",
+        )
+        view = ExamOMRSubmitView.as_view()
+
+        resp = self._call(
+            lambda: view,
+            "post",
+            f"/api/v1/submissions/submissions/exams/{self.exam.id}/omr/",
+            user=self.teacher,
+            data={
+                "enrollment_id": self.enrollment.id,
+                "file_key": "tenants/x/duplicate.png",
+            },
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(resp.status_code, 409, resp.data)
+        self.assertEqual(resp.data["code"], "DUPLICATE_ENROLLMENT")
+        dispatch_submission.assert_not_called()
+
+    @patch("apps.domains.submissions.views.exam_omr_submit_view.dispatch_submission")
+    def test_teacher_omr_submit_rejects_cross_tenant_file_key(self, dispatch_submission):
+        Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=1)
+        view = ExamOMRSubmitView.as_view()
+
+        resp = self._call(
+            lambda: view,
+            "post",
+            f"/api/v1/submissions/submissions/exams/{self.exam.id}/omr/",
+            user=self.teacher,
+            data={
+                "enrollment_id": self.enrollment.id,
+                "file_key": "tenants/999/ai/submissions/1/scan.png",
+            },
+            exam_id=self.exam.id,
+        )
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertFalse(
+            Submission.objects.filter(
+                tenant=self.tenant,
+                target_type=Submission.TargetType.EXAM,
+                target_id=self.exam.id,
+                enrollment_id=self.enrollment.id,
+            ).exists()
+        )
+        dispatch_submission.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════

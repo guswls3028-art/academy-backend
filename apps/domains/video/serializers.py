@@ -39,6 +39,7 @@ class VideoSerializer(serializers.ModelSerializer):
         source="session.id",
         read_only=True,
     )
+    folder = serializers.IntegerField(source="folder_id", read_only=True)
 
     source_type = serializers.SerializerMethodField()
 
@@ -61,6 +62,7 @@ class VideoSerializer(serializers.ModelSerializer):
             "id",
             "session",
             "session_id",
+            "folder",
             "title",
             "file_key",
             "duration",

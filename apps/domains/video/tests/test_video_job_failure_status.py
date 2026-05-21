@@ -10,6 +10,7 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory
 
 from academy.adapters.db.django.repositories_video import (
+    job_complete,
     job_mark_dead,
     job_mark_dead_if_active,
 )
@@ -144,6 +145,29 @@ class VideoProcessingCompleteViewTests(TestCase):
         self.assertEqual(self.job.state, VideoTranscodeJob.State.SUCCEEDED)
         mock_cache_status.assert_called_once()
         mock_delete_progress.assert_called_once_with(self.tenant.id, self.video.id)
+
+    @patch("apps.domains.video.redis_status_cache.delete_video_progress_key")
+    @patch("apps.domains.video.redis_status_cache.cache_video_status")
+    def test_stale_job_complete_does_not_mark_video_ready(self, mock_cache_status, mock_delete_progress):
+        self.video.current_job = None
+        self.video.save(update_fields=["current_job"])
+
+        ok, reason = job_complete(
+            str(self.job.id),
+            "videos/hls/stale-master.m3u8",
+            12,
+            thumbnail_r2_key="videos/thumb.jpg",
+        )
+
+        self.assertFalse(ok)
+        self.assertEqual(reason, "stale_job")
+        self.video.refresh_from_db()
+        self.job.refresh_from_db()
+        self.assertEqual(self.video.status, Video.Status.PROCESSING)
+        self.assertEqual(self.video.hls_path, "")
+        self.assertEqual(self.job.state, VideoTranscodeJob.State.RUNNING)
+        mock_cache_status.assert_not_called()
+        mock_delete_progress.assert_not_called()
 
     @patch("apps.domains.video.redis_status_cache.delete_video_progress_key")
     @patch("apps.domains.video.redis_status_cache.cache_video_status")

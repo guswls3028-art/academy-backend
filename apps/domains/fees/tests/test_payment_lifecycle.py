@@ -543,3 +543,19 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
         self.invoice.refresh_from_db()
         self.assertEqual(self.invoice.paid_amount, 40_000)
         self.assertEqual(self.invoice.status, "PARTIAL")
+
+    def test_invoice_delete_with_active_payment_returns_400_not_500(self):
+        record_payment(
+            self.tenant,
+            self.invoice.id,
+            40_000,
+            "CASH",
+            idempotency_key="api-delete-guard",
+        )
+
+        resp = self.client.delete(f"/api/v1/fees/invoices/{self.invoice.id}/", **self.headers)
+
+        self.assertEqual(resp.status_code, 400, resp.content)
+        self.assertIn("수납을 먼저 취소", resp.data["detail"])
+        self.invoice.refresh_from_db()
+        self.assertNotEqual(self.invoice.status, "CANCELLED")

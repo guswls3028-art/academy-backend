@@ -33,6 +33,7 @@ from academy.adapters.db.django.repositories_video import (
     job_mark_dead,
     job_is_cancel_requested,
     job_set_running,
+    job_cancel,
 )
 from academy.adapters.video.config import load_config
 from academy.adapters.video.processor import process_video
@@ -259,6 +260,16 @@ def main() -> int:
             return 0
         ok, reason = job_complete(job_id, hls_path, duration, thumbnail_r2_key=thumbnail_r2_key)
         if not ok:
+            if reason == "stale_job":
+                job_cancel(job_id)
+                _log_json(
+                    "BATCH_JOB_STALE_COMPLETE_IGNORED",
+                    job_id=job_id,
+                    tenant_id=job_obj.tenant_id,
+                    video_id=job_obj.video_id,
+                    aws_batch_job_id=aws_batch_job_id,
+                )
+                return 0
             raise RuntimeError(f"job_complete failed: {reason}")
 
         elapsed = time.time() - start_time
