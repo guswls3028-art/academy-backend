@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.core.cache import cache
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory
 
@@ -8,11 +9,16 @@ from apps.core.models import Tenant
 from apps.core.models.user import user_internal_username
 from apps.domains.students.models import Student
 from apps.domains.students.views.credential_views import SendExistingCredentialsView
-from apps.domains.students.views.password_views import StudentPasswordResetSendView
+from apps.domains.students.views.password_views import (
+    _pw_reset_cache_key,
+    StudentPasswordFindRequestView,
+    StudentPasswordResetSendView,
+)
 
 
 class StudentPasswordResetSafetyTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.factory = APIRequestFactory()
         self.tenant = Tenant.objects.create(name="비번안전학원", code="pw-safe")
         User = get_user_model()
@@ -90,3 +96,39 @@ class StudentPasswordResetSafetyTests(TestCase):
         self.assertTrue(self.user.check_password("oldpw123"))
         self.assertFalse(self.user.must_change_password)
         self.assertEqual(self.user.token_version, 1)
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_password_find_request_resets_previous_failure_counter(self, _send):
+        key = _pw_reset_cache_key(self.tenant.id, self.student.phone)
+        cache.set(f"{key}:fail", 4, timeout=600)
+
+        response = self._post(
+            StudentPasswordFindRequestView,
+            "/api/v1/students/password_find/request/",
+            {
+                "name": self.student.name,
+                "phone": self.student.phone,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(cache.get(f"{key}:fail"))
+        payload = cache.get(key)
+        self.assertEqual(payload["user_id"], self.user.id)
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=False)
+    def test_password_find_request_clears_otp_when_send_fails(self, _send):
+        key = _pw_reset_cache_key(self.tenant.id, self.student.phone)
+
+        response = self._post(
+            StudentPasswordFindRequestView,
+            "/api/v1/students/password_find/request/",
+            {
+                "name": self.student.name,
+                "phone": self.student.phone,
+            },
+        )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIsNone(cache.get(key))
+        self.assertIsNone(cache.get(f"{key}:fail"))

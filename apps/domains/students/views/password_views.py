@@ -53,17 +53,18 @@ class StudentPasswordFindRequestView(APIView):
             Q(phone=phone) | Q(parent_phone=phone)
         ).select_related("user").order_by("id")
 
-        count = candidates.count()
-        if count != 1:
+        matches = list(candidates[:2])
+        if len(matches) != 1:
             # 계정 존재 여부 노출 방지 + 다건 매칭(동명이인/공유번호) 안전 차단
             return Response({"message": "인증번호가 발송되었습니다."}, status=200)
-        student = candidates.first()
+        student = matches[0]
         if not student or not getattr(student, "user", None):
             return Response({"message": "인증번호가 발송되었습니다."}, status=200)
         import secrets
         code = "".join([str(secrets.randbelow(10)) for _ in range(6)])
         key = _pw_reset_cache_key(tenant.id, phone)
         cache.set(key, {"user_id": student.user_id, "code": code}, timeout=600)
+        cache.delete(f"{key}:fail")
 
         # 알림톡 발송 (AutoSendConfig 템플릿 사용)
         if is_messaging_disabled(tenant.id):
@@ -92,6 +93,8 @@ class StudentPasswordFindRequestView(APIView):
         )
 
         if not ok:
+            cache.delete(key)
+            cache.delete(f"{key}:fail")
             return Response(
                 {"detail": "인증번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."},
                 status=503,
