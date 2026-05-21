@@ -1,0 +1,33 @@
+# arch_guard — 아키텍처 경계 게이트 (Refactor roadmap Phase 0-B).
+# ARCHITECTURE.md §2.3 의 cross-domain / infra-in-domain 규칙을 빌드가 강제.
+# baseline.json 동결분은 통과, 신규 위반만 PR 차단. 의존성 0(stdlib) — Django/DB 부트스트랩 불필요.
+# 배포 파이프라인(v1-build-and-push-latest.yml)과 독립된 게이트.
+name: arch-guard
+
+on:
+  pull_request:
+    paths:
+      - "apps/domains/**"
+      - "tools/arch_guard/**"
+      - ".github/workflows/arch-guard.yml"
+  push:
+    branches-ignore:
+      - main  # main 은 deploy 파이프라인이 다룸. 게이트는 PR/feature 브랜치에서.
+    paths:
+      - "apps/domains/**"
+      - "tools/arch_guard/**"
+
+concurrency:
+  group: arch-guard-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: arch_guard 경계 검사 (신규 위반 차단)
+        run: python tools/arch_guard/check_boundaries.py
