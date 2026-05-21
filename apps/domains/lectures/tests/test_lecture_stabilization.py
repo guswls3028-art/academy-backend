@@ -28,6 +28,7 @@ from apps.domains.lectures.serializers import (
 from apps.domains.lectures.views import SectionAssignmentViewSet
 from apps.domains.lectures.views import LectureViewSet
 from apps.domains.lectures.views import SessionViewSet
+from apps.domains.lectures.views import SectionViewSet
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.video.models import Video, VideoProgress
 
@@ -229,6 +230,68 @@ class TestSessionListNoPagination(LectureTestBase):
             5,
             [query["sql"] for query in captured.captured_queries],
         )
+
+
+class TestSectionBulkCreateSessions(LectureTestBase):
+    """반별 차시 일괄 생성은 한 번의 요청에서 같은 차시 순번을 공유한다."""
+
+    def setUp(self):
+        super().setUp()
+        self.section_a = Section.objects.create(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            label="A",
+            section_type="CLASS",
+            day_of_week=0,
+            start_time="10:00",
+        )
+        self.section_b = Section.objects.create(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            label="B",
+            section_type="CLASS",
+            day_of_week=1,
+            start_time="11:00",
+        )
+
+    def _bulk_create(self, dates):
+        request = self.factory.post(
+            "/api/v1/lectures/sections/bulk-create-sessions/",
+            {"lecture_id": self.lecture.id, "title": "", "dates": dates},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        return SectionViewSet.as_view({"post": "bulk_create_sessions"})(request)
+
+    def test_bulk_create_uses_one_shared_next_order_for_all_sections(self):
+        Session.objects.create(
+            lecture=self.lecture,
+            section=self.section_a,
+            order=1,
+            title="A 1차시",
+        )
+        Session.objects.create(
+            lecture=self.lecture,
+            section=self.section_a,
+            order=2,
+            title="A 2차시",
+        )
+
+        response = self._bulk_create({"A": "2026-04-15", "B": "2026-04-16"})
+
+        self.assertEqual(response.status_code, 201)
+        created_by_section = {row["section_label"]: row for row in response.data}
+        self.assertEqual(created_by_section["A"]["order"], 3)
+        self.assertEqual(created_by_section["B"]["order"], 3)
+        self.assertEqual(created_by_section["A"]["title"], "3차시")
+        self.assertEqual(created_by_section["B"]["title"], "3차시")
+
+    def test_bulk_create_rejects_unknown_section_label(self):
+        response = self._bulk_create({"A": "2026-04-15", "Z": "2026-04-16"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(Session.objects.count(), 0)
 
 
 class TestAutoAssignConcurrency(LectureTestBase):

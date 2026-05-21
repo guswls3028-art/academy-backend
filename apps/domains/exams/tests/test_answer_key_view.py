@@ -131,3 +131,25 @@ class AnswerKeyViewTenantScopeTests(TestCase):
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertFalse(AnswerKey.objects.filter(exam=self.regular_from_template_a).exists())
+
+    def test_update_rejects_answer_key_for_used_template(self):
+        answer_key = AnswerKey.objects.create(exam=self.template_a, answers={"1": "A"})
+
+        response = self._request(
+            "patch",
+            "partial_update",
+            pk=answer_key.id,
+            data={"answers": {"1": "C"}},
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        answer_key.refresh_from_db()
+        self.assertEqual(answer_key.answers, {"1": "A"})
+
+    def test_destroy_rejects_answer_key_for_used_template(self):
+        answer_key = AnswerKey.objects.create(exam=self.template_a, answers={"1": "A"})
+
+        response = self._request("delete", "destroy", pk=answer_key.id)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertTrue(AnswerKey.objects.filter(id=answer_key.id).exists())

@@ -7,11 +7,13 @@ Staff 도메인 운영 안정화 테스트.
 """
 from django.test import TestCase, RequestFactory
 from django.contrib.auth import get_user_model
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
-from apps.domains.staffs.models import Staff
+from apps.domains.staffs.models import Staff, WorkRecord, WorkType
 from apps.domains.staffs.serializers import StaffCreateUpdateSerializer, StaffListSerializer
+from apps.domains.staffs.views.helpers import can_access_staff_management
 from apps.domains.teachers.models import Teacher
 
 User = get_user_model()
@@ -217,6 +219,78 @@ class TestStaffRoleDetection(TestCase):
         self.assertEqual(list_ser.data["role"], "TEACHER")
 
 
+class TestStaffManagementPermissions(TestCase):
+    """직원관리 민감 권한과 직원 본인 출퇴근 권한을 분리한다."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = _make_tenant()
+        self.staff = _create_staff_teacher(self.tenant, name="일반강사", phone="01012121212")
+        self.work_type = WorkType.objects.create(
+            tenant=self.tenant,
+            name="기본",
+            base_hourly_wage=10000,
+            is_active=True,
+        )
+
+    def _start_work(self, staff, user, work_type_id):
+        from apps.domains.staffs.views import StaffViewSet
+
+        request = self.factory.post(
+            f"/staffs/{staff.id}/work-records/start-work/",
+            {"work_type": work_type_id},
+            format="json",
+        )
+        force_authenticate(request, user=user)
+        request.tenant = self.tenant
+        view = StaffViewSet.as_view({"post": "start_work"})
+        return view(request, pk=staff.id)
+
+    def test_non_manager_teacher_cannot_access_staff_management(self):
+        self.assertFalse(can_access_staff_management(self.staff.user, self.tenant))
+
+    def test_manager_teacher_can_access_staff_management(self):
+        self.staff.is_manager = True
+        self.staff.save(update_fields=["is_manager"])
+
+        self.assertTrue(can_access_staff_management(self.staff.user, self.tenant))
+
+    def test_non_manager_teacher_can_start_own_work_with_tenant_work_type(self):
+        response = self._start_work(self.staff, self.staff.user, self.work_type.id)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(
+            WorkRecord.objects.filter(
+                tenant=self.tenant,
+                staff=self.staff,
+                work_type=self.work_type,
+                end_time__isnull=True,
+            ).exists()
+        )
+
+    def test_start_work_rejects_cross_tenant_work_type(self):
+        other_tenant = _make_tenant(name="다른학원")
+        other_work_type = WorkType.objects.create(
+            tenant=other_tenant,
+            name="다른근무",
+            base_hourly_wage=99999,
+            is_active=True,
+        )
+
+        response = self._start_work(self.staff, self.staff.user, other_work_type.id)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertFalse(WorkRecord.objects.filter(staff=self.staff).exists())
+
+    def test_non_manager_teacher_cannot_start_other_staff_work(self):
+        other_staff = _create_staff_teacher(self.tenant, name="다른강사", phone="01034343434")
+
+        response = self._start_work(other_staff, self.staff.user, self.work_type.id)
+
+        self.assertEqual(response.status_code, 403, response.data)
+        self.assertFalse(WorkRecord.objects.filter(staff=other_staff).exists())
+
+
 class TestStaffDeletePolicy(TestCase):
     """Staff 삭제 정책 테스트."""
 
@@ -263,6 +337,8 @@ class TestStaffPasswordChange(TestCase):
     def setUp(self):
         self.tenant = _make_tenant()
         self.staff = _create_staff_teacher(self.tenant, name="비번테스트", phone="01022223333")
+        self.staff.is_manager = True
+        self.staff.save(update_fields=["is_manager"])
 
     def _call_change_password(self, staff_id, password_data):
         from rest_framework.test import APIRequestFactory

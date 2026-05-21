@@ -31,7 +31,12 @@ from .services import (
     paste_image_as_problem,
     merge_problems,
     delete_problem_with_r2,
+    document_has_protected_matchup_problems,
     get_page_states,
+    is_problem_delete_protected,
+    protected_matchup_problem_ids,
+    PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL,
+    PROTECTED_MATCHUP_PROBLEM_DELETE_DETAIL,
     set_page_state,
     bulk_set_page_states,
     auto_recommend_page_states,
@@ -505,6 +510,15 @@ class DocumentDetailView(View):
         if not doc:
             return JsonResponse({"detail": "Not found"}, status=404)
 
+        if document_has_protected_matchup_problems(doc):
+            return JsonResponse(
+                {
+                    "detail": PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL,
+                    "code": "protected_matchup_document",
+                },
+                status=409,
+            )
+
         delete_document_with_r2(doc)
         return JsonResponse({"ok": True})
 
@@ -919,6 +933,15 @@ class ProblemDetailView(View):
         if not problem:
             return JsonResponse({"detail": "Not found"}, status=404)
 
+        if is_problem_delete_protected(problem):
+            return JsonResponse(
+                {
+                    "detail": PROTECTED_MATCHUP_PROBLEM_DELETE_DETAIL,
+                    "code": "protected_matchup_problem",
+                },
+                status=409,
+            )
+
         delete_problem_with_r2(problem)
         return JsonResponse({"ok": True})
 
@@ -1005,13 +1028,14 @@ class DocumentBulkDeleteProblemsView(View):
       number_from + number_to 동시: 두 값 사이 range 삭제 (AND, 예: 150~200)
       problem_ids: int[] # 명시적 ID 삭제 (위 range와 OR 결합)
 
-    **manual=true 보호 (절대 보존, default ON)**:
-      학원장이 직접 자른 problem (meta.manual=true)은 number_from 범위 안에 있어도 삭제 안 됨.
-      retry_document와 동일 패턴 — manual_ids 명시 exclude (NULL semantics 회피).
+    **manual / owner-pinned 보호 (절대 보존, default ON)**:
+      학원장이 직접 자른 problem(meta.manual=true)과 보고서에서 선별된 problem
+      (meta.manual_owner_pinned=true)은 range 안에 있어도 삭제 안 됨.
+      retry_document와 동일 패턴 — 보호 id 명시 exclude (NULL semantics 회피).
       운영 위험 (학원장 진행 중 cut 손실) 방지가 본질이라 force 옵션 X.
 
     R2 image도 함께 삭제 (delete_problem_with_r2 사용).
-    Returns: { "deleted": N, "ids": [...], "preserved_manual": M }
+    Returns: { "deleted": N, "ids": [...], "preserved_manual": M, "preserved_protected": M }
     """
 
     def post(self, request, doc_id):
@@ -1062,23 +1086,21 @@ class DocumentBulkDeleteProblemsView(View):
         if not (nf_int is not None or nt_int is not None or ids):
             return JsonResponse({"detail": "number_from / number_to / problem_ids 중 하나는 필수"}, status=400)
 
-        # manual=true 보호 — retry_document와 동일 패턴.
-        # NULL semantics 회피 (운영 사고 2026-05-03): manual 키 없는 row가 PostgreSQL
+        # 보호 대상 명시 exclude — retry_document와 동일 패턴.
+        # NULL semantics 회피 (운영 사고 2026-05-03): meta 키 없는 row가 PostgreSQL
         # 3-valued logic으로 exclude에서 빠질 수 있어 ID 명시 exclude 사용.
-        manual_ids = list(
-            MatchupProblem.objects.filter(
-                tenant=request.tenant, document=doc, meta__manual=True,
-            ).values_list("id", flat=True)
+        protected_ids = protected_matchup_problem_ids(
+            MatchupProblem.objects.filter(tenant=request.tenant, document=doc)
         )
 
         targets = list(
             MatchupProblem.objects.filter(tenant=request.tenant, document=doc)
             .filter(cond)
-            .exclude(id__in=manual_ids)
+            .exclude(id__in=protected_ids)
         )
-        # 사용자 의도 검증 위해 보호된 manual 수 로깅/응답에 포함
-        protected_manual_in_range = MatchupProblem.objects.filter(
-            tenant=request.tenant, document=doc, id__in=manual_ids,
+        # 사용자 의도 검증 위해 보호된 수 로깅/응답에 포함
+        protected_in_range = MatchupProblem.objects.filter(
+            tenant=request.tenant, document=doc, id__in=protected_ids,
         ).filter(cond).count()
 
         deleted_ids = []
@@ -1100,7 +1122,8 @@ class DocumentBulkDeleteProblemsView(View):
         return JsonResponse({
             "deleted": len(deleted_ids),
             "ids": deleted_ids,
-            "preserved_manual": protected_manual_in_range,
+            "preserved_manual": protected_in_range,
+            "preserved_protected": protected_in_range,
         })
 
 

@@ -177,16 +177,52 @@ class AutoSendConfigView(APIView):
 
             # delay_mode / delay_value — 마이그레이션 전에도 안전 (hasattr 체크)
             if hasattr(config, "delay_mode"):
-                delay_mode = (item.get("delay_mode") or "").strip().lower()
-                if delay_mode in ("immediate", "delay_minutes", "scheduled_hour"):
-                    config.delay_mode = delay_mode
+                current_delay_mode = (getattr(config, "delay_mode", "") or "immediate").strip().lower()
+                requested_delay_mode = item.get("delay_mode")
+                delay_mode = (
+                    (requested_delay_mode or "").strip().lower()
+                    if requested_delay_mode is not None
+                    else current_delay_mode
+                )
+                if delay_mode not in ("immediate", "delay_minutes", "scheduled_hour"):
+                    delay_mode = current_delay_mode
                 delay_value = item.get("delay_value")
+                parsed_delay_value = None
                 if delay_value is not None:
                     try:
-                        config.delay_value = max(0, int(delay_value)) if delay_value != "" else None
+                        parsed_delay_value = int(delay_value) if delay_value != "" else None
                     except (TypeError, ValueError):
+                        return Response(
+                            {"delay_value": "발송 지연 값은 숫자여야 합니다."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    if delay_mode == "scheduled_hour" and parsed_delay_value is not None and not 0 <= parsed_delay_value <= 23:
+                        return Response(
+                            {"delay_value": "지정 시각은 0~23 사이여야 합니다."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                elif requested_delay_mode is not None and delay_mode != "immediate":
+                    current_delay_value = getattr(config, "delay_value", None)
+                    if current_delay_value is None:
+                        return Response(
+                            {"delay_value": "발송 지연 값이 필요합니다."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    if delay_mode == "scheduled_hour" and not 0 <= int(current_delay_value) <= 23:
+                        return Response(
+                            {"delay_value": "지정 시각은 0~23 사이여야 합니다."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                config.delay_mode = delay_mode
+                if delay_value is not None:
+                    if parsed_delay_value is None or delay_mode == "immediate":
                         config.delay_value = None
-                elif delay_mode == "immediate":
+                    elif delay_mode == "scheduled_hour":
+                        config.delay_value = parsed_delay_value
+                    else:
+                        config.delay_value = max(0, parsed_delay_value)
+                elif requested_delay_mode is not None and delay_mode == "immediate":
                     config.delay_value = None
 
             config.save()

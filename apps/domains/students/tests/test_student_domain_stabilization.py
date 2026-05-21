@@ -153,6 +153,27 @@ class TestB1TenantIsolationNegative(TestCase):
         self.student_b.refresh_from_db()
         self.assertEqual(self.student_b.name, original_name)
 
+    def test_admin_update_cannot_mutate_student_app_and_delete_only_fields(self):
+        """관리자 일반 수정 API는 삭제/프로필/일정숨김 같은 시스템 필드를 바꾸지 못한다."""
+        resp = self._update(
+            self.admin_a,
+            self.tenant_a,
+            self.student_a.id,
+            {
+                "deleted_at": timezone.now().isoformat(),
+                "profile_photo_r2_key": "students/hidden/profile.png",
+                "schedule_hidden_ids": [12345],
+                "schedule_hidden_before": "2026-01-01",
+            },
+        )
+
+        self.assertIn(resp.status_code, [200, 400], resp.data)
+        self.student_a.refresh_from_db()
+        self.assertIsNone(self.student_a.deleted_at)
+        self.assertEqual(self.student_a.profile_photo_r2_key, "")
+        self.assertEqual(self.student_a.schedule_hidden_ids, [])
+        self.assertIsNone(self.student_a.schedule_hidden_before)
+
     # --- Tag isolation ---
 
     def test_tag_cross_tenant_isolation(self):

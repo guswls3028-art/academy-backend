@@ -38,6 +38,8 @@ def assert_template_editable(template_exam: Exam) -> None:
     - regular이 template_exam을 참조 중이면, 구조 편집은 template에서 수행해야 한다.
     """
     if template_exam.exam_type == Exam.ExamType.TEMPLATE:
+        if template_exam.derived_exams.exists():
+            raise ValidationError({"detail": "이미 운영 시험에 사용된 템플릿은 수정할 수 없습니다."})
         return
 
     if template_exam.exam_type == Exam.ExamType.REGULAR and template_exam.template_exam_id is None:

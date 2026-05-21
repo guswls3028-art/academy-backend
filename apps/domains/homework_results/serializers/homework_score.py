@@ -50,6 +50,20 @@ class HomeworkScoreSerializer(serializers.ModelSerializer):
             # input-only
             "status",
         ]
+        read_only_fields = [
+            "id",
+            "enrollment_id",
+            "session",
+            "homework",
+            "passed",
+            "clinic_required",
+            "is_locked",
+            "lock_reason",
+            "updated_by_user_id",
+            "meta",
+            "created_at",
+            "updated_at",
+        ]
 
     def validate_status(self, value: Optional[str]) -> Optional[str]:
         if value is None:

@@ -3,6 +3,7 @@
 from django.db import transaction, IntegrityError
 from django.db.models import Case, Count, IntegerField, Max, OuterRef, Q, Subquery, Value, When
 from django.db.models.functions import Coalesce
+from django.utils.dateparse import parse_date
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.filters import SearchFilter
@@ -517,37 +518,55 @@ class SectionViewSet(ModelViewSet):
         title = request.data.get("title", "")
         dates = request.data.get("dates", {})  # {section_label: date_string}
 
-        if not lecture_id or not dates:
+        if not lecture_id or not isinstance(dates, dict) or not dates:
             raise ValidationError("lecture_id와 dates는 필수입니다.")
 
         lecture = Lecture.objects.filter(id=lecture_id, tenant=tenant).first()
         if not lecture:
             raise NotFound("강의를 찾을 수 없습니다.")
 
+        requested_labels = [str(label).strip() for label in dates.keys() if str(label).strip()]
+        if not requested_labels:
+            raise ValidationError({"dates": "생성할 반을 1개 이상 선택해 주세요."})
+
         sections = Section.objects.filter(
-            tenant=tenant, lecture=lecture, label__in=dates.keys(),
+            tenant=tenant, lecture=lecture, label__in=requested_labels,
         )
         section_map = {s.label: s for s in sections}
+        missing_labels = [label for label in requested_labels if label not in section_map]
+        if missing_labels:
+            raise ValidationError(
+                {"dates": f"존재하지 않는 반입니다: {', '.join(missing_labels)}"}
+            )
+
+        parsed_dates = {}
+        for label in requested_labels:
+            raw_date = dates.get(label)
+            if raw_date in (None, ""):
+                parsed_dates[label] = None
+                continue
+            parsed_date = parse_date(str(raw_date))
+            if parsed_date is None:
+                raise ValidationError({"dates": f"{label}반 날짜 형식이 올바르지 않습니다."})
+            parsed_dates[label] = parsed_date
 
         created = []
         with transaction.atomic():
             # 같은 강의의 동시 차시 일괄생성 직렬화
             Lecture.objects.select_for_update().filter(pk=lecture.pk).exists()
-            for label, date_str in dates.items():
+            selected_section_ids = [section_map[label].id for label in requested_labels]
+            agg = Session.objects.filter(
+                lecture=lecture, section_id__in=selected_section_ids,
+            ).aggregate(max_order=Max("order"))
+            next_order = (agg["max_order"] or 0) + 1
+            for label in requested_labels:
                 section = section_map.get(label)
-                if not section:
-                    continue
-                # per-section max order 계산
-                agg = Session.objects.filter(
-                    lecture=lecture, section=section,
-                ).aggregate(max_order=Max("order"))
-                next_order = (agg["max_order"] or 0) + 1
                 session = Session.objects.create(
                     lecture=lecture,
                     section=section,
                     order=next_order,
                     title=title or f"{next_order}차시",
-                    date=date_str,
+                    date=parsed_dates[label],
                 )
                 created.append(SessionSerializer(session).data)
 

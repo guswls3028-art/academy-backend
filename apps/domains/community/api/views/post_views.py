@@ -89,25 +89,10 @@ class PostViewSet(viewsets.ModelViewSet):
 
     def _limited_reader_student_ids(self, request) -> list[int]:
         """학생/학부모가 볼 수 있는 학생 id 목록. staff는 이 helper를 쓰지 않는다."""
-        parent = getattr(request.user, "parent_profile", None)
-        tenant = getattr(request, "tenant", None)
-        if parent is not None and tenant is not None:
-            from apps.domains.students.models import Student
-
-            return list(
-                Student.objects.filter(
-                    tenant=tenant,
-                    parent=parent,
-                    deleted_at__isnull=True,
-                ).values_list("id", flat=True)
-            )
-
         request_student = get_request_student(request)
         if request_student is not None:
             return [request_student.id]
 
-        if tenant is None:
-            return []
         return []
 
     def _visible_node_ids_for_request(self, request) -> set[int]:
@@ -131,6 +116,12 @@ class PostViewSet(viewsets.ModelViewSet):
             ).values_list("id", flat=True)
         )
 
+    def _own_student_post_filter(self, request) -> Q:
+        student_ids = self._limited_reader_student_ids(request)
+        if not student_ids:
+            return Q(pk__in=[])
+        return Q(created_by_id__in=student_ids)
+
     def _post_visible_to_request(self, request, post) -> bool:
         """단건 가시성 SSOT — retrieve/replies/like/reply_like/reply_detail 공용.
         staff: 모두 OK. 학생/학부모: published & 공개 타입 & 수강 매핑 가시성.
@@ -140,8 +131,8 @@ class PostViewSet(viewsets.ModelViewSet):
         """
         if self._is_staff_request(request):
             return True
-        request_student = get_request_student(request)
-        is_own = request_student is not None and getattr(post, "created_by_id", None) == request_student.id
+        student_ids = self._limited_reader_student_ids(request)
+        is_own = getattr(post, "created_by_id", None) in student_ids
         if is_own:
             return True
         if getattr(post, "status", "") != "published":
@@ -237,17 +228,13 @@ class PostViewSet(viewsets.ModelViewSet):
             qs = get_posts_for_node(tenant, node_id, include_inherited=True, include_unpublished=is_staff)
             if is_limited_reader:
                 from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
-                public_filter = Q(post_type__in=STUDENT_PUBLIC_POST_TYPES)
-                if request_student is not None:
-                    public_filter |= Q(created_by=request_student)
+                public_filter = Q(post_type__in=STUDENT_PUBLIC_POST_TYPES) | self._own_student_post_filter(self.request)
                 qs = qs.filter(public_filter)
         else:
             qs = get_all_posts_for_tenant(tenant, include_unpublished=is_staff)
-            # 학생 요청 시 node_id 없으면 본인 작성 글만 반환 (학생 앱 "내 질문" 목록)
-            if request_student is not None:
-                qs = qs.filter(created_by=request_student)
-            elif is_limited_reader:
-                qs = qs.none()
+            # 학생/학부모 요청 시 node_id 없으면 본인/자녀 작성 글만 반환 (학생 앱 "내 질문" 목록)
+            if is_limited_reader:
+                qs = qs.filter(self._own_student_post_filter(self.request))
 
         # F4: post_type server-side filter
         from apps.domains.community.models.post import VALID_POST_TYPES

@@ -433,7 +433,7 @@ def mark_overdue_invoices(tenant=None):
 def auto_assign_fees_on_enrollment(tenant, student, lecture, enrollment):
     """
     강의에 연결된 활성 FeeTemplate이 있으면 StudentFee를 자동 생성.
-    이미 동일 비목이 할당되어 있으면 skip.
+    이전 수강 종료로 비활성화된 동일 비목이 있으면 새 enrollment에 다시 연결한다.
     """
     templates = FeeTemplate.objects.filter(
         tenant=tenant,
@@ -444,7 +444,7 @@ def auto_assign_fees_on_enrollment(tenant, student, lecture, enrollment):
 
     created_count = 0
     for tmpl in templates:
-        _, created = StudentFee.objects.get_or_create(
+        student_fee, created = StudentFee.objects.get_or_create(
             tenant=tenant,
             student=student,
             fee_template=tmpl,
@@ -455,8 +455,42 @@ def auto_assign_fees_on_enrollment(tenant, student, lecture, enrollment):
         )
         if created:
             created_count += 1
+            continue
+        update_fields = []
+        if student_fee.enrollment_id != enrollment.id:
+            student_fee.enrollment = enrollment
+            update_fields.append("enrollment")
+        if not student_fee.is_active:
+            student_fee.is_active = True
+            update_fields.append("is_active")
+        if student_fee.billing_end_month:
+            student_fee.billing_end_month = ""
+            update_fields.append("billing_end_month")
+        if update_fields:
+            student_fee.save(update_fields=[*update_fields, "updated_at"])
+            created_count += 1
 
     return created_count
+
+
+def deactivate_fees_for_enrollment(enrollment) -> int:
+    """수강 종료/삭제 시 해당 수강 등록에서 자동 생성된 수강료를 비활성화한다."""
+    billing_period = timezone.localdate().strftime("%Y-%m")
+    return (
+        StudentFee.objects
+        .filter(
+            tenant=enrollment.tenant,
+            enrollment=enrollment,
+            fee_template__lecture_id=enrollment.lecture_id,
+            fee_template__auto_assign=True,
+            is_active=True,
+        )
+        .update(
+            is_active=False,
+            billing_end_month=billing_period,
+            updated_at=timezone.now(),
+        )
+    )
 
 
 # ========================================================

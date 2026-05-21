@@ -80,6 +80,18 @@ class HomeworkQuickPatchScopeTests(TestCase):
         self.assertEqual(response.status_code, expected_status, response.data)
         return response
 
+    def _partial_update(self, score, data, *, expected_status=200):
+        request = self.factory.patch(
+            f"/homework/scores/{score.id}/",
+            data,
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = HomeworkScoreViewSet.as_view({"patch": "partial_update"})(request, pk=score.id)
+        self.assertEqual(response.status_code, expected_status, response.data)
+        return response
+
     def test_rejects_unassigned_enrollment_without_side_effects(self):
         self._quick_patch(
             {
@@ -135,3 +147,59 @@ class HomeworkQuickPatchScopeTests(TestCase):
         self.assertEqual(response.data["id"], score.id)
         self.assertEqual(score.score, 80)
 
+    def test_partial_update_does_not_move_score_relationships(self):
+        score = HomeworkScore.objects.create(
+            homework=self.homework,
+            session=self.session,
+            enrollment=self.assigned_enrollment,
+            attempt_index=1,
+            score=70,
+        )
+
+        self._partial_update(
+            score,
+            {
+                "session": self.other_session.id,
+                "homework": self.homework.id + 9999,
+                "score": 75,
+            },
+        )
+
+        score.refresh_from_db()
+        self.assertEqual(score.session_id, self.session.id)
+        self.assertEqual(score.homework_id, self.homework.id)
+        self.assertEqual(score.score, 75)
+
+    def test_partial_update_status_not_submitted_persists_meta_and_clears_score(self):
+        score = HomeworkScore.objects.create(
+            homework=self.homework,
+            session=self.session,
+            enrollment=self.assigned_enrollment,
+            attempt_index=1,
+            score=70,
+            max_score=100,
+        )
+
+        self._partial_update(score, {"status": HomeworkScore.MetaStatus.NOT_SUBMITTED})
+
+        score.refresh_from_db()
+        self.assertIsNone(score.score)
+        self.assertIsNone(score.max_score)
+        self.assertEqual(score.meta, {"status": HomeworkScore.MetaStatus.NOT_SUBMITTED})
+
+    def test_partial_update_status_null_clears_not_submitted_meta(self):
+        score = HomeworkScore.objects.create(
+            homework=self.homework,
+            session=self.session,
+            enrollment=self.assigned_enrollment,
+            attempt_index=1,
+            score=None,
+            max_score=None,
+            meta={"status": HomeworkScore.MetaStatus.NOT_SUBMITTED},
+        )
+
+        self._partial_update(score, {"status": None, "score": 55})
+
+        score.refresh_from_db()
+        self.assertEqual(score.score, 55)
+        self.assertIsNone(score.meta)

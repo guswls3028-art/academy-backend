@@ -178,6 +178,91 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertEqual(config.message_mode, "alimtalk")
         self.assertTrue(config.enabled)
 
+    def test_autosend_patch_rejects_invalid_scheduled_hour_value(self):
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            enabled=True,
+            message_mode="alimtalk",
+            delay_mode="immediate",
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {
+                    "configs": [
+                        {
+                            "trigger": "clinic_check_in",
+                            "delay_mode": "scheduled_hour",
+                            "delay_value": 24,
+                        }
+                    ]
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("delay_value", response.data)
+        config.refresh_from_db()
+        self.assertEqual(config.delay_mode, "immediate")
+        self.assertIsNone(config.delay_value)
+
+    def test_autosend_patch_preserves_valid_delay_minutes(self):
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            enabled=True,
+            message_mode="alimtalk",
+            delay_mode="immediate",
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {
+                    "configs": [
+                        {
+                            "trigger": "clinic_check_in",
+                            "delay_mode": "delay_minutes",
+                            "delay_value": "30",
+                        }
+                    ]
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        config.refresh_from_db()
+        self.assertEqual(config.delay_mode, "delay_minutes")
+        self.assertEqual(config.delay_value, 30)
+
+    def test_autosend_patch_rejects_scheduled_hour_mode_without_valid_hour(self):
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            enabled=True,
+            message_mode="alimtalk",
+            delay_mode="delay_minutes",
+            delay_value=30,
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "clinic_check_in", "delay_mode": "scheduled_hour"}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("delay_value", response.data)
+        config.refresh_from_db()
+        self.assertEqual(config.delay_mode, "delay_minutes")
+        self.assertEqual(config.delay_value, 30)
+
     def test_community_answer_triggers_are_not_enabled_by_default(self):
         response = AutoSendConfigView.as_view()(
             self._request("get", "/api/v1/messaging/auto-send/")

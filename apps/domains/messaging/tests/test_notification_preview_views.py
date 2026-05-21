@@ -5,6 +5,9 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
+from unittest.mock import patch
+
+from apps.domains.messaging.notification_dispatch import execute_notification_batch
 from apps.domains.messaging.views_notification import (
     AttendanceNotificationPreviewView,
     ManualNotificationPreviewView,
@@ -151,3 +154,37 @@ class NotificationPreviewViewValidationTests(TestCase):
         recipient = response.data["recipients"][0]
         self.assertNotIn("phone_raw", recipient)
         self.assertNotIn("alimtalk_replacements", recipient)
+
+
+class NotificationBatchDispatchPolicyTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(code="msg-batch", name="Msg Batch", is_active=True)
+
+    @patch("apps.domains.messaging.policy.check_recipient_allowed", return_value=True)
+    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    def test_legacy_sms_preview_payload_is_sent_as_alimtalk_only(self, mock_enqueue, _mock_allowed):
+        result = execute_notification_batch(
+            tenant=self.tenant,
+            payload={
+                "recipients": [
+                    {
+                        "student_id": 11,
+                        "student_name": "정합성",
+                        "phone_raw": "01012345678",
+                        "message_body": "알림 본문",
+                        "alimtalk_replacements": [{"key": "선생님메모", "value": "알림 본문"}],
+                    }
+                ],
+                "solapi_template_id": "KA01TP_TEST",
+                "message_mode": "sms",
+                "notification_type": "check_in",
+            },
+            batch_id="batch-legacy-sms",
+            staff_id=7,
+        )
+
+        self.assertEqual(result["sent_count"], 1)
+        mock_enqueue.assert_called_once()
+        kwargs = mock_enqueue.call_args.kwargs
+        self.assertEqual(kwargs["message_mode"], "alimtalk")
+        self.assertEqual(kwargs["template_id"], "KA01TP_TEST")

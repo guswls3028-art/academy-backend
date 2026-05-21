@@ -1,9 +1,13 @@
+from datetime import date
+
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.attendance.models import Attendance
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.fees.models import FeeTemplate, StudentFee, StudentInvoice
+from apps.domains.fees.services import generate_monthly_invoices
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.students.models import Student
 
@@ -151,6 +155,107 @@ class EnrollmentAttendanceSingleRouteScopeGuardTests(APITestCase):
         self.assertEqual(resp.status_code, 400, resp.data)
         self.enrollment.refresh_from_db()
         self.assertEqual(self.enrollment.lecture_id, self.lecture.id)
+
+    def test_enrollment_inactive_deactivates_auto_assigned_fees(self):
+        template = FeeTemplate.objects.create(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            name="월 수강료",
+            fee_type=FeeTemplate.FeeType.TUITION,
+            billing_cycle=FeeTemplate.BillingCycle.MONTHLY,
+            amount=100_000,
+            auto_assign=True,
+        )
+        student_fee = StudentFee.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            fee_template=template,
+            enrollment=self.enrollment,
+            is_active=True,
+        )
+
+        resp = self.client.patch(
+            f"/api/v1/enrollments/{self.enrollment.id}/",
+            {"status": "INACTIVE"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        student_fee.refresh_from_db()
+        self.assertFalse(student_fee.is_active)
+
+        generated = generate_monthly_invoices(
+            self.tenant,
+            2026,
+            6,
+            due_date=date(2026, 6, 10),
+            created_by=self.admin,
+        )
+        self.assertEqual(generated["created"], 0)
+        self.assertFalse(StudentInvoice.objects.filter(student=self.student, billing_year=2026, billing_month=6).exists())
+
+    def test_enrollment_inactive_preserves_manual_student_fee(self):
+        template = FeeTemplate.objects.create(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            name="수동 교재비",
+            fee_type=FeeTemplate.FeeType.MATERIAL,
+            billing_cycle=FeeTemplate.BillingCycle.MONTHLY,
+            amount=30_000,
+            auto_assign=False,
+        )
+        student_fee = StudentFee.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            fee_template=template,
+            enrollment=self.enrollment,
+            is_active=True,
+        )
+
+        resp = self.client.patch(
+            f"/api/v1/enrollments/{self.enrollment.id}/",
+            {"status": "INACTIVE"},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        student_fee.refresh_from_db()
+        self.assertTrue(student_fee.is_active)
+        self.assertEqual(student_fee.billing_end_month, "")
+
+    def test_enrollment_reactivation_relinks_existing_inactive_fee(self):
+        template = FeeTemplate.objects.create(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            name="재등록 수강료",
+            fee_type=FeeTemplate.FeeType.TUITION,
+            billing_cycle=FeeTemplate.BillingCycle.MONTHLY,
+            amount=100_000,
+            auto_assign=True,
+        )
+        student_fee = StudentFee.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            fee_template=template,
+            enrollment=None,
+            is_active=False,
+            billing_end_month="2026-05",
+        )
+
+        resp = self.client.post(
+            "/api/v1/enrollments/bulk_create/",
+            {"lecture": self.lecture.id, "students": [self.student.id]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        student_fee.refresh_from_db()
+        self.assertTrue(student_fee.is_active)
+        self.assertEqual(student_fee.enrollment_id, self.enrollment.id)
+        self.assertEqual(student_fee.billing_end_month, "")
 
     def test_session_enrollment_patch_cannot_cross_lecture(self):
         resp = self.client.patch(

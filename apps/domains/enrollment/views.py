@@ -28,7 +28,10 @@ from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.services import send_event_notification
-from apps.domains.fees.services import auto_assign_fees_on_enrollment
+from apps.domains.fees.services import (
+    auto_assign_fees_on_enrollment,
+    deactivate_fees_for_enrollment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -100,14 +103,15 @@ class EnrollmentViewSet(ModelViewSet):
                 obj.status = "ACTIVE"
                 obj.save(update_fields=["status"])
             created.append(obj)
-            # 반 등록 완료 알림 (학부모) + 수강료 자동 할당
+            _tenant = tenant
+            _student = obj.student if hasattr(obj, "student") else None
+            _lecture_title = lecture.title if lecture else ""
+            if _student:
+                # 강의에 연결된 비목(수강료 등) 자동 할당/재활성화
+                auto_assign_fees_on_enrollment(tenant, _student, lecture, obj)
+            # 반 등록 완료 알림 (학부모)
             if created_new:
-                _tenant = tenant
-                _student = obj.student if hasattr(obj, "student") else None
-                _lecture_title = lecture.title if lecture else ""
                 if _student:
-                    # 강의에 연결된 비목(수강료 등) 자동 할당
-                    auto_assign_fees_on_enrollment(tenant, _student, lecture, obj)
                     transaction.on_commit(lambda t=_tenant, s=_student, lt=_lecture_title: send_event_notification(
                         tenant=t, trigger="class_enrollment_complete",
                         student=s, send_to="parent",
@@ -120,10 +124,24 @@ class EnrollmentViewSet(ModelViewSet):
         )
 
     @transaction.atomic
+    def perform_update(self, serializer):
+        enrollment = serializer.save()
+        if enrollment.status != "ACTIVE":
+            deactivate_fees_for_enrollment(enrollment)
+        else:
+            auto_assign_fees_on_enrollment(
+                enrollment.tenant,
+                enrollment.student,
+                enrollment.lecture,
+                enrollment,
+            )
+
+    @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         enrollment = self.get_object()
 
         enroll_repo.session_enrollment_filter_delete(enrollment.tenant, enrollment)
+        deactivate_fees_for_enrollment(enrollment)
 
         enrollment.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -327,6 +345,12 @@ class SessionEnrollmentViewSet(ModelViewSet):
             if enrollment.status != "ACTIVE":
                 enrollment.status = "ACTIVE"
                 enrollment.save(update_fields=["status"])
+            auto_assign_fees_on_enrollment(
+                tenant,
+                enrollment.student,
+                session.lecture,
+                enrollment,
+            )
 
             obj, _ = enroll_repo.session_enrollment_get_or_create_tenant(
                 tenant=tenant,

@@ -8,12 +8,13 @@ from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from ..models import WorkRecord
 from ..serializers import WorkRecordSerializer
 from ..filters import WorkRecordFilter
-from .helpers import IsPayrollManager, is_month_locked
+from apps.core.permissions import TenantResolvedAndStaff
+from .helpers import IsPayrollManager, can_manage_payroll, is_month_locked
 
 # ===========================
 # WorkRecord (Record 기준: 휴게/종료만)
@@ -27,6 +28,11 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
     filterset_class = WorkRecordFilter
     ordering_fields = ["date", "created_at", "amount"]
 
+    def get_permissions(self):
+        if self.action in ("start_break", "end_break", "end_work"):
+            return [IsAuthenticated(), TenantResolvedAndStaff()]
+        return super().get_permissions()
+
     def get_queryset(self):
         return (
             WorkRecord.objects
@@ -34,6 +40,13 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
             .select_related("staff", "work_type")
             .order_by("-date", "-start_time")
         )
+
+    def _assert_self_service_or_manager(self, record):
+        if can_manage_payroll(self.request.user, record.tenant):
+            return
+        if record.staff.user_id == self.request.user.id:
+            return
+        raise PermissionDenied("본인 근무 기록만 처리할 수 있습니다.")
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, "tenant", None)
@@ -97,6 +110,7 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def start_break(self, request, pk=None):
         record = self.get_object()
+        self._assert_self_service_or_manager(record)
 
         if is_month_locked(record.staff, record.date):
             raise ValidationError("마감된 월입니다.")
@@ -112,6 +126,7 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def end_break(self, request, pk=None):
         record = self.get_object()
+        self._assert_self_service_or_manager(record)
 
         if is_month_locked(record.staff, record.date):
             raise ValidationError("마감된 월입니다.")
@@ -132,6 +147,7 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=["post"])
     def end_work(self, request, pk=None):
         record = self.get_object()
+        self._assert_self_service_or_manager(record)
 
         if is_month_locked(record.staff, record.date):
             raise ValidationError("마감된 월입니다.")

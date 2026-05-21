@@ -63,4 +63,5 @@ class AnswerKeyViewSet(ModelViewSet):
         serializer.save()
 
     def perform_destroy(self, instance):
+        self._validate_exam_scope(instance.exam)
         return super().perform_destroy(instance)

@@ -39,7 +39,16 @@ class SessionViewSet(viewsets.ModelViewSet):
     serializer_class = ClinicSessionSerializer
 
     def get_permissions(self):
-        if self.action in ("create", "update", "partial_update", "destroy"):
+        staff_only_actions = {
+            "create",
+            "update",
+            "partial_update",
+            "destroy",
+            "bulk_create",
+            "send_reminder",
+            "tree",
+        }
+        if self.action in staff_only_actions:
             return [IsAuthenticated(), TenantResolvedAndStaff()]
         return [IsAuthenticated(), TenantResolvedAndMember()]
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]

@@ -82,6 +82,34 @@ def _check_duplicate_file(target_folder_id: int | None, tenant: Tenant, scope: s
     return qs.filter(display_name=display_name).order_by("id").first()
 
 
+def _matchup_delete_protection_result(files: list[InventoryFile]) -> dict | None:
+    protected_file_ids: list[int] = []
+    for inv_file in files:
+        try:
+            matchup_doc = getattr(inv_file, "matchup_document", None)
+        except Exception:
+            matchup_doc = None
+        if matchup_doc is None:
+            continue
+        from apps.domains.matchup.services import document_has_protected_matchup_problems
+
+        if document_has_protected_matchup_problems(matchup_doc):
+            protected_file_ids.append(inv_file.id)
+
+    if not protected_file_ids:
+        return None
+
+    from apps.domains.matchup.services import PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL
+
+    return {
+        "ok": False,
+        "detail": PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL,
+        "code": "protected_matchup_document",
+        "protected_file_ids": protected_file_ids,
+        "status": 409,
+    }
+
+
 def move_file(
     *,
     tenant: Tenant,
@@ -131,6 +159,11 @@ def move_file(
             current_filename = safe_filename(display_name)
         else:
             return {"ok": False, "status": 409, "code": "duplicate", "existing_name": display_name, "detail": "File with same name exists"}
+
+    if overwrite_existing:
+        protection_result = _matchup_delete_protection_result([overwrite_existing])
+        if protection_result:
+            return protection_result
 
     new_key = build_r2_key(
         tenant_id=tenant.id,
@@ -245,6 +278,10 @@ def delete_folder_recursive(
     matchup_doc_count = 0
     r2_deleted = 0
 
+    protection_result = _matchup_delete_protection_result(files)
+    if protection_result:
+        return protection_result
+
     # 매치업 problem 이미지 cleanup (cascade 전 — InventoryFile cascade는 problem
     # 이미지 R2 객체를 알지 못함)
     for inv_file in files:
@@ -325,6 +362,7 @@ def move_folder(
     if source_folder.parent_id == target_folder_id:
         return {"ok": True, "detail": "Already in target"}
 
+    overwrite_files: list[InventoryFile] = []
     q = inv_repo.inventory_folder_filter_parent_id_name(tenant, target_folder_id, source_folder.name).filter(scope=scope)
     if scope == "student":
         q = q.filter(student_ps=student_ps)
@@ -338,6 +376,12 @@ def move_folder(
             source_folder.save(update_fields=["name", "updated_at"])
         else:
             return {"ok": False, "status": 409, "code": "duplicate", "existing_name": source_folder.name, "detail": "Folder with same name exists"}
+
+    if overwrite_folder:
+        _, overwrite_files = _collect_folder_tree(overwrite_folder, tenant, scope, student_ps)
+        protection_result = _matchup_delete_protection_result(overwrite_files)
+        if protection_result:
+            return protection_result
 
     folders, files = _collect_folder_tree(source_folder, tenant, scope, student_ps)
     source_folder_path = _get_folder_path_str(source_folder, tenant, scope, student_ps)
@@ -367,7 +411,6 @@ def move_folder(
 
     backup_plans: list[tuple[str, str]] = []
     if overwrite_folder:
-        _, overwrite_files = _collect_folder_tree(overwrite_folder, tenant, scope, student_ps)
         for existing_file in overwrite_files:
             existing_key = existing_file.r2_key
             backup_key = _move_backup_key(tenant, existing_key)

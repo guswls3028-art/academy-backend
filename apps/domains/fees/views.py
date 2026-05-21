@@ -8,12 +8,13 @@ from rest_framework.views import APIView
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import BasePermission, IsAuthenticated
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from rest_framework.pagination import PageNumberPagination
 
-from apps.core.permissions import TenantResolvedAndStaff, TenantResolvedAndMember
+from apps.core.permissions import TenantResolvedAndMember
+from apps.domains.student_app.permissions import get_request_student
 
 
 class FeesLargePagination(PageNumberPagination):
@@ -53,6 +54,34 @@ from . import services
 logger = logging.getLogger(__name__)
 
 
+class TenantResolvedAndFeeManager(BasePermission):
+    """수납 관리는 원장/관리자만 접근한다."""
+
+    message = "Fee manager membership required."
+
+    def has_permission(self, request, view):
+        tenant = getattr(request, "tenant", None)
+        user = getattr(request, "user", None)
+        if not tenant or not user or not user.is_authenticated:
+            return False
+        from academy.adapters.db.django import repositories_core as core_repo
+
+        if core_repo.membership_exists_staff(
+            tenant=tenant,
+            user=user,
+            staff_roles=("owner", "admin"),
+        ):
+            return True
+        return bool(user.is_superuser and getattr(user, "tenant_id", None) == tenant.id)
+
+
+class FeeManagementEnabledMixin:
+    def initial(self, request, *args, **kwargs):
+        super().initial(request, *args, **kwargs)
+        if not _fees_enabled(request):
+            raise PermissionDenied("수납 기능이 활성화되어 있지 않습니다.")
+
+
 def _validate_fee_template_lecture_tenant(*, tenant, lecture):
     if lecture is None:
         return
@@ -67,14 +96,22 @@ def _validate_student_fee_tenant_consistency(*, tenant, student, fee_template, e
         raise ValidationError({"fee_template": "다른 테넌트의 비목은 지정할 수 없습니다."})
     if enrollment is not None and enrollment.tenant_id != tenant.id:
         raise ValidationError({"enrollment": "다른 테넌트의 수강정보는 지정할 수 없습니다."})
+    if enrollment is not None and enrollment.student_id != student.id:
+        raise ValidationError({"enrollment": "학생과 수강정보가 일치하지 않습니다."})
+    if (
+        enrollment is not None
+        and fee_template.lecture_id is not None
+        and enrollment.lecture_id != fee_template.lecture_id
+    ):
+        raise ValidationError({"enrollment": "비목의 강의와 수강정보의 강의가 일치하지 않습니다."})
 
 
 # ========================================================
 # FeeTemplate (비목 관리)
 # ========================================================
 
-class FeeTemplateViewSet(ModelViewSet):
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+class FeeTemplateViewSet(FeeManagementEnabledMixin, ModelViewSet):
+    permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
     pagination_class = FeesLargePagination
 
     def get_serializer_class(self):
@@ -123,9 +160,9 @@ class FeeTemplateViewSet(ModelViewSet):
 # StudentFee (학생별 비용 할당)
 # ========================================================
 
-class StudentFeeViewSet(ModelViewSet):
+class StudentFeeViewSet(FeeManagementEnabledMixin, ModelViewSet):
     serializer_class = StudentFeeSerializer
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
     pagination_class = FeesLargePagination
 
     def get_queryset(self):
@@ -224,8 +261,8 @@ class StudentFeeViewSet(ModelViewSet):
 # StudentInvoice (청구서)
 # ========================================================
 
-class StudentInvoiceViewSet(ModelViewSet):
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+class StudentInvoiceViewSet(FeeManagementEnabledMixin, ModelViewSet):
+    permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
     pagination_class = FeesLargePagination
     http_method_names = ["get", "patch", "delete", "post"]
 
@@ -341,9 +378,9 @@ class StudentInvoiceViewSet(ModelViewSet):
 # FeePayment (수납 기록)
 # ========================================================
 
-class FeePaymentViewSet(ModelViewSet):
+class FeePaymentViewSet(FeeManagementEnabledMixin, ModelViewSet):
     serializer_class = FeePaymentSerializer
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
     pagination_class = FeesLargePagination
     http_method_names = ["get", "post"]
 
@@ -419,8 +456,8 @@ class FeePaymentViewSet(ModelViewSet):
 # Dashboard (수납 현황)
 # ========================================================
 
-class FeeDashboardView(APIView):
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+class FeeDashboardView(FeeManagementEnabledMixin, APIView):
+    permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
 
     def get(self, request):
         today = timezone.localdate()
@@ -431,8 +468,8 @@ class FeeDashboardView(APIView):
         return Response(stats)
 
 
-class FeeOverdueView(APIView):
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+class FeeOverdueView(FeeManagementEnabledMixin, APIView):
+    permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
 
     def get(self, request):
         tenant = request.tenant
@@ -450,24 +487,15 @@ class FeeOverdueView(APIView):
 # Student API (학생 조회 전용)
 # ========================================================
 
-def _resolve_student_or_children(user, tenant):
+def _resolve_student_or_children(request, tenant):
     """
     학생: 본인 student.
-    학부모: 자녀 student 목록.
+    학부모: 선택된 자녀(X-Student-Id), 없으면 기본 자녀.
     어느 쪽도 아니면 None.
     """
-    student = getattr(user, "student_profile", None)
-    if student:
+    student = get_request_student(request)
+    if student and student.tenant_id == tenant.id:
         return [student]
-    parent = getattr(user, "parent_profile", None)
-    if parent:
-        from apps.domains.students.models import Student as _Student
-        children = list(
-            _Student.objects.filter(
-                tenant=tenant, parent=parent, deleted_at__isnull=True
-            )
-        )
-        return children or None
     return None
 
 
@@ -477,7 +505,7 @@ class StudentFeeInvoiceListView(APIView):
 
     def get(self, request):
         tenant = request.tenant
-        students = _resolve_student_or_children(request.user, tenant)
+        students = _resolve_student_or_children(request, tenant)
         if not students:
             return Response({"detail": "학생 또는 학부모 계정이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -499,7 +527,7 @@ class StudentFeeInvoiceDetailView(APIView):
 
     def get(self, request, pk):
         tenant = request.tenant
-        students = _resolve_student_or_children(request.user, tenant)
+        students = _resolve_student_or_children(request, tenant)
         if not students:
             return Response({"detail": "학생 또는 학부모 계정이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -524,7 +552,7 @@ class StudentFeePaymentListView(APIView):
 
     def get(self, request):
         tenant = request.tenant
-        students = _resolve_student_or_children(request.user, tenant)
+        students = _resolve_student_or_children(request, tenant)
         if not students:
             return Response({"detail": "학생 또는 학부모 계정이 필요합니다."}, status=status.HTTP_403_FORBIDDEN)
 

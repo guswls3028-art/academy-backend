@@ -285,8 +285,13 @@ class HomeworkScoreViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         vd = serializer.validated_data
+        status_marker = object()
+        meta_status = vd.pop("status", status_marker)
         next_score = vd.get("score", obj.score)
         next_max = vd.get("max_score", obj.max_score)
+        if meta_status == HomeworkScore.MetaStatus.NOT_SUBMITTED:
+            next_score = None
+            next_max = None
         teacher_approved = vd.get("teacher_approved")
 
         progress_info = {"dispatched": False, "reason": None}
@@ -299,6 +304,14 @@ class HomeworkScoreViewSet(ModelViewSet):
             )
 
             score_obj: HomeworkScore = serializer.instance
+            if meta_status is not status_marker:
+                meta = dict(score_obj.meta or {})
+                if meta_status == HomeworkScore.MetaStatus.NOT_SUBMITTED:
+                    meta["status"] = HomeworkScore.MetaStatus.NOT_SUBMITTED
+                else:
+                    meta.pop("status", None)
+                score_obj.meta = meta or None
+                score_obj.save(update_fields=["meta", "updated_at"])
 
             score_obj = _apply_score_and_policy(
                 obj=score_obj,

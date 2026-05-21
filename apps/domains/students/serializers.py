@@ -358,7 +358,28 @@ class StudentCreateSerializer(serializers.ModelSerializer):
 class StudentUpdateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Student
-        exclude = ("tenant", "user")
+        fields = [
+            "id",
+            "ps_number",
+            "omr_code",
+            "name",
+            "gender",
+            "grade",
+            "school_type",
+            "phone",
+            "parent_phone",
+            "uses_identifier",
+            "elementary_school",
+            "high_school",
+            "high_school_class",
+            "major",
+            "middle_school",
+            "origin_middle_school",
+            "memo",
+            "address",
+            "is_managed",
+        ]
+        read_only_fields = ("id", "omr_code")
 
     def validate(self, attrs):
         request = self.context.get("request")

@@ -17,14 +17,14 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
-from apps.domains.student_app.permissions import IsStudentOrParent
+from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.domains.exams.models import Exam, ExamQuestion
 from apps.domains.exams.services.template_resolver import resolve_template_exam
 from .serializers import StudentExamSerializer
 
 
-def _exam_queryset_for_user(user, tenant):
-    """Enrollment 기준: student.user + tenant 로 연결.
+def _exam_queryset_for_student(student, tenant):
+    """Enrollment 기준: request student + tenant 로 연결.
 
     2026-05-13 학원장 결정 정합: Exam.status 단위 폐기 → 학생별 Achievement SSOT.
     이전엔 `.exclude(status=CLOSED)` 로 학생 화면에서 CLOSED 시험을 숨겼으나,
@@ -35,7 +35,7 @@ def _exam_queryset_for_user(user, tenant):
     return (
         Exam.objects.filter(
             exam_type=Exam.ExamType.REGULAR,
-            exam_enrollments__enrollment__student__user=user,
+            exam_enrollments__enrollment__student=student,
             exam_enrollments__enrollment__tenant=tenant,
             exam_enrollments__enrollment__status="ACTIVE",  # ✅ 퇴원 학생 방어
             is_active=True,
@@ -81,16 +81,28 @@ class StudentExamListView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"items": []})
-        qs = _exam_queryset_for_user(request.user, tenant)
+        request_student = get_request_student(request)
+        if not request_student:
+            return Response({"items": []})
+        qs = _exam_queryset_for_student(request_student, tenant)
         exams = list(qs)
 
         # 제출 상태 일괄 조회 (N+1 방지)
         submission_status_map = {}
         if exams:
             from apps.domains.submissions.models.submission import Submission
+            from apps.domains.enrollment.models import Enrollment
+
             exam_ids = [e.id for e in exams]
+            enrollment_ids = list(
+                Enrollment.objects.filter(
+                    tenant=tenant,
+                    student=request_student,
+                    status="ACTIVE",
+                ).values_list("id", flat=True)
+            )
             subs = Submission.objects.filter(
-                user=request.user,
+                enrollment_id__in=enrollment_ids,
                 target_type=Submission.TargetType.EXAM,
                 target_id__in=exam_ids,
             ).values_list("target_id", "status")
@@ -114,7 +126,13 @@ class StudentExamDetailView(APIView):
                 {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        qs = _exam_queryset_for_user(request.user, tenant).filter(id=pk)
+        request_student = get_request_student(request)
+        if not request_student:
+            return Response(
+                {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        qs = _exam_queryset_for_student(request_student, tenant).filter(id=pk)
         exam = qs.first()
         if not exam:
             return Response(
@@ -135,7 +153,13 @@ class StudentExamQuestionsView(APIView):
                 {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        qs = _exam_queryset_for_user(request.user, tenant).filter(id=pk)
+        request_student = get_request_student(request)
+        if not request_student:
+            return Response(
+                {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        qs = _exam_queryset_for_student(request_student, tenant).filter(id=pk)
         exam = qs.first()
         if not exam:
             return Response(
@@ -157,19 +181,10 @@ class StudentExamQuestionsView(APIView):
         return Response(list(questions))
 
 
-def _get_enrollment_for_exam(user, exam_id, tenant=None):
+def _get_enrollment_for_exam(student, exam_id, tenant=None):
     """시험 응시 권한이 있는 enrollment 한 개 반환. (enrollment, tenant) 또는 (None, None)."""
     from apps.domains.exams.models import ExamEnrollment
-    from apps.domains.students.models import Student
 
-    student = getattr(user, "student_profile", None)
-    if not student:
-        try:
-            # request.tenant 기반으로 정확한 student 조회
-            qs = Student.objects.filter(user=user, tenant=tenant) if tenant else Student.objects.none()
-            student = qs.first()
-        except Exception:
-            return None, None
     if not student:
         return None, None
     # tenant는 필수 — 없으면 조회 불가 (cross-tenant fallback 금지)
@@ -206,14 +221,20 @@ class StudentExamSubmitView(APIView):
                 {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        qs = _exam_queryset_for_user(request.user, tenant).filter(id=exam_id)
+        request_student = get_request_student(request)
+        if not request_student:
+            return Response(
+                {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        qs = _exam_queryset_for_student(request_student, tenant).filter(id=exam_id)
         exam = qs.first()
         if not exam:
             return Response(
                 {"detail": "시험을 찾을 수 없거나 응시 권한이 없습니다."},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        enrollment, tenant = _get_enrollment_for_exam(request.user, exam_id, tenant=tenant)
+        enrollment, tenant = _get_enrollment_for_exam(request_student, exam_id, tenant=tenant)
         if not enrollment or not tenant:
             return Response(
                 {"detail": "응시 대상이 아닙니다."},
@@ -248,7 +269,7 @@ class StudentExamSubmitView(APIView):
                 prev_submissions = list(
                     Submission.objects.select_for_update()
                     .filter(
-                        user=request.user,
+                        enrollment_id=enrollment.id,
                         target_type=Submission.TargetType.EXAM,
                         target_id=exam_id,
                         status__in=in_progress_statuses + ["done"],
@@ -282,14 +303,19 @@ class StudentExamSubmitView(APIView):
                         from_status=Submission.Status.DONE,
                     )
 
+                submission_user = request_student.user if request_student.user_id else request.user
+                submission_meta = None
+                if getattr(submission_user, "id", None) != getattr(request.user, "id", None):
+                    submission_meta = {"submitted_by_user_id": request.user.id}
                 submission = Submission.objects.create(
                     tenant=tenant,
-                    user=request.user,
+                    user=submission_user,
                     enrollment_id=enrollment.id,
                     target_type=Submission.TargetType.EXAM,
                     target_id=exam_id,
                     source=Submission.Source.ONLINE,
                     payload={"answers": answers},
+                    meta=submission_meta,
                     status=Submission.Status.SUBMITTED,
                 )
         except IntegrityError as e:

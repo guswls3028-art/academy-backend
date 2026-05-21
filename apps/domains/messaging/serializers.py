@@ -279,3 +279,12 @@ class AutoSendConfigUpdateSerializer(serializers.Serializer):
     )
     delay_value = serializers.IntegerField(required=False, allow_null=True, min_value=0)
     show_actual_time = serializers.BooleanField(required=False)
+
+    def validate(self, attrs):
+        delay_mode = attrs.get("delay_mode")
+        delay_value = attrs.get("delay_value")
+        if delay_mode == "scheduled_hour" and delay_value is not None and delay_value > 23:
+            raise serializers.ValidationError(
+                {"delay_value": "지정 시각은 0~23 사이여야 합니다."}
+            )
+        return attrs

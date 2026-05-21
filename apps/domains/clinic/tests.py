@@ -1177,6 +1177,40 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(participant.status, "booked")
         self.assertIsNone(participant.completed_at)
 
+    def test_student_cannot_bulk_create_sessions(self):
+        resp = self.client.post(
+            "/api/v1/clinic/sessions/bulk-create/",
+            {
+                "dates": [str(datetime.date.today() + datetime.timedelta(days=1))],
+                "start_time": "14:00",
+                "duration_minutes": 60,
+                "location": "101호",
+                "max_participants": 10,
+                "target_lecture_ids": [],
+            },
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 403, resp.data)
+
+    def test_student_cannot_send_session_reminder(self):
+        resp = self.client.post(
+            f"/api/v1/clinic/sessions/{self.data['clinic_session'].id}/send_reminder/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 403, resp.data)
+
+    def test_student_cannot_read_operations_tree(self):
+        resp = self.client.get(
+            "/api/v1/clinic/sessions/tree/",
+            {"year": datetime.date.today().year, "month": datetime.date.today().month},
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 403, resp.data)
+
 
 class ScoreValidationAPITest(TestCase, ClinicTestMixin):
     """서비스 레벨 점수 검증 — 만점 초과/음수 점수 거부 확인 (보강)."""

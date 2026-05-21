@@ -17,6 +17,7 @@ from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
+from apps.domains.student_app.permissions import get_request_student
 
 
 def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
@@ -25,15 +26,17 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     enrollment/result 없으면 Http404.
     tenant: 테넌트 격리를 위해 반드시 전달해야 함.
     """
-    user = request.user
     if tenant is None:
         tenant = getattr(request, "tenant", None)
     if tenant is None:
         raise Http404("tenant resolution failed")
     exam_id = int(exam_id)
-    exam = Exam.objects.filter(id=exam_id).first()
+    exam = Exam.objects.filter(id=exam_id, tenant=tenant).first()
     if not exam:
         raise Http404("exam not found")
+    student = get_request_student(request)
+    if not student:
+        raise Http404("student not found")
 
     # 해당 시험의 응시 대상 enrollment만 사용 (한 학생이 여러 강의 수강 시 정확한 결과 조회)
     allowed_enrollment_ids = ExamEnrollment.objects.filter(
@@ -41,7 +44,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     ).values_list("enrollment_id", flat=True)
     # ⚠️ tenant 필터 필수: 타 테넌트 enrollment 접근 차단
     enrollment_qs = Enrollment.objects.filter(id__in=allowed_enrollment_ids, tenant=tenant)
-    enrollment_qs = enrollment_qs.filter(student__user=user)
+    enrollment_qs = enrollment_qs.filter(student=student)
 
     enrollment = enrollment_qs.first()
     if not enrollment:

@@ -15,7 +15,7 @@ from academy.adapters.db.django.repositories_video import (
 )
 from apps.core.models import Tenant
 from apps.domains.video.models import Video, VideoTranscodeJob
-from apps.domains.video.views.internal_views import VideoScanStuckView
+from apps.domains.video.views.internal_views import VideoProcessingCompleteView, VideoScanStuckView
 from apps.domains.video.views.video_views import VideoViewSet
 
 
@@ -60,6 +60,89 @@ class VideoJobFailureStatusTests(TestCase):
             error_reason="encoder failed",
             ttl=None,
         )
+        mock_delete_progress.assert_called_once_with(self.tenant.id, self.video.id)
+
+
+@override_settings(LAMBDA_INTERNAL_API_KEY="test-internal", INTERNAL_API_ALLOW_IPS="")
+class VideoProcessingCompleteViewTests(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = Tenant.objects.create(
+            name="Video Complete Tenant",
+            code="video-complete",
+            is_active=True,
+        )
+        self.video = Video.objects.create(
+            tenant=self.tenant,
+            title="Video",
+            status=Video.Status.PROCESSING,
+        )
+        self.job = VideoTranscodeJob.objects.create(
+            tenant=self.tenant,
+            video=self.video,
+            state=VideoTranscodeJob.State.RUNNING,
+            attempt_count=1,
+            aws_batch_job_id="aws-current",
+        )
+        self.video.current_job = self.job
+        self.video.save(update_fields=["current_job"])
+
+    def _post_complete(self, data):
+        request = self.factory.post(
+            f"/api/v1/internal/videos/{self.video.id}/processing-complete/",
+            data,
+            format="json",
+            HTTP_X_INTERNAL_KEY="test-internal",
+        )
+        view = VideoProcessingCompleteView.as_view()
+        return view(request, video_id=self.video.id)
+
+    def test_rejects_missing_job_id(self):
+        response = self._post_complete({"hls_path": "videos/hls/master.m3u8", "duration": 12})
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.video.refresh_from_db()
+        self.assertNotEqual(self.video.status, Video.Status.READY)
+
+    def test_rejects_stale_non_current_job_id(self):
+        stale_job = VideoTranscodeJob.objects.create(
+            tenant=self.tenant,
+            video=self.video,
+            state=VideoTranscodeJob.State.DEAD,
+            attempt_count=1,
+            aws_batch_job_id="aws-stale",
+        )
+
+        response = self._post_complete(
+            {
+                "job_id": str(stale_job.id),
+                "hls_path": "videos/hls/master.m3u8",
+                "duration": 12,
+            }
+        )
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.video.refresh_from_db()
+        self.assertNotEqual(self.video.status, Video.Status.READY)
+
+    @patch("apps.domains.video.redis_status_cache.delete_video_progress_key")
+    @patch("apps.domains.video.redis_status_cache.cache_video_status")
+    def test_current_job_id_completes_through_job_complete(self, mock_cache_status, mock_delete_progress):
+        response = self._post_complete(
+            {
+                "job_id": str(self.job.id),
+                "hls_path": "videos/hls/master.m3u8",
+                "duration": 12,
+            }
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.video.refresh_from_db()
+        self.job.refresh_from_db()
+        self.assertEqual(self.video.status, Video.Status.READY)
+        self.assertEqual(self.video.hls_path, "videos/hls/master.m3u8")
+        self.assertEqual(self.job.state, VideoTranscodeJob.State.SUCCEEDED)
+        mock_cache_status.assert_called_once()
         mock_delete_progress.assert_called_once_with(self.tenant.id, self.video.id)
 
     @patch("apps.domains.video.redis_status_cache.delete_video_progress_key")

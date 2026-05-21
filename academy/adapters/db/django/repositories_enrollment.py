@@ -90,12 +90,12 @@ def get_session_by_id_lecture(session_id, lecture):
 
 def get_session_by_id_with_lecture(session_id):
     from apps.domains.lectures.models import Session
-    return Session.objects.select_related("lecture").get(id=session_id)
+    return Session.objects.select_related("lecture").filter(id=session_id).first()
 
 
 def get_enrollment_by_id_with_lecture(enrollment_id, tenant):
     from apps.domains.enrollment.models import Enrollment
-    return Enrollment.objects.select_related("lecture").get(id=enrollment_id, tenant=tenant)
+    return Enrollment.objects.select_related("lecture").filter(id=enrollment_id, tenant=tenant).first()
 
 
 def session_enrollment_get_or_create(session, enrollment, defaults):

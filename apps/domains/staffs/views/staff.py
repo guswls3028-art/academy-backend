@@ -9,9 +9,9 @@ from rest_framework.decorators import action
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from ..models import Staff, WorkRecord, ExpenseRecord
+from ..models import Staff, WorkRecord, ExpenseRecord, WorkType
 from ..serializers import (
     StaffListSerializer,
     StaffDetailSerializer,
@@ -42,6 +42,11 @@ class StaffViewSet(viewsets.ModelViewSet):
     filterset_class = StaffFilter
     search_fields = ["name", "phone"]
     ordering_fields = ["name", "created_at", "is_active"]
+
+    def get_permissions(self):
+        if self.action in ("work_current", "start_work"):
+            return [IsAuthenticated(), TenantResolvedAndStaff()]
+        return super().get_permissions()
 
     def get_serializer_class(self):
         if self.action == "list":
@@ -255,9 +260,16 @@ class StaffViewSet(viewsets.ModelViewSet):
     # 실시간 근무 (Staff 기준)
     # ===========================
 
-    @action(detail=True, methods=["get"], url_path="work-records/current")
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="work-records/current",
+        permission_classes=[IsAuthenticated, TenantResolvedAndStaff],
+    )
     def work_current(self, request, pk=None):
         staff = self.get_object()
+        if not can_manage_payroll(request.user, staff.tenant) and staff.user_id != request.user.id:
+            raise PermissionDenied("본인 근무 기록만 조회할 수 있습니다.")
 
         record = (
             WorkRecord.objects
@@ -298,9 +310,16 @@ class StaffViewSet(viewsets.ModelViewSet):
             "break_total_seconds": break_sec,
         })
 
-    @action(detail=True, methods=["post"], url_path="work-records/start-work")
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="work-records/start-work",
+        permission_classes=[IsAuthenticated, TenantResolvedAndStaff],
+    )
     def start_work(self, request, pk=None):
         staff = self.get_object()
+        if not can_manage_payroll(request.user, staff.tenant) and staff.user_id != request.user.id:
+            raise PermissionDenied("본인 근무만 시작할 수 있습니다.")
         now = timezone.localtime(timezone.now())
 
         if is_month_locked(staff, now.date()):
@@ -312,6 +331,12 @@ class StaffViewSet(viewsets.ModelViewSet):
         work_type_id = request.data.get("work_type")
         if not work_type_id:
             raise ValidationError("work_type은 필수입니다.")
+        if not WorkType.objects.filter(
+            id=work_type_id,
+            tenant=staff.tenant,
+            is_active=True,
+        ).exists():
+            raise ValidationError({"work_type": "선택한 근무 유형이 유효하지 않습니다."})
 
         record = staff_repo.work_record_create_start(
             staff=staff,

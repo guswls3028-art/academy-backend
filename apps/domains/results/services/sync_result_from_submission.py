@@ -13,6 +13,7 @@ from django.utils import timezone
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.results.models import Result, ResultItem
 from apps.domains.results.guards.grading_contract import GradingContractGuard
+from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 
 
 @transaction.atomic
@@ -34,6 +35,8 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     enrollment_id = getattr(submission, "enrollment_id", None)
     if not enrollment_id:
         return None
+    enrollment = validate_exam_submission_scope(submission=submission, exam=exam)
+    enrollment_id = int(enrollment.id)
 
     try:
         sheet, answer_key = GradingContractGuard.validate_exam_for_grading(exam)

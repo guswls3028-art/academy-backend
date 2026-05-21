@@ -11,6 +11,7 @@ from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.domains.community.api.views.admin_views import AdminPostViewSet
 from apps.domains.community.api.views.post_views import PostViewSet
+from apps.domains.community.api.views.scope_node_views import ScopeNodeViewSet
 from apps.domains.community.models import (
     CommunityReport,
     PostAttachment,
@@ -242,6 +243,34 @@ class TestScopedPostMappingVisibility(CommunityHardeningFixture):
 
 
 class TestParentCommunityReadOnly(CommunityHardeningFixture):
+    def test_limited_reader_scope_nodes_follow_active_enrollment(self):
+        view = ScopeNodeViewSet.as_view({"get": "list"})
+
+        parent_response = view(
+            self._request("get", self.parent_user, "/api/v1/community/scope-nodes/")
+        )
+        student_response = view(
+            self._request("get", self.student_user, "/api/v1/community/scope-nodes/")
+        )
+        owner_response = view(
+            self._request("get", self.owner, "/api/v1/community/scope-nodes/")
+        )
+
+        self.assertEqual(parent_response.status_code, 200)
+        parent_ids = {row["id"] for row in parent_response.data}
+        self.assertIn(self.visible_node.id, parent_ids)
+        self.assertNotIn(self.hidden_node.id, parent_ids)
+
+        self.assertEqual(student_response.status_code, 200)
+        student_ids = {row["id"] for row in student_response.data}
+        self.assertIn(self.visible_node.id, student_ids)
+        self.assertNotIn(self.hidden_node.id, student_ids)
+
+        self.assertEqual(owner_response.status_code, 200)
+        owner_ids = {row["id"] for row in owner_response.data}
+        self.assertIn(self.visible_node.id, owner_ids)
+        self.assertIn(self.hidden_node.id, owner_ids)
+
     def test_parent_board_list_and_counts_follow_child_enrollments(self):
         board = PostViewSet.as_view({"get": "board"})
         response = board(
@@ -263,7 +292,7 @@ class TestParentCommunityReadOnly(CommunityHardeningFixture):
         self.assertEqual(response.data["by_node_id"], {self.visible_node.id: 1})
         self.assertNotIn(self.hidden_node.id, response.data["by_node_id"])
 
-    def test_parent_board_list_and_counts_include_all_children_enrollments(self):
+    def test_parent_board_list_and_counts_follow_selected_child_only(self):
         second_student_user = User.objects.create_user(
             username="comm_second_child",
             password="pw1234",
@@ -294,25 +323,45 @@ class TestParentCommunityReadOnly(CommunityHardeningFixture):
 
         board = PostViewSet.as_view({"get": "board"})
         response = board(
-            self._request("get", self.parent_user, "/api/v1/community/posts/board/?page_size=20")
+            self._request(
+                "get",
+                self.parent_user,
+                "/api/v1/community/posts/board/?page_size=20",
+                HTTP_X_STUDENT_ID=str(self.student.id),
+            )
         )
 
         self.assertEqual(response.status_code, 200)
         ids = {row["id"] for row in response.data["results"]}
         self.assertIn(self.visible_post.id, ids)
-        self.assertIn(self.hidden_post.id, ids)
+        self.assertNotIn(self.hidden_post.id, ids)
 
         counts = PostViewSet.as_view({"get": "counts"})
         response = counts(
-            self._request("get", self.parent_user, "/api/v1/community/posts/counts/?post_type=board")
+            self._request(
+                "get",
+                self.parent_user,
+                "/api/v1/community/posts/counts/?post_type=board",
+                HTTP_X_STUDENT_ID=str(self.student.id),
+            )
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["total"], 2)
-        self.assertEqual(
-            response.data["by_node_id"],
-            {self.visible_node.id: 1, self.hidden_node.id: 1},
+        self.assertEqual(response.data["total"], 1)
+        self.assertEqual(response.data["by_node_id"], {self.visible_node.id: 1})
+
+        second_child_response = board(
+            self._request(
+                "get",
+                self.parent_user,
+                "/api/v1/community/posts/board/?page_size=20",
+                HTTP_X_STUDENT_ID=str(second_student.id),
+            )
         )
+        self.assertEqual(second_child_response.status_code, 200)
+        second_child_ids = {row["id"] for row in second_child_response.data["results"]}
+        self.assertNotIn(self.visible_post.id, second_child_ids)
+        self.assertIn(self.hidden_post.id, second_child_ids)
 
     def test_limited_reader_counts_hide_private_post_types(self):
         other_student_user = User.objects.create_user(
@@ -381,6 +430,95 @@ class TestParentCommunityReadOnly(CommunityHardeningFixture):
         )
         self.assertEqual(owner_qna_response.status_code, 200)
         self.assertEqual(owner_qna_response.data["total"], 1)
+
+    def test_parent_can_read_child_private_qna_and_counsel_only(self):
+        qna = PostEntity.objects.create(
+            tenant=self.tenant,
+            post_type="qna",
+            title="Child qna",
+            content="private",
+            created_by=self.student,
+            author_role="student",
+            status="published",
+        )
+        counsel = PostEntity.objects.create(
+            tenant=self.tenant,
+            post_type="counsel",
+            title="Child counsel",
+            content="private",
+            created_by=self.student,
+            author_role="student",
+            status="published",
+        )
+        reply = PostReply.objects.create(
+            tenant=self.tenant,
+            post=qna,
+            content="answer",
+            author_role="staff",
+        )
+        other_student_user = User.objects.create_user(
+            username="comm_other_private",
+            password="pw1234",
+            tenant=self.tenant,
+            name="Other Student",
+        )
+        other_student = Student.objects.create(
+            tenant=self.tenant,
+            user=other_student_user,
+            ps_number="S009",
+            name="Other Student",
+            omr_code="99990000",
+        )
+        other_qna = PostEntity.objects.create(
+            tenant=self.tenant,
+            post_type="qna",
+            title="Other qna",
+            content="private",
+            created_by=other_student,
+            author_role="student",
+            status="published",
+        )
+
+        list_view = PostViewSet.as_view({"get": "list"})
+        response = list_view(
+            self._request("get", self.parent_user, "/api/v1/community/posts/?post_type=qna&page_size=100")
+        )
+        self.assertEqual(response.status_code, 200)
+        rows = response.data.get("results", response.data) if isinstance(response.data, dict) else response.data
+        ids = {row["id"] for row in rows}
+        self.assertIn(qna.id, ids)
+        self.assertNotIn(other_qna.id, ids)
+
+        retrieve = PostViewSet.as_view({"get": "retrieve"})
+        self.assertEqual(
+            retrieve(
+                self._request("get", self.parent_user, f"/api/v1/community/posts/{qna.id}/"),
+                pk=qna.id,
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            retrieve(
+                self._request("get", self.parent_user, f"/api/v1/community/posts/{counsel.id}/"),
+                pk=counsel.id,
+            ).status_code,
+            200,
+        )
+        self.assertEqual(
+            retrieve(
+                self._request("get", self.parent_user, f"/api/v1/community/posts/{other_qna.id}/"),
+                pk=other_qna.id,
+            ).status_code,
+            404,
+        )
+
+        replies = PostViewSet.as_view({"get": "replies"})
+        response = replies(
+            self._request("get", self.parent_user, f"/api/v1/community/posts/{qna.id}/replies/"),
+            pk=qna.id,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["id"] for row in response.data], [reply.id])
 
     def test_parent_cannot_write_replies_or_attachments(self):
         reply = PostReply.objects.create(

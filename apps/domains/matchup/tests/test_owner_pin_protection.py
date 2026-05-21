@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import json
 import pytest
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
@@ -118,6 +119,9 @@ class TestPinHelperIntegration:
         # InventoryFile 은 매치업 doc 의 1:1 의존 — 가짜 row.
         inv = InventoryFile.objects.create(
             tenant=tenant,
+            scope="admin",
+            student_ps="",
+            display_name="pin-test.pdf",
             r2_key=f"pin-test-key-{id(self) % 99999}",
             original_name="pin-test.pdf",
             content_type="application/pdf",
@@ -251,3 +255,103 @@ class TestPinHelperIntegration:
             number=4,
             meta__is_partial=True,
         ).exists()
+
+    def _staff_user(self, tenant):
+        from django.contrib.auth import get_user_model
+        from apps.core.models import TenantMembership
+
+        user = get_user_model().objects.create_user(
+            username=f"pin-staff-{id(self)}",
+            password="test1234",
+            tenant=tenant,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=user, role="teacher")
+        return user
+
+    def _request(self, method: str, path: str, *, tenant, user, body: dict | None = None):
+        from rest_framework.test import APIRequestFactory
+
+        factory = APIRequestFactory()
+        if method == "delete":
+            request = factory.delete(path)
+        else:
+            request = factory.post(
+                path,
+                data=json.dumps(body or {}),
+                content_type="application/json",
+            )
+        request.tenant = tenant
+        return request, patch(
+            "apps.domains.matchup.views.JWTAuthentication.authenticate",
+            return_value=(user, None),
+        )
+
+    def test_single_problem_delete_rejects_owner_pinned_problem(self):
+        from apps.domains.matchup.models import MatchupProblem
+        from apps.domains.matchup.views import ProblemDetailView
+
+        tenant, _doc, pinned, _auto = self._setup_tenant_and_problems()
+        pinned.meta = {"manual_owner_pinned": True}
+        pinned.save(update_fields=["meta"])
+        user = self._staff_user(tenant)
+        request, auth = self._request(
+            "delete",
+            f"/api/v1/matchup/problems/{pinned.id}/",
+            tenant=tenant,
+            user=user,
+        )
+
+        with auth, patch("apps.domains.matchup.views.delete_problem_with_r2") as deleter:
+            response = ProblemDetailView.as_view()(request, problem_id=pinned.id)
+
+        assert response.status_code == 409
+        deleter.assert_not_called()
+        assert MatchupProblem.objects.filter(id=pinned.id).exists()
+
+    def test_bulk_delete_preserves_owner_pinned_problem(self):
+        from apps.domains.matchup.models import MatchupProblem
+        from apps.domains.matchup.views import DocumentBulkDeleteProblemsView
+
+        tenant, doc, pinned, auto = self._setup_tenant_and_problems()
+        pinned.meta = {"manual_owner_pinned": True}
+        pinned.save(update_fields=["meta"])
+        user = self._staff_user(tenant)
+        request, auth = self._request(
+            "post",
+            f"/api/v1/matchup/documents/{doc.id}/bulk-delete-problems/",
+            tenant=tenant,
+            user=user,
+            body={"problem_ids": [pinned.id, auto.id]},
+        )
+
+        with auth, patch("apps.domains.matchup.views.delete_problem_with_r2", side_effect=lambda p: p.delete()):
+            response = DocumentBulkDeleteProblemsView.as_view()(request, doc_id=doc.id)
+
+        payload = json.loads(response.content)
+        assert response.status_code == 200
+        assert payload["deleted"] == 1
+        assert payload["preserved_protected"] == 1
+        assert MatchupProblem.objects.filter(id=pinned.id).exists()
+        assert not MatchupProblem.objects.filter(id=auto.id).exists()
+
+    def test_document_delete_rejects_document_with_owner_pinned_problem(self):
+        from apps.domains.matchup.models import MatchupDocument
+        from apps.domains.matchup.views import DocumentDetailView
+
+        tenant, doc, pinned, _auto = self._setup_tenant_and_problems()
+        pinned.meta = {"manual_owner_pinned": True}
+        pinned.save(update_fields=["meta"])
+        user = self._staff_user(tenant)
+        request, auth = self._request(
+            "delete",
+            f"/api/v1/matchup/documents/{doc.id}/",
+            tenant=tenant,
+            user=user,
+        )
+
+        with auth, patch("apps.domains.matchup.views.delete_document_with_r2") as deleter:
+            response = DocumentDetailView.as_view()(request, doc_id=doc.id)
+
+        assert response.status_code == 409
+        deleter.assert_not_called()
+        assert MatchupDocument.objects.filter(id=doc.id).exists()

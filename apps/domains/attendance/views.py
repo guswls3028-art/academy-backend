@@ -12,6 +12,7 @@ from rest_framework import status
 from rest_framework.exceptions import NotFound
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
+from apps.core.parsing import parse_bool
 from .models import Attendance
 from .serializers import (
     AttendanceSerializer,
@@ -25,6 +26,10 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.lectures.models import Session
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import ExamEnrollment
+from apps.domains.fees.services import (
+    auto_assign_fees_on_enrollment,
+    deactivate_fees_for_enrollment,
+)
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.ai.gateway import dispatch_job
@@ -161,8 +166,18 @@ class AttendanceViewSet(ModelViewSet):
 
         exam_enrollment_deleted = 0
         if exam_ids:
+            remaining_exam_ids = set(
+                SessionEnrollment.objects.filter(
+                    tenant=tenant,
+                    enrollment=enrollment,
+                    session__exams__id__in=exam_ids,
+                )
+                .values_list("session__exams__id", flat=True)
+                .distinct()
+            )
+            removable_exam_ids = [exam_id for exam_id in exam_ids if exam_id not in remaining_exam_ids]
             exam_enrollment_deleted, _ = ExamEnrollment.objects.filter(
-                exam_id__in=exam_ids,
+                exam_id__in=removable_exam_ids,
                 enrollment=enrollment,
                 enrollment__tenant=tenant,
             ).delete()
@@ -195,7 +210,7 @@ class AttendanceViewSet(ModelViewSet):
         new_status = request.data.get("status")
 
         if new_status == "SECESSION" and instance.status != "SECESSION":
-            if not request.data.get("confirm_secession"):
+            if not parse_bool(request.data.get("confirm_secession", False), field_name="confirm_secession"):
                 return Response(
                     {"detail": "퇴원 처리는 confirm_secession: true를 포함해야 합니다."},
                     status=status.HTTP_400_BAD_REQUEST,
@@ -207,6 +222,7 @@ class AttendanceViewSet(ModelViewSet):
             Enrollment.objects.filter(
                 id=enrollment.id, tenant=tenant
             ).update(status="INACTIVE")
+            deactivate_fees_for_enrollment(enrollment)
 
             # 해당 수강등록의 모든 출결을 SECESSION으로 변경
             Attendance.objects.filter(
@@ -349,6 +365,12 @@ class AttendanceViewSet(ModelViewSet):
             if not created_new and enrollment.status != "ACTIVE":
                 enrollment.status = "ACTIVE"
                 enrollment.save(update_fields=["status"])
+            auto_assign_fees_on_enrollment(
+                tenant,
+                enrollment.student,
+                session.lecture,
+                enrollment,
+            )
 
             enroll_repo.session_enrollment_get_or_create_tenant(
                 tenant=tenant,

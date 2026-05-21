@@ -17,6 +17,32 @@ try:
 except ImportError:
     delete_object_r2_storage = None  # type: ignore
 
+PROTECTED_MATCHUP_PROBLEM_DELETE_DETAIL = "학원장/수동 선별 문제는 삭제할 수 없습니다."
+PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL = (
+    "학원장/수동 선별 문제가 포함된 매치업 문서는 삭제할 수 없습니다."
+)
+
+
+def is_problem_delete_protected(problem: MatchupProblem) -> bool:
+    """학원장 데이터 보호 SSOT: 수동/보고서 선별 문제는 hard delete 대상이 아니다."""
+    meta = problem.meta or {}
+    return meta.get("manual") is True or meta.get("manual_owner_pinned") is True
+
+
+def protected_matchup_problem_ids(problem_queryset) -> list[int]:
+    """QuerySet 안에서 삭제 보호 대상 problem id만 반환한다."""
+    from django.db.models import Q
+
+    return list(
+        problem_queryset.filter(
+            Q(meta__manual=True) | Q(meta__manual_owner_pinned=True)
+        ).values_list("id", flat=True)
+    )
+
+
+def document_has_protected_matchup_problems(document: MatchupDocument) -> bool:
+    return bool(protected_matchup_problem_ids(document.problems.all()))
+
 
 # ── Heuristic reranker 가중치 ───────────────────────────
 #

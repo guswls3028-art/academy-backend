@@ -15,7 +15,7 @@ from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.test import TestCase
 from django.utils import timezone
-from rest_framework.test import APITestCase
+from rest_framework.test import APIRequestFactory, APITestCase, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.fees.models import (
@@ -30,6 +30,10 @@ from apps.domains.fees.services import (
     mark_overdue_invoices,
     record_payment,
 )
+from apps.domains.fees.views import StudentFeeInvoiceDetailView, StudentFeeInvoiceListView, StudentFeePaymentListView
+from apps.domains.enrollment.models import Enrollment
+from apps.domains.lectures.models import Lecture
+from apps.domains.parents.models import Parent
 from apps.domains.students.models import Student
 
 User = get_user_model()
@@ -155,6 +159,65 @@ class PaymentLifecycleTest(FeesTestMixin, TestCase):
         # p1 다시 취소 시도 → ValueError
         with self.assertRaises(ValueError):
             cancel_payment(self.tenant, p1.id)
+
+
+class StudentFeeParentSelectionTest(FeesTestMixin, TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = self.make_tenant(code="t_parent_fee")
+        self.parent_user = User.objects.create_user(
+            username="parent_fee_user",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.parent_user, role="parent")
+        self.parent = Parent.objects.create(
+            tenant=self.tenant,
+            user=self.parent_user,
+            name="Parent",
+            phone="01099990000",
+        )
+        self.student_a = self.make_student(self.tenant, suffix=101)
+        self.student_b = self.make_student(self.tenant, suffix=102)
+        self.student_a.parent = self.parent
+        self.student_b.parent = self.parent
+        self.student_a.save(update_fields=["parent"])
+        self.student_b.save(update_fields=["parent"])
+        self.invoice_a = self.make_invoice(self.tenant, self.student_a, total=100_000, year=2026, month=6)
+        self.invoice_b = self.make_invoice(self.tenant, self.student_b, total=200_000, year=2026, month=6)
+
+    def _request(self, path: str, student: Student):
+        request = self.factory.get(path, HTTP_X_STUDENT_ID=str(student.id))
+        force_authenticate(request, user=self.parent_user)
+        request.tenant = self.tenant
+        return request
+
+    def test_parent_invoice_list_uses_selected_child_only(self):
+        response = StudentFeeInvoiceListView.as_view()(
+            self._request("/student/fees/invoices/", self.student_a)
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["id"] for row in response.data], [self.invoice_a.id])
+
+    def test_parent_invoice_detail_rejects_other_child_when_selected_child_differs(self):
+        response = StudentFeeInvoiceDetailView.as_view()(
+            self._request(f"/student/fees/invoices/{self.invoice_b.id}/", self.student_a),
+            pk=self.invoice_b.id,
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_parent_payment_list_uses_selected_child_only(self):
+        payment_a = record_payment(self.tenant, self.invoice_a.id, 100_000, "CASH", idempotency_key="child-a")
+        record_payment(self.tenant, self.invoice_b.id, 200_000, "CASH", idempotency_key="child-b")
+
+        response = StudentFeePaymentListView.as_view()(
+            self._request("/student/fees/payments/", self.student_a)
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["id"] for row in response.data], [payment_a.id])
 
 
 class IdempotencyTest(FeesTestMixin, TestCase):
@@ -336,7 +399,7 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
         TenantMembership.objects.create(
             user=self.staff,
             tenant=self.tenant,
-            role="staff",
+            role="admin",
             is_active=True,
         )
         self.client.force_authenticate(user=self.staff)
@@ -372,6 +435,94 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
         self.assertEqual(self.invoice.total_amount, 100_000)
         self.assertEqual(self.invoice.status, "PENDING")
         self.assertEqual(self.invoice.student_id, self.student.id)
+
+    def test_teacher_role_cannot_access_fee_management_api(self):
+        teacher = User.objects.create_user(
+            username="fee_api_teacher",
+            password="test1234!",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.objects.create(
+            user=teacher,
+            tenant=self.tenant,
+            role="teacher",
+            is_active=True,
+        )
+        self.client.force_authenticate(user=teacher)
+
+        resp = self.client.get("/api/v1/fees/invoices/", **self.headers)
+
+        self.assertEqual(resp.status_code, 403)
+
+    def test_fee_management_feature_flag_blocks_staff_api(self):
+        program = self.tenant.program
+        program.feature_flags = {"fee_management": False}
+        program.save(update_fields=["feature_flags"])
+
+        resp = self.client.get("/api/v1/fees/invoices/", **self.headers)
+
+        self.assertEqual(resp.status_code, 403)
+
+    def test_student_fee_create_rejects_same_tenant_inconsistent_enrollment(self):
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="Fee Lecture",
+            name="Fee Lecture",
+            subject="MATH",
+        )
+        other_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="Other Fee Lecture",
+            name="Other Fee Lecture",
+            subject="MATH",
+        )
+        template = FeeTemplate.objects.create(
+            tenant=self.tenant,
+            lecture=lecture,
+            name="수강료",
+            fee_type=FeeTemplate.FeeType.TUITION,
+            billing_cycle=FeeTemplate.BillingCycle.MONTHLY,
+            amount=100_000,
+        )
+        other_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=self.other_student,
+            lecture=lecture,
+            status="ACTIVE",
+        )
+        mismatched_lecture_enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            lecture=other_lecture,
+            status="ACTIVE",
+        )
+
+        student_mismatch = self.client.post(
+            "/api/v1/fees/student-fees/",
+            data={
+                "student": self.student.id,
+                "fee_template": template.id,
+                "enrollment": other_enrollment.id,
+                "is_active": True,
+            },
+            format="json",
+            **self.headers,
+        )
+        lecture_mismatch = self.client.post(
+            "/api/v1/fees/student-fees/",
+            data={
+                "student": self.student.id,
+                "fee_template": template.id,
+                "enrollment": mismatched_lecture_enrollment.id,
+                "is_active": True,
+            },
+            format="json",
+            **self.headers,
+        )
+
+        self.assertEqual(student_mismatch.status_code, 400)
+        self.assertEqual(lecture_mismatch.status_code, 400)
 
     def test_payment_create_passes_idempotency_key_and_does_not_double_increment(self):
         payload = {

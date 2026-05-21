@@ -13,6 +13,7 @@ from rest_framework.test import APITestCase
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.fees.models import FeeTemplate, StudentFee
 from apps.domains.students.models import Student
 
 
@@ -109,6 +110,28 @@ class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
         enrollment.refresh_from_db()
         self.assertEqual(enrollment.status, "ACTIVE")
 
+    def test_missing_session_returns_validation_error_not_500(self):
+        enrollment = self._create_student_and_enrollment(3)
+
+        resp = self.client.post(
+            "/api/v1/enrollments/session-enrollments/bulk_create/",
+            {"session": 999999, "enrollments": [enrollment.id]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, 400)
+
+    def test_missing_enrollment_returns_validation_error_not_500(self):
+        resp = self.client.post(
+            "/api/v1/enrollments/session-enrollments/bulk_create/",
+            {"session": self.session.id, "enrollments": [999999]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, 400)
+
     def test_mixed_active_and_inactive(self):
         """ACTIVE 2명 + INACTIVE 1명 혼합 시 INACTIVE만 재활성화."""
         e_active1 = self._create_student_and_enrollment(10, "ACTIVE")
@@ -156,3 +179,35 @@ class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
         ).first()
         self.assertIsNotNone(att)
         self.assertEqual(att.status, "PRESENT")
+
+    def test_reactivated_enrollment_reactivates_auto_assigned_student_fee(self):
+        enrollment = self._create_student_and_enrollment(21, enrollment_status="INACTIVE")
+        fee_template = FeeTemplate.objects.create(
+            tenant=self.tenant,
+            name="월 수강료",
+            fee_type=FeeTemplate.FeeType.TUITION,
+            billing_cycle=FeeTemplate.BillingCycle.MONTHLY,
+            amount=100_000,
+            lecture=self.lecture,
+            auto_assign=True,
+        )
+        student_fee = StudentFee.objects.create(
+            tenant=self.tenant,
+            student=enrollment.student,
+            fee_template=fee_template,
+            enrollment=enrollment,
+            is_active=False,
+            billing_end_month="2026-05",
+        )
+
+        resp = self.client.post(
+            "/api/v1/enrollments/session-enrollments/bulk_create/",
+            {"session": self.session.id, "enrollments": [enrollment.id]},
+            format="json",
+            **self._headers(),
+        )
+
+        self.assertEqual(resp.status_code, 201)
+        student_fee.refresh_from_db()
+        self.assertTrue(student_fee.is_active)
+        self.assertEqual(student_fee.billing_end_month, "")

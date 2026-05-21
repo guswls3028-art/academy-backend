@@ -10,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from apps.domains.exams.models import Exam
 from apps.domains.results.models import ExamResult
 from apps.domains.results.guards.grading_contract import GradingContractGuard
+from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 
 
 class ExamGradingService:
@@ -133,6 +134,7 @@ class ExamGradingService:
 
         submission = self._load_submission(submission_id)
         exam = self._load_exam(submission)
+        validate_exam_submission_scope(submission=submission, exam=exam)
 
         # ✅ 계약 검증 (대기업 운영 핵심)
         sheet, answer_key = GradingContractGuard.validate_exam_for_grading(exam)
@@ -215,6 +217,7 @@ class ExamGradingService:
         """
         submission = self._load_submission(submission_id)
         exam = self._load_exam(submission)
+        validate_exam_submission_scope(submission=submission, exam=exam)
 
         existing = (
             ExamResult.objects
@@ -339,6 +342,8 @@ class ExamGradingService:
     @transaction.atomic
     def finalize(self, *, submission_id: int) -> ExamResult:
         submission = self._load_submission(submission_id)
+        exam = self._load_exam(submission)
+        validate_exam_submission_scope(submission=submission, exam=exam)
 
         result = (
             ExamResult.objects

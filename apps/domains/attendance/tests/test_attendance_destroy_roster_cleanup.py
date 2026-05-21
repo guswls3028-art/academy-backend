@@ -1,5 +1,6 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -7,6 +8,7 @@ from apps.domains.attendance.models import Attendance
 from apps.domains.attendance.views import AttendanceViewSet
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment
+from apps.domains.fees.models import FeeTemplate, StudentFee
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework
 from apps.domains.lectures.models import Lecture, Session
@@ -172,3 +174,151 @@ class AttendanceDestroyRosterCleanupTests(TestCase):
         )
         self.enrollment.refresh_from_db()
         self.assertEqual(self.enrollment.status, "ACTIVE")
+
+    def test_destroy_keeps_exam_target_when_exam_is_still_assigned_by_other_session(self):
+        shared_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Shared Exam",
+            pass_score=60,
+            max_score=100,
+        )
+        shared_exam.sessions.add(self.session, self.other_session)
+        shared_target = ExamEnrollment.objects.create(exam=shared_exam, enrollment=self.enrollment)
+        request = self.factory.delete(f"/api/v1/lectures/attendance/{self.attendance.id}/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        view = AttendanceViewSet.as_view({"delete": "destroy"})
+
+        response = view(request, pk=self.attendance.id)
+
+        self.assertEqual(response.status_code, 204)
+        self.assertTrue(
+            ExamEnrollment.objects.filter(id=shared_target.id).exists()
+        )
+
+    def test_secession_rejects_string_false_confirmation(self):
+        request = self.factory.patch(
+            f"/api/v1/lectures/attendance/{self.attendance.id}/",
+            {"status": "SECESSION", "confirm_secession": "false"},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        view = AttendanceViewSet.as_view({"patch": "partial_update"})
+
+        response = view(request, pk=self.attendance.id)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.enrollment.refresh_from_db()
+        self.attendance.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "ACTIVE")
+        self.assertEqual(self.attendance.status, "PRESENT")
+
+    def test_secession_deactivates_auto_assigned_student_fee(self):
+        fee_template = FeeTemplate.objects.create(
+            tenant=self.tenant,
+            name="월 수강료",
+            fee_type=FeeTemplate.FeeType.TUITION,
+            billing_cycle=FeeTemplate.BillingCycle.MONTHLY,
+            amount=100_000,
+            lecture=self.lecture,
+            auto_assign=True,
+        )
+        student_fee = StudentFee.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            fee_template=fee_template,
+            enrollment=self.enrollment,
+            is_active=True,
+        )
+
+        request = self.factory.patch(
+            f"/api/v1/lectures/attendance/{self.attendance.id}/",
+            {"status": "SECESSION", "confirm_secession": True},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        view = AttendanceViewSet.as_view({"patch": "partial_update"})
+
+        response = view(request, pk=self.attendance.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.enrollment.refresh_from_db()
+        student_fee.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "INACTIVE")
+        self.assertFalse(student_fee.is_active)
+        self.assertEqual(student_fee.billing_end_month, timezone.localdate().strftime("%Y-%m"))
+
+    def test_secession_preserves_manual_student_fee(self):
+        fee_template = FeeTemplate.objects.create(
+            tenant=self.tenant,
+            name="교재비",
+            fee_type=FeeTemplate.FeeType.MATERIAL,
+            billing_cycle=FeeTemplate.BillingCycle.ONE_TIME,
+            amount=20_000,
+            lecture=self.lecture,
+            auto_assign=False,
+        )
+        student_fee = StudentFee.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            fee_template=fee_template,
+            enrollment=self.enrollment,
+            is_active=True,
+        )
+
+        request = self.factory.patch(
+            f"/api/v1/lectures/attendance/{self.attendance.id}/",
+            {"status": "SECESSION", "confirm_secession": True},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        view = AttendanceViewSet.as_view({"patch": "partial_update"})
+
+        response = view(request, pk=self.attendance.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        student_fee.refresh_from_db()
+        self.assertTrue(student_fee.is_active)
+        self.assertEqual(student_fee.billing_end_month, "")
+
+    def test_bulk_create_reactivates_auto_assigned_student_fee(self):
+        self.enrollment.status = "INACTIVE"
+        self.enrollment.save(update_fields=["status"])
+        fee_template = FeeTemplate.objects.create(
+            tenant=self.tenant,
+            name="월 수강료",
+            fee_type=FeeTemplate.FeeType.TUITION,
+            billing_cycle=FeeTemplate.BillingCycle.MONTHLY,
+            amount=100_000,
+            lecture=self.lecture,
+            auto_assign=True,
+        )
+        student_fee = StudentFee.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            fee_template=fee_template,
+            enrollment=self.enrollment,
+            is_active=False,
+            billing_end_month="2026-05",
+        )
+
+        request = self.factory.post(
+            "/api/v1/lectures/attendance/bulk_create/",
+            {"session": self.session.id, "students": [self.student.id]},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        view = AttendanceViewSet.as_view({"post": "bulk_create"})
+
+        response = view(request)
+
+        self.assertEqual(response.status_code, 201)
+        self.enrollment.refresh_from_db()
+        student_fee.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "ACTIVE")
+        self.assertTrue(student_fee.is_active)
+        self.assertEqual(student_fee.billing_end_month, "")

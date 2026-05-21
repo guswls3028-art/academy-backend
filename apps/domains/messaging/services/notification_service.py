@@ -95,7 +95,6 @@ def send_event_notification(
         is_messaging_disabled,
         MessagingPolicyError,
         is_event_dry_run,
-        can_send_sms,
         requires_tenant_auto_send_opt_in,
     )
     from apps.domains.messaging.alimtalk_content_builders import (
@@ -187,11 +186,6 @@ def send_event_notification(
                     trigger, template.solapi_status,
                 )
                 return False
-            else:
-                logger.info(
-                    "send_event_notification: trigger=%s alimtalk skipped (not approved, no owner fallback), SMS only",
-                    trigger,
-                )
 
     # 수신자 전화번호
     phone = None
@@ -298,65 +292,81 @@ def send_event_notification(
         domain_object_id = _tz.localtime().strftime("%Y%m%d")
     stable_occurrence = f"{trigger}:{domain_object_id}"
 
-    # ── 발송 모드 결정 ──
+    # ── 발송 모드 결정: 자동발송은 알림톡 단일 경로만 사용한다. ──
     _can_alimtalk = bool(_alimtalk_tid)
-    _can_sms = can_send_sms(tenant.id)
 
-    if effective_mode == "both":
-        modes_to_send = []
-        if _can_alimtalk:
-            modes_to_send.append("alimtalk")
-        if _can_sms:
-            modes_to_send.append("sms")
-    elif effective_mode == "alimtalk":
-        modes_to_send = ["alimtalk"] if _can_alimtalk else []
-    elif effective_mode == "sms":
-        if _can_sms:
-            modes_to_send = ["sms"]
-        else:
-            # SMS 불가 시 알림톡으로 바꿔치지 않음 — 채널 정합성 보장
-            modes_to_send = []
-            logger.info(
-                "send_event_notification: trigger=%s tenant=%s SMS unavailable, skipping (no cross-channel fallback)",
-                trigger, tenant.id,
-            )
-    else:
-        modes_to_send = []
-
-    if not modes_to_send:
+    if not _can_alimtalk:
         logger.warning(
-            "send_event_notification: trigger=%s tenant=%s no available channel (mode=%s, can_alimtalk=%s, can_sms=%s)",
-            trigger, tenant.id, effective_mode, _can_alimtalk, _can_sms,
+            "send_event_notification: trigger=%s tenant=%s no available alimtalk channel (mode=%s)",
+            trigger, tenant.id, effective_mode,
         )
         return False
 
-    any_success = False
-    for mode in modes_to_send:
+    payload = {
+        "tenant_id": tenant.id,
+        "to": phone,
+        "text": _enqueue_text,
+        "sender": sender,
+        "message_mode": "alimtalk",
+        "template_id": _alimtalk_tid,
+        "alimtalk_replacements": replacements,
+        "event_type": trigger,
+        "target_type": "student",
+        "target_id": student_id,
+        "target_name": name,
+        "occurrence_key": stable_occurrence,
+    }
+
+    delay_mode = (getattr(config, "delay_mode", "immediate") or "immediate").strip().lower()
+    delay_value = getattr(config, "delay_value", None)
+    if delay_mode in ("delay_minutes", "scheduled_hour"):
+        if delay_value is None:
+            logger.warning(
+                "send_event_notification skipped: trigger=%s tenant=%s delay_mode=%s without delay_value",
+                trigger, tenant.id, delay_mode,
+            )
+            return False
         try:
-            ok = enqueue_sms(
+            delay_value = int(delay_value)
+        except (TypeError, ValueError):
+            logger.warning(
+                "send_event_notification skipped: trigger=%s tenant=%s invalid delay_value=%r",
+                trigger, tenant.id, delay_value,
+            )
+            return False
+        if delay_mode == "scheduled_hour" and not 0 <= delay_value <= 23:
+            logger.warning(
+                "send_event_notification skipped: trigger=%s tenant=%s invalid scheduled_hour=%s",
+                trigger, tenant.id, delay_value,
+            )
+            return False
+        try:
+            from apps.domains.messaging.scheduled import schedule_notification
+            schedule_notification(
                 tenant_id=tenant.id,
-                to=phone,
-                text=_enqueue_text,
-                sender=sender,
-                message_mode=mode,
-                template_id=_alimtalk_tid if mode == "alimtalk" else None,
-                alimtalk_replacements=replacements if mode == "alimtalk" else None,
-                event_type=trigger,
-                target_type="student",
-                target_id=student_id,
-                target_name=name,
-                occurrence_key=stable_occurrence,
+                trigger=trigger,
+                delay_mode=delay_mode,
+                delay_value=delay_value,
+                payload=payload,
             )
-            if ok:
-                any_success = True
-        except MessagingPolicyError as exc:
-            logger.info(
-                "send_event_notification policy error: trigger=%s tenant=%s mode=%s reason=%s",
-                trigger, tenant.id, mode, exc.reason,
-            )
+            return True
         except Exception as exc:
             logger.exception(
-                "send_event_notification failed: trigger=%s tenant=%s mode=%s error=%s",
-                trigger, tenant.id, mode, exc,
+                "send_event_notification schedule failed: trigger=%s tenant=%s delay_mode=%s error=%s",
+                trigger, tenant.id, delay_mode, exc,
             )
-    return any_success
+            return False
+
+    try:
+        return bool(enqueue_sms(**payload))
+    except MessagingPolicyError as exc:
+        logger.info(
+            "send_event_notification policy error: trigger=%s tenant=%s mode=alimtalk reason=%s",
+            trigger, tenant.id, exc.reason,
+        )
+    except Exception as exc:
+        logger.exception(
+            "send_event_notification failed: trigger=%s tenant=%s mode=alimtalk error=%s",
+            trigger, tenant.id, exc,
+        )
+    return False

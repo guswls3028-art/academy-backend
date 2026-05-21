@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 PREVIEW_TOKEN_TTL_SECONDS = 300  # 5분
 
 
+def _alimtalk_only_mode(raw_mode: str | None) -> str:
+    """Manual notification dispatch is alimtalk-only; legacy SMS modes are normalized."""
+    if (raw_mode or "").strip().lower() != "alimtalk":
+        logger.info("manual notification mode normalized to alimtalk: %s", raw_mode)
+    return "alimtalk"
+
+
 def build_attendance_preview(
     tenant,
     session_id: int,
@@ -71,7 +78,7 @@ def build_attendance_preview(
             config = get_auto_send_config(owner_id, trigger)
 
     template = config.template if config else None
-    effective_mode = (config.message_mode if config else "alimtalk") or "alimtalk"
+    effective_mode = _alimtalk_only_mode(config.message_mode if config else "alimtalk")
     solapi_template_id = (template.solapi_template_id or "").strip() if template else ""
     solapi_approved = solapi_template_id and template.solapi_status == "APPROVED" if template else False
 
@@ -88,20 +95,11 @@ def build_attendance_preview(
         solapi_template_id = unified_tid
         solapi_approved = True
 
-    # SMS-only 모드: 템플릿 본문만 있으면 됨 (APPROVED 불필요)
-    # 알림톡 포함 모드 (alimtalk/both): APPROVED 템플릿 필요
+    # Manual notification dispatch is alimtalk-only; approved template required.
     if not template or not (template.body or "").strip():
         return {"error": "발송 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
-    if effective_mode in ("alimtalk", "both") and not solapi_approved:
-        # 알림톡 불가 시: SMS로 폴백 가능한지 확인
-        from apps.domains.messaging.policy import can_send_sms
-        if effective_mode == "both" and can_send_sms(tenant.id):
-            effective_mode = "sms"  # 알림톡 불가, SMS만 발송
-            solapi_template_id = ""
-        elif effective_mode == "alimtalk":
-            return {"error": "승인된 알림톡 템플릿이 없습니다. SMS 모드로 변경하거나 템플릿 검수를 요청하세요.", "recipients": [], "total_count": 0, "excluded_count": 0}
-        else:
-            return {"error": "승인된 알림톡 템플릿이 없고 SMS 발송도 불가합니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    if not solapi_approved:
+        return {"error": "승인된 알림톡 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
 
     # 출결 상태별 필터
     if notification_type == "check_in":
@@ -232,7 +230,7 @@ def build_student_list_preview(
             config = get_auto_send_config(owner_id, trigger)
 
     template = config.template if config else None
-    effective_mode = (config.message_mode if config else "alimtalk") or "alimtalk"
+    effective_mode = _alimtalk_only_mode(config.message_mode if config else "alimtalk")
     solapi_template_id = (template.solapi_template_id or "").strip() if template else ""
     solapi_approved = solapi_template_id and template.solapi_status == "APPROVED" if template else False
 
@@ -250,15 +248,8 @@ def build_student_list_preview(
 
     if not template or not (template.body or "").strip():
         return {"error": "발송 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
-    if effective_mode in ("alimtalk", "both") and not solapi_approved:
-        from apps.domains.messaging.policy import can_send_sms
-        if effective_mode == "both" and can_send_sms(tenant.id):
-            effective_mode = "sms"
-            solapi_template_id = ""
-        elif effective_mode == "alimtalk":
-            return {"error": "승인된 알림톡 템플릿이 없습니다. SMS 모드로 변경하거나 템플릿 검수를 요청하세요.", "recipients": [], "total_count": 0, "excluded_count": 0}
-        else:
-            return {"error": "승인된 알림톡 템플릿이 없고 SMS 발송도 불가합니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    if not solapi_approved:
+        return {"error": "승인된 알림톡 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
 
     students = Student.objects.filter(
         id__in=student_ids, tenant_id=tenant.id, deleted_at__isnull=True,
@@ -433,37 +424,20 @@ def execute_notification_batch(
     payload의 수신자 목록에 대해 알림톡 발송 실행.
     """
     from apps.domains.messaging.services import enqueue_sms
-    from apps.domains.messaging.policy import check_recipient_allowed, MessagingPolicyError, can_send_sms
+    from apps.domains.messaging.policy import check_recipient_allowed, MessagingPolicyError
 
     recipients = payload.get("recipients", [])
     solapi_template_id = payload.get("solapi_template_id", "")
-    raw_message_mode = payload.get("message_mode", "alimtalk")
+    raw_message_mode = _alimtalk_only_mode(payload.get("message_mode", "alimtalk"))
     notification_type = payload.get("notification_type", "")
 
-    # 채널 가용성 사전 확인 후 modes_to_send 결정
-    _can_sms = can_send_sms(tenant.id)
     _can_alimtalk = bool(solapi_template_id)
-    if raw_message_mode == "both":
-        modes_to_send = []
-        if _can_alimtalk:
-            modes_to_send.append("alimtalk")
-        if _can_sms:
-            modes_to_send.append("sms")
-    elif raw_message_mode == "sms":
-        if _can_sms:
-            modes_to_send = ["sms"]
-        elif _can_alimtalk:
-            modes_to_send = ["alimtalk"]  # SMS 불가 → 알림톡 폴백
-            logger.info("batch: SMS unavailable for tenant=%s, fallback to alimtalk", tenant.id)
-        else:
-            modes_to_send = []
-    else:
-        modes_to_send = ["alimtalk"] if _can_alimtalk else []
+    modes_to_send = ["alimtalk"] if _can_alimtalk else []
 
     if not modes_to_send:
         logger.warning(
-            "batch %s: no available channel (mode=%s, can_sms=%s, can_alimtalk=%s)",
-            batch_id, raw_message_mode, _can_sms, _can_alimtalk,
+            "batch %s: no available channel (mode=%s, can_alimtalk=%s)",
+            batch_id, raw_message_mode, _can_alimtalk,
         )
         return {
             "batch_id": batch_id,

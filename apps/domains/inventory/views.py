@@ -406,6 +406,22 @@ class FileUploadView(View):
             file_name=safe_name,
         )
 
+        # 매치업 승격 토글 — 실패 응답이면 R2/DB 상태가 바뀌지 않도록 업로드 전 검증.
+        promote_flag = (request.POST.get("promote_to_matchup") or "").strip().lower()
+        promote = promote_flag in ("1", "true", "yes")
+        if promote:
+            if scope != "admin":
+                return JsonResponse(
+                    {"detail": "선생님 저장소 파일만 매치업으로 승격할 수 있습니다."},
+                    status=400,
+                )
+            matchup_allowed = {"application/pdf", "image/png", "image/jpeg", "image/jpg"}
+            if (file_obj.content_type or "") not in matchup_allowed:
+                return JsonResponse(
+                    {"detail": "매치업은 PDF/PNG/JPG만 지원합니다."},
+                    status=400,
+                )
+
         if upload_fileobj_to_r2_storage:
             try:
                 upload_fileobj_to_r2_storage(
@@ -430,24 +446,10 @@ class FileUploadView(View):
             content_type=file_obj.content_type or "application/octet-stream",
         )
 
-        # 매치업 승격 토글 — admin scope + 매치업 가능 형식만
-        promote_flag = (request.POST.get("promote_to_matchup") or "").strip().lower()
-        promote = promote_flag in ("1", "true", "yes")
         matchup_doc_id = None
         matchup_promote_failed = False
         matchup_error = ""
         if promote:
-            if scope != "admin":
-                return JsonResponse(
-                    {"detail": "선생님 저장소 파일만 매치업으로 승격할 수 있습니다."},
-                    status=400,
-                )
-            matchup_allowed = {"application/pdf", "image/png", "image/jpeg", "image/jpg"}
-            if (file_obj.content_type or "") not in matchup_allowed:
-                return JsonResponse(
-                    {"detail": "매치업은 PDF/PNG/JPG만 지원합니다."},
-                    status=400,
-                )
             try:
                 from apps.domains.matchup.services import promote_inventory_to_matchup
                 doc = promote_inventory_to_matchup(
@@ -524,6 +526,9 @@ class FolderDeleteView(View):
             result = do_delete_folder_recursive(
                 tenant=tenant, folder=folder, scope=scope, student_ps=student_ps,
             )
+            if result.get("ok") is False:
+                status = int(result.pop("status", 400))
+                return JsonResponse(result, status=status)
             return JsonResponse(result, status=200)
 
         if inv_repo.inventory_folder_has_children(tenant, folder):
@@ -603,7 +608,32 @@ class FileDeleteView(View):
             matchup_doc = None
         if matchup_doc is not None:
             try:
-                from apps.domains.matchup.services import cleanup_matchup_problem_images
+                from apps.domains.matchup.services import (
+                    cleanup_matchup_problem_images,
+                    document_has_protected_matchup_problems,
+                    PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL,
+                )
+                if document_has_protected_matchup_problems(matchup_doc):
+                    return JsonResponse(
+                        {
+                            "detail": PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL,
+                            "code": "protected_matchup_document",
+                        },
+                        status=409,
+                    )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "matchup protected-delete check failed for inv_file %s", inv_file.id,
+                )
+                return JsonResponse(
+                    {
+                        "detail": "매치업 보호 상태 확인에 실패했습니다.",
+                        "code": "matchup_protection_check_failed",
+                    },
+                    status=500,
+                )
+            try:
                 cleanup_matchup_problem_images(matchup_doc)
             except Exception:
                 import logging

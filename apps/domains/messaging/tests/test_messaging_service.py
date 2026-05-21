@@ -44,7 +44,8 @@ def _make_student(name="홍길동", phone="01012345678", parent_phone="010876543
 
 def _make_config(trigger, enabled=True, message_mode="alimtalk",
                  template_name="Test", solapi_template_id="KA01TP_TEST",
-                 solapi_status="APPROVED", body="#{학원명} #{학생이름2} 안내"):
+                 solapi_status="APPROVED", body="#{학원명} #{학생이름2} 안내",
+                 delay_mode="immediate", delay_value=None):
     tmpl = SimpleNamespace(
         name=template_name, body=body,
         solapi_template_id=solapi_template_id,
@@ -53,7 +54,7 @@ def _make_config(trigger, enabled=True, message_mode="alimtalk",
     )
     return SimpleNamespace(
         trigger=trigger, enabled=enabled, message_mode=message_mode,
-        template=tmpl,
+        template=tmpl, delay_mode=delay_mode, delay_value=delay_value,
     )
 
 
@@ -278,6 +279,54 @@ class TestSendEventNotification(TestCase):
         self.assertFalse(result)
         mock_enqueue.assert_not_called()
         mock_config.assert_called_once_with(2, "qna_answered")
+
+    @patch("apps.domains.messaging.scheduled.schedule_notification")
+    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_delay_mode_schedules_instead_of_immediate_enqueue(
+        self, mock_owner, mock_disabled, mock_config, mock_enqueue, mock_schedule
+    ):
+        """자동발송 지연 설정은 즉시 enqueue하지 않고 예약 대기열에 기록한다."""
+        tenant = _make_tenant()
+        student = _make_student()
+        config = _make_config("check_in_complete", delay_mode="delay_minutes", delay_value=15)
+        mock_config.return_value = config
+
+        from apps.domains.messaging.services import send_event_notification
+        result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
+
+        self.assertTrue(result)
+        mock_enqueue.assert_not_called()
+        mock_schedule.assert_called_once()
+        kwargs = mock_schedule.call_args.kwargs
+        self.assertEqual(kwargs["tenant_id"], tenant.id)
+        self.assertEqual(kwargs["trigger"], "check_in_complete")
+        self.assertEqual(kwargs["delay_mode"], "delay_minutes")
+        self.assertEqual(kwargs["delay_value"], 15)
+        self.assertEqual(kwargs["payload"]["message_mode"], "alimtalk")
+
+    @patch("apps.domains.messaging.scheduled.schedule_notification")
+    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_invalid_scheduled_hour_is_not_sent_immediately(
+        self, mock_owner, mock_disabled, mock_config, mock_enqueue, mock_schedule
+    ):
+        """잘못된 지정 시각은 즉시 발송으로 새지 않도록 차단한다."""
+        tenant = _make_tenant()
+        student = _make_student()
+        config = _make_config("check_in_complete", delay_mode="scheduled_hour", delay_value=24)
+        mock_config.return_value = config
+
+        from apps.domains.messaging.services import send_event_notification
+        result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
+
+        self.assertFalse(result)
+        mock_enqueue.assert_not_called()
+        mock_schedule.assert_not_called()
 
 
 # ──────────────────────────────────────────

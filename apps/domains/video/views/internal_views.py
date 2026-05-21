@@ -8,7 +8,6 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from apps.core.permissions import IsLambdaInternal
-from apps.domains.video.models import Video
 
 logger = logging.getLogger(__name__)
 
@@ -51,44 +50,45 @@ class VideoProcessingCompleteView(APIView):
         if not video:
             return Response({"detail": "Not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        # 🔐 tenant 교차검증: request body에 job_id가 있으면 VideoTranscodeJob.tenant_id와 video.tenant_id 비교
         req_job_id = data.get("job_id")
-        if req_job_id and hasattr(video, "tenant_id") and video.tenant_id:
-            from apps.domains.video.models import VideoTranscodeJob
-            job = VideoTranscodeJob.objects.filter(id=req_job_id).first()
-            if job and job.tenant_id and int(job.tenant_id) != int(video.tenant_id):
-                logger.error(
-                    "VideoProcessingComplete TENANT_MISMATCH: job.tenant=%s video.tenant=%s video_id=%s job_id=%s",
-                    job.tenant_id, video.tenant_id, video_id, req_job_id,
-                )
-                return Response({"detail": "tenant_mismatch"}, status=status.HTTP_403_FORBIDDEN)
+        if not req_job_id:
+            return Response({"detail": "job_id required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # 멱등
-        if video.status == Video.Status.READY and bool(video.hls_path):
-            return Response({"ok": True, "idempotent": True}, status=status.HTTP_200_OK)
+        from apps.domains.video.models import VideoTranscodeJob
+        job = VideoTranscodeJob.objects.filter(
+            id=req_job_id,
+            video_id=video.id,
+            tenant_id=video.tenant_id,
+        ).first()
+        if not job:
+            logger.warning(
+                "VideoProcessingComplete JOB_MISMATCH: video_id=%s job_id=%s tenant_id=%s",
+                video_id,
+                req_job_id,
+                getattr(video, "tenant_id", None),
+            )
+            return Response({"detail": "job_mismatch"}, status=status.HTTP_409_CONFLICT)
 
-        video.hls_path = str(hls_path)
-        if duration_int is not None and duration_int >= 0:
-            video.duration = duration_int
-        video.status = Video.Status.READY
+        if str(getattr(video, "current_job_id", "") or "") != str(job.id):
+            logger.warning(
+                "VideoProcessingComplete STALE_JOB: video_id=%s current_job_id=%s job_id=%s",
+                video_id,
+                getattr(video, "current_job_id", None),
+                job.id,
+            )
+            return Response({"detail": "stale_job"}, status=status.HTTP_409_CONFLICT)
 
-        # legacy complete는 lease 통제를 모를 수 있으므로 안전하게 lease 해제만 수행
-        if hasattr(video, "leased_until"):
-            video.leased_until = None
-        if hasattr(video, "leased_by"):
-            video.leased_by = ""
+        from academy.adapters.db.django.repositories_video import job_complete
+        ok, reason = job_complete(
+            str(job.id),
+            str(hls_path),
+            duration_int,
+            thumbnail_r2_key=data.get("thumbnail_r2_key"),
+        )
+        if not ok:
+            return Response({"detail": reason}, status=status.HTTP_409_CONFLICT)
 
-        update_fields = ["hls_path", "status"]
-        if duration_int is not None and duration_int >= 0:
-            update_fields.append("duration")
-        if hasattr(video, "leased_until"):
-            update_fields.append("leased_until")
-        if hasattr(video, "leased_by"):
-            update_fields.append("leased_by")
-
-        video.save(update_fields=update_fields)
-
-        return Response({"ok": True}, status=status.HTTP_200_OK)
+        return Response({"ok": True, "video_id": video.id, "reason": reason}, status=status.HTTP_200_OK)
 
 
 class VideoBacklogCountView(APIView):
