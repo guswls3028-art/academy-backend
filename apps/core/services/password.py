@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 
-
 def change_password(user, new_password: str) -> None:
     """
     비밀번호를 변경하고 token_version을 증가시킨다.
@@ -33,10 +32,19 @@ def force_reset_password(user, new_password: str) -> None:
     user.save(update_fields=["password", "token_version", "must_change_password"])
 
 
-def rollback_password(user, old_password_hash: str) -> None:
+def rollback_password(
+    user,
+    old_password_hash: str,
+    *,
+    must_change_password: bool | None = None,
+) -> None:
     """
     비밀번호 변경 후 알림톡 발송 실패 등으로 롤백할 때 사용.
     token_version은 롤백하지 않는다 (이미 변경된 토큰은 무효화 유지).
     """
     user.password = old_password_hash
-    user.save(update_fields=["password"])
+    update_fields = ["password"]
+    if must_change_password is not None:
+        user.must_change_password = must_change_password
+        update_fields.append("must_change_password")
+    user.save(update_fields=update_fields)

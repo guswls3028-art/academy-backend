@@ -1,7 +1,5 @@
 # PATH: apps/domains/students/views/password_views.py
 
-import logging
-
 from django.db.models import Q
 from django.contrib.auth import get_user_model
 
@@ -18,8 +16,6 @@ from apps.core.models.user import user_display_username
 
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student
-
-logger = logging.getLogger(__name__)
 
 
 def _pw_reset_cache_key(tenant_id, phone: str) -> str:
@@ -294,9 +290,6 @@ class StudentPasswordResetSendView(APIView):
                 {"detail": "임시 비밀번호는 최소 4자 이상이어야 합니다."},
                 status=400,
             )
-        old_password_hash = user.password  # 발송 실패 시 롤백용
-        from apps.core.services.password import force_reset_password
-        force_reset_password(user, temp_password)
 
         # skip_notify: 비밀번호만 변경, 알림톡 발송 안 함 (관리자 전용)
         try:
@@ -307,11 +300,16 @@ class StudentPasswordResetSendView(APIView):
         except ValidationError as e:
             return Response(e.detail, status=400)
         skip_notify = skip_notify_requested and is_staff_request
+
+        old_password_hash = user.password  # 발송 실패 시 롤백용
+        old_must_change_password = bool(getattr(user, "must_change_password", False))
+        from apps.core.services.password import force_reset_password
+        force_reset_password(user, temp_password)
+
         if skip_notify:
             return Response({"message": "비밀번호가 변경되었습니다. (알림톡 미발송)"}, status=200)
 
         # 알림톡 발송
-        from apps.domains.messaging.selectors import get_auto_send_config
         from apps.domains.messaging.policy import is_messaging_disabled
 
         if is_messaging_disabled(tenant.id):
@@ -322,24 +320,6 @@ class StudentPasswordResetSendView(APIView):
 
         notice = "로그인 후 설정에서 비밀번호를 변경하실 수 있습니다."
         trigger = "password_reset_student" if target == "student" else "password_reset_parent"
-        config = get_auto_send_config(tenant.id, trigger)
-
-        if target == "student":
-            fallback_text = (
-                f"[학원] 비밀번호 찾기\n"
-                f"이름: {display_name}\n"
-                f"아이디: {display_username}\n"
-                f"임시 비밀번호: {temp_password}\n"
-                f"{notice}"
-            )
-        else:
-            fallback_text = (
-                f"[학원] 비밀번호 찾기\n"
-                f"이름: {display_name}\n"
-                f"아이디(학부모 전화번호): {display_username}\n"
-                f"임시 비밀번호: {temp_password}\n"
-                f"{notice}"
-            )
 
         # 오너 테넌트의 승인된 알림톡 템플릿으로 발송 (모든 테넌트 공통, SMS fallback 없음)
         from apps.domains.messaging.policy import send_alimtalk_via_owner
@@ -363,7 +343,11 @@ class StudentPasswordResetSendView(APIView):
         if not ok:
             # 발송 실패 시 비밀번호 롤백 — 비밀번호는 바뀌었는데 알림 못 받는 상황 방지
             from apps.core.services.password import rollback_password
-            rollback_password(user, old_password_hash)
+            rollback_password(
+                user,
+                old_password_hash,
+                must_change_password=old_must_change_password,
+            )
             return Response(
                 {"detail": "임시 비밀번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."},
                 status=503,

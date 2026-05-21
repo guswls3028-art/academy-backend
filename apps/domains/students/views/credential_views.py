@@ -50,18 +50,19 @@ class SendExistingCredentialsView(APIView):
         if not student or not getattr(student, "user", None):
             return Response({"detail": "등록된 학생을 찾을 수 없습니다."}, status=404)
 
-        # 임시 비밀번호 생성 및 저장
-        temp_password = _generate_temp_password()
-        old_password_hash = student.user.password  # 발송 실패 시 롤백용
-        from apps.core.services.password import force_reset_password
-        force_reset_password(student.user, temp_password)
-
         display_username = student.ps_number or user_display_username(student.user)
         send_to = (student.phone or "").strip()
         if not send_to or len(send_to) != 11:
             send_to = (student.parent_phone or "").strip()
         if not send_to or len(send_to) != 11:
             return Response({"detail": "등록된 전화번호가 없어 발송할 수 없습니다."}, status=400)
+
+        # 임시 비밀번호 생성 및 저장
+        temp_password = _generate_temp_password()
+        old_password_hash = student.user.password  # 발송 실패 시 롤백용
+        old_must_change_password = bool(getattr(student.user, "must_change_password", False))
+        from apps.core.services.password import force_reset_password
+        force_reset_password(student.user, temp_password)
 
         from apps.domains.messaging.policy import is_messaging_disabled
 
@@ -89,6 +90,10 @@ class SendExistingCredentialsView(APIView):
         if not ok:
             # 발송 실패 시 비밀번호 롤백
             from apps.core.services.password import rollback_password
-            rollback_password(student.user, old_password_hash)
+            rollback_password(
+                student.user,
+                old_password_hash,
+                must_change_password=old_must_change_password,
+            )
             return Response({"detail": "발송에 실패했습니다. 잠시 후 다시 시도해 주세요."}, status=503)
         return Response({"message": "아이디와 임시 비밀번호가 알림톡으로 발송되었습니다."}, status=200)
