@@ -573,22 +573,19 @@ def exclude_page_from_matchup(
     if page_index < 0 or page_index > 999:
         raise ValueError("page_index가 범위를 벗어났습니다.")
 
-    meta = dict(document.meta or {})
-    excluded = list(meta.get("excluded_pages") or [])
-    if page_index not in excluded:
-        excluded.append(int(page_index))
-        excluded.sort()
-    meta["excluded_pages"] = excluded
-    document.meta = meta
-
-    removed = _remove_unprotected_page_problems(document, page_index)
-
-    document.save(update_fields=["meta", "updated_at"])
+    result = set_page_state(
+        document,
+        int(page_index),
+        PAGE_STATE_SKIP,
+        auto_reason="legacy_page_exclude",
+    )
+    document.refresh_from_db(fields=["meta"])
+    excluded = list((document.meta or {}).get("excluded_pages") or [])
     return {
-        "removed_problems": removed["removed_problems"],
+        "removed_problems": result["removed_problems"],
         "excluded_pages": excluded,
-        "preserved_manual": removed["preserved_manual"],
-        "preserved_pinned": removed["preserved_pinned"],
+        "preserved_manual": result["preserved_manual"],
+        "preserved_pinned": result["preserved_pinned"],
     }
 
 
@@ -609,17 +606,27 @@ def include_page_to_matchup(
     if page_index < 0 or page_index > 999:
         raise ValueError("page_index가 범위를 벗어났습니다.")
 
+    from .models import MatchupPageState
+
     meta = dict(document.meta or {})
     excluded = list(meta.get("excluded_pages") or [])
-    if int(page_index) not in excluded:
-        # 이미 포함된 페이지 — no-op
-        return {"excluded_pages": excluded, "requires_reanalyze": False}
+    db_state = (
+        MatchupPageState.objects
+        .filter(document=document, page_index=int(page_index))
+        .values_list("state", flat=True)
+        .first()
+    )
+    requires_reanalyze = int(page_index) in {int(p) for p in excluded} or db_state == PAGE_STATE_SKIP
 
-    excluded = [p for p in excluded if int(p) != int(page_index)]
-    meta["excluded_pages"] = excluded
-    document.meta = meta
-    document.save(update_fields=["meta", "updated_at"])
-    return {"excluded_pages": excluded, "requires_reanalyze": True}
+    set_page_state(
+        document,
+        int(page_index),
+        PAGE_STATE_AUTO,
+        auto_reason="legacy_page_include",
+    )
+    document.refresh_from_db(fields=["meta"])
+    excluded = list((document.meta or {}).get("excluded_pages") or [])
+    return {"excluded_pages": excluded, "requires_reanalyze": requires_reanalyze}
 
 
 # ── Phase A (2026-05-09) — page-level state 도입 ───────────────────────

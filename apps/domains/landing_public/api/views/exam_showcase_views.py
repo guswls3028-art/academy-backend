@@ -9,12 +9,13 @@
 """
 from datetime import date
 
+from django.db.models import Q
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from apps.core.permissions import TenantResolved, TenantResolvedAndStaff
+from apps.core.permissions import TenantResolved, TenantResolvedAndStaff, is_effective_staff
 
 from ...models import PublicExamShowcase
 from ...services.exam_showcase_builder import build_showcase_snapshot
@@ -42,19 +43,8 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
         user = request.user
         if not user.is_authenticated:
             return False
-        if getattr(user, "is_superuser", False):
-            return True
         tenant = getattr(request, "tenant", None)
-        if not tenant:
-            return False
-        try:
-            from academy.adapters.db.django import repositories_core as core_repo
-            return core_repo.membership_exists_staff(
-                tenant=tenant, user=user,
-                staff_roles=("owner", "admin", "staff", "teacher"),
-            )
-        except Exception:
-            return False
+        return is_effective_staff(user, tenant)
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
@@ -64,10 +54,12 @@ class PublicExamShowcaseViewSet(viewsets.GenericViewSet):
         # 외부 시점: published 또는 expired 만 노출. staff(owner/admin)는 draft/hidden 까지.
         # 이전: is_superuser만 검사해 학원 owner/admin이 자기 draft 못 봤음(retrieve 와 정합 X).
         if not self._viewer_is_staff(self.request):
+            now = timezone.now()
+            started = Q(published_at__isnull=True) | Q(published_at__lte=now)
             qs = qs.filter(status__in=[
                 PublicExamShowcase.Status.PUBLISHED,
                 PublicExamShowcase.Status.EXPIRED,
-            ])
+            ]).filter(started)
         return qs.order_by("-published_at", "-created_at")
 
     def _is_expired(self, obj: PublicExamShowcase) -> bool:

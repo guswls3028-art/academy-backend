@@ -3,6 +3,7 @@
 자동발송 설정 뷰 — AutoSendConfig, 기본 템플릿 프로비저닝
 """
 
+from django.db import transaction
 from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -105,6 +106,7 @@ class AutoSendConfigView(APIView):
             )
         logger.info("Auto-provisioned default templates for tenant %s", tenant.id)
 
+    @transaction.atomic
     def patch(self, request):
         tenant = request.tenant
         configs_data = request.data.get("configs") or []
@@ -114,6 +116,10 @@ class AutoSendConfigView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         from apps.domains.messaging.policy import get_trigger_implementation_status
+
+        def reject(payload):
+            transaction.set_rollback(True)
+            return Response(payload, status=status.HTTP_400_BAD_REQUEST)
 
         rejected_triggers = []
         for item in configs_data:
@@ -136,9 +142,11 @@ class AutoSendConfigView(APIView):
             minutes_before = item.get("minutes_before")
             if minutes_before is not None:
                 try:
-                    minutes_before = max(0, int(minutes_before)) if minutes_before != "" else None
+                    minutes_before = int(minutes_before) if minutes_before != "" else None
                 except (TypeError, ValueError):
-                    minutes_before = None
+                    return reject({"minutes_before": "발송 시점 값은 숫자여야 합니다."})
+                if minutes_before is not None and minutes_before < 0:
+                    return reject({"minutes_before": "발송 시점 값은 0 이상이어야 합니다."})
 
             config, _ = AutoSendConfig.objects.get_or_create(
                 tenant=tenant,
@@ -151,12 +159,11 @@ class AutoSendConfigView(APIView):
                     try:
                         template_pk = int(template_id)
                     except (TypeError, ValueError):
-                        template_pk = None
-                    config.template = (
-                        MessageTemplate.objects.filter(tenant=tenant, pk=template_pk).first()
-                        if template_pk is not None
-                        else None
-                    )
+                        return reject({"template_id": "템플릿 ID는 숫자여야 합니다."})
+                    template = MessageTemplate.objects.filter(tenant=tenant, pk=template_pk).first()
+                    if template is None:
+                        return reject({"template_id": "해당 템플릿을 찾을 수 없습니다."})
+                    config.template = template
                 else:
                     config.template = None
             if should_update_enabled:
@@ -185,42 +192,26 @@ class AutoSendConfigView(APIView):
                     else current_delay_mode
                 )
                 if delay_mode not in ("immediate", "delay_minutes", "scheduled_hour"):
-                    return Response(
-                        {"delay_mode": "지원하지 않는 발송 지연 방식입니다."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
+                    return reject({"delay_mode": "지원하지 않는 발송 지연 방식입니다."})
                 delay_value = item.get("delay_value")
                 parsed_delay_value = None
                 if delay_value is not None:
                     try:
                         parsed_delay_value = int(delay_value) if delay_value != "" else None
                     except (TypeError, ValueError):
-                        return Response(
-                            {"delay_value": "발송 지연 값은 숫자여야 합니다."},
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
+                        return reject({"delay_value": "발송 지연 값은 숫자여야 합니다."})
                     if parsed_delay_value is not None and parsed_delay_value < 0:
-                        return Response(
-                            {"delay_value": "발송 지연 값은 0 이상이어야 합니다."},
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
+                        return reject({"delay_value": "발송 지연 값은 0 이상이어야 합니다."})
                     if delay_mode == "scheduled_hour" and parsed_delay_value is not None and not 0 <= parsed_delay_value <= 23:
-                        return Response(
-                            {"delay_value": "지정 시각은 0~23 사이여야 합니다."},
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
+                        return reject({"delay_value": "지정 시각은 0~23 사이여야 합니다."})
                 elif requested_delay_mode is not None and delay_mode != "immediate":
+                    if delay_mode != current_delay_mode:
+                        return reject({"delay_value": "발송 지연 방식을 바꿀 때는 값을 함께 지정해야 합니다."})
                     current_delay_value = getattr(config, "delay_value", None)
                     if current_delay_value is None:
-                        return Response(
-                            {"delay_value": "발송 지연 값이 필요합니다."},
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
+                        return reject({"delay_value": "발송 지연 값이 필요합니다."})
                     if delay_mode == "scheduled_hour" and not 0 <= int(current_delay_value) <= 23:
-                        return Response(
-                            {"delay_value": "지정 시각은 0~23 사이여야 합니다."},
-                            status=status.HTTP_400_BAD_REQUEST,
-                        )
+                        return reject({"delay_value": "지정 시각은 0~23 사이여야 합니다."})
 
                 config.delay_mode = delay_mode
                 if delay_value is not None:

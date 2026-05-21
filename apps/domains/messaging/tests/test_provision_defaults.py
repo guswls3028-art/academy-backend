@@ -309,6 +309,139 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertEqual(config.delay_mode, "delay_minutes")
         self.assertEqual(config.delay_value, 30)
 
+    def test_autosend_patch_rejects_delay_mode_change_without_value_even_if_old_value_is_valid_hour(self):
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            enabled=True,
+            message_mode="alimtalk",
+            delay_mode="delay_minutes",
+            delay_value=10,
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "clinic_check_in", "delay_mode": "scheduled_hour"}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("delay_value", response.data)
+        config.refresh_from_db()
+        self.assertEqual(config.delay_mode, "delay_minutes")
+        self.assertEqual(config.delay_value, 10)
+
+    def test_autosend_patch_rejects_invalid_minutes_before_without_clearing(self):
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            enabled=True,
+            message_mode="alimtalk",
+            minutes_before=20,
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "clinic_check_in", "minutes_before": "soon"}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("minutes_before", response.data)
+        config.refresh_from_db()
+        self.assertEqual(config.minutes_before, 20)
+
+    def test_autosend_patch_rejects_missing_template_without_clearing(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="출결 템플릿",
+            category="attendance",
+            subject="",
+            body="본문",
+            is_system=True,
+        )
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            template=template,
+            enabled=True,
+            message_mode="alimtalk",
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "clinic_check_in", "template_id": 999999}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("template_id", response.data)
+        config.refresh_from_db()
+        self.assertEqual(config.template_id, template.id)
+
+    def test_autosend_patch_invalid_later_item_rolls_back_earlier_save(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="출결 템플릿",
+            category="attendance",
+            subject="",
+            body="본문",
+            is_system=True,
+        )
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            template=template,
+            enabled=True,
+            message_mode="alimtalk",
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {
+                    "configs": [
+                        {"trigger": "clinic_check_in", "enabled": False},
+                        {"trigger": "check_in_complete", "template_id": 999999},
+                    ]
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        config.refresh_from_db()
+        self.assertTrue(config.enabled)
+        self.assertFalse(
+            AutoSendConfig.objects.filter(
+                tenant=self.tenant,
+                trigger="check_in_complete",
+            ).exists()
+        )
+
+    def test_autosend_patch_invalid_new_config_does_not_leave_default_row(self):
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "check_in_complete", "template_id": 999999}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(
+            AutoSendConfig.objects.filter(
+                tenant=self.tenant,
+                trigger="check_in_complete",
+            ).exists()
+        )
+
     def test_community_answer_triggers_are_not_enabled_by_default(self):
         response = AutoSendConfigView.as_view()(
             self._request("get", "/api/v1/messaging/auto-send/")

@@ -33,7 +33,7 @@ from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
-from apps.core.permissions import TenantResolved, TenantResolvedAndStaff
+from apps.core.permissions import TenantResolved, TenantResolvedAndStaff, is_effective_staff
 
 from ...models import PublicMatchupShowcase
 
@@ -45,19 +45,8 @@ def _viewer_is_staff(request) -> bool:
     user = request.user
     if not user.is_authenticated:
         return False
-    if getattr(user, "is_superuser", False):
-        return True
     tenant = getattr(request, "tenant", None)
-    if not tenant:
-        return False
-    try:
-        from academy.adapters.db.django import repositories_core as core_repo
-        return core_repo.membership_exists_staff(
-            tenant=tenant, user=user,
-            staff_roles=("owner", "admin"),
-        )
-    except Exception:
-        return False
+    return is_effective_staff(user, tenant)
 
 
 def _build_snapshot_for_hit_report(tenant, hit_report_id: int) -> tuple[str, int, dict]:
@@ -111,12 +100,17 @@ def _build_snapshot_for_hit_report(tenant, hit_report_id: int) -> tuple[str, int
     return key, len(pdf_bytes), meta
 
 
-def _parse_dt(raw: Any):
-    if not raw:
-        return None
+def _parse_dt_strict(raw: Any, field_name: str):
+    if raw in (None, ""):
+        return None, None
     if isinstance(raw, str):
-        return parse_datetime(raw)
-    return None
+        parsed = parse_datetime(raw)
+        if parsed is not None:
+            return parsed, None
+    return None, Response(
+        {field_name: "날짜/시간 형식이 잘못되었습니다. ISO 8601 형식으로 입력해 주세요."},
+        status=status.HTTP_400_BAD_REQUEST,
+    )
 
 
 @method_decorator(xframe_options_exempt, name="dispatch")
@@ -278,8 +272,13 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             report.title or (report.document.title if report.document_id else "") or f"적중보고서 #{report.id}"
         )
         description = (request.data.get("description") or "").strip()
-        published_at = _parse_dt(request.data.get("published_at")) or timezone.now()
-        published_until = _parse_dt(request.data.get("published_until"))
+        published_at, error_response = _parse_dt_strict(request.data.get("published_at"), "published_at")
+        if error_response is not None:
+            return error_response
+        published_until, error_response = _parse_dt_strict(request.data.get("published_until"), "published_until")
+        if error_response is not None:
+            return error_response
+        published_at = published_at or timezone.now()
 
         # snapshot 생성 (PDF generate → R2 upload)
         try:
@@ -343,8 +342,13 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
 
         title = (request.data.get("title") or "").strip() or (upload.name.rsplit(".", 1)[0] if upload.name else "게시물")
         description = (request.data.get("description") or "").strip()
-        published_at = _parse_dt(request.data.get("published_at")) or timezone.now()
-        published_until = _parse_dt(request.data.get("published_until"))
+        published_at, error_response = _parse_dt_strict(request.data.get("published_at"), "published_at")
+        if error_response is not None:
+            return error_response
+        published_until, error_response = _parse_dt_strict(request.data.get("published_until"), "published_until")
+        if error_response is not None:
+            return error_response
+        published_at = published_at or timezone.now()
 
         source_hit_report_id: int | None = None
         raw_src = request.data.get("source_hit_report_id")
@@ -452,9 +456,15 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
         if "description" in request.data:
             updates["description"] = (request.data.get("description") or "").strip()
         if "published_at" in request.data:
-            updates["published_at"] = _parse_dt(request.data.get("published_at"))
+            parsed, error_response = _parse_dt_strict(request.data.get("published_at"), "published_at")
+            if error_response is not None:
+                return error_response
+            updates["published_at"] = parsed
         if "published_until" in request.data:
-            updates["published_until"] = _parse_dt(request.data.get("published_until"))
+            parsed, error_response = _parse_dt_strict(request.data.get("published_until"), "published_until")
+            if error_response is not None:
+                return error_response
+            updates["published_until"] = parsed
         if "status" in request.data:
             v = (request.data.get("status") or "").strip()
             if v not in {c[0] for c in PublicMatchupShowcase.Status.choices}:

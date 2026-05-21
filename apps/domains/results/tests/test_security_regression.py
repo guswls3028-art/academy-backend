@@ -24,6 +24,7 @@ from apps.domains.lectures.models import Lecture
 from apps.domains.exams.models import Exam
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
+from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFStatusView
 from apps.domains.results.views.wrong_note_view import WrongNoteView
 from apps.domains.results.views.wrong_note_pdf_view import WrongNotePDFCreateView
 from apps.domains.results.views.student_exam_attempts_view import MyExamAttemptsView
@@ -246,6 +247,94 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
 
         self.assertEqual(resp.status_code, 403)
         self.assertFalse(WrongNotePDF.objects.exists())
+
+    def test_wrong_note_view_staff_without_tenant_membership_rejected(self):
+        """전역 is_staff라도 request.tenant 멤버십 없으면 오답노트 조회 불가."""
+        other_tenant = Tenant.objects.create(
+            name="OtherResultsSecAcademy4",
+            code="ressec-other-4",
+            is_active=True,
+        )
+        other_lecture = Lecture.objects.create(
+            tenant=other_tenant,
+            title="Other L4",
+            name="Other L4",
+            subject="MATH",
+        )
+        _other_user, other_student = _make_student(other_tenant, "O004", "외부학생4")
+        other_enroll = Enrollment.objects.create(
+            tenant=other_tenant,
+            student=other_student,
+            lecture=other_lecture,
+            status="ACTIVE",
+        )
+        staff_without_membership = User.objects.create_user(
+            username="staff_without_wrong_note_membership",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=staff_without_membership,
+            role="teacher",
+        )
+
+        view = WrongNoteView.as_view()
+        req = self.factory.get(
+            f"/api/v1/results/wrong-notes/?enrollment_id={other_enroll.id}"
+        )
+        force_authenticate(req, user=staff_without_membership)
+        req.tenant = other_tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 403)
+
+    def test_wrong_note_pdf_status_staff_without_tenant_membership_rejected(self):
+        """전역 is_staff라도 request.tenant 멤버십 없으면 PDF 상태 조회 불가."""
+        other_tenant = Tenant.objects.create(
+            name="OtherResultsSecAcademy5",
+            code="ressec-other-5",
+            is_active=True,
+        )
+        other_lecture = Lecture.objects.create(
+            tenant=other_tenant,
+            title="Other L5",
+            name="Other L5",
+            subject="MATH",
+        )
+        _other_user, other_student = _make_student(other_tenant, "O005", "외부학생5")
+        other_enroll = Enrollment.objects.create(
+            tenant=other_tenant,
+            student=other_student,
+            lecture=other_lecture,
+            status="ACTIVE",
+        )
+        job = WrongNotePDF.objects.create(
+            enrollment_id=other_enroll.id,
+            status=WrongNotePDF.Status.PENDING,
+        )
+        staff_without_membership = User.objects.create_user(
+            username="staff_without_pdf_status_membership",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=staff_without_membership,
+            role="teacher",
+        )
+
+        view = WrongNotePDFStatusView.as_view()
+        req = self.factory.get(f"/api/v1/results/wrong-notes/pdf/{job.id}/")
+        force_authenticate(req, user=staff_without_membership)
+        req.tenant = other_tenant
+
+        resp = view(req, job_id=job.id)
+
+        self.assertEqual(resp.status_code, 403)
 
     def test_attempts_user_b_pk_collision_blocked(self):
         """MyExamAttemptsView에서도 PK 충돌 사용자가 타인 attempts 접근 불가.

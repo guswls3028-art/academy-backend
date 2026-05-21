@@ -27,7 +27,9 @@ from apps.domains.matchup.services import (
     PAGE_STATE_MANUAL,
     auto_recommend_page_states,
     bulk_set_page_states,
+    exclude_page_from_matchup,
     get_page_states,
+    include_page_to_matchup,
     set_page_state,
 )
 
@@ -125,6 +127,33 @@ class TestSetPageState:
         set_page_state(document, 4, PAGE_STATE_MANUAL, actor=actor)
         document.refresh_from_db()
         assert 4 not in document.meta["excluded_pages"]
+
+    def test_legacy_exclude_updates_page_state_row(self, document):
+        set_page_state(document, 5, PAGE_STATE_MANUAL)
+
+        result = exclude_page_from_matchup(document, 5)
+
+        assert 5 in result["excluded_pages"]
+        ps = MatchupPageState.objects.get(document=document, page_index=5)
+        assert ps.state == PAGE_STATE_SKIP
+        states = get_page_states(document)
+        skip_state = next(s for s in states if s["page_index"] == 5)
+        assert skip_state["state"] == PAGE_STATE_SKIP
+        assert skip_state["source"] == "db"
+
+    def test_legacy_include_updates_page_state_row(self, document):
+        set_page_state(document, 5, PAGE_STATE_SKIP)
+
+        result = include_page_to_matchup(document, 5)
+
+        assert 5 not in result["excluded_pages"]
+        assert result["requires_reanalyze"] is True
+        ps = MatchupPageState.objects.get(document=document, page_index=5)
+        assert ps.state == PAGE_STATE_AUTO
+        states = get_page_states(document)
+        auto_state = next(s for s in states if s["page_index"] == 5)
+        assert auto_state["state"] == PAGE_STATE_AUTO
+        assert auto_state["source"] == "db"
 
     def test_invalid_state_raises(self, document):
         with pytest.raises(ValueError):

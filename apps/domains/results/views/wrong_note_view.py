@@ -6,7 +6,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 
-from apps.domains.results.permissions import is_teacher_user
+from apps.core.permissions import TenantResolvedAndMember, is_effective_staff
 from apps.domains.enrollment.models import Enrollment
 
 from apps.domains.results.serializers.wrong_note_serializers import (
@@ -27,7 +27,7 @@ class WrongNoteView(APIView):
     - View는 보안 + query parsing + serializer만 담당
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def _assert_enrollment_access(self, request, enrollment_id: int) -> None:
         user = request.user
@@ -37,7 +37,7 @@ class WrongNoteView(APIView):
         if not qs.exists():
             raise PermissionDenied("You cannot access this enrollment_id.")
 
-        if is_teacher_user(user):
+        if is_effective_staff(user, request.tenant):
             return
 
         # Enrollment.student_id는 Student.pk이므로 user.pk 비교는 오매칭 버그.
