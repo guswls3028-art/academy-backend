@@ -13,6 +13,7 @@ from django.utils import timezone
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.results.models import Result, ResultItem
 from apps.domains.results.guards.grading_contract import GradingContractGuard
+from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 
 
@@ -73,6 +74,44 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
             "max_score": max_score,
             "source": "online",
         })
+
+    total = 0.0
+    max_total = 0.0
+    for item in items_payload:
+        total += item["score"]
+        max_total += item["max_score"]
+
+    # 먼저 attempt 정책을 통과시킨다. 재응시 불가/최대 횟수 초과라면 Result를 건드리지 않는다.
+    from apps.domains.results.models import ExamAttempt
+
+    attempt = (
+        ExamAttempt.objects
+        .select_for_update()
+        .filter(submission_id=submission.id)
+        .first()
+    )
+    if attempt:
+        attempt.status = "done"
+        attempt.save(update_fields=["status", "updated_at"])
+    else:
+        attempt = ExamAttemptService.create_for_submission(
+            exam_id=int(exam.id),
+            enrollment_id=int(enrollment_id),
+            submission_id=int(submission.id),
+        )
+        attempt.status = "done"
+        if int(attempt.attempt_index) == 1:
+            attempt.meta = {
+                "initial_snapshot": {
+                    "total_score": float(total),
+                    "max_score": float(max_total),
+                    "submitted_at": timezone.now().isoformat(),
+                    "submission_id": int(submission.id),
+                }
+            }
+            attempt.save(update_fields=["status", "meta", "updated_at"])
+        else:
+            attempt.save(update_fields=["status", "updated_at"])
 
     # 기존 Result가 있으면 이전 대표 attempt의 meta에 최종 snapshot 보존.
     # 재응시로 Result가 덮어쓰여도 이전 점수 이력이 손실되지 않음.
@@ -145,8 +184,6 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         defaults={"total_score": 0, "max_score": 0},
     )
 
-    total = 0.0
-    max_total = 0.0
     for item in items_payload:
         ResultItem.objects.update_or_create(
             result=result,
@@ -159,83 +196,11 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
                 "source": item["source"],
             },
         )
-        total += item["score"]
-        max_total += item["max_score"]
-
     result.total_score = total
     result.max_score = max_total
     result.objective_score = total  # 자동채점 문항 합산 = objective score
     result.submitted_at = timezone.now()
     result.save(update_fields=["total_score", "max_score", "objective_score", "submitted_at", "updated_at"])
-
-    # ✅ ExamAttempt 연동 (ONLINE submissions)
-    # P0-2: attempt_index=1 하드코딩 제거 — 기존 attempt를 submission_id로 찾고,
-    # 없으면 현재 최대 attempt_index + 1로 생성. 재시험 존재 시 대표 롤백 방지.
-    from apps.domains.results.models import ExamAttempt
-    from django.db.models import Max
-
-    # 1) 이 submission에 이미 연결된 attempt가 있는지 확인
-    attempt = (
-        ExamAttempt.objects
-        .select_for_update()
-        .filter(submission_id=submission.id)
-        .first()
-    )
-
-    if attempt:
-        # 기존 attempt 상태만 갱신 (대표 플래그는 건드리지 않음 — 이미 설정된 상태 유지)
-        attempt.status = "done"
-        attempt.save(update_fields=["status", "updated_at"])
-    else:
-        # submission에 연결된 attempt 없음 → 새로 생성
-        # (exam, enrollment) lock으로 직렬화
-        existing_qs = (
-            ExamAttempt.objects
-            .select_for_update()
-            .filter(exam_id=int(exam.id), enrollment_id=int(enrollment_id))
-        )
-        last_index = existing_qs.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
-        next_index = int(last_index) + 1
-
-        # 기존 대표 해제 후 새 attempt를 대표로 설정
-        existing_qs.filter(is_representative=True).update(is_representative=False)
-
-        # attempt_index=1이면 "1차 점수 불변 스냅샷"을 meta에 저장한다.
-        # Result.total_score는 ONLINE 재응시 시 sync가 덮어쓰지만,
-        # attempt_index=1.meta["initial_snapshot"]은 한 번 저장되면 이후 갱신 경로가 없어
-        # 석차 계산(ranking.py)이 "석차=1차 점수" 정책을 유지할 수 있게 해준다.
-        new_meta = None
-        if next_index == 1:
-            new_meta = {
-                "initial_snapshot": {
-                    "total_score": float(total),
-                    "max_score": float(max_total),
-                    "submitted_at": timezone.now().isoformat(),
-                    "submission_id": int(submission.id),
-                }
-            }
-
-        from django.db import IntegrityError
-        try:
-            attempt = ExamAttempt.objects.create(
-                exam_id=int(exam.id),
-                enrollment_id=int(enrollment_id),
-                submission_id=submission.id,
-                attempt_index=next_index,
-                is_retake=(last_index > 0),
-                is_representative=True,
-                status="done",
-                meta=new_meta,
-            )
-        except IntegrityError:
-            # 동시성: 다른 경로에서 이미 생성됨 — 기존 것 사용
-            attempt = (
-                ExamAttempt.objects
-                .filter(submission_id=submission.id)
-                .first()
-            )
-            if not attempt:
-                raise
 
     result.attempt_id = attempt.id
     result.save(update_fields=["attempt_id", "updated_at"])

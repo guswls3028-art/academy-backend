@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from django.db import transaction
 
 from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.submissions.services.omr_submission_guards import (
+    duplicate_conflict_payload,
+    find_conflicting_exam_submission,
+    lock_exam_enrollment_candidate,
+)
 from apps.domains.submissions.services.transition import transit
 
 logger = logging.getLogger(__name__)
@@ -354,6 +359,29 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
                 reasons.append("IDENTIFIER_NO_ENROLLMENT_MATCH")
 
     identifier_ok = enrollment_id is not None
+    duplicate_conflict = None
+    if identifier_ok and submission.target_id:
+        exam_enrollment_locked = lock_exam_enrollment_candidate(
+            tenant=submission.tenant,
+            exam_id=int(submission.target_id),
+            enrollment_id=int(enrollment_id),
+        )
+        if not exam_enrollment_locked:
+            identifier_ok = False
+            enrollment_id = None
+            identifier_status = "no_match"
+            reasons.append("IDENTIFIER_NO_EXAM_ENROLLMENT")
+        else:
+            duplicate_conflict = find_conflicting_exam_submission(
+                tenant=submission.tenant,
+                exam_id=int(submission.target_id),
+                enrollment_id=int(enrollment_id),
+                exclude_submission_id=int(submission.id),
+            )
+            if duplicate_conflict:
+                manual_required = True
+                identifier_status = "matched_duplicate"
+                reasons.append("DUPLICATE_ENROLLMENT")
 
     if unmapped_questions:
         manual_required = True
@@ -368,11 +396,23 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     meta["identifier_status"] = identifier_status
     meta["identifier_match_kind"] = identifier_match_kind
     meta["answer_stats"] = answer_stats
+    if duplicate_conflict:
+        meta["duplicate_conflict"] = duplicate_conflict_payload(duplicate_conflict)
 
     submission.meta = meta
 
     if not identifier_ok:
         transit(submission, Submission.Status.NEEDS_IDENTIFICATION, actor="ai_omr_mapper")
+        submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
+        return submission.id
+
+    if duplicate_conflict:
+        transit(
+            submission,
+            Submission.Status.NEEDS_IDENTIFICATION,
+            error_message="duplicate_enrollment",
+            actor="ai_omr_mapper",
+        )
         submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
         return submission.id
 

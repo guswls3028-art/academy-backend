@@ -21,7 +21,7 @@ from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.exams.models import Exam
+from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
@@ -86,6 +86,7 @@ class BaseTestMixin:
         exam = Exam(**defaults)
         exam.save()
         exam.sessions.add(self.session)
+        ExamEnrollment.objects.get_or_create(exam=exam, enrollment=self.enrollment)
         return exam
 
     def _create_submission(self, exam, enrollment=None):

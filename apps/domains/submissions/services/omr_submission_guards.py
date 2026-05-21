@@ -19,20 +19,41 @@ def allow_duplicate_requested(request) -> bool:
     return raw in ("1", "true", "yes")
 
 
-def find_conflicting_exam_submission(*, tenant, exam_id: int, enrollment_id: int | None):
+def lock_exam_enrollment_candidate(*, tenant, exam_id: int, enrollment_id: int | None) -> bool:
+    if not enrollment_id:
+        return False
+    from apps.domains.exams.models import ExamEnrollment
+
+    return (
+        ExamEnrollment.objects.select_for_update()
+        .filter(
+            exam_id=int(exam_id),
+            enrollment_id=int(enrollment_id),
+            enrollment__tenant=tenant,
+        )
+        .exists()
+    )
+
+
+def find_conflicting_exam_submission(
+    *,
+    tenant,
+    exam_id: int,
+    enrollment_id: int | None,
+    exclude_submission_id: int | None = None,
+):
     if not enrollment_id:
         return None
-    return (
-        Submission.objects.filter(
-            tenant=tenant,
-            target_type=Submission.TargetType.EXAM,
-            target_id=int(exam_id),
-            enrollment_id=int(enrollment_id),
-            status__in=OMR_CONFLICT_STATUSES,
-        )
-        .order_by("-id")
-        .first()
+    qs = Submission.objects.filter(
+        tenant=tenant,
+        target_type=Submission.TargetType.EXAM,
+        target_id=int(exam_id),
+        enrollment_id=int(enrollment_id),
+        status__in=OMR_CONFLICT_STATUSES,
     )
+    if exclude_submission_id is not None:
+        qs = qs.exclude(id=int(exclude_submission_id))
+    return qs.order_by("-id").first()
 
 
 def duplicate_conflict_payload(submission: Submission) -> dict:

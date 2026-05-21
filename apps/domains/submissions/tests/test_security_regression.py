@@ -28,8 +28,9 @@ from apps.core.models.user import user_internal_username
 from apps.domains.students.models import Student
 from apps.domains.lectures.models import Lecture, Session as LectureSession
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.exams.models import Exam, ExamQuestion, Sheet
+from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_result
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
 from apps.domains.submissions.views.pending_submissions_view import PendingSubmissionsView
 from apps.domains.submissions.views.exam_submissions_list_view import ExamSubmissionsListView
@@ -747,6 +748,61 @@ class TestC3ExamOMRSubmitGuard(_SecurityFixtureMixin, TestCase):
         self.assertEqual(resp.status_code, 409, resp.data)
         self.assertEqual(resp.data["code"], "DUPLICATE_ENROLLMENT")
         dispatch_submission.assert_not_called()
+
+    def test_ai_auto_match_duplicate_stays_needs_identification(self):
+        sheet = Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=1)
+        ExamQuestion.objects.create(sheet=sheet, number=1, score=5)
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        first = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.teacher,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.DISPATCHED,
+            file_key="tenants/x/first.png",
+        )
+        second = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.teacher,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.DISPATCHED,
+            file_key="tenants/x/second.png",
+        )
+        payload = {
+            "status": "DONE",
+            "identifier": {
+                "status": "ok",
+                "identifier": str(self.student.phone).replace("-", "")[-8:],
+            },
+            "answers": [
+                {
+                    "question_id": 1,
+                    "detected": ["1"],
+                    "status": "ok",
+                    "marking": "single",
+                    "confidence": 0.99,
+                }
+            ],
+        }
+
+        apply_omr_ai_result({"submission_id": first.id, **payload})
+        apply_omr_ai_result({"submission_id": second.id, **payload})
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        self.assertEqual(first.status, Submission.Status.ANSWERS_READY)
+        self.assertEqual(first.enrollment_id, self.enrollment.id)
+        self.assertEqual(second.status, Submission.Status.NEEDS_IDENTIFICATION)
+        self.assertIsNone(second.enrollment_id)
+        self.assertEqual(second.error_message, "duplicate_enrollment")
+        self.assertIn("DUPLICATE_ENROLLMENT", second.meta["manual_review"]["reasons"])
+        self.assertEqual(
+            second.meta["duplicate_conflict"]["conflict_submission_id"],
+            first.id,
+        )
 
     @patch("apps.domains.submissions.views.exam_omr_submit_view.dispatch_submission")
     def test_teacher_omr_submit_rejects_cross_tenant_file_key(self, dispatch_submission):

@@ -6,7 +6,7 @@ from django.test import TestCase
 
 from apps.core.models import Tenant
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion, Sheet
+from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ExamAttempt, ExamResult, Result
 from apps.domains.results.services.exam_grading_service import ExamGradingService
@@ -117,3 +117,23 @@ class SubmissionScopeGuardTests(TestCase):
 
         self.assertFalse(ExamResult.objects.filter(submission=submission).exists())
         self.assertFalse(Result.objects.filter(target_id=self.exam.id, enrollment_id=self.enrollment.id).exists())
+
+    def test_sync_rejects_duplicate_submission_when_retake_is_disabled(self):
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        first = self._unassigned_submission()
+
+        first_result = sync_result_from_exam_submission(first.id)
+        self.assertIsNotNone(first_result)
+        first.status = Submission.Status.DONE
+        first.save(update_fields=["status", "updated_at"])
+        second = self._unassigned_submission()
+
+        with self.assertRaises(DjangoValidationError):
+            sync_result_from_exam_submission(second.id)
+
+        attempts = ExamAttempt.objects.filter(exam=self.exam, enrollment=self.enrollment)
+        self.assertEqual(attempts.count(), 1)
+        self.assertEqual(attempts.get().submission_id, first.id)
+        result = Result.objects.get(target_id=self.exam.id, enrollment_id=self.enrollment.id)
+        self.assertEqual(result.attempt.submission_id, first.id)
+        self.assertFalse(ExamResult.objects.filter(submission=second).exists())

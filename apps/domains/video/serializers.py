@@ -317,7 +317,7 @@ class VideoDetailSerializer(VideoSerializer):
                 from django.utils import timezone
                 from apps.domains.video.models import VideoTranscodeJob
                 cur = VideoTranscodeJob.objects.filter(pk=job_id).only(
-                    "state", "cancel_requested", "last_heartbeat_at", "updated_at",
+                    "state", "cancel_requested", "last_heartbeat_at", "updated_at", "aws_batch_job_id",
                 ).first()
                 if cur and cur.state == VideoTranscodeJob.State.RUNNING and not getattr(cur, "cancel_requested", False):
                     # Allow retry if RUNNING job is stale (no heartbeat for too long)
@@ -327,6 +327,11 @@ class VideoDetailSerializer(VideoSerializer):
                         return False
                     # Stale RUNNING → allow retry
                 if cur and cur.state in (VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT):
+                    if not (cur.aws_batch_job_id or "").strip():
+                        return True
+                    stale_hours = getattr(settings, "VIDEO_RETRY_STALE_QUEUED_HOURS", 1)
+                    if cur.updated_at < timezone.now() - timedelta(hours=stale_hours):
+                        return True
                     return False
             except Exception:
                 pass

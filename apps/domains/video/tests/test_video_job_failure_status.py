@@ -16,6 +16,7 @@ from academy.adapters.db.django.repositories_video import (
 )
 from apps.core.models import Tenant
 from apps.domains.video.models import Video, VideoTranscodeJob
+from apps.domains.video.serializers import VideoDetailSerializer
 from apps.domains.video.views.internal_views import VideoProcessingCompleteView, VideoScanStuckView
 from apps.domains.video.views.video_views import VideoViewSet
 
@@ -306,6 +307,60 @@ class ReconcileBatchVideoJobsTests(TestCase):
         self.assertEqual(self.job.last_counted_failure_aws_batch_job_id, "aws-old")
         self.assertEqual(mock_describe.call_count, 2)
         self.assertEqual(mock_submit.call_count, 2)
+
+
+@override_settings(VIDEO_RETRY_STALE_QUEUED_HOURS=1)
+class VideoDetailCanRetryTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            name="Video Retry Tenant",
+            code="video-retry",
+            is_active=True,
+        )
+        self.video = Video.objects.create(
+            tenant=self.tenant,
+            title="Retry Video",
+            status=Video.Status.PROCESSING,
+        )
+
+    def _attach_job(self, *, state, updated_at, aws_batch_job_id="aws-current"):
+        job = VideoTranscodeJob.objects.create(
+            tenant=self.tenant,
+            video=self.video,
+            state=state,
+            attempt_count=1,
+            aws_batch_job_id=aws_batch_job_id,
+        )
+        VideoTranscodeJob.objects.filter(pk=job.pk).update(updated_at=updated_at)
+        self.video.current_job = job
+        self.video.save(update_fields=["current_job"])
+        self.video.refresh_from_db()
+        return job
+
+    def test_can_retry_false_for_recent_queued_job(self):
+        self._attach_job(
+            state=VideoTranscodeJob.State.QUEUED,
+            updated_at=timezone.now() - timedelta(minutes=30),
+        )
+
+        self.assertFalse(VideoDetailSerializer(self.video).data["can_retry"])
+
+    def test_can_retry_true_for_stale_queued_job(self):
+        self._attach_job(
+            state=VideoTranscodeJob.State.QUEUED,
+            updated_at=timezone.now() - timedelta(hours=2),
+        )
+
+        self.assertTrue(VideoDetailSerializer(self.video).data["can_retry"])
+
+    def test_can_retry_true_for_queued_job_without_batch_id(self):
+        self._attach_job(
+            state=VideoTranscodeJob.State.RETRY_WAIT,
+            updated_at=timezone.now(),
+            aws_batch_job_id="",
+        )
+
+        self.assertTrue(VideoDetailSerializer(self.video).data["can_retry"])
 
 
 class InternalVideoScanStuckViewTests(TestCase):

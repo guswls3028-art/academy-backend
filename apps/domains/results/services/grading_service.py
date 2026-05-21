@@ -39,6 +39,7 @@ def grade_submission(submission_id: int) -> ExamResult:
         logging.getLogger(__name__).exception(
             "Result sync failed for submission %s", submission_id
         )
+        raise
 
     # ✅ 시험 채점 완료 → progress / clinic 자동 갱신
     dispatch_progress_pipeline(submission_id=int(submission_id))
