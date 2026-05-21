@@ -89,24 +89,26 @@ class PostViewSet(viewsets.ModelViewSet):
 
     def _limited_reader_student_ids(self, request) -> list[int]:
         """학생/학부모가 볼 수 있는 학생 id 목록. staff는 이 helper를 쓰지 않는다."""
+        parent = getattr(request.user, "parent_profile", None)
+        tenant = getattr(request, "tenant", None)
+        if parent is not None and tenant is not None:
+            from apps.domains.students.models import Student
+
+            return list(
+                Student.objects.filter(
+                    tenant=tenant,
+                    parent=parent,
+                    deleted_at__isnull=True,
+                ).values_list("id", flat=True)
+            )
+
         request_student = get_request_student(request)
         if request_student is not None:
             return [request_student.id]
 
-        parent = getattr(request.user, "parent_profile", None)
-        tenant = getattr(request, "tenant", None)
-        if parent is None or tenant is None:
+        if tenant is None:
             return []
-
-        from apps.domains.students.models import Student
-
-        return list(
-            Student.objects.filter(
-                tenant=tenant,
-                parent=parent,
-                deleted_at__isnull=True,
-            ).values_list("id", flat=True)
-        )
+        return []
 
     def _visible_node_ids_for_request(self, request) -> set[int]:
         tenant = getattr(request, "tenant", None)

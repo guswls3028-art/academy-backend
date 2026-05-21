@@ -11,20 +11,18 @@ from rest_framework.permissions import IsAuthenticated
 from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import MessageTemplate, AutoSendConfig
+from apps.domains.messaging.policy import is_auto_send_enabled_by_default
 from apps.domains.messaging.serializers import AutoSendConfigSerializer
 
 
-COMMUNITY_OPT_IN_TRIGGERS = frozenset({"qna_answered", "counsel_answered"})
-
-
 def _default_enabled_for_trigger(trigger: str) -> bool:
-    return trigger not in COMMUNITY_OPT_IN_TRIGGERS
+    return is_auto_send_enabled_by_default(trigger)
 
 
 class AutoSendConfigView(APIView):
     """
     GET: 테넌트의 모든 자동발송 설정 목록 (트리거별)
-    PATCH: 트리거별 설정 수정. Body: { "configs": [ { "trigger": "...", "template_id": null|int, "enabled": bool, "message_mode": "sms"|"alimtalk" }, ... ] }
+    PATCH: 트리거별 설정 수정. Body: { "configs": [ { "trigger": "...", "template_id": null|int, "enabled": bool, "message_mode": "alimtalk" }, ... ] }
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -92,10 +90,6 @@ class AutoSendConfigView(APIView):
                     "is_system": True,
                 },
             )
-            # 기존 시스템 템플릿이 is_system=False이면 교정
-            if not created and not tpl.is_system:
-                tpl.is_system = True
-                tpl.save(update_fields=["is_system"])
             # 자유양식 템플릿 등 유효한 트리거가 아니면 AutoSendConfig 생성 스킵
             if trigger not in valid_triggers:
                 continue
@@ -169,7 +163,7 @@ class AutoSendConfigView(APIView):
                 config.enabled = enabled
             if "message_mode" in item:
                 message_mode = (item.get("message_mode") or "alimtalk").strip().lower()
-                if message_mode not in ("sms", "alimtalk", "both"):
+                if message_mode != "alimtalk":
                     message_mode = "alimtalk"
                 config.message_mode = message_mode
             if "minutes_before" in item:
@@ -179,7 +173,7 @@ class AutoSendConfigView(APIView):
             if hasattr(config, "show_actual_time"):
                 sat = item.get("show_actual_time")
                 if sat is not None:
-                    config.show_actual_time = bool(sat)
+                    config.show_actual_time = parse_bool(sat, field_name="show_actual_time")
 
             # delay_mode / delay_value — 마이그레이션 전에도 안전 (hasattr 체크)
             if hasattr(config, "delay_mode"):
@@ -267,10 +261,6 @@ class ProvisionDefaultTemplatesView(APIView):
                     existing_tpl.save(update_fields=["name", "updated_at"])
 
             if existing_tpl:
-                # 기존 시스템 템플릿이 is_system=False이면 교정
-                if not existing_tpl.is_system:
-                    existing_tpl.is_system = True
-                    existing_tpl.save(update_fields=["is_system"])
                 # 기본 템플릿 연결은 복구하되 학원장 작성 본문/제목은 덮어쓰지 않는다.
                 changed = False
                 if existing_tpl.category != tpl_category:

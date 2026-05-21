@@ -191,6 +191,27 @@ class TestSendEventNotification(TestCase):
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_auto_send_normalizes_legacy_sms_mode_to_alimtalk(
+        self, mock_owner, mock_disabled, mock_config, mock_enqueue
+    ):
+        """AutoSendConfig는 운영 발송에서 알림톡 전용으로 처리된다."""
+        tenant = _make_tenant()
+        student = _make_student()
+        config = _make_config("check_in_complete", message_mode="sms")
+        mock_config.return_value = config
+        mock_enqueue.return_value = True
+
+        from apps.domains.messaging.services import send_event_notification
+        result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
+
+        self.assertTrue(result)
+        mock_enqueue.assert_called_once()
+        self.assertEqual(mock_enqueue.call_args.kwargs["message_mode"], "alimtalk")
+
+    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     def test_skips_when_no_phone(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
         """전화번호 없으면 발송 스킵."""
         tenant = _make_tenant()
@@ -238,6 +259,25 @@ class TestSendEventNotification(TestCase):
         self.assertEqual(mock_config.call_count, 2)
         self.assertEqual(mock_config.call_args_list[0].args, (2, "check_in_complete"))
         self.assertEqual(mock_config.call_args_list[1].args, (1, "check_in_complete"))
+
+    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_owner_fallback_blocked_for_opt_in_trigger_without_tenant_row(
+        self, mock_owner, mock_disabled, mock_config, mock_enqueue
+    ):
+        """명시 opt-in 트리거는 테넌트 row가 없으면 오너 설정으로 우회 발송하지 않는다."""
+        tenant = _make_tenant(tid=2, name="박철과학")
+        student = _make_student()
+        mock_config.return_value = None
+
+        from apps.domains.messaging.services import send_event_notification
+        result = send_event_notification(tenant=tenant, trigger="qna_answered", student=student)
+
+        self.assertFalse(result)
+        mock_enqueue.assert_not_called()
+        mock_config.assert_called_once_with(2, "qna_answered")
 
 
 # ──────────────────────────────────────────

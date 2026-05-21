@@ -263,6 +263,57 @@ class TestParentCommunityReadOnly(CommunityHardeningFixture):
         self.assertEqual(response.data["by_node_id"], {self.visible_node.id: 1})
         self.assertNotIn(self.hidden_node.id, response.data["by_node_id"])
 
+    def test_parent_board_list_and_counts_include_all_children_enrollments(self):
+        second_student_user = User.objects.create_user(
+            username="comm_second_child",
+            password="pw1234",
+            tenant=self.tenant,
+            name="Second Child",
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=second_student_user,
+            role="student",
+        )
+        second_student = Student.objects.create(
+            tenant=self.tenant,
+            user=second_student_user,
+            ps_number="S002",
+            name="Second Child",
+            phone="01055550000",
+            parent_phone="01033334444",
+            omr_code="55550000",
+            parent=self.parent,
+        )
+        Enrollment.objects.create(
+            tenant=self.tenant,
+            student=second_student,
+            lecture=self.hidden_lecture,
+            status="ACTIVE",
+        )
+
+        board = PostViewSet.as_view({"get": "board"})
+        response = board(
+            self._request("get", self.parent_user, "/api/v1/community/posts/board/?page_size=20")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        ids = {row["id"] for row in response.data["results"]}
+        self.assertIn(self.visible_post.id, ids)
+        self.assertIn(self.hidden_post.id, ids)
+
+        counts = PostViewSet.as_view({"get": "counts"})
+        response = counts(
+            self._request("get", self.parent_user, "/api/v1/community/posts/counts/?post_type=board")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["total"], 2)
+        self.assertEqual(
+            response.data["by_node_id"],
+            {self.visible_node.id: 1, self.hidden_node.id: 1},
+        )
+
     def test_limited_reader_counts_hide_private_post_types(self):
         other_student_user = User.objects.create_user(
             username="comm_other_student",

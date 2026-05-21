@@ -61,6 +61,28 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertEqual(template.subject, "원장님이 바꾼 제목")
         self.assertEqual(template.body, "원장님이 바꾼 본문")
 
+    def test_existing_editable_template_is_not_locked_as_system(self):
+        defaults = get_default_templates(self.tenant.name)
+        default = defaults["registration_approved_student"]
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name=default["name"],
+            category=default["category"],
+            subject="직접 수정한 제목",
+            body="직접 수정한 본문",
+            is_system=False,
+        )
+
+        response = ProvisionDefaultTemplatesView.as_view()(
+            self._request("post", "/api/v1/messaging/provision-defaults/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        template.refresh_from_db()
+        self.assertFalse(template.is_system)
+        self.assertEqual(template.subject, "직접 수정한 제목")
+        self.assertEqual(template.body, "직접 수정한 본문")
+
     def test_autosend_patch_enabled_only_preserves_template_and_timing(self):
         template = MessageTemplate.objects.create(
             tenant=self.tenant,
@@ -113,6 +135,49 @@ class ProvisionDefaultTemplatesTests(TestCase):
         config.refresh_from_db()
         self.assertFalse(config.enabled)
 
+    def test_autosend_patch_parses_show_actual_time_string_false(self):
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            enabled=True,
+            message_mode="alimtalk",
+            show_actual_time=True,
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "clinic_check_in", "show_actual_time": "false"}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        config.refresh_from_db()
+        self.assertFalse(config.show_actual_time)
+        self.assertTrue(config.enabled)
+
+    def test_autosend_patch_keeps_auto_send_channel_alimtalk_only(self):
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            enabled=True,
+            message_mode="alimtalk",
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "clinic_check_in", "message_mode": "sms"}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        config.refresh_from_db()
+        self.assertEqual(config.message_mode, "alimtalk")
+        self.assertTrue(config.enabled)
+
     def test_community_answer_triggers_are_not_enabled_by_default(self):
         response = AutoSendConfigView.as_view()(
             self._request("get", "/api/v1/messaging/auto-send/")
@@ -120,8 +185,15 @@ class ProvisionDefaultTemplatesTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         by_trigger = {item["trigger"]: item for item in response.data}
+        self.assertFalse(by_trigger["matchup_report_submitted"]["enabled"])
         self.assertFalse(by_trigger["qna_answered"]["enabled"])
         self.assertFalse(by_trigger["counsel_answered"]["enabled"])
+        self.assertFalse(
+            AutoSendConfig.objects.get(
+                tenant=self.tenant,
+                trigger="matchup_report_submitted",
+            ).enabled
+        )
         self.assertFalse(
             AutoSendConfig.objects.get(
                 tenant=self.tenant,

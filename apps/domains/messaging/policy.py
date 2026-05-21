@@ -82,6 +82,23 @@ def get_trigger_policy(trigger: str) -> str:
     return TRIGGER_POLICY.get(trigger, "DISABLED")
 
 
+TENANT_OPT_IN_AUTO_TRIGGERS: frozenset = frozenset([
+    "matchup_report_submitted",
+    "qna_answered",
+    "counsel_answered",
+])
+
+
+def requires_tenant_auto_send_opt_in(trigger: str) -> bool:
+    """True면 테넌트가 자기 AutoSendConfig row를 명시적으로 켜야 한다."""
+    return trigger in TENANT_OPT_IN_AUTO_TRIGGERS
+
+
+def is_auto_send_enabled_by_default(trigger: str) -> bool:
+    """자동발송 config 생성 시 기본 enabled 값."""
+    return get_trigger_policy(trigger) != "DISABLED" and not requires_tenant_auto_send_opt_in(trigger)
+
+
 # ──────────────────────────────────────────
 # 자동 발화 구현 여부 — SSOT (운영자 가시성)
 # ──────────────────────────────────────────

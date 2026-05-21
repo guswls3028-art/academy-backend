@@ -90,7 +90,14 @@ def send_event_notification(
         bool: enqueue 성공 여부
     """
     from apps.domains.messaging.selectors import get_auto_send_config
-    from apps.domains.messaging.policy import get_owner_tenant_id, is_messaging_disabled, MessagingPolicyError, is_event_dry_run, can_send_sms
+    from apps.domains.messaging.policy import (
+        get_owner_tenant_id,
+        is_messaging_disabled,
+        MessagingPolicyError,
+        is_event_dry_run,
+        can_send_sms,
+        requires_tenant_auto_send_opt_in,
+    )
     from apps.domains.messaging.alimtalk_content_builders import (
         get_solapi_template_id as get_unified_tid,
         build_unified_replacements,
@@ -114,6 +121,12 @@ def send_event_notification(
     # 1) 현재 테넌트의 config 조회
     config = get_auto_send_config(tenant.id, trigger)
     # 2) 없으면 오너 테넌트 config로 fallback (공용 템플릿 공유)
+    if not config and requires_tenant_auto_send_opt_in(trigger):
+        logger.debug(
+            "send_event_notification skipped: trigger=%s tenant=%s requires explicit tenant opt-in",
+            trigger, tenant.id,
+        )
+        return False
     if not config:
         owner_id = get_owner_tenant_id()
         if int(tenant.id) != owner_id:
@@ -138,7 +151,13 @@ def send_event_notification(
     solapi_template_id = (template.solapi_template_id or "").strip()
     solapi_approved = solapi_template_id and template.solapi_status == "APPROVED"
 
-    effective_mode = config.message_mode or "alimtalk"
+    effective_mode = (config.message_mode or "alimtalk").strip().lower()
+    if effective_mode != "alimtalk":
+        logger.info(
+            "send_event_notification: trigger=%s tenant=%s normalized auto-send mode %s to alimtalk",
+            trigger, tenant.id, effective_mode,
+        )
+        effective_mode = "alimtalk"
 
     # ── 통합 알림톡 템플릿 감지 ──
     # 트리거에 매핑된 통합 템플릿이 있으면 해당 ID 사용
