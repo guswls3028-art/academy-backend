@@ -185,7 +185,10 @@ class AutoSendConfigView(APIView):
                     else current_delay_mode
                 )
                 if delay_mode not in ("immediate", "delay_minutes", "scheduled_hour"):
-                    delay_mode = current_delay_mode
+                    return Response(
+                        {"delay_mode": "지원하지 않는 발송 지연 방식입니다."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 delay_value = item.get("delay_value")
                 parsed_delay_value = None
                 if delay_value is not None:
@@ -194,6 +197,11 @@ class AutoSendConfigView(APIView):
                     except (TypeError, ValueError):
                         return Response(
                             {"delay_value": "발송 지연 값은 숫자여야 합니다."},
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    if parsed_delay_value is not None and parsed_delay_value < 0:
+                        return Response(
+                            {"delay_value": "발송 지연 값은 0 이상이어야 합니다."},
                             status=status.HTTP_400_BAD_REQUEST,
                         )
                     if delay_mode == "scheduled_hour" and parsed_delay_value is not None and not 0 <= parsed_delay_value <= 23:

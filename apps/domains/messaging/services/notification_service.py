@@ -319,6 +319,12 @@ def send_event_notification(
 
     delay_mode = (getattr(config, "delay_mode", "immediate") or "immediate").strip().lower()
     delay_value = getattr(config, "delay_value", None)
+    if delay_mode not in ("immediate", "delay_minutes", "scheduled_hour"):
+        logger.warning(
+            "send_event_notification skipped: trigger=%s tenant=%s invalid delay_mode=%r",
+            trigger, tenant.id, delay_mode,
+        )
+        return False
     if delay_mode in ("delay_minutes", "scheduled_hour"):
         if delay_value is None:
             logger.warning(
@@ -331,6 +337,12 @@ def send_event_notification(
         except (TypeError, ValueError):
             logger.warning(
                 "send_event_notification skipped: trigger=%s tenant=%s invalid delay_value=%r",
+                trigger, tenant.id, delay_value,
+            )
+            return False
+        if delay_mode == "delay_minutes" and delay_value < 0:
+            logger.warning(
+                "send_event_notification skipped: trigger=%s tenant=%s invalid delay_minutes=%s",
                 trigger, tenant.id, delay_value,
             )
             return False

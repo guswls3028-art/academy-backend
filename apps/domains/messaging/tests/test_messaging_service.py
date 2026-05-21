@@ -328,6 +328,61 @@ class TestSendEventNotification(TestCase):
         mock_enqueue.assert_not_called()
         mock_schedule.assert_not_called()
 
+    @patch("apps.domains.messaging.scheduled.schedule_notification")
+    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_invalid_delay_mode_is_not_sent_immediately(
+        self, mock_owner, mock_disabled, mock_config, mock_enqueue, mock_schedule
+    ):
+        """DB에 잘못된 delay_mode가 들어와도 즉시 발송으로 열리지 않는다."""
+        tenant = _make_tenant()
+        student = _make_student()
+        config = _make_config("check_in_complete", delay_mode="legacy_mode", delay_value=10)
+        mock_config.return_value = config
+
+        from apps.domains.messaging.services import send_event_notification
+        result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
+
+        self.assertFalse(result)
+        mock_enqueue.assert_not_called()
+        mock_schedule.assert_not_called()
+
+    @patch("apps.domains.messaging.scheduled.schedule_notification")
+    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_negative_delay_minutes_is_not_sent_immediately(
+        self, mock_owner, mock_disabled, mock_config, mock_enqueue, mock_schedule
+    ):
+        """음수 지연값은 예약/즉시 발송 모두 차단한다."""
+        tenant = _make_tenant()
+        student = _make_student()
+        config = _make_config("check_in_complete", delay_mode="delay_minutes", delay_value=-1)
+        mock_config.return_value = config
+
+        from apps.domains.messaging.services import send_event_notification
+        result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
+
+        self.assertFalse(result)
+        mock_enqueue.assert_not_called()
+        mock_schedule.assert_not_called()
+
+    def test_schedule_notification_rejects_unknown_delay_mode(self):
+        """하위 예약 함수도 알 수 없는 mode를 즉시 발송으로 fail-open 하지 않는다."""
+        from apps.domains.messaging.scheduled import schedule_notification
+
+        with self.assertRaises(ValueError):
+            schedule_notification(
+                tenant_id=1,
+                trigger="check_in_complete",
+                delay_mode="legacy_mode",
+                delay_value=10,
+                payload={"tenant_id": 1, "to": "01012345678", "text": "test"},
+            )
+
 
 # ──────────────────────────────────────────
 # 2. tenant isolation 테스트

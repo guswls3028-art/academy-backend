@@ -94,13 +94,16 @@ def _is_tenant_staff(request):
     tenant = getattr(request, "tenant", None)
     if not user or not tenant:
         return False
-    if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
-        return True
     from apps.core.models import TenantMembership
-    return TenantMembership.objects.filter(
+    if TenantMembership.objects.filter(
         user=user, tenant=tenant, is_active=True,
         role__in=["owner", "admin", "teacher", "assistant"],
-    ).exists()
+    ).exists():
+        return True
+    return bool(
+        (getattr(user, "is_superuser", False) or getattr(user, "is_staff", False))
+        and getattr(user, "tenant_id", None) == tenant.id
+    )
 
 
 def _is_tenant_admin(request) -> bool:
@@ -113,13 +116,16 @@ def _is_tenant_admin(request) -> bool:
     tenant = getattr(request, "tenant", None)
     if not user or not tenant:
         return False
-    if getattr(user, "is_superuser", False) or getattr(user, "is_staff", False):
-        return True
     from apps.core.models import TenantMembership
-    return TenantMembership.objects.filter(
+    if TenantMembership.objects.filter(
         user=user, tenant=tenant, is_active=True,
         role__in=["owner", "admin"],
-    ).exists()
+    ).exists():
+        return True
+    return bool(
+        (getattr(user, "is_superuser", False) or getattr(user, "is_staff", False))
+        and getattr(user, "tenant_id", None) == tenant.id
+    )
 
 
 def _hit_report_writable(request, report) -> bool:
@@ -131,8 +137,6 @@ def _hit_report_writable(request, report) -> bool:
     user = getattr(request, "user", None)
     if not user:
         return False
-    if getattr(user, "is_superuser", False):
-        return True
     user_id = getattr(user, "id", None)
     if user_id and report.author_id and report.author_id == user_id:
         return True

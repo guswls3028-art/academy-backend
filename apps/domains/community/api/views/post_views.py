@@ -167,33 +167,39 @@ class PostViewSet(viewsets.ModelViewSet):
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.is_superuser or user.is_staff:
-            return True
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return False
         from apps.core.models import TenantMembership
-        return TenantMembership.objects.filter(
+        if TenantMembership.objects.filter(
             tenant=tenant, user=user, is_active=True,
             role__in=["owner", "admin", "staff", "teacher"],
-        ).exists()
+        ).exists():
+            return True
+        return bool(
+            (user.is_superuser or user.is_staff)
+            and getattr(user, "tenant_id", None) == tenant.id
+        )
 
     def _can_manage_post_nodes(self, request) -> bool:
         user = request.user
         if not user or not user.is_authenticated:
             return False
-        if user.is_superuser:
-            return True
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return False
         from apps.core.models import TenantMembership
-        return TenantMembership.objects.filter(
+        if TenantMembership.objects.filter(
             tenant=tenant,
             user=user,
             is_active=True,
             role__in=["owner", "admin", "staff"],
-        ).exists()
+        ).exists():
+            return True
+        return bool(
+            (user.is_superuser or user.is_staff)
+            and getattr(user, "tenant_id", None) == tenant.id
+        )
 
     def _with_is_liked(self, qs, request):
         user = getattr(request, "user", None)

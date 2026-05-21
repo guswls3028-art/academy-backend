@@ -530,6 +530,33 @@ def delete_document_with_r2(document: MatchupDocument) -> None:
     document.delete()  # CASCADE로 problems도 삭제 (InventoryFile은 그대로)
 
 
+def _remove_unprotected_page_problems(document: MatchupDocument, page_index: int) -> dict:
+    page_problems = [
+        p for p in document.problems.all()
+        if (p.meta or {}).get("page_index") == int(page_index)
+    ]
+    target_problems = [
+        p for p in page_problems
+        if not (p.meta or {}).get("manual")
+        and not (p.meta or {}).get("manual_owner_pinned")
+    ]
+    preserved_manual = sum(1 for p in page_problems if (p.meta or {}).get("manual"))
+    preserved_pinned = sum(
+        1 for p in page_problems
+        if (p.meta or {}).get("manual_owner_pinned")
+        and not (p.meta or {}).get("manual")
+    )
+    removed = 0
+    for problem in target_problems:
+        delete_problem_with_r2(problem)
+        removed += 1
+    return {
+        "removed_problems": removed,
+        "preserved_manual": preserved_manual,
+        "preserved_pinned": preserved_pinned,
+    }
+
+
 def exclude_page_from_matchup(
     document: MatchupDocument,
     page_index: int,
@@ -554,39 +581,14 @@ def exclude_page_from_matchup(
     meta["excluded_pages"] = excluded
     document.meta = meta
 
-    # 해당 페이지 problems 즉시 제거 — meta.page_index로 매칭.
-    # 보호:
-    #   manual=True (운영 위험 fix 2026-05-05): 학원장이 직접 자른 problem 보존.
-    #   manual_owner_pinned=True (P0 fix 2026-05-11): 적중보고서 selected_problem_ids
-    #     가 가리키는 자동 problem 도 페이지 exclude 에서 보존. 미보호 시
-    #     selected_problem_ids 가 dead pid 만 가리키는 dangling 재발 위험
-    #     (project_matchup_hitreport_dangling_recovery_2026_05_06 사고 클래스).
-    page_problems = [
-        p for p in document.problems.all()
-        if (p.meta or {}).get("page_index") == int(page_index)
-    ]
-    target_problems = [
-        p for p in page_problems
-        if not (p.meta or {}).get("manual")
-        and not (p.meta or {}).get("manual_owner_pinned")
-    ]
-    preserved_manual = sum(1 for p in page_problems if (p.meta or {}).get("manual"))
-    preserved_pinned = sum(
-        1 for p in page_problems
-        if (p.meta or {}).get("manual_owner_pinned")
-        and not (p.meta or {}).get("manual")
-    )
-    removed = 0
-    for p in target_problems:
-        delete_problem_with_r2(p)
-        removed += 1
+    removed = _remove_unprotected_page_problems(document, page_index)
 
     document.save(update_fields=["meta", "updated_at"])
     return {
-        "removed_problems": removed,
+        "removed_problems": removed["removed_problems"],
         "excluded_pages": excluded,
-        "preserved_manual": preserved_manual,
-        "preserved_pinned": preserved_pinned,
+        "preserved_manual": removed["preserved_manual"],
+        "preserved_pinned": removed["preserved_pinned"],
     }
 
 
@@ -741,6 +743,7 @@ def set_page_state(
         },
     )
 
+    removed = {"removed_problems": 0, "preserved_manual": 0, "preserved_pinned": 0}
     if sync_excluded_pages:
         meta = dict(document.meta or {})
         excluded = list(meta.get("excluded_pages") or [])
@@ -748,6 +751,7 @@ def set_page_state(
             if page_index not in excluded:
                 excluded.append(int(page_index))
                 excluded.sort()
+            removed = _remove_unprotected_page_problems(document, page_index)
         else:
             excluded = [p for p in excluded if int(p) != int(page_index)]
         meta["excluded_pages"] = excluded
@@ -759,6 +763,7 @@ def set_page_state(
         "state": ps.state,
         "auto_reason": ps.auto_reason,
         "created": created,
+        **removed,
     }
 
 
@@ -783,6 +788,7 @@ def bulk_set_page_states(
     failed: list[dict] = []
     skip_indexes: set[int] = set()
     non_skip_indexes: set[int] = set()
+    removed_counts = {"removed_problems": 0, "preserved_manual": 0, "preserved_pinned": 0}
 
     for item in items:
         try:
@@ -820,7 +826,17 @@ def bulk_set_page_states(
     document.meta = meta
     document.save(update_fields=["meta", "updated_at"])
 
-    return {"applied": sorted(applied), "failed": failed, "excluded_pages": meta["excluded_pages"]}
+    for page_index in skip_indexes - non_skip_indexes:
+        removed = _remove_unprotected_page_problems(document, page_index)
+        for key in removed_counts:
+            removed_counts[key] += removed[key]
+
+    return {
+        "applied": sorted(applied),
+        "failed": failed,
+        "excluded_pages": meta["excluded_pages"],
+        **removed_counts,
+    }
 
 
 def auto_recommend_page_states(document: MatchupDocument) -> list[dict]:

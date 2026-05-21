@@ -239,6 +239,52 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertEqual(config.delay_mode, "delay_minutes")
         self.assertEqual(config.delay_value, 30)
 
+    def test_autosend_patch_rejects_invalid_delay_mode(self):
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            enabled=True,
+            message_mode="alimtalk",
+            delay_mode="immediate",
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "clinic_check_in", "delay_mode": "legacy_mode", "delay_value": 10}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("delay_mode", response.data)
+        config.refresh_from_db()
+        self.assertEqual(config.delay_mode, "immediate")
+        self.assertIsNone(config.delay_value)
+
+    def test_autosend_patch_rejects_negative_delay_value(self):
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_check_in",
+            enabled=True,
+            message_mode="alimtalk",
+            delay_mode="immediate",
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "clinic_check_in", "delay_mode": "delay_minutes", "delay_value": -1}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("delay_value", response.data)
+        config.refresh_from_db()
+        self.assertEqual(config.delay_mode, "immediate")
+        self.assertIsNone(config.delay_value)
+
     def test_autosend_patch_rejects_scheduled_hour_mode_without_valid_hour(self):
         config = AutoSendConfig.objects.create(
             tenant=self.tenant,

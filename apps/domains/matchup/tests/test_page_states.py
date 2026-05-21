@@ -20,7 +20,7 @@ pytestmark = pytest.mark.django_db
 
 from apps.core.models import Tenant
 from apps.domains.inventory.models import InventoryFile, InventoryFolder
-from apps.domains.matchup.models import MatchupDocument, MatchupPageState
+from apps.domains.matchup.models import MatchupDocument, MatchupPageState, MatchupProblem
 from apps.domains.matchup.services import (
     PAGE_STATE_AUTO,
     PAGE_STATE_SKIP,
@@ -83,6 +83,38 @@ class TestSetPageState:
         document.refresh_from_db()
         assert 5 in document.meta["excluded_pages"]
         assert 3 in document.meta["excluded_pages"]
+
+    def test_set_skip_removes_visible_unprotected_page_problems(self, document, actor):
+        unprotected = MatchupProblem.objects.create(
+            tenant=document.tenant,
+            document=document,
+            number=101,
+            text="auto",
+            meta={"page_index": 5},
+        )
+        manual = MatchupProblem.objects.create(
+            tenant=document.tenant,
+            document=document,
+            number=102,
+            text="manual",
+            meta={"page_index": 5, "manual": True},
+        )
+        pinned = MatchupProblem.objects.create(
+            tenant=document.tenant,
+            document=document,
+            number=103,
+            text="pinned",
+            meta={"page_index": 5, "manual_owner_pinned": True},
+        )
+
+        result = set_page_state(document, 5, PAGE_STATE_SKIP, actor=actor)
+
+        assert result["removed_problems"] == 1
+        assert result["preserved_manual"] == 1
+        assert result["preserved_pinned"] == 1
+        assert not MatchupProblem.objects.filter(pk=unprotected.pk).exists()
+        assert MatchupProblem.objects.filter(pk=manual.pk).exists()
+        assert MatchupProblem.objects.filter(pk=pinned.pk).exists()
 
     def test_set_auto_removes_from_excluded(self, document, actor):
         set_page_state(document, 3, PAGE_STATE_AUTO, actor=actor)
@@ -147,6 +179,20 @@ class TestBulkSetPageStates:
         ], actor=actor)
         document.refresh_from_db()
         assert 5 not in document.meta["excluded_pages"]
+
+    def test_bulk_skip_removes_visible_unprotected_page_problems(self, document, actor):
+        unprotected = MatchupProblem.objects.create(
+            tenant=document.tenant,
+            document=document,
+            number=201,
+            text="auto",
+            meta={"page_index": 6},
+        )
+
+        result = bulk_set_page_states(document, [{"page_index": 6, "state": PAGE_STATE_SKIP}], actor=actor)
+
+        assert result["removed_problems"] == 1
+        assert not MatchupProblem.objects.filter(pk=unprotected.pk).exists()
 
 
 class TestAutoRecommendPageStates:

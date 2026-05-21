@@ -41,14 +41,15 @@ def schedule_notification(
     now = dj_tz.now()
 
     if delay_mode == "delay_minutes":
+        if delay_value < 0:
+            raise ValueError("delay_minutes must be greater than or equal to 0")
         send_at = now + timedelta(minutes=delay_value)
     elif delay_mode == "scheduled_hour":
+        if not 0 <= delay_value <= 23:
+            raise ValueError("scheduled_hour must be between 0 and 23")
         send_at = _next_kst_hour(now, delay_value)
     else:
-        logger.warning("schedule_notification: unknown delay_mode=%s, sending immediately", delay_mode)
-        from apps.domains.messaging.services import enqueue_sms
-        enqueue_sms(**payload)
-        return
+        raise ValueError(f"unknown delay_mode: {delay_mode}")
 
     ScheduledNotification.objects.create(
         tenant_id=tenant_id,
