@@ -70,6 +70,12 @@ class ProfileViewSet(viewsets.ViewSet):
         if not old_pw or not new_pw:
             return Response({"error": "old_password, new_password 필요"}, status=400)
 
+        if len(new_pw) < 4:
+            return Response({"error": "새 비밀번호는 4자 이상이어야 합니다."}, status=400)
+
+        if old_pw == new_pw:
+            return Response({"error": "새 비밀번호가 현재 비밀번호와 같습니다."}, status=400)
+
         if not request.user.check_password(old_pw):
             return Response({"error": "현재 비밀번호가 올바르지 않습니다."}, status=400)
 
