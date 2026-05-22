@@ -42,6 +42,7 @@ from ..services import (
     StudentLifecycleError,
     StudentProfileUpdateError,
     normalize_school_from_name,
+    restore_student,
     soft_delete_student,
     update_student_profile,
 )
@@ -663,31 +664,13 @@ class StudentViewSet(ModelViewSet):
                     continue
 
                 if action == "restore":
-                    with transaction.atomic():
-                        student.deleted_at = None
-                        student.name = (student_data.get("name") or student.name or "").strip()
-                        school_val = (student_data.get("school") or "").strip() or None
-                        st, elementary_school, high_school, middle_school = normalize_school_from_name(
-                            school_val, student_data.get("school_type")
-                        )
-                        student.school_type = st
-                        student.elementary_school = elementary_school
-                        student.high_school = high_school
-                        student.middle_school = middle_school
-                        student.high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
-                        student.major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
-                        student.gender = student_data.get("gender") or None
-                        student.grade = student_data.get("grade")
-                        student.memo = (student_data.get("memo") or "") or None
-                        student.uses_identifier = student_data.get("uses_identifier", False)
-                        student.save()
-                        if student.user:
-                            student.user.is_active = True
-                            student.user.save(update_fields=["is_active"])
-                        TenantMembership.ensure_active(tenant=tenant, user=student.user, role="student")
-                        # 복원 시 이전 수강등록은 재활성화하지 않음 (이전 이력이 유령 복원되는 것 방지)
+                    restored_result = restore_student(
+                        student,
+                        tenant=tenant,
+                        profile_data=student_data,
+                    )
                     restored_count += 1
-                    created_students.append(student)
+                    created_students.append(restored_result.student)
                 else:
                     with transaction.atomic():
                         student_repo.enrollment_filter_student_delete(student.id, tenant=tenant)
@@ -830,51 +813,13 @@ class StudentViewSet(ModelViewSet):
         to_restore = list(student_repo.student_filter_tenant_ids_deleted(tenant, ids))
         restored = []
         skipped = []
-        with transaction.atomic():
-            for student in to_restore:
-                student.deleted_at = None
-                update_fields = ["deleted_at"]
-                # ps_number 복원 + 충돌 검사
-                if student.ps_number and student.ps_number.startswith("_del_"):
-                    parts = student.ps_number.split("_", 3)
-                    if len(parts) >= 4:
-                        original_ps = parts[3]
-                        # 충돌 검사: 다른 활성 학생이 이미 사용 중이면 스킵
-                        if Student.objects.filter(
-                            tenant=tenant, ps_number=original_ps, deleted_at__isnull=True
-                        ).exists():
-                            skipped.append({"id": student.id, "reason": f"ps_number '{original_ps}' already in use"})
-                            continue
-                        student.ps_number = original_ps
-                        update_fields.append("ps_number")
-                student.save(update_fields=update_fields)
-                # User 계정 복원: is_active + phone
-                if student.user:
-                    user_update = ["is_active"]
-                    student.user.is_active = True
-                    # phone 복원 (삭제 시 User.phone이 None으로 클리어됨)
-                    if not student.user.phone and student.phone:
-                        student.user.phone = student.phone
-                        user_update.append("phone")
-                    student.user.save(update_fields=user_update)
-                    TenantMembership.ensure_active(
-                        tenant=tenant, user=student.user, role="student"
-                    )
-                # 학부모 재연결 (삭제 시 parent_id가 None으로 해제됨)
-                if not student.parent_id and student.parent_phone:
-                    try:
-                        parent = ensure_parent_for_student(
-                            tenant=tenant,
-                            parent_phone=student.parent_phone,
-                            student_name=student.name,
-                        )
-                        if parent:
-                            student.parent = parent
-                            student.save(update_fields=["parent"])
-                    except Exception:
-                        logger.warning("bulk_restore: failed to re-link parent for student_id=%s", student.id)
-                restored.append(student.id)
-                # 복원 시 이전 수강등록은 재활성화하지 않음 (유령 복원 방지)
+        for student in to_restore:
+            try:
+                restore_student(student, tenant=tenant)
+            except StudentLifecycleError as exc:
+                skipped.append({"id": student.id, "code": exc.code, "reason": exc.detail})
+                continue
+            restored.append(student.id)
         result = {"restored": len(restored)}
         if skipped:
             result["skipped"] = skipped

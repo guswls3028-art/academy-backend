@@ -7,6 +7,7 @@ from django.db import transaction
 from academy.adapters.db.django import repositories_students as student_repo
 from apps.core.models import TenantMembership
 from apps.domains.parents.services import ensure_parent_for_student
+from .lifecycle import restore_student
 from .school import normalize_school_from_name
 
 from ..ps_number import _generate_unique_ps_number
@@ -57,84 +58,17 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
         tenant, name, parent_phone
     )
     if deleted_student:
-        update_fields = ["deleted_at"]
-        deleted_student.deleted_at = None
+        restore_data = dict(item)
+        restore_data["name"] = name
+        restore_data["parent_phone"] = parent_phone
         if phone is not None:
-            deleted_student.phone = phone
-            update_fields.append("phone")
-        school_val = (item.get("school") or "").strip() or None
-        if school_val is not None:
-            st, elementary_school, high_school, middle_school = normalize_school_from_name(
-                school_val, item.get("school_type")
-            )
-            deleted_student.school_type = st
-            deleted_student.elementary_school = elementary_school
-            deleted_student.high_school = high_school
-            deleted_student.middle_school = middle_school
-            deleted_student.high_school_class = (
-                (item.get("high_school_class") or "").strip() or None
-                if st == "HIGH"
-                else None
-            )
-            deleted_student.major = (
-                (item.get("major") or "").strip() or None if st == "HIGH" else None
-            )
-            update_fields.extend(
-                ["school_type", "elementary_school", "high_school", "middle_school", "high_school_class", "major"]
-            )
-        grade_school_type = st if school_val is not None else (deleted_student.school_type or "HIGH")
-        gr = _grade_value(item.get("grade"), grade_school_type)
-        if gr is not None:
-            deleted_student.grade = gr
-            update_fields.append("grade")
-        if item.get("memo") is not None:
-            deleted_student.memo = (item.get("memo") or "").strip() or None
-            update_fields.append("memo")
-        if item.get("gender") is not None:
-            deleted_student.gender = (item.get("gender") or "").strip().upper()[:1] or None
-            update_fields.append("gender")
-        deleted_student.save(update_fields=update_fields)
-        # Reactivate user account + phone 복원
-        if deleted_student.user:
-            user_update = ["is_active"]
-            deleted_student.user.is_active = True
-            if not deleted_student.user.phone and (phone or deleted_student.phone):
-                deleted_student.user.phone = phone or deleted_student.phone
-                user_update.append("phone")
-            deleted_student.user.save(update_fields=user_update)
-        # Unmangle ps_number (충돌 검사 포함)
-        if deleted_student.ps_number and deleted_student.ps_number.startswith("_del_"):
-            parts = deleted_student.ps_number.split("_", 3)  # ["", "del", "{id}", "{original}"]
-            if len(parts) >= 4:
-                original_ps = parts[3]
-                from apps.domains.students.models import Student as StudentModel
-                if not StudentModel.objects.filter(
-                    tenant=tenant, ps_number=original_ps, deleted_at__isnull=True
-                ).exists():
-                    deleted_student.ps_number = original_ps
-                    deleted_student.save(update_fields=["ps_number"])
-                # 충돌 시 _del_ 접두사 유지 (새 ps_number 자동 생성하지 않음 — 관리자 수동 처리 필요)
-        # 학부모 재연결 (삭제 시 parent_id가 None으로 해제됨)
-        if not deleted_student.parent_id and parent_phone:
-            try:
-                parent = ensure_parent_for_student(
-                    tenant=tenant,
-                    parent_phone=parent_phone,
-                    student_name=name,
-                )
-                if parent:
-                    deleted_student.parent = parent
-                    deleted_student.save(update_fields=["parent"])
-            except Exception:
-                pass  # 학부모 연결 실패 시 무시 (학생 복원은 계속)
-        # NOTE: 이전 수강등록은 재활성화하지 않음.
-        # 복원된 학생은 새로운 수강등록만 받아야 함 (이전 수강 이력이 유령처럼 되살아나는 것 방지).
-        TenantMembership.ensure_active(
+            restore_data["phone"] = phone
+        restored_result = restore_student(
+            deleted_student,
             tenant=tenant,
-            user=deleted_student.user,
-            role="student",
+            profile_data=restore_data,
         )
-        return deleted_student, False, True  # was_restored=True
+        return restored_result.student, False, True
 
     # 3) 신규 생성 (bulk_create 한 건 분 로직)
     # 학생 아이디: 본인 전화번호 우선, 없으면 랜덤

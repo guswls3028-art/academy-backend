@@ -12,7 +12,7 @@ from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.core.models.user import user_internal_username, user_display_username
 from apps.domains.students.models import Student
-from apps.domains.students.services import StudentLifecycleError, soft_delete_student
+from apps.domains.students.services import StudentLifecycleError, restore_student, soft_delete_student
 from apps.domains.students.views import StudentViewSet
 from apps.domains.parents.models import Parent
 from apps.domains.inventory.models import InventoryFolder, InventoryFile
@@ -410,7 +410,16 @@ class TestBulkRestoreFlow(TestCase):
     """Bulk restore: ps_number collision check, parent re-link, User.phone restore."""
 
     def setUp(self):
+        self.factory = APIRequestFactory()
         self.tenant = _create_tenant()
+        self.admin = User.objects.create_user(
+            username="restore-admin",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+            name="복원 관리자",
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="owner")
         self.student = _create_student(self.tenant, "R11111", phone="01033334444", parent_phone="01055556666")
         # Create parent
         self.parent = Parent.objects.create(
@@ -426,31 +435,90 @@ class TestBulkRestoreFlow(TestCase):
         self.student.user.is_active = False
         self.student.user.phone = None
         self.student.user.save(update_fields=["is_active", "phone"])
+        TenantMembership.objects.filter(tenant=self.tenant, user=self.student.user).update(is_active=False)
 
     def test_restore_recovers_ps_number(self):
-        """복원 시 _del_ 접두사 제거하여 원래 ps_number 복원."""
-        parts = self.student.ps_number.split("_", 3)
-        if len(parts) >= 4:
-            self.student.ps_number = parts[3]
-        self.student.deleted_at = None
-        self.student.save(update_fields=["deleted_at", "ps_number"])
+        """복원 서비스가 ps_number/user/parent/membership을 함께 복원."""
+        result = restore_student(self.student, tenant=self.tenant)
+
+        self.assertEqual(result.restored_ps_number, "R11111")
+        self.assertTrue(result.user_reactivated)
+        self.assertTrue(result.parent_relinked)
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+
+        self.assertIsNone(self.student.deleted_at)
         self.assertEqual(self.student.ps_number, "R11111")
+        self.assertTrue(self.student.user.is_active)
+        self.assertEqual(self.student.user.phone, "01033334444")
+        self.assertEqual(self.student.parent_id, self.parent.id)
+        self.assertTrue(
+            TenantMembership.objects.get(tenant=self.tenant, user=self.student.user).is_active
+        )
 
     def test_restore_collision_detection(self):
         """복원 시 ps_number가 다른 활성 학생에게 사용 중이면 충돌."""
         _create_student(self.tenant, "R11111", name="새학생", phone="01099998888", parent_phone="01077778888")
-        collision = Student.objects.filter(
-            tenant=self.tenant, ps_number="R11111", deleted_at__isnull=True
-        ).exists()
-        self.assertTrue(collision)
+        with self.assertRaises(StudentLifecycleError) as ctx:
+            restore_student(self.student, tenant=self.tenant)
+
+        self.assertEqual(ctx.exception.code, "ps_number_conflict")
+        self.student.refresh_from_db()
+        self.assertIsNotNone(self.student.deleted_at)
+        self.assertTrue(self.student.ps_number.startswith(f"_del_{self.student.id}_R11111"))
 
     def test_user_phone_can_be_restored(self):
         """복원 시 User.phone을 Student.phone에서 복원."""
-        self.student.user.phone = self.student.phone
-        self.student.user.is_active = True
-        self.student.user.save(update_fields=["is_active", "phone"])
+        restore_student(self.student, tenant=self.tenant)
         self.student.user.refresh_from_db()
         self.assertEqual(self.student.user.phone, "01033334444")
+
+    def test_bulk_restore_view_uses_restore_lifecycle(self):
+        request = self.factory.post(
+            "/api/v1/students/bulk_restore/",
+            data={"ids": [self.student.id]},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_restore"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["restored"], 1)
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        self.assertIsNone(self.student.deleted_at)
+        self.assertEqual(self.student.ps_number, "R11111")
+        self.assertTrue(self.student.user.is_active)
+        self.assertEqual(self.student.user.phone, "01033334444")
+        self.assertEqual(self.student.parent_id, self.parent.id)
+
+    def test_lecture_enroll_restore_uses_restore_lifecycle(self):
+        from apps.domains.students.services.lecture_enroll import (
+            get_or_create_student_for_lecture_enroll,
+        )
+
+        student, created, was_restored = get_or_create_student_for_lecture_enroll(
+            self.tenant,
+            {
+                "name": self.student.name,
+                "parent_phone": self.student.parent_phone,
+                "phone": self.student.phone,
+                "memo": "복원 메모",
+            },
+            "test1234",
+        )
+
+        self.assertFalse(created)
+        self.assertTrue(was_restored)
+        student.refresh_from_db()
+        student.user.refresh_from_db()
+        self.assertIsNone(student.deleted_at)
+        self.assertEqual(student.ps_number, "R11111")
+        self.assertEqual(student.memo, "복원 메모")
+        self.assertTrue(student.user.is_active)
+        self.assertEqual(student.parent_id, self.parent.id)
 
 
 class TestCrossTenantIsolation(TestCase):

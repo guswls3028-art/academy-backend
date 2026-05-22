@@ -16,7 +16,7 @@ Risk scale:
 | Student list/detail read | Backend `StudentViewSet.get_queryset`, `StudentDetailSerializer`; frontend admin `students.api.ts`; teacher `students/api.ts`; clinic/messaging/results direct reads | Admin students home/detail, teacher students list/detail, clinic add participant, messaging send, results grade pages | `students.selectors.list_students`, `get_student_detail`, `get_student_for_tenant` | Direct `Student.objects` reads in non-students domains; duplicated FE mappers | P1 | API contract snapshot, tenant isolation, admin/teacher/student profile visibility |
 | Student profile read | `/students/{id}/`, `/students/me/`, `/student/me/`, `/core/me linkedStudents` | Admin/teacher detail, student profile, parent child switcher, auth bootstrap | `students.selectors.get_student_profile_context` | Manual DTO builders in `StudentProfileView` and `StudentViewSet.me` | P1 | Snapshot all four responses before convergence |
 | Student create | `StudentViewSet.create`, `bulk_create`, `_approve_registration_request`, `get_or_create_student_for_lecture_enroll`, Excel worker, E2E direct API setup | Admin create modal, teacher create sheet, signup approval, lecture enroll Excel, student Excel import, E2E fixtures | `students.services.create_student_for_tenant` plus specialized adapters | View-level user/parent/membership creation logic | P1 | Create contract, duplicate rejection, parent link, membership, welcome event tests |
-| Student restore | `bulk_restore`, `bulk_resolve_conflicts`, `lecture_enroll` deleted-student restore, deleted duplicate fix | Deleted student page, conflict resolver, lecture/enrollment import | `students.services.restore_student` | Local unmangle/reactivate/relink implementations | P0 | Restore identity collision, tenant isolation, user/membership/enrollment behavior |
+| Student restore | `[COMPLETED]` `bulk_restore`, `bulk_resolve_conflicts`, and `lecture_enroll` deleted-student restore are compatibility facades | Deleted student page, conflict resolver, lecture/enrollment import | `students.services.restore_student` | Local unmangle/reactivate/relink implementations removed from the three active paths | P0 | `[DONE]` restore identity collision, tenant isolation, user/membership/parent behavior, no enrollment ghost reactivation |
 | Student update | `StudentViewSet.perform_update`, `StudentViewSet.me`, `StudentProfileView.patch`, teacher `updateStudent`, admin `updateStudent` | Admin edit modal, teacher detail, student profile page | `students.services.update_student_profile` | Direct `student.save()` update branches in views | P1 | Parent relink, OMR recompute, school mapping, profile photo, id collision |
 | Student schedule hidden state | `StudentSessionClearPastView`, `StudentSessionHideView`, `StudentSessionUnhideView` write `Student.schedule_hidden_*` | Student sessions page | `students.services.update_schedule_visibility` or student-app policy wrapper | Inline mutation in student-app session views | P2 | Student/parent tenant and child selection tests |
 | Student soft delete | `[COMPLETED]` `StudentViewSet.destroy`, `bulk_delete` are compatibility HTTP facades | Admin/teacher delete, E2E cleanup | `students.services.soft_delete_student` plus enrollment/clinic lifecycle hooks | Direct duplicated user/membership/enrollment/clinic side effects removed from student views | P0 | `[DONE]` soft delete state machine, single/bulk routing, enrollment deactivation, clinic cancellation |
@@ -138,6 +138,12 @@ Risk scale:
   lecture sections contract. Admin lectures sections API remains a compatibility
   facade, teacher clinic imports shared directly, and cross-app/admin role
   imports are now 0.
+- 2026-05-23: Student restore lifecycle converged on
+  `apps.domains.students.services.restore_student`. `bulk_restore`,
+  `bulk_resolve_conflicts`, and lecture/enrollment deleted-student reuse now
+  share ps_number unmangling, collision rejection, user reactivation,
+  membership restoration, and parent relinking behavior without reactivating
+  previous enrollments.
 - 2026-05-22: Clinic participant/session/idcard active-student reads moved to
   `students.selectors` and `enrollment.selectors` for touched HTTP paths.
   `student_app.permissions.get_request_student` now returns only active

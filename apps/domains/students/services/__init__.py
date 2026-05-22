@@ -8,7 +8,13 @@ from .profile import (
     normalize_phone,
     update_student_profile,
 )
-from .lifecycle import StudentLifecycleError, StudentSoftDeleteResult, soft_delete_student
+from .lifecycle import (
+    StudentLifecycleError,
+    StudentRestoreResult,
+    StudentSoftDeleteResult,
+    restore_student,
+    soft_delete_student,
+)
 
 __all__ = [
     "normalize_school_from_name",
@@ -19,6 +25,8 @@ __all__ = [
     "normalize_phone",
     "update_student_profile",
     "StudentLifecycleError",
+    "StudentRestoreResult",
     "StudentSoftDeleteResult",
+    "restore_student",
     "soft_delete_student",
 ]
