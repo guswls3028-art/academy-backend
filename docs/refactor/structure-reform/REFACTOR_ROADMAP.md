@@ -360,6 +360,12 @@ Implemented:
   student submit and teacher submissions inbox use shared directly.
 - Frontend boundary snapshot improved from 3 to 1 cross-app/admin role imports
   after the submissions contract slice.
+- Lecture section and section-assignment APIs now live behind
+  `src/shared/api/contracts/lectureSections.ts`. The admin lectures sections API
+  path remains a compatibility facade, while teacher clinic uses shared
+  directly.
+- Frontend boundary snapshot improved from 1 to 0 cross-app/admin role imports
+  after the lecture sections contract slice.
 
 ## Cleanup And Removal Rule
 

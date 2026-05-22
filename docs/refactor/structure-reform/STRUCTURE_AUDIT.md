@@ -21,7 +21,7 @@ structurally enforced, and which small refactor should start Phase 1.
   `src/app_student`, plus `auth`, `core`, `shared`, `landing`.
 - Current refactor inventory measured 27 backend domain directories,
   104 backend cross-domain imports, 645 backend cross-domain internal imports,
-  1 frontend cross-app import, and 0 `shared -> app_*` imports.
+  0 frontend cross-app imports, and 0 `shared -> app_*` imports.
 
 Backend API prefixes relevant to this audit:
 
@@ -242,9 +242,9 @@ services, or events.
   notes data, video access/rule contracts, reusable video thumbnail UI,
   lecture/session attendance API, storage/inventory API, student API contracts,
   student Excel utilities, fees API/status contracts, the tools timer download
-  contract, the exam enrollment contract, the tenant info contract, and
-  submissions API/types out of admin internals. Frontend cross-app/admin role
-  imports are now 1.
+  contract, the exam enrollment contract, the tenant info contract, submissions
+  API/types, and lecture section APIs out of admin internals. Frontend
+  cross-app/admin role imports are now 0.
 
 ## 11. Phase 1 Recommendation
 
