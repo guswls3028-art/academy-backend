@@ -138,6 +138,11 @@ Risk scale:
   lecture sections contract. Admin lectures sections API remains a compatibility
   facade, teacher clinic imports shared directly, and cross-app/admin role
   imports are now 0.
+- 2026-05-23: Parent welcome-password drift cleanup also aligned account
+  Alimtalk queue metadata. Direct student welcome and registration approval
+  paths now enqueue `registration_approved_student|parent` event metadata so
+  `NotificationLog` masking and operations tracing use the same SYSTEM_AUTO
+  trigger SSOT.
 - 2026-05-23: Student restore lifecycle converged on
   `apps.domains.students.services.restore_student`. `bulk_restore`,
   `bulk_resolve_conflicts`, and lecture/enrollment deleted-student reuse now

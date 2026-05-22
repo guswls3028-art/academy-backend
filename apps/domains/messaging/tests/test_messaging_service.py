@@ -767,6 +767,56 @@ class TestRegistrationMessages(TestCase):
         text = mock_enqueue.call_args_list[0].kwargs["text"]
         self.assertIn("홍길동", text)
         self.assertIn("PS001", text)
+        student_kwargs = mock_enqueue.call_args_list[0].kwargs
+        parent_kwargs = mock_enqueue.call_args_list[1].kwargs
+        self.assertEqual(student_kwargs["event_type"], "registration_approved_student")
+        self.assertEqual(student_kwargs["target_type"], "account")
+        self.assertEqual(student_kwargs["target_id"], "PS001")
+        self.assertEqual(parent_kwargs["event_type"], "registration_approved_parent")
+        self.assertEqual(parent_kwargs["target_type"], "account")
+        self.assertEqual(parent_kwargs["target_id"], "01087654321")
+
+    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    @patch(f"{_SEL}.get_auto_send_config")
+    def test_send_welcome_passes_account_event_metadata(self, mock_config, mock_owner, mock_enqueue):
+        """학생 직접 등록 welcome도 계정성 알림 trigger로 로그 분류된다."""
+        student_config = _make_config(
+            "registration_approved_student",
+            body="#{학생이름} #{학생아이디} #{학생비밀번호} #{사이트링크}",
+        )
+        parent_config = _make_config(
+            "registration_approved_parent",
+            body="#{학생이름} #{학부모아이디} #{학부모비밀번호} #{사이트링크}",
+        )
+        mock_config.side_effect = [student_config, parent_config]
+        mock_enqueue.return_value = True
+        student = SimpleNamespace(
+            name="홍길동",
+            phone="01012345678",
+            parent_phone="01087654321",
+            ps_number="PS001",
+            tenant_id=1,
+        )
+
+        from apps.domains.messaging.services import send_welcome_messages
+        result = send_welcome_messages(
+            created_students=[student],
+            student_password="test1234",
+            parent_password_by_phone={"01087654321": "4321"},
+            site_url="https://hakwonplus.com",
+        )
+
+        self.assertEqual(result["status"], "enqueued")
+        self.assertEqual(result["enqueued"], 2)
+        student_kwargs = mock_enqueue.call_args_list[0].kwargs
+        parent_kwargs = mock_enqueue.call_args_list[1].kwargs
+        self.assertEqual(student_kwargs["event_type"], "registration_approved_student")
+        self.assertEqual(student_kwargs["target_type"], "account")
+        self.assertEqual(student_kwargs["target_id"], "PS001")
+        self.assertEqual(parent_kwargs["event_type"], "registration_approved_parent")
+        self.assertEqual(parent_kwargs["target_type"], "account")
+        self.assertEqual(parent_kwargs["target_id"], "01087654321")
 
     @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)

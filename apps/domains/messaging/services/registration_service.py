@@ -108,6 +108,12 @@ def send_welcome_messages(
                     message_mode="alimtalk",
                     template_id=sid_student,
                     alimtalk_replacements=[{"key": k, "value": v} for k, v in replacements.items()],
+                    event_type="registration_approved_student",
+                    target_type="account",
+                    target_id=ps_number,
+                    target_name=name,
+                    source_domain="students",
+                    source_use_case="students.welcome.student",
                 )
             except MessagingPolicyError:
                 logger.info("send_welcome student skipped (policy: tenant_id=%s)", tenant_id)
@@ -145,6 +151,12 @@ def send_welcome_messages(
                     message_mode="alimtalk",
                     template_id=sid_parent,
                     alimtalk_replacements=[{"key": k, "value": v} for k, v in replacements.items()],
+                    event_type="registration_approved_parent",
+                    target_type="account",
+                    target_id=parent_phone,
+                    target_name=name,
+                    source_domain="students",
+                    source_use_case="students.welcome.parent",
                 )
             except MessagingPolicyError:
                 logger.info("send_welcome parent skipped (policy: tenant_id=%s)", tenant_id)
@@ -244,6 +256,12 @@ def send_registration_approved_messages(
                     message_mode="alimtalk",
                     template_id=template_id_solapi,
                     alimtalk_replacements=alimtalk_replacements,
+                    event_type="registration_approved_student",
+                    target_type="account",
+                    target_id=student_id,
+                    target_name=student_name,
+                    source_domain="students",
+                    source_use_case="students.registration_approved.student",
                 ):
                     sent += 1
             except MessagingPolicyError:
@@ -284,6 +302,12 @@ def send_registration_approved_messages(
                     message_mode="alimtalk",
                     template_id=template_id_solapi,
                     alimtalk_replacements=alimtalk_replacements,
+                    event_type="registration_approved_parent",
+                    target_type="account",
+                    target_id=parent_id_display,
+                    target_name=student_name,
+                    source_domain="students",
+                    source_use_case="students.registration_approved.parent",
                 ):
                     sent += 1
             except MessagingPolicyError:
