@@ -980,6 +980,7 @@ class StudentViewSet(ModelViewSet):
                         "community_postentity", "community_postreply",
                         "students_student", "accounts_user", "core_tenantmembership",
                         "core_pending_password_reset",
+                        "token_blacklist_blacklistedtoken", "token_blacklist_outstandingtoken",
                     })
                     _SAFE_COLS = frozenset({
                         "enrollment_id", "student_id", "author_student_id",
@@ -1175,6 +1176,27 @@ class StudentViewSet(ModelViewSet):
                                 )
                                 cursor.execute(
                                     f"DELETE FROM core_pending_password_reset WHERE user_id IN {orphan_user_clause}",
+                                    orphan_user_params,
+                                )
+                            if _table_exists(cursor, _safe_tbl("token_blacklist_outstandingtoken")):
+                                if _table_exists(cursor, _safe_tbl("token_blacklist_blacklistedtoken")):
+                                    logger.info(
+                                        "bulk_permanent_delete DELETE token_blacklist_blacklistedtoken ids=%s",
+                                        orphan_user_ids,
+                                    )
+                                    cursor.execute(
+                                        "DELETE FROM token_blacklist_blacklistedtoken "
+                                        "WHERE token_id IN ("
+                                        f"SELECT id FROM token_blacklist_outstandingtoken WHERE user_id IN {orphan_user_clause}"
+                                        ")",
+                                        orphan_user_params,
+                                    )
+                                logger.info(
+                                    "bulk_permanent_delete DELETE token_blacklist_outstandingtoken ids=%s",
+                                    orphan_user_ids,
+                                )
+                                cursor.execute(
+                                    f"DELETE FROM token_blacklist_outstandingtoken WHERE user_id IN {orphan_user_clause}",
                                     orphan_user_params,
                                 )
                             logger.info("bulk_permanent_delete DELETE accounts_user (orphaned) ids=%s", orphan_user_ids)

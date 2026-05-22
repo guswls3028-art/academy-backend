@@ -12,6 +12,8 @@ from django.contrib.auth.hashers import make_password
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
+from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from apps.core.models import PendingPasswordReset
 from apps.core.models.tenant import Tenant
@@ -148,6 +150,10 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
     def test_user_deleted_when_orphaned(self):
         """멤버십이 전부 삭제되면 User도 삭제."""
         create_pending_password_reset(self.user_x, "12345678")
+        refresh = RefreshToken.for_user(self.user_x)
+        refresh.blacklist()
+        self.assertTrue(OutstandingToken.objects.filter(user=self.user_x).exists())
+        self.assertTrue(BlacklistedToken.objects.filter(token__user=self.user_x).exists())
         TenantMembership.objects.filter(tenant=self.tenant_b, user=self.user_x).delete()
         Submission.objects.filter(tenant=self.tenant_b, user=self.user_x).delete()
 
@@ -156,6 +162,8 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
         self.assertFalse(User.objects.filter(id=self.user_x.id).exists(),
                          "orphan User는 삭제되어야 함")
         self.assertFalse(PendingPasswordReset.objects.filter(user=self.user_x).exists())
+        self.assertFalse(OutstandingToken.objects.filter(user_id=self.user_x.id).exists())
+        self.assertFalse(BlacklistedToken.objects.filter(token__user_id=self.user_x.id).exists())
 
     def test_cross_tenant_student_id_rejected(self):
         """다른 테넌트 학생 ID → deleted=0."""
