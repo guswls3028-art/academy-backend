@@ -1,10 +1,9 @@
 # PATH: apps/domains/students/views/student_views.py
 
 import logging
-import traceback
 import uuid
 
-from django.db import transaction, connection
+from django.db import transaction
 from django.utils import timezone
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -42,6 +41,7 @@ from ..services import (
     StudentLifecycleError,
     StudentProfileUpdateError,
     normalize_school_from_name,
+    permanently_delete_students,
     restore_student,
     soft_delete_student,
     update_student_profile,
@@ -686,19 +686,7 @@ class StudentViewSet(ModelViewSet):
                     restored_count += 1
                 else:
                     with transaction.atomic():
-                        student_repo.enrollment_filter_student_delete(student.id, tenant=tenant)
-                        user = student.user if student.user_id else None
-                        student.delete()
-                        if user:
-                            # 안전한 패턴: User를 바로 delete()하면 다른 테넌트 데이터까지 cascade 삭제됨
-                            # 1) 비활성화 먼저
-                            user.is_active = False
-                            user.save(update_fields=["is_active"])
-                            # 2) 해당 테넌트 멤버십만 삭제
-                            TenantMembership.objects.filter(user=user, tenant=tenant).delete()
-                            # 3) 다른 테넌트에 멤버십이 없는 고아 User만 삭제
-                            if not TenantMembership.objects.filter(user=user).exists():
-                                user.delete()
+                        permanently_delete_students(tenant=tenant, student_ids=[student.id])
                         parent = None
                         parent_phone_raw = str(student_data.get("parent_phone") or student_data.get("parentPhone", "")).replace(" ", "").replace("-", "").replace(".", "")
                         parent_phone = parent_phone_raw if len(parent_phone_raw) >= 11 else ""
@@ -863,278 +851,18 @@ class StudentViewSet(ModelViewSet):
             return Response({"detail": "삭제할 ID가 없습니다."}, status=400)
 
         tenant = request.tenant
-        to_delete = list(student_repo.student_filter_tenant_ids_deleted(tenant, ids))
-        if not to_delete:
-            return Response({"deleted": 0}, status=200)
-
-        student_ids = [s.id for s in to_delete]
-        user_ids = [s.user_id for s in to_delete if s.user_id]
-        deleted = 0
-        logger.info(
-            "bulk_permanent_delete start tenant_id=%s student_ids=%s user_ids=%s",
-            getattr(tenant, "id", None), student_ids, user_ids,
-        )
         try:
-            with transaction.atomic():
-                with connection.cursor() as cursor:
-                    # 안전 화이트리스트: f-string으로 삽입되는 모든 테이블명/컬럼명을 검증
-                    _SAFE_TABLES = frozenset({
-                        "results_result_item", "results_result", "results_exam_attempt",
-                        "results_fact", "results_wrong_note_pdf", "results_exam_result",
-                        "submissions_submissionanswer", "submissions_submission",
-                        "homework_results_homeworkscore", "homework_assignment", "homework_enrollment",
-                        "attendance_attendance", "enrollment_sessionenrollment",
-                        "exams_exam_enrollment", "video_videopermission", "video_videoprogress",
-                        "video_videoplaybacksession", "video_videoplaybackevent",
-                        "progress_sessionprogress", "progress_lectureprogress",
-                        "progress_cliniclink", "progress_risklog",
-                        "enrollment_enrollment", "students_studenttag",
-                        "students_studentregistrationrequest",
-                        "clinic_sessionparticipant", "clinic_submission",
-                        "video_videocomment", "video_videolike",
-                        "community_postentity", "community_postreply",
-                        "students_student", "accounts_user", "core_tenantmembership",
-                        "core_pending_password_reset",
-                        "token_blacklist_blacklistedtoken", "token_blacklist_outstandingtoken",
-                    })
-                    _SAFE_COLS = frozenset({
-                        "enrollment_id", "student_id", "author_student_id",
-                        "created_by_id", "user_id",
-                    })
-
-                    def _safe_tbl(name):
-                        assert name in _SAFE_TABLES, f"Unexpected table: {name}"
-                        return name
-
-                    def _safe_col(name):
-                        assert name in _SAFE_COLS, f"Unexpected column: {name}"
-                        return name
-
-                    def _in_clause(values):
-                        values = list(values or [])
-                        if not values:
-                            return "(NULL)", []
-                        return "(" + ", ".join(["%s"] * len(values)) + ")", values
-
-                    table_names_cache = None
-
-                    def _table_exists(cur, tbl):
-                        nonlocal table_names_cache
-                        if table_names_cache is None:
-                            table_names_cache = set(connection.introspection.table_names(cur))
-                        return tbl in table_names_cache
-
-                    student_id_clause, student_id_params = _in_clause(student_ids)
-                    user_id_clause, user_id_params = _in_clause(user_ids)
-
-                    cursor.execute(
-                        f"SELECT id FROM enrollment_enrollment WHERE student_id IN {student_id_clause} AND tenant_id = %s",
-                        [*student_id_params, tenant.id],
-                    )
-                    enrollment_ids = [row[0] for row in cursor.fetchall()]
-                    logger.info(
-                        "bulk_permanent_delete enrollment_ids=%s (count=%s)",
-                        enrollment_ids[:20], len(enrollment_ids),
-                    )
-
-                    if enrollment_ids:
-                        enrollment_id_clause, enrollment_id_params = _in_clause(enrollment_ids)
-                        # 1) results / submissions / homework (enrollment_id 기반)
-                        for tbl, where_template in [
-                            (
-                                "results_result_item",
-                                "result_id IN (SELECT id FROM results_result WHERE enrollment_id IN {enrollment_ids})",
-                            ),
-                            ("results_result", "enrollment_id IN {enrollment_ids}"),
-                            ("results_exam_attempt", "enrollment_id IN {enrollment_ids}"),
-                            ("results_fact", "enrollment_id IN {enrollment_ids}"),
-                            ("results_wrong_note_pdf", "enrollment_id IN {enrollment_ids}"),
-                            (
-                                "results_exam_result",
-                                "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN {enrollment_ids})",
-                            ),
-                            (
-                                "submissions_submissionanswer",
-                                "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN {enrollment_ids})",
-                            ),
-                            ("submissions_submission", "enrollment_id IN {enrollment_ids}"),
-                            ("homework_results_homeworkscore", "enrollment_id IN {enrollment_ids}"),
-                            ("homework_assignment", "enrollment_id IN {enrollment_ids}"),
-                            ("homework_enrollment", "enrollment_id IN {enrollment_ids}"),
-                        ]:
-                            if _table_exists(cursor, _safe_tbl(tbl)):
-                                logger.info("bulk_permanent_delete DELETE %s", tbl)
-                                where_sql = where_template.format(enrollment_ids=enrollment_id_clause)
-                                cursor.execute(
-                                    f"DELETE FROM {_safe_tbl(tbl)} WHERE {where_sql}",
-                                    enrollment_id_params,
-                                )
-
-                        # 2) enrollment 자식 테이블들 (enrollment_id FK)
-                        enrollment_child_tables = [
-                            "attendance_attendance",
-                            "enrollment_sessionenrollment",
-                            "exams_exam_enrollment",
-                            "video_videopermission",
-                            "video_videoprogress",
-                            "video_videoplaybacksession",
-                            "video_videoplaybackevent",
-                            "progress_sessionprogress",
-                            "progress_lectureprogress",
-                            "progress_cliniclink",
-                            "progress_risklog",
-                        ]
-                        for tbl in enrollment_child_tables:
-                            if _table_exists(cursor, _safe_tbl(tbl)):
-                                logger.info("bulk_permanent_delete DELETE %s", tbl)
-                                cursor.execute(
-                                    f"DELETE FROM {_safe_tbl(tbl)} WHERE enrollment_id IN {enrollment_id_clause}",
-                                    enrollment_id_params,
-                                )
-
-                    # 3) enrollment 자체 삭제
-                    logger.info("bulk_permanent_delete DELETE enrollment_enrollment")
-                    cursor.execute(
-                        f"DELETE FROM enrollment_enrollment WHERE student_id IN {student_id_clause} AND tenant_id = %s",
-                        [*student_id_params, tenant.id],
-                    )
-                    logger.info("bulk_permanent_delete DELETE students_studenttag")
-                    cursor.execute(
-                        f"DELETE FROM students_studenttag WHERE student_id IN {student_id_clause}",
-                        student_id_params,
-                    )
-                    if _table_exists(cursor, _safe_tbl("students_studentregistrationrequest")):
-                        logger.info("bulk_permanent_delete UPDATE students_studentregistrationrequest (unlink)")
-                        cursor.execute(
-                            f"UPDATE students_studentregistrationrequest SET student_id = NULL WHERE student_id IN {student_id_clause}",
-                            student_id_params,
-                        )
-                    for tbl in [
-                        "clinic_sessionparticipant",
-                        "clinic_submission",
-                        "video_videocomment",
-                        "video_videolike",
-                    ]:
-                        if _table_exists(cursor, _safe_tbl(tbl)):
-                            logger.info("bulk_permanent_delete DELETE %s", tbl)
-                            col = _safe_col("author_student_id" if tbl == "video_videocomment" else "student_id")
-                            cursor.execute(
-                                f"DELETE FROM {_safe_tbl(tbl)} WHERE {col} IN {student_id_clause}",
-                                student_id_params,
-                            )
-                    # 커뮤니티(QnA 등)가 해당 학생을 created_by로 참조 → FK 해제 (SET_NULL과 동일)
-                    for tbl in ["community_postentity", "community_postreply"]:
-                        if _table_exists(cursor, _safe_tbl(tbl)):
-                            logger.info("bulk_permanent_delete UPDATE %s (unlink created_by)", tbl)
-                            cursor.execute(
-                                f"UPDATE {_safe_tbl(tbl)} SET created_by_id = NULL WHERE created_by_id IN {student_id_clause}",
-                                student_id_params,
-                            )
-                    logger.info("bulk_permanent_delete DELETE students_student")
-                    cursor.execute(
-                        f"DELETE FROM students_student WHERE id IN {student_id_clause}",
-                        student_id_params,
-                    )
-                    if user_ids:
-                        tenant_id = tenant.id
-                        # submissions_submission.user_id → accounts_user. enrollment 외 제출도 있을 수 있으므로 user_id 기준 정리.
-                        # ⚠️ 반드시 tenant_id 필터 포함 — User는 여러 Tenant에 소속 가능
-                        if _table_exists(cursor, _safe_tbl("submissions_submission")):
-                            _SUB_IDS_SQL = (
-                                f"SELECT id FROM submissions_submission WHERE user_id IN {user_id_clause} AND tenant_id = %s"
-                            )
-                            if _table_exists(cursor, _safe_tbl("results_exam_result")):
-                                logger.info("bulk_permanent_delete DELETE results_exam_result (by user submissions)")
-                                cursor.execute(
-                                    "DELETE FROM results_exam_result WHERE submission_id IN ("
-                                    + _SUB_IDS_SQL + ")",
-                                    [*user_id_params, tenant_id],
-                                )
-                            if _table_exists(cursor, _safe_tbl("submissions_submissionanswer")):
-                                logger.info("bulk_permanent_delete DELETE submissions_submissionanswer (by user)")
-                                cursor.execute(
-                                    "DELETE FROM submissions_submissionanswer WHERE submission_id IN ("
-                                    + _SUB_IDS_SQL + ")",
-                                    [*user_id_params, tenant_id],
-                                )
-                            logger.info("bulk_permanent_delete DELETE submissions_submission (by user_id, tenant)")
-                            cursor.execute(
-                                f"DELETE FROM submissions_submission WHERE user_id IN {user_id_clause} AND tenant_id = %s",
-                                [*user_id_params, tenant_id],
-                            )
-                        # 이 테넌트의 멤버십만 삭제
-                        logger.info("bulk_permanent_delete DELETE core_tenantmembership (tenant=%s)", tenant_id)
-                        if _table_exists(cursor, _safe_tbl("core_pending_password_reset")):
-                            logger.info("bulk_permanent_delete DELETE core_pending_password_reset (tenant=%s)", tenant_id)
-                            cursor.execute(
-                                f"DELETE FROM core_pending_password_reset WHERE user_id IN {user_id_clause} AND tenant_id = %s",
-                                [*user_id_params, tenant_id],
-                            )
-                        cursor.execute(
-                            f"DELETE FROM core_tenantmembership WHERE user_id IN {user_id_clause} AND tenant_id = %s",
-                            [*user_id_params, tenant_id],
-                        )
-                        # User 계정은 다른 테넌트에 멤버십이 없는 경우에만 삭제
-                        cursor.execute(
-                            f"SELECT id FROM accounts_user WHERE id IN {user_id_clause} AND NOT EXISTS ("
-                            "  SELECT 1 FROM core_tenantmembership WHERE user_id = accounts_user.id"
-                            ")",
-                            user_id_params,
-                        )
-                        orphan_user_ids = [row[0] for row in cursor.fetchall()]
-                        if orphan_user_ids:
-                            orphan_user_clause, orphan_user_params = _in_clause(orphan_user_ids)
-                            if _table_exists(cursor, _safe_tbl("core_pending_password_reset")):
-                                logger.info(
-                                    "bulk_permanent_delete DELETE core_pending_password_reset (orphaned users) ids=%s",
-                                    orphan_user_ids,
-                                )
-                                cursor.execute(
-                                    f"DELETE FROM core_pending_password_reset WHERE user_id IN {orphan_user_clause}",
-                                    orphan_user_params,
-                                )
-                            if _table_exists(cursor, _safe_tbl("token_blacklist_outstandingtoken")):
-                                if _table_exists(cursor, _safe_tbl("token_blacklist_blacklistedtoken")):
-                                    logger.info(
-                                        "bulk_permanent_delete DELETE token_blacklist_blacklistedtoken ids=%s",
-                                        orphan_user_ids,
-                                    )
-                                    cursor.execute(
-                                        "DELETE FROM token_blacklist_blacklistedtoken "
-                                        "WHERE token_id IN ("
-                                        f"SELECT id FROM token_blacklist_outstandingtoken WHERE user_id IN {orphan_user_clause}"
-                                        ")",
-                                        orphan_user_params,
-                                    )
-                                logger.info(
-                                    "bulk_permanent_delete DELETE token_blacklist_outstandingtoken ids=%s",
-                                    orphan_user_ids,
-                                )
-                                cursor.execute(
-                                    f"DELETE FROM token_blacklist_outstandingtoken WHERE user_id IN {orphan_user_clause}",
-                                    orphan_user_params,
-                                )
-                            logger.info("bulk_permanent_delete DELETE accounts_user (orphaned) ids=%s", orphan_user_ids)
-                            cursor.execute(
-                                f"DELETE FROM accounts_user WHERE id IN {orphan_user_clause}",
-                                orphan_user_params,
-                            )
-                        else:
-                            logger.info("bulk_permanent_delete SKIP accounts_user delete — users have other tenant memberships")
-                    deleted = len(to_delete)
+            result = permanently_delete_students(tenant=tenant, student_ids=ids)
         except Exception as e:
             logger.exception(
                 "bulk_permanent_delete failed: %s (student_ids=%s)",
-                e, student_ids,
+                e, ids,
             )
-            detail = str(e)
-            if settings.DEBUG:
-                detail += "\n" + traceback.format_exc()
             return Response(
-                {"detail": f"영구 삭제 중 오류: {detail}"},
+                {"detail": f"영구 삭제 중 오류: {e}"},
                 status=500,
             )
-        return Response({"deleted": deleted}, status=200)
+        return Response({"deleted": result.deleted_count}, status=200)
 
     @action(
         detail=False,
@@ -1183,21 +911,11 @@ class StudentViewSet(ModelViewSet):
                         tenant.id, g["name"], g["parent_phone"], keep.id
                     )
                 )
-                for s in to_remove:
-                    student_repo.enrollment_filter_student_delete_obj(s, tenant=tenant)
-                    user = s.user
-                    s.delete()
-                    if user:
-                        # 안전한 패턴: User를 바로 delete()하면 다른 테넌트 데이터까지 cascade 삭제됨
-                        # 1) 비활성화 먼저
-                        user.is_active = False
-                        user.save(update_fields=["is_active"])
-                        # 2) 해당 테넌트 멤버십만 삭제
-                        TenantMembership.objects.filter(user=user, tenant=tenant).delete()
-                        # 3) 다른 테넌트에 멤버십이 없는 고아 User만 삭제
-                        if not TenantMembership.objects.filter(user=user).exists():
-                            user.delete()
-                    removed += 1
+                result = permanently_delete_students(
+                    tenant=tenant,
+                    student_ids=[s.id for s in to_remove],
+                )
+                removed += result.deleted_count
         return Response({"removed": removed}, status=200)
 
     @action(

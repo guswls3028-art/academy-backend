@@ -45,7 +45,7 @@
 |---------|--------|---------|--------|------|
 | P0 | Submission | 9 | CRITICAL | 상태기계 존재하나 미적용 (dead code) |
 | P0 | ExamResult | 2 | CRITICAL | FINAL→DRAFT 회귀 가능 |
-| P0 | StudentRegistrationRequest | 3 | HIGH | approve/reject 레이스 컨디션 |
+| P0 | StudentRegistrationRequest | 3 | FIXED | approve/reject 레이스는 `select_for_update`로 보강됨 |
 | P1 | Video | 5 | HIGH | 관리 명령어 SFU 미사용 |
 | P1 | VideoTranscodeJob | 7 | HIGH | cancel/mark_dead 가드 부재 |
 | P1 | ExamAttempt | 4 | MEDIUM | sync_result 원자성 부재 |
@@ -712,11 +712,11 @@ EXPIRED → {} (종단)
 - **영향:** 이미 확정된(FINAL) 시험 결과가 채점 서비스 재호출 시 DRAFT로 회귀 가능
 - **위반:** ExamResult 모델 docstring "finalized 되면 불변" 계약 위반
 
-### C3. HIGH — StudentRegistrationRequest approve/reject 레이스
+### C3. HIGH — StudentRegistrationRequest approve/reject 레이스 → **FIXED**
 
-- **위치:** `apps/domains/students/views.py:1774`
-- **문제:** reject 경로에 `select_for_update` 없음. approve와 reject가 동시 실행 가능.
-- **영향:** 학생이 생성된 후 request가 rejected로 마킹될 수 있음 (데이터 불일치)
+- **해결:** `apps/domains/students/views/registration_views.py`의 approve/reject/bulk_reject 경로가
+  `select_for_update`와 상태 재확인을 사용한다.
+- **비고:** 새 레이스가 발견되면 이 항목을 새 증거와 함께 다시 열고, 현재 fixed 기록은 변경 이력으로 남긴다.
 
 ### C4. HIGH — VideoTranscodeJob 종단 상태 덮어쓰기
 

@@ -11,9 +11,8 @@
   python manage.py check_deleted_student_duplicates --fix        # 중복 그룹 정리 실행
 """
 from django.core.management.base import BaseCommand
-from django.db import transaction
-
 from academy.adapters.db.django import repositories_students as student_repo
+from apps.domains.students.services import permanently_delete_students
 
 
 class Command(BaseCommand):
@@ -65,22 +64,21 @@ class Command(BaseCommand):
             return
 
         removed = 0
-        with transaction.atomic():
-            for g in groups_list:
-                keep = student_repo.student_filter_dup_keep_first(
-                    g["tenant_id"], g["name"], g["parent_phone"]
-                )
-                to_remove = list(
-                    student_repo.student_filter_dup_to_remove(
-                        g["tenant_id"], g["name"], g["parent_phone"], keep.id
-                    )
-                )
-                for s in to_remove:
-                    student_repo.enrollment_filter_student_delete_obj(s, tenant_id=g["tenant_id"])
-                    user = s.user
-                    s.delete()
-                    if user:
-                        user.delete()
-                    removed += 1
+        for g in groups_list:
+            keep = student_repo.student_filter_dup_keep_first(
+                g["tenant_id"], g["name"], g["parent_phone"]
+            )
+            to_remove = list(
+                student_repo.student_filter_dup_to_remove(
+                    g["tenant_id"], g["name"], g["parent_phone"], keep.id
+                ).select_related("tenant")
+            )
+            if not to_remove:
+                continue
+            result = permanently_delete_students(
+                tenant=to_remove[0].tenant,
+                student_ids=[s.id for s in to_remove],
+            )
+            removed += result.deleted_count
 
         self.stdout.write(self.style.SUCCESS(f"중복 영구 삭제 완료: {removed}명"))

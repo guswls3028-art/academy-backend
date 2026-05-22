@@ -1,6 +1,6 @@
 # Structure Reform Roadmap
 
-**Status:** [ACTIVE] strangler roadmap with implemented Phase 1 and Phase 2/3/4 guardrail slices
+**Status:** [ACTIVE] strangler roadmap with implemented Phase 1 slices and Phase 2/3/4 guardrail slices
 **Captured:** 2026-05-22  
 **Principle:** converge feature responsibility first; move folders only after behavior boundaries are proven.
 
@@ -100,6 +100,15 @@ Implemented:
 - `student_app.permissions.get_request_student` and student/parent permission
   checks now use active tenant-scoped student selectors, so deleted students are
   not treated as active student identities in student-app BFF callers.
+- `students.services.lifecycle.soft_delete_student` and `restore_student`
+  route `destroy`, `bulk_delete`, `bulk_restore`, conflict restore, and
+  lecture/import restore through named lifecycle services.
+- `students.services.lifecycle.permanently_delete_students` routes
+  `bulk_permanent_delete`, conflict delete, deleted-duplicate cleanup, and
+  30-day purge through one tenant-guarded service. It preserves shared
+  parent/staff/teacher or cross-tenant accounts, blocks corrupt cross-tenant
+  child references, and cleans fee/section/video-comment dependencies. The raw
+  SQL graph still needs domain hook/event extraction.
 
 ## Phase 2: Enrollment / Results / Exams / Homework Consistency
 

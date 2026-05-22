@@ -1,6 +1,6 @@
 # Phase 1 Execution Plan
 
-**Status:** [PROPOSED] first implementation phase  
+**Status:** [PARTIAL / HISTORICAL PLAN] first implementation phase
 **Captured:** 2026-05-22  
 **Target:** students canonical read/write path  
 **Non-goal:** do not merge with current account-recovery/password/Alimtalk release work.
@@ -19,8 +19,8 @@ Canonicalize student identity/profile/lifecycle:
 - write: create, update profile, parent relink, soft delete, restore;
 - compatibility: existing `/students/*`, `/student/me/`, and registration/import
   endpoints stay live;
-- destructive permanent delete gets guardrails and a service shell, but should
-  not be deeply rewritten first.
+- destructive permanent delete has a guarded service shell; domain hook/event
+  extraction remains pending.
 
 ## Expected Change Files
 
@@ -69,12 +69,12 @@ E2E/helper modifications:
 |---|---|
 | `student_views.py` | Large view with create/update/delete/import/permanent-delete logic and cross-domain side effects |
 | `registration_views.py` | Public signup approval creates users/students/parents and sends messages |
-| `student_app/profile/views.py` | Separate profile PATCH contract; currently diverges on parent relink and OMR recompute |
+| `student_app/profile/views.py` | Profile PATCH now routes through `update_student_profile`; response DTO still differs from admin/auth surfaces |
 | `lecture_enroll.py` | Create/restore path used by enrollment/import; can affect roster state |
 | `bulk_from_excel.py` | Worker path and welcome message semantics |
 | `repositories_students.py` | Helper signatures allow no-tenant usage |
 | `core/serializers.py` | `linkedStudents` read path for parent auth bootstrap |
-| `bulk_permanent_delete` block | Destructive raw SQL across many domains |
+| `permanently_delete_students` service graph | Destructive raw SQL across many domains, now behind one tenant-guarded service |
 
 ## Step Plan
 
@@ -99,7 +99,7 @@ Completion:
 - No new call in touched files uses `Student.objects.filter(...)` directly.
 - Selector tests prove tenant filter is mandatory.
 
-### 3. Add Profile/Identity Service
+### 3. Add Profile/Identity Service — [COMPLETED FOR TOUCHED WRITE PATHS]
 
 - Implement `update_student_profile` with parent relink and OMR recompute.
 - Use same service from `StudentViewSet.perform_update` and
@@ -127,19 +127,21 @@ Completion:
 - Duplicate and deleted-student conflict behavior is preserved or explicitly
   documented before changing.
 
-### 5. Add Lifecycle Service
+### 5. Add Lifecycle Service — [PARTIAL]
 
-- Implement soft delete and restore service.
+- Implement soft delete and restore service. [DONE]
 - Preserve existing side effects first: user active, membership, enrollment,
   clinic participant cancellation, notification event.
-- Wrap permanent delete with a service entry and dry-run/tenant assertions before
-  moving raw SQL.
+- Wrap permanent delete with a service entry and tenant assertions before moving
+  raw SQL. [DONE service shell / TODO domain hooks and dry-run]
 
 Completion:
 
 - `destroy` and `bulk_delete` use same soft-delete service.
 - `bulk_restore` and import restore use the same restore service or documented
   compatibility adapter.
+- `bulk_permanent_delete`, `bulk_resolve_conflicts` delete, duplicate cleanup,
+  and purge commands use the same permanent-delete service.
 
 ### 6. Frontend API Convergence
 

@@ -55,12 +55,20 @@ It owns:
   `schedule_hidden_ids`;
 - tags through `Tag` and the join table.
 
+[VERIFIED]
+
+Tenant-scoped student selectors and profile/lifecycle services now exist for the
+touched paths. Profile update, soft delete, restore, and permanent-delete
+entrypoints have canonical service boundaries while keeping deployed URLs
+stable.
+
 [INFERRED]
 
-There is no single canonical read selector or write use-case today. The model is
-the database source, but behavior is split among views, serializers, service
-helpers, repository wrappers, frontend mapping functions, and E2E helpers.
-Therefore a patch to a student field is not guaranteed to reach every surface.
+Student create, registration approval, import rows, schedule visibility, read
+DTO convergence, and domain-event cleanup still have split behavior across
+views, serializers, service helpers, repository wrappers, frontend mapping
+functions, and E2E helpers. Therefore a patch outside the canonicalized paths is
+not guaranteed to reach every surface.
 
 ## 3. Student Data Read Paths
 
@@ -104,13 +112,12 @@ creation/restoration and 4 roots for password/account recovery.
 
 [VERIFIED]
 
-- `StudentProfileView.patch` updates `parent_phone` directly but does not relink
-  `Parent`; `StudentViewSet.perform_update` relinks parent when `parent_phone`
-  changes.
-- `StudentProfileView.patch` updates `phone` / `parent_phone` but does not
-  recompute `omr_code`; `StudentUpdateSerializer.validate` recomputes OMR.
-- `StudentViewSet.me` has a third self-profile PATCH flow and performs username,
-  password, profile photo, school field, OMR, and parent relink logic separately.
+- `StudentProfileView.patch`, `StudentViewSet.perform_update`, and
+  `StudentViewSet.me` now route writes through
+  `students.services.profile.update_student_profile`, so parent relink and OMR
+  recompute drift has been removed for those paths.
+- The remaining profile risk is response DTO drift: admin, legacy self-profile,
+  student-app profile, and auth bootstrap still expose different read shapes.
 - `Student.save()` updates `User.username` and inventory `student_ps` when
   `ps_number` changes. This means the students model directly modifies another
   domain's internal data.
@@ -165,9 +172,12 @@ High-risk patterns found:
 - `apps/core/serializers.py` reads `parent.students.filter(...)` without an
   explicit tenant filter for `linkedStudents`; it relies on the parent relation
   invariant rather than a tenant-scoped selector.
-- `StudentViewSet.bulk_permanent_delete` uses raw SQL to delete/update data in
-  results, submissions, homework, attendance, enrollment, exams, video, progress,
-  clinic, community, students, core membership, and accounts user tables.
+- `students.services.lifecycle.permanently_delete_students` uses guarded raw SQL
+  to delete/update data in results, submissions, homework, attendance,
+  enrollment, exams, video, progress, fees, clinic, community, students, core
+  membership, and accounts user tables. `bulk_permanent_delete`, conflict
+  delete, deleted-duplicate cleanup, and purge commands are compatibility
+  facades over the service.
 - Some raw delete/update clauses rely on already tenant-scoped student/user IDs
   rather than repeating tenant in every table operation.
 - Management commands for deleted student duplicate cleanup and purge operate on
@@ -182,8 +192,10 @@ allow unsafe no-tenant usage.
 [VERIFIED]
 
 - Students model save logic imports and updates inventory models.
-- Student permanent delete directly edits internal tables across assessment,
-  academics, clinic, media, community, and core.
+- Student permanent delete no longer edits internal tables from views/commands,
+  but the canonical lifecycle service still owns a guarded cross-domain SQL
+  graph across assessment, academics, clinic, media, fees, community, and core.
+  Domain hooks/events are still the target boundary.
 - Community, fees, messaging, results, and parts of enrollment still import or
   query `Student` directly in views/serializers/services. Touched clinic
   participant/session/idcard and attendance roster paths now use public
@@ -206,12 +218,12 @@ services, or events.
 
 [INFERRED from verified roots]
 
-- Student lifecycle state is spread across `Student.deleted_at`,
+- Student lifecycle state is still spread across `Student.deleted_at`,
   `Student.is_managed`, `User.is_active`, `TenantMembership.is_active`,
   `Enrollment.status`, clinic participant status, and messaging side effects.
-- State transitions are not explicit use-cases. They are implemented in
-  `destroy`, `bulk_delete`, `bulk_restore`, `bulk_permanent_delete`, registration
-  approve, Excel restore, and management commands.
+- Soft delete, restore, and permanent-delete entrypoints are now explicit
+  lifecycle service use-cases. Registration approve, create/import rows,
+  schedule visibility, and domain-event cleanup remain split.
 - Notifications are fired inside view/service flows rather than through a
   durable domain event/outbox contract.
 - Logs exist in some destructive paths, but a uniform
@@ -256,6 +268,11 @@ services, or events.
   tenant-scoped student validation, and `AttendanceSerializer` scopes
   session/enrollment FK querysets by request tenant. Same-tenant deleted
   students are rejected before roster/enrollment creation.
+- Student lifecycle services now cover soft delete, restore, and permanent
+  delete entrypoints. Permanent delete remains a compatibility service with a
+  guarded raw SQL graph, but `bulk_permanent_delete`, conflict delete,
+  duplicate cleanup, and purge commands no longer own separate destructive
+  logic.
 
 ## 11. Phase 1 Recommendation
 

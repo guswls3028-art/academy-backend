@@ -11,10 +11,10 @@
 from datetime import timedelta
 
 from django.core.management.base import BaseCommand
-from django.db import transaction
 from django.utils import timezone
 
 from academy.adapters.db.django import repositories_students as student_repo
+from apps.domains.students.services import permanently_delete_students
 
 
 class Command(BaseCommand):
@@ -54,24 +54,16 @@ class Command(BaseCommand):
             return
 
         deleted = 0
-        with transaction.atomic():
-            for student in to_purge:
-                user = student.user
-                tenant = student.tenant
-                student.delete()
-                if user:
-                    # Only delete user if no other tenant memberships remain
-                    from apps.core.models import TenantMembership
-                    other_memberships = TenantMembership.objects.filter(
-                        user=user,
-                    ).exclude(tenant=tenant).exists()
-                    if not other_memberships:
-                        user.delete()
-                    else:
-                        # Just remove this tenant's membership
-                        TenantMembership.objects.filter(
-                            user=user, tenant=tenant,
-                        ).delete()
-                deleted += 1
+        by_tenant = {}
+        for student in to_purge:
+            by_tenant.setdefault(student.tenant_id, {"tenant": student.tenant, "ids": []})
+            by_tenant[student.tenant_id]["ids"].append(student.id)
+
+        for group in by_tenant.values():
+            result = permanently_delete_students(
+                tenant=group["tenant"],
+                student_ids=group["ids"],
+            )
+            deleted += result.deleted_count
 
         self.stdout.write(self.style.SUCCESS(f"영구 삭제 완료: {deleted}명"))

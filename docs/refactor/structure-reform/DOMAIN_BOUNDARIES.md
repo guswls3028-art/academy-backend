@@ -22,7 +22,7 @@ Boundary rule for the structure reform:
 | Public interface candidate | `students.selectors` for tenant-scoped reads; `students.services` for create/update/lifecycle/profile/import/registration approval |
 | Forbidden dependency | Other domains importing `Student` internals for write logic; model save touching inventory; frontend role apps importing admin student internals instead of shared contracts |
 | Tenant rule | Every student lookup must include tenant and deleted-state intent; no global user/student lookup unless explicitly platform-admin scoped |
-| Current risk | 6+ write roots, profile DTO drift, raw permanent delete, no-tenant repository helpers; student-app identity now uses active tenant-scoped selectors, but broader lifecycle state is still split |
+| Current risk | Profile writes plus soft-delete/restore/permanent-delete entrypoints now have service facades; remaining risks are create/import/registration roots, schedule visibility, read DTO drift, model save inventory side effect, no-tenant repository helpers, and the permanent-delete service's guarded raw SQL graph |
 
 ## Parents
 
@@ -55,7 +55,7 @@ Boundary rule for the structure reform:
 | Public interface candidate | `[COMPLETED] enrollment.selectors.enrollments_for_tenant`, `session_enrollments_for_tenant`, `active_session_enrollments_for_session`; `[COMPLETED] enrollment.services.lifecycle` for bulk enrollment/session create, status side effects, delete, and learning access toggle |
 | Forbidden dependency | Students domain view directly owning enrollment-matrix toggles without enrollment service |
 | Tenant rule | Enrollment and session enrollment queries must include tenant |
-| Current risk | Student lifecycle changes still mutate enrollment status in multiple places; enrollment matrix, assignment roster, and touched clinic enrollment reads are now canonicalized |
+| Current risk | Student soft delete now delegates enrollment deactivation through the enrollment lifecycle service; enrollment matrix, assignment roster, and touched clinic enrollment reads are canonicalized. Remaining risk is event/hook extraction for permanent-delete cleanup |
 
 ## Attendance
 
@@ -154,7 +154,7 @@ Boundary rule for the structure reform:
 | Public interface candidate | `fees.services.assign_fee`, `fees.selectors.get_student_invoices` |
 | Forbidden dependency | Student lifecycle deleting fee data directly without fees hook |
 | Tenant rule | Fee/invoice/payment queries must include tenant and same-tenant student/enrollment |
-| Current risk | Fee models direct-FK Student; permanent delete must coordinate before any destructive cleanup |
+| Current risk | Fee direct-FK cleanup is covered by `students.services.permanently_delete_students`, but the target boundary is still a fees-owned cleanup hook/event rather than student-owned SQL |
 
 ## Community
 
@@ -163,9 +163,9 @@ Boundary rule for the structure reform:
 | Owned data | Scope nodes, posts, mappings, replies, templates, likes, reports, notifications, attachments, blocks |
 | External references | Students/users, lectures/sessions, messaging |
 | Public interface candidate | `community.services.create_post`, `community.services.anonymize_or_unlink_author`, `community.events.ReplyCreated` |
-| Forbidden dependency | Students permanent delete updating community internals from raw SQL |
+| Forbidden dependency | Students permanent delete updating community internals from raw SQL long term; current compatibility service must keep explicit tenant predicates |
 | Tenant rule | Community content and moderation state must include tenant; author lookup must not cross tenant |
-| Current risk | Created-by/user/student relations are repaired by commands and destructive student cleanup |
+| Current risk | Permanent delete currently nulls same-tenant student authors through the guarded lifecycle service; community-owned anonymize/unlink hook remains pending |
 
 ## Landing
 

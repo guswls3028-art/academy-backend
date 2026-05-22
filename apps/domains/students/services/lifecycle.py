@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterable
 
-from django.db import transaction
+from django.apps import apps
+from django.contrib.auth import get_user_model
+from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.core.models import TenantMembership
@@ -34,6 +36,13 @@ class StudentRestoreResult:
     changed_fields: tuple[str, ...]
     user_reactivated: bool
     parent_relinked: bool
+
+
+@dataclass(frozen=True)
+class StudentPermanentDeleteResult:
+    deleted_count: int
+    student_ids: tuple[int, ...]
+    user_ids: tuple[int, ...]
 
 
 def _append_unique(fields: list[str], field: str) -> None:
@@ -185,17 +194,30 @@ def soft_delete_student(
 
         user_deactivated = False
         if student.user:
-            student.user.is_active = False
-            student.user.token_version = (student.user.token_version or 0) + 1
-            user_update = ["is_active", "token_version"]
-            if student.user.phone:
-                student.user.phone = None
-                user_update.append("phone")
-            student.user.save(update_fields=user_update)
-            TenantMembership.objects.filter(user=student.user, tenant=tenant).update(
-                is_active=False
+            cleanup_user_ids = _tenant_account_cleanup_user_ids(
+                tenant=tenant,
+                user_ids=[student.user_id],
+                exclude_student_ids=[student.id],
             )
-            user_deactivated = True
+            if student.user_id in cleanup_user_ids:
+                TenantMembership.objects.filter(
+                    user=student.user,
+                    tenant=tenant,
+                    role="student",
+                ).update(is_active=False)
+                has_active_membership = TenantMembership.objects.filter(
+                    user=student.user,
+                    is_active=True,
+                ).exists()
+                if not has_active_membership:
+                    student.user.is_active = False
+                    student.user.token_version = (student.user.token_version or 0) + 1
+                    user_update = ["is_active", "token_version"]
+                    if student.user.phone:
+                        student.user.phone = None
+                        user_update.append("phone")
+                    student.user.save(update_fields=user_update)
+                    user_deactivated = True
 
         from apps.domains.clinic.services.lifecycle import cancel_active_participants_for_student
         from apps.domains.enrollment.services.lifecycle import deactivate_enrollments_for_student
@@ -280,3 +302,441 @@ def restore_student(
             user_reactivated=user_reactivated,
             parent_relinked=parent_relinked,
         )
+
+
+def permanently_delete_students(
+    *,
+    tenant,
+    student_ids: Iterable[int],
+) -> StudentPermanentDeleteResult:
+    ids = []
+    for value in student_ids or []:
+        try:
+            sid = int(value)
+        except (TypeError, ValueError):
+            continue
+        if sid > 0 and sid not in ids:
+            ids.append(sid)
+
+    if not tenant:
+        raise StudentLifecycleError("tenant_required", "tenant가 필요합니다.")
+    if not ids:
+        return StudentPermanentDeleteResult(0, tuple(), tuple())
+
+    with transaction.atomic():
+        to_delete = list(
+            Student.objects.select_for_update().filter(
+                tenant=tenant,
+                id__in=ids,
+                deleted_at__isnull=False,
+            ).select_related("user")
+        )
+        if not to_delete:
+            return StudentPermanentDeleteResult(0, tuple(), tuple())
+
+        selected_student_ids = tuple(s.id for s in to_delete)
+        selected_user_ids = tuple(s.user_id for s in to_delete if s.user_id)
+
+        _permanently_delete_selected_students(
+            tenant=tenant,
+            student_ids=selected_student_ids,
+            user_ids=selected_user_ids,
+        )
+
+    return StudentPermanentDeleteResult(
+        deleted_count=len(selected_student_ids),
+        student_ids=selected_student_ids,
+        user_ids=selected_user_ids,
+    )
+
+
+def _deletable_orphan_user_ids(user_ids: Iterable[int]) -> tuple[int, ...]:
+    ids = tuple(dict.fromkeys(int(uid) for uid in user_ids or [] if uid))
+    if not ids:
+        return tuple()
+
+    blocked = set(Student.objects.filter(user_id__in=ids).values_list("user_id", flat=True))
+    for app_label, model_name in [
+        ("parents", "Parent"),
+        ("staffs", "Staff"),
+    ]:
+        model = apps.get_model(app_label, model_name)
+        blocked.update(model.objects.filter(user_id__in=ids).values_list("user_id", flat=True))
+
+    return tuple(uid for uid in ids if uid not in blocked)
+
+
+def _tenant_account_cleanup_user_ids(
+    *,
+    tenant,
+    user_ids: Iterable[int],
+    exclude_student_ids: Iterable[int] = (),
+) -> tuple[int, ...]:
+    ids = tuple(dict.fromkeys(int(uid) for uid in user_ids or [] if uid))
+    if not ids:
+        return tuple()
+
+    excluded_students = tuple(dict.fromkeys(int(sid) for sid in exclude_student_ids or [] if sid))
+    student_qs = Student.objects.filter(tenant=tenant, user_id__in=ids)
+    if excluded_students:
+        student_qs = student_qs.exclude(id__in=excluded_students)
+    blocked = set(
+        student_qs.values_list("user_id", flat=True)
+    )
+    for app_label, model_name in [
+        ("parents", "Parent"),
+        ("staffs", "Staff"),
+    ]:
+        model = apps.get_model(app_label, model_name)
+        blocked.update(
+            model.objects.filter(tenant=tenant, user_id__in=ids).values_list("user_id", flat=True)
+        )
+    blocked.update(
+        TenantMembership.objects.filter(
+            tenant=tenant,
+            user_id__in=ids,
+            is_active=True,
+        ).exclude(role="student").values_list("user_id", flat=True)
+    )
+
+    return tuple(uid for uid in ids if uid not in blocked)
+
+
+def _reactivate_preserved_users_with_active_membership(user_ids: Iterable[int]) -> None:
+    ids = tuple(dict.fromkeys(int(uid) for uid in user_ids or [] if uid))
+    if not ids:
+        return
+
+    User = get_user_model()
+    users = (
+        User.objects.filter(
+            id__in=ids,
+            is_active=False,
+            tenant_memberships__is_active=True,
+        )
+        .distinct()
+        .only("id", "is_active", "token_version")
+    )
+    for user in users:
+        user.is_active = True
+        user.token_version = (user.token_version or 0) + 1
+        user.save(update_fields=["is_active", "token_version"])
+
+
+def _permanently_delete_selected_students(
+    *,
+    tenant,
+    student_ids: tuple[int, ...],
+    user_ids: tuple[int, ...],
+) -> None:
+    _SAFE_TABLES = frozenset({
+        "results_result_item", "results_result", "results_exam_attempt",
+        "results_fact", "results_wrong_note_pdf", "results_exam_result",
+        "submissions_submissionanswer", "submissions_submission",
+        "homework_results_homeworkscore", "homework_assignment", "homework_enrollment",
+        "lectures_sectionassignment",
+        "student_fee", "student_invoice", "student_invoice_item", "fee_payment",
+        "attendance_attendance", "enrollment_sessionenrollment",
+        "exams_exam_enrollment", "video_videopermission", "video_videoprogress",
+        "video_videoplaybacksession", "video_videoplaybackevent",
+        "progress_sessionprogress", "progress_lectureprogress",
+        "progress_cliniclink", "progress_risklog",
+        "enrollment_enrollment", "students_studenttag",
+        "students_studentregistrationrequest",
+        "clinic_sessionparticipant", "clinic_submission",
+        "video_videocomment", "video_videolike",
+        "community_postentity", "community_postreply",
+        "students_student", "accounts_user", "core_tenantmembership",
+        "core_pending_password_reset",
+        "token_blacklist_blacklistedtoken", "token_blacklist_outstandingtoken",
+    })
+    _SAFE_COLS = frozenset({
+        "enrollment_id", "student_id", "author_student_id",
+        "created_by_id", "user_id",
+    })
+
+    def _safe_tbl(name: str) -> str:
+        if name not in _SAFE_TABLES:
+            raise StudentLifecycleError("unsafe_delete_table", f"Unexpected table: {name}")
+        return name
+
+    def _safe_col(name: str) -> str:
+        if name not in _SAFE_COLS:
+            raise StudentLifecycleError("unsafe_delete_column", f"Unexpected column: {name}")
+        return name
+
+    def _in_clause(values: Iterable[int]) -> tuple[str, list[int]]:
+        values = list(values or [])
+        if not values:
+            return "(NULL)", []
+        return "(" + ", ".join(["%s"] * len(values)) + ")", values
+
+    orphan_user_ids: list[int] = []
+    with connection.cursor() as cursor:
+        table_names_cache = None
+
+        def _table_exists(tbl: str) -> bool:
+            nonlocal table_names_cache
+            if table_names_cache is None:
+                table_names_cache = set(connection.introspection.table_names(cursor))
+            return tbl in table_names_cache
+
+        def _assert_no_cross_tenant_student_refs(
+            student_id_clause: str,
+            student_id_params: list[int],
+        ) -> None:
+            for tbl, col in [
+                ("enrollment_enrollment", "student_id"),
+                ("students_studentregistrationrequest", "student_id"),
+                ("clinic_sessionparticipant", "student_id"),
+                ("clinic_submission", "student_id"),
+                ("student_fee", "student_id"),
+                ("student_invoice", "student_id"),
+                ("fee_payment", "student_id"),
+                ("video_videolike", "student_id"),
+                ("video_videocomment", "author_student_id"),
+                ("community_postentity", "created_by_id"),
+                ("community_postreply", "created_by_id"),
+            ]:
+                if not _table_exists(_safe_tbl(tbl)):
+                    continue
+                cursor.execute(
+                    f"SELECT id FROM {_safe_tbl(tbl)} "
+                    f"WHERE {_safe_col(col)} IN {student_id_clause} "
+                    "AND (tenant_id IS NULL OR tenant_id <> %s) LIMIT 1",
+                    [*student_id_params, tenant.id],
+                )
+                row = cursor.fetchone()
+                if row:
+                    raise StudentLifecycleError(
+                        "cross_tenant_reference",
+                        f"{tbl}.{col} has cross-tenant reference for deleted student",
+                    )
+
+        student_id_clause, student_id_params = _in_clause(student_ids)
+        user_id_clause, user_id_params = _in_clause(user_ids)
+
+        _assert_no_cross_tenant_student_refs(student_id_clause, student_id_params)
+
+        cursor.execute(
+            f"SELECT id FROM enrollment_enrollment WHERE student_id IN {student_id_clause} AND tenant_id = %s",
+            [*student_id_params, tenant.id],
+        )
+        enrollment_ids = [row[0] for row in cursor.fetchall()]
+
+        if enrollment_ids:
+            enrollment_id_clause, enrollment_id_params = _in_clause(enrollment_ids)
+            for tbl, where_template in [
+                ("lectures_sectionassignment", "enrollment_id IN {enrollment_ids}"),
+                (
+                    "results_result_item",
+                    "result_id IN (SELECT id FROM results_result WHERE enrollment_id IN {enrollment_ids})",
+                ),
+                ("results_result", "enrollment_id IN {enrollment_ids}"),
+                ("results_exam_attempt", "enrollment_id IN {enrollment_ids}"),
+                ("results_fact", "enrollment_id IN {enrollment_ids}"),
+                ("results_wrong_note_pdf", "enrollment_id IN {enrollment_ids}"),
+                (
+                    "results_exam_result",
+                    "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN {enrollment_ids})",
+                ),
+                (
+                    "submissions_submissionanswer",
+                    "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN {enrollment_ids})",
+                ),
+                ("submissions_submission", "enrollment_id IN {enrollment_ids}"),
+                ("homework_results_homeworkscore", "enrollment_id IN {enrollment_ids}"),
+                ("homework_assignment", "enrollment_id IN {enrollment_ids}"),
+                ("homework_enrollment", "enrollment_id IN {enrollment_ids}"),
+            ]:
+                if _table_exists(_safe_tbl(tbl)):
+                    where_sql = where_template.format(enrollment_ids=enrollment_id_clause)
+                    cursor.execute(
+                        f"DELETE FROM {_safe_tbl(tbl)} WHERE {where_sql}",
+                        enrollment_id_params,
+                    )
+
+            for tbl in [
+                "attendance_attendance",
+                "enrollment_sessionenrollment",
+                "exams_exam_enrollment",
+                "video_videopermission",
+                "video_videoprogress",
+                "video_videoplaybacksession",
+                "video_videoplaybackevent",
+                "progress_sessionprogress",
+                "progress_lectureprogress",
+                "progress_cliniclink",
+                "progress_risklog",
+            ]:
+                if _table_exists(_safe_tbl(tbl)):
+                    cursor.execute(
+                        f"DELETE FROM {_safe_tbl(tbl)} WHERE enrollment_id IN {enrollment_id_clause}",
+                        enrollment_id_params,
+                    )
+
+        if _table_exists(_safe_tbl("student_invoice")):
+            cursor.execute(
+                f"SELECT id FROM student_invoice WHERE student_id IN {student_id_clause} AND tenant_id = %s",
+                [*student_id_params, tenant.id],
+            )
+            invoice_ids = [row[0] for row in cursor.fetchall()]
+            if invoice_ids:
+                invoice_id_clause, invoice_id_params = _in_clause(invoice_ids)
+                if _table_exists(_safe_tbl("fee_payment")):
+                    cursor.execute(
+                        f"DELETE FROM fee_payment WHERE invoice_id IN {invoice_id_clause} AND tenant_id = %s",
+                        [*invoice_id_params, tenant.id],
+                    )
+                if _table_exists(_safe_tbl("student_invoice_item")):
+                    cursor.execute(
+                        f"DELETE FROM student_invoice_item WHERE invoice_id IN {invoice_id_clause} AND tenant_id = %s",
+                        [*invoice_id_params, tenant.id],
+                    )
+            cursor.execute(
+                f"DELETE FROM student_invoice WHERE student_id IN {student_id_clause} AND tenant_id = %s",
+                [*student_id_params, tenant.id],
+            )
+        if _table_exists(_safe_tbl("fee_payment")):
+            cursor.execute(
+                f"DELETE FROM fee_payment WHERE student_id IN {student_id_clause} AND tenant_id = %s",
+                [*student_id_params, tenant.id],
+            )
+        if _table_exists(_safe_tbl("student_fee")):
+            cursor.execute(
+                f"DELETE FROM student_fee WHERE student_id IN {student_id_clause} AND tenant_id = %s",
+                [*student_id_params, tenant.id],
+            )
+
+        cursor.execute(
+            f"DELETE FROM enrollment_enrollment WHERE student_id IN {student_id_clause} AND tenant_id = %s",
+            [*student_id_params, tenant.id],
+        )
+        cursor.execute(
+            f"DELETE FROM students_studenttag WHERE student_id IN {student_id_clause}",
+            student_id_params,
+        )
+        if _table_exists(_safe_tbl("students_studentregistrationrequest")):
+            cursor.execute(
+                f"UPDATE students_studentregistrationrequest SET student_id = NULL "
+                f"WHERE student_id IN {student_id_clause} AND tenant_id = %s",
+                [*student_id_params, tenant.id],
+            )
+        for tbl in [
+            "clinic_sessionparticipant",
+            "clinic_submission",
+            "video_videolike",
+        ]:
+            if _table_exists(_safe_tbl(tbl)):
+                cursor.execute(
+                    f"DELETE FROM {_safe_tbl(tbl)} "
+                    f"WHERE student_id IN {student_id_clause} AND tenant_id = %s",
+                    [*student_id_params, tenant.id],
+                )
+        if _table_exists(_safe_tbl("video_videocomment")):
+            cursor.execute(
+                f"SELECT id FROM video_videocomment "
+                f"WHERE author_student_id IN {student_id_clause} AND tenant_id = %s",
+                [*student_id_params, tenant.id],
+            )
+            comment_ids = [row[0] for row in cursor.fetchall()]
+            if comment_ids:
+                comment_id_clause, comment_id_params = _in_clause(comment_ids)
+                cursor.execute(
+                    f"DELETE FROM video_videocomment WHERE parent_id IN {comment_id_clause} AND tenant_id = %s",
+                    [*comment_id_params, tenant.id],
+                )
+                cursor.execute(
+                    f"DELETE FROM video_videocomment WHERE id IN {comment_id_clause} AND tenant_id = %s",
+                    [*comment_id_params, tenant.id],
+                )
+        for tbl in ["community_postentity", "community_postreply"]:
+            if _table_exists(_safe_tbl(tbl)):
+                cursor.execute(
+                    f"UPDATE {_safe_tbl(tbl)} SET created_by_id = NULL "
+                    f"WHERE created_by_id IN {student_id_clause} AND tenant_id = %s",
+                    [*student_id_params, tenant.id],
+                )
+        cursor.execute(
+            f"DELETE FROM students_student WHERE id IN {student_id_clause} AND tenant_id = %s",
+            [*student_id_params, tenant.id],
+        )
+
+        if not user_ids:
+            return
+
+        tenant_id = tenant.id
+        membership_removable_user_ids = _tenant_account_cleanup_user_ids(
+            tenant=tenant,
+            user_ids=user_ids,
+        )
+        removable_user_clause, removable_user_params = _in_clause(membership_removable_user_ids)
+
+        if membership_removable_user_ids and _table_exists(_safe_tbl("submissions_submission")):
+            sub_ids_sql = (
+                f"SELECT id FROM submissions_submission WHERE user_id IN {removable_user_clause} AND tenant_id = %s"
+            )
+            if _table_exists(_safe_tbl("results_exam_result")):
+                cursor.execute(
+                    "DELETE FROM results_exam_result WHERE submission_id IN ("
+                    + sub_ids_sql + ")",
+                    [*removable_user_params, tenant_id],
+                )
+            if _table_exists(_safe_tbl("submissions_submissionanswer")):
+                cursor.execute(
+                    "DELETE FROM submissions_submissionanswer WHERE submission_id IN ("
+                    + sub_ids_sql + ")",
+                    [*removable_user_params, tenant_id],
+                )
+            cursor.execute(
+                f"DELETE FROM submissions_submission WHERE user_id IN {removable_user_clause} AND tenant_id = %s",
+                [*removable_user_params, tenant_id],
+            )
+
+        if membership_removable_user_ids and _table_exists(_safe_tbl("core_pending_password_reset")):
+            cursor.execute(
+                f"DELETE FROM core_pending_password_reset WHERE user_id IN {removable_user_clause} AND tenant_id = %s",
+                [*removable_user_params, tenant_id],
+            )
+        if membership_removable_user_ids:
+            cursor.execute(
+                f"DELETE FROM core_tenantmembership WHERE user_id IN {removable_user_clause} "
+                "AND tenant_id = %s AND role = 'student'",
+                [*removable_user_params, tenant_id],
+            )
+            cursor.execute(
+                f"SELECT id FROM accounts_user WHERE id IN {removable_user_clause} AND NOT EXISTS ("
+                "  SELECT 1 FROM core_tenantmembership WHERE user_id = accounts_user.id"
+                ")",
+                removable_user_params,
+            )
+            orphan_user_ids = [row[0] for row in cursor.fetchall()]
+        if not orphan_user_ids:
+            orphan_user_ids = []
+
+        if orphan_user_ids:
+            orphan_user_clause, orphan_user_params = _in_clause(orphan_user_ids)
+            if _table_exists(_safe_tbl("core_pending_password_reset")):
+                cursor.execute(
+                    f"DELETE FROM core_pending_password_reset WHERE user_id IN {orphan_user_clause}",
+                    orphan_user_params,
+                )
+            if _table_exists(_safe_tbl("token_blacklist_outstandingtoken")):
+                if _table_exists(_safe_tbl("token_blacklist_blacklistedtoken")):
+                    cursor.execute(
+                        "DELETE FROM token_blacklist_blacklistedtoken "
+                        "WHERE token_id IN ("
+                        f"SELECT id FROM token_blacklist_outstandingtoken WHERE user_id IN {orphan_user_clause}"
+                        ")",
+                        orphan_user_params,
+                    )
+                cursor.execute(
+                    f"DELETE FROM token_blacklist_outstandingtoken WHERE user_id IN {orphan_user_clause}",
+                    orphan_user_params,
+                )
+    deletable_user_ids = _deletable_orphan_user_ids(orphan_user_ids)
+    if deletable_user_ids:
+        get_user_model().objects.filter(id__in=deletable_user_ids).delete()
+    _reactivate_preserved_users_with_active_membership(
+        uid for uid in user_ids if uid not in set(deletable_user_ids)
+    )

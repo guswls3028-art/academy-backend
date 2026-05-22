@@ -262,7 +262,7 @@ def student_filter_deleted_dup_groups():
 
 def student_filter_deleted_before_cutoff(cutoff):
     from apps.domains.students.models import Student
-    return Student.objects.filter(deleted_at__lt=cutoff).select_related("user")
+    return Student.objects.filter(deleted_at__lt=cutoff).select_related("tenant", "user")
 
 
 def enrollment_filter_student_ids_bulk(student_ids, tenant=None):

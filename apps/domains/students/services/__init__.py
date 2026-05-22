@@ -10,8 +10,10 @@ from .profile import (
 )
 from .lifecycle import (
     StudentLifecycleError,
+    StudentPermanentDeleteResult,
     StudentRestoreResult,
     StudentSoftDeleteResult,
+    permanently_delete_students,
     restore_student,
     soft_delete_student,
 )
@@ -25,8 +27,10 @@ __all__ = [
     "normalize_phone",
     "update_student_profile",
     "StudentLifecycleError",
+    "StudentPermanentDeleteResult",
     "StudentRestoreResult",
     "StudentSoftDeleteResult",
+    "permanently_delete_students",
     "restore_student",
     "soft_delete_student",
 ]
