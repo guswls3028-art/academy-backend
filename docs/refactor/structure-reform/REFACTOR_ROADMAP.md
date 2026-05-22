@@ -354,6 +354,12 @@ Implemented:
   directly.
 - Frontend boundary snapshot improved from 4 to 3 cross-app/admin role imports
   after the tenant info contract slice.
+- Submission types and submission inbox/action APIs now live behind
+  `src/shared/api/contracts/submissions.ts`. Admin submissions/materials API
+  paths and the teacher submissions API path remain compatibility facades, while
+  student submit and teacher submissions inbox use shared directly.
+- Frontend boundary snapshot improved from 3 to 1 cross-app/admin role imports
+  after the submissions contract slice.
 
 ## Cleanup And Removal Rule
 
