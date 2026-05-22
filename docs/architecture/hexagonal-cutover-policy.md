@@ -167,8 +167,8 @@
 | **Pipeline 오케스트레이션 (분할 → OCR → 임베딩 → persist)** | `academy/application/use_cases/ai/pipelines/matchup_*.py` | ✅ 정합 |
 | **외부 인프라 호출 (PyMuPDF / OpenCV / YOLO / Gemini / OCR / CLIP)** | `academy/adapters/ai/{detection,ocr,embedding,vlm}/`, `academy/adapters/tools/` | ✅ 정합 |
 | **순수 알고리즘 (paper_type, region_splitters, question_splitter, image_preprocessor)** | `academy/domain/tools/` | ✅ 정합 |
-| **순수 계약/DTO (preprocessing contract, mock fixture schema, transform metadata)** | `academy/domain/tools/preprocessing/contract.py` | ✅ 정합 (2026-05-12 이전 완료) |
-| **Tier-별 router · dispatcher · response integrator (mock 포함) + fingerprint instrumentation + shadow pipeline** | `academy/application/use_cases/ai/segmentation/` | ✅ 정합 (2026-05-12 이전 완료) |
+| **순수 계약/DTO (preprocessing contract, mock fixture schema, transform metadata)** | `academy/domain/tools/preprocessing/contract.py`, `academy/domain/ai/{segmentation_contracts,proposal_payload_validation}.py` | ✅ 정합 (AI segmentation contracts 2026-05-22 domain 승격) |
+| **Tier-별 router · dispatcher · response integrator (mock 포함) + fingerprint instrumentation + shadow pipeline** | `academy/application/use_cases/ai/segmentation/` | ✅ 정합 (schema/validator 순수 계약은 `academy/domain/ai/` 사용) |
 | **Native PDF analyzer (PyMuPDF 직접 호출)** | `academy/adapters/ai/detection/tier0_native_pdf.py` | ✅ 정합 (2026-05-12 이전 완료) |
 | **OCR mock contract + schema normalizer** | `academy/adapters/ai/ocr/schema_normalizer.py` | ✅ 정합 (2026-05-12 이전 완료) |
 | **VLM mock contract + schema normalizer** | `academy/adapters/ai/vlm/{mock_contract,schema_normalizer}.py` | ✅ 정합 (2026-05-12 이전 완료) |
@@ -194,17 +194,16 @@
 | `apps/domains/matchup/segmentation/proposal_insert_adapter.py` | `academy/adapters/db/django/repositories_matchup_proposal.py` | 467 | 0 (sandbox INSERT) |
 | `apps/domains/matchup/segmentation/fallback_router.py` | `academy/application/use_cases/ai/segmentation/fallback_router.py` | 365 | 0 |
 | `apps/domains/matchup/segmentation/dispatcher_mock.py` | `academy/application/use_cases/ai/segmentation/dispatcher_mock.py` | 260 | 0 |
-| `apps/domains/matchup/segmentation/mock_response_integrator.py` | `academy/application/use_cases/ai/segmentation/mock_response_integrator.py` | 569 | 0 |
-| `apps/domains/matchup/segmentation/proposal_payload_validator.py` | `academy/application/use_cases/ai/segmentation/proposal_payload_validator.py` | 479 | 0 |
+| `apps/domains/matchup/segmentation/mock_response_integrator.py` | `academy/application/use_cases/ai/segmentation/mock_response_integrator.py` + pure DTO in `academy/domain/ai/segmentation_contracts.py` | 569 | 0 |
+| `apps/domains/matchup/segmentation/proposal_payload_validator.py` | compatibility facade in `academy/application/use_cases/ai/segmentation/proposal_payload_validator.py` + canonical validator in `academy/domain/ai/proposal_payload_validation.py` | 479 | 0 |
 | `apps/domains/matchup/segmentation/fingerprint_collector.py` | `academy/application/use_cases/ai/segmentation/fingerprint_collector.py` | 360 | **1 (instrumentation, `apps/domains/ai/callbacks.py:776`)** |
 | `apps/domains/matchup/segmentation/shadow_proposal_pipeline.py` | `academy/application/use_cases/ai/segmentation/shadow_proposal_pipeline.py` | 460 | 0 (sandbox entrypoint) |
 
 → 합계 약 7,340 줄 (정책 §10 5/7 표상 6,239 줄 + 5/7~5/10 신규 3 모듈). 운영 callback wiring 1건 (`fingerprint_collector.collect_and_save`) 은 read-only measurement + UPSERT instrumentation 설계, 모든 예외 swallow, 운영 본 흐름 영향 0. 이관 후 적용은 5/12 audit cycle. 388+ unit test (실제 collect 841) 중 segmentation 직접 영향 16 파일 모두 통과 (1 outdated regression assertion 갱신 포함). production runtime smoke `PROD IMPORT OK` 확인.
 
-### 알려진 후속 부채 (별도 PR 권고)
+### 정리 완료된 후속 부채
 
-- `academy/adapters/ai/{ocr,vlm}/schema_normalizer.py` 가 `academy/application/use_cases/ai/segmentation/mock_response_integrator` 의 구체 dataclass 직접 import — 어댑터→application 의존 방향 위반. schema/DTO 를 `academy/domain/shared/` 또는 `academy/domain/tools/preprocessing/` 로 분리 권고.
-- `academy/adapters/db/django/repositories_matchup_proposal.py` 가 application use_case 의 `ProposalPayloadCandidate` / `validate_payload` import — 동일 방향 위반.
+- **2026-05-22 완료**: `academy/adapters/ai/{ocr,vlm}/schema_normalizer.py` 와 `academy/adapters/db/django/repositories_matchup_proposal.py` 의 adapter -> application use-case 역방향 import 제거. 순수 DTO/validator 는 `academy/domain/ai/{segmentation_contracts,proposal_payload_validation}.py` 로 승격했고, 기존 application 경로는 호환 facade 로 유지한다.
 
 ### 신규 변경 가이드
 
@@ -224,3 +223,4 @@
 - **2026-05-07**: §10 매치업 도메인 책임 분담 표 추가. 매치업 신규 segmentation 인프라 9 모듈 (총 6,239 줄) 이 §3 결정 트리 위반으로 `apps/domains/matchup/segmentation/` 에 누적된 부채 명문화. 운영 callback wiring 0 (mock-only) 이라 운영 영향 없음. 이전 마감 2026-05-31 (P1) — Stage 6.4 (callback wiring) 직전 일괄 이전.
 - **2026-05-11**: §5 video 행 갱신 — `academy/application/video/handler.py` (ProcessVideoJobHandler) 폐기. CancelledError 만 `cancellation.py` 로 분리. 인코딩 본 경로는 worker entry → adapter 직호출 (use-case 객체 없음).
 - **2026-05-12**: §10 매치업 segmentation 12 모듈 (총 7,340줄) academy/ 일괄 이전 완료. 5/7 표상 9 모듈 + 5/7~5/10 추가 3 모듈 (`fingerprint_collector`, `shadow_proposal_pipeline`, `vlm_schema_normalizer`). git mv 12회로 history 보존. caller 25 파일 import 109곳 갱신. CI build success, ASG instance refresh Successful, production runtime import 검증 통과. 마감 5/31 19일 전 해소. `apps/domains/matchup/segmentation/` 디렉토리 제거. 운영 callback wiring 1건 (`fingerprint_collector.collect_and_save` instrumentation) 명문화. §6 worker_instance_control 도 동일 audit cycle에서 `academy/adapters/compute/ec2_control.py` 이전.
+- **2026-05-22**: §10 매치업/AI segmentation 순수 DTO·proposal validator 를 `academy/domain/ai/` 로 승격. adapter -> application use-case import 4건 제거, `python scripts\lint\refactor_boundary_snapshot.py` 기준 `adapter_application_import=0`. 관련 unit 150개, Django check, migration dry-run, worker boot 검증 통과.

@@ -139,7 +139,7 @@ Frontend dependency risks:
 | Backend cross-domain imports | 104 | semantic snapshot script, non-internal cross-domain imports |
 | Backend cross-domain internal imports | 645 | semantic snapshot script, direct imports into models/services/views/api/serializers |
 | Backend domain infra imports | 84 | domain code still reaches infra SDK/helper modules |
-| Backend adapter -> application imports | 4 | current hexagonal direction drift candidates after allowing application port/cancellation contracts |
+| Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
 | Frontend source import files | 1031 | files scanned for import boundary snapshot |
 | Frontend source text files | 1375 | app/domain moves need automated boundaries |
@@ -183,5 +183,7 @@ pnpm refactor:inventory
 - Generated API types require backend schema generation first; this is a Phase 0
   dependency, not an optional polish task.
 - Captured verification status: these counts include the session-enrollment
-  shared contract slice. Re-run the snapshot commands before each phase because
-  active refactors can change these counts quickly.
+  shared contract slice and the AI segmentation contract extraction that moved
+  pure DTO/validation imports to `academy.domain.ai`. Re-run the snapshot
+  commands before each phase because active refactors can change these counts
+  quickly.

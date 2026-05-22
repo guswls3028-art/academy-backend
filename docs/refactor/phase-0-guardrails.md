@@ -62,7 +62,7 @@ $env:PYTHONPATH='C:\academy\backend'; $env:DJANGO_SETTINGS_MODULE='apps.api.conf
 
 Current baseline snapshot:
 
-- `adapter_application_import`: 4
+- `adapter_application_import`: 0
 - `cross_domain_import`: 104
 - `cross_domain_internal_import`: 645
 - `domain_infra_import`: 84

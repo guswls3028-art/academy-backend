@@ -48,6 +48,10 @@ Implemented:
 - Backend boundary snapshot now distinguishes application port/cancellation
   contracts from real adapter -> use-case reverse imports, reducing
   `adapter_application_import` from 12 to 4.
+- AI segmentation DTO and proposal payload validation contracts now live under
+  `academy.domain.ai`, letting OCR/VLM/proposal adapters depend on pure domain
+  contracts instead of application use cases. Backend boundary snapshot now
+  reports `adapter_application_import = 0`.
 
 ## Phase 1: Students Canonicalization
 

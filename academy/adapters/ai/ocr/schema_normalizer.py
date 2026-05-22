@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Optional
 
-from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
+from academy.domain.ai.segmentation_contracts import (
     MockOcrResponse, OcrPageResult, OcrTextBlock, UnifiedCandidate,
     _ocr_response_to_unified,
 )

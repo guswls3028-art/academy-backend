@@ -24,6 +24,21 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any, Optional
 
+from academy.domain.ai.segmentation_contracts import (
+    MockOcrResponse,
+    MockVlmResponse,
+    OcrPageResult,
+    OcrTextBlock,
+    ProposalPayloadCandidate,
+    UnifiedCandidate,
+    ValidationError,
+    VlmDetectedProblem,
+    VlmPageResult,
+    _bbox_iou_norm,
+    _ocr_response_to_unified,
+    _vlm_response_to_unified,
+)
+
 from .dispatcher_mock import (
     MockDispatcherOutput, ValidationMarks, dispatch_mock,
 )
@@ -32,107 +47,7 @@ from .dispatcher_mock import (
 SCHEMA_VERSION = "5.8-mock-1"
 
 
-# ── Mock OCR/VLM response schema (synthetic — 실 SDK X) ──────────────
-
-
-@dataclass
-class OcrTextBlock:
-    """OCR 텍스트 블록 — Stage 5.8 (synthetic) + Stage 6.3F-2 (운영 변환 결과 호환).
-
-    confidence: Optional[float] — 운영 google_ocr_blocks 가 미surface 하므로 None
-    허용. synthetic mock 은 0.85 등 명시 값. None 인 경우 unified candidate 변환 시
-    confidence=0.0 fallback (semantic: 미상 → 가장 낮은 신뢰도로 안전하게 처리).
-    """
-    bbox_norm: tuple[float, float, float, float]   # (x, y, w, h) 0~1
-    text: str
-    confidence: Optional[float] = None
-
-
-@dataclass
-class OcrPageResult:
-    page_index: int
-    text_blocks: list[OcrTextBlock] = field(default_factory=list)
-
-
-@dataclass
-class MockOcrResponse:
-    engine: str                                 # 'tesseract' | 'google_cloud_vision'
-    pdf_path: str
-    page_count: int
-    pages: list[OcrPageResult] = field(default_factory=list)
-    cost_actual_usd: float = 0.0
-    is_mock: bool = True
-
-
-@dataclass
-class VlmDetectedProblem:
-    number: Optional[int]
-    bbox_norm: tuple[float, float, float, float]
-    confidence: float = 0.80
-
-
-@dataclass
-class VlmPageResult:
-    page_index: int
-    detected_problems: list[VlmDetectedProblem] = field(default_factory=list)
-
-
-@dataclass
-class MockVlmResponse:
-    engine: str                                 # 'gemini_vision'
-    pdf_path: str
-    pages: list[VlmPageResult] = field(default_factory=list)
-    cost_actual_usd: float = 0.0
-    is_mock: bool = True
-
-
-# ── Unified candidate / proposal payload schema ───────────────────────
-
-
-@dataclass
-class UnifiedCandidate:
-    """단일 후보 bbox — Tier 0 / OCR / VLM / YOLO 어디서 왔는지 source 명시.
-
-    confidence: Optional[float] — None 은 "신뢰도 정보 없음" 의미 (Stage 6.3F-2).
-    "신뢰도 낮음" 은 0.0 으로 명시 표현. 운영 google_ocr_blocks 가 confidence 를
-    surface 안 하므로 OCR source 변환 시 None 보존 (downstream proposal payload 변환
-    시점에 DB FloatField 호환 위해 0.0 fallback + raw_response 마킹).
-    """
-    page_index: int
-    bbox_norm: tuple[float, float, float, float]
-    number: Optional[int]
-    source: str                                 # 'tier0' | 'ocr' | 'vlm' | 'yolo'
-    confidence: Optional[float]
-    debug: dict = field(default_factory=dict)
-
-
-@dataclass
-class ValidationError:
-    code: str                                   # 'manual_overlap' | 'duplicate_bbox' | ...
-    detail: str
-    bbox_iou: Optional[float] = None
-
-
-@dataclass
-class ProposalPayloadCandidate:
-    """미래 ProblemSegmentationProposal payload — INSERT 절대 X.
-
-    실 모델 schema (apps.domains.matchup.models.ProblemSegmentationProposal) 와 동일 형식.
-    validation 결과는 status / validation_errors 에 기록.
-    """
-    tenant_id: int
-    document_id: int
-    page_number: int
-    detected_problem_number: int                # 0 = unknown
-    bbox: dict                                  # {"x", "y", "w", "h", "norm": True}
-    engine: str                                 # 'yolo' | 'vlm' | 'ocr' | 'native_pdf'
-    model_version: str = ""
-    confidence: float = 0.0
-    status: str = "pending"                     # pending | rejected | needs_review | auto_passed
-    analysis_version_key: str = ""
-    image_key: str = ""
-    raw_response: dict = field(default_factory=dict)
-    validation_errors: list[ValidationError] = field(default_factory=list)
+# ── Unified dispatch output schema ───────────────────────────────────
 
 
 @dataclass
@@ -208,22 +123,6 @@ def make_mock_vlm_response(
 # ── Manual overlap mock validator (DB query 없는 static check) ────────
 
 
-def _bbox_iou_norm(
-    a: tuple[float, float, float, float],
-    b: tuple[float, float, float, float],
-) -> float:
-    """단순 IoU — bbox_norm = (x, y, w, h)."""
-    ax, ay, aw, ah = a; bx, by, bw, bh = b
-    if aw <= 0 or ah <= 0 or bw <= 0 or bh <= 0:
-        return 0.0
-    ix1, iy1 = max(ax, bx), max(ay, by)
-    ix2, iy2 = min(ax + aw, bx + bw), min(ay + ah, by + bh)
-    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
-    inter = iw * ih
-    union = aw * ah + bw * bh - inter
-    return inter / union if union > 0 else 0.0
-
-
 def manual_overlap_mock_validator(
     candidates: list[UnifiedCandidate],
     *,
@@ -256,52 +155,6 @@ def manual_overlap_mock_validator(
                 ))
                 break
     return errors_by_idx
-
-
-# ── Response → unified candidate 변환 ────────────────────────────────
-
-
-def _ocr_response_to_unified(resp: MockOcrResponse) -> list[UnifiedCandidate]:
-    """OCR text block → unified candidate (numbered text 만 anchor 후보).
-
-    Stage 6.3F-2 (A안): blk.confidence 가 None 이면 UnifiedCandidate.confidence 도
-    None 그대로 보존 (의미 = "신뢰도 정보 없음"). 0.0 fallback 은 ProposalPayloadCandidate
-    변환 시점 (DB FloatField 호환) 만 적용.
-    """
-    import re
-    out: list[UnifiedCandidate] = []
-    num_re = re.compile(r"^(\d+)\.\s")
-    for page in resp.pages:
-        for blk in page.text_blocks:
-            m = num_re.match(blk.text or "")
-            number = int(m.group(1)) if m else None
-            out.append(UnifiedCandidate(
-                page_index=page.page_index,
-                bbox_norm=tuple(blk.bbox_norm),
-                number=number,
-                source="ocr",
-                confidence=blk.confidence,    # None 그대로 보존
-                debug={
-                    "text_preview": (blk.text or "")[:40],
-                    "confidence_raw_present": blk.confidence is not None,
-                },
-            ))
-    return out
-
-
-def _vlm_response_to_unified(resp: MockVlmResponse) -> list[UnifiedCandidate]:
-    """VLM detected problem → unified candidate."""
-    out: list[UnifiedCandidate] = []
-    for page in resp.pages:
-        for prob in page.detected_problems:
-            out.append(UnifiedCandidate(
-                page_index=page.page_index,
-                bbox_norm=tuple(prob.bbox_norm),
-                number=prob.number,
-                source="vlm",
-                confidence=prob.confidence,
-            ))
-    return out
 
 
 def _tier0_pages_to_unified(
