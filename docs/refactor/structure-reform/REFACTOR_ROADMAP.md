@@ -200,6 +200,11 @@ Implemented:
   `students.selectors` and scopes `AttendanceSerializer` session/enrollment FK
   querysets to the request tenant. Roster side effects still need extraction
   into an attendance service before this phase is complete.
+- Messaging manual send and manual notification preview now use
+  `messaging.services.recipients.resolve_student_message_recipients`, so active
+  tenant student selection and parent/student phone choice share one boundary.
+  Event notifications still use caller-supplied student objects until the
+  outbox/event extraction is proven.
 
 ## Phase 4: AI / OMR / Matchup Job Structure
 

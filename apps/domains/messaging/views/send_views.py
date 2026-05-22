@@ -18,6 +18,7 @@ from apps.core.models import TenantMembership
 from apps.domains.messaging.models import NotificationLog, MessageTemplate
 from apps.domains.messaging.serializers import SendMessageRequestSerializer
 from apps.domains.messaging.selectors import resolve_freeform_template
+from apps.domains.messaging.services.recipients import resolve_student_message_recipients
 
 
 MESSAGE_SEND_ROLES = ("owner", "admin", "teacher")
@@ -87,21 +88,19 @@ class SendMessageView(APIView):
 
         # 학생/학부모 수신
         student_ids = data.get("student_ids") or []
-        from apps.domains.students.models import Student
-
-        students = list(
-            Student.objects.filter(tenant=tenant, id__in=student_ids, deleted_at__isnull=True).only(
-                "id", "name", "phone", "parent_phone"
-            )
+        recipients = resolve_student_message_recipients(
+            tenant,
+            student_ids,
+            send_to=send_to,
         )
-        if not students:
+        if not recipients:
             return Response(
                 {"detail": "선택한 학생을 찾을 수 없거나 삭제된 학생입니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if len(students) > 200:
+        if len(recipients) > 200:
             return Response(
-                {"detail": f"한 번에 최대 200명까지 발송할 수 있습니다. (선택: {len(students)}명)"},
+                {"detail": f"한 번에 최대 200명까지 발송할 수 있습니다. (선택: {len(recipients)}명)"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -207,23 +206,19 @@ class SendMessageView(APIView):
         enqueued = 0
         skipped_no_phone = 0
         enqueue_failed = 0
-        for s in students:
-            phone = None
-            if send_to == "student":
-                phone = (s.phone or "").replace("-", "").strip()
-            else:
-                phone = (s.parent_phone or "").replace("-", "").strip()
+        for recipient in recipients:
+            phone = recipient.phone
             if not phone or len(phone) < 10:
                 skipped_no_phone += 1
                 continue
-            name = (s.name or "").strip()
+            name = recipient.student_name
             name_2 = name[-2:] if len(name) >= 2 else name
             name_3 = name
             site_url = get_tenant_site_url(request.tenant) or ""
             academy_name = (tenant.name or "").strip()
 
             # 학생별 개별 변수 merge
-            student_extra = dict(extra_vars_per_student.get(s.id, {}))
+            student_extra = dict(extra_vars_per_student.get(recipient.student_id, {}))
 
             # SSOT (2026-05-13): 학생별 치환된 본문 우선. frontend SessionScoresEntryPage 일괄 path가
             # substituteScoreVars 결과를 _body_subst 로 보냄. backend가 그대로 사용 → 모든 score
@@ -299,7 +294,7 @@ class SendMessageView(APIView):
                     alimtalk_replacements=alimtalk_replacements,
                     event_type="manual_send",
                     target_type="student" if send_to != "parent" else "parent",
-                    target_id=s.id,
+                    target_id=recipient.student_id,
                     target_name=name,
                 )
             except MessagingPolicyError as e:

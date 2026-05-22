@@ -20,7 +20,7 @@ structurally enforced, and which small refactor should start Phase 1.
 - Frontend role surfaces live under `src/app_admin`, `src/app_teacher`,
   `src/app_student`, plus `auth`, `core`, `shared`, `landing`.
 - Current refactor inventory measured 27 backend domain directories,
-  114 backend cross-domain imports, 635 backend cross-domain internal imports,
+  115 backend cross-domain imports, 633 backend cross-domain internal imports,
   0 frontend cross-app imports, and 0 `shared -> app_*` imports.
 
 Backend API prefixes relevant to this audit:

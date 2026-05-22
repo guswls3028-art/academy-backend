@@ -132,7 +132,7 @@ Boundary rule for the structure reform:
 | Public interface candidate | `messaging.services.enqueue_notification`, `messaging.services.resolve_recipients`, event handlers |
 | Forbidden dependency | Domain views sending directly in the middle of transaction without event/outbox contract |
 | Tenant rule | Every message/template/log must include tenant; recipients resolved from tenant-scoped selector |
-| Current risk | Direct sends and rollback logic are repeated in student/password flows; automatic notification queue payloads now include source/use-case/domain object/actor metadata, but durable outbox is still future work |
+| Current risk | Manual send and manual preview recipient reads are selector-backed; direct sends and rollback logic are still repeated in student/password flows, and automatic notification queue payloads include source/use-case/domain object/actor metadata, but durable outbox is still future work |
 
 ## AI / Matchup / OMR
 

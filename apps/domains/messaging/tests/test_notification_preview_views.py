@@ -1,10 +1,11 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
-from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
+from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, NotificationPreviewToken
 from unittest.mock import patch
 
 from apps.domains.messaging.notification_dispatch import execute_notification_batch
@@ -154,6 +155,104 @@ class NotificationPreviewViewValidationTests(TestCase):
         recipient = response.data["recipients"][0]
         self.assertNotIn("phone_raw", recipient)
         self.assertNotIn("alimtalk_replacements", recipient)
+
+    def test_manual_preview_omits_deleted_and_cross_tenant_students(self):
+        active_user = User.objects.create_user(
+            username=user_internal_username(self.tenant, "S010"),
+            password="test1234",
+            tenant=self.tenant,
+            phone="01010101010",
+            name="활성학생",
+        )
+        active_student = Student.objects.create(
+            tenant=self.tenant,
+            user=active_user,
+            ps_number="S010",
+            name="활성학생",
+            phone="01010101010",
+            parent_phone="01055556666",
+            omr_code="10101010",
+        )
+        deleted_user = User.objects.create_user(
+            username=user_internal_username(self.tenant, "S011"),
+            password="test1234",
+            tenant=self.tenant,
+            phone="01020202020",
+            name="삭제학생",
+        )
+        deleted_student = Student.objects.create(
+            tenant=self.tenant,
+            user=deleted_user,
+            ps_number="S011",
+            name="삭제학생",
+            phone="01020202020",
+            parent_phone="01066667777",
+            omr_code="20202020",
+            deleted_at=timezone.now(),
+        )
+        other_tenant = Tenant.objects.create(code="msg-preview-other", name="Other", is_active=True)
+        other_user = User.objects.create_user(
+            username=user_internal_username(other_tenant, "S999"),
+            password="test1234",
+            tenant=other_tenant,
+            phone="01099998888",
+            name="타원생",
+        )
+        other_student = Student.objects.create(
+            tenant=other_tenant,
+            user=other_user,
+            ps_number="S999",
+            name="타원생",
+            phone="01099998888",
+            parent_phone="01077778888",
+            omr_code="99998888",
+        )
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category="grades",
+            name="성적 안내",
+            subject="",
+            body="성적 안내 #{학생이름}",
+            solapi_template_id="APPROVED-SID",
+            solapi_status="APPROVED",
+        )
+        AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="exam_score_published",
+            template=template,
+            enabled=False,
+            message_mode="alimtalk",
+        )
+
+        response = self._post(
+            ManualNotificationPreviewView,
+            "/api/v1/messaging/manual-notification/preview/",
+            {
+                "trigger": "exam_score_published",
+                "student_ids": [
+                    active_student.id,
+                    deleted_student.id,
+                    other_student.id,
+                    active_student.id,
+                ],
+                "send_to": "parent",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["total_count"], 1)
+        self.assertEqual(response.data["excluded_count"], 0)
+        self.assertEqual(len(response.data["recipients"]), 1)
+        recipient = response.data["recipients"][0]
+        self.assertEqual(recipient["student_id"], active_student.id)
+        self.assertEqual(recipient["phone"], "010****6666")
+        self.assertNotIn("phone_raw", recipient)
+        self.assertNotIn("alimtalk_replacements", recipient)
+
+        token = NotificationPreviewToken.objects.get(token=response.data["preview_token"])
+        payload_recipient = token.payload["recipients"][0]
+        self.assertEqual(payload_recipient["student_id"], active_student.id)
+        self.assertEqual(payload_recipient["phone_raw"], "01055556666")
 
 
 class NotificationBatchDispatchPolicyTests(TestCase):

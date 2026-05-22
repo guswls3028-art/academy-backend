@@ -19,6 +19,11 @@ from .url_helpers import (
     get_site_url,
     get_tenant_site_url,
 )
+from .recipients import (
+    StudentMessageRecipient,
+    normalize_phone,
+    resolve_student_message_recipients,
+)
 from .notification_service import (
     send_event_notification,
     send_clinic_reminder_for_students,
@@ -41,6 +46,10 @@ __all__ = [
     # url_helpers
     "get_site_url",
     "get_tenant_site_url",
+    # recipients
+    "StudentMessageRecipient",
+    "normalize_phone",
+    "resolve_student_message_recipients",
     # notification_service
     "send_event_notification",
     "send_clinic_reminder_for_students",

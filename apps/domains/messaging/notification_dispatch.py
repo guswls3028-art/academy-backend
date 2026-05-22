@@ -218,10 +218,10 @@ def build_student_list_preview(
     학생 ID 목록 기반 범용 알림 미리보기.
     시험 성적 공개, 퇴원 안내, 과제 미제출 등 모든 MANUAL_DEFAULT에 사용.
     """
-    from apps.domains.students.models import Student
     from apps.domains.messaging.selectors import get_auto_send_config
     from apps.domains.messaging.policy import get_owner_tenant_id
     from apps.domains.messaging.services import get_tenant_site_url
+    from apps.domains.messaging.services.recipients import resolve_student_message_recipients
 
     config = get_auto_send_config(tenant.id, trigger)
     if not config:
@@ -251,8 +251,10 @@ def build_student_list_preview(
     if not solapi_approved:
         return {"error": "승인된 알림톡 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
 
-    students = Student.objects.filter(
-        id__in=student_ids, tenant_id=tenant.id, deleted_at__isnull=True,
+    resolved_recipients = resolve_student_message_recipients(
+        tenant,
+        student_ids,
+        send_to=send_to,
     )
 
     academy_name = (tenant.name or "").strip()
@@ -261,14 +263,10 @@ def build_student_list_preview(
     shared_context = shared_context or {}
 
     recipients = []
-    for student in students:
-        name = (student.name or "").strip()
+    for resolved in resolved_recipients:
+        name = resolved.student_name
         name_2 = name[-2:] if len(name) >= 2 else name  # 성(첫 글자) 제외 = 이름만
-
-        if send_to == "parent":
-            phone = (student.parent_phone or "").replace("-", "").strip()
-        else:
-            phone = (student.phone or "").replace("-", "").strip()
+        phone = resolved.phone
 
         excluded = False
         exclude_reason = ""
@@ -282,7 +280,7 @@ def build_student_list_preview(
             "학생이름2": name_2,
             "사이트링크": site_url,
             **shared_context,
-            **context_per_student.get(student.id, {}),
+            **context_per_student.get(resolved.student_id, {}),
         }
 
         body = (template.body or "").strip()
@@ -304,7 +302,7 @@ def build_student_list_preview(
             alimtalk_reps = [{"key": k, "value": str(v)} for k, v in ctx.items()]
 
         recipients.append({
-            "student_id": student.id,
+            "student_id": resolved.student_id,
             "student_name": name,
             "phone": phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else phone,
             "phone_raw": phone,

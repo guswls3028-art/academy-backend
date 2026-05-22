@@ -138,8 +138,8 @@ Frontend dependency risks:
 |---|---:|---|
 | Backend serializer-related lines | 1129 | API surface is broad enough that manual FE type sync is unsafe |
 | Backend tenant-related query/assignment hits | 3486 | tenant scope is widespread and needs automated guardrails |
-| Backend cross-domain imports | 114 | semantic snapshot script, non-internal cross-domain imports; increased by deliberate selector/service boundary use |
-| Backend cross-domain internal imports | 635 | semantic snapshot script, direct imports into models/services/views/api/serializers |
+| Backend cross-domain imports | 115 | semantic snapshot script, non-internal cross-domain imports; increased by deliberate selector/service boundary use |
+| Backend cross-domain internal imports | 633 | semantic snapshot script, direct imports into models/services/views/api/serializers |
 | Backend domain infra imports | 84 | domain code still reaches infra SDK/helper modules |
 | Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
@@ -229,6 +229,10 @@ pnpm refactor:inventory
   `students.selectors` and scopes `AttendanceSerializer` session/enrollment FK
   querysets to the request tenant. Same-tenant soft-deleted students are
   rejected before roster/enrollment creation.
+- Messaging manual send and manual notification preview now resolve active
+  tenant student/parent recipients through
+  `messaging.services.recipients.resolve_student_message_recipients` instead
+  of direct `Student.objects` reads in messaging HTTP/preview paths.
 - React runtime/types mismatch and missing lockfile policy can create unrelated
   noise during refactor validation.
 
@@ -247,10 +251,11 @@ pnpm refactor:inventory
   contract/status slice, the tools timer download contract slice, the exam
   enrollment contract slice, the tenant info contract slice, the submissions
   contract slice, the lecture sections contract slice, the clinic
-  active-student selector boundary slice, and the attendance roster selector
-  boundary slice. Re-run the snapshot commands before each phase because active
+  active-student selector boundary slice, the attendance roster selector
+  boundary slice, and the messaging recipient resolver slice. Re-run the
+  snapshot commands before each phase because active
   refactors can change these counts quickly. The latest backend snapshot reports
-  `cross_domain_import=114`,
-  `cross_domain_internal_import=635`, and `domain_infra_import=84`; the
+  `cross_domain_import=115`,
+  `cross_domain_internal_import=633`, and `domain_infra_import=84`; the
   non-internal count rose because touched code now imports public selectors
   instead of internal models/views.
