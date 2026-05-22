@@ -90,7 +90,7 @@ Risk scale:
 - 2026-05-22: Operational notification counts moved to shared notification
   contracts/hooks. Admin notification modules are compatibility facades, teacher
   surfaces use `useTeacherPendingCounts`, and cross-app/admin role imports are
-  became 30.
+  now 30.
 - 2026-05-22: Community post/reply/attachment contracts moved to shared
   community contracts. Student notices/community and teacher developer feedback
   no longer import admin community internals, patch notes are shared product
@@ -99,3 +99,8 @@ Risk scale:
   reusable thumbnail rendering moved to `src/shared/media/video`, student video
   surfaces no longer import admin video internals for those contracts, and
   cross-app/admin role imports are now 21.
+- 2026-05-22: Lecture/session attendance API moved to shared attendance
+  contracts. Admin attendance API remains a compatibility facade, teacher
+  attendance and lecture matrix surfaces use the shared contract directly,
+  duplicate teacher matrix/export calls were removed, and cross-app/admin role
+  imports are now 17.

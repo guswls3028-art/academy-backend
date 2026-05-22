@@ -141,12 +141,12 @@ Frontend dependency risks:
 | Backend domain infra imports | 84 | domain code still reaches infra SDK/helper modules |
 | Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
-| Frontend source import files | 1043 | files scanned for import boundary snapshot |
-| Frontend source text files | 1387 | app/domain moves need automated boundaries |
+| Frontend source import files | 1044 | files scanned for import boundary snapshot |
+| Frontend source text files | 1388 | app/domain moves need automated boundaries |
 | Frontend E2E/script files | 225 | durable gates must be separated from audit specs |
 | Frontend durable E2E waitForTimeout calls | 69 | excludes `_local`, `_audit`, artifacts, reports, screenshots |
-| Frontend cross-app imports | 21 | remaining role-app imports of admin internals |
-| Frontend role-app admin imports | 21 | teacher/student app imports of `@admin/*` internals |
+| Frontend cross-app imports | 17 | remaining role-app imports of admin internals |
+| Frontend role-app admin imports | 17 | teacher/student app imports of `@admin/*` internals |
 | Frontend shared imports app internals | 0 | `shared/` no longer imports role-app internals |
 
 Snapshot commands:
@@ -179,6 +179,9 @@ pnpm refactor:inventory
 - Video access-mode/rule contracts now live in shared API contracts, and the
   reusable video thumbnail UI lives under `src/shared/media/video`. Student video
   playback/home surfaces no longer import admin video internals.
+- Lecture/session attendance API now lives in shared API contracts. Admin
+  attendance path remains a compatibility facade, while teacher attendance and
+  lecture matrix surfaces use the shared contract directly.
 - React runtime/types mismatch and missing lockfile policy can create unrelated
   noise during refactor validation.
 
@@ -191,7 +194,7 @@ pnpm refactor:inventory
 - Generated API types require backend schema generation first; this is a Phase 0
   dependency, not an optional polish task.
 - Captured verification status: these counts include the session-enrollment,
-  notification, community, and video shared-contract slices plus the AI
+  notification, community, video, and attendance shared-contract slices plus the AI
   segmentation contract extraction that moved pure DTO/validation imports to
   `academy.domain.ai`. Re-run the snapshot commands before each phase because
   active refactors can change these counts quickly.

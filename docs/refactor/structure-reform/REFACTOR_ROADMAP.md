@@ -313,6 +313,14 @@ Implemented:
   contracts, and video E2E expectations follow the current KPI/folder explorer UX.
 - Frontend boundary snapshot improved from 24 to 21 cross-app/admin role imports
   after the video media/access contract slice.
+- Lecture/session attendance API now lives behind
+  `src/shared/api/contracts/attendance.ts`. The admin attendance path remains a
+  compatibility facade, teacher attendance and lecture matrix surfaces use the
+  shared contract directly, and duplicate teacher matrix/export calls were
+  removed. `e2e/teacher/attendance-contract.spec.ts` covers the teacher
+  attendance and matrix render paths.
+- Frontend boundary snapshot improved from 21 to 17 cross-app/admin role imports
+  after the attendance contract slice.
 
 ## Cleanup And Removal Rule
 
