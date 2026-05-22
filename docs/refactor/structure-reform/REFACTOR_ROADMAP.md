@@ -342,6 +342,12 @@ Implemented:
   "타이머" page label.
 - Frontend boundary snapshot improved from 7 to 6 cross-app/admin role imports
   after the tools timer contract slice.
+- Exam enrollment API now lives behind
+  `src/shared/api/contracts/examEnrollments.ts`. The admin exam enrollment API
+  remains a compatibility facade, while teacher exam detail and OMR pages use
+  the shared `enrollment_id` contract directly.
+- Frontend boundary snapshot improved from 6 to 4 cross-app/admin role imports
+  after the exam enrollment contract slice.
 
 ## Cleanup And Removal Rule
 
