@@ -143,12 +143,12 @@ Frontend dependency risks:
 | Backend domain infra imports | 84 | domain code still reaches infra SDK/helper modules |
 | Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
-| Frontend source import files | 1050 | files scanned for import boundary snapshot |
-| Frontend source text files | 1394 | app/domain moves need automated boundaries |
+| Frontend source import files | 1051 | files scanned for import boundary snapshot |
+| Frontend source text files | 1395 | app/domain moves need automated boundaries |
 | Frontend E2E/script files | 225 | durable gates must be separated from audit specs |
 | Frontend durable E2E waitForTimeout calls | 69 | excludes `_local`, `_audit`, artifacts, reports, screenshots |
-| Frontend cross-app imports | 7 | remaining role-app imports of admin internals |
-| Frontend role-app admin imports | 7 | teacher/student app imports of `@admin/*` internals |
+| Frontend cross-app imports | 6 | remaining role-app imports of admin internals |
+| Frontend role-app admin imports | 6 | teacher/student app imports of `@admin/*` internals |
 | Frontend shared imports app internals | 0 | `shared/` no longer imports role-app internals |
 
 Snapshot commands:
@@ -198,6 +198,9 @@ pnpm refactor:inventory
   `frontend/e2e/helpers/feesFeatureFlag.ts`. This is not a database or
   production flag mutation; production QA must respect the actual
   `fee_management` tenant flag.
+- Tools timer download API now lives in `frontend/src/shared/api/contracts/tools.ts`.
+  The admin stopwatch timer API path remains a compatibility facade, while the
+  teacher timer surface no longer imports admin tools internals.
 - React runtime/types mismatch and missing lockfile policy can create unrelated
   noise during refactor validation.
 
@@ -212,7 +215,7 @@ pnpm refactor:inventory
 - Captured verification status: these counts include the session-enrollment,
   notification, community, video, attendance, and storage/students/inventory
   shared-contract slices plus the AI segmentation contract extraction that moved
-  pure DTO/validation imports to `academy.domain.ai`, and the fees shared
-  contract/status slice. Re-run the snapshot
+  pure DTO/validation imports to `academy.domain.ai`, the fees shared
+  contract/status slice, and the tools timer download contract slice. Re-run the snapshot
   commands before each phase because active refactors can change these counts
   quickly.

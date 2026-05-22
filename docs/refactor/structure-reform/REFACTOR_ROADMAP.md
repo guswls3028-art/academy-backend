@@ -336,6 +336,12 @@ Implemented:
   override instead of mutating tenant configuration.
 - Frontend boundary snapshot improved from 9 to 7 cross-app/admin role imports
   after the fees contract/status slice.
+- Tools timer download API now lives behind `src/shared/api/contracts/tools.ts`.
+  The admin stopwatch timer API remains a compatibility facade, teacher timer
+  uses the shared contract directly, and teacher timer E2E follows the current
+  "타이머" page label.
+- Frontend boundary snapshot improved from 7 to 6 cross-app/admin role imports
+  after the tools timer contract slice.
 
 ## Cleanup And Removal Rule
 
