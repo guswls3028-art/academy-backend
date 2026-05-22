@@ -329,6 +329,13 @@ Implemented:
   surfaces use shared contracts directly.
 - Frontend boundary snapshot improved from 17 to 9 cross-app/admin role imports
   after the storage/students/inventory contract slice.
+- Fees API contracts now live behind `src/shared/api/contracts/fees.ts`, and
+  fees status/tone labels live under `src/shared/product/fees/feesStatus.ts`.
+  Admin fees paths remain compatibility facades, teacher fees uses shared
+  contracts directly, and local fees E2E uses a browser-route feature-flag
+  override instead of mutating tenant configuration.
+- Frontend boundary snapshot improved from 9 to 7 cross-app/admin role imports
+  after the fees contract/status slice.
 
 ## Cleanup And Removal Rule
 
