@@ -20,7 +20,7 @@ structurally enforced, and which small refactor should start Phase 1.
 - Frontend role surfaces live under `src/app_admin`, `src/app_teacher`,
   `src/app_student`, plus `auth`, `core`, `shared`, `landing`.
 - Current refactor inventory measured 27 backend domain directories,
-  104 backend cross-domain imports, 645 backend cross-domain internal imports,
+  112 backend cross-domain imports, 635 backend cross-domain internal imports,
   0 frontend cross-app imports, and 0 `shared -> app_*` imports.
 
 Backend API prefixes relevant to this audit:
@@ -75,7 +75,7 @@ Therefore a patch to a student field is not guaranteed to reach every surface.
 | Auth current user | `/api/v1/core/me/` | `UserSerializer.linkedStudents`, reads `parent.students` |
 | Student app sessions/results/dashboard | `/api/v1/student/*` | BFF views aggregate enrollment, attendance, exams, results, video, fees |
 | Messaging send targets | `/api/v1/messaging/send/` | `SendMessageView`, direct `Student.objects.filter(...)` |
-| Clinic/attendance/results helpers | domain-specific endpoints | Direct Student import/query in multiple domains |
+| Clinic/attendance/results helpers | domain-specific endpoints | Clinic participant/session/idcard touched paths use student/enrollment selectors; attendance/results still have direct student lookup paths |
 
 Important finding: this feature is actually at least 7 read roots when "student
 identity/profile as shown to users" is counted across admin, teacher, student
@@ -184,8 +184,10 @@ allow unsafe no-tenant usage.
 - Students model save logic imports and updates inventory models.
 - Student permanent delete directly edits internal tables across assessment,
   academics, clinic, media, community, and core.
-- Attendance, clinic, community, fees, messaging, results, and enrollment import
-  or query `Student` directly in views/serializers/services.
+- Attendance, community, fees, messaging, results, and parts of enrollment still
+  import or query `Student` directly in views/serializers/services. Touched
+  clinic participant/session/idcard paths now use public student/enrollment
+  selectors instead of direct `Student.objects` / `Enrollment.objects` reads.
 - `homework.views.__init__` imports `HomeworkScoreViewSet` from
   `homework_results`, so two homework-related roots are coupled at URL/export
   level.
@@ -245,6 +247,10 @@ services, or events.
   contract, the exam enrollment contract, the tenant info contract, submissions
   API/types, and lecture section APIs out of admin internals. Frontend
   cross-app/admin role imports are now 0.
+- Clinic participant/session/idcard active-student reads now use
+  `students.selectors` and `enrollment.selectors`. Deleted students are blocked
+  from participant create through `student`, `enrollment_id`, and student
+  self-booking; deleted student idcard requests return the empty safe payload.
 
 ## 11. Phase 1 Recommendation
 

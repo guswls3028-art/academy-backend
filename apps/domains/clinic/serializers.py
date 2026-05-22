@@ -5,7 +5,8 @@ from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
 from apps.domains.lectures.models import Lecture
 from apps.domains.enrollment.models import Enrollment
-from apps.domains.students.models import Student
+from apps.domains.enrollment.selectors import enrollments_for_tenant
+from apps.domains.students.selectors import students_for_tenant
 
 
 class ClinicSessionSerializer(serializers.ModelSerializer):
@@ -270,8 +271,8 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
         if request and hasattr(request, "tenant") and request.tenant:
             tenant = request.tenant
             self.fields["session"].queryset = Session.objects.filter(tenant=tenant)
-            self.fields["enrollment_id"].queryset = Enrollment.objects.filter(tenant=tenant)
-            self.fields["student"].queryset = Student.objects.filter(tenant=tenant)
+            self.fields["enrollment_id"].queryset = enrollments_for_tenant(tenant)
+            self.fields["student"].queryset = students_for_tenant(tenant, deleted="active")
 
     # FK 전환 호환: 프론트가 enrollment_id로 보내면 enrollment FK로 매핑
     enrollment_id = serializers.PrimaryKeyRelatedField(
@@ -379,7 +380,7 @@ class ClinicSubmissionSerializer(serializers.ModelSerializer):
             if "test" in self.fields:
                 self.fields["test"].queryset = Test.objects.filter(tenant=tenant)
             if "student" in self.fields:
-                self.fields["student"].queryset = Student.objects.filter(tenant=tenant)
+                self.fields["student"].queryset = students_for_tenant(tenant, deleted="active")
 
     def validate_score(self, value):
         if value is None:

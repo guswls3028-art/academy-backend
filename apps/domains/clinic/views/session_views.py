@@ -18,6 +18,7 @@ from ..serializers import ClinicSessionSerializer
 from ..filters import SessionFilter
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.domains.enrollment.selectors import enrollments_for_tenant
 from apps.domains.messaging.services import send_clinic_reminder_for_students
 from apps.domains.progress.models import ClinicLink
 from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
@@ -123,10 +124,9 @@ class SessionViewSet(viewsets.ModelViewSet):
             else:
                 qs = qs.filter(_no_school_restrict)
             # 강의 필터: 수강 중인 강의가 대상에 포함되거나 대상 강의가 비어있는 경우
-            from apps.domains.enrollment.models import Enrollment
             enrolled_lecture_ids = list(
-                Enrollment.objects.filter(
-                    student=student, tenant=tenant, status="ACTIVE"
+                enrollments_for_tenant(tenant).filter(
+                    student=student, status="ACTIVE"
                 ).values_list("lecture_id", flat=True)
             )
             if enrolled_lecture_ids:

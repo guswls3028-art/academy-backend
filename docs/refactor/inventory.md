@@ -138,8 +138,8 @@ Frontend dependency risks:
 |---|---:|---|
 | Backend serializer-related lines | 1129 | API surface is broad enough that manual FE type sync is unsafe |
 | Backend tenant-related query/assignment hits | 3486 | tenant scope is widespread and needs automated guardrails |
-| Backend cross-domain imports | 104 | semantic snapshot script, non-internal cross-domain imports |
-| Backend cross-domain internal imports | 645 | semantic snapshot script, direct imports into models/services/views/api/serializers |
+| Backend cross-domain imports | 112 | semantic snapshot script, non-internal cross-domain imports; increased by deliberate selector/service boundary use |
+| Backend cross-domain internal imports | 635 | semantic snapshot script, direct imports into models/services/views/api/serializers |
 | Backend domain infra imports | 84 | domain code still reaches infra SDK/helper modules |
 | Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
@@ -219,6 +219,12 @@ pnpm refactor:inventory
   `frontend/src/shared/api/contracts/lectureSections.ts`. The admin lectures
   sections API path remains a compatibility facade, while teacher clinic imports
   shared directly.
+- Clinic participant/session/idcard student and enrollment reads now use
+  `students.selectors` / `enrollment.selectors` instead of direct
+  `Student.objects` / `Enrollment.objects` lookups in the touched clinic HTTP
+  paths. Soft-deleted students are no longer accepted as clinic participant
+  targets through `student`, `enrollment_id`, or student self-booking, and
+  deleted student accounts receive an empty clinic idcard response.
 - React runtime/types mismatch and missing lockfile policy can create unrelated
   noise during refactor validation.
 
@@ -236,6 +242,10 @@ pnpm refactor:inventory
   pure DTO/validation imports to `academy.domain.ai`, the fees shared
   contract/status slice, the tools timer download contract slice, the exam
   enrollment contract slice, the tenant info contract slice, the submissions
-  contract slice, and the lecture sections contract slice. Re-run the snapshot
-  commands before each phase because active refactors can change these counts
-  quickly.
+  contract slice, the lecture sections contract slice, and the clinic
+  active-student selector boundary slice. Re-run the snapshot commands before
+  each phase because active refactors can change these counts quickly. The
+  latest backend snapshot reports `cross_domain_import=112`,
+  `cross_domain_internal_import=635`, and `domain_infra_import=84`; the
+  non-internal count rose because touched code now imports public selectors
+  instead of internal models/views.

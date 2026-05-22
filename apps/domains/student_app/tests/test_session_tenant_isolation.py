@@ -99,6 +99,16 @@ class StudentSessionTenantIsolationTests(TestCase):
         self.assertFalse(permission.has_permission(cross_tenant_request, None))
         self.assertIsNone(get_request_student(cross_tenant_request))
 
+    def test_deleted_student_is_not_active_request_student(self):
+        self.student_a.deleted_at = timezone.now()
+        self.student_a.save(update_fields=["deleted_at", "updated_at"])
+
+        request = _request(self.user_a, self.tenant_a)
+        permission = IsStudentOrParent()
+
+        self.assertFalse(permission.has_permission(request, None))
+        self.assertIsNone(get_request_student(request))
+
     def test_session_list_ignores_cross_tenant_session_enrollment_rows(self):
         enrollment = self._enroll_student_a()
         own_session = _create_session(self.lecture_a, title="Own session")

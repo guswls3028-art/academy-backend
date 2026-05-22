@@ -21,6 +21,7 @@ from ..serializers import (
 from ..filters import ParticipantFilter
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.domains.enrollment.selectors import enrollments_for_tenant
 from apps.domains.progress.models import ClinicLink
 
 logger = logging.getLogger(__name__)
@@ -166,10 +167,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             # 강의 제한 검증
             target_lec_ids = set(session.target_lectures.values_list("id", flat=True))
             if target_lec_ids:
-                from apps.domains.enrollment.models import Enrollment
                 enrolled_lec_ids = set(
-                    Enrollment.objects.filter(
-                        student=request_student, tenant=tenant, status="ACTIVE"
+                    enrollments_for_tenant(tenant).filter(
+                        student=request_student, status="ACTIVE"
                     ).values_list("lecture_id", flat=True)
                 )
                 if not target_lec_ids & enrolled_lec_ids:
@@ -186,28 +186,24 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
         # ✅ 선생님 경로: enrollment_id로부터 student 자동 해석
         if not student and enrollment_id:
-            from apps.domains.enrollment.models import Enrollment
-            try:
-                enrollment = Enrollment.objects.get(id=enrollment_id, tenant=tenant)
-                student = enrollment.student
-            except Enrollment.DoesNotExist:
+            enrollment = enrollments_for_tenant(tenant).filter(id=enrollment_id).first()
+            if not enrollment:
                 return Response(
                     {"detail": "해당 수강 등록 정보를 찾을 수 없습니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            student = enrollment.student
         # ✅ enrollment_id ↔ student 교차검증: 불일치 시 데이터 정합성 위반 방지
         elif student and enrollment_id:
-            from apps.domains.enrollment.models import Enrollment
-            try:
-                enrollment = Enrollment.objects.get(id=enrollment_id, tenant=tenant)
-                if enrollment.student_id != student.id:
-                    return Response(
-                        {"detail": "enrollment_id와 student가 일치하지 않습니다."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-            except Enrollment.DoesNotExist:
+            enrollment = enrollments_for_tenant(tenant).filter(id=enrollment_id).first()
+            if not enrollment:
                 return Response(
                     {"detail": "해당 수강 등록 정보를 찾을 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if enrollment.student_id != student.id:
+                return Response(
+                    {"detail": "enrollment_id와 student가 일치하지 않습니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -283,11 +279,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
 
             # enrollment_id 자동 조회 (student만 있고 enrollment_id 없을 때)
             if not enrollment_id and student:
-                from apps.domains.enrollment.models import Enrollment
                 # Deterministic ordering: most recent enrollment first (prevents ambiguity with multiple active enrollments)
-                enrollment = Enrollment.objects.filter(
+                enrollment = enrollments_for_tenant(tenant).filter(
                     student=student,
-                    tenant=tenant,
                     status="ACTIVE"
                 ).order_by("-enrolled_at", "-id").first()
                 if enrollment:
@@ -732,10 +726,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             # Lecture restriction
             target_lec_ids = set(new_session.target_lectures.values_list("id", flat=True))
             if target_lec_ids:
-                from apps.domains.enrollment.models import Enrollment
                 enrolled_lec_ids = set(
-                    Enrollment.objects.filter(
-                        student=request_student, tenant=tenant, status="ACTIVE"
+                    enrollments_for_tenant(tenant).filter(
+                        student=request_student, status="ACTIVE"
                     ).values_list("lecture_id", flat=True)
                 )
                 if not target_lec_ids & enrolled_lec_ids:
@@ -783,11 +776,9 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             # Resolve enrollment_id
             enrollment_id = old_booking.enrollment_id
             if not enrollment_id:
-                from apps.domains.enrollment.models import Enrollment
                 # Deterministic ordering: most recent enrollment first (prevents ambiguity with multiple active enrollments)
-                enrollment = Enrollment.objects.filter(
+                enrollment = enrollments_for_tenant(tenant).filter(
                     student=request_student,
-                    tenant=tenant,
                     status="ACTIVE"
                 ).order_by("-enrolled_at", "-id").first()
                 if enrollment:

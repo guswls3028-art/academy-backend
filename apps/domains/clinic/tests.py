@@ -16,6 +16,7 @@ from django.utils import timezone
 from apps.core.models import Tenant
 from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
 from apps.domains.enrollment.models import Enrollment
+from apps.domains.enrollment.selectors import enrollments_for_tenant
 from apps.domains.lectures.models import Lecture, Session as LectureSession
 from apps.domains.progress.models import ClinicLink
 from apps.domains.students.models import Student
@@ -927,9 +928,9 @@ class EnrollmentSelectionDBTest(TestCase, ClinicTestMixin):
             tenant=self.tenant, student=self.student, lecture=self.lecture2,
             status="ACTIVE",
         )
-        # 동일 로직: views.py와 idcard_views.py에서 사용
-        selected = Enrollment.objects.filter(
-            student=self.student, tenant=self.tenant, status="ACTIVE",
+        # 동일 로직: participant/idcard 경로에서 사용하는 tenant-scoped selector 기준.
+        selected = enrollments_for_tenant(self.tenant).filter(
+            student=self.student, status="ACTIVE",
         ).order_by("-enrolled_at", "-id").first()
 
         # 나중에 생성된 enrollment이 선택됨 (enrolled_at이 같으면 id가 큰 것)
@@ -945,8 +946,8 @@ class EnrollmentSelectionDBTest(TestCase, ClinicTestMixin):
             tenant=self.tenant, student=self.student, lecture=self.lecture2,
             status="INACTIVE",
         )
-        selected = Enrollment.objects.filter(
-            student=self.student, tenant=self.tenant, status="ACTIVE",
+        selected = enrollments_for_tenant(self.tenant).filter(
+            student=self.student, status="ACTIVE",
         ).order_by("-enrolled_at", "-id").first()
 
         self.assertEqual(selected.id, e_active.id)
@@ -1049,6 +1050,62 @@ class TenantIsolationAPITest(APITestCase, ClinicAPITestMixin):
                 tenant=self.a["tenant"],
                 session=self.a["clinic_session"],
                 student=self.b["students"][0],
+            ).exists()
+        )
+
+    def test_tenant_a_cannot_create_participant_with_deleted_student(self):
+        """soft-deleted students are not valid clinic participant targets."""
+        self.client.force_authenticate(user=self.a["admin_user"])
+        deleted_student = self.make_student(self.a["tenant"], "deleted_api")
+        deleted_student.deleted_at = timezone.now()
+        deleted_student.save(update_fields=["deleted_at"])
+
+        resp = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": self.a["clinic_session"].id,
+                "student": deleted_student.id,
+            },
+            **self._headers(self.a["tenant"]),
+        )
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertFalse(
+            SessionParticipant.objects.filter(
+                tenant=self.a["tenant"],
+                session=self.a["clinic_session"],
+                student=deleted_student,
+            ).exists()
+        )
+
+    def test_tenant_a_cannot_create_participant_with_deleted_student_enrollment(self):
+        """enrollment_id cannot be used to add a soft-deleted student."""
+        self.client.force_authenticate(user=self.a["admin_user"])
+        deleted_student = self.make_student(self.a["tenant"], "deleted_enroll_api")
+        enrollment = self.make_enrollment(
+            self.a["tenant"],
+            deleted_student,
+            self.a["lecture"],
+            status="ACTIVE",
+        )
+        deleted_student.deleted_at = timezone.now()
+        deleted_student.save(update_fields=["deleted_at"])
+
+        resp = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": self.a["clinic_session"].id,
+                "enrollment_id": enrollment.id,
+            },
+            **self._headers(self.a["tenant"]),
+        )
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertFalse(
+            SessionParticipant.objects.filter(
+                tenant=self.a["tenant"],
+                session=self.a["clinic_session"],
+                student=deleted_student,
             ).exists()
         )
 
@@ -1158,6 +1215,42 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         participant = SessionParticipant.objects.get(id=resp.data["id"])
         self.assertEqual(participant.student_id, self.student.id)
         self.assertEqual(participant.status, SessionParticipant.Status.PENDING)
+
+    def test_deleted_student_cannot_create_own_booking(self):
+        self.student.deleted_at = timezone.now()
+        self.student.save(update_fields=["deleted_at", "updated_at"])
+
+        resp = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": self.data["clinic_session"].id,
+            },
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertFalse(
+            SessionParticipant.objects.filter(
+                tenant=self.tenant,
+                session=self.data["clinic_session"],
+                student=self.student,
+            ).exists()
+        )
+
+    def test_deleted_student_gets_empty_idcard(self):
+        self.student.deleted_at = timezone.now()
+        self.student.save(update_fields=["deleted_at", "updated_at"])
+
+        resp = self.client.get(
+            "/api/v1/clinic/idcard/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["student_name"], "")
+        self.assertEqual(resp.data["histories"], [])
+        self.assertEqual(resp.data["current_result"], "SUCCESS")
 
     def test_student_cannot_complete_own_booking(self):
         participant = self.make_participant(

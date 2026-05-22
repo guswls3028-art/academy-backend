@@ -97,6 +97,9 @@ Implemented:
 - `students.selectors` and `students.services.profile.update_student_profile`
   route admin profile updates, `/students/me`, and student-app profile updates
   through one canonical tenant-scoped profile write path.
+- `student_app.permissions.get_request_student` and student/parent permission
+  checks now use active tenant-scoped student selectors, so deleted students are
+  not treated as active student identities in student-app BFF callers.
 
 ## Phase 2: Enrollment / Results / Exams / Homework Consistency
 
@@ -187,6 +190,12 @@ Implemented:
   preserving the existing `transaction.on_commit` compatibility path.
 - Messaging worker logs the source context for traceability without changing
   delivery semantics or requiring a data migration.
+- Clinic participant/session/idcard active-student reads now use
+  `students.selectors` and `enrollment.selectors` in touched HTTP paths.
+  Deleted-student participant creation is rejected through `student`,
+  `enrollment_id`, and student self-booking, while idcard returns the empty
+  safe response for deleted student accounts. Participant transition logic still
+  needs extraction into clinic services before this phase is complete.
 
 ## Phase 4: AI / OMR / Matchup Job Structure
 

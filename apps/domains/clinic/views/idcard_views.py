@@ -11,8 +11,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolved
-from apps.domains.students.models import Student
-from apps.domains.enrollment.models import Enrollment
+from apps.domains.enrollment.selectors import enrollments_for_tenant
+from apps.domains.students.selectors import student_for_tenant_user
 from apps.domains.lectures.models import Session as LectureSession
 from apps.domains.progress.models import ClinicLink
 from apps.domains.clinic.color_utils import get_effective_clinic_colors
@@ -27,13 +27,13 @@ class StudentClinicIdcardView(APIView):
 
     def get(self, request):
         user = request.user
-        student = getattr(user, "student_profile", None)
         tenant = request.tenant
+        student = student_for_tenant_user(tenant, user, deleted="active")
 
         # 패스카드 배경 색상 (매일 자동 3색 또는 저장값)
         colors = get_effective_clinic_colors(tenant) if tenant else ["#ef4444", "#3b82f6", "#22c55e"]
 
-        if not student or not isinstance(student, Student) or student.tenant_id != tenant.id:
+        if not student:
             return Response({
                 "student_name": "",
                 "profile_photo_url": None,
@@ -45,7 +45,7 @@ class StudentClinicIdcardView(APIView):
             })
 
         # tenant is guaranteed by TenantResolved permission
-        qs = Enrollment.objects.filter(student=student, tenant=tenant, status="ACTIVE")
+        qs = enrollments_for_tenant(tenant).filter(student=student, status="ACTIVE")
         # enrollment 선택 SSOT: 가장 최근 활성 등록 (booking/ops console과 동일 규칙)
         enrollment = qs.select_related("lecture").order_by("-enrolled_at", "-id").first()
 

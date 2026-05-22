@@ -63,9 +63,16 @@ $env:PYTHONPATH='C:\academy\backend'; $env:DJANGO_SETTINGS_MODULE='apps.api.conf
 Current baseline snapshot:
 
 - `adapter_application_import`: 0
-- `cross_domain_import`: 104
-- `cross_domain_internal_import`: 645
+- `cross_domain_import`: 112
+- `cross_domain_internal_import`: 635
 - `domain_infra_import`: 84
+
+Interpretation note:
+
+- Public selector/service imports can raise `cross_domain_import` while replacing
+  direct model/view/service reach-through. The stricter quality signal during
+  this transition is `cross_domain_internal_import`, plus touched-file review
+  that verifies the new import is a documented public boundary.
 
 ### 3. Tenant Scope Guard
 
@@ -174,7 +181,9 @@ Backend and frontend functional gates are selected by touched surface.
 - Existing violations are counted and documented.
 - New violations in touched files are blocked.
 - Compatibility exceptions must include a removal condition.
-- Baseline counts should only go down after Phase 0.
+- Internal/direct baseline counts should only go down after Phase 0. Public
+  selector/service imports may rise temporarily when they replace internal
+  model/view/service imports and are documented as canonical boundaries.
 
 ## Phase 0 Exit Checklist
 

@@ -22,7 +22,7 @@ Boundary rule for the structure reform:
 | Public interface candidate | `students.selectors` for tenant-scoped reads; `students.services` for create/update/lifecycle/profile/import/registration approval |
 | Forbidden dependency | Other domains importing `Student` internals for write logic; model save touching inventory; frontend role apps importing admin student internals instead of shared contracts |
 | Tenant rule | Every student lookup must include tenant and deleted-state intent; no global user/student lookup unless explicitly platform-admin scoped |
-| Current risk | 6+ write roots, profile DTO drift, raw permanent delete, no-tenant repository helpers |
+| Current risk | 6+ write roots, profile DTO drift, raw permanent delete, no-tenant repository helpers; student-app identity now uses active tenant-scoped selectors, but broader lifecycle state is still split |
 
 ## Parents
 
@@ -55,7 +55,7 @@ Boundary rule for the structure reform:
 | Public interface candidate | `[COMPLETED] enrollment.selectors.enrollments_for_tenant`, `session_enrollments_for_tenant`, `active_session_enrollments_for_session`; `[COMPLETED] enrollment.services.lifecycle` for bulk enrollment/session create, status side effects, delete, and learning access toggle |
 | Forbidden dependency | Students domain view directly owning enrollment-matrix toggles without enrollment service |
 | Tenant rule | Enrollment and session enrollment queries must include tenant |
-| Current risk | Student lifecycle changes still mutate enrollment status in multiple places; enrollment matrix and assignment roster paths are now canonicalized |
+| Current risk | Student lifecycle changes still mutate enrollment status in multiple places; enrollment matrix, assignment roster, and touched clinic enrollment reads are now canonicalized |
 
 ## Attendance
 
@@ -75,9 +75,9 @@ Boundary rule for the structure reform:
 | Owned data | Clinic `Session`, `SessionParticipant`, `Test`, clinic `Submission` |
 | External references | Student, enrollment, lectures, messaging |
 | Public interface candidate | `clinic.services.add_participant`, `clinic.services.change_booking`, `clinic.events.ClinicStatusChanged` |
-| Forbidden dependency | Serializer-owned student querysets/business decisions; students delete flow directly mutating clinic participants |
-| Tenant rule | Participant/session/submission/test queries must include tenant and same-tenant student/enrollment |
-| Current risk | Clinic has a `Submission` model name that conflicts conceptually with assessment submissions; participant status transitions live in views |
+| Forbidden dependency | View-owned participant business decisions and students delete flow directly mutating clinic participants |
+| Tenant rule | Participant/session/submission/test queries must include tenant and same-tenant active student/enrollment |
+| Current risk | Clinic has a `Submission` model name that conflicts conceptually with assessment submissions; participant status transitions live in views. Participant/session/idcard active-student reads in touched HTTP paths now use public selectors, but the add/change booking use-case has not yet been extracted into a clinic service |
 
 ## Exams
 
