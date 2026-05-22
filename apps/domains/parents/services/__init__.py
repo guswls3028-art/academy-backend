@@ -5,6 +5,8 @@
 - 학부모 ID = 학부모 전화번호
 """
 
+from dataclasses import dataclass
+
 from django.db import transaction
 from django.contrib.auth import get_user_model
 
@@ -24,12 +26,23 @@ def parent_initial_password(parent_phone: str) -> str:
     return digits[-4:] if len(digits) >= 4 else (digits or "0000")
 
 
-def ensure_parent_for_student(
+@dataclass(frozen=True)
+class ParentAccountEnsureResult:
+    parent: Parent
+    user_created: bool
+    initial_password: str | None
+
+    @property
+    def password_for_notice(self) -> str:
+        return self.initial_password or "변경되지 않음"
+
+
+def ensure_parent_account_for_student(
     *,
     tenant,
     parent_phone: str,
     student_name: str,
-) -> Parent:
+) -> ParentAccountEnsureResult:
     """
     학부모 전화번호로 Parent 조회 또는 생성
     - 없으면 User + Parent + TenantMembership 생성
@@ -67,7 +80,16 @@ def ensure_parent_for_student(
                     user=user,
                     role="parent",
                 )
-        return parent
+            return ParentAccountEnsureResult(
+                parent=parent,
+                user_created=True,
+                initial_password=initial_pw,
+            )
+        return ParentAccountEnsureResult(
+            parent=parent,
+            user_created=False,
+            initial_password=None,
+        )
 
     with transaction.atomic():
         if User.objects.filter(username=parent_username).exists():
@@ -96,4 +118,22 @@ def ensure_parent_for_student(
             role="parent",
         )
 
-    return parent
+    return ParentAccountEnsureResult(
+        parent=parent,
+        user_created=True,
+        initial_password=initial_pw,
+    )
+
+
+def ensure_parent_for_student(
+    *,
+    tenant,
+    parent_phone: str,
+    student_name: str,
+) -> Parent:
+    """Compatibility facade. New notification paths should use the result object."""
+    return ensure_parent_account_for_student(
+        tenant=tenant,
+        parent_phone=parent_phone,
+        student_name=student_name,
+    ).parent

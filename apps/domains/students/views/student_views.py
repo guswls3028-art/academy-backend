@@ -29,7 +29,7 @@ from apps.core.permissions import IsStudent, TenantResolvedAndStaff
 from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
 
-from apps.domains.parents.services import ensure_parent_for_student
+from apps.domains.parents.services import ensure_parent_account_for_student
 from apps.domains.messaging.services import send_welcome_messages, get_tenant_site_url, send_event_notification
 from apps.domains.ai.gateway import dispatch_job
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
@@ -145,7 +145,7 @@ class StudentViewSet(ModelViewSet):
 
         1. 삭제된 학생 체크 (전화번호 또는 이름+학부모전화)
         2. 입력값 검증 (StudentCreateSerializer)
-        3. 학부모 계정 생성/연결 (ensure_parent_for_student)
+        3. 학부모 계정 생성/연결 (ensure_parent_account_for_student)
         4. User 생성 (username = ps_number)
         5. Student 생성 + tenant / user / parent 연결
         6. TenantMembership(role=student) SSOT 강제 생성
@@ -210,12 +210,15 @@ class StudentViewSet(ModelViewSet):
 
         # 1️⃣ 학부모 계정 생성 (ID = 학부모 전화번호)
         parent = None
+        parent_password_for_notice = ""
         if parent_phone:
-            parent = ensure_parent_for_student(
+            parent_result = ensure_parent_account_for_student(
                 tenant=request.tenant,
                 parent_phone=parent_phone,
                 student_name=data.get("name", ""),
             )
+            parent = parent_result.parent
+            parent_password_for_notice = parent_result.password_for_notice
 
         # 2️⃣ User 생성 (tenant + 내부 username t{id}_{ps_number} 로 전역 유일)
         user = student_repo.user_create_user(
@@ -248,7 +251,9 @@ class StudentViewSet(ModelViewSet):
             send_welcome_messages(
                 created_students=[student],
                 student_password=password,
-                parent_password_by_phone={parent_phone: "0000"} if parent_phone else {},
+                parent_password_by_phone=(
+                    {parent_phone: parent_password_for_notice} if parent_phone else {}
+                ),
                 site_url=site_url,
             )
 
@@ -476,6 +481,7 @@ class StudentViewSet(ModelViewSet):
         created_count = 0
         failed = []
         created_students = []
+        parent_password_by_phone = {}
 
         # school_level_mode 검증 준비
         from apps.domains.students.services.school import get_valid_school_types, is_valid_grade
@@ -541,11 +547,19 @@ class StudentViewSet(ModelViewSet):
                     # 학부모 계정 생성
                     parent = None
                     if parent_phone:
-                        parent = ensure_parent_for_student(
+                        parent_result = ensure_parent_account_for_student(
                             tenant=tenant,
                             parent_phone=parent_phone,
                             student_name=item.get("name", ""),
                         )
+                        parent = parent_result.parent
+                        if (
+                            parent_phone not in parent_password_by_phone
+                            or parent_result.user_created
+                        ):
+                            parent_password_by_phone[parent_phone] = (
+                                parent_result.password_for_notice
+                            )
 
                     user = student_repo.user_create_user(
                         username=ps_number,
@@ -607,11 +621,10 @@ class StudentViewSet(ModelViewSet):
 
         if send_welcome and created_students:
             site_url = get_tenant_site_url(request.tenant)
-            parent_pw = {s.parent_phone: "0000" for s in created_students if getattr(s, "parent_phone", None)}
             send_welcome_messages(
                 created_students=created_students,
                 student_password=password,
-                parent_password_by_phone=parent_pw,
+                parent_password_by_phone=parent_password_by_phone,
                 site_url=site_url,
             )
 
@@ -648,6 +661,7 @@ class StudentViewSet(ModelViewSet):
         restored_count = 0
         failed = []
         created_students = []
+        parent_password_by_phone = {}
 
         for r in resolutions:
             row = r.get("row")
@@ -670,7 +684,6 @@ class StudentViewSet(ModelViewSet):
                         profile_data=student_data,
                     )
                     restored_count += 1
-                    created_students.append(restored_result.student)
                 else:
                     with transaction.atomic():
                         student_repo.enrollment_filter_student_delete(student.id, tenant=tenant)
@@ -690,11 +703,19 @@ class StudentViewSet(ModelViewSet):
                         parent_phone_raw = str(student_data.get("parent_phone") or student_data.get("parentPhone", "")).replace(" ", "").replace("-", "").replace(".", "")
                         parent_phone = parent_phone_raw if len(parent_phone_raw) >= 11 else ""
                         if parent_phone:
-                            parent = ensure_parent_for_student(
+                            parent_result = ensure_parent_account_for_student(
                                 tenant=tenant,
                                 parent_phone=parent_phone,
                                 student_name=student_data.get("name", ""),
                             )
+                            parent = parent_result.parent
+                            if (
+                                parent_phone not in parent_password_by_phone
+                                or parent_result.user_created
+                            ):
+                                parent_password_by_phone[parent_phone] = (
+                                    parent_result.password_for_notice
+                                )
                         phone_raw = str(student_data.get("phone", "")).replace(" ", "").replace("-", "").replace(".", "")
                         phone = phone_raw if phone_raw and len(phone_raw) == 11 and phone_raw.startswith("010") else None
                         parent_phone_val = student_data.get("parent_phone") or student_data.get("parentPhone", "")
@@ -751,11 +772,10 @@ class StudentViewSet(ModelViewSet):
 
         if send_welcome and created_students:
             site_url = get_tenant_site_url(request.tenant)
-            parent_pw = {s.parent_phone: "0000" for s in created_students if getattr(s, "parent_phone", None)}
             send_welcome_messages(
                 created_students=created_students,
                 student_password=password,
-                parent_password_by_phone=parent_pw,
+                parent_password_by_phone=parent_password_by_phone,
                 site_url=site_url,
             )
 

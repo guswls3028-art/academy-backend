@@ -1,7 +1,7 @@
 # 학부모 계정 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-05-21
+**최종 점검:** 2026-05-23
 **코드 기준:** `apps/domains/parents/services/__init__.py`, `apps/domains/parents/models.py`, `apps/api/common/auth_jwt.py`
 
 ## 1. 계정 생성 규칙
@@ -22,7 +22,7 @@
 
 ```
 학생 등록 또는 legacy 학부모 계정 복구
-  -> ensure_parent_for_student(tenant, parent_phone, student_name)
+  -> ensure_parent_account_for_student(tenant, parent_phone, student_name)
     -> Parent(tenant + phone) 조회
     -> Parent 없음:
          User(username=p_{tenant_id}_{phone}, phone=phone, tenant=tenant) 생성
@@ -30,13 +30,20 @@
          must_change_password=True
          Parent 생성
          TenantMembership(parent) 활성화
+         result.password_for_notice = parent_initial_password(phone)
     -> Parent 있음 + user 없음:
          기존 Parent.name 보존
          User 생성/연결
          TenantMembership(parent) 활성화
+         result.password_for_notice = parent_initial_password(phone)
     -> Parent 있음 + user 있음:
          기존 Parent 반환
+         result.password_for_notice = "변경되지 않음"
 ```
+
+`ensure_parent_for_student()`는 기존 호출부 호환용 facade다. 알림톡·운영 안내처럼
+비밀번호 안내 문구가 필요한 신규 경로는 반드시 `ensure_parent_account_for_student()`
+결과의 `password_for_notice`를 사용한다.
 
 ## 3. 로그인
 

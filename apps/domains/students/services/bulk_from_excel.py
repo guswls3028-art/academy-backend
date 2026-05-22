@@ -109,7 +109,7 @@ def bulk_create_students_from_excel_rows(
             from apps.domains.messaging.services import send_welcome_messages, get_tenant_site_url
             site_url = get_tenant_site_url(tenant)
             parent_pw = {
-                s.parent_phone: "0000"
+                s.parent_phone: getattr(s, "_parent_password_for_notice", "변경되지 않음")
                 for s in created_students
                 if getattr(s, "parent_phone", None)
             }

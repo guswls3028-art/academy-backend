@@ -6,6 +6,7 @@ Covers: ps_number/username sync, deletion semantics, restore flow, ghost data fi
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from unittest.mock import patch
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
@@ -519,6 +520,37 @@ class TestBulkRestoreFlow(TestCase):
         self.assertEqual(student.memo, "복원 메모")
         self.assertTrue(student.user.is_active)
         self.assertEqual(student.parent_id, self.parent.id)
+
+    @patch("apps.domains.students.views.student_views.send_welcome_messages")
+    def test_bulk_resolve_restore_does_not_send_new_password_notice(self, send_mock):
+        request = self.factory.post(
+            "/api/v1/students/bulk_resolve_conflicts/",
+            data={
+                "initial_password": "newpass123",
+                "send_welcome_message": True,
+                "resolutions": [
+                    {
+                        "row": 1,
+                        "student_id": self.student.id,
+                        "action": "restore",
+                        "student_data": {
+                            "name": self.student.name,
+                            "parent_phone": self.student.parent_phone,
+                            "phone": self.student.phone,
+                        },
+                    }
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_resolve_conflicts"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["restored"], 1)
+        send_mock.assert_not_called()
 
 
 class TestCrossTenantIsolation(TestCase):

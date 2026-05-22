@@ -18,7 +18,7 @@ from apps.core.permissions import TenantResolvedAndStaff, TenantResolved
 from apps.api.common.throttles import SmsEndpointThrottle, SignupCheckThrottle
 from apps.core.models import TenantMembership
 
-from apps.domains.parents.services import ensure_parent_for_student, PARENT_DEFAULT_PASSWORD
+from apps.domains.parents.services import ensure_parent_account_for_student
 from apps.domains.messaging.services import get_tenant_site_url, send_registration_approved_messages
 
 from academy.adapters.db.django import repositories_students as student_repo
@@ -47,7 +47,7 @@ def _approve_registration_request(request, reg):
     from apps.core.models.user import user_internal_username
 
     tenant = request.tenant
-    parent_fixed_password = PARENT_DEFAULT_PASSWORD
+    parent_password_for_notice = "변경되지 않음"
     name = reg.name
     parent_phone = reg.parent_phone
     phone = reg.phone
@@ -85,11 +85,13 @@ def _approve_registration_request(request, reg):
 
             parent = None
             if parent_phone:
-                parent = ensure_parent_for_student(
+                parent_result = ensure_parent_account_for_student(
                     tenant=tenant,
                     parent_phone=parent_phone,
                     student_name=name,
                 )
+                parent = parent_result.parent
+                parent_password_for_notice = parent_result.password_for_notice
             User = get_user_model()
             user = student_repo.user_create_user(
                 username=ps_number,
@@ -136,7 +138,7 @@ def _approve_registration_request(request, reg):
             student_id=ps_number,
             student_password="가입 신청 시 입력한 비밀번호",
             parent_phone=parent_phone or "",
-            parent_password=parent_fixed_password,
+            parent_password=parent_password_for_notice,
         )
         if reg.initial_password_plain:
             reg.initial_password_plain = ""

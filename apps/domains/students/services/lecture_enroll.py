@@ -6,7 +6,7 @@ from django.db import transaction
 
 from academy.adapters.db.django import repositories_students as student_repo
 from apps.core.models import TenantMembership
-from apps.domains.parents.services import ensure_parent_for_student
+from apps.domains.parents.services import ensure_parent_account_for_student
 from .lifecycle import restore_student
 from .school import normalize_school_from_name
 
@@ -97,11 +97,12 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
 
         parent = None
         if parent_phone:
-            parent = ensure_parent_for_student(
+            parent_result = ensure_parent_account_for_student(
                 tenant=tenant,
                 parent_phone=parent_phone,
                 student_name=name,
             )
+            parent = parent_result.parent
 
         user = student_repo.user_create_user(
             username=ps_number,
@@ -146,4 +147,6 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             user=user,
             role="student",
         )
+        if parent_phone:
+            student._parent_password_for_notice = parent_result.password_for_notice
         return student, True, False
