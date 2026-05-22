@@ -6,14 +6,20 @@ Covers: ps_number/username sync, deletion semantics, restore flow, ghost data fi
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.core.models.user import user_internal_username, user_display_username
 from apps.domains.students.models import Student
+from apps.domains.students.services import StudentLifecycleError, soft_delete_student
+from apps.domains.students.views import StudentViewSet
 from apps.domains.parents.models import Parent
 from apps.domains.inventory.models import InventoryFolder, InventoryFile
+from apps.domains.enrollment.models import Enrollment
+from apps.domains.lectures.models import Lecture
 from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
+from apps.domains.clinic.services.lifecycle import cancel_active_participants_for_student
 
 User = get_user_model()
 
@@ -128,6 +134,203 @@ class TestSoftDeleteSemantics(TestCase):
         self.assertIsNone(self.student.user.phone)
 
 
+class TestSoftDeleteLifecycleService(TestCase):
+    """Canonical soft-delete service keeps all side effects in one place."""
+
+    def setUp(self):
+        self.tenant = _create_tenant()
+        self.student = _create_student(
+            self.tenant,
+            "SD001",
+            phone="01044445555",
+            parent_phone="01099998888",
+        )
+        self.parent = Parent.objects.create(
+            tenant=self.tenant,
+            name="학부모",
+            phone=self.student.parent_phone,
+        )
+        self.student.parent = self.parent
+        self.student.save(update_fields=["parent"])
+        self.lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="삭제 테스트 강의",
+            name="삭제 테스트 강의",
+            subject="테스트",
+        )
+        self.enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=self.student,
+            lecture=self.lecture,
+            status="ACTIVE",
+        )
+        self.clinic_session = ClinicSession.objects.create(
+            tenant=self.tenant,
+            date="2026-04-01",
+            start_time="14:00",
+            location="Room A",
+            max_participants=10,
+        )
+        self.booked = SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=self.clinic_session,
+            student=self.student,
+            status=SessionParticipant.Status.BOOKED,
+            source=SessionParticipant.Source.AUTO,
+        )
+        self.pending = SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=None,
+            student=self.student,
+            requested_date="2026-04-02",
+            requested_start_time="15:00",
+            status=SessionParticipant.Status.PENDING,
+            source=SessionParticipant.Source.STUDENT_REQUEST,
+        )
+        self.attended = SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=self.clinic_session,
+            student=self.student,
+            status=SessionParticipant.Status.ATTENDED,
+            source=SessionParticipant.Source.AUTO,
+            participant_role="target",
+        )
+
+    def test_soft_delete_student_applies_full_lifecycle(self):
+        result = soft_delete_student(self.student, tenant=self.tenant)
+
+        self.assertEqual(result.enrollment_count, 1)
+        self.assertEqual(result.clinic_participant_count, 2)
+        self.assertTrue(result.user_deactivated)
+
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        self.enrollment.refresh_from_db()
+        self.booked.refresh_from_db()
+        self.pending.refresh_from_db()
+        self.attended.refresh_from_db()
+
+        self.assertIsNotNone(self.student.deleted_at)
+        self.assertTrue(self.student.ps_number.startswith(f"_del_{self.student.id}_SD001"))
+        self.assertIsNone(self.student.parent_id)
+        self.assertFalse(self.student.user.is_active)
+        self.assertIsNone(self.student.user.phone)
+        self.assertFalse(
+            TenantMembership.objects.get(tenant=self.tenant, user=self.student.user).is_active
+        )
+        self.assertEqual(self.enrollment.status, "INACTIVE")
+        self.assertEqual(self.booked.status, SessionParticipant.Status.CANCELLED)
+        self.assertEqual(self.pending.status, SessionParticipant.Status.CANCELLED)
+        self.assertEqual(self.attended.status, SessionParticipant.Status.ATTENDED)
+
+    def test_soft_delete_student_rejects_repeat_delete(self):
+        soft_delete_student(self.student, tenant=self.tenant)
+
+        with self.assertRaises(StudentLifecycleError) as ctx:
+            soft_delete_student(self.student, tenant=self.tenant)
+
+        self.assertEqual(ctx.exception.code, "already_deleted")
+
+
+class TestSoftDeleteViewRouting(TestCase):
+    """Single and bulk HTTP paths use the canonical soft-delete lifecycle."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = _create_tenant()
+        self.admin = User.objects.create_user(
+            username="soft-delete-admin",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+            name="관리자",
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="owner")
+
+    def _student_with_edges(self, suffix: str) -> tuple[Student, Enrollment, SessionParticipant]:
+        student = _create_student(
+            self.tenant,
+            f"VR{suffix}",
+            phone=f"0107000{int(suffix):04d}",
+            parent_phone=f"0108000{int(suffix):04d}",
+        )
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title=f"강의 {suffix}",
+            name=f"강의 {suffix}",
+            subject="테스트",
+        )
+        enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=student,
+            lecture=lecture,
+            status="ACTIVE",
+        )
+        clinic_session = ClinicSession.objects.create(
+            tenant=self.tenant,
+            date="2026-04-01",
+            start_time=f"14:{int(suffix) % 60:02d}",
+            location=f"Room {suffix}",
+            max_participants=10,
+        )
+        participant = SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=clinic_session,
+            student=student,
+            status=SessionParticipant.Status.BOOKED,
+            source=SessionParticipant.Source.AUTO,
+        )
+        return student, enrollment, participant
+
+    def test_destroy_routes_through_soft_delete_lifecycle(self):
+        student, enrollment, participant = self._student_with_edges("0001")
+        request = self.factory.delete(f"/api/v1/students/{student.id}/")
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"delete": "destroy"})(request, pk=student.id)
+
+        self.assertEqual(response.status_code, 204)
+        student.refresh_from_db()
+        student.user.refresh_from_db()
+        enrollment.refresh_from_db()
+        participant.refresh_from_db()
+        self.assertTrue(student.ps_number.startswith(f"_del_{student.id}_VR0001"))
+        self.assertFalse(student.user.is_active)
+        self.assertIsNone(student.user.phone)
+        self.assertEqual(enrollment.status, "INACTIVE")
+        self.assertEqual(participant.status, SessionParticipant.Status.CANCELLED)
+
+    def test_bulk_delete_routes_through_soft_delete_lifecycle(self):
+        student1, enrollment1, participant1 = self._student_with_edges("0002")
+        student2, enrollment2, participant2 = self._student_with_edges("0003")
+        request = self.factory.post(
+            "/api/v1/students/bulk_delete/",
+            data={"ids": [student1.id, student2.id]},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_delete"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["deleted"], 2)
+        for student, enrollment, participant, original_ps in [
+            (student1, enrollment1, participant1, "VR0002"),
+            (student2, enrollment2, participant2, "VR0003"),
+        ]:
+            student.refresh_from_db()
+            student.user.refresh_from_db()
+            enrollment.refresh_from_db()
+            participant.refresh_from_db()
+            self.assertTrue(student.ps_number.startswith(f"_del_{student.id}_{original_ps}"))
+            self.assertFalse(student.user.is_active)
+            self.assertIsNone(student.user.phone)
+            self.assertEqual(enrollment.status, "INACTIVE")
+            self.assertEqual(participant.status, SessionParticipant.Status.CANCELLED)
+
+
 class TestSoftDeleteCancelsClinicBookings(TestCase):
     """Student soft-delete should cancel active clinic participants (PENDING/BOOKED → CANCELLED)."""
 
@@ -155,14 +358,15 @@ class TestSoftDeleteCancelsClinicBookings(TestCase):
     def test_soft_delete_cancels_active_bookings(self):
         """BOOKED/PENDING 예약이 학생 삭제 시 CANCELLED로 변경."""
         now = timezone.now()
-        # Simulate soft-delete clinic cancellation
-        SessionParticipant.objects.filter(
-            student=self.student, tenant=self.tenant,
-            status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
-        ).update(status=SessionParticipant.Status.CANCELLED, status_changed_at=now)
+        count = cancel_active_participants_for_student(
+            tenant=self.tenant,
+            student=self.student,
+            changed_at=now,
+        )
 
         self.booked.refresh_from_db()
         self.pending.refresh_from_db()
+        self.assertEqual(count, 2)
         self.assertEqual(self.booked.status, "cancelled")
         self.assertEqual(self.pending.status, "cancelled")
 
@@ -173,21 +377,22 @@ class TestSoftDeleteCancelsClinicBookings(TestCase):
             status=SessionParticipant.Status.ATTENDED, source=SessionParticipant.Source.AUTO,
             participant_role="target",
         )
-        # Only cancel PENDING/BOOKED
-        SessionParticipant.objects.filter(
-            student=self.student, tenant=self.tenant,
-            status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
-        ).update(status=SessionParticipant.Status.CANCELLED)
+        cancel_active_participants_for_student(
+            tenant=self.tenant,
+            student=self.student,
+            changed_at=timezone.now(),
+        )
 
         attended.refresh_from_db()
         self.assertEqual(attended.status, "attended")  # 보존됨
 
     def test_session_count_after_cancel(self):
         """예약 취소 후 세션 카운트가 정확해야 함."""
-        SessionParticipant.objects.filter(
-            student=self.student, tenant=self.tenant,
-            status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
-        ).update(status=SessionParticipant.Status.CANCELLED)
+        cancel_active_participants_for_student(
+            tenant=self.tenant,
+            student=self.student,
+            changed_at=timezone.now(),
+        )
 
         from django.db.models import Count, Q
         session = (

@@ -38,9 +38,13 @@ from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student
 from ..filters import StudentFilter
 from ..selectors import student_for_tenant_user, students_for_tenant
-from ..services import StudentProfileUpdateError, normalize_school_from_name, update_student_profile
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.clinic.models import SessionParticipant
+from ..services import (
+    StudentLifecycleError,
+    StudentProfileUpdateError,
+    normalize_school_from_name,
+    soft_delete_student,
+    update_student_profile,
+)
 from ..serializers import (
     _generate_unique_ps_number,
     StudentListSerializer,
@@ -275,38 +279,12 @@ class StudentViewSet(ModelViewSet):
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         student = self.get_object()
-        if student.deleted_at:
-            return Response({"detail": "이미 삭제된 학생입니다."}, status=400)
-        now = timezone.now()
-        student.deleted_at = now
-        update_fields = ["deleted_at"]
-        if student.ps_number and not student.ps_number.startswith("_del_"):
-            student.ps_number = f"_del_{student.id}_{student.ps_number}"
-            update_fields.append("ps_number")
-        if student.parent_id is not None:
-            student.parent_id = None
-            update_fields.append("parent")
-        student.save(update_fields=update_fields)
-        if student.user:
-            student.user.is_active = False
-            student.user.token_version = (student.user.token_version or 0) + 1
-            user_update = ["is_active", "token_version"]
-            if student.user.phone:
-                student.user.phone = None
-                user_update.append("phone")
-            student.user.save(update_fields=user_update)
-            TenantMembership.objects.filter(
-                user=student.user, tenant=request.tenant
-            ).update(is_active=False)
-        # ✅ 소프트 삭제 시 수강등록도 비활성화
-        Enrollment.objects.filter(
-            student=student, tenant=request.tenant
-        ).update(status="INACTIVE")
-        # ✅ 소프트 삭제 시 활성 클리닉 예약도 취소 (정원 즉시 반환)
-        SessionParticipant.objects.filter(
-            student=student, tenant=request.tenant,
-            status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
-        ).update(status=SessionParticipant.Status.CANCELLED, status_changed_at=now)
+        try:
+            soft_delete_student(student, tenant=request.tenant)
+        except StudentLifecycleError as e:
+            if e.code == "already_deleted":
+                return Response({"detail": e.detail}, status=400)
+            raise ValidationError(e.detail)
         # 퇴원 알림 발송 (학부모)
         _student = student  # closure 캡처용
         _tenant = request.tenant
@@ -825,38 +803,10 @@ class StudentViewSet(ModelViewSet):
 
         tenant = request.tenant
         to_delete = list(student_repo.student_filter_tenant_ids_active(tenant, ids))
-        now = timezone.now()
+        deleted_at = timezone.now()
         with transaction.atomic():
             for student in to_delete:
-                student.deleted_at = now
-                update_fields = ["deleted_at"]
-                if student.ps_number and not student.ps_number.startswith("_del_"):
-                    student.ps_number = f"_del_{student.id}_{student.ps_number}"
-                    update_fields.append("ps_number")
-                if student.parent_id is not None:
-                    student.parent_id = None
-                    update_fields.append("parent")
-                student.save(update_fields=update_fields)
-                if student.user:
-                    student.user.is_active = False
-                    student.user.token_version = (student.user.token_version or 0) + 1
-                    user_update = ["is_active", "token_version"]
-                    if student.user.phone:
-                        student.user.phone = None
-                        user_update.append("phone")
-                    student.user.save(update_fields=user_update)
-                    TenantMembership.objects.filter(
-                        user=student.user, tenant=tenant
-                    ).update(is_active=False)
-                # ✅ 소프트 삭제 시 수강등록도 비활성화
-                Enrollment.objects.filter(
-                    student=student, tenant=tenant
-                ).update(status="INACTIVE")
-                # ✅ 소프트 삭제 시 활성 클리닉 예약도 취소 (정원 즉시 반환)
-                SessionParticipant.objects.filter(
-                    student=student, tenant=tenant,
-                    status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
-                ).update(status=SessionParticipant.Status.CANCELLED, status_changed_at=now)
+                soft_delete_student(student, tenant=tenant, deleted_at=deleted_at)
         return Response({"deleted": len(to_delete)}, status=200)
 
     @action(

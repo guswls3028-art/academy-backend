@@ -19,7 +19,7 @@ Risk scale:
 | Student restore | `bulk_restore`, `bulk_resolve_conflicts`, `lecture_enroll` deleted-student restore, deleted duplicate fix | Deleted student page, conflict resolver, lecture/enrollment import | `students.services.restore_student` | Local unmangle/reactivate/relink implementations | P0 | Restore identity collision, tenant isolation, user/membership/enrollment behavior |
 | Student update | `StudentViewSet.perform_update`, `StudentViewSet.me`, `StudentProfileView.patch`, teacher `updateStudent`, admin `updateStudent` | Admin edit modal, teacher detail, student profile page | `students.services.update_student_profile` | Direct `student.save()` update branches in views | P1 | Parent relink, OMR recompute, school mapping, profile photo, id collision |
 | Student schedule hidden state | `StudentSessionClearPastView`, `StudentSessionHideView`, `StudentSessionUnhideView` write `Student.schedule_hidden_*` | Student sessions page | `students.services.update_schedule_visibility` or student-app policy wrapper | Inline mutation in student-app session views | P2 | Student/parent tenant and child selection tests |
-| Student soft delete | `StudentViewSet.destroy`, `bulk_delete` | Admin/teacher delete, E2E cleanup | `students.services.soft_delete_student` | Duplicated user/membership/enrollment/clinic side effects | P0 | Soft delete state machine, notification event, all related surfaces hidden |
+| Student soft delete | `[COMPLETED]` `StudentViewSet.destroy`, `bulk_delete` are compatibility HTTP facades | Admin/teacher delete, E2E cleanup | `students.services.soft_delete_student` plus enrollment/clinic lifecycle hooks | Direct duplicated user/membership/enrollment/clinic side effects removed from student views | P0 | `[DONE]` soft delete state machine, single/bulk routing, enrollment deactivation, clinic cancellation |
 | Student permanent delete | `bulk_permanent_delete`, purge/deleted duplicate commands | Deleted students admin cleanup, E2E cleanup | `students.services.permanently_delete_students` with domain hooks/events | Raw SQL in view; direct cross-domain table deletes | P0 | Dry-run, tenant isolation, cross-domain referential cleanup snapshot |
 | Parent link/account | `ensure_parent_for_student`, registration approve, create/bulk create, restore, profile update missing relink | Student create/edit, signup approval, parent app, account recovery | `parents.services.ensure_parent_for_student` called only by student service | Per-view parent relink logic; missing relink in `/student/me` | P1 | Parent phone change updates relation and linkedStudents |
 | Password/account recovery | `/auth/account-recovery/dispatch/`, `/students/password_reset_send/`, `/students/password_find/request/`, `/students/password_find/verify/`, `/students/send_existing_credentials/` | Auth recovery UI, admin password modal, teacher password modal, signup duplicate flow, E2E password reset | Keep current release path stable, then canonical `account_recovery` dispatch facade | Legacy student password endpoints should get deprecation logs before removal | P1 | Existing release tests plus legacy deprecation detection |
@@ -179,3 +179,12 @@ Risk scale:
   During QA, the mobile overlay asset/layout defect was fixed in frontend
   commits `756e6e3c`, `c4546fcf`, and `2d340855`; Cloudflare Pages upload
   resilience was fixed in `cf6f873b` and `8c428447`.
+- 2026-05-22: Student soft delete side effects moved to
+  `apps.domains.students.services.soft_delete_student`. The canonical service
+  marks the student deleted, preserves unique `ps_number` semantics, unlinks
+  parent, deactivates the login user and tenant membership, and delegates
+  enrollment/clinic side effects to domain lifecycle hooks. `destroy` and
+  `bulk_delete` are now route-level facades over that service. Local validation
+  covered the full student test file (`24 passed`), stabilization/permanent
+  delete/profile suites (`30 passed`), all student test modules (`85 passed`),
+  `manage.py check`, and migration dry-run.

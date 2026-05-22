@@ -50,6 +50,10 @@ def delete_enrollment(enrollment: Enrollment) -> None:
     enrollment.delete()
 
 
+def deactivate_enrollments_for_student(*, tenant, student) -> int:
+    return Enrollment.objects.filter(student=student, tenant=tenant).update(status="INACTIVE")
+
+
 def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollment]:
     tenant = require_tenant(tenant)
     if not lecture_id:

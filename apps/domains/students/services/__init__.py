@@ -8,6 +8,7 @@ from .profile import (
     normalize_phone,
     update_student_profile,
 )
+from .lifecycle import StudentLifecycleError, StudentSoftDeleteResult, soft_delete_student
 
 __all__ = [
     "normalize_school_from_name",
@@ -17,4 +18,7 @@ __all__ = [
     "derive_omr_code",
     "normalize_phone",
     "update_student_profile",
+    "StudentLifecycleError",
+    "StudentSoftDeleteResult",
+    "soft_delete_student",
 ]
