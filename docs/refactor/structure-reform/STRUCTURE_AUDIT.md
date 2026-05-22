@@ -21,7 +21,7 @@ structurally enforced, and which small refactor should start Phase 1.
   `src/app_student`, plus `auth`, `core`, `shared`, `landing`.
 - Current refactor inventory measured 27 backend domain directories,
   104 backend cross-domain imports, 645 backend cross-domain internal imports,
-  17 frontend cross-app imports, and 0 `shared -> app_*` imports.
+  9 frontend cross-app imports, and 0 `shared -> app_*` imports.
 
 Backend API prefixes relevant to this audit:
 
@@ -69,7 +69,7 @@ Therefore a patch to a student field is not guaranteed to reach every surface.
 | Surface | Current path | Current implementation |
 |---|---|---|
 | Admin student list/detail | `/api/v1/students/`, `/api/v1/students/{id}/` | `StudentViewSet.get_queryset` plus `StudentSerializer` / `StudentDetailSerializer` |
-| Teacher student list/detail | same `/students/` API | `src/app_teacher/domains/students/api.ts`, importing admin `mapStudent` and types |
+| Teacher student list/detail | same `/students/` API | `src/app_teacher/domains/students/api.ts`, using `src/shared/api/contracts/students` |
 | Student/parent profile | `/api/v1/student/me/` | `StudentProfileView`, manual response DTO |
 | Student legacy self profile | `/api/v1/students/me/` | `StudentViewSet.me`, separate GET/PATCH shape |
 | Auth current user | `/api/v1/core/me/` | `UserSerializer.linkedStudents`, reads `parent.students` |
@@ -133,8 +133,9 @@ uses `noPhone` to synthesize a phone-like value and attempts to send `omr_code`.
 
 [VERIFIED]
 
-- Admin and teacher student APIs are separate frontend modules. Teacher imports
-  admin student mapper/types, then also implements its own update/reset helpers.
+- Admin student API is now a compatibility facade over the shared student
+  contract. Teacher student surfaces use the shared contract, while some auth
+  and admin-internal callers still go through the admin facade.
 - `auth/pages/SignupModal.tsx` imports admin student API internals for public
   signup helpers.
 - `auth/api/recovery.api.ts` calls `/auth/account-recovery/dispatch/`, while
@@ -190,8 +191,9 @@ allow unsafe no-tenant usage.
   level.
 - `student_app` is a BFF surface but lives as a domain and performs aggregation
   across sessions, attendance, exams, results, video, and fees.
-- Frontend teacher/auth/community/storage/clinic surfaces import admin student
-  internals instead of a shared student contract.
+- Frontend auth and some admin-internal surfaces still import admin student
+  compatibility paths. Teacher student/storage and student inventory surfaces
+  now use shared contracts directly.
 
 Required report statement: these domains are directly modifying or reading other
 domains' internal models/tables rather than going through public selectors,
@@ -237,9 +239,10 @@ services, or events.
 - Phase 4 `dispatch_job` now blocks missing tenant/source and payload
   tenant-mismatch before creating an AI job.
 - Phase 5 frontend shared-contract cleanup moved community contracts, patch
-  notes data, video access/rule contracts, reusable video thumbnail UI, and
-  lecture/session attendance API out of admin internals. Frontend cross-app/admin
-  role imports are now 17.
+  notes data, video access/rule contracts, reusable video thumbnail UI,
+  lecture/session attendance API, storage/inventory API, student API contracts,
+  and student Excel utilities out of admin internals. Frontend cross-app/admin
+  role imports are now 9.
 
 ## 11. Phase 1 Recommendation
 

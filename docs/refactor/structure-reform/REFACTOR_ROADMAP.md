@@ -321,6 +321,14 @@ Implemented:
   attendance and matrix render paths.
 - Frontend boundary snapshot improved from 21 to 17 cross-app/admin role imports
   after the attendance contract slice.
+- Storage/inventory API now lives behind
+  `src/shared/api/contracts/storage.ts`, student API contracts now live behind
+  `src/shared/api/contracts/students.ts`, and student Excel utilities live under
+  `src/shared/product/students/studentExcel.ts`. Admin paths remain
+  compatibility facades, while teacher/student storage, inventory, and student
+  surfaces use shared contracts directly.
+- Frontend boundary snapshot improved from 17 to 9 cross-app/admin role imports
+  after the storage/students/inventory contract slice.
 
 ## Cleanup And Removal Rule
 

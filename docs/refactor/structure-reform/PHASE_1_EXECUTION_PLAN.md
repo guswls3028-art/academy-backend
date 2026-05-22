@@ -143,13 +143,15 @@ Completion:
 
 ### 6. Frontend API Convergence
 
-- Introduce shared student DTO/mapper after API snapshots exist.
-- Make teacher/auth use shared contract instead of importing admin internals.
+- Shared student DTO/mapper now lives in `src/shared/api/contracts/students`.
+- Teacher student surfaces use the shared contract; auth signup still needs a
+  dedicated cleanup pass before removing the admin compatibility facade.
 - Keep UI behavior unchanged except where backend contract is fixed.
 
 Completion:
 
-- No touched teacher/auth/student file imports `@admin/domains/students/*`.
+- No touched teacher/student file imports `@admin/domains/students/*`; auth is
+  tracked as remaining compatibility debt.
 - Typecheck or generated contract catches response drift for touched endpoints.
 
 ## Required Tests

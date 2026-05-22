@@ -20,7 +20,7 @@ Boundary rule for the structure reform:
 | Owned data | `Student`, `Tag`, `StudentRegistrationRequest`; identity/profile/lifecycle fields; student schedule visibility fields |
 | External references | Enrollment, attendance, clinic, exams/results/submissions, homework, messaging, fees, video, community, inventory, auth/core |
 | Public interface candidate | `students.selectors` for tenant-scoped reads; `students.services` for create/update/lifecycle/profile/import/registration approval |
-| Forbidden dependency | Other domains importing `Student` internals for write logic; model save touching inventory; frontend role apps importing admin student internals |
+| Forbidden dependency | Other domains importing `Student` internals for write logic; model save touching inventory; frontend role apps importing admin student internals instead of shared contracts |
 | Tenant rule | Every student lookup must include tenant and deleted-state intent; no global user/student lookup unless explicitly platform-admin scoped |
 | Current risk | 6+ write roots, profile DTO drift, raw permanent delete, no-tenant repository helpers |
 
@@ -189,6 +189,8 @@ Boundary rule for the structure reform:
   notification, inventory identity rename.
 - Forbidden from students to other domains: raw table surgery in views and model
   save imports.
-- Allowed in frontend: role apps may use shared generated contracts.
-- Forbidden in frontend: `auth`, `app_teacher`, `app_student`, `shared`, or
-  `community/storage/clinic` importing `@admin/domains/students/*` internals.
+- Allowed in frontend: role apps may use shared generated contracts or the
+  current hand-authored shared contracts while schema generation is introduced.
+- Forbidden in frontend: `app_teacher`, `app_student`, `shared`, or new role
+  surfaces importing `@admin/domains/students/*` internals. Existing auth/admin
+  compatibility facade callers need dedicated cleanup before deletion.

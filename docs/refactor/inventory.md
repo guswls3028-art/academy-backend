@@ -120,8 +120,10 @@ Frontend:
 
 Frontend dependency risks:
 
-- `src/shared` is not purely shared today; some shared files import `@admin/*`.
-- `app_teacher` and `app_student` import some `@admin/*` APIs, types, or UI.
+- `src/shared` is app-agnostic as of 2026-05-22; the snapshot reports no
+  `shared -> app_*` imports.
+- `app_teacher` and `app_student` still have a small number of `@admin/*`
+  imports in domains not yet migrated to shared contracts.
 - `src/core/router/AppRouter.tsx` is the practical top-level route SSOT.
 - E2E contains audit/local/date-stamped specs mixed with durable gates.
 - `frontend/e2e/README.md` had a stale `page.waitForTimeout` count. The new
@@ -141,12 +143,12 @@ Frontend dependency risks:
 | Backend domain infra imports | 84 | domain code still reaches infra SDK/helper modules |
 | Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
-| Frontend source import files | 1044 | files scanned for import boundary snapshot |
-| Frontend source text files | 1388 | app/domain moves need automated boundaries |
+| Frontend source import files | 1047 | files scanned for import boundary snapshot |
+| Frontend source text files | 1391 | app/domain moves need automated boundaries |
 | Frontend E2E/script files | 225 | durable gates must be separated from audit specs |
 | Frontend durable E2E waitForTimeout calls | 69 | excludes `_local`, `_audit`, artifacts, reports, screenshots |
-| Frontend cross-app imports | 17 | remaining role-app imports of admin internals |
-| Frontend role-app admin imports | 17 | teacher/student app imports of `@admin/*` internals |
+| Frontend cross-app imports | 9 | remaining role-app imports of admin internals |
+| Frontend role-app admin imports | 9 | teacher/student app imports of `@admin/*` internals |
 | Frontend shared imports app internals | 0 | `shared/` no longer imports role-app internals |
 
 Snapshot commands:
@@ -182,6 +184,10 @@ pnpm refactor:inventory
 - Lecture/session attendance API now lives in shared API contracts. Admin
   attendance path remains a compatibility facade, while teacher attendance and
   lecture matrix surfaces use the shared contract directly.
+- Storage/inventory API, student list/detail API contracts, and student Excel
+  utilities now live in shared contract/product modules. Admin paths remain
+  compatibility facades, while teacher/student storage and student surfaces no
+  longer import those admin internals.
 - React runtime/types mismatch and missing lockfile policy can create unrelated
   noise during refactor validation.
 
@@ -194,7 +200,8 @@ pnpm refactor:inventory
 - Generated API types require backend schema generation first; this is a Phase 0
   dependency, not an optional polish task.
 - Captured verification status: these counts include the session-enrollment,
-  notification, community, video, and attendance shared-contract slices plus the AI
-  segmentation contract extraction that moved pure DTO/validation imports to
-  `academy.domain.ai`. Re-run the snapshot commands before each phase because
-  active refactors can change these counts quickly.
+  notification, community, video, attendance, and storage/students/inventory
+  shared-contract slices plus the AI segmentation contract extraction that moved
+  pure DTO/validation imports to `academy.domain.ai`. Re-run the snapshot
+  commands before each phase because active refactors can change these counts
+  quickly.
