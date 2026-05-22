@@ -143,12 +143,12 @@ Frontend dependency risks:
 | Backend domain infra imports | 84 | domain code still reaches infra SDK/helper modules |
 | Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
-| Frontend source import files | 1052 | files scanned for import boundary snapshot |
-| Frontend source text files | 1396 | app/domain moves need automated boundaries |
+| Frontend source import files | 1053 | files scanned for import boundary snapshot |
+| Frontend source text files | 1397 | app/domain moves need automated boundaries |
 | Frontend E2E/script files | 225 | durable gates must be separated from audit specs |
 | Frontend durable E2E waitForTimeout calls | 69 | excludes `_local`, `_audit`, artifacts, reports, screenshots |
-| Frontend cross-app imports | 4 | remaining role-app imports of admin internals |
-| Frontend role-app admin imports | 4 | teacher/student app imports of `@admin/*` internals |
+| Frontend cross-app imports | 3 | remaining role-app imports of admin internals |
+| Frontend role-app admin imports | 3 | teacher/student app imports of `@admin/*` internals |
 | Frontend shared imports app internals | 0 | `shared/` no longer imports role-app internals |
 
 Snapshot commands:
@@ -205,6 +205,10 @@ pnpm refactor:inventory
   `frontend/src/shared/api/contracts/examEnrollments.ts`. The admin exam
   enrollment API path remains a compatibility facade, while teacher exam detail
   and OMR pages use the shared `enrollment_id` contract directly.
+- Tenant information API now lives in
+  `frontend/src/shared/api/contracts/tenantInfo.ts`. The admin profile API path
+  re-exports the tenant info contract, while the teacher organization settings
+  page imports shared directly.
 - React runtime/types mismatch and missing lockfile policy can create unrelated
   noise during refactor validation.
 
@@ -220,6 +224,7 @@ pnpm refactor:inventory
   notification, community, video, attendance, and storage/students/inventory
   shared-contract slices plus the AI segmentation contract extraction that moved
   pure DTO/validation imports to `academy.domain.ai`, the fees shared
-  contract/status slice, the tools timer download contract slice, and the exam
-  enrollment contract slice. Re-run the snapshot commands before each phase
-  because active refactors can change these counts quickly.
+  contract/status slice, the tools timer download contract slice, the exam
+  enrollment contract slice, and the tenant info contract slice. Re-run the
+  snapshot commands before each phase because active refactors can change these
+  counts quickly.

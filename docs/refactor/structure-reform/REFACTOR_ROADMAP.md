@@ -348,6 +348,12 @@ Implemented:
   the shared `enrollment_id` contract directly.
 - Frontend boundary snapshot improved from 6 to 4 cross-app/admin role imports
   after the exam enrollment contract slice.
+- Tenant information API now lives behind
+  `src/shared/api/contracts/tenantInfo.ts`. The admin profile API re-exports the
+  tenant info contract, while teacher organization settings uses shared
+  directly.
+- Frontend boundary snapshot improved from 4 to 3 cross-app/admin role imports
+  after the tenant info contract slice.
 
 ## Cleanup And Removal Rule
 
