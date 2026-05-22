@@ -17,7 +17,7 @@ from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.progress.models import ClinicLink
-from apps.domains.students.models import Student
+from apps.domains.students.selectors import active_student_by_id
 
 
 class AdminStudentGradesView(APIView):
@@ -31,18 +31,23 @@ class AdminStudentGradesView(APIView):
         student_id = request.query_params.get("student_id")
         if not student_id:
             return Response({"detail": "student_id is required"}, status=400)
+        try:
+            parsed_student_id = int(student_id)
+        except (TypeError, ValueError):
+            return Response({"detail": "student_id must be integer"}, status=400)
 
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"exams": [], "homeworks": []})
 
-        # tenant isolation: 해당 테넌트의 학생인지 확인
-        if not Student.objects.filter(id=int(student_id), tenant=tenant).exists():
+        # tenant/deleted-state isolation: 해당 테넌트의 활성 학생인지 확인
+        student = active_student_by_id(tenant, parsed_student_id)
+        if not student:
             return Response({"detail": "student not found"}, status=404)
 
         enrollment_ids = list(
             Enrollment.objects.filter(
-                student_id=int(student_id),
+                student_id=student.id,
                 tenant=tenant,
             ).values_list("id", flat=True)
         )

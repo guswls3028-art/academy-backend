@@ -20,7 +20,7 @@ structurally enforced, and which small refactor should start Phase 1.
 - Frontend role surfaces live under `src/app_admin`, `src/app_teacher`,
   `src/app_student`, plus `auth`, `core`, `shared`, `landing`.
 - Current refactor inventory measured 27 backend domain directories,
-  115 backend cross-domain imports, 633 backend cross-domain internal imports,
+  117 backend cross-domain imports, 632 backend cross-domain internal imports,
   0 frontend cross-app imports, and 0 `shared -> app_*` imports.
 
 Backend API prefixes relevant to this audit:
@@ -75,7 +75,7 @@ Therefore a patch to a student field is not guaranteed to reach every surface.
 | Auth current user | `/api/v1/core/me/` | `UserSerializer.linkedStudents`, reads `parent.students` |
 | Student app sessions/results/dashboard | `/api/v1/student/*` | BFF views aggregate enrollment, attendance, exams, results, video, fees |
 | Messaging send targets | `/api/v1/messaging/send/` | `SendMessageView`, direct `Student.objects.filter(...)` |
-| Clinic/attendance/results helpers | domain-specific endpoints | Clinic participant/session/idcard and attendance roster touched paths use student/enrollment selectors; results still has direct student lookup paths |
+| Clinic/attendance/results helpers | domain-specific endpoints | Clinic participant/session/idcard, attendance roster, and results admin student-grades touched paths use student/enrollment selectors |
 
 Important finding: this feature is actually at least 7 read roots when "student
 identity/profile as shown to users" is counted across admin, teacher, student
