@@ -109,7 +109,7 @@ class Command(BaseCommand):
 
     def _print_manual_network(self):
         self.stdout.write("DEPENDS ON MANUAL AWS CONSOLE CONFIG:")
-        self.stdout.write("  - Create Batch compute environment with subnets and security groups (see scripts/infra/batch_video_setup.ps1).")
+        self.stdout.write("  - Create Batch compute environment with subnets and security groups (see scripts/v1/resources/batch.ps1).")
         self.stdout.write("  - If using private subnets: add NAT Gateway route or VPC endpoints (ecr.api, ecr.dkr, logs, s3).")
 
     def _output(self, errors, warnings):

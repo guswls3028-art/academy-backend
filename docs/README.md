@@ -1,40 +1,68 @@
-# backend/docs — 진입점
+# backend/docs
 
-프로젝트 모든 문서의 시작점. 어디 가야 할지 알 수 있게.
+Backend 문서의 단일 진입점. 현재 동작 정본, 운영 절차, 리팩토링 계획, 과거 기록을 분리한다.
 
-## 진실 우선순위 (충돌 시)
-1. `scripts/v1/` 실행 코드
-2. `.github/workflows/` CI 워크플로우
-3. `docs/ssot/params.yaml` 실행 파라미터
-4. SSOT 문서 (아래)
+제품 전체 목표 아키텍처는 워크스페이스 루트 `ARCHITECTURE.md`에 둔다. 현재 실측과 실행 계획은 이 저장소의 [refactor/](refactor/)에서 관리한다.
+
+## 진실 우선순위
+
+충돌 시 아래 순서로 판단한다.
+
+1. 실행 코드: `apps/`, `academy/`, `scripts/v1/`, `.github/workflows/`
+2. 실행 SSOT: [ssot/](ssot/)
+3. 현재 정책 문서: [architecture/](architecture/), [domain/](domain/), [infrastructure/](infrastructure/), [operations/](operations/)
+4. 진행/예정 설계: [refactor/](refactor/)
+5. 과거 기록: [releases/](releases/), [reports/](reports/)
+
+## 폴더 트리
+
+```text
+backend/docs/
+  README.md
+  ssot/             # 코드/스크립트/CI가 직접 의존하는 정본
+  architecture/     # 레이어, 모듈 경계, ADR, 큰 설계 결정
+  domain/           # 현재 도메인 규칙과 상태머신
+  infrastructure/   # AWS/Cloudflare/RDS/SQS/R2 구조와 예산
+  operations/       # 배포, 장애대응, 운영 절차, 테넌트 셋업
+    runbooks/       # 절차형 운영 runbook
+    tenants/        # 테넌트별/도메인별 셋업
+  refactor/         # 예정 리팩토링, 백로그, migration plan
+  reports/          # 자동/수동 검증 보고서와 사고 기록
+    history/        # audit/drift 스냅샷
+    incidents/      # 사고 보고서
+  releases/         # 봉인 릴리즈 기록, append-only
+```
 
 ## 폴더 의미
 
-| 폴더 | 의미 | 변경 빈도 | 진입 |
-|------|------|-----------|------|
-| **[ssot/](ssot/)** | 코드/CI 가 직접 의존하는 SSOT (params/ID/path-alias/messaging-policy) | 낮음 (변경 = 인프라/스크립트 동시 수정) | [ssot/README.md](ssot/README.md) |
-| **[domain/](domain/)** | 도메인 SSOT (헥사고날/메시징/OMR/매치업/커뮤니티/평가 etc) | 중간 (도메인 정책 진화) | [domain/README.md](domain/README.md) |
-| **[infrastructure/](infrastructure/)** | 인프라/배포 SSOT (deployment-architecture, runbooks) | 낮음 (RDS Proxy 같은 큰 변경 시) | [infrastructure/README.md](infrastructure/README.md) |
-| **[architecture/](architecture/)** | 설계 결정 + ADR | 낮음 (큰 결정 시) | [architecture/README.md](architecture/README.md) |
-| **[operations/](operations/)** | 운영 실무 가이드 (배포/일상/테넌트) | 중간 | [operations/README.md](operations/README.md) |
-| **[releases/](releases/)** | 버전별 RELEASE-NOTES (v1.0.3~v1.2.0) | append-only | [releases/README.md](releases/README.md) |
-| **[reports/](reports/)** | CI/스크립트 자동 생성 보고서 | 자동 | [reports/README.md](reports/README.md) |
+| 폴더 | 의미 | 변경 방식 |
+|------|------|-----------|
+| [ssot/](ssot/) | 코드/스크립트/CI가 경로 그대로 읽는 정본 | 의존 코드와 동시 변경 |
+| [architecture/](architecture/) | 레이어 책임, 배치 규칙, ADR | 큰 결정 시 갱신 |
+| [domain/](domain/) | 도메인별 현재 정책·상태·불변 규칙 | 기능/정책 변경 시 갱신 |
+| [infrastructure/](infrastructure/) | 인프라 구조, 용량, 비용, 자원 경계 | 인프라 변경 시 갱신 |
+| [operations/](operations/) | 배포/운영/장애/테넌트 절차 | 실제 운영 절차 변경 시 갱신 |
+| [refactor/](refactor/) | 예정 리팩토링과 백로그 | 완료 후 정본 문서로 흡수 |
+| [reports/](reports/) | 자동 보고서, 감사, 사고 기록 | 자동 생성 또는 append-only |
+| [releases/](releases/) | 봉인 릴리즈 기록 | append-only |
 
 ## 핵심 단축 경로
 
 | 용도 | 경로 |
 |------|------|
-| **현재 버전 RELEASE-NOTES** | [releases/v1.2.0.md](releases/v1.2.0.md) — 매치업 신규 도메인 + RDS Proxy + 헥사고날 컷오버 (봉인 2026-04-30) |
-| 실행 파라미터 SSOT | [ssot/params.yaml](ssot/params.yaml) — 스크립트가 직접 로드 |
-| 헥사고날 컷오버 정책 | [domain/hexagonal-cutover-policy.md](domain/hexagonal-cutover-policy.md) — `academy/` vs `apps/` 경계 |
+| 현재 봉인 릴리즈 | [releases/v1.2.1.md](releases/v1.2.1.md) |
+| 실행 파라미터 | [ssot/params.yaml](ssot/params.yaml) |
+| 레이어/코드 배치 | [architecture/hexagonal-cutover-policy.md](architecture/hexagonal-cutover-policy.md) |
 | 배포 아키텍처 | [infrastructure/deployment-architecture.md](infrastructure/deployment-architecture.md) |
 | 배포 경로 비교 | [operations/deployment-modes.md](operations/deployment-modes.md) |
-| 배포 스크립트 | [../scripts/v1/deploy.ps1](../scripts/v1/deploy.ps1) |
+| 수동 정식 배포 | [operations/formal-deploy.md](operations/formal-deploy.md) |
+| 운영 runbook | [operations/runbooks/](operations/runbooks/) |
 
 ## 작성 규칙
 
-- 새 문서 → 위 7개 폴더 중 하나 + 해당 폴더 README 표에 추가
-- 한 주제 = 한 파일. 같은 주제 분산 금지
-- 파일명 = kebab-case (한국어 파일명은 한국어 그대로)
-- 이전 버전 SSOT 보존 = `releases/archive/` 사용
-- 일회성 조사/검증 보고서 = `_artifacts/sessions/reports/` 또는 PR 마무리 후 삭제
+- 현재 규칙은 `domain/`, `architecture/`, `infrastructure/`, `operations/` 중 하나에 둔다.
+- 예정/제안/백로그는 `refactor/`에 둔다. 구현 완료 후 현재 정본 문서로 흡수한다.
+- 사고/감사/검증 기록은 `reports/`에 둔다. 현재 정책처럼 서술하지 않는다.
+- 봉인 릴리즈는 `releases/`에 두고 append-only로 관리한다.
+- 한 주제는 한 파일에 둔다. 같은 내용을 여러 문서에 복제하지 않는다.
+- 파일명은 kebab-case를 기본으로 하며, 기존 한국어 운영 문서명은 유지할 수 있다.

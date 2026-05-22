@@ -18,9 +18,9 @@
 
 - **전체 인프라 + API 반영:**
   `pwsh scripts/v1/deploy.ps1 -AwsProfile default`
-- **main push만으로 API 이미지 반영 (CI 자동):**
-  main에 push → GitHub Actions `v1-build-and-push-latest.yml` 실행 → **build-and-push** 후 **deploy-api-refresh** job이 `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg` 실행 (MinHealthyPercentage=100, InstanceWarmup=300).
-  즉, **push만 해도** CI가 ECR 푸시 후 API ASG instance refresh까지 수행한다. IAM 권한 적용 완료 (2026-03-11).
+- **main push만으로 이미지 반영 (CI 자동):**
+  main에 push → GitHub Actions `v1-build-and-push-latest.yml` 실행 → **build-and-push** → 필요한 경우 **run-migrations** → **deploy-api / deploy-messaging / deploy-ai / deploy-video** → **verify-deployment**.
+  즉, **push만 해도** CI가 ECR 푸시, 마이그레이션, 각 서비스 배포, 헬스 검증까지 수행한다.
 
 ### 2.2 deploy.ps1 동작 순서 (요약)
 
@@ -62,16 +62,17 @@
 ## 5. 실행 후 검증
 
 - **deploy.ps1 내장:** After-Deploy Verification에서 ASG desired/inService, ALB target health, Batch Video CE/Queue 상태 출력. 실패 시 경고.
-- **수동 검증:** tenant·API 동작 확인이 필요하면
-  `pwsh scripts/v1/run-qna-e2e-verify.ps1 -AwsProfile default`
-- **이미지 digest:** `docs/v1/reports/ci-build.latest.md`의 academy-api digest vs 서버 `docker inspect academy-api --format '{{.RepoDigests}}'`.
+- **수동 검증:** 배포 후 tenant/API/워커 동작을 넓게 확인하려면
+  `pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default`
+  특정 QnA 회귀만 좁게 재확인할 때는 `pwsh scripts/v1/run-qna-e2e-verify.ps1 -AwsProfile default`
+- **이미지 digest:** `docs/reports/ci-build.latest.md`의 academy-api digest vs 서버 `docker inspect academy-api --format '{{.RepoDigests}}'`.
 
 ---
 
 ## 6. 멀티테넌트 관련
 
 - env는 **SSM `/academy/api/env` → `/opt/api.env`** 만 사용. tenant 격리·폴백 정책 적용.
-- tenant resolver, auth, middleware, worker, deployment 관련 수정 후에는 배포 후 검증(예: run-qna-e2e-verify) 필수. tenant fallback·default tenant 금지.
+- tenant resolver, auth, middleware, worker, deployment 관련 수정 후에는 배포 후 검증(예: run-deploy-verification) 필수. tenant fallback·default tenant 금지.
 
 ---
 
@@ -79,4 +80,4 @@
 
 - `docs/operations/deployment-modes.md` — 배포 방식 개요
 - `docs/operations/배포.md` — 인프라 부트스트랩 (RDS/SQS/EC2/IAM)
-- `.github/workflows/v1-build-and-push-latest.yml` — CI 빌드·deploy-api-refresh 흐름
+- `.github/workflows/v1-build-and-push-latest.yml` — CI 빌드·마이그레이션·서비스별 deploy·검증 흐름

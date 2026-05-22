@@ -41,15 +41,36 @@ class PostReplySerializer(serializers.ModelSerializer):
         request = self.context.get("request") if hasattr(self, "context") else None
         tenant = getattr(request, "tenant", None) if request else None
         view = self.context.get("view") if hasattr(self, "context") else None
+        post = self.context.get("post") if hasattr(self, "context") else None
         if tenant and "parent_reply" in self.fields:
             try:
-                post_id = view.kwargs.get("pk") if view else None
+                post_id = getattr(post, "id", None) or (view.kwargs.get("pk") if view else None)
                 qs = PostReply.objects.filter(tenant=tenant)
                 if post_id:
                     qs = qs.filter(post_id=int(post_id))
                 self.fields["parent_reply"].queryset = qs
             except (AttributeError, TypeError, ValueError):
                 pass  # context 없으면 그대로(view-level 검증으로 차단)
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        parent_reply = attrs.get("parent_reply")
+        if parent_reply is None:
+            return attrs
+
+        request = self.context.get("request") if hasattr(self, "context") else None
+        tenant = getattr(request, "tenant", None) if request else None
+        post = self.context.get("post") if hasattr(self, "context") else None
+        if post is None and self.instance is not None:
+            post = getattr(self.instance, "post", None)
+
+        if tenant is not None and parent_reply.tenant_id != tenant.id:
+            raise serializers.ValidationError({"parent_reply": "답글 대상이 잘못되었습니다."})
+        if post is not None and parent_reply.post_id != post.id:
+            raise serializers.ValidationError({"parent_reply": "답글 대상이 잘못되었습니다."})
+        if parent_reply.parent_reply_id is not None:
+            raise serializers.ValidationError({"parent_reply": "답글에는 다시 답글을 등록할 수 없습니다."})
+        return attrs
 
     class Meta:
         model = PostReply

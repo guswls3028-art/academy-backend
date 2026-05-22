@@ -70,7 +70,7 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
             defaults={
                 "exam_pass_source": ProgressPolicy.ExamPassSource.EXAM,
                 "exam_start_session_order": 1,
-                "homework_start_session_order": 1,
+                "homework_start_session_order": 2,
             },
         )
         from apps.domains.progress.services.session_calculator import (
@@ -112,7 +112,7 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
             defaults={
                 "exam_pass_source": ProgressPolicy.ExamPassSource.EXAM,
                 "exam_start_session_order": 1,
-                "homework_start_session_order": 1,
+                "homework_start_session_order": 2,
             },
         )
         from apps.domains.progress.services.session_calculator import (
@@ -151,7 +151,7 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
             lecture=self.lecture,
             defaults={
                 "exam_start_session_order": 1,
-                "homework_start_session_order": 1,
+                "homework_start_session_order": 2,
                 "exam_pass_source": ProgressPolicy.ExamPassSource.EXAM,
             },
         )
@@ -332,6 +332,43 @@ class RemediationValidationTest(TestCase, ClinicTestMixin):
                 graded_by_user_id=self.admin.id,
             )
         self.assertIn("이미 해소", str(ctx.exception))
+
+    def test_exam_retake_uses_custom_cutline_and_keeps_attempt_meta(self):
+        """재시험은 원시험 커트라인 대신 시도별 커트라인으로 통과 판정한다."""
+        from apps.domains.results.models import ExamAttempt
+
+        exam = Exam.objects.create(
+            tenant=self.tenant, title="Cut", max_score=100.0, pass_score=70.0,
+        )
+        link = self.make_clinic_link(
+            self.enrollment, self.lec_session,
+            source_type="exam", source_id=exam.id,
+        )
+
+        result = ClinicRemediationService.submit_exam_retake(
+            clinic_link_id=link.id,
+            score=60.0,
+            max_score=100.0,
+            pass_score=60.0,
+            graded_by_user_id=self.admin.id,
+        )
+
+        self.assertTrue(result.passed)
+        self.assertEqual(result.pass_score, 60.0)
+        link.refresh_from_db()
+        self.assertEqual(link.resolution_type, ClinicLink.ResolutionType.EXAM_PASS)
+        self.assertEqual(link.resolution_evidence["pass_score"], 60.0)
+        self.assertEqual(link.resolution_evidence["max_score"], 100.0)
+
+        attempt = ExamAttempt.objects.get(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=result.attempt_index,
+        )
+        self.assertFalse(attempt.is_representative)
+        self.assertEqual(attempt.meta["total_score"], 60.0)
+        self.assertEqual(attempt.meta["pass_score"], 60.0)
+        self.assertEqual(attempt.meta["max_score"], 100.0)
 
 
 class StudentResultRemediatedTest(TestCase, ClinicTestMixin):

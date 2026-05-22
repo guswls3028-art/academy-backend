@@ -87,6 +87,42 @@ class User(AbstractUser):
         return self.username
 
 
+class PendingPasswordReset(models.Model):
+    """
+    Public account recovery password that is not activated until the user logs in
+    with the delivered temporary password.
+
+    This keeps the existing password usable if async Alimtalk delivery later
+    fails after enqueue.
+    """
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name="pending_password_resets",
+        db_index=True,
+    )
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="pending_password_reset",
+    )
+    password_hash = models.CharField(max_length=128)
+    created_at = models.DateTimeField(auto_now_add=True)
+    expires_at = models.DateTimeField(db_index=True)
+
+    class Meta:
+        app_label = "core"
+        db_table = "core_pending_password_reset"
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["tenant", "expires_at"], name="core_ppr_tenant_expires_idx"),
+        ]
+
+    def __str__(self):
+        return f"pending reset for user={self.user_id}"
+
+
 class Attendance(TimestampModel):
     """
     ✅ 운영레벨 핵심:

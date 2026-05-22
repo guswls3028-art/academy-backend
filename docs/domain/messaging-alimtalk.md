@@ -1,6 +1,6 @@
 # 메시징 도메인 SSOT (알림톡/SMS 발송 시스템)
 
-> 최종 갱신: 2026-05-13 (학원장 mental model "봉투/편지" 박스 추가, §0 강제 박스)
+> 최종 갱신: 2026-05-21 (계정복구 SSOT 링크 추가)
 > 근거: 코드 직접 확인. 추측 없음.
 
 ---
@@ -92,12 +92,19 @@
 ### 시스템 필수 알림톡 파이프라인 (가입/비번)
 
 ```
-가입 승인 / 비밀번호 찾기
-  -> send_alimtalk_via_owner()          [policy.py:311]
+가입 승인 / 계정 복구
+  -> send_alimtalk_via_owner()          [apps/domains/messaging/policy.py]
     -> 오너 테넌트의 승인 템플릿 조회
     -> enqueue_sms() (오너 tenant_id로)
       -> (이하 동일)
 ```
+
+공개 로그인 화면의 아이디 찾기/비밀번호 찾기 정본은 `backend/docs/domain/account-recovery.md`다.
+
+- 현재 공개 endpoint: `/api/v1/auth/account-recovery/dispatch/`
+- 아이디 찾기: `registration_approved_student` / `registration_approved_parent` 템플릿 재사용, 비밀번호는 `변경되지 않음`
+- 비밀번호 찾기: `password_reset_student` / `password_reset_parent`, 8자리 숫자 임시 비밀번호
+- `password_find_otp`는 legacy OTP 경로 호환용이다.
 
 ### 각 단계의 역할
 
@@ -243,7 +250,7 @@
 | | `counseling_reservation_created` | 상담 예약 완료 | AUTO_DEFAULT |
 | G. 결제 | `payment_complete` | 결제 완료 | MANUAL_DEFAULT |
 | | `payment_due_days_before` | 납부 예정일 N일 전 | MANUAL_DEFAULT |
-| I. 비밀번호 | `password_find_otp` | 비밀번호 찾기 인증번호 | SYSTEM_AUTO |
+| I. 비밀번호 | `password_find_otp` | 비밀번호 찾기 인증번호 (legacy OTP) | SYSTEM_AUTO |
 | | `password_reset_student` | 비밀번호 재설정(학생) | SYSTEM_AUTO |
 | | `password_reset_parent` | 비밀번호 재설정(학부모) | SYSTEM_AUTO |
 
@@ -271,8 +278,8 @@
 | `check_in_complete` | attendance/views.py:80 | `_send_attendance_notification` |
 | `absent_occurred` | attendance/views.py:80 | `_send_attendance_notification` |
 | `registration_approved_*` | (가입 승인 플로우) | `send_alimtalk_via_owner` 경유 |
-| `password_find_otp` | (비번 찾기 플로우) | `send_alimtalk_via_owner` 경유 |
-| `password_reset_*` | (비번 리셋 플로우) | `send_alimtalk_via_owner` 경유 |
+| `password_find_otp` | legacy OTP 경로 | `send_alimtalk_via_owner` 경유 |
+| `password_reset_*` | 현재 공개 비밀번호 찾기 + 관리자/선생님 재설정 | `send_alimtalk_via_owner` 경유 |
 
 ### 도메인 코드에서 send_event_notification 호출이 확인되지 않은 트리거
 
@@ -556,10 +563,10 @@ SHA-256(canonical) -> 64자 hex
 
 ### send_alimtalk_via_owner
 
-출처: `policy.py:311-386`
+출처: `apps/domains/messaging/policy.py`의 `send_alimtalk_via_owner()`
 
 - 모든 테넌트에서 가입/비번 관련 알림톡은 오너 테넌트의 승인 템플릿으로 발송
-- 비번 리셋 -> 가입 승인 템플릿 재활용 (FALLBACK_TRIGGERS, line 340-344):
+- 비번 리셋/legacy OTP -> 가입 승인 템플릿 재활용 (`FALLBACK_TRIGGERS`):
   - `password_reset_student` -> `registration_approved_student`
   - `password_reset_parent` -> `registration_approved_parent`
   - `password_find_otp` -> `registration_approved_student`

@@ -1,26 +1,35 @@
-# infrastructure — 인프라/배포 SSOT
+# infrastructure
 
-배포 아키텍처 + 운영 런북. RDS Proxy 도입 (V1.1.0) 시 봉인된 SSOT 본문은 RELEASE-NOTES 에 변경 명시.
+AWS/Cloudflare/RDS/SQS/R2 등 인프라 구조와 용량·비용 기준의 정본.
 
-## 아키텍처
-
-| 파일 | 용도 |
-|------|------|
-| [deployment-architecture.md](deployment-architecture.md) | API/Worker/RDS/SQS/R2/Cloudflare 전체 구성 (정본) |
-| [infrastructure-optimization.md](infrastructure-optimization.md) | RDS Proxy / 워커 ASG / 비용 최적화 |
-
-## Runbook (장애·운영)
+## 구조/용량
 
 | 파일 | 용도 |
 |------|------|
-| [runbook-deploy-checklist.md](runbook-deploy-checklist.md) | 배포 전 체크리스트 |
-| [runbook-emergency-mode.md](runbook-emergency-mode.md) | 긴급 모드 |
-| [runbook-incidents.md](runbook-incidents.md) | 사고 일반 대응 |
-| [runbook-ops-prohibited.md](runbook-ops-prohibited.md) | 운영 금지 사항 |
+| [deployment-architecture.md](deployment-architecture.md) | API/Worker/RDS/SQS/R2/Cloudflare 전체 구성 |
+| [connection-budget.md](connection-budget.md) | RDS connection 예산 |
+| [video-cron-jobs.md](video-cron-jobs.md) | 영상 관련 cron/job 책임 분담 |
+
+## Historical / Reference
+
+| 파일 | 용도 |
+|------|------|
+| [infrastructure-optimization.md](infrastructure-optimization.md) | historical optimization memo. 현재 구조 판단은 실행 파일과 active 인프라 문서를 우선 |
+
+## 관련 운영 절차
+
+절차형 runbook은 [../operations/runbooks/](../operations/runbooks/)에 둔다.
+
+| 문서 | 용도 |
+|------|------|
+| [../operations/runbooks/deploy-checklist.md](../operations/runbooks/deploy-checklist.md) | 배포 전 체크리스트 |
+| [../operations/runbooks/emergency-mode.md](../operations/runbooks/emergency-mode.md) | 긴급 모드 |
+| [../operations/runbooks/incidents.md](../operations/runbooks/incidents.md) | 사고 일반 대응 |
+| [../operations/runbooks/ops-prohibited.md](../operations/runbooks/ops-prohibited.md) | 운영 금지 사항 |
 
 ## 자동 생성 보고서
 
 | 경로 | 용도 |
 |------|------|
-| [../reports/ci-build.latest.md](../reports/ci-build.latest.md) | CI 빌드 digest (GitHub Actions 자동) |
+| [../reports/ci-build.latest.md](../reports/ci-build.latest.md) | CI 빌드 digest |
 | [../reports/runtime-images.latest.md](../reports/runtime-images.latest.md) | 운영 이미지 digest |

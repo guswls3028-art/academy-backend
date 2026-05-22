@@ -6,6 +6,28 @@
 """
 from __future__ import annotations
 
+from datetime import timedelta
+
+from django.contrib.auth.hashers import check_password, make_password
+from django.utils import timezone
+
+TEMP_PASSWORD_LENGTH = 8
+PENDING_PASSWORD_RESET_TTL_MINUTES = 30
+
+
+def generate_temp_password(length: int = TEMP_PASSWORD_LENGTH) -> str:
+    """
+    임시 비밀번호 생성 SSOT.
+
+    자동 발급 비밀번호는 알림톡을 보고 직접 입력하는 일이 많아서
+    짧은 숫자형 1회용 비밀번호로 통일한다.
+    """
+    import secrets
+    import string
+
+    chars = string.digits
+    return "".join(secrets.choice(chars) for _ in range(length))
+
 
 def change_password(user, new_password: str) -> None:
     """
@@ -48,3 +70,113 @@ def rollback_password(
         user.must_change_password = must_change_password
         update_fields.append("must_change_password")
     user.save(update_fields=update_fields)
+
+
+def create_pending_password_reset(
+    user,
+    raw_password: str,
+    *,
+    ttl_minutes: int = PENDING_PASSWORD_RESET_TTL_MINUTES,
+):
+    """
+    Store a delivered temporary password without changing the active password.
+
+    Public account recovery uses this so async delivery failures cannot lock a
+    family out of an account whose old password still worked.
+    """
+    from apps.core.models import PendingPasswordReset
+
+    expires_at = timezone.now() + timedelta(minutes=ttl_minutes)
+    pending, _created = PendingPasswordReset.objects.update_or_create(
+        user=user,
+        defaults={
+            "tenant_id": user.tenant_id,
+            "password_hash": make_password(raw_password),
+            "expires_at": expires_at,
+        },
+    )
+    return pending
+
+
+def clear_pending_password_reset(user) -> None:
+    """Remove any public recovery temporary password for a user."""
+    from apps.core.models import PendingPasswordReset
+
+    PendingPasswordReset.objects.filter(user=user).delete()
+
+
+def snapshot_pending_password_reset(user) -> dict[str, object] | None:
+    """Capture the current pending reset so a failed delivery can restore it."""
+    from apps.core.models import PendingPasswordReset
+
+    pending = (
+        PendingPasswordReset.objects
+        .filter(user=user)
+        .order_by("-created_at")
+        .values("password_hash", "expires_at")
+        .first()
+    )
+    return dict(pending) if pending else None
+
+
+def restore_pending_password_reset(user, snapshot: dict[str, object] | None) -> None:
+    """Restore a pending reset snapshot, or clear pending state when absent."""
+    from apps.core.models import PendingPasswordReset
+
+    if snapshot is None:
+        PendingPasswordReset.objects.filter(user=user).delete()
+        return
+
+    PendingPasswordReset.objects.update_or_create(
+        user=user,
+        defaults={
+            "tenant_id": user.tenant_id,
+            "password_hash": snapshot["password_hash"],
+            "expires_at": snapshot["expires_at"],
+        },
+    )
+
+
+def consume_pending_password_reset(user, raw_password: str) -> bool:
+    """
+    Activate a pending temporary password when it is used at login.
+
+    Returns True only when the pending password is valid and has been promoted
+    to the real password with must_change_password=True.
+    """
+    from apps.core.models import PendingPasswordReset
+
+    pending = PendingPasswordReset.objects.filter(user=user).order_by("-created_at").first()
+    if not pending:
+        return False
+
+    if pending.expires_at <= timezone.now():
+        pending.delete()
+        return False
+
+    if not check_password(raw_password, pending.password_hash):
+        return False
+
+    force_reset_password(user, raw_password)
+    pending.delete()
+    return True
+
+
+def pending_password_reset_matches(user, raw_password: str) -> bool:
+    """
+    Check a pending temporary password without promoting it.
+
+    Login uses this before mutating password state so inactive/non-loginable
+    accounts cannot consume a pending reset while still being rejected.
+    """
+    from apps.core.models import PendingPasswordReset
+
+    pending = PendingPasswordReset.objects.filter(user=user).order_by("-created_at").first()
+    if not pending:
+        return False
+
+    if pending.expires_at <= timezone.now():
+        pending.delete()
+        return False
+
+    return check_password(raw_password, pending.password_hash)

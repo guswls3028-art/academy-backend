@@ -1,4 +1,5 @@
 from datetime import timedelta
+from django.contrib.auth import get_user_model
 from django.db.models import Count, F, Q
 from django.utils import timezone
 from rest_framework import viewsets, status
@@ -13,7 +14,10 @@ from apps.domains.community.selectors import (
     get_all_posts_for_tenant,
     get_empty_post_queryset,
 )
+from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
+
+User = get_user_model()
 
 
 class AdminPostViewSet(viewsets.GenericViewSet):
@@ -224,6 +228,12 @@ class CommunityUserBlockView(APIView):
         # 자기 자신 차단 방지
         if request.user.id == user_id:
             return Response({"detail": "본인은 차단할 수 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+        belongs_to_tenant = (
+            TenantMembership.objects.filter(tenant=tenant, user_id=user_id, is_active=True).exists()
+            or User.objects.filter(id=user_id, tenant=tenant).exists()
+        )
+        if not belongs_to_tenant:
+            return Response({"detail": "현재 학원 소속 사용자만 차단할 수 있습니다."}, status=status.HTTP_400_BAD_REQUEST)
         reason = (request.data.get("reason") or "").strip()[:500]
         obj, created = CommunityUserBlock.objects.get_or_create(
             tenant=tenant, user_id=user_id,

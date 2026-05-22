@@ -10,7 +10,9 @@ from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import Result
+from apps.domains.progress.models import ClinicLink
+from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
+from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.views.session_scores_view import SessionScoresView
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
@@ -178,3 +180,67 @@ class SessionScoresRosterScopeTests(TestCase):
         active_row = next(row for row in rows if row["enrollment_id"] == self.active_enrollment.id)
         self.assertEqual(len(active_row["exams"]), 1)
         self.assertEqual(active_row["exams"][0]["block"]["score"], 10.0)
+
+    def test_session_scores_include_retake_history_and_final_pass(self):
+        self.exam.pass_score = 70
+        self.exam.max_score = 100
+        self.exam.save(update_fields=["pass_score", "max_score"])
+
+        attempt1 = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.active_enrollment,
+            attempt_index=1,
+            is_retake=False,
+            is_representative=True,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 50.0,
+                    "max_score": 100.0,
+                    "source": "test",
+                },
+                "total_score": 50.0,
+            },
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.active_enrollment,
+            attempt=attempt1,
+            total_score=50,
+            max_score=100,
+        )
+        link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            approved=True,
+            source_type="exam",
+            source_id=self.exam.id,
+        )
+        ClinicRemediationService.submit_exam_retake(
+            clinic_link_id=link.id,
+            score=70,
+            max_score=100,
+            pass_score=60,
+            graded_by_user_id=self.admin.id,
+        )
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = response.data["rows"][0]
+        exam_entry = row["exams"][0]
+        self.assertEqual(exam_entry["block"]["passed"], False)
+        self.assertEqual(exam_entry["block"]["final_pass"], True)
+        self.assertEqual(exam_entry["block"]["achievement"], "REMEDIATED")
+        self.assertEqual(len(exam_entry["attempts"]), 2)
+        self.assertEqual(exam_entry["attempts"][0]["pass_score"], 70.0)
+        self.assertEqual(exam_entry["attempts"][1]["pass_score"], 60.0)
+        self.assertEqual(exam_entry["attempts"][1]["passed"], True)

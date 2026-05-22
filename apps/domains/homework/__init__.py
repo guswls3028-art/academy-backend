@@ -15,5 +15,5 @@ homework 도메인 — 숙제 정책·배정.
 - 채점 로직: 없음 (숙제는 직접 점수 입력 — Submission 미경유 경로).
 - 클리닉 합류: progress / clinic.
 
-평가 5도메인 책임 분담은 backend/docs/domain/hexagonal-cutover-policy.md §8 참조.
+평가 5도메인 책임 분담은 backend/docs/architecture/hexagonal-cutover-policy.md §8 참조.
 """

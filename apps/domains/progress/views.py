@@ -207,7 +207,8 @@ class ClinicLinkViewSet(ModelViewSet):
 
         Body:
         - score (required): 점수
-        - max_score (optional): 과제 최대 점수 (시험은 exam.max_score 자동 사용)
+        - max_score (optional): 재시도 최대 점수
+        - pass_score (optional): 시험 재시도 합격 기준
         """
         link = self.get_object()
         if link.resolved_at:
@@ -244,6 +245,13 @@ class ClinicLinkViewSet(ModelViewSet):
             except (TypeError, ValueError):
                 max_score = None
 
+        pass_score = request.data.get("pass_score")
+        if pass_score is not None:
+            try:
+                pass_score = float(pass_score)
+            except (TypeError, ValueError):
+                pass_score = None
+
         source_type = link.source_type
 
         try:
@@ -251,6 +259,8 @@ class ClinicLinkViewSet(ModelViewSet):
                 result = ClinicRemediationService.submit_exam_retake(
                     clinic_link_id=link.id,
                     score=score,
+                    max_score=max_score,
+                    pass_score=pass_score,
                     graded_by_user_id=request.user.id,
                 )
             elif source_type == "homework":
@@ -280,6 +290,7 @@ class ClinicLinkViewSet(ModelViewSet):
             "passed": result.passed,
             "score": result.score,
             "max_score": result.max_score,
+            "pass_score": result.pass_score,
             "attempt_index": result.attempt_index,
             "resolution_type": result.resolution_type,
             "resolved_at": result.resolved_at,
@@ -295,7 +306,8 @@ class ClinicLinkViewSet(ModelViewSet):
         Body:
         - attempt_index (required): 수정할 시도 차수 (2 이상)
         - score (required): 새 점수
-        - max_score (optional): 과제 최대 점수
+        - max_score (optional): 재시도 최대 점수
+        - pass_score (optional): 시험 재시도 합격 기준
         """
         link = self.get_object()
 
@@ -336,6 +348,13 @@ class ClinicLinkViewSet(ModelViewSet):
             except (TypeError, ValueError):
                 max_score = None
 
+        pass_score = request.data.get("pass_score")
+        if pass_score is not None:
+            try:
+                pass_score = float(pass_score)
+            except (TypeError, ValueError):
+                pass_score = None
+
         source_type = link.source_type
 
         try:
@@ -344,6 +363,8 @@ class ClinicLinkViewSet(ModelViewSet):
                     clinic_link_id=link.id,
                     attempt_index=attempt_index,
                     score=score,
+                    max_score=max_score,
+                    pass_score=pass_score,
                     graded_by_user_id=request.user.id,
                 )
             elif source_type == "homework":
@@ -369,6 +390,7 @@ class ClinicLinkViewSet(ModelViewSet):
             "passed": result.passed,
             "score": result.score,
             "max_score": result.max_score,
+            "pass_score": result.pass_score,
             "attempt_index": result.attempt_index,
             "resolution_type": result.resolution_type,
             "resolved_at": result.resolved_at,

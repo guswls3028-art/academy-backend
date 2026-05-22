@@ -43,6 +43,7 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
 
 from apps.domains.lectures.models import Session
@@ -112,6 +113,73 @@ def _safe_student_name(enrollment: Optional[Enrollment]) -> str:
         pass
 
     return "-"
+
+
+def _float_or_none(value: Any) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_exam_attempt_summary(
+    *,
+    attempt: ExamAttempt,
+    result: Optional[Result],
+    exam_pass_score: float,
+    exam_max_score: float,
+) -> Dict[str, Any]:
+    meta = attempt.meta if isinstance(attempt.meta, dict) else {}
+    snapshot = meta.get("initial_snapshot") if isinstance(meta.get("initial_snapshot"), dict) else {}
+    meta_status = meta.get("status")
+    is_not_submitted = meta_status == "NOT_SUBMITTED"
+
+    score: Optional[float]
+    if is_not_submitted:
+        score = None
+    elif int(attempt.attempt_index) == 1:
+        score = (
+            _float_or_none(snapshot.get("total_score"))
+            if snapshot
+            else None
+        )
+        if score is None:
+            score = _float_or_none(meta.get("total_score"))
+        if score is None and result is not None:
+            score = _float_or_none(result.total_score)
+    else:
+        score = _float_or_none(meta.get("total_score"))
+
+    max_score = _float_or_none(meta.get("max_score"))
+    if int(attempt.attempt_index) == 1:
+        max_score = _float_or_none(snapshot.get("max_score")) if snapshot else max_score
+    if max_score is None and result is not None:
+        max_score = _float_or_none(result.max_score)
+    if max_score is None:
+        max_score = float(exam_max_score)
+
+    pass_score = _float_or_none(meta.get("pass_score"))
+    if pass_score is None:
+        pass_score = float(exam_pass_score)
+
+    passed = None
+    if score is not None and pass_score is not None and pass_score > 0:
+        passed = bool(float(score) >= float(pass_score))
+
+    entry: Dict[str, Any] = {
+        "attempt_index": int(attempt.attempt_index),
+        "score": score,
+        "max_score": max_score,
+        "pass_score": pass_score,
+        "passed": passed,
+        "at": attempt.created_at,
+        "source": "clinic" if attempt.clinic_link_id else "grade",
+    }
+    if meta_status:
+        entry["meta_status"] = meta_status
+    return entry
 
 
 class SessionScoresView(APIView):
@@ -427,6 +495,22 @@ class SessionScoresView(APIView):
         }
 
         # -------------------------------------------------
+        # 7-a) Exam 메타
+        # -------------------------------------------------
+        exam_pass_score_map = {
+            int(ex.id): float(getattr(ex, "pass_score", 0.0) or 0.0)
+            for ex in exams
+        }
+        exam_max_score_map = {
+            int(ex.id): float(getattr(ex, "max_score", 100.0) or 100.0)
+            for ex in exams
+        }
+        exam_title_map = {
+            int(ex.id): str(getattr(ex, "title", "") or "")
+            for ex in exams
+        }
+
+        # -------------------------------------------------
         # 7-b) Attempt count & clinic_link_id bulk (차수별 편집 지원)
         # -------------------------------------------------
         from django.db.models import Count
@@ -460,6 +544,45 @@ class SessionScoresView(APIView):
             for row in exam_clinic_link_qs
         }
 
+        # Exam: 차수별 이력(알림톡/드로어 공통) + 성취(1차/최종 통과 분리)
+        exam_attempts_by_key: Dict[tuple[int, int], List[Dict[str, Any]]] = {}
+        if exam_ids and enrollment_ids:
+            for attempt in (
+                ExamAttempt.objects
+                .filter(exam_id__in=exam_ids, enrollment_id__in=enrollment_ids)
+                .order_by("exam_id", "enrollment_id", "attempt_index")
+            ):
+                exid = int(attempt.exam_id)
+                eid = int(attempt.enrollment_id)
+                result = result_map.get(exid, {}).get(eid)
+                exam_attempts_by_key.setdefault((exid, eid), []).append(
+                    _build_exam_attempt_summary(
+                        attempt=attempt,
+                        result=result,
+                        exam_pass_score=exam_pass_score_map.get(exid, 0.0),
+                        exam_max_score=exam_max_score_map.get(exid, 100.0),
+                    )
+                )
+
+        achievement_items: List[Dict[str, Any]] = []
+        for exid in exam_ids:
+            for eid in enrollment_ids:
+                if (eid, exid) not in exam_enrolled_set:
+                    continue
+                r = result_map.get(exid, {}).get(eid)
+                achievement_items.append({
+                    "enrollment_id": eid,
+                    "exam_id": exid,
+                    "total_score": float(r.total_score or 0.0) if r is not None else None,
+                    "pass_score": exam_pass_score_map.get(exid, 0.0),
+                    "attempt_id": int(r.attempt_id) if r is not None and r.attempt_id else None,
+                    "session": session,
+                })
+        achievement_map = compute_exam_achievement_bulk(
+            items=achievement_items,
+            use_session_filter=True,
+        )
+
         # Homework: 차수(attempt) 수
         hw_ids = [int(hw.id) for hw in homeworks]
         hw_attempt_stats = (
@@ -492,18 +615,6 @@ class SessionScoresView(APIView):
         hw_clinic_link_map: Dict[tuple, int] = {
             (int(row["source_id"]), int(row["enrollment_id"])): row["id"]
             for row in hw_clinic_link_qs
-        }
-
-        # -------------------------------------------------
-        # 8) Exam 메타
-        # -------------------------------------------------
-        exam_pass_score_map = {
-            int(ex.id): float(getattr(ex, "pass_score", 0.0) or 0.0)
-            for ex in exams
-        }
-        exam_title_map = {
-            int(ex.id): str(getattr(ex, "title", "") or "")
-            for ex in exams
         }
 
         # -------------------------------------------------
@@ -583,6 +694,17 @@ class SessionScoresView(APIView):
                 if updated_at:
                     exam_updated_ats.append(updated_at)
 
+                achievement_data = achievement_map.get((eid, exid), {})
+                if achievement_data:
+                    block["passed"] = achievement_data.get("is_pass")
+                    block["remediated"] = achievement_data.get("remediated")
+                    block["final_pass"] = achievement_data.get("final_pass")
+                    block["achievement"] = achievement_data.get("achievement")
+                    block["is_provisional"] = bool(achievement_data.get("is_provisional"))
+                    block["clinic_retake"] = achievement_data.get("clinic_retake")
+                    if achievement_data.get("meta_status") and not block.get("meta"):
+                        block["meta"] = {"status": achievement_data.get("meta_status")}
+
                 items_payload: List[Dict[str, Any]] = []
                 if r is not None and hasattr(r, "items"):
                     for ri in items_list:
@@ -599,8 +721,12 @@ class SessionScoresView(APIView):
                         "pass_score": exam_pass_score_map.get(exid, 0.0),
                         "block": block,
                         "items": items_payload,
-                        "attempt_count": exam_attempt_count_map.get((exid, eid), 0),
+                        "attempt_count": max(
+                            exam_attempt_count_map.get((exid, eid), 0),
+                            1 if r is not None else 0,
+                        ),
                         "clinic_link_id": exam_clinic_link_map.get((exid, eid)),
+                        "attempts": exam_attempts_by_key.get((exid, eid), []),
                     }
                 )
 

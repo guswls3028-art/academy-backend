@@ -1,4 +1,4 @@
-# SSOT 문서: backend/.claude/domains/messaging.md (수정 시 문서도 동기화)
+# SSOT 문서: backend/docs/domain/messaging.md, backend/docs/domain/messaging-alimtalk.md
 """
 Messaging Worker - SQS 기반 메시지 발송
 

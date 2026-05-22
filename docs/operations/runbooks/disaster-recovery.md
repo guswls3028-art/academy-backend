@@ -189,7 +189,7 @@ GROUP BY status;
 ## 6. 사후 액션 (복구 후 24시간 이내)
 
 1. **사고 보고서 작성** — 무엇을, 언제, 왜, 영향 범위, 복구 시간.
-   - 위치: `_artifacts/reports/incident-{YYYY-MM-DD}.md`.
+   - 위치: `docs/reports/incidents/incident-{YYYY-MM-DD}.md`.
 2. **알림톡/메일/Slack로 학원장 안내** — 영향받은 테넌트만.
 3. **opsauditlog 검증** — 복구 시점 이후 일관성. ID 시퀀스 충돌 없음.
 4. **R2 storage 정합성** — DB와 R2 객체 키 mismatch 없는지 cleanup_orphan_video_storage 1회 dry-run.
@@ -205,7 +205,7 @@ GROUP BY status;
 Q1 / Q2 / Q3 / Q4 의 중간 토요일 03:00 KST (peak 회피).
 1. 가장 최근 자동 snapshot으로 academy-db-drill 인스턴스 restore.
 2. 위 §5 검증 체크리스트 실행.
-3. 결과를 _artifacts/reports/dr-drill-{date}.md 에 기록.
+3. 결과를 `docs/reports/history/dr-drill-{date}.md` 에 기록.
 4. 인스턴스 즉시 삭제.
 ```
 
@@ -215,6 +215,6 @@ Q1 / Q2 / Q3 / Q4 의 중간 토요일 03:00 KST (peak 회피).
 
 ## 8. 참고
 
-- [RDS Proxy 도입](../infrastructure/infrastructure-optimization.md) — 2026-04-29 connection pool 만석 사고 대응.
-- [Operations Baseline](../domain/operations-baseline.md) — 일상 운영·헬스체크.
-- [Incidents Runbook](../infrastructure/runbook-incidents.md) — 사고 일반 대응.
+- [RDS Proxy 도입](../../infrastructure/infrastructure-optimization.md) — 2026-04-29 connection pool 만석 사고 대응.
+- [Operations Baseline](../operations-baseline.md) — 일상 운영·헬스체크.
+- [Incidents Runbook](incidents.md) — 사고 일반 대응.

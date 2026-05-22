@@ -12,7 +12,6 @@ from .password_views import (
     StudentPasswordFindRequestView,
     StudentPasswordFindVerifyView,
     _normalize_phone_for_reset,
-    _generate_temp_password,
     StudentPasswordResetSendView,
 )
 from .credential_views import SendExistingCredentialsView
@@ -27,7 +26,6 @@ __all__ = [
     "StudentPasswordFindRequestView",
     "StudentPasswordFindVerifyView",
     "_normalize_phone_for_reset",
-    "_generate_temp_password",
     "StudentPasswordResetSendView",
     "SendExistingCredentialsView",
 ]

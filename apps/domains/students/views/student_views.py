@@ -37,7 +37,8 @@ from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student
 from ..filters import StudentFilter
-from ..services import normalize_school_from_name
+from ..selectors import student_for_tenant_user, students_for_tenant
+from ..services import StudentProfileUpdateError, normalize_school_from_name, update_student_profile
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.clinic.models import SessionParticipant
 from ..serializers import (
@@ -98,7 +99,7 @@ class StudentViewSet(ModelViewSet):
         - request.tenant 기준으로만 학생 노출
         - list: ?deleted=true 시 삭제된 학생만, 기본은 활성 학생만
         """
-        qs = student_repo.student_filter_tenant(self.request.tenant)
+        qs = students_for_tenant(self.request.tenant, deleted="any")
 
         if self.action == "list":
             show_deleted = self.request.query_params.get("deleted") == "true"
@@ -257,20 +258,16 @@ class StudentViewSet(ModelViewSet):
     # ------------------------------
     @transaction.atomic
     def perform_update(self, serializer):
-        old_parent_phone = serializer.instance.parent_phone
-        instance = serializer.save()
-
-        # parent_phone이 변경되었으면 Parent FK 재연결
-        new_parent_phone = serializer.validated_data.get("parent_phone")
-        if new_parent_phone and new_parent_phone != old_parent_phone:
-            parent = ensure_parent_for_student(
+        try:
+            result = update_student_profile(
+                student=serializer.instance,
                 tenant=self.request.tenant,
-                parent_phone=new_parent_phone,
-                student_name=instance.name,
+                data=dict(serializer.validated_data),
+                identity_field="ps_number",
             )
-            if parent and instance.parent_id != parent.id:
-                instance.parent = parent
-                instance.save(update_fields=["parent_id", "updated_at"])
+        except StudentProfileUpdateError as e:
+            raise ValidationError(e.detail)
+        serializer.instance = result.student
 
     # ------------------------------
     # DELETE: 소프트 삭제 (30일 보관)
@@ -965,17 +962,6 @@ class StudentViewSet(ModelViewSet):
         try:
             with transaction.atomic():
                 with connection.cursor() as cursor:
-                    # enrollment ID를 먼저 명시적으로 수집
-                    cursor.execute(
-                        "SELECT id FROM enrollment_enrollment WHERE student_id IN %s AND tenant_id = %s",
-                        [tuple(student_ids), tenant.id],
-                    )
-                    enrollment_ids = [row[0] for row in cursor.fetchall()]
-                    logger.info(
-                        "bulk_permanent_delete enrollment_ids=%s (count=%s)",
-                        enrollment_ids[:20], len(enrollment_ids),
-                    )
-
                     # 안전 화이트리스트: f-string으로 삽입되는 모든 테이블명/컬럼명을 검증
                     _SAFE_TABLES = frozenset({
                         "results_result_item", "results_result", "results_exam_attempt",
@@ -1007,43 +993,65 @@ class StudentViewSet(ModelViewSet):
                         assert name in _SAFE_COLS, f"Unexpected column: {name}"
                         return name
 
+                    def _in_clause(values):
+                        values = list(values or [])
+                        if not values:
+                            return "(NULL)", []
+                        return "(" + ", ".join(["%s"] * len(values)) + ")", values
+
+                    table_names_cache = None
+
                     def _table_exists(cur, tbl):
-                        cur.execute(
-                            "SELECT 1 FROM information_schema.tables "
-                            "WHERE table_schema = %s AND table_name = %s",
-                            ["public", tbl],
-                        )
-                        return cur.fetchone() is not None
+                        nonlocal table_names_cache
+                        if table_names_cache is None:
+                            table_names_cache = set(connection.introspection.table_names(cur))
+                        return tbl in table_names_cache
+
+                    student_id_clause, student_id_params = _in_clause(student_ids)
+                    user_id_clause, user_id_params = _in_clause(user_ids)
+
+                    cursor.execute(
+                        f"SELECT id FROM enrollment_enrollment WHERE student_id IN {student_id_clause} AND tenant_id = %s",
+                        [*student_id_params, tenant.id],
+                    )
+                    enrollment_ids = [row[0] for row in cursor.fetchall()]
+                    logger.info(
+                        "bulk_permanent_delete enrollment_ids=%s (count=%s)",
+                        enrollment_ids[:20], len(enrollment_ids),
+                    )
 
                     if enrollment_ids:
-                        e_ids = tuple(enrollment_ids)
-
+                        enrollment_id_clause, enrollment_id_params = _in_clause(enrollment_ids)
                         # 1) results / submissions / homework (enrollment_id 기반)
-                        for tbl, where_sql in [
+                        for tbl, where_template in [
                             (
                                 "results_result_item",
-                                "result_id IN (SELECT id FROM results_result WHERE enrollment_id IN %s)",
+                                "result_id IN (SELECT id FROM results_result WHERE enrollment_id IN {enrollment_ids})",
                             ),
-                            ("results_result", "enrollment_id IN %s"),
-                            ("results_exam_attempt", "enrollment_id IN %s"),
-                            ("results_fact", "enrollment_id IN %s"),
-                            ("results_wrong_note_pdf", "enrollment_id IN %s"),
+                            ("results_result", "enrollment_id IN {enrollment_ids}"),
+                            ("results_exam_attempt", "enrollment_id IN {enrollment_ids}"),
+                            ("results_fact", "enrollment_id IN {enrollment_ids}"),
+                            ("results_wrong_note_pdf", "enrollment_id IN {enrollment_ids}"),
                             (
                                 "results_exam_result",
-                                "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN %s)",
+                                "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN {enrollment_ids})",
                             ),
                             (
                                 "submissions_submissionanswer",
-                                "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN %s)",
+                                "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN {enrollment_ids})",
                             ),
-                            ("submissions_submission", "enrollment_id IN %s"),
-                            ("homework_results_homeworkscore", "enrollment_id IN %s"),
-                            ("homework_assignment", "enrollment_id IN %s"),
-                            ("homework_enrollment", "enrollment_id IN %s"),
+                            ("submissions_submission", "enrollment_id IN {enrollment_ids}"),
+                            ("homework_results_homeworkscore", "enrollment_id IN {enrollment_ids}"),
+                            ("homework_assignment", "enrollment_id IN {enrollment_ids}"),
+                            ("homework_enrollment", "enrollment_id IN {enrollment_ids}"),
                         ]:
                             if _table_exists(cursor, _safe_tbl(tbl)):
                                 logger.info("bulk_permanent_delete DELETE %s", tbl)
-                                cursor.execute(f"DELETE FROM {_safe_tbl(tbl)} WHERE {where_sql}", [e_ids])
+                                where_sql = where_template.format(enrollment_ids=enrollment_id_clause)
+                                cursor.execute(
+                                    f"DELETE FROM {_safe_tbl(tbl)} WHERE {where_sql}",
+                                    enrollment_id_params,
+                                )
 
                         # 2) enrollment 자식 테이블들 (enrollment_id FK)
                         enrollment_child_tables = [
@@ -1063,26 +1071,26 @@ class StudentViewSet(ModelViewSet):
                             if _table_exists(cursor, _safe_tbl(tbl)):
                                 logger.info("bulk_permanent_delete DELETE %s", tbl)
                                 cursor.execute(
-                                    f"DELETE FROM {_safe_tbl(tbl)} WHERE enrollment_id IN %s",
-                                    [e_ids],
+                                    f"DELETE FROM {_safe_tbl(tbl)} WHERE enrollment_id IN {enrollment_id_clause}",
+                                    enrollment_id_params,
                                 )
 
                     # 3) enrollment 자체 삭제
                     logger.info("bulk_permanent_delete DELETE enrollment_enrollment")
                     cursor.execute(
-                        "DELETE FROM enrollment_enrollment WHERE student_id IN %s AND tenant_id = %s",
-                        [tuple(student_ids), tenant.id],
+                        f"DELETE FROM enrollment_enrollment WHERE student_id IN {student_id_clause} AND tenant_id = %s",
+                        [*student_id_params, tenant.id],
                     )
                     logger.info("bulk_permanent_delete DELETE students_studenttag")
                     cursor.execute(
-                        "DELETE FROM students_studenttag WHERE student_id IN %s",
-                        [tuple(student_ids)],
+                        f"DELETE FROM students_studenttag WHERE student_id IN {student_id_clause}",
+                        student_id_params,
                     )
                     if _table_exists(cursor, _safe_tbl("students_studentregistrationrequest")):
                         logger.info("bulk_permanent_delete UPDATE students_studentregistrationrequest (unlink)")
                         cursor.execute(
-                            "UPDATE students_studentregistrationrequest SET student_id = NULL WHERE student_id IN %s",
-                            [tuple(student_ids)],
+                            f"UPDATE students_studentregistrationrequest SET student_id = NULL WHERE student_id IN {student_id_clause}",
+                            student_id_params,
                         )
                     for tbl in [
                         "clinic_sessionparticipant",
@@ -1094,21 +1102,21 @@ class StudentViewSet(ModelViewSet):
                             logger.info("bulk_permanent_delete DELETE %s", tbl)
                             col = _safe_col("author_student_id" if tbl == "video_videocomment" else "student_id")
                             cursor.execute(
-                                f"DELETE FROM {_safe_tbl(tbl)} WHERE {col} IN %s",
-                                [tuple(student_ids)],
+                                f"DELETE FROM {_safe_tbl(tbl)} WHERE {col} IN {student_id_clause}",
+                                student_id_params,
                             )
                     # 커뮤니티(QnA 등)가 해당 학생을 created_by로 참조 → FK 해제 (SET_NULL과 동일)
                     for tbl in ["community_postentity", "community_postreply"]:
                         if _table_exists(cursor, _safe_tbl(tbl)):
                             logger.info("bulk_permanent_delete UPDATE %s (unlink created_by)", tbl)
                             cursor.execute(
-                                f"UPDATE {_safe_tbl(tbl)} SET created_by_id = NULL WHERE created_by_id IN %s",
-                                [tuple(student_ids)],
+                                f"UPDATE {_safe_tbl(tbl)} SET created_by_id = NULL WHERE created_by_id IN {student_id_clause}",
+                                student_id_params,
                             )
                     logger.info("bulk_permanent_delete DELETE students_student")
                     cursor.execute(
-                        "DELETE FROM students_student WHERE id IN %s",
-                        [tuple(student_ids)],
+                        f"DELETE FROM students_student WHERE id IN {student_id_clause}",
+                        student_id_params,
                     )
                     if user_ids:
                         tenant_id = tenant.id
@@ -1116,46 +1124,47 @@ class StudentViewSet(ModelViewSet):
                         # ⚠️ 반드시 tenant_id 필터 포함 — User는 여러 Tenant에 소속 가능
                         if _table_exists(cursor, _safe_tbl("submissions_submission")):
                             _SUB_IDS_SQL = (
-                                "SELECT id FROM submissions_submission WHERE user_id IN %s AND tenant_id = %s"
+                                f"SELECT id FROM submissions_submission WHERE user_id IN {user_id_clause} AND tenant_id = %s"
                             )
                             if _table_exists(cursor, _safe_tbl("results_exam_result")):
                                 logger.info("bulk_permanent_delete DELETE results_exam_result (by user submissions)")
                                 cursor.execute(
                                     "DELETE FROM results_exam_result WHERE submission_id IN ("
                                     + _SUB_IDS_SQL + ")",
-                                    [tuple(user_ids), tenant_id],
+                                    [*user_id_params, tenant_id],
                                 )
                             if _table_exists(cursor, _safe_tbl("submissions_submissionanswer")):
                                 logger.info("bulk_permanent_delete DELETE submissions_submissionanswer (by user)")
                                 cursor.execute(
                                     "DELETE FROM submissions_submissionanswer WHERE submission_id IN ("
                                     + _SUB_IDS_SQL + ")",
-                                    [tuple(user_ids), tenant_id],
+                                    [*user_id_params, tenant_id],
                                 )
                             logger.info("bulk_permanent_delete DELETE submissions_submission (by user_id, tenant)")
                             cursor.execute(
-                                "DELETE FROM submissions_submission WHERE user_id IN %s AND tenant_id = %s",
-                                [tuple(user_ids), tenant_id],
+                                f"DELETE FROM submissions_submission WHERE user_id IN {user_id_clause} AND tenant_id = %s",
+                                [*user_id_params, tenant_id],
                             )
                         # 이 테넌트의 멤버십만 삭제
                         logger.info("bulk_permanent_delete DELETE core_tenantmembership (tenant=%s)", tenant_id)
                         cursor.execute(
-                            "DELETE FROM core_tenantmembership WHERE user_id IN %s AND tenant_id = %s",
-                            [tuple(user_ids), tenant_id],
+                            f"DELETE FROM core_tenantmembership WHERE user_id IN {user_id_clause} AND tenant_id = %s",
+                            [*user_id_params, tenant_id],
                         )
                         # User 계정은 다른 테넌트에 멤버십이 없는 경우에만 삭제
                         cursor.execute(
-                            "SELECT id FROM accounts_user WHERE id IN %s AND NOT EXISTS ("
+                            f"SELECT id FROM accounts_user WHERE id IN {user_id_clause} AND NOT EXISTS ("
                             "  SELECT 1 FROM core_tenantmembership WHERE user_id = accounts_user.id"
                             ")",
-                            [tuple(user_ids)],
+                            user_id_params,
                         )
                         orphan_user_ids = [row[0] for row in cursor.fetchall()]
                         if orphan_user_ids:
+                            orphan_user_clause, orphan_user_params = _in_clause(orphan_user_ids)
                             logger.info("bulk_permanent_delete DELETE accounts_user (orphaned) ids=%s", orphan_user_ids)
                             cursor.execute(
-                                "DELETE FROM accounts_user WHERE id IN %s",
-                                [tuple(orphan_user_ids)],
+                                f"DELETE FROM accounts_user WHERE id IN {orphan_user_clause}",
+                                orphan_user_params,
                             )
                         else:
                             logger.info("bulk_permanent_delete SKIP accounts_user delete — users have other tenant memberships")
@@ -1252,7 +1261,9 @@ class StudentViewSet(ModelViewSet):
         - request.user + request.tenant 기준 강제
         - 다른 학원 / 다른 학생 접근 불가
         """
-        student = student_repo.student_get_tenant_user(request.tenant, request.user)
+        student = student_for_tenant_user(request.tenant, request.user)
+        if not student:
+            raise NotFound("학생 프로필이 없습니다.")
 
         if request.method == "GET":
             serializer = StudentDetailSerializer(
@@ -1308,8 +1319,6 @@ class StudentViewSet(ModelViewSet):
                         status=400,
                     )
 
-        old_parent_phone = student.parent_phone  # parent FK 동기화용
-
         with transaction.atomic():
             # 아이디 변경
             new_username = (data.get("username") or "").strip()
@@ -1350,51 +1359,16 @@ class StudentViewSet(ModelViewSet):
                 student.profile_photo = request.FILES["profile_photo"]
                 student.save(update_fields=["profile_photo"])
 
-            # 기본 정보 수정
-            updatable_fields = [
-                "name", "phone", "parent_phone", "gender", "address",
-                "school_type", "elementary_school", "high_school", "middle_school",
-                "origin_middle_school", "grade", "high_school_class",
-                "major", "memo",
-            ]
-            update_fields = []
-            for field in updatable_fields:
-                if field in data:
-                    value = data[field]
-                    # grade: 정수 변환 (검증은 위에서 완료)
-                    if field == "grade" and value is not None:
-                        value = int(value)
-                    setattr(student, field, value)
-                    update_fields.append(field)
-            # omr_code 재계산: phone 또는 parent_phone 변경 시
-            if "phone" in data or "parent_phone" in data:
-                phone_str = str(student.phone).strip() if student.phone else None
-                pp_str = str(student.parent_phone).strip() if student.parent_phone else None
-                if phone_str and len(phone_str) >= 8:
-                    new_omr = phone_str[-8:]
-                elif pp_str and len(pp_str) >= 8:
-                    new_omr = pp_str[-8:]
-                else:
-                    new_omr = student.omr_code  # 기존값 유지
-                if new_omr != student.omr_code:
-                    student.omr_code = new_omr
-                    if "omr_code" not in update_fields:
-                        update_fields.append("omr_code")
-            if update_fields:
-                student.save(update_fields=update_fields)
-
-            # parent_phone 변경 시 Parent FK 재연결
-            if "parent_phone" in data:
-                new_parent_phone = str(data["parent_phone"] or "").strip()
-                if new_parent_phone and new_parent_phone != (old_parent_phone or ""):
-                    parent = ensure_parent_for_student(
-                        tenant=tenant,
-                        parent_phone=new_parent_phone,
-                        student_name=student.name,
-                    )
-                    if parent and student.parent_id != parent.id:
-                        student.parent = parent
-                        student.save(update_fields=["parent_id", "updated_at"])
+            try:
+                result = update_student_profile(
+                    student=student,
+                    tenant=tenant,
+                    data=dict(data),
+                    ignore_blank_name=True,
+                )
+                student = result.student
+            except StudentProfileUpdateError as e:
+                raise ValidationError(e.detail)
 
         serializer = StudentDetailSerializer(
             student,

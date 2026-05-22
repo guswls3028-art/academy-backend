@@ -496,11 +496,9 @@ concurrency:
   cancel-in-progress: false  # CHANGED: prevent orphaned ASG refreshes
 ```
 
-### 6.3 Video Batch Deploy OIDC Fix (Required)
+### 6.3 Video Batch Deploy Workflow **[SUPERSEDED]**
 
-**Problem:** `video_batch_deploy.yml` fails with OIDC credential loading error.
-**Root cause:** The workflow uses `secrets.AWS_ROLE_ARN_FOR_VIDEO_BATCH` (a separate OIDC role from the main CI/CD `AWS_ROLE_ARN_FOR_ECR_BUILD`). The Video Batch role's trust policy likely does not include `video_batch_deploy.yml` in its `sub` condition, or the GitHub secret is not configured.
-**Fix:** Verify `AWS_ROLE_ARN_FOR_VIDEO_BATCH` secret exists in GitHub, and that the referenced IAM role's trust policy includes the `video_batch_deploy` workflow. This is NOT the same role as `academy-gha-ecr-build`.
+`video_batch_deploy.yml` was removed. Video worker build/deploy now runs through `.github/workflows/v1-build-and-push-latest.yml` and the v1 resource scripts. Do not reintroduce a separate Video Batch workflow unless the release architecture is explicitly revised.
 
 ### 6.4 Worker Drain Strategy (Already Implemented)
 
@@ -517,7 +515,7 @@ No additional drain work needed.
 - Additive only (nullable/default columns)
 - No column renames/drops in single release
 - Two-release process for breaking schema changes
-- Migration runs BEFORE new code deploys via SSM
+- Migration runs before API instance refresh using the newly built SHA image in GitHub Actions.
 - **Safe failure state:** If migration succeeds but ASG deploy fails (health check failure), the system is in new-schema + old-code state. Because migrations are additive-only, old code continues to work correctly with the new schema. No manual migration rollback is needed in this case.
 - **[COMPLETED] `CONN_HEALTH_CHECKS: True`** added to DATABASES settings in both `base.py` and `worker.py`. Without this, Django reuses stale DB connections after RDS recovery, causing post-recovery errors for up to 60 seconds (CONN_MAX_AGE=60).
 

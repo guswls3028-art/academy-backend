@@ -2,7 +2,7 @@
 from .tenant import Tenant
 from .tenant_domain import TenantDomain
 from .tenant_membership import TenantMembership
-from .user import User, Attendance, Expense
+from .user import User, PendingPasswordReset, Attendance, Expense
 from .program import Program
 from .landing_page import LandingPage
 from .landing_consult import LandingConsultRequest
@@ -15,6 +15,7 @@ __all__ = [
     "TenantDomain",
     "TenantMembership",
     "User",
+    "PendingPasswordReset",
     "Attendance",
     "Expense",
     "Program",

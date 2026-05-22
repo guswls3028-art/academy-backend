@@ -37,6 +37,7 @@ class RetakeResult:
     passed: bool
     score: float
     max_score: float
+    pass_score: Optional[float]
     attempt_index: int
     resolution_type: Optional[str] = None
     resolved_at: Optional[str] = None
@@ -55,6 +56,8 @@ class ClinicRemediationService:
         *,
         clinic_link_id: int,
         score: float,
+        max_score: Optional[float] = None,
+        pass_score: Optional[float] = None,
         graded_by_user_id: int,
     ) -> RetakeResult:
         """
@@ -84,12 +87,18 @@ class ClinicRemediationService:
             raise ValueError(f"ClinicLink {clinic_link_id}는 시험 유형이 아닙니다 (source_type={link.source_type})")
 
         exam = Exam.objects.get(id=link.source_id, tenant_id=link.tenant_id)
-        pass_score = float(getattr(exam, "pass_score", 0) or 0)
-        max_score_val = float(getattr(exam, "max_score", 100) or 100)
+        pass_score_val = float(pass_score) if pass_score is not None else float(getattr(exam, "pass_score", 0) or 0)
+        max_score_val = float(max_score) if max_score is not None else float(getattr(exam, "max_score", 100) or 100)
 
         # 점수 검증: 음수/만점 초과 차단
         if score < 0:
             raise ValueError(f"점수({score})는 0 이상이어야 합니다.")
+        if max_score_val < 0:
+            raise ValueError(f"만점({max_score_val})은 0 이상이어야 합니다.")
+        if pass_score_val < 0:
+            raise ValueError(f"합격 기준({pass_score_val})은 0 이상이어야 합니다.")
+        if max_score_val > 0 and pass_score_val > max_score_val:
+            raise ValueError(f"합격 기준({pass_score_val})이 만점({max_score_val})을 초과할 수 없습니다.")
         if max_score_val > 0 and score > max_score_val:
             raise ValueError(f"점수({score})가 만점({max_score_val})을 초과할 수 없습니다.")
 
@@ -118,7 +127,8 @@ class ClinicRemediationService:
                         "source": "clinic_remediation",
                         "graded_by_user_id": graded_by_user_id,
                         "total_score": score,
-                        "pass_score": pass_score,
+                        "max_score": max_score_val,
+                        "pass_score": pass_score_val,
                     },
                 )
                 break
@@ -129,7 +139,7 @@ class ClinicRemediationService:
             raise ValueError("재시도 차수 생성 중 충돌이 발생했습니다. 다시 시도해 주세요.")
 
         # 4. 합격 판정
-        is_passed = score >= pass_score  # pass_score=0 → 모든 점수 합격
+        is_passed = score >= pass_score_val  # pass_score=0 → 모든 점수 합격
 
         # ExamResult는 submission 1:1이라 클리닉 직접 입력에는 생성하지 않음
         # 대신 attempt.meta에 점수를 기록 (위에서 이미 저장)
@@ -139,6 +149,7 @@ class ClinicRemediationService:
             passed=is_passed,
             score=score,
             max_score=max_score_val,
+            pass_score=pass_score_val,
             attempt_index=next_attempt,
             clinic_link_id=link.id,
         )
@@ -150,7 +161,8 @@ class ClinicRemediationService:
                 exam_id=exam.id,
                 attempt_id=attempt.id,
                 score=score,
-                pass_score=pass_score,
+                pass_score=pass_score_val,
+                max_score=max_score_val,
             )
             link.refresh_from_db()
             result.resolution_type = link.resolution_type
@@ -275,6 +287,7 @@ class ClinicRemediationService:
             passed=passed,
             score=score,
             max_score=max_score,
+            pass_score=None,
             attempt_index=next_attempt,
             clinic_link_id=link.id,
         )
@@ -313,6 +326,8 @@ class ClinicRemediationService:
         clinic_link_id: int,
         attempt_index: int,
         score: float,
+        max_score: Optional[float] = None,
+        pass_score: Optional[float] = None,
         graded_by_user_id: int,
     ) -> RetakeResult:
         """
@@ -332,8 +347,8 @@ class ClinicRemediationService:
             raise ValueError(f"ClinicLink {clinic_link_id}는 시험 유형이 아닙니다")
 
         exam = Exam.objects.get(id=link.source_id, tenant_id=link.tenant_id)
-        pass_score = float(getattr(exam, "pass_score", 0) or 0)
-        max_score_val = float(getattr(exam, "max_score", 100) or 100)
+        default_pass_score = float(getattr(exam, "pass_score", 0) or 0)
+        default_max_score = float(getattr(exam, "max_score", 100) or 100)
 
         attempt = ExamAttempt.objects.select_for_update().get(
             exam_id=exam.id,
@@ -341,19 +356,43 @@ class ClinicRemediationService:
             attempt_index=attempt_index,
         )
 
-        # 점수 업데이트
         attempt.meta = attempt.meta or {}
+        effective_max_score = (
+            float(max_score)
+            if max_score is not None
+            else float(attempt.meta.get("max_score") or default_max_score)
+        )
+        effective_pass_score = (
+            float(pass_score)
+            if pass_score is not None
+            else float(attempt.meta.get("pass_score") or default_pass_score)
+        )
+
+        if score < 0:
+            raise ValueError(f"점수({score})는 0 이상이어야 합니다.")
+        if effective_max_score < 0:
+            raise ValueError(f"만점({effective_max_score})은 0 이상이어야 합니다.")
+        if effective_pass_score < 0:
+            raise ValueError(f"합격 기준({effective_pass_score})은 0 이상이어야 합니다.")
+        if effective_max_score > 0 and effective_pass_score > effective_max_score:
+            raise ValueError(f"합격 기준({effective_pass_score})이 만점({effective_max_score})을 초과할 수 없습니다.")
+        if effective_max_score > 0 and score > effective_max_score:
+            raise ValueError(f"점수({score})가 만점({effective_max_score})을 초과할 수 없습니다.")
+
+        # 점수 업데이트
         attempt.meta["total_score"] = score
-        attempt.meta["pass_score"] = pass_score
+        attempt.meta["max_score"] = effective_max_score
+        attempt.meta["pass_score"] = effective_pass_score
         attempt.meta["updated_by_user_id"] = graded_by_user_id
         attempt.save(update_fields=["meta", "updated_at"])
 
-        is_passed = score >= pass_score  # pass_score=0 → 모든 점수 합격
+        is_passed = score >= effective_pass_score  # pass_score=0 → 모든 점수 합격
 
         result = RetakeResult(
             passed=is_passed,
             score=score,
-            max_score=max_score_val,
+            max_score=effective_max_score,
+            pass_score=effective_pass_score,
             attempt_index=attempt_index,
             clinic_link_id=link.id,
         )
@@ -366,7 +405,8 @@ class ClinicRemediationService:
                 exam_id=exam.id,
                 attempt_id=attempt.id,
                 score=score,
-                pass_score=pass_score,
+                pass_score=effective_pass_score,
+                max_score=effective_max_score,
             )
             link.refresh_from_db()
             result.resolution_type = link.resolution_type
@@ -445,6 +485,7 @@ class ClinicRemediationService:
             passed=passed,
             score=score,
             max_score=max_score,
+            pass_score=None,
             attempt_index=attempt_index,
             clinic_link_id=link.id,
         )

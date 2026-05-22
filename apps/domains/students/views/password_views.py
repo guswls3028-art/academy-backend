@@ -13,6 +13,7 @@ from apps.core.parsing import parse_bool
 from apps.api.common.throttles import SmsEndpointThrottle
 from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
+from apps.core.services.password import generate_temp_password
 
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student
@@ -164,12 +165,20 @@ def _normalize_phone_for_reset(value):
     return s if len(s) == 11 and s.startswith("010") else ""
 
 
-def _generate_temp_password(length=10):
-    """임시 비밀번호 생성 (영문+숫자)."""
-    import secrets
-    import string
-    chars = string.ascii_letters + string.digits
-    return "".join(secrets.choice(chars) for _ in range(length))
+def _is_staff_password_reset_request(request) -> bool:
+    user = getattr(request, "user", None)
+    tenant = getattr(request, "tenant", None)
+    return bool(
+        user
+        and user.is_authenticated
+        and tenant
+        and TenantMembership.objects.filter(
+            user=user,
+            tenant=tenant,
+            role__in=["owner", "admin", "teacher", "staff"],
+            is_active=True,
+        ).exists()
+    )
 
 
 class StudentPasswordResetSendView(APIView):
@@ -182,8 +191,9 @@ class StudentPasswordResetSendView(APIView):
 
     def get_authenticators(self):
         """AllowAny이지만 JWT가 있으면 파싱 — staff 판별용 (temp_password/skip_notify)."""
-        from rest_framework_simplejwt.authentication import JWTAuthentication
-        return [JWTAuthentication()]
+        from apps.core.authentication import TokenVersionJWTAuthentication
+
+        return [TokenVersionJWTAuthentication()]
 
     def post(self, request):
         tenant = getattr(request, "tenant", None)
@@ -199,6 +209,57 @@ class StudentPasswordResetSendView(APIView):
             return Response({"detail": "대상을 선택해 주세요. (학생 / 학부모)"}, status=400)
         if not student_name:
             return Response({"detail": "학생 이름을 입력해 주세요."}, status=400)
+
+        try:
+            skip_notify_requested = parse_bool(
+                request.data.get("skip_notify", False),
+                field_name="skip_notify",
+            )
+        except ValidationError as e:
+            return Response(e.detail, status=400)
+
+        is_staff_request = _is_staff_password_reset_request(request)
+
+        if not is_staff_request:
+            from apps.domains.students.services.account_recovery import (
+                AccountRecoveryDeliveryError,
+                AccountRecoveryValidationError,
+                resolve_recovery_account,
+                send_password_recovery,
+                validate_recovery_payload,
+            )
+
+            verified_phone = parent_phone
+            if target == "student":
+                verified_phone = _normalize_phone_for_reset(request.data.get("student_phone") or "") or parent_phone
+
+            try:
+                _, recovery_target, name, phone = validate_recovery_payload(
+                    mode="password",
+                    target=target,
+                    name=student_name,
+                    phone=verified_phone,
+                )
+            except AccountRecoveryValidationError as e:
+                return Response({"detail": e.detail}, status=400)
+
+            account = resolve_recovery_account(
+                tenant=tenant,
+                target=recovery_target,
+                name=name,
+                phone=phone,
+            )
+            message = "입력한 정보가 등록되어 있다면 해당 번호로 임시 비밀번호가 발송됩니다."
+            if account is None:
+                return Response({"message": message}, status=200)
+
+            try:
+                send_password_recovery(account)
+            except AccountRecoveryValidationError as e:
+                return Response({"detail": e.detail}, status=400)
+            except AccountRecoveryDeliveryError as e:
+                return Response({"detail": e.detail}, status=503)
+            return Response({"message": message}, status=200)
 
         if target == "student":
             student_phone = _normalize_phone_for_reset(request.data.get("student_phone") or "")
@@ -272,20 +333,10 @@ class StudentPasswordResetSendView(APIView):
         # ✅ 보안: 클라이언트 지정 비밀번호는 인증된 관리자/교사만 허용
         # (이 엔드포인트는 AllowAny이므로 비인증 요청에서는 서버 생성만 사용)
         client_temp_password = (request.data.get("temp_password") or "").strip()
-        is_staff_request = (
-            getattr(request, "user", None)
-            and request.user.is_authenticated
-            and hasattr(request, "tenant")
-            and TenantMembership.objects.filter(
-                user=request.user, tenant=request.tenant,
-                role__in=["owner", "admin", "teacher", "staff"],
-                is_active=True,
-            ).exists()
-        )
         temp_password = (
             client_temp_password
             if client_temp_password and is_staff_request
-            else _generate_temp_password()
+            else generate_temp_password()
         )
         # 비밀번호 정책: 최소 4자 (PASSWORD_POLICY_4CHAR). staff가 더 짧게 입력해도 강제 적용.
         if len(temp_password) < 4:
@@ -295,13 +346,6 @@ class StudentPasswordResetSendView(APIView):
             )
 
         # skip_notify: 비밀번호만 변경, 알림톡 발송 안 함 (관리자 전용)
-        try:
-            skip_notify_requested = parse_bool(
-                request.data.get("skip_notify", False),
-                field_name="skip_notify",
-            )
-        except ValidationError as e:
-            return Response(e.detail, status=400)
         skip_notify = skip_notify_requested and is_staff_request
 
         old_password_hash = user.password  # 발송 실패 시 롤백용

@@ -189,6 +189,7 @@ class ClinicResolutionService:
         attempt_id: Optional[int] = None,
         score: Optional[float] = None,
         pass_score: Optional[float] = None,
+        max_score: Optional[float] = None,
     ) -> int:
         """
         시험 통과 시 해당 enrollment+session의 미해소 ClinicLink를 해소.
@@ -198,6 +199,7 @@ class ClinicResolutionService:
             "exam_id": exam_id,
             "score": score,
             "pass_score": pass_score,
+            "max_score": max_score,
         }
         if attempt_id:
             evidence["attempt_id"] = attempt_id

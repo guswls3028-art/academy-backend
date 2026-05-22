@@ -14,7 +14,7 @@
 | Video Worker | academy-video-worker | AWS Batch CE (`academy-v1-video-batch-ce-200gb`, c6g.4xlarge primary) | — | 영상 인코딩. 1 video = 1 Batch job. VCPU=8 / MEM=16GB / timeout=6h |
 | Base | academy-base | — | — | Shared base image for all services |
 
-**Note (2026-05-10):** Daemon mode 폐기. 모든 영상은 AWS Batch로 1-shot 처리. long path 도 폐기되어 short queue/jobdef만 사용 — 4시간+ 영상은 jobdef timeout(2h)에 걸려 종료 후 reconcile/scan_stuck이 재시도. ffmpeg는 `c6g.4xlarge` VCPU=8 + R2 병렬 업로드(16 worker)로 처리.
+**Note (2026-05-10, checked 2026-05-22):** Daemon mode 폐기. 모든 영상은 AWS Batch로 1-shot 처리. long path도 폐기되어 단일 queue/jobdef만 사용한다. 현재 jobdef timeout은 6h이며, 실패/중단 케이스는 reconcile/scan_stuck이 재시도한다. ffmpeg는 `c6g.4xlarge` VCPU=8 + R2 병렬 업로드(16 worker)로 처리.
 
 ## 2. CI/CD Pipeline Architecture
 
@@ -27,7 +27,7 @@ git push main
     v
 [build-and-push] ─── build changed images ──> ECR (:latest + :sha-XXXXXXXX)
     |
-    |── (if API changed) ──> [run-migrations] ─── SSM RunCommand ──> migrate on current instance
+    |── (if API changed) ──> [run-migrations] ─── pull new SHA image ──> docker run manage.py migrate
     |                              |
     |                              v
     |── (if API changed) ──> [deploy-api] ─── ASG instance refresh (MinHealthy=100%, Warmup=120s)
@@ -74,6 +74,7 @@ Dependencies:
 - `deploy-api` waits for `run-migrations` to succeed (or be skipped)
 - `deploy-messaging` and `deploy-ai` run in parallel, independently
 - `verify-deployment` waits for all deploy jobs
+- `deploy-video` is included in the same workflow and runs when the video worker image changes
 
 ## 5. Zero-Downtime API Strategy
 
@@ -123,14 +124,14 @@ This UserData is already correctly implemented in `scripts/v1/resources/worker_u
 
 ### Execution
 
-- Migrations run via SSM RunCommand on a CURRENT InService API instance
-- Command: `docker exec academy-api python manage.py migrate --no-input`
+- Migrations run in GitHub Actions before API instance refresh.
+- The workflow pulls the newly built immutable SHA image and runs `python manage.py migrate --no-input` in a one-shot Docker container using production env.
 - Only runs when API or shared code changed
 - Must succeed before API ASG refresh starts
 
 ### Backward Compatibility Requirement
 
-Since migrations run on the OLD code/container before new code deploys:
+Since migrations can succeed before every old API instance has drained:
 - **Allowed:** Add nullable/default columns, add tables, add indexes
 - **Not allowed in single release:** Drop columns, rename columns, remove tables, change column types
 - For breaking schema changes, use a two-release process:
@@ -251,9 +252,10 @@ This keeps 10 rollback points and aggressively cleans untagged manifests. See `I
 
 | File | Purpose |
 |------|---------|
-| `.github/workflows/video_batch_deploy.yml` | Video Batch worker deploy (separate, NOT modified) |
+| `.github/workflows/v1-build-and-push-latest.yml` | CI build, migration, API/messaging/AI/video deploy, verification |
 | `scripts/v1/resources/worker_userdata.ps1` | Worker UserData generation (Docker + ECR + SSM) |
 | `scripts/v1/resources/asg_ai.ps1` | AI ASG + launch template management |
 | `scripts/v1/resources/asg_messaging.ps1` | Messaging ASG + launch template management |
+| `scripts/v1/resources/batch.ps1` | Video Batch CE/queue/job definition management |
 | `scripts/v1/resources/api.ps1` | API ASG + launch template management |
 | `scripts/v1/deploy.ps1` | Manual/bootstrap deployment (not used in CI/CD) |

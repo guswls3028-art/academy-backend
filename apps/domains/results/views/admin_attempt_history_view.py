@@ -106,6 +106,7 @@ class AdminAttemptHistoryView(APIView):
             raise ValidationError("Exam not found for this tenant.")
 
         pass_score = float(exam.pass_score or 0)
+        max_score = float(exam.max_score or 100)
 
         # 1️⃣ 1차 점수: Result (성적 산출 SSOT)
         result = Result.objects.filter(
@@ -126,15 +127,36 @@ class AdminAttemptHistoryView(APIView):
             score = None
             passed = None  # 기본: 합격 기준 미설정 또는 미응시
             a_meta = a.meta or {}
+            snapshot = a_meta.get("initial_snapshot") if isinstance(a_meta.get("initial_snapshot"), dict) else {}
             meta_status = a_meta.get("status")  # "NOT_SUBMITTED" | None
+            attempt_pass_score = (
+                float(a_meta.get("pass_score"))
+                if a_meta.get("pass_score") is not None
+                else pass_score
+            )
+            attempt_max_score = float(
+                (snapshot.get("max_score") if snapshot else None)
+                or a_meta.get("max_score")
+                or (result.max_score if result else None)
+                or max_score
+            )
 
             if a.attempt_index == 1 and result:
-                score = None if meta_status == "NOT_SUBMITTED" else float(result.total_score or 0)
+                if meta_status == "NOT_SUBMITTED":
+                    score = None
+                else:
+                    score = (
+                        snapshot.get("total_score")
+                        if snapshot and snapshot.get("total_score") is not None
+                        else a_meta.get("total_score")
+                    )
+                    score = float(score) if score is not None else float(result.total_score or 0)
             else:
                 score = a_meta.get("total_score")
+                score = float(score) if score is not None else None
 
-            if score is not None and pass_score > 0:
-                passed = float(score) >= pass_score
+            if score is not None and attempt_pass_score > 0:
+                passed = float(score) >= attempt_pass_score
 
             # ✅ source: clinic_link 유무 기준 (is_retake는 당일 직접 재시도에도 True)
             source = "clinic" if a.clinic_link_id else "grade"
@@ -142,6 +164,8 @@ class AdminAttemptHistoryView(APIView):
             entry: dict = {
                 "attempt_index": a.attempt_index,
                 "score": score,
+                "max_score": attempt_max_score,
+                "pass_score": attempt_pass_score,
                 "passed": passed,
                 "at": a.created_at,
                 "source": source,
@@ -157,6 +181,8 @@ class AdminAttemptHistoryView(APIView):
             attempt_list.append({
                 "attempt_index": 1,
                 "score": score,
+                "max_score": float(result.max_score or max_score),
+                "pass_score": pass_score,
                 "passed": passed,
                 "at": result.submitted_at or result.created_at,
                 "source": "grade",
@@ -182,7 +208,7 @@ class AdminAttemptHistoryView(APIView):
             "source_id": exam_id,
             "source_title": exam.title,
             "pass_score": exam.pass_score,
-            "max_score": exam.max_score,
+            "max_score": max_score,
             "attempts": attempt_list,
             "clinic_link_id": clinic_link_id,
             "resolved": resolved,
@@ -237,6 +263,8 @@ class AdminAttemptHistoryView(APIView):
             attempt_list.append({
                 "attempt_index": s.attempt_index,
                 "score": s.score,
+                "max_score": s.max_score,
+                "pass_score": pass_score,
                 "passed": bool(s.passed),
                 "at": s.created_at,
                 "source": source,

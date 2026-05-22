@@ -81,6 +81,7 @@ urlpatterns = [
     # =========================
     # Core
     # =========================
+    path("auth/", include("apps.core.auth_urls")),
     path("core/", include("apps.core.urls")),
 
     # =========================

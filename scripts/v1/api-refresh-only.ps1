@@ -1,5 +1,5 @@
 ﻿# ==============================================================================
-# API ASG instance refresh only (정식 풀배포 중 API만). CI deploy-api-refresh와 동일 동작.
+# API ASG instance refresh only (정식 풀배포 중 API만). CI deploy-api와 동일 계열 동작.
 # AWS 프로필: 반드시 default. (-AwsProfile default)
 # Usage: pwsh scripts/v1/api-refresh-only.ps1 -AwsProfile default
 # ==============================================================================

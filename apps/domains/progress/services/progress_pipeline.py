@@ -387,6 +387,7 @@ class ProgressPipelineService:
                     attempt_id=attempt_id,
                     score=exam_row.get("score"),
                     pass_score=exam_row.get("pass_score"),
+                    max_score=exam_row.get("max_score"),
                 )
 
             # 과제별 해소: 세션의 homework ClinicLink를 순회하며

@@ -30,6 +30,7 @@ def create_notification_log(
         False: sqs_message_id 기준 중복 (이미 성공 기록 존재) → 생성 안 함
     """
     from apps.domains.messaging.models import NotificationLog
+    from apps.domains.messaging.security import sanitize_message_body_for_log
 
     # DB-level dedup: 동일 SQS 메시지에 대해 이미 성공 기록이 있으면 스킵
     if sqs_message_id and success:
@@ -45,7 +46,10 @@ def create_notification_log(
         recipient_summary=recipient_summary[:500] if recipient_summary else "",
         template_summary=template_summary[:255] if template_summary else "",
         failure_reason=failure_reason[:500] if failure_reason else "",
-        message_body=message_body[:2000] if message_body else "",
+        message_body=sanitize_message_body_for_log(
+            message_body,
+            notification_type=notification_type,
+        )[:2000],
         message_mode=message_mode[:20] if message_mode else "",
         sqs_message_id=sqs_message_id[:128] if sqs_message_id else "",
         notification_type=notification_type[:30] if notification_type else "",
@@ -146,6 +150,7 @@ def finalize_notification(
 ) -> None:
     """Update a claimed notification slot with final result."""
     from apps.domains.messaging.models import NotificationLog
+    from apps.domains.messaging.security import sanitize_message_body_for_log
 
     NotificationLog.objects.filter(id=log_id).update(
         success=success,
@@ -153,6 +158,9 @@ def finalize_notification(
         status="sent" if success else "failed",
         template_summary=template_summary[:255] if template_summary else "",
         failure_reason=failure_reason[:500] if failure_reason else "",
-        message_body=message_body[:2000] if message_body else "",
+        message_body=sanitize_message_body_for_log(
+            message_body,
+            notification_type=notification_type,
+        )[:2000],
         notification_type=notification_type[:30] if notification_type else "",
     )

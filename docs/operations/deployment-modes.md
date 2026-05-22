@@ -1,7 +1,7 @@
 # 배포 방식 개요
 
 **기준:** 실제 스크립트·워크플로우. 문서는 실행 방식과 일치하도록 유지한다.
-**최종 갱신:** 2026-03-11
+**최종 갱신:** 2026-05-22
 
 ---
 
@@ -24,7 +24,7 @@
 
 | 경로 | 트리거 | 서버 반영 방식 | 속도 |
 |------|--------|----------------|------|
-| **CI 자동 배포** | main push → GitHub Actions | build-and-push → **deploy-api-refresh** job → API ASG instance refresh → 새 인스턴스가 ECR latest pull | ~10분 (빌드+refresh) |
+| **CI 자동 배포** | main push → GitHub Actions | build-and-push → run-migrations(필요 시) → deploy-api/messaging/ai/video → verify-deployment | ~10~25분 |
 | **수동 정식 배포** | `pwsh scripts/v1/deploy.ps1 -AwsProfile default` | 전체 인프라 Ensure + API LT 갱신 + ASG instance refresh | 20~25분 |
 
 - **env·이미지 소스:** SSM `/academy/api/env` → `/opt/api.env`, ECR `academy-api:latest`.
@@ -37,8 +37,10 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 1. GitHub Actions `v1-build-and-push-latest.yml` 트리거
 2. 5개 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu) linux/arm64 빌드 → ECR `:latest` 푸시
-3. `deploy-api-refresh` job → `aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg`
-4. 새 API 인스턴스 기동 → UserData로 ECR pull + SSM→/opt/api.env + docker run
+3. `run-migrations` job → 새 SHA 이미지로 one-shot `manage.py migrate`
+4. `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-video` job → 각 ASG/Bacth 리소스 refresh
+5. 새 인스턴스 기동 → UserData로 ECR pull + SSM env + docker run
+6. `verify-deployment` job → API health와 ASG 상태 확인
 
 **IAM:** `academy-gha-ecr-build` 역할에 ECR 권한 + `autoscaling:StartInstanceRefresh` + 배포 헬스 계측용 ELB target group read 권한 적용 완료 (2026-05-20).
 
@@ -54,7 +56,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
   - 출시 전/후, 안정 반영이 필요할 때
   - "서버 상태를 정석 경로로 통째로 맞추고 싶을 때"
 
-**상세:** [FORMAL-DEPLOY.md](FORMAL-DEPLOY.md)
+**상세:** [formal-deploy.md](formal-deploy.md)
 
 ---
 
@@ -70,8 +72,8 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 | 목적 | 방법 |
 |------|------|
-| 배포 후 API·인프라 상태 | deploy.ps1 출력의 After-Deploy Verification. 필요 시 `run-qna-e2e-verify.ps1`. |
-| CI 빌드 digest와 서버 이미지 일치 | `docs/v1/reports/ci-build.latest.md`의 academy-api digest vs 서버 `docker inspect academy-api --format '{{.RepoDigests}}'`. |
+| 배포 후 API·인프라 상태 | deploy.ps1 출력의 After-Deploy Verification. 필요 시 `run-deploy-verification.ps1`. |
+| CI 빌드 digest와 서버 이미지 일치 | `docs/reports/ci-build.latest.md`의 academy-api digest vs 서버 `docker inspect academy-api --format '{{.RepoDigests}}'`. |
 | API health | ALB DNS 또는 API 공개 URL로 `/health` 200 확인. |
 
 ---
@@ -79,7 +81,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 ## 6. 장애 시 확인 포인트
 
 - deploy.ps1 stderr, ASG/ALB/Batch 상태, SSM `/academy/api/env` 존재·형식.
-- CI deploy-api-refresh job 실패 시: GitHub Actions 로그 확인 → IAM 권한 확인.
+- CI deploy-* 또는 verify-deployment job 실패 시: GitHub Actions 로그 확인 → IAM 권한/ASG/ALB/Batch 상태 확인.
 - health check 실패 시 `docker logs academy-api`.
 
 ---
@@ -90,7 +92,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 |------|------|
 | `docs/operations/formal-deploy.md` | 수동 정식 배포 상세: 목적, 실행 방식, 검증, 주의. |
 | `docs/operations/배포.md` | 인프라 부트스트랩 (RDS/SQS/EC2/IAM 처음부터). |
-| `.github/workflows/v1-build-and-push-latest.yml` | CI 빌드·ECR·deploy-api-refresh 흐름. |
+| `.github/workflows/v1-build-and-push-latest.yml` | CI 빌드·ECR·마이그레이션·서비스별 deploy·검증 흐름. |
 
 ---
 

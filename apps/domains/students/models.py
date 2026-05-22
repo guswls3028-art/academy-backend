@@ -276,7 +276,7 @@ class StudentRegistrationRequest(TimestampModel):
     initial_password = models.CharField(max_length=256)  # 해시 저장 후 승인 시 User.password로 직접 이전
     initial_password_plain = models.CharField(
         max_length=128, blank=True, default="",
-        help_text="알림톡 발송용 원문 비밀번호. 승인 후 즉시 삭제.",
+        help_text="Deprecated. 원문 비밀번호는 저장하지 않으며 기존 값은 마이그레이션으로 비운다.",
     )
     parent_phone = models.CharField(max_length=20)
     phone = models.CharField(max_length=20, null=True, blank=True)

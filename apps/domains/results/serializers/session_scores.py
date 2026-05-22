@@ -39,6 +39,24 @@ class ScoreBlockSerializer(serializers.Serializer):
     # 과제만: 미제출 등 meta.status (NOT_SUBMITTED)
     meta = serializers.DictField(allow_null=True, required=False, default=None)
 
+    # 시험 성취 SSOT: 1차 성적과 보강/재시험 최종 통과를 분리한다.
+    remediated = serializers.BooleanField(allow_null=True, required=False, default=None)
+    final_pass = serializers.BooleanField(allow_null=True, required=False, default=None)
+    achievement = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+    is_provisional = serializers.BooleanField(required=False, default=False)
+    clinic_retake = serializers.DictField(allow_null=True, required=False, default=None)
+
+
+class AttemptSummarySerializer(serializers.Serializer):
+    attempt_index = serializers.IntegerField()
+    score = serializers.FloatField(allow_null=True)
+    max_score = serializers.FloatField(allow_null=True, required=False, default=None)
+    pass_score = serializers.FloatField(allow_null=True, required=False, default=None)
+    passed = serializers.BooleanField(allow_null=True)
+    at = serializers.DateTimeField(allow_null=True)
+    source = serializers.CharField()
+    meta_status = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)
+
 
 class ExamScoreBlockSerializer(serializers.Serializer):
     exam_id = serializers.IntegerField()
@@ -58,6 +76,7 @@ class ExamScoreBlockSerializer(serializers.Serializer):
     # V1.1.1: 차수별 편집 지원
     attempt_count = serializers.IntegerField(default=0)
     clinic_link_id = serializers.IntegerField(allow_null=True, default=None)
+    attempts = AttemptSummarySerializer(many=True, required=False, default=list)
 
 
 class HomeworkScoreBlockSerializer(serializers.Serializer):

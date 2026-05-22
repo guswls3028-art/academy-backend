@@ -27,7 +27,11 @@ class NotificationLog(models.Model):
     recipient_summary = models.CharField(max_length=500, blank=True, default="")
     template_summary = models.CharField(max_length=255, blank=True, default="")
     failure_reason = models.CharField(max_length=500, blank=True, default="")
-    message_body = models.TextField(blank=True, default="", help_text="실제 발송된 메시지 본문")
+    message_body = models.TextField(
+        blank=True,
+        default="",
+        help_text="보안 마스킹이 적용된 발송 메시지 본문",
+    )
     message_mode = models.CharField(
         max_length=20, blank=True, default="",
         choices=[("sms", "SMS"), ("alimtalk", "알림톡")],

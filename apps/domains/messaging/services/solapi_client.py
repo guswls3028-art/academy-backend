@@ -1,5 +1,5 @@
 # apps/support/messaging/services/solapi_client.py
-# SSOT 문서: backend/.claude/domains/messaging.md (수정 시 문서도 동기화)
+# SSOT 문서: backend/docs/domain/messaging.md, backend/docs/domain/messaging-alimtalk.md
 """
 Solapi 클라이언트 — 인증 정보, Mock 모드, SMS 즉시 발송
 """

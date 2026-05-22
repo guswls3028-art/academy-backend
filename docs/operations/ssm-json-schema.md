@@ -6,7 +6,7 @@
 - **Value:** Either:
   - **Plain JSON:** Single-line JSON object (no legacy KEY=VALUE lines), or
   - **Base64(UTF-8 JSON):** Used by `ssm_bootstrap_video_worker.ps1` on Windows to avoid CLI quoting corruption. Entrypoint and verify scripts accept both.
-- **Produced by:** `scripts/infra/ssm_bootstrap_video_worker.ps1` from `.env`. No manual editing.
+- **Produced by:** the v1 deploy/resource scripts from `.env` or the approved release environment. No manual editing.
 
 ## Required keys
 

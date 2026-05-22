@@ -1,6 +1,6 @@
-# reports — 자동 생성 보고서
+# reports
 
-CI/스크립트 자동 생성 산출물. **수동 편집 금지** (다음 실행 시 덮어쓰기).
+검증 보고서, 감사 결과, 사고 기록. 현재 정책처럼 서술하지 않는다.
 
 ## latest
 
@@ -10,14 +10,25 @@ CI/스크립트 자동 생성 산출물. **수동 편집 금지** (다음 실행
 | [audit.latest.md](audit.latest.md) | audit 스크립트 | 수동 |
 | [drift.latest.md](drift.latest.md) | drift 스크립트 | 수동 |
 | [runtime-images.latest.md](runtime-images.latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
-| [structure-refactor-2026-04-13.md](structure-refactor-2026-04-13.md) | 구조 리팩터 보고서 (1회성) | 보존 |
 
 ## history
 
-`history/` 에 시점별 audit/drift 스냅샷 보관.
+[history/](history/)에는 audit/drift 스냅샷을 보관한다.
+
+## incidents
+
+| 파일 | 사건 |
+|------|------|
+| [incidents/incident-2026-03-23-db-auth-failure.md](incidents/incident-2026-03-23-db-auth-failure.md) | DB 인증 실패/connection exhaustion |
+
+## one-off reports
+
+| 파일 | 용도 |
+|------|------|
+| [structure-refactor-2026-04-13.md](structure-refactor-2026-04-13.md) | 구조 리팩터 보고서 |
 
 ## 출력 정책
 
-- CI/script 가 쓰는 경로는 절대 변경 금지 (`.github/workflows/*.yml` 와 `scripts/v1/*.ps1` 가 hardcode)
-- latest 파일은 항상 마지막 실행 결과만 포함
-- history 누적은 자동 (스크립트 책임)
+- CI/script가 쓰는 `*.latest.md` 경로는 변경하지 않는다.
+- 최신 보고서는 마지막 실행 결과만 포함한다.
+- 과거 스냅샷과 사고 기록은 append-only로 보존한다.

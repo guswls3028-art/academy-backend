@@ -1,4 +1,4 @@
-# 메시징/알림톡 운영 정책 SSOT (2026-04-10 갱신)
+# 메시징/알림톡 운영 정책 SSOT (2026-05-21 갱신)
 
 ## 정책 분류 체계
 
@@ -9,7 +9,7 @@
 |---------|------|--------|----------|
 | registration_approved_student | 가입 안내(학생) | 학생 | 가입/등록 승인 시 |
 | registration_approved_parent | 가입 안내(학부모) | 학부모 | 가입/등록 승인 시 |
-| password_find_otp | 비밀번호 찾기 OTP | 요청자 | 비밀번호 찾기 요청 시 |
+| password_find_otp | 비밀번호 찾기 OTP (legacy compatibility) | 요청자 | legacy OTP 요청 시 |
 | password_reset_student | 비밀번호 재설정(학생) | 학생 | 비밀번호 재설정 시 |
 | password_reset_parent | 비밀번호 재설정(학부모) | 학부모 | 비밀번호 재설정 시 |
 
@@ -72,6 +72,7 @@
 7. **Time Guard** — 과거 날짜 출결은 알림 차단
 
 ## 변경 이력
+- 2026-05-21: 공개 로그인 화면 계정복구 SSOT를 `/api/v1/auth/account-recovery/dispatch/`로 정리. `password_find_otp`는 legacy OTP 경로로 명시.
 - 2026-04-10: 코드 기반 전면 갱신 — clinic_check_out 제거(clinic_self_study_completed로 통합), 누락 트리거 13개 추가
 - 2026-03-28: 정책 확정 — 4분류 체계 (SYSTEM_AUTO/AUTO_DEFAULT/MANUAL_DEFAULT/DISABLED)
 - 2026-03-28: 클리닉 트리거 세분화 (cancelled, check_in, check_out, absent)

@@ -8,6 +8,11 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework import serializers
 
+from apps.core.services.password import (
+    consume_pending_password_reset,
+    pending_password_reset_matches,
+)
+
 
 def _tenant_for_auth(request):
     """
@@ -65,6 +70,16 @@ def _tenant_for_auth(request):
 class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
     """테넌트별 User만 로그인 허용. tenant=null 계정은 로그인 불가."""
 
+    @staticmethod
+    def _password_matches(user, password: str, *, consume_pending: bool = True) -> bool:
+        if not user:
+            return False
+        if user.check_password(password):
+            return True
+        if consume_pending:
+            return consume_pending_password_reset(user, password)
+        return pending_password_reset_matches(user, password)
+
     def validate(self, attrs):
         request = self.context.get("request")
         username = (attrs.get("username") or "").strip()
@@ -80,15 +95,14 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         user = core_repo.user_get_by_tenant_username(tenant, username)
         # 학부모: ID = 학부모 전화번호. username이 전화번호일 때 Parent로 조회 후 해당 User로 인증
         # 학생 로그인ID와 학부모 전화번호가 동일할 수 있으므로, 첫 매칭 실패 시 학부모도 시도
+        parent = core_repo.parent_get_by_tenant_phone(tenant, username)
         if not user:
-            parent = core_repo.parent_get_by_tenant_phone(tenant, username)
             if parent and parent.user_id:
                 user = parent.user
-        elif not user.check_password(password):
-            parent = core_repo.parent_get_by_tenant_phone(tenant, username)
-            if parent and parent.user_id and parent.user.check_password(password):
+        elif not self._password_matches(user, password, consume_pending=False):
+            if parent and parent.user_id and self._password_matches(parent.user, password, consume_pending=False):
                 user = parent.user
-        if not user or not user.check_password(password):
+        if not user or not self._password_matches(user, password, consume_pending=False):
             raise serializers.ValidationError(
                 {"detail": "로그인 아이디 또는 비밀번호가 올바르지 않습니다."},
                 code="authorization",
@@ -101,6 +115,11 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         if not user.is_active:
             raise serializers.ValidationError(
                 {"detail": "비활성화된 계정입니다."},
+                code="authorization",
+            )
+        if not self._password_matches(user, password):
+            raise serializers.ValidationError(
+                {"detail": "로그인 아이디 또는 비밀번호가 올바르지 않습니다."},
                 code="authorization",
             )
 

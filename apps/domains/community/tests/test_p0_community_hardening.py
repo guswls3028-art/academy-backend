@@ -14,6 +14,7 @@ from apps.domains.community.api.views.post_views import PostViewSet
 from apps.domains.community.api.views.scope_node_views import ScopeNodeViewSet
 from apps.domains.community.models import (
     CommunityReport,
+    CommunityUserBlock,
     PostAttachment,
     PostEntity,
     PostLike,
@@ -690,6 +691,224 @@ class TestCommunityNodeRemapping(CommunityHardeningFixture):
         self.assertEqual(
             list(PostMapping.objects.filter(post=self.visible_post).values_list("node_id", flat=True)),
             [self.hidden_node.id],
+        )
+
+
+class TestCommunityStudentWriteContract(CommunityHardeningFixture):
+    def test_student_can_create_public_board_post(self):
+        view = PostViewSet.as_view({"post": "create"})
+        response = view(
+            self._request(
+                "post",
+                self.student_user,
+                "/api/v1/community/posts/",
+                {
+                    "title": "Student board",
+                    "content": "<p>hello</p>",
+                    "post_type": "board",
+                    "node_ids": [],
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 201)
+        post = PostEntity.objects.get(title="Student board")
+        self.assertEqual(post.post_type, "board")
+        self.assertEqual(post.created_by, self.student)
+        self.assertEqual(post.author_role, "student")
+        self.assertEqual(post.status, "published")
+        self.assertFalse(post.is_urgent)
+        self.assertFalse(post.is_pinned)
+        self.assertFalse(PostMapping.objects.filter(post=post).exists())
+
+    def test_student_cannot_create_staff_managed_post_type(self):
+        view = PostViewSet.as_view({"post": "create"})
+        response = view(
+            self._request(
+                "post",
+                self.student_user,
+                "/api/v1/community/posts/",
+                {
+                    "title": "Student notice",
+                    "content": "body",
+                    "post_type": "notice",
+                    "node_ids": [],
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(PostEntity.objects.filter(title="Student notice").exists())
+
+    def test_student_cannot_scope_private_question_to_arbitrary_node(self):
+        view = PostViewSet.as_view({"post": "create"})
+        response = view(
+            self._request(
+                "post",
+                self.student_user,
+                "/api/v1/community/posts/",
+                {
+                    "title": "Scoped qna",
+                    "content": "body",
+                    "post_type": "qna",
+                    "node_ids": [self.hidden_node.id],
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(PostEntity.objects.filter(title="Scoped qna").exists())
+
+    def test_student_cannot_create_with_operator_fields(self):
+        view = PostViewSet.as_view({"post": "create"})
+        response = view(
+            self._request(
+                "post",
+                self.student_user,
+                "/api/v1/community/posts/",
+                {
+                    "title": "Student pinned board",
+                    "content": "body",
+                    "post_type": "board",
+                    "status": "published",
+                    "is_pinned": True,
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(PostEntity.objects.filter(title="Student pinned board").exists())
+
+    def test_student_cannot_patch_operator_fields_on_own_post(self):
+        own_qna = PostEntity.objects.create(
+            tenant=self.tenant,
+            post_type="qna",
+            title="Own qna",
+            content="body",
+            created_by=self.student,
+            author_role="student",
+            status="published",
+        )
+
+        view = PostViewSet.as_view({"patch": "partial_update"})
+        response = view(
+            self._request(
+                "patch",
+                self.student_user,
+                f"/api/v1/community/posts/{own_qna.id}/",
+                {
+                    "title": "Tampered",
+                    "author_role": "staff",
+                    "post_type": "notice",
+                    "status": "archived",
+                    "is_pinned": True,
+                },
+            ),
+            pk=own_qna.id,
+        )
+
+        self.assertEqual(response.status_code, 403)
+        own_qna.refresh_from_db()
+        self.assertEqual(own_qna.title, "Own qna")
+        self.assertEqual(own_qna.author_role, "student")
+        self.assertEqual(own_qna.post_type, "qna")
+        self.assertEqual(own_qna.status, "published")
+        self.assertFalse(own_qna.is_pinned)
+
+    def test_student_can_patch_own_title_and_content(self):
+        own_qna = PostEntity.objects.create(
+            tenant=self.tenant,
+            post_type="qna",
+            title="Own qna",
+            content="body",
+            created_by=self.student,
+            author_role="student",
+            status="published",
+        )
+
+        view = PostViewSet.as_view({"patch": "partial_update"})
+        response = view(
+            self._request(
+                "patch",
+                self.student_user,
+                f"/api/v1/community/posts/{own_qna.id}/",
+                {"title": "Updated qna", "content": "<script>alert(1)</script><p>safe</p>"},
+            ),
+            pk=own_qna.id,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        own_qna.refresh_from_db()
+        self.assertEqual(own_qna.title, "Updated qna")
+        self.assertNotIn("<script", own_qna.content)
+        self.assertIn("<p>safe</p>", own_qna.content)
+
+
+class TestCommunityReplyParentGuard(CommunityHardeningFixture):
+    def test_reply_patch_cannot_reparent_to_reply_on_another_post(self):
+        other_post = PostEntity.objects.create(
+            tenant=self.tenant,
+            post_type="board",
+            title="Other board",
+            content="body",
+            author_role="staff",
+            status="published",
+        )
+        own_reply = PostReply.objects.create(
+            tenant=self.tenant,
+            post=self.visible_post,
+            content="own reply",
+            author_role="staff",
+        )
+        other_reply = PostReply.objects.create(
+            tenant=self.tenant,
+            post=other_post,
+            content="other reply",
+            author_role="staff",
+        )
+
+        view = PostViewSet.as_view({"patch": "reply_detail"})
+        response = view(
+            self._request(
+                "patch",
+                self.owner,
+                f"/api/v1/community/posts/{self.visible_post.id}/replies/{own_reply.id}/",
+                {"parent_reply": other_reply.id},
+            ),
+            pk=self.visible_post.id,
+            reply_id=own_reply.id,
+        )
+
+        self.assertEqual(response.status_code, 400)
+        own_reply.refresh_from_db()
+        self.assertIsNone(own_reply.parent_reply_id)
+
+
+class TestCommunityUserBlockGuard(CommunityHardeningFixture):
+    def test_block_user_rejects_user_outside_current_tenant(self):
+        other_user = User.objects.create_user(
+            username="comm_other_user",
+            password="pw1234",
+            tenant=self.other_tenant,
+            name="Other",
+        )
+        TenantMembership.ensure_active(tenant=self.other_tenant, user=other_user, role="student")
+
+        from apps.domains.community.api.views.admin_views import CommunityUserBlockView
+
+        view = CommunityUserBlockView.as_view()
+        response = view(
+            self._request(
+                "post",
+                self.owner,
+                "/api/v1/community/admin/user-blocks/",
+                {"user_id": other_user.id, "reason": "outside tenant"},
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(
+            CommunityUserBlock.objects.filter(tenant=self.tenant, user=other_user).exists()
         )
 
 

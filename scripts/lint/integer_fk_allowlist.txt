@@ -21,6 +21,10 @@
 # === REMAINING (structural reasons) ===
 
 # Polymorphic FK (target_type + target_id pattern) — cannot convert to single FK
+domains/community/models/report.py:target_id
+domains/landing_public/models/like.py:target_id
+domains/landing_public/models/reply.py:target_id
+domains/landing_public/models/report.py:target_id
 domains/results/models/result.py:target_id
 domains/results/models/result_fact.py:target_id
 domains/submissions/models/submission.py:target_id
@@ -52,3 +56,20 @@ domains/homework_results/models/score.py:updated_by_user_id
 
 # Submission — enrollment_id is nullable, FK conversion possible but needs careful migration
 domains/submissions/models/submission.py:enrollment_id
+
+# Matchup legacy / denormalized source references
+domains/matchup/models.py:source_exam_id
+domains/matchup/models.py:submitted_by_id
+domains/matchup/models.py:class_id
+
+# Messaging preview/log audit references
+domains/messaging/models.py:sender_staff_id
+domains/messaging/models.py:session_id
+domains/messaging/models.py:created_by_id
+
+# Progress source is polymorphic by source_type
+domains/progress/models.py:source_id
+
+# Video ops/social — current path after support/video consolidation
+domains/video/models.py:video_id
+domains/video/models.py:user_id

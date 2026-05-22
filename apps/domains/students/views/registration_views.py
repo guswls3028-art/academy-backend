@@ -128,19 +128,16 @@ def _approve_registration_request(request, reg):
             reg.student = student
             reg.save(update_fields=["status", "student", "updated_at"])
 
-        # 알림톡에 실제 비밀번호 전달 (원문 보관 필드 사용)
-        actual_password = (reg.initial_password_plain or "").strip()
         send_registration_approved_messages(
             tenant_id=tenant.id,
             site_url=get_tenant_site_url(request.tenant) or "",
             student_name=name,
             student_phone=(phone or "") if phone else "",
             student_id=ps_number,
-            student_password=actual_password if actual_password else "비밀번호를 변경해 주세요",
+            student_password="가입 신청 시 입력한 비밀번호",
             parent_phone=parent_phone or "",
             parent_password=parent_fixed_password,
         )
-        # 원문 비밀번호 즉시 삭제 (보안)
         if reg.initial_password_plain:
             reg.initial_password_plain = ""
             reg.save(update_fields=["initial_password_plain"])
@@ -328,7 +325,7 @@ class RegistrationRequestViewSet(ModelViewSet):
                 tenant=request.tenant,
                 status=StudentRegistrationRequest.PENDING,
                 initial_password=password,
-                initial_password_plain=raw_password,
+                initial_password_plain="",
                 name=data.get("name", ""),
                 username=(data.get("username") or "").strip() or "",
                 parent_phone=data.get("parent_phone", ""),

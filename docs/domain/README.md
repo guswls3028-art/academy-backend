@@ -1,32 +1,40 @@
-# domain — 도메인 SSOT
+# domain
 
-도메인별 정책·규칙·상태머신 SSOT. 코드 ↔ 문서 일치 의무.
+도메인별 현재 정책·규칙·상태머신 SSOT. 코드와 다르면 코드를 확인한 뒤 문서를 갱신한다.
 
 ## 핵심 정책
 
 | 파일 | 도메인 | 핵심 |
 |------|--------|------|
-| [hexagonal-cutover-policy.md](hexagonal-cutover-policy.md) | 전체 | `academy/` 헥사고날 ↔ `apps/` Django CRUD 경계 (필독) |
-| [state-transitions.md](state-transitions.md) | 시험/클리닉/과제 | 5도메인 상태머신 (results=SEALED, exam-only) |
-| [operations-baseline.md](operations-baseline.md) | 운영 | 멀티테넌트/인증/권한 baseline |
+| [state-transitions.md](state-transitions.md) | 시험/클리닉/과제 | 상태머신과 결과 경계 |
+| [messaging.md](messaging.md) | 메시징 | 메시징 SSOT 인덱스 |
+| [messaging-alimtalk.md](messaging-alimtalk.md) | 알림톡 | 4종 ITEM_LIST 봉투 + 본문 자유 정책 |
+| [account-recovery.md](account-recovery.md) | 로그인 | 아이디/비밀번호 찾기 |
+| [parent-account.md](parent-account.md) | 학부모 | 학부모 계정 생성/로그인 |
 
 ## 도메인별
 
 | 파일 | 도메인 |
 |------|--------|
-| [messaging.md](messaging.md) | 메시징 SSOT |
-| [messaging-alimtalk.md](messaging-alimtalk.md) | 알림톡 템플릿 SSOT (4종 ITEM_LIST) |
-| [omr.md](omr.md) | OMR v15 인식 시스템 |
-| [community.md](community.md) | 커뮤니티 보안/구조 (재설계) |
-| [parent-account.md](parent-account.md) | 학부모 대리 계정 (전용 기능 X) |
-| [teacher-mobile.md](teacher-mobile.md) | 선생앱 모바일 디자인 |
+| [community.md](community.md) | 커뮤니티 |
 | [matchup.md](matchup.md) | 매치업 사용자 흐름 |
+| [omr.md](omr.md) | OMR v15 인식 시스템 |
+| [teacher-mobile.md](teacher-mobile.md) | 선생앱 모바일 설계 |
 
-## 운영/체크리스트
+## 다른 폴더로 분리된 문서
 
-| 파일 | 용도 |
+| 주제 | 위치 |
 |------|------|
-| [billing-go-live-checklist.md](billing-go-live-checklist.md) | 결제 오픈 전 체크리스트 |
-| [connection-budget.md](connection-budget.md) | RDS connection 예산 (RDS Proxy 도입 후) |
-| [backlog-student-grade-comparison.md](backlog-student-grade-comparison.md) | 학생 등급 비교 백로그 |
-| [incident-2026-03-23-db-auth-failure.md](incident-2026-03-23-db-auth-failure.md) | 사고 보고서 |
+| 레이어/코드 배치 정책 | [../architecture/hexagonal-cutover-policy.md](../architecture/hexagonal-cutover-policy.md) |
+| 운영 baseline | [../operations/operations-baseline.md](../operations/operations-baseline.md) |
+| 결제 오픈 체크리스트 | [../operations/billing-go-live-checklist.md](../operations/billing-go-live-checklist.md) |
+| RDS connection budget | [../infrastructure/connection-budget.md](../infrastructure/connection-budget.md) |
+| 학생 성적 비교 백로그 | [../refactor/backlog-student-grade-comparison.md](../refactor/backlog-student-grade-comparison.md) |
+| DB 인증 장애 기록 | [../reports/incidents/incident-2026-03-23-db-auth-failure.md](../reports/incidents/incident-2026-03-23-db-auth-failure.md) |
+
+## 작성 규칙
+
+- 현재 운영 중인 도메인 규칙만 둔다.
+- 계획/백로그/제안은 `../refactor/`에 둔다.
+- 사고와 감사 기록은 `../reports/`에 둔다.
+- 운영 절차는 `../operations/`에 둔다.

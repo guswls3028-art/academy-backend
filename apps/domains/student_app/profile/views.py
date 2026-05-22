@@ -6,11 +6,9 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
-from apps.core.models.user import user_display_username, user_internal_username
+from apps.core.models.user import user_display_username
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
-from django.contrib.auth import get_user_model
-
-User = get_user_model()
+from apps.domains.students.services import StudentProfileUpdateError, update_student_profile
 logger = logging.getLogger(__name__)
 
 
@@ -130,108 +128,17 @@ class StudentProfileView(APIView):
             except Exception:
                 pass
 
-        name = data.get("name")
-        if name is not None:
-            name = str(name).strip()
-            if name:
-                student.name = name[:50]
-                student.save(update_fields=["name"])
-
-        new_username = data.get("username")
-        if new_username is not None:
-            new_username = str(new_username).strip()
-            if new_username:
-                internal = user_internal_username(student.tenant, new_username)
-                if User.objects.filter(username=internal).exclude(pk=student.user_id).exists():
-                    return Response({"detail": "이미 사용 중인 아이디입니다."}, status=400)
-                # ps_number 동일 여부 확인 (다른 활성 학생이 이미 사용 중이면 거부)
-                from apps.domains.students.models import Student as StudentModel
-                if StudentModel.objects.filter(
-                    tenant=student.tenant, ps_number=new_username, deleted_at__isnull=True
-                ).exclude(pk=student.pk).exists():
-                    return Response({"detail": "이미 사용 중인 아이디입니다."}, status=400)
-                # SSOT: ps_number = 로그인 아이디 = 표시 아이디 (동기화)
-                student.user.username = internal
-                student.user.save(update_fields=["username"])
-                student.ps_number = new_username
-                # Student.save() hook이 User.username 동기화 + 인벤토리 student_ps 연쇄 업데이트 처리
-                student.save(update_fields=["ps_number"])
-
-        # 학생 본인 수정 가능 필드 (선생앱 학생 스펙과 동일)
-        update_fields = []
-        if "phone" in data:
-            raw = (data.get("phone") or "").strip().replace("-", "").replace(" ", "")
-            if raw and (not raw.isdigit() or len(raw) < 10 or len(raw) > 15):
-                return Response({"detail": "올바른 전화번호를 입력해 주세요."}, status=400)
-            student.phone = raw[:20] if raw else None
-            update_fields.append("phone")
-        if "parent_phone" in data:
-            raw = (data.get("parent_phone") or "").strip().replace("-", "").replace(" ", "")
-            if raw and (not raw.isdigit() or len(raw) < 10 or len(raw) > 15):
-                return Response({"detail": "올바른 학부모 전화번호를 입력해 주세요."}, status=400)
-            if raw:
-                student.parent_phone = raw[:20]
-                update_fields.append("parent_phone")
-        if "gender" in data:
-            g = (data.get("gender") or "").strip().upper()[:1]
-            student.gender = g if g in ("M", "F") else None
-            update_fields.append("gender")
-        if "address" in data:
-            student.address = (data.get("address") or "").strip()[:255] or None
-            update_fields.append("address")
-        # 회원가입 모달과 동일한 학교·추가 정보 필드
-        if "school_type" in data:
-            st = (data.get("school_type") or "").strip().upper()
-            if st in ("ELEMENTARY", "MIDDLE", "HIGH"):
-                from apps.domains.students.services.school import get_valid_school_types
-                from apps.core.models import Program
-                program = Program.objects.filter(tenant=student.tenant).first()
-                slm = program.feature_flags.get("school_level_mode") if program and program.feature_flags else None
-                valid_types = get_valid_school_types(slm)
-                if st not in valid_types:
-                    labels = {"ELEMENTARY": "초등", "MIDDLE": "중등", "HIGH": "고등"}
-                    allowed = ", ".join(labels.get(t, t) for t in sorted(valid_types))
-                    return Response(
-                        {"detail": f"이 학원에서는 {allowed}만 선택할 수 있습니다."},
-                        status=400,
-                    )
-                student.school_type = st
-                update_fields.append("school_type")
-        if "elementary_school" in data:
-            student.elementary_school = (data.get("elementary_school") or "").strip()[:100] or None
-            update_fields.append("elementary_school")
-        if "high_school" in data:
-            student.high_school = (data.get("high_school") or "").strip()[:100] or None
-            update_fields.append("high_school")
-        if "middle_school" in data:
-            student.middle_school = (data.get("middle_school") or "").strip()[:100] or None
-            update_fields.append("middle_school")
-        if "origin_middle_school" in data:
-            student.origin_middle_school = (data.get("origin_middle_school") or "").strip()[:100] or None
-            update_fields.append("origin_middle_school")
-        if "grade" in data:
-            from apps.domains.students.services.school import is_valid_grade
-            raw = data.get("grade")
-            if raw is not None and raw != "":
-                try:
-                    g = int(raw)
-                    student.grade = g if is_valid_grade(student.school_type, g) else None
-                except (TypeError, ValueError):
-                    student.grade = None
-            else:
-                student.grade = None
-            update_fields.append("grade")
-        if "high_school_class" in data:
-            student.high_school_class = (data.get("high_school_class") or "").strip()[:100] or None
-            update_fields.append("high_school_class")
-        if "major" in data:
-            student.major = (data.get("major") or "").strip()[:50] or None
-            update_fields.append("major")
-        if "memo" in data:
-            student.memo = (data.get("memo") or "").strip() or None
-            update_fields.append("memo")
-        if update_fields:
-            student.save(update_fields=update_fields)
+        try:
+            result = update_student_profile(
+                student=student,
+                tenant=request.tenant,
+                data=dict(data),
+                identity_field="username",
+                ignore_blank_name=True,
+            )
+            student = result.student
+        except StudentProfileUpdateError as e:
+            return Response(e.detail if isinstance(e.detail, dict) else {"detail": str(e.detail)}, status=400)
 
         current_password = data.get("current_password")
         new_password = data.get("new_password")

@@ -43,6 +43,8 @@ class PostViewSet(viewsets.ModelViewSet):
     """Post CRUD. tenant from request. list: ?node_id= or admin list."""
     serializer_class = PostEntitySerializer
     permission_classes = [TenantResolvedAndMember]
+    STUDENT_WRITABLE_POST_TYPES = {"board", "qna", "counsel"}
+    STUDENT_UPDATE_FIELDS = {"title", "content", "category_label"}
 
     def update(self, request, *args, **kwargs):
         """학생은 본인 글만 수정 가능. 학부모는 수정 불가."""
@@ -487,6 +489,24 @@ class PostViewSet(viewsets.ModelViewSet):
         if post_type not in VALID_POST_TYPES:
             post_type = "board"
 
+        if request_student is not None:
+            if post_type not in self.STUDENT_WRITABLE_POST_TYPES:
+                return Response(
+                    {"detail": "학생 계정은 자유게시판, 질문, 상담 신청만 등록할 수 있습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            if node_ids:
+                return Response(
+                    {"detail": "학생 계정은 게시 대상을 직접 지정할 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            admin_only_fields = {"status", "is_urgent", "is_pinned", "published_at"} & set(request.data.keys())
+            if admin_only_fields:
+                return Response(
+                    {"detail": "학생 계정은 운영 필드를 지정할 수 없습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+
         # QnA는 작성자(created_by) 필수. 프로필 로드 전 제출 시 null 저장 방지.
         if post_type == "qna" and created_by is None:
             return Response(
@@ -523,6 +543,13 @@ class PostViewSet(viewsets.ModelViewSet):
             is_pinned = parse_bool(request.data.get("is_pinned", False), field_name="is_pinned")
         except ValidationError as e:
             return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+        post_status = str(request.data.get("status", "published") or "published").strip().lower()
+        if post_status not in {"draft", "published", "archived"}:
+            return Response({"detail": f"허용되지 않는 status: {post_status}"}, status=status.HTTP_400_BAD_REQUEST)
+        if request_student is not None:
+            is_urgent = False
+            is_pinned = False
+            post_status = "published"
 
         data = {
             "post_type": post_type,
@@ -534,7 +561,7 @@ class PostViewSet(viewsets.ModelViewSet):
             "author_role": author_role,
             "is_urgent": is_urgent,
             "is_pinned": is_pinned,
-            "status": request.data.get("status", "published"),
+            "status": post_status,
             "published_at": request.data.get("published_at") or None,
         }
         svc = CommunityService(tenant)
@@ -551,6 +578,12 @@ class PostViewSet(viewsets.ModelViewSet):
         if getattr(request.user, "parent_profile", None) is not None:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("학부모 계정은 수정이 제한됩니다.")
+        request_student = get_request_student(request)
+        if request_student is not None and not self._is_staff_request(request):
+            forbidden = set(serializer.validated_data.keys()) - self.STUDENT_UPDATE_FIELDS
+            if forbidden:
+                from rest_framework.exceptions import PermissionDenied
+                raise PermissionDenied("학생 계정은 제목, 내용, 분류만 수정할 수 있습니다.")
         # Content sanitization
         if "content" in serializer.validated_data:
             serializer.validated_data["content"] = sanitize_html(
@@ -645,7 +678,11 @@ class PostViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_403_FORBIDDEN,
                 )
 
-        serializer = PostReplySerializer(data=request.data, partial=False)
+        serializer = PostReplySerializer(
+            data=request.data,
+            partial=False,
+            context={"request": request, "view": self, "post": post},
+        )
         serializer.is_valid(raise_exception=True)
 
         # 답글 nesting (2026-05-11): parent_reply_id 받아서 답글로 저장.
@@ -882,7 +919,12 @@ class PostViewSet(viewsets.ModelViewSet):
             reply.delete()
             return Response(status=status.HTTP_204_NO_CONTENT)
         # PATCH
-        serializer = PostReplySerializer(reply, data=request.data, partial=True)
+        serializer = PostReplySerializer(
+            reply,
+            data=request.data,
+            partial=True,
+            context={"request": request, "view": self, "post": post},
+        )
         serializer.is_valid(raise_exception=True)
         # 🔐 XSS 방지: 댓글 수정 시에도 content sanitize (2026-05-11 보안 리뷰 H2: 무조건 적용)
         if "content" in serializer.validated_data:

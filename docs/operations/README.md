@@ -1,26 +1,38 @@
-# operations — 운영 실무 가이드
+# operations
 
-운영·배포·테넌트 셋업 실무 문서. 각 문서 스코프 1줄 요약.
+배포, 운영, 장애 대응, 테넌트 셋업 절차의 정본.
 
-## 배포 / 인프라
+## 배포
 
 | 문서 | 스코프 | 사용 시점 |
 |------|--------|-----------|
-| [배포.md](배포.md) | 인프라 부트스트랩 (RDS/SQS/EC2/IAM 처음부터 끝까지) | 새 환경/리전 셋업 |
-| [deployment-modes.md](deployment-modes.md) | 배포 경로 비교 (CI 자동 vs deploy.ps1) | 어느 경로 쓸지 결정 |
-| [formal-deploy.md](formal-deploy.md) | `deploy.ps1` 동작 상세 | 수동 정식 배포 실행 |
+| [deployment-modes.md](deployment-modes.md) | CI 자동 배포 vs 수동 정식 배포 | 배포 경로 선택 |
+| [formal-deploy.md](formal-deploy.md) | `deploy.ps1` 동작 상세 | 인프라 반영/정식 배포 |
+| [배포.md](배포.md) | legacy 인프라 부트스트랩 노트 | 새 환경/리전 셋업 전 `deployment-modes.md`와 실행 스크립트 재확인 |
 | [ssm-json-schema.md](ssm-json-schema.md) | SSM `/academy/api/env` JSON 스키마 | env 키 추가/변경 |
 
-## 일상 운영
+## 평시 운영
 
-| 문서 | 스코프 | 사용 시점 |
-|------|--------|-----------|
-| [운영.md](운영.md) | 일상 운영 체크/엑셀 흐름/학생 복구/관리 명령 | 평시 운영 |
-| [local-dev-db.md](local-dev-db.md) | 로컬 개발 DB 셋업 | 로컬 환경 구성 |
-| [video-batch-runbook.md](video-batch-runbook.md) | 영상 Batch 운영 (트랜스코드) | 영상 인코딩 이슈 |
-| [disaster-recovery-runbook.md](disaster-recovery-runbook.md) | 장애 복구 절차 | 장애 발생 시 |
+| 문서 | 스코프 |
+|------|--------|
+| [운영.md](운영.md) | legacy 혼합 운영 노트. 영상/배포 절차는 runbook 우선 | 일상 운영 참고 |
+| [operations-baseline.md](operations-baseline.md) | 배포/CI/보안/observability baseline |
+| [local-dev-db.md](local-dev-db.md) | 로컬 개발 DB 셋업 |
+| [billing-go-live-checklist.md](billing-go-live-checklist.md) | Toss 자동결제 오픈 전 체크리스트 |
 
-## 신규 테넌트 셋업
+## Runbooks
+
+| 문서 | 스코프 |
+|------|--------|
+| [runbooks/](runbooks/) | runbook 인덱스 |
+| [runbooks/deploy-checklist.md](runbooks/deploy-checklist.md) | 배포 전 체크리스트 |
+| [runbooks/disaster-recovery.md](runbooks/disaster-recovery.md) | DB 장애/복구 |
+| [runbooks/emergency-mode.md](runbooks/emergency-mode.md) | 긴급 모드 |
+| [runbooks/incidents.md](runbooks/incidents.md) | 사고 일반 대응 |
+| [runbooks/ops-prohibited.md](runbooks/ops-prohibited.md) | 운영 금지 사항 |
+| [runbooks/video-batch.md](runbooks/video-batch.md) | 영상 Batch 운영 |
+
+## 테넌트 셋업
 
 | 문서 | 스코프 |
 |------|--------|
@@ -30,6 +42,7 @@
 
 ## 작성 규칙
 
-- 새 운영 문서 → 위 3그룹(배포/일상/테넌트) 중 하나 + README 표에 추가
-- 한 주제 = 한 파일. 같은 주제 분산 금지
-- 파일명 = kebab-case (한국어 파일명은 한국어 그대로)
+- 실제 운영 절차만 둔다.
+- 인프라 구조/용량 설명은 `../infrastructure/`에 둔다.
+- 사고 기록은 `../reports/incidents/`에 둔다.
+- 예정 작업과 리팩토링 계획은 `../refactor/`에 둔다.
