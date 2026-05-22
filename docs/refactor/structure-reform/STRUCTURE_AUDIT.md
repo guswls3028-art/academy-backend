@@ -273,6 +273,12 @@ services, or events.
   guarded raw SQL graph, but `bulk_permanent_delete`, conflict delete,
   duplicate cleanup, and purge commands no longer own separate destructive
   logic.
+- Account recovery temporary password generation now has one SSOT at
+  `apps.core.services.password.TEMP_PASSWORD_LENGTH = 6`. Public login recovery
+  uses the canonical dispatch endpoint and production AlimTalk logging confirms
+  successful send while preserving credential-body redaction. Legacy student
+  password endpoints remain compatibility roots and still need deprecation
+  logging before removal.
 
 ## 11. Phase 1 Recommendation
 
