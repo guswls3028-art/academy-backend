@@ -299,6 +299,13 @@ Implemented:
   `useTeacherPendingCounts`.
 - Frontend boundary snapshot improved from 37 to 30 cross-app/admin role imports
   after the notification-count contract slice.
+- Community post/reply/attachment contracts now live behind
+  `src/shared/api/contracts/community.ts`. Admin community API remains a
+  compatibility facade, student notices/community use the student API facade,
+  teacher developer feedback uses a teacher-local facade, and patch notes data
+  moved to `src/shared/product/patchNotesData.ts`.
+- Frontend boundary snapshot improved from 30 to 24 cross-app/admin role imports
+  after the community/notice/developer contract slice.
 
 ## Cleanup And Removal Rule
 

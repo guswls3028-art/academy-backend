@@ -21,7 +21,7 @@ structurally enforced, and which small refactor should start Phase 1.
   `src/app_student`, plus `auth`, `core`, `shared`, `landing`.
 - Current refactor inventory measured 27 backend domain directories,
   104 backend cross-domain imports, 645 backend cross-domain internal imports,
-  30 frontend cross-app imports, and 0 `shared -> app_*` imports.
+  24 frontend cross-app imports, and 0 `shared -> app_*` imports.
 
 Backend API prefixes relevant to this audit:
 

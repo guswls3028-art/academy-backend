@@ -90,4 +90,8 @@ Risk scale:
 - 2026-05-22: Operational notification counts moved to shared notification
   contracts/hooks. Admin notification modules are compatibility facades, teacher
   surfaces use `useTeacherPendingCounts`, and cross-app/admin role imports are
-  now 30.
+  became 30.
+- 2026-05-22: Community post/reply/attachment contracts moved to shared
+  community contracts. Student notices/community and teacher developer feedback
+  no longer import admin community internals, patch notes are shared product
+  data, and cross-app/admin role imports are now 24.
