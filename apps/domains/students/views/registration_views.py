@@ -16,9 +16,7 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff, TenantResolved
 from apps.api.common.throttles import SmsEndpointThrottle, SignupCheckThrottle
-from apps.core.models import TenantMembership
 
-from apps.domains.parents.services import ensure_parent_account_for_student
 from apps.domains.messaging.services import get_tenant_site_url, send_registration_approved_messages
 
 from academy.adapters.db.django import repositories_students as student_repo
@@ -29,6 +27,7 @@ from ..serializers import (
     RegistrationRequestCreateSerializer,
     RegistrationRequestListSerializer,
 )
+from ..services import create_student_account
 from .student_views import StudentListPagination
 
 logger = logging.getLogger(__name__)
@@ -83,49 +82,31 @@ def _approve_registration_request(request, reg):
             if reg.status != StudentRegistrationRequest.PENDING:
                 return Response({"detail": "이미 처리된 신청입니다."}, status=400)
 
-            parent = None
-            if parent_phone:
-                parent_result = ensure_parent_account_for_student(
-                    tenant=tenant,
-                    parent_phone=parent_phone,
-                    student_name=name,
-                )
-                parent = parent_result.parent
-                parent_password_for_notice = parent_result.password_for_notice
-            User = get_user_model()
-            user = student_repo.user_create_user(
-                username=ps_number,
+            result = create_student_account(
                 tenant=tenant,
-                phone=phone or "",
-                name=name,
+                password_hash=reg.initial_password,
+                student_data={
+                    "name": name,
+                    "parent_phone": parent_phone,
+                    "phone": phone,
+                    "ps_number": ps_number,
+                    "omr_code": omr_code,
+                    "uses_identifier": not (phone and phone.strip()),
+                    "school_type": reg.school_type,
+                    "elementary_school": reg.elementary_school or None,
+                    "high_school": reg.high_school or None,
+                    "middle_school": reg.middle_school or None,
+                    "high_school_class": reg.high_school_class or None,
+                    "major": reg.major or None,
+                    "grade": reg.grade,
+                    "gender": reg.gender or None,
+                    "memo": reg.memo or None,
+                    "address": reg.address or None,
+                    "origin_middle_school": reg.origin_middle_school or None,
+                },
             )
-            # 가입 시 입력한 비밀번호(해시) 직접 이전 — 임시 비번 생성하지 않음
-            user.password = reg.initial_password
-            user.save()
-
-            student = student_repo.student_create(
-                tenant=tenant,
-                user=user,
-                parent=parent,
-                name=name,
-                parent_phone=parent_phone,
-                phone=phone,
-                ps_number=ps_number,
-                omr_code=omr_code,
-                uses_identifier=not (phone and phone.strip()),
-                school_type=reg.school_type,
-                elementary_school=reg.elementary_school or None,
-                high_school=reg.high_school or None,
-                middle_school=reg.middle_school or None,
-                high_school_class=reg.high_school_class or None,
-                major=reg.major or None,
-                grade=reg.grade,
-                gender=reg.gender or None,
-                memo=reg.memo or None,
-                address=reg.address or None,
-                origin_middle_school=reg.origin_middle_school or None,
-            )
-            TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
+            student = result.student
+            parent_password_for_notice = result.parent_password_for_notice or "변경되지 않음"
             reg.status = StudentRegistrationRequest.APPROVED
             reg.student = student
             reg.save(update_fields=["status", "student", "updated_at"])

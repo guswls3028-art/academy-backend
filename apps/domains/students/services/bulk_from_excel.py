@@ -17,6 +17,7 @@ def bulk_create_students_from_excel_rows(
     tenant_id: int,
     students_data: list[dict],
     initial_password: str,
+    send_welcome_message: bool = True,
     on_row_progress: Callable[[int, int], None] | None = None,
 ) -> dict:
     """
@@ -104,7 +105,7 @@ def bulk_create_students_from_excel_rows(
             })
 
     # 가입 안내 알림톡 발송 (새로 생성된 학생만)
-    if created_students:
+    if send_welcome_message and created_students:
         try:
             from apps.domains.messaging.services import send_welcome_messages, get_tenant_site_url
             site_url = get_tenant_site_url(tenant)

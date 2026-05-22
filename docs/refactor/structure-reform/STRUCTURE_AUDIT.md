@@ -58,17 +58,20 @@ It owns:
 [VERIFIED]
 
 Tenant-scoped student selectors and profile/lifecycle services now exist for the
-touched paths. Profile update, soft delete, restore, and permanent-delete
-entrypoints have canonical service boundaries while keeping deployed URLs
-stable.
+touched paths. Profile update, soft delete, restore, permanent-delete, and the
+student account creation graph have canonical service boundaries while keeping
+deployed URLs stable.
 
 [INFERRED]
 
-Student create, registration approval, import rows, schedule visibility, read
-DTO convergence, and domain-event cleanup still have split behavior across
-views, serializers, service helpers, repository wrappers, frontend mapping
-functions, and E2E helpers. Therefore a patch outside the canonicalized paths is
-not guaranteed to reach every surface.
+Student create still has split orchestration behavior: validation,
+duplicate/deleted-student policy, API response shapes, import job dispatch, and
+welcome/approval notifications remain caller-owned. The durable account graph
+itself is now centralized. Schedule visibility, read DTO convergence, and
+domain-event cleanup still have split behavior across views, serializers,
+service helpers, repository wrappers, frontend mapping functions, and E2E
+helpers. Therefore a patch outside the canonicalized paths is not guaranteed to
+reach every surface.
 
 ## 3. Student Data Read Paths
 
@@ -95,11 +98,11 @@ app, auth, messaging, clinic/attendance/results, and E2E helper paths.
 
 | Feature | Current write roots | Evidence |
 |---|---:|---|
-| Single student create | 1 primary, plus duplicates | `StudentViewSet.create` creates User, Student, Parent link, TenantMembership, welcome message |
-| Bulk JSON create | 1 duplicate root | `StudentViewSet.bulk_create` repeats ps_number, OMR, parent, user, membership logic |
-| Excel/import create | 2 roots | `bulk_create_from_excel` dispatches worker; `services/bulk_from_excel.py` calls `lecture_enroll` |
-| Lecture enrollment create/restore | 1 root | `get_or_create_student_for_lecture_enroll` creates/restores Student and User |
-| Registration approve | 1 root | `_approve_registration_request` creates User, Student, Parent, TenantMembership |
+| Single student create | 1 primary, plus compatibility surfaces | `StudentViewSet.create` validates/responds and calls `create_student_account` for Parent/User/Student/Membership |
+| Bulk JSON create | 1 compatibility root | `StudentViewSet.bulk_create` owns row policy and calls `create_student_account` for the account graph |
+| Excel/import create | 2 roots | `bulk_create_from_excel` dispatches worker; `services/bulk_from_excel.py` calls `lecture_enroll`, which calls `create_student_account` for new students |
+| Lecture enrollment create/restore | 1 root | `get_or_create_student_for_lecture_enroll` restores through lifecycle service or creates through `create_student_account` |
+| Registration approve | 1 compatibility root | `_approve_registration_request` owns approval state/message and calls `create_student_account` with the signup password hash |
 | Admin/student profile update | 3 roots | `StudentViewSet.perform_update`, `StudentViewSet.me`, `StudentProfileView.patch` |
 | Schedule visibility | 3 action roots | `StudentSessionClearPastView`, `StudentSessionHideView`, `StudentSessionUnhideView` mutate Student fields |
 | Soft delete / restore / permanent delete | 6 roots | `destroy`, `bulk_delete`, `bulk_restore`, `bulk_permanent_delete`, duplicate fix, purge command |
@@ -127,9 +130,11 @@ creation/restoration and 4 roots for password/account recovery.
 - Frontend admin `updateStudent` with `noPhone` sends a synthetic phone and
   `omr_code`, while backend treats `omr_code` as read-only on update and computes
   it from phone/parent phone.
-- Parent password meaning drift exists: `parents.services` creates parent initial
-  password from the last 4 digits, while registration/bulk welcome messaging can
-  still report `"0000"`.
+- Parent password meaning drift has been reduced: `parents.services` creates
+  parent initial password from the last 4 digits, and active student create
+  roots now pass the returned notice value through welcome/approval messaging.
+  Remaining risk is in future parent relink/read DTO work, not duplicated
+  create-time password constants.
 
 Required report statement: this field is used as backend meaning A and frontend
 meaning B in multiple places. `uses_identifier/no_phone/omr_code` is the clearest
@@ -221,9 +226,9 @@ services, or events.
 - Student lifecycle state is still spread across `Student.deleted_at`,
   `Student.is_managed`, `User.is_active`, `TenantMembership.is_active`,
   `Enrollment.status`, clinic participant status, and messaging side effects.
-- Soft delete, restore, and permanent-delete entrypoints are now explicit
-  lifecycle service use-cases. Registration approve, create/import rows,
-  schedule visibility, and domain-event cleanup remain split.
+- Soft delete, restore, permanent-delete, and account graph creation entrypoints
+  now have explicit service use-cases. Registration approve, create/import row
+  orchestration, schedule visibility, and domain-event cleanup remain split.
 - Notifications are fired inside view/service flows rather than through a
   durable domain event/outbox contract.
 - Logs exist in some destructive paths, but a uniform
@@ -279,6 +284,14 @@ services, or events.
   successful send while preserving credential-body redaction. Legacy student
   password endpoints remain compatibility roots and still need deprecation
   logging before removal.
+- Student account graph creation now has one SSOT at
+  `apps.domains.students.services.create_student_account`. Direct create, JSON
+  bulk create, conflict delete-and-recreate, registration approval, lecture
+  enrollment import, and student Excel import all share Parent ensure, User
+  password/hash assignment, Student creation, and student TenantMembership
+  activation. Frontend teacher create routes through the shared student
+  contract, admin Excel upload forwards the welcome toggle, and worker payload
+  booleans are parsed explicitly.
 
 ## 11. Phase 1 Recommendation
 

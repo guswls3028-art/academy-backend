@@ -11,6 +11,7 @@
 | [messaging-alimtalk.md](messaging-alimtalk.md) | 알림톡 | 4종 ITEM_LIST 봉투 + 본문 자유 정책 |
 | [account-recovery.md](account-recovery.md) | 로그인 | 아이디/비밀번호 찾기 |
 | [parent-account.md](parent-account.md) | 학부모 | 학부모 계정 생성/로그인 |
+| [student-creation.md](student-creation.md) | 학생 | 생성 계정 그래프 |
 | [student-lifecycle.md](student-lifecycle.md) | 학생 | 삭제/복원/영구삭제 생명주기 |
 
 ## 도메인별

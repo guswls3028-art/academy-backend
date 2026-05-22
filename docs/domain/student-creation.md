@@ -1,0 +1,73 @@
+# 학생 생성 SSOT
+
+**상태:** Active  
+**최종 점검:** 2026-05-23  
+**코드 기준:** `apps/domains/students/services/creation.py`, `apps/domains/students/views/student_views.py`, `apps/domains/students/views/registration_views.py`, `apps/domains/students/services/lecture_enroll.py`, `apps/domains/students/services/bulk_from_excel.py`
+
+## 1. 책임 경계
+
+학생 생성의 계정 그래프 SSOT는 `create_student_account()`다.
+
+이 서비스가 소유하는 것:
+
+- `ensure_parent_account_for_student()` 호출과 Parent 연결
+- 학생 `User` 생성
+- 학생 비밀번호 설정 또는 가입 신청의 기존 password hash 이전
+- `Student` 생성
+- `TenantMembership(role="student")` 활성화
+- 학부모 안내용 비밀번호 문구 반환
+
+이 서비스가 소유하지 않는 것:
+
+- serializer/API 입력 검증
+- 활성/삭제 학생 중복 정책
+- 삭제 학생 복원 또는 delete-and-recreate 결정
+- 가입 신청 상태 전이
+- Excel/R2/AI job dispatch
+- 알림톡 발송
+- HTTP 응답 모양
+
+위 항목들은 아직 각 표면의 compatibility contract다. 다음 리팩토링은 표면별 응답/상태 계약을 먼저 스냅샷한 뒤 orchestration service로 옮긴다.
+
+## 2. 현재 진입점
+
+| 진입점 | 위치 | 생성 그래프 처리 |
+|--------|------|----------------|
+| 단건 생성 | `StudentViewSet.create` | `create_student_account(password=...)` |
+| JSON 일괄 생성 | `StudentViewSet.bulk_create` | 행 정책 처리 후 `create_student_account(password=...)` |
+| 충돌 delete-and-recreate | `StudentViewSet.bulk_resolve_conflicts` | 영구삭제 후 `create_student_account(password=...)` |
+| 가입 신청 승인 | `_approve_registration_request` | `create_student_account(password_hash=reg.initial_password)` |
+| 강의/수강 Excel 신규 학생 | `get_or_create_student_for_lecture_enroll` | 복원 실패/중복 판단 후 `create_student_account(password=...)` |
+| 학생 Excel worker | `bulk_create_students_from_excel_rows` | `lecture_enroll` helper를 통해 생성 |
+
+## 3. 불변 조건
+
+- `tenant`는 반드시 caller가 resolve해서 전달한다. tenant fallback은 만들지 않는다.
+- `student_data.ps_number`는 caller 또는 serializer가 확정한다.
+- `password`와 `password_hash` 중 정확히 하나만 전달한다.
+- 학부모가 새로 생성되면 안내 비밀번호는 `parent_initial_password(parent_phone)`이다.
+- 기존 학부모 계정이면 안내 문구는 `변경되지 않음`이다.
+- welcome/approval 알림톡은 caller가 서비스 결과의 `parent_password_by_phone` 또는 `parent_password_for_notice`를 사용한다.
+- 복원은 생성이 아니므로 비밀번호를 재발급하지 않고 welcome 알림톡도 새 비밀번호처럼 보내지 않는다.
+
+## 4. Frontend 계약
+
+- 학생 생성 API 호출은 `src/shared/api/contracts/students.ts`의 `createStudent()`가 canonical mapper다.
+- teacher 모바일 생성 시트는 role-local raw `/students/` POST를 쓰지 않고 shared contract를 호출한다.
+- admin Excel 업로드의 `sendWelcomeMessage` 토글은 multipart `send_welcome_message`로 worker payload까지 전달된다.
+- worker payload boolean은 `academy.application.services.excel_parsing_service._payload_bool()`로 명시 파싱한다. 문자열 `"false"`는 false다.
+
+## 5. 검증 기준
+
+학생 생성 경로 변경 시 최소 검증:
+
+- `python -m pytest apps\domains\students\tests -q`
+- `python -m pytest apps\domains\messaging\tests\test_messaging_service.py -q`
+- `python manage.py check --settings apps.api.config.settings.test`
+- `python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test`
+- frontend focused ESLint for touched student files
+- `pnpm typecheck`
+- `pnpm build`
+- `pnpm guard:legacy-api`
+
+운영 QA는 최소 하나의 disposable 학생 생성, 로그인 가능성, 알림톡 전송 여부, cleanup(soft delete + permanent delete)을 포함한다.

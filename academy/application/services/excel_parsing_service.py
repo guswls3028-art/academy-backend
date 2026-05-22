@@ -17,6 +17,26 @@ from academy.application.ports.storage import IObjectStorage
 logger = logging.getLogger(__name__)
 
 
+def _payload_bool(value: Any, *, default: bool) -> bool:
+    """Parse worker payload booleans without importing HTTP/DRF parsing concerns."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        if value in (0, 1):
+            return bool(value)
+        raise ValueError("boolean payload must be 0 or 1")
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "t", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "f", "no", "n", "off"}:
+            return False
+        raise ValueError("boolean payload must be true/false")
+    raise ValueError("boolean payload must be bool/int/str")
+
+
 class ExcelValidationError(ValueError):
     """
     학부모 전화 필수 검증 등 엑셀 파싱 검증 실패 시 (Fail-Fast).
@@ -618,6 +638,10 @@ class ExcelParsingService:
                 tenant_id=int(tenant_id),
                 students_data=rows,
                 initial_password=initial_password,
+                send_welcome_message=_payload_bool(
+                    payload.get("send_welcome_message"),
+                    default=True,
+                ),
                 on_row_progress=_row_progress if on_progress else None,
             )
             if isinstance(result, dict) and lecture_title:

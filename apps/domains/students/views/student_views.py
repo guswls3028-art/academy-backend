@@ -18,6 +18,7 @@ from rest_framework.exceptions import NotFound, ValidationError
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
+from apps.core.parsing import parse_bool
 from apps.api.common.upload_validation import (
     DEFAULT_MAX_EXCEL_SIZE,
     EXCEL_CONTENT_TYPES,
@@ -25,10 +26,8 @@ from apps.api.common.upload_validation import (
     validate_uploaded_file,
 )
 from apps.core.permissions import IsStudent, TenantResolvedAndStaff
-from apps.core.models import TenantMembership
 from apps.core.models.user import user_display_username
 
-from apps.domains.parents.services import ensure_parent_account_for_student
 from apps.domains.messaging.services import send_welcome_messages, get_tenant_site_url, send_event_notification
 from apps.domains.ai.gateway import dispatch_job
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
@@ -40,6 +39,7 @@ from ..selectors import student_for_tenant_user, students_for_tenant
 from ..services import (
     StudentLifecycleError,
     StudentProfileUpdateError,
+    create_student_account,
     normalize_school_from_name,
     permanently_delete_students,
     restore_student,
@@ -136,7 +136,7 @@ class StudentViewSet(ModelViewSet):
         return StudentDetailSerializer
 
     # ------------------------------
-    # Student + User + Membership 생성 (봉인)
+    # Student account graph 생성 (봉인)
     # ------------------------------
     @transaction.atomic
     def create(self, request, *args, **kwargs):
@@ -145,11 +145,8 @@ class StudentViewSet(ModelViewSet):
 
         1. 삭제된 학생 체크 (전화번호 또는 이름+학부모전화)
         2. 입력값 검증 (StudentCreateSerializer)
-        3. 학부모 계정 생성/연결 (ensure_parent_account_for_student)
-        4. User 생성 (username = ps_number)
-        5. Student 생성 + tenant / user / parent 연결
-        6. TenantMembership(role=student) SSOT 강제 생성
-        7. (옵션) 가입 성공 메시지 일괄 발송
+        3. create_student_account SSOT로 Parent/User/Student/Membership 생성
+        4. (옵션) 가입 성공 메시지 일괄 발송
         """
         tenant = request.tenant
         raw_data = request.data
@@ -203,47 +200,14 @@ class StudentViewSet(ModelViewSet):
         data = serializer.validated_data
         send_welcome = data.pop("send_welcome_message", False)
 
-        phone = data.get("phone")  # nullable
         password = data.pop("initial_password")
-        parent_phone = data.get("parent_phone", "")
-        ps_number = data.get("ps_number")
 
-        # 1️⃣ 학부모 계정 생성 (ID = 학부모 전화번호)
-        parent = None
-        parent_password_for_notice = ""
-        if parent_phone:
-            parent_result = ensure_parent_account_for_student(
-                tenant=request.tenant,
-                parent_phone=parent_phone,
-                student_name=data.get("name", ""),
-            )
-            parent = parent_result.parent
-            parent_password_for_notice = parent_result.password_for_notice
-
-        # 2️⃣ User 생성 (tenant + 내부 username t{id}_{ps_number} 로 전역 유일)
-        user = student_repo.user_create_user(
-            username=ps_number,
+        result = create_student_account(
             tenant=request.tenant,
-            phone=phone or "",
-            name=data.get("name", ""),
+            student_data=data,
+            password=password,
         )
-        user.set_password(password)
-        user.save()
-
-        # 3️⃣ Student 생성 + parent 연결
-        student = student_repo.student_create(
-            tenant=request.tenant,
-            user=user,
-            parent=parent,
-            **data,
-        )
-
-        # 4️⃣ TenantMembership
-        TenantMembership.ensure_active(
-            tenant=request.tenant,
-            user=user,
-            role="student",
-        )
+        student = result.student
 
         # 5️⃣ 가입 성공 메시지 발송
         if send_welcome:
@@ -251,9 +215,7 @@ class StudentViewSet(ModelViewSet):
             send_welcome_messages(
                 created_students=[student],
                 student_password=password,
-                parent_password_by_phone=(
-                    {parent_phone: parent_password_for_notice} if parent_phone else {}
-                ),
+                parent_password_by_phone=result.parent_password_by_phone,
                 site_url=site_url,
             )
 
@@ -373,6 +335,10 @@ class StudentViewSet(ModelViewSet):
             )
         upload_file = request.FILES.get("file")
         initial_password = (request.data.get("initial_password") or "").strip()
+        send_welcome = parse_bool(
+            request.data.get("send_welcome_message", True),
+            field_name="send_welcome_message",
+        )
         if not upload_file:
             raise ValidationError({"detail": "file(엑셀)은 필수입니다."})
         if len(initial_password) < 4:
@@ -402,6 +368,7 @@ class StudentViewSet(ModelViewSet):
                 "bucket": bucket,
                 "tenant_id": tenant.id,
                 "initial_password": initial_password,
+                "send_welcome_message": send_welcome,
             }
             out = dispatch_job(
                 job_type="excel_parsing",
@@ -544,32 +511,6 @@ class StudentViewSet(ModelViewSet):
                     if student_repo.student_filter_tenant_ps_number(tenant, ps_number).exists():
                         raise ValueError("이미 사용 중인 PS 번호입니다.")
 
-                    # 학부모 계정 생성
-                    parent = None
-                    if parent_phone:
-                        parent_result = ensure_parent_account_for_student(
-                            tenant=tenant,
-                            parent_phone=parent_phone,
-                            student_name=item.get("name", ""),
-                        )
-                        parent = parent_result.parent
-                        if (
-                            parent_phone not in parent_password_by_phone
-                            or parent_result.user_created
-                        ):
-                            parent_password_by_phone[parent_phone] = (
-                                parent_result.password_for_notice
-                            )
-
-                    user = student_repo.user_create_user(
-                        username=ps_number,
-                        tenant=tenant,
-                        phone=phone or "",
-                        name=item.get("name", ""),
-                    )
-                    user.set_password(password)
-                    user.save()
-
                     school_val = (item.get("school") or "").strip() or None
                     st, elementary_school, high_school, middle_school = normalize_school_from_name(
                         school_val, item.get("school_type")
@@ -577,33 +518,39 @@ class StudentViewSet(ModelViewSet):
                     high_school_class = (item.get("high_school_class") or "").strip() or None if st == "HIGH" else None
                     major = (item.get("major") or "").strip() or None if st == "HIGH" else None
 
-                    student = student_repo.student_create(
+                    result = create_student_account(
                         tenant=tenant,
-                        user=user,
-                        parent=parent,
-                        name=item["name"],
-                        phone=phone,
-                        parent_phone=item["parent_phone"],
-                        ps_number=ps_number,
-                        omr_code=omr_code,
-                        uses_identifier=item.get("uses_identifier", False) or (phone is None),
-                        gender=item.get("gender") or None,
-                        school_type=st,
-                        elementary_school=elementary_school,
-                        high_school=high_school,
-                        middle_school=middle_school,
-                        high_school_class=high_school_class,
-                        major=major,
-                        grade=item.get("grade"),
-                        memo=item.get("memo") or None,
-                        is_managed=item.get("is_managed", True),
+                        password=password,
+                        student_data={
+                            "name": item["name"],
+                            "phone": phone,
+                            "parent_phone": item["parent_phone"],
+                            "ps_number": ps_number,
+                            "omr_code": omr_code,
+                            "uses_identifier": item.get("uses_identifier", False) or (phone is None),
+                            "gender": item.get("gender") or None,
+                            "school_type": st,
+                            "elementary_school": elementary_school,
+                            "high_school": high_school,
+                            "middle_school": middle_school,
+                            "high_school_class": high_school_class,
+                            "major": major,
+                            "grade": item.get("grade"),
+                            "memo": item.get("memo") or None,
+                            "is_managed": item.get("is_managed", True),
+                        },
                     )
-
-                    TenantMembership.ensure_active(
-                        tenant=tenant,
-                        user=user,
-                        role="student",
-                    )
+                    student = result.student
+                    if (
+                        parent_phone
+                        and (
+                            parent_phone not in parent_password_by_phone
+                            or result.parent_user_created
+                        )
+                    ):
+                        parent_password_by_phone[parent_phone] = (
+                            result.parent_password_for_notice
+                        )
                     created_count += 1
                     created_students.append(student)
             except Exception as e:
@@ -687,23 +634,8 @@ class StudentViewSet(ModelViewSet):
                 else:
                     with transaction.atomic():
                         permanently_delete_students(tenant=tenant, student_ids=[student.id])
-                        parent = None
                         parent_phone_raw = str(student_data.get("parent_phone") or student_data.get("parentPhone", "")).replace(" ", "").replace("-", "").replace(".", "")
                         parent_phone = parent_phone_raw if len(parent_phone_raw) >= 11 else ""
-                        if parent_phone:
-                            parent_result = ensure_parent_account_for_student(
-                                tenant=tenant,
-                                parent_phone=parent_phone,
-                                student_name=student_data.get("name", ""),
-                            )
-                            parent = parent_result.parent
-                            if (
-                                parent_phone not in parent_password_by_phone
-                                or parent_result.user_created
-                            ):
-                                parent_password_by_phone[parent_phone] = (
-                                    parent_result.password_for_notice
-                                )
                         phone_raw = str(student_data.get("phone", "")).replace(" ", "").replace("-", "").replace(".", "")
                         phone = phone_raw if phone_raw and len(phone_raw) == 11 and phone_raw.startswith("010") else None
                         parent_phone_val = student_data.get("parent_phone") or student_data.get("parentPhone", "")
@@ -717,42 +649,45 @@ class StudentViewSet(ModelViewSet):
                             omr_code = parent_phone[-8:]
                         else:
                             raise ValueError("학생 전화번호 또는 부모 전화번호가 필요합니다.")
-                        user = student_repo.user_create_user(
-                            username=ps_number,
-                            tenant=tenant,
-                            phone=phone or "",
-                            name=student_data.get("name", ""),
-                        )
-                        user.set_password(password)
-                        user.save()
                         school_val = (student_data.get("school") or "").strip() or None
                         st, elementary_school, high_school, middle_school = normalize_school_from_name(
                             school_val, student_data.get("school_type")
                         )
                         high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
                         major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
-                        new_student = student_repo.student_create(
+                        result = create_student_account(
                             tenant=tenant,
-                            user=user,
-                            parent=parent,
-                            name=student_data.get("name", ""),
-                            phone=phone,
-                            parent_phone=parent_phone,
-                            ps_number=ps_number,
-                            omr_code=omr_code,
-                            uses_identifier=student_data.get("uses_identifier", False) or (phone is None),
-                            gender=student_data.get("gender") or None,
-                            school_type=st,
-                            elementary_school=elementary_school,
-                            high_school=high_school,
-                            middle_school=middle_school,
-                            high_school_class=high_school_class,
-                            major=major,
-                            grade=student_data.get("grade"),
-                            memo=student_data.get("memo") or None,
-                            is_managed=student_data.get("is_managed", True),
+                            password=password,
+                            student_data={
+                                "name": student_data.get("name", ""),
+                                "phone": phone,
+                                "parent_phone": parent_phone,
+                                "ps_number": ps_number,
+                                "omr_code": omr_code,
+                                "uses_identifier": student_data.get("uses_identifier", False) or (phone is None),
+                                "gender": student_data.get("gender") or None,
+                                "school_type": st,
+                                "elementary_school": elementary_school,
+                                "high_school": high_school,
+                                "middle_school": middle_school,
+                                "high_school_class": high_school_class,
+                                "major": major,
+                                "grade": student_data.get("grade"),
+                                "memo": student_data.get("memo") or None,
+                                "is_managed": student_data.get("is_managed", True),
+                            },
                         )
-                        TenantMembership.ensure_active(tenant=tenant, user=user, role="student")
+                        new_student = result.student
+                        if (
+                            parent_phone
+                            and (
+                                parent_phone not in parent_password_by_phone
+                                or result.parent_user_created
+                            )
+                        ):
+                            parent_password_by_phone[parent_phone] = (
+                                result.parent_password_for_notice
+                            )
                     created_count += 1
                     created_students.append(new_student)
             except Exception as e:

@@ -14,7 +14,7 @@
 | 강제 변경 | `must_change_password=True` |
 | 이름 | 기존 Parent 이름 우선, 없으면 `{학생이름} 학부모` |
 | 역할 | `TenantMembership.role = "parent"` |
-| 생성 시점 | 학생 등록 또는 계정복구 중 `ensure_parent_for_student()` 호출 |
+| 생성 시점 | 학생 생성 SSOT 또는 계정복구 중 parent ensure 호출 |
 
 `PARENT_DEFAULT_PASSWORD = "0000"` 상수는 외부 import 호환용 deprecated 값이다. 신규 코드에서 초기 비밀번호로 사용하지 않는다.
 
@@ -40,6 +40,9 @@
          기존 Parent 반환
          result.password_for_notice = "변경되지 않음"
 ```
+
+학생 생성 경로의 Parent/User/Student/Membership 계정 그래프는
+[student-creation.md](student-creation.md)가 정본이다.
 
 `ensure_parent_for_student()`는 기존 호출부 호환용 facade다. 알림톡·운영 안내처럼
 비밀번호 안내 문구가 필요한 신규 경로는 반드시 `ensure_parent_account_for_student()`

@@ -5,8 +5,7 @@ import re
 from django.db import transaction
 
 from academy.adapters.db.django import repositories_students as student_repo
-from apps.core.models import TenantMembership
-from apps.domains.parents.services import ensure_parent_account_for_student
+from .creation import create_student_account
 from .lifecycle import restore_student
 from .school import normalize_school_from_name
 
@@ -95,24 +94,6 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
             )
             return None, False, False
 
-        parent = None
-        if parent_phone:
-            parent_result = ensure_parent_account_for_student(
-                tenant=tenant,
-                parent_phone=parent_phone,
-                student_name=name,
-            )
-            parent = parent_result.parent
-
-        user = student_repo.user_create_user(
-            username=ps_number,
-            tenant=tenant,
-            phone=phone or "",
-            name=name,
-        )
-        user.set_password(password)
-        user.save()
-
         school_val = (item.get("school") or "").strip() or None
         st, elementary_school, high_school, middle_school = normalize_school_from_name(
             school_val, item.get("school_type")
@@ -120,33 +101,29 @@ def get_or_create_student_for_lecture_enroll(tenant, item, password):
         high_school_class = (item.get("high_school_class") or "").strip() or None if st == "HIGH" else None
         major = (item.get("major") or "").strip() or None if st == "HIGH" else None
 
-        student = student_repo.student_create(
+        result = create_student_account(
             tenant=tenant,
-            user=user,
-            parent=parent,
-            name=name,
-            phone=phone,
-            parent_phone=parent_phone,
-            ps_number=ps_number,
-            omr_code=omr_code,
-            uses_identifier=item.get("uses_identifier", False) or (phone is None or not phone),
-            gender=(item.get("gender") or "").strip().upper()[:1] or None,
-            school_type=st,
-            elementary_school=elementary_school,
-            high_school=high_school,
-            middle_school=middle_school,
-            high_school_class=high_school_class,
-            major=major,
-            grade=_grade_value(item.get("grade"), st),
-            memo=(item.get("memo") or "").strip() or None,
-            is_managed=item.get("is_managed", True),
+            password=password,
+            student_data={
+                "name": name,
+                "phone": phone,
+                "parent_phone": parent_phone,
+                "ps_number": ps_number,
+                "omr_code": omr_code,
+                "uses_identifier": item.get("uses_identifier", False) or (phone is None or not phone),
+                "gender": (item.get("gender") or "").strip().upper()[:1] or None,
+                "school_type": st,
+                "elementary_school": elementary_school,
+                "high_school": high_school,
+                "middle_school": middle_school,
+                "high_school_class": high_school_class,
+                "major": major,
+                "grade": _grade_value(item.get("grade"), st),
+                "memo": (item.get("memo") or "").strip() or None,
+                "is_managed": item.get("is_managed", True),
+            },
         )
-
-        TenantMembership.ensure_active(
-            tenant=tenant,
-            user=user,
-            role="student",
-        )
+        student = result.student
         if parent_phone:
-            student._parent_password_for_notice = parent_result.password_for_notice
+            student._parent_password_for_notice = result.parent_password_for_notice
         return student, True, False

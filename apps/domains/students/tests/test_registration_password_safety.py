@@ -211,3 +211,34 @@ class RegistrationPasswordSafetyTests(TestCase):
             send_mock.call_args.kwargs["parent_password_by_phone"],
             {"01055556666": "6666"},
         )
+
+    @patch("apps.domains.messaging.services.send_welcome_messages")
+    def test_excel_worker_respects_send_welcome_message_false(self, send_mock):
+        from apps.domains.students.services.bulk_from_excel import (
+            bulk_create_students_from_excel_rows,
+        )
+
+        result = bulk_create_students_from_excel_rows(
+            tenant_id=self.tenant.id,
+            students_data=[
+                {
+                    "name": "엑셀무알림학생",
+                    "parent_phone": "01055556666",
+                    "phone": "01077778894",
+                    "school_type": "HIGH",
+                    "grade": 1,
+                }
+            ],
+            initial_password="stud1234",
+            send_welcome_message=False,
+        )
+
+        self.assertEqual(result["created"], 1)
+        send_mock.assert_not_called()
+
+    def test_excel_worker_payload_bool_parses_string_false(self):
+        from academy.application.services.excel_parsing_service import _payload_bool
+
+        self.assertFalse(_payload_bool("false", default=True))
+        self.assertFalse(_payload_bool("0", default=True))
+        self.assertTrue(_payload_bool(None, default=True))
