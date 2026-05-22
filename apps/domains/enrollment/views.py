@@ -19,7 +19,6 @@ from apps.api.common.upload_validation import (
     validate_uploaded_file,
 )
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
-from .models import Enrollment, SessionEnrollment
 from .serializers import EnrollmentSerializer, SessionEnrollmentSerializer
 from .filters import EnrollmentFilter
 from apps.domains.ai.gateway import dispatch_job
@@ -27,10 +26,12 @@ from django.conf import settings
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.messaging.services import send_event_notification
-from apps.domains.fees.services import (
-    auto_assign_fees_on_enrollment,
-    deactivate_fees_for_enrollment,
+from .selectors import enrollments_for_tenant, session_enrollments_for_tenant
+from .services.lifecycle import (
+    bulk_create_enrollments,
+    bulk_create_session_enrollments,
+    delete_enrollment,
+    sync_enrollment_status_side_effects,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,12 +47,7 @@ class EnrollmentViewSet(ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
-        return (
-            Enrollment.objects
-            .filter(tenant=tenant)
-            .filter(student__deleted_at__isnull=True)
-            .select_related("student", "lecture")
-        )
+        return enrollments_for_tenant(tenant)
 
     def create(self, request, *args, **kwargs):
         return Response(
@@ -67,56 +63,11 @@ class EnrollmentViewSet(ModelViewSet):
         lecture_id = request.data.get("lecture")
         student_ids = request.data.get("students", [])
 
-        if not lecture_id or not isinstance(student_ids, list) or not student_ids:
-            return Response(
-                {"detail": "lecture, students(list)는 필수입니다"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if len(student_ids) > 200:
-            return Response(
-                {"detail": "최대 200건까지 일괄 처리할 수 있습니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # ✅ lecture tenant 검증
-        lecture = enroll_repo.get_lecture_by_id_tenant(lecture_id, tenant)
-        if not lecture:
-            raise ValidationError({"detail": "해당 학원의 강의가 아닙니다."})
-
-        created = []
-        for sid in student_ids:
-            # ✅ student tenant 검증
-            if not enroll_repo.student_exists_for_tenant(sid, tenant):
-                raise ValidationError(
-                    {"detail": f"학생(id={sid})은 현재 학원 소속이 아닙니다."}
-                )
-
-            obj, created_new = enroll_repo.enrollment_get_or_create(
-                tenant=tenant,
-                lecture=lecture,
-                student_id=sid,
-                defaults={"status": "ACTIVE"},
-            )
-            # 퇴원(INACTIVE) 수강생 재등록 시 활성화 복원
-            if not created_new and obj.status != "ACTIVE":
-                obj.status = "ACTIVE"
-                obj.save(update_fields=["status"])
-            created.append(obj)
-            _tenant = tenant
-            _student = obj.student if hasattr(obj, "student") else None
-            _lecture_title = lecture.title if lecture else ""
-            if _student:
-                # 강의에 연결된 비목(수강료 등) 자동 할당/재활성화
-                auto_assign_fees_on_enrollment(tenant, _student, lecture, obj)
-            # 반 등록 완료 알림 (학부모)
-            if created_new:
-                if _student:
-                    transaction.on_commit(lambda t=_tenant, s=_student, lt=_lecture_title: send_event_notification(
-                        tenant=t, trigger="class_enrollment_complete",
-                        student=s, send_to="parent",
-                        context={"강의명": lt},
-                    ))
+        created = bulk_create_enrollments(
+            tenant=tenant,
+            lecture_id=lecture_id,
+            student_ids=student_ids,
+        )
 
         return Response(
             EnrollmentSerializer(created, many=True).data,
@@ -126,24 +77,12 @@ class EnrollmentViewSet(ModelViewSet):
     @transaction.atomic
     def perform_update(self, serializer):
         enrollment = serializer.save()
-        if enrollment.status != "ACTIVE":
-            deactivate_fees_for_enrollment(enrollment)
-        else:
-            auto_assign_fees_on_enrollment(
-                enrollment.tenant,
-                enrollment.student,
-                enrollment.lecture,
-                enrollment,
-            )
+        sync_enrollment_status_side_effects(enrollment)
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         enrollment = self.get_object()
-
-        enroll_repo.session_enrollment_filter_delete(enrollment.tenant, enrollment)
-        deactivate_fees_for_enrollment(enrollment)
-
-        enrollment.delete()
+        delete_enrollment(enrollment)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=["post"], url_path="lecture_enroll_from_excel")
@@ -283,16 +222,7 @@ class SessionEnrollmentViewSet(ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
-        return (
-            SessionEnrollment.objects
-            .filter(tenant=tenant)
-            .filter(enrollment__student__deleted_at__isnull=True)
-            .select_related(
-                "session",
-                "enrollment",
-                "enrollment__student",
-            )
-        )
+        return session_enrollments_for_tenant(tenant)
 
     def create(self, request, *args, **kwargs):
         return Response(
@@ -308,63 +238,11 @@ class SessionEnrollmentViewSet(ModelViewSet):
         session_id = request.data.get("session")
         enrollment_ids = request.data.get("enrollments", [])
 
-        if not session_id or not isinstance(enrollment_ids, list):
-            return Response(
-                {"detail": "session, enrollments(list)는 필수입니다"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if len(enrollment_ids) > 200:
-            return Response(
-                {"detail": "최대 200건까지 일괄 처리할 수 있습니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        session = enroll_repo.get_session_by_id_with_lecture(session_id)
-
-        # ✅ session 미존재 시 명시적 404 — 이전엔 None.lecture에서 AttributeError → 500 노출
-        if session is None:
-            raise ValidationError({"detail": "세션을 찾을 수 없습니다."})
-
-        # ✅ session 소속 lecture tenant 검증
-        if session.lecture.tenant_id != tenant.id:
-            raise ValidationError({"detail": "다른 학원의 세션입니다."})
-
-        created = []
-        for eid in enrollment_ids:
-            enrollment = enroll_repo.get_enrollment_by_id_with_lecture(eid, tenant)
-            if enrollment is None:
-                raise ValidationError({"detail": f"수강 등록을 찾을 수 없습니다: {eid}"})
-
-            if enrollment.lecture_id != session.lecture_id:
-                raise ValidationError(
-                    {"detail": "다른 강의 수강자는 이 세션에 추가할 수 없습니다."}
-                )
-
-            # 퇴원(INACTIVE) 수강생 재등록 시 활성화 복원 (attendance bulk_create와 동일 정책)
-            if enrollment.status != "ACTIVE":
-                enrollment.status = "ACTIVE"
-                enrollment.save(update_fields=["status"])
-            auto_assign_fees_on_enrollment(
-                tenant,
-                enrollment.student,
-                session.lecture,
-                enrollment,
-            )
-
-            obj, _ = enroll_repo.session_enrollment_get_or_create_tenant(
-                tenant=tenant,
-                session=session,
-                enrollment=enrollment,
-            )
-            created.append(obj)
-            # 차시 수강생 등록 시 기본 출결 행 생성 → 출결 탭에서 학생 목록이 바로 보이도록
-            enroll_repo.attendance_get_or_create_tenant(
-                tenant=tenant,
-                enrollment=enrollment,
-                session=session,
-                defaults={"status": "PRESENT"},
-            )
+        created = bulk_create_session_enrollments(
+            tenant=tenant,
+            session_id=session_id,
+            enrollment_ids=enrollment_ids,
+        )
 
         return Response(
             SessionEnrollmentSerializer(created, many=True).data,

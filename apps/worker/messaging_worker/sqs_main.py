@@ -521,6 +521,20 @@ def main() -> int:
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
                     event_type_msg = (data.get("event_type") or "").strip()[:30]
+                    source_domain_msg = (data.get("source_domain") or "").strip()[:50]
+                    source_use_case_msg = (data.get("source_use_case") or "").strip()[:80]
+                    domain_object_id_msg = (data.get("domain_object_id") or "").strip()[:120]
+                    actor_id_msg = (data.get("actor_id") or "").strip()[:50]
+                    if source_domain_msg or source_use_case_msg or domain_object_id_msg or actor_id_msg:
+                        logger.info(
+                            "Messaging source context: tenant=%s event=%s source=%s use_case=%s object=%s actor=%s",
+                            tenant_id,
+                            event_type_msg,
+                            source_domain_msg,
+                            source_use_case_msg,
+                            domain_object_id_msg,
+                            actor_id_msg,
+                        )
 
                     # 테넌트별 잔액·PFID·발신번호·단가·공급자 (Django 있을 때만)
                     info = None

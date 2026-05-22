@@ -52,10 +52,10 @@ Boundary rule for the structure reform:
 |---|---|
 | Owned data | `Enrollment`, `SessionEnrollment` |
 | External references | Attendance, exams, homework, results, submissions, fees, clinic, video |
-| Public interface candidate | `enrollment.selectors.get_roster`, `enrollment.services.enroll_student`, `enrollment.services.set_status` |
+| Public interface candidate | `[COMPLETED] enrollment.selectors.enrollments_for_tenant`, `session_enrollments_for_tenant`, `active_session_enrollments_for_session`; `[COMPLETED] enrollment.services.lifecycle` for bulk enrollment/session create, status side effects, delete, and learning access toggle |
 | Forbidden dependency | Students domain view directly owning enrollment-matrix toggles without enrollment service |
 | Tenant rule | Enrollment and session enrollment queries must include tenant |
-| Current risk | Student lifecycle changes also mutate enrollment status in multiple places |
+| Current risk | Student lifecycle changes still mutate enrollment status in multiple places; enrollment matrix and assignment roster paths are now canonicalized |
 
 ## Attendance
 
@@ -132,7 +132,7 @@ Boundary rule for the structure reform:
 | Public interface candidate | `messaging.services.enqueue_notification`, `messaging.services.resolve_recipients`, event handlers |
 | Forbidden dependency | Domain views sending directly in the middle of transaction without event/outbox contract |
 | Tenant rule | Every message/template/log must include tenant; recipients resolved from tenant-scoped selector |
-| Current risk | Direct sends and rollback logic are repeated in student/password flows; source/use-case logging is inconsistent |
+| Current risk | Direct sends and rollback logic are repeated in student/password flows; automatic notification queue payloads now include source/use-case/domain object/actor metadata, but durable outbox is still future work |
 
 ## AI / Matchup / OMR
 
@@ -143,7 +143,7 @@ Boundary rule for the structure reform:
 | Public interface candidate | `ai.services.enqueue_job`, `matchup.services.create_document_job`, `omr.services.submit_batch` |
 | Forbidden dependency | Domain views reaching worker/infra gateways directly without job contract |
 | Tenant rule | Jobs and documents must include tenant or explicit system/platform scope; no tenant fallback for worker payloads |
-| Current risk | Student Excel import dispatches AI jobs from student view; matchup has many tenant query paths and some public/iframe tenant resolution exceptions |
+| Current risk | `dispatch_job` now rejects missing tenant/source and payload tenant mismatch; student Excel import still dispatches AI jobs from student view, and matchup has many tenant query paths plus public/iframe tenant resolution exceptions |
 
 ## Billing / Fees
 

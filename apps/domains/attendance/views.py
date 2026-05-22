@@ -37,7 +37,7 @@ from apps.domains.ai.gateway import dispatch_job
 logger = logging.getLogger(__name__)
 
 
-def _send_attendance_notification(tenant, attendance, trigger):
+def _send_attendance_notification(tenant, attendance, trigger, actor_id=None):
     """
     출결 알림톡 발송 (best-effort, 실패해도 출결 처리는 유지).
     trigger: "check_in_complete" 또는 "absent_occurred"
@@ -81,7 +81,11 @@ def _send_attendance_notification(tenant, attendance, trigger):
             "시간": now.strftime("%H:%M"),
             "반이름": section_label,
             "_domain_object_id": str(attendance.id),
+            "_source_domain": "attendance",
+            "_source_use_case": f"attendance.{trigger}",
         }
+        if actor_id:
+            context["_actor_id"] = str(actor_id)
 
         send_event_notification(
             tenant=tenant,
@@ -269,8 +273,9 @@ class AttendanceViewSet(ModelViewSet):
                 _att = instance
                 _t = tenant
                 _tr = trigger
+                _actor_id = getattr(request.user, "id", None)
                 transaction.on_commit(
-                    lambda: _send_attendance_notification(_t, _att, _tr)
+                    lambda: _send_attendance_notification(_t, _att, _tr, actor_id=_actor_id)
                 )
 
         return response

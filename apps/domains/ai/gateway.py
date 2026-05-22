@@ -17,6 +17,10 @@ from apps.domains.ai.services.pre_validation import validate_input_for_basic
 logger = logging.getLogger(__name__)
 
 
+def _is_blank(value: Optional[str]) -> bool:
+    return value is None or str(value).strip() == ""
+
+
 def _publish_after_commit(job: AIJob, job_model) -> None:
     """DB commit 후 SQS에 job을 publish. 실패 시 job을 FAILED로 마킹."""
     try:
@@ -53,6 +57,49 @@ def dispatch_job(
         tier: Tier ("lite" | "basic" | "premium"), 기본값: "basic"
     """
     payload = ensure_payload_dict(payload)
+    if _is_blank(tenant_id):
+        logger.warning(
+            "AI_JOB_DISPATCH_REJECTED | job_type=%s | reason=missing_tenant_id | source_domain=%s | source_id=%s",
+            job_type,
+            source_domain,
+            source_id,
+        )
+        return {
+            "ok": False,
+            "job_id": None,
+            "type": job_type,
+            "error": "tenant_id is required for AI job dispatch",
+            "rejection_code": "missing_tenant_id",
+        }
+    if _is_blank(source_domain):
+        logger.warning(
+            "AI_JOB_DISPATCH_REJECTED | job_type=%s | tenant_id=%s | reason=missing_source_domain | source_id=%s",
+            job_type,
+            tenant_id,
+            source_id,
+        )
+        return {
+            "ok": False,
+            "job_id": None,
+            "type": job_type,
+            "error": "source_domain is required for AI job dispatch",
+            "rejection_code": "missing_source_domain",
+        }
+    payload_tenant_id = payload.get("tenant_id")
+    if payload_tenant_id is not None and str(payload_tenant_id).strip() != str(tenant_id).strip():
+        logger.warning(
+            "AI_JOB_DISPATCH_REJECTED | job_type=%s | tenant_id=%s | payload_tenant_id=%s | reason=tenant_mismatch",
+            job_type,
+            tenant_id,
+            payload_tenant_id,
+        )
+        return {
+            "ok": False,
+            "job_id": None,
+            "type": job_type,
+            "error": "payload tenant_id does not match dispatch tenant_id",
+            "rejection_code": "tenant_mismatch",
+        }
     
     # Tier 결정 (명시적 tier 또는 자동 결정)
     if not tier:

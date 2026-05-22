@@ -25,13 +25,14 @@ Risk scale:
 | Password/account recovery | `/auth/account-recovery/dispatch/`, `/students/password_reset_send/`, `/students/password_find/request/`, `/students/password_find/verify/`, `/students/send_existing_credentials/` | Auth recovery UI, admin password modal, teacher password modal, signup duplicate flow, E2E password reset | Keep current release path stable, then canonical `account_recovery` dispatch facade | Legacy student password endpoints should get deprecation logs before removal | P1 | Existing release tests plus legacy deprecation detection |
 | Registration request approve | `RegistrationRequestViewSet.approve`, `bulk_approve`, auto-approve inside create | Signup modal, admin requests page, teacher comms notifications | `students.services.approve_registration_request` | `_approve_registration_request` view helper with create logic | P1 | Approval contract, auto-approve, duplicate, parent password payload |
 | Excel student import | `/students/bulk_create_from_excel/`, `bulk_from_excel.process_student_bulk_create_from_excel`, `lecture_enroll` helper | Admin/teacher Excel upload, AI job status | `students.services.import_students_from_rows` called by worker/API | View dispatch plus worker logic split | P1 | Job payload contract, R2 path, row validation, duplicate/restore |
-| Enrollment matrix | `/students/{id}/enrollment-matrix/`, `/toggle/` | Admin student enrollment matrix drawer | `enrollment.services` public API called by students facade | Student domain view mutating enrollment/session state directly | P2 | Enrollment status, session enrollment, tenant isolation |
+| Enrollment matrix | `/students/{id}/enrollment-matrix/`, `/toggle/` | Admin student enrollment matrix drawer | `[COMPLETED] enrollment.selectors` + `enrollment.services.lifecycle` public API called by students facade | Student domain view no longer mutates enrollment/session state directly; legacy URL remains as facade | P2 | `[DONE]` tenant isolation and session/exam/homework scope tests |
+| Exam/homework assignment roster | `ExamEnrollmentManageView`, `HomeworkEnrollmentManageView`, `HomeworkAssignmentManageView` each built valid roster independently | Exam enrollment modal, homework enrollment/assignment screens | `[COMPLETED] enrollment.selectors.active_session_enrollments_for_session` | Per-view SessionEnrollment filtering with missing tenant/status/deleted checks | P1 | `[DONE]` cross-tenant corrupted row exclusion and inactive enrollment rejection |
 | Attendance roster create | `AttendanceViewSet.bulk_create` queries Student directly | Attendance/lecture sessions flows | `attendance.services.create_roster` using students selector | Direct `Student.objects.filter` in attendance view | P1 | Cross-tenant student IDs rejected, roster idempotency |
 | Results student grades | `/results/admin/student-grades/` validates Student directly | Admin/teacher student detail grades | `results.selectors.get_student_grades(tenant, student_id)` using students selector | Result view direct Student existence check | P2 | Student missing/deleted/cross-tenant contract |
 | Clinic participants | Clinic serializers/views import Student and set querysets | Clinic operations console, add participant | `clinic.services.add_participant` with students selector | Serializer-owned Student querysets/business validation | P1 | Add participant cross-tenant and deleted-student rejection |
 | Messaging recipients | `SendMessageView`, `notification_dispatch` direct Student query | Messaging send, event notifications | `messaging.services.resolve_recipients` with students selector DTO | Direct Student field reads in messaging layer | P1 | Parent/student target selection, missing phone, tenant isolation |
 | Frontend student DTO mapping | Admin `mapStudent`, teacher import of admin mapper/types, student `MyProfile`, auth signup imports admin API | Admin students, teacher students, student profile, signup modal | `src/shared/api/contracts/students` after OpenAPI schema | Role-app imports of `@admin/domains/students/*` | P2 | Typecheck, route render, contract snapshots |
-| Legacy/wrong E2E route | `e2e/admin/dnb-lectures-sessions.spec.ts` calls `/api/v1/students/students/` | DNB lecture/session E2E setup/cleanup | Current `/api/v1/students/` or shared E2E data helper | Wrong route and any compatibility workaround | P2 | E2E helper route inventory, fail on unknown legacy prefixes |
+| Legacy/wrong E2E route | `[COMPLETED] e2e/admin/dnb-lectures-sessions.spec.ts` no longer calls `/api/v1/students/students/` | DNB lecture/session E2E setup/cleanup | Current `/api/v1/students/` or shared E2E data helper | Wrong route removed from this helper; broader helper inventory remains future work | P2 | `[DONE]` grep confirms no `students/students` caller in `frontend/src` or `frontend/e2e` |
 | Student field naming | Backend `is_managed`, `uses_identifier`, `no_phone`, `omr_code`; frontend `active`, `noPhone`, synthetic phone, `studentPhone` | Admin/teacher create/edit; student/profile | Generated contract plus explicit UI form mapper | Implicit field semantics in each API client | P1 | Contract snapshot and mapper unit tests |
 
 ## Canonicalization Order
@@ -57,3 +58,15 @@ Risk scale:
   `/api/v1/students/`.
 - `noPhone/uses_identifier/omr_code`, `active/is_managed`, and parent initial
   password have semantic drift across backend and frontend.
+
+## Implemented Convergence Notes
+
+- 2026-05-22: Phase 2 enrollment matrix and assignment roster writes/read
+  scope now converge through `apps.domains.enrollment.selectors` and
+  `apps.domains.enrollment.services.lifecycle`.
+- 2026-05-22: Phase 3 automatic notification queue payloads carry
+  source/use-case/domain object/actor metadata for operational tracing.
+- 2026-05-22: Phase 4 AI job gateway rejects missing tenant/source and
+  payload tenant mismatch before SQS publish.
+- 2026-05-22: Phase 5 first cleanup removed the known
+  `/api/v1/students/students/` E2E helper route.

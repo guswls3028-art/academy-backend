@@ -291,6 +291,9 @@ def send_event_notification(
         from django.utils import timezone as _tz
         domain_object_id = _tz.localtime().strftime("%Y%m%d")
     stable_occurrence = f"{trigger}:{domain_object_id}"
+    source_domain = (context or {}).get("_source_domain", "")
+    source_use_case = (context or {}).get("_source_use_case", "")
+    actor_id = (context or {}).get("_actor_id", "")
 
     # ── 발송 모드 결정: 자동발송은 알림톡 단일 경로만 사용한다. ──
     _can_alimtalk = bool(_alimtalk_tid)
@@ -315,6 +318,10 @@ def send_event_notification(
         "target_id": student_id,
         "target_name": name,
         "occurrence_key": stable_occurrence,
+        "source_domain": source_domain,
+        "source_use_case": source_use_case,
+        "domain_object_id": domain_object_id,
+        "actor_id": actor_id,
     }
 
     delay_mode = (getattr(config, "delay_mode", "immediate") or "immediate").strip().lower()

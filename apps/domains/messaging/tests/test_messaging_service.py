@@ -909,6 +909,38 @@ class TestIdempotencyMetadata(TestCase):
         self.assertEqual(kwargs["target_id"], 42)
         self.assertTrue(kwargs["occurrence_key"])  # 날짜 기반 키
 
+    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_SEL}.get_auto_send_config")
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    def test_passes_source_metadata(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
+        tenant = _make_tenant()
+        student = SimpleNamespace(
+            id=42, pk=42, name="홍길동", phone="01012345678",
+            parent_phone="01087654321", ps_number="PS001", tenant_id=1,
+        )
+        mock_config.return_value = _make_config("check_in_complete")
+        mock_enqueue.return_value = True
+
+        from apps.domains.messaging.services import send_event_notification
+        send_event_notification(
+            tenant=tenant,
+            trigger="check_in_complete",
+            student=student,
+            context={
+                "_source_domain": "attendance",
+                "_source_use_case": "attendance.check_in_complete",
+                "_domain_object_id": "123",
+                "_actor_id": "7",
+            },
+        )
+
+        kwargs = mock_enqueue.call_args.kwargs
+        self.assertEqual(kwargs["source_domain"], "attendance")
+        self.assertEqual(kwargs["source_use_case"], "attendance.check_in_complete")
+        self.assertEqual(kwargs["domain_object_id"], "123")
+        self.assertEqual(kwargs["actor_id"], "7")
+
 
 class TestOwnerAlimtalkMetadata(TestCase):
     """계정/비밀번호 알림톡도 운영 로그 추적 메타데이터를 전달."""

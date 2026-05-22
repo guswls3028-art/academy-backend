@@ -217,9 +217,29 @@ services, or events.
   through admin, teacher, student app, auth linked students, messaging recipient,
   and E2E UI surfaces.
 
-## 10. Phase 1 Recommendation
+## 10. Implemented Reform Slices
 
-[PROPOSED]
+[COMPLETED 2026-05-22]
+
+- Phase 1 student profile canonicalization introduced tenant-scoped student
+  selectors and `students.services.profile.update_student_profile`.
+- Phase 2 enrollment canonicalization introduced
+  `apps.domains.enrollment.selectors` and
+  `apps.domains.enrollment.services.lifecycle`.
+- Student enrollment matrix still uses the existing student URL, but the view is
+  now a facade over the enrollment domain. Session/exam/homework toggles are
+  validated against tenant + student + lecture + active enrollment in one use
+  case.
+- Exam/homework assignment screens now use the enrollment active-session roster
+  selector instead of recomputing roster scope independently.
+- Phase 3 notification queue payloads now include source/use-case/domain object
+  metadata; attendance passes actor metadata for status-change sends.
+- Phase 4 `dispatch_job` now blocks missing tenant/source and payload
+  tenant-mismatch before creating an AI job.
+
+## 11. Phase 1 Recommendation
+
+[COMPLETED INITIAL SLICE]
 
 Phase 1 should start with `students` canonical read/write path, not with file
 movement:

@@ -27,6 +27,10 @@ def enqueue_sms(
     target_id: Optional[int | str] = None,
     target_name: Optional[str] = None,
     occurrence_key: Optional[str] = None,
+    source_domain: Optional[str] = None,
+    source_use_case: Optional[str] = None,
+    domain_object_id: Optional[str] = None,
+    actor_id: Optional[int | str] = None,
 ) -> bool:
     """
     메시지(SMS/알림톡)를 SQS에 넣어 워커가 비동기로 발송하도록 함.
@@ -44,6 +48,7 @@ def enqueue_sms(
         target_type: 대상 유형 (예: "student")
         target_id: 대상 ID (예: student.id)
         occurrence_key: 이벤트 발생 식별자 (예: "20260328_session_42"). 동일 이벤트 재전송 방지.
+        source_domain/source_use_case/domain_object_id/actor_id: 추적용 발송 원천 메타데이터.
 
     Returns:
         bool: enqueue 성공 여부
@@ -98,6 +103,10 @@ def enqueue_sms(
         target_id=target_id,
         target_name=target_name,
         occurrence_key=occurrence_key,
+        source_domain=source_domain,
+        source_use_case=source_use_case,
+        domain_object_id=domain_object_id,
+        actor_id=actor_id,
     )
 
 

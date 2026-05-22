@@ -7,8 +7,8 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion, Sheet
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.exams.views.exam_recalculate_view import ExamRecalculateView
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ExamResult, Result
@@ -65,6 +65,12 @@ class ExamRecalculateViewTests(TestCase):
             max_score=10,
         )
         self.exam.sessions.add(self.session)
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
 
         self.sheet = Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=2)
         self.q1 = ExamQuestion.objects.create(sheet=self.sheet, number=1, score=5)

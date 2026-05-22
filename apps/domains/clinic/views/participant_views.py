@@ -30,13 +30,16 @@ def _send_clinic_notification(tenant, student, trigger, context=None):
     """클리닉 알림 — 학생+학부모 동시 발송 (AUTO_DEFAULT 정책)."""
     try:
         from apps.domains.messaging.services import send_event_notification
+        event_context = dict(context or {})
+        event_context.setdefault("_source_domain", "clinic")
+        event_context.setdefault("_source_use_case", f"clinic.{trigger}")
         for send_to in ("parent", "student"):
             send_event_notification(
                 tenant=tenant,
                 trigger=trigger,
                 student=student,
                 send_to=send_to,
-                context=context,
+                context=event_context,
             )
     except Exception:
         logger.exception("clinic notification failed: trigger=%s student=%s", trigger, getattr(student, "id", "?"))

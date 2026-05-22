@@ -75,6 +75,10 @@ class MessagingSQSQueue:
         target_id: Optional[int | str] = None,
         target_name: Optional[str] = None,
         occurrence_key: Optional[str] = None,
+        source_domain: Optional[str] = None,
+        source_use_case: Optional[str] = None,
+        domain_object_id: Optional[str] = None,
+        actor_id: Optional[int | str] = None,
     ) -> bool:
         """
         발송 작업을 SQS에 추가
@@ -120,6 +124,14 @@ class MessagingSQSQueue:
             message["target_id"] = str(target_id)
         if target_name:
             message["target_name"] = str(target_name)[:50]
+        if source_domain:
+            message["source_domain"] = str(source_domain)[:50]
+        if source_use_case:
+            message["source_use_case"] = str(source_use_case)[:80]
+        if domain_object_id:
+            message["domain_object_id"] = str(domain_object_id)[:120]
+        if actor_id:
+            message["actor_id"] = str(actor_id)[:50]
         et = (event_type or "").strip()
         if et:
             message["event_type"] = et[:30]

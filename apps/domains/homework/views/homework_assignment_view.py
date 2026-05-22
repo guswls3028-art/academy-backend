@@ -12,7 +12,10 @@ from rest_framework import status
 
 from apps.core.permissions import TenantResolvedAndStaff
 
-from apps.domains.enrollment.models import SessionEnrollment
+from apps.domains.enrollment.selectors import (
+    active_enrollment_ids_for_session,
+    active_session_enrollments_for_session,
+)
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework.serializers.homework_assignment_serializer import (
@@ -49,16 +52,9 @@ class HomeworkAssignmentManageView(APIView):
         session_id = homework.session_id
 
         # ✅ 퇴원(INACTIVE) 수강생 제외
-        session_enrollments = (
-            SessionEnrollment.objects
-            .filter(
-                tenant=tenant,
-                session_id=session_id,
-            )
-            .filter(enrollment__status="ACTIVE")
-            .filter(enrollment__student__deleted_at__isnull=True)
-            .select_related("enrollment", "enrollment__student", "enrollment__lecture")
-            .order_by("id")
+        session_enrollments = active_session_enrollments_for_session(
+            tenant=tenant,
+            session_id=session_id,
         )
 
         selected_ids: Set[int] = set(
@@ -152,15 +148,9 @@ class HomeworkAssignmentManageView(APIView):
 
         incoming_ids = set(map(int, ser.validated_data["enrollment_ids"]))
 
-        valid_ids = set(
-            SessionEnrollment.objects
-            .filter(
-                tenant=tenant,
-                session_id=homework.session_id,
-                enrollment__status="ACTIVE",
-                enrollment__student__deleted_at__isnull=True,
-            )
-            .values_list("enrollment_id", flat=True)
+        valid_ids = active_enrollment_ids_for_session(
+            tenant=tenant,
+            session_id=homework.session_id,
         )
 
         invalid = list(incoming_ids - valid_ids)

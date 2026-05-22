@@ -17,7 +17,10 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import ExamEnrollment
 from apps.domains.exams.models.exam import Exam
 
-from apps.domains.enrollment.models import SessionEnrollment
+from apps.domains.enrollment.selectors import (
+    active_enrollment_ids_for_session,
+    active_session_enrollments_for_session,
+)
 
 from apps.domains.exams.serializers.exam_enrollment_serializer import (
     ExamEnrollmentRowSerializer,
@@ -89,19 +92,15 @@ class ExamEnrollmentManageView(APIView):
 
         # 1) 세션 등록 학생 목록 (아바타·강의 딱지용 select_related)
         #    ✅ 퇴원(INACTIVE) 수강생 제외
-        session_enrollments = (
-            SessionEnrollment.objects
-            .filter(session_id=session_id)
-            .filter(enrollment__status="ACTIVE")
-            .filter(enrollment__student__deleted_at__isnull=True)
-            .select_related("enrollment", "enrollment__student", "enrollment__lecture")
-            .order_by("id")
+        session_enrollments = active_session_enrollments_for_session(
+            tenant=tenant,
+            session_id=session_id,
         )
 
         # 2) 현재 시험에 선택된 enrollment_id set
         selected_ids: Set[int] = set(
             ExamEnrollment.objects
-            .filter(exam_id=exam_id)
+            .filter(exam_id=exam_id, enrollment__tenant=tenant)
             .values_list("enrollment_id", flat=True)
         )
 
@@ -198,15 +197,9 @@ class ExamEnrollmentManageView(APIView):
         incoming_ids = set(map(int, ser.validated_data["enrollment_ids"]))
 
         # ✅ 세션 등록 학생에 포함되는 enrollment_id만 허용
-        valid_ids = set(
-            SessionEnrollment.objects
-            .filter(
-                tenant=tenant,
-                session_id=session_id,
-                enrollment__status="ACTIVE",
-                enrollment__student__deleted_at__isnull=True,
-            )
-            .values_list("enrollment_id", flat=True)
+        valid_ids = active_enrollment_ids_for_session(
+            tenant=tenant,
+            session_id=session_id,
         )
 
         invalid = list(incoming_ids - valid_ids)
@@ -222,6 +215,7 @@ class ExamEnrollmentManageView(APIView):
         # ✅ 세션 범위 내 치환 (다른 세션의 enrollment은 유지)
         ExamEnrollment.objects.filter(
             exam_id=exam_id,
+            enrollment__tenant=tenant,
             enrollment_id__in=valid_ids,
         ).delete()
 

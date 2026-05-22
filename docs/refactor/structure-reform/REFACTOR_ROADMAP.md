@@ -1,6 +1,6 @@
 # Structure Reform Roadmap
 
-**Status:** [PROPOSED] strangler roadmap  
+**Status:** [ACTIVE] strangler roadmap with implemented Phase 1 and Phase 2/3/4 guardrail slices
 **Captured:** 2026-05-22  
 **Principle:** converge feature responsibility first; move folders only after behavior boundaries are proven.
 
@@ -82,6 +82,12 @@ Done:
 - Existing URLs still work.
 - Legacy routes log deprecation source without breaking callers.
 
+Implemented:
+
+- `students.selectors` and `students.services.profile.update_student_profile`
+  route admin profile updates, `/students/me`, and student-app profile updates
+  through one canonical tenant-scoped profile write path.
+
 ## Phase 2: Enrollment / Results / Exams / Homework Consistency
 
 Goal:
@@ -113,6 +119,21 @@ Done:
 - Enrollment/result/exam/homework writes have named use-cases.
 - Same score/status value is not recomputed independently in model, serializer,
   view, and frontend state.
+
+Implemented:
+
+- `enrollment.selectors` now owns tenant-scoped enrollment/session roster reads,
+  including active session enrollment rows.
+- `enrollment.services.lifecycle` now owns bulk enrollment create, session
+  enrollment create, enrollment delete/status side effects, and student learning
+  access toggles for session/exam/homework.
+- Student enrollment matrix views now act as a facade and no longer mutate
+  enrollment/session/exam/homework assignment state directly.
+- Exam/homework assignment screens now use the canonical active session roster
+  selector, preventing cross-tenant corrupted rows and INACTIVE enrollments from
+  entering assignment writes.
+- `ExamRecalculateView` test fixtures now match the sealed submission scope
+  contract: regrading requires `SessionEnrollment` + `ExamEnrollment`.
 
 ## Phase 3: Attendance / Clinic / Messaging Event Structure
 
@@ -147,6 +168,16 @@ Done:
   transaction boundaries.
 - Logs include tenant, actor, source, use-case, and target IDs.
 
+Implemented:
+
+- Automatic notification enqueue payloads now carry source metadata:
+  `source_domain`, `source_use_case`, `domain_object_id`, and optional
+  `actor_id`.
+- Attendance and clinic event wrappers populate source/use-case metadata while
+  preserving the existing `transaction.on_commit` compatibility path.
+- Messaging worker logs the source context for traceability without changing
+  delivery semantics or requiring a data migration.
+
 ## Phase 4: AI / OMR / Matchup Job Structure
 
 Goal:
@@ -177,6 +208,13 @@ Done:
 - Every job has explicit tenant/source/use-case metadata.
 - Worker cannot process tenant-scoped data without tenant in payload or verified
   system scope.
+
+Implemented:
+
+- `ai.gateway.dispatch_job` rejects tenant-scoped job dispatch when
+  `tenant_id` or `source_domain` is missing.
+- `dispatch_job` rejects payload-level `tenant_id` mismatches before creating
+  an `AIJobModel` row or publishing SQS.
 
 ## Phase 5: Frontend Design System / API Client Cleanup
 
@@ -211,6 +249,13 @@ Done:
 - Touched role apps use shared contracts rather than importing other app
   internals.
 - API response changes surface in typecheck or contract snapshots.
+
+Implemented:
+
+- The known E2E helper route `/api/v1/students/students/` was removed from
+  `frontend/e2e/admin/dnb-lectures-sessions.spec.ts` and replaced with the
+  current `/api/v1/students/` API.
+- Frontend typecheck and production build pass after the helper cleanup.
 
 ## Cleanup And Removal Rule
 
