@@ -158,3 +158,9 @@ Risk scale:
   student vs parent target phone, duplicate ID dedupe, same-tenant deleted
   student omission, cross-tenant omission, public preview redaction, and token
   payload raw phone preservation for sendable recipients.
+- 2026-05-22: Messaging production QA passed after deployment without external
+  send: production manual notification preview resolved a no-parent-phone
+  active student once despite duplicate/missing IDs, returned no preview token,
+  excluded the recipient for "전화번호 없음", and exposed no raw phone or
+  replacement payload fields. The admin message page production smoke and
+  mobile screenshot also passed with no console/API errors.
