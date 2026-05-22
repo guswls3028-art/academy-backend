@@ -306,6 +306,13 @@ Implemented:
   moved to `src/shared/product/patchNotesData.ts`.
 - Frontend boundary snapshot improved from 30 to 24 cross-app/admin role imports
   after the community/notice/developer contract slice.
+- Video access-mode/rule contracts now live behind
+  `src/shared/api/contracts/videos.ts`, and reusable thumbnail rendering moved to
+  `src/shared/media/video/VideoThumbnail.tsx`. Admin video paths remain
+  compatibility facades, student video API/player/thumbnail wrappers use shared
+  contracts, and video E2E expectations follow the current KPI/folder explorer UX.
+- Frontend boundary snapshot improved from 24 to 21 cross-app/admin role imports
+  after the video media/access contract slice.
 
 ## Cleanup And Removal Rule
 

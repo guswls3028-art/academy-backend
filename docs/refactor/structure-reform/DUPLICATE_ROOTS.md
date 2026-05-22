@@ -95,3 +95,7 @@ Risk scale:
   community contracts. Student notices/community and teacher developer feedback
   no longer import admin community internals, patch notes are shared product
   data, and cross-app/admin role imports are now 24.
+- 2026-05-22: Video access-mode/rule contracts moved to shared video contracts,
+  reusable thumbnail rendering moved to `src/shared/media/video`, student video
+  surfaces no longer import admin video internals for those contracts, and
+  cross-app/admin role imports are now 21.
