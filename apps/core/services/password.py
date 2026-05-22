@@ -11,7 +11,7 @@ from datetime import timedelta
 from django.contrib.auth.hashers import check_password, make_password
 from django.utils import timezone
 
-TEMP_PASSWORD_LENGTH = 8
+TEMP_PASSWORD_LENGTH = 6
 PENDING_PASSWORD_RESET_TTL_MINUTES = 30
 
 
@@ -20,7 +20,7 @@ def generate_temp_password(length: int = TEMP_PASSWORD_LENGTH) -> str:
     임시 비밀번호 생성 SSOT.
 
     자동 발급 비밀번호는 알림톡을 보고 직접 입력하는 일이 많아서
-    짧은 숫자형 1회용 비밀번호로 통일한다.
+    6자리 숫자형 1회용 비밀번호로 통일한다.
     """
     import secrets
     import string

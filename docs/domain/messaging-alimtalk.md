@@ -1,6 +1,6 @@
 # 메시징 도메인 SSOT (알림톡/SMS 발송 시스템)
 
-> 최종 갱신: 2026-05-21 (계정복구 SSOT 링크 추가)
+> 최종 갱신: 2026-05-23 (계정복구 임시 비밀번호 6자리 SSOT 반영)
 > 근거: 코드 직접 확인. 추측 없음.
 
 ---
@@ -103,7 +103,7 @@
 
 - 현재 공개 endpoint: `/api/v1/auth/account-recovery/dispatch/`
 - 아이디 찾기: `registration_approved_student` / `registration_approved_parent` 템플릿 재사용, 비밀번호는 `변경되지 않음`
-- 비밀번호 찾기: `password_reset_student` / `password_reset_parent`, 8자리 숫자 임시 비밀번호
+- 비밀번호 찾기: `password_reset_student` / `password_reset_parent`, 6자리 숫자 임시 비밀번호
 - `password_find_otp`는 legacy OTP 경로 호환용이다.
 
 ### 각 단계의 역할

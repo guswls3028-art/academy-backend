@@ -60,7 +60,7 @@ Body: { "username": "{학부모전화번호}", "password": "{비밀번호}" }
 공개 로그인 화면의 아이디/비밀번호 찾기는 [account-recovery.md](account-recovery.md)가 정본이다.
 
 - 학부모 아이디 찾기: 학생 이름 + 등록 학부모 전화번호가 유일하게 일치할 때 전화번호로 아이디 안내를 보낸다.
-- 학부모 비밀번호 찾기: 동일 검증 후 8자리 숫자 임시 비밀번호를 pending reset으로 발급한다. 실제 비밀번호 변경과 `must_change_password=True` 적용은 학부모가 임시 비밀번호로 로그인할 때 수행한다.
+- 학부모 비밀번호 찾기: 동일 검증 후 6자리 숫자 임시 비밀번호를 pending reset으로 발급한다. 실제 비밀번호 변경과 `must_change_password=True` 적용은 학부모가 임시 비밀번호로 로그인할 때 수행한다.
 - legacy Parent row에 user가 없으면, 복구 과정에서 `ensure_parent_for_student()`로 계정을 생성/연결한다.
 
 ## 5. 가입 승인 알림톡

@@ -1,7 +1,7 @@
 # 계정 복구 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-05-22
+**최종 점검:** 2026-05-23
 **코드 기준:** `apps/core/views/account_recovery.py`, `apps/domains/students/services/account_recovery.py`, `apps/core/services/password.py`, `apps/api/common/auth_jwt.py`
 
 ## 1. 정본 경로
@@ -77,7 +77,7 @@ Student(tenant, deleted_at is null, name__iexact, parent_phone == 요청번호)
 
 ### `mode=password`
 
-- `generate_temp_password()`로 8자리 숫자 임시 비밀번호를 만든다.
+- `generate_temp_password()`로 6자리 숫자 임시 비밀번호를 만든다.
 - 공개 계정복구는 즉시 비밀번호를 바꾸지 않고 `PendingPasswordReset`에 임시 비밀번호 해시를 저장한다.
 - 학생은 `password_reset_student`, 학부모는 `password_reset_parent` 트리거로 발송한다.
 - enqueue 실패 시 이번 요청의 pending reset을 되돌린다. 기존 pending reset이 없으면 삭제하고, 이미 발급된 기존 pending reset이 있으면 복원한다.
@@ -90,11 +90,11 @@ Student(tenant, deleted_at is null, name__iexact, parent_phone == 요청번호)
 
 ```
 apps/core/services/password.py
-TEMP_PASSWORD_LENGTH = 8
-generate_temp_password() -> 숫자 8자리
+TEMP_PASSWORD_LENGTH = 6
+generate_temp_password() -> 숫자 6자리
 ```
 
-비밀번호 최소 길이 정책은 `.claude/rules/domain-policy.md §8`에 따라 4자 유지다. 자동 임시 비밀번호가 8자리인 것은 사용성 정책이며 최소 길이 상향이 아니다.
+비밀번호 최소 길이 정책은 `.claude/rules/domain-policy.md §8`에 따라 4자 유지다. 자동 임시 비밀번호가 6자리인 것은 알림톡을 보고 직접 입력하는 학부모/학생 사용성을 위한 운영 정책이며 최소 길이 상향이 아니다.
 
 ## 5. Pending reset 안전 구조
 

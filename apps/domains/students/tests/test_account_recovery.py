@@ -167,7 +167,7 @@ class AccountRecoveryDispatchTests(TestCase):
         self.assertEqual(send_mock.call_args.kwargs["to"], self.student.parent_phone)
         self.assertRegex(
             send_mock.call_args.kwargs["replacements"]["임시비밀번호"],
-            r"^\d{8}$",
+            r"^\d{6}$",
         )
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)

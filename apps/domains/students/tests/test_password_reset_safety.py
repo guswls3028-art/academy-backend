@@ -232,7 +232,7 @@ class StudentPasswordResetSafetyTests(TestCase):
         self.assertIsNone(cache.get(key))
         self.assertIsNone(cache.get(f"{key}:fail"))
 
-    def test_auto_temp_password_is_eight_digits(self):
+    def test_auto_temp_password_is_six_digits(self):
         temp_password = generate_temp_password()
 
-        self.assertRegex(temp_password, r"^\d{8}$")
+        self.assertRegex(temp_password, r"^\d{6}$")
