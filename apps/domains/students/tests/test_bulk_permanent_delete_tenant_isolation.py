@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 # PATH: apps/domains/students/tests/test_bulk_permanent_delete_tenant_isolation.py
 """
 크로스테넌트 보호 증명 테스트 — bulk_permanent_delete
@@ -5,17 +7,20 @@
 시나리오: User X가 Tenant A(학생), Tenant B(teacher Membership + Submission).
   Tenant A에서 영구삭제 시 Tenant B 데이터 보존 증명.
 """
-from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.contrib.auth.hashers import make_password
+from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from apps.core.models import PendingPasswordReset
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
-from apps.domains.students.models import Student
-from apps.domains.lectures.models import Lecture
+from apps.core.services.password import create_pending_password_reset
 from apps.domains.enrollment.models import Enrollment
+from apps.domains.lectures.models import Lecture
 from apps.domains.submissions.models import Submission
+from apps.domains.students.models import Student
 from apps.domains.students.views import StudentViewSet
 
 User = get_user_model()
@@ -87,6 +92,13 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
 
     def test_delete_preserves_other_tenant_data(self):
         """핵심 증명: Tenant A 영구삭제 → Tenant B 데이터 100% 보존."""
+        PendingPasswordReset.objects.create(
+            tenant=self.tenant_b,
+            user=self.user_x,
+            password_hash=make_password("87654321"),
+            expires_at=timezone.now() + timedelta(minutes=30),
+        )
+
         # PRE
         self.assertEqual(Submission.objects.filter(tenant=self.tenant_a, user=self.user_x).count(), 1)
         self.assertEqual(Submission.objects.filter(tenant=self.tenant_b, user=self.user_x).count(), 1)
@@ -116,9 +128,26 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
             User.objects.filter(id=self.user_x.id).exists(),
             "❌ CRITICAL: 다른 테넌트 멤버십이 있는 User가 삭제됨!"
         )
+        self.assertTrue(
+            PendingPasswordReset.objects.filter(tenant=self.tenant_b, user=self.user_x).exists(),
+            "❌ CRITICAL: 다른 테넌트 pending password reset이 삭제됨!"
+        )
+
+    def test_deleted_tenant_pending_reset_removed_even_when_user_retained(self):
+        """삭제되는 테넌트의 pending reset은 User가 다른 테넌트에 남아도 정리."""
+        create_pending_password_reset(self.user_x, "12345678")
+
+        resp = self._call(self.tenant_a, self.admin_a, [self.student_a.id])
+
+        self.assertEqual(resp.status_code, 200, f"응답: {resp.data}")
+        self.assertTrue(User.objects.filter(id=self.user_x.id).exists())
+        self.assertFalse(
+            PendingPasswordReset.objects.filter(tenant=self.tenant_a, user=self.user_x).exists()
+        )
 
     def test_user_deleted_when_orphaned(self):
         """멤버십이 전부 삭제되면 User도 삭제."""
+        create_pending_password_reset(self.user_x, "12345678")
         TenantMembership.objects.filter(tenant=self.tenant_b, user=self.user_x).delete()
         Submission.objects.filter(tenant=self.tenant_b, user=self.user_x).delete()
 
@@ -126,6 +155,7 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(User.objects.filter(id=self.user_x.id).exists(),
                          "orphan User는 삭제되어야 함")
+        self.assertFalse(PendingPasswordReset.objects.filter(user=self.user_x).exists())
 
     def test_cross_tenant_student_id_rejected(self):
         """다른 테넌트 학생 ID → deleted=0."""

@@ -979,6 +979,7 @@ class StudentViewSet(ModelViewSet):
                         "video_videocomment", "video_videolike",
                         "community_postentity", "community_postreply",
                         "students_student", "accounts_user", "core_tenantmembership",
+                        "core_pending_password_reset",
                     })
                     _SAFE_COLS = frozenset({
                         "enrollment_id", "student_id", "author_student_id",
@@ -1147,6 +1148,12 @@ class StudentViewSet(ModelViewSet):
                             )
                         # 이 테넌트의 멤버십만 삭제
                         logger.info("bulk_permanent_delete DELETE core_tenantmembership (tenant=%s)", tenant_id)
+                        if _table_exists(cursor, _safe_tbl("core_pending_password_reset")):
+                            logger.info("bulk_permanent_delete DELETE core_pending_password_reset (tenant=%s)", tenant_id)
+                            cursor.execute(
+                                f"DELETE FROM core_pending_password_reset WHERE user_id IN {user_id_clause} AND tenant_id = %s",
+                                [*user_id_params, tenant_id],
+                            )
                         cursor.execute(
                             f"DELETE FROM core_tenantmembership WHERE user_id IN {user_id_clause} AND tenant_id = %s",
                             [*user_id_params, tenant_id],
@@ -1161,6 +1168,15 @@ class StudentViewSet(ModelViewSet):
                         orphan_user_ids = [row[0] for row in cursor.fetchall()]
                         if orphan_user_ids:
                             orphan_user_clause, orphan_user_params = _in_clause(orphan_user_ids)
+                            if _table_exists(cursor, _safe_tbl("core_pending_password_reset")):
+                                logger.info(
+                                    "bulk_permanent_delete DELETE core_pending_password_reset (orphaned users) ids=%s",
+                                    orphan_user_ids,
+                                )
+                                cursor.execute(
+                                    f"DELETE FROM core_pending_password_reset WHERE user_id IN {orphan_user_clause}",
+                                    orphan_user_params,
+                                )
                             logger.info("bulk_permanent_delete DELETE accounts_user (orphaned) ids=%s", orphan_user_ids)
                             cursor.execute(
                                 f"DELETE FROM accounts_user WHERE id IN {orphan_user_clause}",
