@@ -86,4 +86,8 @@ Risk scale:
 - 2026-05-22: Frontend shared purity slice moved theme, responsive view,
   clinic-target, video status/workbox, and session-progress contracts under
   `src/shared/*`. Admin role paths remain compatibility facades where needed;
-  `shared -> app_*` imports are now 0 and cross-app/admin role imports are 37.
+  `shared -> app_*` imports became 0 and cross-app/admin role imports became 37.
+- 2026-05-22: Operational notification counts moved to shared notification
+  contracts/hooks. Admin notification modules are compatibility facades, teacher
+  surfaces use `useTeacherPendingCounts`, and cross-app/admin role imports are
+  now 30.

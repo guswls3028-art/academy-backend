@@ -141,12 +141,12 @@ Frontend dependency risks:
 | Backend domain infra imports | 84 | domain code still reaches infra SDK/helper modules |
 | Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
-| Frontend source import files | 1037 | files scanned for import boundary snapshot |
-| Frontend source text files | 1381 | app/domain moves need automated boundaries |
+| Frontend source import files | 1039 | files scanned for import boundary snapshot |
+| Frontend source text files | 1383 | app/domain moves need automated boundaries |
 | Frontend E2E/script files | 225 | durable gates must be separated from audit specs |
 | Frontend durable E2E waitForTimeout calls | 69 | excludes `_local`, `_audit`, artifacts, reports, screenshots |
-| Frontend cross-app imports | 37 | remaining role-app imports of admin internals |
-| Frontend role-app admin imports | 37 | teacher/student app imports of `@admin/*` internals |
+| Frontend cross-app imports | 30 | remaining role-app imports of admin internals |
+| Frontend role-app admin imports | 30 | teacher/student app imports of `@admin/*` internals |
 | Frontend shared imports app internals | 0 | `shared/` no longer imports role-app internals |
 
 Snapshot commands:
@@ -171,6 +171,8 @@ pnpm refactor:inventory
 - The target architecture referenced `roadmap.md` before that document existed.
 - `shared/` is now app-agnostic; the remaining frontend boundary work is
   role-app imports of `@admin/*` internals.
+- Operational notification counts now use a shared contract instead of teacher
+  surfaces importing admin notification internals.
 - React runtime/types mismatch and missing lockfile policy can create unrelated
   noise during refactor validation.
 

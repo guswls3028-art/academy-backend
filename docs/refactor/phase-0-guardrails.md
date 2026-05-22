@@ -129,7 +129,7 @@ Current:
 - `scripts/refactor-boundary-snapshot.mjs` captures app/domain import
   boundaries in baseline mode.
 - `shared -> app_*` imports are at 0 as of 2026-05-22.
-- role-app `@admin/*` imports remain at 37 and are the next frontend boundary
+- role-app `@admin/*` imports remain at 30 and are the next frontend boundary
   cleanup target.
 
 Proposed:

@@ -292,6 +292,13 @@ Implemented:
 - Teacher settings E2E now follows the canonical appearance route instead of the
   obsolete inline theme-card contract, and message-log copy is aligned to
   "발송 내역".
+- Operational notification counts now live behind
+  `src/shared/api/contracts/notifications.ts` and
+  `src/shared/hooks/useOperationalNotificationCounts.ts`. Admin notification
+  paths are compatibility facades, and teacher surfaces use
+  `useTeacherPendingCounts`.
+- Frontend boundary snapshot improved from 37 to 30 cross-app/admin role imports
+  after the notification-count contract slice.
 
 ## Cleanup And Removal Rule
 
