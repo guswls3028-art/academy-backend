@@ -3,6 +3,69 @@
 # Existence = same Describe as Evidence; filter by resource name for correct detection.
 $ErrorActionPreference = "Stop"
 
+function Get-ExpectedApiImageUriForDrift {
+    if (-not $script:EcrApiRepo -or -not $script:AccountId -or -not $script:Region) { return "" }
+    if ($script:EcrUseLatestTag) {
+        return "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:EcrApiRepo):latest"
+    }
+
+    $list = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $script:EcrApiRepo, "--region", $script:Region, "--output", "json") 2>$null
+    if (-not $list -or -not $list.imageDetails -or $list.imageDetails.Count -eq 0) { return "" }
+    $nonLatest = @($list.imageDetails | Where-Object { $_.imageTags -and ($_.imageTags | Where-Object { $_ -ne "latest" }) } | ForEach-Object {
+        $tag = ($_.imageTags | Where-Object { $_ -ne "latest" } | Select-Object -First 1)
+        if ($tag) { [PSCustomObject]@{ Tag = $tag; Pushed = $_.imagePushedAt } }
+    } | Where-Object { $_ })
+    if ($nonLatest.Count -gt 0) {
+        $latest = $nonLatest | Sort-Object { $_.Pushed } -Descending | Select-Object -First 1
+        return "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:EcrApiRepo):$($latest.Tag)"
+    }
+    return "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:EcrApiRepo):latest"
+}
+
+function ConvertFrom-LaunchTemplateUserData {
+    param([string]$UserData)
+    if (-not $UserData) { return "" }
+    try {
+        return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UserData))
+    } catch {
+        return ""
+    }
+}
+
+function Test-GeneratedApiUserDataMatchesSSOT {
+    param([string]$ActualUserData)
+    $raw = ConvertFrom-LaunchTemplateUserData -UserData $ActualUserData
+    if (-not $raw) { return $false }
+
+    $expectedImage = Get-ExpectedApiImageUriForDrift
+    if (-not $expectedImage) { return $false }
+
+    return (
+        $raw.Contains($expectedImage) -and
+        $raw.Contains("export AWS_REGION=`"$($script:Region)`"") -and
+        $raw.Contains("aws ssm get-parameter --name `"$($script:SsmApiEnv)`"") -and
+        $raw.Contains("--name academy-api") -and
+        $raw.Contains("-p 8000:8000")
+    )
+}
+
+function Get-ExpectedApiSecurityGroupForDrift {
+    if ($script:ApiSecurityGroupId) { return ($script:ApiSecurityGroupId -split '#')[0].Trim() }
+    if ($script:SecurityGroupApp) { return ($script:SecurityGroupApp -split '#')[0].Trim() }
+    if (-not $script:SgAppName) { return "" }
+
+    $args = @("ec2", "describe-security-groups", "--filters", "Name=group-name,Values=$($script:SgAppName)")
+    if ($script:VpcId) { $args += "Name=vpc-id,Values=$($script:VpcId)" }
+    $args += @("--region", $script:Region, "--output", "json")
+    try {
+        $sg = Invoke-AwsJson $args
+        if ($sg -and $sg.SecurityGroups -and $sg.SecurityGroups.Count -gt 0) {
+            return $sg.SecurityGroups[0].GroupId
+        }
+    } catch { }
+    return ""
+}
+
 function Get-StructuralDrift {
     $R = $script:Region
     $rows = [System.Collections.ArrayList]::new()
@@ -104,9 +167,16 @@ function Get-StructuralDrift {
             $actualAmi = if ($d.PSObject.Properties['ImageId']) { $d.ImageId } else { $null }
             $actualSg = $null; if ($d.PSObject.Properties['SecurityGroupIds'] -and $d.SecurityGroupIds -and $d.SecurityGroupIds.Count -gt 0) { $actualSg = $d.SecurityGroupIds[0] }
             $actualProfile = $null; if ($d.PSObject.Properties['IamInstanceProfile'] -and $d.IamInstanceProfile) { $actualProfile = $d.IamInstanceProfile.Name }
-            $expectedUserData = if ($script:ApiUserData) { [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($script:ApiUserData)) } else { "" }
+            $expectedSg = Get-ExpectedApiSecurityGroupForDrift
             $actualUserData = if ($d.PSObject.Properties['UserData']) { $d.UserData } else { "" }
-            $apiLtDrift = ($actualAmi -ne $script:ApiAmiId) -or ($actualSg -ne $script:ApiSecurityGroupId) -or ($actualProfile -ne $script:ApiInstanceProfile) -or ($actualUserData -ne $expectedUserData)
+            $userDataDrift = $false
+            if ($script:ApiUserData) {
+                $expectedUserData = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($script:ApiUserData))
+                $userDataDrift = $actualUserData -ne $expectedUserData
+            } else {
+                $userDataDrift = -not (Test-GeneratedApiUserDataMatchesSSOT -ActualUserData $actualUserData)
+            }
+            $apiLtDrift = ($actualAmi -ne $script:ApiAmiId) -or ($actualSg -ne $expectedSg) -or ($actualProfile -ne $script:ApiInstanceProfile) -or $userDataDrift
         }
         if ($apiLtDrift) {
             [void]$rows.Add([PSCustomObject]@{ ResourceType = "API LT"; Name = $apiLtName; Expected = "AMI/SG/Profile/UserData SSOT"; Actual = "drift"; Action = "NewVersion" })
