@@ -148,3 +148,7 @@ Risk scale:
   now scopes session/enrollment FK querysets by request tenant. Tests cover
   cross-tenant, mixed-tenant, same-tenant deleted student rejection, and FK
   queryset scoping.
+- 2026-05-22: Attendance production QA passed after deployment:
+  `e2e/teacher/attendance-contract.spec.ts`, the deep operational smoke
+  "강의 출결 매트릭스" path, API/console error capture, and mobile screenshots
+  for teacher attendance check and matrix render.
