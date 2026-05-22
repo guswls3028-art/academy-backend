@@ -169,3 +169,13 @@ Risk scale:
   Tests cover malformed IDs, active same-tenant empty payload, cross-tenant
   rejection, same-tenant soft-deleted rejection, and the existing achievement
   contract.
+- 2026-05-22: Results production QA passed after backend deployment
+  (`8b7f0f24`, CI run `26296381780`, CI build note `83cf2554`) and frontend
+  mobile follow-up deployment (`2d340855`, CI run `26299809665`). Production API
+  checks covered active student `200`, malformed `student_id` `400`, and missing
+  student `404`. Production UI checks covered the admin student detail overlay
+  and grade tab smoke (`2 passed`) plus mobile visual capture at
+  `C:\academy\_artifacts\results-prod-qa-20260522\admin-student-detail-grades-mobile-content-first-prod.png`.
+  During QA, the mobile overlay asset/layout defect was fixed in frontend
+  commits `756e6e3c`, `c4546fcf`, and `2d340855`; Cloudflare Pages upload
+  resilience was fixed in `cf6f873b` and `8c428447`.
