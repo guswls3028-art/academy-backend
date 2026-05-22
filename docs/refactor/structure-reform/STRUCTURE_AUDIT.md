@@ -19,9 +19,9 @@ structurally enforced, and which small refactor should start Phase 1.
 - Backend product domains currently live under `apps/domains/`.
 - Frontend role surfaces live under `src/app_admin`, `src/app_teacher`,
   `src/app_student`, plus `auth`, `core`, `shared`, `landing`.
-- Existing refactor inventory already measured 27 backend domain directories,
-  98 backend cross-domain imports, 642 backend cross-domain internal imports,
-  43 frontend cross-app imports, and 6 `shared -> app_*` imports.
+- Current refactor inventory measured 27 backend domain directories,
+  104 backend cross-domain imports, 645 backend cross-domain internal imports,
+  37 frontend cross-app imports, and 0 `shared -> app_*` imports.
 
 Backend API prefixes relevant to this audit:
 

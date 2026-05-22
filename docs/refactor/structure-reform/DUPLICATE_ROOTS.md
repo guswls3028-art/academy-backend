@@ -83,3 +83,7 @@ Risk scale:
 - 2026-05-22: Frontend CI runs `pnpm guard:legacy-api` to fail on reintroduced
   legacy `/students/students/`, `/lectures/enrollments/`, or direct
   `/enrollments/` create calls in tracked `src`/`e2e` TypeScript/JavaScript.
+- 2026-05-22: Frontend shared purity slice moved theme, responsive view,
+  clinic-target, video status/workbox, and session-progress contracts under
+  `src/shared/*`. Admin role paths remain compatibility facades where needed;
+  `shared -> app_*` imports are now 0 and cross-app/admin role imports are 37.

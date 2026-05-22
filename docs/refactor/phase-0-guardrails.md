@@ -126,14 +126,17 @@ Proposed:
 Current:
 
 - eslint guards style and E2E wait patterns.
-- app/domain import boundaries are not enforced.
+- `scripts/refactor-boundary-snapshot.mjs` captures app/domain import
+  boundaries in baseline mode.
+- `shared -> app_*` imports are at 0 as of 2026-05-22.
+- role-app `@admin/*` imports remain at 37 and are the next frontend boundary
+  cleanup target.
 
 Proposed:
 
 - add dependency-cruiser or eslint boundary rules in baseline mode;
 - capture existing `@admin/*` imports from `app_teacher`, `app_student`,
   `shared`, `auth`, `landing`, and `core`;
-- capture existing `shared -> app_*` imports;
 - block `shared/*` from importing any app;
 - block one app from importing another app's internals;
 - block app domain internals from importing sibling domain internals unless they
@@ -182,6 +185,6 @@ Backend and frontend functional gates are selected by touched surface.
 - [ ] Generated type path is proven or blocker is documented.
 - [ ] Tenant/auth/account recovery validation path is defined.
 - [ ] Docs distinguish current behavior from proposed architecture.
-- [ ] Frontend `shared` purity and `@admin` cross-app baseline are captured.
+- [x] Frontend `shared` purity and `@admin` cross-app baseline are captured.
 - [ ] Worker settings drift and migration dry-run are included in the backend
       gate.

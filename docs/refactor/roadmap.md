@@ -51,7 +51,7 @@ Required work:
 - [ ] Add frontend app/domain boundary guard in baseline mode.
 - [ ] Capture Django app-label, URL resolver, migration dry-run, and worker
       settings snapshots.
-- [ ] Capture frontend `shared -> app_*` and role-app `@admin/*` dependency
+- [x] Capture frontend `shared -> app_*` and role-app `@admin/*` dependency
       baselines.
 - [ ] Decide frontend lockfile and React type-version policy before relying on
       typecheck as a migration gate.

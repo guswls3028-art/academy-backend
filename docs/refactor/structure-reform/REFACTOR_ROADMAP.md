@@ -282,6 +282,16 @@ Implemented:
   after the shared session-enrollment contract slice.
 - Frontend typecheck and production build pass after the shared
   session-enrollment contract slice.
+- Shared frontend surfaces are app-agnostic after moving theme runtime/constants,
+  responsive view state, clinic-target fetch, video status/workbox APIs, and
+  session progress fetches to `src/shared/*` contracts. Admin paths now remain
+  compatibility facades where needed.
+- Frontend boundary snapshot improved from 41 to 37 cross-app/admin role imports,
+  and `shared -> app_*` imports improved from 6 to 0 after the shared purity
+  slice.
+- Teacher settings E2E now follows the canonical appearance route instead of the
+  obsolete inline theme-card contract, and message-log copy is aligned to
+  "발송 내역".
 
 ## Cleanup And Removal Rule
 
