@@ -50,7 +50,7 @@ backend/docs/
 
 | 용도 | 경로 |
 |------|------|
-| 현재 봉인 릴리즈 | [releases/v1.2.1.md](releases/v1.2.1.md) |
+| 현재 봉인 릴리즈 | [releases/v1.2.2.md](releases/v1.2.2.md) |
 | 실행 파라미터 | [ssot/params.yaml](ssot/params.yaml) |
 | 레이어/코드 배치 | [architecture/hexagonal-cutover-policy.md](architecture/hexagonal-cutover-policy.md) |
 | 배포 아키텍처 | [infrastructure/deployment-architecture.md](infrastructure/deployment-architecture.md) |

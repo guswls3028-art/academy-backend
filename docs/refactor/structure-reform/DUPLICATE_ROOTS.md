@@ -32,8 +32,8 @@ Risk scale:
 | Clinic participants | Clinic serializers/views import Student and set querysets | Clinic operations console, add participant | `clinic.services.add_participant` with students selector | Serializer-owned Student querysets/business validation | P1 | Add participant cross-tenant and deleted-student rejection |
 | Messaging recipients | `SendMessageView`, `notification_dispatch` direct Student query | Messaging send, event notifications | `messaging.services.resolve_recipients` with students selector DTO | Direct Student field reads in messaging layer | P1 | Parent/student target selection, missing phone, tenant isolation |
 | Frontend student DTO mapping | Admin `mapStudent`, teacher import of admin mapper/types, student `MyProfile`, auth signup imports admin API | Admin students, teacher students, student profile, signup modal | `src/shared/api/contracts/students` after OpenAPI schema | Role-app imports of `@admin/domains/students/*` | P2 | Typecheck, route render, contract snapshots |
-| Frontend enrollment API wrappers | `[COMPLETED]` admin lectures, exams, and homework each wrapped `/enrollments/session-enrollments/` independently | Lecture session roster, exam enrollment panel, homework assignment/enrollment panel, score entry setup flows | `frontend/src/app_admin/domains/enrollment/api/enrollments.ts` | Lectures/exams/homework session enrollment API files now compatibility facades | P2 | `[DONE]` frontend typecheck |
-| Legacy/wrong E2E route | `[COMPLETED] e2e/admin/dnb-lectures-sessions.spec.ts` no longer calls `/api/v1/students/students/` | DNB lecture/session E2E setup/cleanup | Current `/api/v1/students/` or shared E2E data helper | Wrong route removed from this helper; broader helper inventory remains future work | P2 | `[DONE]` grep confirms no `students/students` caller in `frontend/src` or `frontend/e2e` |
+| Frontend enrollment API wrappers | `[COMPLETED]` admin lectures, exams, homework, clinic tab, and teacher score entry previously depended on role-local wrappers for `/enrollments/session-enrollments/` | Lecture score roster, exam creation/enrollment panel, homework assignment/enrollment panel, session clinic tab, teacher mobile score entry | `frontend/src/shared/api/contracts/sessionEnrollments.ts` with admin compatibility facades | Lectures/exams/homework session enrollment API files remain compatibility facades; active call sites now use shared contract where cross-domain import was unnecessary | P2 | `[DONE]` focused ESLint, frontend typecheck, boundary snapshot 43→41 |
+| Legacy/wrong E2E route | `[COMPLETED] e2e/admin/dnb-lectures-sessions.spec.ts` no longer calls `/api/v1/students/students/` | DNB lecture/session E2E setup/cleanup | Current `/api/v1/students/` or shared E2E data helper | Wrong route removed from this helper; CI guard blocks reintroduction of `students/students`, `lectures/enrollments`, and direct enrollment-create routes in tracked source/E2E files | P2 | `[DONE]` `pnpm guard:legacy-api` |
 | Student field naming | Backend `is_managed`, `uses_identifier`, `no_phone`, `omr_code`; frontend `active`, `noPhone`, synthetic phone, `studentPhone` | Admin/teacher create/edit; student/profile | Generated contract plus explicit UI form mapper | Implicit field semantics in each API client | P1 | Contract snapshot and mapper unit tests |
 
 ## Canonicalization Order
@@ -75,3 +75,11 @@ Risk scale:
   `app_admin/domains/enrollment/api/enrollments.ts` client. Lectures, exams,
   and homework session-enrollment wrappers now delegate to it instead of each
   normalizing the same endpoint independently.
+- 2026-05-22: Session-enrollment fetch/bulk contract moved to
+  `src/shared/api/contracts/sessionEnrollments.ts`. Admin enrollment remains a
+  compatibility facade, lecture scores/exam creation/session clinic/teacher
+  mobile score entry call the shared contract directly, and the previous exams
+  `404/501 -> []` compatibility is preserved in the shared contract.
+- 2026-05-22: Frontend CI runs `pnpm guard:legacy-api` to fail on reintroduced
+  legacy `/students/students/`, `/lectures/enrollments/`, or direct
+  `/enrollments/` create calls in tracked `src`/`e2e` TypeScript/JavaScript.

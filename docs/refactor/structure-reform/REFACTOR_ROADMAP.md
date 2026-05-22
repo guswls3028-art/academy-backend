@@ -43,6 +43,12 @@ Done:
 - Tenant fallback/cross-tenant access is not introduced.
 - Legacy paths are documented with owner and removal condition.
 
+Implemented:
+
+- Backend boundary snapshot now distinguishes application port/cancellation
+  contracts from real adapter -> use-case reverse imports, reducing
+  `adapter_application_import` from 12 to 4.
+
 ## Phase 1: Students Canonicalization
 
 Goal:
@@ -259,7 +265,19 @@ Implemented:
   `src/app_admin/domains/enrollment/api/enrollments.ts`. Existing lectures,
   exams, and homework API files remain as compatibility facades and no longer
   duplicate session-enrollment normalization.
-- Frontend typecheck and production build pass after the helper cleanup.
+- Session-enrollment fetch/bulk contract now lives at
+  `src/shared/api/contracts/sessionEnrollments.ts`. Admin enrollment remains a
+  compatibility facade, homework creation uses its own homework facade instead
+  of the exams facade, lecture scores/exam creation/session clinic can call the
+  shared contract directly, and teacher mobile score entry no longer imports
+  admin homework internals.
+- Frontend CI now runs `pnpm guard:legacy-api`, blocking reintroduction of
+  `students/students`, `lectures/enrollments`, and direct enrollment-create
+  routes in tracked source/E2E files.
+- Frontend boundary snapshot improved from 43 to 41 cross-app/admin role imports
+  after the shared session-enrollment contract slice.
+- Frontend typecheck and production build pass after the shared
+  session-enrollment contract slice.
 
 ## Cleanup And Removal Rule
 

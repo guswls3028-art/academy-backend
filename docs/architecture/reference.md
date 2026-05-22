@@ -1,6 +1,6 @@
-# Academy Backend — 참조 문서 (단일 SSOT)
+# Academy Backend — quick reference
 
-실제 코드·설정 기준만 기술. Cursor·개발 시 이 파일 + 루트 README + docs/operations/README.md 등만 보면 됨.
+실제 코드·설정으로 빠르게 진입하기 위한 참조 문서. 충돌 시 실행 코드와 `backend/docs/README.md`의 진실 우선순위를 따른다.
 
 ---
 
@@ -26,7 +26,7 @@
 - **Tenant Branding (dev_app 전용, TenantResolvedAndOwner)**: GET/PATCH `tenant-branding/<id>/`, POST `tenant-branding/<id>/upload-logo/`. DTO: tenantId, loginTitle, loginSubtitle, logoUrl, windowTitle, displayName (snake_case 저장).
 - **Tenants (dev_app 전용)**: GET tenants/, GET tenants/<id>/, PATCH tenants/<id>/, POST tenants/create/. 목록/상세/생성.
 - **Tenant Owner (dev_app 전용)**: POST tenants/<id>/owner/ (username 필수, password/name/phone), GET tenants/<id>/owners/, GET tenants/<id>/owners/<user_id>/.
-- **Staff (staffs 도메인)**: GET/POST work-types, staff-work-types (POST body: staff, work_type_id, hourly_wage?). 상세: docs/archive/cursor_legacy/07-staffs-api.md.
+- **Staff (staffs 도메인)**: 기준 URL은 `apps/domains/staffs/urls.py`. 주요 리소스는 work-types, staff-work-types, work-records, expense-records, work-month-locks, payroll-snapshots, staff 루트.
 - 기타: profile/, job_progress/, messaging(/api/v1/messaging/).
 
 ---
@@ -66,4 +66,4 @@
 ## 6. 프론트·인프라 계약
 
 - **CORS/도메인**: 새 프론트 도메인 사용 시 CORS_ALLOWED_ORIGINS, CSRF_TRUSTED_ORIGINS 추가. 프론트 구현 사실: **frontend/docs/README.md** 및 **frontend/e2e/README.md**.
-- **엑셀 파싱**: `application/services/excel_parsing_service.py`. parse_student_excel_file 결과 비어 있으면 `ValueError("등록할 학생 데이터가 없습니다.")` — 프론트와 동일 메시지. 강의 수강생 일괄 등록용.
+- **엑셀 파싱**: `academy/application/services/excel_parsing_service.py`. parse_student_excel_file 결과 비어 있으면 `ValueError("등록할 학생 데이터가 없습니다.")` — 프론트와 동일 메시지. 강의 수강생 일괄 등록용.

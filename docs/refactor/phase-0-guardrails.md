@@ -30,7 +30,9 @@ Required before implementation phases:
 Current:
 
 - ruff `F821` exists.
-- import boundary guard is absent.
+- `scripts/lint/refactor_boundary_snapshot.py` exists in baseline mode.
+- adapter -> application boundary scan allows application port/cancellation
+  contracts and reports concrete use-case imports as violations.
 
 Proposed:
 
@@ -57,6 +59,13 @@ python manage.py makemigrations --check --dry-run --settings apps.api.config.set
 pytest tests\test_worker_settings_drift.py -v --tb=short -x
 $env:PYTHONPATH='C:\academy\backend'; $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.worker'; python tests\_worker_boot_check.py
 ```
+
+Current baseline snapshot:
+
+- `adapter_application_import`: 4
+- `cross_domain_import`: 104
+- `cross_domain_internal_import`: 645
+- `domain_infra_import`: 84
 
 ### 3. Tenant Scope Guard
 

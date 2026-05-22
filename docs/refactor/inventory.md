@@ -103,7 +103,8 @@ Backend:
 
 - `pyproject.toml` enables ruff `F821` only.
 - No import-linter configuration was found.
-- No DRF OpenAPI generation path was found by file scan.
+- `drf-yasg` is installed and used by some views, but no committed schema
+  generation or drift-check command was found by file scan.
 
 Frontend:
 
@@ -135,15 +136,17 @@ Frontend dependency risks:
 |---|---:|---|
 | Backend serializer-related lines | 1129 | API surface is broad enough that manual FE type sync is unsafe |
 | Backend tenant-related query/assignment hits | 3486 | tenant scope is widespread and needs automated guardrails |
-| Backend cross-domain imports | 98 | semantic snapshot script, non-internal cross-domain imports |
-| Backend cross-domain internal imports | 642 | semantic snapshot script, direct imports into models/services/views/api/serializers |
+| Backend cross-domain imports | 104 | semantic snapshot script, non-internal cross-domain imports |
+| Backend cross-domain internal imports | 645 | semantic snapshot script, direct imports into models/services/views/api/serializers |
 | Backend domain infra imports | 84 | domain code still reaches infra SDK/helper modules |
-| Backend adapter -> application imports | 12 | current hexagonal direction drift candidates |
+| Backend adapter -> application imports | 4 | current hexagonal direction drift candidates after allowing application port/cancellation contracts |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
-| Frontend source files | 1373 | app/domain moves need automated boundaries |
+| Frontend source import files | 1031 | files scanned for import boundary snapshot |
+| Frontend source text files | 1375 | app/domain moves need automated boundaries |
 | Frontend E2E/script files | 225 | durable gates must be separated from audit specs |
 | Frontend durable E2E waitForTimeout calls | 69 | excludes `_local`, `_audit`, artifacts, reports, screenshots |
-| Frontend cross-app imports | 43 | role apps currently import admin internals |
+| Frontend cross-app imports | 41 | role apps currently import admin internals |
+| Frontend role-app admin imports | 41 | teacher/student app imports of `@admin/*` internals |
 | Frontend shared imports app internals | 6 | `shared/` is not yet pure |
 
 Snapshot commands:
@@ -179,5 +182,6 @@ pnpm refactor:inventory
 - Worker entrypoints must remain stable through the first phases.
 - Generated API types require backend schema generation first; this is a Phase 0
   dependency, not an optional polish task.
-- The current worktree is dirty; this inventory is a working-tree snapshot, not a
-  clean-release snapshot.
+- Captured verification status: these counts include the session-enrollment
+  shared contract slice. Re-run the snapshot commands before each phase because
+  active refactors can change these counts quickly.

@@ -32,6 +32,10 @@ INFRA_IMPORTS = {
     "libs.redis",
 }
 DOMAIN_INTERNAL_SEGMENTS = {"models", "services", "views", "api", "serializers"}
+ADAPTER_APPLICATION_IMPORT_ALLOWLIST = {
+    "academy.application.ports",
+    "academy.application.video",
+}
 
 
 @dataclass(frozen=True)
@@ -113,7 +117,12 @@ def scan_file(path: Path) -> list[Finding]:
 
         if path.is_relative_to(ACADEMY_ADAPTERS_DIR):
             if module == "academy.application" or module.startswith("academy.application."):
-                findings.append(Finding("adapter_application_import", rel(path), line, module))
+                allowed = any(
+                    module == allowed_module or module.startswith(allowed_module + ".")
+                    for allowed_module in ADAPTER_APPLICATION_IMPORT_ALLOWLIST
+                )
+                if not allowed:
+                    findings.append(Finding("adapter_application_import", rel(path), line, module))
 
     return findings
 
