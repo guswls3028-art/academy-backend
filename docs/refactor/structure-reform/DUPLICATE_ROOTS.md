@@ -32,6 +32,7 @@ Risk scale:
 | Clinic participants | Clinic serializers/views import Student and set querysets | Clinic operations console, add participant | `clinic.services.add_participant` with students selector | Serializer-owned Student querysets/business validation | P1 | Add participant cross-tenant and deleted-student rejection |
 | Messaging recipients | `SendMessageView`, `notification_dispatch` direct Student query | Messaging send, event notifications | `messaging.services.resolve_recipients` with students selector DTO | Direct Student field reads in messaging layer | P1 | Parent/student target selection, missing phone, tenant isolation |
 | Frontend student DTO mapping | Admin `mapStudent`, teacher import of admin mapper/types, student `MyProfile`, auth signup imports admin API | Admin students, teacher students, student profile, signup modal | `src/shared/api/contracts/students` after OpenAPI schema | Role-app imports of `@admin/domains/students/*` | P2 | Typecheck, route render, contract snapshots |
+| Frontend enrollment API wrappers | `[COMPLETED]` admin lectures, exams, and homework each wrapped `/enrollments/session-enrollments/` independently | Lecture session roster, exam enrollment panel, homework assignment/enrollment panel, score entry setup flows | `frontend/src/app_admin/domains/enrollment/api/enrollments.ts` | Lectures/exams/homework session enrollment API files now compatibility facades | P2 | `[DONE]` frontend typecheck |
 | Legacy/wrong E2E route | `[COMPLETED] e2e/admin/dnb-lectures-sessions.spec.ts` no longer calls `/api/v1/students/students/` | DNB lecture/session E2E setup/cleanup | Current `/api/v1/students/` or shared E2E data helper | Wrong route removed from this helper; broader helper inventory remains future work | P2 | `[DONE]` grep confirms no `students/students` caller in `frontend/src` or `frontend/e2e` |
 | Student field naming | Backend `is_managed`, `uses_identifier`, `no_phone`, `omr_code`; frontend `active`, `noPhone`, synthetic phone, `studentPhone` | Admin/teacher create/edit; student/profile | Generated contract plus explicit UI form mapper | Implicit field semantics in each API client | P1 | Contract snapshot and mapper unit tests |
 
@@ -54,8 +55,8 @@ Risk scale:
   mutations.
 - Password/account recovery is actually 4 API roots and must not be mixed with
   the current release while Phase 1 student canonicalization starts.
-- The E2E lecture/session path uses `/api/v1/students/students/`, not the current
-  `/api/v1/students/`.
+- The E2E lecture/session path used `/api/v1/students/students/`, not the current
+  `/api/v1/students/`; the known tracked caller has been migrated.
 - `noPhone/uses_identifier/omr_code`, `active/is_managed`, and parent initial
   password have semantic drift across backend and frontend.
 
@@ -70,3 +71,7 @@ Risk scale:
   payload tenant mismatch before SQS publish.
 - 2026-05-22: Phase 5 first cleanup removed the known
   `/api/v1/students/students/` E2E helper route.
+- 2026-05-22: Phase 5 frontend enrollment API cleanup created a canonical
+  `app_admin/domains/enrollment/api/enrollments.ts` client. Lectures, exams,
+  and homework session-enrollment wrappers now delegate to it instead of each
+  normalizing the same endpoint independently.

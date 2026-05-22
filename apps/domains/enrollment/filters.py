@@ -8,7 +8,7 @@ from .models import Enrollment
 class EnrollmentFilter(django_filters.FilterSet):
     """
     Enrollment list filtering.
-    Front uses: /lectures/enrollments/?lecture={lectureId}
+    Frontend canonical client uses: /enrollments/?lecture={lectureId}
     """
 
     class Meta:

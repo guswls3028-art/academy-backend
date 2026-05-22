@@ -255,6 +255,10 @@ Implemented:
 - The known E2E helper route `/api/v1/students/students/` was removed from
   `frontend/e2e/admin/dnb-lectures-sessions.spec.ts` and replaced with the
   current `/api/v1/students/` API.
+- Frontend enrollment API calls now have a canonical admin enrollment client at
+  `src/app_admin/domains/enrollment/api/enrollments.ts`. Existing lectures,
+  exams, and homework API files remain as compatibility facades and no longer
+  duplicate session-enrollment normalization.
 - Frontend typecheck and production build pass after the helper cleanup.
 
 ## Cleanup And Removal Rule
