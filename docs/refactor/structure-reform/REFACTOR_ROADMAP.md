@@ -196,6 +196,10 @@ Implemented:
   `enrollment_id`, and student self-booking, while idcard returns the empty
   safe response for deleted student accounts. Participant transition logic still
   needs extraction into clinic services before this phase is complete.
+- Attendance roster create now validates student IDs through
+  `students.selectors` and scopes `AttendanceSerializer` session/enrollment FK
+  querysets to the request tenant. Roster side effects still need extraction
+  into an attendance service before this phase is complete.
 
 ## Phase 4: AI / OMR / Matchup Job Structure
 

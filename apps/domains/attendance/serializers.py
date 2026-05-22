@@ -3,6 +3,7 @@
 from rest_framework import serializers
 from .models import Attendance
 from apps.domains.enrollment.models import Enrollment
+from apps.domains.enrollment.selectors import enrollments_for_tenant
 from apps.domains.lectures.models import Session
 
 
@@ -42,6 +43,18 @@ class AttendanceSerializer(serializers.ModelSerializer):
     )
     profile_photo_url = serializers.SerializerMethodField()
     name_highlight_clinic_target = serializers.SerializerMethodField()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        request = self.context.get("request")
+        tenant = getattr(request, "tenant", None) if request else None
+        if tenant:
+            self.fields["session"].queryset = (
+                Session.objects
+                .filter(lecture__tenant=tenant)
+                .select_related("lecture")
+            )
+            self.fields["enrollment_id"].queryset = enrollments_for_tenant(tenant)
 
     class Meta:
         model = Attendance

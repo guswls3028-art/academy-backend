@@ -25,6 +25,7 @@ from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.lectures.models import Session
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.domains.students.selectors import students_for_tenant
 from apps.domains.exams.models import ExamEnrollment
 from apps.domains.fees.services import (
     auto_assign_fees_on_enrollment,
@@ -344,12 +345,11 @@ class AttendanceViewSet(ModelViewSet):
         if not session:
             raise NotFound("세션을 찾을 수 없습니다.")
 
-        # 🔐 tenant isolation: client가 보낸 student_id가 이 테넌트 소속인지 검증
-        from apps.domains.students.models import Student
+        # 🔐 tenant isolation: client가 보낸 student_id가 이 테넌트 소속 active 학생인지 검증
         valid_sids = set(
-            Student.objects.filter(
-                tenant=tenant, id__in=student_ids, deleted_at__isnull=True,
-            ).values_list("id", flat=True)
+            students_for_tenant(tenant, deleted="active")
+            .filter(id__in=student_ids)
+            .values_list("id", flat=True)
         )
         invalid_sids = [sid for sid in student_ids if sid not in valid_sids]
         if invalid_sids:

@@ -8,10 +8,13 @@ attendance bulk_create 테넌트 검증 증명 테스트
 """
 from django.test import TestCase
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
+from apps.domains.attendance.serializers import AttendanceSerializer
+from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.attendance.views import AttendanceViewSet
@@ -96,6 +99,19 @@ class TestBulkCreateTenantIsolation(TestCase):
         })
         self.assertEqual(resp.status_code, 400)
 
+    def test_deleted_same_tenant_student_rejected(self):
+        """같은 테넌트라도 soft-deleted 학생은 출결 roster 대상이 아니다."""
+        self.student_a.deleted_at = timezone.now()
+        self.student_a.save(update_fields=["deleted_at", "updated_at"])
+
+        resp = self._call(self.tenant_a, self.admin_a, {
+            "session": self.session_a.id,
+            "students": [self.student_a.id],
+        })
+
+        self.assertEqual(resp.status_code, 400, f"응답: {resp.data}")
+        self.assertIn(str(self.student_a.id), str(resp.data))
+
     def test_other_tenant_session_rejected(self):
         """다른 테넌트 세션 ID → 404."""
         resp = self._call(self.tenant_a, self.admin_a, {
@@ -103,3 +119,52 @@ class TestBulkCreateTenantIsolation(TestCase):
             "students": [self.student_a.id],
         })
         self.assertEqual(resp.status_code, 404)
+
+    def test_serializer_fk_querysets_are_tenant_scoped(self):
+        active_enrollment = Enrollment.objects.create(
+            tenant=self.tenant_a,
+            student=self.student_a,
+            lecture=self.lecture_a,
+            status="ACTIVE",
+        )
+        deleted_user = User.objects.create_user(
+            username="t_a_deleted_stu",
+            password="test1234",
+            tenant=self.tenant_a,
+            name="DeletedStudent",
+        )
+        deleted_student = Student.objects.create(
+            tenant=self.tenant_a,
+            user=deleted_user,
+            ps_number="A002",
+            name="DeletedStudent",
+            phone="01055550000",
+            parent_phone="01066660000",
+            omr_code="55550000",
+            deleted_at=timezone.now(),
+        )
+        deleted_enrollment = Enrollment.objects.create(
+            tenant=self.tenant_a,
+            student=deleted_student,
+            lecture=self.lecture_a,
+            status="ACTIVE",
+        )
+        foreign_enrollment = Enrollment.objects.create(
+            tenant=self.tenant_b,
+            student=self.student_b,
+            lecture=self.lecture_b,
+            status="ACTIVE",
+        )
+
+        request = self.factory.get("/api/v1/lectures/attendance/")
+        request.tenant = self.tenant_a
+        serializer = AttendanceSerializer(context={"request": request})
+
+        enrollment_ids = set(serializer.fields["enrollment_id"].queryset.values_list("id", flat=True))
+        session_ids = set(serializer.fields["session"].queryset.values_list("id", flat=True))
+
+        self.assertIn(active_enrollment.id, enrollment_ids)
+        self.assertNotIn(deleted_enrollment.id, enrollment_ids)
+        self.assertNotIn(foreign_enrollment.id, enrollment_ids)
+        self.assertIn(self.session_a.id, session_ids)
+        self.assertNotIn(self.session_b.id, session_ids)
