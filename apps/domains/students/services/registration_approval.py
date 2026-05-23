@@ -77,9 +77,10 @@ def approve_registration_request(
     shape and message delivery remain caller concerns.
     """
     with transaction.atomic():
+        # Lock only the registration row. Joining nullable student here breaks
+        # PostgreSQL FOR UPDATE because it becomes a nullable outer join.
         reg = (
             StudentRegistrationRequest.objects.select_for_update()
-            .select_related("tenant", "student")
             .get(pk=registration_id, tenant=tenant)
         )
         if reg.status != StudentRegistrationRequest.PENDING:
