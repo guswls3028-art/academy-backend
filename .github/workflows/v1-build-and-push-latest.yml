@@ -99,6 +99,7 @@ jobs:
           echo "$CHANGED" | grep -qE "^requirements/requirements\.txt$" && FORCE_ALL=true
           echo "$CHANGED" | grep -qE "^libs/" && FORCE_ALL=true
           echo "$CHANGED" | grep -qE "^academy/" && FORCE_ALL=true
+          echo "$CHANGED" | grep -qE "^apps/shared/" && FORCE_ALL=true
 
           if [ "$FORCE_ALL" = "true" ]; then
             echo "Core/shared change detected — full build"
