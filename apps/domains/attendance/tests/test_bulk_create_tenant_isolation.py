@@ -13,6 +13,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
+from apps.domains.attendance.models import Attendance
 from apps.domains.attendance.serializers import AttendanceSerializer
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
@@ -81,6 +82,68 @@ class TestBulkCreateTenantIsolation(TestCase):
         })
         self.assertEqual(resp.status_code, 201, f"응답: {resp.data}")
         self.assertEqual(len(resp.data), 1)
+
+    def test_same_roster_request_is_idempotent(self):
+        """같은 학생을 같은 차시에 반복 등록해도 로스터/출결은 1개만 유지된다."""
+        first = self._call(self.tenant_a, self.admin_a, {
+            "session": self.session_a.id,
+            "students": [self.student_a.id],
+        })
+        second = self._call(self.tenant_a, self.admin_a, {
+            "session": self.session_a.id,
+            "students": [self.student_a.id],
+        })
+
+        self.assertEqual(first.status_code, 201, f"응답: {first.data}")
+        self.assertEqual(second.status_code, 201, f"응답: {second.data}")
+        self.assertEqual(
+            Enrollment.objects.filter(
+                tenant=self.tenant_a,
+                student=self.student_a,
+                lecture=self.lecture_a,
+            ).count(),
+            1,
+        )
+        self.assertEqual(
+            Attendance.objects.filter(
+                tenant=self.tenant_a,
+                session=self.session_a,
+                enrollment__student=self.student_a,
+            ).count(),
+            1,
+        )
+
+    def test_malformed_student_id_rejected_without_side_effects(self):
+        """숫자가 아닌 student id는 500이 아니라 400으로 거부된다."""
+        resp = self._call(self.tenant_a, self.admin_a, {
+            "session": self.session_a.id,
+            "students": ["bad-id"],
+        })
+
+        self.assertEqual(resp.status_code, 400, f"응답: {resp.data}")
+        self.assertIn("학생 ID", str(resp.data))
+        self.assertFalse(
+            Enrollment.objects.filter(
+                tenant=self.tenant_a,
+                lecture=self.lecture_a,
+            ).exists()
+        )
+
+    def test_malformed_session_id_rejected_without_side_effects(self):
+        """숫자가 아닌 session id는 500이 아니라 400으로 거부된다."""
+        resp = self._call(self.tenant_a, self.admin_a, {
+            "session": "bad-session",
+            "students": [self.student_a.id],
+        })
+
+        self.assertEqual(resp.status_code, 400, f"응답: {resp.data}")
+        self.assertIn("session", str(resp.data))
+        self.assertFalse(
+            Enrollment.objects.filter(
+                tenant=self.tenant_a,
+                lecture=self.lecture_a,
+            ).exists()
+        )
 
     def test_other_tenant_student_rejected(self):
         """다른 테넌트 학생 ID → 400 거부."""

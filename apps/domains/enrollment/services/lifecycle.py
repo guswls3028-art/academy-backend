@@ -6,6 +6,7 @@ from django.db import transaction
 from rest_framework.exceptions import NotFound, ValidationError
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
+from apps.domains.attendance.services import ensure_session_roster_membership
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.enrollment.selectors import (
     get_active_enrollment_for_student_lecture,
@@ -118,28 +119,12 @@ def bulk_create_session_enrollments(*, tenant, session_id, enrollment_ids) -> li
         if enrollment.lecture_id != session.lecture_id:
             raise ValidationError({"detail": "다른 강의 수강자는 이 세션에 추가할 수 없습니다."})
 
-        if enrollment.status != "ACTIVE":
-            enrollment.status = "ACTIVE"
-            enrollment.save(update_fields=["status"])
-        auto_assign_fees_on_enrollment(
-            tenant,
-            enrollment.student,
-            session.lecture,
-            enrollment,
-        )
-
-        obj, _ = enroll_repo.session_enrollment_get_or_create_tenant(
+        membership = ensure_session_roster_membership(
             tenant=tenant,
             session=session,
             enrollment=enrollment,
         )
-        created.append(obj)
-        enroll_repo.attendance_get_or_create_tenant(
-            tenant=tenant,
-            enrollment=enrollment,
-            session=session,
-            defaults={"status": "PRESENT"},
-        )
+        created.append(membership.session_enrollment)
 
     return created
 

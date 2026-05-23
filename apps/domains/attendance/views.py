@@ -19,16 +19,15 @@ from .serializers import (
     AttendanceMatrixStudentSerializer,
 )
 from .filters import AttendanceFilter
+from .services import create_attendance_roster
 
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.lectures.models import Session
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.students.selectors import students_for_tenant
 from apps.domains.exams.models import ExamEnrollment
 from apps.domains.fees.services import (
-    auto_assign_fees_on_enrollment,
     deactivate_fees_for_enrollment,
 )
 from apps.domains.homework.models import HomeworkAssignment
@@ -325,7 +324,6 @@ class AttendanceViewSet(ModelViewSet):
     # =========================================================
     # 1️⃣ 세션 기준 학생 등록
     # =========================================================
-    @transaction.atomic
     @action(detail=False, methods=["post"])
     def bulk_create(self, request):
         tenant = getattr(request, "tenant", None)
@@ -333,64 +331,11 @@ class AttendanceViewSet(ModelViewSet):
         session_id = request.data.get("session")
         student_ids = request.data.get("students", [])
 
-        if not session_id or not isinstance(student_ids, list):
-            return Response(
-                {"detail": "session, students(list)는 필수입니다"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        session = Session.objects.select_related("lecture").filter(
-            id=session_id, lecture__tenant=tenant,
-        ).first()
-        if not session:
-            raise NotFound("세션을 찾을 수 없습니다.")
-
-        # 🔐 tenant isolation: client가 보낸 student_id가 이 테넌트 소속 active 학생인지 검증
-        valid_sids = set(
-            students_for_tenant(tenant, deleted="active")
-            .filter(id__in=student_ids)
-            .values_list("id", flat=True)
+        created = create_attendance_roster(
+            tenant=tenant,
+            session_id=session_id,
+            student_ids=student_ids,
         )
-        invalid_sids = [sid for sid in student_ids if sid not in valid_sids]
-        if invalid_sids:
-            return Response(
-                {"detail": f"이 학원에 속하지 않는 학생 ID: {invalid_sids}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        created = []
-
-        for sid in student_ids:
-            enrollment, created_new = enroll_repo.enrollment_get_or_create(
-                tenant=tenant,
-                lecture=session.lecture,
-                student_id=sid,
-                defaults={"status": "ACTIVE"},
-            )
-            # 퇴원(INACTIVE) 수강생 재등록 시 활성화 복원
-            if not created_new and enrollment.status != "ACTIVE":
-                enrollment.status = "ACTIVE"
-                enrollment.save(update_fields=["status"])
-            auto_assign_fees_on_enrollment(
-                tenant,
-                enrollment.student,
-                session.lecture,
-                enrollment,
-            )
-
-            enroll_repo.session_enrollment_get_or_create_tenant(
-                tenant=tenant,
-                session=session,
-                enrollment=enrollment,
-            )
-
-            attendance, _ = enroll_repo.attendance_get_or_create_tenant(
-                tenant=tenant,
-                enrollment=enrollment,
-                session=session,
-                defaults={"status": "PRESENT"},
-            )
-
-            created.append(attendance)
 
         # 차시 학생 등록(bulk_create)은 행정 작업 — 입실(check_in_complete) 알림톡 발송 안 함.
         # 실제 입실 알림은 partial_update(개별 출결 변경) 또는 bulk_set_present(전체 현장 출석)에서만 발송.
