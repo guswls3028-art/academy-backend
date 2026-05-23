@@ -518,7 +518,8 @@ rejected → {} (종단)
 #### 불변조건
 
 1. **원자성 필수:** approve와 reject는 `select_for_update`로 동시 실행 방지
-2. **approved → 학생 생성:** approve 시 학생 계정이 atomic하게 생성되어야 함
+2. **approved → 학생 생성:** `students.services.registration_approval.approve_registration_request()`가 `pending -> approved` 전이와 학생 계정 생성을 같은 트랜잭션에서 처리
+3. **발송 분리:** 승인 알림톡 실패는 이미 커밋된 승인/학생 생성을 API 실패로 되돌리지 않음
 
 ---
 
@@ -714,8 +715,11 @@ EXPIRED → {} (종단)
 
 ### C3. HIGH — StudentRegistrationRequest approve/reject 레이스 → **FIXED**
 
-- **해결:** `apps/domains/students/views/registration_views.py`의 approve/reject/bulk_reject 경로가
-  `select_for_update`와 상태 재확인을 사용한다.
+- **해결:** approve/auto-approve/bulk_approve 경로는
+  `apps/domains/students/services/registration_approval.py`의
+  `approve_registration_request()`를 통해 `select_for_update`, 상태 재확인,
+  계정 생성, `approved` 전이를 atomic 처리한다. reject/bulk_reject 경로는
+  view compatibility layer에서 `select_for_update`와 상태 재확인을 사용한다.
 - **비고:** 새 레이스가 발견되면 이 항목을 새 증거와 함께 다시 열고, 현재 fixed 기록은 변경 이력으로 남긴다.
 
 ### C4. HIGH — VideoTranscodeJob 종단 상태 덮어쓰기
@@ -776,7 +780,7 @@ EXPIRED → {} (종단)
 |---|--------|--------|----------|----------|
 | 1 | C2: ExamResult FINAL→DRAFT | CRITICAL | **FIXED** | `exam_grading_service.py`: FINAL 결과 재채점 시 early return |
 | 2 | C1: Submission can_transit | CRITICAL | **FIXED** | `transition.py` SSOT 생성, 16개 write path 전수 리팩터링, 102개 테스트 |
-| 3 | C3: Registration race | HIGH | **FIXED** | `students/views.py`: approve/reject/bulk_reject에 select_for_update + 상태 재확인 |
+| 3 | C3: Registration race | HIGH | **FIXED** | `students/services/registration_approval.py`: approve 상태 전이+학생 생성 atomic 처리; `registration_views.py`: reject/bulk_reject 잠금 유지 |
 | 4 | C4: Job terminal overwrite | HIGH | **FIXED** | `repositories_video.py`: job_cancel/mark_dead/fail_retry에 종단 상태 가드 |
 | 5 | C5: ExamAttempt atomic | MEDIUM | **FIXED** | `sync_result_from_submission.py`: select_for_update 추가 |
 | 6 | C6: Clinic booking bypass | MEDIUM | **FIXED** | `clinic/views.py`: change_booking에 CANCEL_ALLOWED_FROM 가드 |

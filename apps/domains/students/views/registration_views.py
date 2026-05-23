@@ -6,7 +6,6 @@ import traceback
 from django.db import transaction, IntegrityError
 from django.db.models import Q
 from django.conf import settings
-from django.contrib.auth import get_user_model
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.decorators import action
@@ -22,12 +21,11 @@ from apps.domains.messaging.services import get_tenant_site_url, send_registrati
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student, StudentRegistrationRequest
 from ..serializers import (
-    _generate_unique_ps_number,
     StudentDetailSerializer,
     RegistrationRequestCreateSerializer,
     RegistrationRequestListSerializer,
 )
-from ..services import create_student_account
+from ..services import RegistrationApprovalError, RegistrationApprovalResult, approve_registration_request
 from .student_views import StudentListPagination
 
 logger = logging.getLogger(__name__)
@@ -38,99 +36,63 @@ logger = logging.getLogger(__name__)
 # ======================================================
 
 
-def _approve_registration_request(request, reg):
-    """
-    가입 신청 1건 승인 처리. 성공 시 None 반환, 실패 시 Response 반환.
-    호출 후 reg.student 가 설정됨.
-    """
-    from apps.core.models.user import user_internal_username
+def _copy_approval_result_to_instance(reg, result: RegistrationApprovalResult) -> None:
+    reg.status = result.registration.status
+    reg.student = result.student
+    reg.student_id = result.student.id
+    reg.initial_password_plain = result.registration.initial_password_plain
+    reg._approval_result = result
 
-    tenant = request.tenant
-    parent_password_for_notice = "변경되지 않음"
-    name = reg.name
-    parent_phone = reg.parent_phone
-    phone = reg.phone
 
-    # SSOT: ps_number = 로그인 아이디 = 표시 아이디 (하나의 값)
-    # 학생이 요청한 아이디가 있으면 그것을 ps_number로, 없으면 랜덤
-    requested_id = (reg.username or "").strip()
-    if requested_id:
-        internal = user_internal_username(tenant, requested_id)
-        # 테넌트 내 중복 검사 (User.username + Student.ps_number)
-        if get_user_model().objects.filter(username=internal).exists():
-            requested_id = ""
-        elif Student.objects.filter(tenant=tenant, ps_number=requested_id, deleted_at__isnull=True).exists():
-            requested_id = ""
-    if not requested_id:
-        try:
-            requested_id = _generate_unique_ps_number(tenant=tenant)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=400)
-    ps_number = requested_id  # ps_number = 로그인 아이디 = 하나의 값
-
-    if phone and len(str(phone)) >= 8:
-        omr_code = str(phone)[-8:]
-    elif parent_phone and len(parent_phone) >= 8:
-        omr_code = parent_phone[-8:]
-    else:
-        omr_code = (parent_phone or "00000000")[-8:]
-
+def _send_registration_approved_notice(request, result: RegistrationApprovalResult) -> dict:
     try:
-        with transaction.atomic():
-            # Row lock to prevent double-approve race condition
-            reg = StudentRegistrationRequest.objects.select_for_update().get(pk=reg.pk)
-            if reg.status != StudentRegistrationRequest.PENDING:
-                return Response({"detail": "이미 처리된 신청입니다."}, status=400)
-
-            result = create_student_account(
-                tenant=tenant,
-                password_hash=reg.initial_password,
-                student_data={
-                    "name": name,
-                    "parent_phone": parent_phone,
-                    "phone": phone,
-                    "ps_number": ps_number,
-                    "omr_code": omr_code,
-                    "uses_identifier": not (phone and phone.strip()),
-                    "school_type": reg.school_type,
-                    "elementary_school": reg.elementary_school or None,
-                    "high_school": reg.high_school or None,
-                    "middle_school": reg.middle_school or None,
-                    "high_school_class": reg.high_school_class or None,
-                    "major": reg.major or None,
-                    "grade": reg.grade,
-                    "gender": reg.gender or None,
-                    "memo": reg.memo or None,
-                    "address": reg.address or None,
-                    "origin_middle_school": reg.origin_middle_school or None,
-                },
-            )
-            student = result.student
-            parent_password_for_notice = result.parent_password_for_notice or "변경되지 않음"
-            reg.status = StudentRegistrationRequest.APPROVED
-            reg.student = student
-            reg.save(update_fields=["status", "student", "updated_at"])
-
-        send_registration_approved_messages(
-            tenant_id=tenant.id,
+        notice = result.notice
+        return send_registration_approved_messages(
+            tenant_id=request.tenant.id,
             site_url=get_tenant_site_url(request.tenant) or "",
-            student_name=name,
-            student_phone=(phone or "") if phone else "",
-            student_id=ps_number,
-            student_password="가입 신청 시 입력한 비밀번호",
-            parent_phone=parent_phone or "",
-            parent_password=parent_password_for_notice,
+            student_name=notice.student_name,
+            student_phone=notice.student_phone,
+            student_id=notice.student_id,
+            student_password=notice.student_password,
+            parent_phone=notice.parent_phone,
+            parent_password=notice.parent_password,
         )
-        if reg.initial_password_plain:
-            reg.initial_password_plain = ""
-            reg.save(update_fields=["initial_password_plain"])
-        return None
+    except Exception as exc:
+        logger.exception(
+            "registration approved notification failed: reg_id=%s student_id=%s error=%s",
+            result.registration.id,
+            result.student.id,
+            exc,
+        )
+        return {"status": "error", "enqueued": 0}
+
+
+def _approve_registration_request_with_result(request, reg):
+    try:
+        result = approve_registration_request(
+            tenant=request.tenant,
+            registration_id=reg.pk,
+        )
+        _copy_approval_result_to_instance(reg, result)
+        _send_registration_approved_notice(request, result)
+        return None, result
+    except RegistrationApprovalError as e:
+        return Response({"detail": e.detail}, status=e.status_code), None
     except Exception as e:
         logger.exception("_approve_registration_request error: %s", e)
         return Response(
             {"detail": str(e) if settings.DEBUG else "승인 처리 중 오류가 발생했습니다."},
             status=500,
-        )
+        ), None
+
+
+def _approve_registration_request(request, reg):
+    """
+    가입 신청 1건 승인 처리. 성공 시 None 반환, 실패 시 Response 반환.
+    호출 후 reg.student 가 설정됨.
+    """
+    error, _result = _approve_registration_request_with_result(request, reg)
+    return error
 
 
 class RegistrationRequestViewSet(ModelViewSet):
@@ -340,17 +302,14 @@ class RegistrationRequestViewSet(ModelViewSet):
             return Response(payload, status=500)
 
         # 자동 승인 설정 시 즉시 승인 처리
-        try:
-            if getattr(request.tenant, "student_registration_auto_approve", False):
-                err = _approve_registration_request(request, req)
-                if err is not None:
-                    return err
-                return Response(
-                    StudentDetailSerializer(req.student, context={"request": request}).data,
-                    status=200,
-                )
-        except Exception:
-            pass
+        if getattr(request.tenant, "student_registration_auto_approve", False):
+            err, result = _approve_registration_request_with_result(request, req)
+            if err is not None:
+                return err
+            return Response(
+                StudentDetailSerializer(result.student, context={"request": request}).data,
+                status=200,
+            )
 
         try:
             out = RegistrationRequestListSerializer(req, context={"request": request})
@@ -391,7 +350,7 @@ class RegistrationRequestViewSet(ModelViewSet):
             if reg.status != StudentRegistrationRequest.PENDING:
                 failed.append({"id": rid, "detail": "이미 처리된 신청입니다."})
                 continue
-            err_response = _approve_registration_request(request, reg)
+            err_response, _result = _approve_registration_request_with_result(request, reg)
             if err_response is not None:
                 failed.append({"id": rid, "detail": err_response.data.get("detail", "승인 실패")})
             else:
@@ -445,10 +404,10 @@ class RegistrationRequestViewSet(ModelViewSet):
                 {"detail": "이미 처리된 신청입니다."},
                 status=400,
             )
-        err = _approve_registration_request(request, reg)
+        err, result = _approve_registration_request_with_result(request, reg)
         if err is not None:
             return err
-        out = StudentDetailSerializer(reg.student, context={"request": request})
+        out = StudentDetailSerializer(result.student, context={"request": request})
         return Response(out.data, status=200)
 
     @action(detail=True, methods=["post"])

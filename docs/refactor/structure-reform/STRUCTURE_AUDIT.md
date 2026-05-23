@@ -102,7 +102,7 @@ app, auth, messaging, clinic/attendance/results, and E2E helper paths.
 | Bulk JSON create | 1 compatibility root | `StudentViewSet.bulk_create` owns row policy and calls `create_student_account` for the account graph |
 | Excel/import create | 2 roots | `bulk_create_from_excel` dispatches worker; `services/bulk_from_excel.py` calls `lecture_enroll`, which calls `create_student_account` for new students |
 | Lecture enrollment create/restore | 1 root | `get_or_create_student_for_lecture_enroll` restores through lifecycle service or creates through `create_student_account` |
-| Registration approve | 1 compatibility root | `_approve_registration_request` owns approval state/message and calls `create_student_account` with the signup password hash |
+| Registration approve | 1 service root plus compatibility HTTP facades | `approve_registration_request` owns approval state and account graph transaction; views own response shape and nonfatal approval-message dispatch |
 | Admin/student profile update | 3 roots | `StudentViewSet.perform_update`, `StudentViewSet.me`, `StudentProfileView.patch` |
 | Schedule visibility | 3 action roots | `StudentSessionClearPastView`, `StudentSessionHideView`, `StudentSessionUnhideView` mutate Student fields |
 | Soft delete / restore / permanent delete | 6 roots | `destroy`, `bulk_delete`, `bulk_restore`, `bulk_permanent_delete`, duplicate fix, purge command |
@@ -226,9 +226,10 @@ services, or events.
 - Student lifecycle state is still spread across `Student.deleted_at`,
   `Student.is_managed`, `User.is_active`, `TenantMembership.is_active`,
   `Enrollment.status`, clinic participant status, and messaging side effects.
-- Soft delete, restore, permanent-delete, and account graph creation entrypoints
-  now have explicit service use-cases. Registration approve, create/import row
-  orchestration, schedule visibility, and domain-event cleanup remain split.
+- Soft delete, restore, permanent-delete, account graph creation, and
+  registration approval entrypoints now have explicit service use-cases.
+  Create/import row orchestration, schedule visibility, and domain-event cleanup
+  remain split.
 - Notifications are fired inside view/service flows rather than through a
   durable domain event/outbox contract.
 - Logs exist in some destructive paths, but a uniform
@@ -292,6 +293,12 @@ services, or events.
   activation. Frontend teacher create routes through the shared student
   contract, admin Excel upload forwards the welcome toggle, and worker payload
   booleans are parsed explicitly.
+- Registration approval orchestration now has one SSOT at
+  `apps.domains.students.services.approve_registration_request`. Approve,
+  bulk_approve, and auto-approve share the same row lock, pending-state guard,
+  signup password hash transfer, `pending -> approved` transition, and student
+  account graph call. Approval AlimTalk dispatch remains a view compatibility
+  boundary and is nonfatal after the durable transaction commits.
 
 ## 11. Phase 1 Recommendation
 

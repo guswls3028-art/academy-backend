@@ -2,7 +2,7 @@
 
 **상태:** Active  
 **최종 점검:** 2026-05-23  
-**코드 기준:** `apps/domains/students/services/creation.py`, `apps/domains/students/views/student_views.py`, `apps/domains/students/views/registration_views.py`, `apps/domains/students/services/lecture_enroll.py`, `apps/domains/students/services/bulk_from_excel.py`
+**코드 기준:** `apps/domains/students/services/creation.py`, `apps/domains/students/services/registration_approval.py`, `apps/domains/students/views/student_views.py`, `apps/domains/students/views/registration_views.py`, `apps/domains/students/services/lecture_enroll.py`, `apps/domains/students/services/bulk_from_excel.py`
 
 ## 1. 책임 경계
 
@@ -22,12 +22,14 @@
 - serializer/API 입력 검증
 - 활성/삭제 학생 중복 정책
 - 삭제 학생 복원 또는 delete-and-recreate 결정
-- 가입 신청 상태 전이
+- 가입 신청 상태 전이(`approve_registration_request()`가 소유)
 - Excel/R2/AI job dispatch
 - 알림톡 발송
 - HTTP 응답 모양
 
-위 항목들은 아직 각 표면의 compatibility contract다. 다음 리팩토링은 표면별 응답/상태 계약을 먼저 스냅샷한 뒤 orchestration service로 옮긴다.
+가입 신청 승인의 durable orchestration SSOT는 `approve_registration_request()`다. 이 서비스는 `pending -> approved` 전이와 학생 계정 생성 그래프 호출을 하나의 트랜잭션으로 처리한다. HTTP 응답 모양과 알림톡 발송은 여전히 view compatibility boundary다.
+
+Excel/import orchestration, 표면별 응답 계약, 알림톡 outbox화는 아직 각 표면의 compatibility contract다. 다음 리팩토링은 표면별 응답/상태 계약을 먼저 스냅샷한 뒤 orchestration service로 옮긴다.
 
 ## 2. 현재 진입점
 
@@ -36,7 +38,7 @@
 | 단건 생성 | `StudentViewSet.create` | `create_student_account(password=...)` |
 | JSON 일괄 생성 | `StudentViewSet.bulk_create` | 행 정책 처리 후 `create_student_account(password=...)` |
 | 충돌 delete-and-recreate | `StudentViewSet.bulk_resolve_conflicts` | 영구삭제 후 `create_student_account(password=...)` |
-| 가입 신청 승인 | `_approve_registration_request` | `create_student_account(password_hash=reg.initial_password)` |
+| 가입 신청 승인 | `approve_registration_request` + view facade | `pending -> approved`와 `create_student_account(password_hash=reg.initial_password)`를 atomic 처리 |
 | 강의/수강 Excel 신규 학생 | `get_or_create_student_for_lecture_enroll` | 복원 실패/중복 판단 후 `create_student_account(password=...)` |
 | 학생 Excel worker | `bulk_create_students_from_excel_rows` | `lecture_enroll` helper를 통해 생성 |
 
@@ -49,6 +51,7 @@
 - 기존 학부모 계정이면 안내 문구는 `변경되지 않음`이다.
 - welcome/approval 알림톡은 caller가 서비스 결과의 `parent_password_by_phone` 또는 `parent_password_for_notice`를 사용한다.
 - 복원은 생성이 아니므로 비밀번호를 재발급하지 않고 welcome 알림톡도 새 비밀번호처럼 보내지 않는다.
+- 가입 신청 승인 알림톡 실패는 이미 커밋된 승인/학생 생성을 API 500으로 되돌리지 않는다. 발송 장애는 운영 로그/알림 재처리 대상이다.
 
 ## 4. Frontend 계약
 

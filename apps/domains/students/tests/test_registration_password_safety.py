@@ -126,6 +126,93 @@ class RegistrationPasswordSafetyTests(TestCase):
         self.assertIsNone(error)
         self.assertEqual(send_mock.call_args.kwargs["parent_password"], "변경되지 않음")
 
+    @patch("apps.domains.students.views.registration_views.send_registration_approved_messages")
+    def test_approve_action_returns_created_student_without_refreshing_input_instance(self, send_mock):
+        reg = StudentRegistrationRequest.objects.create(
+            tenant=self.tenant,
+            status=StudentRegistrationRequest.PENDING,
+            initial_password=make_password("rawpw1234"),
+            initial_password_plain="legacy-rawpw",
+            name="액션승인학생",
+            username="REGSAFE04",
+            parent_phone="01055556666",
+            phone="01077778890",
+            school_type="HIGH",
+            high_school="테스트고",
+            origin_middle_school="테스트중",
+            grade=1,
+            gender="M",
+            address="서울",
+        )
+        request = self.factory.post(f"/api/v1/students/registration-requests/{reg.id}/approve/")
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = RegistrationRequestViewSet.as_view({"post": "approve"})(request, pk=reg.id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["name"], "액션승인학생")
+        reg.refresh_from_db()
+        self.assertEqual(reg.status, StudentRegistrationRequest.APPROVED)
+        self.assertIsNotNone(reg.student_id)
+        send_mock.assert_called_once()
+
+    @patch("apps.domains.students.views.registration_views.send_registration_approved_messages")
+    def test_auto_approve_create_returns_student_and_approves_request(self, send_mock):
+        self.tenant.student_registration_auto_approve = True
+        self.tenant.save(update_fields=["student_registration_auto_approve"])
+        request = self.factory.post(
+            "/api/v1/students/registration-requests/",
+            {
+                **self._registration_payload(),
+                "username": "REGSAFE05",
+                "phone": "01077778895",
+            },
+            format="json",
+        )
+        request.tenant = self.tenant
+
+        response = RegistrationRequestViewSet.as_view({"post": "create"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["name"], "가입학생")
+        reg = StudentRegistrationRequest.objects.get(username="REGSAFE05")
+        self.assertEqual(reg.status, StudentRegistrationRequest.APPROVED)
+        self.assertIsNotNone(reg.student_id)
+        send_mock.assert_called_once()
+
+    @patch(
+        "apps.domains.students.views.registration_views.send_registration_approved_messages",
+        side_effect=RuntimeError("alimtalk transport down"),
+    )
+    def test_approval_notification_failure_does_not_hide_committed_approval(self, _send_mock):
+        reg = StudentRegistrationRequest.objects.create(
+            tenant=self.tenant,
+            status=StudentRegistrationRequest.PENDING,
+            initial_password=make_password("rawpw1234"),
+            initial_password_plain="legacy-rawpw",
+            name="알림실패승인학생",
+            username="REGSAFE06",
+            parent_phone="01055556666",
+            phone="01077778896",
+            school_type="HIGH",
+            high_school="테스트고",
+            origin_middle_school="테스트중",
+            grade=1,
+            gender="M",
+            address="서울",
+        )
+        request = self.factory.post(f"/api/v1/students/registration-requests/{reg.id}/approve/")
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = RegistrationRequestViewSet.as_view({"post": "approve"})(request, pk=reg.id)
+
+        self.assertEqual(response.status_code, 200)
+        reg.refresh_from_db()
+        self.assertEqual(reg.status, StudentRegistrationRequest.APPROVED)
+        self.assertIsNotNone(reg.student_id)
+
     @patch("apps.domains.students.views.student_views.send_welcome_messages")
     def test_student_create_welcome_uses_parent_initial_password_ssot(self, send_mock):
         request = self.factory.post(
