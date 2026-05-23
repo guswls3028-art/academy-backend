@@ -64,14 +64,14 @@ deployed URLs stable.
 
 [INFERRED]
 
-Student create still has split orchestration behavior: validation,
-duplicate/deleted-student policy, API response shapes, import job dispatch, and
-welcome/approval notifications remain caller-owned. The durable account graph
-itself is now centralized. Schedule visibility, read DTO convergence, and
-domain-event cleanup still have split behavior across views, serializers,
-service helpers, repository wrappers, frontend mapping functions, and E2E
-helpers. Therefore a patch outside the canonicalized paths is not guaranteed to
-reach every surface.
+Student create still has split orchestration behavior: validation, JSON
+bulk/conflict row policy, API response shapes, import job dispatch, and
+approval notifications remain caller-owned. The durable account graph,
+registration approval transition, and Excel/import row orchestration are now
+centralized. Schedule visibility, read DTO convergence, and domain-event cleanup
+still have split behavior across views, serializers, service helpers,
+repository wrappers, frontend mapping functions, and E2E helpers. Therefore a
+patch outside the canonicalized paths is not guaranteed to reach every surface.
 
 ## 3. Student Data Read Paths
 
@@ -100,7 +100,7 @@ app, auth, messaging, clinic/attendance/results, and E2E helper paths.
 |---|---:|---|
 | Single student create | 1 primary, plus compatibility surfaces | `StudentViewSet.create` validates/responds and calls `create_student_account` for Parent/User/Student/Membership |
 | Bulk JSON create | 1 compatibility root | `StudentViewSet.bulk_create` owns row policy and calls `create_student_account` for the account graph |
-| Excel/import create | 1 service root plus compatibility dispatch | `bulk_create_from_excel` dispatches worker; `ExcelParsingService` calls `import_students_from_rows`; legacy `bulk_from_excel.py` delegates to the import service |
+| Excel/import create | 1 service root plus compatibility dispatch | `bulk_create_from_excel` dispatches worker; `StudentViewSet.excel_job_status` exposes the regex job route; `ExcelParsingService` calls `import_students_from_rows`; legacy `bulk_from_excel.py` delegates to the import service |
 | Lecture enrollment create/restore | 1 service root plus compatibility facade | `lecture_enroll_from_excel_rows` calls `resolve_student_import_row`; legacy `get_or_create_student_for_lecture_enroll` delegates to the same import resolver |
 | Registration approve | 1 service root plus compatibility HTTP facades | `approve_registration_request` owns approval state and account graph transaction; views own response shape and nonfatal approval-message dispatch |
 | Admin/student profile update | 3 roots | `StudentViewSet.perform_update`, `StudentViewSet.me`, `StudentProfileView.patch` |

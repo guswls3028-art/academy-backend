@@ -31,6 +31,8 @@
 
 Excel/import row orchestration SSOT는 `import_students_from_rows()`와 `resolve_student_import_row()`다. 이 서비스는 학생 import 행의 중복/복원/생성 판단, school_level_mode 검증, 계정 그래프 호출, 학생-only Excel welcome dispatch를 소유한다. R2 업로드, AI job dispatch, HTTP 응답 모양은 여전히 view/worker compatibility boundary다.
 
+Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 있으면 이름 50자까지 허용한다. 긴 이름을 무조건 비학생 행으로 버리면 실제 외국 이름, 관리 접두어, QA 태그가 있는 정상 행이 `등록할 학생 데이터가 없습니다.`로 실패할 수 있다.
+
 알림톡 outbox화와 JSON bulk/충돌해결 표면의 row orchestration 수렴은 별도 슬라이스다.
 
 ## 2. 현재 진입점
