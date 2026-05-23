@@ -226,9 +226,12 @@ pnpm refactor:inventory
   targets through `student`, `enrollment_id`, or student self-booking, and
   deleted student accounts receive an empty clinic idcard response.
 - Attendance roster create now validates posted student IDs through
-  `students.selectors` and scopes `AttendanceSerializer` session/enrollment FK
-  querysets to the request tenant. Same-tenant soft-deleted students are
-  rejected before roster/enrollment creation.
+  `students.selectors`, scopes `AttendanceSerializer` session/enrollment FK
+  querysets to the request tenant, and delegates writes to
+  `attendance.services.create_attendance_roster`. Session-enrollment bulk create
+  shares `ensure_session_roster_membership`, so enrollment reactivation, fee
+  auto-assignment, session roster creation, and attendance idempotency cannot
+  drift between the two public APIs.
 - Messaging manual send and manual notification preview now resolve active
   tenant student/parent recipients through
   `messaging.services.recipients.resolve_student_message_recipients` instead
@@ -255,7 +258,7 @@ pnpm refactor:inventory
   contract/status slice, the tools timer download contract slice, the exam
   enrollment contract slice, the tenant info contract slice, the submissions
   contract slice, the lecture sections contract slice, the clinic
-  active-student selector boundary slice, the attendance roster selector
+  active-student selector boundary slice, the attendance roster service
   boundary slice, the messaging recipient resolver slice, and the results
   student-grades selector slice. Re-run the snapshot commands before each phase
   because active

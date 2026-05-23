@@ -271,10 +271,12 @@ services, or events.
   `students.selectors` and `enrollment.selectors`. Deleted students are blocked
   from participant create through `student`, `enrollment_id`, and student
   self-booking; deleted student idcard requests return the empty safe payload.
-- Attendance roster create now uses `students.selectors` for active
-  tenant-scoped student validation, and `AttendanceSerializer` scopes
-  session/enrollment FK querysets by request tenant. Same-tenant deleted
-  students are rejected before roster/enrollment creation.
+- Attendance roster create now uses
+  `apps.domains.attendance.services.create_attendance_roster`; the shared
+  `ensure_session_roster_membership` unit also backs session-enrollment bulk
+  create. Active tenant-scoped student validation, enrollment reactivation,
+  auto-assigned fee reactivation, session roster creation, attendance
+  idempotency, and malformed ID 400s are covered by local and production QA.
 - Student lifecycle services now cover soft delete, restore, and permanent
   delete entrypoints. Permanent delete remains a compatibility service with a
   guarded raw SQL graph, but `bulk_permanent_delete`, conflict delete,

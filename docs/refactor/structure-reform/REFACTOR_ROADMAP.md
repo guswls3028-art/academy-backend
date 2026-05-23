@@ -206,9 +206,12 @@ Implemented:
   safe response for deleted student accounts. Participant transition logic still
   needs extraction into clinic services before this phase is complete.
 - Attendance roster create now validates student IDs through
-  `students.selectors` and scopes `AttendanceSerializer` session/enrollment FK
-  querysets to the request tenant. Roster side effects still need extraction
-  into an attendance service before this phase is complete.
+  `students.selectors`, scopes `AttendanceSerializer` session/enrollment FK
+  querysets to the request tenant, and delegates roster writes to
+  `attendance.services.create_attendance_roster`. The shared
+  `ensure_session_roster_membership` helper is also used by session-enrollment
+  bulk create, so enrollment reactivation, fee auto-assignment, session roster
+  creation, and attendance idempotency have one service boundary.
 - Messaging manual send and manual notification preview now use
   `messaging.services.recipients.resolve_student_message_recipients`, so active
   tenant student selection and parent/student phone choice share one boundary.

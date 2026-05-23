@@ -63,10 +63,10 @@ Boundary rule for the structure reform:
 |---|---|
 | Owned data | `Attendance` |
 | External references | Enrollment/session, students for roster validation, messaging for notifications |
-| Public interface candidate | `attendance.services.record_attendance`, `attendance.events.AttendanceChanged` |
+| Public interface | `attendance.services.create_attendance_roster`, `attendance.services.ensure_session_roster_membership`; future status event candidate: `attendance.events.AttendanceChanged` |
 | Forbidden dependency | View-owned roster side effects beyond selector DTOs and attendance/enrollment services |
 | Tenant rule | Attendance is tenant-scoped and should validate enrollment/session belong to same tenant |
-| Current risk | Roster student validation and serializer FK querysets are now tenant/active scoped through selectors, but roster creation still performs enrollment/session enrollment/fee side effects inside the view |
+| Current risk | Roster creation side effects are now service-owned and shared by attendance bulk create plus session-enrollment bulk create. Remaining risk is status-change/event extraction: notification triggers still live beside attendance HTTP mutation code. |
 
 ## Clinic
 
