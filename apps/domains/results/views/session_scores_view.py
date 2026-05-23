@@ -298,7 +298,10 @@ class SessionScoresView(APIView):
         # 2) Meta (프론트 계약)
         # -------------------------------------------------
         homeworks = list(
-            Homework.objects.filter(session=session).order_by("id")
+            Homework.objects
+            .filter(session=session)
+            .exclude(meta__removed_from_session_at__isnull=False)
+            .order_by("id")
         )
 
         # 시험별 문항(주관식 점수 입력용): template → Sheet → ExamQuestion

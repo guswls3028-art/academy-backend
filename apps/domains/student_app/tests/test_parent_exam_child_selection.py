@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -132,6 +133,22 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual([row["id"] for row in response_a.data["items"]], [self.exam_a.id])
         self.assertEqual(response_b.status_code, 200)
         self.assertEqual([row["id"] for row in response_b.data["items"]], [self.exam_b.id])
+
+    def test_exam_list_can_include_upcoming_dashboard_window(self):
+        view = StudentExamListView.as_view()
+        future_exam, _, _ = self._exam_for_student(self.student_a, "Upcoming Exam")
+        future_exam.open_at = timezone.now() + timedelta(days=3)
+        future_exam.save(update_fields=["open_at"])
+
+        default_response = view(self._request("/student/exams/", student=self.student_a))
+        upcoming_response = view(
+            self._request("/student/exams/?include_upcoming=true", student=self.student_a)
+        )
+
+        self.assertEqual(default_response.status_code, 200)
+        self.assertNotIn(future_exam.id, [row["id"] for row in default_response.data["items"]])
+        self.assertEqual(upcoming_response.status_code, 200)
+        self.assertIn(future_exam.id, [row["id"] for row in upcoming_response.data["items"]])
 
     def test_parent_exam_result_uses_selected_child(self):
         view = MyExamResultView.as_view()

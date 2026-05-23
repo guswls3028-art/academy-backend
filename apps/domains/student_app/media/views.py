@@ -509,7 +509,7 @@ class StudentVideoStatsView(APIView):
         enrollments = Enrollment.objects.filter(
             student=student,
             tenant=tenant,
-            is_active=True,
+            status="ACTIVE",
         ).select_related("lecture")
 
         enrollment_ids = list(enrollments.values_list("id", flat=True))
@@ -645,6 +645,34 @@ def _student_can_access_session(request, session) -> bool:
         ).exists():
             return True
     return False
+
+
+def _student_can_access_video(request, video) -> bool:
+    """Video-level guard shared by playback, likes, and comments."""
+    tenant = getattr(request, "tenant", None)
+    if not tenant:
+        return False
+
+    video_tenant_id = getattr(video, "tenant_id", None)
+    if video_tenant_id is None:
+        video_tenant_id = (
+            getattr(video.session.lecture, "tenant_id", None)
+            if getattr(video, "session", None) and getattr(video.session, "lecture", None)
+            else None
+        )
+    if video_tenant_id != tenant.id:
+        return False
+
+    from apps.domains.video.models import Video as VideoModel
+
+    if getattr(video, "visibility", VideoModel.Visibility.ENROLLED) == VideoModel.Visibility.PUBLIC:
+        student = get_request_student(request)
+        return bool(student and getattr(student, "tenant_id", None) == tenant.id)
+
+    session = getattr(video, "session", None)
+    if not session:
+        return False
+    return _student_can_access_session(request, session)
 
 
 class StudentSessionVideoListView(APIView):
@@ -1190,14 +1218,7 @@ class StudentVideoLikeView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
-        # 테넌트 격리 검증 (video.tenant 직접 참조 우선, 레거시 폴백)
-        video_tenant_id = getattr(video, "tenant_id", None)
-        if video_tenant_id is None:
-            video_tenant_id = (
-                getattr(video.session.lecture, "tenant_id", None)
-                if video.session and video.session.lecture else None
-            )
-        if video_tenant_id != tenant.id:
+        if not _student_can_access_video(request, video):
             raise PermissionDenied("접근 권한이 없습니다.")
 
         from django.db import transaction, IntegrityError
@@ -1250,8 +1271,7 @@ class StudentVideoCommentListView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
-        video_tenant_id = getattr(video.session.lecture, "tenant_id", None) if video.session and video.session.lecture else None
-        if video_tenant_id != tenant.id:
+        if not _student_can_access_video(request, video):
             raise PermissionDenied("접근 권한이 없습니다.")
 
         # 최상위 댓글만 (parent=None), 대댓글은 prefetch
@@ -1336,8 +1356,7 @@ class StudentVideoCommentListView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
-        video_tenant_id = getattr(video.session.lecture, "tenant_id", None) if video.session and video.session.lecture else None
-        if video_tenant_id != tenant.id:
+        if not _student_can_access_video(request, video):
             raise PermissionDenied("접근 권한이 없습니다.")
 
         content = str(request.data.get("content", "")).strip()

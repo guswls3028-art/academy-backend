@@ -37,6 +37,8 @@ class HomeworkAssignmentManageView(APIView):
         return Homework.objects.select_related(
             "session",
             "session__lecture",
+        ).exclude(
+            meta__removed_from_session_at__isnull=False,
         ).get(
             id=int(hid),
             session__lecture__tenant=tenant,  # ✅ tenant 안전장치

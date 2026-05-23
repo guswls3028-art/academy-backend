@@ -45,6 +45,8 @@ class HomeworkCandidatesView(APIView):
         hw = Homework.objects.filter(id=int(homework_id), tenant=tenant).first()
         if not hw:
             return Response({"detail": "과제를 찾을 수 없습니다."}, status=404)
+        if isinstance(hw.meta, dict) and hw.meta.get("removed_from_session_at"):
+            return Response([], status=200)
 
         q = str(request.query_params.get("q") or "").strip()
 

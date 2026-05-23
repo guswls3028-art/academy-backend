@@ -19,6 +19,7 @@ from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.exams.models import Exam
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.homework_results.models import HomeworkScore
+from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.progress.models import ClinicLink
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
 
@@ -282,6 +283,56 @@ class MyGradesSummaryView(APIView):
                 "retake_count": max_attempt,
                 "session_title": session_title,
                 "lecture_title": lecture_title,
+            })
+
+        assigned_homeworks = (
+            HomeworkAssignment.objects
+            .filter(tenant=tenant, enrollment_id__in=enrollment_ids)
+            .exclude(homework__meta__removed_from_session_at__isnull=False)
+            .exclude(session__lecture__is_system=True)
+            .select_related("homework", "session", "session__lecture")
+            .order_by("-homework__updated_at", "-homework_id")
+        )
+        for assignment in assigned_homeworks:
+            homework = assignment.homework
+            session = assignment.session
+            key = (assignment.homework_id, assignment.session_id, assignment.enrollment_id)
+            if key in seen_hw_key:
+                continue
+            seen_hw_key.add(key)
+
+            effective_max = None
+            _meta = getattr(homework, "meta", None) or {}
+            if isinstance(_meta, dict):
+                _dms = _meta.get("default_max_score")
+                if _dms is not None:
+                    try:
+                        _v = float(_dms)
+                        if _v > 0:
+                            effective_max = _v
+                    except (TypeError, ValueError):
+                        pass
+            if session:
+                assignment_session_title = getattr(session, "title", None) or f"{getattr(session, 'order', '')}차시"
+                assignment_lecture_title = (
+                    getattr(session.lecture, "title", None)
+                    if getattr(session, "lecture", None) else None
+                )
+            else:
+                assignment_session_title = None
+                assignment_lecture_title = None
+
+            homework_list.append({
+                "homework_id": assignment.homework_id,
+                "enrollment_id": assignment.enrollment_id,
+                "title": homework.title if homework else f"과제 #{assignment.homework_id}",
+                "score": None,
+                "max_score": effective_max,
+                "passed": False,
+                "achievement": "NOT_SUBMITTED",
+                "retake_count": 0,
+                "session_title": assignment_session_title,
+                "lecture_title": assignment_lecture_title,
             })
 
         return Response({

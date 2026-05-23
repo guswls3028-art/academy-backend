@@ -229,6 +229,8 @@ class SubmissionViewSet(ModelViewSet):
                 return Homework.objects.filter(
                     id=int(target_id),
                     session__lecture__tenant=tenant,
+                ).exclude(
+                    meta__removed_from_session_at__isnull=False,
                 ).exists()
         except Exception:
             pass
@@ -298,6 +300,11 @@ class SubmissionViewSet(ModelViewSet):
                 id=target_id_i,
                 session__lecture_id=enrollment.lecture_id,
                 session__lecture__tenant=tenant,
+            ).exclude(
+                meta__removed_from_session_at__isnull=False,
+            ).filter(
+                assignments__tenant=tenant,
+                assignments__enrollment_id=enrollment_id_i,
             ).exists()
 
         return False

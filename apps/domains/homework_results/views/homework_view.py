@@ -17,13 +17,16 @@ from rest_framework.filters import OrderingFilter
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
+from django.db import transaction
 from django.db.models import QuerySet
+from django.shortcuts import get_object_or_404
+from django.utils import timezone
 
 from apps.core.permissions import TenantResolvedAndMember
 
-from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
+from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
 from apps.domains.lectures.models import Session
@@ -52,6 +55,14 @@ class HomeworkViewSet(ModelViewSet):
                 qs = qs.filter(session_id=sid)
             except Exception:
                 qs = qs.none()
+
+        include_removed = str(self.request.query_params.get("include_removed") or "").lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if not include_removed:
+            qs = qs.exclude(meta__removed_from_session_at__isnull=False)
 
         return qs
 
@@ -114,3 +125,27 @@ class HomeworkViewSet(ModelViewSet):
             session_id=int(session_id),
             title=(data.get("title") or "").strip() or "제목 없음",
         )
+
+    @transaction.atomic
+    def destroy(self, request, *args, **kwargs):
+        """Remove a homework from the live session without deleting score/submission history."""
+        homework = get_object_or_404(
+            self.get_queryset().select_for_update(),
+            pk=kwargs["pk"],
+        )
+        tenant = getattr(request, "tenant", None)
+
+        assignment_count, _ = HomeworkAssignment.objects.filter(
+            tenant=tenant,
+            homework=homework,
+        ).delete()
+
+        meta = dict(homework.meta or {})
+        meta["removed_from_session_at"] = timezone.now().isoformat()
+        meta["removed_from_session_by_user_id"] = getattr(request.user, "id", None)
+        meta["removed_assignment_count"] = int(assignment_count)
+        homework.meta = meta
+        homework.status = Homework.Status.CLOSED
+        homework.save(update_fields=["meta", "status", "updated_at"])
+
+        return Response(status=status.HTTP_204_NO_CONTENT)

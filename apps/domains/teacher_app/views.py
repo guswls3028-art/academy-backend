@@ -22,7 +22,7 @@ class NotificationSummaryView(APIView):
     def get(self, request):
         tenant = request.tenant
 
-        # Q&A 미답변
+        # Q&A/상담 미답변. 선생님 내부 상담 메모는 학생 요청 카운트에서 제외한다.
         from apps.domains.community.models import PostEntity
         qna_pending = (
             PostEntity.objects.filter(
@@ -30,6 +30,19 @@ class NotificationSummaryView(APIView):
                 post_type="qna",
                 status="published",
             )
+            .exclude(author_role="staff")
+            .annotate(reply_count=_count_replies())
+            .filter(reply_count=0)
+            .count()
+        )
+        counsel_pending = (
+            PostEntity.objects.filter(
+                tenant=tenant,
+                post_type="counsel",
+                status="published",
+            )
+            .exclude(author_role="staff")
+            .exclude(category_label="teacher_internal_memo")
             .annotate(reply_count=_count_replies())
             .filter(reply_count=0)
             .count()
@@ -49,11 +62,12 @@ class NotificationSummaryView(APIView):
             status="pending",
         ).count()
 
-        total = qna_pending + registration_pending + clinic_pending
+        total = qna_pending + counsel_pending + registration_pending + clinic_pending
 
         return Response({
             "total": total,
             "qna_pending": qna_pending,
+            "counsel_pending": counsel_pending,
             "registration_pending": registration_pending,
             "clinic_pending": clinic_pending,
         })
