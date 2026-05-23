@@ -1,6 +1,5 @@
 # PATH: apps/domains/clinic/views/participant_views.py
 import logging
-import time
 
 from django.db import IntegrityError, transaction
 from django.utils import timezone
@@ -19,6 +18,11 @@ from ..serializers import (
     ClinicSessionParticipantCreateSerializer,
 )
 from ..filters import ParticipantFilter
+from ..services import (
+    change_participant_status,
+    complete_participant,
+    uncomplete_participant,
+)
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.domains.enrollment.selectors import enrollments_for_tenant
@@ -376,149 +380,32 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         next_status = request.data.get("status")
         memo = request.data.get("memo")
 
-        allowed = {c[0] for c in SessionParticipant.Status.choices}
-        if next_status not in allowed:
-            return Response(
-                {"detail": f"Invalid status: {next_status}"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        # 상태 전이 검증 (유효한 전이만 허용)
-        # 학생: terminal state 변경 불가
-        # 관리자: attended/no_show → booked 되돌리기 허용 (오입력 수정용)
         from apps.domains.student_app.permissions import get_request_student
-        _is_student = get_request_student(request) is not None
-
-        if _is_student:
-            VALID_TRANSITIONS = {
-                SessionParticipant.Status.PENDING: {
-                    SessionParticipant.Status.CANCELLED,
-                },
-                SessionParticipant.Status.BOOKED: set(),
-                SessionParticipant.Status.ATTENDED: set(),
-                SessionParticipant.Status.NO_SHOW: set(),
-                SessionParticipant.Status.REJECTED: set(),
-                SessionParticipant.Status.CANCELLED: set(),
-            }
-        else:
-            VALID_TRANSITIONS = {
-                SessionParticipant.Status.PENDING: {
-                    SessionParticipant.Status.BOOKED,
-                    SessionParticipant.Status.REJECTED,
-                    SessionParticipant.Status.CANCELLED,
-                },
-                SessionParticipant.Status.BOOKED: {
-                    SessionParticipant.Status.ATTENDED,
-                    SessionParticipant.Status.NO_SHOW,
-                    SessionParticipant.Status.CANCELLED,
-                },
-                # 관리자: attended/no_show 간 전환 및 booked 되돌리기 허용 (오입력 수정용)
-                SessionParticipant.Status.ATTENDED: {
-                    SessionParticipant.Status.BOOKED,
-                    SessionParticipant.Status.NO_SHOW,
-                },
-                SessionParticipant.Status.NO_SHOW: {
-                    SessionParticipant.Status.BOOKED,
-                    SessionParticipant.Status.ATTENDED,
-                },
-                SessionParticipant.Status.REJECTED: set(),
-                SessionParticipant.Status.CANCELLED: set(),
-            }
-
-        with transaction.atomic():
-            # Re-fetch with row lock to prevent concurrent status transitions
-            obj = SessionParticipant.objects.select_for_update().get(
-                pk=self.get_object().pk
-            )
-
-            valid_next = VALID_TRANSITIONS.get(obj.status, set())
-            if next_status not in valid_next:
-                return Response(
-                    {"detail": f"'{obj.status}'에서 '{next_status}'(으)로 변경할 수 없습니다."},
-                    status=status.HTTP_400_BAD_REQUEST,
+        result = change_participant_status(
+            tenant=getattr(request, "tenant", None),
+            participant_id=self.get_object().pk,
+            next_status=next_status,
+            actor=request.user,
+            request_student=get_request_student(request),
+            memo=memo,
+        )
+        obj = result.participant
+        if result.notification:
+            _t = getattr(request, "tenant", None)
+            _event = result.notification
+            transaction.on_commit(
+                lambda: _send_clinic_notification(
+                    _t,
+                    _event.student,
+                    _event.trigger,
+                    _event.context,
                 )
-
-            # 학생 권한 체크: 자신의 예약 신청만 취소 가능
-            request_student = get_request_student(request)
-            if request_student:
-                if obj.student != request_student:
-                    return Response(
-                        {"detail": "다른 학생의 예약을 수정할 수 없습니다."},
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
-                # 학생은 pending 상태만 cancelled로 변경 가능
-                if obj.status != SessionParticipant.Status.PENDING:
-                    return Response(
-                        {"detail": "승인 대기 중인 예약만 취소할 수 있습니다."},
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
-                if next_status != SessionParticipant.Status.CANCELLED:
-                    return Response(
-                        {"detail": "학생은 예약 취소만 가능합니다."},
-                        status=status.HTTP_403_FORBIDDEN,
-                    )
-
-            obj.status = next_status
-            obj.status_changed_at = timezone.now()
-            obj.status_changed_by = request.user
-
-            if memo is not None:
-                obj.memo = memo
-
-            obj.save(
-                update_fields=[
-                    "status",
-                    "memo",
-                    "status_changed_at",
-                    "status_changed_by",
-                    "updated_at",
-                ]
             )
-
-            # ✅ V1.1.1 remediation 재정렬:
-            # 예약 상태 변경(no_show, cancelled, rejected)은 ClinicLink 해소에 영향 없음.
-
-            # ── 클리닉 상태 변경 알림 (AUTO_DEFAULT, transaction.on_commit으로 안전 발송) ──
-            _trigger_map = {
-                SessionParticipant.Status.CANCELLED: "clinic_cancelled",
-                SessionParticipant.Status.ATTENDED: "clinic_check_in",
-                SessionParticipant.Status.NO_SHOW: "clinic_absent",
-            }
-            _trigger = _trigger_map.get(next_status)
-            if _trigger:
-                _t = getattr(request, "tenant", None)
-                _s = obj.student
-                _tr = _trigger
-                _session = obj.session
-                _loc = getattr(_session, "location", "") if _session else ""
-                _date = str(_session.date) if _session and _session.date else ""
-                _time = str(_session.start_time)[:5] if _session and getattr(_session, "start_time", None) else ""
-                _is_cancel = (next_status == SessionParticipant.Status.CANCELLED)
-                _is_absent = (next_status == SessionParticipant.Status.NO_SHOW)
-                _ctx = {
-                    "클리닉명": getattr(_session, "title", "") if _session else "",
-                    "장소": f"[취소] {_loc}" if _is_cancel else f"[결석] {_loc}" if _is_absent else _loc,
-                    "날짜": _date,
-                    "시간": f"취소({_time})" if _is_cancel else f"결석({_time})" if _is_absent else _time,
-                    "_domain_object_id": f"participant_{obj.pk}_{next_status}_{int(time.time())}",
-                }
-                # 출석/결석 시 실제 버튼 누른 시각 — 본문 변수 #{도착시간} + ITEM_LIST 시간 대체 옵션
-                if next_status in (SessionParticipant.Status.ATTENDED, SessionParticipant.Status.NO_SHOW):
-                    _now_hm = timezone.now().strftime("%H:%M")
-                    _ctx["도착시간"] = _now_hm
-                    _ctx["_actual_time"] = _now_hm
-                transaction.on_commit(lambda: _send_clinic_notification(_t, _s, _tr, _ctx))
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
         ).data
         return Response(out)
-
-    # complete() 허용 전이: 자율학습 완료 시 ATTENDED로 전환할 수 있는 상태
-    COMPLETE_ALLOWED_TRANSITIONS = {
-        SessionParticipant.Status.PENDING,
-        SessionParticipant.Status.BOOKED,
-    }
 
     @action(detail=True, methods=["post"])
     def complete(self, request, pk=None):
@@ -530,51 +417,23 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         이미 ATTENDED/NO_SHOW/CANCELLED/REJECTED인 경우 상태는 변경하지 않고
         completed_at만 기록한다.
         """
-        with transaction.atomic():
-            obj = SessionParticipant.objects.select_for_update().get(
-                pk=self.get_object().pk
+        result = complete_participant(
+            tenant=getattr(request, "tenant", None),
+            participant_id=self.get_object().pk,
+            actor=request.user,
+        )
+        obj = result.participant
+        if result.notification:
+            _t = getattr(request, "tenant", None)
+            _event = result.notification
+            transaction.on_commit(
+                lambda: _send_clinic_notification(
+                    _t,
+                    _event.student,
+                    _event.trigger,
+                    _event.context,
+                )
             )
-            if obj.completed_at:
-                return Response(
-                    {"detail": "이미 완료 처리된 참가자입니다."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            # terminal 상태(CANCELLED, REJECTED)에서는 완료 불가
-            if obj.status in (
-                SessionParticipant.Status.CANCELLED,
-                SessionParticipant.Status.REJECTED,
-            ):
-                return Response(
-                    {"detail": f"'{obj.get_status_display()}' 상태의 참가자는 완료 처리할 수 없습니다."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            obj.completed_at = timezone.now()
-            obj.completed_by = request.user
-            # 출석 처리 (자율학습 완료 = 출석 확정)
-            # PENDING/BOOKED → ATTENDED 전환만 허용 (명시적 전이 맵)
-            if obj.status in self.COMPLETE_ALLOWED_TRANSITIONS:
-                obj.status = SessionParticipant.Status.ATTENDED
-                obj.status_changed_at = timezone.now()
-                obj.status_changed_by = request.user
-            obj.save(update_fields=[
-                "completed_at", "completed_by",
-                "status", "status_changed_at", "status_changed_by",
-                "updated_at",
-            ])
-
-        # ── 클리닉 퇴실(완료) + 자율학습 완료 알림 ──
-        _t = getattr(request, "tenant", None)
-        _s = obj.student
-        _session = obj.session
-        _now = timezone.now()
-        _ctx = {
-            "클리닉명": getattr(_session, "title", "") if _session else "",
-            "장소": getattr(_session, "location", "") if _session else "",
-            "날짜": str(_session.date) if _session and _session.date else _now.strftime("%Y-%m-%d"),
-            "시간": _now.strftime("%H:%M"),
-            "_domain_object_id": str(obj.pk),
-        }
-        transaction.on_commit(lambda: _send_clinic_notification(_t, _s, "clinic_self_study_completed", _ctx))
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
@@ -587,23 +446,11 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         POST /clinic/participants/{id}/uncomplete/
         완료 취소
         """
-        with transaction.atomic():
-            obj = SessionParticipant.objects.select_for_update().get(
-                pk=self.get_object().pk
-            )
-            if not obj.completed_at:
-                return Response(
-                    {"detail": "완료 처리되지 않은 참가자입니다."},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            obj.completed_at = None
-            obj.completed_by = None
-            # complete 시 ATTENDED로 전환된 경우 BOOKED로 복원
-            if obj.status == SessionParticipant.Status.ATTENDED:
-                obj.status = SessionParticipant.Status.BOOKED
-                obj.save(update_fields=["completed_at", "completed_by", "status", "updated_at"])
-            else:
-                obj.save(update_fields=["completed_at", "completed_by", "updated_at"])
+        result = uncomplete_participant(
+            tenant=getattr(request, "tenant", None),
+            participant_id=self.get_object().pk,
+        )
+        obj = result.participant
 
         out = ClinicSessionParticipantSerializer(
             obj, context={"request": request}
