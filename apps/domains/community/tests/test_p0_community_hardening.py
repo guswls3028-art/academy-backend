@@ -213,6 +213,31 @@ class TestScopedPostMappingVisibility(CommunityHardeningFixture):
         results = response.data.get("results", response.data) if isinstance(response.data, dict) else response.data
         self.assertEqual(len(results), 0)
 
+    def test_staff_post_list_applies_q_filter_on_generic_and_typed_routes(self):
+        self.visible_post.category_label = "Algebra scope"
+        self.visible_post.save(update_fields=["category_label"])
+
+        generic = PostViewSet.as_view({"get": "list"})
+        response = generic(
+            self._request("get", self.teacher, "/api/v1/community/posts/?post_type=board&q=Algebra")
+        )
+        self.assertEqual(response.status_code, 200)
+        results = response.data.get("results", response.data) if isinstance(response.data, dict) else response.data
+        self.assertEqual([post["id"] for post in results], [self.visible_post.id])
+
+        response = generic(
+            self._request("get", self.teacher, "/api/v1/community/posts/?post_type=board&q=NoSuchE2EPost")
+        )
+        self.assertEqual(response.status_code, 200)
+        results = response.data.get("results", response.data) if isinstance(response.data, dict) else response.data
+        self.assertEqual(results, [])
+
+        typed = PostViewSet.as_view({"get": "board"})
+        response = typed(self._request("get", self.teacher, "/api/v1/community/posts/board/?q=Algebra"))
+        self.assertEqual(response.status_code, 200)
+        results = response.data.get("results", response.data) if isinstance(response.data, dict) else response.data
+        self.assertEqual([post["id"] for post in results], [self.visible_post.id])
+
     @patch("apps.infrastructure.storage.r2.generate_presigned_get_url_storage", return_value="https://example.test/file.pdf")
     def test_student_can_still_access_visible_mapped_post(self, _mock_url):
         visible_attachment = PostAttachment.objects.create(

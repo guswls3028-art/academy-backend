@@ -253,6 +253,15 @@ class PostViewSet(viewsets.ModelViewSet):
                 raise ValidationError({"post_type": f"허용되지 않는 타입입니다: {post_type_param}"})
             qs = qs.filter(post_type=post_type_param)
 
+        q = (self.request.query_params.get("q") or "").strip()[:100]
+        if q:
+            qs = qs.filter(
+                Q(title__icontains=q)
+                | Q(content__icontains=q)
+                | Q(author_display_name__icontains=q)
+                | Q(category_label__icontains=q)
+            ).distinct()
+
         return self._with_is_liked(qs, self.request)
 
     def list(self, request, *args, **kwargs):
@@ -298,7 +307,10 @@ class PostViewSet(viewsets.ModelViewSet):
         q = (request.query_params.get("q") or "").strip()[:100]
         if q:
             qs = qs.filter(
-                Q(title__icontains=q) | Q(content__icontains=q) | Q(author_display_name__icontains=q)
+                Q(title__icontains=q)
+                | Q(content__icontains=q)
+                | Q(author_display_name__icontains=q)
+                | Q(category_label__icontains=q)
             ).distinct()
 
         # 정렬 ordering — latest(default) / replies / likes
