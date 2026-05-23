@@ -227,9 +227,11 @@ pnpm refactor:inventory
   deleted student accounts receive an empty clinic idcard response.
 - Clinic participant status, complete, and uncomplete writes now route through
   `apps.domains.clinic.services.lifecycle`. The service owns transition maps,
-  completion guards, row locking, and notification event selection. Participant
-  creation and booking-change orchestration remain the next clinic service
-  extraction targets.
+  completion guards, row locking, and notification event selection.
+- Clinic participant creation and booking-change writes now route through
+  `apps.domains.clinic.services.lifecycle` as well. The service owns
+  tenant/student/enrollment validation, capacity and duplicate checks, status
+  defaults, cancel-after-new-booking semantics, and notification event context.
 - Attendance roster create now validates posted student IDs through
   `students.selectors`, scopes `AttendanceSerializer` session/enrollment FK
   querysets to the request tenant, and delegates writes to

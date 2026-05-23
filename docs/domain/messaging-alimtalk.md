@@ -177,8 +177,8 @@
 | `clinic_self_study_completed` | clinic_info | ✅ | clinic_check_out 통합. ⚠️ "완료"를 "안내" prefix — 의미 검토 |
 | `clinic_result_notification` | clinic_info | ✅ | ⚠️ "결과"를 "안내" prefix — 의미 검토 |
 | `counseling_reservation_created` | clinic_info | ✅ | ⚠️ "상담"이 "[클리닉 안내]" prefix — 학부모 혼동 가능 |
-| `clinic_reservation_changed` | clinic_change | ✅ | 기존일정/변동사항/수정자 변수 사용 |
-| `clinic_cancelled` | clinic_change | ✅ | |
+| `clinic_reservation_changed` | clinic_change | ✅ | `clinic.services.lifecycle`가 기존일정/변동사항/수정자 변수 생성 |
+| `clinic_cancelled` | clinic_change | ✅ | `clinic.services.lifecycle`가 기존일정/변동사항/수정자 변수 생성 |
 | `check_in_complete` | attendance | ✅ | |
 | `absent_occurred` | attendance | ✅ | |
 | `lecture_session_reminder` | attendance | manual | minutes_before 스케줄러 미구현 |
@@ -269,8 +269,8 @@
 
 | 트리거 | 호출 파일:라인 | 비고 |
 |--------|---------------|------|
-| `clinic_reservation_created` | `clinic/views/participant_views.py` | create 액션, `transaction.on_commit` |
-| `clinic_reservation_changed` | `clinic/views/participant_views.py` | change_booking 액션, `transaction.on_commit` |
+| `clinic_reservation_created` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | create service 이벤트, view가 `on_commit` 발송 |
+| `clinic_reservation_changed` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | change_booking service 이벤트, view가 `on_commit` 발송 |
 | `clinic_cancelled` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | service가 이벤트 선택, view가 `on_commit` 발송 |
 | `clinic_check_in` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | service가 이벤트 선택, view가 `on_commit` 발송 |
 | `clinic_absent` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | service가 이벤트 선택, view가 `on_commit` 발송 |
@@ -619,10 +619,11 @@ def _send_clinic_notification(tenant, student, trigger, context=None):
 
 - **학생 + 학부모 동시 발송** (AUTO_DEFAULT 정책)
 - `transaction.on_commit()` 내에서 호출 (트랜잭션 커밋 후 발송)
-- create/change_booking은 view가 context를 만든다.
-- status/complete/uncomplete 계열은 `clinic.services.lifecycle`이 `ClinicNotificationEvent`를 반환하고 view가 `on_commit`으로 발송한다.
-- context 변수: 클리닉명, 장소, 날짜, 시간, _domain_object_id
+- create/change_booking/status/complete/uncomplete 계열은 `clinic.services.lifecycle`이 `ClinicNotificationEvent`를 반환하고 view가 `on_commit`으로 발송한다.
+- clinic_info context 변수: 클리닉명, 장소, 날짜, 시간, _domain_object_id
+- clinic_change context 변수: 클리닉명, 장소, 날짜, 시간, 클리닉기존일정, 클리닉변동사항, 클리닉수정자, _domain_object_id
 - `clinic_check_in`/`clinic_absent` 트리거 전용 추가 변수: **도착시간** (상태 처리 시점의 `timezone.now()` → `HH:MM` 포맷). 선생님메모 본문에서 `#{도착시간}`으로 사용 가능.
+- 2026-05-23 단말 확인: 실제 카카오톡 복붙 본문에는 자유 본문(`#{선생님메모}`)만 보이고 ITEM_LIST 변수는 별도 UI로 표시될 수 있다. 현재 템플릿 본문은 검수 통과한 자유 본문 정책을 유지한다. 기본 본문에 일정 정보를 중복 삽입하려면 기존 테넌트 템플릿 reset/overwrite 정책을 먼저 정해야 한다.
 
 ### _send_attendance_notification
 

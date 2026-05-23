@@ -274,8 +274,11 @@ services, or events.
 - Clinic participant status, complete, and uncomplete writes now use
   `apps.domains.clinic.services.lifecycle`. The HTTP view is a facade over the
   service and keeps only serializer response shaping plus `transaction.on_commit`
-  notification dispatch. Participant creation and booking-change orchestration
-  remain view-owned compatibility paths.
+  notification dispatch.
+- Clinic participant creation and booking-change writes now use the same
+  lifecycle service. Tenant/student/enrollment validation, row-locked capacity
+  checks, duplicate checks, status defaults, and notification event contexts are
+  no longer view-owned compatibility paths.
 - Attendance roster create now uses
   `apps.domains.attendance.services.create_attendance_roster`; the shared
   `ensure_session_roster_membership` unit also backs session-enrollment bulk

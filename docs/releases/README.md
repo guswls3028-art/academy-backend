@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.9.md](v1.2.9.md) | **CURRENT** | 2026-05-23 KST | Clinic participant transition SSOT + clinic operations mobile QA |
+| [v1.2.10.md](v1.2.10.md) | **CURRENT** | 2026-05-23 KST | Clinic participant write SSOT + student clinic change UX contract |
+| [v1.2.9.md](v1.2.9.md) | production-deployed / v1.2.10로 승계 | 2026-05-23 KST | Clinic participant transition SSOT + clinic operations mobile QA |
 | [v1.2.8.md](v1.2.8.md) | production-deployed / v1.2.9로 승계 | 2026-05-23 KST | Attendance roster write SSOT + local PG-only concurrency test guard |
 | [v1.2.7.md](v1.2.7.md) | production-deployed / v1.2.8로 승계 | 2026-05-23 KST | JSON student bulk/create-conflict orchestration convergence |
 | [v1.2.6.md](v1.2.6.md) | production-deployed / v1.2.7로 승계, 단말 본문 확인 선택 대기 | 2026-05-23 KST | Excel student import orchestration SSOT + teacher import UX + 운영 QA 하드닝 |

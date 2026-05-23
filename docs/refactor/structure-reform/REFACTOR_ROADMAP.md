@@ -208,8 +208,11 @@ Implemented:
   `apps.domains.clinic.services.lifecycle`. The service owns staff/student
   transition maps, completion guards, row locking, and notification event
   selection; `ParticipantViewSet` remains a transport plus `on_commit`
-  dispatch facade. Participant creation and `change_booking` remain the next
-  clinic extraction slice.
+  dispatch facade.
+- Clinic participant creation and `change_booking` now also use
+  `apps.domains.clinic.services.lifecycle`. The service owns tenant/student/
+  enrollment validation, row-locked capacity checks, duplicate checks, status
+  defaults, booking-change cancellation, and notification event context.
 - Attendance roster create now validates student IDs through
   `students.selectors`, scopes `AttendanceSerializer` session/enrollment FK
   querysets to the request tenant, and delegates roster writes to
