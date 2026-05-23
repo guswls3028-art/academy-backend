@@ -465,6 +465,7 @@ jobs:
           done
 
           echo "::warning::ci-build.latest.md push failed after retries (non-critical)"
+          exit 0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
