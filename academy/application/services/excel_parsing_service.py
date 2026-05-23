@@ -623,7 +623,7 @@ class ExcelParsingService:
                     result["lecture_title"] = lecture_title
                 return result
 
-            from apps.domains.students.services import bulk_create_students_from_excel_rows
+            from apps.domains.students.services import import_students_from_rows
 
             _last_pct: list[int] = [-1]  # mutable for closure
 
@@ -634,7 +634,7 @@ class ExcelParsingService:
                         _last_pct[0] = pct
                         on_progress("creating", pct)
 
-            result = bulk_create_students_from_excel_rows(
+            result = import_students_from_rows(
                 tenant_id=int(tenant_id),
                 students_data=rows,
                 initial_password=initial_password,

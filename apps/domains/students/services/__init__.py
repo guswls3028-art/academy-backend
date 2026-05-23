@@ -7,6 +7,13 @@ from .registration_approval import (
     RegistrationApprovalResult,
     approve_registration_request,
 )
+from .import_students import (
+    StudentImportRowError,
+    StudentImportRowResolution,
+    import_students_from_rows,
+    resolve_student_import_row,
+    student_import_valid_school_types,
+)
 from .lecture_enroll import get_or_create_student_for_lecture_enroll
 from .bulk_from_excel import bulk_create_students_from_excel_rows
 from .profile import (
@@ -33,6 +40,11 @@ __all__ = [
     "RegistrationApprovalNotice",
     "RegistrationApprovalResult",
     "approve_registration_request",
+    "StudentImportRowError",
+    "StudentImportRowResolution",
+    "import_students_from_rows",
+    "resolve_student_import_row",
+    "student_import_valid_school_types",
     "get_or_create_student_for_lecture_enroll",
     "bulk_create_students_from_excel_rows",
     "StudentProfileUpdateError",

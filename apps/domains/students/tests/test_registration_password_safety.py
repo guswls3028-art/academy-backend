@@ -323,6 +323,100 @@ class RegistrationPasswordSafetyTests(TestCase):
         self.assertEqual(result["created"], 1)
         send_mock.assert_not_called()
 
+    @patch("apps.domains.messaging.services.send_welcome_messages")
+    def test_student_import_reports_active_duplicate_without_new_account(self, send_mock):
+        from apps.domains.students.models import Student
+        from apps.domains.students.services import create_student_account, import_students_from_rows
+
+        existing = create_student_account(
+            tenant=self.tenant,
+            password="stud1234",
+            student_data={
+                "name": "엑셀중복학생",
+                "ps_number": "REGSAFE-IMP-1",
+                "phone": "01077778897",
+                "parent_phone": "01055556667",
+                "omr_code": "77778897",
+                "uses_identifier": False,
+                "school_type": "HIGH",
+                "grade": 1,
+            },
+        ).student
+
+        result = import_students_from_rows(
+            tenant_id=self.tenant.id,
+            students_data=[
+                {
+                    "name": "엑셀중복학생",
+                    "parent_phone": "01055556667",
+                    "phone": "01077778898",
+                    "school_type": "HIGH",
+                    "grade": 1,
+                }
+            ],
+            initial_password="stud1234",
+        )
+
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(result["duplicates"][0]["student_id"], existing.id)
+        self.assertEqual(
+            Student.objects.filter(
+                tenant=self.tenant,
+                name="엑셀중복학생",
+                parent_phone="01055556667",
+                deleted_at__isnull=True,
+            ).count(),
+            1,
+        )
+        send_mock.assert_not_called()
+
+    @patch("apps.domains.messaging.services.send_welcome_messages")
+    def test_student_import_restores_deleted_student_without_welcome(self, send_mock):
+        from apps.domains.students.services import (
+            create_student_account,
+            import_students_from_rows,
+            soft_delete_student,
+        )
+
+        student = create_student_account(
+            tenant=self.tenant,
+            password="stud1234",
+            student_data={
+                "name": "엑셀복원학생",
+                "ps_number": "REGSAFE-IMP-2",
+                "phone": "01077778899",
+                "parent_phone": "01055556668",
+                "omr_code": "77778899",
+                "uses_identifier": False,
+                "school_type": "HIGH",
+                "grade": 1,
+            },
+        ).student
+        soft_delete_student(student, tenant=self.tenant)
+
+        result = import_students_from_rows(
+            tenant_id=self.tenant.id,
+            students_data=[
+                {
+                    "name": "엑셀복원학생",
+                    "parent_phone": "01055556668",
+                    "phone": "01077778899",
+                    "school_type": "HIGH",
+                    "grade": 2,
+                    "memo": "복원 메모",
+                }
+            ],
+            initial_password="stud1234",
+        )
+
+        self.assertEqual(result["created"], 0)
+        self.assertEqual(result["restored"][0]["student_id"], student.id)
+        student.refresh_from_db()
+        self.assertIsNone(student.deleted_at)
+        self.assertEqual(student.grade, 2)
+        self.assertEqual(student.memo, "복원 메모")
+        send_mock.assert_not_called()
+
     def test_excel_worker_payload_bool_parses_string_false(self):
         from academy.application.services.excel_parsing_service import _payload_bool
 

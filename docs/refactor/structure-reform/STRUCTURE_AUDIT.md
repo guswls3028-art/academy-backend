@@ -100,8 +100,8 @@ app, auth, messaging, clinic/attendance/results, and E2E helper paths.
 |---|---:|---|
 | Single student create | 1 primary, plus compatibility surfaces | `StudentViewSet.create` validates/responds and calls `create_student_account` for Parent/User/Student/Membership |
 | Bulk JSON create | 1 compatibility root | `StudentViewSet.bulk_create` owns row policy and calls `create_student_account` for the account graph |
-| Excel/import create | 2 roots | `bulk_create_from_excel` dispatches worker; `services/bulk_from_excel.py` calls `lecture_enroll`, which calls `create_student_account` for new students |
-| Lecture enrollment create/restore | 1 root | `get_or_create_student_for_lecture_enroll` restores through lifecycle service or creates through `create_student_account` |
+| Excel/import create | 1 service root plus compatibility dispatch | `bulk_create_from_excel` dispatches worker; `ExcelParsingService` calls `import_students_from_rows`; legacy `bulk_from_excel.py` delegates to the import service |
+| Lecture enrollment create/restore | 1 service root plus compatibility facade | `lecture_enroll_from_excel_rows` calls `resolve_student_import_row`; legacy `get_or_create_student_for_lecture_enroll` delegates to the same import resolver |
 | Registration approve | 1 service root plus compatibility HTTP facades | `approve_registration_request` owns approval state and account graph transaction; views own response shape and nonfatal approval-message dispatch |
 | Admin/student profile update | 3 roots | `StudentViewSet.perform_update`, `StudentViewSet.me`, `StudentProfileView.patch` |
 | Schedule visibility | 3 action roots | `StudentSessionClearPastView`, `StudentSessionHideView`, `StudentSessionUnhideView` mutate Student fields |

@@ -9,7 +9,11 @@ from django.db import transaction
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from apps.domains.lectures.models import Session, Lecture
-from apps.domains.students.services import get_or_create_student_for_lecture_enroll
+from apps.domains.students.services import (
+    StudentImportRowError,
+    resolve_student_import_row,
+    student_import_valid_school_types,
+)
 
 from ..models import Enrollment, SessionEnrollment
 
@@ -52,6 +56,7 @@ def lecture_enroll_from_excel_rows(
         student_ids: list[int] = []
         created_student_count = 0
         seen: set[tuple[str, str]] = set()
+        valid_school_types = student_import_valid_school_types(tenant)
 
         skipped_reasons: list[str] = []
         for row_index, item in enumerate(students_data, start=1):
@@ -103,7 +108,23 @@ def lecture_enroll_from_excel_rows(
                 "major": raw.get("major"),
             }
             try:
-                student, created, _restored = get_or_create_student_for_lecture_enroll(tenant, row, initial_password)
+                resolved = resolve_student_import_row(
+                    tenant,
+                    row,
+                    initial_password,
+                    identity_policy="phone_if_available",
+                    valid_school_types=valid_school_types,
+                )
+            except StudentImportRowError as e:
+                skipped_reasons.append(f"row{row_index}:{e.detail}")
+                logger.debug(
+                    "[lecture_enroll_excel] row=%s name=%r parent=%s skip=%s",
+                    row_index,
+                    name,
+                    _mask_phone(parent_phone),
+                    e.detail,
+                )
+                continue
             except Exception as e:
                 logger.warning(
                     "[lecture_enroll_excel] row=%s name=%r parent=%s error=%s",
@@ -114,16 +135,19 @@ def lecture_enroll_from_excel_rows(
                     exc_info=True,
                 )
                 raise
+            student = resolved.student
             if student:
                 student_ids.append(student.id)
-                if created:
+                if resolved.created:
                     created_student_count += 1
                 logger.debug(
-                    "[lecture_enroll_excel] row=%s name=%r student_id=%s created=%s",
+                    "[lecture_enroll_excel] row=%s name=%r student_id=%s created=%s restored=%s duplicate=%s",
                     row_index,
                     name,
                     student.id,
-                    created,
+                    resolved.created,
+                    resolved.restored,
+                    resolved.duplicate,
                 )
             else:
                 logger.debug(
