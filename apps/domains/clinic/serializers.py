@@ -260,9 +260,9 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
 class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
     """
     ✅ 예약 등록(생성) 전용
-    - 선생: student, enrollment_id 직접 지정, session 필수
+    - 선생: student, enrollment_id 직접 지정 가능
     - 학생: student 생략 가능 (자동 설정), source="student_request", status="pending"
-    - 학생 신청 시: session 또는 (requested_date + requested_start_time) 필수
+    - session 또는 (requested_date + requested_start_time) 중 하나 필수
     """
 
     def __init__(self, *args, **kwargs):

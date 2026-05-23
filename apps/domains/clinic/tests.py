@@ -1142,6 +1142,66 @@ class DuplicateBookingAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(resp2.status_code, 409)
 
 
+class ParticipantCreateServiceAPITest(APITestCase, ClinicAPITestMixin):
+    """participant create API가 clinic service write SSOT를 사용한다."""
+
+    def setUp(self):
+        self.data = self.setup_api_tenant("participant_create_api", student_count=2)
+        self.tenant = self.data["tenant"]
+        self.client.force_authenticate(user=self.data["admin_user"])
+
+    def test_admin_create_with_enrollment_resolves_student_and_reason(self):
+        enrollment = self.data["enrollments"][0]
+        self.make_clinic_link(
+            enrollment,
+            self.data["lec_session"],
+            tenant=self.tenant,
+            source_type="exam",
+        )
+
+        resp = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": self.data["clinic_session"].id,
+                "enrollment_id": enrollment.id,
+            },
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        participant = SessionParticipant.objects.get(id=resp.data["id"])
+        self.assertEqual(participant.student_id, enrollment.student_id)
+        self.assertEqual(participant.enrollment_id, enrollment.id)
+        self.assertEqual(participant.status, SessionParticipant.Status.BOOKED)
+        self.assertEqual(participant.clinic_reason, "exam")
+
+    def test_create_returns_409_when_session_capacity_is_full(self):
+        full_session = self.make_clinic_session(
+            self.tenant,
+            date=datetime.date.today() + datetime.timedelta(days=1),
+            max_participants=1,
+        )
+        self.make_participant(
+            self.tenant,
+            full_session,
+            self.data["students"][0],
+            status=SessionParticipant.Status.BOOKED,
+        )
+
+        resp = self.client.post(
+            "/api/v1/clinic/participants/",
+            {
+                "session": full_session.id,
+                "student": self.data["students"][1].id,
+            },
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 409, resp.data)
+
+
 class CompleteBlockedAPITest(APITestCase, ClinicAPITestMixin):
     """cancelled/rejected 참가자에 대한 complete API → 400."""
 
@@ -1407,6 +1467,176 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
         )
 
         self.assertEqual(resp.status_code, 403, resp.data)
+
+
+class StudentClinicBookingChangeAPITest(APITestCase, ClinicAPITestMixin):
+    """학생 예약 변경 API가 clinic service write SSOT를 사용한다."""
+
+    def setUp(self):
+        self.data = self.setup_api_tenant("student_booking_change_api", student_count=1)
+        self.tenant = self.data["tenant"]
+        self.student = self.data["students"][0]
+        self.student.user.tenant = self.tenant
+        self.student.user.save(update_fields=["tenant"])
+        self.client.force_authenticate(user=self.student.user)
+
+    def _pending_booking(self):
+        return self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status=SessionParticipant.Status.PENDING,
+            source=SessionParticipant.Source.STUDENT_REQUEST,
+        )
+
+    def _new_session(self, start_time=datetime.time(15, 0), max_participants=10):
+        return self.make_clinic_session(
+            self.tenant,
+            date=datetime.date.today() + datetime.timedelta(days=1),
+            start_time=start_time,
+            location="변경실",
+            max_participants=max_participants,
+        )
+
+    def test_student_can_change_own_pending_booking(self):
+        old_booking = self._pending_booking()
+        new_session = self._new_session()
+
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{old_booking.id}/change-booking/",
+            {"new_session_id": str(new_session.id), "memo": "시간 변경"},
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        old_booking.refresh_from_db()
+        new_booking = SessionParticipant.objects.get(id=resp.data["id"])
+        self.assertNotEqual(new_booking.id, old_booking.id)
+        self.assertEqual(old_booking.status, SessionParticipant.Status.CANCELLED)
+        self.assertEqual(old_booking.status_changed_by_id, self.student.user_id)
+        self.assertEqual(new_booking.session_id, new_session.id)
+        self.assertEqual(new_booking.student_id, self.student.id)
+        self.assertEqual(new_booking.status, SessionParticipant.Status.PENDING)
+        self.assertEqual(new_booking.memo, "시간 변경")
+
+    def test_change_booking_rejects_malformed_session_id(self):
+        old_booking = self._pending_booking()
+
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{old_booking.id}/change-booking/",
+            {"new_session_id": "not-a-number"},
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        old_booking.refresh_from_db()
+        self.assertEqual(old_booking.status, SessionParticipant.Status.PENDING)
+
+    def test_change_booking_rejects_same_session(self):
+        old_booking = self._pending_booking()
+
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{old_booking.id}/change-booking/",
+            {"new_session_id": str(old_booking.session_id)},
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        old_booking.refresh_from_db()
+        self.assertEqual(old_booking.status, SessionParticipant.Status.PENDING)
+
+    def test_change_booking_returns_409_for_target_duplicate(self):
+        old_booking = self._pending_booking()
+        new_session = self._new_session()
+        SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=new_session,
+            student=self.student,
+            status=SessionParticipant.Status.PENDING,
+            source=SessionParticipant.Source.STUDENT_REQUEST,
+        )
+
+        resp = self.client.post(
+            f"/api/v1/clinic/participants/{old_booking.id}/change-booking/",
+            {"new_session_id": new_session.id},
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 409, resp.data)
+        old_booking.refresh_from_db()
+        self.assertEqual(old_booking.status, SessionParticipant.Status.PENDING)
+
+
+class ParticipantWriteServiceNotificationTest(TestCase, ClinicTestMixin):
+    """service 반환 알림 이벤트가 메시징 clinic_change 계약을 만족한다."""
+
+    def setUp(self):
+        self.data = self.setup_full_tenant("participant_notify", student_count=1)
+        self.tenant = self.data["tenant"]
+        self.student = self.data["students"][0]
+        self.actor = self.make_user("participant_notify_actor")
+
+    def test_change_booking_notification_contains_clinic_change_variables(self):
+        from apps.domains.clinic.services import change_participant_booking
+
+        old_booking = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status=SessionParticipant.Status.PENDING,
+            source=SessionParticipant.Source.STUDENT_REQUEST,
+        )
+        new_session = self.make_clinic_session(
+            self.tenant,
+            date=datetime.date.today() + datetime.timedelta(days=1),
+            start_time=datetime.time(16, 0),
+            location="변경실",
+        )
+
+        result = change_participant_booking(
+            tenant=self.tenant,
+            participant_id=old_booking.id,
+            new_session_id=str(new_session.id),
+            request_student=self.student,
+            actor=self.actor,
+            memo="변경 요청",
+        )
+
+        self.assertEqual(result.notification.trigger, "clinic_reservation_changed")
+        context = result.notification.context
+        self.assertIn("클리닉기존일정", context)
+        self.assertIn("클리닉변동사항", context)
+        self.assertIn("클리닉수정자", context)
+        self.assertIn(str(new_session.date), context["클리닉변동사항"])
+        self.assertEqual(context["클리닉수정자"], self.actor.username)
+
+    def test_cancel_notification_contains_clinic_change_variables(self):
+        from apps.domains.clinic.services import change_participant_status
+
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status=SessionParticipant.Status.PENDING,
+        )
+
+        result = change_participant_status(
+            tenant=self.tenant,
+            participant_id=participant.id,
+            next_status=SessionParticipant.Status.CANCELLED,
+            actor=self.actor,
+            request_student=self.student,
+        )
+
+        self.assertEqual(result.notification.trigger, "clinic_cancelled")
+        context = result.notification.context
+        self.assertEqual(context["클리닉변동사항"], "예약 취소")
+        self.assertIn("클리닉기존일정", context)
+        self.assertEqual(context["클리닉수정자"], self.actor.username)
 
 
 class ScoreValidationAPITest(TestCase, ClinicTestMixin):
