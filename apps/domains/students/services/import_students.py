@@ -23,7 +23,7 @@ from academy.adapters.db.django import repositories_students as student_repo
 
 from ..ps_number import _generate_unique_ps_number
 from .creation import create_student_account
-from .lifecycle import restore_student
+from .lifecycle import permanently_delete_students, restore_student
 from .school import get_valid_school_types, is_valid_grade, normalize_school_from_name
 
 logger = logging.getLogger(__name__)
@@ -434,4 +434,147 @@ def import_students_from_rows(
         "restored": restored,
         "total": total,
         "processed_by": "worker",
+    }
+
+
+def resolve_student_import_conflicts(
+    *,
+    tenant,
+    resolutions: list[dict],
+    initial_password: str,
+    send_welcome_message: bool = False,
+) -> dict:
+    """
+    Resolve deleted-student import conflicts through the same row policy.
+
+    Existing HTTP contract:
+    {
+      "created": int,
+      "restored": int,
+      "failed": [{"row", "name", "error", "conflict_student_id"?}],
+    }
+    """
+    initial_password = (initial_password or "").strip()
+    if len(initial_password) < 4:
+        raise ValueError("initial_password는 4자 이상이어야 합니다.")
+    if not isinstance(resolutions, (list, tuple)):
+        raise ValueError("resolutions는 배열이어야 합니다.")
+
+    created_count = 0
+    restored_count = 0
+    failed: list[dict[str, Any]] = []
+    created_students: list[Any] = []
+    parent_password_by_phone: dict[str, str] = {}
+    valid_school_types = student_import_valid_school_types(tenant)
+
+    for resolution in resolutions:
+        item = resolution if isinstance(resolution, dict) else {}
+        row = item.get("row")
+        student_id = item.get("student_id")
+        action = item.get("action")
+        student_data = item.get("student_data") or {}
+        if not isinstance(student_data, dict):
+            student_data = {}
+        display_name = str(student_data.get("name") or "").strip()
+
+        if not student_id or action not in ("restore", "delete"):
+            failed.append({
+                "row": row,
+                "name": display_name,
+                "error": "잘못된 resolution",
+                "conflict_student_id": None,
+            })
+            continue
+
+        try:
+            deleted_student = student_repo.student_filter_tenant_id_deleted_first(
+                tenant,
+                student_id,
+            )
+            if not deleted_student:
+                failed.append({
+                    "row": row,
+                    "name": display_name,
+                    "error": "삭제된 학생을 찾을 수 없습니다.",
+                    "conflict_student_id": None,
+                })
+                continue
+
+            if action == "restore":
+                restore_student(
+                    deleted_student,
+                    tenant=tenant,
+                    profile_data=student_data,
+                )
+                restored_count += 1
+                continue
+
+            with transaction.atomic():
+                permanently_delete_students(
+                    tenant=tenant,
+                    student_ids=[deleted_student.id],
+                )
+                resolved = resolve_student_import_row(
+                    tenant,
+                    student_data,
+                    initial_password,
+                    identity_policy="phone_if_available",
+                    valid_school_types=valid_school_types,
+                )
+            if resolved.created:
+                created_count += 1
+                created_students.append(resolved.student)
+                if resolved.parent_phone:
+                    parent_password_by_phone[resolved.parent_phone] = (
+                        resolved.parent_password_for_notice
+                        or getattr(resolved.student, "_parent_password_for_notice", "변경되지 않음")
+                    )
+            elif resolved.restored:
+                restored_count += 1
+            elif resolved.duplicate:
+                failed.append({
+                    "row": row,
+                    "name": display_name,
+                    "error": "이미 있는 학생입니다.",
+                    "conflict_student_id": getattr(resolved.student, "id", None),
+                })
+        except StudentImportRowError as exc:
+            failed.append({
+                "row": row,
+                "name": display_name,
+                "error": exc.detail,
+                "conflict_student_id": exc.conflict_student_id,
+            })
+        except Exception as exc:
+            logger.warning(
+                "resolve_student_import_conflicts row=%s name=%r: %s",
+                row,
+                display_name,
+                exc,
+                exc_info=True,
+            )
+            failed.append({
+                "row": row,
+                "name": display_name,
+                "error": str(exc)[:500],
+                "conflict_student_id": None,
+            })
+
+    if send_welcome_message and created_students:
+        try:
+            from apps.domains.messaging.services import get_tenant_site_url, send_welcome_messages
+
+            send_welcome_messages(
+                created_students=created_students,
+                student_password=initial_password,
+                parent_password_by_phone=parent_password_by_phone,
+                site_url=get_tenant_site_url(tenant),
+            )
+        except Exception:
+            logger.exception("student_import_conflicts: send_welcome_messages failed (non-fatal)")
+
+    return {
+        "created": created_count,
+        "restored": restored_count,
+        "failed": failed,
     }

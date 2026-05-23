@@ -11,6 +11,7 @@ from .import_students import (
     StudentImportRowError,
     StudentImportRowResolution,
     import_students_from_rows,
+    resolve_student_import_conflicts,
     resolve_student_import_row,
     student_import_valid_school_types,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "StudentImportRowError",
     "StudentImportRowResolution",
     "import_students_from_rows",
+    "resolve_student_import_conflicts",
     "resolve_student_import_row",
     "student_import_valid_school_types",
     "get_or_create_student_for_lecture_enroll",

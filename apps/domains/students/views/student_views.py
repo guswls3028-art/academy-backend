@@ -40,14 +40,14 @@ from ..services import (
     StudentLifecycleError,
     StudentProfileUpdateError,
     create_student_account,
-    normalize_school_from_name,
+    import_students_from_rows,
     permanently_delete_students,
+    resolve_student_import_conflicts,
     restore_student,
     soft_delete_student,
     update_student_profile,
 )
 from ..serializers import (
-    _generate_unique_ps_number,
     StudentListSerializer,
     StudentDetailSerializer,
     AddTagSerializer,
@@ -445,141 +445,13 @@ class StudentViewSet(ModelViewSet):
         send_welcome = serializer.validated_data.get("send_welcome_message", False)
         tenant = request.tenant
 
-        created_count = 0
-        failed = []
-        created_students = []
-        parent_password_by_phone = {}
-
-        # school_level_mode 검증 준비
-        from apps.domains.students.services.school import get_valid_school_types, is_valid_grade
-        from apps.core.models import Program
-        program = Program.objects.filter(tenant=tenant).first()
-        slm = program.feature_flags.get("school_level_mode") if program and program.feature_flags else None
-        valid_types = get_valid_school_types(slm)
-
-        for idx, item in enumerate(students_data):
-            # school_level_mode 검증
-            st_type = item.get("school_type", "HIGH")
-            if st_type not in valid_types:
-                labels = {"ELEMENTARY": "초등", "MIDDLE": "중등", "HIGH": "고등"}
-                allowed = ", ".join(labels.get(t, t) for t in sorted(valid_types))
-                failed.append({
-                    "row": idx + 1,
-                    "name": item.get("name", ""),
-                    "error": f"이 학원에서는 {allowed} 학생만 등록할 수 있습니다.",
-                })
-                continue
-            st_grade = item.get("grade")
-            if st_grade is not None and not is_valid_grade(st_type, st_grade):
-                from apps.domains.students.services.school import GRADE_RANGE
-                lo, hi = GRADE_RANGE.get(st_type, (1, 3))
-                failed.append({
-                    "row": idx + 1,
-                    "name": item.get("name", ""),
-                    "error": f"{st_type} 학생의 학년은 {lo}~{hi}학년이어야 합니다.",
-                })
-                continue
-
-            phone = item.get("phone")  # nullable
-            parent_phone = item.get("parent_phone", "")
-            # ps_number: 임의 6자리 자동 부여 (학생이 추후 변경 가능)
-            ps_number = _generate_unique_ps_number(tenant=tenant)
-            # omr_code: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
-            if phone and len(phone) >= 8:
-                omr_code = phone[-8:]
-            elif parent_phone and len(parent_phone) >= 8:
-                omr_code = parent_phone[-8:]
-            else:
-                failed.append({
-                    "row": idx + 1,
-                    "name": item.get("name", ""),
-                    "error": "학생 전화번호 또는 부모 전화번호가 필요합니다.",
-                })
-                continue
-
-            try:
-                with transaction.atomic():
-                    # 학생 전화번호가 있으면 중복 체크
-                    if phone:
-                        conflict_deleted = student_repo.student_filter_tenant_phone_deleted(
-                            tenant, phone
-                        ).values_list("id", flat=True).first()
-                        if conflict_deleted:
-                            raise ValueError("삭제된 학생과 전화번호 충돌. 복원 또는 삭제 후 재등록을 선택하세요.", conflict_deleted)
-                        if student_repo.user_filter_phone_active(phone, tenant=tenant).exists():
-                            raise ValueError("이미 사용 중인 전화번호입니다.")
-                    if student_repo.student_filter_tenant_ps_number(tenant, ps_number).exists():
-                        raise ValueError("이미 사용 중인 PS 번호입니다.")
-
-                    school_val = (item.get("school") or "").strip() or None
-                    st, elementary_school, high_school, middle_school = normalize_school_from_name(
-                        school_val, item.get("school_type")
-                    )
-                    high_school_class = (item.get("high_school_class") or "").strip() or None if st == "HIGH" else None
-                    major = (item.get("major") or "").strip() or None if st == "HIGH" else None
-
-                    result = create_student_account(
-                        tenant=tenant,
-                        password=password,
-                        student_data={
-                            "name": item["name"],
-                            "phone": phone,
-                            "parent_phone": item["parent_phone"],
-                            "ps_number": ps_number,
-                            "omr_code": omr_code,
-                            "uses_identifier": item.get("uses_identifier", False) or (phone is None),
-                            "gender": item.get("gender") or None,
-                            "school_type": st,
-                            "elementary_school": elementary_school,
-                            "high_school": high_school,
-                            "middle_school": middle_school,
-                            "high_school_class": high_school_class,
-                            "major": major,
-                            "grade": item.get("grade"),
-                            "memo": item.get("memo") or None,
-                            "is_managed": item.get("is_managed", True),
-                        },
-                    )
-                    student = result.student
-                    if (
-                        parent_phone
-                        and (
-                            parent_phone not in parent_password_by_phone
-                            or result.parent_user_created
-                        )
-                    ):
-                        parent_password_by_phone[parent_phone] = (
-                            result.parent_password_for_notice
-                        )
-                    created_count += 1
-                    created_students.append(student)
-            except Exception as e:
-                err_msg = str(e)
-                conflict_student_id = None
-                if isinstance(e, ValueError) and len(e.args) >= 2:
-                    conflict_student_id = e.args[1]
-                    err_msg = e.args[0]
-                failed.append({
-                    "row": idx + 1,
-                    "name": item.get("name", ""),
-                    "error": err_msg,
-                    "conflict_student_id": conflict_student_id,
-                })
-
-        if send_welcome and created_students:
-            site_url = get_tenant_site_url(request.tenant)
-            send_welcome_messages(
-                created_students=created_students,
-                student_password=password,
-                parent_password_by_phone=parent_password_by_phone,
-                site_url=site_url,
-            )
-
-        return Response({
-            "created": created_count,
-            "failed": failed,
-            "total": len(students_data),
-        }, status=201)
+        result = import_students_from_rows(
+            tenant_id=tenant.id,
+            students_data=students_data,
+            initial_password=password,
+            send_welcome_message=send_welcome,
+        )
+        return Response(result, status=201)
 
     @action(
         detail=False,
@@ -603,110 +475,16 @@ class StudentViewSet(ModelViewSet):
         if not isinstance(resolutions, (list, tuple)):
             return Response({"detail": "resolutions는 배열이어야 합니다."}, status=400)
 
-        tenant = request.tenant
-        created_count = 0
-        restored_count = 0
-        failed = []
-        created_students = []
-        parent_password_by_phone = {}
-
-        for r in resolutions:
-            row = r.get("row")
-            student_id = r.get("student_id")
-            action = r.get("action")
-            student_data = r.get("student_data") or {}
-            if not student_id or action not in ("restore", "delete"):
-                failed.append({"row": row, "name": student_data.get("name", ""), "error": "잘못된 resolution"})
-                continue
-            try:
-                student = student_repo.student_filter_tenant_id_deleted_first(tenant, student_id)
-                if not student:
-                    failed.append({"row": row, "name": student_data.get("name", ""), "error": "삭제된 학생을 찾을 수 없습니다."})
-                    continue
-
-                if action == "restore":
-                    restored_result = restore_student(
-                        student,
-                        tenant=tenant,
-                        profile_data=student_data,
-                    )
-                    restored_count += 1
-                else:
-                    with transaction.atomic():
-                        permanently_delete_students(tenant=tenant, student_ids=[student.id])
-                        parent_phone_raw = str(student_data.get("parent_phone") or student_data.get("parentPhone", "")).replace(" ", "").replace("-", "").replace(".", "")
-                        parent_phone = parent_phone_raw if len(parent_phone_raw) >= 11 else ""
-                        phone_raw = str(student_data.get("phone", "")).replace(" ", "").replace("-", "").replace(".", "")
-                        phone = phone_raw if phone_raw and len(phone_raw) == 11 and phone_raw.startswith("010") else None
-                        parent_phone_val = student_data.get("parent_phone") or student_data.get("parentPhone", "")
-                        parent_phone = str(parent_phone_val).replace(" ", "").replace("-", "").replace(".", "")
-                        # ps_number: 임의 6자리 자동 부여
-                        ps_number = _generate_unique_ps_number(tenant=tenant)
-                        # omr_code: 학생 전화번호가 있으면 학생 전화번호 8자리, 없으면 부모 전화번호 8자리
-                        if phone and len(phone) >= 8:
-                            omr_code = phone[-8:]
-                        elif parent_phone and len(parent_phone) >= 8:
-                            omr_code = parent_phone[-8:]
-                        else:
-                            raise ValueError("학생 전화번호 또는 부모 전화번호가 필요합니다.")
-                        school_val = (student_data.get("school") or "").strip() or None
-                        st, elementary_school, high_school, middle_school = normalize_school_from_name(
-                            school_val, student_data.get("school_type")
-                        )
-                        high_school_class = (student_data.get("high_school_class") or "").strip() or None if st == "HIGH" else None
-                        major = (student_data.get("major") or "").strip() or None if st == "HIGH" else None
-                        result = create_student_account(
-                            tenant=tenant,
-                            password=password,
-                            student_data={
-                                "name": student_data.get("name", ""),
-                                "phone": phone,
-                                "parent_phone": parent_phone,
-                                "ps_number": ps_number,
-                                "omr_code": omr_code,
-                                "uses_identifier": student_data.get("uses_identifier", False) or (phone is None),
-                                "gender": student_data.get("gender") or None,
-                                "school_type": st,
-                                "elementary_school": elementary_school,
-                                "high_school": high_school,
-                                "middle_school": middle_school,
-                                "high_school_class": high_school_class,
-                                "major": major,
-                                "grade": student_data.get("grade"),
-                                "memo": student_data.get("memo") or None,
-                                "is_managed": student_data.get("is_managed", True),
-                            },
-                        )
-                        new_student = result.student
-                        if (
-                            parent_phone
-                            and (
-                                parent_phone not in parent_password_by_phone
-                                or result.parent_user_created
-                            )
-                        ):
-                            parent_password_by_phone[parent_phone] = (
-                                result.parent_password_for_notice
-                            )
-                    created_count += 1
-                    created_students.append(new_student)
-            except Exception as e:
-                failed.append({"row": row, "name": student_data.get("name", ""), "error": str(e)})
-
-        if send_welcome and created_students:
-            site_url = get_tenant_site_url(request.tenant)
-            send_welcome_messages(
-                created_students=created_students,
-                student_password=password,
-                parent_password_by_phone=parent_password_by_phone,
-                site_url=site_url,
-            )
-
-        return Response({
-            "created": created_count,
-            "restored": restored_count,
-            "failed": failed,
-        }, status=200)
+        result = resolve_student_import_conflicts(
+            tenant=request.tenant,
+            resolutions=resolutions,
+            initial_password=password,
+            send_welcome_message=parse_bool(
+                send_welcome,
+                field_name="send_welcome_message",
+            ),
+        )
+        return Response(result, status=200)
 
     @action(
         detail=False,

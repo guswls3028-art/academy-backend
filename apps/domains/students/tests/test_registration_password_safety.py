@@ -417,6 +417,178 @@ class RegistrationPasswordSafetyTests(TestCase):
         self.assertEqual(student.memo, "복원 메모")
         send_mock.assert_not_called()
 
+    @patch("apps.domains.messaging.services.send_welcome_messages")
+    def test_json_bulk_create_reports_active_duplicate_without_new_account(self, send_mock):
+        from apps.domains.students.models import Student
+        from apps.domains.students.services import create_student_account
+
+        existing = create_student_account(
+            tenant=self.tenant,
+            password="stud1234",
+            student_data={
+                "name": "JSON중복학생",
+                "ps_number": "REGSAFE-BULK-1",
+                "phone": "01077778900",
+                "parent_phone": "01055556670",
+                "omr_code": "77778900",
+                "uses_identifier": False,
+                "school_type": "HIGH",
+                "grade": 1,
+            },
+        ).student
+        request = self.factory.post(
+            "/api/v1/students/bulk_create/",
+            {
+                "initial_password": "stud1234",
+                "send_welcome_message": True,
+                "students": [
+                    {
+                        "name": "JSON중복학생",
+                        "parent_phone": "01055556670",
+                        "phone": "01077778901",
+                        "school_type": "HIGH",
+                        "grade": 1,
+                    }
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_create"})(request)
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["created"], 0)
+        self.assertEqual(response.data["duplicates"][0]["student_id"], existing.id)
+        self.assertEqual(
+            Student.objects.filter(
+                tenant=self.tenant,
+                name="JSON중복학생",
+                parent_phone="01055556670",
+                deleted_at__isnull=True,
+            ).count(),
+            1,
+        )
+        send_mock.assert_not_called()
+
+    @patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://hakwonplus.com")
+    @patch("apps.domains.messaging.services.send_welcome_messages")
+    def test_bulk_resolve_delete_recreate_uses_import_parent_notice(self, send_mock, _site_mock):
+        from apps.domains.students.models import Student
+        from apps.domains.students.services import create_student_account, soft_delete_student
+
+        old_student = create_student_account(
+            tenant=self.tenant,
+            password="oldpass123",
+            student_data={
+                "name": "삭제재생성대상",
+                "ps_number": "REGSAFE-DEL-1",
+                "phone": "01077778902",
+                "parent_phone": "01055556671",
+                "omr_code": "77778902",
+                "uses_identifier": False,
+                "school_type": "HIGH",
+                "grade": 1,
+            },
+        ).student
+        soft_delete_student(old_student, tenant=self.tenant)
+        request = self.factory.post(
+            "/api/v1/students/bulk_resolve_conflicts/",
+            {
+                "initial_password": "newpass123",
+                "send_welcome_message": True,
+                "resolutions": [
+                    {
+                        "row": 1,
+                        "student_id": old_student.id,
+                        "action": "delete",
+                        "student_data": {
+                            "name": "삭제재생성대상",
+                            "parent_phone": "01055556671",
+                            "phone": "01077778903",
+                            "school_type": "HIGH",
+                            "grade": 1,
+                        },
+                    }
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_resolve_conflicts"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["created"], 1)
+        self.assertEqual(response.data["failed"], [])
+        self.assertFalse(Student.objects.filter(id=old_student.id).exists())
+        self.assertTrue(
+            Student.objects.filter(
+                tenant=self.tenant,
+                name="삭제재생성대상",
+                phone="01077778903",
+                deleted_at__isnull=True,
+            ).exists()
+        )
+        self.assertEqual(
+            send_mock.call_args.kwargs["parent_password_by_phone"],
+            {"01055556671": "변경되지 않음"},
+        )
+
+    def test_bulk_resolve_delete_recreate_failure_keeps_deleted_student(self):
+        from apps.domains.students.models import Student
+        from apps.domains.students.services import create_student_account, soft_delete_student
+
+        old_student = create_student_account(
+            tenant=self.tenant,
+            password="oldpass123",
+            student_data={
+                "name": "롤백대상",
+                "ps_number": "REGSAFE-ROLL-1",
+                "phone": "01077778904",
+                "parent_phone": "01055556672",
+                "omr_code": "77778904",
+                "uses_identifier": False,
+                "school_type": "HIGH",
+                "grade": 1,
+            },
+        ).student
+        soft_delete_student(old_student, tenant=self.tenant)
+        request = self.factory.post(
+            "/api/v1/students/bulk_resolve_conflicts/",
+            {
+                "initial_password": "newpass123",
+                "resolutions": [
+                    {
+                        "row": 1,
+                        "student_id": old_student.id,
+                        "action": "delete",
+                        "student_data": {
+                            "name": "롤백대상",
+                            "parent_phone": "not-a-phone",
+                            "phone": "01077778905",
+                            "school_type": "HIGH",
+                            "grade": 1,
+                        },
+                    }
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_resolve_conflicts"})(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["created"], 0)
+        self.assertEqual(len(response.data["failed"]), 1)
+        old_student.refresh_from_db()
+        self.assertIsNotNone(old_student.deleted_at)
+        self.assertTrue(Student.objects.filter(id=old_student.id).exists())
+
     def test_excel_worker_payload_bool_parses_string_false(self):
         from academy.application.services.excel_parsing_service import _payload_bool
 
