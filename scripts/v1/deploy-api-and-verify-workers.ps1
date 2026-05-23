@@ -20,6 +20,7 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
 }
 . (Join-Path $ScriptRoot "core\ssot.ps1")
 . (Join-Path $ScriptRoot "core\aws.ps1")
+. (Join-Path $ScriptRoot "resources\api.ps1")
 $null = Load-SSOT -Env "prod"
 
 $report = @()
@@ -65,6 +66,7 @@ try {
 # 0-2. Latest CI build SHA + status (via gh CLI)
 $ciRunStatus = $null
 $ciRunConclusion = $null
+$reportOnlyHead = $false
 try {
     $ghOutput = gh run list --limit 10 --json databaseId,status,conclusion,headSha,workflowName 2>&1
     $ghRuns = $ghOutput | ConvertFrom-Json
@@ -92,7 +94,22 @@ try {
             if ($inProgress -and $inProgress.headSha -eq $gitHeadSha) {
                 Add-Result "0-IMAGE" "ci/HEAD-sync" "WARN" "HEAD=$($gitHeadSha.Substring(0,7)) != lastBuild=$lastSuccessShort (build in progress)"
             } else {
-                Add-Result "0-IMAGE" "ci/HEAD-sync" "FAIL" "HEAD=$($gitHeadSha.Substring(0,7)) != lastBuild=$lastSuccessShort (no build running!)"
+                $deltaFiles = @()
+                try {
+                    Push-Location $repoRoot
+                    $deltaFiles = @(git diff --name-only "$lastSuccessSha..$gitHeadSha" 2>$null)
+                    Pop-Location
+                } catch {
+                    Pop-Location
+                    $deltaFiles = @()
+                }
+                $nonReportFiles = @($deltaFiles | Where-Object { $_ -ne "docs/reports/ci-build.latest.md" })
+                if ($deltaFiles.Count -gt 0 -and $nonReportFiles.Count -eq 0) {
+                    $reportOnlyHead = $true
+                    Add-Result "0-IMAGE" "ci/HEAD-sync" "PASS" "HEAD only contains CI build report after deployed build"
+                } else {
+                    Add-Result "0-IMAGE" "ci/HEAD-sync" "FAIL" "HEAD=$($gitHeadSha.Substring(0,7)) != lastBuild=$lastSuccessShort (no build running!)"
+                }
             }
         } elseif ($gitHeadSha) {
             Add-Result "0-IMAGE" "ci/HEAD-sync" "PASS" "HEAD matches last successful build"
@@ -157,6 +174,8 @@ foreach ($repo in $imageRepos) {
 if ($gitHeadSha -and $ciBuildReportSha) {
     if ($gitHeadSha -eq $ciBuildReportSha) {
         Add-Result "0-IMAGE" "freshness" "PASS" "Git HEAD = CI build = ECR latest (all in sync)"
+    } elseif ($reportOnlyHead) {
+        Add-Result "0-IMAGE" "freshness" "PASS" "Runtime images match last successful build; HEAD only updates CI build report"
     } elseif ($ciRunStatus -eq "in_progress") {
         Add-Result "0-IMAGE" "freshness" "WARN" "New build in progress — ECR will update when CI completes"
     } else {
