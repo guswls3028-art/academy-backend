@@ -326,14 +326,16 @@ def _row_looks_like_student(
         return False
     if name and re.match(r"^\d+$", name):
         return False
-    if len(name) > 20:
-        return False
     has_phone = (
         (len(parent_phone_raw) == 11 and parent_phone_raw.startswith("010"))
         or (len(student_phone_raw) == 11 and student_phone_raw.startswith("010"))
         or (len(parent_phone_raw) == 8 and parent_phone_raw.isdigit())
         or (len(student_phone_raw) == 8 and student_phone_raw.isdigit())
     )
+    if len(name) > 50:
+        return False
+    if len(name) > 20 and not has_phone:
+        return False
     has_name = bool(re.match(r"^[가-힣]{2,5}[A-Za-z0-9]*\*?$", name))
     if not has_name and not has_phone:
         return False
