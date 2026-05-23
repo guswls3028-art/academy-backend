@@ -225,6 +225,11 @@ pnpm refactor:inventory
   paths. Soft-deleted students are no longer accepted as clinic participant
   targets through `student`, `enrollment_id`, or student self-booking, and
   deleted student accounts receive an empty clinic idcard response.
+- Clinic participant status, complete, and uncomplete writes now route through
+  `apps.domains.clinic.services.lifecycle`. The service owns transition maps,
+  completion guards, row locking, and notification event selection. Participant
+  creation and booking-change orchestration remain the next clinic service
+  extraction targets.
 - Attendance roster create now validates posted student IDs through
   `students.selectors`, scopes `AttendanceSerializer` session/enrollment FK
   querysets to the request tenant, and delegates writes to
@@ -258,8 +263,9 @@ pnpm refactor:inventory
   contract/status slice, the tools timer download contract slice, the exam
   enrollment contract slice, the tenant info contract slice, the submissions
   contract slice, the lecture sections contract slice, the clinic
-  active-student selector boundary slice, the attendance roster service
-  boundary slice, the messaging recipient resolver slice, and the results
+  active-student selector boundary slice, the clinic participant transition
+  service slice, the attendance roster service boundary slice, the messaging
+  recipient resolver slice, and the results
   student-grades selector slice. Re-run the snapshot commands before each phase
   because active
   refactors can change these counts quickly. The latest backend snapshot reports

@@ -394,19 +394,38 @@ FINAL → {} (종단, 절대 불변)
 | `cancelled` | 취소됨 | 학생/관리자 취소 | 종단 상태 |
 | `rejected` | 거절됨 | 관리자 거절 | 종단 상태 |
 
-#### 허용 전이 (VALID_TRANSITIONS)
+#### 허용 전이
 
 ```python
-# apps/domains/clinic/views.py:647-662
-VALID_TRANSITIONS = {
-    "pending":   {"booked", "cancelled", "rejected"},
-    "booked":    {"attended", "no_show", "cancelled"},
-    "attended":  {"booked"},          # 출석 취소 (오입력 정정)
-    "no_show":   {"booked", "attended"},  # 미출석 정정
-    "cancelled": {"pending", "booked"},   # 취소 복원
-    "rejected":  {"pending", "booked"},   # 거절 복원
+# apps/domains/clinic/services/lifecycle.py
+STAFF_STATUS_TRANSITIONS = {
+    "pending": {"booked", "rejected", "cancelled"},
+    "booked": {"attended", "no_show", "cancelled"},
+    "attended": {"booked", "no_show"},
+    "no_show": {"booked", "attended"},
+    "rejected": set(),
+    "cancelled": set(),
+}
+
+STUDENT_STATUS_TRANSITIONS = {
+    "pending": {"cancelled"},
+    "booked": set(),
+    "attended": set(),
+    "no_show": set(),
+    "rejected": set(),
+    "cancelled": set(),
 }
 ```
+
+완료 처리는 별도 use-case다.
+
+```python
+COMPLETE_ALLOWED_TRANSITIONS = {"pending", "booked"}
+```
+
+`complete`는 pending/booked 참가자를 attended로 전환하고 `completed_at`을 기록한다.
+이미 attended/no_show인 참가자는 상태를 바꾸지 않고 완료 시간만 기록한다.
+cancelled/rejected 참가자는 완료 처리할 수 없다.
 
 #### 금지 전이
 
@@ -414,6 +433,7 @@ VALID_TRANSITIONS = {
 - `pending → no_show` (booked 경유 필수)
 - `booked → pending` (승인 취소 없음)
 - `booked → rejected` (승인된 예약 거절 없음)
+- `cancelled/rejected → *` (상태 전이 종단)
 
 #### UI 허용 액션
 
@@ -421,10 +441,10 @@ VALID_TRANSITIONS = {
 |------|-------|---------|
 | pending | 승인(→booked), 거절(→rejected), 취소(→cancelled) | 취소(→cancelled) |
 | booked | 출석(→attended), 미출석(→no_show), 취소(→cancelled) | (변경 불가, "확정" 표시) |
-| attended | 출석취소(→booked) | (미노출) |
+| attended | 출석취소(→booked), 미출석 정정(→no_show) | (미노출) |
 | no_show | 정정(→booked, →attended) | (미노출) |
-| cancelled | 복원(→pending, →booked) | (미노출) |
-| rejected | 복원(→pending, →booked) | (미노출 — 현재 코드 갭) |
+| cancelled | 종단 | (미노출) |
+| rejected | 종단 | (미노출) |
 
 ---
 
@@ -739,8 +759,8 @@ EXPIRED → {} (종단)
 
 ### C6. MEDIUM — Clinic change_booking 전이 우회
 
-- **위치:** `apps/domains/clinic/views.py:925`
-- **문제:** 기존 예약을 CANCELLED로 변경할 때 `VALID_TRANSITIONS` 검증을 거치지 않음
+- **위치:** `apps/domains/clinic/views/participant_views.py` `change_booking`
+- **문제:** 기존 예약을 CANCELLED로 변경할 때 전이 검증을 거치지 않음
 - **영향:** ATTENDED/NO_SHOW 상태의 예약이 CANCELLED로 변경될 수 있음
 
 ### C7. MEDIUM — AIJobModel job_save_failed SFU 부재
@@ -783,7 +803,7 @@ EXPIRED → {} (종단)
 | 3 | C3: Registration race | HIGH | **FIXED** | `students/services/registration_approval.py`: approve 상태 전이+학생 생성 atomic 처리; `registration_views.py`: reject/bulk_reject 잠금 유지 |
 | 4 | C4: Job terminal overwrite | HIGH | **FIXED** | `repositories_video.py`: job_cancel/mark_dead/fail_retry에 종단 상태 가드 |
 | 5 | C5: ExamAttempt atomic | MEDIUM | **FIXED** | `sync_result_from_submission.py`: select_for_update 추가 |
-| 6 | C6: Clinic booking bypass | MEDIUM | **FIXED** | `clinic/views.py`: change_booking에 CANCEL_ALLOWED_FROM 가드 |
+| 6 | C6: Clinic booking bypass | MEDIUM | **FIXED** | `clinic/views/participant_views.py`: change_booking에 CANCEL_ALLOWED_FROM 가드 |
 | 7 | C7: AI job SFU | MEDIUM | **FIXED** | `repositories_ai.py`: job_save_failed에 atomic + select_for_update + 종단 상태 가드 |
 
 ---

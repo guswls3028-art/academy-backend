@@ -203,8 +203,13 @@ Implemented:
   `students.selectors` and `enrollment.selectors` in touched HTTP paths.
   Deleted-student participant creation is rejected through `student`,
   `enrollment_id`, and student self-booking, while idcard returns the empty
-  safe response for deleted student accounts. Participant transition logic still
-  needs extraction into clinic services before this phase is complete.
+  safe response for deleted student accounts.
+- Clinic participant status, complete, and uncomplete writes now use
+  `apps.domains.clinic.services.lifecycle`. The service owns staff/student
+  transition maps, completion guards, row locking, and notification event
+  selection; `ParticipantViewSet` remains a transport plus `on_commit`
+  dispatch facade. Participant creation and `change_booking` remain the next
+  clinic extraction slice.
 - Attendance roster create now validates student IDs through
   `students.selectors`, scopes `AttendanceSerializer` session/enrollment FK
   querysets to the request tenant, and delegates roster writes to

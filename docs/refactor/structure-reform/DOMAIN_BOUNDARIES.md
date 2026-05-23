@@ -74,10 +74,10 @@ Boundary rule for the structure reform:
 |---|---|
 | Owned data | Clinic `Session`, `SessionParticipant`, `Test`, clinic `Submission` |
 | External references | Student, enrollment, lectures, messaging |
-| Public interface candidate | `clinic.services.add_participant`, `clinic.services.change_booking`, `clinic.events.ClinicStatusChanged` |
+| Public interface candidate | `[COMPLETED] clinic.services.change_participant_status`, `complete_participant`, `uncomplete_participant`; `[NEXT] clinic.services.add_participant`, `clinic.services.change_booking`, `clinic.events.ClinicStatusChanged` |
 | Forbidden dependency | View-owned participant business decisions and students delete flow directly mutating clinic participants |
 | Tenant rule | Participant/session/submission/test queries must include tenant and same-tenant active student/enrollment |
-| Current risk | Clinic has a `Submission` model name that conflicts conceptually with assessment submissions; participant status transitions live in views. Participant/session/idcard active-student reads in touched HTTP paths now use public selectors, but the add/change booking use-case has not yet been extracted into a clinic service |
+| Current risk | Clinic has a `Submission` model name that conflicts conceptually with assessment submissions. Participant status/complete/uncomplete transitions are service-owned and row-locked, but participant creation and booking-change orchestration have not yet been extracted into clinic services. Notification dispatch still uses the current `transaction.on_commit` compatibility boundary. |
 
 ## Exams
 

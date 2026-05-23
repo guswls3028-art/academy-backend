@@ -269,12 +269,12 @@
 
 | 트리거 | 호출 파일:라인 | 비고 |
 |--------|---------------|------|
-| `clinic_reservation_created` | clinic/views.py:728 | `transaction.on_commit` |
-| `clinic_reservation_changed` | clinic/views.py:1197 | `transaction.on_commit` |
-| `clinic_cancelled` | clinic/views.py:872 | set_status에서 next_status=cancelled |
-| `clinic_check_in` | clinic/views.py:872 | set_status에서 next_status=checked_in |
-| `clinic_absent` | clinic/views.py:872 | set_status에서 next_status=absent |
-| `clinic_self_study_completed` | clinic/views.py:939 | complete 액션 |
+| `clinic_reservation_created` | `clinic/views/participant_views.py` | create 액션, `transaction.on_commit` |
+| `clinic_reservation_changed` | `clinic/views/participant_views.py` | change_booking 액션, `transaction.on_commit` |
+| `clinic_cancelled` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | service가 이벤트 선택, view가 `on_commit` 발송 |
+| `clinic_check_in` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | service가 이벤트 선택, view가 `on_commit` 발송 |
+| `clinic_absent` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | service가 이벤트 선택, view가 `on_commit` 발송 |
+| `clinic_self_study_completed` | `clinic/services/lifecycle.py` + `clinic/views/participant_views.py` | complete service 이벤트, view가 `on_commit` 발송 |
 | `check_in_complete` | attendance/views.py:80 | `_send_attendance_notification` |
 | `absent_occurred` | attendance/views.py:80 | `_send_attendance_notification` |
 | `registration_approved_*` | (가입 승인 플로우) | `send_alimtalk_via_owner` 경유 |
@@ -478,8 +478,9 @@ SHA-256(canonical) -> 64자 hex
 
 도메인 코드에서 context에 `_domain_object_id`를 전달하여 occurrence_key로 사용. 예:
 
-- `f"clinic_participant_{obj.pk}"` (clinic/views.py:726)
-- `f"participant_{obj.pk}_{next_status}_{int(time.time())}"` (clinic/views.py:870)
+- `f"clinic_participant_{obj.pk}"` (`clinic/views/participant_views.py` create)
+- `f"participant_{participant.pk}_{next_status}_{int(time.time())}"` (`clinic/services/lifecycle.py`)
+- `f"booking_change_{new_booking.pk}"` (`clinic/views/participant_views.py`)
 - `str(attendance.id)` (attendance/views.py:77)
 
 ---
@@ -608,7 +609,7 @@ POST로 기존 기본 템플릿 리셋 가능. 이름이 기본값과 동일한 
 
 ### _send_clinic_notification
 
-출처: `clinic/views.py:25-35`
+출처: `clinic/views/participant_views.py` + `clinic/services/lifecycle.py`
 
 ```python
 def _send_clinic_notification(tenant, student, trigger, context=None):
@@ -618,8 +619,10 @@ def _send_clinic_notification(tenant, student, trigger, context=None):
 
 - **학생 + 학부모 동시 발송** (AUTO_DEFAULT 정책)
 - `transaction.on_commit()` 내에서 호출 (트랜잭션 커밋 후 발송)
+- create/change_booking은 view가 context를 만든다.
+- status/complete/uncomplete 계열은 `clinic.services.lifecycle`이 `ClinicNotificationEvent`를 반환하고 view가 `on_commit`으로 발송한다.
 - context 변수: 클리닉명, 장소, 날짜, 시간, _domain_object_id
-- `clinic_check_in` 트리거 전용 추가 변수: **도착시간** (출석 시점의 `timezone.now()` → `HH:MM` 포맷). 선생님메모 본문에서 `#{도착시간}`으로 사용 가능.
+- `clinic_check_in`/`clinic_absent` 트리거 전용 추가 변수: **도착시간** (상태 처리 시점의 `timezone.now()` → `HH:MM` 포맷). 선생님메모 본문에서 `#{도착시간}`으로 사용 가능.
 
 ### _send_attendance_notification
 
@@ -667,7 +670,8 @@ DEFAULT, SIGNUP, ATTENDANCE, LECTURE, EXAM, ASSIGNMENT, GRADES, CLINIC, PAYMENT,
 | `apps/support/messaging/services.py` | 섹션 1, 11 (파이프라인, 폴백) |
 | `apps/support/messaging/sqs_queue.py` | 섹션 7, 8 (메시지 구조, 멱등성) |
 | `apps/worker/messaging_worker/sqs_main.py` | 섹션 1, 6, 8 (워커, 공급자 분기, 멱등성) |
-| `apps/domains/clinic/views.py` | 섹션 4, 13 (트리거 호출 위치) |
+| `apps/domains/clinic/views/participant_views.py` | 섹션 4, 13 (트리거 호출 위치, on_commit dispatch) |
+| `apps/domains/clinic/services/lifecycle.py` | 섹션 4, 8, 13 (상태/완료 전이와 클리닉 이벤트 context) |
 | `apps/domains/attendance/views.py` | 섹션 4, 13 (트리거 호출 위치) |
 
 ### TEMPLATE_TYPE_VARIABLES 변경 시
