@@ -23,3 +23,81 @@ function Ensure-VideoBatchLogRetention {
         }
     }
 }
+
+function Ensure-RdsCloudWatchAlarms {
+    $R = $script:Region
+    $dbId = $script:RdsDbIdentifier
+    if (-not $dbId -or $dbId.Trim() -eq "") {
+        Write-Host "  [CloudWatch] RDS alarms skipped: RdsDbIdentifier empty" -ForegroundColor Yellow
+        return
+    }
+
+    $period = if ($script:ObservabilityAlarmPeriodSeconds -gt 0) { $script:ObservabilityAlarmPeriodSeconds } else { 300 }
+    $evalPeriods = if ($script:ObservabilityAlarmEvaluationPeriods -gt 0) { $script:ObservabilityAlarmEvaluationPeriods } else { 2 }
+    $cpuThreshold = if ($script:ObservabilityRdsCpuThresholdPercent -gt 0) { $script:ObservabilityRdsCpuThresholdPercent } else { 80 }
+    $freeStorageGb = if ($script:ObservabilityRdsFreeStorageGbThreshold -gt 0) { $script:ObservabilityRdsFreeStorageGbThreshold } else { 5 }
+    $freeStorageBytes = [int64]$freeStorageGb * 1073741824
+    # Existing ops healthcheck treats >320 connections as an issue; keep the alarm aligned.
+    $connectionThreshold = if ($script:ObservabilityRdsConnectionsThreshold -gt 100) { $script:ObservabilityRdsConnectionsThreshold } else { 320 }
+
+    $alarmActionArgs = @()
+    $opsTopicArn = "arn:aws:sns:${R}:$($script:AccountId):academy-ops-alerts"
+    try {
+        Invoke-Aws @("sns", "get-topic-attributes", "--topic-arn", $opsTopicArn, "--region", $R) -ErrorMessage "sns-get-ops-alerts" | Out-Null
+        $alarmActionArgs = @("--alarm-actions", $opsTopicArn)
+    } catch {
+        Write-Host "  [CloudWatch] SNS topic not found, creating RDS alarms without actions: academy-ops-alerts" -ForegroundColor Yellow
+    }
+
+    $dimension = "Name=DBInstanceIdentifier,Value=$dbId"
+    $alarms = @(
+        @{
+            Name = "academy-rds-CPUHigh"
+            Description = "RDS CPUUtilization high for academy-db"
+            Metric = "CPUUtilization"
+            Statistic = "Average"
+            Threshold = $cpuThreshold
+            Operator = "GreaterThanThreshold"
+            Missing = "notBreaching"
+        },
+        @{
+            Name = "academy-rds-FreeStorageLow"
+            Description = "RDS FreeStorageSpace low for academy-db"
+            Metric = "FreeStorageSpace"
+            Statistic = "Average"
+            Threshold = $freeStorageBytes
+            Operator = "LessThanThreshold"
+            Missing = "breaching"
+        },
+        @{
+            Name = "academy-rds-DatabaseConnectionsHigh"
+            Description = "RDS DatabaseConnections high for academy-db"
+            Metric = "DatabaseConnections"
+            Statistic = "Average"
+            Threshold = $connectionThreshold
+            Operator = "GreaterThanThreshold"
+            Missing = "notBreaching"
+        }
+    )
+
+    foreach ($alarm in $alarms) {
+        $args = @(
+            "cloudwatch", "put-metric-alarm",
+            "--alarm-name", $alarm.Name,
+            "--alarm-description", $alarm.Description,
+            "--namespace", "AWS/RDS",
+            "--metric-name", $alarm.Metric,
+            "--dimensions", $dimension,
+            "--statistic", $alarm.Statistic,
+            "--period", $period.ToString(),
+            "--evaluation-periods", $evalPeriods.ToString(),
+            "--threshold", $alarm.Threshold.ToString(),
+            "--comparison-operator", $alarm.Operator,
+            "--treat-missing-data", $alarm.Missing,
+            "--region", $R
+        )
+        $args += $alarmActionArgs
+        Invoke-Aws $args -ErrorMessage "put-metric-alarm $($alarm.Name)" | Out-Null
+        Write-Host "  [CloudWatch] RDS alarm ensured: $($alarm.Name)" -ForegroundColor Gray
+    }
+}

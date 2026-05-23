@@ -19,7 +19,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
-from django.db.models import Sum
+from django.db.models import Max, Sum
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -163,25 +163,38 @@ def rule_stale_workers(min_age_minutes: int = 5):
     """N분+ heartbeat 미갱신 워커. SQS 워커 process 멈춤 즉시 감지."""
     try:
         from apps.core.models import WorkerHeartbeatModel
+        from apps.shared.utils.heartbeat import HEARTBEAT_RETENTION_HOURS
     except Exception:
         return None
-    cutoff = timezone.now() - timedelta(minutes=min_age_minutes)
-    qs = WorkerHeartbeatModel.objects.filter(last_seen_at__lt=cutoff).order_by("name", "instance")
-    rows = [
-        {
-            "worker": h.name,
-            "instance": h.instance,
-            "last_seen": h.last_seen_at.isoformat(timespec="seconds") if h.last_seen_at else None,
-            "version": h.version or "—",
-        }
-        for h in qs[:30]
-    ]
+    now = timezone.now()
+    cutoff = now - timedelta(minutes=min_age_minutes)
+    alert_floor = now - timedelta(hours=HEARTBEAT_RETENTION_HOURS)
+    stale_workers = (
+        WorkerHeartbeatModel.objects.values("name")
+        .annotate(last_seen=Max("last_seen_at"))
+        .filter(last_seen__lt=cutoff, last_seen__gte=alert_floor)
+        .order_by("name")
+    )
+    total = stale_workers.count()
+    rows = []
+    for worker in stale_workers[:30]:
+        h = (
+            WorkerHeartbeatModel.objects.filter(name=worker["name"], last_seen_at=worker["last_seen"])
+            .order_by("instance")
+            .first()
+        )
+        rows.append({
+            "worker": worker["name"],
+            "instance": h.instance if h else "—",
+            "last_seen": worker["last_seen"].isoformat(timespec="seconds") if worker["last_seen"] else None,
+            "version": (h.version if h else "") or "—",
+        })
     if not rows:
         return None
     return {
-        "title": f"💔 워커 heartbeat 정지 {len(rows)}건 ({min_age_minutes}분+ 미갱신)",
+        "title": f"💔 워커 heartbeat 정지 {total}건 ({min_age_minutes}분+ 미갱신)",
         "rows": rows,
-        "total": len(rows),
+        "total": total,
     }
 
 

@@ -241,6 +241,7 @@ try {
         Ensure-EventBridgeRules
     }
     Ensure-VideoBatchLogRetention
+    Ensure-RdsCloudWatchAlarms
     Ensure-ALBStack
     Ensure-API
 
