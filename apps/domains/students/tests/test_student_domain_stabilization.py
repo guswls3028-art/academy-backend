@@ -14,6 +14,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test.utils import CaptureQueriesContext
 from django.contrib.auth import get_user_model
 from django.utils import timezone
+from django.urls import reverse
 from unittest.mock import patch
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -261,6 +262,17 @@ class TestStudentExcelUploadValidation(TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         mock_upload.assert_not_called()
         mock_dispatch.assert_not_called()
+
+    def test_excel_job_status_route_accepts_uuid_job_id(self):
+        url = reverse(
+            "student-excel-job-status",
+            kwargs={"job_id": "c9a6e1f8-4377-459c-8e4a-0f9356c3612f"},
+        )
+
+        self.assertEqual(
+            url,
+            "/api/v1/students/excel_job_status/c9a6e1f8-4377-459c-8e4a-0f9356c3612f/",
+        )
 
 
 # ═══════════════════════════════════════════════════

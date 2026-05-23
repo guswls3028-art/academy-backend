@@ -397,7 +397,7 @@ class StudentViewSet(ModelViewSet):
                 status=500,
             )
 
-    @action(detail=False, methods=["get"], url_path="excel_job_status/<str:job_id>")
+    @action(detail=False, methods=["get"], url_path=r"excel_job_status/(?P<job_id>[^/.]+)")
     def excel_job_status(self, request, job_id=None):
         """
         엑셀 일괄등록(excel_parsing) job 상태 조회 (폴링용).
