@@ -131,3 +131,20 @@ class HomeworkDestroyPolicyTests(TestCase):
 
         ids = [row["id"] for row in _rows(response)]
         self.assertIn(self.homework.id, ids)
+
+    def test_destroy_homework_without_assignments_still_soft_removes(self):
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="대상자 없는 과제",
+        )
+
+        request = self.factory.delete(f"/homeworks/{homework.id}/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = HomeworkViewSet.as_view({"delete": "destroy"})(request, pk=homework.id)
+
+        self.assertEqual(response.status_code, 204)
+        homework.refresh_from_db()
+        self.assertEqual(homework.status, Homework.Status.CLOSED)
+        self.assertEqual(homework.meta["removed_assignment_count"], 0)

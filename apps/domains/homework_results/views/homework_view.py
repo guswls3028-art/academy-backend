@@ -129,11 +129,13 @@ class HomeworkViewSet(ModelViewSet):
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
         """Remove a homework from the live session without deleting score/submission history."""
+        tenant = getattr(request, "tenant", None)
         homework = get_object_or_404(
-            self.get_queryset().select_for_update(),
+            Homework.objects.select_for_update()
+            .filter(tenant=tenant)
+            .exclude(meta__removed_from_session_at__isnull=False),
             pk=kwargs["pk"],
         )
-        tenant = getattr(request, "tenant", None)
 
         assignment_count, _ = HomeworkAssignment.objects.filter(
             tenant=tenant,
