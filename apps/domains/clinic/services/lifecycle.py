@@ -77,7 +77,9 @@ def _locked_participant(*, tenant, participant_id: int) -> SessionParticipant:
         return (
             SessionParticipant.objects
             .select_for_update()
-            .select_related("student", "session")
+            # `session` is nullable; joining it in the lock query makes PostgreSQL
+            # reject FOR UPDATE on the nullable side of an outer join.
+            .select_related("student")
             .get(pk=participant_id, tenant=tenant, student__deleted_at__isnull=True)
         )
     except SessionParticipant.DoesNotExist as exc:

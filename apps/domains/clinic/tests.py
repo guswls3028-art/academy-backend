@@ -9,8 +9,9 @@ import datetime
 import threading
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError, connection
+from django.db import IntegrityError, connection, transaction
 from django.test import TestCase, TransactionTestCase, RequestFactory
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from apps.core.models import Tenant
@@ -1221,6 +1222,34 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(participant.status, "no_show")
         self.assertEqual(participant.memo, "결석")
         self.assertEqual(participant.status_changed_by_id, self.admin.id)
+
+    def test_locked_participant_query_does_not_join_nullable_session(self):
+        from apps.domains.clinic.services.lifecycle import _locked_participant
+
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status="booked",
+        )
+
+        with transaction.atomic(), CaptureQueriesContext(connection) as captured:
+            locked = _locked_participant(
+                tenant=self.tenant,
+                participant_id=participant.id,
+            )
+
+        self.assertEqual(locked.id, participant.id)
+        participant_queries = [
+            q["sql"].lower()
+            for q in captured.captured_queries
+            if "clinic_sessionparticipant" in q["sql"].lower()
+        ]
+        self.assertTrue(participant_queries)
+        self.assertFalse(
+            any('"clinic_session"' in sql or " join clinic_session " in sql for sql in participant_queries),
+            participant_queries,
+        )
 
     def test_staff_invalid_transition_returns_400(self):
         self.client.force_authenticate(user=self.admin)
