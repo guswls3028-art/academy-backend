@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.6.md](v1.2.6.md) | **CURRENT** / 최종 봉인 전 단말 본문 확인 선택 대기 | 2026-05-23 KST | Excel student import orchestration SSOT + teacher import UX + 운영 QA 하드닝 |
+| [v1.2.7.md](v1.2.7.md) | **CURRENT** | 2026-05-23 KST | JSON student bulk/create-conflict orchestration convergence |
+| [v1.2.6.md](v1.2.6.md) | production-deployed / v1.2.7로 승계, 단말 본문 확인 선택 대기 | 2026-05-23 KST | Excel student import orchestration SSOT + teacher import UX + 운영 QA 하드닝 |
 | [v1.2.5.md](v1.2.5.md) | production-deployed / v1.2.6로 승계, 단말 본문 확인 선택 대기 | 2026-05-23 KST | 가입신청 승인 orchestration SSOT + PostgreSQL row-lock 운영 QA 수정 |
 | [v1.2.4.md](v1.2.4.md) | production-deployed / v1.2.5로 승계, 단말 본문 확인 선택 대기 | 2026-05-23 KST | 학생 생성 계정 그래프 SSOT + Excel 환영알림 토글 + 모바일 생성 UX |
 | [v1.2.3.md](v1.2.3.md) | production-deployed / v1.2.4로 승계, 계정복구 단말 본문 확인 대기 | 2026-05-23 KST | 학생 lifecycle 영구삭제 수렴 + 복원 skip UX + 계정복구 임시 비밀번호 6자리 |

@@ -29,19 +29,19 @@
 
 가입 신청 승인의 durable orchestration SSOT는 `approve_registration_request()`다. 이 서비스는 `pending -> approved` 전이와 학생 계정 생성 그래프 호출을 하나의 트랜잭션으로 처리한다. HTTP 응답 모양과 알림톡 발송은 여전히 view compatibility boundary다.
 
-Excel/import row orchestration SSOT는 `import_students_from_rows()`와 `resolve_student_import_row()`다. 이 서비스는 학생 import 행의 중복/복원/생성 판단, school_level_mode 검증, 계정 그래프 호출, 학생-only Excel welcome dispatch를 소유한다. R2 업로드, AI job dispatch, HTTP 응답 모양은 여전히 view/worker compatibility boundary다.
+Excel/import/JSON bulk row orchestration SSOT는 `import_students_from_rows()`, `resolve_student_import_row()`, `resolve_student_import_conflicts()`다. 이 서비스는 학생 import 행의 중복/복원/생성 판단, school_level_mode 검증, 계정 그래프 호출, 학생-only Excel/JSON bulk welcome dispatch, delete-and-recreate conflict resolution을 소유한다. R2 업로드, AI job dispatch, HTTP 응답 모양은 여전히 view/worker compatibility boundary다.
 
 Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 있으면 이름 50자까지 허용한다. 긴 이름을 무조건 비학생 행으로 버리면 실제 외국 이름, 관리 접두어, QA 태그가 있는 정상 행이 `등록할 학생 데이터가 없습니다.`로 실패할 수 있다.
 
-알림톡 outbox화와 JSON bulk/충돌해결 표면의 row orchestration 수렴은 별도 슬라이스다.
+알림톡 outbox화와 단건 생성 duplicate response shape 수렴은 별도 슬라이스다.
 
 ## 2. 현재 진입점
 
 | 진입점 | 위치 | 생성 그래프 처리 |
 |--------|------|----------------|
 | 단건 생성 | `StudentViewSet.create` | `create_student_account(password=...)` |
-| JSON 일괄 생성 | `StudentViewSet.bulk_create` | 행 정책 처리 후 `create_student_account(password=...)` |
-| 충돌 delete-and-recreate | `StudentViewSet.bulk_resolve_conflicts` | 영구삭제 후 `create_student_account(password=...)` |
+| JSON 일괄 생성 | `StudentViewSet.bulk_create` -> `import_students_from_rows` | 학생 도메인 import row SSOT로 중복/복원/생성 판단 |
+| 충돌 delete-and-recreate | `StudentViewSet.bulk_resolve_conflicts` -> `resolve_student_import_conflicts` | 영구삭제+재생성 conflict resolution을 학생 도메인 import row SSOT로 처리 |
 | 가입 신청 승인 | `approve_registration_request` + view facade | `pending -> approved`와 `create_student_account(password_hash=reg.initial_password)`를 atomic 처리 |
 | 강의/수강 Excel 신규 학생 | `lecture_enroll_from_excel_rows` -> `resolve_student_import_row` | 학생 도메인 import row SSOT로 중복/복원/생성 판단 |
 | 학생 Excel worker | `ExcelParsingService` -> `import_students_from_rows` | 학생 도메인 import row SSOT로 생성, 신규 학생만 welcome 발송 |
