@@ -62,3 +62,20 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertEqual(result["mode"], "trap")
         self.assertGreaterEqual(len(result["questions"]), 1)
         self.assertIn("오답 유도", result["questions"][0]["explanation"])
+
+    def test_transfer_only_preserves_original_block(self):
+        payload = {
+            "variant_mode": "copy",
+            "variant_count": 1,
+            "use_ai": False,
+            "transfer_only": True,
+            "text": "1. 광합성에서 생성되는 물질을 고르시오.\n① 산소와 포도당\n② 이산화탄소와 물\n정답 ①",
+        }
+
+        result = build_problem_studio_package(payload=payload, source_files=[])
+
+        self.assertEqual(result["generation_engine"], "source_transfer")
+        self.assertEqual(result["mode_label"], "원본 이관")
+        self.assertIn("광합성에서 생성되는 물질", result["questions"][0]["prompt"])
+        self.assertIn("정답 ①", result["questions"][0]["prompt"])
+        self.assertEqual(result["questions"][0]["answer"], "①")

@@ -293,6 +293,31 @@ def _fallback_questions(
     return output
 
 
+def _source_transfer_questions(text: str) -> list[dict[str, Any]]:
+    blocks = _split_source_questions(text)
+    if not blocks:
+        return []
+    output: list[dict[str, Any]] = []
+    for block_index, block in enumerate(blocks, start=1):
+        answer_match = _ANSWER_RE.search(block)
+        explanation_match = _EXPLANATION_RE.search(block)
+        output.append({
+            "prompt": block[:4000],
+            "choices": [],
+            "answer": answer_match.group(1).strip() if answer_match else "원본 확인",
+            "explanation": (
+                _normalize_space(explanation_match.group(1))[:800]
+                if explanation_match
+                else "원본 자료를 한글 검수 파일로 그대로 옮긴 초안입니다. 선생님 검수 후 수정합니다."
+            ),
+            "source_index": block_index,
+            "variant_index": 1,
+        })
+        if len(output) >= MAX_OUTPUT_QUESTIONS:
+            break
+    return output
+
+
 def _normalize_mode(value: Any) -> str:
     mode = str(value or "copy").strip()
     return mode if mode in {"copy", "same-type", "trap", "concept"} else "copy"
@@ -332,6 +357,7 @@ def build_problem_studio_package(
     note_policy = str(payload.get("note_policy") or "")
     subject = str(payload.get("subject") or "")
     use_ai = bool(payload.get("use_ai", True))
+    transfer_only = bool(payload.get("transfer_only", False))
 
     sources = [extract_source(uploaded) for uploaded in source_files]
     combined_text = _normalize_space("\n\n".join(
@@ -343,7 +369,11 @@ def build_problem_studio_package(
     generation_engine = "rule_fallback"
     questions: list[dict[str, Any]] = []
 
-    if use_ai and combined_text:
+    if transfer_only and combined_text:
+        questions = _source_transfer_questions(combined_text)
+        generation_engine = "source_transfer"
+
+    if not questions and use_ai and combined_text:
         questions = _try_ai_generation(
             text=combined_text,
             mode=mode,
@@ -378,7 +408,7 @@ def build_problem_studio_package(
     return {
         "generation_engine": generation_engine,
         "mode": mode,
-        "mode_label": _mode_label(mode),
+        "mode_label": "원본 이관" if transfer_only else _mode_label(mode),
         "variant_count": 1 if mode == "copy" else count,
         "questions": questions[:MAX_OUTPUT_QUESTIONS],
         "source_files": [
