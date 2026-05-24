@@ -445,6 +445,7 @@ def _detect_single_question(
     """단일 문항의 버블 multi-feature scoring 및 판정."""
     img_h, img_w = img_shape[:2]
     fills: List[Tuple[str, float, Dict[str, float]]] = []
+    choice_order = {str(ch.get("label", "")): i for i, ch in enumerate(choices)}
     # v10.1: 각 버블의 픽셀 좌표 기록 (검토 UI의 BBox overlay용). 판정 로직에는 영향 없음.
     bubble_rects: List[Dict[str, int]] = []
 
@@ -559,7 +560,45 @@ def _detect_single_question(
     if gap < config.conf_gap_threshold:
         # 복수 마킹 가능성 — 상대적 noise floor 기준
         noise_floor = median_score + _REL_BLANK_TH
-        marked = [l for l, s, _ in fills if s >= noise_floor]
+        marked_pairs = [(l, s) for l, s, _ in fills if s >= noise_floor]
+        marked_labels = {l for l, _ in marked_pairs}
+        marked = sorted(
+            marked_labels,
+            key=lambda label: choice_order.get(str(label), len(choice_order)),
+        )
+
+        if len(marked_pairs) > 1:
+            weakest_mark = min(s for _, s in marked_pairs)
+            unmarked_scores = [s for l, s, _ in fills if l not in marked_labels]
+            next_score = max(unmarked_scores) if unmarked_scores else median_score
+            selected_separation = weakest_mark - next_score
+            strong_multi = (
+                top_score >= max(0.28, median_score + 0.12)
+                and weakest_mark >= median_score + 0.10
+                and selected_separation >= max(0.08, 3.0 * noise_std)
+            )
+            if strong_multi:
+                raw_data["multi_decision"] = {
+                    "noise_floor": round(noise_floor, 4),
+                    "weakest_mark": round(weakest_mark, 4),
+                    "next_score": round(next_score, 4),
+                    "selected_separation": round(selected_separation, 4),
+                    "decision": "clear_multi",
+                }
+                return OMRAnswerV1(
+                    version=meta_version,
+                    question_id=q_num,
+                    detected=marked,
+                    marking="multi",
+                    confidence=round(min(1.0, max(0.0, selected_separation / 0.3)), 4),
+                    status="ok",
+                    raw=raw_data,
+                )
+
+        raw_data["multi_decision"] = {
+            "noise_floor": round(noise_floor, 4),
+            "decision": "ambiguous_multi" if len(marked) > 1 else "ambiguous_single",
+        }
         return OMRAnswerV1(
             version=meta_version, question_id=q_num,
             detected=marked,

@@ -445,10 +445,6 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             manual_required = True
             reasons.append("ANSWER_SCORE_AMBIGUOUS")
 
-        if mk == "multi" and not expected_multi_ok and score_ambiguous:
-            manual_required = True
-            reasons.append("ANSWER_BLANK_OR_MULTI")
-
         if st == "low_confidence" and not expected_multi_ok and score_ambiguous:
             manual_required = True
             reasons.append("ANSWER_LOW_CONFIDENCE")

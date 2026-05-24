@@ -137,6 +137,7 @@ class OMRTenantRealUseFlowTests(TestCase):
         q1_answer = next(a for a in answers if a.question_id == 1)
         self.assertEqual(set(q1_answer.detected), {"1", "3"})
         self.assertEqual(q1_answer.marking, "multi")
+        self.assertEqual(q1_answer.status, "ok")
         self.assertTrue(all(a.status == "ok" for a in answers if a.question_id != 1))
         for a in answers:
             self.assertTrue(answer_matches(a.detected, marks[str(a.question_id)]))
@@ -178,8 +179,8 @@ class OMRTenantRealUseFlowTests(TestCase):
         self.assertEqual(submission.status, Submission.Status.ANSWERS_READY)
         self.assertEqual(submission.enrollment_id, enrollment.id)
         self.assertFalse(submission.meta["manual_review"]["required"])
-        self.assertEqual(submission.meta["answer_stats"]["ok"], 19)
-        self.assertEqual(submission.meta["answer_stats"]["ambiguous"], 1)
+        self.assertEqual(submission.meta["answer_stats"]["ok"], 20)
+        self.assertEqual(submission.meta["answer_stats"]["ambiguous"], 0)
 
         exam_result = grade_submission(submission.id)
         submission.refresh_from_db()
@@ -336,6 +337,39 @@ class OMRMapperReviewPolicyTests(TestCase):
         self.assertEqual(submission.enrollment_id, enrollment.id)
         self.assertFalse(submission.meta["manual_review"]["required"])
         self.assertEqual(submission.meta["answer_stats"]["ambiguous"], 1)
+
+    def test_clear_multi_answer_is_scored_without_manual_review(self):
+        tenant, _exam, enrollment, submission = self._make_exam()
+
+        apply_omr_ai_result({
+            "submission_id": submission.id,
+            "tenant_id": tenant.id,
+            "status": "DONE",
+            "version": "v15",
+            "aligned": True,
+            "identifier": {"status": "ok", "identifier": "12345678"},
+            "answers": [
+                {
+                    "question_id": 1,
+                    "detected": ["1", "2"],
+                    "status": "ok",
+                    "marking": "multi",
+                    "confidence": 0.8,
+                },
+                {
+                    "question_id": 2,
+                    "detected": ["2"],
+                    "status": "ok",
+                    "marking": "single",
+                    "confidence": 0.99,
+                },
+            ],
+        })
+
+        submission.refresh_from_db()
+        self.assertEqual(submission.enrollment_id, enrollment.id)
+        self.assertFalse(submission.meta["manual_review"]["required"])
+        self.assertEqual(submission.meta["answer_stats"]["ok"], 2)
 
     def test_ambiguous_identifier_without_competing_candidate_is_resolved(self):
         tenant, _exam, enrollment, submission = self._make_exam()
