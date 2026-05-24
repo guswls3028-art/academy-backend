@@ -328,6 +328,44 @@ class OMRMapperReviewPolicyTests(TestCase):
         self.assertFalse(submission.meta["manual_review"]["required"])
         self.assertEqual(submission.meta["answer_stats"]["blank"], 1)
 
+    def test_fully_blank_sheet_with_matched_identifier_grades_zero_without_manual_review(self):
+        tenant, exam, enrollment, submission = self._make_exam()
+
+        apply_omr_ai_result({
+            "submission_id": submission.id,
+            "tenant_id": tenant.id,
+            "status": "DONE",
+            "version": "v15",
+            "aligned": True,
+            "identifier": {"status": "ok", "identifier": "12345678"},
+            "answers": [
+                {"question_id": 1, "detected": [], "status": "blank", "marking": "blank", "confidence": 0.0},
+                {"question_id": 2, "detected": [], "status": "blank", "marking": "blank", "confidence": 0.0},
+            ],
+        })
+
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.ANSWERS_READY)
+        self.assertEqual(submission.enrollment_id, enrollment.id)
+        self.assertFalse(submission.meta["manual_review"]["required"])
+        self.assertEqual(submission.meta["answer_stats"]["blank"], 2)
+
+        result = grade_submission(submission.id)
+        submission.refresh_from_db()
+
+        self.assertEqual(submission.status, Submission.Status.DONE)
+        self.assertEqual(result.total_score, 0)
+        self.assertEqual(result.max_score, 100)
+        self.assertTrue(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment_id=enrollment.id,
+                total_score=0,
+                max_score=100,
+            ).exists()
+        )
+
     def test_ambiguous_multi_with_no_correct_overlap_is_auto_wrong(self):
         tenant, _exam, enrollment, submission = self._make_exam()
 

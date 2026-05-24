@@ -456,14 +456,6 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         manual_required = True
         reasons.append("ALIGNMENT_FAILED")
 
-    if (
-        answer_stats["total"] > 0
-        and answer_stats["ok"] == 0
-        and answer_stats["blank"] >= max(3, int(answer_stats["total"] * 0.8))
-    ):
-        manual_required = True
-        reasons.append("ANSWER_SHEET_BLANK")
-
     # 평균 신뢰도 보조 필드
     if answer_stats["n_conf"] > 0:
         answer_stats["avg_confidence"] = round(
