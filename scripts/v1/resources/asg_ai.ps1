@@ -108,90 +108,112 @@ function Ensure-AiSqsScaling {
     }
 
     $doScaling = {
-        $resourceId = "auto-scaling-group/$($script:AiASGName)"
         $region = $script:Region
-        $ns = "ec2"
-        $dim = "ec2:autoScalingGroup:DesiredCapacity"
-        $scaleOutPolicyName = "$($script:AiASGName)-sqs-scale-out"
-        $scaleInPolicyName = "$($script:AiASGName)-sqs-scale-in"
-        $alarmOutName = "$($script:AiASGName)-sqs-scale-out"
-        $alarmInName = "$($script:AiASGName)-sqs-scale-in"
+        $queueDimension = "Name=QueueName,Value=$queueName"
+        $scaleOutPolicyName = "ai-worker-scale-out"
+        $ageScaleOutPolicyName = "ai-worker-scale-out-age"
+        $scaleInPolicyName = "ai-worker-scale-in"
+        $alarmOutName = "ai-worker-queue-high"
+        $alarmAgeName = "ai-worker-queue-age-high"
+        $alarmInName = "ai-worker-queue-low"
         $scaleOutThreshold = $script:AiScaleOutThreshold
         $scaleInThreshold = $script:AiScaleInThreshold
         $treatMissing = "notBreaching"
 
-        try {
-            Invoke-Aws @("application-autoscaling", "register-scalable-target",
-                "--service-namespace", $ns,
-                "--resource-id", $resourceId,
-                "--scalable-dimension", $dim,
-                "--min-capacity", $script:AiMinSize.ToString(),
-                "--max-capacity", $script:AiMaxSize.ToString(),
-                "--region", $region) -ErrorMessage "register-scalable-target ai" | Out-Null
-        } catch {
-            if ($_.Exception.Message -match "scalableDimension|ValidationException|ec2:autoScalingGroup") {
-                Write-Warn "Application Auto Scaling does not support EC2 ASG; SQS-based scaling skipped. Use ASG min/max/desired or EC2 scaling policies."
-                $script:SqsScalingNotEnforced = $true
-                return
-            }
-            throw
-        }
-
-        $targets = Invoke-AwsJson @("application-autoscaling", "describe-scalable-targets",
-            "--service-namespace", $ns, "--resource-ids", $resourceId, "--region", $region, "--output", "json")
-        $st = $targets.ScalableTargets | Where-Object { $_.ResourceId -eq $resourceId } | Select-Object -First 1
-        if (-not $st -or [int]$st.MinCapacity -ne $script:AiMinSize -or [int]$st.MaxCapacity -ne $script:AiMaxSize) {
-            throw "ScalableTarget min/max mismatch: expected Min=$($script:AiMinSize) Max=$($script:AiMaxSize)"
-        }
-
-        $stepOut = '{"AdjustmentType":"ChangeInCapacity","MetricAggregationType":"Average","Cooldown":' + $script:AiScaleOutCooldown + ',"StepAdjustments":[{"MetricIntervalLowerBound":0,"ScalingAdjustment":1}]}'
-        $putOut = Invoke-AwsJson @("application-autoscaling", "put-scaling-policy",
-            "--service-namespace", $ns, "--resource-id", $resourceId, "--scalable-dimension", $dim,
-            "--policy-name", $scaleOutPolicyName, "--policy-type", "StepScaling",
-            "--step-scaling-policy-configuration", $stepOut,
+        $stepOut = '[{"MetricIntervalLowerBound":0,"MetricIntervalUpperBound":10,"ScalingAdjustment":1},{"MetricIntervalLowerBound":10,"MetricIntervalUpperBound":50,"ScalingAdjustment":3},{"MetricIntervalLowerBound":50,"ScalingAdjustment":5}]'
+        $putOut = Invoke-AwsJson @("autoscaling", "put-scaling-policy",
+            "--auto-scaling-group-name", $script:AiASGName,
+            "--policy-name", $scaleOutPolicyName,
+            "--policy-type", "StepScaling",
+            "--adjustment-type", "ExactCapacity",
+            "--metric-aggregation-type", "Average",
+            "--step-adjustments", $stepOut,
+            "--cooldown", $script:AiScaleOutCooldown.ToString(),
             "--region", $region, "--output", "json")
         $policyOutArn = $putOut.PolicyARN
 
-        $stepIn = '{"AdjustmentType":"ChangeInCapacity","MetricAggregationType":"Average","Cooldown":' + $script:AiScaleInCooldown + ',"StepAdjustments":[{"MetricIntervalUpperBound":0,"ScalingAdjustment":-1}]}'
-        $putIn = Invoke-AwsJson @("application-autoscaling", "put-scaling-policy",
-            "--service-namespace", $ns, "--resource-id", $resourceId, "--scalable-dimension", $dim,
-            "--policy-name", $scaleInPolicyName, "--policy-type", "StepScaling",
-            "--step-scaling-policy-configuration", $stepIn,
+        $stepAgeOut = '[{"MetricIntervalLowerBound":0,"ScalingAdjustment":1}]'
+        $putAgeOut = Invoke-AwsJson @("autoscaling", "put-scaling-policy",
+            "--auto-scaling-group-name", $script:AiASGName,
+            "--policy-name", $ageScaleOutPolicyName,
+            "--policy-type", "StepScaling",
+            "--adjustment-type", "ExactCapacity",
+            "--metric-aggregation-type", "Average",
+            "--step-adjustments", $stepAgeOut,
+            "--cooldown", $script:AiScaleOutCooldown.ToString(),
+            "--region", $region, "--output", "json")
+        $policyAgeOutArn = $putAgeOut.PolicyARN
+
+        $stepIn = '[{"MetricIntervalUpperBound":0,"ScalingAdjustment":0}]'
+        $putIn = Invoke-AwsJson @("autoscaling", "put-scaling-policy",
+            "--auto-scaling-group-name", $script:AiASGName,
+            "--policy-name", $scaleInPolicyName,
+            "--policy-type", "StepScaling",
+            "--adjustment-type", "ExactCapacity",
+            "--metric-aggregation-type", "Average",
+            "--step-adjustments", $stepIn,
+            "--cooldown", $script:AiScaleInCooldown.ToString(),
             "--region", $region, "--output", "json")
         $policyInArn = $putIn.PolicyARN
+
+        $ageAlarmActions = @($policyAgeOutArn)
+        if ($script:AccountId) {
+            $opsTopicArn = "arn:aws:sns:${region}:$($script:AccountId):academy-ops-alerts"
+            try {
+                Invoke-Aws @("sns", "get-topic-attributes", "--topic-arn", $opsTopicArn, "--region", $region) -ErrorMessage "sns-get-ai-worker-ops-alerts" | Out-Null
+                $ageAlarmActions += $opsTopicArn
+            } catch {
+                Write-Warn "SNS topic academy-ops-alerts not found; AI worker age alarm keeps scaling action only."
+            }
+        }
 
         Invoke-Aws @("cloudwatch", "put-metric-alarm",
             "--alarm-name", $alarmOutName,
             "--metric-name", "ApproximateNumberOfMessagesVisible",
             "--namespace", "AWS/SQS",
-            "--dimensions", "Name=QueueName,Value=$queueName",
+            "--dimensions", $queueDimension,
             "--statistic", "Average", "--period", "60", "--evaluation-periods", "1",
             "--threshold", $scaleOutThreshold.ToString(),
             "--comparison-operator", "GreaterThanThreshold",
             "--treat-missing-data", $treatMissing,
             "--alarm-actions", $policyOutArn,
             "--region", $region) -ErrorMessage "put-metric-alarm ai scale-out" | Out-Null
+        $ageAlarmArgs = @("cloudwatch", "put-metric-alarm",
+            "--alarm-name", $alarmAgeName,
+            "--metric-name", "ApproximateAgeOfOldestMessage",
+            "--namespace", "AWS/SQS",
+            "--dimensions", $queueDimension,
+            "--statistic", "Average", "--period", "60", "--evaluation-periods", "1",
+            "--threshold", "300",
+            "--comparison-operator", "GreaterThanOrEqualToThreshold",
+            "--treat-missing-data", $treatMissing,
+            "--alarm-actions") + $ageAlarmActions + @("--region", $region)
+        Invoke-Aws $ageAlarmArgs -ErrorMessage "put-metric-alarm ai age scale-out" | Out-Null
         Invoke-Aws @("cloudwatch", "put-metric-alarm",
             "--alarm-name", $alarmInName,
             "--metric-name", "ApproximateNumberOfMessagesVisible",
             "--namespace", "AWS/SQS",
-            "--dimensions", "Name=QueueName,Value=$queueName",
-            "--statistic", "Average", "--period", "60", "--evaluation-periods", "1",
+            "--dimensions", $queueDimension,
+            "--statistic", "Average", "--period", "60", "--evaluation-periods", "5",
             "--threshold", $scaleInThreshold.ToString(),
-            "--comparison-operator", "LessThanOrEqualToThreshold",
+            "--comparison-operator", "LessThanThreshold",
             "--treat-missing-data", $treatMissing,
             "--alarm-actions", $policyInArn,
             "--region", $region) -ErrorMessage "put-metric-alarm ai scale-in" | Out-Null
 
-        $descOut = Invoke-AwsJson @("cloudwatch", "describe-alarms", "--alarm-names", $alarmOutName, "--region", $region, "--output", "json")
+        $descOut = Invoke-AwsJson @("cloudwatch", "describe-alarms", "--alarm-names", $alarmOutName, $alarmAgeName, "--region", $region, "--output", "json")
         $descIn = Invoke-AwsJson @("cloudwatch", "describe-alarms", "--alarm-names", $alarmInName, "--region", $region, "--output", "json")
         $aOut = $descOut.MetricAlarms | Where-Object { $_.AlarmName -eq $alarmOutName } | Select-Object -First 1
+        $aAge = $descOut.MetricAlarms | Where-Object { $_.AlarmName -eq $alarmAgeName } | Select-Object -First 1
         $aIn = $descIn.MetricAlarms | Where-Object { $_.AlarmName -eq $alarmInName } | Select-Object -First 1
-        if (-not $aOut -or -not $aOut.AlarmActions -or $aOut.AlarmActions -notcontains $policyOutArn) {
-            throw "Alarm $alarmOutName alarm-actions does not reference policy ARN"
+        if (-not $aOut -or -not $aOut.AlarmActions -or $aOut.AlarmActions -notcontains $policyOutArn -or $aOut.Dimensions[0].Value -ne $queueName) {
+            throw "Alarm $alarmOutName does not reference queue=$queueName and scale-out policy ARN"
         }
-        if (-not $aIn -or -not $aIn.AlarmActions -or $aIn.AlarmActions -notcontains $policyInArn) {
-            throw "Alarm $alarmInName alarm-actions does not reference policy ARN"
+        if (-not $aAge -or -not $aAge.AlarmActions -or $aAge.AlarmActions -notcontains $policyAgeOutArn -or $aAge.Dimensions[0].Value -ne $queueName) {
+            throw "Alarm $alarmAgeName does not reference queue=$queueName and age scale-out policy ARN"
+        }
+        if (-not $aIn -or -not $aIn.AlarmActions -or $aIn.AlarmActions -notcontains $policyInArn -or $aIn.Dimensions[0].Value -ne $queueName) {
+            throw "Alarm $alarmInName does not reference queue=$queueName and scale-in policy ARN"
         }
 
         Write-Ok "AI SQS scaling ensured (queue=$queueName)"
