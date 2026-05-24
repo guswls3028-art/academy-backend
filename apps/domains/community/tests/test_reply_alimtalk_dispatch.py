@@ -75,6 +75,17 @@ class TestReplyAlimtalkDispatch(TestCase):
         self.assertEqual(kwargs["context"]["강의명"], "수학")
         self.assertEqual(kwargs["context"]["차시명"], "함수 미분 질문")
 
+    @patch("apps.domains.community.services.qna_notifications.notify_qna_answered")
+    @patch("apps.domains.messaging.services.send_event_notification", return_value=False)
+    def test_qna_reply_falls_back_to_freeform_alimtalk_when_trigger_not_sent(self, mock_send, mock_fallback):
+        resp = self._post_reply(self.qna)
+        self.assertEqual(resp.status_code, 201, resp.data)
+        self.assertEqual(mock_send.call_count, 1)
+        mock_fallback.assert_called_once()
+        kwargs = mock_fallback.call_args.kwargs
+        self.assertEqual(kwargs["send_to"], "student")
+        self.assertEqual(kwargs["actor_user"], self.staff)
+
     @patch("apps.domains.messaging.services.send_event_notification")
     def test_counsel_reply_dispatches_to_student_and_parent(self, mock_send):
         resp = self._post_reply(self.counsel)

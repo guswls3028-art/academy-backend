@@ -581,6 +581,13 @@ class PostViewSet(viewsets.ModelViewSet):
             post = svc.create_post(data, node_ids)
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        if post_type == "qna" and author_role in ("student", "parent") and created_by is not None:
+            try:
+                from apps.domains.community.services.qna_notifications import notify_qna_created
+
+                notify_qna_created(post, actor_user=request.user)
+            except Exception as e:
+                logger.warning("community qna created notification dispatch failed: post_id=%s err=%s", post.id, e)
         return Response(self.get_serializer(post).data, status=status.HTTP_201_CREATED)
 
     def perform_update(self, serializer):
@@ -753,10 +760,14 @@ class PostViewSet(viewsets.ModelViewSet):
                 else:  # qna + student
                     send_targets = ("student",)
                 for send_to in send_targets:
-                    send_event_notification(
+                    sent = send_event_notification(
                         tenant=tenant, trigger=trigger,
                         student=post.created_by, send_to=send_to, context=ctx,
                     )
+                    if post.post_type == "qna" and not sent:
+                        from apps.domains.community.services.qna_notifications import notify_qna_answered
+
+                        notify_qna_answered(post, reply, send_to=send_to, actor_user=request.user)
             except Exception as e:
                 logger.warning("community reply notification dispatch failed: post_id=%s err=%s", post.id, e)
 

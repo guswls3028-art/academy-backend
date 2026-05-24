@@ -213,6 +213,35 @@ class TestScopedPostMappingVisibility(CommunityHardeningFixture):
         results = response.data.get("results", response.data) if isinstance(response.data, dict) else response.data
         self.assertEqual(len(results), 0)
 
+    @patch("apps.domains.community.services.qna_notifications.notify_qna_created")
+    def test_student_without_enrollment_can_create_and_read_own_qna(self, mock_notify):
+        Enrollment.objects.filter(tenant=self.tenant, student=self.student).delete()
+        create = PostViewSet.as_view({"post": "create"})
+        response = create(
+            self._request(
+                "post",
+                self.student_user,
+                "/api/v1/community/posts/",
+                {
+                    "post_type": "qna",
+                    "title": "수강 전 질문",
+                    "content": "아직 듣는 강의가 없어도 질문합니다.",
+                    "node_ids": [],
+                },
+            )
+        )
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(response.data["post_type"], "qna")
+        self.assertEqual(response.data["created_by"], self.student.id)
+        mock_notify.assert_called_once()
+
+        list_view = PostViewSet.as_view({"get": "list"})
+        response = list_view(
+            self._request("get", self.student_user, "/api/v1/community/posts/?post_type=qna")
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["id"] for item in response.data], [PostEntity.objects.latest("id").id])
+
     def test_staff_post_list_applies_q_filter_on_generic_and_typed_routes(self):
         self.visible_post.category_label = "Algebra scope"
         self.visible_post.save(update_fields=["category_label"])
