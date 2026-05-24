@@ -49,6 +49,7 @@ from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 import logging
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
+from apps.domains.results.services.answer_matching import format_answer_for_display
 
 logger = logging.getLogger(__name__)
 
@@ -199,7 +200,9 @@ class AdminExamResultDetailView(APIView):
 
         for item in data.get("items", []):
             qid = str(item.get("question_id", ""))
-            item["correct_answer"] = correct_answers.get(qid, "")
+            item["correct_answer"] = format_answer_for_display(
+                correct_answers.get(qid, "")
+            )
 
         # -------------------------------------------------
         # 9️⃣ OMR 스캔 정보 (image_url + per-answer meta)
@@ -282,7 +285,10 @@ class AdminExamResultDetailView(APIView):
             "can_retake": can_retake,
             "clinic_required": bool(clinic_required),
             "edit_state": edit_state,
-            "correct_answers": correct_answers,
+            "correct_answers": {
+                str(k): format_answer_for_display(v)
+                for k, v in (correct_answers or {}).items()
+            },
             "scan_image_url": scan_image_url,
             "submission_id": submission_id_for_omr,
             "submission_status": submission_status,

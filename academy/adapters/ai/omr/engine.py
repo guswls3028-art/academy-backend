@@ -36,7 +36,7 @@ class AnswerDetectConfig:
     # blank 판단: 최고 score가 이 값 미만이면 blank
     blank_threshold: float = 0.08
     # ambiguous 판단: top-2 gap이 이 값 미만이면 ambiguous
-    conf_gap_threshold: float = 0.08
+    conf_gap_threshold: float = 0.06
     # adaptive threshold 사용 여부
     use_adaptive_threshold: bool = True
     # adaptive threshold block size (must be odd)

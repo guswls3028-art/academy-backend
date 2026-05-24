@@ -13,6 +13,7 @@ from apps.domains.submissions.services.omr_submission_guards import (
     lock_exam_enrollment_candidate,
 )
 from apps.domains.submissions.services.transition import transit
+from apps.domains.results.services.answer_matching import answer_matches
 
 logger = logging.getLogger(__name__)
 
@@ -179,10 +180,11 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     # AI 엔진은 question_id = question_number(1,2,3...)를 반환한다.
     # SubmissionAnswer.exam_question_id는 ExamQuestion PK여야 하므로 변환 필요.
     qnum_to_pk: dict[int, int] = {}
+    correct_answers_by_pk: dict[str, Any] = {}
     qnum_map_built = False
     if submission.target_type == "exam" and submission.target_id:
         try:
-            from apps.domains.exams.models import Sheet, ExamQuestion
+            from apps.domains.exams.models import AnswerKey, Sheet, ExamQuestion
             from apps.domains.exams.services.template_resolver import resolve_template_exam
             from apps.domains.exams.models import Exam
 
@@ -194,6 +196,9 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
                     for q in ExamQuestion.objects.filter(sheet=sheet).only("id", "number"):
                         qnum_to_pk[int(q.number)] = int(q.id)
                     qnum_map_built = True
+                answer_key = AnswerKey.objects.filter(exam=template_exam).first()
+                if answer_key and isinstance(answer_key.answers, dict):
+                    correct_answers_by_pk = answer_key.answers
         except Exception:
             logger.exception(
                 "apply_omr_ai_result: failed to build qnum→pk map for submission %s",
@@ -234,6 +239,13 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             # 매핑 미구축: 구버전 호환 fallback
             eqid = raw_id_int
 
+        detected_values = [str(x).strip() for x in (a.get("detected") or []) if str(x).strip()]
+        detected_answer = ",".join(detected_values)
+        expected_multi_ok = (
+            len(detected_values) > 1
+            and answer_matches(detected_values, correct_answers_by_pk.get(str(eqid)))
+        )
+
         # v10.1: worker가 raw 안에 제공하는 bubble_rects/rect (검토 UI BBox overlay)
         raw_payload = a.get("raw") or {}
         bubble_rects = raw_payload.get("bubble_rects") if isinstance(raw_payload, dict) else None
@@ -246,6 +258,8 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             "confidence": a.get("confidence"),
             "status": a.get("status"),
         }
+        if expected_multi_ok:
+            omr_meta["expected_multi_answer"] = True
         if isinstance(bubble_rects, list) and bubble_rects:
             omr_meta["bubble_rects"] = bubble_rects
         if isinstance(question_rect, dict):
@@ -256,7 +270,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             exam_question_id=int(eqid),
             defaults={
                 "tenant": submission.tenant,
-                "answer": "".join([str(x) for x in a.get("detected") or []]),
+                "answer": detected_answer,
                 "meta": {"omr": omr_meta},
             },
         )
@@ -278,15 +292,15 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             answer_stats["sum_conf"] += conf_f
             answer_stats["n_conf"] += 1
 
-        if st != "ok":
+        if st != "ok" and not expected_multi_ok:
             manual_required = True
             reasons.append("ANSWER_STATUS_NOT_OK")
 
-        if mk in ("blank", "multi"):
+        if mk == "blank" or (mk == "multi" and not expected_multi_ok):
             manual_required = True
             reasons.append("ANSWER_BLANK_OR_MULTI")
 
-        if conf_f is not None and conf_f < 0.70:
+        if st == "low_confidence" and not expected_multi_ok:
             manual_required = True
             reasons.append("ANSWER_LOW_CONFIDENCE")
 

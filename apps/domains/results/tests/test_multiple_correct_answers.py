@@ -10,7 +10,10 @@ from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture
 from apps.domains.results.models import ExamResult, Result, ResultItem
-from apps.domains.results.services.answer_matching import answer_matches
+from apps.domains.results.services.answer_matching import (
+    answer_matches,
+    format_answer_for_display,
+)
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission, SubmissionAnswer
@@ -20,10 +23,17 @@ User = get_user_model()
 
 
 class AnswerMatchingTests(SimpleTestCase):
-    def test_delimited_objective_candidates_match_any_choice(self):
-        self.assertTrue(answer_matches("3", "1,3"))
+    def test_pipe_objective_candidates_match_any_choice(self):
+        self.assertTrue(answer_matches("3", "1|3"))
         self.assertTrue(answer_matches("4", "2|4"))
-        self.assertTrue(answer_matches("2", "①;②"))
+        self.assertTrue(answer_matches("2", "① 또는 ②"))
+        self.assertEqual(format_answer_for_display(["1", "3"]), "1,3")
+
+    def test_delimited_objective_candidates_require_same_mark_set(self):
+        self.assertTrue(answer_matches("1,3", "1,3"))
+        self.assertTrue(answer_matches(["2", "4"], ["2", "4"]))
+        self.assertFalse(answer_matches("3", "1,3"))
+        self.assertFalse(answer_matches("1,2,3", "1,3"))
 
     def test_single_answer_exact_match_stays_unchanged(self):
         self.assertTrue(answer_matches(" a ", "A"))
@@ -103,7 +113,7 @@ class MultipleCorrectAnswerGradingTests(TestCase):
             tenant=self.tenant,
             submission=submission,
             exam_question_id=self.q1.id,
-            answer="3",
+            answer="1,3",
         )
         SubmissionAnswer.objects.create(
             tenant=self.tenant,

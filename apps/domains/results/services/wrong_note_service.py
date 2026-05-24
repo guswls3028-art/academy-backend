@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from apps.domains.results.models import ResultFact
 from apps.domains.exams.models import ExamQuestion, AnswerKey, Exam
+from apps.domains.results.services.answer_matching import format_answer_for_display
 
 
 # ======================================================
@@ -168,7 +169,9 @@ def list_wrong_notes_for_enrollment(
 
         correct_answer = ""
         if qobj:
-            correct_answer = str(answer_key_cache.get(exid, {}).get(str(qobj.id)) or "")
+            correct_answer = format_answer_for_display(
+                answer_key_cache.get(exid, {}).get(str(qobj.id)) or ""
+            )
 
         out.append({
             "exam_id": exid,

@@ -17,6 +17,7 @@ from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
+from apps.domains.results.services.answer_matching import format_answer_for_display
 from apps.domains.student_app.permissions import get_request_student
 
 
@@ -147,7 +148,8 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         item["question_number"] = question_number_map.get(q_id, q_id)
         item.setdefault("student_answer", item.get("answer"))
         if show_answers:
-            item["correct_answer"] = correct_answer_map.get(str(q_id or "")) or None
+            correct = correct_answer_map.get(str(q_id or ""))
+            item["correct_answer"] = format_answer_for_display(correct) if correct else None
         else:
             item["correct_answer"] = None
 

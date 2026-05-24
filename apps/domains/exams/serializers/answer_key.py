@@ -8,7 +8,25 @@ class AnswerKeySerializer(serializers.ModelSerializer):
 
         normalized = {}
         for k, v in value.items():
-            normalized[str(k)] = str(v).strip()
+            key = str(k).strip()
+            if not key:
+                continue
+
+            if isinstance(v, (list, tuple, set)):
+                candidates = [
+                    str(item).strip()
+                    for item in v
+                    if str(item).strip()
+                ]
+                normalized[key] = candidates
+                continue
+
+            if isinstance(v, dict):
+                raise serializers.ValidationError(
+                    {"answers": "answer values must be strings or arrays"}
+                )
+
+            normalized[key] = str(v or "").strip()
 
         return normalized
 

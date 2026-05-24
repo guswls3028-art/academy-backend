@@ -60,14 +60,18 @@ def render_marked_pdf(meta, marks: dict, id_digits: dict, logo_bytes=None,
         qn = q["question_number"]
         if str(qn) not in marks:
             continue
+        raw_mark = marks[str(qn)]
+        if isinstance(raw_mark, (list, tuple, set)):
+            selected = {str(v) for v in raw_mark}
+        else:
+            selected = {str(raw_mark)}
         for c in q["choices"]:
-            if c["label"] == str(marks[str(qn)]):
+            if c["label"] in selected:
                 cx = int(round(c["center"]["x"] * sx))
                 cy = int(round(c["center"]["y"] * sy))
                 rx = int(round(c["radius_x"] * sx))
                 ry = int(round(c["radius_y"] * sy))
                 cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, color, -1)
-                break
 
     # 식별번호 마킹
     for d_idx, value in id_digits.items():
@@ -103,7 +107,13 @@ def score(answers, expected_marks):
             else:
                 wrong.append(f"Q{qid}:blank→{r.detected}")
         else:
-            if r.detected == [expected] and r.status == "ok":
+            expected_values = (
+                {str(v) for v in expected}
+                if isinstance(expected, (list, tuple, set))
+                else {str(expected)}
+            )
+            detected_values = {str(v) for v in (r.detected or [])}
+            if detected_values == expected_values and r.marking in ("single", "multi"):
                 correct += 1
             else:
                 wrong.append(f"Q{qid}:{expected}→{r.detected}({r.status})")
