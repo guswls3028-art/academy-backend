@@ -10,6 +10,7 @@
 | [structure-reform/STRUCTURE_AUDIT.md](structure-reform/STRUCTURE_AUDIT.md) | verified | 학생 중심 duplicate root 및 경계 감사 |
 | [structure-reform/DOMAIN_BOUNDARIES.md](structure-reform/DOMAIN_BOUNDARIES.md) | verified/proposed | 도메인별 현재 책임과 공개 인터페이스 후보 |
 | [structure-reform/DUPLICATE_ROOTS.md](structure-reform/DUPLICATE_ROOTS.md) | verified/proposed | 중복 진입점과 canonical 후보 |
+| [structure-reform/PRE_PROMOTION_STRUCTURE_PLAN.md](structure-reform/PRE_PROMOTION_STRUCTURE_PLAN.md) | proposed | 운영 홍보 직전 배포·작업트리·구조조정 착수 계획 |
 | [roadmap.md](roadmap.md) | phase-0 baseline | 대규모 구조 리팩토링 Phase 0 가드레일 로드맵 |
 | [inventory.md](inventory.md) | verified/proposed | 현재 구조 실측과 병목 inventory |
 | [phase-0-guardrails.md](phase-0-guardrails.md) | proposed | 코드 이동 전 안전망 구축 계획 |

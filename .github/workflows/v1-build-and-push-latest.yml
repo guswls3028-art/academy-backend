@@ -193,6 +193,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v6
@@ -205,6 +207,16 @@ jobs:
       - name: Run ruff
         run: |
           ruff check apps/ academy/
+
+      - name: Refactor boundary touched-file guard
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && \
+             [ -n "${{ github.event.before }}" ] && \
+             [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            python scripts/lint/refactor_boundary_snapshot.py --strict-touched --base-ref "${{ github.event.before }}"
+          else
+            python scripts/lint/refactor_boundary_snapshot.py --strict-touched
+          fi
 
   # ============================================================
   # Phase 1.5: Run smoke tests (deploy gate)

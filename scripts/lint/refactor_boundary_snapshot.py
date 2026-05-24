@@ -3,6 +3,10 @@
 This is a baseline-mode guardrail for large refactors. It does not fail by
 default because the current tree has known legacy coupling. Use --strict only
 after a specific baseline policy is in place.
+
+Use --strict-touched during Phase 0 refactors. It still reports the full
+baseline, but only fails when files changed in the current worktree, explicit
+--touched-file paths, or a --base-ref diff contain findings.
 """
 
 from __future__ import annotations
@@ -10,6 +14,8 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -18,6 +24,7 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 APPS_DOMAINS_DIR = BACKEND_DIR / "apps" / "domains"
 ACADEMY_DOMAIN_DIR = BACKEND_DIR / "academy" / "domain"
 ACADEMY_ADAPTERS_DIR = BACKEND_DIR / "academy" / "adapters"
+SCAN_ROOTS = (APPS_DOMAINS_DIR, ACADEMY_DOMAIN_DIR, ACADEMY_ADAPTERS_DIR)
 
 SKIP_PARTS = {"__pycache__", ".git", ".venv", "venv", "migrations"}
 INFRA_IMPORTS = {
@@ -70,6 +77,70 @@ def module_names(node: ast.AST) -> list[tuple[str, int]]:
 
 def rel(path: Path) -> str:
     return path.relative_to(BACKEND_DIR).as_posix()
+
+
+def is_scanned_python_file(path: Path) -> bool:
+    if path.suffix != ".py":
+        return False
+    if any(part in SKIP_PARTS for part in path.parts):
+        return False
+    try:
+        path.relative_to(BACKEND_DIR)
+    except ValueError:
+        return False
+    return any(path.is_relative_to(root) for root in SCAN_ROOTS)
+
+
+def normalize_repo_path(path_text: str) -> Path | None:
+    path = Path(path_text)
+    if not path.is_absolute():
+        path = BACKEND_DIR / path
+    path = path.resolve(strict=False)
+    try:
+        path.relative_to(BACKEND_DIR)
+    except ValueError:
+        return None
+    return path
+
+
+def run_git_name_only(args: list[str]) -> list[str]:
+    result = subprocess.run(
+        ["git", "-C", str(BACKEND_DIR), *args],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "git command failed")
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def collect_touched_files(
+    *,
+    base_ref: str | None,
+    explicit_files: list[str],
+    include_working_tree: bool,
+) -> set[str]:
+    changed: set[str] = set(explicit_files)
+
+    if base_ref:
+        changed.update(run_git_name_only(["diff", "--name-only", "--diff-filter=AM", f"{base_ref}...HEAD"]))
+
+    if include_working_tree:
+        changed.update(run_git_name_only(["diff", "--name-only", "--diff-filter=AM"]))
+        changed.update(run_git_name_only(["diff", "--cached", "--name-only", "--diff-filter=AM"]))
+        changed.update(run_git_name_only(["ls-files", "--others", "--exclude-standard"]))
+
+    touched: set[str] = set()
+    for item in changed:
+        path = normalize_repo_path(item)
+        if path and is_scanned_python_file(path):
+            touched.add(rel(path))
+    return touched
+
+
+def findings_for_paths(findings: list[Finding], paths: set[str]) -> list[Finding]:
+    return [finding for finding in findings if finding.path in paths]
 
 
 def domain_name(path: Path) -> str | None:
@@ -138,23 +209,59 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
     parser.add_argument("--strict", action="store_true", help="Exit 1 when any finding exists")
+    parser.add_argument(
+        "--strict-touched",
+        action="store_true",
+        help="Exit 1 only when a touched scanned Python file has findings",
+    )
+    parser.add_argument(
+        "--base-ref",
+        help="Git base ref for touched-file mode; compares BASE...HEAD",
+    )
+    parser.add_argument(
+        "--include-working-tree",
+        action="store_true",
+        help="Include unstaged, staged, and untracked files in touched-file mode",
+    )
+    parser.add_argument(
+        "--touched-file",
+        action="append",
+        default=[],
+        help="Explicit touched file path for strict-touched mode; repeatable",
+    )
     args = parser.parse_args()
 
-    files = (
-        iter_py_files(APPS_DOMAINS_DIR)
-        + iter_py_files(ACADEMY_DOMAIN_DIR)
-        + iter_py_files(ACADEMY_ADAPTERS_DIR)
-    )
+    files = [path for root in SCAN_ROOTS for path in iter_py_files(root)]
     findings: list[Finding] = []
     for path in files:
         findings.extend(scan_file(path))
 
     summary = summarize(findings)
+    touched_files: set[str] = set()
+    strict_findings: list[Finding] = []
+    strict_touched = args.strict_touched
+    if strict_touched:
+        include_working_tree = args.include_working_tree or not args.base_ref and not args.touched_file
+        try:
+            touched_files = collect_touched_files(
+                base_ref=args.base_ref,
+                explicit_files=args.touched_file,
+                include_working_tree=include_working_tree,
+            )
+        except RuntimeError as exc:
+            print(f"error: could not resolve touched files: {exc}", file=sys.stderr)
+            return 2
+        strict_findings = findings_for_paths(findings, touched_files)
+
     payload = {
         "backend": str(BACKEND_DIR),
         "files_scanned": len(files),
         "summary": summary,
         "findings": [asdict(item) for item in findings],
+        "strict_touched": strict_touched,
+        "touched_files": sorted(touched_files),
+        "strict_summary": summarize(strict_findings),
+        "strict_findings": [asdict(item) for item in strict_findings],
     }
 
     if args.json:
@@ -173,8 +280,21 @@ def main() -> int:
             print("sample findings:")
             for finding in findings[:30]:
                 print(f"  {finding.kind} {finding.path}:{finding.line} {finding.detail}")
+        if strict_touched:
+            print(f"strict touched files: {len(touched_files)}")
+            if touched_files:
+                for path in sorted(touched_files):
+                    print(f"  {path}")
+            if strict_findings:
+                print("strict touched findings:")
+                for finding in strict_findings:
+                    print(f"  {finding.kind} {finding.path}:{finding.line} {finding.detail}")
 
-    return 1 if args.strict and findings else 0
+    if args.strict and findings:
+        return 1
+    if strict_touched and strict_findings:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

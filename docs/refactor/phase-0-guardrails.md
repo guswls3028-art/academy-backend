@@ -31,6 +31,13 @@ Current:
 
 - ruff `F821` exists.
 - `scripts/lint/refactor_boundary_snapshot.py` exists in baseline mode.
+- `scripts/lint/refactor_boundary_snapshot.py --strict-touched` exists for
+  touched-file strict mode. With no extra options it inspects the current
+  working tree; with `--base-ref <ref>` it inspects `ref...HEAD`; with
+  `--touched-file <path>` it inspects explicit paths.
+- Backend deploy workflow `run-lint` runs the touched-file guard against the push
+  range, so new main pushes cannot touch scanned boundary-risk files without
+  clearing their boundary findings.
 - adapter -> application boundary scan allows application port/cancellation
   contracts and reports concrete use-case imports as violations.
 
@@ -54,18 +61,31 @@ Required backend compatibility snapshots:
 ```powershell
 cd C:\academy\backend
 python scripts\lint\refactor_boundary_snapshot.py
+python scripts\lint\refactor_boundary_snapshot.py --strict-touched
 python manage.py check --settings apps.api.config.settings.test
 python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
 pytest tests\test_worker_settings_drift.py -v --tb=short -x
 $env:PYTHONPATH='C:\academy\backend'; $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.worker'; python tests\_worker_boot_check.py
 ```
 
-Current baseline snapshot:
+Current baseline snapshot (latest local run: 2026-05-25 KST):
 
 - `adapter_application_import`: 0
-- `cross_domain_import`: 117
-- `cross_domain_internal_import`: 632
-- `domain_infra_import`: 84
+- `cross_domain_import`: 123
+- `cross_domain_internal_import`: 678
+- `domain_infra_import`: 86
+
+Current frontend baseline snapshot (latest local run: 2026-05-25 KST):
+
+- `api_generated_dir_present`: false
+- `same_app_domain_import`: 217
+- `large_frontend_file`: 34
+- `local_format_defs`: 124
+- `status_map_defs`: 37
+- `query_key_literals`: 970
+- `inline_style_objects`: 3884
+- `api_response_type_defs`: 105
+- `e2e_wait_for_timeout`: 69
 
 Interpretation note:
 
@@ -187,9 +207,10 @@ Backend and frontend functional gates are selected by touched surface.
 
 ## Phase 0 Exit Checklist
 
-- [ ] Guardrail commands exist and are documented.
+- [x] Backend boundary guardrail command exists, is documented, and is wired into
+      the backend deploy lint gate.
 - [ ] Existing violation counts are captured.
-- [ ] Touched-file strict mode is defined.
+- [x] Touched-file strict mode is defined for backend boundary findings.
 - [ ] Generated type path is proven or blocker is documented.
 - [ ] Tenant/auth/account recovery validation path is defined.
 - [ ] Docs distinguish current behavior from proposed architecture.

@@ -21,6 +21,7 @@ Also run markdown link checks when docs move.
 |---|---|
 | Python syntax/static | `cd C:\academy\backend; python -m ruff check apps/ academy/` |
 | Refactor boundary snapshot | `cd C:\academy\backend; python scripts\lint\refactor_boundary_snapshot.py` |
+| Refactor touched-file boundary gate | `cd C:\academy\backend; python scripts\lint\refactor_boundary_snapshot.py --strict-touched` |
 | ID/domain safety | `cd C:\academy\backend; python scripts\lint\check_id_domain_safety.py` |
 | Django config/imports | `cd C:\academy\backend; python manage.py check --settings apps.api.config.settings.test` |
 | Migration drift | `cd C:\academy\backend; python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test` |
