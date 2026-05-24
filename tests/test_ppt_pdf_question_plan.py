@@ -44,6 +44,17 @@ def test_ppt_pdf_plan_uses_whole_page_for_scan_pdf_without_text():
     assert plan.regions_per_page == [[], []]
 
 
+def test_ppt_pdf_plan_attempts_split_for_short_text_pdf():
+    pages = [[
+        _Block("1. 다음 중 옳은 것은? ① ㄱ ② ㄴ", 40, 100, 560, 130),
+    ]]
+
+    plan = _build_pdf_question_plan(_FakeDoc(pages))
+
+    assert plan.use_whole_page is False
+    assert [r.number for r in plan.regions_per_page[0]] == [1]
+
+
 def test_ppt_pdf_plan_applies_cross_page_anchor_validation():
     pages = [
         [

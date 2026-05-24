@@ -310,7 +310,9 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         })
 
     # 스캔/사진 PDF는 text layer가 없어서 문항 split이 불가능하다. 페이지 단위 fallback.
-    if total_text_chars < 200:
+    # 텍스트가 짧은 PDF라도 실제 문항 anchor가 있을 수 있으므로, 글자 수가 적다는
+    # 이유만으로 page mode로 보내지 않는다.
+    if total_text_chars <= 0:
         return _PdfQuestionPlan(
             use_whole_page=True,
             regions_per_page=[[] for _ in range(page_count)],
