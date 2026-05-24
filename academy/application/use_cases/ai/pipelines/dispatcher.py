@@ -131,6 +131,9 @@ def handle_ai_job(job: AIJob) -> AIResult:
             return handle_staff_excel_export(job)
         if job_type_lower == "ppt_generation":
             return handle_ppt_generation_job(job)
+        if job_type_lower == "problem_studio_package":
+            from apps.domains.tools.problem_studio.worker import handle_problem_studio_package_job
+            return handle_problem_studio_package_job(job)
 
         # Matchup index exam (download 불필요 — DB에서 직접 읽음)
         if job.type == "matchup_index_exam":

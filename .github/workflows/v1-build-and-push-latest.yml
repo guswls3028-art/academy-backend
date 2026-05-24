@@ -858,8 +858,25 @@ jobs:
             echo "No protected instances found"
           fi
 
+      - name: Check AI ASG capacity
+        id: capacity
+        run: |
+          DESIRED=$(aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names ${{ env.AI_ASG_NAME }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'AutoScalingGroups[0].DesiredCapacity' \
+            --output text)
+          echo "desired=$DESIRED" >> $GITHUB_OUTPUT
+          if [ "$DESIRED" = "0" ]; then
+            echo "skip_refresh=true" >> $GITHUB_OUTPUT
+            echo "AI ASG desired=0; new scale-out instances will pull the latest image."
+          else
+            echo "skip_refresh=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Start AI ASG instance refresh
         id: refresh
+        if: steps.capacity.outputs.skip_refresh != 'true'
         run: |
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.AI_ASG_NAME }} \
@@ -871,6 +888,7 @@ jobs:
           echo "AI ASG instance refresh started: $REFRESH_ID"
 
       - name: Wait for AI refresh to complete
+        if: steps.capacity.outputs.skip_refresh != 'true'
         run: |
           REFRESH_ID="${{ steps.refresh.outputs.refresh_id }}"
           for i in $(seq 1 40); do

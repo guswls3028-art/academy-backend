@@ -177,6 +177,30 @@ def extract_source(uploaded: Any) -> SourceExtraction:
     )
 
 
+def extract_sources(source_files: Iterable[Any]) -> list[SourceExtraction]:
+    return [extract_source(uploaded) for uploaded in source_files]
+
+
+def source_extraction_to_payload(source: SourceExtraction) -> dict[str, Any]:
+    return {
+        "name": source.name,
+        "kind": source.kind,
+        "sizeLabel": source.size_label,
+        "extracted_text": source.extracted_text,
+        "warning": source.warning,
+    }
+
+
+def source_extraction_from_payload(raw: dict[str, Any]) -> SourceExtraction:
+    return SourceExtraction(
+        name=str(raw.get("name") or "source"),
+        kind=str(raw.get("kind") or "기타"),
+        size_label=str(raw.get("sizeLabel") or raw.get("size_label") or ""),
+        extracted_text=str(raw.get("extracted_text") or raw.get("extractedText") or "")[:MAX_TEXT_CHARS],
+        warning=str(raw["warning"]) if raw.get("warning") else None,
+    )
+
+
 def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
@@ -352,6 +376,17 @@ def build_problem_studio_package(
     payload: dict[str, Any],
     source_files: Iterable[Any],
 ) -> dict[str, Any]:
+    return build_problem_studio_package_from_sources(
+        payload=payload,
+        sources=extract_sources(source_files),
+    )
+
+
+def build_problem_studio_package_from_sources(
+    *,
+    payload: dict[str, Any],
+    sources: Iterable[SourceExtraction],
+) -> dict[str, Any]:
     mode = _normalize_mode(payload.get("variant_mode"))
     count = _normalize_count(payload.get("variant_count"))
     note_policy = str(payload.get("note_policy") or "")
@@ -359,7 +394,7 @@ def build_problem_studio_package(
     use_ai = bool(payload.get("use_ai", True))
     transfer_only = bool(payload.get("transfer_only", False))
 
-    sources = [extract_source(uploaded) for uploaded in source_files]
+    sources = list(sources)
     combined_text = _normalize_space("\n\n".join(
         [src.extracted_text for src in sources if src.extracted_text.strip()]
         + [_question_text_from_payload(payload)]
@@ -424,6 +459,19 @@ def build_problem_studio_package(
         "warnings": [w for w in warnings if w],
         "source_text_chars": len(combined_text),
     }
+
+
+def build_problem_studio_package_from_worker_payload(worker_payload: dict[str, Any]) -> dict[str, Any]:
+    payload = worker_payload.get("problem_studio_payload")
+    if not isinstance(payload, dict):
+        payload = {}
+    raw_sources = worker_payload.get("source_files")
+    sources = [
+        source_extraction_from_payload(source)
+        for source in _as_list(raw_sources)
+        if isinstance(source, dict)
+    ]
+    return build_problem_studio_package_from_sources(payload=payload, sources=sources)
 
 
 def parse_payload(raw: Any) -> dict[str, Any]:

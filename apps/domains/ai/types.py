@@ -12,6 +12,7 @@ AIJobType = Literal[
     "homework_video_analysis",
     "excel_parsing",
     "ppt_generation",
+    "problem_studio_package",
     "matchup_analysis",
     "matchup_index_exam",
     "matchup_search_qna",
@@ -42,6 +43,11 @@ class EmbeddingPayload(TypedDict, total=False):
 class ProblemGenerationPayload(TypedDict, total=False):
     ocr_text: str
     model: Optional[str]
+
+
+class ProblemStudioPackagePayload(TypedDict, total=False):
+    problem_studio_payload: Dict[str, Any]
+    source_files: list[Dict[str, Any]]
 
 
 class HomeworkVideoPayload(TypedDict, total=False):

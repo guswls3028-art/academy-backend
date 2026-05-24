@@ -6,7 +6,14 @@ from io import BytesIO
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase
 
-from apps.domains.tools.problem_studio.services import build_problem_studio_package, extract_source
+from apps.shared.contracts.ai_job import AIJob
+from apps.domains.tools.problem_studio.services import (
+    build_problem_studio_package,
+    build_problem_studio_package_from_worker_payload,
+    extract_source,
+    source_extraction_to_payload,
+)
+from apps.domains.tools.problem_studio.worker import handle_problem_studio_package_job
 
 
 def _zip_file(name: str, files: dict[str, str]) -> SimpleUploadedFile:
@@ -79,3 +86,46 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertIn("광합성에서 생성되는 물질", result["questions"][0]["prompt"])
         self.assertIn("정답 ①", result["questions"][0]["prompt"])
         self.assertEqual(result["questions"][0]["answer"], "①")
+
+    def test_worker_payload_rebuilds_package_from_extracted_sources(self):
+        source = extract_source(_zip_file(
+            "source.hwpx",
+            {"Preview/PrvText.txt": "1. 광합성에서 필요한 기체는?\n① 산소\n② 이산화탄소\n정답 ②"},
+        ))
+        payload = {
+            "problem_studio_payload": {
+                "variant_mode": "copy",
+                "variant_count": 1,
+                "use_ai": False,
+                "transfer_only": True,
+            },
+            "source_files": [source_extraction_to_payload(source)],
+        }
+
+        result = build_problem_studio_package_from_worker_payload(payload)
+
+        self.assertEqual(result["generation_engine"], "source_transfer")
+        self.assertEqual(result["source_files"][0]["name"], "source.hwpx")
+        self.assertIn("광합성에서 필요한 기체", result["questions"][0]["prompt"])
+
+    def test_worker_handler_returns_ai_result_done(self):
+        job = AIJob.new(
+            type="problem_studio_package",
+            tenant_id="1",
+            source_domain="tools_problem_studio",
+            payload={
+                "problem_studio_payload": {
+                    "variant_mode": "copy",
+                    "use_ai": False,
+                    "transfer_only": True,
+                    "text": "1. 뉴클레오타이드 염기의 종류는?\n정답 4",
+                },
+                "source_files": [],
+            },
+        )
+
+        result = handle_problem_studio_package_job(job)
+
+        self.assertEqual(result.status, "DONE")
+        self.assertEqual(result.result["generation_engine"], "source_transfer")
+        self.assertIn("뉴클레오타이드", result.result["questions"][0]["prompt"])
