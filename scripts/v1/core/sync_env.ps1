@@ -72,6 +72,10 @@ function Sync-ApiEnvFromSSOT {
         $obj | Add-Member -NotePropertyName "REDIS_PORT" -NotePropertyValue ([string]$redisEp.Port) -Force
     }
 
+    if ($script:RdsProxyRequireTls) {
+        $obj | Add-Member -NotePropertyName "DB_SSL_MODE" -NotePropertyValue "require" -Force
+    }
+
     $newJson = $obj | ConvertTo-Json -Compress -Depth 10
     $newValue = $newJson
     if ($isBase64) {
@@ -131,6 +135,10 @@ function Sync-WorkersEnvFromSSOT {
     if ($redisEp) {
         $obj | Add-Member -NotePropertyName "REDIS_HOST" -NotePropertyValue $redisEp.Host -Force
         $obj | Add-Member -NotePropertyName "REDIS_PORT" -NotePropertyValue ([string]$redisEp.Port) -Force
+    }
+
+    if ($script:RdsProxyRequireTls) {
+        $obj | Add-Member -NotePropertyName "DB_SSL_MODE" -NotePropertyValue "require" -Force
     }
 
     $newJson = $obj | ConvertTo-Json -Compress -Depth 10

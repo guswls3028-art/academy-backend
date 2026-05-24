@@ -203,7 +203,7 @@ dynamodb:
 rds:
   engine: postgres
   engineVersion: "15.16"
-  instanceClass: "db.t4g.medium"
+  instanceClass: "db.t4g.large"
   allocatedStorage: 20
   dbIdentifier: academy-db
   dbSubnetGroupName: academy-v1-db-subnets
@@ -211,6 +211,10 @@ rds:
   masterPasswordSsmParam: "/academy/rds/master_password"
   performanceInsightsEnabled: true
   performanceInsightsRetentionDays: 7
+  deletionProtection: true
+  publiclyAccessible: false
+  proxyName: academy-db-proxy
+  proxyRequireTls: true
   multiAz: false
 
 observability:

@@ -299,6 +299,43 @@ try {
         Add-Issue "RDS 상태가 '$rdsStatus' — 즉시 확인 필요"
     }
 
+    if ($rds.DeletionProtection) {
+        Write-Check "✅" "삭제 보호: enabled"
+    } else {
+        Write-Check "⚠️" "삭제 보호: disabled"
+        Add-Warning "RDS deletion protection disabled"
+    }
+
+    if ($rds.PubliclyAccessible) {
+        Write-Check "⚠️" "Public access: enabled"
+        Add-Warning "RDS public access enabled"
+    } else {
+        Write-Check "✅" "Public access: disabled"
+    }
+
+    if ($rds.MultiAZ) {
+        Write-Check "✅" "Multi-AZ: enabled"
+    } else {
+        Write-Check "⚠️" "Multi-AZ: disabled"
+        Add-Warning "RDS Multi-AZ disabled"
+    }
+
+    try {
+        $proxyJson = aws rds describe-db-proxies `
+            --db-proxy-name academy-db-proxy `
+            --region $REGION --output json 2>&1
+        $proxy = ($proxyJson | ConvertFrom-Json).DBProxies[0]
+        if ($proxy.RequireTLS) {
+            Write-Check "✅" "RDS Proxy TLS: required"
+        } else {
+            Write-Check "⚠️" "RDS Proxy TLS: not required"
+            Add-Warning "RDS Proxy RequireTLS disabled"
+        }
+    } catch {
+        Write-Check "⚠️" "RDS Proxy TLS: 조회 실패"
+        Add-Warning "RDS Proxy TLS status unavailable"
+    }
+
     # FreeStorageSpace (CloudWatch, 최근 5분)
     try {
         $endTime = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")

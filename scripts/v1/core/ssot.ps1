@@ -307,6 +307,10 @@ function Load-SSOT {
     if ($script:RdsDbIdentifier -and $script:RdsMasterPasswordSsmParam.Trim() -eq "") { $script:RdsMasterPasswordSsmParam = "/academy/rds/master_password" }
     $script:RdsPerformanceInsightsEnabled = ($p["rds"]["performanceInsightsEnabled"] -eq "true")
     $script:RdsPerformanceInsightsRetentionDays = Coerce-Int $p["rds"]["performanceInsightsRetentionDays"] 7
+    $script:RdsDeletionProtection = ($p["rds"]["deletionProtection"] -eq $true -or $p["rds"]["deletionProtection"] -eq "true")
+    $script:RdsPubliclyAccessible = ($p["rds"]["publiclyAccessible"] -eq $true -or $p["rds"]["publiclyAccessible"] -eq "true")
+    $script:RdsProxyName = if ($p["rds"]["proxyName"]) { $p["rds"]["proxyName"] } else { "" }
+    $script:RdsProxyRequireTls = ($p["rds"]["proxyRequireTls"] -eq $true -or $p["rds"]["proxyRequireTls"] -eq "true")
     $script:RdsMultiAz = ($p["rds"]["multiAz"] -eq "true")
     $script:RedisReplicationGroupId = $p["redis"]["replicationGroupId"]
     if (-not $script:RedisReplicationGroupId) { $script:RedisReplicationGroupId = Get-ParamFromRaw $raw "replicationGroupId" }

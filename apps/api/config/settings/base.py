@@ -209,6 +209,15 @@ ASGI_APPLICATION = "apps.api.config.asgi.application"
 # DATABASE
 # ==================================================
 
+
+def _database_options():
+    options = {"connect_timeout": 10}
+    sslmode = os.getenv("DB_SSL_MODE", "").strip()
+    if sslmode:
+        options["sslmode"] = sslmode
+    return options
+
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -223,9 +232,7 @@ DATABASES = {
         # 환경변수 DB_CONN_MAX_AGE override 가능 (수치 안정 후 다시 60으로 올릴 수 있음).
         "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE", "5")),
         "CONN_HEALTH_CHECKS": True,  # V1.1.0: validate connection before reuse (prevents stale-connection errors after RDS recovery)
-        "OPTIONS": {
-            "connect_timeout": 10,
-        },
+        "OPTIONS": _database_options(),
     }
 }
 

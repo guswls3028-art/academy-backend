@@ -77,6 +77,15 @@ MIDDLEWARE = [
 # ==================================================
 AUTH_USER_MODEL = "core.User"
 
+
+def _database_options():
+    options = {"connect_timeout": 10}
+    sslmode = os.getenv("DB_SSL_MODE", "").strip()
+    if sslmode:
+        options["sslmode"] = sslmode
+    return options
+
+
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
@@ -91,7 +100,7 @@ DATABASES = {
         # API 쪽은 60s 유지 (요청 reuse 가치 큼).
         "CONN_MAX_AGE": int(os.getenv("DB_CONN_MAX_AGE_WORKER", os.getenv("DB_CONN_MAX_AGE", "0"))),
         "CONN_HEALTH_CHECKS": True,
-        "OPTIONS": {"connect_timeout": 10},
+        "OPTIONS": _database_options(),
     }
 }
 

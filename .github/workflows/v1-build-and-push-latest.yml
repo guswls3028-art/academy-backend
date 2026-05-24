@@ -138,6 +138,7 @@ jobs:
           echo "$CHANGED" | grep -qE "^apps/worker/video_worker/" && VIDEO=true
           echo "$CHANGED" | grep -qE "^apps/support/video/" && VIDEO=true
           echo "$CHANGED" | grep -qE "^apps/domains/video/" && VIDEO=true
+          echo "$CHANGED" | grep -qE "^apps/api/config/settings/worker\.py$" && VIDEO=true
           echo "$CHANGED" | grep -qE "^docker/video-worker/" && VIDEO=true
           echo "$CHANGED" | grep -qE "^requirements/worker-video\.txt$" && VIDEO=true
           echo "build_video=$VIDEO" >> $GITHUB_OUTPUT
@@ -151,6 +152,7 @@ jobs:
           echo "$CHANGED" | grep -qE "^apps/worker/messaging_worker/" && MSG=true
           echo "$CHANGED" | grep -qE "^apps/support/messaging/" && MSG=true
           echo "$CHANGED" | grep -qE "^apps/domains/messaging/" && MSG=true
+          echo "$CHANGED" | grep -qE "^apps/api/config/settings/worker\.py$" && MSG=true
           echo "$CHANGED" | grep -qE "^docker/messaging-worker/" && MSG=true
           echo "$CHANGED" | grep -qE "^requirements/worker-messaging\.txt$" && MSG=true
           echo "build_messaging=$MSG" >> $GITHUB_OUTPUT

@@ -134,6 +134,74 @@ function Ensure-RdsObservability {
     }
 }
 
+function Ensure-RdsProtection {
+    param($DbInstance)
+    if ($script:PlanMode) { return }
+    if (-not $script:RdsDbIdentifier -or -not $DbInstance) { return }
+
+    $modify = $false
+    $changes = @()
+    $args = @("rds", "modify-db-instance", "--db-instance-identifier", $script:RdsDbIdentifier, "--region", $script:Region)
+
+    if ($script:RdsDeletionProtection -and -not $DbInstance.DeletionProtection) {
+        $args += "--deletion-protection"
+        $changes += "deletion-protection"
+        $modify = $true
+    }
+
+    if ($script:RdsPubliclyAccessible -and -not $DbInstance.PubliclyAccessible) {
+        $args += "--publicly-accessible"
+        $changes += "publicly-accessible"
+        $modify = $true
+    } elseif (-not $script:RdsPubliclyAccessible -and $DbInstance.PubliclyAccessible) {
+        $args += "--no-publicly-accessible"
+        $changes += "no-publicly-accessible"
+        $modify = $true
+    }
+
+    if ($modify) {
+        $args += "--apply-immediately"
+        try {
+            Invoke-Aws $args -ErrorMessage "modify-db-instance protection" | Out-Null
+            Write-Ok "RDS $($script:RdsDbIdentifier) protection updated: $($changes -join ', ')"
+            $script:ChangesMade = $true
+        } catch {
+            if ($_.Exception.Message -match "No modifications were requested") { Write-Ok "RDS protection unchanged" }
+            else { throw }
+        }
+    } else {
+        Write-Ok "RDS $($script:RdsDbIdentifier) protection matches SSOT"
+    }
+}
+
+function Ensure-RdsProxyHardening {
+    if ($script:PlanMode) { return }
+    if (-not $script:RdsProxyName -or $script:RdsProxyName.Trim() -eq "") { return }
+
+    $proxy = $null
+    try {
+        $r = Invoke-AwsJson @("rds", "describe-db-proxies", "--db-proxy-name", $script:RdsProxyName, "--region", $script:Region, "--output", "json")
+        if ($r -and $r.DBProxies -and $r.DBProxies.Count -gt 0) { $proxy = $r.DBProxies[0] }
+    } catch {
+        Write-Warn "RDS proxy $($script:RdsProxyName) not found or not accessible; TLS hardening skipped"
+        return
+    }
+    if (-not $proxy) { return }
+
+    if ($script:RdsProxyRequireTls -and -not $proxy.RequireTLS) {
+        Invoke-Aws @(
+            "rds", "modify-db-proxy",
+            "--db-proxy-name", $script:RdsProxyName,
+            "--require-tls",
+            "--region", $script:Region
+        ) -ErrorMessage "modify-db-proxy require tls" | Out-Null
+        Write-Ok "RDS proxy $($script:RdsProxyName) RequireTLS enabled"
+        $script:ChangesMade = $true
+    } else {
+        Write-Ok "RDS proxy $($script:RdsProxyName) TLS setting matches SSOT"
+    }
+}
+
 function Confirm-RDSState {
     Write-Step "Ensure RDS $($script:RdsDbIdentifier)"
     if ($script:PlanMode) {
@@ -209,6 +277,8 @@ function Confirm-RDSState {
                 $ep = $db.Endpoint
                 Write-Ok "RDS $($script:RdsDbIdentifier) available (endpoint: $($ep.Address):$($ep.Port))"
                 Ensure-RDSSecurityGroup -DbInstance $db
+                Ensure-RdsProtection -DbInstance $db
+                Ensure-RdsProxyHardening
                 Ensure-RdsObservability -DbInstance $db
                 return
             }
