@@ -8,7 +8,8 @@ GET /api/v1/submissions/submissions/homework/<homework_id>/candidates/?q=<query>
 - q (검색어): 학생명, 학생폰 뒤 8자리, 학부모폰 뒤 8자리 부분일치.
 - 최대 50건.
 - 응답 필드: enrollment_id, student_name, student_phone_last4,
-             parent_phone_last4, lecture_title, already_matched.
+             parent_phone_last4, lecture_title, lecture_color,
+             lecture_chip_label, already_matched.
 
 Tenant isolation: homework.tenant 강제.
 """
@@ -107,6 +108,8 @@ class HomeworkCandidatesView(APIView):
             student_phone = str(getattr(student, "phone", "") or "") if student else ""
             parent_phone = str(getattr(student, "parent_phone", "") or "") if student else ""
             lecture_title = str(getattr(lecture, "title", "") or "") if lecture else ""
+            lecture_color = str(getattr(lecture, "color", "") or "") if lecture else ""
+            lecture_chip_label = str(getattr(lecture, "chip_label", "") or "") if lecture else ""
 
             items.append({
                 "enrollment_id": int(e.id),
@@ -114,6 +117,8 @@ class HomeworkCandidatesView(APIView):
                 "student_phone_last4": _mask_phone_tail(student_phone),
                 "parent_phone_last4": _mask_phone_tail(parent_phone),
                 "lecture_title": lecture_title or None,
+                "lecture_color": lecture_color or None,
+                "lecture_chip_label": lecture_chip_label or None,
                 "already_matched": int(e.id) in matched_ids,
             })
 
