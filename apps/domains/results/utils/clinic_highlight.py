@@ -4,7 +4,8 @@
 
 name_highlight_clinic_target = True 조건:
   1. 해당 enrollment에 미해결(resolved_at IS NULL) 자동 ClinicLink 존재
-  2. 해당 enrollment가 클리닉 세션에 출석(ATTENDED)한 적 없음
+  2. 해당 enrollment/session의 최종 진행 상태가 완료가 아님
+  3. 해당 enrollment가 클리닉 세션에 출석(ATTENDED)한 적 없음
 
 세션 스코프와 글로벌 스코프 두 가지 모드 제공:
   - session 지정: 해당 세션의 ClinicLink만 검사 (성적/시험/과제 탭)
@@ -15,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Set
 
-from apps.domains.progress.models import ClinicLink
+from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.clinic.models import SessionParticipant
 
 
@@ -50,7 +51,24 @@ def compute_clinic_highlight_map(
     if session is not None:
         clinic_qs = clinic_qs.filter(session=session)
 
-    clinic_ids = set(clinic_qs.values_list("enrollment_id", flat=True).distinct())
+    clinic_links = list(clinic_qs.values("enrollment_id", "session_id"))
+    if not clinic_links:
+        return {eid: False for eid in enrollment_ids}
+
+    session_ids = list({int(row["session_id"] or 0) for row in clinic_links} - {0})
+    clinic_enrollment_ids = list({int(row["enrollment_id"] or 0) for row in clinic_links} - {0})
+    completed_pairs = set(
+        SessionProgress.objects.filter(
+            session_id__in=session_ids,
+            enrollment_id__in=clinic_enrollment_ids,
+            completed=True,
+        ).values_list("enrollment_id", "session_id")
+    )
+    clinic_ids = {
+        int(row["enrollment_id"])
+        for row in clinic_links
+        if (int(row["enrollment_id"]), int(row["session_id"])) not in completed_pairs
+    }
 
     if not clinic_ids:
         return {eid: False for eid in enrollment_ids}

@@ -15,12 +15,13 @@ GET /api/v1/results/admin/sessions/<session_id>/scores/
 🚫 금지
 - 점수 계산/정책 생성
 - homework percent / cutline 계산
-- progress 결과 직접 노출
+- progress 세부 계산 결과 직접 노출(progress_status 최종 판정값만 계약)
 
 ✅ 단일 진실
 - exam: results(Result + Exam.pass_score)
 - homework: homework_results.HomeworkScore
-- clinic_required: progress.ClinicLink(is_auto=True)
+- progress_status: progress.SessionProgress.completed
+- clinic_required: progress.ClinicLink(is_auto=True) 중 progress_status=completed가 아닌 현재 대상
 
 📌 중요 설계 결정
 - enrollment 모수는 SessionProgress ❌
@@ -47,7 +48,7 @@ from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
 
 from apps.domains.lectures.models import Session
-from apps.domains.progress.models import ClinicLink
+from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.clinic.models import SessionParticipant
 
 from apps.domains.homework_results.models import HomeworkScore
@@ -390,15 +391,28 @@ class SessionScoresView(APIView):
             return Response({"meta": meta, "rows": []})
 
         # -------------------------------------------------
-        # 3) Clinic 대상자
+        # 3) 진행/완료 + Clinic 대상자
         # -------------------------------------------------
-        clinic_ids: Set[int] = set(
+        progress_completed_ids: Set[int] = set(
+            SessionProgress.objects.filter(
+                session=session,
+                enrollment_id__in=enrollment_ids,
+                completed=True,
+            )
+            .values_list("enrollment_id", flat=True)
+            .distinct()
+        )
+
+        raw_clinic_ids: Set[int] = set(
             ClinicLink.objects.filter(
                 session=session, is_auto=True, resolved_at__isnull=True,
             )
             .values_list("enrollment_id", flat=True)
             .distinct()
         )
+        # 최종 완료 상태가 SSOT다. 과거/특례 등록으로 남은 미해소 ClinicLink가 있어도
+        # SessionProgress.completed=True면 현재 클리닉 대상에서 제외한다.
+        clinic_ids: Set[int] = raw_clinic_ids - progress_completed_ids
 
         # -------------------------------------------------
         # 3b) 클리닉 수강 완료(enrollment별 ATTENDED 1건 이상) → 하이라이트 제거
@@ -565,7 +579,7 @@ class SessionScoresView(APIView):
             ClinicLink.objects
             .filter(
                 session=session,
-                enrollment_id__in=enrollment_ids,
+                enrollment_id__in=clinic_ids,
                 source_type="exam",
                 source_id__in=exam_ids,
                 resolved_at__isnull=True,
@@ -638,7 +652,7 @@ class SessionScoresView(APIView):
             ClinicLink.objects
             .filter(
                 session=session,
-                enrollment_id__in=enrollment_ids,
+                enrollment_id__in=clinic_ids,
                 source_type="homework",
                 source_id__in=hw_ids,
                 resolved_at__isnull=True,
@@ -656,6 +670,8 @@ class SessionScoresView(APIView):
         rows: List[Dict[str, Any]] = []
 
         for eid in enrollment_ids:
+            progress_completed = eid in progress_completed_ids
+            progress_status = "completed" if progress_completed else "in_progress"
             clinic_required = eid in clinic_ids
 
             exams_payload = []
@@ -840,6 +856,8 @@ class SessionScoresView(APIView):
                     "homeworks": homeworks_payload,
                     "updated_at": updated_at or timezone.now(),
                     "clinic_required": clinic_required,
+                    "progress_completed": progress_completed,
+                    "progress_status": progress_status,
                     "name_highlight_clinic_target": name_highlight_clinic_target,
                     **display,
                 }

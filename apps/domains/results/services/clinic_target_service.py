@@ -2,11 +2,11 @@
 """
 역할
 - Admin/Teacher용 "클리닉 대상자" 리스트를 생성한다.
-- clinic_required의 단일 진실: progress.ClinicLink(is_auto=True)
+- clinic_required의 단일 진실: progress.SessionProgress.completed가 아닌 미해소 ClinicLink(is_auto=True)
 
 설계 계약 (중요)
 1) 단일 진실: enrollment_id (학생 식별은 enrollment_id로만)
-2) clinic_required 판단은 ClinicLink (자동 트리거) 기준
+2) 현재 clinic_required 판단은 SessionProgress.completed=False AND ClinicLink(자동 트리거) 기준
 3) 점수/커트라인/사유(reason)는 results/exams에서 파생
 4) Session ↔ Exam 매핑은 results.utils.session_exam.get_exams_for_session() 단일 진실 사용
 
@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 from django.db import models
 
 from apps.domains.lectures.models import Session
-from apps.domains.progress.models import ClinicLink
+from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.exams.models import Exam
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.homework_results.models import HomeworkScore, Homework
@@ -248,9 +248,29 @@ class ClinicTargetService:
             )
             links = links.filter(enrollment_id__in=assigned_enrollment_ids)
 
+        links_list = list(links)
+        if not include_resolved and links_list:
+            session_ids = list({int(getattr(lk, "session_id", 0) or 0) for lk in links_list} - {0})
+            enrollment_ids_for_progress = list({int(getattr(lk, "enrollment_id", 0) or 0) for lk in links_list} - {0})
+            completed_pairs = set(
+                SessionProgress.objects.filter(
+                    session_id__in=session_ids,
+                    enrollment_id__in=enrollment_ids_for_progress,
+                    completed=True,
+                ).values_list("session_id", "enrollment_id")
+            )
+            # 최종 진행 상태가 완료면 현재 대상자 목록에서 제외한다.
+            # 남아 있는 미해소 ClinicLink는 데이터 잔상일 수 있으므로 운영 노출 SSOT는 completed를 우선한다.
+            links_list = [
+                lk for lk in links_list
+                if (
+                    int(getattr(lk, "session_id", 0) or 0),
+                    int(getattr(lk, "enrollment_id", 0) or 0),
+                ) not in completed_pairs
+            ]
+
         # ✅ enrollment 일괄 조회 (N+1 방지 + 학생 SSOT 표시 필드)
         # 🔐 tenant 강제 — links는 tenant 스코프이지만 enrollment_id 참조는 강제 제약 없음.
-        links_list = list(links)
         all_enrollment_ids = list({int(getattr(lk, "enrollment_id", 0) or 0) for lk in links_list} - {0})
         from apps.domains.enrollment.models import Enrollment as _Enrollment
         enrollment_map: Dict[int, Any] = {

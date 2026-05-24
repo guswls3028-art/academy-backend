@@ -10,8 +10,10 @@ from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.progress.models import ClinicLink
+from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_remediation_service import ClinicRemediationService
+from apps.domains.results.services.clinic_target_service import ClinicTargetService
+from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.views.session_scores_view import SessionScoresView
 from apps.domains.students.models import Student
@@ -211,6 +213,52 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(block["meta"]["status"], "OMR_REVIEW_REQUIRED")
         self.assertTrue(block["meta"]["manual_review_required"])
         self.assertEqual(block["meta"]["manual_review_reasons"], ["ANSWER_STATUS_NOT_OK"])
+
+    def test_completed_progress_overrides_unresolved_clinic_link(self):
+        link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            approved=True,
+            source_type="exam",
+            source_id=self.exam.id,
+        )
+        SessionProgress.objects.create(
+            enrollment=self.active_enrollment,
+            session=self.session,
+            exam_passed=True,
+            homework_passed=True,
+            video_completed=True,
+            completed=True,
+        )
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(row for row in response.data["rows"] if row["enrollment_id"] == self.active_enrollment.id)
+        self.assertTrue(row["progress_completed"])
+        self.assertEqual(row["progress_status"], "completed")
+        self.assertFalse(row["clinic_required"])
+        self.assertFalse(row["exams"][0]["block"]["clinic_required"])
+        self.assertIsNone(row["exams"][0]["clinic_link_id"])
+
+        targets = ClinicTargetService.list_admin_targets(tenant=self.tenant)
+        self.assertFalse(
+            any(target.get("clinic_link_id") == link.id for target in targets),
+            "완료 상태 학생은 현재 클리닉 대상자 API에서 제외되어야 한다.",
+        )
+        highlights = compute_clinic_highlight_map(
+            tenant=self.tenant,
+            enrollment_ids={self.active_enrollment.id},
+            session=self.session,
+        )
+        self.assertFalse(highlights[self.active_enrollment.id])
 
     def test_session_scores_include_retake_history_and_final_pass(self):
         self.exam.pass_score = 70

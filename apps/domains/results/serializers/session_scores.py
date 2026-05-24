@@ -102,6 +102,12 @@ class SessionScoreRowSerializer(serializers.Serializer):
 
     # 행 단위 클리닉 대상 여부(ClinicLink 기준). 판정 컬럼 "대상"|"합격" 표시용
     clinic_required = serializers.BooleanField(default=False)
+    # 최종 차시 진행 상태 SSOT. completed면 미제출/1차 불합격 잔상이 있어도 현재 클리닉 대상이 아니다.
+    progress_completed = serializers.BooleanField(default=False)
+    progress_status = serializers.ChoiceField(
+        choices=["completed", "in_progress"],
+        default="in_progress",
+    )
     # 클리닉 대상이면서 해당 주차 클리닉 미수강 시 이름만 노란 형광펜 하이라이트(수강 완료 시 제거)
     name_highlight_clinic_target = serializers.BooleanField(default=False)
 
