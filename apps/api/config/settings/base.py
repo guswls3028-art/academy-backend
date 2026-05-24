@@ -116,6 +116,19 @@ SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 AUTH_USER_MODEL = "core.User"
 
 # ==================================================
+# UPLOAD LIMITS
+# ==================================================
+
+# PPT generator supports up to 500 images. Django's default multipart file-count
+# guard is 100, so keep the framework parser limit aligned with the product cap
+# plus a little headroom for adjacent upload fields.
+DATA_UPLOAD_MAX_NUMBER_FILES = int(os.getenv("DATA_UPLOAD_MAX_NUMBER_FILES", "600"))
+
+# Large multi-file batches should not keep every file in process memory. Files
+# above this threshold are spooled to disk by Django's upload handlers.
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.getenv("FILE_UPLOAD_MAX_MEMORY_SIZE", str(1024 * 1024)))
+
+# ==================================================
 # INSTALLED APPS
 # ==================================================
 
