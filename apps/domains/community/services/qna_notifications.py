@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
+from django.utils import timezone
 from django.utils.html import strip_tags
 
 logger = logging.getLogger(__name__)
@@ -23,11 +24,15 @@ def notify_qna_created(post, *, actor_user=None) -> int:
     if getattr(post, "post_type", "") != "qna" or not getattr(post, "created_by_id", None):
         return 0
 
+    student_name = _post_student_name(post)
     body = _qna_created_body(post)
     return _send_freeform_to_recipients(
         tenant=getattr(post, "tenant", None),
         recipients=_iter_staff_recipients(getattr(post, "tenant", None)),
         body=body,
+        student_name=student_name,
+        category_label=_clean(getattr(post, "category_label", "") or "QnA"),
+        action_label="새 질문",
         event_type="qna_created",
         occurrence_key=f"post:{post.id}:created",
         source_use_case="qna_created",
@@ -62,11 +67,15 @@ def notify_qna_answered(post, reply, *, send_to: str = "student", actor_user=Non
         target_type="parent" if send_to == "parent" else "student",
         target_id=getattr(student, "id", ""),
     )
+    student_name = _post_student_name(post)
     body = _qna_answered_body(post)
     return _send_freeform_to_recipients(
         tenant=getattr(post, "tenant", None),
         recipients=[recipient],
         body=body,
+        student_name=student_name,
+        category_label=_clean(getattr(post, "category_label", "") or "QnA"),
+        action_label="답변 등록",
         event_type="qna_answered",
         occurrence_key=f"reply:{getattr(reply, 'id', '')}:answered:{send_to}",
         source_use_case="qna_answered",
@@ -80,6 +89,9 @@ def _send_freeform_to_recipients(
     tenant,
     recipients: Iterable[_Recipient],
     body: str,
+    student_name: str,
+    category_label: str,
+    action_label: str,
     event_type: str,
     occurrence_key: str,
     source_use_case: str,
@@ -95,13 +107,6 @@ def _send_freeform_to_recipients(
 
     template = resolve_freeform_template(tenant.id)
     template_id = (getattr(template, "solapi_template_id", "") or "").strip() if template else ""
-    if not template_id:
-        logger.info(
-            "qna alimtalk skipped: tenant=%s event=%s no approved freeform template",
-            getattr(tenant, "id", None),
-            event_type,
-        )
-        return 0
 
     academy_name = (getattr(tenant, "name", "") or "").strip()
     site_url = get_tenant_site_url(tenant) or ""
@@ -111,24 +116,25 @@ def _send_freeform_to_recipients(
     for recipient in recipients:
         if not _is_valid_phone(recipient.phone):
             continue
-        replacements = _freeform_replacements(
+        resolved_template_id, replacements, text = _resolve_qna_alimtalk_payload(
+            template=template,
+            template_id=template_id,
             body=body,
             academy_name=academy_name,
             recipient_name=recipient.name,
+            student_name=student_name,
             site_url=site_url,
+            category_label=category_label,
+            action_label=action_label,
         )
         try:
             ok = enqueue_sms(
                 tenant_id=tenant.id,
                 to=recipient.phone,
-                text=_render_template_text(
-                    getattr(template, "body", "") or "#{공지내용}",
-                    replacements,
-                    subject=getattr(template, "subject", "") or "",
-                ),
+                text=text,
                 sender=sender,
                 message_mode="alimtalk",
-                template_id=template_id,
+                template_id=resolved_template_id,
                 alimtalk_replacements=replacements,
                 event_type=event_type,
                 target_type=recipient.target_type,
@@ -152,6 +158,55 @@ def _send_freeform_to_recipients(
         if ok:
             sent += 1
     return sent
+
+
+def _resolve_qna_alimtalk_payload(
+    *,
+    template,
+    template_id: str,
+    body: str,
+    academy_name: str,
+    recipient_name: str,
+    student_name: str,
+    site_url: str,
+    category_label: str,
+    action_label: str,
+) -> tuple[str, list[dict[str, str]], str]:
+    if template_id:
+        replacements = _freeform_replacements(
+            body=body,
+            academy_name=academy_name,
+            recipient_name=recipient_name,
+            site_url=site_url,
+        )
+        text = _render_template_text(
+            getattr(template, "body", "") or "#{공지내용}",
+            replacements,
+            subject=getattr(template, "subject", "") or "",
+        )
+        return template_id, replacements, text
+
+    from apps.domains.messaging.alimtalk_content_builders import (
+        SOLAPI_ATTENDANCE,
+        TYPE_ATTENDANCE,
+        build_manual_replacements,
+    )
+
+    now = timezone.localtime()
+    replacements = build_manual_replacements(
+        TYPE_ATTENDANCE,
+        body,
+        {
+            "강의명": _clip(category_label or "QnA", 23),
+            "차시명": _clip(action_label or "QnA", 23),
+            "날짜": now.strftime("%m/%d"),
+            "시간": now.strftime("%H:%M"),
+        },
+        tenant_name=academy_name,
+        student_name=student_name or recipient_name,
+        site_url=site_url,
+    )
+    return SOLAPI_ATTENDANCE, replacements, body
 
 
 def _iter_staff_recipients(tenant) -> list[_Recipient]:
@@ -222,8 +277,12 @@ def _iter_staff_recipients(tenant) -> list[_Recipient]:
     return recipients
 
 
+def _post_student_name(post) -> str:
+    return _clean(getattr(getattr(post, "created_by", None), "name", "") or getattr(post, "author_display_name", ""))
+
+
 def _qna_created_body(post) -> str:
-    student_name = _clean(getattr(getattr(post, "created_by", None), "name", "") or getattr(post, "author_display_name", ""))
+    student_name = _post_student_name(post)
     title = _clean(getattr(post, "title", ""))
     category = _clean(getattr(post, "category_label", "") or "강의 선택 없음")
     return "\n".join(
@@ -238,7 +297,7 @@ def _qna_created_body(post) -> str:
 
 
 def _qna_answered_body(post) -> str:
-    student_name = _clean(getattr(getattr(post, "created_by", None), "name", "") or getattr(post, "author_display_name", ""))
+    student_name = _post_student_name(post)
     title = _clean(getattr(post, "title", ""))
     return "\n".join(
         [

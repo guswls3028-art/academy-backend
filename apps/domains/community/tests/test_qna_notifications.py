@@ -10,6 +10,7 @@ from apps.domains.community.services.qna_notifications import (
     notify_qna_answered,
     notify_qna_created,
 )
+from apps.domains.messaging.alimtalk_content_builders import SOLAPI_ATTENDANCE
 from apps.domains.messaging.models import MessageTemplate
 from apps.domains.students.models import Student
 
@@ -19,7 +20,7 @@ User = get_user_model()
 class QnaNotificationTests(TestCase):
     def setUp(self):
         self.tenant = Tenant.objects.create(name="QnA학원", code="qna_notice", is_active=True)
-        MessageTemplate.objects.create(
+        self.freeform_template = MessageTemplate.objects.create(
             tenant=self.tenant,
             category=MessageTemplate.Category.COMMUNITY,
             name="커뮤니티 자유 알림",
@@ -81,6 +82,24 @@ class QnaNotificationTests(TestCase):
         self.assertIn("수열 질문", replacement["value"])
 
     @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    def test_notify_qna_created_falls_back_to_unified_attendance_template(self, mock_enqueue):
+        self.freeform_template.delete()
+
+        sent = notify_qna_created(self.post, actor_user=self.student_user)
+
+        self.assertEqual(sent, 1)
+        kwargs = mock_enqueue.call_args.kwargs
+        self.assertEqual(kwargs["template_id"], SOLAPI_ATTENDANCE)
+        replacements = kwargs["alimtalk_replacements"]
+        memo = next(item for item in replacements if item["key"] == "선생님메모")
+        lecture = next(item for item in replacements if item["key"] == "강의명")
+        session = next(item for item in replacements if item["key"] == "차시명")
+        self.assertIn("[QnA 새 질문]", memo["value"])
+        self.assertIn("수열 질문", memo["value"])
+        self.assertEqual(lecture["value"], "수학")
+        self.assertEqual(session["value"], "새 질문")
+
+    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
     def test_notify_qna_answered_sends_freeform_alimtalk_to_student(self, mock_enqueue):
         reply = PostReply.objects.create(
             tenant=self.tenant,
@@ -101,3 +120,26 @@ class QnaNotificationTests(TestCase):
         replacement = next(item for item in kwargs["alimtalk_replacements"] if item["key"] == "공지내용")
         self.assertIn("[QnA 답변 등록]", replacement["value"])
         self.assertIn("수열 질문", replacement["value"])
+
+    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    def test_notify_qna_answered_falls_back_to_unified_attendance_template(self, mock_enqueue):
+        self.freeform_template.delete()
+        reply = PostReply.objects.create(
+            tenant=self.tenant,
+            post=self.post,
+            content="답변입니다",
+            author_role="staff",
+            author_display_name="김선생",
+        )
+
+        sent = notify_qna_answered(self.post, reply, send_to="student", actor_user=self.teacher)
+
+        self.assertEqual(sent, 1)
+        kwargs = mock_enqueue.call_args.kwargs
+        self.assertEqual(kwargs["template_id"], SOLAPI_ATTENDANCE)
+        replacements = kwargs["alimtalk_replacements"]
+        memo = next(item for item in replacements if item["key"] == "선생님메모")
+        session = next(item for item in replacements if item["key"] == "차시명")
+        self.assertIn("[QnA 답변 등록]", memo["value"])
+        self.assertIn("수열 질문", memo["value"])
+        self.assertEqual(session["value"], "답변 등록")
