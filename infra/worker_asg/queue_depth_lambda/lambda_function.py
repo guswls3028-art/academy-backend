@@ -3,11 +3,10 @@ SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시.
 
 - EventBridge rate(1 minute)로 호출.
 - AI/Messaging: Target Tracking (QueueDepth, Academy/Workers)
-- Video: 스케일링은 **오직 SQS** 기준. DB/backlog API 미사용.
-  - Academy/VideoProcessing VideoQueueDepthTotal = SQS(visible + notVisible) 합산.
-  - ASG TargetTracking이 이 메트릭만 사용 (Scale Trigger Source = Worker Pull Source = SQS).
+- Video: AWS Batch 전용. `ENABLE_VIDEO_METRICS=true`일 때만 legacy 진단용
+  Academy/VideoProcessing metric을 발행한다.
 
-설계: docs/VIDEO_WORKER_SCALING_SSOT.md
+설계: docs/infrastructure/deployment-architecture.md, docs/operations/runbooks/video-batch.md
 """
 from __future__ import annotations
 
@@ -30,11 +29,11 @@ VIDEO_QUEUE = os.environ.get("VIDEO_QUEUE", "academy-video-jobs-DEPRECATED-DO-NO
 MESSAGING_QUEUE = os.environ.get("MESSAGING_QUEUE", "academy-v1-messaging-queue")
 NAMESPACE = os.environ.get("METRIC_NAMESPACE", "Academy/Workers")
 METRIC_NAME = os.environ.get("METRIC_NAME", "QueueDepth")
-AI_WORKER_ASG_NAME = os.environ.get("AI_WORKER_ASG_NAME", "academy-ai-worker-asg")
+AI_WORKER_ASG_NAME = os.environ.get("AI_WORKER_ASG_NAME", "academy-v1-ai-worker-asg")
 AI_WORKER_ASG_MAX = int(os.environ.get("AI_WORKER_ASG_MAX", "20"))
-VIDEO_WORKER_ASG_NAME = os.environ.get("VIDEO_WORKER_ASG_NAME", "academy-video-worker-asg")
+VIDEO_WORKER_ASG_NAME = os.environ.get("VIDEO_WORKER_ASG_NAME", "academy-video-worker-asg-DEPRECATED-DO-NOT-USE")
 VIDEO_WORKER_ASG_MAX = int(os.environ.get("VIDEO_WORKER_ASG_MAX", "20"))
-MESSAGING_WORKER_ASG_NAME = os.environ.get("MESSAGING_WORKER_ASG_NAME", "academy-messaging-worker-asg")
+MESSAGING_WORKER_ASG_NAME = os.environ.get("MESSAGING_WORKER_ASG_NAME", "academy-v1-messaging-worker-asg")
 MESSAGING_WORKER_ASG_MAX = int(os.environ.get("MESSAGING_WORKER_ASG_MAX", "20"))
 MESSAGING_WORKER_ASG_MIN = int(os.environ.get("MESSAGING_WORKER_ASG_MIN", "1"))
 TARGET_MESSAGES_PER_INSTANCE = int(os.environ.get("TARGET_MESSAGES_PER_INSTANCE", "20"))
@@ -79,7 +78,10 @@ def lambda_handler(event: dict, context: Any) -> dict:
     (ai_basic_v, ai_basic_f) = get_queue_counts(sqs, AI_QUEUE_BASIC)
     ai_visible = ai_lite_v + ai_basic_v
     ai_in_flight = ai_lite_f + ai_basic_f
-    (video_visible, video_in_flight) = get_queue_counts(sqs, VIDEO_QUEUE)
+    video_visible = 0
+    video_in_flight = 0
+    if ENABLE_VIDEO_METRICS:
+        (video_visible, video_in_flight) = get_queue_counts(sqs, VIDEO_QUEUE)
     (messaging_visible, messaging_in_flight) = get_queue_counts(sqs, MESSAGING_QUEUE)
     ai_total = ai_visible  # 메트릭은 visible만 (기존과 동일)
 
