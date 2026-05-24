@@ -12,16 +12,17 @@
 > - **VCPU=8, MEM=16GB, jobdef timeout 6h, R2 병렬 업로드:** 2026-05-10 적용. 본 문서 수치와 다름.
 >
 > 현재 운영 SSOT:
-> - `backend/docs/releases/v1.2.0.md` (V1.2.0 봉인)
+> - `backend/docs/releases/README.md`의 CURRENT 행
 > - `backend/docs/infrastructure/video-cron-jobs.md` (cron 7종 책임 분담)
 > - `backend/apps/worker/video_worker/README.md` (batch_main 단독)
 > - 영상 파이프라인 대정비 메모 (2026-05-10)
 >
 > 본 문서는 *왜 그 시점에 그렇게 결정했는지* 의 history 가 필요할 때만 참조.
 
-> **Current State vs. Target State:**
-> This document describes both current infrastructure reality and proposed improvements.
-> Items marked **[CURRENT]** are already implemented.
+> **Historical label warning:** `[CURRENT]` below means current at the V1.1.0 writing
+> time, not current production. Use the SSOT links above for live operation.
+> This document describes both V1.1.0 infrastructure reality and proposed improvements.
+> Items marked **[CURRENT]** were already implemented at that time.
 > Items marked **[PROPOSED]** require code/infra changes before they take effect.
 > Items marked **[COMPLETED]** were implemented during the V1.1.0 optimization pass.
 

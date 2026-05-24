@@ -1,8 +1,8 @@
 """
 SQS 큐 깊이 → CloudWatch 메트릭 퍼블리시.
 
-- EventBridge rate(1 minute)로 호출.
-- AI/Messaging: Target Tracking (QueueDepth, Academy/Workers)
+- EventBridge rate(1 minute)로 호출하던 legacy helper.
+- AI/Messaging: QueueDepth diagnostic metric (Academy/Workers)
 - Video: AWS Batch 전용. `ENABLE_VIDEO_METRICS=true`일 때만 legacy 진단용
   Academy/VideoProcessing metric을 발행한다.
 

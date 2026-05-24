@@ -11,10 +11,14 @@ The active deployment truth is:
 - Worker env SQS sync: `scripts/v1/update-workers-env-sqs.ps1`
 
 There is no active non-`v1` `deploy_worker_asg.ps1` entrypoint.
+As of the 2026-05-25 KST live check, `academy-worker-queue-depth-metric` and
+`academy-worker-queue-depth-rate` are not deployed in ap-northeast-2. Active
+AI/Messaging scale policies use AWS/SQS CloudWatch alarms with EC2 ASG
+StepScaling.
 
 ## 구성
 
-- **queue_depth_lambda**: 1분마다 SQS visible 메시지 수를 CloudWatch `Academy/Workers` 네임스페이스에 퍼블리시 (AI = lite+basic 합산, Messaging). `ENABLE_VIDEO_METRICS=false`일 때는 폐기된 Video 큐를 조회하지 않는다.
+- **queue_depth_lambda**: historical helper source. Not deployed in the live account as of 2026-05-25 KST. If revived, `ENABLE_VIDEO_METRICS=false` skips the retired Video queue lookup.
 - **user_data**: AI/Messaging Launch Template 용 부팅 스크립트 (Docker, ECR pull, 컨테이너 실행, EC2_IDLE_STOP_THRESHOLD=0). Video user_data 는 stale 잔재.
 - **배포**: GitHub Actions 또는 `scripts/v1/deploy.ps1`가 정본.
 
@@ -24,7 +28,7 @@ There is no active non-`v1` `deploy_worker_asg.ps1` entrypoint.
    ```powershell
    aws ssm put-parameter --name /academy/workers/env --type SecureString --value file://.env --overwrite --region ap-northeast-2
    ```
-2. **Lambda 역할** (`academy-lambda`): 큐 깊이 Lambda용으로 **CloudWatch PutMetricData** (Namespace `Academy/Workers`) 권한 필요.  
+2. **Historical Lambda 역할** (`academy-lambda`): queue_depth_lambda를 되살릴 때만 CloudWatch PutMetricData 권한 필요.
    - `infra/worker_asg/iam_policy_queue_depth_lambda.json` 참고해 인라인 정책 추가 또는 기존 정책에 Statement 추가.
 3. **EC2 IAM 역할** (인스턴스 프로필): `ssm:GetParameter` (/academy/workers/env), ECR pull, 기존 워커용 권한.
 4. **VPC/서브넷/보안 그룹**: 기존 워커와 동일 (예: academy-worker-sg). 서브넷 ID 2개 이상 권장 (Multi-AZ).
@@ -43,7 +47,7 @@ pwsh scripts/v1/deploy.ps1 -AwsProfile default
 
 일반 코드 배포는 backend `main` push 후 GitHub Actions가 worker ASG refresh를 수행한다.
 
-## Lambda 사양 (academy-worker-queue-depth-metric)
+## Historical Lambda 사양 (not deployed 2026-05-25 KST)
 
 | 항목 | 값 |
 |------|-----|
@@ -57,11 +61,11 @@ pwsh scripts/v1/deploy.ps1 -AwsProfile default
 
 | 리소스 | 이름 |
 |--------|------|
-| Lambda | academy-worker-queue-depth-metric |
-| EventBridge Rule | academy-worker-queue-depth-rate (rate 1 min) |
+| Lambda | academy-worker-queue-depth-metric (not found in live account) |
+| EventBridge Rule | academy-worker-queue-depth-rate (not found in live account) |
 | Launch Template | academy-v1-ai-worker-lt, academy-v1-messaging-worker-lt (Video ASG 폐기) |
 | ASG | academy-v1-ai-worker-asg, academy-v1-messaging-worker-asg (Video ASG 폐기) |
-| Scaling Policy | QueueDepthTargetTracking (Target Tracking) |
+| Scaling Policy | AWS/SQS CloudWatch alarms → EC2 ASG StepScaling |
 
 ## 전환 시 (기존 Lambda 스케일 제거)
 

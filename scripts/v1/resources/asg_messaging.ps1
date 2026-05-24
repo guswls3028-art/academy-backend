@@ -108,10 +108,7 @@ function Ensure-MessagingSqsScaling {
     }
 
     $doScaling = {
-        $resourceId = "auto-scaling-group/$($script:MessagingASGName)"
         $region = $script:Region
-        $ns = "ec2"
-        $dim = "ec2:autoScalingGroup:DesiredCapacity"
         $scaleOutPolicyName = "$($script:MessagingASGName)-sqs-scale-out"
         $scaleInPolicyName = "$($script:MessagingASGName)-sqs-scale-in"
         $alarmOutName = "$($script:MessagingASGName)-sqs-scale-out"
@@ -120,43 +117,27 @@ function Ensure-MessagingSqsScaling {
         $scaleInThreshold = $script:MessagingScaleInThreshold
         $treatMissing = "notBreaching"
 
-        try {
-            Invoke-Aws @("application-autoscaling", "register-scalable-target",
-                "--service-namespace", $ns,
-                "--resource-id", $resourceId,
-                "--scalable-dimension", $dim,
-                "--min-capacity", $script:MessagingMinSize.ToString(),
-                "--max-capacity", $script:MessagingMaxSize.ToString(),
-                "--region", $region) -ErrorMessage "register-scalable-target messaging" | Out-Null
-        } catch {
-            if ($_.Exception.Message -match "scalableDimension|ValidationException|ec2:autoScalingGroup") {
-                Write-Warn "Application Auto Scaling does not support EC2 ASG; SQS-based scaling skipped. Use ASG min/max/desired or EC2 scaling policies."
-                $script:SqsScalingNotEnforced = $true
-                return
-            }
-            throw
-        }
-
-        $targets = Invoke-AwsJson @("application-autoscaling", "describe-scalable-targets",
-            "--service-namespace", $ns, "--resource-ids", $resourceId, "--region", $region, "--output", "json")
-        $st = $targets.ScalableTargets | Where-Object { $_.ResourceId -eq $resourceId } | Select-Object -First 1
-        if (-not $st -or [int]$st.MinCapacity -ne $script:MessagingMinSize -or [int]$st.MaxCapacity -ne $script:MessagingMaxSize) {
-            throw "ScalableTarget min/max mismatch: expected Min=$($script:MessagingMinSize) Max=$($script:MessagingMaxSize)"
-        }
-
-        $stepOut = '{"AdjustmentType":"ChangeInCapacity","MetricAggregationType":"Average","Cooldown":' + $script:MessagingScaleOutCooldown + ',"StepAdjustments":[{"MetricIntervalLowerBound":0,"ScalingAdjustment":1}]}'
-        $putOut = Invoke-AwsJson @("application-autoscaling", "put-scaling-policy",
-            "--service-namespace", $ns, "--resource-id", $resourceId, "--scalable-dimension", $dim,
-            "--policy-name", $scaleOutPolicyName, "--policy-type", "StepScaling",
-            "--step-scaling-policy-configuration", $stepOut,
+        $stepOut = '[{"MetricIntervalLowerBound":0,"ScalingAdjustment":1}]'
+        $putOut = Invoke-AwsJson @("autoscaling", "put-scaling-policy",
+            "--auto-scaling-group-name", $script:MessagingASGName,
+            "--policy-name", $scaleOutPolicyName,
+            "--policy-type", "StepScaling",
+            "--adjustment-type", "ChangeInCapacity",
+            "--metric-aggregation-type", "Average",
+            "--step-adjustments", $stepOut,
+            "--cooldown", $script:MessagingScaleOutCooldown.ToString(),
             "--region", $region, "--output", "json")
         $policyOutArn = $putOut.PolicyARN
 
-        $stepIn = '{"AdjustmentType":"ChangeInCapacity","MetricAggregationType":"Average","Cooldown":' + $script:MessagingScaleInCooldown + ',"StepAdjustments":[{"MetricIntervalUpperBound":0,"ScalingAdjustment":-1}]}'
-        $putIn = Invoke-AwsJson @("application-autoscaling", "put-scaling-policy",
-            "--service-namespace", $ns, "--resource-id", $resourceId, "--scalable-dimension", $dim,
-            "--policy-name", $scaleInPolicyName, "--policy-type", "StepScaling",
-            "--step-scaling-policy-configuration", $stepIn,
+        $stepIn = '[{"MetricIntervalUpperBound":0,"ScalingAdjustment":-1}]'
+        $putIn = Invoke-AwsJson @("autoscaling", "put-scaling-policy",
+            "--auto-scaling-group-name", $script:MessagingASGName,
+            "--policy-name", $scaleInPolicyName,
+            "--policy-type", "StepScaling",
+            "--adjustment-type", "ChangeInCapacity",
+            "--metric-aggregation-type", "Average",
+            "--step-adjustments", $stepIn,
+            "--cooldown", $script:MessagingScaleInCooldown.ToString(),
             "--region", $region, "--output", "json")
         $policyInArn = $putIn.PolicyARN
 

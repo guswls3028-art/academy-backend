@@ -374,9 +374,12 @@ try {
 
 # --- 8b. 정합성·프론트 연결 보고서 (consistency.latest.md, front-connection.latest.md) ---
 $buildRunningCount = 0  # build server 없음 (GitHub Actions only)
-$apiConsensusOk = ($ev.apiAsgMin -eq 1 -and $ev.apiAsgDesired -eq 1)
-$aiConsensusOk = ($ev.asgAiMin -eq 1 -and $ev.asgAiDesired -eq 1)
-$msgConsensusOk = ($ev.asgMessagingMin -eq 1 -and $ev.asgMessagingDesired -eq 1)
+$apiExpectedMinDesired = "$($script:ApiASGMinSize)/$($script:ApiASGDesiredCapacity)"
+$aiExpectedMinDesired = "$($script:AiMinSize)/$($script:AiDesiredCapacity)"
+$msgExpectedMinDesired = "$($script:MessagingMinSize)/$($script:MessagingDesiredCapacity)"
+$apiConsensusOk = ([string]$ev.apiAsgMin -eq [string]$script:ApiASGMinSize -and [string]$ev.apiAsgDesired -eq [string]$script:ApiASGDesiredCapacity)
+$aiConsensusOk = ([string]$ev.asgAiMin -eq [string]$script:AiMinSize -and [string]$ev.asgAiDesired -eq [string]$script:AiDesiredCapacity)
+$msgConsensusOk = ([string]$ev.asgMessagingMin -eq [string]$script:MessagingMinSize -and [string]$ev.asgMessagingDesired -eq [string]$script:MessagingDesiredCapacity)
 $eipNote = if ($eipCountTotal -gt 0) { "EIP $eipCountTotal 개 (미연결 $eipCountUnassociated). Solapi 고정 IP 취소로 NAT/EIP 불필요·비용 검토 권장." } else { "EIP 없음 (합의 반영)" }
 $buildNote = "정상 (빌드 서버 없음, GitHub Actions only)"
 
@@ -389,9 +392,9 @@ $consistencySb = [System.Text.StringBuilder]::new()
 [void]$consistencySb.AppendLine("## 합의사항 체크리스트")
 [void]$consistencySb.AppendLine("| 항목 | 기대 | 실제 | 결과 |")
 [void]$consistencySb.AppendLine("|------|------|------|------|")
-[void]$consistencySb.AppendLine("| API ASG min/desired | 1/1 | $($ev.apiAsgMin)/$($ev.apiAsgDesired) | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
-[void]$consistencySb.AppendLine("| AI ASG min/desired | 1/1 | $($ev.asgAiMin)/$($ev.asgAiDesired) | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
-[void]$consistencySb.AppendLine("| Messaging ASG min/desired | 1/1 | $($ev.asgMessagingMin)/$($ev.asgMessagingDesired) | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| API ASG min/desired | $apiExpectedMinDesired | $($ev.apiAsgMin)/$($ev.apiAsgDesired) | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| AI ASG min/desired | $aiExpectedMinDesired | $($ev.asgAiMin)/$($ev.asgAiDesired) | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| Messaging ASG min/desired | $msgExpectedMinDesired | $($ev.asgMessagingMin)/$($ev.asgMessagingDesired) | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$consistencySb.AppendLine("| Solapi 고정 IP(NAT/EIP) | 취소(불필요) | $eipNote | $(if ($eipCountTotal -eq 0) { 'PASS' } else { 'WARNING' }) |")
 [void]$consistencySb.AppendLine("| 빌드 서버 | 사용하지 않음(0대) | $buildNote | PASS |")
 [void]$consistencySb.AppendLine("")
@@ -607,9 +610,9 @@ $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("## 합의사항 체크")
 [void]$finalSb.AppendLine("| 항목 | 결과 |")
 [void]$finalSb.AppendLine("|------|------|")
-[void]$finalSb.AppendLine("| API ASG min/desired=1 | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
-[void]$finalSb.AppendLine("| AI ASG min/desired=1 | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
-[void]$finalSb.AppendLine("| Messaging ASG min/desired=1 | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$finalSb.AppendLine("| API ASG min/desired=$apiExpectedMinDesired | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$finalSb.AppendLine("| AI ASG min/desired=$aiExpectedMinDesired | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$finalSb.AppendLine("| Messaging ASG min/desired=$msgExpectedMinDesired | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$finalSb.AppendLine("| Solapi 고정 IP(NAT/EIP) 취소 | $(if ($eipCountTotal -eq 0) { 'PASS' } else { 'WARNING(EIP 잔여)' }) |")
 [void]$finalSb.AppendLine("| 빌드 (GitHub Actions only) | PASS |")
 [void]$finalSb.AppendLine("")

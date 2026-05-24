@@ -36,7 +36,7 @@
 main에 push하면 자동으로 서버 반영까지 완료된다:
 
 1. GitHub Actions `v1-build-and-push-latest.yml` 트리거
-2. 5개 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu) linux/arm64 빌드 → ECR `:latest` 푸시
+2. 변경 감지 결과에 따라 필요한 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu)만 linux/arm64 빌드 → ECR `:latest` + `:sha-*` 푸시. `workflow_dispatch` 또는 core/shared 변경은 전체 빌드.
 3. `run-migrations` job → 새 SHA 이미지로 one-shot `manage.py migrate`
 4. `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-video` job → 각 ASG/Bacth 리소스 refresh
 5. 새 인스턴스 기동 → UserData로 ECR pull + SSM env + docker run

@@ -1,7 +1,7 @@
 # V1.1.0 Deployment Architecture
 
 **Version:** V1.1.0
-**Date:** 2026-03-14
+**Date:** 2026-03-14 (checked 2026-05-25)
 **SSOT Status:** Active
 
 ## 1. Service Decomposition
@@ -36,6 +36,8 @@ git push main
     |
     |── (if AI changed) ──> [deploy-ai] ─── ASG instance refresh (MinHealthy=0%, Warmup=120s)
     |
+    |── (if video changed) ──> [deploy-video] ─── Batch job definition revisions with SHA image
+    |
     v
 [verify-deployment] ─── healthz 200 + health 200 + ASG healthy instances ──> PASS/FAIL
 ```
@@ -48,9 +50,9 @@ git push main
 |--------------|--------|
 | `docker/Dockerfile.base`, `requirements/common.txt`, `requirements/requirements.txt`, `libs/`, `academy/` | ALL images (force_full) |
 | `apps/`, `docker/api/`, `requirements/api.txt` | API |
-| `apps/worker/video_worker/`, `apps/support/video/`, `docker/video-worker/`, `requirements/worker-video.txt` | Video Worker |
-| `apps/worker/messaging_worker/`, `apps/support/messaging/`, `docker/messaging-worker/`, `requirements/worker-messaging.txt` | Messaging Worker |
-| `apps/worker/ai_worker/`, `apps/domains/ai/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
+| `apps/worker/video_worker/`, `apps/support/video/`, `apps/domains/video/`, `apps/api/config/settings/worker.py`, `docker/video-worker/`, `requirements/worker-video.txt` | Video Worker |
+| `apps/worker/messaging_worker/`, `apps/support/messaging/`, `apps/domains/messaging/`, `apps/api/config/settings/worker.py`, `docker/messaging-worker/`, `requirements/worker-messaging.txt` | Messaging Worker |
+| `apps/worker/ai_worker/`, `apps/worker/omr/`, `apps/domains/`, `apps/support/ai/`, `apps/api/config/settings/(worker|base).py`, `academy/`, `libs/queue/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
 
 Base image build is CONDITIONAL — triggered only when `docker/Dockerfile.base`, `requirements/common.txt`, or `libs/` files change (or on workflow_dispatch). Conditional builds also apply to service-specific images.
 
@@ -68,6 +70,7 @@ Deploy jobs only run if the corresponding service was built:
 deploy-api:       if build_api == 'true' || force_full == 'true'
 deploy-messaging: if build_messaging == 'true' || force_full == 'true'
 deploy-ai:        if build_ai == 'true' || force_full == 'true'
+deploy-video:     if build_video == 'true' || force_full == 'true'
 ```
 
 Dependencies:
@@ -104,6 +107,12 @@ Workers use the same ASG instance refresh mechanism as API but with:
 - Shorter warmup (120s vs 300s) — workers don't serve HTTP traffic
 - No ALB health check — workers are background processors
 - **MinHealthyPercentage=0%** — workers tolerate brief downtime during replacement. Message loss is prevented by SQS visibility timeout (messages return to queue if not acknowledged)
+
+Runtime scaling is split by worker:
+
+- **AI** uses AWS/SQS CloudWatch alarms (`ai-worker-queue-high`, `ai-worker-queue-low`, `ai-worker-queue-age-high`) and EC2 ASG StepScaling. SSOT min/desired is 0/0.
+- **Messaging** runs with ASG min/desired=1 baseline and AWS/SQS CloudWatch alarms for StepScaling up to SSOT max capacity. Deploys replace instances through ASG refresh.
+- **Video** is not an ASG worker. It is AWS Batch only.
 
 ### Worker UserData Flow
 
