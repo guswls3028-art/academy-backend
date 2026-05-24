@@ -161,10 +161,9 @@ class LectureProgress(TimestampModel):
         WARNING = "WARNING", "Warning"
         DANGER = "DANGER", "Danger"
 
-    enrollment = models.ForeignKey(
+    enrollment = models.OneToOneField(
         "enrollment.Enrollment",
         on_delete=models.CASCADE,
-        unique=True,
         db_column="enrollment_id",
         related_name="lecture_progress_rows",
     )
