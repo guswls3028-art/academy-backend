@@ -744,32 +744,54 @@ class PostViewSet(viewsets.ModelViewSet):
         #   - student 작성: QnA→학생, 상담→학생+학부모
         #   - parent 작성: QnA·상담 모두 학부모만 (학부모가 본인 자격으로 쓴 글)
         if author_role == "staff" and post.post_type in ("qna", "counsel") and post.created_by_id:
+            category_fallback = "QnA" if post.post_type == "qna" else "상담"
+            ctx = {
+                "강의명": (post.category_label or category_fallback),
+                "차시명": (post.title or ""),
+            }
+            trigger = "qna_answered" if post.post_type == "qna" else "counsel_answered"
+            post_author_role = getattr(post, "author_role", "") or "student"
+            if post_author_role == "parent":
+                send_targets = ("parent",)
+            elif post.post_type == "counsel":
+                send_targets = ("student", "parent")
+            else:  # qna + student
+                send_targets = ("student",)
+
             try:
                 from apps.domains.messaging.services import send_event_notification
-                category_fallback = "QnA" if post.post_type == "qna" else "상담"
-                ctx = {
-                    "강의명": (post.category_label or category_fallback),
-                    "차시명": (post.title or ""),
-                }
-                trigger = "qna_answered" if post.post_type == "qna" else "counsel_answered"
-                post_author_role = getattr(post, "author_role", "") or "student"
-                if post_author_role == "parent":
-                    send_targets = ("parent",)
-                elif post.post_type == "counsel":
-                    send_targets = ("student", "parent")
-                else:  # qna + student
-                    send_targets = ("student",)
-                for send_to in send_targets:
-                    sent = send_event_notification(
-                        tenant=tenant, trigger=trigger,
-                        student=post.created_by, send_to=send_to, context=ctx,
-                    )
-                    if post.post_type == "qna" and not sent:
+            except Exception as e:
+                logger.warning("community reply primary notification unavailable: post_id=%s err=%s", post.id, e)
+                send_event_notification = None
+
+            for send_to in send_targets:
+                sent = False
+                if send_event_notification is not None:
+                    try:
+                        sent = send_event_notification(
+                            tenant=tenant, trigger=trigger,
+                            student=post.created_by, send_to=send_to, context=ctx,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "community reply primary notification failed: post_id=%s trigger=%s send_to=%s err=%s",
+                            post.id,
+                            trigger,
+                            send_to,
+                            e,
+                        )
+                if post.post_type == "qna" and not sent:
+                    try:
                         from apps.domains.community.services.qna_notifications import notify_qna_answered
 
                         notify_qna_answered(post, reply, send_to=send_to, actor_user=request.user)
-            except Exception as e:
-                logger.warning("community reply notification dispatch failed: post_id=%s err=%s", post.id, e)
+                    except Exception as e:
+                        logger.warning(
+                            "community qna reply fallback notification failed: post_id=%s send_to=%s err=%s",
+                            post.id,
+                            send_to,
+                            e,
+                        )
 
         return Response(PostReplySerializer(reply).data, status=status.HTTP_201_CREATED)
 

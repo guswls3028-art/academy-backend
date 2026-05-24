@@ -26,7 +26,7 @@ def notify_qna_created(post, *, actor_user=None) -> int:
 
     student_name = _post_student_name(post)
     body = _qna_created_body(post)
-    return _send_freeform_to_recipients(
+    return _send_qna_alimtalk_to_recipients(
         tenant=getattr(post, "tenant", None),
         recipients=_iter_staff_recipients(getattr(post, "tenant", None)),
         body=body,
@@ -69,7 +69,7 @@ def notify_qna_answered(post, reply, *, send_to: str = "student", actor_user=Non
     )
     student_name = _post_student_name(post)
     body = _qna_answered_body(post)
-    return _send_freeform_to_recipients(
+    return _send_qna_alimtalk_to_recipients(
         tenant=getattr(post, "tenant", None),
         recipients=[recipient],
         body=body,
@@ -84,7 +84,7 @@ def notify_qna_answered(post, reply, *, send_to: str = "student", actor_user=Non
     )
 
 
-def _send_freeform_to_recipients(
+def _send_qna_alimtalk_to_recipients(
     *,
     tenant,
     recipients: Iterable[_Recipient],

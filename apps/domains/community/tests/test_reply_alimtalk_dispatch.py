@@ -103,11 +103,14 @@ class TestReplyAlimtalkDispatch(TestCase):
         self.assertEqual(resp.status_code, 201, resp.data)
         mock_send.assert_not_called()
 
+    @patch("apps.domains.community.services.qna_notifications.notify_qna_answered")
     @patch("apps.domains.messaging.services.send_event_notification")
-    def test_dispatch_failure_does_not_break_reply(self, mock_send):
+    def test_qna_reply_falls_back_when_primary_dispatch_raises(self, mock_send, mock_fallback):
         mock_send.side_effect = RuntimeError("solapi down")
         resp = self._post_reply(self.qna)
         self.assertEqual(resp.status_code, 201, "알림톡 실패가 답변 등록을 막아선 안 됨")
+        mock_fallback.assert_called_once()
+        self.assertEqual(mock_fallback.call_args.kwargs["send_to"], "student")
 
     @patch("apps.domains.messaging.services.send_event_notification")
     def test_parent_authored_qna_dispatches_to_parent_only(self, mock_send):
