@@ -142,6 +142,18 @@ def send_clinic_session_reminder(*, session_id: int):
     return send_clinic_reminder_for_students(session_id=session_id)
 
 
+def send_clinic_event_notification(*, tenant, trigger: str, student, send_to: str, context: dict):
+    from apps.domains.messaging.services import send_event_notification
+
+    return send_event_notification(
+        tenant=tenant,
+        trigger=trigger,
+        student=student,
+        send_to=send_to,
+        context=context,
+    )
+
+
 def unresolve_legacy_booking_links_for_session_delete(*, tenant, session) -> None:
     from django.db.models import Q
     from apps.domains.clinic.models import SessionParticipant

@@ -4,6 +4,7 @@ import logging
 from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import serializers
@@ -26,6 +27,10 @@ from ..services import (
 )
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.support.clinic.session_dependencies import (
+    get_student_for_clinic_request,
+    send_clinic_event_notification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +38,11 @@ logger = logging.getLogger(__name__)
 def _send_clinic_notification(tenant, student, trigger, context=None):
     """클리닉 알림 — 학생+학부모 동시 발송 (AUTO_DEFAULT 정책)."""
     try:
-        from apps.domains.messaging.services import send_event_notification
         event_context = dict(context or {})
         event_context.setdefault("_source_domain", "clinic")
         event_context.setdefault("_source_use_case", f"clinic.{trigger}")
         for send_to in ("parent", "student"):
-            send_event_notification(
+            send_clinic_event_notification(
                 tenant=tenant,
                 trigger=trigger,
                 student=student,
@@ -84,8 +88,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         )
 
         # 학생이 조회하는 경우: 자신의 예약 신청만 조회
-        from apps.domains.student_app.permissions import get_request_student
-        student = get_request_student(self.request)
+        student = get_student_for_clinic_request(self.request)
         if student:
             qs = qs.filter(student=student)
 
@@ -112,11 +115,10 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        from apps.domains.student_app.permissions import get_request_student
         result = create_participant(
             tenant=tenant,
             validated_data=serializer.validated_data,
-            request_student=get_request_student(request),
+            request_student=get_student_for_clinic_request(request),
         )
         obj = result.participant
         if result.notification:
@@ -147,13 +149,16 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         next_status = request.data.get("status")
         memo = request.data.get("memo")
 
-        from apps.domains.student_app.permissions import get_request_student
+        request_student = get_student_for_clinic_request(request)
+        if request_student is None and not TenantResolvedAndStaff().has_permission(request, self):
+            raise PermissionDenied("클리닉 상태 변경은 스태프만 가능합니다.")
+
         result = change_participant_status(
             tenant=getattr(request, "tenant", None),
             participant_id=self.get_object().pk,
             next_status=next_status,
             actor=request.user,
-            request_student=get_request_student(request),
+            request_student=request_student,
             memo=memo,
         )
         obj = result.participant
@@ -243,12 +248,11 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from apps.domains.student_app.permissions import get_request_student
         result = change_participant_booking(
             tenant=tenant,
             participant_id=pk,
             new_session_id=new_session_id,
-            request_student=get_request_student(request),
+            request_student=get_student_for_clinic_request(request),
             actor=request.user,
             memo=memo,
         )
