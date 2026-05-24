@@ -13,7 +13,7 @@ from apps.domains.submissions.services.omr_submission_guards import (
     lock_exam_enrollment_candidate,
 )
 from apps.domains.submissions.services.transition import transit
-from apps.domains.results.services.answer_matching import answer_matches
+from apps.domains.results.services.answer_matching import answer_matches, correct_answer_sets
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,145 @@ def _hamming(a: str, b: str) -> int:
     if len(a) != len(b):
         return max(len(a), len(b))
     return sum(1 for x, y in zip(a, b) if x != y)
+
+
+def _clean_tail8(value: str) -> str:
+    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
+    return digits[-8:] if len(digits) >= 8 else digits
+
+
+def _tail8_variants(value: str) -> set[str]:
+    """
+    전화번호/식별번호 비교용 tail 후보.
+
+    운영 값은 숫자 8자리지만, 오래된 테스트/fixture에는 S001 같은
+    알파벳이 섞인 pseudo-phone이 있다. 숫자 정규화와 legacy compact tail을
+    모두 비교해 기존 보안 회귀를 유지한다.
+    """
+    raw = str(value or "").strip()
+    variants: set[str] = set()
+
+    digit_tail = _clean_tail8(raw)
+    if digit_tail:
+        variants.add(digit_tail)
+
+    compact = "".join(ch for ch in raw if ch.isalnum()).upper()
+    if len(compact) >= 8:
+        variants.add(compact[-8:])
+    elif compact:
+        variants.add(compact)
+
+    return variants
+
+
+def _exact_enrollment_ids_by_phone(
+    *,
+    exam_id: int,
+    phone_last8: str,
+    tenant,
+) -> set[int]:
+    """시험 대상자 중 전화번호 뒤 8자리 exact match enrollment id 집합."""
+    from apps.domains.enrollment.models import Enrollment
+
+    tails = {tail for tail in _tail8_variants(phone_last8) if len(tail) == 8}
+    if not tails:
+        return set()
+
+    out: set[int] = set()
+    enrollments = Enrollment.objects.filter(
+        exam_enrollments__exam_id=exam_id,
+        tenant=tenant,
+    ).select_related("student").distinct()
+    for enr in enrollments:
+        student = getattr(enr, "student", None)
+        if not student:
+            continue
+        student_tails = _tail8_variants(getattr(student, "phone", "") or "")
+        parent_tails = _tail8_variants(getattr(student, "parent_phone", "") or "")
+        if tails & (student_tails | parent_tails):
+            out.add(int(enr.id))
+    return out
+
+
+def _ambiguous_identifier_has_competing_exact_match(
+    *,
+    identifier: dict[str, Any],
+    accepted_code: str,
+    accepted_enrollment_id: int,
+    exam_id: int,
+    tenant,
+) -> bool:
+    """
+    식별번호 한 자리 ambiguous라도, 가능한 대체 코드가 다른 시험 대상자를
+    정확히 가리키지 않으면 자동 매칭해도 안전하다.
+    """
+    base = _clean_tail8(accepted_code)
+    if len(base) != 8:
+        return True
+
+    digits = identifier.get("digits") if isinstance(identifier, dict) else None
+    if not isinstance(digits, list):
+        return True
+
+    candidate_codes: set[str] = set()
+    for digit in digits:
+        if not isinstance(digit, dict):
+            continue
+        if str(digit.get("status") or "").lower() != "ambiguous":
+            continue
+        try:
+            raw_idx = int(digit.get("digit_index"))
+        except Exception:
+            continue
+        idx = raw_idx if 0 <= raw_idx < len(base) else raw_idx - 1
+        if idx < 0 or idx >= len(base):
+            continue
+
+        marks = digit.get("marks")
+        if not isinstance(marks, list):
+            continue
+        for mark in marks[1:4]:
+            if not isinstance(mark, dict):
+                continue
+            raw_number = mark.get("number")
+            if raw_number is None:
+                continue
+            alt = str(raw_number)
+            if len(alt) != 1 or not alt.isdigit() or alt == base[idx]:
+                continue
+            candidate_codes.add(f"{base[:idx]}{alt}{base[idx + 1:]}")
+
+    for code in candidate_codes:
+        matches = _exact_enrollment_ids_by_phone(
+            exam_id=exam_id,
+            phone_last8=code,
+            tenant=tenant,
+        )
+        if matches and (matches != {int(accepted_enrollment_id)}):
+            return True
+    return False
+
+
+def _ambiguous_answer_can_change_score(
+    *,
+    detected_values: list[str],
+    correct_answer: Any,
+) -> bool:
+    """
+    애매한 마킹이 실제 점수를 바꿀 가능성이 있을 때만 검토로 보낸다.
+    정답 후보와 전혀 겹치지 않는 애매한 선/낙서는 자동 오답으로 확정 가능하다.
+    """
+    detected = frozenset(str(v).strip() for v in detected_values if str(v).strip())
+    if not detected:
+        return False
+
+    correct_sets = correct_answer_sets(correct_answer)
+    if not correct_sets:
+        return True
+    if detected in correct_sets:
+        return False
+
+    return any(bool(detected & correct) for correct in correct_sets)
 
 
 def _resolve_enrollment_by_phone(
@@ -61,6 +200,9 @@ def _resolve_enrollment_by_phone(
         tenant=tenant,
     ).select_related("student").distinct()
 
+    lookup_tails = {tail for tail in _tail8_variants(phone_last8) if len(tail) == 8}
+    lookup_digit_tails = {tail for tail in lookup_tails if tail.isdigit()}
+
     exact_matches: list[int] = []
     fuzzy_candidates: list[tuple[int, int]] = []  # (enrollment_id, hamming_distance)
 
@@ -68,26 +210,25 @@ def _resolve_enrollment_by_phone(
         student = getattr(enr, "student", None)
         if not student:
             continue
-        s_phone = str(getattr(student, "phone", "") or "").replace("-", "").strip()
-        p_phone = str(getattr(student, "parent_phone", "") or "").replace("-", "").strip()
+        s_tails = _tail8_variants(getattr(student, "phone", "") or "")
+        p_tails = _tail8_variants(getattr(student, "parent_phone", "") or "")
 
-        s_tail = s_phone[-8:] if s_phone else ""
-        p_tail = p_phone[-8:] if p_phone else ""
-
-        if s_tail == phone_last8 or p_tail == phone_last8:
+        if lookup_tails & (s_tails | p_tails):
             exact_matches.append(enr.id)
             continue
 
         # fuzzy 후보: 길이 8이고 Hamming 거리 ≤1
-        if len(s_tail) == 8:
-            d = _hamming(s_tail, phone_last8)
-            if d <= 1:
-                fuzzy_candidates.append((enr.id, d))
+        student_digit_tails = {tail for tail in s_tails if len(tail) == 8 and tail.isdigit()}
+        parent_digit_tails = {tail for tail in p_tails if len(tail) == 8 and tail.isdigit()}
+        for candidate_tail in student_digit_tails | parent_digit_tails:
+            for lookup_tail in lookup_digit_tails:
+                d = _hamming(candidate_tail, lookup_tail)
+                if d <= 1:
+                    fuzzy_candidates.append((enr.id, d))
+                    break
+            else:
                 continue
-        if len(p_tail) == 8:
-            d = _hamming(p_tail, phone_last8)
-            if d <= 1:
-                fuzzy_candidates.append((enr.id, d))
+            break
 
     # 1) 정확 매칭이 정확히 1건이면 채택
     if len(exact_matches) == 1:
@@ -292,15 +433,23 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             answer_stats["sum_conf"] += conf_f
             answer_stats["n_conf"] += 1
 
-        if st != "ok" and not expected_multi_ok:
+        score_ambiguous = _ambiguous_answer_can_change_score(
+            detected_values=detected_values,
+            correct_answer=correct_answers_by_pk.get(str(eqid)),
+        )
+
+        if st == "error":
             manual_required = True
             reasons.append("ANSWER_STATUS_NOT_OK")
+        elif st not in ("ok", "blank") and not expected_multi_ok and score_ambiguous:
+            manual_required = True
+            reasons.append("ANSWER_SCORE_AMBIGUOUS")
 
-        if mk == "blank" or (mk == "multi" and not expected_multi_ok):
+        if mk == "multi" and not expected_multi_ok and score_ambiguous:
             manual_required = True
             reasons.append("ANSWER_BLANK_OR_MULTI")
 
-        if st == "low_confidence" and not expected_multi_ok:
+        if st == "low_confidence" and not expected_multi_ok and score_ambiguous:
             manual_required = True
             reasons.append("ANSWER_LOW_CONFIDENCE")
 
@@ -310,6 +459,14 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     if isinstance(result, dict) and result.get("aligned") is False:
         manual_required = True
         reasons.append("ALIGNMENT_FAILED")
+
+    if (
+        answer_stats["total"] > 0
+        and answer_stats["ok"] == 0
+        and answer_stats["blank"] >= max(3, int(answer_stats["total"] * 0.8))
+    ):
+        manual_required = True
+        reasons.append("ANSWER_SHEET_BLANK")
 
     # 평균 신뢰도 보조 필드
     if answer_stats["n_conf"] > 0:
@@ -355,10 +512,21 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             ambiguous_ident = ident_status == "ambiguous"
             if enrollment_id and identifier_match_kind == "exact":
                 if ambiguous_ident:
-                    # 1자리가 ambiguous였지만 정확 매칭 단일 후보 → 자동 식별 + 운영자 확인
-                    identifier_status = "matched_ambiguous"
-                    manual_required = True
-                    reasons.append("IDENTIFIER_AMBIGUOUS_DIGIT")
+                    has_competitor = _ambiguous_identifier_has_competing_exact_match(
+                        identifier=identifier,
+                        accepted_code=detected_code,
+                        accepted_enrollment_id=int(enrollment_id),
+                        exam_id=int(submission.target_id),
+                        tenant=submission.tenant,
+                    )
+                    if has_competitor:
+                        # 대체 digit 후보가 다른 시험 대상자를 가리킬 수 있으면 운영자 확인.
+                        identifier_status = "matched_ambiguous"
+                        manual_required = True
+                        reasons.append("IDENTIFIER_AMBIGUOUS_DIGIT")
+                    else:
+                        # 애매한 digit 후보가 실제 경쟁 대상자를 만들지 않으면 자동 확정.
+                        identifier_status = "matched_ambiguous_resolved"
                 else:
                     identifier_status = "matched"
             elif enrollment_id and identifier_match_kind == "fuzzy":

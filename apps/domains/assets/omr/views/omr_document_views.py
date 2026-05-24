@@ -70,6 +70,50 @@ def _safe_filename(title: str) -> str:
     return safe or "OMR"
 
 
+def _render_preview_response(doc: OMRDocument) -> HttpResponse:
+    """OMRDocument → HTML preview response. 모든 생성 경로의 SSOT."""
+    html = OMRHtmlRenderer().render(doc)
+    return HttpResponse(html, content_type="text/html; charset=utf-8")
+
+
+def _render_pdf_response(doc: OMRDocument, *, tenant) -> HttpResponse:
+    """OMRDocument → PDF download response. 모든 생성 경로의 SSOT."""
+    doc = OMRDocumentService.fetch_logo_bytes(doc, tenant=tenant)
+    pdf_bytes = OMRPdfRenderer().render(doc)
+
+    filename = _safe_filename(doc.exam_title)
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}_OMR.pdf"'
+    return response
+
+
+def _build_exam_doc(*, request, exam_id: int) -> tuple[OMRDocument | None, Response | None]:
+    """시험 기반 OMRDocument 생성. validation error는 DRF Response로 반환."""
+    exam = _get_exam(request.tenant, exam_id)
+    params = _parse_omr_params(request.data)
+    doc = OMRDocumentService.from_exam(
+        exam=exam, tenant=request.tenant, **params
+    )
+    err = _validate_doc(doc)
+    return (None, err) if err else (doc, None)
+
+
+def _build_tools_doc(*, request) -> tuple[OMRDocument | None, Response | None]:
+    """도구 기반 OMRDocument 생성. validation error는 DRF Response로 반환."""
+    data = request.data
+    exam_title = str(data.get("exam_title", "시험 답안지"))[:100]
+    params = _parse_omr_params(data)
+    params.pop("exam_title", None)
+
+    doc = OMRDocumentService.from_params(
+        tenant=request.tenant,
+        exam_title=exam_title,
+        **params,
+    )
+    err = _validate_doc(doc)
+    return (None, err) if err else (doc, None)
+
+
 # ──────────────────────────────────────────────
 # Exam-bound endpoints
 # ──────────────────────────────────────────────
@@ -97,17 +141,10 @@ class ExamOMRPreviewView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request, exam_id: int):
-        exam = _get_exam(request.tenant, exam_id)
-        params = _parse_omr_params(request.data)
-        doc = OMRDocumentService.from_exam(
-            exam=exam, tenant=request.tenant, **params
-        )
-        err = _validate_doc(doc)
+        doc, err = _build_exam_doc(request=request, exam_id=exam_id)
         if err:
             return err
-
-        html = OMRHtmlRenderer().render(doc)
-        return HttpResponse(html, content_type="text/html; charset=utf-8")
+        return _render_preview_response(doc)
 
 
 class ExamOMRPdfView(APIView):
@@ -119,22 +156,10 @@ class ExamOMRPdfView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request, exam_id: int):
-        exam = _get_exam(request.tenant, exam_id)
-        params = _parse_omr_params(request.data)
-        doc = OMRDocumentService.from_exam(
-            exam=exam, tenant=request.tenant, **params
-        )
-        err = _validate_doc(doc)
+        doc, err = _build_exam_doc(request=request, exam_id=exam_id)
         if err:
             return err
-
-        doc = OMRDocumentService.fetch_logo_bytes(doc, tenant=request.tenant)
-        pdf_bytes = OMRPdfRenderer().render(doc)
-
-        filename = _safe_filename(doc.exam_title)
-        response = HttpResponse(pdf_bytes, content_type="application/pdf")
-        response["Content-Disposition"] = f'attachment; filename="{filename}_OMR.pdf"'
-        return response
+        return _render_pdf_response(doc, tenant=request.tenant)
 
 
 # ──────────────────────────────────────────────
@@ -150,22 +175,10 @@ class ToolsOMRPreviewView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request):
-        data = request.data
-        exam_title = str(data.get("exam_title", "시험 답안지"))[:100]
-        params = _parse_omr_params(data)
-        params.pop("exam_title", None)
-
-        doc = OMRDocumentService.from_params(
-            tenant=request.tenant,
-            exam_title=exam_title,
-            **params,
-        )
-        err = _validate_doc(doc)
+        doc, err = _build_tools_doc(request=request)
         if err:
             return err
-
-        html = OMRHtmlRenderer().render(doc)
-        return HttpResponse(html, content_type="text/html; charset=utf-8")
+        return _render_preview_response(doc)
 
 
 class ToolsOMRPdfView(APIView):
@@ -177,24 +190,7 @@ class ToolsOMRPdfView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request):
-        data = request.data
-        exam_title = str(data.get("exam_title", "시험 답안지"))[:100]
-        params = _parse_omr_params(data)
-        params.pop("exam_title", None)
-
-        doc = OMRDocumentService.from_params(
-            tenant=request.tenant,
-            exam_title=exam_title,
-            **params,
-        )
-        err = _validate_doc(doc)
+        doc, err = _build_tools_doc(request=request)
         if err:
             return err
-
-        doc = OMRDocumentService.fetch_logo_bytes(doc, tenant=request.tenant)
-        pdf_bytes = OMRPdfRenderer().render(doc)
-
-        filename = _safe_filename(doc.exam_title)
-        response = HttpResponse(pdf_bytes, content_type="application/pdf")
-        response["Content-Disposition"] = f'attachment; filename="{filename}_OMR.pdf"'
-        return response
+        return _render_pdf_response(doc, tenant=request.tenant)
