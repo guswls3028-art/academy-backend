@@ -14,7 +14,10 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
+import tempfile
 import uuid
+import zipfile
 
 from django.http import JsonResponse
 from django.views import View
@@ -90,6 +93,33 @@ def _validate_order(order: list, image_count: int) -> list[int] | None:
     if sorted(int_order) != list(range(image_count)):
         return None
     return int_order
+
+
+def _safe_archive_ext(filename: str) -> str:
+    """Return a conservative image extension for generated archive entries."""
+    if "." not in filename:
+        return "bin"
+    ext = filename.rsplit(".", 1)[-1].lower()
+    if not ext.isalnum() or len(ext) > 10:
+        return "bin"
+    return ext
+
+
+def _build_images_archive(ordered_files):
+    """Pack ordered uploads into a single ZIP to avoid hundreds of R2 round trips."""
+    archive = tempfile.TemporaryFile()
+    with zipfile.ZipFile(archive, mode="w", compression=zipfile.ZIP_STORED, allowZip64=True) as zf:
+        for idx, f in enumerate(ordered_files):
+            ext = _safe_archive_ext(getattr(f, "name", ""))
+            info = zipfile.ZipInfo(f"images/{idx:04d}.{ext}")
+            info.compress_type = zipfile.ZIP_STORED
+            info.date_time = (1980, 1, 1, 0, 0, 0)
+            f.seek(0)
+            with zf.open(info, mode="w") as target:
+                shutil.copyfileobj(f, target, length=1024 * 1024)
+            f.seek(0)
+    archive.seek(0)
+    return archive
 
 
 @method_decorator([csrf_exempt, require_POST], name="dispatch")
@@ -222,22 +252,23 @@ class PptGenerateView(View):
         if fit_mode not in ("contain", "cover", "stretch"):
             fit_mode = "contain"
 
-        # Upload each image to R2 temp location
+        # Upload all images as one ordered archive. 500 individual R2 PUTs made
+        # the job-dispatch request exceed the frontend timeout before workers
+        # could even start.
         from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
 
         job_unique = uuid.uuid4().hex[:12]
-        r2_keys = []
+        archive_key = f"tenants/{tenant_id}/tools/ppt/tmp/{job_unique}/images.zip"
 
-        for idx, f in enumerate(ordered_files):
-            ext = f.name.rsplit(".", 1)[-1] if "." in f.name else "bin"
-            tmp_key = f"tenants/{tenant_id}/tools/ppt/tmp/{job_unique}/{idx}.{ext}"
-
+        archive_file = _build_images_archive(ordered_files)
+        try:
             upload_fileobj_to_r2_storage(
-                fileobj=f,
-                key=tmp_key,
-                content_type=f.content_type or "application/octet-stream",
+                fileobj=archive_file,
+                key=archive_key,
+                content_type="application/zip",
             )
-            r2_keys.append(tmp_key)
+        finally:
+            archive_file.close()
 
         # Build settings payload for worker
         image_settings = {
@@ -258,7 +289,7 @@ class PptGenerateView(View):
             job_type="ppt_generation",
             payload={
                 "mode": "images",
-                "r2_keys": r2_keys,
+                "r2_archive_key": archive_key,
                 "config": {
                     "aspect_ratio": aspect_ratio,
                     "background": background,
@@ -279,13 +310,13 @@ class PptGenerateView(View):
 
         logger.info(
             "PPT 작업 등록: tenant=%s user=%s job_id=%s images=%d",
-            tenant_id, request.user.id, result["job_id"], len(r2_keys),
+            tenant_id, request.user.id, result["job_id"], len(ordered_files),
         )
 
         return JsonResponse({
             "job_id": result["job_id"],
             "status": "PENDING",
-            "slide_count": len(r2_keys),
+            "slide_count": len(ordered_files),
         })
 
     def _handle_pdf_mode(self, request, pdf_file, tenant_id: str) -> JsonResponse:

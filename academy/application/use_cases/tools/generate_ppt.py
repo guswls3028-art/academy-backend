@@ -9,7 +9,7 @@ from __future__ import annotations
 import io
 import logging
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Iterable, List, Optional
 
 from PIL import Image as PILImage
 
@@ -42,16 +42,18 @@ class GeneratePptUseCase:
 
     def execute(
         self,
-        image_bytes_list: List[bytes],
+        image_bytes_list: Iterable[bytes],
         config: Optional[dict] = None,
         on_progress: Optional[Callable[[int, str], None]] = None,
+        total_count: Optional[int] = None,
     ) -> PptResult:
         """Execute PPT generation from images.
 
         Args:
-            image_bytes_list: List of image bytes (JPEG/PNG).
-            config: PPT config dict with keys: aspect_ratio, background, fit_mode.
-            on_progress: Optional callback (percent, step_name).
+        image_bytes_list: Iterable of image bytes (JPEG/PNG).
+        config: PPT config dict with keys: aspect_ratio, background, fit_mode.
+        on_progress: Optional callback (percent, step_name).
+        total_count: Optional count for streaming iterables.
 
         Returns:
             PptResult with PPTX bytes and slide count.
@@ -66,13 +68,20 @@ class GeneratePptUseCase:
         )
 
         composer = PptComposer(ppt_config)
-        total = len(image_bytes_list)
+        if total_count is not None:
+            total = total_count
+        else:
+            try:
+                total = len(image_bytes_list)  # type: ignore[arg-type]
+            except TypeError:
+                total = 0
 
         for idx, img_bytes in enumerate(image_bytes_list):
             composer.add_slide(img_bytes)
             if on_progress:
-                pct = int((idx + 1) / total * 100)
-                on_progress(pct, f"슬라이드 {idx + 1}/{total}")
+                pct = int((idx + 1) / total * 100) if total else 0
+                label = f"슬라이드 {idx + 1}/{total}" if total else f"슬라이드 {idx + 1}"
+                on_progress(pct, label)
 
         pptx_bytes = composer.finalize()
         return PptResult(pptx_bytes=pptx_bytes, slide_count=composer.slide_count)
