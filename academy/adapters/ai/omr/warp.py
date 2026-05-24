@@ -73,6 +73,17 @@ def _build_dst_corners(out_w: int, out_h: int) -> np.ndarray:
     )
 
 
+def _quad_aspect_ratio(rect: np.ndarray) -> float:
+    """Return width/height ratio for an ordered quadrilateral."""
+    width_top = float(np.linalg.norm(rect[1] - rect[0]))
+    width_bottom = float(np.linalg.norm(rect[2] - rect[3]))
+    height_left = float(np.linalg.norm(rect[3] - rect[0]))
+    height_right = float(np.linalg.norm(rect[2] - rect[1]))
+    width = max(1.0, (width_top + width_bottom) / 2.0)
+    height = max(1.0, (height_left + height_right) / 2.0)
+    return width / height
+
+
 def _compute_residual(
     H: np.ndarray,
     src_pts: np.ndarray,
@@ -284,10 +295,20 @@ def _try_contour_warp(
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
     page_cnt = None
+    image_area = float(image_bgr.shape[0] * image_bgr.shape[1])
     for cnt in contours[:8]:
+        area_ratio = cv2.contourArea(cnt) / max(1.0, image_area)
+        if area_ratio < 0.15:
+            logger.debug("warp: contour rejected area_ratio=%.4f", area_ratio)
+            continue
         peri = cv2.arcLength(cnt, True)
         approx = cv2.approxPolyDP(cnt, 0.02 * peri, True)
         if len(approx) == 4:
+            rect = _order_points(approx.reshape(4, 2).astype(np.float32))
+            aspect = _quad_aspect_ratio(rect)
+            if not (1.15 <= aspect <= 1.75):
+                logger.debug("warp: contour rejected aspect=%.2f", aspect)
+                continue
             page_cnt = approx
             break
 

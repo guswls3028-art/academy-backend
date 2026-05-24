@@ -124,14 +124,13 @@ def detect_omr_answers_v7(
     # v15: 컬럼 앵커 원 제거됨 — 코너 마커 homography만으로 정렬. col_transforms는 빈 dict.
     col_transforms: Dict[int, np.ndarray] = {}
     meta_version = meta.get("version", "v8")
-    if meta_version in ("v9", "v10", "v11", "v12", "v13", "v14") and meta.get("columns"):
+    if meta_version in ("v9", "v10", "v11", "v12", "v13", "v14", "v15") and meta.get("columns"):
         raw_transforms = _compute_column_transforms(
             gray=gray, scale=scale, columns_meta=meta["columns"],
         )
-        # marker_homography 이후 잔여 warp 보정. 실 종이 왜곡은 보통 2mm 이하,
-        # anchor 오검출은 5mm(search_radius) 근처에서 튐 → 3mm 임계로 분리.
-        # 5px 절대값(=0.42mm @300dpi)은 비현실적으로 빡빡해서 사실상 모든 보정 reject.
-        _MAX_COL_DISPLACEMENT_PX = 3.0 * scale.sx  # 3mm를 픽셀로 환산
+        # marker/rotation 이후 잔여 보정. 실스캔에는 인쇄 축소/스캔 여백으로 4~5mm
+        # 평행 이동이 남을 수 있어 v15 컬럼 앵커 기준으로 6mm까지 허용한다.
+        _MAX_COL_DISPLACEMENT_PX = 6.0 * scale.sx  # 6mm를 픽셀로 환산
         for ci, M in raw_transforms.items():
             # displacement = M @ [0,0,1] 의 translation 성분
             dx, dy = abs(M[0, 2]), abs(M[1, 2])

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import cv2
+import numpy as np
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
@@ -24,6 +26,7 @@ from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_
 from academy.adapters.ai.omr.engine import AnswerDetectConfig, detect_omr_answers_v7
 from academy.adapters.ai.omr.identifier import IdentifierConfigV1, detect_identifier_v1
 from academy.adapters.ai.omr.warp import align_to_a4_landscape
+from academy.adapters.ai.omr.warp import _try_contour_warp
 from tests.omr.test_omr_full_pipeline import distort
 from tests.omr.test_omr_realuse import render_marked_pdf
 
@@ -32,6 +35,14 @@ User = get_user_model()
 
 
 class OMRTenantRealUseFlowTests(TestCase):
+    def test_contour_fallback_rejects_narrow_internal_panel(self):
+        image = np.ones((3507, 2480, 3), dtype=np.uint8) * 255
+        cv2.rectangle(image, (80, 2697), (2380, 3441), (0, 0, 0), 3)
+
+        result = _try_contour_warp(image, 3508, 2480)
+
+        self.assertIsNone(result)
+
     def test_tenant_one_omr_scan_maps_student_and_grades(self):
         tag = "[E2E-OMR-REALUSE]"
 
