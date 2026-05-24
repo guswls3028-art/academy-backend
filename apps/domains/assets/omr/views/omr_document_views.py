@@ -21,6 +21,7 @@ from rest_framework import status
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import Exam
 from apps.domains.assets.omr.dto.omr_document import OMRDocument
+from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS
 from apps.domains.assets.omr.services.omr_document_service import OMRDocumentService
 from apps.domains.assets.omr.renderer.html_renderer import OMRHtmlRenderer
 from apps.domains.assets.omr.renderer.pdf_renderer import OMRPdfRenderer
@@ -47,7 +48,7 @@ def _parse_omr_params(data: dict) -> dict:
     if "session_name" in data:
         params["session_name"] = str(data.get("session_name", ""))[:100]
     if "mc_count" in data:
-        params["mc_count"] = max(0, min(45, int(data["mc_count"] or 0)))
+        params["mc_count"] = max(0, min(MAX_MC_QUESTIONS, int(data["mc_count"] or 0)))
     if "essay_count" in data:
         params["essay_count"] = max(0, min(10, int(data["essay_count"] or 0)))
     if "n_choices" in data:

@@ -1,11 +1,11 @@
 # apps/domains/assets/omr/renderer/pdf_renderer.py
 """
-OMR PDF 렌더러 v15 — reportlab 기반 벡터 PDF 생성 (한국 표준 OMR 스타일)
+OMR PDF 렌더러 v15 — reportlab 기반 벡터 PDF 생성 (브랜드형 한국 표준 OMR 스타일)
 
 좌표계: meta_generator.py (좌상단 mm) → reportlab (좌하단 pt)
 
 ═══════════════════════════════════════════════════
-시각 시스템 정의 v15
+시각 시스템 정의 v15.3
 ═══════════════════════════════════════════════════
 
 A. STROKE & COLOR
@@ -36,9 +36,9 @@ D. 통합 프레임 구조 (v14)
   답안 영역  단일 외곽 rect + 세로선 칸막이 (독립 박스 없음)
   그리기 순서: 배경 fill → 내부선 → 외곽 stroke → 텍스트 → 버블
 
-E. 인식 시스템 v15.1 (원칙: 모든 인식마크는 AI 엔진이 실제로 사용하는 것만)
-  코너 마커    8mm 비대칭 4종 (TL=square, TR=L, BL=triangle, BR=plus)
-               오프셋 5mm, 팔 두께 2mm, 순흑 #000 — homography 전역 정렬
+E. 인식 시스템 v15.2 (원칙: 모든 인식마크는 AI 엔진이 실제로 사용하는 것만)
+  코너 마커    4mm 얇은 브래킷 3개 + BL 삼각형
+               오프셋 3mm, 팔 두께 1mm, 순흑 #000 — homography 전역 정렬
   컬럼 앵커    각 답안 컬럼 TL/BR 2mm 사각형 — 컬럼별 local affine 잔차 보정
                (종이 비선형 왜곡/ADF 늘어짐 대응)
   식별번호 앵커 학생번호 그리드 TL/BR 2mm 사각형 — identifier 영역 local affine
@@ -51,6 +51,7 @@ import io
 import math
 import os
 import platform
+import re
 
 from reportlab.lib.units import mm as MM
 from reportlab.lib.pagesizes import landscape, A4
@@ -109,6 +110,10 @@ C_HDR_ESSAY = HexColor("#f4f4f4")   # 서술형 헤더 — 동일 톤
 C_ZEBRA = HexColor("#fafafa")       # zebra
 C_BUB_FILL = HexColor("#f8f8f8")    # 버블 내부 — 미세 회색 (순백보다 부드러움)
 C_G10 = HexColor("#666666")         # 10행
+C_PANEL_BG = HexColor("#fdfdfd")    # 좌측 패널 바탕
+C_RULE_SOFT = HexColor("#e6e8eb")   # 안내/메타 보조선
+
+DEFAULT_BRAND_HEX = "#2563eb"
 
 # 번호 칼럼 배경
 C_NUM_BG = white                    # 깔끔
@@ -136,6 +141,81 @@ def _mm(v: float) -> float:
 
 def _y(y_mm: float) -> float:
     return _mm(PAGE_H) - _mm(y_mm)
+
+
+def _normalize_hex_color(value: str | None) -> str:
+    if not isinstance(value, str):
+        return DEFAULT_BRAND_HEX
+    raw = value.strip()
+    if re.fullmatch(r"#[0-9a-fA-F]{6}", raw):
+        return raw
+    if re.fullmatch(r"#[0-9a-fA-F]{3}", raw):
+        return "#" + "".join(ch * 2 for ch in raw[1:])
+    return DEFAULT_BRAND_HEX
+
+
+def _mix_hex(a: str, b: str, b_ratio: float) -> str:
+    a = _normalize_hex_color(a)
+    b = _normalize_hex_color(b)
+    b_ratio = max(0.0, min(1.0, b_ratio))
+    a_ratio = 1.0 - b_ratio
+    ar, ag, ab = (int(a[i:i + 2], 16) for i in (1, 3, 5))
+    br, bg, bb = (int(b[i:i + 2], 16) for i in (1, 3, 5))
+    return f"#{round(ar * a_ratio + br * b_ratio):02x}{round(ag * a_ratio + bg * b_ratio):02x}{round(ab * a_ratio + bb * b_ratio):02x}"
+
+
+def _brand(doc: OMRDocument):
+    return HexColor(_normalize_hex_color(doc.brand_color))
+
+
+def _brand_tint(doc: OMRDocument, white_ratio: float = 0.92):
+    return HexColor(_mix_hex(_normalize_hex_color(doc.brand_color), "#ffffff", white_ratio))
+
+
+def _wrap_text(c, text: str, font_name: str, font_size: float, max_width: float, max_lines: int) -> list[str]:
+    text = (text or "").strip()
+    if not text:
+        return [""]
+
+    def fits(s: str) -> bool:
+        return c.stringWidth(s, font_name, font_size) <= max_width
+
+    tokens = text.split()
+    if len(tokens) <= 1:
+        tokens = list(text)
+
+    lines: list[str] = []
+    current = ""
+    truncated = False
+    for token in tokens:
+        joiner = "" if len(tokens) == len(text) else " "
+        candidate = token if not current else f"{current}{joiner}{token}"
+        if fits(candidate):
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+            current = token
+        else:
+            lines.append(token)
+            current = ""
+        if len(lines) >= max_lines:
+            truncated = True
+            break
+    if current and len(lines) < max_lines:
+        lines.append(current)
+    elif current:
+        truncated = True
+
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        truncated = True
+    if truncated and len(lines) == max_lines:
+        last = lines[-1]
+        while last and not fits(last + "..."):
+            last = last[:-1]
+        lines[-1] = last + "..."
+    return lines or [text[:1]]
 
 
 def _register_fonts():
@@ -219,10 +299,13 @@ def _register_fonts():
 # 공통 그리기 헬퍼
 # ══════════════════════════════════════════════
 
-def _header(c, x_pt, w_pt, top_mm, label):
+def _header(c, x_pt, w_pt, top_mm, label, accent=None):
     """S2 구분선 + 배경 + 라벨."""
     c.setFillColor(C_HDR)
     c.rect(x_pt, _y(top_mm + HEADER_H), w_pt, _mm(HEADER_H), fill=1, stroke=0)
+    if accent is not None:
+        c.setFillColor(accent)
+        c.rect(x_pt, _y(top_mm + HEADER_H), _mm(1.2), _mm(HEADER_H), fill=1, stroke=0)
     c.setStrokeColor(C2); c.setLineWidth(S2)
     c.line(x_pt, _y(top_mm + HEADER_H), x_pt + w_pt, _y(top_mm + HEADER_H))
     c.setFont(_FB, 7); c.setFillColor(CT2)
@@ -280,23 +363,29 @@ class OMRPdfRenderer:
     def _left(self, c, doc: OMRDocument):
         x = _mm(CONTENT_X)
         w = _mm(LP_W)
+        accent = _brand(doc)
 
         t_logo = CONTENT_Y
         t_name = t_logo + H_LOGO
         t_phone = t_name + H_NAME
         t_note = t_phone + H_PHONE
 
+        c.setFillColor(C_PANEL_BG)
+        c.rect(x, _y(CONTENT_Y + CONTENT_H), w, _mm(CONTENT_H), fill=1, stroke=0)
+        c.setFillColor(accent)
+        c.rect(x, _y(CONTENT_Y + 1.6), w, _mm(1.6), fill=1, stroke=0)
+
         # 내부 요소 먼저 (fill → line → text)
         # 1) 로고+제목
         self._logo_title(c, doc, x, w, t_logo, H_LOGO)
 
         # 2) 성명
-        _header(c, x, w, t_name, "성 명")
+        _header(c, x, w, t_name, "성 명", accent)
         c.setStrokeColor(C1); c.setLineWidth(S1)
         c.line(x, _y(t_name), x + w, _y(t_name))
 
         # 3) 전화번호
-        _header(c, x, w, t_phone, "학생 식별번호 (전화번호 뒤 8자리)")
+        _header(c, x, w, t_phone, "학생 식별번호 (전화번호 뒤 8자리)", accent)
         c.setStrokeColor(C1); c.setLineWidth(S1)
         c.line(x, _y(t_phone), x + w, _y(t_phone))
         self._phone(c, x, w, t_phone)
@@ -323,10 +412,16 @@ class OMRPdfRenderer:
         ix = x + _mm(LP_PAD_X)
         iw = w - 2 * _mm(LP_PAD_X)
         cx = x + w / 2  # 중심축
+        accent = _brand(doc)
 
-        # 로고 — 영역의 45% 이내, 상단 5mm 패딩
-        logo_ceil = _y(top + PAD_LOGO_TOP)
-        logo_max = _mm(min(h * 0.45, 30))
+        c.setFont(_FB, 5.2); c.setFillColor(accent)
+        c.drawCentredString(cx, _y(top + 6.1), "OMR ANSWER SHEET")
+        c.setStrokeColor(C_RULE_SOFT); c.setLineWidth(S4)
+        c.line(ix + _mm(4), _y(top + 8.2), ix + iw - _mm(4), _y(top + 8.2))
+
+        # 로고 — 영역의 38% 이내, 상단 브랜드 헤더 아래 배치
+        logo_ceil = _y(top + 12.0)
+        logo_max = _mm(min(h * 0.38, 24))
         cursor = logo_ceil
 
         if doc.logo_bytes:
@@ -345,9 +440,11 @@ class OMRPdfRenderer:
 
         # 시험명
         title_len = len(doc.exam_title) if doc.exam_title else 0
-        title_pt = 9 if title_len > 20 else (10 if title_len > 15 else 12)
+        title_pt = 8.5 if title_len > 28 else (9.5 if title_len > 18 else 11.5)
         c.setFont(_FB, title_pt); c.setFillColor(CT)
-        c.drawCentredString(cx, cursor, doc.exam_title)
+        title_lines = _wrap_text(c, doc.exam_title, _FB, title_pt, iw * 0.94, 2)
+        for idx, line in enumerate(title_lines):
+            c.drawCentredString(cx, cursor - idx * (title_pt + 1.2), line)
 
         # 부제
         parts = []
@@ -355,7 +452,8 @@ class OMRPdfRenderer:
         if doc.session_name: parts.append(doc.session_name)
         if parts:
             c.setFont(_FN, 7); c.setFillColor(CT3)
-            c.drawCentredString(cx, cursor - _mm(GAP_TITLE_SUB + 3), " / ".join(parts))
+            sub_y = cursor - len(title_lines) * (title_pt + 1.2) - _mm(1.5)
+            c.drawCentredString(cx, sub_y, " / ".join(parts))
 
     def _phone(self, c, x, w, top):
         """전화번호 쓰기 칸 + 버블 그리드 — 동일 칼럼 그리드 사용."""
@@ -444,19 +542,27 @@ class OMRPdfRenderer:
         line += 1
 
         # 2. 사인펜
-        c.drawString(ix, _line_y(line), "2. 객관식은 ")
+        y = _line_y(line)
+        prefix = "2. 객관식은 "
+        c.drawString(ix, y, prefix)
+        x2 = ix + c.stringWidth(prefix, _FN, 5.5)
         c.setFont(_FB, 5.5)
-        c.drawString(ix + _mm(13), _line_y(line), "컴퓨터용 사인펜")
+        c.drawString(x2, y, "컴퓨터용 사인펜")
+        x3 = x2 + c.stringWidth("컴퓨터용 사인펜", _FB, 5.5)
         c.setFont(_FN, 5.5)
-        c.drawString(ix + _mm(29.5), _line_y(line), "으로 칠해주세요.")
+        c.drawString(x3, y, "으로 칠해주세요.")
         line += 1
 
         # 3. 수정테이프
-        c.drawString(ix, _line_y(line), "3. ")
+        y = _line_y(line)
+        prefix = "3. "
+        c.drawString(ix, y, prefix)
+        x2 = ix + c.stringWidth(prefix, _FN, 5.5)
         c.setFont(_FB, 5.5)
-        c.drawString(ix + _mm(3), _line_y(line), "수정테이프")
+        c.drawString(x2, y, "수정테이프")
+        x3 = x2 + c.stringWidth("수정테이프", _FB, 5.5)
         c.setFont(_FN, 5.5)
-        c.drawString(ix + _mm(15), _line_y(line), "를 사용해주세요. (수정액 금지)")
+        c.drawString(x3, y, "를 사용해주세요. (수정액 금지)")
         line += 1
 
         # 4. 마킹 예시
@@ -481,6 +587,7 @@ class OMRPdfRenderer:
     def _answer_area(self, c, doc):
         mc = doc.mc_count
         ec = doc.essay_count
+        accent = _brand(doc)
         if mc <= 0 and ec <= 0:
             return
 
@@ -528,8 +635,10 @@ class OMRPdfRenderer:
             rh = bh / cnt if cnt > 0 else bh
 
             # 헤더 배경
-            c.setFillColor(C_HDR if typ == 'mc' else C_HDR_ESSAY)
+            c.setFillColor(_brand_tint(doc, 0.96) if typ == 'mc' else C_HDR_ESSAY)
             c.rect(sxp, ft - hh, vwp, hh, fill=1, stroke=0)
+            c.setFillColor(accent if typ == 'mc' else C2)
+            c.rect(sxp, ft - _mm(0.8), vwp, _mm(0.8), fill=1, stroke=0)
 
             # 번호 칼럼 배경
             c.setFillColor(C_NUM_BG)

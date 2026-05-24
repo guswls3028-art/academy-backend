@@ -89,11 +89,7 @@ class OMRHtmlRenderer:
             start = col_idx * per_col + 1
             end = min(start + per_col - 1, mc)
 
-            count_in_col = end - start + 1
-            if n_cols > 1:
-                label = f"{start}번 ~ {end}번"
-            else:
-                label = f"객관식 {count_in_col}문항"
+            label = f"객관식 {start}번 ~ {end}번"
 
             rows = []
             for q in range(start, end + 1):

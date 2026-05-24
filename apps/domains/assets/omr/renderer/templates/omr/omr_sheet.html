@@ -6,14 +6,14 @@
 <title>{{ exam_title }} OMR 답안지</title>
 <style>
 *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
-body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;color:#000;margin:0;padding:0}
+body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;color:#111;margin:0;padding:0}
 
 @media print{
   @page{size:A4 landscape;margin:0}
   body{background:#fff;margin:0;padding:0}
 }
 
-.omr{width:297mm;height:210mm;margin:0 auto;background:#fff;position:relative;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact;border:2px solid #000}
+.omr{width:297mm;height:210mm;margin:0 auto;background:#fff;position:relative;overflow:hidden;-webkit-print-color-adjust:exact;print-color-adjust:exact;--brand:#2563eb}
 
 /* v15.2 코너 마커 (min.t 참고) — 얇은 ㄱ자 브래킷 3개 + BL 삼각형 */
 /* TL=┐, TR=┌, BR=┘ (모두 l_shape), BL=삼각형 (orientation 판별) */
@@ -39,25 +39,28 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 /* ═══ LEFT PANEL ═══ */
 .lp{
   width:62mm;flex-shrink:0;
-  border:2px solid #000;border-radius:2mm;
-  display:flex;flex-direction:column;overflow:hidden;
+  border:0.35mm solid #333;border-radius:1.2mm;
+  display:flex;flex-direction:column;overflow:hidden;position:relative;
+  background:#fdfdfd;
 }
-.lp-brand{height:2mm;flex-shrink:0}
+.lp-brand{position:absolute;top:0;left:0;right:0;height:1.6mm;background:var(--brand);z-index:0}
 .lp-top{
   display:flex;flex-direction:column;align-items:center;justify-content:center;
-  flex:1;padding:2mm 2mm;
+  flex:1;padding:4mm 2.5mm 2mm;position:relative;z-index:1;
 }
-.lp-top img{max-width:95%;max-height:26mm;object-fit:contain;margin-bottom:2.5mm}
+.lp-kicker{font-size:5.2pt;font-weight:800;color:var(--brand);letter-spacing:0.35px;margin-bottom:1.6mm;padding-bottom:1.2mm;border-bottom:0.25mm solid #e6e8eb;width:47mm;text-align:center}
+.lp-top img{max-width:92%;max-height:24mm;object-fit:contain;margin-bottom:2.5mm}
 .lp-ttl-exam{font-weight:800;line-height:1.4;overflow-wrap:break-word;word-break:break-all;text-align:center}
 .lp-ttl-sub{font-size:6.5pt;color:#555;margin-top:0.8mm;line-height:1.3;text-align:center}
 .lp-bottom{
   display:flex;flex-direction:column;
   justify-content:flex-end;
 }
-.lp-bottom .sec:first-child{border-top:2px solid #000}
-.sec{border-bottom:2px solid #000}
+.lp-bottom .sec:first-child{border-top:0.35mm solid #333}
+.sec{border-bottom:0.35mm solid #333}
 .sec:last-of-type{border-bottom:none}
-.sec-h{background:#f0f0f0;border-bottom:0.8px solid #000;padding:1mm 2mm;font-size:6.5pt;font-weight:700;letter-spacing:1px;text-align:center}
+.sec-h{background:#f4f4f4;border-bottom:0.18mm solid #555;padding:1mm 2mm;font-size:6.5pt;font-weight:700;letter-spacing:0;text-align:center;position:relative}
+.sec-h::before{content:"";position:absolute;left:0;top:0;bottom:0;width:1.2mm;background:var(--brand)}
 .sec-b{padding:2mm 2.5mm}
 
 .nm-area{height:10mm;display:flex;align-items:flex-end;justify-content:center;padding:0 3mm 1mm}
@@ -65,18 +68,18 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 
 .ph-guide{display:flex;justify-content:center;font-size:6pt;color:#ccc;margin-bottom:0.5mm;letter-spacing:2px}
 .ph-write{display:flex;justify-content:center;gap:0;margin-bottom:1.5mm}
-.ph-cell{width:5.8mm;height:7mm;border:0.7px solid #000;display:flex;align-items:center;justify-content:center}
+.ph-cell{width:5.8mm;height:7mm;border:0.22mm solid #555;display:flex;align-items:center;justify-content:center;background:#fff}
 .ph-cell+.ph-cell{border-left:none}
 .ph-sep{width:3.5mm;display:flex;align-items:center;justify-content:center;font-size:10pt;font-weight:800}
 .ph-bub-row{display:flex;justify-content:center;gap:0}
 .ph-bub-col{display:flex;flex-direction:column;align-items:center;width:5.8mm}
 .ph-bub-sep{width:3.5mm}
-.ph-bub{width:3.6mm;height:5.2mm;border:0.55px solid #000;border-radius:40%;display:flex;align-items:center;justify-content:center;font-size:5.5pt;color:#c0c0c0;margin:0.3mm 0;background:#f8f8f8}
+.ph-bub{width:3.6mm;height:5.2mm;border:0.18mm solid #444;border-radius:40%;display:flex;align-items:center;justify-content:center;font-size:5.5pt;color:#999;margin:0.3mm 0;background:#f8f8f8}
 
 .lp-note{
   padding:1.5mm 2mm;
   font-size:6pt;color:#333;line-height:1.6;
-  border-top:2px solid #000;
+  border-top:0.35mm solid #333;
   margin-top:auto;
 }
 .lp-note b{font-weight:800}
@@ -85,23 +88,26 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 .note-mark .bad{font-size:7pt;color:#999;font-weight:700}
 
 /* ═══ ANSWER AREA ═══ */
-.ans{flex:1;display:flex;gap:2.5mm;min-width:0}
+.ans{flex:1;display:flex;gap:0;min-width:0}
 
 .ac{
-  width:44mm;flex-shrink:0;flex-grow:0;
-  border:2px solid #000;border-radius:2mm;
+  width:46.5mm;flex-shrink:0;flex-grow:0;
+  border:0.35mm solid #333;border-right:none;border-radius:0;
   display:flex;flex-direction:column;overflow:hidden;
+  background:#fff;
 }
+.ac-last{width:44mm;border-right:0.35mm solid #333}
 .ac-h{
   display:flex;align-items:center;
   height:5.5mm;
-  background:#f0f0f0;
-  border-bottom:1px solid #000;
+  background:#f4f4f4;
+  border-bottom:0.18mm solid #555;
+  border-top:0.8mm solid var(--brand);
 }
 .ac-h-n{
   width:8mm;text-align:center;flex-shrink:0;
   font-size:5.5pt;font-weight:700;
-  border-right:0.5px solid #999;
+  border-right:0.18mm solid #ccc;
   align-self:stretch;display:flex;align-items:center;justify-content:center;
 }
 .ac-h-a{
@@ -117,26 +123,27 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 .ar:last-child{border-bottom:none}
 .ar-n{
   width:8mm;text-align:center;font-size:8pt;font-weight:700;
-  border-right:0.4px solid #ccc;flex-shrink:0;
+  border-right:0.15mm solid #ccc;flex-shrink:0;
   align-self:stretch;display:flex;align-items:center;justify-content:center;
 }
 .ar-bs{flex:1;display:flex;justify-content:space-evenly;align-items:center;padding:0 0.5mm}
-.bu{width:3.6mm;height:5.2mm;border:0.55px solid #000;border-radius:40%;display:inline-flex;align-items:center;justify-content:center;font-size:5.5pt;color:#c0c0c0;background:#f8f8f8;flex-shrink:0}
+.bu{width:3.6mm;height:5.2mm;border:0.18mm solid #444;border-radius:40%;display:inline-flex;align-items:center;justify-content:center;font-size:5.5pt;color:#999;background:#f8f8f8;flex-shrink:0}
 
 .dc{
   flex:1;min-width:40mm;
-  border:2px solid #000;border-radius:2mm;
-  display:flex;flex-direction:column;overflow:hidden;
+  border:0.35mm solid #333;border-radius:0;
+  display:flex;flex-direction:column;overflow:hidden;background:#fff;
 }
 .dc-h{
   display:flex;align-items:center;
-  height:5.5mm;background:#e8e8e8;
-  border-bottom:1px solid #000;
+  height:5.5mm;background:#f4f4f4;
+  border-bottom:0.18mm solid #555;
+  border-top:0.8mm solid #555;
 }
 .dc-h-n{
   width:8mm;text-align:center;flex-shrink:0;
   font-size:5.5pt;font-weight:700;
-  border-right:0.5px solid #999;
+  border-right:0.18mm solid #ccc;
   align-self:stretch;display:flex;align-items:center;justify-content:center;
 }
 .dc-h-a{
@@ -152,7 +159,7 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 .dr-n{
   width:8mm;display:flex;align-items:center;justify-content:center;
   font-size:8pt;font-weight:700;flex-shrink:0;
-  border-right:0.4px solid #ccc;
+  border-right:0.15mm solid #ccc;
 }
 .dr-bx{flex:1}
 
@@ -162,7 +169,7 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
 </head>
 <body>
 
-<div class="omr">
+<div class="omr" style="--brand:{{ brand_color|default:'#2563eb' }}">
   <!-- v15 코너 마커 (비대칭 4종) -->
   <div class="cm cm-tl"><b class="h"></b><b class="v"></b></div>
   <div class="cm cm-tr"><b class="h"></b><b class="v"></b></div>
@@ -172,8 +179,9 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
   <div class="omr-c">
     <!-- 왼쪽 패널 -->
     <div class="lp">
-      {% if brand_color %}<div class="lp-brand" style="background:{{ brand_color }};border-radius:1mm 1mm 0 0"></div>{% endif %}
+      <div class="lp-brand"></div>
       <div class="lp-top">
+        <div class="lp-kicker">OMR ANSWER SHEET</div>
         {% if logo_url %}<img src="{{ logo_url }}" alt="" onerror="this.style.display='none'">{% endif %}
         <div class="lp-ttl-exam" style="font-size:{{ title_font_pt }}pt">{{ exam_title }}</div>
         {% if sub_line %}<div class="lp-ttl-sub">{{ sub_line }}</div>{% endif %}
@@ -216,7 +224,7 @@ body{background:#fff;font-family:'Malgun Gothic','맑은 고딕',sans-serif;colo
     <!-- 답안 영역 -->
     <div class="ans">
       {% for col in mc_columns %}
-      <div class="ac">
+      <div class="ac{% if forloop.last and essay_count <= 0 %} ac-last{% endif %}">
         <div class="ac-h">
           <div class="ac-h-n">번호</div>
           <div class="ac-h-a">{{ col.label }}</div>

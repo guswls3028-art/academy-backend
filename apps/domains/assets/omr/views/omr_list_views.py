@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import ExamAsset
-from apps.domains.assets.omr.services.meta_generator import build_omr_meta
+from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS, build_omr_meta
 
 
 class ObjectiveOMRTemplateListView(APIView):
@@ -50,8 +50,8 @@ class ObjectiveOMRMetaView(APIView):
             question_count = int(str(qc_raw).strip())
         except (TypeError, ValueError):
             return Response({"detail": "question_count must be integer"}, status=400)
-        if question_count < 1 or question_count > 45:
-            return Response({"detail": "question_count: 1~45"}, status=400)
+        if question_count < 1 or question_count > MAX_MC_QUESTIONS:
+            return Response({"detail": f"question_count: 1~{MAX_MC_QUESTIONS}"}, status=400)
 
         n_choices = int(request.query_params.get("n_choices", 5) or 5)
         essay_count = int(request.query_params.get("essay_count", 0) or 0)

@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Optional
 
+from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS
+
 
 @dataclass(frozen=True)
 class OMRDocument:
@@ -21,7 +23,7 @@ class OMRDocument:
     session_name: str = ""  # "1차시"
 
     # -- 문항 구성 --
-    mc_count: int = 20  # 0~45
+    mc_count: int = 20  # 0~MAX_MC_QUESTIONS
     essay_count: int = 0  # 0~10
     n_choices: int = 5  # 4 or 5
 
@@ -42,8 +44,8 @@ class OMRDocument:
         errors = []
         if not self.exam_title or not self.exam_title.strip():
             errors.append("시험명은 필수입니다.")
-        if self.mc_count < 0 or self.mc_count > 45:
-            errors.append("객관식 문항 수는 0~45 사이여야 합니다.")
+        if self.mc_count < 0 or self.mc_count > MAX_MC_QUESTIONS:
+            errors.append(f"객관식 문항 수는 0~{MAX_MC_QUESTIONS} 사이여야 합니다.")
         if self.essay_count < 0 or self.essay_count > 10:
             errors.append("서술형 문항 수는 0~10 사이여야 합니다.")
         if self.mc_count + self.essay_count < 1:

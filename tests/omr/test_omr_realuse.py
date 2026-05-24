@@ -183,7 +183,7 @@ def main():
     total_pass = 0
     total_total = 0
 
-    for qc in [20, 30, 45]:
+    for qc in [20, 30, 45, 60]:
         marks = {str(i): str(((i - 1) % 5) + 1) for i in range(1, qc + 1) if i % 2 == 0}
         id_digits = {0: 1, 1: 2, 2: 3, 3: 4, 4: 5, 5: 6, 6: 7, 7: 8}
 

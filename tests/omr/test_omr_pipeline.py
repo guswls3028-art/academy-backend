@@ -108,7 +108,7 @@ def test_struct():
     check("A5. identifier digit 7 exists", any(b["digit_index"] == 7 for b in raw))
 
     # A6. 다양한 문항 수 테스트
-    for mc in [1, 10, 15, 20, 25, 30, 40, 45]:
+    for mc in [1, 10, 15, 20, 25, 30, 40, 45, 60]:
         m = build_omr_meta(question_count=mc)
         check(f"A6. meta mc={mc}", len(m["questions"]) == mc)
 
@@ -261,8 +261,8 @@ def test_synth(meta):
           q1_double is not None and q1_double.status in ("ambiguous", "ok"),
           f"status={q1_double.status if q1_double else '?'}, detected={q1_double.detected if q1_double else '?'}")
 
-    # B8. 20문항 / 45문항 테스트
-    for mc in [20, 45]:
+    # B8. 20문항 / 45문항 / 60문항 테스트
+    for mc in [20, 45, 60]:
         m = build_omr_meta(question_count=mc)
         marks_all = {str(i): str((i % 5) + 1) for i in range(1, mc + 1)}
         img_mc = create_synthetic_omr(m, marks=marks_all)
