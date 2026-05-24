@@ -83,9 +83,9 @@ Dependencies:
 - **MinHealthyPercentage: 100%** (API) — 새 인스턴스가 healthy가 될 때까지 기존 인스턴스 유지. 502 gap 0건 보장.
 - **MinHealthyPercentage: 0%** (workers) — workers tolerate brief downtime during replacement (no HTTP traffic)
 - **SkipMatching: false** (API) — launch template 변경 없어도 실제 인스턴스 교체 수행
-- **InstanceWarmup: 120s** (API/workers 동일) — Dockerfile CMD에서 migrate 제거로 시작 시간 단축
+- **InstanceWarmup: 300s** (API), **120s** (workers) — API는 ECR pull/컨테이너 기동 편차를 흡수
 - **HealthCheckType: ELB** (API) — 앱 크래시 시 ALB가 감지 → ASG 자동 교체. **EC2** (workers) — ALB 없음.
-- **HealthCheckGracePeriod: 120s** (API) / **60s** (workers) — 새 인스턴스 부팅 중 조기 종료 방지
+- **HealthCheckGracePeriod: 300s** (API) / **60s** (workers) — 새 인스턴스 부팅 중 조기 종료 방지
 - **ALB deregistration delay: 30s** — in-flight 연결 drain 후 즉시 정리
 - Scale-up 후 **ALB target health 실측 확인** (고정 대기 아닌 실제 healthy 2개 확인, max 5min)
 - Old instances are drained and terminated only after new ones pass ALB health checks
@@ -173,7 +173,7 @@ Every build produces immutable SHA-tagged images. To rollback:
    ```bash
    aws autoscaling start-instance-refresh \
      --auto-scaling-group-name academy-v1-api-asg \
-     --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120}'
+     --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'
    ```
 
 ### Migration Rollback

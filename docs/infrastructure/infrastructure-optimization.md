@@ -464,7 +464,7 @@ AI worker min=1 is an operating principle, not a cost optimization target. The p
 **API 무중단 배포 — Scale-Up 방식:**
 1. 현재 desired=1이면 desired=2로 scale-up
 2. 90초 대기 후 2대 Healthy 확인
-3. Instance refresh 실행 (`MinHealthyPercentage=100%`, `InstanceWarmup=120s`, `SkipMatching=false`)
+3. Instance refresh 실행 (`MinHealthyPercentage=100%`, `InstanceWarmup=300s`, `SkipMatching=false`)
 4. Refresh 완료 후 desired=1로 scale-down
 
 **워커 배포:**
@@ -602,7 +602,7 @@ Step 3: ROLL BACK CODE (image re-tag + ASG refresh)
   $ aws ecr put-image --repository-name academy-api \
       --image-tag latest --image-manifest "$MANIFEST"
   $ aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg \
-      --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120}'
+      --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'
 
 Step 4: VERIFY
   - /healthz returns 200

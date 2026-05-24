@@ -81,7 +81,7 @@ aws ssm put-parameter \
 aws autoscaling start-instance-refresh \
   --region ap-northeast-2 \
   --auto-scaling-group-name academy-v1-api-asg \
-  --preferences '{"MinHealthyPercentage": 100, "InstanceWarmup": 120}'
+  --preferences '{"MinHealthyPercentage": 100, "InstanceWarmup": 300}'
 
 # 5) 완료 후 검증 (5~10분 후)
 aws ssm send-command \

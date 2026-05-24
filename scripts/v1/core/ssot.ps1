@@ -157,6 +157,7 @@ function Load-SSOT {
     if ($p["api"]["asgDesiredCapacity"]) { $script:ApiASGDesiredCapacity = [int]$p["api"]["asgDesiredCapacity"] }
     $script:ApiInstanceRefreshMinHealthyPercentage = Coerce-Int $p["api"]["instanceRefreshMinHealthyPercentage"] 100
     $script:ApiInstanceRefreshInstanceWarmup = Coerce-Int $p["api"]["instanceRefreshInstanceWarmup"] 300
+    $script:ApiHealthCheckGracePeriodSeconds = Coerce-Int $p["api"]["healthCheckGracePeriodSeconds"] 300
 
     # Build server DEPRECATED: 빌드는 GitHub Actions에서만 수행한다.
     $script:BuildTagKey = ""

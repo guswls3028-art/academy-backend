@@ -609,6 +609,7 @@ jobs:
       (needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true')
     env:
       API_ASG_NAME: academy-v1-api-asg
+      API_INSTANCE_WARMUP: "300"
     steps:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
@@ -703,7 +704,7 @@ jobs:
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":120,"SkipMatching":false}' \
+            --preferences "{\"MinHealthyPercentage\":100,\"InstanceWarmup\":${API_INSTANCE_WARMUP},\"SkipMatching\":false}" \
             --query 'InstanceRefreshId' \
             --output text)
           echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT

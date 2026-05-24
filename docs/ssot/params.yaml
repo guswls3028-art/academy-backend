@@ -71,6 +71,7 @@ api:
   asgDesiredCapacity: 1
   instanceRefreshMinHealthyPercentage: 100
   instanceRefreshInstanceWarmup: 300
+  healthCheckGracePeriodSeconds: 300
   containerName: academy-api
   albName: academy-v1-api-alb
   targetGroupName: academy-v1-api-tg

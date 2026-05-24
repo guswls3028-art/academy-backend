@@ -309,7 +309,7 @@ function Ensure-API-ASG {
 
     if (-not $asg) {
         $ltSpec = "LaunchTemplateId=$($ltResult.LtId),Version=`$Latest"
-        $createArgs = @("autoscaling", "create-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--launch-template", $ltSpec, "--min-size", $script:ApiASGMinSize.ToString(), "--max-size", $script:ApiASGMaxSize.ToString(), "--desired-capacity", $script:ApiASGDesiredCapacity.ToString(), "--vpc-zone-identifier", $vpcZone, "--region", $script:Region)
+        $createArgs = @("autoscaling", "create-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--launch-template", $ltSpec, "--min-size", $script:ApiASGMinSize.ToString(), "--max-size", $script:ApiASGMaxSize.ToString(), "--desired-capacity", $script:ApiASGDesiredCapacity.ToString(), "--vpc-zone-identifier", $vpcZone, "--health-check-type", "ELB", "--health-check-grace-period", $script:ApiHealthCheckGracePeriodSeconds.ToString(), "--region", $script:Region)
         if ($script:ApiTargetGroupArn) { $createArgs += "--target-group-arns"; $createArgs += $script:ApiTargetGroupArn }
         Invoke-Aws $createArgs -ErrorMessage "create-auto-scaling-group API ASG failed" | Out-Null
         Write-Ok "ASG $($script:ApiASGName) created"
@@ -318,6 +318,7 @@ function Ensure-API-ASG {
     }
 
     $capacityDrift = ($asg.MinSize -ne $script:ApiASGMinSize) -or ($asg.MaxSize -ne $script:ApiASGMaxSize) -or ($asg.DesiredCapacity -ne $script:ApiASGDesiredCapacity)
+    $healthConfigDrift = ($asg.HealthCheckType -ne "ELB") -or ([int]$asg.HealthCheckGracePeriod -ne $script:ApiHealthCheckGracePeriodSeconds)
     $currentZones = ($asg.VpcZoneIdentifier -split "," | ForEach-Object { $_.Trim() }) -join ","
     $wantedZones = $vpcZone
     $subnetDrift = ($currentZones -ne $wantedZones)
@@ -334,6 +335,11 @@ function Ensure-API-ASG {
     if ($capacityDrift) {
         Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--min-size", $script:ApiASGMinSize.ToString(), "--max-size", $script:ApiASGMaxSize.ToString(), "--desired-capacity", $script:ApiASGDesiredCapacity.ToString(), "--region", $script:Region) -ErrorMessage "update-auto-scaling-group API ASG failed" | Out-Null
         Write-Ok "ASG $($script:ApiASGName) capacity updated"
+        $script:ChangesMade = $true
+    }
+    if ($healthConfigDrift) {
+        Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--health-check-type", "ELB", "--health-check-grace-period", $script:ApiHealthCheckGracePeriodSeconds.ToString(), "--region", $script:Region) -ErrorMessage "update-auto-scaling-group API ASG health check config failed" | Out-Null
+        Write-Ok "ASG $($script:ApiASGName) health check config updated (type=ELB, grace=$($script:ApiHealthCheckGracePeriodSeconds)s)"
         $script:ChangesMade = $true
     }
     if ($ltResult.Updated -and -not $subnetDrift) {
@@ -360,7 +366,7 @@ function Ensure-API-ASG {
             $script:ChangesMade = $true
         }
     }
-    if (-not $capacityDrift -and -not $ltResult.Updated) {
+    if (-not $capacityDrift -and -not $healthConfigDrift -and -not $ltResult.Updated) {
         Write-Ok "ASG $($script:ApiASGName) idempotent"
     }
     if ($script:ApiTargetGroupArn) {
