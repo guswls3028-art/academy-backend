@@ -9,7 +9,7 @@ from __future__ import annotations
 import io
 import logging
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 
 from PIL import Image as PILImage
 
@@ -23,6 +23,14 @@ class PptResult:
     slide_count: int
     # "question": 문항 단위 분리. "page": 페이지 단위 (스캔 PDF fallback). 이미지 모드는 None.
     mode: Optional[str] = None
+
+
+@dataclass
+class _PdfQuestionPlan:
+    """Question regions planned before rendering/cropping PDF pages."""
+    use_whole_page: bool
+    regions_per_page: List[List[Any]]
+    workbook_doc: bool = False
 
 
 class GeneratePptUseCase:
@@ -95,10 +103,6 @@ class GeneratePptFromPdfUseCase:
             PptResult with PPTX bytes and slide count.
         """
         from academy.adapters.tools.pymupdf_renderer import PdfDocument
-        from academy.domain.tools.question_splitter import (
-            split_questions,
-            TextBlock as SplitterTextBlock,
-        )
         from academy.domain.tools.image_preprocessor import preprocess_for_export, trim_bottom_whitespace
         from academy.domain.tools.ppt_composer import PptComposer, PptConfig
 
@@ -137,21 +141,10 @@ class GeneratePptFromPdfUseCase:
 
         with PdfDocument(pdf_path) as doc:
             page_count = doc.page_count()
-
-            # Pre-pass: detect total text content to decide question-splitting vs whole-page mode.
-            # 스캔/사진 PDF (text 레이어 없음)는 split_questions가 항상 0 regions 반환 → 전 페이지 skip → 0 슬라이드.
-            # 이를 미리 감지해 페이지 단위 fallback로 전환.
-            total_text_chars = 0
-            for i in range(page_count):
-                blocks = doc.extract_text_blocks(i)
-                for b in blocks:
-                    total_text_chars += len(b.text or "")
-                    if total_text_chars >= 200:
-                        break
-                if total_text_chars >= 200:
-                    break
-
-            use_whole_page = total_text_chars < 200
+            if on_progress:
+                on_progress(0, "문항 구조 분석")
+            question_plan = _build_pdf_question_plan(doc)
+            use_whole_page = question_plan.use_whole_page
 
             for page_idx in range(page_count):
                 if on_progress:
@@ -174,19 +167,18 @@ class GeneratePptFromPdfUseCase:
                     del page_img, export_img
                     continue
 
-                # 텍스트 PDF: 문항 단위 분할
-                page_w, page_h = doc.page_dimensions(page_idx)
-                raw_blocks = doc.extract_text_blocks(page_idx)
-                splitter_blocks = [
-                    SplitterTextBlock(text=b.text, x0=b.x0, y0=b.y0, x1=b.x1, y1=b.y1)
-                    for b in raw_blocks
-                ]
-                regions = split_questions(splitter_blocks, page_w, page_h, page_idx)
+                # 텍스트 PDF: pre-pass에서 page type/workbook/cross-page 검증까지 끝낸 문항 crop.
+                regions = (
+                    question_plan.regions_per_page[page_idx]
+                    if page_idx < len(question_plan.regions_per_page)
+                    else []
+                )
                 if not regions:
                     continue
 
                 page_img = doc.render_page(page_idx, dpi=200)
                 img_w, img_h = page_img.size
+                page_w, page_h = doc.page_dimensions(page_idx)
                 scale_x = img_w / page_w if page_w > 0 else 1.0
                 scale_y = img_h / page_h if page_h > 0 else 1.0
 
@@ -241,6 +233,202 @@ class GeneratePptFromPdfUseCase:
             slide_count=composer.slide_count,
             mode=result_mode,
         )
+
+
+def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
+    """Plan PDF question regions using the Matchup splitter's durable guards.
+
+    The old PPT path called split_questions page-by-page. That skipped page type
+    classification, workbook marginal-anchor detection, and cross-page anchor
+    validation, so PPT splitting lagged behind the Matchup path. This pre-pass
+    keeps only lightweight text blocks in memory, then renders pages later.
+    """
+    from academy.domain.tools.paper_type import classify_paper_type
+    from academy.domain.tools.question_splitter import (
+        TextBlock as SplitterTextBlock,
+        count_marginal_anchor_candidates,
+        split_questions,
+        validate_anchors_across_pages,
+    )
+
+    phase1: List[dict[str, Any]] = []
+    total_text_chars = 0
+    page_count = doc.page_count()
+
+    for page_idx in range(page_count):
+        try:
+            raw_blocks = doc.extract_text_blocks(page_idx)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "PPT_PDF_TEXT_EXTRACT_ERROR page=%d error=%s",
+                page_idx,
+                exc,
+            )
+            raw_blocks = []
+
+        splitter_blocks = [
+            SplitterTextBlock(text=b.text, x0=b.x0, y0=b.y0, x1=b.x1, y1=b.y1)
+            for b in raw_blocks
+        ]
+        total_text_chars += sum(len(b.text or "") for b in splitter_blocks)
+
+        try:
+            page_w, page_h = doc.page_dimensions(page_idx)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "PPT_PDF_DIMENSION_ERROR page=%d error=%s",
+                page_idx,
+                exc,
+            )
+            page_w, page_h = 0.0, 0.0
+
+        paper_type_result = None
+        is_skip_page = False
+        if splitter_blocks and page_w > 0 and page_h > 0:
+            try:
+                paper_type_result = classify_paper_type(
+                    text_blocks=splitter_blocks,
+                    page_width=page_w,
+                    page_height=page_h,
+                    has_embedded_text=True,
+                )
+                is_skip_page = paper_type_result.is_non_question
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "PPT_PDF_CLASSIFY_ERROR page=%d error=%s",
+                    page_idx,
+                    exc,
+                )
+
+        phase1.append({
+            "page_index": page_idx,
+            "text_blocks": splitter_blocks,
+            "page_width": page_w,
+            "page_height": page_h,
+            "paper_type_result": paper_type_result,
+            "is_skip_page": is_skip_page,
+        })
+
+    # 스캔/사진 PDF는 text layer가 없어서 문항 split이 불가능하다. 페이지 단위 fallback.
+    if total_text_chars < 200:
+        return _PdfQuestionPlan(
+            use_whole_page=True,
+            regions_per_page=[[] for _ in range(page_count)],
+        )
+
+    eligible_pages = 0
+    pages_with_marginal = 0
+    for page in phase1:
+        if (
+            page["is_skip_page"]
+            or not page["text_blocks"]
+            or page["page_width"] <= 0
+            or page["page_height"] <= 0
+        ):
+            continue
+        eligible_pages += 1
+        marginal_count = count_marginal_anchor_candidates(
+            page["text_blocks"],
+            page["page_width"],
+        )
+        if marginal_count >= 1:
+            pages_with_marginal += 1
+
+    signal_a = False
+    if eligible_pages >= 5:
+        signal_a = (
+            pages_with_marginal >= 3
+            and (pages_with_marginal / eligible_pages) >= 0.3
+        )
+
+    first_pass_regions: List[List[Any]] = []
+    for page in phase1:
+        if (
+            page["is_skip_page"]
+            or not page["text_blocks"]
+            or page["page_width"] <= 0
+            or page["page_height"] <= 0
+        ):
+            first_pass_regions.append([])
+            continue
+        try:
+            regions = split_questions(
+                page["text_blocks"],
+                page["page_width"],
+                page["page_height"],
+                page_index=page["page_index"],
+                paper_type=page["paper_type_result"],
+                prefer_marginal=False,
+            )
+            first_pass_regions.append(list(regions))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "PPT_PDF_SPLIT_FIRST_PASS_ERROR page=%d error=%s",
+                page["page_index"],
+                exc,
+            )
+            first_pass_regions.append([])
+
+    pages_with_low_anchor = sum(
+        1 for regions in first_pass_regions
+        if {r.number for r in regions} & {1, 2, 3}
+    )
+    eligible_with_anchors = sum(1 for regions in first_pass_regions if regions)
+    signal_b = False
+    if eligible_with_anchors >= 5:
+        signal_b = (
+            pages_with_low_anchor >= 3
+            and (pages_with_low_anchor / eligible_with_anchors) >= 0.3
+        )
+
+    workbook_doc = signal_a or signal_b
+    planned_regions: List[List[Any]] = []
+    for idx, page in enumerate(phase1):
+        if (
+            page["is_skip_page"]
+            or not page["text_blocks"]
+            or page["page_width"] <= 0
+            or page["page_height"] <= 0
+        ):
+            planned_regions.append([])
+            continue
+        if not workbook_doc:
+            planned_regions.append(first_pass_regions[idx])
+            continue
+        try:
+            regions = split_questions(
+                page["text_blocks"],
+                page["page_width"],
+                page["page_height"],
+                page_index=page["page_index"],
+                paper_type=page["paper_type_result"],
+                prefer_marginal=True,
+            )
+            planned_regions.append(list(regions))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "PPT_PDF_SPLIT_WORKBOOK_PASS_ERROR page=%d error=%s",
+                page["page_index"],
+                exc,
+            )
+            planned_regions.append(first_pass_regions[idx])
+
+    validated_regions = validate_anchors_across_pages(planned_regions)
+    logger.info(
+        "PPT_PDF_QUESTION_PLAN pages=%d eligible=%d anchors=%d "
+        "marginal_pages=%d workbook=%s slides=%d",
+        page_count,
+        eligible_pages,
+        eligible_with_anchors,
+        pages_with_marginal,
+        workbook_doc,
+        sum(len(regions) for regions in validated_regions),
+    )
+    return _PdfQuestionPlan(
+        use_whole_page=False,
+        regions_per_page=validated_regions,
+        workbook_doc=workbook_doc,
+    )
 
 
 def _image_to_bytes(img, fmt: str = "PNG") -> bytes:
