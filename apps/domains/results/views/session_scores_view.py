@@ -54,6 +54,7 @@ from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.attendance.models import Attendance
+from apps.domains.submissions.models import Submission
 
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import ExamEnrollment, ExamQuestion
@@ -476,6 +477,35 @@ class SessionScoresView(APIView):
             )
             result_map[int(exid)] = {int(r.enrollment_id): r for r in rs}
 
+        omr_review_map: Dict[tuple[int, int], Dict[str, Any]] = {}
+        if exam_ids and enrollment_ids:
+            omr_submissions = (
+                Submission.objects
+                .filter(
+                    tenant=tenant,
+                    target_type=Submission.TargetType.EXAM,
+                    target_id__in=exam_ids,
+                    enrollment_id__in=enrollment_ids,
+                    source=Submission.Source.OMR_SCAN,
+                )
+                .order_by("target_id", "enrollment_id", "-id")
+            )
+            for sub in omr_submissions:
+                if not sub.enrollment_id:
+                    continue
+                key = (int(sub.target_id), int(sub.enrollment_id))
+                if key in omr_review_map:
+                    continue
+                meta = sub.meta if isinstance(sub.meta, dict) else {}
+                manual_review = meta.get("manual_review") if isinstance(meta.get("manual_review"), dict) else {}
+                if manual_review.get("required") is True:
+                    omr_review_map[key] = {
+                        "status": "OMR_REVIEW_REQUIRED",
+                        "manual_review_required": True,
+                        "manual_review_reasons": list(manual_review.get("reasons") or []),
+                        "submission_id": int(sub.id),
+                    }
+
         # -------------------------------------------------
         # 7) Attempt LOCK 상태
         # -------------------------------------------------
@@ -639,6 +669,7 @@ class SessionScoresView(APIView):
                 r = result_map.get(exid, {}).get(eid)
 
                 if r is None:
+                    omr_review_meta = omr_review_map.get((exid, eid))
                     block = {
                         "score": None,
                         "max_score": None,
@@ -648,6 +679,7 @@ class SessionScoresView(APIView):
                         "lock_reason": None,
                         "objective_score": None,
                         "subjective_score": None,
+                        "meta": omr_review_meta,
                     }
                     updated_at = None
                 else:

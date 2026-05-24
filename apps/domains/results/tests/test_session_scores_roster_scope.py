@@ -181,6 +181,37 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(len(active_row["exams"]), 1)
         self.assertEqual(active_row["exams"][0]["block"]["score"], 10.0)
 
+    def test_session_scores_marks_omr_review_required_without_fail_score(self):
+        Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            enrollment_id=self.active_enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.DONE,
+            meta={
+                "manual_review": {
+                    "required": True,
+                    "reasons": ["ANSWER_STATUS_NOT_OK"],
+                }
+            },
+        )
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(row for row in response.data["rows"] if row["enrollment_id"] == self.active_enrollment.id)
+        block = row["exams"][0]["block"]
+        self.assertIsNone(block["score"])
+        self.assertEqual(block["meta"]["status"], "OMR_REVIEW_REQUIRED")
+        self.assertTrue(block["meta"]["manual_review_required"])
+        self.assertEqual(block["meta"]["manual_review_reasons"], ["ANSWER_STATUS_NOT_OK"])
+
     def test_session_scores_include_retake_history_and_final_pass(self):
         self.exam.pass_score = 70
         self.exam.max_score = 100
