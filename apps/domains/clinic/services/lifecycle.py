@@ -9,8 +9,12 @@ from django.utils import timezone
 from rest_framework.exceptions import APIException, NotFound, PermissionDenied, ValidationError
 
 from apps.domains.clinic.models import Session, SessionParticipant
-from apps.domains.enrollment.selectors import enrollments_for_tenant
-from apps.domains.progress.models import ClinicLink
+from apps.support.clinic.session_dependencies import (
+    active_enrolled_lecture_ids_for_student,
+    clinic_enrollment_for_tenant,
+    clinic_reason_for_unresolved_auto_links,
+    latest_active_enrollment_id_for_student,
+)
 
 
 class Conflict(APIException):
@@ -363,43 +367,17 @@ def _validate_student_session_eligibility(*, tenant, student, session) -> None:
             raise PermissionDenied("해당 클리닉은 다른 학교 유형 대상입니다.")
     target_lecture_ids = set(session.target_lectures.values_list("id", flat=True))
     if target_lecture_ids:
-        enrolled_lecture_ids = set(
-            enrollments_for_tenant(tenant).filter(
-                student=student,
-                status="ACTIVE",
-            ).values_list("lecture_id", flat=True)
-        )
+        enrolled_lecture_ids = active_enrolled_lecture_ids_for_student(tenant, student)
         if not target_lecture_ids & enrolled_lecture_ids:
             raise PermissionDenied("해당 클리닉은 특정 강의 수강생 대상입니다.")
 
 
 def _latest_active_enrollment_id(*, tenant, student) -> int | None:
-    enrollment = (
-        enrollments_for_tenant(tenant)
-        .filter(student=student, status="ACTIVE")
-        .order_by("-enrolled_at", "-id")
-        .first()
-    )
-    return enrollment.id if enrollment else None
+    return latest_active_enrollment_id_for_student(tenant, student)
 
 
 def _clinic_reason_for_enrollment(*, tenant, enrollment_id: int | None) -> str | None:
-    if not enrollment_id:
-        return None
-    links = ClinicLink.objects.filter(
-        enrollment_id=enrollment_id,
-        resolved_at__isnull=True,
-        session__lecture__tenant=tenant,
-    )
-    has_exam = links.filter(source_type="exam").exists()
-    has_homework = links.filter(source_type="homework").exists()
-    if has_exam and has_homework:
-        return "both"
-    if has_exam:
-        return "exam"
-    if has_homework:
-        return "homework"
-    return None
+    return clinic_reason_for_unresolved_auto_links(tenant, enrollment_id)
 
 
 def _assert_session_capacity(*, tenant, session) -> None:
@@ -490,12 +468,12 @@ def create_participant(
             requested_status = SessionParticipant.Status.BOOKED
 
     if not student and enrollment_id:
-        enrollment = enrollments_for_tenant(tenant).filter(id=enrollment_id).first()
+        enrollment = clinic_enrollment_for_tenant(tenant, enrollment_id)
         if not enrollment:
             raise ValidationError({"detail": "해당 수강 등록 정보를 찾을 수 없습니다."})
         student = enrollment.student
     elif student and enrollment_id:
-        enrollment = enrollments_for_tenant(tenant).filter(id=enrollment_id).first()
+        enrollment = clinic_enrollment_for_tenant(tenant, enrollment_id)
         if not enrollment:
             raise ValidationError({"detail": "해당 수강 등록 정보를 찾을 수 없습니다."})
         if enrollment.student_id != student.id:

@@ -3,10 +3,16 @@
 from datetime import datetime, timedelta
 from rest_framework import serializers
 from .models import Session, SessionParticipant, Test, Submission
-from apps.domains.lectures.models import Lecture
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.enrollment.selectors import enrollments_for_tenant
-from apps.domains.students.selectors import students_for_tenant
+from apps.support.clinic.session_dependencies import (
+    active_students_for_clinic_tenant,
+    empty_enrollment_queryset,
+    empty_lecture_queryset,
+    enrollments_for_clinic_tenant,
+    lectures_for_tenant,
+    sections_for_tenant,
+    storage_presigned_get_url,
+    unresolved_clinic_enrollment_ids,
+)
 
 
 class ClinicSessionSerializer(serializers.ModelSerializer):
@@ -23,7 +29,7 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
     # 대상 강의: 쓰기 시 id 배열, 읽기 시 id+title
     target_lecture_ids = serializers.PrimaryKeyRelatedField(
         source="target_lectures",
-        queryset=Lecture.objects.none(),  # __init__에서 tenant 필터 적용
+        queryset=empty_lecture_queryset(),  # __init__에서 tenant 필터 적용
         many=True,
         required=False,
     )
@@ -34,11 +40,10 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         if request and hasattr(request, "tenant") and request.tenant:
             self.fields["target_lecture_ids"].child_relation.queryset = (
-                Lecture.objects.filter(tenant=request.tenant)
+                lectures_for_tenant(request.tenant)
             )
             if "section" in self.fields:
-                from apps.domains.lectures.models import Section
-                self.fields["section"].queryset = Section.objects.filter(tenant=request.tenant)
+                self.fields["section"].queryset = sections_for_tenant(request.tenant)
 
     # ✅ 파생 필드: 종료 시간 (저장 X)
     end_time = serializers.SerializerMethodField()
@@ -82,7 +87,9 @@ class ClinicSessionSerializer(serializers.ModelSerializer):
 
     def get_status_summary(self, obj):
         return {
-            "booked": getattr(obj, "booked_count", 0),
+            "pending": getattr(obj, "pending_count", 0),
+            "booked": getattr(obj, "booked_confirmed_count", getattr(obj, "booked_count", 0)),
+            "reserved": getattr(obj, "booked_count", 0),
             "attended": getattr(obj, "attended_count", 0),
             "no_show": getattr(obj, "no_show_count", 0),
             "cancelled": getattr(obj, "cancelled_count", 0),
@@ -215,18 +222,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
             ctx["_unresolved_clinic_eids"] = set()
             return set()
 
-        from apps.domains.progress.models import ClinicLink
-        unresolved = set(
-            ClinicLink.objects
-            .filter(
-                tenant=tenant,
-                is_auto=True,
-                resolved_at__isnull=True,
-                enrollment_id__in=enrollment_ids,
-            )
-            .values_list("enrollment_id", flat=True)
-            .distinct()
-        )
+        unresolved = unresolved_clinic_enrollment_ids(tenant, enrollment_ids)
         ctx["_unresolved_clinic_eids"] = unresolved
         return unresolved
 
@@ -250,9 +246,7 @@ class ClinicSessionParticipantSerializer(serializers.ModelSerializer):
         if not r2_key:
             return None
         try:
-            from django.conf import settings
-            from libs.r2_client.presign import create_presigned_get_url
-            return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
+            return storage_presigned_get_url(r2_key, expires_in=3600)
         except Exception:
             return None
 
@@ -271,13 +265,13 @@ class ClinicSessionParticipantCreateSerializer(serializers.ModelSerializer):
         if request and hasattr(request, "tenant") and request.tenant:
             tenant = request.tenant
             self.fields["session"].queryset = Session.objects.filter(tenant=tenant)
-            self.fields["enrollment_id"].queryset = enrollments_for_tenant(tenant)
-            self.fields["student"].queryset = students_for_tenant(tenant, deleted="active")
+            self.fields["enrollment_id"].queryset = enrollments_for_clinic_tenant(tenant)
+            self.fields["student"].queryset = active_students_for_clinic_tenant(tenant)
 
     # FK 전환 호환: 프론트가 enrollment_id로 보내면 enrollment FK로 매핑
     enrollment_id = serializers.PrimaryKeyRelatedField(
         source="enrollment",
-        queryset=Enrollment.objects.none(),  # __init__에서 tenant-scoped로 교체
+        queryset=empty_enrollment_queryset(),  # __init__에서 tenant-scoped로 교체
         required=False,
         allow_null=True,
     )
@@ -380,7 +374,7 @@ class ClinicSubmissionSerializer(serializers.ModelSerializer):
             if "test" in self.fields:
                 self.fields["test"].queryset = Test.objects.filter(tenant=tenant)
             if "student" in self.fields:
-                self.fields["student"].queryset = students_for_tenant(tenant, deleted="active")
+                self.fields["student"].queryset = active_students_for_clinic_tenant(tenant)
 
     def validate_score(self, value):
         if value is None:

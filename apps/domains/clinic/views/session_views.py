@@ -18,10 +18,14 @@ from ..serializers import ClinicSessionSerializer
 from ..filters import SessionFilter
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
-from apps.domains.enrollment.selectors import enrollments_for_tenant
-from apps.domains.messaging.services import send_clinic_reminder_for_students
-from apps.domains.progress.models import ClinicLink
-from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+from apps.support.clinic.session_dependencies import (
+    enrollments_for_clinic_tenant,
+    get_student_for_clinic_request,
+    lectures_for_tenant,
+    sections_for_tenant,
+    send_clinic_session_reminder,
+    unresolve_legacy_booking_links_for_session_delete,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +84,16 @@ class SessionViewSet(viewsets.ModelViewSet):
                     ),
                     distinct=True,
                 ),
+                pending_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.PENDING),
+                    distinct=True,
+                ),
+                booked_confirmed_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.BOOKED),
+                    distinct=True,
+                ),
                 attended_count=Count(
                     "participants",
                     filter=Q(participants__status=SessionParticipant.Status.ATTENDED),
@@ -109,8 +123,7 @@ class SessionViewSet(viewsets.ModelViewSet):
         )
 
         # 학생 조회 시: 본인 조건에 맞는 세션만 노출
-        from apps.domains.student_app.permissions import get_request_student
-        student = get_request_student(self.request)
+        student = get_student_for_clinic_request(self.request)
         if student:
             # 학년 필터: 학년 미설정 학생은 제한 없는 세션만
             if student.grade:
@@ -125,7 +138,7 @@ class SessionViewSet(viewsets.ModelViewSet):
                 qs = qs.filter(_no_school_restrict)
             # 강의 필터: 수강 중인 강의가 대상에 포함되거나 대상 강의가 비어있는 경우
             enrolled_lecture_ids = list(
-                enrollments_for_tenant(tenant).filter(
+                enrollments_for_clinic_tenant(tenant).filter(
                     student=student, status="ACTIVE"
                 ).values_list("lecture_id", flat=True)
             )
@@ -174,34 +187,13 @@ class SessionViewSet(viewsets.ModelViewSet):
             raise serializers.ValidationError(
                 {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
             )
-        enrollment_ids = list(
-            SessionParticipant.objects.filter(
-                session=instance,
-                enrollment_id__isnull=False,
-                status__in=[
-                    SessionParticipant.Status.BOOKED,
-                    SessionParticipant.Status.PENDING,
-                ],
-            ).values_list("enrollment_id", flat=True)
-        )
         with transaction.atomic():
-            if enrollment_ids:
-                # 레거시 예약 기반 해소만 되돌림. 실제 pass 기반 해소는 유지.
-                # SSOT: ClinicResolutionService.unresolve() 경유
-                # 범위 제한: 이 clinic session의 target_lectures에 해당하는 ClinicLink만
-                target_lecture_ids = list(instance.target_lectures.values_list("id", flat=True))
-                link_filter = Q(
-                    enrollment_id__in=enrollment_ids,
-                    is_auto=True,
-                    resolution_type="BOOKING_LEGACY",
-                    resolved_at__isnull=False,
-                    session__lecture__tenant=tenant,
-                )
-                if target_lecture_ids:
-                    link_filter &= Q(session__lecture_id__in=target_lecture_ids)
-                qs = ClinicLink.objects.filter(link_filter)
-                for link in qs:
-                    ClinicResolutionService.unresolve(clinic_link_id=link.id)
+            # 레거시 예약 기반 해소만 되돌림. 실제 pass 기반 해소는 유지.
+            # 범위 제한은 support boundary 내부에서 target_lectures 기준으로 적용.
+            unresolve_legacy_booking_links_for_session_delete(
+                tenant=tenant,
+                session=instance,
+            )
             instance.delete()
 
     def retrieve(self, request, *args, **kwargs):
@@ -222,7 +214,7 @@ class SessionViewSet(viewsets.ModelViewSet):
         - 세션 참가자 리마인더 발송
         """
         session = self.get_object()
-        result = send_clinic_reminder_for_students(session_id=session.id)
+        result = send_clinic_session_reminder(session_id=session.id)
         if result.get("status") == "not_found":
             return Response(result, status=status.HTTP_404_NOT_FOUND)
         return Response({"ok": True, **result})
@@ -272,6 +264,14 @@ class SessionViewSet(viewsets.ModelViewSet):
                         ]
                     ),
                 ),
+                pending_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.PENDING),
+                ),
+                booked_confirmed_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.BOOKED),
+                ),
                 no_show_count=Count(
                     "participants",
                     filter=Q(participants__status=SessionParticipant.Status.NO_SHOW),
@@ -305,6 +305,8 @@ class SessionViewSet(viewsets.ModelViewSet):
                 "duration_minutes": s.duration_minutes,
                 "participant_count": s.participant_count,
                 "booked_count": s.booked_count,
+                "pending_count": s.pending_count,
+                "booked_confirmed_count": s.booked_confirmed_count,
                 "no_show_count": s.no_show_count,
                 "max_participants": getattr(s, "max_participants", None),
                 "section": s.section_id,
@@ -363,8 +365,7 @@ class SessionViewSet(viewsets.ModelViewSet):
         # Validate section belongs to this tenant
         section_obj = None
         if section_id:
-            from apps.domains.lectures.models import Section
-            section_obj = Section.objects.filter(id=section_id, tenant=tenant).first()
+            section_obj = sections_for_tenant(tenant).filter(id=section_id).first()
             if not section_obj:
                 return Response(
                     {"detail": "선택한 반이 유효하지 않습니다."},
@@ -373,10 +374,7 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         # Validate target_lecture_ids belong to this tenant
         if target_lecture_ids:
-            from apps.domains.lectures.models import Lecture
-            valid_count = Lecture.objects.filter(
-                id__in=target_lecture_ids, tenant=tenant
-            ).count()
+            valid_count = lectures_for_tenant(tenant).filter(id__in=target_lecture_ids).count()
             if valid_count != len(target_lecture_ids):
                 return Response(
                     {"detail": "선택한 강의가 유효하지 않습니다."},
