@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Tuple
 # 🔽 exams 도메인 (정답 / 문제 정의)
 # ======================================================
 from apps.domains.exams.models import ExamQuestion, AnswerKey
+from apps.domains.results.services.answer_matching import answer_matches, normalize_answer
 # (선택) pass_score를 Exam에서 읽을 수 있으면 쓰고, 없으면 안전하게 스킵
 try:
     from apps.domains.exams.models import Exam  # type: ignore
@@ -51,7 +52,7 @@ def _norm(s: Optional[str]) -> str:
     - 공백 제거
     - 대문자 통일
     """
-    return (s or "").strip().upper()
+    return normalize_answer(s)
 
 
 def _get_omr_meta(meta: Any) -> Dict[str, Any]:
@@ -134,8 +135,7 @@ def _grade_choice_v1(
 
     # 4) best-effort 채점
     ans = _norm(detected[0])
-    cor = _norm(correct_answer)
-    is_correct = ans != "" and cor != "" and ans == cor
+    is_correct = answer_matches(ans, correct_answer)
     score = float(max_score) if is_correct else 0.0
 
     # 5) ambiguous(top-2 gap이 작음)도 single이면 best-effort
@@ -165,12 +165,11 @@ def _grade_short_v1(
     - exact match only
     """
     ans = _norm(answer_text)
-    cor = _norm(correct_answer)
 
     if ans == "":
         return False, 0.0, _with_invalid_reason(original_meta, "EMPTY_ANSWER")
 
-    is_correct = cor != "" and ans == cor
+    is_correct = answer_matches(ans, correct_answer)
     return is_correct, (float(max_score) if is_correct else 0.0), _ensure_dict(original_meta)
 
 

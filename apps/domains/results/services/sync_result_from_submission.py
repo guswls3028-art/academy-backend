@@ -14,6 +14,7 @@ from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.results.models import Result, ResultItem
 from apps.domains.results.guards.grading_contract import GradingContractGuard
 from apps.domains.results.services.attempt_service import ExamAttemptService
+from apps.domains.results.services.answer_matching import answer_matches
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 
 
@@ -45,7 +46,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         return None
 
     key_map = {
-        int(k): str(v).strip()
+        int(k): v
         for k, v in (answer_key.answers or {}).items()
         if str(k).isdigit()
     }
@@ -57,13 +58,12 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
             answers_map[qid] = ans
 
     questions = list(sheet.questions.all().order_by("number"))
-    _norm = lambda s: str(s).strip().upper() if s else ""
     items_payload = []
     for q in questions:
         qid = int(q.id)
         ans = answers_map.get(qid, "")
         correct_key = key_map.get(qid, "")
-        is_correct = bool(correct_key and _norm(ans) == _norm(correct_key))
+        is_correct = answer_matches(ans, correct_key)
         max_score = float(getattr(q, "score", 0) or 0)
         score = max_score if is_correct else 0.0
         items_payload.append({

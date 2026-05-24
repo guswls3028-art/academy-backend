@@ -1,7 +1,7 @@
 # PATH: apps/domains/results/services/exam_grading_service.py
 from __future__ import annotations
 
-from typing import Dict, Tuple
+from typing import Any, Dict, Tuple
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -10,6 +10,10 @@ from django.shortcuts import get_object_or_404
 from apps.domains.exams.models import Exam
 from apps.domains.results.models import ExamResult
 from apps.domains.results.guards.grading_contract import GradingContractGuard
+from apps.domains.results.services.answer_matching import (
+    answer_matches,
+    format_answer_for_display,
+)
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 
 
@@ -73,8 +77,8 @@ class ExamGradingService:
           (total_score, max_score, breakdown)
         """
 
-        key_map: Dict[int, str] = {
-            int(k): str(v).strip()
+        key_map: Dict[int, Any] = {
+            int(k): v
             for k, v in answer_key.answers.items()
             if str(k).isdigit()
         }
@@ -101,12 +105,7 @@ class ExamGradingService:
             max_score += q_score
             correct_answer = key_map.get(qid)
             student_answer = answers_map.get(qid, "")
-            # 정규화: 대소문자·공백 무시 (grader.py _norm()과 일관성 유지)
-            _norm = lambda s: str(s).strip().upper() if s else ""
-            is_correct = (
-                correct_answer is not None
-                and _norm(student_answer) == _norm(correct_answer)
-            )
+            is_correct = answer_matches(student_answer, correct_answer)
             earned = q_score if is_correct else 0
 
             if is_correct:
@@ -117,7 +116,7 @@ class ExamGradingService:
                 "correct": is_correct,
                 "earned": earned,
                 "answer": student_answer,
-                "correct_answer": correct_answer or "",
+                "correct_answer": format_answer_for_display(correct_answer),
             }
 
         return round(float(total_score), 2), max_score, breakdown
