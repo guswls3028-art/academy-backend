@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
+from academy.adapters.ai.omr.anchor_detector import detect_filled_anchor_square
 from academy.adapters.ai.omr.meta_px import build_page_scale_from_meta, PageScale
 from academy.adapters.ai.omr.types import OMRAnswerV1
 
@@ -128,9 +129,9 @@ def detect_omr_answers_v7(
         raw_transforms = _compute_column_transforms(
             gray=gray, scale=scale, columns_meta=meta["columns"],
         )
-        # marker/rotation 이후 잔여 보정. 실스캔에는 인쇄 축소/스캔 여백으로 4~5mm
-        # 평행 이동이 남을 수 있어 v15 컬럼 앵커 기준으로 6mm까지 허용한다.
-        _MAX_COL_DISPLACEMENT_PX = 6.0 * scale.sx  # 6mm를 픽셀로 환산
+        # marker/rotation 이후 잔여 보정. rotation_only fallback에서는 스캔 여백 차이로
+        # 8mm 안팎의 평행 이동이 남을 수 있어 실제 컬럼 앵커 기준으로 10mm까지 허용한다.
+        _MAX_COL_DISPLACEMENT_PX = 10.0 * scale.sx  # 10mm를 픽셀로 환산
         for ci, M in raw_transforms.items():
             # displacement = M @ [0,0,1] 의 translation 성분
             dx, dy = abs(M[0, 2]), abs(M[1, 2])
@@ -138,7 +139,7 @@ def detect_omr_answers_v7(
                 col_transforms[ci] = M
             else:
                 logger.debug(
-                    "Column %d transform rejected: dx=%.1f dy=%.1f exceeds %.1fpx (3mm)",
+                    "Column %d transform rejected: dx=%.1f dy=%.1f exceeds %.1fpx",
                     ci, dx, dy, _MAX_COL_DISPLACEMENT_PX,
                 )
 
@@ -259,56 +260,15 @@ def _detect_anchor_square(
     expected_x: int,
     expected_y: int,
     scale: PageScale,
-    search_radius_mm: float = 5.0,
+    search_radius_mm: float = 12.0,
 ) -> Optional[Tuple[int, int]]:
-    """
-    Detect a filled anchor square near the expected position.
-    Returns (cx, cy) in pixels, or None if not found.
-    """
-    r_x = max(10, scale.mm_to_px_len_x(search_radius_mm))
-    r_y = max(10, scale.mm_to_px_len_y(search_radius_mm))
-
-    img_h, img_w = gray.shape[:2]
-    x1 = max(0, expected_x - r_x)
-    y1 = max(0, expected_y - r_y)
-    x2 = min(img_w, expected_x + r_x)
-    y2 = min(img_h, expected_y + r_y)
-
-    roi = gray[y1:y2, x1:x2]
-    if roi.size == 0:
-        return None
-
-    # Threshold to find dark regions
-    _, thresh = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-
-    # Find the most square-like contour near center
-    best = None
-    best_dist = float("inf")
-    roi_cx = (x2 - x1) // 2
-    roi_cy = (y2 - y1) // 2
-
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < 20:
-            continue
-        x, y, w, h = cv2.boundingRect(cnt)
-        if w == 0 or h == 0:
-            continue
-        aspect = min(w, h) / max(w, h)
-        if aspect < 0.5:
-            continue
-        cx = x + w // 2
-        cy = y + h // 2
-        dist = ((cx - roi_cx) ** 2 + (cy - roi_cy) ** 2) ** 0.5
-        if dist < best_dist:
-            best_dist = dist
-            best = (x1 + cx, y1 + cy)
-
-    return best
+    return detect_filled_anchor_square(
+        gray=gray,
+        expected_x=expected_x,
+        expected_y=expected_y,
+        scale=scale,
+        search_radius_mm=search_radius_mm,
+    )
 
 
 def _apply_col_transform(

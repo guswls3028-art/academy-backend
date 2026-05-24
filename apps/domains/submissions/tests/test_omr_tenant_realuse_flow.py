@@ -212,6 +212,215 @@ class OMRTenantRealUseFlowTests(TestCase):
             ).exists()
         )
 
+    def test_tenant_one_batch_omr_scans_map_grade_and_hold_unreadable_identifier(self):
+        tag = "[E2E-OMR-BATCH]"
+
+        tenant = Tenant.objects.create(
+            name=f"{tag} Tenant",
+            code="e2e_omr_batch_t1",
+            is_active=True,
+        )
+        self.assertEqual(tenant.id, 1)
+
+        staff = User.objects.create_user(
+            username="e2e_omr_batch_staff",
+            password="test1234",
+            tenant=tenant,
+            is_staff=True,
+            name=f"{tag} Staff",
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=staff, role="teacher")
+
+        lecture = Lecture.objects.create(
+            tenant=tenant,
+            title=f"{tag} Lecture",
+            name=f"{tag} Lecture",
+            subject="MATH",
+        )
+        session = Session.objects.create(
+            lecture=lecture,
+            order=1,
+            title=f"{tag} Session",
+        )
+        exam = Exam.objects.create(
+            tenant=tenant,
+            title=f"{tag} Exam",
+            subject="MATH",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+            max_attempts=1,
+        )
+        exam.sessions.add(session)
+
+        enrollments_by_code = {}
+        for code, name in {
+            "11150001": "perfect",
+            "11110001": "all-wrong",
+            "11139992": "unreadable-id",
+        }.items():
+            student_result = create_student_account(
+                tenant=tenant,
+                student_data={
+                    "ps_number": f"E2EOMR{code}",
+                    "name": f"{tag} {name}",
+                    "phone": f"010{code}",
+                    "parent_phone": "",
+                    "omr_code": code,
+                    "school_type": "HIGH",
+                },
+                password="test1234",
+            )
+            enrollment = Enrollment.objects.create(
+                tenant=tenant,
+                student=student_result.student,
+                lecture=lecture,
+                status="ACTIVE",
+            )
+            SessionEnrollment.objects.create(
+                tenant=tenant,
+                session=session,
+                enrollment=enrollment,
+            )
+            ExamEnrollment.objects.create(exam=exam, enrollment=enrollment)
+            enrollments_by_code[code] = enrollment
+
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=20)
+        questions = [
+            ExamQuestion.objects.create(sheet=sheet, number=i, score=5)
+            for i in range(1, 21)
+        ]
+
+        answer_key_by_number = {
+            "1": ["1", "3"],
+            "2": ["2", "3"],
+            "3": ["3", "4"],
+            **{str(i): "3" for i in range(4, 21)},
+        }
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={str(q.id): answer_key_by_number[str(q.number)] for q in questions},
+        )
+
+        wrong_marks = {
+            "1": ["1", "2"],
+            "2": ["1", "4"],
+            "3": ["1", "5"],
+            **{str(i): "1" for i in range(4, 21)},
+        }
+        meta = build_omr_meta(question_count=20, n_choices=5)
+
+        cases = [
+            {
+                "label": "perfect",
+                "code": "11150001",
+                "marks": answer_key_by_number,
+                "id_digits": {i: int(d) for i, d in enumerate("11150001")},
+                "expected_status": Submission.Status.ANSWERS_READY,
+                "expected_score": 100,
+            },
+            {
+                "label": "all-wrong",
+                "code": "11110001",
+                "marks": wrong_marks,
+                "id_digits": {i: int(d) for i, d in enumerate("11110001")},
+                "expected_status": Submission.Status.ANSWERS_READY,
+                "expected_score": 0,
+            },
+            {
+                "label": "unreadable-id",
+                "code": "11139992",
+                "marks": answer_key_by_number,
+                "id_digits": {0: 1, 1: 1, 2: 1, 3: 3, 4: 9, 7: 2},
+                "expected_status": Submission.Status.NEEDS_IDENTIFICATION,
+                "expected_score": None,
+            },
+        ]
+
+        for case in cases:
+            image = render_marked_pdf(
+                meta,
+                case["marks"],
+                case["id_digits"],
+                dpi=200,
+                jpeg_quality=70,
+            )
+            scanned = distort(image, dpi=200, rotation_deg=1.0, noise_sigma=5.0)
+            align = align_to_a4_landscape(image_bgr=scanned, meta=meta)
+            answers = detect_omr_answers_v7(
+                image_bgr=align.image,
+                meta=meta,
+                config=AnswerDetectConfig(),
+            )
+            identifier = detect_identifier_v1(
+                image_bgr=align.image,
+                meta=meta,
+                cfg=IdentifierConfigV1(),
+            )
+
+            self.assertEqual(align.method, "marker_homography")
+            self.assertEqual(len(answers), 20)
+            if case["expected_status"] == Submission.Status.ANSWERS_READY:
+                self.assertEqual(identifier["identifier"], case["code"])
+            else:
+                self.assertIn("?", identifier.get("raw_identifier", ""))
+
+            submission = Submission.objects.create(
+                tenant=tenant,
+                user=staff,
+                target_type=Submission.TargetType.EXAM,
+                target_id=exam.id,
+                source=Submission.Source.OMR_SCAN,
+                status=Submission.Status.DISPATCHED,
+                file_key=f"tenants/{tenant.id}/e2e/{case['label']}.jpg",
+            )
+
+            apply_omr_ai_result({
+                "submission_id": submission.id,
+                "tenant_id": tenant.id,
+                "status": "DONE",
+                "version": "v15",
+                "aligned": True,
+                "alignment_method": align.method,
+                "identifier": identifier,
+                "answers": [a.to_dict() for a in answers],
+            })
+
+            submission.refresh_from_db()
+            self.assertEqual(submission.status, case["expected_status"])
+            self.assertEqual(submission.answers.count(), 20)
+
+            if case["expected_status"] == Submission.Status.NEEDS_IDENTIFICATION:
+                self.assertIsNone(submission.enrollment_id)
+                self.assertTrue(submission.meta["manual_review"]["required"])
+                self.assertIn(
+                    "IDENTIFIER_INCOMPLETE",
+                    submission.meta["manual_review"]["reasons"],
+                )
+                self.assertEqual(submission.meta["identifier_status"], "incomplete")
+                continue
+
+            enrollment = enrollments_by_code[case["code"]]
+            self.assertEqual(submission.enrollment_id, enrollment.id)
+            self.assertFalse(submission.meta["manual_review"]["required"])
+            self.assertEqual(submission.meta["answer_stats"]["total"], 20)
+
+            exam_result = grade_submission(submission.id)
+            submission.refresh_from_db()
+
+            self.assertEqual(submission.status, Submission.Status.DONE)
+            self.assertEqual(exam_result.total_score, case["expected_score"])
+            self.assertEqual(exam_result.max_score, 100)
+            self.assertTrue(
+                Result.objects.filter(
+                    target_type="exam",
+                    target_id=exam.id,
+                    enrollment_id=enrollment.id,
+                    total_score=case["expected_score"],
+                    max_score=100,
+                ).exists()
+            )
+
 
 class OMRMapperReviewPolicyTests(TestCase):
     def _make_exam(self, *, answer_key: dict[str, object] | None = None, peer_phone: str | None = None):

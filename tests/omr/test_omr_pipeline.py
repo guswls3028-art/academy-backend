@@ -25,7 +25,8 @@ import pytest
 from apps.domains.assets.omr.services.meta_generator import build_omr_meta
 from academy.adapters.ai.omr.meta_px import build_page_scale_from_meta
 from academy.adapters.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
-from academy.adapters.ai.omr.identifier import IdentifierConfigV1
+from academy.adapters.ai.omr.identifier import IdentifierConfigV1, detect_identifier_v1
+from academy.adapters.ai.omr.marker_detector import detect_markers
 from academy.adapters.ai.omr.types import OMRAnswerV1
 from academy.adapters.ai.omr.roi_builder import build_questions_payload_from_meta
 
@@ -176,6 +177,136 @@ def create_synthetic_omr(meta, marks=None):
                 cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, (0, 0, 0), -1)
 
     return img
+
+
+def test_legacy_v14_corner_markers_are_detected_with_current_meta():
+    meta = build_omr_meta(question_count=20, n_choices=5)
+    w, h = 3508, 2480
+    img = np.ones((h, w, 3), dtype=np.uint8) * 255
+    sx = w / float(meta["page"]["width"])
+    sy = h / float(meta["page"]["height"])
+
+    def mm(v, axis="x"):
+        return int(round(float(v) * (sx if axis == "x" else sy)))
+
+    page_w = float(meta["page"]["width"])
+    page_h = float(meta["page"]["height"])
+    off = 2.5
+    sz = 5.0
+    th = 1.5
+
+    # TL square
+    cv2.rectangle(img, (mm(off), mm(off, "y")),
+                  (mm(off + sz), mm(off + sz, "y")), (0, 0, 0), -1)
+
+    # TR L-shape
+    cv2.rectangle(img, (mm(page_w - off - sz), mm(off, "y")),
+                  (mm(page_w - off), mm(off + th, "y")), (0, 0, 0), -1)
+    cv2.rectangle(img, (mm(page_w - off - th), mm(off, "y")),
+                  (mm(page_w - off), mm(off + sz, "y")), (0, 0, 0), -1)
+
+    # BL triangle
+    pts = np.array([
+        [mm(off), mm(page_h - off, "y")],
+        [mm(off + sz), mm(page_h - off, "y")],
+        [mm(off + sz / 2), mm(page_h - off - sz, "y")],
+    ], dtype=np.int32)
+    cv2.fillPoly(img, [pts], (0, 0, 0))
+
+    # BR plus
+    cv2.rectangle(img, (mm(page_w - off - sz), mm(page_h - off - sz / 2 - th / 2, "y")),
+                  (mm(page_w - off), mm(page_h - off - sz / 2 + th / 2, "y")), (0, 0, 0), -1)
+    cv2.rectangle(img, (mm(page_w - off - sz / 2 - th / 2), mm(page_h - off - sz, "y")),
+                  (mm(page_w - off - sz / 2 + th / 2), mm(page_h - off, "y")), (0, 0, 0), -1)
+
+    result = detect_markers(img, meta)
+
+    assert result.success
+    assert result.orientation == 0
+    assert set(result.markers.keys()) == {"TL", "TR", "BR", "BL"}
+
+
+def test_identifier_anchor_ignores_nearby_artifact():
+    meta = build_omr_meta(question_count=20, n_choices=5)
+    w, h = 3508, 2480
+    img = np.ones((h, w, 3), dtype=np.uint8) * 255
+    scale = build_page_scale_from_meta(meta=meta, image_size_px=(w, h))
+    dx, dy = -48, -14
+    expected_digits = "12345678"
+
+    ident = meta["identifier"]
+    for d_idx, digit in enumerate(ident["digits"]):
+        for value, bub in enumerate(digit["bubbles"]):
+            center = bub["center"]
+            cx, cy = scale.mm_to_px_point(float(center["x"]), float(center["y"]))
+            cx += dx
+            cy += dy
+            rx = scale.mm_to_px_len_x(float(bub["radius_x"]))
+            ry = scale.mm_to_px_len_y(float(bub["radius_y"]))
+            cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, (180, 180, 180), 1)
+            if value == int(expected_digits[d_idx]):
+                cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, (0, 0, 0), -1)
+
+    for anchor in ident["anchors"].values():
+        center = anchor["center"]
+        cx, cy = scale.mm_to_px_point(float(center["x"]), float(center["y"]))
+        cx += dx
+        cy += dy
+        side = scale.mm_to_px_len_x(float(anchor.get("size", 2.0)))
+        half = side // 2
+        cv2.rectangle(img, (cx - half, cy - half), (cx + half, cy + half), (0, 0, 0), -1)
+
+    # A small dark artifact close to the uncorrected expected TL anchor used to
+    # win the old nearest-contour search even though it is not a 2mm square.
+    tl_center = ident["anchors"]["TL"]["center"]
+    tx, ty = scale.mm_to_px_point(float(tl_center["x"]), float(tl_center["y"]))
+    cv2.rectangle(img, (tx - 4, ty - 3), (tx + 4, ty + 3), (0, 0, 0), -1)
+
+    result = detect_identifier_v1(
+        image_bgr=img,
+        meta=meta,
+        cfg=IdentifierConfigV1(),
+    )
+
+    assert result["status"] == "ok"
+    assert result["identifier"] == expected_digits
+
+
+def test_answer_column_anchor_corrects_shifted_scan():
+    meta = build_omr_meta(question_count=20, n_choices=5)
+    w, h = 3508, 2480
+    img = np.ones((h, w, 3), dtype=np.uint8) * 255
+    scale = build_page_scale_from_meta(meta=meta, image_size_px=(w, h))
+    dx = -95  # about 8mm at 300dpi; seen in real rotation_only scans.
+
+    for anchor in meta["columns"][0]["anchors"].values():
+        center = anchor["center"]
+        cx, cy = scale.mm_to_px_point(float(center["x"]), float(center["y"]))
+        side = scale.mm_to_px_len_x(float(anchor.get("size", 2.0)))
+        half = side // 2
+        cv2.rectangle(img, (cx + dx - half, cy - half), (cx + dx + half, cy + half), (0, 0, 0), -1)
+
+    for q in meta["questions"]:
+        if int(q["question_number"]) > 20:
+            continue
+        for choice in q["choices"]:
+            center = choice["center"]
+            cx, cy = scale.mm_to_px_point(float(center["x"]), float(center["y"]))
+            rx = scale.mm_to_px_len_x(float(choice["radius_x"]))
+            ry = scale.mm_to_px_len_y(float(choice["radius_y"]))
+            cv2.ellipse(img, (cx + dx, cy), (rx, ry), 0, 0, 360, (180, 180, 180), 1)
+            if int(q["question_number"]) == 4 and choice["label"] == "1":
+                cv2.ellipse(img, (cx + dx, cy), (rx, ry), 0, 0, 360, (0, 0, 0), -1)
+
+    results = detect_omr_answers_v7(
+        image_bgr=img,
+        meta=meta,
+        config=AnswerDetectConfig(),
+    )
+    q4 = next(r for r in results if r.question_id == 4)
+
+    assert q4.status == "ok"
+    assert q4.detected == ["1"]
 
 
 def test_synth(meta):

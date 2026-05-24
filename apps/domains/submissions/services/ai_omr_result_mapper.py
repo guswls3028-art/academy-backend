@@ -473,6 +473,8 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     enrollment_id = None
     identifier_status = "missing"
     identifier_match_kind = "none"
+    ident_status = ""
+    detected_code = ""
 
     if isinstance(identifier, dict):
         ident_status = str(identifier.get("status") or "").lower()
@@ -527,6 +529,17 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             else:
                 identifier_status = "no_match"
                 reasons.append("IDENTIFIER_NO_ENROLLMENT_MATCH")
+
+    if not enrollment_id:
+        if not isinstance(identifier, dict) or not detected_code:
+            reasons.append("IDENTIFIER_MISSING")
+        elif (
+            "?" in detected_code
+            or len(_clean_tail8(detected_code)) != 8
+            or ident_status not in ("ok", "ambiguous")
+        ):
+            identifier_status = "incomplete"
+            reasons.append("IDENTIFIER_INCOMPLETE")
 
     identifier_ok = enrollment_id is not None
     duplicate_conflict = None

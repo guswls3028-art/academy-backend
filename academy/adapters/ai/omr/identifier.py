@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2  # type: ignore
 import numpy as np  # type: ignore
 
+from academy.adapters.ai.omr.anchor_detector import detect_filled_anchor_square
 from academy.adapters.ai.omr.meta_px import build_page_scale_from_meta, PageScale
 
 logger = logging.getLogger(__name__)
@@ -175,21 +176,16 @@ def _detect_id_anchors(
         if top_det is None or bot_det is None:
             return None
 
-        dx_top = top_det[0] - top_exp_x
-        dy_top = top_det[1] - top_exp_y
-        dx_bot = bot_det[0] - bot_exp_x
-        dy_bot = bot_det[1] - bot_exp_y
-
         src_pts = np.array([
             [top_exp_x, top_exp_y],
             [bot_exp_x, bot_exp_y],
-            [top_exp_x + 100, top_exp_y],
+            [bot_exp_x, top_exp_y],
         ], dtype=np.float32)
 
         dst_pts = np.array([
-            [top_exp_x + dx_top, top_exp_y + dy_top],
-            [bot_exp_x + dx_bot, bot_exp_y + dy_bot],
-            [top_exp_x + 100 + dx_top, top_exp_y + dy_top],
+            [top_det[0], top_det[1]],
+            [bot_det[0], bot_det[1]],
+            [bot_det[0], top_det[1]],
         ], dtype=np.float32)
 
         return cv2.getAffineTransform(src_pts, dst_pts)
@@ -203,54 +199,15 @@ def _detect_anchor_square(
     expected_x: int,
     expected_y: int,
     scale: PageScale,
-    search_radius_mm: float = 5.0,
+    search_radius_mm: float = 12.0,
 ) -> Optional[Tuple[int, int]]:
-    """
-    Detect a filled anchor square near the expected position.
-    Returns (cx, cy) in pixels, or None if not found.
-    """
-    r_x = max(10, scale.mm_to_px_len_x(search_radius_mm))
-    r_y = max(10, scale.mm_to_px_len_y(search_radius_mm))
-
-    img_h, img_w = gray.shape[:2]
-    x1 = max(0, expected_x - r_x)
-    y1 = max(0, expected_y - r_y)
-    x2 = min(img_w, expected_x + r_x)
-    y2 = min(img_h, expected_y + r_y)
-
-    roi = gray[y1:y2, x1:x2]
-    if roi.size == 0:
-        return None
-
-    _, thresh = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    if not contours:
-        return None
-
-    best = None
-    best_dist = float("inf")
-    roi_cx = (x2 - x1) // 2
-    roi_cy = (y2 - y1) // 2
-
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < 20:
-            continue
-        x, y, w, h = cv2.boundingRect(cnt)
-        if w == 0 or h == 0:
-            continue
-        aspect = min(w, h) / max(w, h)
-        if aspect < 0.5:
-            continue
-        cx = x + w // 2
-        cy = y + h // 2
-        dist = ((cx - roi_cx) ** 2 + (cy - roi_cy) ** 2) ** 0.5
-        if dist < best_dist:
-            best_dist = dist
-            best = (x1 + cx, y1 + cy)
-
-    return best
+    return detect_filled_anchor_square(
+        gray=gray,
+        expected_x=expected_x,
+        expected_y=expected_y,
+        scale=scale,
+        search_radius_mm=search_radius_mm,
+    )
 
 
 def _apply_affine_point(

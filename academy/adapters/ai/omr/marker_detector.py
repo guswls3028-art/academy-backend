@@ -43,6 +43,17 @@ _DEFAULT_CORNER_MAP: Dict[int, Dict[str, str]] = {
     270: {"TL": TRIANGLE, "TR": L_SHAPE, "BL": L_SHAPE, "BR": L_SHAPE},
 }
 
+# Legacy v14 browser sheet marker mapping:
+#   TL=square, TR=L-shape, BL=triangle, BR=plus.
+# User-submitted OMR samples still use this visual system, so keep it as a
+# detection fallback while v15 remains the generated-meta default.
+_LEGACY_V14_BASE_MAP: Dict[str, str] = {
+    "TL": SQUARE,
+    "TR": L_SHAPE,
+    "BL": TRIANGLE,
+    "BR": PLUS,
+}
+
 _ALL_MARKER_TYPES = frozenset({SQUARE, L_SHAPE, T_SHAPE, TRIANGLE, PLUS})
 
 # Corner regions: (x_range_frac, y_range_frac) — outer 25% band (v15)
@@ -77,7 +88,7 @@ class MarkerDetectionResult:
     markers: Dict[str, DetectedMarker] = field(default_factory=dict)
     orientation: int = 0  # 0, 90, 180, 270
     success: bool = False
-    method: str = "fallback"  # "marker" or "fallback"
+    method: str = "fallback"  # "marker:<map_name>" or "fallback"
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +223,21 @@ def _point_in_corner(
     return x_lo <= cx <= x_hi and y_lo <= cy <= y_hi
 
 
+def _build_rotated_corner_maps(base_map: Dict[str, str]) -> Dict[int, Dict[str, str]]:
+    """Generate image-corner marker maps for all 90-degree rotations."""
+    corner_order = ["TL", "TR", "BR", "BL"]
+    result: Dict[int, Dict[str, str]] = {}
+    for rot_idx, angle in enumerate([0, 90, 180, 270]):
+        mapping: Dict[str, str] = {}
+        for i, corner_name in enumerate(corner_order):
+            # Under CW rotation by `rot_idx * 90°`, the marker originally
+            # at corner_order[(i + rot_idx) % 4] moves to corner_order[i].
+            src_corner = corner_order[(i + rot_idx) % 4]
+            mapping[corner_name] = base_map[src_corner]
+        result[angle] = mapping
+    return result
+
+
 def _get_corner_map(meta: Dict[str, Any]) -> Dict[int, Dict[str, str]]:
     """
     Extract corner-marker mapping from meta if present, else use defaults.
@@ -243,19 +269,7 @@ def _get_corner_map(meta: Dict[str, Any]) -> Dict[int, Dict[str, str]]:
     if len(base_map) < 4:
         return _DEFAULT_CORNER_MAP
 
-    # Generate all 4 rotations
-    corner_order = ["TL", "TR", "BR", "BL"]
-    result: Dict[int, Dict[str, str]] = {}
-    for rot_idx, angle in enumerate([0, 90, 180, 270]):
-        mapping: Dict[str, str] = {}
-        for i, corner_name in enumerate(corner_order):
-            # Under CW rotation by `rot_idx * 90°`, the marker originally
-            # at corner_order[(i + rot_idx) % 4] moves to corner_order[i]
-            src_corner = corner_order[(i + rot_idx) % 4]
-            mapping[corner_name] = base_map[src_corner]
-        result[angle] = mapping
-
-    return result
+    return _build_rotated_corner_maps(base_map)
 
 
 def _get_marker_positions_px(
@@ -652,54 +666,63 @@ def detect_markers(
         logger.info("marker_detector: no candidates found, returning fallback")
         return MarkerDetectionResult()
 
-    # Try each orientation and find the best assignment
-    corner_maps = _get_corner_map(meta)
+    # Try each orientation and find the best assignment. The first map follows
+    # current meta; the second preserves compatibility with v14 sheets that
+    # are still used in real uploads.
+    primary_corner_maps = _get_corner_map(meta)
+    legacy_corner_maps = _build_rotated_corner_maps(_LEGACY_V14_BASE_MAP)
+    corner_map_sets: List[Tuple[str, Dict[int, Dict[str, str]]]] = [
+        ("meta", primary_corner_maps),
+    ]
+    if legacy_corner_maps != primary_corner_maps:
+        corner_map_sets.append(("legacy_v14", legacy_corner_maps))
 
     best_result: Optional[MarkerDetectionResult] = None
     best_score = -1.0
 
-    for angle, corner_map in corner_maps.items():
-        assigned = _assign_candidates_to_corners(candidates, img_w, img_h, corner_map)
-        n_matched = len(assigned)
+    for map_name, corner_maps in corner_map_sets:
+        for angle, corner_map in corner_maps.items():
+            assigned = _assign_candidates_to_corners(candidates, img_w, img_h, corner_map)
+            n_matched = len(assigned)
 
-        if n_matched == 0:
-            continue
+            if n_matched == 0:
+                continue
 
-        # Tie-break: 동일한 n_matched 안에서는 homography reprojection error(mm)가 작은 쪽이 정답.
-        # 이전에는 avg_conf(코너 anchor 거리 기반)로만 골라 4개 다 잡힌 잘못된 orientation이
-        # 우승하는 경우가 있었음. residual은 종이 실제 배치와 호환되는 orientation만 낮게 나옴.
-        residual_mm = _compute_orientation_residual_mm(assigned, angle, meta)
-        avg_conf = sum(c.confidence for c in assigned.values()) / n_matched
+            # Tie-break: 동일한 n_matched 안에서는 homography reprojection error(mm)가 작은 쪽이 정답.
+            # 이전에는 avg_conf(코너 anchor 거리 기반)로만 골라 4개 다 잡힌 잘못된 orientation이
+            # 우승하는 경우가 있었음. residual은 종이 실제 배치와 호환되는 orientation만 낮게 나옴.
+            residual_mm = _compute_orientation_residual_mm(assigned, angle, meta)
+            avg_conf = sum(c.confidence for c in assigned.values()) / n_matched
 
-        # Score: prioritize n_matched, then minimize residual.
-        # residual_mm 이 무한대면 해당 orientation 후보 폐기 효과.
-        if math.isinf(residual_mm):
-            continue
-        # n_matched 가중치를 매우 크게(1e6) → residual은 같은 n_matched 안에서만 비교
-        score = n_matched * 1_000_000.0 - residual_mm * 100.0 + avg_conf
-        logger.debug(
-            "marker_detector: angle=%d n=%d residual=%.2fmm avg_conf=%.2f score=%.1f",
-            angle, n_matched, residual_mm, avg_conf, score,
-        )
-
-        if score > best_score:
-            best_score = score
-            markers_dict: Dict[str, DetectedMarker] = {}
-            for corner_name, cand in assigned.items():
-                markers_dict[corner_name] = DetectedMarker(
-                    corner=corner_name,
-                    marker_type=cand.marker_type,
-                    center_px=cand.center,
-                    contour=cand.contour,
-                    confidence=cand.confidence,
-                )
-
-            best_result = MarkerDetectionResult(
-                markers=markers_dict,
-                orientation=angle,
-                success=(n_matched == 4),
-                method="marker" if n_matched >= 3 else "fallback",
+            # Score: prioritize n_matched, then minimize residual.
+            # residual_mm 이 무한대면 해당 orientation 후보 폐기 효과.
+            if math.isinf(residual_mm):
+                continue
+            # n_matched 가중치를 매우 크게(1e6) → residual은 같은 n_matched 안에서만 비교
+            score = n_matched * 1_000_000.0 - residual_mm * 100.0 + avg_conf
+            logger.debug(
+                "marker_detector: map=%s angle=%d n=%d residual=%.2fmm avg_conf=%.2f score=%.1f",
+                map_name, angle, n_matched, residual_mm, avg_conf, score,
             )
+
+            if score > best_score:
+                best_score = score
+                markers_dict: Dict[str, DetectedMarker] = {}
+                for corner_name, cand in assigned.items():
+                    markers_dict[corner_name] = DetectedMarker(
+                        corner=corner_name,
+                        marker_type=cand.marker_type,
+                        center_px=cand.center,
+                        contour=cand.contour,
+                        confidence=cand.confidence,
+                    )
+
+                best_result = MarkerDetectionResult(
+                    markers=markers_dict,
+                    orientation=angle,
+                    success=(n_matched == 4),
+                    method=f"marker:{map_name}" if n_matched >= 3 else "fallback",
+                )
 
     if best_result is not None and best_result.success:
         logger.info(
