@@ -605,23 +605,42 @@ def job_get_by_id(job_id) -> Optional["VideoTranscodeJob"]:
 
 def job_set_running(job_id: str) -> bool:
     """
-    Job QUEUED/RETRY_WAIT → RUNNING. Batch 전용 (no lease, no heartbeat, no backlog).
+    Job QUEUED/RETRY_WAIT → RUNNING. Keep the parent Video status in sync so
+    list/detail APIs do not show a running Batch job as "처리 대기".
     """
+    from django.db import transaction
     from django.utils import timezone
-    from apps.domains.video.models import VideoTranscodeJob
+    from apps.domains.video.models import Video, VideoTranscodeJob
 
     now = timezone.now()
-    n = VideoTranscodeJob.objects.filter(
-        pk=job_id,
-        state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT],
-    ).update(
-        state=VideoTranscodeJob.State.RUNNING,
-        locked_by="batch",
-        locked_until=now,
-        last_heartbeat_at=now,
-        updated_at=now,
+    with transaction.atomic():
+        n = VideoTranscodeJob.objects.filter(
+            pk=job_id,
+            state__in=[VideoTranscodeJob.State.QUEUED, VideoTranscodeJob.State.RETRY_WAIT],
+        ).update(
+            state=VideoTranscodeJob.State.RUNNING,
+            locked_by="batch",
+            locked_until=now,
+            last_heartbeat_at=now,
+            updated_at=now,
+        )
+        if n != 1:
+            return False
+
+        job = VideoTranscodeJob.objects.only("video_id", "tenant_id").get(pk=job_id)
+        Video.objects.filter(pk=job.video_id, status=Video.Status.UPLOADED).update(
+            status=Video.Status.PROCESSING,
+            processing_started_at=now,
+            updated_at=now,
+        )
+
+    _cache_video_status_safe(
+        job.video_id,
+        job.tenant_id,
+        getattr(Video.Status.PROCESSING, "value", "PROCESSING"),
+        ttl=21600,
     )
-    return n == 1
+    return True
 
 
 def job_heartbeat(job_id, lease_seconds: int = 3600) -> bool:

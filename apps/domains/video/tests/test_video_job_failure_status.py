@@ -13,6 +13,7 @@ from academy.adapters.db.django.repositories_video import (
     job_complete,
     job_mark_dead,
     job_mark_dead_if_active,
+    job_set_running,
 )
 from apps.core.models import Tenant
 from apps.domains.video.models import Video, VideoTranscodeJob
@@ -63,6 +64,48 @@ class VideoJobFailureStatusTests(TestCase):
             ttl=None,
         )
         mock_delete_progress.assert_called_once_with(self.tenant.id, self.video.id)
+
+
+class VideoJobRunningStatusTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(
+            name="Video Running Tenant",
+            code="video-running",
+            is_active=True,
+        )
+        self.video = Video.objects.create(
+            tenant=self.tenant,
+            title="Queued Video",
+            status=Video.Status.UPLOADED,
+        )
+        self.job = VideoTranscodeJob.objects.create(
+            tenant=self.tenant,
+            video=self.video,
+            state=VideoTranscodeJob.State.QUEUED,
+            attempt_count=1,
+            aws_batch_job_id="aws-current",
+        )
+        self.video.current_job = self.job
+        self.video.save(update_fields=["current_job"])
+
+    @patch("apps.domains.video.redis_status_cache.cache_video_status")
+    def test_job_set_running_moves_video_to_processing(self, mock_cache_status):
+        self.assertTrue(job_set_running(str(self.job.id)))
+
+        self.video.refresh_from_db()
+        self.job.refresh_from_db()
+        self.assertEqual(self.job.state, VideoTranscodeJob.State.RUNNING)
+        self.assertEqual(self.video.status, Video.Status.PROCESSING)
+        self.assertIsNotNone(self.video.processing_started_at)
+        mock_cache_status.assert_called_once_with(
+            tenant_id=self.tenant.id,
+            video_id=self.video.id,
+            status=Video.Status.PROCESSING,
+            hls_path=None,
+            duration=None,
+            error_reason=None,
+            ttl=21600,
+        )
 
 
 @override_settings(LAMBDA_INTERNAL_API_KEY="test-internal", INTERNAL_API_ALLOW_IPS="")
@@ -448,3 +491,21 @@ class VideoUploadCompleteStatusCacheTests(TestCase):
         mock_presign.assert_called_once()
         mock_probe.assert_called_once()
         mock_enqueue.assert_called_once()
+
+    @patch("apps.domains.video.redis_status_cache.cache_video_status")
+    @patch("apps.domains.video.views.video_views.head_object", return_value=(False, 0))
+    def test_upload_complete_missing_source_marks_failed(self, mock_head_object, mock_cache_status):
+        response = VideoViewSet()._upload_complete_impl(self.video)
+
+        self.assertEqual(response.status_code, 409, response.data)
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.status, Video.Status.FAILED)
+        self.assertEqual(self.video.error_reason, "source_not_found_or_empty")
+        mock_cache_status.assert_called_once_with(
+            tenant_id=self.tenant.id,
+            video_id=self.video.id,
+            status=Video.Status.FAILED,
+            error_reason="source_not_found_or_empty",
+            ttl=None,
+        )
+        mock_head_object.assert_called_once()

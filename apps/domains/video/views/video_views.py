@@ -83,6 +83,23 @@ def _cache_uploaded_status(video: Video) -> None:
         logger.debug("VIDEO_UPLOAD_STATUS_CACHE_FAILED | video_id=%s | %s", getattr(video, "id", None), e)
 
 
+def _cache_failed_status(video: Video, reason: str) -> None:
+    tenant_id = getattr(video, "tenant_id", None)
+    if not tenant_id:
+        return
+    try:
+        from apps.domains.video.redis_status_cache import cache_video_status
+        cache_video_status(
+            tenant_id=tenant_id,
+            video_id=video.id,
+            status=Video.Status.FAILED,
+            error_reason=reason,
+            ttl=None,
+        )
+    except Exception as e:
+        logger.debug("VIDEO_UPLOAD_FAILED_STATUS_CACHE_FAILED | video_id=%s | %s", getattr(video, "id", None), e)
+
+
 def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
     """
     upload_complete 최소 무결성 검증
@@ -737,8 +754,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             video_id, exists, size,
         )
         if not exists or size == 0:
-            video.error_reason = "source_not_found_or_empty"
-            video.save(update_fields=["error_reason"])
+            reason = "source_not_found_or_empty"
+            video.status = Video.Status.FAILED
+            video.error_reason = reason
+            video.save(update_fields=["status", "error_reason", "updated_at"])
+            _cache_failed_status(video, reason)
             return Response(
                 {"detail": "S3 object not found"},
                 status=status.HTTP_409_CONFLICT,
@@ -748,8 +768,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             src_url = create_presigned_get_url(key=video.file_key, expires_in=600)
         except Exception as e:
             logger.exception("VIDEO_UPLOAD_COMPLETE_ERROR | create_presigned_get_url | video_id=%s | %s", video_id, e)
-            video.error_reason = f"presigned_get_failed:{str(e)[:200]}"
-            video.save(update_fields=["error_reason"])
+            reason = f"presigned_get_failed:{str(e)[:200]}"
+            video.status = Video.Status.FAILED
+            video.error_reason = reason
+            video.save(update_fields=["status", "error_reason", "updated_at"])
+            _cache_failed_status(video, reason)
             return Response(
                 {"detail": "presigned_get_failed"},
                 status=status.HTTP_409_CONFLICT,
