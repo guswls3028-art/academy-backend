@@ -122,6 +122,7 @@ IMPLEMENTED_AUTO_TRIGGERS: frozenset = frozenset([
     "clinic_cancelled",
     "clinic_check_in",
     "clinic_absent",
+    "clinic_reminder",  # management command: send_clinic_reminders
     "clinic_self_study_completed",
     "clinic_result_notification",
     # 시험/과제/퇴원/결제 (즉시 발화)

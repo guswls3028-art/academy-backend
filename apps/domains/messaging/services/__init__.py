@@ -27,6 +27,7 @@ from .recipients import (
 from .notification_service import (
     send_event_notification,
     send_clinic_reminder_for_students,
+    send_due_clinic_reminders,
 )
 from .registration_service import (
     REGISTRATION_APPROVED_NOTICE,
@@ -53,6 +54,7 @@ __all__ = [
     # notification_service
     "send_event_notification",
     "send_clinic_reminder_for_students",
+    "send_due_clinic_reminders",
     # registration_service
     "REGISTRATION_APPROVED_NOTICE",
     "send_welcome_messages",

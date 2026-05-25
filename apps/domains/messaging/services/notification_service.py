@@ -5,6 +5,7 @@
 
 import logging
 import re
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def send_clinic_reminder_for_students(*, session_id: int):
             tenant=session.tenant,
             trigger="clinic_reminder",
             student=student,
-            send_to="parent",
+            send_to="student",
             context=context,
         ):
             sent += 1
@@ -66,6 +67,116 @@ def send_clinic_reminder_for_students(*, session_id: int):
         "sent": sent,
         "skipped": max(0, attempted - sent),
     }
+
+
+def send_due_clinic_reminders(
+    *,
+    now=None,
+    tenant_id: int | None = None,
+    window_minutes: int = 5,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Send clinic reminders whose due time has arrived.
+
+    due_time = clinic session start - AutoSendConfig.minutes_before.
+    The default window catches small scheduler delays while avoiding old sessions.
+    """
+    from django.db.models import Count, Q
+    from django.utils import timezone
+
+    from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
+    from apps.domains.messaging.models import AutoSendConfig
+
+    current = timezone.localtime(now or timezone.now())
+    try:
+        window = timedelta(minutes=max(0, int(window_minutes)))
+    except (TypeError, ValueError):
+        window = timedelta(minutes=5)
+
+    configs = (
+        AutoSendConfig.objects
+        .filter(
+            trigger="clinic_reminder",
+            enabled=True,
+            minutes_before__isnull=False,
+            tenant__is_active=True,
+        )
+        .select_related("tenant")
+        .order_by("tenant_id")
+    )
+    if tenant_id is not None:
+        configs = configs.filter(tenant_id=int(tenant_id))
+
+    stats = {
+        "status": "ok",
+        "dry_run": bool(dry_run),
+        "configs": 0,
+        "sessions_checked": 0,
+        "sessions_due": 0,
+        "attempted": 0,
+        "sent": 0,
+        "skipped": 0,
+    }
+
+    tz = timezone.get_current_timezone()
+    for config in configs:
+        stats["configs"] += 1
+        try:
+            minutes_before = int(config.minutes_before)
+        except (TypeError, ValueError):
+            stats["skipped"] += 1
+            continue
+        if minutes_before < 0:
+            stats["skipped"] += 1
+            continue
+
+        earliest_start = current + timedelta(minutes=minutes_before) - window
+        latest_start = current + timedelta(minutes=minutes_before)
+        sessions = (
+            ClinicSession.objects
+            .filter(
+                tenant_id=config.tenant_id,
+                date__gte=earliest_start.date(),
+                date__lte=latest_start.date(),
+            )
+            .annotate(
+                booked_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.BOOKED),
+                    distinct=True,
+                )
+            )
+            .filter(booked_count__gt=0)
+            .order_by("date", "start_time", "id")
+        )
+
+        for session in sessions:
+            stats["sessions_checked"] += 1
+            if not session.date or not session.start_time:
+                stats["skipped"] += 1
+                continue
+            start_at = datetime.combine(session.date, session.start_time)
+            if timezone.is_naive(start_at):
+                start_at = timezone.make_aware(start_at, tz)
+            start_at = timezone.localtime(start_at)
+            due_at = start_at - timedelta(minutes=minutes_before)
+            if not (current - window <= due_at <= current):
+                continue
+            if start_at < current:
+                continue
+
+            stats["sessions_due"] += 1
+            if dry_run:
+                stats["attempted"] += int(session.booked_count or 0)
+                continue
+
+            result = send_clinic_reminder_for_students(session_id=session.id)
+            stats["attempted"] += int(result.get("attempted") or 0)
+            stats["sent"] += int(result.get("sent") or 0)
+            stats["skipped"] += int(result.get("skipped") or 0)
+
+    return stats
 
 
 def send_event_notification(
