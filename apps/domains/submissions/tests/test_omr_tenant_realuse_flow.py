@@ -423,7 +423,18 @@ class OMRTenantRealUseFlowTests(TestCase):
 
 
 class OMRMapperReviewPolicyTests(TestCase):
-    def _make_exam(self, *, answer_key: dict[str, object] | None = None, peer_phone: str | None = None):
+    def _make_exam(
+        self,
+        *,
+        answer_key: dict[str, object] | None = None,
+        peer_phone: str | None = None,
+        phone: str = "01012345678",
+        parent_phone: str = "",
+        omr_code: str = "12345678",
+        create_exam_enrollment: bool = True,
+        question_scores: tuple[float, float] = (50, 50),
+        extra_answer_key_answers: dict[str, object] | None = None,
+    ):
         tenant = Tenant.objects.create(name="OMR Policy", code="omr_policy", is_active=True)
         staff = User.objects.create_user(
             username="omr_policy_staff",
@@ -438,9 +449,9 @@ class OMRMapperReviewPolicyTests(TestCase):
             student_data={
                 "ps_number": "OMRPOL001",
                 "name": "OMR 정책 학생",
-                "phone": "01012345678",
-                "parent_phone": "",
-                "omr_code": "12345678",
+                "phone": phone,
+                "parent_phone": parent_phone,
+                "omr_code": omr_code,
                 "school_type": "HIGH",
             },
             password="test1234",
@@ -471,7 +482,8 @@ class OMRMapperReviewPolicyTests(TestCase):
             max_attempts=1,
         )
         exam.sessions.add(session)
-        ExamEnrollment.objects.create(exam=exam, enrollment=enrollment)
+        if create_exam_enrollment:
+            ExamEnrollment.objects.create(exam=exam, enrollment=enrollment)
 
         if peer_phone:
             peer_result = create_student_account(
@@ -497,12 +509,19 @@ class OMRMapperReviewPolicyTests(TestCase):
 
         sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=2)
         questions = [
-            ExamQuestion.objects.create(sheet=sheet, number=i, score=50)
+            ExamQuestion.objects.create(
+                sheet=sheet,
+                number=i,
+                score=question_scores[i - 1],
+            )
             for i in range(1, 3)
         ]
+        answers = answer_key or {str(questions[0].id): "1", str(questions[1].id): "2"}
+        if extra_answer_key_answers:
+            answers = {**answers, **extra_answer_key_answers}
         AnswerKey.objects.create(
             exam=exam,
-            answers=answer_key or {str(questions[0].id): "1", str(questions[1].id): "2"},
+            answers=answers,
         )
         submission = Submission.objects.create(
             tenant=tenant,
@@ -514,6 +533,94 @@ class OMRMapperReviewPolicyTests(TestCase):
             file_key=f"tenants/{tenant.id}/omr/policy.jpg",
         )
         return tenant, exam, enrollment, submission
+
+    def test_session_candidate_without_exam_enrollment_matches_parent_tail_and_creates_exam_enrollment(self):
+        tenant, exam, enrollment, submission = self._make_exam(
+            phone="01011112222",
+            parent_phone="01033334444",
+            omr_code="55556666",
+            create_exam_enrollment=False,
+        )
+
+        apply_omr_ai_result({
+            "submission_id": submission.id,
+            "tenant_id": tenant.id,
+            "status": "DONE",
+            "version": "v15",
+            "aligned": True,
+            "identifier": {"status": "ok", "identifier": "33334444"},
+            "answers": [
+                {"question_id": 1, "detected": ["1"], "status": "ok", "marking": "single", "confidence": 0.99},
+                {"question_id": 2, "detected": ["2"], "status": "ok", "marking": "single", "confidence": 0.99},
+            ],
+        })
+
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.ANSWERS_READY)
+        self.assertEqual(submission.enrollment_id, enrollment.id)
+        self.assertEqual(submission.meta["identifier_status"], "matched")
+        self.assertFalse(submission.meta["manual_review"]["required"])
+        self.assertTrue(
+            ExamEnrollment.objects.filter(exam=exam, enrollment=enrollment).exists()
+        )
+
+    def test_session_candidate_without_exam_enrollment_matches_omr_code_and_creates_exam_enrollment(self):
+        tenant, exam, enrollment, submission = self._make_exam(
+            phone="01011112222",
+            parent_phone="01033334444",
+            omr_code="82378990",
+            create_exam_enrollment=False,
+        )
+
+        apply_omr_ai_result({
+            "submission_id": submission.id,
+            "tenant_id": tenant.id,
+            "status": "DONE",
+            "version": "v15",
+            "aligned": True,
+            "identifier": {"status": "ok", "identifier": "82378990"},
+            "answers": [
+                {"question_id": 1, "detected": ["1"], "status": "ok", "marking": "single", "confidence": 0.99},
+                {"question_id": 2, "detected": ["2"], "status": "ok", "marking": "single", "confidence": 0.99},
+            ],
+        })
+
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.ANSWERS_READY)
+        self.assertEqual(submission.enrollment_id, enrollment.id)
+        self.assertEqual(submission.meta["identifier_status"], "matched")
+        self.assertFalse(submission.meta["manual_review"]["required"])
+        self.assertTrue(
+            ExamEnrollment.objects.filter(exam=exam, enrollment=enrollment).exists()
+        )
+
+    def test_zero_question_scores_fallback_to_exam_max_and_blank_extra_answer_keys_are_ignored(self):
+        tenant, _exam, enrollment, submission = self._make_exam(
+            question_scores=(0, 0),
+            extra_answer_key_answers={"999999": ""},
+        )
+
+        apply_omr_ai_result({
+            "submission_id": submission.id,
+            "tenant_id": tenant.id,
+            "status": "DONE",
+            "version": "v15",
+            "aligned": True,
+            "identifier": {"status": "ok", "identifier": "12345678"},
+            "answers": [
+                {"question_id": 1, "detected": ["1"], "status": "ok", "marking": "single", "confidence": 0.99},
+                {"question_id": 2, "detected": ["2"], "status": "ok", "marking": "single", "confidence": 0.99},
+            ],
+        })
+
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.ANSWERS_READY)
+        self.assertEqual(submission.enrollment_id, enrollment.id)
+
+        result = grade_submission(submission.id)
+
+        self.assertEqual(result.total_score, 100)
+        self.assertEqual(result.max_score, 100)
 
     def test_sparse_blank_answer_is_auto_zero_not_manual_review(self):
         tenant, _exam, enrollment, submission = self._make_exam()

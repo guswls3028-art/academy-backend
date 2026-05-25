@@ -44,13 +44,23 @@ class GradingContractGuard:
 
         # Question–AnswerKey 정합성 (존재 여부만)
         question_ids = {int(q.id) for q in sheet.questions.all()}
-        key_ids = {
+        def has_answer_value(value) -> bool:
+            if isinstance(value, list):
+                return any(str(v).strip() for v in value)
+            return bool(str(value or "").strip())
+
+        unknown_key_ids = {
             int(k)
-            for k in answer_key.answers.keys()
-            if isinstance(k, (int, str)) and str(k).isdigit()
+            for k, value in answer_key.answers.items()
+            if (
+                isinstance(k, (int, str))
+                and str(k).isdigit()
+                and int(k) not in question_ids
+                and has_answer_value(value)
+            )
         }
 
-        if not key_ids.issubset(question_ids):
+        if unknown_key_ids:
             raise ValidationError("answer_key contains unknown question ids")
 
         return sheet, answer_key

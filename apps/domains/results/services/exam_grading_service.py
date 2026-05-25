@@ -68,6 +68,7 @@ class ExamGradingService:
     def _compute_score(
         self,
         *,
+        exam: Exam,
         sheet,
         answer_key,
         submission_answers,
@@ -95,13 +96,22 @@ class ExamGradingService:
         if not questions:
             return 0, 0.0, {}
 
+        exam_max_score = float(getattr(exam, "max_score", 0) or 0)
+        raw_total_score = sum(float(getattr(q, "score", 0) or 0) for q in questions)
+        use_equal_score_fallback = raw_total_score <= 0 and exam_max_score > 0
+        equal_question_score = exam_max_score / len(questions) if use_equal_score_fallback else 0.0
+
         total_score = 0
         max_score = 0.0
         breakdown: Dict[str, dict] = {}
 
         for q in questions:
             qid = int(q.id)
-            q_score = float(getattr(q, "score", 0) or 0)
+            q_score = (
+                equal_question_score
+                if use_equal_score_fallback
+                else float(getattr(q, "score", 0) or 0)
+            )
             max_score += q_score
             correct_answer = key_map.get(qid)
             student_answer = answers_map.get(qid, "")
@@ -119,7 +129,7 @@ class ExamGradingService:
                 "correct_answer": format_answer_for_display(correct_answer),
             }
 
-        return round(float(total_score), 2), max_score, breakdown
+        return round(float(total_score), 2), round(max_score, 2), breakdown
 
     # ------------------------------------------------------------------
     # Public API
@@ -154,6 +164,7 @@ class ExamGradingService:
         )
 
         total_score, max_score, breakdown = self._compute_score(
+            exam=exam,
             sheet=sheet,
             answer_key=answer_key,
             submission_answers=submission_answers,

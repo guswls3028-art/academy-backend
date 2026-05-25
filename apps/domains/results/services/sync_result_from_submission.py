@@ -58,13 +58,21 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
             answers_map[qid] = ans
 
     questions = list(sheet.questions.all().order_by("number"))
+    exam_max_score = float(getattr(exam, "max_score", 0) or 0)
+    raw_total_score = sum(float(getattr(q, "score", 0) or 0) for q in questions)
+    use_equal_score_fallback = bool(questions) and raw_total_score <= 0 and exam_max_score > 0
+    equal_question_score = exam_max_score / len(questions) if use_equal_score_fallback else 0.0
     items_payload = []
     for q in questions:
         qid = int(q.id)
         ans = answers_map.get(qid, "")
         correct_key = key_map.get(qid, "")
         is_correct = answer_matches(ans, correct_key)
-        max_score = float(getattr(q, "score", 0) or 0)
+        max_score = (
+            equal_question_score
+            if use_equal_score_fallback
+            else float(getattr(q, "score", 0) or 0)
+        )
         score = max_score if is_correct else 0.0
         items_payload.append({
             "question_id": qid,

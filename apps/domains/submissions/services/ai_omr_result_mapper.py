@@ -5,6 +5,7 @@ import logging
 from datetime import datetime, timezone
 
 from django.db import transaction
+from django.db.models import Q
 
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.services.omr_submission_guards import (
@@ -77,8 +78,11 @@ def _exact_enrollment_ids_by_phone(
 
     out: set[int] = set()
     enrollments = Enrollment.objects.filter(
-        exam_enrollments__exam_id=exam_id,
+        Q(exam_enrollments__exam_id=exam_id)
+        | Q(session_enrollments__session__exams__id=exam_id),
         tenant=tenant,
+        status="ACTIVE",
+        student__deleted_at__isnull=True,
     ).select_related("student").distinct()
     for enr in enrollments:
         student = getattr(enr, "student", None)
@@ -86,7 +90,8 @@ def _exact_enrollment_ids_by_phone(
             continue
         student_tails = _tail8_variants(getattr(student, "phone", "") or "")
         parent_tails = _tail8_variants(getattr(student, "parent_phone", "") or "")
-        if tails & (student_tails | parent_tails):
+        omr_tails = _tail8_variants(getattr(student, "omr_code", "") or "")
+        if tails & (student_tails | parent_tails | omr_tails):
             out.add(int(enr.id))
     return out
 
@@ -196,8 +201,11 @@ def _resolve_enrollment_by_phone(
 
     # 시험에 연결된 enrollment 중에서 검색
     enrollments = Enrollment.objects.filter(
-        exam_enrollments__exam_id=exam_id,
+        Q(exam_enrollments__exam_id=exam_id)
+        | Q(session_enrollments__session__exams__id=exam_id),
         tenant=tenant,
+        status="ACTIVE",
+        student__deleted_at__isnull=True,
     ).select_related("student").distinct()
 
     lookup_tails = {tail for tail in _tail8_variants(phone_last8) if len(tail) == 8}
@@ -212,15 +220,17 @@ def _resolve_enrollment_by_phone(
             continue
         s_tails = _tail8_variants(getattr(student, "phone", "") or "")
         p_tails = _tail8_variants(getattr(student, "parent_phone", "") or "")
+        o_tails = _tail8_variants(getattr(student, "omr_code", "") or "")
 
-        if lookup_tails & (s_tails | p_tails):
+        if lookup_tails & (s_tails | p_tails | o_tails):
             exact_matches.append(enr.id)
             continue
 
         # fuzzy 후보: 길이 8이고 Hamming 거리 ≤1
         student_digit_tails = {tail for tail in s_tails if len(tail) == 8 and tail.isdigit()}
         parent_digit_tails = {tail for tail in p_tails if len(tail) == 8 and tail.isdigit()}
-        for candidate_tail in student_digit_tails | parent_digit_tails:
+        omr_digit_tails = {tail for tail in o_tails if len(tail) == 8 and tail.isdigit()}
+        for candidate_tail in student_digit_tails | parent_digit_tails | omr_digit_tails:
             for lookup_tail in lookup_digit_tails:
                 d = _hamming(candidate_tail, lookup_tail)
                 if d <= 1:

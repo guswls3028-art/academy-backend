@@ -22,8 +22,35 @@ def allow_duplicate_requested(request) -> bool:
 def lock_exam_enrollment_candidate(*, tenant, exam_id: int, enrollment_id: int | None) -> bool:
     if not enrollment_id:
         return False
+    from apps.domains.enrollment.models import SessionEnrollment
     from apps.domains.exams.models import ExamEnrollment
 
+    if (
+        ExamEnrollment.objects.select_for_update()
+        .filter(
+            exam_id=int(exam_id),
+            enrollment_id=int(enrollment_id),
+            enrollment__tenant=tenant,
+        )
+        .exists()
+    ):
+        return True
+
+    in_session = SessionEnrollment.objects.filter(
+        tenant=tenant,
+        session__exams__id=int(exam_id),
+        enrollment_id=int(enrollment_id),
+        enrollment__tenant=tenant,
+        enrollment__status="ACTIVE",
+        enrollment__student__deleted_at__isnull=True,
+    ).exists()
+    if not in_session:
+        return False
+
+    ExamEnrollment.objects.get_or_create(
+        exam_id=int(exam_id),
+        enrollment_id=int(enrollment_id),
+    )
     return (
         ExamEnrollment.objects.select_for_update()
         .filter(
