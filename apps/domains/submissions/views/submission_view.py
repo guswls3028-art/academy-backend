@@ -18,6 +18,7 @@ from apps.api.common.upload_validation import (
     validate_uploaded_file,
 )
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.domains.exams.models import ExamQuestion
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.serializers.submission import (
     SubmissionSerializer,
@@ -343,16 +344,33 @@ class SubmissionViewSet(ModelViewSet):
     def _manual_edit_get(self, request, pk=None):
         """GET: 현재 답안 목록 + identifier + 스캔 이미지 URL 반환 (수동 편집 화면용)."""
         submission: Submission = self.get_object()
-        answers_qs = SubmissionAnswer.objects.filter(
+        answers = list(SubmissionAnswer.objects.filter(
             submission=submission,
-        ).order_by("exam_question_id")
+        ))
+        question_ids = [int(a.exam_question_id) for a in answers]
+        question_number_by_id = {
+            int(qid): int(number)
+            for qid, number in ExamQuestion.objects.filter(
+                id__in=question_ids,
+                sheet__exam__tenant=submission.tenant,
+            ).values_list("id", "number")
+        }
+        answers.sort(
+            key=lambda a: (
+                question_number_by_id.get(int(a.exam_question_id), int(a.exam_question_id)),
+                int(a.exam_question_id),
+            )
+        )
         answers_data = []
-        for a in answers_qs:
+        for a in answers:
             am = a.meta or {}
             omr = am.get("omr") if isinstance(am, dict) else None
             answers_data.append({
                 "question_id": a.exam_question_id,
-                "question_no": a.exam_question_id,
+                "question_no": question_number_by_id.get(
+                    int(a.exam_question_id),
+                    int(a.exam_question_id),
+                ),
                 "answer": a.answer or "",
                 "omr": omr if isinstance(omr, dict) else None,
             })

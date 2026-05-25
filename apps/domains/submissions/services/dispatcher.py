@@ -210,13 +210,31 @@ def dispatch_submission(submission: Submission) -> None:
         return
     source_id = str(submission.id)
 
-    dispatch_job(
+    dispatch_result = dispatch_job(
         job_type=job_type,
         payload=payload,
         tenant_id=str(submission.tenant_id),
         source_domain="submissions",
         source_id=source_id,
     )
+    if not dispatch_result.get("ok"):
+        meta = dict(submission.meta or {})
+        meta["ai_dispatch"] = {
+            "ok": False,
+            "job_type": job_type,
+            "job_id": dispatch_result.get("job_id"),
+            "rejection_code": dispatch_result.get("rejection_code"),
+            "error": dispatch_result.get("error") or "AI dispatch failed",
+        }
+        submission.meta = meta
+        transit_save(
+            submission,
+            Submission.Status.FAILED,
+            error_message=str(dispatch_result.get("error") or "AI dispatch failed"),
+            actor="dispatcher.ai_dispatch",
+            extra_update_fields=["meta"],
+        )
+        return
 
     # 워커 기동은 반드시 DB commit 후에 (on_commit)
     def _start_worker():

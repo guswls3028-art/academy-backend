@@ -284,6 +284,9 @@ function Ensure-ECR-VpcEndpoints {
     $region = $script:Region
     $vpcCidr = $script:VpcCidr
     if (-not $vpcId -or -not $region -or $script:PlanMode) { return }
+    if (-not $script:NatEnabled) {
+        $script:SkipEcrVpcEndpoints = $true
+    }
     $svcPrefix = "com.amazonaws.$region"
     $ecrApiSvc = "$svcPrefix.ecr.api"
     $ecrDkrSvc = "$svcPrefix.ecr.dkr"
@@ -319,7 +322,7 @@ function Ensure-ECR-VpcEndpoints {
     $rtIds = @($rtIds | Where-Object { $_ -and $_ -match '^rtb-' })
 
     # ECR API interface endpoint (skip when SkipEcrVpcEndpoints - instances use public internet)
-    if ($script:SkipEcrVpcEndpoints) { Write-Ok "ECR VPC endpoints skipped (MinimalDeploy)" } else {
+    if ($script:SkipEcrVpcEndpoints) { Write-Ok "ECR VPC endpoints skipped (public egress path)" } else {
     $existing = Invoke-AwsJson @("ec2", "describe-vpc-endpoints", "--filters", "Name=vpc-id,Values=$vpcId", "Name=service-name,Values=$ecrApiSvc", "--region", $region, "--output", "json") 2>$null
     if (-not $existing -or -not $existing.VpcEndpoints -or $existing.VpcEndpoints.Count -eq 0) {
         if (-not $script:PlanMode) {

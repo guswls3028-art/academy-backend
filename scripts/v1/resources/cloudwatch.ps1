@@ -1,15 +1,19 @@
-﻿# CloudWatch: Video Batch 로그 그룹 생성 및 retention (SSOT: videoBatch.observability.logRetentionDays)
+﻿# CloudWatch: 로그 그룹 생성 및 retention (SSOT: observability.logRetentionDays)
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
 
 function Ensure-VideoBatchLogRetention {
     $R = $script:Region
-    $retentionDays = if ($script:VideoBatchLogRetentionDays -gt 0) { $script:VideoBatchLogRetentionDays } else { 30 }
+    $retentionDays = if ($script:ObservabilityLogRetentionDays -gt 0) { $script:ObservabilityLogRetentionDays } elseif ($script:VideoBatchLogRetentionDays -gt 0) { $script:VideoBatchLogRetentionDays } else { 30 }
     $logGroups = @(
-        "/aws/batch/academy-video-worker",
-        "/aws/batch/academy-video-ops"
+        $script:VideoLogGroup,
+        $script:OpsLogGroup
     )
+    if ($script:RdsProxyName -and $script:RdsProxyName.Trim() -ne "") {
+        $logGroups += "/aws/rds/proxy/$($script:RdsProxyName.Trim())"
+    }
     foreach ($name in $logGroups) {
+        if (-not $name -or $name.Trim() -eq "") { continue }
         try {
             $exists = Invoke-AwsJson @("logs", "describe-log-groups", "--log-group-name-prefix", $name, "--region", $R, "--output", "json")
             if (-not $exists -or -not $exists.logGroups -or $exists.logGroups.Count -eq 0) {

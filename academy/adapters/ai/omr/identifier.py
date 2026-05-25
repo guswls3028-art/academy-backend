@@ -57,6 +57,7 @@ class IdentifierConfigV1:
     # z-score thresholds
     min_z_score_ok: float = 2.5
     min_z_score_ambiguous: float = 1.5
+    min_z_gap_ok: float = 1.5
 
 
 def _clamp(v: int, lo: int, hi: int) -> int:
@@ -420,7 +421,11 @@ def detect_identifier_v1(
                 status_rollup = "blank" if status_rollup == "ok" else status_rollup
                 continue
 
-            if top_z < cfg.min_z_score_ok or z_gap < 1.5 * std:
+            if (
+                top_z < cfg.min_z_score_ok
+                or z_gap < cfg.min_z_gap_ok
+                or second_z >= cfg.min_z_score_ambiguous
+            ):
                 # Ambiguous
                 digits_out.append({
                     "digit_index": int(digit_index),

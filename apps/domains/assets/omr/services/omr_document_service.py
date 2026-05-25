@@ -114,7 +114,12 @@ class OMRDocumentService:
         # 문항 수 resolve
         _mc_count = mc_count
         if _mc_count is None:
-            sheet = getattr(exam, "sheet", None)
+            from apps.domains.exams.services.template_resolver import resolve_template_exam
+
+            sheet_exam = resolve_template_exam(exam)
+            if int(getattr(sheet_exam, "tenant_id", 0) or 0) != int(getattr(tenant, "id", 0) or 0):
+                raise ValueError("template exam belongs to another tenant")
+            sheet = getattr(sheet_exam, "sheet", None)
             total_q = int(getattr(sheet, "total_questions", 0) or 0)
             _mc_count = total_q if total_q > 0 else 20
 

@@ -31,6 +31,70 @@ def _publish_after_commit(job: AIJob, job_model) -> None:
             ai_repo.job_save_failed(job_model, str(e), str(e))
         except Exception:
             pass
+        _propagate_publish_failure(job_model, str(e))
+
+
+def _propagate_publish_failure(job_model, error_message: str) -> None:
+    if getattr(job_model, "source_domain", None) != "submissions":
+        return
+    try:
+        submission_id = int(getattr(job_model, "source_id", "") or 0)
+        tenant_id = int(getattr(job_model, "tenant_id", "") or 0)
+    except (TypeError, ValueError):
+        logger.warning(
+            "AI publish failure propagation skipped: job_id=%s source_id=%s tenant_id=%s",
+            getattr(job_model, "job_id", ""),
+            getattr(job_model, "source_id", ""),
+            getattr(job_model, "tenant_id", ""),
+        )
+        return
+    if submission_id <= 0 or tenant_id <= 0:
+        return
+
+    try:
+        from django.db import transaction
+
+        from apps.domains.submissions.models import Submission
+        from apps.domains.submissions.services.transition import can_transit, transit_save
+
+        with transaction.atomic():
+            submission = (
+                Submission.objects
+                .select_for_update()
+                .filter(id=submission_id, tenant_id=tenant_id)
+                .first()
+            )
+            if not submission or submission.status == Submission.Status.FAILED:
+                return
+            if not can_transit(submission.status, Submission.Status.FAILED):
+                logger.warning(
+                    "AI publish failure could not mark submission failed: job_id=%s submission_id=%s status=%s",
+                    getattr(job_model, "job_id", ""),
+                    submission_id,
+                    getattr(submission, "status", None),
+                )
+                return
+            meta = dict(submission.meta or {})
+            meta["ai_dispatch"] = {
+                "ok": False,
+                "job_type": getattr(job_model, "job_type", ""),
+                "job_id": getattr(job_model, "job_id", ""),
+                "rejection_code": "publish_failed",
+                "error": error_message or "AI publish failed",
+            }
+            submission.meta = meta
+            transit_save(
+                submission,
+                Submission.Status.FAILED,
+                error_message=error_message or "AI publish failed",
+                actor="ai.publish_after_commit",
+                extra_update_fields=["meta"],
+            )
+    except Exception:
+        logger.exception(
+            "AI publish failure propagation failed: job_id=%s",
+            getattr(job_model, "job_id", ""),
+        )
 
 
 def dispatch_job(

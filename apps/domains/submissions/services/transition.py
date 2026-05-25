@@ -23,7 +23,7 @@ S = Submission.Status
 STATUS_FLOW: dict[str, set[str]] = {
     S.SUBMITTED:            {S.DISPATCHED, S.ANSWERS_READY, S.GRADING, S.FAILED},
     S.DISPATCHED:           {S.ANSWERS_READY, S.NEEDS_IDENTIFICATION, S.FAILED},
-    S.ANSWERS_READY:        {S.GRADING},
+    S.ANSWERS_READY:        {S.GRADING, S.FAILED},
     S.GRADING:              {S.DONE, S.FAILED},
     S.FAILED:               {S.SUBMITTED},
     S.NEEDS_IDENTIFICATION: {S.ANSWERS_READY},

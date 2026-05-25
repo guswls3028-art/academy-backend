@@ -272,6 +272,43 @@ def test_identifier_anchor_ignores_nearby_artifact():
     assert result["identifier"] == expected_digits
 
 
+def test_identifier_double_mark_with_lighter_second_mark_is_ambiguous():
+    meta = build_omr_meta(question_count=20, n_choices=5)
+    w, h = 3508, 2480
+    img = np.ones((h, w, 3), dtype=np.uint8) * 255
+    scale = build_page_scale_from_meta(meta=meta, image_size_px=(w, h))
+    expected_digits = "12345678"
+
+    ident = meta["identifier"]
+    for d_idx, digit in enumerate(ident["digits"]):
+        for value, bub in enumerate(digit["bubbles"]):
+            center = bub["center"]
+            cx, cy = scale.mm_to_px_point(float(center["x"]), float(center["y"]))
+            rx = scale.mm_to_px_len_x(float(bub["radius_x"]))
+            ry = scale.mm_to_px_len_y(float(bub["radius_y"]))
+            cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, (180, 180, 180), 1)
+            if value == int(expected_digits[d_idx]):
+                cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, (0, 0, 0), -1)
+            if d_idx == 0 and value == 9:
+                cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, (90, 90, 90), -1)
+
+    for anchor in ident["anchors"].values():
+        center = anchor["center"]
+        cx, cy = scale.mm_to_px_point(float(center["x"]), float(center["y"]))
+        side = scale.mm_to_px_len_x(float(anchor.get("size", 2.0)))
+        half = side // 2
+        cv2.rectangle(img, (cx - half, cy - half), (cx + half, cy + half), (0, 0, 0), -1)
+
+    result = detect_identifier_v1(
+        image_bgr=img,
+        meta=meta,
+        cfg=IdentifierConfigV1(),
+    )
+
+    assert result["status"] == "ambiguous"
+    assert result["digits"][0]["status"] == "ambiguous"
+
+
 def test_answer_column_anchor_corrects_shifted_scan():
     meta = build_omr_meta(question_count=20, n_choices=5)
     w, h = 3508, 2480
