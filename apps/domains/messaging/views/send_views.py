@@ -6,6 +6,7 @@
 import re
 from datetime import timedelta
 
+from django.apps import apps as django_apps
 from django.utils import timezone
 
 from rest_framework import status
@@ -357,7 +358,7 @@ class SendMessageView(APIView):
         self, request, tenant, data, sender, message_mode,
         template_id, raw_body, raw_subject, scheduled_send_at,
     ):
-        from apps.domains.staffs.models import Staff
+        Staff = django_apps.get_model("staffs", "Staff")
         staff_ids = data.get("staff_ids") or []
         staffs = list(
             Staff.objects.filter(tenant=tenant, id__in=staff_ids).only("id", "name", "phone")

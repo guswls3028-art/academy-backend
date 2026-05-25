@@ -1,6 +1,7 @@
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
@@ -11,10 +12,10 @@ from apps.core.models.user import user_internal_username
 from apps.domains.messaging.models import MessageTemplate, ScheduledNotification
 from apps.domains.messaging.views.send_views import SendMessageView
 from apps.domains.messaging.views.template_views import MessageTemplateListCreateView
-from apps.domains.students.models import Student
 
 
 User = get_user_model()
+Student = apps.get_model("students", "Student")
 
 
 class SendMessageViewTests(TestCase):
