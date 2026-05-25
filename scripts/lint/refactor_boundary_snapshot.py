@@ -153,13 +153,11 @@ def domain_name(path: Path) -> str | None:
     return relative.parts[0]
 
 
-def scan_file(path: Path) -> list[Finding]:
+def scan_source(path: Path, source: str) -> list[Finding]:
     try:
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        tree = ast.parse(source, filename=str(path))
     except SyntaxError as exc:
         return [Finding("syntax_error", rel(path), exc.lineno or 0, exc.msg)]
-    except UnicodeDecodeError as exc:
-        return [Finding("decode_error", rel(path), 0, str(exc))]
 
     findings: list[Finding] = []
     source_domain = domain_name(path)
@@ -198,11 +196,51 @@ def scan_file(path: Path) -> list[Finding]:
     return findings
 
 
+def scan_file(path: Path) -> list[Finding]:
+    try:
+        source = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        return [Finding("decode_error", rel(path), 0, str(exc))]
+    return scan_source(path, source)
+
+
 def summarize(findings: list[Finding]) -> dict[str, int]:
     summary: dict[str, int] = {}
     for finding in findings:
         summary[finding.kind] = summary.get(finding.kind, 0) + 1
     return dict(sorted(summary.items()))
+
+
+def finding_identity(finding: Finding) -> tuple[str, str, str]:
+    """Stable identity for baseline comparison. Line numbers may shift during safe edits."""
+    return (finding.kind, finding.path, finding.detail)
+
+
+def read_git_file(ref: str, repo_path: str) -> str | None:
+    result = subprocess.run(
+        ["git", "-C", str(BACKEND_DIR), "show", f"{ref}:{repo_path}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def collect_base_findings(base_ref: str, paths: set[str]) -> list[Finding]:
+    base_findings: list[Finding] = []
+    for repo_path in paths:
+        path = normalize_repo_path(repo_path)
+        if not path:
+            continue
+        source = read_git_file(base_ref, repo_path)
+        if source is None:
+            continue
+        base_findings.extend(scan_source(path, source))
+    return base_findings
 
 
 def main() -> int:
@@ -252,6 +290,13 @@ def main() -> int:
             print(f"error: could not resolve touched files: {exc}", file=sys.stderr)
             return 2
         strict_findings = findings_for_paths(findings, touched_files)
+        if args.base_ref:
+            base_findings = collect_base_findings(args.base_ref, touched_files)
+            base_identities = {finding_identity(item) for item in base_findings}
+            strict_findings = [
+                item for item in strict_findings
+                if finding_identity(item) not in base_identities
+            ]
 
     payload = {
         "backend": str(BACKEND_DIR),
