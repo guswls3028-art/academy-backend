@@ -3,38 +3,17 @@ from __future__ import annotations
 
 import logging
 
+from apps.support.submissions.failure import mark_submission_failed
+
 logger = logging.getLogger(__name__)
 
 
 def _mark_submission_failed(submission_id: int, error_message: str) -> bool:
-    from django.db import transaction
-
-    from apps.domains.submissions.models import Submission
-    from apps.domains.submissions.services.transition import can_transit, transit_save
-
-    with transaction.atomic():
-        submission = (
-            Submission.objects
-            .select_for_update()
-            .filter(id=int(submission_id))
-            .first()
-        )
-        if not submission or submission.status == Submission.Status.FAILED:
-            return False
-        if not can_transit(submission.status, Submission.Status.FAILED):
-            logger.warning(
-                "grade_submission_task could not mark failed: submission_id=%s status=%s",
-                submission_id,
-                getattr(submission, "status", None),
-            )
-            return False
-        transit_save(
-            submission,
-            Submission.Status.FAILED,
-            error_message=error_message,
-            actor="grader.task",
-        )
-        return True
+    return mark_submission_failed(
+        int(submission_id),
+        error_message=error_message,
+        actor="grader.task",
+    )
 
 
 def grade_submission_task(submission_id: int) -> dict:
