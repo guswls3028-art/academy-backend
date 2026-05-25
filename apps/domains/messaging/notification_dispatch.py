@@ -428,6 +428,8 @@ def execute_notification_batch(
     solapi_template_id = payload.get("solapi_template_id", "")
     raw_message_mode = _alimtalk_only_mode(payload.get("message_mode", "alimtalk"))
     notification_type = payload.get("notification_type", "")
+    send_to = payload.get("send_to", "parent")
+    target_type = "parent" if send_to == "parent" else "student"
 
     _can_alimtalk = bool(solapi_template_id)
     modes_to_send = ["alimtalk"] if _can_alimtalk else []
@@ -469,7 +471,7 @@ def execute_notification_batch(
                     template_id=solapi_template_id if mode == "alimtalk" else None,
                     alimtalk_replacements=r.get("alimtalk_replacements", []) if mode == "alimtalk" else None,
                     event_type=f"manual_{notification_type}",
-                    target_type="student",
+                    target_type=target_type,
                     target_id=r.get("student_id"),
                     target_name=r.get("student_name", ""),
                     occurrence_key=f"batch_{batch_id}",

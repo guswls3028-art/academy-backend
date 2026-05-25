@@ -176,6 +176,8 @@ def send_clinic_reminder_for_students(*, session_id: int):
         "날짜": session.date.isoformat() if session.date else "",
         "시간": session.start_time.strftime("%H:%M") if session.start_time else "",
         "_domain_object_id": f"clinic_session:{session.id}:reminder",
+        "_source_domain": "clinic",
+        "_source_use_case": "clinic.reminder",
     }
 
     attempted = 0

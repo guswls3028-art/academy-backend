@@ -84,6 +84,8 @@ class ClinicReminderServiceTest(TestCase):
         self.assertEqual(kwargs["context"]["장소"], "3층 세미나실")
         self.assertEqual(kwargs["context"]["날짜"], "2026-05-15")
         self.assertEqual(kwargs["context"]["시간"], "18:30")
+        self.assertEqual(kwargs["context"]["_source_domain"], "clinic")
+        self.assertEqual(kwargs["context"]["_source_use_case"], "clinic.reminder")
 
     @patch(
         "apps.support.clinic.session_dependencies.send_clinic_reminder_for_students",

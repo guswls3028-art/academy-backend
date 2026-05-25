@@ -273,6 +273,7 @@ def send_event_notification(
         )
         return False
 
+    target_type = "parent" if send_to == "parent" else "student"
     payload = {
         "tenant_id": tenant.id,
         "to": phone,
@@ -282,7 +283,7 @@ def send_event_notification(
         "template_id": _alimtalk_tid,
         "alimtalk_replacements": replacements,
         "event_type": trigger,
-        "target_type": "student",
+        "target_type": target_type,
         "target_id": student_id,
         "target_name": name,
         "occurrence_key": stable_occurrence,

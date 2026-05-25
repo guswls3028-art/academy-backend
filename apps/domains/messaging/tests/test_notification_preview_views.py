@@ -287,3 +287,31 @@ class NotificationBatchDispatchPolicyTests(TestCase):
         kwargs = mock_enqueue.call_args.kwargs
         self.assertEqual(kwargs["message_mode"], "alimtalk")
         self.assertEqual(kwargs["template_id"], "KA01TP_TEST")
+        self.assertEqual(kwargs["target_type"], "parent")
+
+    @patch("apps.domains.messaging.policy.check_recipient_allowed", return_value=True)
+    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    def test_preview_batch_marks_student_target_when_sending_to_student(self, mock_enqueue, _mock_allowed):
+        result = execute_notification_batch(
+            tenant=self.tenant,
+            payload={
+                "recipients": [
+                    {
+                        "student_id": 12,
+                        "student_name": "학생수신",
+                        "phone_raw": "01012345678",
+                        "message_body": "학생 안내",
+                        "alimtalk_replacements": [{"key": "선생님메모", "value": "학생 안내"}],
+                    }
+                ],
+                "solapi_template_id": "KA01TP_TEST",
+                "message_mode": "alimtalk",
+                "notification_type": "clinic_reminder",
+                "send_to": "student",
+            },
+            batch_id="batch-student-target",
+            staff_id=7,
+        )
+
+        self.assertEqual(result["sent_count"], 1)
+        self.assertEqual(mock_enqueue.call_args.kwargs["target_type"], "student")

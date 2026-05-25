@@ -100,6 +100,7 @@ class TestSendEventNotification(TestCase):
         self.assertEqual(kw["tenant_id"], 1)
         self.assertEqual(kw["to"], "01087654321")
         self.assertEqual(kw["message_mode"], "alimtalk")
+        self.assertEqual(kw["target_type"], "parent")
         # 통합 4종 우선 라우팅 정책: check_in_complete는 attendance 통합 템플릿 사용
         self.assertEqual(kw["template_id"], "KA01TP260406121126868FGddLmrDFUC")
         # SMS fallback text
@@ -133,6 +134,7 @@ class TestSendEventNotification(TestCase):
 
         self.assertTrue(result)
         self.assertEqual(mock_enqueue.call_args.kwargs["to"], "01099998888")
+        self.assertEqual(mock_enqueue.call_args.kwargs["target_type"], "student")
 
     @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
@@ -306,6 +308,7 @@ class TestSendEventNotification(TestCase):
         self.assertEqual(kwargs["delay_mode"], "delay_minutes")
         self.assertEqual(kwargs["delay_value"], 15)
         self.assertEqual(kwargs["payload"]["message_mode"], "alimtalk")
+        self.assertEqual(kwargs["payload"]["target_type"], "parent")
 
     @patch("apps.domains.messaging.scheduled.schedule_notification")
     @patch(f"{_QSV}.enqueue_sms")
@@ -955,7 +958,7 @@ class TestIdempotencyMetadata(TestCase):
 
         kwargs = mock_enqueue.call_args.kwargs
         self.assertEqual(kwargs["event_type"], "check_in_complete")
-        self.assertEqual(kwargs["target_type"], "student")
+        self.assertEqual(kwargs["target_type"], "parent")
         self.assertEqual(kwargs["target_id"], 42)
         self.assertTrue(kwargs["occurrence_key"])  # 날짜 기반 키
 
