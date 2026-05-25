@@ -82,6 +82,16 @@ class QnaNotificationTests(TestCase):
         self.assertIn("수열 질문", replacement["value"])
 
     @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    def test_notify_qna_created_skips_e2e_marked_post(self, mock_enqueue):
+        self.post.title = "[E2E] QnA 테스트 질문"
+        self.post.save(update_fields=["title"])
+
+        sent = notify_qna_created(self.post, actor_user=self.student_user)
+
+        self.assertEqual(sent, 0)
+        mock_enqueue.assert_not_called()
+
+    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
     def test_notify_qna_created_falls_back_to_unified_attendance_template(self, mock_enqueue):
         self.freeform_template.delete()
 
@@ -120,6 +130,23 @@ class QnaNotificationTests(TestCase):
         replacement = next(item for item in kwargs["alimtalk_replacements"] if item["key"] == "공지내용")
         self.assertIn("[QnA 답변 등록]", replacement["value"])
         self.assertIn("수열 질문", replacement["value"])
+
+    @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
+    def test_notify_qna_answered_skips_e2e_marked_post(self, mock_enqueue):
+        self.post.title = "[E2E-SAFE] 검증 질문"
+        self.post.save(update_fields=["title"])
+        reply = PostReply.objects.create(
+            tenant=self.tenant,
+            post=self.post,
+            content="답변입니다",
+            author_role="staff",
+            author_display_name="김선생",
+        )
+
+        sent = notify_qna_answered(self.post, reply, send_to="student", actor_user=self.teacher)
+
+        self.assertEqual(sent, 0)
+        mock_enqueue.assert_not_called()
 
     @patch("apps.domains.messaging.services.enqueue_sms", return_value=True)
     def test_notify_qna_answered_falls_back_to_unified_attendance_template(self, mock_enqueue):

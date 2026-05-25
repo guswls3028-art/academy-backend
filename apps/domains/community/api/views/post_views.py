@@ -743,7 +743,21 @@ class PostViewSet(viewsets.ModelViewSet):
         # 발송 대상은 글 작성자(author_role)에 따라 분기:
         #   - student 작성: QnA→학생, 상담→학생+학부모
         #   - parent 작성: QnA·상담 모두 학부모만 (학부모가 본인 자격으로 쓴 글)
-        if author_role == "staff" and post.post_type in ("qna", "counsel") and post.created_by_id:
+        suppress_qna_notification = False
+        if post.post_type == "qna":
+            try:
+                from apps.domains.community.services.qna_notifications import should_suppress_qna_notification
+
+                suppress_qna_notification = should_suppress_qna_notification(post)
+            except Exception as e:
+                logger.warning("community qna notification suppression check failed: post_id=%s err=%s", post.id, e)
+
+        if (
+            author_role == "staff"
+            and post.post_type in ("qna", "counsel")
+            and post.created_by_id
+            and not suppress_qna_notification
+        ):
             category_fallback = "QnA" if post.post_type == "qna" else "상담"
             ctx = {
                 "강의명": (post.category_label or category_fallback),

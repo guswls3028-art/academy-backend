@@ -10,6 +10,8 @@ from django.utils.html import strip_tags
 
 logger = logging.getLogger(__name__)
 
+_E2E_MARKER_RE = re.compile(r"\[E2E(?:-[^\]]+)?\]", re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class _Recipient:
@@ -22,6 +24,9 @@ class _Recipient:
 def notify_qna_created(post, *, actor_user=None) -> int:
     """Send a best-effort Alimtalk to tenant staff when a student QnA is created."""
     if getattr(post, "post_type", "") != "qna" or not getattr(post, "created_by_id", None):
+        return 0
+    if should_suppress_qna_notification(post):
+        logger.info("qna created alimtalk suppressed for E2E post=%s", getattr(post, "id", None))
         return 0
 
     student_name = _post_student_name(post)
@@ -44,6 +49,13 @@ def notify_qna_created(post, *, actor_user=None) -> int:
 def notify_qna_answered(post, reply, *, send_to: str = "student", actor_user=None) -> int:
     """Send a best-effort Alimtalk to the original QnA author after a staff answer."""
     if getattr(post, "post_type", "") != "qna" or not getattr(post, "created_by_id", None):
+        return 0
+    if should_suppress_qna_notification(post):
+        logger.info(
+            "qna answer alimtalk suppressed for E2E post=%s send_to=%s",
+            getattr(post, "id", None),
+            send_to,
+        )
         return 0
 
     student = getattr(post, "created_by", None)
@@ -158,6 +170,17 @@ def _send_qna_alimtalk_to_recipients(
         if ok:
             sent += 1
     return sent
+
+
+def should_suppress_qna_notification(post) -> bool:
+    """External Alimtalk must not fire for production E2E probe content."""
+    if not post:
+        return False
+    for attr in ("title", "content"):
+        value = _clean(getattr(post, attr, "") or "")
+        if value and _E2E_MARKER_RE.search(value):
+            return True
+    return False
 
 
 def _resolve_qna_alimtalk_payload(

@@ -76,6 +76,18 @@ class TestReplyAlimtalkDispatch(TestCase):
         self.assertEqual(kwargs["context"]["차시명"], "함수 미분 질문")
 
     @patch("apps.domains.community.services.qna_notifications.notify_qna_answered")
+    @patch("apps.domains.messaging.services.send_event_notification")
+    def test_qna_reply_skips_notifications_for_e2e_marked_post(self, mock_send, mock_fallback):
+        self.qna.title = "[E2E] QnA 테스트 질문"
+        self.qna.save(update_fields=["title"])
+
+        resp = self._post_reply(self.qna)
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        mock_send.assert_not_called()
+        mock_fallback.assert_not_called()
+
+    @patch("apps.domains.community.services.qna_notifications.notify_qna_answered")
     @patch("apps.domains.messaging.services.send_event_notification", return_value=False)
     def test_qna_reply_falls_back_to_freeform_alimtalk_when_trigger_not_sent(self, mock_send, mock_fallback):
         resp = self._post_reply(self.qna)
