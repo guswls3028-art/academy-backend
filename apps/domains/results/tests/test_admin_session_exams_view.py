@@ -1,17 +1,19 @@
 from datetime import timedelta
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.exams.models import Exam
-from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.views.admin_session_exams_view import AdminSessionExamsView
 
 
 User = get_user_model()
+Exam = apps.get_model("exams", "Exam")
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
 
 
 class AdminSessionExamsViewTests(TestCase):

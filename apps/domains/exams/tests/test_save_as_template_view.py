@@ -1,14 +1,20 @@
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.exams.models import AnswerKey, Exam, ExamAsset, ExamQuestion, Sheet
 from apps.domains.exams.views.save_as_template_view import SaveAsTemplateView
-from apps.domains.lectures.models import Lecture, Session
 
 
 User = get_user_model()
+AnswerKey = apps.get_model("exams", "AnswerKey")
+Exam = apps.get_model("exams", "Exam")
+ExamAsset = apps.get_model("exams", "ExamAsset")
+ExamQuestion = apps.get_model("exams", "ExamQuestion")
+Sheet = apps.get_model("exams", "Sheet")
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
 
 
 class SaveAsTemplateViewTests(TestCase):

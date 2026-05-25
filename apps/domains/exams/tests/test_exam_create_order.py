@@ -1,14 +1,16 @@
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.exams.models import Exam
 from apps.domains.exams.views.exam_view import ExamViewSet
-from apps.domains.lectures.models import Lecture, Session
 
 
 User = get_user_model()
+Exam = apps.get_model("exams", "Exam")
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
 
 
 class ExamCreateOrderTests(TestCase):

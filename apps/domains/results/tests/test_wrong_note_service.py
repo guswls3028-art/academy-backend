@@ -1,20 +1,25 @@
 from __future__ import annotations
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from apps.core.models.tenant import Tenant
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion, Sheet
-from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ResultFact
 from apps.domains.results.services.wrong_note_service import (
     WrongNoteQuery,
     list_wrong_notes_for_enrollment,
 )
-from apps.domains.students.models import Student
 
 User = get_user_model()
+Enrollment = apps.get_model("enrollment", "Enrollment")
+AnswerKey = apps.get_model("exams", "AnswerKey")
+Exam = apps.get_model("exams", "Exam")
+ExamQuestion = apps.get_model("exams", "ExamQuestion")
+Sheet = apps.get_model("exams", "Sheet")
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
+Student = apps.get_model("students", "Student")
 
 
 class WrongNoteServiceSessionExamTests(TestCase):
