@@ -25,6 +25,12 @@ git push main
 [detect-changes] ─── analyze git diff ──> outputs: build_api, build_video,
     |                                               build_messaging, build_ai, force_full
     v
+[run-lint] ─── ruff deploy gate
+    |
+    v
+[run-tests] ─── smoke tests deploy gate
+    |
+    v
 [build-and-push] ─── build changed images ──> ECR (:latest + :sha-XXXXXXXX)
     |
     |── (if API changed) ──> [run-migrations] ─── pull new SHA image ──> docker run manage.py migrate
@@ -40,6 +46,9 @@ git push main
     |
     v
 [verify-deployment] ─── healthz 200 + health 200 + ASG healthy instances ──> PASS/FAIL
+    |
+    v
+[notify-on-failure] ─── failure-only notification
 ```
 
 ## 3. Selective Build Logic

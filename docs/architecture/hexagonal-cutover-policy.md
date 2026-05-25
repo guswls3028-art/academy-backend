@@ -133,6 +133,7 @@
   → `submissions/services/dispatcher.py` 가 그 단일 경계점.
 - `results` 안에 **Homework 관련 코드 추가 금지**. results 는 exam-only.
   → 숙제 결과는 `homework_results.HomeworkScore` 로.
+- 예외적으로 `/results/admin/sessions/{session_id}/scores/` 계열은 **차시 성적 탭 BFF** 이다. 실제 운영 동선(강의 → 차시 → 성적)에서 시험 점수와 과제 점수를 한 화면에 보여주기 위해 `exams/results` + `homework_results` 를 읽어 조합한다. 이 예외는 화면 조합/임시저장/시험 점수 저장 경계에 한정하며, `results` 안에 HomeworkScore 모델·정책·채점 책임을 추가하면 안 된다.
 - `exams` 와 `homework` 모두 `template` 형(template_exam / template_homework self-FK + TemplateBundle 다리)을 갖는다.
   → 둘 사이를 직접 import 하지 말고 `apps/domains/exams/models/template_bundle.py` 가 polymorphic 다리.
 - `homework_results.HomeworkScore` 의 직접 점수 갱신은 `homework_results.HomeworkScoreViewSet` 이 단일 책임자.
@@ -144,6 +145,7 @@
 
 - **`homework` ↔ `homework_results` 분리는 자의적**. URL prefix 가 `/api/v1/homework/` 와 `/api/v1/homeworks/` 두 개로 갈라져 있어 프런트가 매번 헷갈리는 실질 부담. 향후 multi-PR 통합 예정 (코드 위치 + URL 통합 + frontend api.ts 갱신).
 - **`results` 도메인 이름**은 "통합 결과"로 오해되기 쉽지만 실체는 exam-only. SEALED 라 rename 불가. README.md 와 본 표로 명문화하는 것이 답.
+- **관리자 실사용 동선**은 도메인 이름보다 먼저 `강의 → 차시 → 성적/시험/과제` 로 검증한다. 구조 감사·E2E·시각검수는 직접 URL 진입만으로 완료 처리하지 않는다.
 
 ### 신규 변경 가이드
 

@@ -202,7 +202,7 @@ class SessionScoresView(APIView):
         # -------------------------------------------------
         # 0) Exams
         # -------------------------------------------------
-        exams = list(get_exams_for_session(session))
+        exams = list(get_exams_for_session(session).filter(tenant=tenant))
         exam_ids = [int(e.id) for e in exams]
 
         # -------------------------------------------------
@@ -274,7 +274,7 @@ class SessionScoresView(APIView):
             Homework.objects
             .filter(session=session)
             .exclude(meta__removed_from_session_at__isnull=False)
-            .order_by("id")
+            .order_by("display_order", "created_at", "id")
         )
 
         # 시험별 문항(주관식 점수 입력용): template → Sheet → ExamQuestion
@@ -309,9 +309,9 @@ class SessionScoresView(APIView):
                 exam_questions_map[int(ex.id)] = questions_by_sheet.get(sheet.id, [])
 
         # 시험/과제를 display_order 기준으로 정렬 (0이면 created_at 순)
-        exams = sorted(exams, key=lambda e: (getattr(e, "display_order", 0) or 0, e.created_at))
+        exams = sorted(exams, key=lambda e: (getattr(e, "display_order", 0) or 0, e.created_at, e.id))
         exam_ids = [int(e.id) for e in exams]
-        homeworks = sorted(homeworks, key=lambda h: (getattr(h, "display_order", 0) or 0, h.created_at))
+        homeworks = sorted(homeworks, key=lambda h: (getattr(h, "display_order", 0) or 0, h.created_at, h.id))
 
         # Homework 대표 max_score: HomeworkScore 레코드에서 집계 (과제별 최대값, 없으면 100)
         hw_max_scores: Dict[int, float] = {}

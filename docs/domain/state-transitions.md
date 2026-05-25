@@ -192,7 +192,7 @@ GRADING/SUPERSEDED에서는 admin_override도 차단.
 | `READY` | 사용 가능 | HLS 출력 완료 | 종단 상태 (soft-delete만 가능) |
 | `FAILED` | 실패 | 최대 재시도 초과 / 복구 불가 | 재시도(→UPLOADED) |
 
-#### 허용 전이
+#### 허용 전이 (호환/관리용)
 
 ```
 PENDING    → {UPLOADED, FAILED}
@@ -472,7 +472,9 @@ CLOSED → {OPEN}  (재개방 허용)
 #### 비고
 
 - DRAFT는 레거시. 새 시험은 항상 OPEN으로 생성됨.
-- 실질적 응시 가능 판단: `open_at`/`close_at` 시간 + status=OPEN
+- 신규 운영 UI는 시험 전체 종료/재개방을 주 조작 단위로 쓰지 않는다.
+- 성적 탭과 클리닉 판정의 SSOT는 학생별 제출/시도/Result/Achievement 상태다.
+- 실질적 응시 가능 판단에서 status는 호환 보조 필드이며, 일정은 `open_at`/`close_at`와 별도 정책을 따른다.
 - `answer_visibility`: HIDDEN / AFTER_CLOSED / ALWAYS (시험 상태와 독립적으로 정답 공개 제어)
 
 ---
@@ -482,7 +484,7 @@ CLOSED → {OPEN}  (재개방 허용)
 **모델:** `apps/domains/homework_results/models/homework.py`
 **상태 필드:** `status` (CharField, indexed)
 
-Exam과 동일한 DRAFT / OPEN / CLOSED 패턴. 전이 규칙 동일.
+Exam과 동일한 DRAFT / OPEN / CLOSED 호환 필드를 가진다. 신규 운영 UI의 주 조작 단위는 과제 전체 종료가 아니라 학생별 HomeworkScore/Submission/Achievement 상태다.
 
 ---
 

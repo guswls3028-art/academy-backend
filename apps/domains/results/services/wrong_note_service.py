@@ -4,9 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-
+from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion
 from apps.domains.results.models import ResultFact
-from apps.domains.exams.models import ExamQuestion, AnswerKey, Exam
 from apps.domains.results.services.answer_matching import format_answer_for_display
 
 
@@ -42,47 +41,24 @@ def _safe_int(v: Any, default: Optional[int] = None) -> Optional[int]:
         return default
 
 
-def _has_relation(model, name: str) -> bool:
-    """
-    Exam 모델에 특정 relation(name)이 존재하는지 검사
-    """
-    try:
-        return any(getattr(f, "name", None) == name for f in model._meta.get_fields())
-    except Exception:
-        return False
-
-
 def _get_exam_ids_by_lecture_and_order(*, lecture_id: int, from_order: int) -> List[int]:
     """
     lecture_id + from_session_order로 exam_id 목록 구하기
 
-    ⚠️ 프로젝트별로 Exam ↔ Session reverse relation 이름이 다를 수 있음:
-    - sessions / session / session_set ...
-    그래서 가능한 후보들을 모두 검사해 안전하게 필터링.
-
     ✅ 규칙:
-    - 관계를 못 찾으면 빈 리스트 반환(=안전하게 결과 없음)
+    - Exam ↔ Session 관계는 Exam.sessions M2M이 단일 진실
+    - 강의/차시 필터는 세션의 lecture/order를 통해 계산
     """
-    exam_qs = Exam.objects.filter(lecture_id=int(lecture_id))
-
-    # 우선순위 후보들
-    # 1) sessions
-    if _has_relation(Exam, "sessions"):
-        exam_qs = exam_qs.filter(sessions__order__gte=int(from_order))
-        return list(exam_qs.values_list("id", flat=True))
-
-    # 2) session (1:1 혹은 FK)
-    if _has_relation(Exam, "session"):
-        exam_qs = exam_qs.filter(session__order__gte=int(from_order))
-        return list(exam_qs.values_list("id", flat=True))
-
-    # 3) session_set (Django default reverse name)
-    if _has_relation(Exam, "session_set"):
-        exam_qs = exam_qs.filter(session_set__order__gte=int(from_order))
-        return list(exam_qs.values_list("id", flat=True))
-
-    # 못 찾으면 안전하게 none
-    return []
+    return list(
+        Exam.objects
+        .filter(
+            exam_type=Exam.ExamType.REGULAR,
+            sessions__lecture_id=int(lecture_id),
+            sessions__order__gte=int(from_order),
+        )
+        .values_list("id", flat=True)
+        .distinct()
+    )
 
 
 def _get_answer_key_map(exam_id: int) -> Dict[str, Any]:
@@ -90,7 +66,10 @@ def _get_answer_key_map(exam_id: int) -> Dict[str, Any]:
     AnswerKey v2 (고정):
       answers = { "123": "B", ... }  # key = ExamQuestion.id(str)
     """
-    ak = AnswerKey.objects.filter(exam_id=int(exam_id)).first()
+    exam = Exam.objects.only("id", "exam_type", "template_exam_id").filter(id=int(exam_id)).first()
+    if exam is None:
+        return {}
+    ak = AnswerKey.objects.filter(exam_id=exam.effective_template_exam_id).first()
     answers = getattr(ak, "answers", None) if ak else None
     return answers if isinstance(answers, dict) else {}
 

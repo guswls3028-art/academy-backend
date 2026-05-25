@@ -138,6 +138,32 @@ class SessionScoresRosterScopeTests(TestCase):
         self.assertEqual(rows[0]["exams"][0]["exam_id"], self.exam.id)
         self.assertIsNone(rows[0]["exams"][0]["block"]["score"])
 
+    def test_session_scores_excludes_cross_tenant_exam_m2m_contamination(self):
+        other_tenant = Tenant.objects.create(name="Other Tenant", code="scorecope-other", is_active=True)
+        foreign_exam = Exam.objects.create(
+            tenant=other_tenant,
+            title="타 테넌트 시험",
+            pass_score=40,
+            max_score=100,
+        )
+        foreign_exam.sessions.add(self.session)
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            [row["exam_id"] for row in response.data["meta"]["exams"]],
+            [self.exam.id],
+        )
+        self.assertEqual(
+            [row["exam_id"] for row in response.data["rows"][0]["exams"]],
+            [self.exam.id],
+        )
+
     def test_omr_manual_match_registers_exam_target_and_score_appears(self):
         ExamEnrollment.objects.filter(exam=self.exam).delete()
         sheet = Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=2)

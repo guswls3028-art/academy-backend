@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from django.db.models import Q
+from django.db import transaction
+from django.db.models import Max, Q
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
@@ -146,23 +147,36 @@ class ExamViewSet(ModelViewSet):
         except (TypeError, ValueError):
             raise ValidationError({"session_id": "must be integer"})
 
-        try:
-            session = Session.objects.get(id=session_id, lecture__tenant=tenant)
-        except Session.DoesNotExist:
-            raise ValidationError({"session_id": "invalid"})
+        with transaction.atomic():
+            try:
+                session = (
+                    Session.objects
+                    .select_for_update()
+                    .select_related("lecture")
+                    .get(id=session_id, lecture__tenant=tenant)
+                )
+            except Session.DoesNotExist:
+                raise ValidationError({"session_id": "invalid"})
 
-        # 템플릿 없이 생성 시 강의(Lecture) 과목을 시험 과목으로 자동 반영
-        if not subject and getattr(session, "lecture", None):
-            subject = (getattr(session.lecture, "subject", None) or "").strip()
+            # 템플릿 없이 생성 시 강의(Lecture) 과목을 시험 과목으로 자동 반영
+            if not subject and getattr(session, "lecture", None):
+                subject = (getattr(session.lecture, "subject", None) or "").strip()
 
-        exam = serializer.save(
-            exam_type=Exam.ExamType.REGULAR,
-            subject=subject,
-            template_exam=template_exam,
-            tenant=tenant,
-        )
+            max_order = (
+                Exam.objects
+                .filter(tenant=tenant, sessions=session)
+                .aggregate(value=Max("display_order"))
+                .get("value")
+            )
+            exam = serializer.save(
+                exam_type=Exam.ExamType.REGULAR,
+                subject=subject,
+                template_exam=template_exam,
+                tenant=tenant,
+                display_order=int(max_order or 0) + 1,
+            )
 
-        exam.sessions.add(session)
+            exam.sessions.add(session)
 
     # ================================
     # UPDATE 방어 + pass_score 변경 시 ClinicLink 해소 재계산
@@ -321,5 +335,8 @@ class ExamViewSet(ModelViewSet):
             except (TypeError, ValueError):
                 raise ValidationError({"lecture_id": "must be integer"})
             qs = qs.filter(sessions__lecture_id=lid)
+
+        if session_id:
+            return qs.order_by("display_order", "created_at", "id")
 
         return qs.order_by("-created_at")

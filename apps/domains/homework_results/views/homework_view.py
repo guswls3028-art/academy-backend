@@ -18,7 +18,7 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 
 from django.db import transaction
-from django.db.models import QuerySet
+from django.db.models import Max, QuerySet
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
@@ -37,8 +37,18 @@ class HomeworkViewSet(ModelViewSet):
     serializer_class = HomeworkSerializer
 
     filter_backends = [OrderingFilter]
-    ordering_fields = ["id", "created_at", "updated_at", "status"]
-    ordering = ["-updated_at", "-id"]
+    ordering_fields = ["id", "created_at", "updated_at", "status", "display_order"]
+    ordering = ["display_order", "created_at", "id"]
+
+    def _next_display_order(self, *, tenant, session_id: int) -> int:
+        max_order = (
+            Homework.objects
+            .filter(tenant=tenant, session_id=int(session_id))
+            .exclude(meta__removed_from_session_at__isnull=False)
+            .aggregate(value=Max("display_order"))
+            .get("value")
+        )
+        return int(max_order or 0) + 1
 
     def get_queryset(self) -> QuerySet[Homework]:
         tenant = getattr(self.request, "tenant", None)
@@ -79,7 +89,15 @@ class HomeworkViewSet(ModelViewSet):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Tenant is required."}, status=status.HTTP_403_FORBIDDEN)
-        if not Session.objects.filter(id=int(session_id), lecture__tenant=tenant).exists():
+        try:
+            session_id = int(session_id)
+        except (TypeError, ValueError):
+            return Response(
+                {"session_id": "정수여야 합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        session = Session.objects.filter(id=session_id, lecture__tenant=tenant).first()
+        if session is None:
             return Response(
                 {"detail": "해당 차시를 찾을 수 없습니다."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -96,15 +114,21 @@ class HomeworkViewSet(ModelViewSet):
                     {"template_homework_id": "유효한 과제 템플릿이 아닙니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
-            title = (data.get("title") or "").strip() or template.title
-            instance = Homework.objects.create(
-                tenant=tenant,
-                homework_type=Homework.HomeworkType.REGULAR,
-                session_id=int(session_id),
-                template_homework=template,
-                title=title,
-                status=Homework.Status.OPEN,
-            )
+            with transaction.atomic():
+                session = Session.objects.select_for_update().get(id=session.id)
+                title = (data.get("title") or "").strip() or template.title
+                instance = Homework.objects.create(
+                    tenant=tenant,
+                    homework_type=Homework.HomeworkType.REGULAR,
+                    session=session,
+                    template_homework=template,
+                    title=title,
+                    status=Homework.Status.OPEN,
+                    display_order=self._next_display_order(
+                        tenant=tenant,
+                        session_id=int(session.id),
+                    ),
+                )
             return Response(
                 HomeworkSerializer(instance).data,
                 status=status.HTTP_201_CREATED,
@@ -117,14 +141,29 @@ class HomeworkViewSet(ModelViewSet):
         if not session_id:
             raise ValidationError({"session_id": "필수입니다."})
         tenant = getattr(self.request, "tenant", None)
-        if not Session.objects.filter(id=int(session_id), lecture__tenant=tenant).exists():
-            raise ValidationError({"detail": "해당 차시를 찾을 수 없습니다."})
-        serializer.save(
-            tenant=tenant,
-            homework_type=Homework.HomeworkType.REGULAR,
-            session_id=int(session_id),
-            title=(data.get("title") or "").strip() or "제목 없음",
-        )
+        try:
+            session_id = int(session_id)
+        except (TypeError, ValueError):
+            raise ValidationError({"session_id": "정수여야 합니다."})
+        with transaction.atomic():
+            session = (
+                Session.objects
+                .select_for_update()
+                .filter(id=session_id, lecture__tenant=tenant)
+                .first()
+            )
+            if session is None:
+                raise ValidationError({"detail": "해당 차시를 찾을 수 없습니다."})
+            serializer.save(
+                tenant=tenant,
+                homework_type=Homework.HomeworkType.REGULAR,
+                session=session,
+                title=(data.get("title") or "").strip() or "제목 없음",
+                display_order=self._next_display_order(
+                    tenant=tenant,
+                    session_id=int(session.id),
+                ),
+            )
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):

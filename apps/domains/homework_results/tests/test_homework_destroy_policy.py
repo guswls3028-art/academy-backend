@@ -1,5 +1,8 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -131,6 +134,72 @@ class HomeworkDestroyPolicyTests(TestCase):
 
         ids = [row["id"] for row in _rows(response)]
         self.assertIn(self.homework.id, ids)
+
+    def test_session_homeworks_order_by_display_order_to_match_scores_tab(self):
+        self.homework.display_order = 30
+        self.homework.save(update_fields=["display_order"])
+        first = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="먼저 과제",
+            display_order=10,
+        )
+        second = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="나중 과제",
+            display_order=20,
+        )
+
+        request = self.factory.get(f"/homeworks/?session_id={self.session.id}")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = HomeworkViewSet.as_view({"get": "list"})(request)
+
+        ids = [row["id"] for row in _rows(response)]
+        self.assertEqual(ids[:3], [first.id, second.id, self.homework.id])
+
+    def test_session_homeworks_ties_use_created_at_then_id(self):
+        later = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="같은 순서 나중",
+            display_order=0,
+        )
+        earlier = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="같은 순서 먼저",
+            display_order=0,
+        )
+        now = timezone.now()
+        Homework.objects.filter(id=later.id).update(created_at=now)
+        Homework.objects.filter(id=earlier.id).update(created_at=now - timedelta(minutes=1))
+
+        request = self.factory.get(f"/homeworks/?session_id={self.session.id}")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = HomeworkViewSet.as_view({"get": "list"})(request)
+
+        ids = [row["id"] for row in _rows(response)]
+        self.assertLess(ids.index(earlier.id), ids.index(later.id))
+
+    def test_create_homework_appends_after_existing_session_homeworks(self):
+        self.homework.display_order = 5
+        self.homework.save(update_fields=["display_order"])
+
+        request = self.factory.post(
+            "/homeworks/",
+            {"session_id": self.session.id, "title": "새 과제"},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = HomeworkViewSet.as_view({"post": "create"})(request)
+
+        self.assertEqual(response.status_code, 201)
+        created = Homework.objects.get(id=response.data["id"])
+        self.assertEqual(created.display_order, 6)
 
     def test_destroy_homework_without_assignments_still_soft_removes(self):
         homework = Homework.objects.create(

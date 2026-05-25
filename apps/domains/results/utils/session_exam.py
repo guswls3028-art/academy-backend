@@ -9,16 +9,7 @@ from apps.domains.lectures.models import Session
 from apps.domains.exams.models import Exam
 
 
-def _has_relation(model, name: str) -> bool:
-    """
-    모델에 특정 field/relation이 존재하는지 검사.
-    프로젝트 히스토리(세션-시험 관계가 바뀌는 과정)에서
-    런타임에 안전하게 동작시키기 위한 방어 유틸.
-    """
-    try:
-        return any(getattr(f, "name", None) == name for f in model._meta.get_fields())
-    except Exception:
-        return False
+EXAM_SESSION_ORDERING = ("display_order", "created_at", "id")
 
 
 # ---------------------------------------------------------------------
@@ -26,25 +17,23 @@ def _has_relation(model, name: str) -> bool:
 # ---------------------------------------------------------------------
 def get_exams_for_session(session: Session) -> QuerySet[Exam]:
     """
-    ✅ 단일 진실: Session에 연결된 Exam queryset 반환
+    ✅ 단일 진실: Session에 연결된 Exam queryset 반환.
+
+    Session ↔ Exam 관계는 Exam.sessions M2M 하나만 사용한다.
     """
-    # 1) Session.exams (M2M)
-    if _has_relation(Session, "exams") and hasattr(session, "exams"):
-        try:
-            return session.exams.all()
-        except Exception:
-            pass
+    return session.exams.all().order_by(*EXAM_SESSION_ORDERING)
 
-    # 2) Exam.sessions reverse (M2M)
-    if _has_relation(Exam, "sessions"):
-        return Exam.objects.filter(sessions__id=int(session.id)).distinct()
 
-    # 3) Legacy fallback: Session.exam (FK)
-    exam_id = getattr(session, "exam_id", None)
-    if exam_id:
-        return Exam.objects.filter(id=int(exam_id))
-
-    return Exam.objects.none()
+def get_session_exams_for_session_id(session_id: int) -> QuerySet[Exam]:
+    """
+    Session 인스턴스가 없을 때 쓰는 동일 SSOT queryset.
+    """
+    return (
+        Exam.objects
+        .filter(sessions__id=int(session_id))
+        .distinct()
+        .order_by(*EXAM_SESSION_ORDERING)
+    )
 
 
 def get_exam_ids_for_session(session: Session) -> List[int]:
@@ -61,21 +50,12 @@ def get_sessions_for_exam(exam_id: int) -> QuerySet[Session]:
     """
     ✅ 단일 진실: 특정 exam_id가 속한 Session queryset 반환
     """
-    exam_id = int(exam_id)
-
-    # 1) Session.exams (M2M)
-    if _has_relation(Session, "exams"):
-        try:
-            return Session.objects.filter(exams__id=exam_id).distinct()
-        except Exception:
-            pass
-
-    # 2) Exam.sessions reverse (M2M)
-    if _has_relation(Exam, "sessions"):
-        return Session.objects.filter(exams__id=exam_id).distinct()
-
-    # 3) legacy: Session.exam FK
-    return Session.objects.filter(exam_id=exam_id).distinct()
+    return (
+        Session.objects
+        .filter(exams__id=int(exam_id))
+        .distinct()
+        .order_by("order", "id")
+    )
 
 
 def get_primary_session_for_exam(exam_id: int) -> Optional[Session]:
@@ -86,13 +66,7 @@ def get_primary_session_for_exam(exam_id: int) -> Optional[Session]:
     if not qs.exists():
         return None
 
-    if hasattr(Session, "order"):
-        try:
-            return qs.order_by("order", "id").first()
-        except Exception:
-            pass
-
-    return qs.order_by("id").first()
+    return qs.first()
 
 
 # ---------------------------------------------------------------------

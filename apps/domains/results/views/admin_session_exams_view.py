@@ -16,7 +16,8 @@ GET /results/admin/sessions/{session_id}/exams/
     open_at,
     close_at,
     allow_retake,
-    max_attempts
+    max_attempts,
+    display_order
   },
   ...
 ]
@@ -29,7 +30,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.lectures.models import Session
-from apps.domains.exams.models import Exam
+from apps.domains.results.utils.session_exam import get_exams_for_session
 
 
 def _dt(v):
@@ -40,36 +41,13 @@ def _dt(v):
 class AdminSessionExamsView(APIView):
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
 
-    @staticmethod
-    def _get_exams_for_session(session: Session) -> list[Exam]:
-        """
-        Session에 연결된 Exam 목록 조회
-
-        ✅ canonical:
-        - session.exams (Exam.sessions related_name="exams")
-
-        방어적 fallback:
-        - Exam.objects.filter(sessions=session)
-        """
-        if hasattr(session, "exams"):
-            try:
-                return list(session.exams.all())
-            except Exception:
-                pass
-
-        return list(
-            Exam.objects
-            .filter(sessions__id=int(session.id))
-            .distinct()
-        )
-
     def get(self, request, session_id: int):
         # ✅ tenant isolation: verify session belongs to tenant
         session = Session.objects.filter(id=int(session_id), lecture__tenant=request.tenant).first()
         if not session:
             return Response([])
 
-        exams = self._get_exams_for_session(session)
+        exams = list(get_exams_for_session(session).filter(tenant=request.tenant))
         if not exams:
             return Response([])
 
@@ -83,6 +61,7 @@ class AdminSessionExamsView(APIView):
                 "close_at": _dt(exam.close_at),
                 "allow_retake": bool(exam.allow_retake),
                 "max_attempts": int(exam.max_attempts),
+                "display_order": int(getattr(exam, "display_order", 0) or 0),
             }
             for exam in exams
         ])
