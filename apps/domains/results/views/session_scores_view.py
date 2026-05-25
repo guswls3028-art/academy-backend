@@ -25,7 +25,8 @@ GET /api/v1/results/admin/sessions/<session_id>/scores/
 
 📌 중요 설계 결정
 - enrollment 모수는 SessionProgress ❌
-- 시험 OR 과제에 한 번이라도 연결된 Enrollment 기준 ✅
+- 성적탭 row 모수는 차시 출석/수강 roster ✅
+- OMR 시험 대상은 ExamEnrollment + 시험이 붙은 차시의 SessionEnrollment ✅
 """
 
 from __future__ import annotations
@@ -34,8 +35,6 @@ from typing import Any, Dict, List, Optional, Set
 
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
-from django.db.models import Q
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -207,7 +206,7 @@ class SessionScoresView(APIView):
         exam_ids = [int(e.id) for e in exams]
 
         # -------------------------------------------------
-        # 1) Enrollment 모수 (현재 차시 수강생 ∩ 시험/과제 대상)
+        # 1) Enrollment 모수
         # -------------------------------------------------
         active_session_enrollment_ids = list(
             SessionEnrollment.objects
@@ -234,37 +233,18 @@ class SessionScoresView(APIView):
         if attendance_enrollment_ids:
             active_session_enrollment_ids = attendance_enrollment_ids
 
-        # ❗️FIX: HomeworkEnrollment ❌
-        # ✅ 과제 대상자의 단일 진실은 HomeworkAssignment
-        hw_enrollment_ids_qs = HomeworkAssignment.objects.filter(
-            session=session,
-            enrollment_id__in=active_session_enrollment_ids,
-        ).values_list("enrollment_id", flat=True)
-
-        if exam_ids:
-            ex_enrollment_ids_qs = ExamEnrollment.objects.filter(
-                exam_id__in=exam_ids,
-                enrollment_id__in=active_session_enrollment_ids,
-            ).values_list("enrollment_id", flat=True)
-
-            # 🔐 tenant 강제: enrollment_id 참조에 강제 제약 없으므로 명시 차단.
-            enrollment_qs = (
-                Enrollment.objects.filter(
-                    Q(id__in=hw_enrollment_ids_qs)
-                    | Q(id__in=ex_enrollment_ids_qs),
-                    tenant=tenant,
-                )
-                .filter(status="ACTIVE")  # ✅ 퇴원(INACTIVE) 수강생 제외
-                .filter(student__deleted_at__isnull=True)
-                .distinct()
+        # SSOT: 성적탭은 차시에 붙은 학생 roster를 먼저 보여준다.
+        # OMR 채점은 명시 ExamEnrollment가 없어도 이 roster 학생을 후보로 삼고,
+        # 채점/수동입력 시점에 ExamEnrollment를 materialize한다.
+        enrollment_qs = (
+            Enrollment.objects.filter(
+                id__in=active_session_enrollment_ids,
+                tenant=tenant,
             )
-        else:
-            enrollment_qs = (
-                Enrollment.objects.filter(id__in=hw_enrollment_ids_qs, tenant=tenant)
-                .filter(status="ACTIVE")  # ✅ 퇴원(INACTIVE) 수강생 제외
-                .filter(student__deleted_at__isnull=True)
-                .distinct()
-            )
+            .filter(status="ACTIVE")
+            .filter(student__deleted_at__isnull=True)
+            .distinct()
+        )
 
         enrollment_ids = list(enrollment_qs.values_list("id", flat=True))
 
@@ -277,24 +257,15 @@ class SessionScoresView(APIView):
                 exam_id__in=exam_ids
             ).values_list("enrollment_id", "exam_id"):
                 exam_enrolled_set.add((int(row[0]), int(row[1])))
+            for eid in active_session_enrollment_ids:
+                for exid in exam_ids:
+                    exam_enrolled_set.add((int(eid), int(exid)))
 
         hw_assigned_set: Set[tuple[int, int]] = set()
         for row in HomeworkAssignment.objects.filter(
             session=session
         ).values_list("enrollment_id", "homework_id"):
             hw_assigned_set.add((int(row[0]), int(row[1])))
-
-        # 시험/과제 연결 전: 세션 수강생(SessionEnrollment) 폴백 — 삭제된 학생·퇴원 학생 제외
-        if not enrollment_ids:
-            enrollment_ids = list(
-                Enrollment.objects.filter(
-                    id__in=active_session_enrollment_ids,
-                    status="ACTIVE",  # ✅ 퇴원(INACTIVE) 수강생 제외
-                    tenant=tenant,    # 🔐 tenant 강제
-                )
-                .filter(student__deleted_at__isnull=True)
-                .values_list("id", flat=True)
-            )
 
         # -------------------------------------------------
         # 2) Meta (프론트 계약)
@@ -360,7 +331,7 @@ class SessionScoresView(APIView):
         # SSOT (2026-05-13): 발송 컨텍스트 — frontend가 어디서든 정확히 강의명/차시명 인용 가능하도록 응답 meta에 항상 포함.
         # 직전 결함: drawer 발송 path가 row.lecture_title / qc.getQueryData fallback에 의존 → 캐시 miss 시 알림톡 봉투 변수 빈 값으로 발송 (학원장 limglish 보고).
         _session_lecture = getattr(session, "lecture", None)
-        meta = {
+        response_meta = {
             "session_title": str(getattr(session, "title", "") or ""),
             "lecture_title": str(getattr(_session_lecture, "title", "") or ""),
             "lecture_id": int(_session_lecture.id) if _session_lecture is not None else None,
@@ -388,7 +359,7 @@ class SessionScoresView(APIView):
         }
 
         if not enrollment_ids:
-            return Response({"meta": meta, "rows": []})
+            return Response({"meta": response_meta, "rows": []})
 
         # -------------------------------------------------
         # 3) 진행/완료 + Clinic 대상자
@@ -510,8 +481,12 @@ class SessionScoresView(APIView):
                 key = (int(sub.target_id), int(sub.enrollment_id))
                 if key in omr_review_map:
                     continue
-                meta = sub.meta if isinstance(sub.meta, dict) else {}
-                manual_review = meta.get("manual_review") if isinstance(meta.get("manual_review"), dict) else {}
+                submission_meta = sub.meta if isinstance(sub.meta, dict) else {}
+                manual_review = (
+                    submission_meta.get("manual_review")
+                    if isinstance(submission_meta.get("manual_review"), dict)
+                    else {}
+                )
                 if manual_review.get("required") is True:
                     omr_review_map[key] = {
                         "status": "OMR_REVIEW_REQUIRED",
@@ -865,7 +840,7 @@ class SessionScoresView(APIView):
 
         return Response(
             {
-                "meta": meta,
+                "meta": response_meta,
                 "rows": SessionScoreRowSerializer(rows, many=True).data,
             }
         )

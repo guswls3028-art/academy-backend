@@ -2,21 +2,45 @@ from __future__ import annotations
 
 from rest_framework.exceptions import ValidationError
 
+from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment
 
 
 def validate_exam_enrollment_assigned(exam: Exam, enrollment_id: int) -> None:
     """
     Manual score writes may create Result/Attempt rows, so they must be limited
-    to the roster explicitly assigned to the exam.
+    to students assigned to the exam or to the session roster of the linked exam.
+
+    OMR 운영 SSOT: 차시에 붙은 학생은 OMR 채점 대상이다. Explicit
+    ExamEnrollment가 아직 없으면, 같은 tenant의 linked SessionEnrollment를
+    확인한 뒤 ExamEnrollment를 materialize한다.
     """
     if exam.exam_type == Exam.ExamType.TEMPLATE:
         raise ValidationError({"detail": "템플릿 시험에는 점수를 입력할 수 없습니다."})
 
-    if not ExamEnrollment.objects.filter(
+    if ExamEnrollment.objects.filter(
         exam_id=exam.id,
         enrollment_id=enrollment_id,
     ).exists():
-        raise ValidationError(
-            {"enrollment_id": "이 시험의 응시 대상 수강생만 점수를 입력할 수 있습니다."}
+        return
+
+    in_linked_session = SessionEnrollment.objects.filter(
+        tenant=exam.tenant,
+        session__exams__id=exam.id,
+        session__exams__tenant=exam.tenant,
+        session__lecture__tenant=exam.tenant,
+        enrollment_id=enrollment_id,
+        enrollment__tenant=exam.tenant,
+        enrollment__status="ACTIVE",
+        enrollment__student__deleted_at__isnull=True,
+    ).exists()
+    if in_linked_session:
+        ExamEnrollment.objects.get_or_create(
+            exam_id=exam.id,
+            enrollment_id=enrollment_id,
         )
+        return
+
+    raise ValidationError(
+        {"enrollment_id": "이 시험이 연결된 차시의 수강생만 점수를 입력할 수 있습니다."}
+    )

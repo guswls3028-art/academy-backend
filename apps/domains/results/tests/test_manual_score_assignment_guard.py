@@ -3,7 +3,7 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.enrollment.models import Enrollment
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
@@ -47,7 +47,13 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
 
         self.assigned_enrollment = self._create_enrollment("assigned")
         self.unassigned_enrollment = self._create_enrollment("unassigned")
+        self.session_roster_enrollment = self._create_enrollment("session-roster")
         ExamEnrollment.objects.create(exam=self.exam, enrollment=self.assigned_enrollment)
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.session_roster_enrollment,
+        )
 
         self.sheet = Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=1)
         self.question = ExamQuestion.objects.create(sheet=self.sheet, number=1, score=5)
@@ -72,14 +78,14 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
             status="ACTIVE",
         )
 
-    def _patch(self, view_cls, data=None, **kwargs):
+    def _patch(self, view_cls, data=None, enrollment=None, **kwargs):
         request = self.factory.patch("/results/admin/exams/manual/", data or {"score": 10}, format="json")
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin)
         return view_cls.as_view()(
             request,
             exam_id=self.exam.id,
-            enrollment_id=self.unassigned_enrollment.id,
+            enrollment_id=(enrollment or self.unassigned_enrollment).id,
             **kwargs,
         )
 
@@ -117,6 +123,29 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
 
         self.assertEqual(response.status_code, 400, response.data)
         self._assert_no_manual_score_side_effects()
+
+    def test_total_score_accepts_linked_session_roster_and_materializes_exam_enrollment(self):
+        response = self._patch(
+            AdminExamTotalScoreView,
+            {"score": 10, "max_score": 100},
+            enrollment=self.session_roster_enrollment,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(
+            ExamEnrollment.objects.filter(
+                exam=self.exam,
+                enrollment=self.session_roster_enrollment,
+            ).exists()
+        )
+        self.assertTrue(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=self.exam.id,
+                enrollment=self.session_roster_enrollment,
+                total_score=10,
+            ).exists()
+        )
 
     def test_objective_score_rejects_unassigned_enrollment(self):
         response = self._patch(AdminExamObjectiveScoreView, {"score": 10})

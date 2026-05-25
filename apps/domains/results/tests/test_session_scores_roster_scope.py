@@ -115,10 +115,28 @@ class SessionScoresRosterScopeTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         rows = response.data["rows"]
+        self.assertEqual(response.data["meta"]["exams"][0]["exam_id"], self.exam.id)
+        self.assertEqual(response.data["meta"]["homeworks"][0]["homework_id"], self.homework.id)
         self.assertEqual([row["enrollment_id"] for row in rows], [self.active_enrollment.id])
         self.assertEqual(rows[0]["student_name"], "현재 학생")
         self.assertEqual(len(rows[0]["exams"]), 1)
         self.assertEqual(len(rows[0]["homeworks"]), 1)
+
+    def test_session_scores_treats_session_student_as_omr_exam_target(self):
+        ExamEnrollment.objects.filter(exam=self.exam, enrollment=self.active_enrollment).delete()
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data["rows"]
+        self.assertEqual([row["enrollment_id"] for row in rows], [self.active_enrollment.id])
+        self.assertEqual(len(rows[0]["exams"]), 1)
+        self.assertEqual(rows[0]["exams"][0]["exam_id"], self.exam.id)
+        self.assertIsNone(rows[0]["exams"][0]["block"]["score"])
 
     def test_omr_manual_match_registers_exam_target_and_score_appears(self):
         ExamEnrollment.objects.filter(exam=self.exam).delete()
@@ -207,6 +225,7 @@ class SessionScoresRosterScopeTests(TestCase):
         response = SessionScoresView.as_view()(request, session_id=self.session.id)
 
         self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["meta"]["exams"][0]["exam_id"], self.exam.id)
         row = next(row for row in response.data["rows"] if row["enrollment_id"] == self.active_enrollment.id)
         block = row["exams"][0]["block"]
         self.assertIsNone(block["score"])
