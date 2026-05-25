@@ -1,4 +1,4 @@
-# 메시징/알림톡 운영 정책 SSOT (2026-05-21 갱신)
+# 메시징/알림톡 운영 정책 SSOT (2026-05-25 갱신)
 
 ## 정책 분류 체계
 
@@ -21,7 +21,7 @@
 | clinic_cancelled | 클리닉 예약 취소 | 학부모 | 상태 → cancelled |
 | clinic_check_in | 클리닉 입실 | 학부모 | 상태 → attended |
 | clinic_absent | 클리닉 결석 | 학부모 | 상태 → no_show |
-| clinic_reminder | 클리닉 시작 N분 전 | 학생 | 스케줄러 |
+| clinic_reminder | 클리닉 시작 N분 전 | 학생 | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders` |
 | clinic_self_study_completed | 클리닉 자율학습 완료(퇴실) | 학부모 | 자율학습 완료(complete) 시 |
 | clinic_result_notification | 클리닉 결과 알림 | 학부모 | 클리닉 결과 확정 시 |
 | counseling_reservation_created | 상담 예약 완료 | 학부모 | 상담 예약 시 |
@@ -33,18 +33,18 @@
 | exam_score_published | 성적 공개 | 학부모 | 선생이 수동 발송 |
 | exam_not_taken | 시험 미응시 | 학부모 | 선생이 수동 발송 |
 | retake_assigned | 재시험 배정 | 학부모 | 선생이 수동 발송 |
-| assignment_not_submitted | 과제 미제출 | 학부모 | 선생이 수동 발송 |
+| assignment_not_submitted | 과제 미제출 | 학부모 | 선생이 수동 발송. 배치 명령은 있으나 운영 스케줄 미등록이므로 자동발화는 `manual_only` |
 | assignment_registered | 과제 등록 알림 | 학부모 | 선생이 수동 발송 |
-| assignment_due_hours_before | 과제 마감 N시간 전 | 학부모 | 스케줄러 |
+| assignment_due_hours_before | 과제 마감 N시간 전 | 학부모 | 스케줄러 미구현, `manual_only` |
 | withdrawal_complete | 퇴원 안내 | 학부모 | 선생이 수동 발송 |
 | check_in_complete | 일반 강의 입실 | 학부모 | 선생이 수동 발송 |
 | absent_occurred | 일반 강의 결석 | 학부모 | 선생이 수동 발송 |
 | monthly_report_generated | 월간 리포트 생성 | 학부모 | 선생이 수동 발송 |
-| exam_scheduled_days_before | 시험 D-N 리마인더 | 학부모 | 스케줄러 |
-| exam_start_minutes_before | 시험 시작 N분 전 | 학부모 | 스케줄러 |
-| lecture_session_reminder | 수업 리마인더 | 학부모 | 스케줄러 |
+| exam_scheduled_days_before | 시험 D-N 리마인더 | 학부모 | 스케줄러 미구현, `manual_only` |
+| exam_start_minutes_before | 시험 시작 N분 전 | 학부모 | 스케줄러 미구현, `manual_only` |
+| lecture_session_reminder | 수업 리마인더 | 학부모 | 스케줄러 미구현, `manual_only` |
 | payment_complete | 결제 완료 | 학부모 | 결제 확정 시 |
-| payment_due_days_before | 결제 예정 D-N | 학부모 | 스케줄러 |
+| payment_due_days_before | 결제 예정 D-N | 학부모 | 스케줄러 미구현, `manual_only` |
 
 ### DISABLED — 비활성 (정책상 의미 없는 트리거)
 | Trigger | 사유 |
@@ -71,8 +71,10 @@
 6. **멱등성 키** — business_idempotency_key (trigger + student_id + 날짜)
 7. **Time Guard** — 과거 날짜 출결은 알림 차단
 8. **계정 알림 event metadata** — `registration_approved_*`, `password_*` 발송은 큐 payload에 원 trigger를 `event_type`으로 싣는다. `NotificationLog.message_body` 보안 마스킹과 운영 추적은 이 값에 의존한다.
+9. **예약/지연 발송 drain** — `AutoSendConfig.delay_mode`가 만든 `ScheduledNotification`은 EventBridge `academy-v1-process-scheduled-notifications` → `process_scheduled_notifications`가 SQS로 전달한다.
 
 ## 변경 이력
+- 2026-05-25: `clinic_reminder` 운영 EventBridge 연결. `process_scheduled_notifications` 운영 스케줄 추가. 운영 스케줄이 없는 `assignment_not_submitted`는 자동발화 구현상태에서 제외해 원장 화면 혼선 방지.
 - 2026-05-23: 학생 등록 welcome/가입 승인 알림도 `registration_approved_student|parent` event metadata를 큐에 싣도록 정렬. 계정성 알림 로그 마스킹 기준을 문서화.
 - 2026-05-21: 공개 로그인 화면 계정복구 SSOT를 `/api/v1/auth/account-recovery/dispatch/`로 정리. `password_find_otp`는 legacy OTP 경로로 명시.
 - 2026-04-10: 코드 기반 전면 갱신 — clinic_check_out 제거(clinic_self_study_completed로 통합), 누락 트리거 13개 추가

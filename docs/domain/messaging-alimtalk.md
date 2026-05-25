@@ -171,7 +171,7 @@
 | 트리거 | 템플릿 타입 | 자동 발화 | 비고 |
 |--------|------------|---|------|
 | `clinic_reservation_created` | clinic_info | ✅ | |
-| `clinic_reminder` | clinic_info | manual | minutes_before 스케줄러 미구현 |
+| `clinic_reminder` | clinic_info | ✅ | EventBridge `academy-v1-send-clinic-reminders` → `send_clinic_reminders` |
 | `clinic_check_in` | clinic_info | ✅ | |
 | `clinic_absent` | clinic_info | ✅ | ⚠️ 결석 통보를 "[클리닉 안내]" prefix — 의미 검토 |
 | `clinic_self_study_completed` | clinic_info | ✅ | clinic_check_out 통합. ⚠️ "완료"를 "안내" prefix — 의미 검토 |
@@ -195,7 +195,7 @@
 | 트리거 | 매핑 제외 사유 |
 |---|---|
 | `exam_scheduled_days_before` / `exam_start_minutes_before` / `exam_not_taken` / `retake_assigned` | score 매핑 한때 있었으나 자동 발화 결함 회피 위해 제거 (`ff2a3f93` / `2cfaea34`) |
-| `assignment_registered` / `assignment_due_hours_before` / `assignment_not_submitted` | 동일 |
+| `assignment_registered` / `assignment_due_hours_before` / `assignment_not_submitted` | 동일. `assignment_not_submitted`는 배치 명령은 있으나 운영 스케줄 미등록이라 자동발화 상태는 `manual_only` |
 | `video_encoding_complete` / `matchup_report_submitted` | "[성적표 안내]" prefix 의미 불일치 (강사 본인/owner/admin 알림) |
 | `qna_answered` / `counsel_answered` | 한 때 TYPE_SCORE 재사용 ([[v1_2_0_seal_2026_04_30]] §6) 이었으나 prefix 의미 불일치로 매핑 제거. test_alimtalk_content_builders.py:55-60 None assert 적용 |
 
@@ -291,7 +291,7 @@
 - `exam_scheduled_days_before` ~ `retake_assigned` (MANUAL_DEFAULT, 시험 관련 5개)
 - `assignment_registered` ~ `assignment_not_submitted` (MANUAL_DEFAULT, 과제 관련 3개)
 - `monthly_report_generated` (MANUAL_DEFAULT)
-- `clinic_reminder` (AUTO_DEFAULT, minutes_before=30)
+- `clinic_reminder` (AUTO_DEFAULT, minutes_before=30, EventBridge 운영 스케줄 적용)
 - `clinic_check_out` (Trigger choices에 존재하나, `clinic_self_study_completed`로 통합)
 - `clinic_result_notification` (AUTO_DEFAULT)
 - `counseling_reservation_created` (AUTO_DEFAULT)

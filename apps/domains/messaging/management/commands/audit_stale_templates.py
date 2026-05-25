@@ -9,7 +9,7 @@
 사용:
   python manage.py audit_stale_templates
   python manage.py audit_stale_templates --tenant 1
-  python manage.py audit_stale_templates --disable        # 식별된 stale config 일괄 disable
+  python manage.py audit_stale_templates --disable        # 식별된 stale/무효 config 일괄 disable
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--disable",
             action="store_true",
-            help="DISABLED 정책 트리거의 enabled=True config 일괄 disable (확인 필요)",
+            help="DISABLED/UNKNOWN/manual_only enabled=True config 일괄 disable",
         )
 
     def handle(self, *args, **opts):
@@ -138,6 +138,12 @@ class Command(BaseCommand):
                     c.save(update_fields=["enabled", "updated_at"])
                     cnt2 += 1
             self.stdout.write(self.style.SUCCESS(f"UNKNOWN trigger {cnt2}건 enabled=False 처리"))
+            cnt3 = 0
+            for c in manual_only_enabled:
+                c.enabled = False
+                c.save(update_fields=["enabled", "updated_at"])
+                cnt3 += 1
+            self.stdout.write(self.style.SUCCESS(f"manual_only trigger {cnt3}건 enabled=False 처리"))
         else:
             self.stdout.write("")
             self.stdout.write("실제 disable 적용은 --disable 옵션 필요. (read-only 보고)")

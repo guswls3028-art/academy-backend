@@ -96,7 +96,10 @@ def requires_tenant_auto_send_opt_in(trigger: str) -> bool:
 
 def is_auto_send_enabled_by_default(trigger: str) -> bool:
     """자동발송 config 생성 시 기본 enabled 값."""
-    return get_trigger_policy(trigger) != "DISABLED" and not requires_tenant_auto_send_opt_in(trigger)
+    return (
+        get_trigger_implementation_status(trigger) == "implemented"
+        and not requires_tenant_auto_send_opt_in(trigger)
+    )
 
 
 # ──────────────────────────────────────────
@@ -130,7 +133,8 @@ IMPLEMENTED_AUTO_TRIGGERS: frozenset = frozenset([
     # 학원장이 "수업결과 발송" 버튼으로 SendMessageModal 또는 manual-notification preview/confirm 통해 명시 발송.
     "withdrawal_complete",
     "payment_complete",
-    "assignment_not_submitted",  # management command (cron)
+    # assignment_not_submitted: management command exists, but no production schedule.
+    # Keep it manual_only until a scheduler is intentionally wired and verified.
     # 영상
     "video_encoding_complete",
     # 매치업 보고서 (강사 → 학원 owner/admin)
