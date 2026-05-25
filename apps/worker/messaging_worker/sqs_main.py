@@ -74,6 +74,29 @@ logging.basicConfig(
 )
 logger = logging.getLogger("messaging_worker")
 
+_NON_RETRYABLE_SEND_FAILURES = (
+    "alimtalk_failed_or_rejected",
+    "alimtalk_requires_pf_id_and_template_id",
+    "InvalidParameterValue",
+    "TemplateNotApproved",
+    "to_pf_template_required",
+    "to_text_sender_required",
+    "sender_required",
+    "to_and_text_required",
+    "solapi_not_installed",
+    "sms_not_allowed_for_tenant",
+    "ppurio_not_configured",
+    "ppurio_token_failed",
+    "ppurio_token_rejected",
+    "ppurio_token_client_error",
+    "invalid_sender_profile_format",
+)
+
+
+def _is_non_retryable_send_failure(reason: str) -> bool:
+    return any(item in (reason or "") for item in _NON_RETRYABLE_SEND_FAILURES)
+
+
 # 메시지 발송 구간별 진행률 (n/4): 업로드 마법사처럼 단계별 0~100% 제공
 MESSAGING_STEP_TOTAL = 4
 MESSAGING_STEPS = [
@@ -909,20 +932,8 @@ def main() -> int:
                             consecutive_errors = 0
                         else:
                             reason = result.get("reason", "")
-                            # 비재시도성 오류: 템플릿 미승인, 변수 불일치 등 → 재시도해도 영구 실패
-                            _NON_RETRYABLE = (
-                                "alimtalk_failed_or_rejected",
-                                "alimtalk_requires_pf_id_and_template_id",
-                                "InvalidParameterValue",
-                                "TemplateNotApproved",
-                                "to_pf_template_required",
-                                "to_text_sender_required",
-                                "sender_required",
-                                "to_and_text_required",
-                                "solapi_not_installed",
-                                "sms_not_allowed_for_tenant",
-                            )
-                            is_permanent = any(nr in reason for nr in _NON_RETRYABLE)
+                            # 비재시도성 오류: 설정/템플릿/권한 오류는 재시도해도 영구 실패.
+                            is_permanent = _is_non_retryable_send_failure(reason)
                             if is_permanent:
                                 logger.error(
                                     "send permanently failed (non-retryable), deleting message: reason=%s to=%s tenant=%s",
