@@ -734,9 +734,10 @@ def job_complete(
 def _notify_video_encoding_complete(video, tenant_id: int) -> None:
     """
     영상 인코딩 완료 시 업로더(스태프)에게 알림톡 발송.
-    video.uploaded_by가 있고 전화번호가 있으면 send_event_notification으로 발송.
+    SMS fallback 금지. 승인된 알림톡 템플릿이 없으면 발송하지 않는다.
     """
     import logging
+    import re
     _log = logging.getLogger(__name__)
 
     uploaded_by = getattr(video, "uploaded_by", None)
@@ -775,7 +776,10 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
 
     trigger = "video_encoding_complete"
     config = get_auto_send_config(tenant_id, trigger)
-    if config and not config.enabled:
+    if not config:
+        _log.info("video_encoding_complete: no auto-send config for tenant %s", tenant_id)
+        return
+    if not config.enabled:
         _log.info("video_encoding_complete: trigger disabled for tenant %s", tenant_id)
         return
 
@@ -801,12 +805,27 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
     context = {
         "강의명": lecture_name,
         "차시명": session_name or video.title or "",
+        "영상명": video.title or "",
     }
 
-    solapi_tid = get_solapi_template_id(trigger)
+    unified_tid = get_solapi_template_id(trigger)
+    approved_template_id = ""
+    if config and config.template:
+        approved_template_id = (getattr(config.template, "solapi_template_id", "") or "").strip()
+        if getattr(config.template, "solapi_status", "") != "APPROVED":
+            approved_template_id = ""
+
+    alimtalk_tid = unified_tid or approved_template_id
+    if not alimtalk_tid:
+        _log.warning(
+            "video_encoding_complete: approved alimtalk template missing, skip (tenant=%s video_id=%s)",
+            tenant_id,
+            video.id,
+        )
+        return
 
     # 발송 payload 구성
-    if solapi_tid:
+    if unified_tid:
         replacements = build_unified_replacements(
             trigger=trigger,
             content_body=template_body,
@@ -815,32 +834,65 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
             student_name=staff_name,  # 수신자 이름 (스태프)
             site_url=site_url,
         )
-        sms_kwargs = dict(
-            tenant_id=tenant_id,
-            to=phone,
-            text=template_body,
-            message_mode="alimtalk",
-            template_id=solapi_tid,
-            alimtalk_replacements=replacements,
-        )
+        enqueue_text = template_body
     else:
-        # SMS fallback
-        text = f"[{tenant_name}] 영상 인코딩 완료\n\n{staff_name}님, {video.title} 영상 인코딩이 완료되었습니다."
-        sms_kwargs = dict(
-            tenant_id=tenant_id,
-            to=phone,
-            text=text,
-            message_mode="sms",
-        )
+        values = {
+            "학원명": tenant_name,
+            "학원이름": tenant_name,
+            "학생이름": staff_name,
+            "학생이름2": staff_name[-2:] if len(staff_name) >= 2 else staff_name,
+            "학생이름3": staff_name,
+            "선생님이름": staff_name,
+            "스태프이름": staff_name,
+            "강의명": lecture_name,
+            "차시명": session_name or video.title or "",
+            "영상명": video.title or "",
+            "사이트링크": site_url,
+        }
+        enqueue_text = template_body
+        replacements = []
+        for key, value in values.items():
+            text_value = str(value or "")
+            placeholder = f"#{{{key}}}"
+            if placeholder in enqueue_text:
+                replacements.append({"key": key, "value": text_value})
+            enqueue_text = enqueue_text.replace(placeholder, text_value)
+        remaining = re.findall(r"#\{([^}]+)\}", enqueue_text)
+        if remaining:
+            _log.warning(
+                "video_encoding_complete: unresolved template vars, skip (tenant=%s video_id=%s vars=%s)",
+                tenant_id,
+                video.id,
+                ",".join(sorted(set(remaining))),
+            )
+            return
+
+    message_kwargs = dict(
+        tenant_id=tenant_id,
+        to=phone,
+        text=enqueue_text,
+        message_mode="alimtalk",
+        template_id=alimtalk_tid,
+        alimtalk_replacements=replacements,
+        event_type=trigger,
+        target_type="staff",
+        target_id=getattr(uploaded_by, "id", None),
+        target_name=staff_name,
+        occurrence_key=f"{trigger}:video:{video.id}",
+        source_domain="video",
+        source_use_case="encoding_complete",
+        domain_object_id=f"video:{video.id}",
+        actor_id=getattr(uploaded_by, "id", None),
+    )
 
     # delay_mode 분기: immediate / delay_minutes / scheduled_hour
-    delay_mode = getattr(config, "delay_mode", "immediate") if config else "immediate"
-    delay_value = getattr(config, "delay_value", None) if config else None
+    delay_mode = getattr(config, "delay_mode", "immediate")
+    delay_value = getattr(config, "delay_value", None)
 
     if delay_mode == "immediate" or not delay_value:
         # 즉시 발송
-        enqueue_sms(**sms_kwargs)
-        _log.info("video_encoding_complete: sent immediately to %s staff_id=%s video_id=%s",
+        enqueue_sms(**message_kwargs)
+        _log.info("video_encoding_complete: enqueued alimtalk to %s staff_id=%s video_id=%s",
                    phone[:4] + "****", uploaded_by.id, video.id)
     else:
         # 예약/지연 발송 → ScheduledNotification에 저장
@@ -850,9 +902,9 @@ def _notify_video_encoding_complete(video, tenant_id: int) -> None:
             trigger=trigger,
             delay_mode=delay_mode,
             delay_value=delay_value,
-            payload=sms_kwargs,
+            payload=message_kwargs,
         )
-        _log.info("video_encoding_complete: scheduled (%s=%s) to %s staff_id=%s video_id=%s",
+        _log.info("video_encoding_complete: scheduled alimtalk (%s=%s) to %s staff_id=%s video_id=%s",
                    delay_mode, delay_value, phone[:4] + "****", uploaded_by.id, video.id)
 
 

@@ -68,6 +68,17 @@ def _get_template_summary(event_type: str, template_id: str, message_mode: str) 
         return f"알림톡"
     return "SMS" if message_mode == "sms" else message_mode or "SMS"
 
+
+def _video_encoding_block_reason(event_type: str, message_mode: str, template_id: str) -> str:
+    """영상 인코딩 완료는 알림톡 승인 템플릿 없이 발송하지 않는다."""
+    if event_type != "video_encoding_complete":
+        return ""
+    if message_mode == "sms":
+        return "video_encoding_complete_sms_blocked"
+    if message_mode == "alimtalk" and not (template_id or "").strip():
+        return "video_encoding_complete_template_required"
+    return ""
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] [MESSAGING-WORKER] %(message)s",
@@ -544,6 +555,43 @@ def main() -> int:
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
                     event_type_msg = (data.get("event_type") or "").strip()[:30]
+                    video_encoding_block_reason = _video_encoding_block_reason(
+                        event_type_msg,
+                        message_mode,
+                        str(template_id_msg or ""),
+                    )
+                    if video_encoding_block_reason:
+                        logger.error(
+                            "Messaging worker blocked video_encoding_complete delivery: tenant=%s mode=%s reason=%s",
+                            tenant_id,
+                            message_mode,
+                            video_encoding_block_reason,
+                        )
+                        if os.environ.get("DJANGO_SETTINGS_MODULE"):
+                            try:
+                                from decimal import Decimal
+                                from academy.adapters.db.django.repositories_messaging import create_notification_log
+
+                                create_notification_log(
+                                    tenant_id=int(tenant_id),
+                                    success=False,
+                                    amount_deducted=Decimal("0"),
+                                    recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
+                                    failure_reason=video_encoding_block_reason,
+                                    message_body=text[:2000],
+                                    message_mode=message_mode,
+                                    sqs_message_id=message_id,
+                                    notification_type=event_type_msg,
+                                )
+                            except Exception as e:
+                                logger.warning("create_notification_log failed: %s", e)
+                        queue_client.delete_message(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                            receipt_handle=receipt_handle,
+                        )
+                        _msg_deleted = True
+                        _current_receipt_handle = None
+                        continue
                     source_domain_msg = (data.get("source_domain") or "").strip()[:50]
                     source_use_case_msg = (data.get("source_use_case") or "").strip()[:80]
                     domain_object_id_msg = (data.get("domain_object_id") or "").strip()[:120]

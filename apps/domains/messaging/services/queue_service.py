@@ -76,6 +76,13 @@ def enqueue_sms(
     if mode not in ("sms", "alimtalk"):
         mode = "alimtalk"
 
+    if mode == "sms" and (event_type or "").strip() == "video_encoding_complete":
+        logger.error(
+            "enqueue_sms blocked: video_encoding_complete must use alimtalk only (tenant_id=%s)",
+            tenant_id,
+        )
+        return False
+
     # SMS 모드: 자체 키 보유 또는 OWNER 테넌트만 허용
     if mode == "sms":
         if not can_send_sms(tenant_id):
