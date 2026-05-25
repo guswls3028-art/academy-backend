@@ -1283,6 +1283,47 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(participant.memo, "결석")
         self.assertEqual(participant.status_changed_by_id, self.admin.id)
 
+    def test_staff_can_approve_pending_booking(self):
+        self.client.force_authenticate(user=self.admin)
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status="pending",
+        )
+
+        resp = self.client.patch(
+            f"/api/v1/clinic/participants/{participant.id}/set_status/",
+            {"status": "booked"},
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        participant.refresh_from_db()
+        self.assertEqual(participant.status, "booked")
+        self.assertEqual(participant.status_changed_by_id, self.admin.id)
+
+    def test_staff_cannot_mark_pending_attended_without_approval(self):
+        self.client.force_authenticate(user=self.admin)
+        participant = self.make_participant(
+            self.tenant,
+            self.data["clinic_session"],
+            self.student,
+            status="pending",
+        )
+
+        resp = self.client.patch(
+            f"/api/v1/clinic/participants/{participant.id}/set_status/",
+            {"status": "attended"},
+            format="json",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        participant.refresh_from_db()
+        self.assertEqual(participant.status, "pending")
+
     def test_locked_participant_query_does_not_join_nullable_session(self):
         from apps.domains.clinic.services.lifecycle import _locked_participant
 
@@ -1330,6 +1371,16 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         self.assertEqual(resp.status_code, 400, resp.data)
         participant.refresh_from_db()
         self.assertEqual(participant.status, "cancelled")
+
+    def test_missing_session_retrieve_returns_404(self):
+        self.client.force_authenticate(user=self.admin)
+
+        resp = self.client.get(
+            "/api/v1/clinic/sessions/999999999/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 404, resp.data)
 
     def test_student_can_cancel_own_pending_booking(self):
         self.client.force_authenticate(user=self.student.user)

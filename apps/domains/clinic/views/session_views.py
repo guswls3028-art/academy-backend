@@ -3,9 +3,11 @@ import logging
 
 from django.db import IntegrityError, transaction
 from django.db.models import Count, Q, Exists, OuterRef
+from django.http import Http404
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import serializers
@@ -200,6 +202,8 @@ class SessionViewSet(viewsets.ModelViewSet):
         """단일 세션 조회 시 직렬화 오류 방지 (annotate 필드 누락 등)."""
         try:
             return super().retrieve(request, *args, **kwargs)
+        except (Http404, APIException):
+            raise
         except Exception:
             logger.exception("ClinicSessionViewSet.retrieve failed")
             return Response(
