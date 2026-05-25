@@ -30,7 +30,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from apps.domains.messaging.services.notification_service import send_due_clinic_reminders
+        from apps.support.clinic.session_dependencies import send_due_clinic_reminders
 
         stats = send_due_clinic_reminders(
             tenant_id=options.get("tenant_id"),

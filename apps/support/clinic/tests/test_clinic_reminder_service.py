@@ -10,11 +10,11 @@ from django.utils import timezone
 from apps.core.models import Tenant
 from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
 from apps.domains.messaging.models import AutoSendConfig
-from apps.domains.messaging.services.notification_service import (
+from apps.domains.students.models import Student
+from apps.support.clinic.session_dependencies import (
     send_clinic_reminder_for_students,
     send_due_clinic_reminders,
 )
-from apps.domains.students.models import Student
 
 
 User = get_user_model()
@@ -86,7 +86,7 @@ class ClinicReminderServiceTest(TestCase):
         self.assertEqual(kwargs["context"]["시간"], "18:30")
 
     @patch(
-        "apps.domains.messaging.services.notification_service.send_clinic_reminder_for_students",
+        "apps.support.clinic.session_dependencies.send_clinic_reminder_for_students",
         return_value={"status": "ok", "attempted": 1, "sent": 1, "skipped": 0},
     )
     def test_send_due_clinic_reminders_picks_due_sessions(self, mock_send):
@@ -136,7 +136,7 @@ class ClinicReminderServiceTest(TestCase):
         self.assertEqual(result["sent"], 1)
         mock_send.assert_called_once_with(session_id=due_session.id)
 
-    @patch("apps.domains.messaging.services.notification_service.send_clinic_reminder_for_students")
+    @patch("apps.support.clinic.session_dependencies.send_clinic_reminder_for_students")
     def test_send_due_clinic_reminders_ignores_disabled_configs(self, mock_send):
         AutoSendConfig.objects.create(
             tenant=self.tenant,

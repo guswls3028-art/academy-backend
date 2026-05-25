@@ -7,6 +7,7 @@ in progress.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Iterable
 
 
@@ -137,9 +138,178 @@ def storage_presigned_get_url(r2_key: str, *, expires_in: int = 3600) -> str:
 
 
 def send_clinic_session_reminder(*, session_id: int):
-    from apps.domains.messaging.services import send_clinic_reminder_for_students
-
     return send_clinic_reminder_for_students(session_id=session_id)
+
+
+def send_clinic_reminder_for_students(*, session_id: int):
+    """
+    Send the clinic reminder Alimtalk for booked participants in one session.
+
+    Clinic owns the session/participant selection. Messaging only owns the
+    notification dispatch path.
+    """
+    from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
+    from apps.domains.messaging.services.notification_service import send_event_notification
+
+    session = (
+        ClinicSession.objects
+        .select_related("tenant")
+        .filter(id=int(session_id))
+        .first()
+    )
+    if not session:
+        return {"status": "not_found", "message": "클리닉 세션을 찾을 수 없습니다."}
+
+    participants = (
+        SessionParticipant.objects
+        .select_related("student")
+        .filter(
+            tenant_id=session.tenant_id,
+            session_id=session.id,
+            status=SessionParticipant.Status.BOOKED,
+        )
+    )
+
+    context = {
+        "클리닉명": (session.title or "클리닉").strip(),
+        "장소": session.location or "",
+        "날짜": session.date.isoformat() if session.date else "",
+        "시간": session.start_time.strftime("%H:%M") if session.start_time else "",
+        "_domain_object_id": f"clinic_session:{session.id}:reminder",
+    }
+
+    attempted = 0
+    sent = 0
+    for participant in participants:
+        student = participant.student
+        if not student:
+            continue
+        attempted += 1
+        if send_event_notification(
+            tenant=session.tenant,
+            trigger="clinic_reminder",
+            student=student,
+            send_to="student",
+            context=context,
+        ):
+            sent += 1
+
+    return {
+        "status": "ok",
+        "attempted": attempted,
+        "sent": sent,
+        "skipped": max(0, attempted - sent),
+    }
+
+
+def send_due_clinic_reminders(
+    *,
+    now=None,
+    tenant_id: int | None = None,
+    window_minutes: int = 5,
+    dry_run: bool = False,
+) -> dict:
+    """
+    Send clinic reminders whose due time has arrived.
+
+    due_time = clinic session start - AutoSendConfig.minutes_before.
+    The default window catches small scheduler delays while avoiding old sessions.
+    """
+    from django.db.models import Count, Q
+    from django.utils import timezone
+
+    from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
+    from apps.domains.messaging.models import AutoSendConfig
+
+    current = timezone.localtime(now or timezone.now())
+    try:
+        window = timedelta(minutes=max(0, int(window_minutes)))
+    except (TypeError, ValueError):
+        window = timedelta(minutes=5)
+
+    configs = (
+        AutoSendConfig.objects
+        .filter(
+            trigger="clinic_reminder",
+            enabled=True,
+            minutes_before__isnull=False,
+            tenant__is_active=True,
+        )
+        .select_related("tenant")
+        .order_by("tenant_id")
+    )
+    if tenant_id is not None:
+        configs = configs.filter(tenant_id=int(tenant_id))
+
+    stats = {
+        "status": "ok",
+        "dry_run": bool(dry_run),
+        "configs": 0,
+        "sessions_checked": 0,
+        "sessions_due": 0,
+        "attempted": 0,
+        "sent": 0,
+        "skipped": 0,
+    }
+
+    tz = timezone.get_current_timezone()
+    for config in configs:
+        stats["configs"] += 1
+        try:
+            minutes_before = int(config.minutes_before)
+        except (TypeError, ValueError):
+            stats["skipped"] += 1
+            continue
+        if minutes_before < 0:
+            stats["skipped"] += 1
+            continue
+
+        earliest_start = current + timedelta(minutes=minutes_before) - window
+        latest_start = current + timedelta(minutes=minutes_before)
+        sessions = (
+            ClinicSession.objects
+            .filter(
+                tenant_id=config.tenant_id,
+                date__gte=earliest_start.date(),
+                date__lte=latest_start.date(),
+            )
+            .annotate(
+                booked_count=Count(
+                    "participants",
+                    filter=Q(participants__status=SessionParticipant.Status.BOOKED),
+                    distinct=True,
+                )
+            )
+            .filter(booked_count__gt=0)
+            .order_by("date", "start_time", "id")
+        )
+
+        for session in sessions:
+            stats["sessions_checked"] += 1
+            if not session.date or not session.start_time:
+                stats["skipped"] += 1
+                continue
+            start_at = datetime.combine(session.date, session.start_time)
+            if timezone.is_naive(start_at):
+                start_at = timezone.make_aware(start_at, tz)
+            start_at = timezone.localtime(start_at)
+            due_at = start_at - timedelta(minutes=minutes_before)
+            if not (current - window <= due_at <= current):
+                continue
+            if start_at < current:
+                continue
+
+            stats["sessions_due"] += 1
+            if dry_run:
+                stats["attempted"] += int(session.booked_count or 0)
+                continue
+
+            result = send_clinic_reminder_for_students(session_id=session.id)
+            stats["attempted"] += int(result.get("attempted") or 0)
+            stats["sent"] += int(result.get("sent") or 0)
+            stats["skipped"] += int(result.get("skipped") or 0)
+
+    return stats
 
 
 def send_clinic_event_notification(*, tenant, trigger: str, student, send_to: str, context: dict):
