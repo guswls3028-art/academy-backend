@@ -4,8 +4,9 @@ OMR v9 이미지 정렬 — 마커 기반 homography + fallback chain.
 
 정렬 방법 우선순위:
 1. v9 비대칭 마커 검출 → homography warp
-2. 문서 외곽 contour 검출 → perspective warp (v8 fallback)
-3. portrait 감지 시 90° 회전 + resize (최후 fallback)
+2. 90/180/270° cardinal rotation 후 마커 재검출
+3. 문서 외곽 contour 검출 → perspective warp (v8 fallback)
+4. cardinal rotation + contour/resize (최후 fallback)
 """
 from __future__ import annotations
 
@@ -38,6 +39,7 @@ class AlignmentResult:
     success: bool = False
     method: str = "raw"  # "marker_homography", "contour_warp", "rotation_only", "raw"
     orientation: int = 0  # detected orientation (0/90/180/270)
+    input_correction_rotation: int = 0  # clockwise rotation to display original input upright
     residual_error: float = float("inf")  # alignment quality metric (lower is better)
 
 
@@ -263,6 +265,7 @@ def _try_marker_homography(
         success=True,
         method=method_name,
         orientation=detection.orientation,
+        input_correction_rotation=detection.orientation % 360,
         residual_error=residual,
     )
 
@@ -332,13 +335,93 @@ def _try_contour_warp(
         success=True,
         method="contour_warp",
         orientation=0,
+        input_correction_rotation=0,
         residual_error=residual,
     )
 
 
 # ---------------------------------------------------------------------------
-# Strategy 3: Simple rotation + resize
+# Strategy 3: Cardinal rotation fallbacks
 # ---------------------------------------------------------------------------
+
+def _rotate_image_cw(image_bgr: np.ndarray, degrees: int) -> np.ndarray:
+    """Rotate image by a cardinal clockwise angle."""
+    normalized = degrees % 360
+    if normalized == 0:
+        return image_bgr
+    if normalized == 90:
+        return cv2.rotate(image_bgr, cv2.ROTATE_90_CLOCKWISE)
+    if normalized == 180:
+        return cv2.rotate(image_bgr, cv2.ROTATE_180)
+    if normalized == 270:
+        return cv2.rotate(image_bgr, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    raise ValueError(f"unsupported cardinal rotation: {degrees}")
+
+
+def _with_applied_rotation(result: AlignmentResult, degrees_cw: int) -> AlignmentResult:
+    """Annotate an alignment result that was produced after pre-rotating input."""
+    applied = degrees_cw % 360
+    if applied == 0:
+        return result
+    result.method = f"rotation_{applied}_then_{result.method}"
+    result.input_correction_rotation = (
+        applied + int(result.input_correction_rotation or 0)
+    ) % 360
+    return result
+
+
+def _alignment_sort_key(result: AlignmentResult) -> Tuple[int, float]:
+    method = result.method
+    if "marker_homography" in method:
+        priority = 0
+    elif "marker_affine" in method:
+        priority = 1
+    elif "contour" in method:
+        priority = 2
+    elif "rotation_only" in method:
+        priority = 3
+    else:
+        priority = 4
+    residual = result.residual_error if math.isfinite(result.residual_error) else 1e12
+    return priority, residual
+
+
+def _try_rotated_marker_homography(
+    image_bgr: np.ndarray,
+    meta: Dict[str, Any],
+    out_w: int,
+    out_h: int,
+) -> Optional[AlignmentResult]:
+    """
+    Retry marker homography after applying each 90-degree cardinal rotation.
+
+    Some scanners save pixel-rotated pages without EXIF orientation metadata.
+    The marker detector is orientation-aware, but pre-rotating also handles
+    scans with asymmetric margins/crops where corner-band assignment fails in
+    the raw orientation.
+    """
+    candidates: List[AlignmentResult] = []
+    for degrees in (90, 180, 270):
+        rotated = _rotate_image_cw(image_bgr, degrees)
+        try:
+            result = _try_marker_homography(rotated, meta, out_w, out_h)
+        except Exception:
+            logger.exception("warp: rotation_%d_then_marker failed", degrees)
+            continue
+        if result is not None:
+            candidates.append(_with_applied_rotation(result, degrees))
+
+    if not candidates:
+        return None
+
+    best = sorted(candidates, key=_alignment_sort_key)[0]
+    logger.info(
+        "warp: rotated marker fallback success method=%s correction=%d",
+        best.method,
+        best.input_correction_rotation,
+    )
+    return best
+
 
 def _try_rotation_only(
     image_bgr: np.ndarray,
@@ -347,45 +430,48 @@ def _try_rotation_only(
     out_h: int,
 ) -> Optional[AlignmentResult]:
     """
-    Portrait 이미지면 90° CW 회전 후 marker → contour → resize 순으로 재정렬.
+    Cardinal rotation 후 contour → resize 순으로 재정렬.
 
-    이전 버전은 회전 후 단순 resize만 했지만, OMR sheet의 마커는 회전 후 재검출이
-    가능하므로 정밀 정렬 기회를 그냥 버리지 않도록 chain.
+    마커 기반 보정이 모두 실패했을 때의 최후 fallback이다. 90° 한 방향만 보던
+    예전 경로를 90/180/270 후보로 확장해 좌/우 회전 스캔을 모두 흡수한다.
     """
     h, w = image_bgr.shape[:2]
+
+    contour_candidates: List[AlignmentResult] = []
+    for degrees in (90, 270, 180):
+        rotated = _rotate_image_cw(image_bgr, degrees)
+        try:
+            result = _try_contour_warp(rotated, out_w, out_h)
+        except Exception:
+            logger.exception("warp: rotation_%d_then_contour failed", degrees)
+            continue
+        if result is not None:
+            contour_candidates.append(_with_applied_rotation(result, degrees))
+
+    if contour_candidates:
+        best = sorted(contour_candidates, key=_alignment_sort_key)[0]
+        logger.info(
+            "warp: rotated contour fallback success method=%s correction=%d",
+            best.method,
+            best.input_correction_rotation,
+        )
+        return best
+
     if h <= w:
-        return None  # already landscape
+        return None
 
-    rotated = cv2.rotate(image_bgr, cv2.ROTATE_90_CLOCKWISE)
-
-    # 1) 회전 후 marker homography 재시도
-    try:
-        result = _try_marker_homography(rotated, meta, out_w, out_h)
-        if result is not None:
-            logger.info("warp: rotation_then_marker success")
-            result.method = f"rotation_then_{result.method}"
-            return result
-    except Exception:
-        logger.exception("warp: rotation_then_marker failed")
-
-    # 2) 회전 후 contour fallback
-    try:
-        result = _try_contour_warp(rotated, out_w, out_h)
-        if result is not None:
-            logger.info("warp: rotation_then_contour success")
-            result.method = "rotation_then_contour"
-            return result
-    except Exception:
-        logger.exception("warp: rotation_then_contour failed")
-
-    # 3) 최후: 회전 + 단순 resize
+    # 최후: portrait → landscape 단순 회전 + resize. 방향을 알 수 없는 경우라
+    # 기존 운영 동작과 동일하게 90° CW를 우선한다.
+    correction = 90
+    rotated = _rotate_image_cw(image_bgr, correction)
     resized = cv2.resize(rotated, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
-    logger.info("warp: rotation_only (portrait→landscape, no marker/contour)")
+    logger.info("warp: rotation_only (portrait -> landscape, no marker/contour)")
     return AlignmentResult(
         image=resized,
         success=True,
         method="rotation_only",
-        orientation=90,
+        orientation=0,
+        input_correction_rotation=correction,
         residual_error=float("inf"),
     )
 
@@ -405,9 +491,10 @@ def align_to_a4_landscape(
 
     Priority:
         1. v9 asymmetric marker detection → homography warp
-        2. Document contour detection → perspective warp (v8 fallback)
-        3. Portrait detection → 90° CW rotation + resize
-        4. Raw resize (last resort)
+        2. Cardinal rotation + marker retry
+        3. Document contour detection → perspective warp (v8 fallback)
+        4. Cardinal rotation + contour/resize
+        5. Raw resize (last resort)
 
     Args:
         image_bgr: Input BGR image (any resolution, any orientation).
@@ -433,7 +520,15 @@ def align_to_a4_landscape(
     except Exception:
         logger.exception("warp: marker_homography failed with exception")
 
-    # --- Strategy 2: Contour-based perspective warp ---
+    # --- Strategy 2: Cardinal rotation + marker retry ---
+    try:
+        result = _try_rotated_marker_homography(image_bgr, meta, out_w, out_h)
+        if result is not None:
+            return result
+    except Exception:
+        logger.exception("warp: rotated_marker_homography failed with exception")
+
+    # --- Strategy 3: Contour-based perspective warp ---
     try:
         result = _try_contour_warp(image_bgr, out_w, out_h)
         if result is not None:
@@ -441,7 +536,7 @@ def align_to_a4_landscape(
     except Exception:
         logger.exception("warp: contour_warp failed with exception")
 
-    # --- Strategy 3: Rotation + resize ---
+    # --- Strategy 4: Rotation + resize ---
     try:
         result = _try_rotation_only(image_bgr, meta, out_w, out_h)
         if result is not None:
@@ -449,7 +544,7 @@ def align_to_a4_landscape(
     except Exception:
         logger.exception("warp: rotation_only failed with exception")
 
-    # --- Strategy 4: Raw resize (last resort) ---
+    # --- Strategy 5: Raw resize (last resort) ---
     logger.warning("warp: all strategies failed, returning raw resize")
     resized = cv2.resize(image_bgr, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
     return AlignmentResult(
@@ -457,6 +552,7 @@ def align_to_a4_landscape(
         success=False,
         method="raw",
         orientation=0,
+        input_correction_rotation=0,
         residual_error=float("inf"),
     )
 

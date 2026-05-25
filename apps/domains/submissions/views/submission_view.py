@@ -381,16 +381,19 @@ class SubmissionViewSet(ModelViewSet):
             identifier = omr.get("identifier_override") or omr.get("identifier")
 
         # ✅ 스캔 이미지 presigned URL (6h TTL — 장시간 검토 세션 대응)
-        scan_image_url = ""
+        # AI가 정렬 보정본을 생성한 경우 원본보다 보정본을 우선 표시한다.
+        scan_image_payload = {
+            "scan_image_url": "",
+            "original_scan_image_url": "",
+            "scan_image_is_aligned": False,
+            "scan_image_size": None,
+        }
         if submission.file_key and submission.source == Submission.Source.OMR_SCAN:
-            try:
-                from apps.infrastructure.storage.r2 import generate_presigned_get_url
-                scan_image_url = generate_presigned_get_url(
-                    key=submission.file_key,
-                    expires_in=21600,
-                )
-            except Exception:
-                scan_image_url = ""
+            from apps.support.omr.scan_images import build_omr_scan_image_payload
+            scan_image_payload = build_omr_scan_image_payload(
+                submission=submission,
+                expires_in=21600,
+            )
 
         return Response({
             "submission_id": submission.id,
@@ -400,7 +403,7 @@ class SubmissionViewSet(ModelViewSet):
             "target_id": submission.target_id,
             "identifier": identifier,
             "answers": answers_data,
-            "scan_image_url": scan_image_url,
+            **scan_image_payload,
             "meta": {
                 "manual_review": meta.get("manual_review"),
                 "ai_result": meta.get("ai_result"),

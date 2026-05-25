@@ -32,8 +32,10 @@ from academy.adapters.ai.omr.meta_px import build_page_scale_from_meta
 from academy.adapters.ai.omr.engine import detect_omr_answers_v7, AnswerDetectConfig
 from academy.adapters.ai.omr.identifier import IdentifierConfigV1, detect_identifier_v1
 from academy.adapters.ai.omr.marker_detector import detect_markers
+from academy.adapters.ai.omr.warp import align_to_a4_landscape
 from academy.adapters.ai.omr.types import OMRAnswerV1
 from academy.adapters.ai.omr.roi_builder import build_questions_payload_from_meta
+from tests.omr.test_omr_full_pipeline import draw_omr_image
 
 PASS = 0
 FAIL = 0
@@ -231,6 +233,32 @@ def test_legacy_v14_corner_markers_are_detected_with_current_meta():
     assert result.success
     assert result.orientation == 0
     assert set(result.markers.keys()) == {"TL", "TR", "BR", "BL"}
+
+
+def test_cardinal_rotated_scans_align_and_report_preview_rotation():
+    meta = build_omr_meta(question_count=20, n_choices=5)
+    marks = {str(i): str(((i - 1) % 5) + 1) for i in range(1, 21)}
+    img = draw_omr_image(meta, marks=marks, dpi=200)
+
+    cases = [
+        (cv2.ROTATE_90_CLOCKWISE, 270),
+        (cv2.ROTATE_180, 180),
+        (cv2.ROTATE_90_COUNTERCLOCKWISE, 90),
+    ]
+
+    for rotate_code, expected_display_rotation in cases:
+        rotated = cv2.rotate(img, rotate_code)
+        aligned = align_to_a4_landscape(image_bgr=rotated, meta=meta)
+        answers = detect_omr_answers_v7(
+            image_bgr=aligned.image,
+            meta=meta,
+            config=AnswerDetectConfig(),
+        )
+
+        assert aligned.success
+        assert aligned.input_correction_rotation == expected_display_rotation
+        assert all(a.status == "ok" for a in answers)
+        assert all(a.detected == [marks[str(a.question_id)]] for a in answers)
 
 
 def test_identifier_anchor_ignores_nearby_artifact():

@@ -62,6 +62,58 @@ def _load_omr_image_bgr(local_path: str) -> tuple[Any, Dict[str, Any]]:
     return imread_exif_aware(local_path), {"input_format": "image"}
 
 
+def _upload_omr_aligned_preview(
+    *,
+    image_bgr: Any,
+    job: AIJob,
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """
+    Store the aligned OMR page as a derived preview image.
+
+    The original upload stays immutable for audit, but operations UI should show
+    the normalized A4 page that the detector actually graded. This also keeps
+    BBox coordinates in the manual-review workspace aligned with the displayed
+    image.
+    """
+    try:
+        import io
+        import re
+
+        import cv2  # type: ignore
+
+        from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
+
+        tenant_id_raw = payload.get("tenant_id") or job.tenant_id
+        submission_id_raw = payload.get("submission_id") or job.source_id
+        tenant_id = int(tenant_id_raw)
+        submission_id = int(submission_id_raw)
+
+        ok, encoded = cv2.imencode(
+            ".jpg",
+            image_bgr,
+            [cv2.IMWRITE_JPEG_QUALITY, 88],
+        )
+        if not ok:
+            return {}
+
+        job_slug = re.sub(r"[^A-Za-z0-9_-]+", "_", str(job.id or "job"))[:96]
+        key = f"tenants/{tenant_id}/ai/submissions/{submission_id}/aligned/{job_slug}.jpg"
+        upload_fileobj_to_r2(
+            fileobj=io.BytesIO(encoded.tobytes()),
+            key=key,
+            content_type="image/jpeg",
+        )
+        h, w = image_bgr.shape[:2]
+        return {
+            "aligned_image_key": key,
+            "aligned_image_size": {"width": int(w), "height": int(h)},
+        }
+    except Exception:
+        logger.exception("OMR aligned preview upload failed | job_id=%s", job.id)
+        return {}
+
+
 # 구간별 진행률 기록 함수 (공통)
 def _record_progress(
     job_id: str,
@@ -356,6 +408,11 @@ def handle_ai_job(job: AIJob) -> AIResult:
             aligned = align_result.image
             if mode == "photo" and not align_result.success:
                 return AIResult.failed(job.id, f"alignment_failed_for_photo_mode (method={align_result.method})")
+            aligned_preview = _upload_omr_aligned_preview(
+                image_bgr=aligned,
+                job=job,
+                payload=payload,
+            )
             _record_progress(job.id, "aligning", 55, step_index=4, step_total=7, step_name_display="정렬", step_percent=100, tenant_id=tenant_id)
 
             # 4) identifier 감지
@@ -386,9 +443,14 @@ def handle_ai_job(job: AIJob) -> AIResult:
                     "mode": mode,
                     "aligned": align_result.success,
                     "alignment_method": align_result.method,
+                    "alignment_orientation": align_result.orientation,
+                    "input_correction_rotation": align_result.input_correction_rotation,
                     "input": input_meta,
+                    "input_image_size": {"width": int(img_bgr.shape[1]), "height": int(img_bgr.shape[0])},
+                    "input_was_resized": bool(was_resized),
                     "identifier": ident,
                     "answers": answers,
+                    **aligned_preview,
                 },
             )
 

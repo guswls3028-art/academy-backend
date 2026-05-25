@@ -93,6 +93,47 @@ def test_omr_worker_pdf_contract():
     assert "OMR question_count required" in src
 
 
+def test_omr_scan_image_prefers_aligned_preview():
+    from apps.support.omr.scan_images import select_omr_scan_image
+
+    selection = select_omr_scan_image(
+        submission_meta={
+            "ai_result": {
+                "result": {
+                    "aligned_image_key": "tenants/1/ai/submissions/3/aligned/job.jpg",
+                    "aligned_image_size": {"width": 3508, "height": 2480},
+                }
+            }
+        },
+        original_file_key="tenants/1/ai/submissions/3/original.jpg",
+        tenant_id=1,
+    )
+
+    assert selection["scan_image_key"].endswith("/aligned/job.jpg")
+    assert selection["original_scan_image_key"].endswith("/original.jpg")
+    assert selection["scan_image_is_aligned"] is True
+    assert selection["scan_image_size"] == {"width": 3508, "height": 2480}
+
+
+def test_omr_scan_image_rejects_cross_tenant_preview_key():
+    from apps.support.omr.scan_images import select_omr_scan_image
+
+    selection = select_omr_scan_image(
+        submission_meta={
+            "ai_result": {
+                "result": {
+                    "aligned_image_key": "tenants/2/ai/submissions/3/aligned/job.jpg",
+                }
+            }
+        },
+        original_file_key="tenants/1/ai/submissions/3/original.jpg",
+        tenant_id=1,
+    )
+
+    assert selection["scan_image_key"] == "tenants/1/ai/submissions/3/original.jpg"
+    assert selection["scan_image_is_aligned"] is False
+
+
 def test_manual_review_blocks_student_result_sync_contract():
     import inspect
     from apps.domains.results.services import grading_service

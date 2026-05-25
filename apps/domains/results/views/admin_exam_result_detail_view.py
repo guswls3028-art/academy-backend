@@ -46,12 +46,9 @@ from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 
 # ✅ OMR 스캔 이미지 presigned URL
-import logging
 from apps.domains.submissions.models import Submission, SubmissionAnswer
-from apps.infrastructure.storage.r2 import generate_presigned_get_url
+from apps.support.omr.scan_images import build_omr_scan_image_payload
 from apps.domains.results.services.answer_matching import format_answer_for_display
-
-logger = logging.getLogger(__name__)
 
 
 class AdminExamResultDetailView(APIView):
@@ -208,7 +205,12 @@ class AdminExamResultDetailView(APIView):
         # 9️⃣ OMR 스캔 정보 (image_url + per-answer meta)
         #     — 대표 attempt의 submission을 기반으로 주입
         # -------------------------------------------------
-        scan_image_url = ""
+        scan_image_payload = {
+            "scan_image_url": "",
+            "original_scan_image_url": "",
+            "scan_image_is_aligned": False,
+            "scan_image_size": None,
+        }
         submission_id_for_omr: int | None = None
         submission_status = None
         manual_review_meta = None
@@ -233,17 +235,10 @@ class AdminExamResultDetailView(APIView):
                 identifier_status = s_meta.get("identifier_status")
 
                 if sub.file_key and sub.source == Submission.Source.OMR_SCAN:
-                    try:
-                        scan_image_url = generate_presigned_get_url(
-                            key=sub.file_key,
-                            expires_in=21600,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "scan_image_url presign failed | submission_id=%s",
-                            submission_id_for_omr,
-                        )
-                        scan_image_url = ""
+                    scan_image_payload = build_omr_scan_image_payload(
+                        submission=sub,
+                        expires_in=21600,
+                    )
 
                 # Per-answer OMR meta (confidence/marking/status)
                 ans_qs = SubmissionAnswer.objects.filter(
@@ -289,7 +284,7 @@ class AdminExamResultDetailView(APIView):
                 str(k): format_answer_for_display(v)
                 for k, v in (correct_answers or {}).items()
             },
-            "scan_image_url": scan_image_url,
+            **scan_image_payload,
             "submission_id": submission_id_for_omr,
             "submission_status": submission_status,
             "manual_review": manual_review_meta,
