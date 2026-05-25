@@ -1,6 +1,6 @@
 # Front V1 인프라 기준 연결 검증
 
-**Generated:** 2026-05-22T11:34:41.5984524+09:00
+**Generated:** 2026-05-25T14:47:55.5907466+09:00
 
 ## SSOT front.* / r2.* 확인
 | 항목 | 값 | 비고 |
@@ -22,4 +22,3 @@
 | R2 버킷 | OK (wrangler list success) | wrangler r2 bucket list |
 
 **배포 후 purge:** SSOT front.purgeOnDeploy 반영 여부는 배포 파이프라인에서 확인.
-

@@ -5,7 +5,7 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-05-22T11:32:56.1687499+09:00 |
+| 검증 시각 | 2026-05-25T14:43:11.6466966+09:00 |
 | 최종 상태 | PASS |
 | SSOT↔Actual 정합성 | **WARNING** |
 | GO/NO-GO | **GO** |
@@ -15,9 +15,9 @@
 ## 합의사항 체크
 | 항목 | 결과 |
 |------|------|
-| API ASG min/desired=1 | PASS |
-| AI ASG min/desired=1 | PASS |
-| Messaging ASG min/desired=1 | PASS |
+| API ASG min/desired=1/1 | PASS |
+| AI ASG min/desired=0/0 | PASS |
+| Messaging ASG min/desired=1/1 | PASS |
 | Solapi 고정 IP(NAT/EIP) 취소 | WARNING(EIP 잔여) |
 | 빌드 (GitHub Actions only) | PASS |
 
@@ -45,5 +45,3 @@
 - [front-pipeline-mapping.latest.md](./front-pipeline-mapping.latest.md) — 프론트 Git 파이프라인 ↔ SSOT 매핑
 - [audit.latest.md](./audit.latest.md) — 리소스·지표 스냅샷
 - [drift.latest.md](./drift.latest.md) — SSOT 대비 drift
-
-

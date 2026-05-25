@@ -5,7 +5,7 @@
 ## 배포 정보
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-05-25T14:43:11.6466966+09:00 |
+| 검증 시각 | 2026-05-25T14:06:31.3645605+09:00 |
 | 리전 | ap-northeast-2 |
 | 배포 스크립트 | scripts/v1/deploy.ps1 |
 | 근거·로그 | reports/audit.latest.md, reports/drift.latest.md |
@@ -18,10 +18,10 @@
 |------|------|-------------------------------------|
 | API ASG min/desired/max | 1/1/2 | reports/audit.latest.md (apiAsg*) |
 | ALB target health | 1 / 1 healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |
-| /health 200 | OK 127ms | curl 위 URL 또는 ALB DNS 직접 호출 |
+| /health 200 | OK 17ms | curl 위 URL 또는 ALB DNS 직접 호출 |
 | API 공개 URL(도메인) /health | OK | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
 | AI/Messaging ASG | 0/1 | reports/audit.latest.md (asgAi*, asgMessaging*) |
-| SQS queue 연결·DLQ | Messaging depth error DLQ 0 / AI depth error DLQ 0 | SQS Console 또는 get-queue-attributes |
+| SQS queue 연결·DLQ | Messaging depth error DLQ 2 / AI depth error DLQ 0 | SQS Console 또는 get-queue-attributes |
 | Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 202 | reports/audit.latest.md, Batch Console |
 | Video Ops CE/Queue, EventBridge | Ops CE VALID Ops Queue ENABLED Reconcile ENABLED ScanStuck ENABLED | reports/audit.latest.md, rca.video.latest.md |
 | RDS 연결 가능 | available | RDS describe-db-instances (연결 테스트는 앱/psql 수동) |
@@ -32,7 +32,7 @@
 
 | 항목 | 결과 | 근거 |
 |------|------|------|
-| /health | OK | 응답시간: 127ms (기준 p95 &lt; 2s, 샘플 1회) |
+| /health | OK | 응답시간: 17ms (기준 p95 &lt; 2s, 샘플 1회) |
 | API root | root unreachable | 동일 ALB DNS |
 | 핵심 API 1~2개(인증/CRUD) | 수동 검증 권장 | 샘플 20회 평균/최대 기록 시 reports/ 에 URL 또는 로그 경로 기입 |
 | **섹션 2 종합** | **WARNING** | |
@@ -54,8 +54,8 @@
 |------|------|------|
 | AI queue enqueue→consume | 수동 검증 권장 | SQS 메시지 발송 후 워커 로그 확인 |
 | Messaging queue enqueue→consume | 수동 검증 권장 | 동일 |
-| DLQ 적재 없음 | Messaging DLQ=0 AI DLQ=0 | get-queue-attributes ApproximateNumberOfMessages (DLQ) |
-| **섹션 4 종합** | **PASS** | |
+| DLQ 적재 없음 | Messaging DLQ=2 AI DLQ=0 | get-queue-attributes ApproximateNumberOfMessages (DLQ) |
+| **섹션 4 종합** | **WARNING** | |
 
 ## 5) Video Pipeline 테스트 (3시간 영상 기준)
 
@@ -78,12 +78,12 @@
 ## 7) 리스크 및 GO/NO-GO 권고
 
 ### 발견 사항(리스크)
-- Drift 없음, 인프라 상태 정상 범위.
+- **WARNING** [SQS] Messaging DLQ messages: 2
 
 ### GO/NO-GO
 | 판정 | 내용 |
 |------|------|
-| **GO** |  |
+| **CONDITIONAL GO** | WARNING 영향도·완화책·추적 계획 확인 후 배포 판단. 상세: 아래 리스크 섹션 및 deploy-verification-latest.md. |
 
 - **FAIL 1건 이상** → **NO-GO**. 재검증 후 재실행.
 - **WARNING만** → **CONDITIONAL GO**. 영향도·완화책·추적 계획 확인 후 배포 여부 결정.
@@ -92,6 +92,6 @@
 ---
 
 ## 최종 상태
-**PASS**
+**WARNING**
 
 **연관 보고서:** audit.latest.md, drift.latest.md (동시 갱신됨).
