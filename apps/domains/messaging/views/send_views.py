@@ -22,6 +22,7 @@ from apps.domains.messaging.services.recipients import resolve_student_message_r
 
 
 MESSAGE_SEND_ROLES = ("owner", "admin", "teacher")
+CONTENT_PLACEHOLDERS = ("#{공지내용}", "#{내용}", "#{선생님메모}", "#{선생님메모1}")
 
 
 def _can_send_messages(request, tenant) -> bool:
@@ -36,6 +37,28 @@ def _can_send_messages(request, tenant) -> bool:
     ).exists():
         return True
     return bool(user.is_superuser and getattr(user, "tenant_id", None) == tenant.id)
+
+
+def _dispatch_or_schedule_message(*, tenant_id: int, trigger: str, payload: dict, scheduled_send_at):
+    if scheduled_send_at:
+        from apps.domains.messaging.scheduled import schedule_notification_at
+
+        schedule_notification_at(
+            tenant_id=tenant_id,
+            trigger=trigger,
+            send_at=scheduled_send_at,
+            payload=payload,
+        )
+        return "scheduled"
+
+    from apps.domains.messaging.services import enqueue_sms
+
+    return "enqueued" if enqueue_sms(**payload) else "failed"
+
+
+def _append_teacher_memo_aliases(replacements: list[dict], value: str) -> None:
+    replacements.append({"key": "선생님메모", "value": value})
+    replacements.append({"key": "선생님메모1", "value": value})
 
 
 class SendMessageView(APIView):
@@ -62,11 +85,12 @@ class SendMessageView(APIView):
         template_id = data.get("template_id")
         raw_body = (data.get("raw_body") or "").strip()
         raw_subject = (data.get("raw_subject") or "").strip()
+        scheduled_send_at = data.get("scheduled_send_at")
 
         # 알림톡 전용 정책: 발신번호는 선택값이다.
         sender = (tenant.messaging_sender or "").strip()
 
-        from apps.domains.messaging.services import enqueue_sms, get_tenant_site_url
+        from apps.domains.messaging.services import get_tenant_site_url
         from apps.domains.messaging.policy import MessagingPolicyError
 
         # Rate limit: max 500 messages per tenant per hour
@@ -83,7 +107,7 @@ class SendMessageView(APIView):
         if send_to == "staff":
             return self._send_to_staff(
                 request, tenant, data, sender, message_mode,
-                template_id, raw_body, raw_subject,
+                template_id, raw_body, raw_subject, scheduled_send_at,
             )
 
         # 학생/학부모 수신
@@ -128,7 +152,7 @@ class SendMessageView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
             tpl_body = t.body or ""
-            if body_base and ("#{공지내용}" in tpl_body or "#{내용}" in tpl_body):
+            if body_base and any(marker in tpl_body for marker in CONTENT_PLACEHOLDERS):
                 user_custom_content = body_base
             if not body_base:
                 body_base = (t.body or "").strip()
@@ -204,6 +228,7 @@ class SendMessageView(APIView):
             )
 
         enqueued = 0
+        scheduled = 0
         skipped_no_phone = 0
         enqueue_failed = 0
         for recipient in recipients:
@@ -281,33 +306,41 @@ class SendMessageView(APIView):
                     if user_custom_content:
                         alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
                         alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
-                        alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
+                        _append_teacher_memo_aliases(alimtalk_replacements, user_custom_content)
 
             try:
-                ok = enqueue_sms(
+                dispatch_result = _dispatch_or_schedule_message(
                     tenant_id=tenant.id,
-                    to=phone,
-                    text=text,
-                    sender=sender,
-                    message_mode=message_mode,
-                    template_id=template_id_solapi,
-                    alimtalk_replacements=alimtalk_replacements,
-                    event_type="manual_send",
-                    target_type="student" if send_to != "parent" else "parent",
-                    target_id=recipient.student_id,
-                    target_name=name,
+                    trigger="manual_send",
+                    scheduled_send_at=scheduled_send_at,
+                    payload={
+                        "tenant_id": tenant.id,
+                        "to": phone,
+                        "text": text,
+                        "sender": sender,
+                        "message_mode": message_mode,
+                        "template_id": template_id_solapi,
+                        "alimtalk_replacements": alimtalk_replacements,
+                        "event_type": "manual_send",
+                        "target_type": "student" if send_to != "parent" else "parent",
+                        "target_id": recipient.student_id,
+                        "target_name": name,
+                    },
                 )
             except MessagingPolicyError as e:
                 return Response(
                     {"detail": str(e) or "문자(SMS) 발송은 내 테넌트에서만 가능합니다."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            if ok:
+            if dispatch_result == "enqueued":
                 enqueued += 1
+            elif dispatch_result == "scheduled":
+                scheduled += 1
             else:
                 enqueue_failed += 1
 
-        detail = f"발송 예정 {enqueued}건"
+        accepted = enqueued + scheduled
+        detail = f"{'예약됨' if scheduled_send_at else '발송 예정'} {accepted}건"
         if enqueue_failed:
             detail += f" (큐 등록 실패 {enqueue_failed}건)"
         if skipped_no_phone:
@@ -315,13 +348,14 @@ class SendMessageView(APIView):
         return Response({
             "detail": detail + ".",
             "enqueued": enqueued,
+            "scheduled": scheduled,
             "enqueue_failed": enqueue_failed,
             "skipped_no_phone": skipped_no_phone,
         }, status=status.HTTP_200_OK)
 
     def _send_to_staff(
         self, request, tenant, data, sender, message_mode,
-        template_id, raw_body, raw_subject,
+        template_id, raw_body, raw_subject, scheduled_send_at,
     ):
         from apps.domains.staffs.models import Staff
         staff_ids = data.get("staff_ids") or []
@@ -363,7 +397,7 @@ class SendMessageView(APIView):
                     status=status.HTTP_404_NOT_FOUND,
                 )
             tpl_body = t.body or ""
-            if body_base and ("#{공지내용}" in tpl_body or "#{내용}" in tpl_body):
+            if body_base and any(marker in tpl_body for marker in CONTENT_PLACEHOLDERS):
                 user_custom_content = body_base
             if not body_base:
                 body_base = (t.body or "").strip()
@@ -400,10 +434,11 @@ class SendMessageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from apps.domains.messaging.services import enqueue_sms, get_tenant_site_url
+        from apps.domains.messaging.services import get_tenant_site_url
         from apps.domains.messaging.policy import MessagingPolicyError
 
         enqueued = 0
+        scheduled = 0
         skipped_no_phone = 0
         enqueue_failed = 0
         for s in staffs:
@@ -456,33 +491,41 @@ class SendMessageView(APIView):
                     if user_custom_content:
                         alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
                         alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
-                        alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
+                        _append_teacher_memo_aliases(alimtalk_replacements, user_custom_content)
 
             try:
-                ok = enqueue_sms(
+                dispatch_result = _dispatch_or_schedule_message(
                     tenant_id=tenant.id,
-                    to=phone,
-                    text=text,
-                    sender=sender,
-                    message_mode=message_mode,
-                    template_id=template_id_solapi,
-                    alimtalk_replacements=alimtalk_replacements,
-                    event_type="manual_send_staff",
-                    target_type="staff",
-                    target_id=s.id,
-                    target_name=name,
+                    trigger="manual_send_staff",
+                    scheduled_send_at=scheduled_send_at,
+                    payload={
+                        "tenant_id": tenant.id,
+                        "to": phone,
+                        "text": text,
+                        "sender": sender,
+                        "message_mode": message_mode,
+                        "template_id": template_id_solapi,
+                        "alimtalk_replacements": alimtalk_replacements,
+                        "event_type": "manual_send_staff",
+                        "target_type": "staff",
+                        "target_id": s.id,
+                        "target_name": name,
+                    },
                 )
             except MessagingPolicyError as e:
                 return Response(
                     {"detail": str(e) or "문자(SMS) 발송은 내 테넌트에서만 가능합니다."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
-            if ok:
+            if dispatch_result == "enqueued":
                 enqueued += 1
+            elif dispatch_result == "scheduled":
+                scheduled += 1
             else:
                 enqueue_failed += 1
 
-        detail = f"발송 예정 {enqueued}건"
+        accepted = enqueued + scheduled
+        detail = f"{'예약됨' if scheduled_send_at else '발송 예정'} {accepted}건"
         if enqueue_failed:
             detail += f" (큐 등록 실패 {enqueue_failed}건)"
         if skipped_no_phone:
@@ -490,6 +533,7 @@ class SendMessageView(APIView):
         return Response({
             "detail": detail + ".",
             "enqueued": enqueued,
+            "scheduled": scheduled,
             "enqueue_failed": enqueue_failed,
             "skipped_no_phone": skipped_no_phone,
         }, status=status.HTTP_200_OK)

@@ -77,6 +77,7 @@ NONE_TEMPLATE_TYPES = frozenset({
     TYPE_NOTICE_WITHDRAWAL,
     TYPE_NOTICE_PAYMENT,
 })
+TEACHER_MEMO_KEYS = ("선생님메모", "선생님메모1")
 
 # ──────────────────────────────────────────
 # 트리거 → 템플릿 타입 매핑
@@ -137,6 +138,16 @@ def get_solapi_template_id(trigger: str) -> str | None:
     if tt:
         return TEMPLATE_TYPE_TO_SOLAPI_ID.get(tt)
     return None
+
+
+def _append_replacement(
+    replacements: list[dict[str, str]],
+    key: str,
+    value: str,
+) -> None:
+    replacements.append({"key": key, "value": value})
+    if key == "선생님메모":
+        replacements.append({"key": "선생님메모1", "value": value})
 
 
 # ──────────────────────────────────────────
@@ -275,19 +286,19 @@ def build_manual_replacements(
     registered_vars = TEMPLATE_TYPE_VARIABLES.get(template_type, [])
     replacements = []
     for var_name in registered_vars:
-        if var_name == "선생님메모":
-            replacements.append({"key": var_name, "value": memo_value})
+        if var_name in TEACHER_MEMO_KEYS:
+            _append_replacement(replacements, var_name, memo_value)
         elif var_name == "공지내용":
-            replacements.append({"key": var_name, "value": built_content})
+            _append_replacement(replacements, var_name, built_content)
         elif var_name == "사이트링크":
-            replacements.append({"key": var_name, "value": site_url})
+            _append_replacement(replacements, var_name, site_url)
         elif var_name in all_vars:
             val = all_vars[var_name]
             if not is_none_type and len(val) > ITEM_LIST_VAR_MAX_LEN:
                 val = val[:ITEM_LIST_VAR_MAX_LEN - 1] + "…"
-            replacements.append({"key": var_name, "value": val})
+            _append_replacement(replacements, var_name, val)
         else:
-            replacements.append({"key": var_name, "value": "-"})
+            _append_replacement(replacements, var_name, "-")
 
     return replacements
 
@@ -423,18 +434,18 @@ def build_unified_replacements(
     registered_vars = TEMPLATE_TYPE_VARIABLES.get(template_type, [])
     replacements = []
     for var_name in registered_vars:
-        if var_name == "선생님메모":
-            replacements.append({"key": var_name, "value": memo_value})
+        if var_name in TEACHER_MEMO_KEYS:
+            _append_replacement(replacements, var_name, memo_value)
         elif var_name == "공지내용":
-            replacements.append({"key": var_name, "value": built_content})
+            _append_replacement(replacements, var_name, built_content)
         elif var_name == "사이트링크":
-            replacements.append({"key": var_name, "value": site_url})
+            _append_replacement(replacements, var_name, site_url)
         elif var_name in all_vars:
             val = all_vars[var_name]
             if not is_none_type and len(val) > ITEM_LIST_VAR_MAX_LEN:
                 val = val[:ITEM_LIST_VAR_MAX_LEN - 1] + "…"
-            replacements.append({"key": var_name, "value": val})
+            _append_replacement(replacements, var_name, val)
         else:
-            replacements.append({"key": var_name, "value": "-"})
+            _append_replacement(replacements, var_name, "-")
 
     return replacements

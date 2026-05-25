@@ -9,6 +9,12 @@ urlpatterns = [
     path("charge/", views.ChargeView.as_view(), name="messaging-charge"),
     path("log/", views.NotificationLogListView.as_view(), name="messaging-log"),
     path("log/<int:pk>/", views.NotificationLogDetailView.as_view(), name="messaging-log-detail"),
+    path("scheduled/", views.ScheduledNotificationListView.as_view(), name="messaging-scheduled"),
+    path(
+        "scheduled/<int:pk>/cancel/",
+        views.ScheduledNotificationCancelView.as_view(),
+        name="messaging-scheduled-cancel",
+    ),
     path("channel-check/", views.ChannelCheckView.as_view(), name="messaging-channel-check"),
     path("send/", views.SendMessageView.as_view(), name="messaging-send"),
     path("templates/", views.MessageTemplateListCreateView.as_view(), name="messaging-templates"),

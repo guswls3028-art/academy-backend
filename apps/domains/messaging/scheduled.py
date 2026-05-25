@@ -19,6 +19,24 @@ logger = logging.getLogger(__name__)
 KST = timezone(timedelta(hours=9))
 
 
+def _create_scheduled_notification(
+    *,
+    tenant_id: int,
+    trigger: str,
+    send_at: datetime,
+    payload: dict,
+):
+    from apps.domains.messaging.models import ScheduledNotification
+
+    return ScheduledNotification.objects.create(
+        tenant_id=tenant_id,
+        trigger=trigger,
+        send_at=send_at,
+        payload=payload,
+        status=ScheduledNotification.Status.PENDING,
+    )
+
+
 def schedule_notification(
     tenant_id: int,
     trigger: str,
@@ -36,8 +54,6 @@ def schedule_notification(
         delay_value: 분 수 또는 시각(0-23)
         payload: enqueue_sms kwargs (JSON 직렬화 가능해야 함)
     """
-    from apps.domains.messaging.models import ScheduledNotification
-
     now = dj_tz.now()
 
     if delay_mode == "delay_minutes":
@@ -51,17 +67,46 @@ def schedule_notification(
     else:
         raise ValueError(f"unknown delay_mode: {delay_mode}")
 
-    ScheduledNotification.objects.create(
+    _create_scheduled_notification(
         tenant_id=tenant_id,
         trigger=trigger,
         send_at=send_at,
         payload=payload,
-        status=ScheduledNotification.Status.PENDING,
     )
     logger.info(
         "schedule_notification: created trigger=%s tenant=%s send_at=%s delay_mode=%s delay_value=%s",
         trigger, tenant_id, send_at.isoformat(), delay_mode, delay_value,
     )
+
+
+def schedule_notification_at(
+    *,
+    tenant_id: int,
+    trigger: str,
+    send_at: datetime,
+    payload: dict,
+):
+    """
+    지정 시각 예약 발송 레코드 생성.
+
+    수동 발송 UI에서 직접 선택한 wall-clock 시각을 저장할 때 사용한다.
+    """
+    if dj_tz.is_naive(send_at):
+        send_at = dj_tz.make_aware(send_at, dj_tz.get_current_timezone())
+    if send_at <= dj_tz.now():
+        raise ValueError("send_at must be in the future")
+
+    notification = _create_scheduled_notification(
+        tenant_id=tenant_id,
+        trigger=trigger,
+        send_at=send_at,
+        payload=payload,
+    )
+    logger.info(
+        "schedule_notification_at: created trigger=%s tenant=%s send_at=%s",
+        trigger, tenant_id, send_at.isoformat(),
+    )
+    return notification
 
 
 def _next_kst_hour(now: datetime, hour: int) -> datetime:

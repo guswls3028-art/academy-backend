@@ -30,13 +30,18 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
+        from apps.domains.messaging.scheduler_locks import advisory_lock
         from apps.support.clinic.session_dependencies import send_due_clinic_reminders
 
-        stats = send_due_clinic_reminders(
-            tenant_id=options.get("tenant_id"),
-            window_minutes=options["window_minutes"],
-            dry_run=options["dry_run"],
-        )
+        with advisory_lock("messaging.send_clinic_reminders") as acquired:
+            if not acquired:
+                self.stdout.write("Skipped: another scheduler is already processing clinic reminders.")
+                return
+            stats = send_due_clinic_reminders(
+                tenant_id=options.get("tenant_id"),
+                window_minutes=options["window_minutes"],
+                dry_run=options["dry_run"],
+            )
         line = (
             f"configs={stats['configs']} sessions_checked={stats['sessions_checked']} "
             f"sessions_due={stats['sessions_due']} attempted={stats['attempted']} "

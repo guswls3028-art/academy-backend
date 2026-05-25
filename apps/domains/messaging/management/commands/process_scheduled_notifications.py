@@ -24,9 +24,14 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from apps.domains.messaging.scheduled import process_due_notifications
+        from apps.domains.messaging.scheduler_locks import advisory_lock
 
         batch_size = options["batch_size"]
-        stats = process_due_notifications(batch_size=batch_size)
+        with advisory_lock("messaging.process_scheduled_notifications") as acquired:
+            if not acquired:
+                self.stdout.write("Skipped: another scheduler is already processing scheduled notifications.")
+                return
+            stats = process_due_notifications(batch_size=batch_size)
 
         if stats["processed"]:
             self.stdout.write(

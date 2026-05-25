@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.parsing import parse_bool
+from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import MessageTemplate, AutoSendConfig
 from apps.domains.messaging.policy import is_auto_send_enabled_by_default
@@ -18,6 +19,27 @@ from apps.domains.messaging.serializers import AutoSendConfigSerializer
 
 def _default_enabled_for_trigger(trigger: str) -> bool:
     return is_auto_send_enabled_by_default(trigger)
+
+
+def _can_manage_auto_send(request, tenant) -> bool:
+    user = request.user
+    if not user or not user.is_authenticated or not tenant:
+        return False
+    if (user.is_superuser or user.is_staff) and getattr(user, "tenant_id", None) == tenant.id:
+        return True
+    return TenantMembership.objects.filter(
+        tenant=tenant,
+        user=user,
+        is_active=True,
+        role__in=("owner", "admin"),
+    ).exists()
+
+
+def _auto_send_write_forbidden_response():
+    return Response(
+        {"detail": "자동발송 설정은 대표 또는 관리자만 변경할 수 있습니다."},
+        status=status.HTTP_403_FORBIDDEN,
+    )
 
 
 class AutoSendConfigView(APIView):
@@ -109,6 +131,9 @@ class AutoSendConfigView(APIView):
     @transaction.atomic
     def patch(self, request):
         tenant = request.tenant
+        if not _can_manage_auto_send(request, tenant):
+            return _auto_send_write_forbidden_response()
+
         configs_data = request.data.get("configs") or []
         if not isinstance(configs_data, list):
             return Response(
@@ -256,6 +281,9 @@ class ProvisionDefaultTemplatesView(APIView):
         from ..default_templates import get_default_templates
 
         tenant = request.tenant
+        if not _can_manage_auto_send(request, tenant):
+            return _auto_send_write_forbidden_response()
+
         templates = get_default_templates(tenant.name or "학원")
         existing_configs = {
             c.trigger: c

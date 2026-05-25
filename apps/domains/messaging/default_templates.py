@@ -208,13 +208,6 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "body": "클리닉에 입실하였습니다.",
         "minutes_before": None,
     },
-    "clinic_check_out": {
-        "category": "clinic",
-        "name": "[{academy_name}] 클리닉 퇴실 알림",
-        "subject": "클리닉에서 퇴실하였습니다",
-        "body": "클리닉에서 퇴실하였습니다.\n수고하셨습니다.",
-        "minutes_before": None,
-    },
     "clinic_absent": {
         "category": "clinic",
         "name": "[{academy_name}] 클리닉 결석 알림",

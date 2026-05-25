@@ -31,6 +31,10 @@ from .config_views import (
     AutoSendConfigView,
     ProvisionDefaultTemplatesView,
 )
+from .scheduled_views import (
+    ScheduledNotificationCancelView,
+    ScheduledNotificationListView,
+)
 
 __all__ = [
     "MessagingInfoView",
@@ -49,4 +53,6 @@ __all__ = [
     "SendMessageView",
     "AutoSendConfigView",
     "ProvisionDefaultTemplatesView",
+    "ScheduledNotificationCancelView",
+    "ScheduledNotificationListView",
 ]

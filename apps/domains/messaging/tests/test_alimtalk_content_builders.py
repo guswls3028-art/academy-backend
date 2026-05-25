@@ -1,11 +1,13 @@
 from unittest import TestCase
 
 from apps.domains.messaging.alimtalk_content_builders import (
+    build_manual_replacements,
     build_unified_replacements,
     get_solapi_template_id,
     get_template_type,
     get_unified_for_category,
     SOLAPI_SCORE,
+    TYPE_CLINIC_INFO,
     TYPE_NOTICE_PAYMENT,
     TYPE_NOTICE_WITHDRAWAL,
     TYPE_SCORE,
@@ -93,3 +95,18 @@ class TestSystemNoticeMappings(TestCase):
         tt, sid = get_unified_for_category("payment")
         self.assertEqual(tt, TYPE_NOTICE_PAYMENT)
         self.assertTrue(bool(sid))
+
+
+class TestTeacherMemoAlias(TestCase):
+    def test_manual_replacements_include_teacher_memo_1_alias(self):
+        replacements = build_manual_replacements(
+            template_type=TYPE_CLINIC_INFO,
+            content_body="내일 클리닉 안내입니다.",
+            context={"장소": "301호", "날짜": "2026-05-26", "시간": "18:30"},
+            tenant_name="림글리쉬",
+            student_name="홍길동",
+            site_url="https://limglish.hakwonplus.com",
+        )
+        reps = {item["key"]: item["value"] for item in replacements}
+        self.assertEqual(reps["선생님메모"], "내일 클리닉 안내입니다.")
+        self.assertEqual(reps["선생님메모1"], "내일 클리닉 안내입니다.")

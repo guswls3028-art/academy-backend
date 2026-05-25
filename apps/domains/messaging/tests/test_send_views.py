@@ -1,3 +1,4 @@
+from datetime import timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -7,7 +8,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
-from apps.domains.messaging.models import MessageTemplate
+from apps.domains.messaging.models import MessageTemplate, ScheduledNotification
 from apps.domains.messaging.views.send_views import SendMessageView
 from apps.domains.messaging.views.template_views import MessageTemplateListCreateView
 from apps.domains.students.models import Student
@@ -123,6 +124,63 @@ class SendMessageViewTests(TestCase):
         self.assertEqual(kwargs["to"], "01033334444")
         self.assertEqual(kwargs["target_type"], "parent")
         self.assertEqual(kwargs["target_id"], self.student.id)
+
+    def test_manual_send_can_be_scheduled_without_immediate_enqueue(self):
+        send_at = timezone.now() + timedelta(hours=1)
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "parent",
+                "student_ids": [self.student.id],
+                "raw_body": "예약 안내입니다.",
+                "block_category": "default",
+                "scheduled_send_at": send_at.isoformat(),
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with (
+            patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
+            patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
+        ):
+            response = SendMessageView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["enqueued"], 0)
+        self.assertEqual(response.data["scheduled"], 1)
+        enqueue_sms.assert_not_called()
+        scheduled = ScheduledNotification.objects.get(tenant=self.tenant)
+        self.assertEqual(scheduled.trigger, "manual_send")
+        self.assertEqual(scheduled.status, ScheduledNotification.Status.PENDING)
+        self.assertEqual(scheduled.payload["to"], "01033334444")
+        self.assertEqual(scheduled.payload["target_type"], "parent")
+
+    def test_manual_send_rejects_past_scheduled_time(self):
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "student",
+                "student_ids": [self.student.id],
+                "raw_body": "과거 예약 안내입니다.",
+                "block_category": "default",
+                "scheduled_send_at": (timezone.now() - timedelta(minutes=1)).isoformat(),
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
+            response = SendMessageView.as_view()(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("scheduled_send_at", response.data)
+        enqueue_sms.assert_not_called()
+        self.assertFalse(ScheduledNotification.objects.exists())
 
     def test_student_direct_alimtalk_omits_deleted_and_cross_tenant_students(self):
         deleted_user = User.objects.create_user(

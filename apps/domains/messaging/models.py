@@ -218,7 +218,6 @@ class AutoSendConfig(models.Model):
         CLINIC_RESERVATION_CHANGED = "clinic_reservation_changed", "클리닉 예약 변경"
         CLINIC_CANCELLED = "clinic_cancelled", "클리닉 예약 취소"
         CLINIC_CHECK_IN = "clinic_check_in", "클리닉 입실"
-        CLINIC_CHECK_OUT = "clinic_check_out", "클리닉 퇴실(완료)"
         CLINIC_ABSENT = "clinic_absent", "클리닉 결석"
         CLINIC_SELF_STUDY_COMPLETED = "clinic_self_study_completed", "자율학습 완료"
         CLINIC_RESULT_NOTIFICATION = "clinic_result_notification", "클리닉 대상 해소(완료)"

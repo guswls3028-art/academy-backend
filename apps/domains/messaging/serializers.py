@@ -1,9 +1,11 @@
 # apps/support/messaging/serializers.py
 from decimal import Decimal
+
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.core.models import Tenant
-from apps.domains.messaging.models import MessageTemplate, AutoSendConfig
+from apps.domains.messaging.models import MessageTemplate, AutoSendConfig, ScheduledNotification
 
 
 class MessagingInfoSerializer(serializers.ModelSerializer):
@@ -166,6 +168,11 @@ class SendMessageRequestSerializer(serializers.Serializer):
     template_id = serializers.IntegerField(required=False, allow_null=True)
     raw_body = serializers.CharField(required=False, allow_blank=True)
     raw_subject = serializers.CharField(required=False, allow_blank=True, default="")
+    scheduled_send_at = serializers.DateTimeField(
+        required=False,
+        allow_null=True,
+        help_text="예약 발송 시각. 비어 있으면 즉시 발송합니다.",
+    )
     block_category = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -216,7 +223,68 @@ class SendMessageRequestSerializer(serializers.Serializer):
                         )
                     }
                 )
+        scheduled_send_at = attrs.get("scheduled_send_at")
+        if scheduled_send_at is not None and scheduled_send_at <= timezone.now():
+            raise serializers.ValidationError(
+                {"scheduled_send_at": "예약 발송 시각은 현재 이후여야 합니다."}
+            )
         return attrs
+
+
+class ScheduledNotificationSerializer(serializers.ModelSerializer):
+    recipient_summary = serializers.SerializerMethodField()
+    message_preview = serializers.SerializerMethodField()
+    target_type = serializers.SerializerMethodField()
+    target_id = serializers.SerializerMethodField()
+    target_name = serializers.SerializerMethodField()
+    message_mode = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ScheduledNotification
+        fields = [
+            "id",
+            "trigger",
+            "send_at",
+            "status",
+            "recipient_summary",
+            "message_preview",
+            "target_type",
+            "target_id",
+            "target_name",
+            "message_mode",
+            "created_at",
+            "sent_at",
+            "error_message",
+        ]
+
+    @staticmethod
+    def _payload(obj) -> dict:
+        return obj.payload if isinstance(obj.payload, dict) else {}
+
+    def get_recipient_summary(self, obj) -> str:
+        payload = self._payload(obj)
+        target_name = (payload.get("target_name") or "").strip()
+        to = (payload.get("to") or "").strip()
+        if to and len(to) >= 7:
+            to = f"{to[:3]}****{to[-4:]}"
+        return " / ".join(part for part in [target_name, to] if part)
+
+    def get_message_preview(self, obj) -> str:
+        payload = self._payload(obj)
+        text = (payload.get("text") or "").strip()
+        return text[:160]
+
+    def get_target_type(self, obj) -> str:
+        return (self._payload(obj).get("target_type") or "").strip()
+
+    def get_target_id(self, obj) -> str:
+        return str(self._payload(obj).get("target_id") or "")
+
+    def get_target_name(self, obj) -> str:
+        return (self._payload(obj).get("target_name") or "").strip()
+
+    def get_message_mode(self, obj) -> str:
+        return (self._payload(obj).get("message_mode") or "").strip()
 
 
 class AutoSendConfigSerializer(serializers.ModelSerializer):

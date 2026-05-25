@@ -24,7 +24,6 @@ CLINIC_MESSAGING_TRIGGERS: tuple[str, ...] = (
     "clinic_reservation_changed",
     "clinic_cancelled",
     "clinic_check_in",
-    "clinic_check_out",
     "clinic_absent",
     "clinic_reminder",
     "clinic_self_study_completed",

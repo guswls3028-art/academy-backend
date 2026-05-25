@@ -115,6 +115,32 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertEqual(config.template_id, template.id)
         self.assertEqual(config.minutes_before, 30)
 
+    def test_teacher_membership_cannot_patch_auto_send_settings(self):
+        teacher = User.objects.create_user(
+            username="msg-provision-teacher",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        request = self.factory.patch(
+            "/api/v1/messaging/auto-send/",
+            data={"configs": [{"trigger": "check_in_complete", "enabled": True}]},
+            format="json",
+        )
+        force_authenticate(request, user=teacher)
+        request.user = teacher
+        request.tenant = self.tenant
+
+        response = AutoSendConfigView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(
+            AutoSendConfig.objects.filter(
+                tenant=self.tenant,
+                trigger="check_in_complete",
+            ).exists()
+        )
+
     def test_autosend_patch_parses_string_false_without_enabling(self):
         config = AutoSendConfig.objects.create(
             tenant=self.tenant,
