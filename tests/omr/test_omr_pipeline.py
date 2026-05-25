@@ -16,6 +16,11 @@ import os
 import sys
 import traceback
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import cv2
@@ -139,7 +144,9 @@ def test_struct():
     with open("apps/domains/submissions/services/ai_omr_result_mapper.py", encoding="utf-8") as f:
         mapper_src = f.read()
     check("A11. mapper question_id fallback", 'a.get("question_id")' in mapper_src)
-    check("A11. mapper enrollment resolver", "_resolve_enrollment_by_phone" in mapper_src)
+    with open("apps/support/omr/candidate_matching.py", encoding="utf-8") as f:
+        candidate_src = f.read()
+    check("A11. mapper enrollment resolver", "resolve_enrollment_by_identifier" in candidate_src)
 
 
 # ══════════════════════════════════════════

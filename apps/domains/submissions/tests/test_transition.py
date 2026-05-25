@@ -200,6 +200,17 @@ def test_file_pipeline_with_identification():
     assert sub.status == S.DONE
 
 
+def test_file_pipeline_with_identification_can_be_discarded():
+    """FILE 제출 중복/오식별 수동 폐기: DISPATCHED → NEEDS_ID → FAILED."""
+    sub = _make_submission(S.SUBMITTED)
+
+    transit(sub, S.DISPATCHED, actor="test")
+    transit(sub, S.NEEDS_IDENTIFICATION, actor="test")
+    transit(sub, S.FAILED, error_message="discarded_duplicate", actor="test_admin")
+    assert sub.status == S.FAILED
+    assert sub.error_message == "discarded_duplicate"
+
+
 def test_failure_and_retry():
     """실패 후 재시도: ... → GRADING → FAILED → SUBMITTED → (다시 처리)."""
     sub = _make_submission(S.SUBMITTED)

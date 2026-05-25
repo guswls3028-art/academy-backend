@@ -26,7 +26,7 @@ STATUS_FLOW: dict[str, set[str]] = {
     S.ANSWERS_READY:        {S.GRADING, S.FAILED},
     S.GRADING:              {S.DONE, S.FAILED},
     S.FAILED:               {S.SUBMITTED},
-    S.NEEDS_IDENTIFICATION: {S.ANSWERS_READY},
+    S.NEEDS_IDENTIFICATION: {S.ANSWERS_READY, S.FAILED},
     S.DONE:                 {S.SUPERSEDED},
     S.SUPERSEDED:           set(),  # terminal
 }
@@ -38,7 +38,7 @@ ADMIN_OVERRIDE_FLOW: dict[str, set[str]] = {
     S.FAILED:               {S.ANSWERS_READY},
     S.SUBMITTED:            {S.ANSWERS_READY},
     S.DISPATCHED:           {S.ANSWERS_READY},
-    S.NEEDS_IDENTIFICATION: {S.ANSWERS_READY},  # 이미 STATUS_FLOW에도 있지만 명시
+    S.NEEDS_IDENTIFICATION: {S.ANSWERS_READY, S.FAILED},  # 운영자 수동 확정/폐기
 }
 
 # 종단 상태: 이 상태에 도달하면 일반 전이 불가
