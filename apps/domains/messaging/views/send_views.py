@@ -15,29 +15,14 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.core.models import TenantMembership
 from apps.domains.messaging.models import NotificationLog, MessageTemplate
+from apps.domains.messaging.permissions import can_send_messages
 from apps.domains.messaging.serializers import SendMessageRequestSerializer
 from apps.domains.messaging.selectors import resolve_freeform_template
 from apps.domains.messaging.services.recipients import resolve_student_message_recipients
 
 
-MESSAGE_SEND_ROLES = ("owner", "admin", "teacher")
 CONTENT_PLACEHOLDERS = ("#{공지내용}", "#{내용}", "#{선생님메모}", "#{선생님메모1}")
-
-
-def _can_send_messages(request, tenant) -> bool:
-    user = request.user
-    if not user or not user.is_authenticated or not tenant:
-        return False
-    if TenantMembership.objects.filter(
-        tenant=tenant,
-        user=user,
-        is_active=True,
-        role__in=MESSAGE_SEND_ROLES,
-    ).exists():
-        return True
-    return bool(user.is_superuser and getattr(user, "tenant_id", None) == tenant.id)
 
 
 def _dispatch_or_schedule_message(*, tenant_id: int, trigger: str, payload: dict, scheduled_send_at):
@@ -72,7 +57,7 @@ class SendMessageView(APIView):
 
     def post(self, request):
         tenant = request.tenant
-        if not _can_send_messages(request, tenant):
+        if not can_send_messages(request, tenant):
             return Response(
                 {"detail": "메시지 발송 권한이 없습니다. 관리자 또는 강사 권한이 필요합니다."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -215,6 +200,13 @@ class SendMessageView(APIView):
                 user_custom_content = body_base
                 if not subject_base:
                     subject_base = (freeform.subject or "").strip()
+
+        if message_mode == "alimtalk" and solapi_template_id and not use_unified:
+            if t and getattr(t, "solapi_status", None) != "APPROVED":
+                return Response(
+                    {"detail": "알림톡 발송에는 검수 승인된 템플릿이 필요합니다. 템플릿 검수를 먼저 신청해 주세요."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         if message_mode == "alimtalk" and not solapi_template_id:
             return Response(

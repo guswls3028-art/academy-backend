@@ -83,6 +83,8 @@ class NotificationLogSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     sent_at = serializers.DateTimeField()
     success = serializers.BooleanField()
+    status = serializers.CharField()
+    claimed_at = serializers.DateTimeField(allow_null=True)
     amount_deducted = serializers.DecimalField(max_digits=10, decimal_places=2)
     recipient_summary = serializers.CharField()
     template_summary = serializers.CharField()

@@ -9,15 +9,15 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import ScheduledNotification
+from apps.domains.messaging.permissions import can_send_messages
 from apps.domains.messaging.serializers import ScheduledNotificationSerializer
-from apps.domains.messaging.views.send_views import _can_send_messages
 
 
 class ScheduledNotificationListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
-        if not _can_send_messages(request, request.tenant):
+        if not can_send_messages(request, request.tenant):
             return Response(
                 {"detail": "예약 발송 조회 권한이 없습니다."},
                 status=status.HTTP_403_FORBIDDEN,
@@ -46,7 +46,7 @@ class ScheduledNotificationCancelView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request, pk: int):
-        if not _can_send_messages(request, request.tenant):
+        if not can_send_messages(request, request.tenant):
             return Response(
                 {"detail": "예약 발송 취소 권한이 없습니다."},
                 status=status.HTTP_403_FORBIDDEN,

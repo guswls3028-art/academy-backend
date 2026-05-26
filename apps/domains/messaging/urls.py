@@ -16,6 +16,8 @@ urlpatterns = [
         name="messaging-scheduled-cancel",
     ),
     path("channel-check/", views.ChannelCheckView.as_view(), name="messaging-channel-check"),
+    path("operations/status/", views.MessagingOperationsStatusView.as_view(), name="messaging-operations-status"),
+    path("send/preflight/", views.SendMessagePreflightView.as_view(), name="messaging-send-preflight"),
     path("send/", views.SendMessageView.as_view(), name="messaging-send"),
     path("templates/", views.MessageTemplateListCreateView.as_view(), name="messaging-templates"),
     path("templates/<int:pk>/", views.MessageTemplateDetailView.as_view(), name="messaging-template-detail"),
