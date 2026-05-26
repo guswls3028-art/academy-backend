@@ -2,10 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
-from apps.domains.results.models import ResultItem
 
-
-def empty_result_item_analysis() -> dict[str, Any]:
+def _empty_result_item_analysis() -> dict[str, Any]:
     return {
         "total_questions": 0,
         "correct_count": 0,
@@ -41,40 +39,13 @@ def summarize_result_items(items: Iterable[dict[str, Any]]) -> dict[str, Any]:
 
     wrong = max(total - correct, 0)
     wrong_numbers.sort()
+    if not total:
+        return _empty_result_item_analysis()
+
     return {
         "total_questions": total,
         "correct_count": correct,
         "wrong_count": wrong,
-        "accuracy_rate": round((correct / total) * 100, 1) if total else None,
+        "accuracy_rate": round((correct / total) * 100, 1),
         "wrong_question_numbers": wrong_numbers,
-    }
-
-
-def build_result_item_analysis_map(result_ids: Iterable[int]) -> dict[int, dict[str, Any]]:
-    """
-    Batch result_id -> item analysis map for student grade summaries.
-    """
-    ids = [int(result_id) for result_id in result_ids if result_id]
-    if not ids:
-        return {}
-
-    grouped: dict[int, list[dict[str, Any]]] = {result_id: [] for result_id in ids}
-    rows = (
-        ResultItem.objects
-        .filter(result_id__in=ids)
-        .select_related("question")
-        .order_by("result_id", "question__number", "question_id")
-        .values("result_id", "question_id", "question__number", "is_correct")
-    )
-    for row in rows:
-        result_id = int(row["result_id"])
-        grouped.setdefault(result_id, []).append({
-            "question_id": row["question_id"],
-            "question_number": row["question__number"] or row["question_id"],
-            "is_correct": row["is_correct"],
-        })
-
-    return {
-        result_id: summarize_result_items(items)
-        for result_id, items in grouped.items()
     }

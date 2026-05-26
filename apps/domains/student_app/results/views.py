@@ -21,11 +21,45 @@ from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.progress.models import ClinicLink
-from apps.domains.results.aggregations.exam_report import (
-    build_result_item_analysis_map,
-    empty_result_item_analysis,
-)
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
+
+
+def _empty_result_item_analysis():
+    return {
+        "total_questions": 0,
+        "correct_count": 0,
+        "wrong_count": 0,
+        "accuracy_rate": None,
+        "wrong_question_numbers": [],
+    }
+
+
+def _summarize_grade_result_items(result):
+    total = 0
+    correct = 0
+    wrong_numbers = []
+
+    for item in result.items.all():
+        total += 1
+        if item.is_correct:
+            correct += 1
+            continue
+
+        question = getattr(item, "question", None)
+        raw_number = getattr(question, "number", None) or item.question_id
+        try:
+            wrong_numbers.append(int(raw_number))
+        except (TypeError, ValueError):
+            continue
+
+    wrong_numbers.sort()
+    return {
+        "total_questions": total,
+        "correct_count": correct,
+        "wrong_count": max(total - correct, 0),
+        "accuracy_rate": round((correct / total) * 100, 1) if total else None,
+        "wrong_question_numbers": wrong_numbers,
+    }
 
 
 class MyExamResultView(APIView):
@@ -96,7 +130,18 @@ class MyGradesSummaryView(APIView):
             .values("id", "target_id", "enrollment_id", "total_score", "max_score", "submitted_at", "attempt_id")
         )
         exam_ids = list({r["target_id"] for r in results})
-        result_analysis_map = build_result_item_analysis_map(r["id"] for r in results)
+        result_analysis_map = {}
+        result_ids = [int(r["id"]) for r in results if r.get("id")]
+        if result_ids:
+            result_rows = (
+                Result.objects
+                .filter(id__in=result_ids)
+                .prefetch_related("items__question")
+            )
+            result_analysis_map = {
+                int(result.id): _summarize_grade_result_items(result)
+                for result in result_rows
+            }
 
         # ✅ 미응시 감지
         _attempt_ids = {int(r["attempt_id"]) for r in results if r.get("attempt_id")}
@@ -183,7 +228,7 @@ class MyGradesSummaryView(APIView):
                 achievement = "FAIL"
 
             rank_info = exam_rank_maps.get(eid, {}).get(enroll_id, {})
-            item_analysis = result_analysis_map.get(int(r["id"])) or empty_result_item_analysis()
+            item_analysis = result_analysis_map.get(int(r["id"])) or _empty_result_item_analysis()
 
             exam_list.append({
                 "exam_id": eid,
