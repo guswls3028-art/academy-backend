@@ -18,6 +18,7 @@ from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 from apps.domains.results.services.answer_matching import format_answer_for_display
+from apps.domains.results.aggregations.exam_report import summarize_result_items
 from apps.domains.student_app.permissions import get_request_student
 
 
@@ -152,6 +153,8 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
             item["correct_answer"] = format_answer_for_display(correct) if correct else None
         else:
             item["correct_answer"] = None
+
+    data["analysis"] = summarize_result_items(data.get("items") or [])
 
     # 석차 정보 추가
     rank_map = compute_exam_rankings(exam_id=exam_id)

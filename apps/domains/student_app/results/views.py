@@ -21,6 +21,10 @@ from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.homework_results.models import HomeworkScore
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.progress.models import ClinicLink
+from apps.domains.results.aggregations.exam_report import (
+    build_result_item_analysis_map,
+    empty_result_item_analysis,
+)
 from apps.domains.results.utils.ranking import compute_exam_rankings_batch
 
 
@@ -89,9 +93,10 @@ class MyGradesSummaryView(APIView):
                 target_type="exam",
             )
             .order_by("-submitted_at")
-            .values("target_id", "enrollment_id", "total_score", "max_score", "submitted_at", "attempt_id")
+            .values("id", "target_id", "enrollment_id", "total_score", "max_score", "submitted_at", "attempt_id")
         )
         exam_ids = list({r["target_id"] for r in results})
+        result_analysis_map = build_result_item_analysis_map(r["id"] for r in results)
 
         # ✅ 미응시 감지
         _attempt_ids = {int(r["attempt_id"]) for r in results if r.get("attempt_id")}
@@ -178,6 +183,7 @@ class MyGradesSummaryView(APIView):
                 achievement = "FAIL"
 
             rank_info = exam_rank_maps.get(eid, {}).get(enroll_id, {})
+            item_analysis = result_analysis_map.get(int(r["id"])) or empty_result_item_analysis()
 
             exam_list.append({
                 "exam_id": eid,
@@ -197,6 +203,11 @@ class MyGradesSummaryView(APIView):
                 "percentile": rank_info.get("percentile"),
                 "cohort_size": rank_info.get("cohort_size"),
                 "cohort_avg": rank_info.get("cohort_avg"),
+                "total_questions": item_analysis["total_questions"],
+                "correct_count": item_analysis["correct_count"],
+                "wrong_count": item_analysis["wrong_count"],
+                "accuracy_rate": item_analysis["accuracy_rate"],
+                "wrong_question_numbers": item_analysis["wrong_question_numbers"],
             })
 
         # 과제 성적: HomeworkScore (기입된 것만, score is not None)
