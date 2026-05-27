@@ -94,7 +94,7 @@ TEMP_PASSWORD_LENGTH = 6
 generate_temp_password() -> 숫자 6자리
 ```
 
-비밀번호 최소 길이 정책은 `.claude/rules/domain-policy.md §8`에 따라 4자 유지다. 자동 임시 비밀번호가 6자리인 것은 알림톡을 보고 직접 입력하는 학부모/학생 사용성을 위한 운영 정책이며 최소 길이 상향이 아니다.
+비밀번호 최소 길이 정책은 `.claude/rules/domain.md §8`에 따라 4자 유지다. 자동 임시 비밀번호가 6자리인 것은 알림톡을 보고 직접 입력하는 학부모/학생 사용성을 위한 운영 정책이며 최소 길이 상향이 아니다.
 
 ## 5. Pending reset 안전 구조
 

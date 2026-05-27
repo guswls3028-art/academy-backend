@@ -54,9 +54,9 @@
 2. 모든 새 안내 문구 / 카테고리 / 트리거 → 4종 봉투 중 의미 가까운 것 선택 + `#{선생님메모}` 본문 자유 작성으로 cover
 3. 학원장이 명시적으로 "새 카카오 양식 검수 받자" 한 경우만 신규 검수 진행
 4. NONE 자동발송 매핑(withdrawal_complete/payment_complete/payment_due_days_before) 제거 금지 — 시스템 안내 자동발송이 정상
-5. UI에서 양식 본문 편집 잠금 금지 — domain-policy.md §5 "잠금/플래그 강제 금지" 정신
+5. UI에서 양식 본문 편집 잠금 금지 — domain.md §5 "잠금/플래그 강제 금지" 정신
 
-관련: [[domain-policy.md §5 / §5.5]] / [[feedback_alimtalk_template_prefix_immutable]] / [[project_alimtalk_audit_2026_05_13]]
+관련: [[domain.md §5 / §5.5]] / [[feedback_alimtalk_template_prefix_immutable]] / [[project_alimtalk_audit_2026_05_13]]
 
 ---
 

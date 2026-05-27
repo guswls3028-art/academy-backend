@@ -182,7 +182,7 @@ class SendMessageRequestSerializer(serializers.Serializer):
         help_text=(
             "frontend 발송 진입점의 블록 카테고리 (grades/attendance/clinic 등). "
             "template_id 누락 또는 t.category 매핑 안 될 때 unified 봉투 fallback 매칭에 사용. "
-            "학원장 본문 어떻게 수정해도 봉투(검수 양식)는 유지되어 발송 (domain-policy.md §5)."
+            "학원장 본문 어떻게 수정해도 봉투(검수 양식)는 유지되어 발송 (domain.md §5)."
         ),
     )
     alimtalk_extra_vars = serializers.DictField(

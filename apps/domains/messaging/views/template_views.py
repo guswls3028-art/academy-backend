@@ -262,9 +262,9 @@ class SolapiSyncTemplatesView(APIView):
 
     **본문(body)·이름(name)은 절대 덮어쓰지 않음** —
     `MessageTemplate.body` 는 학원장이 SaaS에서 작성·편집하는 사용자 영역.
-    [[domain-policy.md §1 학원장 작성 데이터 immutable]]
-    [[domain-policy.md §5 알림톡 본문 — 사용자 영역 보호]]
-    [[anti-avoidance.md §8 학원장 데이터 자동 변경 금지]]
+    [[domain.md §1 학원장 작성 데이터 immutable]]
+    [[domain.md §5 알림톡 본문 — 사용자 영역 보호]]
+    [[domain.md §1 학원장 데이터 자동 변경 금지]]
     솔라피 콘솔에서 본문이 다르게 보여도 학원장이 SaaS에서 편집한 것이 truth.
     실제 카카오 발송 시 본문은 ITEM_LIST 양식의 `#{선생님메모}` 자리에 학원장
     본문이 그대로 박혀 전달됨 (notification_dispatch.py SSOT).
@@ -354,7 +354,7 @@ class SolapiSyncTemplatesView(APIView):
         # 솔라피 콘솔에서 학원장이 직접 삭제한 경우, 솔라피 GET 응답에 templateId가 없음.
         # 이 경우 SaaS DB는 영영 PENDING stale 상태로 남음 (학원장 호소의 진짜 원인).
         # solapi_template_id / solapi_status 둘 다 reset 해서 검수 미신청 상태로 복구.
-        # body / name 은 학원장 영역이라 절대 안 건드림 [[domain-policy.md §1·§5]].
+        # body / name 은 학원장 영역이라 절대 안 건드림 [[domain.md §1·§5]].
         for tid, tpl in existing_by_solapi_id.items():
             if tid in solapi_ids:
                 continue  # 솔라피에 존재 — 정상 매칭, sync 단계로 진행
@@ -395,7 +395,7 @@ class SolapiSyncTemplatesView(APIView):
                 continue
 
             # 학원장 작성 데이터 보호 — name/body 자동 덮어쓰기 금지.
-            # [[domain-policy.md §1 §5]] / [[anti-avoidance.md §8]]
+            # [[domain.md §1 §5]] / [[domain.md §1]]
             # solapi_status (카카오 검수 결과) 만 동기화 — 이건 사용자 영역 아님.
             if mapped_status and tpl.solapi_status != mapped_status:
                 tpl.solapi_status = mapped_status

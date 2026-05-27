@@ -26,7 +26,7 @@ NONE 2종 (notice_withdrawal/notice_payment):
   자동발송 매핑(withdrawal_complete/payment_complete/payment_due_days_before) 유지 = 시스템 안내 자동발송.
   AI가 본문 미반영을 결함으로 분류 + 매핑 제거 = 영구 금지 (2026-05-13 revert 이력).
 
-참조: backend/docs/domain/messaging-alimtalk.md §0, .claude/rules/domain-policy.md §5/§5.5
+참조: backend/docs/domain/messaging-alimtalk.md §0, .claude/rules/domain.md §5/§5.5
 """
 
 from __future__ import annotations
@@ -161,7 +161,7 @@ CATEGORY_TO_TEMPLATE_TYPE: dict[str, str] = {
     "lecture": TYPE_ATTENDANCE,                 # 수업
     "clinic": TYPE_CLINIC_INFO,                 # 클리닉 (장소/날짜/시간) — name 변경/취소 시 clinic_change
     "payment": TYPE_NOTICE_PAYMENT,             # 결제/납부 (NONE 양식, 본문 고정 시스템 안내)
-    # ── 매핑 의도적 제외 (domain-policy.md §5.5) ─────────────────────
+    # ── 매핑 의도적 제외 (domain.md §5.5) ─────────────────────
     # exam/assignment/notice/community/staff/default/student: 카카오 등록 양식 부재.
     # 학원장이 명시 요청 시 §5.5 따라 기존 4종 양식 + 본문 변수 재활용으로 확장.
 }
