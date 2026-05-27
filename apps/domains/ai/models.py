@@ -63,6 +63,8 @@ class AIJobModel(BaseModel):
     locked_at = models.DateTimeField(null=True, blank=True)
     lease_expires_at = models.DateTimeField(null=True, blank=True)
     last_heartbeat_at = models.DateTimeField(null=True, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    completed_at = models.DateTimeField(null=True, blank=True, db_index=True)
 
     next_run_at = models.DateTimeField(default=timezone.now)
     last_error = models.TextField(blank=True, default="")
@@ -192,4 +194,3 @@ class AIUsageModel(TimestampModel):
 
     def __str__(self) -> str:
         return f"AIUsage({self.tenant_id}, {self.kind}, {self.year}-{self.month:02d}-{self.day:02d}={self.count})"
-

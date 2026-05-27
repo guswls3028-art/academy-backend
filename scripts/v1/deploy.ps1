@@ -85,6 +85,7 @@ switch ($true) { { $EcrRepoUri } { $script:EcrRepoUri = $EcrRepoUri } default { 
 . (Join-Path $ScriptRoot "resources\redis.ps1")
 . (Join-Path $ScriptRoot "resources\asg_ai.ps1")
 . (Join-Path $ScriptRoot "resources\asg_messaging.ps1")
+. (Join-Path $ScriptRoot "resources\asg_tools.ps1")
 . (Join-Path $ScriptRoot "resources\batch.ps1")
 . (Join-Path $ScriptRoot "resources\jobdef.ps1")
 . (Join-Path $ScriptRoot "resources\eventbridge.ps1")
@@ -222,6 +223,7 @@ try {
     Ensure-DynamoUploadCheckpointTable
     Ensure-ASGAi
     Ensure-ASGMessaging
+    Ensure-ASGTools
     # long path 폐기 (2026-05-10): VideoLongCE/Queue/JobDef ensure 제거.
     Ensure-VideoCE
     if (-not $script:MinimalDeploy) { Ensure-OpsCE }
@@ -293,7 +295,7 @@ try {
         Write-Host "`n=== After-Deploy Verification ===" -ForegroundColor Cyan
         try {
             $asgAll = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--region", $R, "--output", "json")
-            $asgNames = @($script:AiASGName, $script:MessagingASGName, $script:ApiASGName) | Where-Object { $_ }
+            $asgNames = @($script:AiASGName, $script:ToolsASGName, $script:MessagingASGName, $script:ApiASGName) | Where-Object { $_ }
             foreach ($name in $asgNames) {
                 $a = $asgAll.AutoScalingGroups | Where-Object { $_.AutoScalingGroupName -eq $name } | Select-Object -First 1
                 if ($a) {

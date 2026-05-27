@@ -124,6 +124,7 @@ AWS_DEFAULT_REGION = os.getenv("AWS_DEFAULT_REGION", AWS_REGION)
 AI_SQS_QUEUE_NAME_LITE = os.getenv("AI_SQS_QUEUE_NAME_LITE", "academy-v1-ai-queue")
 AI_SQS_QUEUE_NAME_BASIC = os.getenv("AI_SQS_QUEUE_NAME_BASIC", "academy-v1-ai-queue")
 AI_SQS_QUEUE_NAME_PREMIUM = os.getenv("AI_SQS_QUEUE_NAME_PREMIUM", "academy-v1-ai-queue")
+TOOLS_SQS_QUEUE_NAME = os.getenv("TOOLS_SQS_QUEUE_NAME", "academy-v1-tools-queue")
 MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-v1-messaging-queue")
 
 # ==================================================

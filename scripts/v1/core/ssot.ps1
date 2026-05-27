@@ -123,6 +123,7 @@ function Load-SSOT {
     $script:VideoWorkerRepo = $p["ecr"]["videoWorkerRepo"]
     $script:EcrMessagingRepo = $p["ecr"]["messagingWorkerRepo"]
     $script:EcrAiRepo = $p["ecr"]["aiWorkerRepo"]
+    $script:EcrToolsRepo = if ($p["ecr"]["toolsWorkerRepo"]) { $p["ecr"]["toolsWorkerRepo"] } else { "academy-tools-worker" }
     $script:EcrBaseRepo = if ($p["ecr"]["baseRepo"]) { $p["ecr"]["baseRepo"] } else { "academy-base" }
     $script:EcrImmutableTagRequired = ($p["ecr"]["immutableTagRequired"] -eq "true")
     $script:EcrUseLatestTag = ($p["ecr"]["useLatestTag"] -eq "true")
@@ -201,6 +202,24 @@ function Load-SSOT {
     $script:AiSqsQueueUrl = if ($p["aiWorker"]["sqsQueueUrl"]) { $p["aiWorker"]["sqsQueueUrl"] } else { "" }
     $script:AiSqsQueueName = if ($p["aiWorker"]["sqsQueueName"]) { $p["aiWorker"]["sqsQueueName"] } else { "" }
     $script:AiVisibilityTimeoutSeconds = Coerce-Int $p["aiWorker"]["visibilityTimeoutSeconds"] 1800
+    $tools = $p["toolsWorker"]
+    if (-not $tools) { $tools = @{} }
+    $script:ToolsASGName = if ($tools["asgName"]) { $tools["asgName"] } else { "academy-v1-tools-worker-asg" }
+    $script:ToolsLaunchTemplateName = if ($tools["launchTemplateName"]) { $tools["launchTemplateName"] } else { "academy-v1-tools-worker-lt" }
+    $script:ToolsInstanceTagValue = if ($tools["instanceTagValue"]) { $tools["instanceTagValue"] } else { "academy-v1-tools-worker" }
+    $script:ToolsAmiId = if ($tools["amiId"]) { $tools["amiId"] } else { $script:AiAmiId }
+    $script:ToolsInstanceType = if ($tools["instanceType"]) { $tools["instanceType"] } else { "t4g.small" }
+    $script:ToolsMinSize = Coerce-Int $tools["minSize"] 1
+    $script:ToolsMaxSize = Coerce-Int $tools["maxSize"] 2
+    $script:ToolsDesiredCapacity = Coerce-Int $tools["desiredCapacity"] 1
+    $script:ToolsScaleInProtection = ($tools["scaleInProtection"] -eq $true -or $tools["scaleInProtection"] -eq "true")
+    $script:ToolsScaleOutCooldown = Coerce-Int $tools["scalingPolicyScaleOutCooldown"] 300
+    $script:ToolsScaleInCooldown = Coerce-Int $tools["scalingPolicyScaleInCooldown"] 900
+    $script:ToolsScaleOutThreshold = Coerce-Int $tools["scalingPolicyScaleOutThreshold"] 2
+    $script:ToolsScaleInThreshold = Coerce-Int $tools["scalingPolicyScaleInThreshold"] 0
+    $script:ToolsSqsQueueUrl = if ($tools["sqsQueueUrl"]) { $tools["sqsQueueUrl"] } else { "" }
+    $script:ToolsSqsQueueName = if ($tools["sqsQueueName"]) { $tools["sqsQueueName"] } else { "academy-v1-tools-queue" }
+    $script:ToolsVisibilityTimeoutSeconds = Coerce-Int $tools["visibilityTimeoutSeconds"] 1800
 
     $vb = $p["videoBatch"]
     $vbs = if ($vb.ContainsKey("standard") -and $vb["standard"]) { $vb["standard"] } else { $vb }
@@ -364,7 +383,7 @@ function Load-SSOT {
     # long path 폐기 (2026-05-10): SSOT_* 인벤토리에서 long CE/queue/jobdef 제외.
     # 2026-05-11 보강: detect-stuck / recover-dead / purge-raw / cleanup-orphan jobdef 추가.
     $script:SSOT_CE = @($script:VideoCEName, $script:OpsCEName)
-    $script:SSOT_Queue = @($script:VideoQueueName, $script:OpsQueueName)
+    $script:SSOT_Queue = @($script:VideoQueueName, $script:OpsQueueName, $script:ToolsSqsQueueName)
     $script:SSOT_JobDef = @(
         $script:VideoJobDefName,
         $script:OpsJobDefReconcile,
@@ -384,10 +403,10 @@ function Load-SSOT {
         $script:EventBridgePurgeRawRule,
         $script:EventBridgeCleanupOrphanRule
     )
-    $script:SSOT_ASG = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName)
+    $script:SSOT_ASG = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName, $script:ToolsASGName)
     $script:SSOT_RDS = @($script:RdsDbIdentifier)
     $script:SSOT_Redis = @($script:RedisReplicationGroupId)
-    $script:SSOT_ECR = @($script:EcrApiRepo, $script:VideoWorkerRepo, $script:EcrMessagingRepo, $script:EcrAiRepo)
+    $script:SSOT_ECR = @($script:EcrApiRepo, $script:VideoWorkerRepo, $script:EcrMessagingRepo, $script:EcrAiRepo, $script:EcrToolsRepo)
     $script:SSOT_SSM = @($script:SsmApiEnv, $script:SsmWorkersEnv)
     if ($script:RdsMasterPasswordSsmParam -and $script:RdsMasterPasswordSsmParam.Trim() -ne "" -and $script:RdsMasterPasswordSsmParam -notin $script:SSOT_SSM) {
         $script:SSOT_SSM = @($script:SsmApiEnv, $script:SsmWorkersEnv, $script:RdsMasterPasswordSsmParam)

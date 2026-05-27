@@ -48,6 +48,7 @@ function Get-EvidenceSnapshot {
     $ev["netprobeStatus"] = $NetprobeStatus
     $asgM = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:MessagingASGName, "--region", $R, "--output", "json")
     $asgA = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:AiASGName, "--region", $R, "--output", "json")
+    $asgT = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:ToolsASGName, "--region", $R, "--output", "json")
     if ($asgM -and $asgM.AutoScalingGroups -and $asgM.AutoScalingGroups.Count -gt 0) {
         $a = $asgM.AutoScalingGroups[0]
         $ev["asgMessagingDesired"] = $a.DesiredCapacity; $ev["asgMessagingMin"] = $a.MinSize; $ev["asgMessagingMax"] = $a.MaxSize
@@ -57,6 +58,11 @@ function Get-EvidenceSnapshot {
         $a = $asgA.AutoScalingGroups[0]
         $ev["asgAiDesired"] = $a.DesiredCapacity; $ev["asgAiMin"] = $a.MinSize; $ev["asgAiMax"] = $a.MaxSize
         if ($a.LaunchTemplate) { $ev["asgAiLtVersion"] = $a.LaunchTemplate.Version }
+    }
+    if ($asgT -and $asgT.AutoScalingGroups -and $asgT.AutoScalingGroups.Count -gt 0) {
+        $a = $asgT.AutoScalingGroups[0]
+        $ev["asgToolsDesired"] = $a.DesiredCapacity; $ev["asgToolsMin"] = $a.MinSize; $ev["asgToolsMax"] = $a.MaxSize
+        if ($a.LaunchTemplate) { $ev["asgToolsLtVersion"] = $a.LaunchTemplate.Version }
     }
     if ($script:ApiAllocationId) {
         $addr = Invoke-AwsJson @("ec2", "describe-addresses", "--allocation-ids", $script:ApiAllocationId, "--region", $R, "--output", "json")
@@ -114,6 +120,10 @@ function Convert-EvidenceToMarkdown {
     param($Ev)
     if (-not $Ev) { return "" }
     $lines = @()
-    $Ev.GetEnumerator() | ForEach-Object { $lines += "- **$($_.Key):** $($_.Value)" }
+    $Ev.GetEnumerator() | ForEach-Object {
+        $value = if ($null -eq $_.Value) { "" } else { [string]$_.Value }
+        $suffix = if ($value -eq "") { "" } else { " $value" }
+        $lines += "- **$($_.Key):**$suffix"
+    }
     return $lines -join "`n"
 }

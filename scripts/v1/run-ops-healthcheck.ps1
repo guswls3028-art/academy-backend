@@ -16,17 +16,20 @@ $API_DOMAIN = "https://api.hakwonplus.com"
 $ASG_API = "academy-v1-api-asg"
 $ASG_MESSAGING = "academy-v1-messaging-worker-asg"
 $ASG_AI = "academy-v1-ai-worker-asg"
+$ASG_TOOLS = "academy-v1-tools-worker-asg"
 
 # SQS 큐 이름
 $SQS_QUEUES = @(
     @{ Name = "academy-v1-messaging-queue"; Label = "Messaging" },
     @{ Name = "academy-v1-messaging-queue-dlq"; Label = "Messaging DLQ" },
     @{ Name = "academy-v1-ai-queue"; Label = "AI" },
-    @{ Name = "academy-v1-ai-queue-dlq"; Label = "AI DLQ" }
+    @{ Name = "academy-v1-ai-queue-dlq"; Label = "AI DLQ" },
+    @{ Name = "academy-v1-tools-queue"; Label = "Tools" },
+    @{ Name = "academy-v1-tools-queue-dlq"; Label = "Tools DLQ" }
 )
 
 # ECR 리포지토리
-$ECR_REPOS = @("academy-base", "academy-api", "academy-ai-worker-cpu", "academy-messaging-worker", "academy-video-worker")
+$ECR_REPOS = @("academy-base", "academy-api", "academy-ai-worker-cpu", "academy-messaging-worker", "academy-tools-worker", "academy-video-worker")
 
 # RDS
 $RDS_IDENTIFIER = "academy-db"
@@ -190,6 +193,7 @@ function Check-ASG($asgName, $label) {
 Check-ASG $ASG_API "API"
 Check-ASG $ASG_MESSAGING "Messaging"
 Check-ASG $ASG_AI "AI"
+Check-ASG $ASG_TOOLS "Tools"
 
 Write-Host ""
 

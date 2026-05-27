@@ -1,0 +1,6 @@
+# Tools Worker — lightweight document conversion jobs.
+-r ./common.txt
+
+pillow
+python-pptx==1.0.2
+PyMuPDF==1.25.3

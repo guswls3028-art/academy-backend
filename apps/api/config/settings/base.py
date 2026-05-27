@@ -489,6 +489,7 @@ VIDEO_CLOUDWATCH_NAMESPACE = os.getenv("VIDEO_CLOUDWATCH_NAMESPACE", "Academy/Vi
 AI_SQS_QUEUE_NAME_LITE = os.getenv("AI_SQS_QUEUE_NAME_LITE", "academy-v1-ai-queue")
 AI_SQS_QUEUE_NAME_BASIC = os.getenv("AI_SQS_QUEUE_NAME_BASIC", "academy-v1-ai-queue")
 AI_SQS_QUEUE_NAME_PREMIUM = os.getenv("AI_SQS_QUEUE_NAME_PREMIUM", "academy-v1-ai-queue")
+TOOLS_SQS_QUEUE_NAME = os.getenv("TOOLS_SQS_QUEUE_NAME", "academy-v1-tools-queue")
 # 메시지 발송 SQS 큐 (워커가 소비). SSOT: academy-v1-messaging-queue
 MESSAGING_SQS_QUEUE_NAME = os.getenv("MESSAGING_SQS_QUEUE_NAME", "academy-v1-messaging-queue")
 

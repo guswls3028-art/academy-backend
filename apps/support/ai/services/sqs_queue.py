@@ -58,8 +58,9 @@ class AISQSQueue:
     
     MAX_RECEIVE_COUNT = 3  # DLQ로 전송 전 최대 재시도 횟수
     
-    def __init__(self):
+    def __init__(self, queue_name_override: Optional[str] = None):
         self.queue_client = get_queue_client()
+        self.queue_name_override = queue_name_override
     
     def _get_queue_name(self, tier: str) -> str:
         """
@@ -71,6 +72,9 @@ class AISQSQueue:
         Returns:
             str: 큐 이름
         """
+        if self.queue_name_override:
+            return self.queue_name_override
+
         tier = tier.lower()
         if tier == "lite":
             return getattr(settings, "AI_SQS_QUEUE_NAME_LITE", self.QUEUE_NAME_LITE)

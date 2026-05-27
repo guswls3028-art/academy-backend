@@ -2,11 +2,17 @@
 from __future__ import annotations
 
 import logging
+
+from django.conf import settings
+
 from apps.shared.contracts.ai_job import AIJob
 from apps.domains.ai.models import AIJobModel  # type hint only
+from apps.domains.ai.queueing.worker_job_types import is_tool_worker_job_type
 from academy.adapters.db.django import repositories_ai as ai_repo
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_TOOLS_QUEUE_NAME = "academy-v1-tools-queue"
 
 
 def publish_ai_job_sqs(job_model: AIJobModel) -> None:
@@ -17,7 +23,19 @@ def publish_ai_job_sqs(job_model: AIJobModel) -> None:
         job_model: AIJobModel 객체 (tier 필드 포함)
     """
     from apps.support.ai.services.sqs_queue import AISQSQueue
-    
+
+    if is_tool_worker_job_type(job_model.job_type):
+        queue_name = getattr(settings, "TOOLS_SQS_QUEUE_NAME", DEFAULT_TOOLS_QUEUE_NAME)
+        queue = AISQSQueue(queue_name_override=queue_name)
+        queue.enqueue(job_model)
+        logger.info(
+            "Tool job enqueued: job_id=%s job_type=%s queue=%s",
+            job_model.job_id,
+            job_model.job_type,
+            queue_name,
+        )
+        return
+
     queue = AISQSQueue()
     queue.enqueue(job_model)
 

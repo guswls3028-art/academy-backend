@@ -30,7 +30,8 @@ if (-not $VpcId) { Write-Error "VpcId not set (params.yaml network.vpcId)" }
 $KeepASGNames = @(
     $script:ApiASGName,
     $script:MessagingASGName,
-    $script:AiASGName
+    $script:AiASGName,
+    $script:ToolsASGName
 )
 # Batch CE가 만드는 ASG (academy-v1-video-ops-ce-asg-*, academy-v1-video-batch-ce-asg-*)
 $BatchOpsASGPrefix = "academy-v1-video-ops-ce-asg-"

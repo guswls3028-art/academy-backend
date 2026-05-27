@@ -38,6 +38,7 @@ $obj | Add-Member -NotePropertyName "MESSAGING_SQS_QUEUE_NAME" -NotePropertyValu
 $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_BASIC" -NotePropertyValue $script:AiSqsQueueName -Force
 $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_LITE" -NotePropertyValue $script:AiSqsQueueName -Force
 $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_PREMIUM" -NotePropertyValue $script:AiSqsQueueName -Force
+if ($script:ToolsSqsQueueName) { $obj | Add-Member -NotePropertyName "TOOLS_SQS_QUEUE_NAME" -NotePropertyValue $script:ToolsSqsQueueName -Force }
 # Messaging 워커: API env에서 SOLAPI_* 복사 (API와 동일 키 사용)
 $apiParam = $script:SsmApiEnv
 if ($apiParam) {
@@ -74,4 +75,5 @@ Invoke-Aws @("ssm", "put-parameter", "--name", $paramName, "--type", "SecureStri
 Write-Host "SSM $paramName updated with SQS queue names:" -ForegroundColor Green
 Write-Host "  MESSAGING_SQS_QUEUE_NAME=$($script:MessagingSqsQueueName)" -ForegroundColor Gray
 Write-Host "  AI_SQS_QUEUE_NAME_*= $($script:AiSqsQueueName)" -ForegroundColor Gray
+Write-Host "  TOOLS_SQS_QUEUE_NAME=$($script:ToolsSqsQueueName)" -ForegroundColor Gray
 Write-Host "`nMessaging/AI 워커 인스턴스 재시작(instance-refresh) 후 적용됨." -ForegroundColor Cyan

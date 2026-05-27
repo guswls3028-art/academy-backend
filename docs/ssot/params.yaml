@@ -52,6 +52,7 @@ ecr:
   videoWorkerRepo: academy-video-worker
   messagingWorkerRepo: academy-messaging-worker
   aiWorkerRepo: academy-ai-worker-cpu
+  toolsWorkerRepo: academy-tools-worker
   # 이미지 빌드는 GitHub Actions만 사용. CI는 5개 이미지 모두 :latest 푸시. 풀배포(deploy.ps1)는 :latest 사용으로 정합.
   useLatestTag: true
   immutableTagRequired: false
@@ -127,6 +128,28 @@ aiWorker:
   sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-ai-queue
   sqsQueueName: academy-v1-ai-queue
   visibilityTimeoutSeconds: 1800   # 엑셀 worst-case 30분, graceful shutdown·in-flight 유실 방지
+  dlqMaxReceiveCount: 5
+  dlqSuffix: -dlq
+
+toolsWorker:
+  # PPT/PDF 등 도구성 변환 작업은 AI/OCR 모델 캐시와 분리한다.
+  # 사용자 체감 대기시간을 줄이기 위해 1대 warm baseline을 유지한다.
+  asgName: academy-v1-tools-worker-asg
+  launchTemplateName: academy-v1-tools-worker-lt
+  instanceTagValue: academy-v1-tools-worker
+  amiId: ami-0885e191a9bcf28b0
+  instanceType: t4g.small
+  minSize: 1
+  maxSize: 2
+  desiredCapacity: 1
+  scaleInProtection: false
+  scalingPolicyScaleOutCooldown: 300
+  scalingPolicyScaleInCooldown: 900
+  scalingPolicyScaleOutThreshold: 2
+  scalingPolicyScaleInThreshold: 0
+  sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-tools-queue
+  sqsQueueName: academy-v1-tools-queue
+  visibilityTimeoutSeconds: 1800
   dlqMaxReceiveCount: 5
   dlqSuffix: -dlq
 

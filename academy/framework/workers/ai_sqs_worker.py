@@ -65,7 +65,12 @@ def _handle_signal(sig, frame) -> None:
     _shutdown = True
 
 
-def _weighted_poll(queue: SQSAIQueueAdapter) -> tuple[Optional[dict], str]:
+def _weighted_poll(queue: SQSAIQueueAdapter, *, tools_only: bool = False) -> tuple[Optional[dict], str]:
+    if tools_only:
+        tier = "tools"
+        msg = queue.receive(tier=tier, wait_time_seconds=SQS_WAIT_TIME_SECONDS)
+        return msg, tier
+
     if os.environ.get("AI_WORKER_PREMIUM_ONLY") == "1":
         tier = "premium"
     else:
@@ -131,14 +136,25 @@ def _run_inference(prepared: PreparedJob):
     return handle_ai_job(job)
 
 
-def run_ai_sqs_worker() -> int:
+def run_ai_sqs_worker(
+    *,
+    queue: SQSAIQueueAdapter | None = None,
+    worker_kind: str = "ai",
+    supported_job_types: set[str] | frozenset[str] | None = None,
+) -> int:
     """메인 루프. 0 정상 종료, 1 오류."""
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    queue = SQSAIQueueAdapter()
+    queue = queue or SQSAIQueueAdapter()
     extender = SQSVisibilityExtender(queue)
     uow_factory = DjangoUnitOfWork
+    worker_kind = (worker_kind or "ai").strip().lower()
+    supported_job_types = (
+        {job_type.strip().lower() for job_type in supported_job_types}
+        if supported_job_types
+        else None
+    )
 
     consecutive_errors = 0
     max_consecutive_errors = 10
@@ -149,16 +165,19 @@ def run_ai_sqs_worker() -> int:
             try:
                 # 워커 루프 경계에서 stale DB 커넥션 정리 (누수/반납 지연 보호)
                 close_old_connections()
-                # Heartbeat — WORKER_TYPE env로 ai_cpu/ai_gpu 구분. 실패는 silent.
+                # Heartbeat — worker family별 이름으로 기록. 실패는 silent.
                 try:
                     import os as _os
                     from apps.shared.utils.heartbeat import beat as _beat
-                    _wt = (_os.getenv("WORKER_TYPE", "CPU") or "CPU").lower()
-                    _beat(f"ai_{_wt}")
+                    if worker_kind == "tools":
+                        _beat("tools")
+                    else:
+                        _wt = (_os.getenv("WORKER_TYPE", "CPU") or "CPU").lower()
+                        _beat(f"ai_{_wt}")
                 except Exception:
                     pass
                 try:
-                    message, tier = _weighted_poll(queue)
+                    message, tier = _weighted_poll(queue, tools_only=(worker_kind == "tools"))
                 except QueueUnavailableError:
                     logger.warning("SQS unavailable, waiting 60s")
                     time.sleep(60)
@@ -186,10 +205,27 @@ def run_ai_sqs_worker() -> int:
                         queue.delete(receipt_handle, tier_from_msg)
                     continue
 
+                job_type_normalized = job_type.strip().lower()
+                if supported_job_types is not None and job_type_normalized not in supported_job_types:
+                    logger.error(
+                        "UNSUPPORTED_JOB_FOR_WORKER | worker=%s | job_id=%s | job_type=%s",
+                        worker_kind,
+                        job_id,
+                        job_type,
+                    )
+                    fail_ai_job(
+                        uow_factory(),
+                        job_id,
+                        f"unsupported_job_type_for_{worker_kind}_worker:{job_type}",
+                        tier_from_msg,
+                    )
+                    queue.delete(receipt_handle, tier_from_msg)
+                    continue
+
                 request_id = uuid.uuid4().hex[:8]
                 logger.info(
-                    "SQS_MESSAGE_RECEIVED | request_id=%s | job_id=%s | tier=%s",
-                    request_id, job_id, tier_from_msg,
+                    "SQS_MESSAGE_RECEIVED | worker=%s | request_id=%s | job_id=%s | tier=%s",
+                    worker_kind, request_id, job_id, tier_from_msg,
                 )
 
                 global _current_receipt_handle
@@ -206,6 +242,7 @@ def run_ai_sqs_worker() -> int:
                     tenant_id=message.get("tenant_id"),
                     source_domain=message.get("source_domain"),
                     source_id=message.get("source_id"),
+                    worker_id=f"{worker_kind}-sqs-worker",
                     lease_seconds=LEASE_SECONDS,
                 )
 

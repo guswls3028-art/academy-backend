@@ -1,5 +1,5 @@
 ﻿# ==============================================================================
-# Messaging/AI 워커 ASG instance-refresh (UserData·IAM 반영용)
+# Messaging/AI/Tools 워커 ASG instance-refresh (UserData·IAM 반영용)
 # ==============================================================================
 # SSM /academy/workers/env 갱신 후, 워커 인스턴스를 새 LT(UserData+IAM)로 롤링 교체.
 # 사용: pwsh scripts/v1/restart-workers.ps1 [-AwsProfile default] [-UpdateSsm]
@@ -30,7 +30,7 @@ if ($UpdateSsm) {
     }
 }
 
-$asgs = @($script:MessagingASGName, $script:AiASGName)
+$asgs = @($script:MessagingASGName, $script:AiASGName, $script:ToolsASGName)
 foreach ($asgName in $asgs) {
     if (-not $asgName) { continue }
     Write-Host "`nASG $asgName instance-refresh 시작..." -ForegroundColor Cyan
@@ -56,4 +56,4 @@ foreach ($asgName in $asgs) {
 Write-Host "`n완료 후 확인:" -ForegroundColor Cyan
 Write-Host "  1. AWS Console > EC2 > Auto Scaling Groups > 해당 ASG > Instance refresh" -ForegroundColor Gray
 Write-Host "  2. 새 인스턴스의 UserData 로그: /var/log/academy-worker-userdata.log" -ForegroundColor Gray
-Write-Host "  3. SQS 대기 메시지: academy-v1-messaging-queue / academy-v1-ai-queue" -ForegroundColor Gray
+Write-Host "  3. SQS 대기 메시지: academy-v1-messaging-queue / academy-v1-ai-queue / academy-v1-tools-queue" -ForegroundColor Gray

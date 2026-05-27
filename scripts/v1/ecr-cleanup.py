@@ -33,6 +33,7 @@ REPOS = [
     "academy-api",
     "academy-ai-worker-cpu",
     "academy-messaging-worker",
+    "academy-tools-worker",
     "academy-video-worker",
 ]
 

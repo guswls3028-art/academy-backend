@@ -58,7 +58,7 @@ if (-not $DryRun -and $Execute) {
     Test-ReportsExist
 }
 
-$KeepASG = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName)
+$KeepASG = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName, $script:ToolsASGName)
 # long path 폐기 (2026-05-10): VideoLongCE 인벤토리 keep 대상 아님.
 $KeepBatchCE = @($script:VideoCEName, $script:OpsCEName) | Where-Object { $_ -and $_.Trim() -ne "" }
 $BatchOpsASGPrefix = "academy-v1-video-ops-ce-asg-"

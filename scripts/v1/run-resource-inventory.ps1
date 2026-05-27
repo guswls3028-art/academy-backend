@@ -21,7 +21,8 @@ $VpcId = $script:VpcId
 $KeepASG = @(
     $script:ApiASGName,
     $script:MessagingASGName,
-    $script:AiASGName
+    $script:AiASGName,
+    $script:ToolsASGName
 )
 $KeepALB = @($script:ApiAlbName)
 $KeepTG = @($script:ApiTargetGroupName)

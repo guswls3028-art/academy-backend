@@ -107,21 +107,25 @@ function Invoke-BootstrapSqs {
 
     $defaultMsg = "academy-v1-messaging-queue"
     $defaultAi = "academy-v1-ai-queue"
+    $defaultTools = "academy-v1-tools-queue"
     $msgName = if ($script:MessagingSqsQueueName -and $script:MessagingSqsQueueName.Trim() -ne "") { $script:MessagingSqsQueueName.Trim() } else { $defaultMsg }
     $aiName = if ($script:AiSqsQueueName -and $script:AiSqsQueueName.Trim() -ne "") { $script:AiSqsQueueName.Trim() } else { $defaultAi }
+    $toolsName = if ($script:ToolsSqsQueueName -and $script:ToolsSqsQueueName.Trim() -ne "") { $script:ToolsSqsQueueName.Trim() } else { $defaultTools }
 
     $msgDlq = "${msgName}-dlq"
     $aiDlq = "${aiName}-dlq"
+    $toolsDlq = "${toolsName}-dlq"
     $msgVisibility = if ($script:MessagingVisibilityTimeoutSeconds -gt 0) { $script:MessagingVisibilityTimeoutSeconds } else { 900 }
     $aiVisibility = if ($script:AiVisibilityTimeoutSeconds -gt 0) { $script:AiVisibilityTimeoutSeconds } else { 1800 }
+    $toolsVisibility = if ($script:ToolsVisibilityTimeoutSeconds -gt 0) { $script:ToolsVisibilityTimeoutSeconds } else { 1800 }
     $maxReceiveCount = 5
 
-    foreach ($qName in @($msgName, $aiName)) {
+    foreach ($qName in @($msgName, $aiName, $toolsName)) {
         $url = $null
         $get = Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $qName, "--region", $script:Region, "--output", "json")
         if ($get -and $get.QueueUrl) { $url = $get.QueueUrl }
-        $dlqName = if ($qName -eq $msgName) { $msgDlq } else { $aiDlq }
-        $visibility = if ($qName -eq $msgName) { $msgVisibility } else { $aiVisibility }
+        $dlqName = if ($qName -eq $msgName) { $msgDlq } elseif ($qName -eq $aiName) { $aiDlq } else { $toolsDlq }
+        $visibility = if ($qName -eq $msgName) { $msgVisibility } elseif ($qName -eq $aiName) { $aiVisibility } else { $toolsVisibility }
 
         if (-not (Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $dlqName, "--region", $script:Region, "--output", "json") -ErrorAction SilentlyContinue).QueueUrl) {
             Invoke-AwsJson @("sqs", "create-queue", "--queue-name", $dlqName, "--region", $script:Region, "--output", "json") | Out-Null
@@ -156,7 +160,8 @@ function Invoke-BootstrapSqs {
         }
         if ($url) {
             if ($qName -eq $msgName) { $script:MessagingSqsQueueName = $qName; $script:MessagingSqsQueueUrl = $url; Write-Ok "SQS Messaging: $qName -> $url (DLQ=$dlqName, VisibilityTimeout=${visibility}s)" }
-            else { $script:AiSqsQueueName = $qName; $script:AiSqsQueueUrl = $url; Write-Ok "SQS AI: $qName -> $url (DLQ=$dlqName, VisibilityTimeout=${visibility}s)" }
+            elseif ($qName -eq $aiName) { $script:AiSqsQueueName = $qName; $script:AiSqsQueueUrl = $url; Write-Ok "SQS AI: $qName -> $url (DLQ=$dlqName, VisibilityTimeout=${visibility}s)" }
+            else { $script:ToolsSqsQueueName = $qName; $script:ToolsSqsQueueUrl = $url; Write-Ok "SQS Tools: $qName -> $url (DLQ=$dlqName, VisibilityTimeout=${visibility}s)" }
         }
     }
 }

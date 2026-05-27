@@ -56,6 +56,7 @@ function Sync-ApiEnvFromSSOT {
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_BASIC" -NotePropertyValue $script:AiSqsQueueName -Force
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_LITE" -NotePropertyValue $script:AiSqsQueueName -Force
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_PREMIUM" -NotePropertyValue $script:AiSqsQueueName -Force
+    if ($script:ToolsSqsQueueName) { $obj | Add-Member -NotePropertyName "TOOLS_SQS_QUEUE_NAME" -NotePropertyValue $script:ToolsSqsQueueName -Force }
 
     # SSOT: Video Batch (long path 폐기 2026-05-10 — short queue/jobdef 단일 운영)
     $obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_QUEUE" -NotePropertyValue $script:VideoQueueName -Force
@@ -126,6 +127,7 @@ function Sync-WorkersEnvFromSSOT {
         $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_LITE" -NotePropertyValue $script:AiSqsQueueName -Force
         $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_PREMIUM" -NotePropertyValue $script:AiSqsQueueName -Force
     }
+    if ($script:ToolsSqsQueueName) { $obj | Add-Member -NotePropertyName "TOOLS_SQS_QUEUE_NAME" -NotePropertyValue $script:ToolsSqsQueueName -Force }
     # 옛 long path SSM 잔재 청소 (workers env). API env 동기와 동일 패턴.
     $obj.PSObject.Properties.Remove("VIDEO_BATCH_JOB_QUEUE_LONG") | Out-Null
     $obj.PSObject.Properties.Remove("VIDEO_BATCH_JOB_DEFINITION_LONG") | Out-Null

@@ -59,6 +59,7 @@ R2_ADMIN_PUBLIC_BASE_URL = "https://test-admin-public.r2.example.com"
 AI_SQS_QUEUE_NAME_LITE = "test-ai-queue"
 AI_SQS_QUEUE_NAME_BASIC = "test-ai-queue"
 AI_SQS_QUEUE_NAME_PREMIUM = "test-ai-queue"
+TOOLS_SQS_QUEUE_NAME = "test-tools-queue"
 MESSAGING_SQS_QUEUE_NAME = "test-messaging-queue"
 VIDEO_SQS_QUEUE_DELETE_R2 = "test-video-delete-r2"
 

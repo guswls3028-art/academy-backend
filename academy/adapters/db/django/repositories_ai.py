@@ -169,9 +169,11 @@ class DjangoAIJobRepository:
         job.status = "RUNNING"
         job.locked_by = str(worker_id)
         job.locked_at = now
+        if job.started_at is None:
+            job.started_at = now
         job.lease_expires_at = lease_expires_at
         job.last_heartbeat_at = now
-        job.save(update_fields=["status", "locked_by", "locked_at", "lease_expires_at", "last_heartbeat_at", "updated_at"])
+        job.save(update_fields=["status", "locked_by", "locked_at", "started_at", "lease_expires_at", "last_heartbeat_at", "updated_at"])
         # ✅ Redis에 RUNNING 기록 (진행 상황 위젯에서 진행률 표시용)
         try:
             from apps.domains.ai.redis_status_cache import cache_job_status
@@ -193,6 +195,9 @@ class DjangoAIJobRepository:
         if not job:
             return False
         if job.status == "DONE":
+            if job.completed_at is None:
+                job.completed_at = now
+                job.save(update_fields=["completed_at", "updated_at"])
             if result_payload is not None:
                 res, _ = AIResultModel.objects.get_or_create(job=job, defaults={"payload": result_payload})
                 if res.payload != result_payload:
@@ -203,7 +208,8 @@ class DjangoAIJobRepository:
         job.locked_by = None
         job.locked_at = None
         job.lease_expires_at = None
-        job.save(update_fields=["status", "locked_by", "locked_at", "lease_expires_at", "updated_at"])
+        job.completed_at = now
+        job.save(update_fields=["status", "locked_by", "locked_at", "lease_expires_at", "completed_at", "updated_at"])
         if result_payload is not None:
             res, _ = AIResultModel.objects.get_or_create(job=job, defaults={"payload": result_payload})
             if res.payload != result_payload:
@@ -239,6 +245,9 @@ class DjangoAIJobRepository:
             return False
         final_str, _ = status_for_exception(tier or job.tier or "basic", job.job_type)
         if job.status == final_str:
+            if job.completed_at is None:
+                job.completed_at = now
+                job.save(update_fields=["completed_at", "updated_at"])
             return True
         err = (error_message or "")[:2000]
         job.status = final_str
@@ -247,7 +256,8 @@ class DjangoAIJobRepository:
         job.locked_by = None
         job.locked_at = None
         job.lease_expires_at = None
-        job.save(update_fields=["status", "error_message", "last_error", "locked_by", "locked_at", "lease_expires_at", "updated_at"])
+        job.completed_at = now
+        job.save(update_fields=["status", "error_message", "last_error", "locked_by", "locked_at", "lease_expires_at", "completed_at", "updated_at"])
         # ✅ 실패 시 Redis에 최종 상태 기록 (진행 상황 위젯 폴링용)
         try:
             from apps.domains.ai.redis_status_cache import cache_job_status
