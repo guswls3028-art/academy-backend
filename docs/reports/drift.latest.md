@@ -1,5 +1,5 @@
 # Drift — SSOT vs actual
-**Generated:** 2026-05-26T02:37:36.6338904+09:00
+**Generated:** 2026-05-28T02:14:18.1927656+09:00
 
 | ResourceType | Name | Expected | Actual | Action |
 |--------------|------|----------|--------|--------|
@@ -17,4 +17,5 @@
 | ASG | academy-v1-api-asg | exists | exists | NoOp |
 | ASG | academy-v1-messaging-worker-asg | exists | exists | NoOp |
 | ASG | academy-v1-ai-worker-asg | exists | exists | NoOp |
+| ASG | academy-v1-tools-worker-asg | exists | exists | NoOp |
 | API LT | academy-v1-api-lt | exists | exists | NoOp |

@@ -4,8 +4,13 @@ $ErrorActionPreference = "Stop"
 
 function Get-ECRLifecyclePolicyPath {
     $repoRoot = (Get-Item $PSScriptRoot).Parent.Parent.Parent.FullName
-    $path = Join-Path $repoRoot "docs\scripts\ecr-lifecycle-policy.json"
-    if (Test-Path -LiteralPath $path) { return $path }
+    $paths = @(
+        (Join-Path $repoRoot "docs\ssot\ecr-lifecycle-policy.json"),
+        (Join-Path $repoRoot "docs\scripts\ecr-lifecycle-policy.json")
+    )
+    foreach ($path in $paths) {
+        if (Test-Path -LiteralPath $path) { return $path }
+    }
     return $null
 }
 

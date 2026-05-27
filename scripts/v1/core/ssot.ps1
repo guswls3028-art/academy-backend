@@ -385,7 +385,8 @@ function Load-SSOT {
     # long path 폐기 (2026-05-10): SSOT_* 인벤토리에서 long CE/queue/jobdef 제외.
     # 2026-05-11 보강: detect-stuck / recover-dead / purge-raw / cleanup-orphan jobdef 추가.
     $script:SSOT_CE = @($script:VideoCEName, $script:OpsCEName)
-    $script:SSOT_Queue = @($script:VideoQueueName, $script:OpsQueueName, $script:ToolsSqsQueueName)
+    # AWS Batch job queues only. Tools uses SQS, not Batch.
+    $script:SSOT_Queue = @($script:VideoQueueName, $script:OpsQueueName)
     $script:SSOT_JobDef = @(
         $script:VideoJobDefName,
         $script:OpsJobDefReconcile,

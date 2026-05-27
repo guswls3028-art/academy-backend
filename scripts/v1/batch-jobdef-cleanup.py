@@ -62,7 +62,7 @@ def main():
         total_keep += len(keep)
         total_drop += len(drop)
         kept_str = ",".join(str(r) for r, _ in keep)
-        dropped_str = ",".join(str(r) for r, _ in drop) if drop else "—"
+        dropped_str = ",".join(str(r) for r, _ in drop) if drop else "none"
         print(f"  {name}: keep={kept_str}  drop={dropped_str}")
         plan.append((name, drop))
 

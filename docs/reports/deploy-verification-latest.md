@@ -5,7 +5,7 @@
 ## 배포 정보
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-05-26T02:37:18.5070187+09:00 |
+| 검증 시각 | 2026-05-28T02:14:00.0260384+09:00 |
 | 리전 | ap-northeast-2 |
 | 배포 스크립트 | scripts/v1/deploy.ps1 |
 | 근거·로그 | reports/audit.latest.md, reports/drift.latest.md |
@@ -18,11 +18,11 @@
 |------|------|-------------------------------------|
 | API ASG min/desired/max | 1/1/2 | reports/audit.latest.md (apiAsg*) |
 | ALB target health | 1 / 1 healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |
-| /health 200 | OK 23ms | curl 위 URL 또는 ALB DNS 직접 호출 |
+| /health 200 | OK 17ms | curl 위 URL 또는 ALB DNS 직접 호출 |
 | API 공개 URL(도메인) /health | OK | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
 | AI/Messaging ASG | 0/1 | reports/audit.latest.md (asgAi*, asgMessaging*) |
 | SQS queue 연결·DLQ | Messaging depth error DLQ 0 / AI depth error DLQ 0 | SQS Console 또는 get-queue-attributes |
-| Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 206 | reports/audit.latest.md, Batch Console |
+| Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 210 | reports/audit.latest.md, Batch Console |
 | Video Ops CE/Queue, EventBridge | Ops CE VALID Ops Queue ENABLED Reconcile ENABLED ScanStuck ENABLED | reports/audit.latest.md, rca.video.latest.md |
 | RDS 연결 가능 | available | RDS describe-db-instances (연결 테스트는 앱/psql 수동) |
 | Redis 연결 가능 | available | ElastiCache describe-replication-groups |
@@ -32,7 +32,7 @@
 
 | 항목 | 결과 | 근거 |
 |------|------|------|
-| /health | OK | 응답시간: 23ms (기준 p95 &lt; 2s, 샘플 1회) |
+| /health | OK | 응답시간: 17ms (기준 p95 &lt; 2s, 샘플 1회) |
 | API root | root unreachable | 동일 ALB DNS |
 | 핵심 API 1~2개(인증/CRUD) | 수동 검증 권장 | 샘플 20회 평균/최대 기록 시 reports/ 에 URL 또는 로그 경로 기입 |
 | **섹션 2 종합** | **WARNING** | |
@@ -71,7 +71,7 @@
 
 | 항목 | 결과 | 근거 |
 |------|------|------|
-| 최소 알람 세트(API 5XX, SQS depth/DLQ, Batch failed/stuck/backlog, RDS, Redis) | 12 alarms (academy/v1) | CloudWatch > Alarms (academy/v1 필터) |
+| 최소 알람 세트(API 5XX, SQS depth/DLQ, Batch failed/stuck/backlog, RDS, Redis) | 14 alarms (academy/v1) | CloudWatch > Alarms (academy/v1 필터) |
 | 로그 retention 30d | params observability.logRetentionDays | Ensure-VideoBatchLogRetention, Batch 로그 그룹 |
 | **섹션 6 종합** | **PASS** | |
 

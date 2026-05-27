@@ -1,5 +1,5 @@
 # Evidence / Audit
-**Generated:** 2026-05-26T02:37:50.3807682+09:00
+**Generated:** 2026-05-28T02:14:33.0951021+09:00
 
 - **batchVideoCeArn:** arn:aws:batch:ap-northeast-2:809466760795:compute-environment/academy-v1-video-batch-ce-200gb
 - **batchVideoCeStatus:** VALID
@@ -11,7 +11,7 @@
 - **videoQueueState:** ENABLED
 - **opsQueueArn:** arn:aws:batch:ap-northeast-2:809466760795:job-queue/academy-v1-video-ops-queue
 - **opsQueueState:** ENABLED
-- **videoJobDefRevision:** 206
+- **videoJobDefRevision:** 210
 - **videoJobDefVcpus:**
 - **videoJobDefMemory:**
 - **eventBridgeReconcileState:** ENABLED
@@ -26,6 +26,10 @@
 - **asgAiMin:** 0
 - **asgAiMax:** 5
 - **asgAiLtVersion:** $Default
+- **asgToolsDesired:** 1
+- **asgToolsMin:** 1
+- **asgToolsMax:** 2
+- **asgToolsLtVersion:** $Latest
 - **apiInstanceId:** n/a (EIP not used)
 - **apiAsgDesired:** 1
 - **apiAsgMin:** 1

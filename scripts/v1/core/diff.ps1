@@ -49,6 +49,35 @@ function Test-GeneratedApiUserDataMatchesSSOT {
     )
 }
 
+function Add-UnexpectedBatchResourceRows {
+    param(
+        [System.Collections.ArrayList]$Rows,
+        [string]$ResourceType,
+        [array]$ActualNames,
+        [array]$ExpectedNames,
+        [scriptblock]$ActualLabel
+    )
+
+    $expectedSet = @{}
+    foreach ($name in @($ExpectedNames | Where-Object { $_ })) {
+        $expectedSet[$name] = $true
+    }
+
+    foreach ($name in @($ActualNames | Where-Object { $_ })) {
+        if ($name -notlike "academy-*") { continue }
+        if ($expectedSet.ContainsKey($name)) { continue }
+
+        $actual = & $ActualLabel $name
+        [void]$Rows.Add([PSCustomObject]@{
+            ResourceType = $ResourceType
+            Name = $name
+            Expected = "not in SSOT"
+            Actual = $actual
+            Action = "Review"
+        })
+    }
+}
+
 function Get-ExpectedApiSecurityGroupForDrift {
     if ($script:ApiSecurityGroupId) { return ($script:ApiSecurityGroupId -split '#')[0].Trim() }
     if ($script:SecurityGroupApp) { return ($script:SecurityGroupApp -split '#')[0].Trim() }
@@ -91,6 +120,17 @@ function Get-StructuralDrift {
             [void]$rows.Add([PSCustomObject]@{ ResourceType = "Batch CE"; Name = $ceName; Expected = "exists"; Actual = "exists"; Action = "NoOp" })
         }
     }
+    Add-UnexpectedBatchResourceRows `
+        -Rows $rows `
+        -ResourceType "Batch CE" `
+        -ActualNames $allCeNames `
+        -ExpectedNames $script:SSOT_CE `
+        -ActualLabel {
+            param($name)
+            $ce = $ceArr | Where-Object { $_.computeEnvironmentName -eq $name } | Select-Object -First 1
+            if (-not $ce) { return "exists" }
+            return "$($ce.status)/$($ce.state)"
+        }
 
     # Batch Queue: full list describe-job-queues, then filter by jobQueueName
     $qResult = Invoke-AwsJson @("batch", "describe-job-queues", "--region", $R, "--output", "json")
@@ -107,6 +147,17 @@ function Get-StructuralDrift {
             [void]$rows.Add([PSCustomObject]@{ ResourceType = "Batch Queue"; Name = $qName; Expected = "exists"; Actual = "exists"; Action = "NoOp" })
         }
     }
+    Add-UnexpectedBatchResourceRows `
+        -Rows $rows `
+        -ResourceType "Batch Queue" `
+        -ActualNames $allQueueNames `
+        -ExpectedNames $script:SSOT_Queue `
+        -ActualLabel {
+            param($name)
+            $queue = $qArr | Where-Object { $_.jobQueueName -eq $name } | Select-Object -First 1
+            if (-not $queue) { return "exists" }
+            return "$($queue.status)/$($queue.state)"
+        }
 
     # EventBridge: describe-rule; exception => missing, else exists
     foreach ($ruleName in $script:SSOT_EventBridgeRule) {
@@ -135,6 +186,7 @@ function Get-StructuralDrift {
         $script:ApiASGName = @{ Min = $script:ApiASGMinSize; Max = $script:ApiASGMaxSize; Desired = $script:ApiASGDesiredCapacity }
         $script:MessagingASGName = @{ Min = $script:MessagingMinSize; Max = $script:MessagingMaxSize; Desired = $script:MessagingDesiredCapacity }
         $script:AiASGName = @{ Min = $script:AiMinSize; Max = $script:AiMaxSize; Desired = $script:AiDesiredCapacity }
+        $script:ToolsASGName = @{ Min = $script:ToolsMinSize; Max = $script:ToolsMaxSize; Desired = $script:ToolsDesiredCapacity }
     }
     foreach ($asgName in $script:SSOT_ASG) {
         Write-Host "  [DRIFT-DEBUG] ASG ExpectedName: $asgName" -ForegroundColor DarkGray

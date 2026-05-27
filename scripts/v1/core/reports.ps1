@@ -15,6 +15,14 @@ function Get-ReportsHistoryDir {
     return $ReportsHistory
 }
 
+function Normalize-ReportContent {
+    param([string]$Content)
+    if ($null -eq $Content) { return "" }
+    $lines = $Content -split "\r?\n"
+    $trimmed = $lines | ForEach-Object { $_.TrimEnd() }
+    return (($trimmed -join "`n").TrimEnd())
+}
+
 function Save-DriftReport {
     param([System.Collections.ArrayList]$Rows)
     $dir = Get-ReportsDir
@@ -33,7 +41,7 @@ function Save-DriftReport {
     } else {
         [void]$sb.AppendLine("| (none) | - | - | - | NoOp |")
     }
-    $content = $sb.ToString()
+    $content = Normalize-ReportContent -Content $sb.ToString()
     $latestPath = Join-Path $dir "drift.latest.md"
     $historyPath = Join-Path $historyDir "${ts}-drift.md"
     Set-Content -Path $latestPath -Value $content -Encoding UTF8 -Force
@@ -47,7 +55,7 @@ function Save-EvidenceReport {
     $historyDir = Get-ReportsHistoryDir
     $ts = Get-Date -Format "yyyyMMdd-HHmmss"
     $header = "# Evidence / Audit`n**Generated:** $(Get-Date -Format 'o')`n`n"
-    $content = $header + $MarkdownContent
+    $content = Normalize-ReportContent -Content ($header + $MarkdownContent)
     $latestPath = Join-Path $dir "audit.latest.md"
     $historyPath = Join-Path $historyDir "${ts}-audit.md"
     Set-Content -Path $latestPath -Value $content -Encoding UTF8 -Force
@@ -61,7 +69,7 @@ function Save-VerifyReport {
     $historyDir = Get-ReportsHistoryDir
     $ts = Get-Date -Format "yyyyMMdd-HHmmss"
     $header = "# Verify v1`n**Generated:** $(Get-Date -Format 'o')`n`n"
-    $content = $header + $MarkdownContent
+    $content = Normalize-ReportContent -Content ($header + $MarkdownContent)
     $latestPath = Join-Path $dir "verify.latest.md"
     $historyPath = Join-Path $historyDir "${ts}-verify.md"
     Set-Content -Path $latestPath -Value $content -Encoding UTF8 -Force
@@ -75,9 +83,10 @@ function Save-DeployVerificationReport {
     $historyDir = Get-ReportsHistoryDir
     $ts = Get-Date -Format "yyyyMMdd-HHmmss"
     $latestPath = Join-Path $dir "deploy-verification-latest.md"
-    Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
+    $content = Normalize-ReportContent -Content $MarkdownContent
+    Set-Content -Path $latestPath -Value $content -Encoding UTF8 -Force
     $historyPath = Join-Path $historyDir "${ts}-deploy-verification.md"
-    Set-Content -Path $historyPath -Value $MarkdownContent -Encoding UTF8 -Force
+    Set-Content -Path $historyPath -Value $content -Encoding UTF8 -Force
     Write-Host "  Deploy verification report: $latestPath" -ForegroundColor DarkGray
 }
 
@@ -85,7 +94,8 @@ function Save-V1FinalReportInReports {
     param([string]$MarkdownContent)
     $dir = Get-ReportsDir
     $latestPath = Join-Path $dir "V1-FINAL-REPORT.md"
-    Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
+    $content = Normalize-ReportContent -Content $MarkdownContent
+    Set-Content -Path $latestPath -Value $content -Encoding UTF8 -Force
     Write-Host "  V1 Final report (reports): $latestPath" -ForegroundColor DarkGray
 }
 
@@ -93,7 +103,8 @@ function Save-RuntimeImagesReport {
     param([string]$MarkdownContent)
     $dir = Get-ReportsDir
     $latestPath = Join-Path $dir "runtime-images.latest.md"
-    Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
+    $content = Normalize-ReportContent -Content $MarkdownContent
+    Set-Content -Path $latestPath -Value $content -Encoding UTF8 -Force
     Write-Host "  Runtime images report: $latestPath" -ForegroundColor DarkGray
 }
 
@@ -101,7 +112,8 @@ function Save-ConsistencyReport {
     param([string]$MarkdownContent)
     $dir = Get-ReportsDir
     $latestPath = Join-Path $dir "consistency.latest.md"
-    Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
+    $content = Normalize-ReportContent -Content $MarkdownContent
+    Set-Content -Path $latestPath -Value $content -Encoding UTF8 -Force
     Write-Host "  Consistency report: $latestPath" -ForegroundColor DarkGray
 }
 
@@ -109,6 +121,7 @@ function Save-FrontConnectionReport {
     param([string]$MarkdownContent)
     $dir = Get-ReportsDir
     $latestPath = Join-Path $dir "front-connection.latest.md"
-    Set-Content -Path $latestPath -Value $MarkdownContent -Encoding UTF8 -Force
+    $content = Normalize-ReportContent -Content $MarkdownContent
+    Set-Content -Path $latestPath -Value $content -Encoding UTF8 -Force
     Write-Host "  Front connection report: $latestPath" -ForegroundColor DarkGray
 }
