@@ -35,3 +35,30 @@ def dispatch_progress_pipeline(
         enrollment_id=enrollment_id,
         session_id=session_id,
     )
+
+
+def resolve_removed_source_clinic_links(
+    *,
+    tenant_id: int,
+    session_id: int,
+    source_type: str,
+    source_id: int,
+    user_id: Optional[int] = None,
+    reason: str = "source_removed_from_session",
+) -> int:
+    """
+    Public progress-domain entrypoint for closing ClinicLinks whose source was removed.
+
+    Callers outside the progress domain must use this dispatcher-level API instead
+    of importing progress.services internals directly.
+    """
+    from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+
+    return ClinicResolutionService.resolve_by_removed_source(
+        tenant_id=tenant_id,
+        session_id=session_id,
+        source_type=source_type,
+        source_id=source_id,
+        user_id=user_id,
+        reason=reason,
+    )

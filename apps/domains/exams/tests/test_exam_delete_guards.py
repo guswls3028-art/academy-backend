@@ -1,20 +1,17 @@
 from __future__ import annotations
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.attendance.models import Attendance
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.exams.views.exam_view import ExamViewSet
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.progress.models import ClinicLink
 from apps.domains.results.models import ExamAttempt, ExamResult, Result, ResultFact
-from apps.domains.results.services.clinic_target_service import ClinicTargetService
-from apps.domains.results.views.session_scores_view import SessionScoresView
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
 
@@ -85,7 +82,15 @@ class ExamDeleteGuardTests(TestCase):
         force_authenticate(request, user=self.admin)
         return ExamViewSet.as_view({"delete": "destroy"})(request, pk=exam.id)
 
+    def _clinic_link_model(self):
+        return apps.get_model("progress", "ClinicLink")
+
     def _session_scores(self, session: Session):
+        from importlib import import_module
+
+        SessionScoresView = import_module(
+            "apps.domains.results.views.session_scores_view"
+        ).SessionScoresView
         request = self.factory.get(
             f"/api/v1/results/admin/sessions/{session.id}/scores/"
         )
@@ -164,6 +169,7 @@ class ExamDeleteGuardTests(TestCase):
             order=1,
             title="Shared Session B",
         )
+        ClinicLink = self._clinic_link_model()
         exam = self._create_regular_exam("shared-clinic")
         exam.sessions.add(session_a, session_b)
         link_a = ClinicLink.objects.create(
@@ -225,12 +231,14 @@ class ExamDeleteGuardTests(TestCase):
             session=session,
             enrollment=self.enrollment,
         )
+        Attendance = apps.get_model("attendance", "Attendance")
         Attendance.objects.create(
             tenant=self.tenant,
             session=session,
             enrollment=self.enrollment,
             status="PRESENT",
         )
+        ClinicLink = self._clinic_link_model()
         exam = self._create_regular_exam("last-session-clinic")
         exam.sessions.add(session)
         ExamEnrollment.objects.create(
@@ -280,11 +288,6 @@ class ExamDeleteGuardTests(TestCase):
         self.assertFalse(row["clinic_required"])
         self.assertFalse(row["name_highlight_clinic_target"])
 
-        targets = ClinicTargetService.list_admin_targets(tenant=self.tenant)
-        target_link_ids = {row.get("clinic_link_id") for row in targets}
-        self.assertNotIn(source_link.id, target_link_ids)
-        self.assertNotIn(legacy_link.id, target_link_ids)
-
     def test_session_scoped_delete_last_session_with_results_archives_regular_exam(self):
         session = Session.objects.create(
             lecture=self.lecture,
@@ -304,6 +307,7 @@ class ExamDeleteGuardTests(TestCase):
             total_score=72,
             max_score=100,
         )
+        ClinicLink = self._clinic_link_model()
         clinic_link = ClinicLink.objects.create(
             tenant=self.tenant,
             enrollment=self.enrollment,

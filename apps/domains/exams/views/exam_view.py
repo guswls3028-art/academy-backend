@@ -266,9 +266,9 @@ class ExamViewSet(ModelViewSet):
         return session
 
     def _resolve_removed_exam_clinic_links(self, request, obj: Exam, session_id: int) -> int:
-        from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+        from apps.domains.progress.dispatcher import resolve_removed_source_clinic_links
 
-        return ClinicResolutionService.resolve_by_removed_source(
+        return resolve_removed_source_clinic_links(
             tenant_id=int(request.tenant.id),
             session_id=int(session_id),
             source_type="exam",
