@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 import uuid
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from django.db import close_old_connections, connections
 
@@ -109,19 +109,12 @@ def _dispatch_domain_callback(
         )
 
 
-def _run_inference(prepared: PreparedJob):
-    """기존 handle_ai_job 호출 (contract 변환)."""
-    from apps.shared.contracts.ai_job import AIJob
-    from apps.shared.contracts.ai_result import AIResult
-    from academy.application.use_cases.ai.pipelines.dispatcher import handle_ai_job
-    from academy.application.use_cases.ai.pipelines.tier_enforcer import enforce_tier_limits
+InferenceHandler = Callable[[Any], Any]
 
-    allowed, error_msg = enforce_tier_limits(
-        tier=prepared.tier,
-        job_type=prepared.job_type,
-    )
-    if not allowed:
-        return AIResult.failed(prepared.job_id, error_msg or "tier_limit")
+
+def _to_contract_job(prepared: PreparedJob):
+    """PreparedJob을 pipeline handler가 받는 AIJob contract로 변환한다."""
+    from apps.shared.contracts.ai_job import AIJob
 
     job_dict = {
         "id": prepared.job_id,
@@ -132,7 +125,26 @@ def _run_inference(prepared: PreparedJob):
         "payload": prepared.payload,
         "created_at": "",
     }
-    job = AIJob.from_dict(job_dict)
+    return AIJob.from_dict(job_dict)
+
+
+def _run_inference(prepared: PreparedJob, inference_handler: InferenceHandler | None = None):
+    """기존 handle_ai_job 호출 (contract 변환). Tools worker는 handler를 직접 주입한다."""
+    from apps.shared.contracts.ai_result import AIResult
+    from academy.application.use_cases.ai.pipelines.tier_enforcer import enforce_tier_limits
+
+    allowed, error_msg = enforce_tier_limits(
+        tier=prepared.tier,
+        job_type=prepared.job_type,
+    )
+    if not allowed:
+        return AIResult.failed(prepared.job_id, error_msg or "tier_limit")
+
+    job = _to_contract_job(prepared)
+    if inference_handler:
+        return inference_handler(job)
+
+    from academy.application.use_cases.ai.pipelines.dispatcher import handle_ai_job
     return handle_ai_job(job)
 
 
@@ -141,6 +153,7 @@ def run_ai_sqs_worker(
     queue: SQSAIQueueAdapter | None = None,
     worker_kind: str = "ai",
     supported_job_types: set[str] | frozenset[str] | None = None,
+    inference_handler: InferenceHandler | None = None,
 ) -> int:
     """메인 루프. 0 정상 종료, 1 오류."""
     signal.signal(signal.SIGTERM, _handle_signal)
@@ -267,7 +280,9 @@ def run_ai_sqs_worker(
 
                 def _run_inference_safe() -> None:
                     try:
-                        result_container.append(_run_inference(prepared))
+                        result_container.append(
+                            _run_inference(prepared, inference_handler=inference_handler)
+                        )
                     except Exception as e:
                         from apps.shared.contracts.ai_result import AIResult
                         result_container.append(AIResult.failed(prepared.job_id, str(e)))

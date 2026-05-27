@@ -20,6 +20,7 @@ if __name__ == "__main__":
         format="%(asctime)s [%(levelname)s] [TOOLS-SQS-WORKER] %(message)s",
     )
     from academy.adapters.queue.sqs.tools_queue import SQSToolsQueueAdapter
+    from academy.application.use_cases.ai.pipelines.ppt_handler import handle_ppt_generation_job
     from academy.framework.workers.ai_sqs_worker import run_ai_sqs_worker
     from apps.domains.ai.queueing.worker_job_types import TOOL_WORKER_JOB_TYPES
 
@@ -28,5 +29,6 @@ if __name__ == "__main__":
             queue=SQSToolsQueueAdapter(),
             worker_kind="tools",
             supported_job_types=TOOL_WORKER_JOB_TYPES,
+            inference_handler=handle_ppt_generation_job,
         )
     )

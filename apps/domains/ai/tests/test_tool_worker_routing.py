@@ -8,8 +8,11 @@ from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
+from academy.application.use_cases.ai.process_ai_job_from_sqs import PreparedJob
+from academy.framework.workers.ai_sqs_worker import _run_inference
 from apps.domains.ai.models import AIJobModel
 from apps.domains.ai.queueing.publisher import publish_ai_job_sqs
+from apps.shared.contracts.ai_result import AIResult
 
 
 class ToolWorkerRoutingTests(TestCase):
@@ -75,3 +78,30 @@ class ToolWorkerRoutingTests(TestCase):
 
         job.refresh_from_db()
         assert job.completed_at is not None
+
+    def test_tools_inference_handler_bypasses_ai_dispatcher_imports(self):
+        prepared = PreparedJob(
+            job_id=str(uuid.uuid4()),
+            job_type="ppt_generation",
+            tier="basic",
+            payload={"tenant_id": "1"},
+            receipt_handle="receipt",
+            tenant_id="1",
+            source_domain="tools",
+        )
+
+        real_import = __import__
+
+        def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "academy.application.use_cases.ai.pipelines.dispatcher":
+                raise AssertionError("tools worker must not import AI dispatcher")
+            return real_import(name, globals, locals, fromlist, level)
+
+        with patch("builtins.__import__", guarded_import):
+            result = _run_inference(
+                prepared,
+                inference_handler=lambda job: AIResult.done(job.id, {"ok": True}),
+            )
+
+        assert result.status == "DONE"
+        assert result.result == {"ok": True}
