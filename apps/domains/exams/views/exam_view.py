@@ -9,7 +9,7 @@ from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework.response import Response
 
 from apps.core.permissions import TenantResolvedAndMember
-from apps.domains.exams.models import Exam
+from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.exams.serializers.exam import ExamSerializer
 from apps.domains.exams.serializers.exam_create import ExamCreateSerializer
 from apps.domains.exams.serializers.exam_update import ExamUpdateSerializer
@@ -252,7 +252,7 @@ class ExamViewSet(ModelViewSet):
         except (TypeError, ValueError):
             raise ValidationError({"session_id": "must be integer"})
 
-    def _unlink_from_session_if_shared(self, request, obj: Exam, session_id: int):
+    def _unlink_from_session(self, request, obj: Exam, session_id: int, *, preserve_history: bool = False, blocker: str | None = None):
         session = Session.objects.filter(
             id=session_id,
             lecture__tenant=request.tenant,
@@ -264,7 +264,8 @@ class ExamViewSet(ModelViewSet):
                 {"session_id": "exam is not linked to this session"}
             )
 
-        if obj.sessions.exclude(id=session_id).exists():
+        has_other_sessions = obj.sessions.exclude(id=session_id).exists()
+        if has_other_sessions:
             obj.sessions.remove(session)
             return Response(
                 {
@@ -272,6 +273,25 @@ class ExamViewSet(ModelViewSet):
                     "action": "unlinked",
                     "exam_id": int(obj.id),
                     "session_id": int(session_id),
+                },
+                status=200,
+            )
+
+        if preserve_history:
+            obj.sessions.remove(session)
+            enrollment_count, _ = ExamEnrollment.objects.filter(exam=obj).delete()
+            if obj.is_active or obj.status != Exam.Status.CLOSED:
+                obj.is_active = False
+                obj.status = Exam.Status.CLOSED
+                obj.save(update_fields=["is_active", "status", "updated_at"])
+            return Response(
+                {
+                    "detail": "Exam was removed from this session and historical records were preserved.",
+                    "action": "archived",
+                    "exam_id": int(obj.id),
+                    "session_id": int(session_id),
+                    "preserved_blocker": blocker,
+                    "removed_enrollment_count": int(enrollment_count),
                 },
                 status=200,
             )
@@ -293,12 +313,20 @@ class ExamViewSet(ModelViewSet):
 
         if obj.exam_type == Exam.ExamType.REGULAR:
             if session_id is not None:
-                response = self._unlink_from_session_if_shared(request, obj, session_id)
+                response = self._unlink_from_session(request, obj, session_id)
                 if response is not None:
                     return response
 
             blocker = self._regular_delete_blocker(obj)
             if blocker:
+                if session_id is not None:
+                    return self._unlink_from_session(
+                        request,
+                        obj,
+                        session_id,
+                        preserve_history=True,
+                        blocker=blocker,
+                    )
                 raise PermissionDenied(
                     f"This regular exam has {blocker} and cannot be deleted."
                 )

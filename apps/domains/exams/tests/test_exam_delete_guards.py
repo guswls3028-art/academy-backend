@@ -148,6 +148,53 @@ class ExamDeleteGuardTests(TestCase):
         self.assertEqual(response.status_code, 204)
         self.assertFalse(Exam.objects.filter(id=exam.id).exists())
 
+    def test_session_scoped_delete_last_session_with_results_archives_regular_exam(self):
+        session = Session.objects.create(
+            lecture=self.lecture,
+            order=1,
+            title="Only Session With Results",
+        )
+        exam = self._create_regular_exam("last-session-results")
+        exam.sessions.add(session)
+        ExamEnrollment.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=72,
+            max_score=100,
+        )
+
+        response = self._delete_exam(exam, session_id=session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["action"], "archived")
+        self.assertEqual(response.data["preserved_blocker"], "results")
+        self.assertTrue(Exam.objects.filter(id=exam.id).exists())
+        self.assertTrue(Result.objects.filter(id=result.id).exists())
+        self.assertFalse(exam.sessions.filter(id=session.id).exists())
+        self.assertFalse(ExamEnrollment.objects.filter(exam_id=exam.id).exists())
+
+        exam.refresh_from_db()
+        self.assertFalse(exam.is_active)
+        self.assertEqual(exam.status, Exam.Status.CLOSED)
+
+        request = self.factory.get(
+            f"/api/v1/exams/?exam_type=regular&session_id={session.id}"
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        list_response = ExamViewSet.as_view({"get": "list"})(request)
+        rows = (
+            list_response.data.get("results", list_response.data)
+            if isinstance(list_response.data, dict)
+            else list_response.data
+        )
+        self.assertNotIn(exam.id, {row["id"] for row in rows})
+
     def test_session_scoped_delete_rejects_unlinked_session(self):
         linked_session = Session.objects.create(
             lecture=self.lecture,
