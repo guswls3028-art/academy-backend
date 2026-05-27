@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from apps.domains.ai.job_types import BASIC_ALLOWED_JOB_TYPES, LITE_ALLOWED_JOB_TYPES
+
 
 logger = logging.getLogger(__name__)
 
@@ -85,25 +87,11 @@ def validate_tier_for_job_type(tier: str, job_type: str) -> bool:
     
     # Lite: OCR만 허용
     if tier == "lite":
-        return job_type_lower in ("ocr",)
+        return job_type_lower in LITE_ALLOWED_JOB_TYPES
     
     # Basic: OCR + OMR/status detection + 엑셀 파싱/내보내기 + 문제분할 + 매치업
     if tier == "basic":
-        return job_type_lower in (
-            "ocr",
-            "omr_grading",
-            "homework_video_analysis",
-            "excel_parsing",
-            "attendance_excel_export",
-            "staff_excel_export",
-            "ppt_generation",
-            "problem_studio_package",
-            "question_segmentation",
-            "matchup_analysis",
-            "matchup_index_exam",
-            "matchup_search_qna",
-            "matchup_manual_index",
-        )
+        return job_type_lower in BASIC_ALLOWED_JOB_TYPES
     
     # Premium: 모든 작업 허용
     if tier == "premium":

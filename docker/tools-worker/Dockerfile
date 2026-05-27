@@ -1,8 +1,8 @@
 # ==============================================================================
 # Tools Worker Dockerfile
 # ==============================================================================
-# Lightweight worker for deterministic document conversion tasks such as PPT
-# generation. Keep this separate from AI worker model caches and OCR/ML deps.
+# Lightweight worker for deterministic document conversion and spreadsheet
+# tasks. Keep this separate from AI worker model caches and OCR/ML deps.
 # ==============================================================================
 
 ARG BASE_IMAGE=academy-base:latest
@@ -21,7 +21,7 @@ USER appuser
 COPY requirements/constraints.txt requirements/common.txt requirements/worker-tools.txt ./requirements/
 RUN pip install --user --no-cache-dir -r requirements/worker-tools.txt
 
-RUN python -c "from academy.application.use_cases.tools.generate_ppt import GeneratePptUseCase; print(GeneratePptUseCase.__name__)"
+RUN python -c "from academy.application.use_cases.tools.worker_dispatcher import handle_tools_job; from academy.application.services.excel_parsing_service import ExcelParsingService; print(handle_tools_job.__name__, ExcelParsingService.__name__)"
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD kill -0 1 2>/dev/null || exit 1

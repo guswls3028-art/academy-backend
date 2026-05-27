@@ -1,6 +1,6 @@
 """AI job routing contracts for worker families."""
 
-TOOL_WORKER_JOB_TYPES = frozenset({"ppt_generation"})
+from apps.domains.ai.job_types import TOOL_WORKER_JOB_TYPES
 
 
 def is_tool_worker_job_type(job_type: str | None) -> bool:

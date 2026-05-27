@@ -12,6 +12,8 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+from apps.domains.ai.job_types import BASIC_ALLOWED_JOB_TYPES, LITE_ALLOWED_JOB_TYPES
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,17 +35,14 @@ def enforce_tier_limits(
     tier = tier.lower()
     job_type_lower = job_type.lower()
     
-    # Lite: OCR + 엑셀 파싱 (경량)
     if tier == "lite":
-        if job_type_lower not in ("ocr", "excel_parsing", "ppt_generation"):
-            return False, f"Tier 'lite' only allows 'ocr', 'excel_parsing', got '{job_type}'"
+        if job_type_lower not in LITE_ALLOWED_JOB_TYPES:
+            return False, f"Tier 'lite' only allows {tuple(sorted(LITE_ALLOWED_JOB_TYPES))}, got '{job_type}'"
         return True, None
 
-    # Basic: OCR + OMR/status detection + 엑셀 파싱 + 문항 분할 + 매치업
     if tier == "basic":
-        allowed_types = ("ocr", "omr_grading", "homework_video_analysis", "excel_parsing", "ppt_generation", "problem_studio_package", "question_segmentation", "matchup_analysis", "matchup_index_exam", "matchup_search_qna", "matchup_manual_index")
-        if job_type_lower not in allowed_types:
-            return False, f"Tier 'basic' only allows {allowed_types}, got '{job_type}'"
+        if job_type_lower not in BASIC_ALLOWED_JOB_TYPES:
+            return False, f"Tier 'basic' only allows {tuple(sorted(BASIC_ALLOWED_JOB_TYPES))}, got '{job_type}'"
         return True, None
     
     # Premium: 모든 작업 허용

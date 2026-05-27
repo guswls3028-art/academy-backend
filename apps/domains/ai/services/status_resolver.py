@@ -13,21 +13,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional, Tuple
 
+from apps.domains.ai.job_types import DETERMINISTIC_JOB_TYPES
 from apps.domains.ai.services.runtime_flags import get_runtime_flag
 
 logger = logging.getLogger(__name__)
-
-
-# AI inference가 아닌 결정적 작업(파일 변환·집계·인덱싱). confidence 기반 review_candidate 의미 없음.
-# Lite/Basic 정책에서 제외하고 실패는 그대로 FAILED 노출 (silent-timeout 방지).
-_DETERMINISTIC_TOOL_JOB_TYPES = frozenset({
-    "ppt_generation",
-    "excel_parsing",
-    "attendance_excel_export",
-    "staff_excel_export",
-    "matchup_index_exam",
-    "matchup_manual_index",
-})
 
 
 def status_for_exception(tier: str, job_type: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
@@ -38,7 +27,7 @@ def status_for_exception(tier: str, job_type: Optional[str] = None) -> Tuple[str
     - AI inference + Lite/Basic → DONE + review_candidate (실패 없음 정책)
     - 그 외(Premium 등) → FAILED
     """
-    if job_type and job_type.lower() in _DETERMINISTIC_TOOL_JOB_TYPES:
+    if job_type and job_type.lower() in DETERMINISTIC_JOB_TYPES:
         return "FAILED", {}
     t = (tier or "basic").lower()
     if t in ("lite", "basic"):
