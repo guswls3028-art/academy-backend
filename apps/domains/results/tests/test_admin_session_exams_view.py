@@ -66,6 +66,7 @@ class AdminSessionExamsViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual([row["exam_id"] for row in response.data], [earlier.id, later.id])
         self.assertEqual(response.data[0]["display_order"], 10)
+        self.assertNotIn("status", response.data[0])
 
     def test_ties_use_created_at_then_id_to_match_scores_tab(self):
         later = Exam.objects.create(

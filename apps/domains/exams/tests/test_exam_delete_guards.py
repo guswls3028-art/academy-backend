@@ -332,7 +332,6 @@ class ExamDeleteGuardTests(TestCase):
 
         exam.refresh_from_db()
         self.assertFalse(exam.is_active)
-        self.assertEqual(exam.status, Exam.Status.CLOSED)
         clinic_link.refresh_from_db()
         self.assertIsNotNone(clinic_link.resolved_at)
         self.assertEqual(clinic_link.resolution_type, ClinicLink.ResolutionType.SOURCE_REMOVED)

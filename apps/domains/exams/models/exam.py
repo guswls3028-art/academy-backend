@@ -59,8 +59,7 @@ class Exam(BaseModel):
         max_length=20,
         choices=Status.choices,
         default=Status.OPEN,
-        db_index=True,
-        help_text="생성=OPEN(즉시 진행), 마감=CLOSED. DRAFT는 레거시(기존 데이터 호환).",
+        help_text="Legacy compatibility storage. Business logic uses exam_type + is_active + session link.",
     )
 
     # ===============================

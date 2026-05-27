@@ -200,7 +200,6 @@ class ApplyBundleView(GenericAPIView):
                         exam_type=Exam.ExamType.REGULAR,
                         template_exam=item.exam_template,
                         subject=item.exam_template.subject,
-                        status=Exam.Status.OPEN,
                         max_score=config.get("max_score", item.exam_template.max_score),
                         pass_score=config.get("pass_score", item.exam_template.pass_score),
                     )
@@ -224,7 +223,6 @@ class ApplyBundleView(GenericAPIView):
                         homework_type=Homework.HomeworkType.REGULAR,
                         template_homework=item.homework_template,
                         session=session,
-                        status=Homework.Status.OPEN,
                         meta={"default_max_score": config.get("max_score", 100)},
                     )
                     created_homeworks.append({"id": hw.id, "title": hw.title})

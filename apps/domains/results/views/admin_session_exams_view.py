@@ -56,7 +56,6 @@ class AdminSessionExamsView(APIView):
                 "exam_id": int(exam.id),
                 "title": exam.title or "",
                 "exam_type": exam.exam_type,
-                "status": getattr(exam, "status", "OPEN"),
                 "open_at": _dt(exam.open_at),
                 "close_at": _dt(exam.close_at),
                 "allow_retake": bool(exam.allow_retake),

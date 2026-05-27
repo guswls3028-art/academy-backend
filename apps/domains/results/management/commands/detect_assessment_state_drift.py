@@ -49,12 +49,6 @@ class Command(BaseCommand):
             exam_type="template",
             sessions__isnull=False,
         ).distinct()
-        active_linked_closed_exams = exam_qs.filter(
-            exam_type="regular",
-            is_active=True,
-            status=Exam.Status.CLOSED,
-            sessions__isnull=False,
-        ).distinct()
         removed_homework_with_assignments = homework_qs.exclude(
             meta__removed_from_session_at__isnull=False
         ).none()
@@ -152,7 +146,6 @@ class Command(BaseCommand):
             "tenant": tenant_id if tenant_id is not None else "all",
             "inactive_regular_linked_exam_count": inactive_linked_exams.count(),
             "template_linked_exam_count": template_linked_exams.count(),
-            "active_regular_linked_closed_exam_count": active_linked_closed_exams.count(),
             "removed_homework_with_assignment_count": removed_homework_with_assignments.count(),
             "unresolved_non_live_source_clinic_link_count": len(ghost_links),
             "samples": {
@@ -161,9 +154,6 @@ class Command(BaseCommand):
                 ),
                 "template_linked_exam_ids": list(
                     template_linked_exams.values_list("id", flat=True)[:sample_size]
-                ),
-                "active_regular_linked_closed_exam_ids": list(
-                    active_linked_closed_exams.values_list("id", flat=True)[:sample_size]
                 ),
                 "removed_homework_with_assignment_ids": list(
                     removed_homework_with_assignments.values_list("id", flat=True)[:sample_size]

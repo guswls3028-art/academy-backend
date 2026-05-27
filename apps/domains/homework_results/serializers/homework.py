@@ -15,7 +15,6 @@ class HomeworkSerializer(serializers.ModelSerializer):
             "template_homework",
             "session",
             "title",
-            "status",
             "meta",
             "display_order",
             "updated_at",

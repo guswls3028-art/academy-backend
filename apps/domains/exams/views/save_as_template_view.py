@@ -92,7 +92,6 @@ class SaveAsTemplateView(APIView):
                 subject=exam.subject or "",
                 exam_type=Exam.ExamType.TEMPLATE,
                 template_exam=None,
-                status=Exam.Status.OPEN,
                 tenant=tenant,
                 is_active=exam.is_active,
                 allow_retake=exam.allow_retake,

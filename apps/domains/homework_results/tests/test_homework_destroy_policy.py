@@ -115,7 +115,6 @@ class HomeworkDestroyPolicyTests(TestCase):
         self.assertTrue(Submission.objects.filter(id=self.submission.id).exists())
 
         self.homework.refresh_from_db()
-        self.assertEqual(self.homework.status, Homework.Status.CLOSED)
         self.assertIsInstance(self.homework.meta, dict)
         self.assertIn("removed_from_session_at", self.homework.meta)
 
@@ -257,5 +256,4 @@ class HomeworkDestroyPolicyTests(TestCase):
 
         self.assertEqual(response.status_code, 204)
         homework.refresh_from_db()
-        self.assertEqual(homework.status, Homework.Status.CLOSED)
         self.assertEqual(homework.meta["removed_assignment_count"], 0)

@@ -39,7 +39,7 @@ class HomeworkViewSet(ModelViewSet):
     serializer_class = HomeworkSerializer
 
     filter_backends = [OrderingFilter]
-    ordering_fields = ["id", "created_at", "updated_at", "status", "display_order"]
+    ordering_fields = ["id", "created_at", "updated_at", "display_order"]
     ordering = ["display_order", "created_at", "id"]
 
     def _next_display_order(self, *, tenant, session_id: int) -> int:
@@ -148,7 +148,6 @@ class HomeworkViewSet(ModelViewSet):
                     session=session,
                     template_homework=template,
                     title=title,
-                    status=Homework.Status.OPEN,
                     display_order=self._next_display_order(
                         tenant=tenant,
                         session_id=int(session.id),
@@ -216,7 +215,6 @@ class HomeworkViewSet(ModelViewSet):
         meta["removed_assignment_count"] = int(assignment_count)
         meta["removed_clinic_link_count"] = int(removed_clinic_link_count)
         homework.meta = meta
-        homework.status = Homework.Status.CLOSED
-        homework.save(update_fields=["meta", "status", "updated_at"])
+        homework.save(update_fields=["meta", "updated_at"])
 
         return Response(status=status.HTTP_204_NO_CONTENT)

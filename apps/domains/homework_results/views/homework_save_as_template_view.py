@@ -29,7 +29,6 @@ class HomeworkSaveAsTemplateView(APIView):
             session=None,
             template_homework=None,
             title=hw.title,
-            status=Homework.Status.OPEN,
             meta=hw.meta,
         )
         hw.template_homework = template

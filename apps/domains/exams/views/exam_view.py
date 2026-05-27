@@ -310,10 +310,9 @@ class ExamViewSet(ModelViewSet):
         if preserve_history:
             obj.sessions.remove(session)
             enrollment_count, _ = ExamEnrollment.objects.filter(exam=obj).delete()
-            if obj.is_active or obj.status != Exam.Status.CLOSED:
+            if obj.is_active:
                 obj.is_active = False
-                obj.status = Exam.Status.CLOSED
-                obj.save(update_fields=["is_active", "status", "updated_at"])
+                obj.save(update_fields=["is_active", "updated_at"])
             return Response(
                 {
                     "detail": "Exam was removed from this session and historical records were preserved.",

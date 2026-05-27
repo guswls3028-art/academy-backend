@@ -33,7 +33,6 @@ class ExamSerializer(serializers.ModelSerializer):
             "subject",
             "exam_type",
             "is_active",
-            "status",
             # ✅ STEP 1/3
             "allow_retake",
             "max_attempts",

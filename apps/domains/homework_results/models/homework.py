@@ -75,7 +75,7 @@ class Homework(TimestampModel):
         max_length=20,
         choices=Status.choices,
         default=Status.OPEN,
-        db_index=True,
+        help_text="Legacy compatibility storage. Business logic uses homework_type + session + removed_from_session_at.",
     )
 
     meta = models.JSONField(null=True, blank=True)
@@ -88,7 +88,6 @@ class Homework(TimestampModel):
         ordering = ["-updated_at", "-id"]
         indexes = [
             models.Index(fields=["session", "updated_at"]),
-            models.Index(fields=["session", "status"]),
         ]
 
     def __str__(self) -> str:
