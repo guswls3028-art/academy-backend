@@ -110,7 +110,7 @@ class Homework(TimestampModel):
         규칙:
         1) 해당 세션의 Homework 중
            - 최신(updated_at desc)
-           - CLOSED → OPEN → DRAFT 우선
+           - removed_from_session_at 없는 live 과제 우선
         2) 없으면 fallback 반환
 
         ❗ 책임:
@@ -120,14 +120,8 @@ class Homework(TimestampModel):
         qs = (
             cls.objects
             .filter(session=session)
+            .exclude(meta__removed_from_session_at__isnull=False)
             .order_by(
-                models.Case(
-                    models.When(status=cls.Status.CLOSED, then=0),
-                    models.When(status=cls.Status.OPEN, then=1),
-                    models.When(status=cls.Status.DRAFT, then=2),
-                    default=3,
-                    output_field=models.IntegerField(),
-                ),
                 "-updated_at",
                 "-id",
             )
@@ -136,4 +130,3 @@ class Homework(TimestampModel):
         if hw and hw.title:
             return str(hw.title)
         return fallback
-

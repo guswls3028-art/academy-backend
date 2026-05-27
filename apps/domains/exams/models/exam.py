@@ -14,12 +14,12 @@ class Exam(BaseModel):
 
     ✅ 확정 정책
     - exam_type="template": 양식 전용 (응시/제출/결과/대상자 ❌)
-    - exam_type="regular" : 운영 시험 (반드시 template_exam 기반)
+    - exam_type="regular" : 차시에 붙는 운영 시험 (template_exam은 양식 연결용 옵션)
 
     ✅ 핵심
     - 시험의 정체성은 exam.id
     - 같은 시험(regular)을 여러 세션에 붙여 재사용 가능 (N:M)
-    - Sheet/Question/AnswerKey/Asset는 template_exam이 단일 진실
+    - Sheet/Question/AnswerKey/Asset는 template_exam이 있으면 template, 없으면 자기 자신이 단일 진실
     """
 
     class ExamType(models.TextChoices):

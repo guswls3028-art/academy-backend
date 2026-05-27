@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import List, Set
 
 from django.db import transaction
-from django.db.models import Q
 from django.shortcuts import get_object_or_404
 
 from rest_framework.views import APIView
@@ -79,8 +78,10 @@ class ExamEnrollmentManageView(APIView):
         tenant = request.tenant
         exam = get_object_or_404(
             Exam.objects.filter(
-                Q(sessions__lecture__tenant=tenant)
-                | Q(derived_exams__sessions__lecture__tenant=tenant)
+                tenant=tenant,
+                exam_type=Exam.ExamType.REGULAR,
+                is_active=True,
+                sessions__lecture__tenant=tenant,
             ).distinct(),
             pk=exam_id,
         )
@@ -180,8 +181,10 @@ class ExamEnrollmentManageView(APIView):
         tenant = request.tenant
         exam = get_object_or_404(
             Exam.objects.filter(
-                Q(sessions__lecture__tenant=tenant)
-                | Q(derived_exams__sessions__lecture__tenant=tenant)
+                tenant=tenant,
+                exam_type=Exam.ExamType.REGULAR,
+                is_active=True,
+                sessions__lecture__tenant=tenant,
             ).distinct(),
             pk=exam_id,
         )

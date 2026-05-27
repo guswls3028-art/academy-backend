@@ -16,7 +16,13 @@ def _verify_exam_tenant(request, exam_id: int) -> None:
     """✅ tenant isolation: verify exam belongs to request.tenant"""
     from apps.domains.exams.models import Exam
     from rest_framework.exceptions import NotFound
-    if not Exam.objects.filter(id=exam_id, sessions__lecture__tenant=request.tenant).exists():
+    if not Exam.objects.filter(
+        id=exam_id,
+        tenant=request.tenant,
+        exam_type=Exam.ExamType.REGULAR,
+        is_active=True,
+        sessions__lecture__tenant=request.tenant,
+    ).exists():
         raise NotFound("Exam not found for this tenant.")
 
 

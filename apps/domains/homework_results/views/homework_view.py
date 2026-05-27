@@ -84,6 +84,13 @@ class HomeworkViewSet(ModelViewSet):
             except Exception:
                 qs = qs.none()
 
+        homework_type = self.request.query_params.get("homework_type")
+        if homework_type:
+            qs = qs.filter(homework_type=str(homework_type).lower())
+
+        if session_id:
+            qs = qs.filter(homework_type=Homework.HomeworkType.REGULAR)
+
         include_removed = str(self.request.query_params.get("include_removed") or "").lower() in {
             "1",
             "true",
@@ -98,7 +105,7 @@ class HomeworkViewSet(ModelViewSet):
         """템플릿 불러오기 시 serializer 검증 없이 생성."""
         data = request.data
         template_id = data.get("template_homework_id") or data.get("template_homework")
-        session_id = data.get("session_id")
+        session_id = data.get("session_id") or data.get("session")
         if not session_id:
             return Response(
                 {"session_id": "필수입니다."},
@@ -155,7 +162,7 @@ class HomeworkViewSet(ModelViewSet):
 
     def perform_create(self, serializer):
         data = self.request.data
-        session_id = data.get("session_id")
+        session_id = data.get("session_id") or data.get("session")
         if not session_id:
             raise ValidationError({"session_id": "필수입니다."})
         tenant = getattr(self.request, "tenant", None)

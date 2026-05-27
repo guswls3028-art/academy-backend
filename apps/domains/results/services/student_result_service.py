@@ -33,7 +33,12 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     if tenant is None:
         raise Http404("tenant resolution failed")
     exam_id = int(exam_id)
-    exam = Exam.objects.filter(id=exam_id, tenant=tenant).first()
+    exam = Exam.objects.filter(
+        id=exam_id,
+        tenant=tenant,
+        exam_type=Exam.ExamType.REGULAR,
+        is_active=True,
+    ).first()
     if not exam:
         raise Http404("exam not found")
     student = get_request_student(request)

@@ -22,7 +22,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from django.apps import apps
 from django.db import models
 
 from apps.domains.lectures.models import Session
@@ -32,6 +31,7 @@ from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.homework_results.models import HomeworkScore, Homework
 
 # ✅ 단일 진실 유틸
+from apps.domains.results.utils.clinic import filter_live_source_links
 from apps.domains.results.utils.session_exam import get_exams_for_session
 
 
@@ -115,115 +115,6 @@ def _is_low_confidence_for_attempt(*, exam_id: int, enrollment_id: int, attempt_
                 return True
 
     return False
-
-
-def _int_or_none(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _link_source_id(link: ClinicLink, source_type: str) -> Optional[int]:
-    meta = link.meta if isinstance(getattr(link, "meta", None), dict) else {}
-    if getattr(link, "source_type", None) == source_type:
-        return _int_or_none(getattr(link, "source_id", None) or meta.get(f"{source_type}_id"))
-    if getattr(link, "source_type", None) is None:
-        return _int_or_none(meta.get(f"{source_type}_id"))
-    return None
-
-
-def _filter_live_source_links(links: List[ClinicLink], *, tenant: Any) -> List[ClinicLink]:
-    """
-    Read-side guard for stale automatic ClinicLinks.
-
-    SOURCE_REMOVED transitions are the write-side SSOT, but clinic target APIs must
-    still fail closed when a historical unresolved link points to a source that is
-    no longer live in that session.
-    """
-    if not links:
-        return []
-
-    session_ids = {
-        int(getattr(link, "session_id", 0) or 0)
-        for link in links
-        if getattr(link, "session_id", None)
-    }
-    exam_ids = {
-        exam_id
-        for link in links
-        for exam_id in [_link_source_id(link, "exam")]
-        if exam_id is not None
-    }
-    homework_ids = {
-        homework_id
-        for link in links
-        for homework_id in [_link_source_id(link, "homework")]
-        if homework_id is not None
-    }
-
-    live_exam_pairs: set[tuple[int, int]] = set()
-    if exam_ids and session_ids:
-        live_exam_pairs = {
-            (int(exam_id), int(session_id))
-            for exam_id, session_id in Exam.objects.filter(
-                tenant=tenant,
-                is_active=True,
-                id__in=exam_ids,
-                sessions__id__in=session_ids,
-            ).values_list("id", "sessions__id")
-        }
-
-    live_homework_pairs: set[tuple[int, int]] = set()
-    live_homework_assignment_triples: set[tuple[int, int, int]] = set()
-    if homework_ids and session_ids:
-        live_homework_pairs = {
-            (int(homework_id), int(session_id))
-            for homework_id, session_id in Homework.objects.filter(
-                tenant=tenant,
-                id__in=homework_ids,
-                session_id__in=session_ids,
-            )
-            .exclude(meta__removed_from_session_at__isnull=False)
-            .values_list("id", "session_id")
-        }
-        HomeworkAssignment = apps.get_model("homework", "HomeworkAssignment")
-        live_homework_assignment_triples = {
-            (int(homework_id), int(session_id), int(enrollment_id))
-            for homework_id, session_id, enrollment_id in HomeworkAssignment.objects.filter(
-                tenant=tenant,
-                homework_id__in=homework_ids,
-                session_id__in=session_ids,
-            ).values_list("homework_id", "session_id", "enrollment_id")
-        }
-
-    live_links: List[ClinicLink] = []
-    for link in links:
-        source_type = getattr(link, "source_type", None)
-        session_id = int(getattr(link, "session_id", 0) or 0)
-
-        exam_id = _link_source_id(link, "exam")
-        if exam_id is not None:
-            if (exam_id, session_id) in live_exam_pairs:
-                live_links.append(link)
-            continue
-
-        homework_id = _link_source_id(link, "homework")
-        if homework_id is not None:
-            enrollment_id = int(getattr(link, "enrollment_id", 0) or 0)
-            if (
-                (homework_id, session_id) in live_homework_pairs
-                and (homework_id, session_id, enrollment_id) in live_homework_assignment_triples
-            ):
-                live_links.append(link)
-            continue
-
-        if source_type is None:
-            live_links.append(link)
-
-    return live_links
 
 
 def _get_student_name_by_enrollment_id(enrollment_id: int) -> str:
@@ -360,7 +251,7 @@ class ClinicTargetService:
 
         links_list = list(links)
         if not include_resolved and links_list:
-            links_list = _filter_live_source_links(links_list, tenant=tenant)
+            links_list = filter_live_source_links(links_list, tenant=tenant)
 
         if not include_resolved and links_list:
             session_ids = list({int(getattr(lk, "session_id", 0) or 0) for lk in links_list} - {0})
@@ -474,7 +365,18 @@ class ClinicTargetService:
             # ── Homework source ──
             if source_type == "homework":
                 source_id = getattr(link, "source_id", None)
-                hw = Homework.objects.filter(id=int(source_id)).first() if source_id else None
+                hw = (
+                    Homework.objects
+                    .filter(
+                        id=int(source_id),
+                        tenant=tenant,
+                        homework_type=Homework.HomeworkType.REGULAR,
+                        session_id=session_id,
+                    )
+                    .exclude(meta__removed_from_session_at__isnull=False)
+                    .first()
+                    if source_id else None
+                )
                 hw_title = _safe_str(getattr(hw, "title", None), "-") if hw else "-"
 
                 # 1차 점수 (성적 산출 대상)
@@ -533,7 +435,13 @@ class ClinicTargetService:
             # ── Exam source (기존 로직 + 확장) ──
             source_id = getattr(link, "source_id", None)
             if source_type == "exam" and source_id:
-                exam = Exam.objects.filter(id=int(source_id)).first()
+                exam = Exam.objects.filter(
+                    id=int(source_id),
+                    tenant=tenant,
+                    exam_type=Exam.ExamType.REGULAR,
+                    is_active=True,
+                    sessions__id=session_id,
+                ).first()
             else:
                 # Legacy fallback: 세션의 대표 exam
                 if session_id not in exams_cache:

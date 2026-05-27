@@ -33,7 +33,10 @@ class ExamAttemptViewSet(ModelViewSet):
         from apps.domains.exams.models import Exam
         tenant = self.request.tenant
         tenant_exam_ids = Exam.objects.filter(
-            sessions__lecture__tenant=tenant
+            tenant=tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+            sessions__lecture__tenant=tenant,
         ).values_list("id", flat=True).distinct()
         return (
             ExamAttempt.objects

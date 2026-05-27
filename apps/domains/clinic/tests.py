@@ -18,6 +18,7 @@ from apps.core.models import Tenant
 from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.enrollment.selectors import enrollments_for_tenant
+from apps.domains.exams.models import Exam
 from apps.domains.lectures.models import Lecture, Session as LectureSession
 from apps.domains.progress.models import ClinicLink
 from apps.domains.students.models import Student
@@ -134,16 +135,30 @@ class MultiTenantIsolationTest(TestCase, ClinicTestMixin):
     def setUp(self):
         self.a = self.setup_full_tenant("tenantA", student_count=2)
         self.b = self.setup_full_tenant("tenantB", student_count=2)
+        self.exam_a = Exam.objects.create(
+            tenant=self.a["tenant"],
+            title="tenant A live exam",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        self.exam_b = Exam.objects.create(
+            tenant=self.b["tenant"],
+            title="tenant B live exam",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        self.exam_a.sessions.add(self.a["lec_session"])
+        self.exam_b.sessions.add(self.b["lec_session"])
 
         # tenant A에 ClinicLink 생성
         self.link_a = self.make_clinic_link(
             self.a["enrollments"][0], self.a["lec_session"],
-            source_type="exam", source_id=100,
+            source_type="exam", source_id=self.exam_a.id,
         )
-        # tenant B에 ClinicLink 생성 — 의도적으로 동일 source_id
+        # tenant B에 ClinicLink 생성
         self.link_b = self.make_clinic_link(
             self.b["enrollments"][0], self.b["lec_session"],
-            source_type="exam", source_id=100,
+            source_type="exam", source_id=self.exam_b.id,
         )
 
     def test_clinic_highlight_map_isolates_tenants(self):

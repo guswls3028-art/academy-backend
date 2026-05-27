@@ -10,10 +10,10 @@ class ExamCreateSerializer(serializers.ModelSerializer):
     - template:
         - subject 필수
     - regular:
-        - subject 입력 금지 (template에서 자동 복사)
+        - subject 입력 금지 (template 또는 강의 과목에서 자동 반영)
     """
 
-    # 🔥 핵심 수정
+    exam_type = serializers.CharField()
     subject = serializers.CharField(
         required=False,
         allow_blank=True,
@@ -36,6 +36,7 @@ class ExamCreateSerializer(serializers.ModelSerializer):
         ]
 
     def validate_exam_type(self, value):
+        value = str(value or "").lower()
         if value not in {Exam.ExamType.TEMPLATE, Exam.ExamType.REGULAR}:
             raise serializers.ValidationError("invalid exam_type")
         return value

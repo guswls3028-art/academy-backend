@@ -108,7 +108,14 @@ class AdminRepresentativeAttemptView(APIView):
         # ✅ tenant isolation: verify exam belongs to tenant
         from apps.domains.exams.models import Exam
         from django.shortcuts import get_object_or_404
-        get_object_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
+        get_object_or_404(
+            Exam,
+            id=exam_id,
+            tenant=request.tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+            sessions__lecture__tenant=request.tenant,
+        )
 
         enrollment_id = request.data.get("enrollment_id")
         attempt_id = request.data.get("attempt_id")

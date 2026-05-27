@@ -18,6 +18,7 @@ from typing import Any, Dict, Set
 
 from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.clinic.models import SessionParticipant
+from apps.domains.results.utils.clinic import filter_live_source_links
 
 
 def compute_clinic_highlight_map(
@@ -51,12 +52,15 @@ def compute_clinic_highlight_map(
     if session is not None:
         clinic_qs = clinic_qs.filter(session=session)
 
-    clinic_links = list(clinic_qs.values("enrollment_id", "session_id"))
+    clinic_links = filter_live_source_links(
+        clinic_qs.order_by("id"),
+        tenant=tenant,
+    )
     if not clinic_links:
         return {eid: False for eid in enrollment_ids}
 
-    session_ids = list({int(row["session_id"] or 0) for row in clinic_links} - {0})
-    clinic_enrollment_ids = list({int(row["enrollment_id"] or 0) for row in clinic_links} - {0})
+    session_ids = list({int(link.session_id or 0) for link in clinic_links} - {0})
+    clinic_enrollment_ids = list({int(link.enrollment_id or 0) for link in clinic_links} - {0})
     completed_pairs = set(
         SessionProgress.objects.filter(
             session_id__in=session_ids,
@@ -65,9 +69,9 @@ def compute_clinic_highlight_map(
         ).values_list("enrollment_id", "session_id")
     )
     clinic_ids = {
-        int(row["enrollment_id"])
-        for row in clinic_links
-        if (int(row["enrollment_id"]), int(row["session_id"])) not in completed_pairs
+        int(link.enrollment_id)
+        for link in clinic_links
+        if (int(link.enrollment_id), int(link.session_id)) not in completed_pairs
     }
 
     if not clinic_ids:

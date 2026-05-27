@@ -13,15 +13,39 @@ EXAM_SESSION_ORDERING = ("display_order", "created_at", "id")
 
 
 # ---------------------------------------------------------------------
-# ✅ Canonical API: Session -> Exams
+# Canonical API: Session -> live regular Exams
 # ---------------------------------------------------------------------
+def _live_regular_exam_filter() -> dict:
+    return {
+        "exam_type": Exam.ExamType.REGULAR,
+        "is_active": True,
+    }
+
+
 def get_exams_for_session(session: Session) -> QuerySet[Exam]:
     """
-    ✅ 단일 진실: Session에 연결된 Exam queryset 반환.
+    단일 진실: Session에 연결된 live regular Exam queryset 반환.
 
-    Session ↔ Exam 관계는 Exam.sessions M2M 하나만 사용한다.
+    비즈니스 정책:
+    - template은 양식/콘텐츠 소스이며 차시 운영 시험이 아니다.
+    - Exam.status(OPEN/CLOSED)는 legacy compatibility 필드다.
+    - 차시 시험 노출 여부는 regular + is_active + Session M2M 연결로만 판단한다.
     """
-    return session.exams.all().order_by(*EXAM_SESSION_ORDERING)
+    return (
+        session.exams
+        .filter(**_live_regular_exam_filter())
+        .distinct()
+        .order_by(*EXAM_SESSION_ORDERING)
+    )
+
+
+def get_all_exams_for_session(session: Session) -> QuerySet[Exam]:
+    """
+    Audit/repair 전용: archived/template 포함 원시 Session -> Exam 연결.
+
+    운영 화면/성적/클리닉 판단에서는 get_exams_for_session()을 사용한다.
+    """
+    return session.exams.all().distinct().order_by(*EXAM_SESSION_ORDERING)
 
 
 def get_session_exams_for_session_id(session_id: int) -> QuerySet[Exam]:
@@ -30,7 +54,7 @@ def get_session_exams_for_session_id(session_id: int) -> QuerySet[Exam]:
     """
     return (
         Exam.objects
-        .filter(sessions__id=int(session_id))
+        .filter(sessions__id=int(session_id), **_live_regular_exam_filter())
         .distinct()
         .order_by(*EXAM_SESSION_ORDERING)
     )
@@ -48,11 +72,15 @@ def get_exam_ids_for_session(session: Session) -> List[int]:
 # ---------------------------------------------------------------------
 def get_sessions_for_exam(exam_id: int) -> QuerySet[Session]:
     """
-    ✅ 단일 진실: 특정 exam_id가 속한 Session queryset 반환
+    단일 진실: live regular exam이 속한 Session queryset 반환.
     """
     return (
         Session.objects
-        .filter(exams__id=int(exam_id))
+        .filter(
+            exams__id=int(exam_id),
+            exams__exam_type=Exam.ExamType.REGULAR,
+            exams__is_active=True,
+        )
         .distinct()
         .order_by("order", "id")
     )

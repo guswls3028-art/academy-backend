@@ -116,3 +116,35 @@ class AdminSessionExamsViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual([row["exam_id"] for row in response.data], [own_exam.id])
+
+    def test_excludes_inactive_and_template_exam_links(self):
+        active_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="운영 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+            display_order=1,
+        )
+        inactive_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="삭제된 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=False,
+            display_order=2,
+        )
+        template_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="양식 시험",
+            subject="MATH",
+            exam_type=Exam.ExamType.TEMPLATE,
+            is_active=True,
+            display_order=3,
+        )
+        active_exam.sessions.add(self.session)
+        inactive_exam.sessions.add(self.session)
+        template_exam.sessions.add(self.session)
+
+        response = self._list()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([row["exam_id"] for row in response.data], [active_exam.id])

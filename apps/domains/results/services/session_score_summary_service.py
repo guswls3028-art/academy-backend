@@ -5,10 +5,10 @@ from django.db.models import Count
 
 from apps.domains.results.models import ExamAttempt
 from apps.domains.progress.models import SessionProgress
-from apps.domains.progress.models import ClinicLink
 from apps.domains.lectures.models import Session
 
 # ✅ 단일 진실 유틸
+from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exam_ids_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 
@@ -21,7 +21,7 @@ class SessionScoreSummaryService:
     - 점수 통계: Result(단, enrollment 중복 방어 적용)
     - 세션 통과율: SessionProgress.completed(혹은 정책에 따라 exam_passed) 중 무엇인지 '정의'가 필요하지만
       기존 원본은 completed를 사용했으므로 원본 의미를 존중한다.
-    - 클리닉: ClinicLink (is_auto=True, enrollment distinct)
+    - 클리닉: unresolved automatic ClinicLink + live source enrollment distinct
 
     ⚠️ 세션1:시험N 구조 반영:
     - session에 연결된 exam_id들을 모두 가져와서 통계를 만든다.
@@ -56,9 +56,11 @@ class SessionScoreSummaryService:
             progresses = SessionProgress.objects.filter(session=session)
             participant_count = progresses.count()
             pass_count = progresses.filter(completed=True).count()
-            clinic_count = (
-                ClinicLink.objects.filter(session=session, is_auto=True)
-                .values("enrollment_id").distinct().count()
+            clinic_count = len(
+                get_clinic_enrollment_ids_for_session(
+                    session=session,
+                    include_manual=False,
+                )
             )
             return {
                 **EMPTY_SUMMARY,
@@ -82,11 +84,11 @@ class SessionScoreSummaryService:
         # -------------------------------------------------
         # clinic_rate: ClinicLink 기준 단일화
         # -------------------------------------------------
-        clinic_count = (
-            ClinicLink.objects.filter(session=session, is_auto=True)
-            .values("enrollment_id")
-            .distinct()
-            .count()
+        clinic_count = len(
+            get_clinic_enrollment_ids_for_session(
+                session=session,
+                include_manual=False,
+            )
         )
         clinic_rate = (clinic_count / participant_count) if participant_count else 0.0
 

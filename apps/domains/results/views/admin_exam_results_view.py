@@ -55,7 +55,13 @@ class AdminExamResultsView(ListAPIView):
             return Result.objects.none()
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        if not Exam.objects.filter(id=int(exam_id), sessions__lecture__tenant=self.request.tenant).exists():
+        if not Exam.objects.filter(
+            id=int(exam_id),
+            tenant=self.request.tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+            sessions__lecture__tenant=self.request.tenant,
+        ).exists():
             return Result.objects.none()
 
         return (
@@ -69,7 +75,12 @@ class AdminExamResultsView(ListAPIView):
     def list(self, request, *args, **kwargs):
         exam_id = int(self.kwargs["exam_id"])
 
-        exam = Exam.objects.filter(id=exam_id).first()
+        exam = Exam.objects.filter(
+            id=exam_id,
+            tenant=request.tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        ).first()
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
         queryset = self.get_queryset()

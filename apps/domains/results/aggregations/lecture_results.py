@@ -7,8 +7,9 @@ from django.db.models import Avg, Min, Max, Count
 from django.utils import timezone
 
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.progress.models import SessionProgress, ClinicLink, ProgressPolicy
+from apps.domains.progress.models import SessionProgress, ProgressPolicy
 
+from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 
@@ -110,9 +111,11 @@ def build_lecture_results_snapshot(
         pass_count = sp_qs.filter(exam_passed=True).count()
         pass_rate = (pass_count / participant_count) if participant_count else 0.0
 
-        clinic_count = (
-            ClinicLink.objects.filter(session=s, is_auto=True)
-            .values("enrollment_id").distinct().count()
+        clinic_count = len(
+            get_clinic_enrollment_ids_for_session(
+                session=s,
+                include_manual=False,
+            )
         )
         clinic_rate = (clinic_count / participant_count) if participant_count else 0.0
 

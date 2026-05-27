@@ -25,7 +25,7 @@ class ExamViewSet(ModelViewSet):
     봉인 규칙:
     - create/update/delete는 Teacher/Admin만
     - template: subject 필수, session_id/template_exam_id 입력 금지
-    - regular: template_exam_id + session_id 필수, subject는 template 기반으로 봉인
+    - regular: session_id 필수, template_exam_id는 양식 연결용 옵션
     - update/patch에서 exam_type/subject/template_exam 변경 시도는 즉시 400
     - template 삭제: derived regular 존재 시 금지
     """
@@ -378,6 +378,7 @@ class ExamViewSet(ModelViewSet):
 
         exam_type = self.request.query_params.get("exam_type")
         if exam_type:
+            exam_type = str(exam_type).lower()
             qs = qs.filter(exam_type=exam_type)
 
         session_id = self.request.query_params.get("session_id")
@@ -395,6 +396,22 @@ class ExamViewSet(ModelViewSet):
             except (TypeError, ValueError):
                 raise ValidationError({"lecture_id": "must be integer"})
             qs = qs.filter(sessions__lecture_id=lid)
+
+        include_inactive = str(
+            self.request.query_params.get("include_inactive") or ""
+        ).lower() in {"1", "true", "yes"}
+        if session_id or lecture_id:
+            qs = qs.filter(
+                exam_type=Exam.ExamType.REGULAR,
+                is_active=True,
+            )
+        elif exam_type == Exam.ExamType.REGULAR and not include_inactive:
+            qs = qs.filter(is_active=True)
+        elif not exam_type and not include_inactive:
+            qs = qs.exclude(
+                exam_type=Exam.ExamType.REGULAR,
+                is_active=False,
+            )
 
         if session_id:
             return qs.order_by("display_order", "created_at", "id")

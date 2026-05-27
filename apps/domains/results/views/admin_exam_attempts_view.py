@@ -70,7 +70,13 @@ class AdminExamAttemptsView(APIView):
 
         # ✅ tenant isolation: verify exam belongs to tenant
         from apps.domains.exams.models import Exam
-        if not Exam.objects.filter(id=exam_id, sessions__lecture__tenant=request.tenant).exists():
+        if not Exam.objects.filter(
+            id=exam_id,
+            tenant=request.tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+            sessions__lecture__tenant=request.tenant,
+        ).exists():
             raise ValidationError("Exam not found for this tenant.")
 
         # ✅ tenant isolation: verify enrollment belongs to tenant

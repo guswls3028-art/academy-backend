@@ -7,8 +7,9 @@ from typing import Any, Dict, Optional
 from django.utils import timezone
 
 from apps.domains.lectures.models import Session
-from apps.domains.progress.models import SessionProgress, ClinicLink
+from apps.domains.progress.models import SessionProgress
 
+from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 
@@ -104,13 +105,15 @@ def build_global_results_snapshot(
 
     participant_count = SessionProgress.objects.filter(session_id__in=session_ids).count()
 
-    # clinic enrollment distinct (세션 합계 기준)
-    clinic_enrollment_distinct_count = (
-        ClinicLink.objects.filter(session_id__in=session_ids, is_auto=True)
-        .values("enrollment_id")
-        .distinct()
-        .count()
-    )
+    # clinic enrollment distinct (세션 합계 기준, live source만)
+    clinic_pairs: set[tuple[int, int]] = set()
+    for session in sessions:
+        for enrollment_id in get_clinic_enrollment_ids_for_session(
+            session=session,
+            include_manual=False,
+        ):
+            clinic_pairs.add((int(session.id), int(enrollment_id)))
+    clinic_enrollment_distinct_count = len(clinic_pairs)
 
     # exam 최신 Result count (시험 건수 성격)
     exam_latest_result_count = 0

@@ -39,7 +39,14 @@ class AdminExamSubjectiveScoreView(APIView):
 
         # ✅ tenant isolation: verify exam belongs to tenant
         from django.shortcuts import get_object_or_404 as _get_or_404
-        exam = _get_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
+        exam = _get_or_404(
+            Exam,
+            id=exam_id,
+            tenant=request.tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+            sessions__lecture__tenant=request.tenant,
+        )
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
         from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
@@ -57,7 +64,6 @@ class AdminExamSubjectiveScoreView(APIView):
         if new_subjective < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
 
-        exam = Exam.objects.filter(id=exam_id).first()
         max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
         if new_subjective > max_score:
             raise ValidationError(

@@ -100,6 +100,9 @@ class AdminAttemptHistoryView(APIView):
         # ✅ tenant isolation: verify exam belongs to tenant
         exam = Exam.objects.filter(
             id=exam_id,
+            tenant=request.tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
             sessions__lecture__tenant=request.tenant,
         ).first()
         if not exam:

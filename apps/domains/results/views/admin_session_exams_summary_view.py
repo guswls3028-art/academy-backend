@@ -10,9 +10,10 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.serializers.session_exams_summary import SessionExamsSummarySerializer
 
 from apps.domains.lectures.models import Session
-from apps.domains.progress.models import SessionProgress, ClinicLink, ProgressPolicy
+from apps.domains.progress.models import SessionProgress, ProgressPolicy
 
 # ✅ 단일 진실 유틸
+from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 
@@ -25,7 +26,7 @@ class AdminSessionExamsSummaryView(APIView):
 
     단일 진실 규칙:
     - 세션 단위 pass_rate: SessionProgress.exam_passed 기반 (집계 결과)
-    - 세션 단위 clinic_rate: ClinicLink(is_auto=True) enrollment distinct 기반
+    - 세션 단위 clinic_rate: unresolved automatic ClinicLink + live source 기반
     - 시험 단위 점수 통계: Result(단, enrollment 중복 방어)
     """
 
@@ -67,9 +68,11 @@ class AdminSessionExamsSummaryView(APIView):
         pass_rate = (pass_count / participant_count) if participant_count else 0.0
 
         # clinic_rate(단일 규칙)
-        clinic_count = (
-            ClinicLink.objects.filter(session=session, is_auto=True)
-            .values("enrollment_id").distinct().count()
+        clinic_count = len(
+            get_clinic_enrollment_ids_for_session(
+                session=session,
+                include_manual=False,
+            )
         )
         clinic_rate = (clinic_count / participant_count) if participant_count else 0.0
 
@@ -122,7 +125,7 @@ class AdminSessionExamsSummaryView(APIView):
             "pass_rate": round(float(pass_rate), 4),
 
             # ✅ 의미 고정:
-            # clinic_rate = ClinicLink(is_auto=True) 기준
+            # clinic_rate = unresolved automatic ClinicLink + live source 기준
             "clinic_rate": round(float(clinic_rate), 4),
 
             "strategy": strategy,

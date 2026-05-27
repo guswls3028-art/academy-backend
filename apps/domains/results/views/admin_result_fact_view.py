@@ -28,7 +28,12 @@ class AdminResultFactView(APIView):
         # ✅ tenant isolation: scope ResultFact to exams belonging to tenant
         from apps.domains.exams.models import Exam
         tenant_exam_ids = list(
-            Exam.objects.filter(sessions__lecture__tenant=request.tenant)
+            Exam.objects.filter(
+                tenant=request.tenant,
+                exam_type=Exam.ExamType.REGULAR,
+                is_active=True,
+                sessions__lecture__tenant=request.tenant,
+            )
             .values_list("id", flat=True).distinct()
         )
         qs = ResultFact.objects.filter(

@@ -10,9 +10,9 @@ from rest_framework.permissions import IsAuthenticated
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.serializers.admin_exam_summary import AdminExamSummarySerializer
 from apps.domains.exams.models import Exam
-from apps.domains.progress.models import ClinicLink
 
 # ✅ 단일 진실 유틸
+from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 
@@ -49,7 +49,15 @@ class AdminExamSummaryView(APIView):
 
         # ✅ tenant isolation: verify exam belongs to tenant
         from django.shortcuts import get_object_or_404
-        exam = get_object_or_404(Exam.objects.filter(sessions__lecture__tenant=request.tenant).distinct(), id=exam_id)
+        exam = get_object_or_404(
+            Exam.objects.filter(
+                tenant=request.tenant,
+                exam_type=Exam.ExamType.REGULAR,
+                is_active=True,
+                sessions__lecture__tenant=request.tenant,
+            ).distinct(),
+            id=exam_id,
+        )
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
         # ✅ 중복 방어: enrollment당 최신 Result만
@@ -73,11 +81,11 @@ class AdminExamSummaryView(APIView):
         clinic_count = 0
         session = get_primary_session_for_exam(exam_id)
         if session:
-            clinic_count = (
-                ClinicLink.objects.filter(session=session, is_auto=True)
-                .values("enrollment_id")
-                .distinct()
-                .count()
+            clinic_count = len(
+                get_clinic_enrollment_ids_for_session(
+                    session=session,
+                    include_manual=False,
+                )
             )
 
         payload = {

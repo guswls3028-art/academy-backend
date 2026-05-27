@@ -39,7 +39,14 @@ class AdminExamObjectiveScoreView(APIView):
 
         # ✅ tenant isolation: verify exam belongs to tenant
         from django.shortcuts import get_object_or_404 as _get_or_404
-        exam = _get_or_404(Exam, id=exam_id, sessions__lecture__tenant=request.tenant)
+        exam = _get_or_404(
+            Exam,
+            id=exam_id,
+            tenant=request.tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+            sessions__lecture__tenant=request.tenant,
+        )
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
         from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
