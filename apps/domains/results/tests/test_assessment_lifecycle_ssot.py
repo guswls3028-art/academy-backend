@@ -230,3 +230,42 @@ class AssessmentLifecycleSsotTests(TestCase):
 
         self.assertEqual(report["inactive_regular_linked_exam_count"], 1)
         self.assertEqual(report["unresolved_non_live_source_clinic_link_count"], 1)
+
+    def test_repair_assessment_state_drift_detaches_inactive_exam_links(self):
+        inactive_exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="삭제된 시험",
+            exam_type="regular",
+            is_active=False,
+        )
+        inactive_exam.sessions.add(self.session)
+
+        out = StringIO()
+        call_command(
+            "repair_assessment_state_drift",
+            "--tenant",
+            str(self.tenant.id),
+            "--json",
+            stdout=out,
+        )
+        dry_run_report = json.loads(out.getvalue())
+
+        self.assertEqual(dry_run_report["mode"], "dry-run")
+        self.assertEqual(dry_run_report["detachable_exam_session_pair_count"], 1)
+        self.assertTrue(inactive_exam.sessions.filter(id=self.session.id).exists())
+
+        out = StringIO()
+        call_command(
+            "repair_assessment_state_drift",
+            "--tenant",
+            str(self.tenant.id),
+            "--apply",
+            "--json",
+            stdout=out,
+        )
+        apply_report = json.loads(out.getvalue())
+        inactive_exam.refresh_from_db()
+
+        self.assertEqual(apply_report["mode"], "apply")
+        self.assertEqual(apply_report["detachable_exam_session_pair_count"], 1)
+        self.assertFalse(inactive_exam.sessions.filter(id=self.session.id).exists())
