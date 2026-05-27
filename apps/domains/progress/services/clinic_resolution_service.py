@@ -7,6 +7,7 @@
 2. 과제 재제출/재채점 통과 (HOMEWORK_PASS) — auto
 3. 관리자 수동 해소 (MANUAL_OVERRIDE)
 4. 면제 (WAIVED)
+5. 원본 시험/과제 제거 (SOURCE_REMOVED)
 
 절대 금지:
 - 예약(booking)으로 해소
@@ -18,6 +19,7 @@ import logging
 from typing import Optional
 
 from django.db import transaction
+from django.db.models import Q
 from django.utils import timezone
 
 from apps.domains.progress.models import ClinicLink
@@ -118,6 +120,29 @@ def _dispatch_progress_for_link(link: ClinicLink) -> None:
     )
 
 
+def _dispatch_progress_for_enrollment_session(*, enrollment_id: int, session_id: int) -> None:
+    """
+    특정 enrollment × session 진행 상태를 on_commit에서 강제 재계산한다.
+    source가 삭제된 뒤에는 exam_id 경로로 해당 session을 찾을 수 없으므로
+    session 스코프를 직접 지정해야 한다.
+    """
+    _enr = int(enrollment_id)
+    _sid = int(session_id)
+
+    def _dispatch() -> None:
+        try:
+            from apps.domains.progress.dispatcher import dispatch_progress_pipeline
+            dispatch_progress_pipeline(enrollment_id=_enr, session_id=_sid)
+        except Exception:
+            logger.exception(
+                "clinic_resolution: pipeline dispatch failed "
+                "(enrollment=%s, session=%s)",
+                _enr, _sid,
+            )
+
+    transaction.on_commit(_dispatch)
+
+
 def _send_resolution_notification(enrollment_id: int, session_id: int, resolution_type: str):
     """클리닉 해소 완료 알림 (best-effort, on_commit에서 호출)."""
     try:
@@ -136,6 +161,7 @@ def _send_resolution_notification(enrollment_id: int, session_id: int, resolutio
             "HOMEWORK_PASS": "과제 통과",
             "MANUAL_OVERRIDE": "수동 해소",
             "WAIVED": "면제",
+            "SOURCE_REMOVED": "원본 삭제",
         }.get(resolution_type, "해소")
 
         # 세션 정보 (장소/날짜/시간) — 통합 알림톡 템플릿에 필요
@@ -178,6 +204,83 @@ class ClinicResolutionService:
     ClinicLink 해소 단일 진실 서비스.
     모든 해소/복원은 이 서비스를 통해야 한다.
     """
+
+    @staticmethod
+    @transaction.atomic
+    def resolve_by_removed_source(
+        *,
+        tenant_id: int,
+        session_id: int,
+        source_type: str,
+        source_id: int,
+        user_id: Optional[int] = None,
+        reason: str = "source_removed_from_session",
+    ) -> int:
+        """
+        시험/과제가 차시에서 제거될 때 해당 source가 만든 미해소 ClinicLink를 닫는다.
+
+        운영 노출의 단일 진실은 unresolved ClinicLink이므로, 원본이 사라진 링크를
+        SOURCE_REMOVED로 전이해야 성적/클리닉 대상 UI에 유령 대상자가 남지 않는다.
+        """
+        if source_type not in {"exam", "homework"}:
+            raise ValueError(f"Unsupported clinic source_type: {source_type}")
+
+        source_id = int(source_id)
+        session_id = int(session_id)
+        tenant_id = int(tenant_id)
+        source_meta_key = "exam_id" if source_type == "exam" else "homework_id"
+        source_filter = (
+            Q(source_type=source_type, source_id=source_id)
+            | Q(source_type__isnull=True, **{f"meta__{source_meta_key}": source_id})
+        )
+
+        links = list(
+            ClinicLink.objects.select_for_update()
+            .filter(
+                tenant_id=tenant_id,
+                session_id=session_id,
+                resolved_at__isnull=True,
+            )
+            .filter(source_filter)
+            .order_by("id")
+        )
+        if not links:
+            return 0
+
+        now = timezone.now()
+        affected_pairs: set[tuple[int, int]] = set()
+        count = 0
+        for link in links:
+            _append_history(link, action="resolve_source_removed", at=now)
+            link.resolved_at = now
+            link.resolution_type = ClinicLink.ResolutionType.SOURCE_REMOVED
+            link.resolution_evidence = {
+                "reason": reason,
+                "source_type": source_type,
+                "source_id": source_id,
+                "session_id": session_id,
+                "user_id": user_id,
+            }
+            link.save(update_fields=[
+                "resolved_at", "resolution_type", "resolution_evidence",
+                "resolution_history", "updated_at",
+            ])
+            if link.enrollment_id and link.session_id:
+                affected_pairs.add((int(link.enrollment_id), int(link.session_id)))
+            count += 1
+
+        for enrollment_id, affected_session_id in sorted(affected_pairs):
+            _dispatch_progress_for_enrollment_session(
+                enrollment_id=enrollment_id,
+                session_id=affected_session_id,
+            )
+
+        logger.info(
+            "clinic_resolution: SOURCE_REMOVED resolved %d links "
+            "(tenant=%s, session=%s, source=%s:%s)",
+            count, tenant_id, session_id, source_type, source_id,
+        )
+        return count
 
     @staticmethod
     @transaction.atomic

@@ -223,6 +223,7 @@ class ClinicLink(TimestampModel):
         MANUAL_OVERRIDE = "MANUAL_OVERRIDE", "관리자 수동 해소"
         WAIVED = "WAIVED", "면제"
         CARRIED_OVER = "CARRIED_OVER", "다음 차수로 이월"
+        SOURCE_REMOVED = "SOURCE_REMOVED", "원본 삭제"
         BOOKING_LEGACY = "BOOKING_LEGACY", "레거시(예약 기반)"
 
     tenant = models.ForeignKey(
@@ -255,7 +256,7 @@ class ClinicLink(TimestampModel):
         choices=ResolutionType.choices,
         null=True,
         blank=True,
-        help_text="해소 유형: 시험통과/과제통과/수동해소/면제/레거시",
+        help_text="해소 유형: 시험통과/과제통과/수동해소/면제/원본삭제/레거시",
     )
     resolution_evidence = models.JSONField(
         null=True,

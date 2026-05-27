@@ -252,7 +252,7 @@ class ExamViewSet(ModelViewSet):
         except (TypeError, ValueError):
             raise ValidationError({"session_id": "must be integer"})
 
-    def _unlink_from_session(self, request, obj: Exam, session_id: int, *, preserve_history: bool = False, blocker: str | None = None):
+    def _session_for_delete(self, request, obj: Exam, session_id: int) -> Session:
         session = Session.objects.filter(
             id=session_id,
             lecture__tenant=request.tenant,
@@ -263,8 +263,37 @@ class ExamViewSet(ModelViewSet):
             raise ValidationError(
                 {"session_id": "exam is not linked to this session"}
             )
+        return session
+
+    def _resolve_removed_exam_clinic_links(self, request, obj: Exam, session_id: int) -> int:
+        from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
+
+        return ClinicResolutionService.resolve_by_removed_source(
+            tenant_id=int(request.tenant.id),
+            session_id=int(session_id),
+            source_type="exam",
+            source_id=int(obj.id),
+            user_id=getattr(request.user, "id", None),
+            reason="exam_removed_from_session",
+        )
+
+    def _unlink_from_session(
+        self,
+        request,
+        obj: Exam,
+        session_id: int,
+        *,
+        preserve_history: bool = False,
+        blocker: str | None = None,
+    ):
+        session = self._session_for_delete(request, obj, session_id)
 
         has_other_sessions = obj.sessions.exclude(id=session_id).exists()
+        removed_clinic_link_count = self._resolve_removed_exam_clinic_links(
+            request,
+            obj,
+            session_id,
+        )
         if has_other_sessions:
             obj.sessions.remove(session)
             return Response(
@@ -273,6 +302,7 @@ class ExamViewSet(ModelViewSet):
                     "action": "unlinked",
                     "exam_id": int(obj.id),
                     "session_id": int(session_id),
+                    "removed_clinic_link_count": int(removed_clinic_link_count),
                 },
                 status=200,
             )
@@ -292,6 +322,7 @@ class ExamViewSet(ModelViewSet):
                     "session_id": int(session_id),
                     "preserved_blocker": blocker,
                     "removed_enrollment_count": int(enrollment_count),
+                    "removed_clinic_link_count": int(removed_clinic_link_count),
                 },
                 status=200,
             )
@@ -313,20 +344,21 @@ class ExamViewSet(ModelViewSet):
 
         if obj.exam_type == Exam.ExamType.REGULAR:
             if session_id is not None:
-                response = self._unlink_from_session(request, obj, session_id)
-                if response is not None:
-                    return response
-
-            blocker = self._regular_delete_blocker(obj)
-            if blocker:
-                if session_id is not None:
-                    return self._unlink_from_session(
+                with transaction.atomic():
+                    blocker = self._regular_delete_blocker(obj)
+                    response = self._unlink_from_session(
                         request,
                         obj,
                         session_id,
-                        preserve_history=True,
+                        preserve_history=bool(blocker),
                         blocker=blocker,
                     )
+                    if response is not None:
+                        return response
+                    return super().destroy(request, *args, **kwargs)
+
+            blocker = self._regular_delete_blocker(obj)
+            if blocker:
                 raise PermissionDenied(
                     f"This regular exam has {blocker} and cannot be deleted."
                 )
