@@ -31,9 +31,10 @@ class JobProgressView(APIView):
         cached_status = get_job_status_from_redis(tenant_id, job_id)
 
         if not cached_status:
-            # ✅ Redis에 없을 때 DB 폴백: 이미 DONE/FAILED면 완료 상태 반환 (진행 상황 위젯 정상 종료)
+            # Redis가 아직 warm-up 전이거나 TTL이 비어도 DB가 상태 SSOT다.
+            # PENDING까지 폴백해야 워커 cold start 동안 UI가 UNKNOWN/0%로 멈춰 보이지 않는다.
             job_model = get_job_model_for_status(job_id, tenant_id)
-            if job_model and job_model.status in ("DONE", "FAILED", "REJECTED_BAD_INPUT", "FALLBACK_TO_GPU", "REVIEW_REQUIRED"):
+            if job_model:
                 from apps.domains.ai.services.job_status_response import build_job_status_response
                 response_data = build_job_status_response(job_model)
                 # progress API 형식에 맞게 status만 상위로 (프론트가 status로 완료 판단)
