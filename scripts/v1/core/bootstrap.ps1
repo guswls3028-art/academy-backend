@@ -137,8 +137,15 @@ function Invoke-BootstrapSqs {
 
         if (-not $url) {
             $redrive = '{"deadLetterTargetArn":"' + $dlqArn + '","maxReceiveCount":"' + $maxReceiveCount + '"}'
-            $redriveArg = 'RedrivePolicy="' + ($redrive.Replace('"', '\"')) + '"'
-            Invoke-AwsJson @("sqs", "create-queue", "--queue-name", $qName, "--attributes", "VisibilityTimeout=$visibility", "MessageRetentionPeriod=1209600", $redriveArg, "--region", $script:Region, "--output", "json") | Out-Null
+            $createBody = @{
+                QueueName = $qName
+                Attributes = @{
+                    VisibilityTimeout = $visibility.ToString()
+                    MessageRetentionPeriod = "1209600"
+                    RedrivePolicy = $redrive
+                }
+            } | ConvertTo-Json -Compress -Depth 5
+            Invoke-AwsJson @("sqs", "create-queue", "--cli-input-json", $createBody, "--region", $script:Region, "--output", "json") | Out-Null
             $get = Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $qName, "--region", $script:Region, "--output", "json")
             if ($get -and $get.QueueUrl) { $url = $get.QueueUrl; $script:ChangesMade = $true }
         } else {
@@ -152,7 +159,13 @@ function Invoke-BootstrapSqs {
             }
             if ($needsUpdate) {
                 $redrive = '{"deadLetterTargetArn":"' + $dlqArn + '","maxReceiveCount":"' + $maxReceiveCount + '"}'
-                $body = '{"QueueUrl":"' + $url + '","Attributes":{"VisibilityTimeout":"' + $visibility + '","RedrivePolicy":"' + ($redrive.Replace('"', '\"')) + '"}}'
+                $body = @{
+                    QueueUrl = $url
+                    Attributes = @{
+                        VisibilityTimeout = $visibility.ToString()
+                        RedrivePolicy = $redrive
+                    }
+                } | ConvertTo-Json -Compress -Depth 5
                 Invoke-Aws @("sqs", "set-queue-attributes", "--cli-input-json", $body, "--region", $script:Region) -ErrorMessage "set-queue-attributes $qName" | Out-Null
                 Write-Host "  SQS attributes set: $qName VisibilityTimeout=$visibility RedrivePolicy->DLQ" -ForegroundColor Yellow
                 $script:ChangesMade = $true
