@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
@@ -101,6 +102,9 @@ class HomeworkDestroyPolicyTests(TestCase):
         force_authenticate(request, user=self.admin)
         return HomeworkViewSet.as_view({"delete": "destroy"})(request, pk=self.homework.id)
 
+    def _clinic_link_model(self):
+        return apps.get_model("progress", "ClinicLink")
+
     def test_destroy_removes_live_assignment_but_preserves_history(self):
         response = self._delete_homework()
 
@@ -121,6 +125,44 @@ class HomeworkDestroyPolicyTests(TestCase):
         response = HomeworkViewSet.as_view({"get": "list"})(request)
         ids = [row["id"] for row in _rows(response)]
         self.assertNotIn(self.homework.id, ids)
+
+    def test_destroy_resolves_homework_clinic_links(self):
+        ClinicLink = self._clinic_link_model()
+        source_link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            source_type="homework",
+            source_id=self.homework.id,
+            meta={"kind": "HOMEWORK_FAILED", "homework_id": self.homework.id},
+        )
+        legacy_link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            source_type=None,
+            source_id=None,
+            meta={"kind": "HOMEWORK_FAILED", "homework_id": self.homework.id},
+        )
+
+        with self.captureOnCommitCallbacks(execute=True):
+            response = self._delete_homework()
+
+        self.assertEqual(response.status_code, 204)
+        self.homework.refresh_from_db()
+        self.assertEqual(self.homework.meta["removed_clinic_link_count"], 2)
+
+        for link in (source_link, legacy_link):
+            link.refresh_from_db()
+            self.assertIsNotNone(link.resolved_at)
+            self.assertEqual(link.resolution_type, ClinicLink.ResolutionType.SOURCE_REMOVED)
+            self.assertEqual(link.resolution_evidence["source_type"], "homework")
+            self.assertEqual(link.resolution_evidence["source_id"], self.homework.id)
+            self.assertEqual(link.resolution_history[-1]["action"], "resolve_source_removed")
 
     def test_destroyed_homework_can_be_queried_explicitly_for_audit(self):
         self._delete_homework()

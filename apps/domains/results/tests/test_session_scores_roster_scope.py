@@ -305,6 +305,67 @@ class SessionScoresRosterScopeTests(TestCase):
         )
         self.assertFalse(highlights[self.active_enrollment.id])
 
+    def test_session_scores_ignores_exam_clinic_link_when_source_not_in_session(self):
+        other_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="다른 차시 시험",
+            pass_score=60,
+            max_score=100,
+        )
+        link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            source_type="exam",
+            source_id=other_exam.id,
+            meta={"kind": "EXAM_FAILED", "exam_id": other_exam.id},
+        )
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(row for row in response.data["rows"] if row["enrollment_id"] == self.active_enrollment.id)
+        self.assertFalse(row["clinic_required"])
+        self.assertFalse(row["name_highlight_clinic_target"])
+
+        targets = ClinicTargetService.list_admin_targets(tenant=self.tenant)
+        self.assertFalse(any(target.get("clinic_link_id") == link.id for target in targets))
+
+    def test_session_scores_ignores_homework_clinic_link_when_assignment_removed(self):
+        HomeworkAssignment.objects.filter(
+            homework=self.homework,
+            enrollment=self.active_enrollment,
+        ).delete()
+        link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.active_enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            source_type="homework",
+            source_id=self.homework.id,
+            meta={"kind": "HOMEWORK_FAILED", "homework_id": self.homework.id},
+        )
+
+        request = self.factory.get(f"/api/v1/results/admin/sessions/{self.session.id}/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = SessionScoresView.as_view()(request, session_id=self.session.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        row = next(row for row in response.data["rows"] if row["enrollment_id"] == self.active_enrollment.id)
+        self.assertFalse(row["clinic_required"])
+        self.assertFalse(row["name_highlight_clinic_target"])
+        self.assertEqual(row["homeworks"], [])
+
+        targets = ClinicTargetService.list_admin_targets(tenant=self.tenant)
+        self.assertFalse(any(target.get("clinic_link_id") == link.id for target in targets))
+
     def test_session_scores_include_retake_history_and_final_pass(self):
         self.exam.pass_score = 70
         self.exam.max_score = 100

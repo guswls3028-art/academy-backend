@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Iterable, Optional
 
 from django.db import transaction
 from django.db.models import Q
@@ -213,6 +213,7 @@ class ClinicResolutionService:
         session_id: int,
         source_type: str,
         source_id: int,
+        enrollment_ids: Optional[Iterable[int]] = None,
         user_id: Optional[int] = None,
         reason: str = "source_removed_from_session",
     ) -> int:
@@ -233,8 +234,15 @@ class ClinicResolutionService:
             Q(source_type=source_type, source_id=source_id)
             | Q(source_type__isnull=True, **{f"meta__{source_meta_key}": source_id})
         )
+        normalized_enrollment_ids: list[int] | None = None
+        if enrollment_ids is not None:
+            normalized_enrollment_ids = sorted(
+                {int(enrollment_id) for enrollment_id in enrollment_ids}
+            )
+            if not normalized_enrollment_ids:
+                return 0
 
-        links = list(
+        link_qs = (
             ClinicLink.objects.select_for_update()
             .filter(
                 tenant_id=tenant_id,
@@ -242,8 +250,11 @@ class ClinicResolutionService:
                 resolved_at__isnull=True,
             )
             .filter(source_filter)
-            .order_by("id")
         )
+        if normalized_enrollment_ids is not None:
+            link_qs = link_qs.filter(enrollment_id__in=normalized_enrollment_ids)
+
+        links = list(link_qs.order_by("id"))
         if not links:
             return 0
 
@@ -259,6 +270,7 @@ class ClinicResolutionService:
                 "source_type": source_type,
                 "source_id": source_id,
                 "session_id": session_id,
+                "enrollment_ids": normalized_enrollment_ids,
                 "user_id": user_id,
             }
             link.save(update_fields=[
@@ -277,8 +289,9 @@ class ClinicResolutionService:
 
         logger.info(
             "clinic_resolution: SOURCE_REMOVED resolved %d links "
-            "(tenant=%s, session=%s, source=%s:%s)",
+            "(tenant=%s, session=%s, source=%s:%s, enrollments=%s)",
             count, tenant_id, session_id, source_type, source_id,
+            normalized_enrollment_ids,
         )
         return count
 

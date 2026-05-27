@@ -10,6 +10,8 @@ Homework API (List/Retrieve/Create)
 
 from __future__ import annotations
 
+from importlib import import_module
+
 from rest_framework import status
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
@@ -49,6 +51,22 @@ class HomeworkViewSet(ModelViewSet):
             .get("value")
         )
         return int(max_order or 0) + 1
+
+    def _resolve_removed_homework_clinic_links(self, *, request, homework: Homework) -> int:
+        if homework.session_id is None:
+            return 0
+        resolve_removed_source_clinic_links = import_module(
+            "apps.domains.progress.dispatcher"
+        ).resolve_removed_source_clinic_links
+
+        return resolve_removed_source_clinic_links(
+            tenant_id=int(request.tenant.id),
+            session_id=int(homework.session_id),
+            source_type="homework",
+            source_id=int(homework.id),
+            user_id=getattr(request.user, "id", None),
+            reason="homework_removed_from_session",
+        )
 
     def get_queryset(self) -> QuerySet[Homework]:
         tenant = getattr(self.request, "tenant", None)
@@ -176,6 +194,10 @@ class HomeworkViewSet(ModelViewSet):
             pk=kwargs["pk"],
         )
 
+        removed_clinic_link_count = self._resolve_removed_homework_clinic_links(
+            request=request,
+            homework=homework,
+        )
         assignment_count, _ = HomeworkAssignment.objects.filter(
             tenant=tenant,
             homework=homework,
@@ -185,6 +207,7 @@ class HomeworkViewSet(ModelViewSet):
         meta["removed_from_session_at"] = timezone.now().isoformat()
         meta["removed_from_session_by_user_id"] = getattr(request.user, "id", None)
         meta["removed_assignment_count"] = int(assignment_count)
+        meta["removed_clinic_link_count"] = int(removed_clinic_link_count)
         homework.meta = meta
         homework.status = Homework.Status.CLOSED
         homework.save(update_fields=["meta", "status", "updated_at"])

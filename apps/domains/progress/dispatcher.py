@@ -1,7 +1,7 @@
 # apps/domains/progress/dispatcher.py
 from __future__ import annotations
 
-from typing import Optional
+from typing import Iterable, Optional
 import logging
 
 from apps.domains.progress.services.progress_pipeline import ProgressPipelineService
@@ -43,6 +43,7 @@ def resolve_removed_source_clinic_links(
     session_id: int,
     source_type: str,
     source_id: int,
+    enrollment_ids: Optional[Iterable[int]] = None,
     user_id: Optional[int] = None,
     reason: str = "source_removed_from_session",
 ) -> int:
@@ -59,6 +60,7 @@ def resolve_removed_source_clinic_links(
         session_id=session_id,
         source_type=source_type,
         source_id=source_id,
+        enrollment_ids=enrollment_ids,
         user_id=user_id,
         reason=reason,
     )

@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from django.apps import apps
 from django.db import models
 
 from apps.domains.lectures.models import Session
@@ -114,6 +115,115 @@ def _is_low_confidence_for_attempt(*, exam_id: int, enrollment_id: int, attempt_
                 return True
 
     return False
+
+
+def _int_or_none(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _link_source_id(link: ClinicLink, source_type: str) -> Optional[int]:
+    meta = link.meta if isinstance(getattr(link, "meta", None), dict) else {}
+    if getattr(link, "source_type", None) == source_type:
+        return _int_or_none(getattr(link, "source_id", None) or meta.get(f"{source_type}_id"))
+    if getattr(link, "source_type", None) is None:
+        return _int_or_none(meta.get(f"{source_type}_id"))
+    return None
+
+
+def _filter_live_source_links(links: List[ClinicLink], *, tenant: Any) -> List[ClinicLink]:
+    """
+    Read-side guard for stale automatic ClinicLinks.
+
+    SOURCE_REMOVED transitions are the write-side SSOT, but clinic target APIs must
+    still fail closed when a historical unresolved link points to a source that is
+    no longer live in that session.
+    """
+    if not links:
+        return []
+
+    session_ids = {
+        int(getattr(link, "session_id", 0) or 0)
+        for link in links
+        if getattr(link, "session_id", None)
+    }
+    exam_ids = {
+        exam_id
+        for link in links
+        for exam_id in [_link_source_id(link, "exam")]
+        if exam_id is not None
+    }
+    homework_ids = {
+        homework_id
+        for link in links
+        for homework_id in [_link_source_id(link, "homework")]
+        if homework_id is not None
+    }
+
+    live_exam_pairs: set[tuple[int, int]] = set()
+    if exam_ids and session_ids:
+        live_exam_pairs = {
+            (int(exam_id), int(session_id))
+            for exam_id, session_id in Exam.objects.filter(
+                tenant=tenant,
+                is_active=True,
+                id__in=exam_ids,
+                sessions__id__in=session_ids,
+            ).values_list("id", "sessions__id")
+        }
+
+    live_homework_pairs: set[tuple[int, int]] = set()
+    live_homework_assignment_triples: set[tuple[int, int, int]] = set()
+    if homework_ids and session_ids:
+        live_homework_pairs = {
+            (int(homework_id), int(session_id))
+            for homework_id, session_id in Homework.objects.filter(
+                tenant=tenant,
+                id__in=homework_ids,
+                session_id__in=session_ids,
+            )
+            .exclude(meta__removed_from_session_at__isnull=False)
+            .values_list("id", "session_id")
+        }
+        HomeworkAssignment = apps.get_model("homework", "HomeworkAssignment")
+        live_homework_assignment_triples = {
+            (int(homework_id), int(session_id), int(enrollment_id))
+            for homework_id, session_id, enrollment_id in HomeworkAssignment.objects.filter(
+                tenant=tenant,
+                homework_id__in=homework_ids,
+                session_id__in=session_ids,
+            ).values_list("homework_id", "session_id", "enrollment_id")
+        }
+
+    live_links: List[ClinicLink] = []
+    for link in links:
+        source_type = getattr(link, "source_type", None)
+        session_id = int(getattr(link, "session_id", 0) or 0)
+
+        exam_id = _link_source_id(link, "exam")
+        if exam_id is not None:
+            if (exam_id, session_id) in live_exam_pairs:
+                live_links.append(link)
+            continue
+
+        homework_id = _link_source_id(link, "homework")
+        if homework_id is not None:
+            enrollment_id = int(getattr(link, "enrollment_id", 0) or 0)
+            if (
+                (homework_id, session_id) in live_homework_pairs
+                and (homework_id, session_id, enrollment_id) in live_homework_assignment_triples
+            ):
+                live_links.append(link)
+            continue
+
+        if source_type is None:
+            live_links.append(link)
+
+    return live_links
 
 
 def _get_student_name_by_enrollment_id(enrollment_id: int) -> str:
@@ -249,6 +359,9 @@ class ClinicTargetService:
             links = links.filter(enrollment_id__in=assigned_enrollment_ids)
 
         links_list = list(links)
+        if not include_resolved and links_list:
+            links_list = _filter_live_source_links(links_list, tenant=tenant)
+
         if not include_resolved and links_list:
             session_ids = list({int(getattr(lk, "session_id", 0) or 0) for lk in links_list} - {0})
             enrollment_ids_for_progress = list({int(getattr(lk, "enrollment_id", 0) or 0) for lk in links_list} - {0})

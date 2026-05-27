@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.enrollment.models import Enrollment
+from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.students.models import Student
+from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import HomeworkScore, Homework
 
 
@@ -136,4 +138,49 @@ class HomeworkPolicyApiTests(APITestCase):
 
         hs.refresh_from_db()
         self.assertTrue(hs.passed)
+
+    def test_assignment_removal_resolves_homework_clinic_link(self):
+        SessionEnrollment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.enrollment,
+        )
+        homework = Homework.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            title="Assigned HW",
+        )
+        HomeworkAssignment.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            homework=homework,
+            enrollment=self.enrollment,
+        )
+        ClinicLink = apps.get_model("progress", "ClinicLink")
+        link = ClinicLink.objects.create(
+            tenant=self.tenant,
+            enrollment=self.enrollment,
+            session=self.session,
+            reason=ClinicLink.Reason.AUTO_FAILED,
+            is_auto=True,
+            source_type="homework",
+            source_id=homework.id,
+            meta={"kind": "HOMEWORK_FAILED", "homework_id": homework.id},
+        )
+
+        res = self.client.put(
+            f"/api/v1/homework/assignments/?homework_id={homework.id}",
+            {"enrollment_ids": []},
+            format="json",
+            **self.req_headers,
+        )
+
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertEqual(res.data["removed_assignment_count"], 1)
+        self.assertEqual(res.data["removed_clinic_link_count"], 1)
+
+        link.refresh_from_db()
+        self.assertIsNotNone(link.resolved_at)
+        self.assertEqual(link.resolution_type, ClinicLink.ResolutionType.SOURCE_REMOVED)
+        self.assertEqual(link.resolution_evidence["reason"], "homework_assignment_removed")
 

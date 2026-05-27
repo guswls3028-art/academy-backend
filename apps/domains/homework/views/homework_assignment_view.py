@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from typing import List, Set
 
 from django.db import transaction
@@ -165,6 +166,16 @@ class HomeworkAssignmentManageView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        existing_ids = set(
+            HomeworkAssignment.objects.filter(
+                tenant=tenant,
+                homework=homework,
+                session=homework.session,
+                enrollment_id__in=valid_ids,
+            ).values_list("enrollment_id", flat=True)
+        )
+        removed_ids = sorted(existing_ids - incoming_ids)
+
         HomeworkAssignment.objects.filter(
             tenant=tenant,
             homework=homework,
@@ -182,10 +193,28 @@ class HomeworkAssignmentManageView(APIView):
             ]
         )
 
+        removed_clinic_link_count = 0
+        if removed_ids:
+            resolve_removed_source_clinic_links = import_module(
+                "apps.domains.progress.dispatcher"
+            ).resolve_removed_source_clinic_links
+
+            removed_clinic_link_count = resolve_removed_source_clinic_links(
+                tenant_id=int(tenant.id),
+                session_id=int(homework.session_id),
+                source_type="homework",
+                source_id=int(homework.id),
+                enrollment_ids=removed_ids,
+                user_id=getattr(request.user, "id", None),
+                reason="homework_assignment_removed",
+            )
+
         return Response(
             {
                 "homework_id": homework.id,
                 "selected_count": len(incoming_ids),
+                "removed_assignment_count": len(removed_ids),
+                "removed_clinic_link_count": int(removed_clinic_link_count),
             },
             status=status.HTTP_200_OK,
         )

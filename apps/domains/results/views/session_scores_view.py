@@ -125,6 +125,51 @@ def _float_or_none(value: Any) -> Optional[float]:
         return None
 
 
+def _int_or_none(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _clinic_source_id(row: Dict[str, Any], source_type: str) -> Optional[int]:
+    meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+    if row.get("source_type") == source_type:
+        return _int_or_none(row.get("source_id"))
+    if row.get("source_type") is None:
+        return _int_or_none(meta.get(f"{source_type}_id"))
+    return None
+
+
+def _is_live_session_clinic_link(
+    row: Dict[str, Any],
+    *,
+    live_exam_ids: Set[int],
+    live_homework_ids: Set[int],
+    homework_assigned_set: Set[tuple[int, int]],
+) -> bool:
+    enrollment_id = _int_or_none(row.get("enrollment_id"))
+    if enrollment_id is None:
+        return False
+
+    exam_id = _clinic_source_id(row, "exam")
+    if exam_id is not None:
+        return exam_id in live_exam_ids
+
+    homework_id = _clinic_source_id(row, "homework")
+    if homework_id is not None:
+        return (
+            homework_id in live_homework_ids
+            and (enrollment_id, homework_id) in homework_assigned_set
+        )
+
+    # Legacy automatic links without source metadata are already session-scoped.
+    # Keep them visible rather than silently hiding an ambiguous historical target.
+    return row.get("source_type") is None
+
+
 def _build_exam_attempt_summary(
     *,
     attempt: ExamAttempt,
@@ -312,15 +357,15 @@ class SessionScoresView(APIView):
         exams = sorted(exams, key=lambda e: (getattr(e, "display_order", 0) or 0, e.created_at, e.id))
         exam_ids = [int(e.id) for e in exams]
         homeworks = sorted(homeworks, key=lambda h: (getattr(h, "display_order", 0) or 0, h.created_at, h.id))
+        homework_ids = [int(hw.id) for hw in homeworks]
 
         # Homework 대표 max_score: HomeworkScore 레코드에서 집계 (과제별 최대값, 없으면 100)
         hw_max_scores: Dict[int, float] = {}
         if homeworks:
             from django.db.models import Max
-            hw_ids = [int(hw.id) for hw in homeworks]
             hw_max_agg = (
                 HomeworkScore.objects
-                .filter(homework_id__in=hw_ids)
+                .filter(homework_id__in=homework_ids)
                 .values("homework_id")
                 .annotate(rep_max=Max("max_score"))
             )
@@ -374,13 +419,28 @@ class SessionScoresView(APIView):
             .distinct()
         )
 
-        raw_clinic_ids: Set[int] = set(
+        clinic_link_rows = list(
             ClinicLink.objects.filter(
-                session=session, is_auto=True, resolved_at__isnull=True,
+                session=session,
+                enrollment_id__in=enrollment_ids,
+                is_auto=True,
+                resolved_at__isnull=True,
             )
-            .values_list("enrollment_id", flat=True)
-            .distinct()
+            .values("enrollment_id", "source_type", "source_id", "meta")
+            .order_by("id")
         )
+        live_exam_ids = set(exam_ids)
+        live_homework_ids = set(homework_ids)
+        raw_clinic_ids: Set[int] = {
+            int(row["enrollment_id"])
+            for row in clinic_link_rows
+            if _is_live_session_clinic_link(
+                row,
+                live_exam_ids=live_exam_ids,
+                live_homework_ids=live_homework_ids,
+                homework_assigned_set=hw_assigned_set,
+            )
+        }
         # 최종 완료 상태가 SSOT다. 과거/특례 등록으로 남은 미해소 ClinicLink가 있어도
         # SessionProgress.completed=True면 현재 클리닉 대상에서 제외한다.
         clinic_ids: Set[int] = raw_clinic_ids - progress_completed_ids
@@ -606,13 +666,12 @@ class SessionScoresView(APIView):
         )
 
         # Homework: 차수(attempt) 수
-        hw_ids = [int(hw.id) for hw in homeworks]
         hw_attempt_stats = (
             HomeworkScore.objects
             .filter(
                 session=session,
                 enrollment_id__in=enrollment_ids,
-                homework_id__in=hw_ids,
+                homework_id__in=homework_ids,
             )
             .values("homework_id", "enrollment_id")
             .annotate(count=Count("id"))
@@ -629,7 +688,7 @@ class SessionScoresView(APIView):
                 session=session,
                 enrollment_id__in=clinic_ids,
                 source_type="homework",
-                source_id__in=hw_ids,
+                source_id__in=homework_ids,
                 resolved_at__isnull=True,
             )
             .values("enrollment_id", "source_id", "id")
