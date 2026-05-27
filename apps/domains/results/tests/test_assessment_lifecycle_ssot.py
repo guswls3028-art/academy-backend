@@ -2,22 +2,17 @@ import json
 from io import StringIO
 
 from django.contrib.auth import get_user_model
+from django.apps import apps
 from django.core.management import call_command
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.attendance.models import Attendance
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.exams.models import Exam
-from apps.domains.lectures.models import Lecture, Session
-from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.views.admin_session_exams_summary_view import (
     AdminSessionExamsSummaryView,
 )
 from apps.domains.results.views.session_scores_view import SessionScoresView
-from apps.domains.students.models import Student
 
 
 User = get_user_model()
@@ -25,6 +20,15 @@ User = get_user_model()
 
 class AssessmentLifecycleSsotTests(TestCase):
     def setUp(self):
+        Attendance = apps.get_model("attendance", "Attendance")
+        Enrollment = apps.get_model("enrollment", "Enrollment")
+        SessionEnrollment = apps.get_model("enrollment", "SessionEnrollment")
+        self.Exam = apps.get_model("exams", "Exam")
+        Lecture = apps.get_model("lectures", "Lecture")
+        Session = apps.get_model("lectures", "Session")
+        self.ClinicLink = apps.get_model("progress", "ClinicLink")
+        Student = apps.get_model("students", "Student")
+
         self.factory = APIRequestFactory()
         self.tenant = Tenant.objects.create(
             name="Assessment Lifecycle",
@@ -91,23 +95,23 @@ class AssessmentLifecycleSsotTests(TestCase):
         return request
 
     def test_live_session_exam_ssot_excludes_inactive_and_templates(self):
-        active_exam = Exam.objects.create(
+        active_exam = self.Exam.objects.create(
             tenant=self.tenant,
             title="운영 시험",
-            exam_type=Exam.ExamType.REGULAR,
+            exam_type="regular",
             is_active=True,
         )
-        inactive_exam = Exam.objects.create(
+        inactive_exam = self.Exam.objects.create(
             tenant=self.tenant,
             title="삭제된 시험",
-            exam_type=Exam.ExamType.REGULAR,
+            exam_type="regular",
             is_active=False,
         )
-        template_exam = Exam.objects.create(
+        template_exam = self.Exam.objects.create(
             tenant=self.tenant,
             title="양식",
             subject="MATH",
-            exam_type=Exam.ExamType.TEMPLATE,
+            exam_type="template",
             is_active=True,
         )
         active_exam.sessions.add(self.session)
@@ -135,10 +139,11 @@ class AssessmentLifecycleSsotTests(TestCase):
         )
 
     def test_summary_clinic_rate_ignores_unresolved_link_whose_source_is_not_live(self):
-        inactive_exam = Exam.objects.create(
+        SessionProgress = apps.get_model("progress", "SessionProgress")
+        inactive_exam = self.Exam.objects.create(
             tenant=self.tenant,
             title="삭제된 시험",
-            exam_type=Exam.ExamType.REGULAR,
+            exam_type="regular",
             is_active=False,
         )
         inactive_exam.sessions.add(self.session)
@@ -147,11 +152,11 @@ class AssessmentLifecycleSsotTests(TestCase):
             enrollment=self.enrollment,
             completed=False,
         )
-        ClinicLink.objects.create(
+        self.ClinicLink.objects.create(
             tenant=self.tenant,
             enrollment=self.enrollment,
             session=self.session,
-            reason=ClinicLink.Reason.AUTO_FAILED,
+            reason=self.ClinicLink.Reason.AUTO_FAILED,
             is_auto=True,
             source_type="exam",
             source_id=inactive_exam.id,
@@ -168,18 +173,18 @@ class AssessmentLifecycleSsotTests(TestCase):
         self.assertEqual(response.data["participant_count"], 1)
         self.assertEqual(response.data["clinic_rate"], 0.0)
 
-        active_exam = Exam.objects.create(
+        active_exam = self.Exam.objects.create(
             tenant=self.tenant,
             title="운영 시험",
-            exam_type=Exam.ExamType.REGULAR,
+            exam_type="regular",
             is_active=True,
         )
         active_exam.sessions.add(self.session)
-        ClinicLink.objects.create(
+        self.ClinicLink.objects.create(
             tenant=self.tenant,
             enrollment=self.enrollment,
             session=self.session,
-            reason=ClinicLink.Reason.AUTO_FAILED,
+            reason=self.ClinicLink.Reason.AUTO_FAILED,
             is_auto=True,
             source_type="exam",
             source_id=active_exam.id,
@@ -196,18 +201,18 @@ class AssessmentLifecycleSsotTests(TestCase):
         self.assertEqual(response.data["clinic_rate"], 1.0)
 
     def test_detect_assessment_state_drift_command_reports_non_live_sources(self):
-        inactive_exam = Exam.objects.create(
+        inactive_exam = self.Exam.objects.create(
             tenant=self.tenant,
             title="삭제된 시험",
-            exam_type=Exam.ExamType.REGULAR,
+            exam_type="regular",
             is_active=False,
         )
         inactive_exam.sessions.add(self.session)
-        ClinicLink.objects.create(
+        self.ClinicLink.objects.create(
             tenant=self.tenant,
             enrollment=self.enrollment,
             session=self.session,
-            reason=ClinicLink.Reason.AUTO_FAILED,
+            reason=self.ClinicLink.Reason.AUTO_FAILED,
             is_auto=True,
             source_type="exam",
             source_id=inactive_exam.id,

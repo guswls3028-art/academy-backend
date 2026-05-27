@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from django.apps import apps
 from django.core.management.base import BaseCommand
 
 
@@ -23,10 +24,10 @@ class Command(BaseCommand):
         parser.add_argument("--sample", type=int, default=10)
 
     def handle(self, *args, **options):
-        from apps.domains.exams.models import Exam
-        from apps.domains.homework.models import HomeworkAssignment
-        from apps.domains.homework_results.models import Homework
-        from apps.domains.progress.models import ClinicLink
+        Exam = apps.get_model("exams", "Exam")
+        HomeworkAssignment = apps.get_model("homework", "HomeworkAssignment")
+        Homework = apps.get_model("homework_results", "Homework")
+        ClinicLink = apps.get_model("progress", "ClinicLink")
 
         tenant_id = options.get("tenant")
         sample_size = max(1, int(options.get("sample") or 10))
@@ -40,16 +41,16 @@ class Command(BaseCommand):
             link_qs = link_qs.filter(tenant_id=tenant_id)
 
         inactive_linked_exams = exam_qs.filter(
-            exam_type=Exam.ExamType.REGULAR,
+            exam_type="regular",
             is_active=False,
             sessions__isnull=False,
         ).distinct()
         template_linked_exams = exam_qs.filter(
-            exam_type=Exam.ExamType.TEMPLATE,
+            exam_type="template",
             sessions__isnull=False,
         ).distinct()
         active_linked_closed_exams = exam_qs.filter(
-            exam_type=Exam.ExamType.REGULAR,
+            exam_type="regular",
             is_active=True,
             status=Exam.Status.CLOSED,
             sessions__isnull=False,
@@ -74,7 +75,7 @@ class Command(BaseCommand):
         live_exam_pairs = {
             (int(exam_id), int(session_id))
             for exam_id, session_id in exam_qs.filter(
-                exam_type=Exam.ExamType.REGULAR,
+                exam_type="regular",
                 is_active=True,
                 sessions__isnull=False,
             ).values_list("id", "sessions__id")
@@ -82,7 +83,7 @@ class Command(BaseCommand):
         live_homework_pairs = {
             (int(homework_id), int(session_id))
             for homework_id, session_id in homework_qs.filter(
-                homework_type=Homework.HomeworkType.REGULAR,
+                homework_type="regular",
                 session__isnull=False,
             )
             .exclude(meta__removed_from_session_at__isnull=False)

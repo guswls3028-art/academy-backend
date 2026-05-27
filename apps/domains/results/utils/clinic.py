@@ -5,8 +5,6 @@ from typing import Any, Iterable, Set
 
 from django.apps import apps
 
-from apps.domains.exams.models import Exam
-from apps.domains.homework_results.models import Homework
 from apps.domains.lectures.models import Session
 from apps.domains.progress.models import ClinicLink, SessionProgress
 
@@ -66,11 +64,12 @@ def filter_live_source_links(
 
     live_exam_pairs: set[tuple[int, int]] = set()
     if exam_ids and session_ids:
+        Exam = apps.get_model("exams", "Exam")
         live_exam_pairs = {
             (int(exam_id), int(session_id))
             for exam_id, session_id in Exam.objects.filter(
                 tenant=tenant,
-                exam_type=Exam.ExamType.REGULAR,
+                exam_type="regular",
                 is_active=True,
                 id__in=exam_ids,
                 sessions__id__in=session_ids,
@@ -80,11 +79,12 @@ def filter_live_source_links(
     live_homework_pairs: set[tuple[int, int]] = set()
     live_homework_assignment_triples: set[tuple[int, int, int]] = set()
     if homework_ids and session_ids:
+        Homework = apps.get_model("homework_results", "Homework")
         live_homework_pairs = {
             (int(homework_id), int(session_id))
             for homework_id, session_id in Homework.objects.filter(
                 tenant=tenant,
-                homework_type=Homework.HomeworkType.REGULAR,
+                homework_type="regular",
                 id__in=homework_ids,
                 session_id__in=session_ids,
             )
