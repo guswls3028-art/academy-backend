@@ -1,17 +1,17 @@
 ## V1.1.0 CI Build — latest 이미지 digest 스냅샷 (OIDC)
 
-**Generated:** 2026-05-27T15:46:06+00:00
+**Generated:** 2026-05-27T16:35:17+00:00
 **SSOT:** docs/infrastructure/deployment-architecture.md
 **Region:** ap-northeast-2
-**gitSha:** bdd3618e87c96925c82381083e2801bda971a7ea
-**shortSha:** bdd3618e
-**Changes:** api=true video=false messaging=false ai=true tools=false force_full=false
+**gitSha:** 7c91161f115ba92b9566384b98b7edd15f4f93a3
+**shortSha:** 7c91161f
+**Changes:** api=true video=true messaging=true ai=true tools=true force_full=true
 
 | repo | tags | imageDigest |
 |------|------|-------------|
-| academy-base | sha-1f0eca7b, sha-8b31bb38, sha-e0262dc1, sha-2a4b9955, sha-de491871, sha-eaa6c3f1, sha-b1d65e84, sha-b9f50248, sha-95de8eb9, sha-4243bac5, sha-ca3acd89, sha-8a1cf8d3, sha-6ac3676b, sha-3e848707, sha-54f0e483, sha-7e1d16f2, sha-34f38ff9, sha-9891313c, sha-4b80e69d, latest, sha-25ccfd22, sha-0bf1b624, sha-258252bb, sha-8e84bdb7, sha-0c467b57, sha-f070892c, sha-9ec02c39, sha-d9059b4b, sha-228d06ad | sha256:af7c49f6c07f3f77c89436e4a2d2e859d2b592a7311e18a61f4f8fcb6bf52ee8 |
-| academy-api | sha-bdd3618e, latest | sha256:2b12b74a5233627348159f45a3b01014bca84b08ae2e4406fd0b96235397c8e3 |
-| academy-video-worker | sha-b9f50248, latest | sha256:a711134949b30d6e32330076dea503c2ba2e9c8d06125680ecb8131caff86daf |
-| academy-messaging-worker | sha-b9f50248, latest | sha256:e97ac478c9cfc7a5287ce1ef4e69fe60732cbe1a670e8ce51c1d66b030506170 |
-| academy-ai-worker-cpu | latest, sha-bdd3618e | sha256:20250cec94a21101634683178655faa0a4b17e9ab45e7480961c01113229ed5e |
-| academy-tools-worker | sha-b9f50248, latest | sha256:20dfb77825bf42ea98b8a7ecdd99ce8c8acaeba8a1fb28d2c6fa2072d9f3d8f2 |
+| academy-base | sha-1f0eca7b, sha-8b31bb38, sha-e0262dc1, sha-2a4b9955, sha-de491871, sha-eaa6c3f1, sha-7c91161f, sha-b1d65e84, sha-b9f50248, sha-95de8eb9, sha-4243bac5, sha-ca3acd89, sha-8a1cf8d3, sha-6ac3676b, sha-3e848707, sha-54f0e483, sha-7e1d16f2, sha-34f38ff9, sha-9891313c, sha-4b80e69d, latest, sha-25ccfd22, sha-0bf1b624, sha-258252bb, sha-8e84bdb7, sha-0c467b57, sha-f070892c, sha-9ec02c39, sha-d9059b4b, sha-228d06ad | sha256:af7c49f6c07f3f77c89436e4a2d2e859d2b592a7311e18a61f4f8fcb6bf52ee8 |
+| academy-api | latest, sha-7c91161f | sha256:e4cceffb8817a1b9c954f883dd2205f0c2f2954056ea3bf27b6ca079c6364461 |
+| academy-video-worker | latest, sha-7c91161f | sha256:504b10e33e37677842bf6c1b12301a1a0b491741dc7bae3878a611867a010fcb |
+| academy-messaging-worker | sha-7c91161f, latest | sha256:4eaff80ec83b5c79ee4f9ecb999315c040c687319415c1403ea4a7709bb5d970 |
+| academy-ai-worker-cpu | sha-7c91161f, latest | sha256:6eca7d2751c20c336b7a5d668d87a0b68257cd7254f0331d176039146658d1a7 |
+| academy-tools-worker | sha-7c91161f, latest | sha256:dc24f4214f6888894629b7555edb5e56f15636f1df417be04fbaa50a74382ad3 |
