@@ -57,6 +57,10 @@ ecr:
   useLatestTag: true
   immutableTagRequired: false
 
+githubActions:
+  deployRoleName: academy-gha-ecr-build
+  deployPolicyName: EcrBuildPush
+
 # API: V1. 런칭 전 비용 절감으로 min/desired=1, max=2. 롤링 배포 시 instance-refresh MinHealthyPercentage.
 # Gunicorn/ALB 타임아웃 60s 내 권장(동영상/AI는 비동기 전용).
 api:

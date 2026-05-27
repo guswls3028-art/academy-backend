@@ -170,6 +170,7 @@ try {
 
     $script:BatchIam = Ensure-BatchIAM
     Ensure-EC2InstanceProfileSSM
+    Ensure-GitHubActionsDeployIAM
     Ensure-Network
     Ensure-NetworkVpc
     Confirm-SubnetsMatchSSOT

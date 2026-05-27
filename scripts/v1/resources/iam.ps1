@@ -11,6 +11,65 @@ $InstanceProfileName = "academy-batch-ecs-instance-profile"
 $JobRoleName = "academy-video-batch-job-role"
 $ExecutionRoleName = "academy-batch-ecs-task-execution-role"
 
+function Get-ASGInstanceRefreshResourceArn {
+    param([string]$AutoScalingGroupName)
+    if (-not $AutoScalingGroupName -or $AutoScalingGroupName.Trim() -eq "") { return $null }
+    return "arn:aws:autoscaling:$($script:Region):$($script:AccountId):autoScalingGroup:*:autoScalingGroupName/$AutoScalingGroupName"
+}
+
+function Ensure-GitHubActionsDeployIAM {
+    if ($script:PlanMode) { return }
+    $roleName = if ($script:GitHubActionsDeployRoleName) { $script:GitHubActionsDeployRoleName } else { "academy-gha-ecr-build" }
+    $policyName = if ($script:GitHubActionsDeployPolicyName) { $script:GitHubActionsDeployPolicyName } else { "EcrBuildPush" }
+    if (-not $roleName -or -not $policyName) { return }
+
+    Write-Step "Ensure GitHub Actions deploy IAM"
+    $role = Invoke-AwsJson @("iam", "get-role", "--role-name", $roleName, "--output", "json")
+    if (-not $role) {
+        Write-Warn "GitHub Actions role $roleName not found or not readable; deploy IAM drift guard skipped."
+        return
+    }
+
+    $policy = Invoke-AwsJson @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--output", "json")
+    if (-not $policy -or -not $policy.PolicyDocument) {
+        Write-Warn "Inline policy $policyName on $roleName not found or not readable; deploy IAM drift guard skipped."
+        return
+    }
+
+    $doc = $policy.PolicyDocument
+    $statement = @($doc.Statement) | Where-Object { $_.Sid -eq "AsgInstanceRefresh" } | Select-Object -First 1
+    if (-not $statement) {
+        Write-Warn "Inline policy $policyName has no AsgInstanceRefresh statement; deploy IAM drift guard skipped."
+        return
+    }
+
+    $required = @(
+        $script:ApiASGName,
+        $script:MessagingASGName,
+        $script:AiASGName,
+        $script:ToolsASGName
+    ) | Where-Object { $_ -and $_.Trim() -ne "" } | Sort-Object -Unique | ForEach-Object { Get-ASGInstanceRefreshResourceArn $_ }
+
+    $current = @($statement.Resource) | Where-Object { $_ -and $_.Trim() -ne "" }
+    $missing = @($required | Where-Object { $current -notcontains $_ })
+    if ($missing.Count -eq 0) {
+        Write-Ok "GitHub Actions deploy IAM covers SSOT ASGs"
+        return
+    }
+
+    $statement.Resource = @($current + $missing | Sort-Object -Unique)
+    $json = $doc | ConvertTo-Json -Depth 20
+    $policyFileRef = Convert-JsonArgToFileRef $json
+    $policyFile = $policyFileRef -replace '^file://', ''
+    try {
+        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--policy-document", $policyFileRef) -ErrorMessage "put GitHub Actions deploy IAM policy" | Out-Null
+    } finally {
+        Remove-TempFiles @($policyFile)
+    }
+    $script:ChangesMade = $true
+    Write-Ok "Updated $roleName/$policyName ASG refresh resources: $($missing -join ', ')"
+}
+
 function Ensure-BatchIAM {
     if ($script:PlanMode) { return @{ ServiceRoleArn = ""; InstanceProfileArn = ""; JobRoleArn = ""; ExecutionRoleArn = "" } }
     Write-Step "Ensure Batch IAM"

@@ -127,6 +127,8 @@ function Load-SSOT {
     $script:EcrBaseRepo = if ($p["ecr"]["baseRepo"]) { $p["ecr"]["baseRepo"] } else { "academy-base" }
     $script:EcrImmutableTagRequired = ($p["ecr"]["immutableTagRequired"] -eq "true")
     $script:EcrUseLatestTag = ($p["ecr"]["useLatestTag"] -eq "true")
+    $script:GitHubActionsDeployRoleName = if ($p["githubActions"] -and $p["githubActions"]["deployRoleName"]) { $p["githubActions"]["deployRoleName"] } else { "academy-gha-ecr-build" }
+    $script:GitHubActionsDeployPolicyName = if ($p["githubActions"] -and $p["githubActions"]["deployPolicyName"]) { $p["githubActions"]["deployPolicyName"] } else { "EcrBuildPush" }
 
     $script:ApiAllocationId = Get-ParamFromRaw $raw "allocationId"
     if (-not $script:ApiAllocationId) { $script:ApiAllocationId = "" }
@@ -418,7 +420,8 @@ function Load-SSOT {
         "academy-batch-ecs-instance-role",
         "academy-batch-ecs-task-execution-role",
         "academy-video-batch-job-role",
-        "academy-eventbridge-batch-video-role"
+        "academy-eventbridge-batch-video-role",
+        $script:GitHubActionsDeployRoleName
     )
     $script:SSOT_InstanceProfile = @("academy-batch-ecs-instance-profile")
     $script:SSOT_ECSClusterPatterns = @("*academy-v1-video-batch-ce*", "*academy-v1-video-ops-ce*")
