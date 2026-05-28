@@ -29,6 +29,7 @@ from apps.domains.submissions.services.dispatcher import (
     resolve_omr_sheet_for_exam,
 )
 from apps.domains.submissions.services.omr_submission_guards import (
+    OMR_CONFLICT_STATUSES,
     allow_duplicate_requested,
     duplicate_conflict_payload,
     ensure_exam_enrollment_candidate,
@@ -395,6 +396,48 @@ class SubmissionViewSet(ModelViewSet):
                 expires_in=21600,
             )
 
+        # 같은 학생·시험에 다른 OMR이 또 있으면 학원장이 한 번에 골라 채택할 수 있도록 노출.
+        # cluster 후보 = (tenant, exam, enrollment_id) 동일 + 진행/완료 status + 본인 제외.
+        duplicate_siblings: list[dict] = []
+        if (
+            submission.target_type == Submission.TargetType.EXAM
+            and submission.enrollment_id
+            and submission.target_id
+        ):
+            from apps.support.omr.scan_images import build_omr_scan_image_payload as _build_payload
+
+            sibling_qs = (
+                Submission.objects.filter(
+                    tenant=submission.tenant,
+                    target_type=Submission.TargetType.EXAM,
+                    target_id=int(submission.target_id),
+                    enrollment_id=int(submission.enrollment_id),
+                    status__in=OMR_CONFLICT_STATUSES,
+                )
+                .exclude(id=submission.id)
+                .order_by("-id")
+            )
+            for sib in sibling_qs:
+                sib_meta = sib.meta or {}
+                sib_review = sib_meta.get("manual_review") or {}
+                sib_payload = {
+                    "scan_image_url": "",
+                    "original_scan_image_url": "",
+                    "scan_image_is_aligned": False,
+                    "scan_image_size": None,
+                }
+                if sib.file_key and sib.source == Submission.Source.OMR_SCAN:
+                    sib_payload = _build_payload(submission=sib, expires_in=21600)
+                duplicate_siblings.append({
+                    "submission_id": int(sib.id),
+                    "status": sib.status,
+                    "identifier_status": (sib_meta.get("identifier_status") if isinstance(sib_meta, dict) else None),
+                    "manual_review_required": bool(sib_review.get("required")),
+                    "created_at": sib.created_at.isoformat() if getattr(sib, "created_at", None) else None,
+                    "scan_image_url": sib_payload["scan_image_url"],
+                    "scan_image_is_aligned": sib_payload["scan_image_is_aligned"],
+                })
+
         return Response({
             "submission_id": submission.id,
             "submission_status": submission.status,
@@ -409,6 +452,7 @@ class SubmissionViewSet(ModelViewSet):
                 "ai_result": meta.get("ai_result"),
                 "identifier_status": meta.get("identifier_status"),
             },
+            "duplicate_siblings": duplicate_siblings,
         })
 
     @transaction.atomic
@@ -663,6 +707,158 @@ class SubmissionViewSet(ModelViewSet):
                 "max_score": synced_max_score,
             }
         )
+
+    @action(detail=True, methods=["post"], url_path="accept-from-duplicates")
+    def accept_from_duplicates(self, request, pk=None):
+        """
+        같은 (시험, 학생) 중복 OMR 후보 중 본 submission을 채택.
+        - 본 submission: manual_review 해제 → ANSWERS_READY → grade → DONE.
+        - 같은 (tenant, exam, enrollment_id) 다른 active sub: 'discarded:duplicate'로 폐기.
+        단일 트랜잭션으로 원자성 보장.
+        """
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "Tenant required"}, status=403)
+
+        with transaction.atomic():
+            submission: Submission = Submission.objects.select_for_update().get(pk=pk)
+            if submission.tenant_id != getattr(tenant, "id", None):
+                return Response({"detail": "tenant mismatch"}, status=403)
+            if submission.target_type != Submission.TargetType.EXAM:
+                return Response({"detail": "시험 답안지만 채택할 수 있습니다."}, status=400)
+            if not submission.enrollment_id:
+                return Response(
+                    {"detail": "학생 식별이 완료된 답안만 채택할 수 있습니다."},
+                    status=400,
+                )
+            if not submission.target_id:
+                return Response({"detail": "시험 정보가 없습니다."}, status=400)
+
+            now = timezone.now()
+            actor = f"admin.accept_from_duplicates.user_{getattr(request.user, 'id', '?')}"
+
+            # 같은 (exam, enrollment) 다른 active sub 폐기
+            sibling_qs = (
+                Submission.objects.select_for_update()
+                .filter(
+                    tenant=tenant,
+                    target_type=Submission.TargetType.EXAM,
+                    target_id=int(submission.target_id),
+                    enrollment_id=int(submission.enrollment_id),
+                    status__in=OMR_CONFLICT_STATUSES,
+                )
+                .exclude(id=submission.id)
+            )
+            discarded_count = 0
+            superseded_count = 0
+            skipped: list[dict] = []
+            for sib in sibling_qs:
+                # DONE 형제는 SUPERSEDED(이 답안이 채택된 다른 답안으로 대체됨)로,
+                # 그 외 active 형제는 FAILED + discarded:duplicate로.
+                if sib.status == Submission.Status.DONE:
+                    target = Submission.Status.SUPERSEDED
+                    err_msg = ""
+                    reason = "superseded_by_duplicate_selection"
+                else:
+                    target = Submission.Status.FAILED
+                    err_msg = "discarded:duplicate"
+                    reason = "duplicate"
+                try:
+                    transit_save(
+                        sib, target,
+                        admin_override=True,
+                        error_message=err_msg,
+                        actor=actor,
+                    )
+                except InvalidTransitionError as e:
+                    skipped.append({"id": sib.id, "reason": str(e)})
+                    continue
+                sib_meta = dict(sib.meta or {})
+                sib_meta["discarded"] = {
+                    "at": now.isoformat(),
+                    "by_user_id": getattr(request.user, "id", None),
+                    "reason": reason,
+                    "kept_sibling_id": int(submission.id),
+                }
+                sib_meta.setdefault("manual_review", {})
+                sib_meta["manual_review"]["required"] = False
+                sib_meta["manual_review"]["resolved_at"] = now.isoformat()
+                sib.meta = sib_meta
+                sib.save(update_fields=["meta", "updated_at"])
+                if target == Submission.Status.SUPERSEDED:
+                    superseded_count += 1
+                else:
+                    discarded_count += 1
+
+            # 채택 sub: manual_review 해제 + audit + ANSWERS_READY (이미면 skip) + grade
+            meta = dict(submission.meta or {})
+            meta.setdefault("manual_review", {})
+            meta["manual_review"]["required"] = False
+            meta["manual_review"]["resolved_at"] = now.isoformat()
+            meta["accepted_from_duplicates"] = {
+                "at": now.isoformat(),
+                "by_user_id": getattr(request.user, "id", None),
+                "discarded_sibling_count": discarded_count,
+                "superseded_sibling_count": superseded_count,
+            }
+            if str(meta.get("identifier_status") or "").startswith("matched_"):
+                meta["identifier_status"] = "matched"
+            submission.meta = meta
+            submission.save(update_fields=["meta", "updated_at"])
+
+            if submission.status not in (
+                Submission.Status.ANSWERS_READY,
+                Submission.Status.GRADING,
+                Submission.Status.DONE,
+            ):
+                try:
+                    transit_save(
+                        submission, Submission.Status.ANSWERS_READY,
+                        admin_override=True,
+                        actor=actor,
+                    )
+                except InvalidTransitionError as e:
+                    return Response({"detail": str(e)}, status=409)
+
+            try:
+                grade_submission(int(submission.id))
+            except Exception:
+                transaction.set_rollback(True)
+                return Response({"detail": "grading failed"}, status=500)
+
+        submission.refresh_from_db()
+
+        synced_score = None
+        synced_max_score = None
+        if submission.enrollment_id:
+            try:
+                from apps.domains.results.models import Result
+                r = (
+                    Result.objects.filter(
+                        target_type="exam",
+                        target_id=int(submission.target_id),
+                        enrollment_id=int(submission.enrollment_id),
+                        enrollment__tenant=tenant,
+                    )
+                    .only("total_score", "max_score")
+                    .order_by("-id")
+                    .first()
+                )
+                if r:
+                    synced_score = float(r.total_score or 0)
+                    synced_max_score = float(r.max_score or 0)
+            except Exception:
+                pass
+
+        return Response({
+            "submission_id": submission.id,
+            "status": submission.status,
+            "discarded_count": discarded_count,
+            "superseded_count": superseded_count,
+            "skipped": skipped[:20],
+            "score": synced_score,
+            "max_score": synced_max_score,
+        }, status=200)
 
     # 폐기 사유 enum — 운영자 audit 용 세분화. 외 값은 "other" 로 fold.
     _DISCARD_REASONS = {
