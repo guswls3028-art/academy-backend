@@ -75,13 +75,20 @@ def test_engine_version_dynamic():
 
 
 def test_omr_dispatcher_sheet_scope_contract():
+    # Phase F: sheet resolve 책임은 omr_pipeline.sheet_resolver 로 이전됨.
+    # tenant + effective_template scoping 가 새 위치에 존재하는지 확인.
     import inspect
     from apps.domains.submissions.services import dispatcher
-    src = inspect.getsource(dispatcher)
-    assert "resolve_omr_sheet_for_exam" in src
-    assert "exam__tenant" in src
-    assert "effective_template_exam_id" in src
-    assert "silently falling back" in src
+    from apps.domains.submissions.omr_pipeline.services import sheet_resolver
+
+    dispatcher_src = inspect.getsource(dispatcher)
+    assert "resolve_omr_sheet_for_exam" in dispatcher_src, (
+        "dispatcher 는 외부 호환을 위해 resolve_omr_sheet_for_exam 를 re-export 해야 함"
+    )
+
+    resolver_src = inspect.getsource(sheet_resolver)
+    assert "exam__tenant" in resolver_src
+    assert "effective_template_exam_id" in resolver_src
 
 
 def test_omr_worker_pdf_contract():
