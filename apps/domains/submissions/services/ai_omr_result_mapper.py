@@ -9,10 +9,8 @@ from django.db import transaction
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.omr_submission_guards import (
     duplicate_conflict_payload,
-    find_conflicting_exam_submission,
 )
 from apps.domains.submissions.services.transition import transit
-from apps.support.omr.candidate_matching import lock_exam_enrollment_candidate
 from apps.support.omr.exam_structure import load_submission_exam_structure
 
 logger = logging.getLogger(__name__)
@@ -163,68 +161,24 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     unmapped_questions = persist_result.unmapped_questions
     manual_required = persist_result.manual_required
 
-    # ✅ 식별자 → enrollment 매칭 (IdentifierMatcher 단일 진입점)
-    # 시험 내 학생 phone tail / parent_phone tail / omr_code 중 어느 쪽이든 매칭 +
-    # 1 자리 변형이 다른 학생을 가리키면 needs_review (워커 status 가 'ok' 든
-    # 'ambiguous' 든 동일). silent 1-digit error 방어.
-    from apps.domains.submissions.omr_pipeline.services.identifier_matcher import (
-        IdentifierMatcher,
+    # ✅ 식별 + ExamEnrollment 락 + duplicate 검사 (Phase E: enrollment_finalizer)
+    # IdentifierMatcher → lock_exam_enrollment_candidate → find_conflicting_exam_submission
+    # 의 한 묶음을 단일 함수가 처리한다. mapper 는 결과 dataclass 만 보고 meta / transit 결정.
+    from apps.domains.submissions.omr_pipeline.services.enrollment_finalizer import (
+        finalize_enrollment,
     )
 
-    if submission.target_id and isinstance(identifier, dict):
-        matcher = IdentifierMatcher(tenant=submission.tenant, exam_id=int(submission.target_id))
-        match_result = matcher.match(identifier)
-    else:
-        from apps.domains.submissions.omr_pipeline.services.identifier_matcher import (
-            IdentifierMatchResult,
-        )
-        match_result = IdentifierMatchResult(None, "missing", False, ["IDENTIFIER_MISSING"])
-
-    enrollment_id = match_result.enrollment_id
-    identifier_status = match_result.identifier_status
-    identifier_match_kind = "fuzzy" if match_result.kind == "fuzzy" else (
-        "exact" if match_result.kind in ("exact", "exact_with_competitor") else "none"
+    enroll_result = finalize_enrollment(
+        submission=submission, identifier_payload=identifier,
     )
-    if match_result.needs_review:
+    enrollment_id = enroll_result.enrollment_id
+    identifier_status = enroll_result.identifier_status
+    identifier_match_kind = enroll_result.identifier_match_kind
+    identifier_ok = enroll_result.identifier_ok
+    duplicate_conflict = enroll_result.duplicate_conflict
+    if enroll_result.manual_required:
         manual_required = True
-    for r in match_result.review_reasons:
-        if r != "IDENTIFIER_AMBIGUOUS_DIGIT_RESOLVED":
-            reasons.append(r)
-
-    # 식별 진단 메타 (UI 가 cluster / review 표시할 때 사용)
-    detected_code = ""
-    if isinstance(identifier, dict):
-        detected_code = str(
-            identifier.get("identifier") or identifier.get("raw_identifier") or ""
-        ).strip()
-    ident_status = (
-        str(identifier.get("status") or "").lower() if isinstance(identifier, dict) else ""
-    )
-
-    identifier_ok = enrollment_id is not None
-    duplicate_conflict = None
-    if identifier_ok and submission.target_id:
-        exam_enrollment_locked = lock_exam_enrollment_candidate(
-            tenant=submission.tenant,
-            exam_id=int(submission.target_id),
-            enrollment_id=int(enrollment_id),
-        )
-        if not exam_enrollment_locked:
-            identifier_ok = False
-            enrollment_id = None
-            identifier_status = "no_match"
-            reasons.append("IDENTIFIER_NO_EXAM_ENROLLMENT")
-        else:
-            duplicate_conflict = find_conflicting_exam_submission(
-                tenant=submission.tenant,
-                exam_id=int(submission.target_id),
-                enrollment_id=int(enrollment_id),
-                exclude_submission_id=int(submission.id),
-            )
-            if duplicate_conflict:
-                manual_required = True
-                identifier_status = "matched_duplicate"
-                reasons.append("DUPLICATE_ENROLLMENT")
+    reasons.extend(enroll_result.review_reasons)
 
     meta.setdefault("manual_review", {})
     meta["manual_review"]["required"] = bool(manual_required or not identifier_ok)
