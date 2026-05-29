@@ -94,6 +94,47 @@ def _ambiguous_identifier_has_competing_exact_match(
     return False
 
 
+def _validate_worker_contract(
+    submission: Submission, payload: Dict[str, Any]
+) -> Optional[int]:
+    """
+    AI worker callback payload 를 OMRWorkerCallback schema 로 검증.
+
+    Returns:
+        None  schema 통과 → caller 는 정상 흐름 계속.
+        submission.id  schema 위반 → manual_review 마킹 + meta 기록 후 caller 종료.
+
+    silent failure 차단: 새 worker version, 필수 키 누락, 타입 오류가 prod 에 들어와도
+    학원장 화면에 "검토 필요" 표시가 뜨고 audit log 가 남는다.
+    """
+    from apps.domains.submissions.omr_pipeline.contracts import parse_worker_callback
+
+    callback, err = parse_worker_callback(payload)
+    if callback is not None:
+        return None
+
+    logger.error(
+        "OMR_WORKER_CONTRACT_VIOLATION | submission_id=%s | error=%s",
+        submission.id, err,
+    )
+    now_iso = datetime.now(timezone.utc).isoformat()
+    meta = dict(submission.meta or {})
+    meta.setdefault("manual_review", {})
+    meta["manual_review"]["required"] = True
+    reasons = list(meta["manual_review"].get("reasons") or [])
+    if "WORKER_CONTRACT_VIOLATION" not in reasons:
+        reasons.append("WORKER_CONTRACT_VIOLATION")
+    meta["manual_review"]["reasons"] = sorted(set(reasons))
+    meta["manual_review"]["updated_at"] = now_iso
+    meta["worker_contract_violation"] = {
+        "at": now_iso,
+        "error": (err or "")[:2000],
+    }
+    submission.meta = meta
+    submission.save(update_fields=["meta", "updated_at"])
+    return submission.id
+
+
 @transaction.atomic
 def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     """
@@ -109,6 +150,14 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     except Submission.DoesNotExist:
         logger.warning("apply_omr_ai_result: submission %s not found", submission_id)
         return None
+
+    # ── worker contract 검증 (silent failure 차단) ──────────────────────────
+    # 새 worker version / 깨진 payload / 빠진 필수 키 들어오면 즉시 manual_review
+    # 강제하고 자동 채점은 막는다. 학원장이 빈 시트나 잘못된 점수를 받는 것보다
+    # "검토 필요" 표시가 안전하다.
+    _violation_id = _validate_worker_contract(submission, payload)
+    if _violation_id is not None:
+        return _violation_id
 
     # 🔐 tenant 교차검증: AI job의 tenant_id와 submission의 tenant_id 일치 확인
     job_id = payload.get("job_id")
