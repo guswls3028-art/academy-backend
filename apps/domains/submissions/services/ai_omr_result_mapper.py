@@ -6,20 +6,13 @@ from datetime import datetime, timezone
 
 from django.db import transaction
 
-from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.omr_submission_guards import (
     duplicate_conflict_payload,
     find_conflicting_exam_submission,
 )
 from apps.domains.submissions.services.transition import transit
-from apps.support.omr.answer_policy import (
-    ambiguous_answer_can_change_score,
-    answer_matches_expected,
-)
-from apps.support.omr.candidate_matching import (
-    clean_tail8,
-    lock_exam_enrollment_candidate,
-)
+from apps.support.omr.candidate_matching import lock_exam_enrollment_candidate
 from apps.support.omr.exam_structure import load_submission_exam_structure
 
 logger = logging.getLogger(__name__)
@@ -149,134 +142,26 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     answers = result.get("answers") or []
     identifier = result.get("identifier")
 
-    # ── question_number → ExamQuestion.id 매핑 ──
-    # AI 엔진은 question_id = question_number(1,2,3...)를 반환한다.
-    # SubmissionAnswer.exam_question_id는 ExamQuestion PK여야 하므로 변환 필요.
+    # ── answer 영속화 + 검토 메타 (Phase C: omr_pipeline.services.answer_persister) ──
+    # 책임 분리: question_number → ExamQuestion.id 매핑, SubmissionAnswer upsert,
+    # answer_stats 집계, manual_review reasons (ANSWER_* + ALIGNMENT_FAILED +
+    # ANSWER_QNUM_NOT_IN_SHEET) 는 모두 persist_answers 안에서 결정한다.
     exam_structure = load_submission_exam_structure(submission)
-    qnum_to_pk = exam_structure.qnum_to_pk
-    correct_answers_by_pk = exam_structure.correct_answers_by_pk
-    qnum_map_built = exam_structure.qnum_map_built
+    from apps.domains.submissions.omr_pipeline.services.answer_persister import (
+        persist_answers,
+    )
 
-    manual_required = False
-    reasons = []
-    unmapped_questions: list[int] = []
+    persist_result = persist_answers(
+        submission=submission,
+        answers_payload=answers if isinstance(answers, list) else [],
+        worker_result_meta=result if isinstance(result, dict) else {},
+        exam_structure=exam_structure,
+    )
 
-    # 자동채점 통계: 운영자가 시험별 인식률을 한눈에 볼 수 있도록 aggregate 저장.
-    answer_stats: Dict[str, Any] = {
-        "total": 0, "ok": 0, "blank": 0, "ambiguous": 0, "error": 0,
-        "sum_conf": 0.0, "n_conf": 0,
-    }
-
-    for a in answers:
-        # v7 engine은 question_id(=question_number), 구버전은 exam_question_id(=PK)
-        raw_id = a.get("exam_question_id") or a.get("question_id")
-        if not raw_id:
-            continue
-
-        # question_number → ExamQuestion PK 변환.
-        # qnum 매핑이 구축되었지만 해당 번호가 매핑에 없으면 다른 시험 PK 충돌 위험 → skip.
-        # 매핑 자체가 미구축(qnum_map_built=False)인 구버전 데이터에서만 raw_id를 PK로 fallback.
-        raw_id_int = int(raw_id)
-        if qnum_map_built:
-            eqid_opt = qnum_to_pk.get(raw_id_int)
-            if eqid_opt is None:
-                unmapped_questions.append(raw_id_int)
-                logger.warning(
-                    "apply_omr_ai_result: question %s not in sheet | submission=%s | exam=%s",
-                    raw_id_int, submission_id, submission.target_id,
-                )
-                continue
-            eqid = eqid_opt
-        else:
-            # 매핑 미구축: 구버전 호환 fallback
-            eqid = raw_id_int
-
-        detected_values = [str(x).strip() for x in (a.get("detected") or []) if str(x).strip()]
-        detected_answer = ",".join(detected_values)
-        expected_multi_ok = (
-            len(detected_values) > 1
-            and answer_matches_expected(detected_values, correct_answers_by_pk.get(str(eqid)))
-        )
-
-        # v10.1: worker가 raw 안에 제공하는 bubble_rects/rect (검토 UI BBox overlay)
-        raw_payload = a.get("raw") or {}
-        bubble_rects = raw_payload.get("bubble_rects") if isinstance(raw_payload, dict) else None
-        question_rect = raw_payload.get("rect") if isinstance(raw_payload, dict) else None
-
-        omr_meta: Dict[str, Any] = {
-            "version": a.get("version") or result.get("version"),
-            "detected": a.get("detected"),
-            "marking": a.get("marking"),
-            "confidence": a.get("confidence"),
-            "status": a.get("status"),
-        }
-        if expected_multi_ok:
-            omr_meta["expected_multi_answer"] = True
-        if isinstance(bubble_rects, list) and bubble_rects:
-            omr_meta["bubble_rects"] = bubble_rects
-        if isinstance(question_rect, dict):
-            omr_meta["rect"] = question_rect
-
-        SubmissionAnswer.objects.update_or_create(
-            submission=submission,
-            exam_question_id=int(eqid),
-            defaults={
-                "tenant": submission.tenant,
-                "answer": detected_answer,
-                "meta": {"omr": omr_meta},
-            },
-        )
-
-        st = str(a.get("status") or "").lower()
-        mk = str(a.get("marking") or "").lower()
-        conf = a.get("confidence")
-
-        try:
-            conf_f = float(conf) if conf is not None else None
-        except Exception:
-            conf_f = None
-
-        # stats 집계
-        answer_stats["total"] += 1
-        if st in ("ok", "blank", "ambiguous", "error"):
-            answer_stats[st] += 1
-        if conf_f is not None:
-            answer_stats["sum_conf"] += conf_f
-            answer_stats["n_conf"] += 1
-
-        score_ambiguous = ambiguous_answer_can_change_score(
-            detected_values=detected_values,
-            correct_answer=correct_answers_by_pk.get(str(eqid)),
-        )
-
-        if st == "error":
-            manual_required = True
-            reasons.append("ANSWER_STATUS_NOT_OK")
-        elif st not in ("ok", "blank") and not expected_multi_ok and score_ambiguous:
-            manual_required = True
-            reasons.append("ANSWER_SCORE_AMBIGUOUS")
-
-        if st == "low_confidence" and not expected_multi_ok and score_ambiguous:
-            manual_required = True
-            reasons.append("ANSWER_LOW_CONFIDENCE")
-
-    # ── 정렬 실패 명시 ──
-    # 워커가 homography/contour/rotation 어느 경로로도 정렬 못 하면 aligned=False.
-    # 답안은 대부분 blank로 위장되므로 여기서 명시 사유를 추가해 운영자가 즉시 인지.
-    if isinstance(result, dict) and result.get("aligned") is False:
-        manual_required = True
-        reasons.append("ALIGNMENT_FAILED")
-
-    # 평균 신뢰도 보조 필드
-    if answer_stats["n_conf"] > 0:
-        answer_stats["avg_confidence"] = round(
-            answer_stats["sum_conf"] / answer_stats["n_conf"], 4
-        )
-    else:
-        answer_stats["avg_confidence"] = None
-    # 내부 누적값은 저장 생략
-    answer_stats.pop("sum_conf", None)
-    answer_stats.pop("n_conf", None)
+    answer_stats = persist_result.answer_stats
+    reasons = list(persist_result.manual_review_reasons)
+    unmapped_questions = persist_result.unmapped_questions
+    manual_required = persist_result.manual_required
 
     # ✅ 식별자 → enrollment 매칭 (IdentifierMatcher 단일 진입점)
     # 시험 내 학생 phone tail / parent_phone tail / omr_code 중 어느 쪽이든 매칭 +
@@ -340,10 +225,6 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
                 manual_required = True
                 identifier_status = "matched_duplicate"
                 reasons.append("DUPLICATE_ENROLLMENT")
-
-    if unmapped_questions:
-        manual_required = True
-        reasons.append("ANSWER_QNUM_NOT_IN_SHEET")
 
     meta.setdefault("manual_review", {})
     meta["manual_review"]["required"] = bool(manual_required or not identifier_ok)

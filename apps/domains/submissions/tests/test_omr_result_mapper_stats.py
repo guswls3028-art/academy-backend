@@ -48,13 +48,13 @@ def test_stats_empty_no_conf():
 
 
 def test_alignment_failed_reason_contract():
-    # mapper가 reason에 실제로 ALIGNMENT_FAILED 상수를 추가하는지 소스 레벨로 확인.
-    # (DB 없이 로직 경로만 검사)
+    # Phase C: answer 처리는 omr_pipeline.services.answer_persister 로 이전됨.
+    # ALIGNMENT_FAILED 추가 로직이 새 위치에 존재하는지 소스 레벨로 확인.
     import inspect
-    from apps.domains.submissions.services import ai_omr_result_mapper
-    src = inspect.getsource(ai_omr_result_mapper.apply_omr_ai_result)
-    assert "ALIGNMENT_FAILED" in src, "mapper는 aligned=False 시 ALIGNMENT_FAILED 사유를 적재해야 함"
-    assert 'result.get("aligned")' in src or "aligned" in src
+    from apps.domains.submissions.omr_pipeline.services import answer_persister
+    src = inspect.getsource(answer_persister.persist_answers)
+    assert "ALIGNMENT_FAILED" in src, "answer_persister 는 aligned=False 시 ALIGNMENT_FAILED 사유를 적재해야 함"
+    assert "aligned" in src
 
 
 def test_answer_stats_stored_in_meta_contract():
