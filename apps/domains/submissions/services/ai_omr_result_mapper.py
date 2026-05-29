@@ -18,9 +18,7 @@ from apps.support.omr.answer_policy import (
 )
 from apps.support.omr.candidate_matching import (
     clean_tail8,
-    exact_enrollment_ids_by_identifier,
     lock_exam_enrollment_candidate,
-    resolve_enrollment_by_identifier,
 )
 from apps.support.omr.exam_structure import load_submission_exam_structure
 
@@ -33,65 +31,6 @@ _ALREADY_PROCESSED_STATUSES = frozenset({
     Submission.Status.DONE,
     Submission.Status.SUPERSEDED,
 })
-
-
-def _ambiguous_identifier_has_competing_exact_match(
-    *,
-    identifier: dict[str, Any],
-    accepted_code: str,
-    accepted_enrollment_id: int,
-    exam_id: int,
-    tenant,
-) -> bool:
-    """
-    식별번호 한 자리 ambiguous라도, 가능한 대체 코드가 다른 시험 대상자를
-    정확히 가리키지 않으면 자동 매칭해도 안전하다.
-    """
-    base = clean_tail8(accepted_code)
-    if len(base) != 8:
-        return True
-
-    digits = identifier.get("digits") if isinstance(identifier, dict) else None
-    if not isinstance(digits, list):
-        return True
-
-    candidate_codes: set[str] = set()
-    for digit in digits:
-        if not isinstance(digit, dict):
-            continue
-        if str(digit.get("status") or "").lower() != "ambiguous":
-            continue
-        try:
-            raw_idx = int(digit.get("digit_index"))
-        except Exception:
-            continue
-        idx = raw_idx if 0 <= raw_idx < len(base) else raw_idx - 1
-        if idx < 0 or idx >= len(base):
-            continue
-
-        marks = digit.get("marks")
-        if not isinstance(marks, list):
-            continue
-        for mark in marks[1:4]:
-            if not isinstance(mark, dict):
-                continue
-            raw_number = mark.get("number")
-            if raw_number is None:
-                continue
-            alt = str(raw_number)
-            if len(alt) != 1 or not alt.isdigit() or alt == base[idx]:
-                continue
-            candidate_codes.add(f"{base[:idx]}{alt}{base[idx + 1:]}")
-
-    for code in candidate_codes:
-        matches = exact_enrollment_ids_by_identifier(
-            exam_id=exam_id,
-            identifier=code,
-            tenant=tenant,
-        )
-        if matches and (matches != {int(accepted_enrollment_id)}):
-            return True
-    return False
 
 
 def _validate_worker_contract(
@@ -339,79 +278,43 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     answer_stats.pop("sum_conf", None)
     answer_stats.pop("n_conf", None)
 
-    # ✅ 식별자 → enrollment 매칭 (학생/학부모 휴대폰 tail 또는 OMR 코드)
-    # status가 ok가 아니어도 raw_identifier에 8자리 모두 결정됐으면 best-effort 매칭 시도.
-    # 한 자리만 ambiguous인 경우에도 정확/fuzzy 매칭이 단일 학생을 가리키면 자동 식별 가능.
-    enrollment_id = None
-    identifier_status = "missing"
-    identifier_match_kind = "none"
-    ident_status = ""
-    detected_code = ""
+    # ✅ 식별자 → enrollment 매칭 (IdentifierMatcher 단일 진입점)
+    # 시험 내 학생 phone tail / parent_phone tail / omr_code 중 어느 쪽이든 매칭 +
+    # 1 자리 변형이 다른 학생을 가리키면 needs_review (워커 status 가 'ok' 든
+    # 'ambiguous' 든 동일). silent 1-digit error 방어.
+    from apps.domains.submissions.omr_pipeline.services.identifier_matcher import (
+        IdentifierMatcher,
+    )
 
-    if isinstance(identifier, dict):
-        ident_status = str(identifier.get("status") or "").lower()
-        # raw_identifier에 ?(blank) 없는 경우만 시도 (ambiguous는 통과, blank/error는 차단)
-        detected_code = str(
-            identifier.get("identifier")
-            or identifier.get("raw_identifier")
-            or ""
-        ).strip()
-        ident_complete = (
-            len(detected_code) == 8
-            and "?" not in detected_code
-            and ident_status in ("ok", "ambiguous")
+    if submission.target_id and isinstance(identifier, dict):
+        matcher = IdentifierMatcher(tenant=submission.tenant, exam_id=int(submission.target_id))
+        match_result = matcher.match(identifier)
+    else:
+        from apps.domains.submissions.omr_pipeline.services.identifier_matcher import (
+            IdentifierMatchResult,
         )
-        if ident_status in ("ok", "ambiguous"):
-            identifier_status = "detected"
+        match_result = IdentifierMatchResult(None, "missing", False, ["IDENTIFIER_MISSING"])
 
-        if ident_complete and submission.target_id:
-            # 시험 대상자의 학생/학부모 휴대폰 tail 또는 OMR 코드 조회 (정확 매칭 → fuzzy fallback)
-            enrollment_id, identifier_match_kind = resolve_enrollment_by_identifier(
-                exam_id=int(submission.target_id),
-                identifier=detected_code,
-                tenant=submission.tenant,
-            )
-            ambiguous_ident = ident_status == "ambiguous"
-            if enrollment_id and identifier_match_kind == "exact":
-                if ambiguous_ident:
-                    has_competitor = _ambiguous_identifier_has_competing_exact_match(
-                        identifier=identifier,
-                        accepted_code=detected_code,
-                        accepted_enrollment_id=int(enrollment_id),
-                        exam_id=int(submission.target_id),
-                        tenant=submission.tenant,
-                    )
-                    if has_competitor:
-                        # 대체 digit 후보가 다른 시험 대상자를 가리킬 수 있으면 운영자 확인.
-                        identifier_status = "matched_ambiguous"
-                        manual_required = True
-                        reasons.append("IDENTIFIER_AMBIGUOUS_DIGIT")
-                    else:
-                        # 애매한 digit 후보가 실제 경쟁 대상자를 만들지 않으면 자동 확정.
-                        identifier_status = "matched_ambiguous_resolved"
-                else:
-                    identifier_status = "matched"
-            elif enrollment_id and identifier_match_kind == "fuzzy":
-                # 자동 매칭은 하되 운영자 확인을 권장 (1자리 OMR 인식 오류 흡수)
-                identifier_status = "matched_fuzzy"
-                manual_required = True
-                reasons.append("IDENTIFIER_FUZZY_MATCH")
-                if ambiguous_ident:
-                    reasons.append("IDENTIFIER_AMBIGUOUS_DIGIT")
-            else:
-                identifier_status = "no_match"
-                reasons.append("IDENTIFIER_NO_ENROLLMENT_MATCH")
+    enrollment_id = match_result.enrollment_id
+    identifier_status = match_result.identifier_status
+    identifier_match_kind = "fuzzy" if match_result.kind == "fuzzy" else (
+        "exact" if match_result.kind in ("exact", "exact_with_competitor") else "none"
+    )
+    if match_result.needs_review:
+        manual_required = True
+    for r in match_result.review_reasons:
+        if r != "IDENTIFIER_AMBIGUOUS_DIGIT_RESOLVED":
+            reasons.append(r)
 
-    if not enrollment_id:
-        if not isinstance(identifier, dict) or not detected_code:
-            reasons.append("IDENTIFIER_MISSING")
-        elif (
-            "?" in detected_code
-            or len(clean_tail8(detected_code)) != 8
-            or ident_status not in ("ok", "ambiguous")
-        ):
-            identifier_status = "incomplete"
-            reasons.append("IDENTIFIER_INCOMPLETE")
+    # 식별 진단 메타 (UI 가 cluster / review 표시할 때 사용)
+    detected_code = ""
+    if isinstance(identifier, dict):
+        detected_code = str(
+            identifier.get("identifier") or identifier.get("raw_identifier") or ""
+        ).strip()
+    ident_status = (
+        str(identifier.get("status") or "").lower() if isinstance(identifier, dict) else ""
+    )
 
     identifier_ok = enrollment_id is not None
     duplicate_conflict = None

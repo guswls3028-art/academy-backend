@@ -1021,3 +1021,221 @@ class AcceptFromDuplicatesTests(TestCase):
             self.kept.id, tenant=other_tenant, user=other_staff
         )
         self.assertIn(response.status_code, (403, 404))
+
+
+class IdentifierMatcherTests(TestCase):
+    """
+    IdentifierMatcher silent 1-digit error 방어 시나리오.
+
+    워커가 status='ok' 로 보고하더라도 digits 안에 status='ambiguous' 자리가
+    하나라도 있으면 시험 내 다른 학생이 1 자리 변형으로 매칭되는지 검증한다.
+    모든 자리 ok 면 워커를 신뢰한다 (false positive 0).
+    """
+
+    def _make_exam_with_two_close_students(self):
+        tenant = Tenant.objects.create(
+            name="IDM", code="idm_tenant", is_active=True
+        )
+        staff = User.objects.create_user(
+            username="idm_staff", password="x", tenant=tenant, is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=staff, role="teacher")
+        lecture = Lecture.objects.create(
+            tenant=tenant, title="L", name="L", subject="MATH"
+        )
+        session = Session.objects.create(lecture=lecture, order=1, title="S")
+        exam = Exam.objects.create(
+            tenant=tenant,
+            title="EXAM",
+            subject="MATH",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+            max_attempts=1,
+        )
+        exam.sessions.add(session)
+        students = {}
+        for code, name in (("12345678", "A"), ("12345679", "B")):
+            sr = create_student_account(
+                tenant=tenant,
+                student_data={
+                    "ps_number": f"IDM-{code}",
+                    "name": name,
+                    "phone": f"010{code}",
+                    "parent_phone": "",
+                    "omr_code": code,
+                    "school_type": "HIGH",
+                },
+                password="x",
+            )
+            enr = Enrollment.objects.create(
+                tenant=tenant,
+                student=sr.student,
+                lecture=lecture,
+                status="ACTIVE",
+            )
+            SessionEnrollment.objects.create(
+                tenant=tenant, session=session, enrollment=enr
+            )
+            ExamEnrollment.objects.create(exam=exam, enrollment=enr)
+            students[code] = enr
+        return tenant, exam, students
+
+    def test_status_ok_without_ambiguous_digits_trusts_worker(self):
+        from apps.domains.submissions.omr_pipeline.services.identifier_matcher import (
+            IdentifierMatcher,
+        )
+
+        tenant, exam, students = self._make_exam_with_two_close_students()
+        matcher = IdentifierMatcher(tenant=tenant, exam_id=exam.id)
+        result = matcher.match({
+            "status": "ok",
+            "identifier": "12345678",
+            "digits": [
+                {"digit_index": i, "status": "ok", "value": int("12345678"[i])}
+                for i in range(8)
+            ],
+        })
+        self.assertEqual(result.enrollment_id, students["12345678"].id)
+        self.assertEqual(result.kind, "exact")
+        self.assertFalse(result.needs_review)
+        self.assertEqual(result.identifier_status, "matched")
+
+    def test_status_ok_with_one_ambiguous_digit_catches_competitor(self):
+        from apps.domains.submissions.omr_pipeline.services.identifier_matcher import (
+            IdentifierMatcher,
+        )
+
+        tenant, exam, students = self._make_exam_with_two_close_students()
+        matcher = IdentifierMatcher(tenant=tenant, exam_id=exam.id)
+        digits = [
+            {"digit_index": i, "status": "ok", "value": int("12345678"[i])}
+            for i in range(7)
+        ]
+        digits.append({
+            "digit_index": 7,
+            "status": "ambiguous",
+            "value": 8,
+            "marks": [{"number": 8}, {"number": 9}],
+        })
+        result = matcher.match({
+            "status": "ok",
+            "identifier": "12345678",
+            "digits": digits,
+        })
+        self.assertEqual(result.enrollment_id, students["12345678"].id)
+        self.assertEqual(result.kind, "exact_with_competitor")
+        self.assertTrue(result.needs_review)
+        self.assertIn("IDENTIFIER_AMBIGUOUS_DIGIT", result.review_reasons)
+        self.assertEqual(result.identifier_status, "matched_ambiguous")
+
+    def test_status_ambiguous_without_competitor_resolves(self):
+        from apps.domains.submissions.omr_pipeline.services.identifier_matcher import (
+            IdentifierMatcher,
+        )
+
+        tenant = Tenant.objects.create(name="IDM2", code="idm2", is_active=True)
+        staff = User.objects.create_user(
+            username="idm2_staff", password="x", tenant=tenant, is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=staff, role="teacher")
+        lecture = Lecture.objects.create(
+            tenant=tenant, title="L", name="L", subject="MATH"
+        )
+        session = Session.objects.create(lecture=lecture, order=1, title="S")
+        exam = Exam.objects.create(
+            tenant=tenant,
+            title="E",
+            subject="MATH",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+            max_attempts=1,
+        )
+        exam.sessions.add(session)
+        sr = create_student_account(
+            tenant=tenant,
+            student_data={
+                "ps_number": "IDM2-1",
+                "name": "Only",
+                "phone": "01099887766",
+                "parent_phone": "",
+                "omr_code": "99887766",
+                "school_type": "HIGH",
+            },
+            password="x",
+        )
+        enr = Enrollment.objects.create(
+            tenant=tenant, student=sr.student, lecture=lecture, status="ACTIVE"
+        )
+        SessionEnrollment.objects.create(
+            tenant=tenant, session=session, enrollment=enr
+        )
+        ExamEnrollment.objects.create(exam=exam, enrollment=enr)
+        matcher = IdentifierMatcher(tenant=tenant, exam_id=exam.id)
+        digits = [
+            {"digit_index": i, "status": "ok", "value": int("99887766"[i])}
+            for i in range(7)
+        ]
+        digits.append({
+            "digit_index": 7,
+            "status": "ambiguous",
+            "value": 6,
+            "marks": [{"number": 6}, {"number": 8}, {"number": 0}],
+        })
+        result = matcher.match({
+            "status": "ambiguous",
+            "identifier": "99887766",
+            "digits": digits,
+        })
+        self.assertEqual(result.enrollment_id, enr.id)
+        self.assertEqual(result.kind, "exact")
+        self.assertFalse(result.needs_review)
+        self.assertEqual(result.identifier_status, "matched_ambiguous_resolved")
+
+    def test_incomplete_identifier_returns_incomplete(self):
+        from apps.domains.submissions.omr_pipeline.services.identifier_matcher import (
+            IdentifierMatcher,
+        )
+
+        tenant = Tenant.objects.create(name="IDM3", code="idm3", is_active=True)
+        exam = Exam.objects.create(
+            tenant=tenant,
+            title="E",
+            subject="MATH",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+            max_attempts=1,
+        )
+        matcher = IdentifierMatcher(tenant=tenant, exam_id=exam.id)
+        result = matcher.match({
+            "status": "ok",
+            "identifier": "1234567?",
+        })
+        self.assertIsNone(result.enrollment_id)
+        self.assertEqual(result.kind, "incomplete")
+        self.assertEqual(result.identifier_status, "incomplete")
+        self.assertIn("IDENTIFIER_INCOMPLETE", result.review_reasons)
+
+    def test_no_identifier_returns_missing(self):
+        from apps.domains.submissions.omr_pipeline.services.identifier_matcher import (
+            IdentifierMatcher,
+            IdentifierMatchResult,
+        )
+
+        tenant = Tenant.objects.create(name="IDM4", code="idm4", is_active=True)
+        exam = Exam.objects.create(
+            tenant=tenant,
+            title="E",
+            subject="MATH",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+            max_attempts=1,
+        )
+        matcher = IdentifierMatcher(tenant=tenant, exam_id=exam.id)
+        result = matcher.match(None)
+        self.assertIsInstance(result, IdentifierMatchResult)
+        self.assertIsNone(result.enrollment_id)
+        self.assertEqual(result.kind, "missing")
