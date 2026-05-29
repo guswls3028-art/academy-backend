@@ -20,9 +20,7 @@ from apps.domains.assets.omr.services.meta_generator import (
 )
 from apps.domains.exams.models import ExamQuestion, Sheet
 from apps.domains.submissions.models import Submission
-from apps.domains.submissions.omr_pipeline.services.sheet_resolver import (
-    resolve_omr_sheet_for_submission,
-)
+from apps.support.omr.sheet_resolver import resolve_omr_sheet_for_submission
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 
 

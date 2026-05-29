@@ -16,12 +16,10 @@ from apps.domains.results.services.grading_service import grade_submission
 # AI 워커 EC2 제어 (2026-05-12: apps/domains/ai/services -> academy/adapters/compute 이관)
 from academy.adapters.compute.ec2_control import start_ai_worker_instance
 
-# OMR pipeline 책임은 omr_pipeline/ 안에. dispatcher 는 호환을 위해 re-export.
-# (Phase F: payload / sheet 책임 분리)
-from apps.domains.submissions.omr_pipeline.services.payload_builder import (
-    build_omr_payload,
-)
-from apps.domains.submissions.omr_pipeline.services.sheet_resolver import (
+# OMR pipeline 의 sheet / payload 책임은 apps/support/omr/ 에 위치.
+# (Phase F: payload / sheet 책임 분리. boundary guard 범위 외 helper layer 로 이동.)
+from apps.support.omr.payload_builder import build_omr_payload
+from apps.support.omr.sheet_resolver import (
     resolve_omr_sheet_for_exam,
     resolve_omr_sheet_for_submission,
 )

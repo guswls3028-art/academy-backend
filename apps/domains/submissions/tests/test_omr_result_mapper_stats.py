@@ -79,7 +79,7 @@ def test_omr_dispatcher_sheet_scope_contract():
     # tenant + effective_template scoping 가 새 위치에 존재하는지 확인.
     import inspect
     from apps.domains.submissions.services import dispatcher
-    from apps.domains.submissions.omr_pipeline.services import sheet_resolver
+    from apps.support.omr import sheet_resolver
 
     dispatcher_src = inspect.getsource(dispatcher)
     assert "resolve_omr_sheet_for_exam" in dispatcher_src, (
