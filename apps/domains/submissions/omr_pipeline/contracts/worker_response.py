@@ -150,12 +150,15 @@ class OMRWorkerCallback(BaseModel):
     callbacks.py 가 raw dict 를 받아 이 model 로 변환한다. 변환 실패는 곧
     worker contract 위반 → 자동 채점 거부 + manual_review 강제.
 
-    extra='ignore' 인 이유: prod 가 받는 raw payload 의 상위 키 목록이 아직
-    레거시 키와 섞여 있어서 forbid 로 가면 정상 callback 도 reject 된다. Phase C
-    에서 ingest 진입점을 정리한 후 forbid 로 조인다 (TODO #14).
+    extra='forbid' — 2026-05-30 Phase G 활성. 활성 전에 prod 30 일 88 건
+    OMR submission 의 meta.ai_result 상위 키를 감사한 결과 모든 키가
+    _ENVELOPE_KEYS 안에 있어 회귀 없음. parse_worker_callback 이 envelope
+    외 키를 result 본문으로 정규화하므로 워커가 다른 모양으로 보내도
+    정규화 후 envelope 만 남는다. 새 worker 가 envelope 외 키를 진짜 새로
+    추가하려고 하면 schema 변경 + backend 배포가 강제된다 (silent acceptance 차단).
     """
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     submission_id: int = Field(..., ge=1)
     job_id: Optional[str] = None

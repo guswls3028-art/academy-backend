@@ -80,11 +80,27 @@ class WorkerResponseSchemaTests(SimpleTestCase):
         self.assertIsNone(cb)
         self.assertIsNotNone(err)
 
-    def test_extra_field_ignored_at_top_level_until_phase_c(self):
-        # Phase A 는 prod 호환을 위해 extra='ignore'. Phase C 에서 ingest 진입점
-        # 정리 후 forbid 로 조이고 이 테스트도 _rejected 로 뒤집는다.
+    def test_extra_envelope_field_rejected_after_phase_g(self):
+        # Phase G: extra='forbid' 활성. parse_worker_callback 의 정규화 로직이
+        # envelope 외 키를 result 본문으로 모으지 않는 단일 envelope-level 의
+        # 미지 필드만 forbid 가 reject 한다 (예: 워커가 진짜 새 envelope 키 추가).
+        # 정규화 자체를 우회하려면 model_validate 직접 호출.
+        from apps.domains.submissions.omr_pipeline.contracts.worker_response import (
+            OMRWorkerCallback,
+        )
+        from pydantic import ValidationError
+
         payload = self._valid_payload()
-        payload["new_secret_field"] = "surprise"
+        payload["new_envelope_field"] = "surprise"
+        with self.assertRaises(ValidationError):
+            OMRWorkerCallback.model_validate(payload)
+
+    def test_extra_non_envelope_top_level_goes_into_result_body(self):
+        # parse_worker_callback 은 envelope 외 키를 result 본문으로 모은다.
+        # 이건 forbid 와 무관 — schema 정규화가 먼저 일어남.
+        payload = self._valid_payload()
+        del payload["result"]
+        payload["aligned"] = True  # legacy 형태: result 본문 키가 최상위
         cb, err = parse_worker_callback(payload)
         self.assertIsNone(err)
         self.assertIsNotNone(cb)
