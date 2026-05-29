@@ -1239,3 +1239,109 @@ class IdentifierMatcherTests(TestCase):
         self.assertIsInstance(result, IdentifierMatchResult)
         self.assertIsNone(result.enrollment_id)
         self.assertEqual(result.kind, "missing")
+
+
+class StateRecoveryTests(TestCase):
+    """state_recovery: timeout 넘은 OMR sub 자동 FAILED 전환."""
+
+    def setUp(self):
+        from datetime import timedelta
+        from django.utils import timezone as dj_tz
+
+        self.tenant = Tenant.objects.create(
+            name="SR", code="state_recovery", is_active=True
+        )
+        self.staff = User.objects.create_user(
+            username="sr_staff", password="x", tenant=self.tenant, is_staff=True,
+        )
+        self.now = dj_tz.now()
+        self.long_ago = self.now - timedelta(minutes=45)
+        self.recent = self.now - timedelta(minutes=5)
+
+    def _make_sub(self, *, status: str, updated_minutes_ago: int):
+        from datetime import timedelta
+        from django.utils import timezone as dj_tz
+
+        s = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.staff,
+            target_type=Submission.TargetType.EXAM,
+            target_id=1,
+            enrollment_id=None,
+            source=Submission.Source.OMR_SCAN,
+            status=status,
+            file_key="x.jpg",
+        )
+        # updated_at 을 인위적으로 과거로 (auto_now 우회 — update 쿼리 사용)
+        target_dt = dj_tz.now() - timedelta(minutes=updated_minutes_ago)
+        Submission.objects.filter(id=s.id).update(updated_at=target_dt)
+        s.refresh_from_db()
+        return s
+
+    def test_recovers_stuck_grading(self):
+        from apps.domains.submissions.omr_pipeline.services.state_recovery import (
+            recover_stuck_submissions,
+        )
+
+        stuck = self._make_sub(status=Submission.Status.GRADING, updated_minutes_ago=45)
+        report = recover_stuck_submissions(actor="test")
+        self.assertIn(stuck.id, report.recovered)
+        stuck.refresh_from_db()
+        self.assertEqual(stuck.status, Submission.Status.FAILED)
+        self.assertEqual(stuck.error_message, "stuck:grading_timeout")
+        self.assertEqual(
+            (stuck.meta or {}).get("state_recovery", {}).get("from_status"),
+            Submission.Status.GRADING,
+        )
+
+    def test_skips_recent_submissions(self):
+        from apps.domains.submissions.omr_pipeline.services.state_recovery import (
+            recover_stuck_submissions,
+        )
+
+        recent = self._make_sub(
+            status=Submission.Status.DISPATCHED, updated_minutes_ago=5
+        )
+        report = recover_stuck_submissions(actor="test")
+        self.assertNotIn(recent.id, report.recovered)
+        recent.refresh_from_db()
+        self.assertEqual(recent.status, Submission.Status.DISPATCHED)
+
+    def test_dry_run_detects_but_does_not_transition(self):
+        from apps.domains.submissions.omr_pipeline.services.state_recovery import (
+            recover_stuck_submissions,
+        )
+
+        stuck = self._make_sub(
+            status=Submission.Status.EXTRACTING, updated_minutes_ago=45
+        )
+        report = recover_stuck_submissions(actor="test", dry_run=True)
+        self.assertEqual(len(report.recovered), 0)
+        self.assertTrue(
+            any(a.submission_id == stuck.id for a in report.detected)
+        )
+        stuck.refresh_from_db()
+        self.assertEqual(stuck.status, Submission.Status.EXTRACTING)
+
+    def test_non_omr_source_ignored(self):
+        from apps.domains.submissions.omr_pipeline.services.state_recovery import (
+            recover_stuck_submissions,
+        )
+        from datetime import timedelta
+        from django.utils import timezone as dj_tz
+
+        s = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.staff,
+            target_type=Submission.TargetType.EXAM,
+            target_id=1,
+            enrollment_id=None,
+            source=Submission.Source.OMR_MANUAL,
+            status=Submission.Status.GRADING,
+            file_key="x.jpg",
+        )
+        Submission.objects.filter(id=s.id).update(
+            updated_at=dj_tz.now() - timedelta(minutes=45)
+        )
+        report = recover_stuck_submissions(actor="test")
+        self.assertNotIn(s.id, report.recovered)
