@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.12.md](v1.2.12.md) | **CURRENT** | 2026-05-30 KST | OMR same-student duplicate cluster UX + OMR pipeline domain split (Phases A–G) + state recovery cron |
+| [v1.2.13.md](v1.2.13.md) | **CURRENT** | 2026-05-30 KST | tchul QnA incident: show student attachment images inline + owner-only QnA alerts + 7 more unified alimtalk triggers + clinic_cancelled on session destroy |
+| [v1.2.12.md](v1.2.12.md) | production-deployed / v1.2.13로 승계 | 2026-05-30 KST | OMR same-student duplicate cluster UX + OMR pipeline domain split (Phases A–G) + state recovery cron |
 | [v1.2.11.md](v1.2.11.md) | production-deployed / v1.2.12로 승계 | 2026-05-24 KST | HJ3 OMR production grading hardening + student launch surface polish |
 | [v1.2.10.md](v1.2.10.md) | production-deployed / v1.2.11로 승계 | 2026-05-23 KST | Clinic participant write SSOT + student clinic change UX contract |
 | [v1.2.9.md](v1.2.9.md) | production-deployed / v1.2.10로 승계 | 2026-05-23 KST | Clinic participant transition SSOT + clinic operations mobile QA |
