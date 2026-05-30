@@ -143,10 +143,33 @@ class PostReplySerializer(serializers.ModelSerializer):
 
 
 class PostAttachmentSerializer(serializers.ModelSerializer):
+    # 첨부 이미지를 글 본문에 즉시 표시할 수 있도록 presigned URL 노출.
+    # 2026-05-30: tchul 박철과학 학원장 신고 — 학생이 이미지로 질문하면
+    # AI 매치업 분석 PENDING 동안 이미지 자체도 화면에 안 떴음. 매치업과
+    # 무관하게 이미지 먼저 보여줘야 학원장이 바로 답변할 수 있다.
+    download_url = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = PostAttachment
-        fields = ["id", "original_name", "size_bytes", "content_type", "created_at"]
+        fields = [
+            "id",
+            "original_name",
+            "size_bytes",
+            "content_type",
+            "created_at",
+            "download_url",
+        ]
         read_only_fields = fields
+
+    def get_download_url(self, obj) -> str | None:
+        if not obj.r2_key:
+            return None
+        try:
+            from apps.infrastructure.storage.r2 import generate_presigned_get_url
+
+            return generate_presigned_get_url(key=obj.r2_key, expires_in=3600)
+        except Exception:
+            return None
 
 
 class PostEntitySerializer(serializers.ModelSerializer):
