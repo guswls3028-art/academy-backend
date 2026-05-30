@@ -183,12 +183,41 @@ class SessionViewSet(viewsets.ModelViewSet):
         세션 삭제. ClinicLink 해소는 시험/과제 통과에 의해 결정되므로
         세션 삭제 시 해소 상태를 건드리지 않음.
         단, BOOKING_LEGACY 해소만 되돌림 (레거시 호환).
+
+        2026-05-30: cascade delete 직전 active SessionParticipant 들에게
+        clinic_cancelled 알림을 발화한다. 이전에는 세션 삭제 시 cascade 로
+        participant 가 사라지면서 학생/학부모에게 통지 없이 사라지는 사고가
+        있었다. _status_notification(CANCELLED) 와 같은 envelope 을 사용 —
+        4종 ITEM_LIST 봉투 SSOT 따름.
         """
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             raise serializers.ValidationError(
                 {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
             )
+
+        # cascade 전 active participant 들을 미리 capture (delete 후엔 식별 불가)
+        from apps.domains.clinic.services.lifecycle import _status_notification
+        from apps.domains.clinic.views.participant_views import _send_clinic_notification
+
+        active_statuses = (
+            SessionParticipant.Status.PENDING,
+            SessionParticipant.Status.APPROVED,
+        )
+        notifications: list[tuple] = []
+        for participant in (
+            SessionParticipant.objects
+            .select_related("student", "session")
+            .filter(tenant=tenant, session=instance, status__in=active_statuses)
+        ):
+            event = _status_notification(
+                participant,
+                SessionParticipant.Status.CANCELLED,
+                actor=getattr(self.request, "user", None),
+            )
+            if event is not None and event.student is not None:
+                notifications.append((event.student, event.trigger, dict(event.context)))
+
         with transaction.atomic():
             # 레거시 예약 기반 해소만 되돌림. 실제 pass 기반 해소는 유지.
             # 범위 제한은 support boundary 내부에서 target_lectures 기준으로 적용.
@@ -197,6 +226,26 @@ class SessionViewSet(viewsets.ModelViewSet):
                 session=instance,
             )
             instance.delete()
+
+            # commit 후에 발송 — DB 일관성 보장 + 실패해도 삭제 자체는 완료.
+            def _dispatch_clinic_cancelled():
+                for student, trigger, context in notifications:
+                    try:
+                        _send_clinic_notification(
+                            tenant=tenant,
+                            student=student,
+                            trigger=trigger,
+                            context=context,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "session destroy clinic_cancelled dispatch failed | "
+                            "tenant=%s session=%s student=%s",
+                            getattr(tenant, "id", "?"), instance.pk,
+                            getattr(student, "id", "?"),
+                        )
+
+            transaction.on_commit(_dispatch_clinic_cancelled)
 
     def retrieve(self, request, *args, **kwargs):
         """단일 세션 조회 시 직렬화 오류 방지 (annotate 필드 누락 등)."""

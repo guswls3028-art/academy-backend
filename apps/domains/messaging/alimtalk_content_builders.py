@@ -103,6 +103,19 @@ TRIGGER_TO_TEMPLATE_TYPE: dict[str, str] = {
     "absent_occurred": TYPE_ATTENDANCE,
     "lecture_session_reminder": TYPE_ATTENDANCE,
 
+    # 시험/과제 일정·미응시·미제출 — 학생/학부모에게 "강의/차시 컨텍스트 안내" 의미.
+    # 학원장이 #{선생님메모} 자유 편집으로 시험 명/과제 명 등 구체 안내.
+    # (2026-05-30 사용자 directive: 전부 공용 알림톡 통일)
+    "exam_scheduled_days_before": TYPE_ATTENDANCE,
+    "exam_start_minutes_before": TYPE_ATTENDANCE,
+    "exam_not_taken": TYPE_ATTENDANCE,
+    "assignment_registered": TYPE_ATTENDANCE,
+    "assignment_due_hours_before": TYPE_ATTENDANCE,
+    "assignment_not_submitted": TYPE_ATTENDANCE,
+
+    # 재시험 배정 — 보강 클리닉과 같은 "장소/날짜/시간" 컨텍스트.
+    "retake_assigned": TYPE_CLINIC_INFO,
+
     # 성적표발송 — 진짜 성적 통보만 (강의명/차시명 + "[성적표 안내]" prefix 의미상 일치)
     "exam_score_published": TYPE_SCORE,
     "monthly_report_generated": TYPE_SCORE,
@@ -112,16 +125,12 @@ TRIGGER_TO_TEMPLATE_TYPE: dict[str, str] = {
     "payment_complete": TYPE_NOTICE_PAYMENT,
     "payment_due_days_before": TYPE_NOTICE_PAYMENT,
 
-    # ── 매핑 의도적 제외 (의미상 맞는 살아있는 봉투 없음) ───────────────
-    # NONE 양식은 위 시스템 안내 3종에만 사용한다.
-    # 시험/과제/영상/매치업/커뮤니티 트리거는 현행 4종 ITEM_LIST 봉투와 의미가 맞지 않아
-    # 자동 통합 매핑을 두지 않는다. 별도 승인 템플릿이 있으면 기존 경로를 사용한다.
-    #
-    # 영향 트리거: exam_scheduled_days_before / exam_start_minutes_before /
-    #   exam_not_taken / retake_assigned / assignment_registered / assignment_due_hours_before /
-    #   assignment_not_submitted / video_encoding_complete / matchup_report_submitted /
-    #   qna_answered / counsel_answered
-    # → 통합 알림톡 비활성. 자체 솔라피 양식 ID가 등록돼 있으면 그쪽 사용, 없으면 발송 차단.
+    # ── 매핑 보류 (4종 ITEM_LIST + 2종 NONE 봉투 중 의미상 적절한 매칭 없음) ─
+    # video_encoding_complete / matchup_report_submitted / qna_answered /
+    # counsel_answered 4건. 현 봉투(강의·차시·성적·클리닉·퇴원·결제)와 의미가
+    # 어느 쪽도 맞지 않아 자동 매핑하면 학원장이 "왜 이 봉투로?" 의문이 든다.
+    # → 통합 매핑 비활성 유지. 학원별 솔라피 ID 직접 등록 시에만 발송.
+    # 보류 백로그: [[project_open_backlog]] (2026-05-30 등록).
 }
 
 
