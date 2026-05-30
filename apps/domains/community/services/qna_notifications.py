@@ -242,11 +242,14 @@ def _iter_staff_recipients(tenant) -> list[_Recipient]:
     recipients: list[_Recipient] = []
     seen_phones: set[str] = set()
 
+    # 2026-05-30: 박철과학 학원장 directive — QnA 알림은 원장(owner)에게만.
+    # 조교(teacher)는 퇴근 후 일반인이라 알림이 가면 안 된다. admin/staff 도
+    # 우선 제외 — 원장이 admin 추가 수신 원하면 별도 라운드에서 확장.
     memberships = (
         TenantMembership.objects.filter(
             tenant=tenant,
             is_active=True,
-            role__in=["owner", "admin", "teacher", "staff"],
+            role__in=["owner"],
         )
         .select_related("user", "user__staff_profile")
         .only(

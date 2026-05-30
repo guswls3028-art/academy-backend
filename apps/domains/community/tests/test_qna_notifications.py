@@ -36,7 +36,8 @@ class QnaNotificationTests(TestCase):
             name="김선생",
             phone="01090001111",
         )
-        TenantMembership.ensure_active(tenant=self.tenant, user=self.teacher, role="teacher")
+        # 2026-05-30: QnA 알림은 owner 만 수신. 학원장 directive.
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.teacher, role="owner")
         self.student_user = User.objects.create_user(
             username="qna_student",
             password="pw1234",
