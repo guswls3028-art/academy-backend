@@ -165,14 +165,9 @@ class PostAttachmentSerializer(serializers.ModelSerializer):
         if not obj.r2_key:
             return None
         try:
-            from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+            from apps.domains.community.services.attachment_urls import build_attachment_download_url
 
-            return generate_presigned_get_url_storage(
-                key=obj.r2_key,
-                expires_in=3600,
-                filename=obj.original_name,
-                content_type=obj.content_type or None,
-            )
+            return build_attachment_download_url(obj, expires_in=3600, force_download=False)
         except Exception:
             return None
 

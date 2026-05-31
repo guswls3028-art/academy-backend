@@ -14,6 +14,7 @@
 | 알림톡 템플릿/봉투 정책 | [messaging-alimtalk.md](messaging-alimtalk.md) |
 | 운영 정책 표 | `backend/docs/ssot/messaging-policy.md` |
 | 계정 복구 알림톡 | [account-recovery.md](account-recovery.md) |
+| 수동 알림 컨텍스트 소스 | `apps/support/messaging/manual_context_sources.py` |
 
 낡은 이벤트 표, Solapi ID 표, 구현 예정 목록을 이 파일에 다시 복제하지 않는다. 위 정본 중 하나를 갱신하고 이 인덱스에는 경로만 남긴다.
 
@@ -24,6 +25,7 @@
 - 계정 관련 시스템 알림은 SMS fallback 없이 알림톡 전용이다.
 - `password_find_otp`는 legacy OTP 경로용 트리거다. 공개 로그인 화면의 현재 정본은 `/api/v1/auth/account-recovery/dispatch/`다.
 - 수동/자동 발송 UX와 템플릿 본문 자유 정책은 [messaging-alimtalk.md](messaging-alimtalk.md)와 `.claude/rules/domain.md §5-6`을 우선한다.
+- 클리닉 변경 알림처럼 도메인 상태에서 파생되는 수동 발송 변수/대상자는 프론트에서 재구현하지 않고 `context_source`로 백엔드 정본에 위임한다.
 
 ## 3. 변경 규칙
 
@@ -33,7 +35,8 @@
 2. `default_templates.py`의 변수명이 Solapi 승인 변수와 맞는가.
 3. [messaging-alimtalk.md](messaging-alimtalk.md)의 봉투/편지 정책과 충돌하지 않는가.
 4. [account-recovery.md](account-recovery.md)의 계정복구 발송 흐름과 충돌하지 않는가.
-5. 오래된 표나 legacy 안내를 추가하지 않았는가.
+5. 수동 발송 컨텍스트가 도메인 상태에서 파생된다면 `manual_context_sources.py` 또는 해당 도메인 서비스가 정본인가.
+6. 오래된 표나 legacy 안내를 추가하지 않았는가.
 
 ## 4. 정리 이력
 

@@ -1,3 +1,4 @@
+from datetime import date, time
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
@@ -5,6 +6,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
+from apps.domains.clinic.models import Session, SessionParticipant
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, NotificationPreviewToken
 from unittest.mock import patch
 
@@ -253,6 +255,119 @@ class NotificationPreviewViewValidationTests(TestCase):
         payload_recipient = token.payload["recipients"][0]
         self.assertEqual(payload_recipient["student_id"], active_student.id)
         self.assertEqual(payload_recipient["phone_raw"], "01055556666")
+
+    def test_manual_preview_resolves_clinic_session_change_context_source(self):
+        active_user = User.objects.create_user(
+            username=user_internal_username(self.tenant, "S020"),
+            password="test1234",
+            tenant=self.tenant,
+            phone="01011112222",
+            name="변경학생",
+        )
+        active_student = Student.objects.create(
+            tenant=self.tenant,
+            user=active_user,
+            ps_number="S020",
+            name="변경학생",
+            phone="01011112222",
+            parent_phone="01088889999",
+            omr_code="20202020",
+        )
+        cancelled_user = User.objects.create_user(
+            username=user_internal_username(self.tenant, "S021"),
+            password="test1234",
+            tenant=self.tenant,
+            phone="01022223333",
+            name="취소학생",
+        )
+        cancelled_student = Student.objects.create(
+            tenant=self.tenant,
+            user=cancelled_user,
+            ps_number="S021",
+            name="취소학생",
+            phone="01022223333",
+            parent_phone="01077778888",
+            omr_code="21212121",
+        )
+        session = Session.objects.create(
+            tenant=self.tenant,
+            title="보강 클리닉",
+            date=date(2026, 6, 1),
+            start_time=time(14, 30),
+            location="2관",
+            max_participants=10,
+        )
+        SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=session,
+            student=active_student,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        SessionParticipant.objects.create(
+            tenant=self.tenant,
+            session=session,
+            student=cancelled_student,
+            status=SessionParticipant.Status.CANCELLED,
+        )
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category="clinic",
+            name="클리닉 변경",
+            subject="",
+            body="#{학생이름} #{클리닉변동사항} #{클리닉수정자}",
+        )
+        AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="clinic_reservation_changed",
+            template=template,
+            enabled=False,
+            message_mode="alimtalk",
+        )
+
+        response = self._post(
+            ManualNotificationPreviewView,
+            "/api/v1/messaging/manual-notification/preview/",
+            {
+                "trigger": "clinic_reservation_changed",
+                "context_source": {
+                    "type": "clinic_session_change",
+                    "session_id": session.id,
+                },
+                "send_to": "parent",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["total_count"], 1)
+        recipient = response.data["recipients"][0]
+        self.assertEqual(recipient["student_id"], active_student.id)
+        self.assertIn("2026-06-01 14:30 2관", recipient["message_body"])
+        self.assertIn(self.admin.username, recipient["message_body"])
+
+        token = NotificationPreviewToken.objects.get(token=response.data["preview_token"])
+        self.assertEqual(len(token.payload["recipients"]), 1)
+        replacements = token.payload["recipients"][0]["alimtalk_replacements"]
+        self.assertIn(
+            {"key": "클리닉변동사항", "value": "2026-06-01 14:30 2관"},
+            replacements,
+        )
+
+    def test_manual_preview_rejects_context_source_for_wrong_trigger(self):
+        response = self._post(
+            ManualNotificationPreviewView,
+            "/api/v1/messaging/manual-notification/preview/",
+            {
+                "trigger": "exam_score_published",
+                "context_source": {"type": "clinic_session_change", "session_id": 1},
+                "send_to": "parent",
+            },
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.data["detail"],
+            "clinic_session_change는 클리닉 변경 알림에만 사용할 수 있습니다.",
+        )
 
 
 class NotificationBatchDispatchPolicyTests(TestCase):

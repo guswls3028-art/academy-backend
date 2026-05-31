@@ -84,7 +84,6 @@ class TestAttachmentViewIntegration(TestCase):
         mock_presign.assert_called_once_with(
             key=att.r2_key,
             expires_in=3600,
-            filename="photo.jpg",
             content_type="image/jpeg",
         )
 

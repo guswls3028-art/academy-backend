@@ -912,14 +912,9 @@ class PostViewSet(viewsets.ModelViewSet):
         except (PostAttachment.DoesNotExist, ValueError, TypeError):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+        from apps.domains.community.services.attachment_urls import build_attachment_download_url
 
-        url = generate_presigned_get_url_storage(
-            key=att.r2_key,
-            expires_in=3600,
-            filename=att.original_name,
-            content_type=att.content_type or None,
-        )
+        url = build_attachment_download_url(att, expires_in=3600, force_download=True)
         return Response({"url": url, "original_name": att.original_name})
 
     @action(detail=True, methods=["delete"], url_path=r"attachments/(?P<att_id>[^/.]+)")
@@ -1180,9 +1175,9 @@ def _dispatch_qna_matchup(post, attachments, tenant):
 
     try:
         from apps.domains.ai.gateway import dispatch_job
-        from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+        from apps.domains.community.services.attachment_urls import build_attachment_download_url
 
-        download_url = generate_presigned_get_url_storage(key=att.r2_key, expires_in=3600)
+        download_url = build_attachment_download_url(att, expires_in=3600, force_download=False)
         result = dispatch_job(
             job_type="matchup_search_qna",
             payload={

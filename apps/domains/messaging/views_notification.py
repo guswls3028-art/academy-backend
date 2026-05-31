@@ -246,6 +246,7 @@ class ManualNotificationPreviewView(APIView):
         student_ids = request.data.get("student_ids", [])
         send_to = request.data.get("send_to", "parent")
         context = request.data.get("context") or {}
+        context_source = request.data.get("context_source", None)
         if not isinstance(context, dict):
             return Response({"detail": "context는 객체여야 합니다."}, status=http_status.HTTP_400_BAD_REQUEST)
         # 학생별 개별 변수 (성적 등) — key: student_id(int)
@@ -268,9 +269,35 @@ class ManualNotificationPreviewView(APIView):
                 {"detail": "send_to는 'parent' 또는 'student'만 가능합니다."},
                 status=http_status.HTTP_400_BAD_REQUEST,
             )
-        student_ids, ids_error = _normalize_student_ids(student_ids)
-        if ids_error:
-            return Response({"detail": ids_error}, status=http_status.HTTP_400_BAD_REQUEST)
+        if context_source is not None:
+            from apps.support.messaging.manual_context_sources import (
+                ManualContextSourceError,
+                resolve_manual_notification_context_source,
+            )
+
+            try:
+                resolved_source = resolve_manual_notification_context_source(
+                    tenant=tenant,
+                    trigger=trigger,
+                    context_source=context_source,
+                    actor=getattr(request, "user", None),
+                )
+            except ManualContextSourceError as exc:
+                return Response({"detail": str(exc)}, status=http_status.HTTP_400_BAD_REQUEST)
+
+            if len(resolved_source.student_ids) > MAX_MANUAL_NOTIFICATION_RECIPIENTS:
+                return Response(
+                    {"detail": f"한 번에 최대 {MAX_MANUAL_NOTIFICATION_RECIPIENTS}명까지 미리보기할 수 있습니다."},
+                    status=http_status.HTTP_400_BAD_REQUEST,
+                )
+            source_context = dict(resolved_source.context)
+            source_context.update(context)
+            context = source_context
+            student_ids = resolved_source.student_ids
+        else:
+            student_ids, ids_error = _normalize_student_ids(student_ids)
+            if ids_error:
+                return Response({"detail": ids_error}, status=http_status.HTTP_400_BAD_REQUEST)
 
         preview = build_student_list_preview(
             tenant=tenant,

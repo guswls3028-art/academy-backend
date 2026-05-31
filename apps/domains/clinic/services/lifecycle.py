@@ -89,6 +89,13 @@ COMPLETE_ALLOWED_TRANSITIONS = {
     SessionParticipant.Status.BOOKED,
 }
 
+SESSION_CHANGE_NOTICE_STATUSES = (
+    SessionParticipant.Status.PENDING,
+    SessionParticipant.Status.BOOKED,
+    SessionParticipant.Status.ATTENDED,
+    SessionParticipant.Status.NO_SHOW,
+)
+
 
 def _locked_participant(*, tenant, participant_id: int) -> SessionParticipant:
     try:
@@ -127,6 +134,51 @@ def _session_schedule_text(session) -> str:
     return " ".join(part for part in (date, start_time, location) if part)
 
 
+def build_session_change_notification_context(
+    *,
+    session,
+    actor=None,
+    old_session=None,
+    domain_object_id: str | None = None,
+) -> dict[str, Any]:
+    location = getattr(session, "location", "") if session else ""
+    date = str(session.date) if session and session.date else ""
+    start_time = str(session.start_time)[:5] if session and getattr(session, "start_time", None) else ""
+    old_schedule = (
+        _session_schedule_text(old_session)
+        if old_session is not None
+        else "이전 안내된 클리닉 일정"
+    )
+    if not old_schedule:
+        old_schedule = "-"
+
+    context = {
+        "클리닉명": getattr(session, "title", "") if session else "",
+        "장소": f"[변경] {location}" if location else "[변경]",
+        "날짜": date,
+        "시간": start_time,
+        "클리닉장소": location,
+        "클리닉날짜": date,
+        "클리닉시간": start_time,
+        "클리닉기존일정": old_schedule,
+        "클리닉변동사항": _session_schedule_text(session) or "일정 변경",
+        "클리닉수정자": _actor_label(actor),
+    }
+    if domain_object_id:
+        context["_domain_object_id"] = domain_object_id
+    return context
+
+
+def session_change_notice_student_ids(*, tenant, session) -> list[int]:
+    ids = SessionParticipant.objects.filter(
+        tenant=tenant,
+        session=session,
+        status__in=SESSION_CHANGE_NOTICE_STATUSES,
+        student__deleted_at__isnull=True,
+    ).order_by("student_id").values_list("student_id", flat=True)
+    return list(dict.fromkeys(ids))
+
+
 def _reservation_notification(participant: SessionParticipant) -> ClinicNotificationEvent | None:
     if participant.status not in (
         SessionParticipant.Status.BOOKED,
@@ -154,23 +206,15 @@ def _booking_change_notification(
     actor,
 ) -> ClinicNotificationEvent:
     new_session = new_booking.session
-    new_loc = getattr(new_session, "location", "") if new_session else ""
-    new_date = str(new_session.date) if new_session and new_session.date else ""
-    new_time = str(new_session.start_time)[:5] if new_session and getattr(new_session, "start_time", None) else ""
-    new_schedule = _session_schedule_text(new_session)
     return ClinicNotificationEvent(
         trigger="clinic_reservation_changed",
         student=new_booking.student,
-        context={
-            "클리닉명": getattr(new_session, "title", "") if new_session else "",
-            "장소": f"[변경] {new_loc}" if new_loc else "[변경]",
-            "날짜": new_date,
-            "시간": new_time,
-            "클리닉기존일정": _session_schedule_text(old_session) or "-",
-            "클리닉변동사항": new_schedule or "일정 변경",
-            "클리닉수정자": _actor_label(actor),
-            "_domain_object_id": f"booking_change_{new_booking.pk}",
-        },
+        context=build_session_change_notification_context(
+            session=new_session,
+            old_session=old_session,
+            actor=actor,
+            domain_object_id=f"booking_change_{new_booking.pk}",
+        ),
     )
 
 

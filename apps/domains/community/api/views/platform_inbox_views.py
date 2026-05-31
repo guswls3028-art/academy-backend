@@ -174,11 +174,7 @@ class PlatformInboxAttachmentDownloadView(APIView):
         if not (title.startswith("[BUG]") or title.startswith("[FB]")):
             return Response({"detail": "Not an inbox attachment."}, status=status.HTTP_404_NOT_FOUND)
 
-        from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
-        url = generate_presigned_get_url_storage(
-            key=att.r2_key,
-            expires_in=3600,
-            filename=att.original_name,
-            content_type=att.content_type or None,
-        )
+        from apps.domains.community.services.attachment_urls import build_attachment_download_url
+
+        url = build_attachment_download_url(att, expires_in=3600, force_download=True)
         return Response({"url": url, "original_name": att.original_name})
