@@ -165,9 +165,14 @@ class PostAttachmentSerializer(serializers.ModelSerializer):
         if not obj.r2_key:
             return None
         try:
-            from apps.infrastructure.storage.r2 import generate_presigned_get_url
+            from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
-            return generate_presigned_get_url(key=obj.r2_key, expires_in=3600)
+            return generate_presigned_get_url_storage(
+                key=obj.r2_key,
+                expires_in=3600,
+                filename=obj.original_name,
+                content_type=obj.content_type or None,
+            )
         except Exception:
             return None
 

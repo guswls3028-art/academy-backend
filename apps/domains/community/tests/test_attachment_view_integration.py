@@ -65,10 +65,12 @@ class TestAttachmentViewIntegration(TestCase):
         resp = self._upload([f])
         self.assertEqual(resp.status_code, 400)
 
+    @patch("apps.infrastructure.storage.r2.generate_presigned_get_url_storage")
     @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
-    def test_allowed_jpg_uploads(self, mock_upload):
+    def test_allowed_jpg_uploads(self, mock_upload, mock_presign):
         """A-1: 허용 MIME은 정상 업로드 (R2 mock)."""
         mock_upload.return_value = None
+        mock_presign.return_value = "https://storage.example/photo.jpg"
         f = SimpleUploadedFile("photo.jpg", b"\xff\xd8\xff\xe0jpeg", content_type="image/jpeg")
         resp = self._upload([f])
         self.assertEqual(resp.status_code, 201, f"resp: {resp.data}")
@@ -78,6 +80,13 @@ class TestAttachmentViewIntegration(TestCase):
         self.assertEqual(att.original_name, "photo.jpg")
         # R2 키에 tenant/post 경로 포함
         self.assertIn(f"tenants/{self.tenant.id}/community/posts/{self.post.id}/", att.r2_key)
+        self.assertEqual(resp.data[0]["download_url"], "https://storage.example/photo.jpg")
+        mock_presign.assert_called_once_with(
+            key=att.r2_key,
+            expires_in=3600,
+            filename="photo.jpg",
+            content_type="image/jpeg",
+        )
 
     @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
     def test_filename_path_traversal_sanitized(self, mock_upload):

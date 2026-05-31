@@ -202,7 +202,7 @@ class SessionViewSet(viewsets.ModelViewSet):
 
         active_statuses = (
             SessionParticipant.Status.PENDING,
-            SessionParticipant.Status.APPROVED,
+            SessionParticipant.Status.BOOKED,
         )
         notifications: list[tuple] = []
         for participant in (

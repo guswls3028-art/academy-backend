@@ -7,6 +7,7 @@
 """
 import datetime
 import threading
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection, transaction
@@ -1396,6 +1397,31 @@ class ParticipantStatusTransitionAPITest(APITestCase, ClinicAPITestMixin):
         )
 
         self.assertEqual(resp.status_code, 404, resp.data)
+
+    @patch("apps.domains.clinic.views.participant_views._send_clinic_notification")
+    def test_staff_can_delete_session_with_active_participants(self, _mock_send_clinic_notification):
+        self.client.force_authenticate(user=self.admin)
+        session = self.data["clinic_session"]
+        self.make_participant(
+            self.tenant,
+            session,
+            self.student,
+            status=SessionParticipant.Status.BOOKED,
+        )
+        self.make_participant(
+            self.tenant,
+            session,
+            self.data["students"][1],
+            status=SessionParticipant.Status.PENDING,
+        )
+
+        resp = self.client.delete(
+            f"/api/v1/clinic/sessions/{session.id}/",
+            **self._headers(self.tenant),
+        )
+
+        self.assertEqual(resp.status_code, 204, resp.data)
+        self.assertFalse(ClinicSession.objects.filter(id=session.id).exists())
 
     def test_student_can_cancel_own_pending_booking(self):
         self.client.force_authenticate(user=self.student.user)
