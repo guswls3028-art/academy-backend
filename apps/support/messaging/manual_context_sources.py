@@ -9,6 +9,8 @@ from apps.domains.clinic.services.lifecycle import (
     session_change_notice_student_ids,
 )
 
+CLINIC_SESSION_CHANGE_CONTEXT_SOURCE = "clinic_session_change"
+
 
 class ManualContextSourceError(ValueError):
     pass
@@ -41,7 +43,7 @@ def resolve_manual_notification_context_source(
         raise ManualContextSourceError("context_source는 객체여야 합니다.")
 
     source_type = context_source.get("type")
-    if source_type != "clinic_session_change":
+    if source_type != CLINIC_SESSION_CHANGE_CONTEXT_SOURCE:
         raise ManualContextSourceError("지원하지 않는 context_source입니다.")
     if trigger != "clinic_reservation_changed":
         raise ManualContextSourceError("clinic_session_change는 클리닉 변경 알림에만 사용할 수 있습니다.")
