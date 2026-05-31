@@ -60,6 +60,19 @@ def _normalize_student_ids(raw_ids):
     return list(dict.fromkeys(normalized)), None
 
 
+def _format_context_keys(keys):
+    return ", ".join(sorted(str(key) for key in keys))
+
+
+def _context_source_override_detail(context_conflicts, per_student_conflicts):
+    parts = []
+    if context_conflicts:
+        parts.append(f"context: {_format_context_keys(context_conflicts)}")
+    if per_student_conflicts:
+        parts.append(f"context_per_student: {_format_context_keys(per_student_conflicts)}")
+    return "context_source가 생성한 변수는 요청 값으로 덮어쓸 수 없습니다. " + "; ".join(parts)
+
+
 class AttendanceNotificationPreviewView(APIView):
     """
     출결 알림 미리보기.
@@ -288,6 +301,24 @@ class ManualNotificationPreviewView(APIView):
             if len(resolved_source.student_ids) > MAX_MANUAL_NOTIFICATION_RECIPIENTS:
                 return Response(
                     {"detail": f"한 번에 최대 {MAX_MANUAL_NOTIFICATION_RECIPIENTS}명까지 미리보기할 수 있습니다."},
+                    status=http_status.HTTP_400_BAD_REQUEST,
+                )
+            protected_context_keys = set(resolved_source.context)
+            context_conflicts = protected_context_keys.intersection(context)
+            per_student_conflicts = {
+                key
+                for student_context in context_per_student.values()
+                for key in student_context
+                if key in protected_context_keys
+            }
+            if context_conflicts or per_student_conflicts:
+                return Response(
+                    {
+                        "detail": _context_source_override_detail(
+                            context_conflicts,
+                            per_student_conflicts,
+                        ),
+                    },
                     status=http_status.HTTP_400_BAD_REQUEST,
                 )
             source_context = dict(resolved_source.context)

@@ -51,7 +51,7 @@ class ManualNotificationContextSourceTests(TestCase):
             omr_code=f"99{ps_number[-2:]}{ps_number[-2:]}99",
         )
 
-    def test_manual_preview_resolves_clinic_session_change_context_source(self):
+    def _clinic_change_session(self):
         active_student = self._student("S020", "변경학생", "01088889999")
         cancelled_student = self._student("S021", "취소학생", "01077778888")
         session = Session.objects.create(
@@ -88,6 +88,10 @@ class ManualNotificationContextSourceTests(TestCase):
             enabled=False,
             message_mode="alimtalk",
         )
+        return active_student, cancelled_student, session
+
+    def test_manual_preview_resolves_clinic_session_change_context_source(self):
+        active_student, _cancelled_student, session = self._clinic_change_session()
 
         response = self._post(
             {
@@ -114,6 +118,46 @@ class ManualNotificationContextSourceTests(TestCase):
             {"key": "클리닉변동사항", "value": "2026-06-01 14:30 2관"},
             replacements,
         )
+
+    def test_manual_preview_rejects_context_source_shared_context_override(self):
+        _active_student, _cancelled_student, session = self._clinic_change_session()
+
+        response = self._post(
+            {
+                "trigger": "clinic_reservation_changed",
+                "context_source": {
+                    "type": "clinic_session_change",
+                    "session_id": session.id,
+                },
+                "context": {"클리닉변동사항": "임의 변경"},
+                "send_to": "parent",
+            }
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("context_source가 생성한 변수", response.data["detail"])
+        self.assertIn("context: 클리닉변동사항", response.data["detail"])
+
+    def test_manual_preview_rejects_context_source_per_student_override(self):
+        active_student, _cancelled_student, session = self._clinic_change_session()
+
+        response = self._post(
+            {
+                "trigger": "clinic_reservation_changed",
+                "context_source": {
+                    "type": "clinic_session_change",
+                    "session_id": session.id,
+                },
+                "context_per_student": {
+                    str(active_student.id): {"클리닉수정자": "다른 사람"},
+                },
+                "send_to": "parent",
+            }
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("context_source가 생성한 변수", response.data["detail"])
+        self.assertIn("context_per_student: 클리닉수정자", response.data["detail"])
 
     def test_manual_preview_rejects_context_source_for_wrong_trigger(self):
         response = self._post(

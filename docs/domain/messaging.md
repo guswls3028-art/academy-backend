@@ -26,6 +26,7 @@
 - `password_find_otp`는 legacy OTP 경로용 트리거다. 공개 로그인 화면의 현재 정본은 `/api/v1/auth/account-recovery/dispatch/`다.
 - 수동/자동 발송 UX와 템플릿 본문 자유 정책은 [messaging-alimtalk.md](messaging-alimtalk.md)와 `.claude/rules/domain.md §5-6`을 우선한다.
 - 클리닉 변경 알림처럼 도메인 상태에서 파생되는 수동 발송 변수/대상자는 프론트에서 재구현하지 않고 `context_source`로 백엔드 정본에 위임한다.
+- `context_source`가 만든 변수 키는 서버 계산값이 정본이다. 요청 `context`/`context_per_student`가 같은 키를 보내면 미리보기 API에서 거부한다.
 
 ## 3. 변경 규칙
 
@@ -36,7 +37,8 @@
 3. [messaging-alimtalk.md](messaging-alimtalk.md)의 봉투/편지 정책과 충돌하지 않는가.
 4. [account-recovery.md](account-recovery.md)의 계정복구 발송 흐름과 충돌하지 않는가.
 5. 수동 발송 컨텍스트가 도메인 상태에서 파생된다면 `manual_context_sources.py` 또는 해당 도메인 서비스가 정본인가.
-6. 오래된 표나 legacy 안내를 추가하지 않았는가.
+6. `context_source` 기반 변수 키가 클라이언트 입력으로 덮이지 않는가.
+7. 오래된 표나 legacy 안내를 추가하지 않았는가.
 
 ## 4. 정리 이력
 
