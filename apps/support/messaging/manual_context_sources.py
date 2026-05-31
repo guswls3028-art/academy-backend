@@ -32,6 +32,13 @@ def _parse_positive_int(value) -> int | None:
     return parsed if parsed > 0 else None
 
 
+def _clean_optional_text(value, *, max_length: int = 120) -> str:
+    if not isinstance(value, str):
+        return ""
+    compact = " ".join(value.split())
+    return compact[:max_length]
+
+
 def resolve_manual_notification_context_source(
     *,
     tenant,
@@ -57,7 +64,12 @@ def resolve_manual_notification_context_source(
     except Session.DoesNotExist as exc:
         raise ManualContextSourceError("클리닉 세션을 찾을 수 없습니다.") from exc
 
+    context = build_session_change_notification_context(session=session, actor=actor)
+    old_schedule = _clean_optional_text(context_source.get("old_schedule"))
+    if old_schedule:
+        context["클리닉기존일정"] = old_schedule
+
     return ManualContextSourceResult(
         student_ids=session_change_notice_student_ids(tenant=tenant, session=session),
-        context=build_session_change_notification_context(session=session, actor=actor),
+        context=context,
     )

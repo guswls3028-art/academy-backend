@@ -397,6 +397,7 @@ def consume_preview_token(token_str: str, tenant) -> dict:
     batch_id = uuid.uuid4()
     updated = NPT.objects.filter(
         token=token_uuid,
+        tenant=tenant,
         used_at__isnull=True,
     ).update(used_at=now, batch_id=batch_id)
 

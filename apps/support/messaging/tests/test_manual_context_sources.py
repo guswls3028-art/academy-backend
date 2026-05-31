@@ -138,6 +138,32 @@ class ManualNotificationContextSourceTests(TestCase):
         self.assertIn("context_source가 생성한 변수", response.data["detail"])
         self.assertIn("context: 클리닉변동사항", response.data["detail"])
 
+    def test_manual_preview_uses_context_source_old_schedule_snapshot(self):
+        active_student, _cancelled_student, session = self._clinic_change_session()
+
+        response = self._post(
+            {
+                "trigger": "clinic_reservation_changed",
+                "context_source": {
+                    "type": "clinic_session_change",
+                    "session_id": session.id,
+                    "old_schedule": "2026-05-31 13:00 1관",
+                },
+                "send_to": "parent",
+            }
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["total_count"], 1)
+        self.assertEqual(response.data["recipients"][0]["student_id"], active_student.id)
+
+        token = NotificationPreviewToken.objects.get(token=response.data["preview_token"])
+        replacements = token.payload["recipients"][0]["alimtalk_replacements"]
+        self.assertIn(
+            {"key": "클리닉기존일정", "value": "2026-05-31 13:00 1관"},
+            replacements,
+        )
+
     def test_manual_preview_rejects_context_source_per_student_override(self):
         active_student, _cancelled_student, session = self._clinic_change_session()
 
