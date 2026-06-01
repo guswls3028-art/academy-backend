@@ -181,6 +181,7 @@ flowchart LR
 
 | 버전 | 날짜 | 변경 |
 |------|------|------|
+| v16 | 2026-06-02 | `OMRSheetContract`를 런타임 SSOT로 승격. payload, 문서 기본값, 답안 저장, recognition fact, grading readiness가 같은 객관식/서술형 계약을 공유. |
 | v15.1 | 2026-05-26 | 차시 성적 화면 OMR 등록을 주 동선으로 고정. 시험 선택/업로드/보정 UX와 `SessionEnrollment` roster 기준 채점 정책을 SSOT에 명시. |
 | v14 | 2026-04 | reportlab 기반 `pdf_renderer.py`로 재구현. `/omr/defaults/`, `/omr/preview/`, `/omr/pdf/` 3종 엔드포인트 추가. `generate-omr/`은 deprecated. |
 | v7 | 2026-03-19 | HTML SSOT 기반 전면 재설계. 기존 v245_final.py 삭제. |

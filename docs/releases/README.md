@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.19.md](v1.2.19.md) | **CURRENT** | 2026-06-02 KST | OMR custom sheet shape matrix hardening |
+| [v1.2.20.md](v1.2.20.md) | **CURRENT** | 2026-06-02 KST | OMR v2 sheet contract pipeline refactor |
+| [v1.2.19.md](v1.2.19.md) | production-deployed / v1.2.20로 승계 | 2026-06-02 KST | OMR custom sheet shape matrix hardening |
 | [v1.2.18.md](v1.2.18.md) | production-deployed / v1.2.19로 승계 | 2026-06-02 KST | OMR objective multi-mark exact grading + manual score hardening |
 | [v1.2.17.md](v1.2.17.md) | production-deployed / v1.2.18로 승계 | 2026-06-01 KST | OMR mixed objective/essay sheet shape + tenant 2 real grading verification |
 | [v1.2.16.md](v1.2.16.md) | production-deployed / v1.2.17로 승계 | 2026-06-01 KST | OMR fact/readiness architecture + zero-answer grading prevention |
