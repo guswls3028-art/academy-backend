@@ -88,7 +88,7 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
     )
 
     shape = resolve_omr_sheet_shape(sheet=sheet)
-    if shape.choice_count > 0:
+    if shape.total_questions > 0 or shape.essay_count > 0:
         payload["question_count"] = shape.choice_count
         payload["mc_count"] = shape.choice_count
         payload["essay_count"] = shape.essay_count

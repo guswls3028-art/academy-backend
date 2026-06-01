@@ -11,6 +11,7 @@ from apps.domains.assets.omr.services.omr_document_service import OMRDocumentSer
 from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion, Sheet
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services import dispatcher
+from apps.support.omr.sheet_shape import resolve_omr_sheet_shape
 
 
 User = get_user_model()
@@ -66,6 +67,39 @@ class OMRDispatcherSheetResolutionTests(TestCase):
             total_questions=3,
         )
 
+    def _reset_sheet_shape(
+        self,
+        *,
+        total_questions: int,
+        choice_count: int = 0,
+        essay_count: int = 0,
+        score: float = 1.0,
+    ) -> list[ExamQuestion]:
+        self.sheet.total_questions = total_questions
+        self.sheet.choice_count = choice_count
+        self.sheet.essay_count = essay_count
+        self.sheet.save(update_fields=[
+            "total_questions",
+            "choice_count",
+            "essay_count",
+            "updated_at",
+        ])
+        ExamQuestion.objects.filter(sheet=self.sheet).delete()
+        return [
+            ExamQuestion.objects.create(sheet=self.sheet, number=number, score=score)
+            for number in range(1, total_questions + 1)
+        ]
+
+    def _submission(self) -> Submission:
+        return Submission.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            target_type=Submission.TargetType.EXAM,
+            target_id=self.regular_exam.id,
+            source=Submission.Source.OMR_SCAN,
+            payload={},
+        )
+
     def test_regular_exam_resolves_template_sheet(self):
         sheet = dispatcher.resolve_omr_sheet_for_exam(
             tenant=self.tenant,
@@ -108,27 +142,8 @@ class OMRDispatcherSheetResolutionTests(TestCase):
         self.assertEqual(doc.mc_count, 7)
 
     def test_ai_payload_uses_choice_count_not_total_questions(self):
-        self.sheet.total_questions = 25
-        self.sheet.choice_count = 20
-        self.sheet.essay_count = 5
-        self.sheet.save(
-            update_fields=[
-                "total_questions",
-                "choice_count",
-                "essay_count",
-                "updated_at",
-            ]
-        )
-        for number in range(3, 26):
-            ExamQuestion.objects.create(sheet=self.sheet, number=number, score=1)
-        submission = Submission.objects.create(
-            tenant=self.tenant,
-            user=self.user,
-            target_type=Submission.TargetType.EXAM,
-            target_id=self.regular_exam.id,
-            source=Submission.Source.OMR_SCAN,
-            payload={},
-        )
+        self._reset_sheet_shape(total_questions=25, choice_count=20, essay_count=5)
+        submission = self._submission()
 
         payload = dispatcher._build_ai_payload(submission)
 
@@ -140,23 +155,69 @@ class OMRDispatcherSheetResolutionTests(TestCase):
         self.assertEqual(payload["template_meta"]["essay_count"], 5)
         self.assertEqual(payload["template_meta"]["layout"]["n_cols"], 1)
 
+    def test_custom_sheet_type_matrix_resolves_payload_and_document_defaults(self):
+        cases = [
+            {
+                "name": "objective_only",
+                "total": 12,
+                "choice": 12,
+                "essay": 0,
+                "expected_cols": 1,
+            },
+            {
+                "name": "mixed_objective_essay",
+                "total": 25,
+                "choice": 20,
+                "essay": 5,
+                "expected_cols": 1,
+            },
+            {
+                "name": "essay_only",
+                "total": 5,
+                "choice": 0,
+                "essay": 5,
+                "expected_cols": 0,
+            },
+            {
+                "name": "large_objective_custom",
+                "total": 45,
+                "choice": 45,
+                "essay": 0,
+                "expected_cols": 3,
+            },
+        ]
+
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                self._reset_sheet_shape(
+                    total_questions=case["total"],
+                    choice_count=case["choice"],
+                    essay_count=case["essay"],
+                )
+                submission = self._submission()
+
+                payload = dispatcher._build_ai_payload(submission)
+                doc = OMRDocumentService.from_exam(
+                    exam=self.regular_exam,
+                    tenant=self.tenant,
+                )
+
+                self.assertEqual(payload["question_count"], case["choice"])
+                self.assertEqual(payload["mc_count"], case["choice"])
+                self.assertEqual(payload["essay_count"], case["essay"])
+                self.assertEqual(payload["total_question_count"], case["total"])
+                self.assertEqual(payload["omr"]["shape_source"], "sheet")
+                self.assertEqual(payload["template_meta"]["mc_count"], case["choice"])
+                self.assertEqual(payload["template_meta"]["essay_count"], case["essay"])
+                self.assertEqual(
+                    payload["template_meta"]["layout"]["n_cols"],
+                    case["expected_cols"],
+                )
+                self.assertEqual(doc.mc_count, case["choice"])
+                self.assertEqual(doc.essay_count, case["essay"])
+
     def test_legacy_sheet_shape_infers_choice_count_from_answer_key(self):
-        self.sheet.total_questions = 25
-        self.sheet.choice_count = 0
-        self.sheet.essay_count = 0
-        self.sheet.save(
-            update_fields=[
-                "total_questions",
-                "choice_count",
-                "essay_count",
-                "updated_at",
-            ]
-        )
-        questions = list(ExamQuestion.objects.filter(sheet=self.sheet).order_by("number"))
-        for number in range(3, 26):
-            questions.append(
-                ExamQuestion.objects.create(sheet=self.sheet, number=number, score=1)
-            )
+        questions = self._reset_sheet_shape(total_questions=25)
         AnswerKey.objects.create(
             exam=self.template_exam,
             answers={
@@ -183,6 +244,65 @@ class OMRDispatcherSheetResolutionTests(TestCase):
         self.assertEqual(payload["omr"]["shape_source"], "answer_key")
         self.assertEqual(doc.mc_count, 20)
         self.assertEqual(doc.essay_count, 5)
+
+    def test_legacy_sheet_shape_infers_choice_count_with_choice_answer_variants(self):
+        questions = self._reset_sheet_shape(total_questions=5)
+        AnswerKey.objects.create(
+            exam=self.template_exam,
+            answers={
+                str(questions[0].id): "①",
+                str(questions[1].id): "2,3",
+                str(questions[2].id): "2|4",
+                str(questions[3].id): "서술형",
+                str(questions[4].id): "풀이",
+            },
+        )
+        submission = self._submission()
+
+        shape = resolve_omr_sheet_shape(sheet=self.sheet, exam=self.regular_exam)
+        payload = dispatcher._build_ai_payload(submission)
+        doc = OMRDocumentService.from_exam(
+            exam=self.regular_exam,
+            tenant=self.tenant,
+        )
+
+        self.assertEqual(shape.source, "answer_key")
+        self.assertEqual(shape.choice_count, 3)
+        self.assertEqual(shape.essay_count, 2)
+        self.assertEqual(payload["question_count"], 3)
+        self.assertEqual(payload["essay_count"], 2)
+        self.assertEqual(doc.mc_count, 3)
+        self.assertEqual(doc.essay_count, 2)
+
+    def test_legacy_sheet_shape_supports_essay_only_from_answer_key(self):
+        questions = self._reset_sheet_shape(total_questions=3)
+        AnswerKey.objects.create(
+            exam=self.template_exam,
+            answers={
+                str(questions[0].id): "서술형 1",
+                str(questions[1].id): "서술형 2",
+                str(questions[2].id): "서술형 3",
+            },
+        )
+        submission = self._submission()
+
+        shape = resolve_omr_sheet_shape(sheet=self.sheet, exam=self.regular_exam)
+        payload = dispatcher._build_ai_payload(submission)
+        doc = OMRDocumentService.from_exam(
+            exam=self.regular_exam,
+            tenant=self.tenant,
+        )
+
+        self.assertEqual(shape.source, "answer_key")
+        self.assertEqual(shape.choice_count, 0)
+        self.assertEqual(shape.essay_count, 3)
+        self.assertEqual(payload["question_count"], 0)
+        self.assertEqual(payload["mc_count"], 0)
+        self.assertEqual(payload["essay_count"], 3)
+        self.assertEqual(payload["template_meta"]["mc_count"], 0)
+        self.assertEqual(payload["template_meta"]["layout"]["n_cols"], 0)
+        self.assertEqual(doc.mc_count, 0)
+        self.assertEqual(doc.essay_count, 3)
 
     def test_omr_document_rejects_cross_tenant_template_sheet(self):
         self.regular_exam.template_exam = self.other_exam

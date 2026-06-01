@@ -60,7 +60,7 @@ class GenerateOMRSheetAssetView(APIView):
         essay_count = int(request.data.get("essay_count", 0) or default_essay)
         n_choices = int(request.data.get("n_choices", 5) or 5)
 
-        if mc_count <= 0:
+        if mc_count <= 0 and essay_count <= 0:
             mc_count = total_questions or 20
 
         if mc_count > 45:

@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Any
 
-
-_CHOICE_ANSWER_RE = re.compile(r"^[1-5](?:\s*,\s*[1-5])*$")
+_CHOICE_LABELS = {"1", "2", "3", "4", "5"}
 
 
 @dataclass(frozen=True)
@@ -117,4 +115,13 @@ def _infer_choice_count_from_answer_key(*, sheet, exam=None) -> int | None:
 
 
 def _is_choice_answer(value: Any) -> bool:
-    return bool(_CHOICE_ANSWER_RE.match(str(value or "").strip()))
+    from apps.domains.results.services.answer_matching import correct_answer_sets
+
+    answer_sets = correct_answer_sets(value)
+    if not answer_sets:
+        return False
+    return all(
+        token in _CHOICE_LABELS
+        for answer_set in answer_sets
+        for token in answer_set
+    )

@@ -81,7 +81,7 @@ class OMRDocumentService:
                 from apps.support.omr.sheet_shape import resolve_omr_sheet_shape
 
                 shape = resolve_omr_sheet_shape(sheet=sheet, exam=sheet_exam)
-                _mc_count = shape.choice_count if shape.choice_count > 0 else 20
+                _mc_count = shape.choice_count if shape.total_questions > 0 else 20
                 if essay_count is None:
                     essay_count = shape.essay_count
             else:
