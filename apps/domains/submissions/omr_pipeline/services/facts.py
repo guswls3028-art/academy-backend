@@ -89,6 +89,7 @@ def record_recognition_fact(
         if isinstance(worker_result.get("aligned"), bool)
         else None,
         "alignment_method": str(worker_result.get("alignment_method") or ""),
+        "contract_snapshot": exam_structure.contract_snapshot,
         "raw_result": worker_result if isinstance(worker_result, dict) else {},
         "error_message": str(error or ""),
         "received_at": timezone.now(),
@@ -209,7 +210,11 @@ def evaluate_omr_grade_readiness(submission: Submission) -> OMRGradeReadiness:
         missing.append("student_match")
 
     answer_count = SubmissionAnswer.objects.filter(submission=submission).count()
-    if answer_count <= 0:
+    expected_answer_count = _latest_expected_answer_count(submission)
+    if expected_answer_count is not None and expected_answer_count > 0:
+        if answer_count != expected_answer_count:
+            missing.append(f"answers:{answer_count}/{expected_answer_count}")
+    elif answer_count <= 0:
         missing.append("answers")
 
     meta = submission.meta if isinstance(submission.meta, dict) else {}
@@ -254,5 +259,20 @@ def write_readiness_meta(
 def _float_or_none(value: Any) -> float | None:
     try:
         return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _latest_expected_answer_count(submission: Submission) -> int | None:
+    run = (
+        OMRRecognitionRun.objects.filter(submission=submission)
+        .order_by("-received_at", "-id")
+        .first()
+    )
+    if not run or not isinstance(run.contract_snapshot, dict):
+        return None
+    value = run.contract_snapshot.get("choice_count")
+    try:
+        return int(value)
     except (TypeError, ValueError):
         return None

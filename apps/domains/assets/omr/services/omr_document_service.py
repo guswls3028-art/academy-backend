@@ -78,12 +78,12 @@ class OMRDocumentService:
             sheet_exam = resolve_template_exam_for_tenant(exam, tenant)
             sheet = getattr(sheet_exam, "sheet", None)
             if sheet:
-                from apps.support.omr.sheet_shape import resolve_omr_sheet_shape
+                from apps.support.omr.contract_builder import build_omr_sheet_contract
 
-                shape = resolve_omr_sheet_shape(sheet=sheet, exam=sheet_exam)
-                _mc_count = shape.choice_count if shape.total_questions > 0 else 20
+                contract = build_omr_sheet_contract(sheet=sheet, exam=sheet_exam)
+                _mc_count = contract.choice_count if contract.total_questions > 0 else 20
                 if essay_count is None:
-                    essay_count = shape.essay_count
+                    essay_count = contract.essay_count
             else:
                 _mc_count = 20
 

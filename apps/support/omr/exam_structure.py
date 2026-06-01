@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+from academy.domain.omr import OMRSheetContract
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +14,12 @@ class OmrExamStructure:
     qnum_to_pk: dict[int, int]
     correct_answers_by_pk: dict[str, Any]
     qnum_map_built: bool
+    contract: OMRSheetContract | None = None
+    contract_snapshot: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def expected_objective_count(self) -> int:
+        return int(self.contract.choice_count if self.contract else 0)
 
 
 def empty_exam_structure() -> OmrExamStructure:
@@ -23,8 +31,9 @@ def load_submission_exam_structure(submission) -> OmrExamStructure:
         return empty_exam_structure()
 
     try:
-        from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion, Sheet
+        from apps.domains.exams.models import AnswerKey, Exam, Sheet
         from apps.domains.exams.services.template_resolver import resolve_template_exam
+        from apps.support.omr.contract_builder import build_omr_sheet_contract
 
         exam = Exam.objects.filter(
             id=int(submission.target_id),
@@ -36,10 +45,13 @@ def load_submission_exam_structure(submission) -> OmrExamStructure:
         template_exam = resolve_template_exam(exam)
         qnum_to_pk: dict[int, int] = {}
         qnum_map_built = False
+        contract = None
+        contract_snapshot: dict[str, Any] = {}
         sheet = Sheet.objects.filter(exam=template_exam).first()
         if sheet:
-            for q in ExamQuestion.objects.filter(sheet=sheet).only("id", "number"):
-                qnum_to_pk[int(q.number)] = int(q.id)
+            contract = build_omr_sheet_contract(sheet=sheet, exam=template_exam)
+            qnum_to_pk = contract.objective_question_ids_by_number
+            contract_snapshot = contract.to_dict(include_template_meta=False)
             qnum_map_built = True
 
         correct_answers_by_pk: dict[str, Any] = {}
@@ -51,6 +63,8 @@ def load_submission_exam_structure(submission) -> OmrExamStructure:
             qnum_to_pk=qnum_to_pk,
             correct_answers_by_pk=correct_answers_by_pk,
             qnum_map_built=qnum_map_built,
+            contract=contract,
+            contract_snapshot=contract_snapshot,
         )
     except Exception:
         logger.exception(

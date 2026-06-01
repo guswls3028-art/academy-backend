@@ -435,6 +435,8 @@ def handle_ai_job(job: AIJob) -> AIResult:
             _record_progress(job.id, "detecting_answers", 95, step_index=5, step_total=6, step_name_display="답안감지", step_percent=100, tenant_id=tenant_id)
 
             _record_progress(job.id, "done", 100, step_index=6, step_total=6, step_name_display="완료", step_percent=100, tenant_id=tenant_id)
+            omr_payload_meta = payload.get("omr") if isinstance(payload.get("omr"), dict) else {}
+            omr_contract = payload.get("omr_contract") if isinstance(payload.get("omr_contract"), dict) else {}
 
             return AIResult.done(
                 job.id,
@@ -448,6 +450,9 @@ def handle_ai_job(job: AIJob) -> AIResult:
                     "input": input_meta,
                     "input_image_size": {"width": int(img_bgr.shape[1]), "height": int(img_bgr.shape[0])},
                     "input_was_resized": bool(was_resized),
+                    "expected_answer_count": int(payload.get("question_count") or 0),
+                    "omr_contract_version": str(omr_contract.get("schema_version") or omr_payload_meta.get("contract_version") or ""),
+                    "omr_contract_fingerprint": str(omr_contract.get("fingerprint") or omr_payload_meta.get("contract_fingerprint") or ""),
                     "identifier": ident,
                     "answers": answers,
                     **aligned_preview,

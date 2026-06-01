@@ -9,8 +9,11 @@ from apps.core.models import Tenant
 from apps.domains.ai.models import AIJobModel
 from apps.domains.assets.omr.services.omr_document_service import OMRDocumentService
 from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion, Sheet
-from apps.domains.submissions.models import Submission
+from apps.domains.submissions.models import OMRDetectedAnswer, Submission, SubmissionAnswer
+from apps.domains.submissions.omr_pipeline.services.answer_persister import persist_answers
+from apps.domains.submissions.omr_pipeline.services.facts import record_recognition_fact
 from apps.domains.submissions.services import dispatcher
+from apps.support.omr.exam_structure import load_submission_exam_structure
 from apps.support.omr.sheet_shape import resolve_omr_sheet_shape
 
 
@@ -151,9 +154,94 @@ class OMRDispatcherSheetResolutionTests(TestCase):
         self.assertEqual(payload["mc_count"], 20)
         self.assertEqual(payload["essay_count"], 5)
         self.assertEqual(payload["total_question_count"], 25)
+        self.assertEqual(payload["omr_contract"]["choice_count"], 20)
+        self.assertEqual(payload["omr_contract"]["essay_count"], 5)
+        self.assertEqual(payload["omr_contract"]["schema_version"], "omr_sheet_contract.v2")
+        self.assertEqual([q["number"] for q in payload["questions"]], list(range(1, 21)))
         self.assertEqual(payload["template_meta"]["mc_count"], 20)
         self.assertEqual(payload["template_meta"]["essay_count"], 5)
         self.assertEqual(payload["template_meta"]["layout"]["n_cols"], 1)
+
+    def test_mixed_sheet_contract_rejects_essay_numbers_as_objective_answers(self):
+        self._reset_sheet_shape(total_questions=25, choice_count=20, essay_count=5)
+        submission = self._submission()
+        exam_structure = load_submission_exam_structure(submission)
+        answers = [
+            {
+                "question_id": number,
+                "detected": ["1"],
+                "status": "ok",
+                "marking": "single",
+                "confidence": 0.99,
+            }
+            for number in range(1, 22)
+        ]
+
+        result = persist_answers(
+            submission=submission,
+            answers_payload=answers,
+            worker_result_meta={"version": "v15", "aligned": True},
+            exam_structure=exam_structure,
+        )
+        run = record_recognition_fact(
+            submission=submission,
+            job_id="mixed-extra-q21",
+            status="DONE",
+            error=None,
+            worker_result={"version": "v15", "aligned": True, "answers": answers},
+            exam_structure=exam_structure,
+        )
+
+        self.assertEqual(exam_structure.expected_objective_count, 20)
+        self.assertEqual(max(exam_structure.qnum_to_pk), 20)
+        self.assertEqual(SubmissionAnswer.objects.filter(submission=submission).count(), 20)
+        self.assertTrue(result.manual_required)
+        self.assertIn("ANSWER_QNUM_NOT_IN_SHEET", result.manual_review_reasons)
+        self.assertIn("ANSWER_COUNT_MISMATCH", result.manual_review_reasons)
+        self.assertEqual(result.answer_stats["expected_total"], 20)
+        self.assertEqual(result.answer_stats["raw_total"], 21)
+        self.assertEqual(result.answer_stats["unique_total"], 20)
+        self.assertEqual(run.contract_snapshot["choice_count"], 20)
+        self.assertEqual(run.contract_snapshot["essay_count"], 5)
+        self.assertEqual(
+            OMRDetectedAnswer.objects.filter(submission=submission, recognition_run=run).count(),
+            21,
+        )
+        q21_fact = OMRDetectedAnswer.objects.get(
+            submission=submission,
+            recognition_run=run,
+            question_number=21,
+        )
+        self.assertIsNone(q21_fact.exam_question_id)
+
+    def test_contract_flags_duplicate_answer_number_even_when_raw_count_matches(self):
+        self._reset_sheet_shape(total_questions=20, choice_count=20, essay_count=0)
+        submission = self._submission()
+        exam_structure = load_submission_exam_structure(submission)
+        answers = [
+            {
+                "question_id": number,
+                "detected": ["1"],
+                "status": "ok",
+                "marking": "single",
+                "confidence": 0.99,
+            }
+            for number in list(range(1, 20)) + [19]
+        ]
+
+        result = persist_answers(
+            submission=submission,
+            answers_payload=answers,
+            worker_result_meta={"version": "v15", "aligned": True},
+            exam_structure=exam_structure,
+        )
+
+        self.assertTrue(result.manual_required)
+        self.assertIn("ANSWER_COUNT_MISMATCH", result.manual_review_reasons)
+        self.assertEqual(result.answer_stats["expected_total"], 20)
+        self.assertEqual(result.answer_stats["raw_total"], 20)
+        self.assertEqual(result.answer_stats["unique_total"], 19)
+        self.assertEqual(SubmissionAnswer.objects.filter(submission=submission).count(), 19)
 
     def test_custom_sheet_type_matrix_resolves_payload_and_document_defaults(self):
         cases = [
@@ -179,9 +267,9 @@ class OMRDispatcherSheetResolutionTests(TestCase):
                 "expected_cols": 0,
             },
             {
-                "name": "large_objective_custom",
-                "total": 45,
-                "choice": 45,
+                "name": "max_objective_custom",
+                "total": 60,
+                "choice": 60,
                 "essay": 0,
                 "expected_cols": 3,
             },

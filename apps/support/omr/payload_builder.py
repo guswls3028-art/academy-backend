@@ -15,12 +15,9 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from apps.domains.assets.omr.services.meta_generator import (
-    build_objective_template_meta,
-)
 from apps.domains.exams.models import ExamQuestion, Sheet
 from apps.domains.submissions.models import Submission
-from apps.support.omr.sheet_shape import resolve_omr_sheet_shape
+from apps.support.omr.contract_builder import build_omr_sheet_contract
 from apps.support.omr.sheet_resolver import resolve_omr_sheet_for_submission
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 
@@ -55,15 +52,20 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
 
     sheet: Sheet = resolve_omr_sheet_for_submission(submission, sheet_id)
     sheet_id = int(sheet.id)
+    contract = build_omr_sheet_contract(sheet=sheet)
+    objective_numbers = set(contract.objective_question_numbers)
 
     questions_payload: list[dict[str, Any]] = []
     qs = ExamQuestion.objects.filter(sheet_id=sheet_id).order_by("number")
     for q in qs:
+        number = int(getattr(q, "number", 0) or 0)
+        if number not in objective_numbers:
+            continue
         region_meta = getattr(q, "region_meta", None) or getattr(q, "meta", None)
         questions_payload.append(
             {
                 "exam_question_id": int(q.id),
-                "number": int(getattr(q, "number", 0) or 0),
+                "number": number,
                 "region_meta": region_meta,
             }
         )
@@ -81,22 +83,20 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
             "target_id": int(submission.target_id),
             "file_key": submission.file_key,
             "download_url": download_url,
-            "omr": {"sheet_id": sheet_id},
+            "omr": {
+                "sheet_id": sheet_id,
+                "shape_source": contract.shape_source,
+                "contract_version": contract.schema_version,
+                "contract_fingerprint": contract.fingerprint(),
+            },
+            "omr_contract": contract.to_dict(include_template_meta=False),
             "questions": questions_payload,
             "mode": mode,
         }
     )
 
-    shape = resolve_omr_sheet_shape(sheet=sheet)
-    if shape.total_questions > 0 or shape.essay_count > 0:
-        payload["question_count"] = shape.choice_count
-        payload["mc_count"] = shape.choice_count
-        payload["essay_count"] = shape.essay_count
-        payload["total_question_count"] = shape.total_questions
-        payload["omr"]["shape_source"] = shape.source
-        payload["template_meta"] = build_objective_template_meta(
-            question_count=shape.choice_count,
-            essay_count=shape.essay_count,
-        )
+    if contract.total_questions > 0 or contract.essay_count > 0:
+        payload.update(contract.worker_shape())
+        payload["template_meta"] = contract.template_meta
 
     return payload

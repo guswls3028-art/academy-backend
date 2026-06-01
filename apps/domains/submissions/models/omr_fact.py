@@ -28,6 +28,7 @@ class OMRRecognitionRun(BaseModel):
     answer_status_counts = models.JSONField(default=dict, blank=True)
     aligned = models.BooleanField(null=True, blank=True)
     alignment_method = models.CharField(max_length=64, blank=True)
+    contract_snapshot = models.JSONField(default=dict, blank=True)
     raw_result = models.JSONField(default=dict, blank=True)
     error_message = models.TextField(blank=True, default="")
     received_at = models.DateTimeField(default=timezone.now, db_index=True)

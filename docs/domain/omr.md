@@ -8,10 +8,55 @@
 
 | 구성요소 | SSOT 파일 | 역할 |
 |----------|-----------|------|
-| **답안지 디자인** | `frontend/public/omr-sheet.html` | 인쇄/PDF용 OMR 답안지 (브라우저 렌더링) |
+| **시험지 계약** | `backend/academy/domain/omr/contract.py` | OMR이 읽을 객관식/서술형 경계, 문제 ID 매핑, 계약 fingerprint |
+| **계약 빌더** | `backend/apps/support/omr/contract_builder.py` | `Sheet`/`ExamQuestion`/`AnswerKey`에서 `OMRSheetContract` 생성 |
+| **답안지 렌더링** | `backend/apps/domains/assets/omr/renderer/pdf_renderer.py` | 인쇄/PDF용 OMR 답안지 |
 | **좌표 메타** | `backend/apps/domains/assets/omr/services/meta_generator.py` | mm 단위 버블/ROI 좌표 (AI 워커용) |
-| **답안 검출** | `backend/apps/worker/ai_worker/ai/omr/engine.py` | 스캔 이미지에서 마킹 감지 |
-| **식별자 검출** | `backend/apps/worker/ai_worker/ai/omr/identifier.py` | 전화번호 뒤 8자리 감지 |
+| **답안 검출** | `backend/academy/adapters/ai/omr/engine.py` | 스캔 이미지에서 마킹 감지 |
+| **식별자 검출** | `backend/academy/adapters/ai/omr/identifier.py` | 전화번호 뒤 8자리 감지 |
+| **결과 반영** | `backend/apps/domains/submissions/services/ai_omr_result_mapper.py` | 워커 결과를 답안/fact/학생매칭 상태로 반영 |
+| **인식 fact** | `backend/apps/domains/submissions/models/omr_fact.py` | 인식 run, 문항별 감지값, 학생 매칭 fact 저장 |
+
+## OMR v2 계약 구조
+
+OMR은 더 이상 `total_questions` 하나를 여러 서비스가 각자 해석하지 않는다. 모든 런타임 경로는 먼저 `OMRSheetContract`를 만든 뒤 그 계약을 기준으로 렌더링, 워커 payload, 답안 저장, 인식 fact, 채점 준비도를 판단한다.
+
+```mermaid
+flowchart LR
+    A["Sheet / ExamQuestion / AnswerKey"] --> B["OMRSheetContract"]
+    B --> C["PDF renderer defaults"]
+    B --> D["AI worker payload + template_meta"]
+    B --> E["qnum -> ExamQuestion.id mapping"]
+    D --> F["AI worker recognition"]
+    F --> G["SubmissionAnswer compatibility rows"]
+    F --> H["OMRRecognitionRun / OMRDetectedAnswer facts"]
+    G --> I["grading readiness"]
+    H --> I
+    I --> J["ExamResult / Result sync"]
+```
+
+### 계약 원칙
+- `total_questions`는 시험 전체 문항 수다.
+- `choice_count`는 AI가 실제로 버블을 읽는 객관식 문항 수다.
+- `essay_count`는 자동 버블 인식 대상이 아닌 서술형 문항 수다.
+- 객관식 답안 저장은 `question_number <= choice_count`이고 계약에 등록된 문제 ID가 있는 경우에만 허용한다.
+- 워커가 `20문항 객관식 + 5문항 서술형` 시험에서 q21~q25 답안을 보내면 그 값은 fact로는 남기되 `SubmissionAnswer`로 저장하지 않는다.
+- 워커 원본 답안 수와 계약상 객관식 수가 다르면 `ANSWER_COUNT_MISMATCH`로 수동 검토가 필요하다.
+- `OMRRecognitionRun.contract_snapshot`은 인식 당시 계약의 fingerprint와 객관식/서술형 경계를 저장한다.
+
+### 레거시 호환
+- `Sheet.choice_count`/`essay_count`가 있으면 그 값을 우선한다.
+- 구형 sheet처럼 경계가 없으면 `AnswerKey`를 기준으로 객관식 답(`1~5`, `2,3`, `2|4`, `①` 등)과 서술형 텍스트를 구분해 경계를 추론한다.
+- 추론도 불가능하면 기존 호환을 위해 `total_questions` 전체를 객관식으로 본다.
+
+### 검증 매트릭스
+- 객관식 전용: `12/0`, `20/0`, `60/0`
+- 혼합형: `20/5`에서 q1~q20만 답안 저장, q21~q25는 서술형으로 보존
+- 서술형 전용: `0/3`에서 객관식 ROI 0개, 자동 객관식 채점 불가
+- 레거시 추론: `①`, `2,3`, `2|4`, 서술형 텍스트 혼합 answer key
+- 워커 이상 응답: 원본 답안 수와 계약 객관식 수 불일치 시 `ANSWER_COUNT_MISMATCH`
+- 워커 이상 응답: 원본 답안 수가 맞아도 중복 문항 때문에 고유 객관식 번호 수가 부족하면 `ANSWER_COUNT_MISMATCH`
+- 운영 완료 판정: 배포 후 deploy verification, 운영 sheet 분포 read-only audit, Tenant 2 실제 OMR canary 재인식/재채점 또는 rollback 검증
 
 ## 레이아웃 (A4 Landscape, 297×210mm)
 
@@ -76,15 +121,17 @@
 ## 자동채점 파이프라인
 
 ```
-1. 선생님: OMR 답안지 인쇄 (omr-sheet.html)
+1. 선생님: OMR 답안지 인쇄/PDF 생성
 2. 학생: 답안지에 마킹 (사인펜)
 3. 선생님: 스캔 파일 업로드 (batch upload)
 4. 시스템:
-   a. warp.py → A4 landscape로 보정 (90/180/270도 회전 포함)
-   b. identifier.py → 전화번호 8자리 추출 → 학생 매칭
-   c. engine.py → 객관식 버블 감지
-   d. ai_omr_result_mapper.py → Submission에 결과 반영
-   e. grader.py → 정답 대조 → ExamResult 생성
+   a. `OMRSheetContract` 생성 → 객관식/서술형 경계와 fingerprint 확정
+   b. `warp.py` → A4 landscape로 보정 (90/180/270도 회전 포함)
+   c. `identifier.py` → 전화번호 8자리 추출 → 학생 매칭 fact 기록
+   d. `engine.py` → 계약상 객관식 버블만 감지
+   e. `ai_omr_result_mapper.py` → 답안 projection + 인식 fact 저장
+   f. `grading_readiness.py` → 학생 매칭/답안 수/수동검토 조건 확인
+   g. `ExamGradingService` → 정답 대조 → `ExamResult` 생성
 5. 선생님: 결과 확인, 필요 시 수동 보정
 ```
 
@@ -94,9 +141,9 @@
 |---------|----------|
 | 1~20 | 1컬럼 |
 | 21~40 | 2컬럼 (균등 분할) |
-| 41~45 | 3컬럼 (균등 분할) |
+| 41~60 | 3컬럼 (균등 분할) |
 
-서술형은 별도 컬럼 (번호 독립: 1번~)
+서술형은 별도 작성 영역이며 자동 버블 인식 대상이 아니다. 시험 문항 번호는 전체 문항 기준으로 유지하되, OMR 엔진은 `choice_count`까지만 객관식 ROI를 만든다.
 
 ## 프론트엔드 연동
 

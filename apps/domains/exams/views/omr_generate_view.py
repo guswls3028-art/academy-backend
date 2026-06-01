@@ -19,7 +19,7 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from apps.domains.exams.models import Exam
-from apps.domains.assets.omr.services.meta_generator import build_omr_meta
+from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS, build_omr_meta
 from apps.core.permissions import TenantResolvedAndStaff
 
 
@@ -47,11 +47,11 @@ class GenerateOMRSheetAssetView(APIView):
         total_questions = int(getattr(sheet, "total_questions", 0) or 0)
 
         if request.data.get("mc_count") in (None, "") and sheet:
-            from apps.support.omr.sheet_shape import resolve_omr_sheet_shape
+            from apps.support.omr.contract_builder import build_omr_sheet_contract
 
-            shape = resolve_omr_sheet_shape(sheet=sheet, exam=exam)
-            default_mc = shape.choice_count or total_questions
-            default_essay = shape.essay_count
+            contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
+            default_mc = contract.choice_count or total_questions
+            default_essay = contract.essay_count
         else:
             default_mc = total_questions
             default_essay = 0
@@ -63,9 +63,9 @@ class GenerateOMRSheetAssetView(APIView):
         if mc_count <= 0 and essay_count <= 0:
             mc_count = total_questions or 20
 
-        if mc_count > 45:
+        if mc_count > MAX_MC_QUESTIONS:
             return Response(
-                {"detail": "객관식은 최대 45문항입니다."},
+                {"detail": f"객관식은 최대 {MAX_MC_QUESTIONS}문항입니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

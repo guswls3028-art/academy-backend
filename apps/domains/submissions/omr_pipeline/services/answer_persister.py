@@ -72,9 +72,13 @@ def persist_answers(
     qnum_to_pk = exam_structure.qnum_to_pk
     correct_answers_by_pk = exam_structure.correct_answers_by_pk
     qnum_map_built = exam_structure.qnum_map_built
+    expected_objective_count = exam_structure.expected_objective_count
 
     answer_stats: dict[str, Any] = {
         "total": 0,
+        "raw_total": 0,
+        "unique_total": 0,
+        "expected_total": expected_objective_count if qnum_map_built else None,
         "ok": 0,
         "blank": 0,
         "ambiguous": 0,
@@ -84,6 +88,7 @@ def persist_answers(
     }
     reasons: list[str] = []
     unmapped: list[int] = []
+    mapped_question_numbers: set[int] = set()
     manual_required = False
 
     for a in answers_payload:
@@ -92,6 +97,7 @@ def persist_answers(
         raw_id = a.get("exam_question_id") or a.get("question_id")
         if not raw_id:
             continue
+        answer_stats["raw_total"] += 1
 
         # question_number → ExamQuestion PK 변환.
         # qnum 매핑이 구축되었지만 해당 번호가 매핑에 없으면 다른 시험 PK 충돌 위험 → skip.
@@ -109,6 +115,7 @@ def persist_answers(
             eqid = eqid_opt
         else:
             eqid = raw_id_int
+        mapped_question_numbers.add(raw_id_int)
 
         detected_values = [
             str(x).strip() for x in (a.get("detected") or []) if str(x).strip()
@@ -196,6 +203,14 @@ def persist_answers(
     if unmapped:
         manual_required = True
         reasons.append("ANSWER_QNUM_NOT_IN_SHEET")
+
+    answer_stats["unique_total"] = len(mapped_question_numbers)
+    if qnum_map_built and (
+        expected_objective_count != answer_stats["raw_total"]
+        or expected_objective_count != answer_stats["unique_total"]
+    ):
+        manual_required = True
+        reasons.append("ANSWER_COUNT_MISMATCH")
 
     # 평균 신뢰도 보조 필드 + 누적값 정리
     if answer_stats["n_conf"] > 0:
