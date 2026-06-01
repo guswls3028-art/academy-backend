@@ -1279,7 +1279,7 @@ class IdentifierMatcherTests(TestCase):
 
 
 class StateRecoveryTests(TestCase):
-    """state_recovery: timeout 넘은 OMR sub 자동 FAILED 전환."""
+    """state_recovery: timeout/late-result OMR 자동 복구."""
 
     def setUp(self):
         from datetime import timedelta
@@ -1314,6 +1314,118 @@ class StateRecoveryTests(TestCase):
         Submission.objects.filter(id=s.id).update(updated_at=target_dt)
         s.refresh_from_db()
         return s
+
+    def _make_done_zero_answer_submission(self):
+        student_result = create_student_account(
+            tenant=self.tenant,
+            student_data={
+                "ps_number": "SR001",
+                "name": "상태복구 학생",
+                "phone": "01077770000",
+                "parent_phone": "",
+                "omr_code": "87654321",
+                "school_type": "HIGH",
+            },
+            password="test1234",
+        )
+        lecture = Lecture.objects.create(
+            tenant=self.tenant, title="SR Lecture", name="SR Lecture", subject="MATH"
+        )
+        session = Session.objects.create(lecture=lecture, order=1, title="SR Session")
+        enrollment = Enrollment.objects.create(
+            tenant=self.tenant,
+            student=student_result.student,
+            lecture=lecture,
+            status="ACTIVE",
+        )
+        SessionEnrollment.objects.create(
+            tenant=self.tenant, session=session, enrollment=enrollment
+        )
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="SR Exam",
+            subject="MATH",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+            max_attempts=1,
+        )
+        exam.sessions.add(session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=enrollment)
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=2)
+        q1 = ExamQuestion.objects.create(sheet=sheet, number=1, score=50)
+        q2 = ExamQuestion.objects.create(sheet=sheet, number=2, score=50)
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={str(q1.id): "1", str(q2.id): "2"},
+        )
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.staff,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            enrollment_id=enrollment.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.ANSWERS_READY,
+            file_key="late-ai.jpg",
+        )
+
+        zero_result = grade_submission(submission.id)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DONE)
+        self.assertEqual(float(zero_result.total_score), 0.0)
+        self.assertFalse(SubmissionAnswer.objects.filter(submission=submission).exists())
+        return submission, enrollment, exam
+
+    def _create_late_ai_result(self, submission: Submission):
+        from django.apps import apps
+        from django.utils import timezone as dj_tz
+
+        AIJobModel = apps.get_model("ai_domain", "AIJobModel")
+        AIResultModel = apps.get_model("ai_domain", "AIResultModel")
+        job = AIJobModel.objects.create(
+            job_id=f"late-ai-{submission.id}",
+            job_type="omr_scan",
+            status="DONE",
+            tenant_id=str(submission.tenant_id),
+            source_domain="submissions",
+            source_id=str(submission.id),
+            completed_at=dj_tz.now(),
+        )
+        AIResultModel.objects.create(
+            job=job,
+            payload={
+                "submission_id": submission.id,
+                "job_id": job.job_id,
+                "tenant_id": str(submission.tenant_id),
+                "status": "DONE",
+                "version": "v15",
+                "result": {
+                    "aligned": True,
+                    "alignment_method": "test",
+                    "answers": [
+                        {
+                            "question_id": 1,
+                            "detected": ["1"],
+                            "status": "ok",
+                            "marking": "1",
+                            "confidence": 0.99,
+                            "version": "v15",
+                        },
+                        {
+                            "question_id": 2,
+                            "detected": ["2"],
+                            "status": "ok",
+                            "marking": "2",
+                            "confidence": 0.99,
+                            "version": "v15",
+                        },
+                    ],
+                    "identifier": None,
+                },
+            },
+        )
+        return job
 
     def test_recovers_stuck_grading(self):
         from apps.domains.submissions.omr_pipeline.services.state_recovery import (
@@ -1382,3 +1494,77 @@ class StateRecoveryTests(TestCase):
         )
         report = recover_stuck_submissions(actor="test")
         self.assertNotIn(s.id, report.recovered)
+
+    def test_late_ai_recovery_hydrates_done_zero_score(self):
+        from academy.application.use_cases.omr.late_answer_recovery import (
+            recover_late_ai_answers,
+        )
+
+        submission, enrollment, exam = self._make_done_zero_answer_submission()
+        self._create_late_ai_result(submission)
+
+        report = recover_late_ai_answers(actor="test")
+
+        self.assertIn(submission.id, report.recovered)
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DONE)
+        self.assertEqual(
+            SubmissionAnswer.objects.filter(submission=submission).count(),
+            2,
+        )
+        self.assertEqual(
+            (submission.meta or {}).get("late_ai_answer_recovery", {}).get("actor"),
+            "test",
+        )
+        self.assertTrue(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment_id=enrollment.id,
+                total_score=100,
+                max_score=100,
+            ).exists()
+        )
+
+    def test_late_ai_recovery_dry_run_does_not_write(self):
+        from academy.application.use_cases.omr.late_answer_recovery import (
+            recover_late_ai_answers,
+        )
+
+        submission, enrollment, exam = self._make_done_zero_answer_submission()
+        self._create_late_ai_result(submission)
+
+        report = recover_late_ai_answers(actor="test", dry_run=True)
+
+        self.assertTrue(
+            any(candidate.submission_id == submission.id for candidate in report.detected)
+        )
+        self.assertEqual(report.recovered, [])
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DONE)
+        self.assertFalse(SubmissionAnswer.objects.filter(submission=submission).exists())
+        self.assertTrue(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment_id=enrollment.id,
+                total_score=0,
+            ).exists()
+        )
+
+    def test_management_command_runs_late_ai_answer_recovery(self):
+        from io import StringIO
+        from django.core.management import call_command
+
+        submission, _enrollment, _exam = self._make_done_zero_answer_submission()
+        self._create_late_ai_result(submission)
+        out = StringIO()
+
+        call_command("recover_stuck_omr_submissions", stdout=out)
+
+        self.assertIn("late_ai_detected=1", out.getvalue())
+        self.assertIn("late_ai_recovered=1", out.getvalue())
+        self.assertEqual(
+            SubmissionAnswer.objects.filter(submission=submission).count(),
+            2,
+        )

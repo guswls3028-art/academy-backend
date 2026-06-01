@@ -13,6 +13,9 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
+from academy.application.use_cases.omr.late_answer_recovery import (
+    recover_late_ai_answers,
+)
 from apps.domains.submissions.omr_pipeline.services.state_recovery import (
     recover_stuck_submissions,
 )
@@ -31,6 +34,23 @@ class Command(BaseCommand):
             "--actor",
             default="cron.recover_stuck_omr",
             help="Audit actor tag written to meta.state_recovery.actor.",
+        )
+        parser.add_argument(
+            "--skip-late-ai-answer-recovery",
+            action="store_true",
+            help="Skip recovering DONE/ANSWERS_READY OMR submissions with late AI answers.",
+        )
+        parser.add_argument(
+            "--late-lookback-days",
+            type=int,
+            default=14,
+            help="Days to scan for late AI answer recovery candidates.",
+        )
+        parser.add_argument(
+            "--late-limit",
+            type=int,
+            default=100,
+            help="Max late AI answer recovery candidates per command run.",
         )
 
     def handle(self, *args, **options):
@@ -52,4 +72,34 @@ class Command(BaseCommand):
         for sub_id, err in report.failed_transitions[:20]:
             self.stdout.write(
                 self.style.WARNING(f"  transition failed sub={sub_id} reason={err}")
+            )
+
+        if options["skip_late_ai_answer_recovery"]:
+            return
+
+        late_report = recover_late_ai_answers(
+            actor=options["actor"],
+            dry_run=options["dry_run"],
+            lookback_days=options["late_lookback_days"],
+            limit=options["late_limit"],
+        )
+        self.stdout.write(
+            f"late_ai_detected={len(late_report.detected)} "
+            f"late_ai_recovered={len(late_report.recovered)} "
+            f"late_ai_skipped={len(late_report.skipped)} "
+            f"late_ai_failed={len(late_report.failed)}"
+        )
+        for candidate in late_report.detected[:20]:
+            self.stdout.write(
+                f"  late_ai sub={candidate.submission_id} status={candidate.status} "
+                f"answers={candidate.answers_count} job={candidate.ai_job_id} "
+                f"tenant={candidate.tenant_id}"
+            )
+        for sub_id, reason in late_report.skipped[:20]:
+            self.stdout.write(
+                self.style.WARNING(f"  late_ai skipped sub={sub_id} reason={reason}")
+            )
+        for sub_id, err in late_report.failed[:20]:
+            self.stdout.write(
+                self.style.WARNING(f"  late_ai failed sub={sub_id} reason={err}")
             )
