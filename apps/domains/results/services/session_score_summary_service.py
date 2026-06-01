@@ -118,16 +118,17 @@ class SessionScoreSummaryService:
         # -------------------------------------------------
         attempts = ExamAttempt.objects.filter(exam_id__in=[int(x) for x in exam_ids])
 
-        per_enrollment = (
-            attempts.values("enrollment_id")
+        per_exam_enrollment = list(
+            attempts.values("exam_id", "enrollment_id")
             .annotate(cnt=Count("id"))
         )
 
-        total_attempts = sum(int(r["cnt"] or 0) for r in per_enrollment)
-        retake_users = sum(1 for r in per_enrollment if int(r["cnt"] or 0) > 1)
+        total_attempts = sum(int(r["cnt"] or 0) for r in per_exam_enrollment)
+        attempted_pairs = len(per_exam_enrollment)
+        retake_pairs = sum(1 for r in per_exam_enrollment if int(r["cnt"] or 0) > 1)
 
-        avg_attempts = (total_attempts / participant_count) if participant_count else 0.0
-        retake_ratio = (retake_users / participant_count) if participant_count else 0.0
+        avg_attempts = (total_attempts / attempted_pairs) if attempted_pairs else 0.0
+        retake_ratio = (retake_pairs / attempted_pairs) if attempted_pairs else 0.0
 
         return {
             "participant_count": int(participant_count),

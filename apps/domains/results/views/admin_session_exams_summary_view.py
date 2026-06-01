@@ -96,7 +96,9 @@ class AdminSessionExamsSummaryView(APIView):
             pass_score = float(getattr(ex, "pass_score", 0.0) or 0.0)
 
             pcount = rs.filter(total_score__gte=pass_score).count()
-            fcount = rs.filter(total_score__lt=pass_score).count()
+            fcount = rs.filter(total_score__lt=pass_score).exclude(
+                attempt__meta__status="NOT_SUBMITTED",
+            ).count()
 
             p_total = int(agg["participant_count"] or 0)
             p_rate = (pcount / p_total) if p_total else 0.0

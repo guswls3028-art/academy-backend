@@ -10,6 +10,7 @@ import hashlib
 import json
 import logging
 from typing import Optional
+from uuid import uuid4
 
 from django.conf import settings
 from django.utils import timezone
@@ -135,6 +136,7 @@ class MessagingSQSQueue:
         et = (event_type or "").strip()
         if et:
             message["event_type"] = et[:30]
+        resolved_occurrence_key = occurrence_key or f"manual-{uuid4().hex}"
         message["business_idempotency_key"] = _build_business_key(
             tenant_id=int(tenant_id),
             channel=mode,
@@ -142,7 +144,7 @@ class MessagingSQSQueue:
             target_type=target_type or "",
             target_id=str(target_id) if target_id else "",
             recipient=message["to"],
-            occurrence_key=occurrence_key or timezone.now().strftime("%Y%m%d%H%M%S"),
+            occurrence_key=resolved_occurrence_key,
             template_id=str(template_id) if template_id else "",
         )
         if not message["to"] or not message["text"]:

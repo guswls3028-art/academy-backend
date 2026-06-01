@@ -343,6 +343,13 @@ class AdminExamItemScoreView(APIView):
         result.max_score = float(max_total)
         result.save(update_fields=["total_score", "max_score"])
 
+        if attempt and attempt.is_representative:
+            attempt.meta = attempt.meta or {}
+            attempt.meta["total_score"] = float(total_score)
+            attempt.meta["synced_from_result"] = True
+            attempt.meta.pop("status", None)
+            attempt.save(update_fields=["meta", "updated_at"])
+
         # -------------------------------------------------
         # 7️⃣ progress pipeline 즉시 트리거
         # -------------------------------------------------

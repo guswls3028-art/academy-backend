@@ -9,6 +9,9 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.results.utils.session_exam import get_exams_for_session
+from apps.domains.results.services.session_score_summary_service import (
+    SessionScoreSummaryService,
+)
 from apps.domains.results.views.admin_session_exams_summary_view import (
     AdminSessionExamsSummaryView,
 )
@@ -199,6 +202,98 @@ class AssessmentLifecycleSsotTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["clinic_rate"], 1.0)
+
+    def test_session_score_attempt_stats_group_by_exam_and_enrollment(self):
+        SessionProgress = apps.get_model("progress", "SessionProgress")
+        ExamAttempt = apps.get_model("results", "ExamAttempt")
+        Result = apps.get_model("results", "Result")
+
+        SessionProgress.objects.create(
+            session=self.session,
+            enrollment=self.enrollment,
+            completed=False,
+        )
+        exams = [
+            self.Exam.objects.create(
+                tenant=self.tenant,
+                title=f"운영 시험 {idx}",
+                exam_type="regular",
+                is_active=True,
+                max_score=100,
+                pass_score=60,
+            )
+            for idx in (1, 2)
+        ]
+        for idx, exam in enumerate(exams, start=1):
+            exam.sessions.add(self.session)
+            attempt = ExamAttempt.objects.create(
+                exam=exam,
+                enrollment=self.enrollment,
+                attempt_index=1,
+                is_representative=True,
+                status="done",
+            )
+            Result.objects.create(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment=self.enrollment,
+                attempt=attempt,
+                total_score=70 + idx,
+                max_score=100,
+            )
+
+        summary = SessionScoreSummaryService.build(session_id=self.session.id)
+
+        self.assertEqual(summary["attempt_stats"]["avg_attempts"], 1.0)
+        self.assertEqual(summary["attempt_stats"]["retake_ratio"], 0.0)
+
+    def test_session_exams_summary_excludes_not_submitted_from_fail_count(self):
+        SessionProgress = apps.get_model("progress", "SessionProgress")
+        ExamAttempt = apps.get_model("results", "ExamAttempt")
+        Result = apps.get_model("results", "Result")
+
+        SessionProgress.objects.create(
+            session=self.session,
+            enrollment=self.enrollment,
+            completed=False,
+        )
+        exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="운영 시험",
+            exam_type="regular",
+            is_active=True,
+            max_score=100,
+            pass_score=60,
+        )
+        exam.sessions.add(self.session)
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"status": "NOT_SUBMITTED"},
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=0,
+            max_score=100,
+        )
+
+        response = AdminSessionExamsSummaryView.as_view()(
+            self._request(
+                f"/api/v1/results/admin/sessions/{self.session.id}/exams/summary/"
+            ),
+            session_id=self.session.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["exams"][0]["participant_count"], 1)
+        self.assertEqual(response.data["exams"][0]["pass_count"], 0)
+        self.assertEqual(response.data["exams"][0]["fail_count"], 0)
 
     def test_detect_assessment_state_drift_command_reports_non_live_sources(self):
         inactive_exam = self.Exam.objects.create(

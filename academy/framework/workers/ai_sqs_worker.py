@@ -32,6 +32,14 @@ from academy.application.use_cases.ai.process_ai_job_from_sqs import (
 
 logger = logging.getLogger("academy.ai_sqs_worker")
 
+_TERMINAL_AI_JOB_STATUSES = {
+    "DONE",
+    "FAILED",
+    "REJECTED_BAD_INPUT",
+    "FALLBACK_TO_GPU",
+    "REVIEW_REQUIRED",
+}
+
 # 상수 (기존 sqs_main_cpu와 동일)
 SQS_WAIT_TIME_SECONDS = 20
 SQS_VISIBILITY_TIMEOUT = int(os.getenv("AI_SQS_VISIBILITY_TIMEOUT", "3600"))  # 1시간 연장
@@ -86,14 +94,14 @@ def _dispatch_domain_callback(
     status: str,
     result_payload: dict | None,
     error: str | None,
-) -> None:
+) -> bool:
     """
     AI Job 완료 후 도메인 콜백 디스패치.
-    콜백 실패는 AI Job 상태에 영향을 주지 않는다 (fire-and-forget with logging).
+    도메인 반영이 실패하면 SQS message를 삭제하지 않고 재배달로 회복시킨다.
     """
     try:
         from apps.domains.ai.callbacks import dispatch_ai_result_to_domain
-        dispatch_ai_result_to_domain(
+        handled = dispatch_ai_result_to_domain(
             job_id=prepared.job_id,
             status=status,
             result_payload=result_payload,
@@ -102,11 +110,58 @@ def _dispatch_domain_callback(
             source_id=prepared.source_id,
             tier=prepared.tier,
         )
+        if handled is False:
+            logger.error(
+                "Domain callback returned failure; keeping SQS message for retry: job_id=%s source=%s/%s",
+                prepared.job_id, prepared.source_domain, prepared.source_id,
+            )
+            return False
+        return True
     except Exception:
         logger.exception(
-            "Domain callback failed (non-fatal): job_id=%s source=%s/%s",
+            "Domain callback failed; keeping SQS message for retry: job_id=%s source=%s/%s",
             prepared.job_id, prepared.source_domain, prepared.source_id,
         )
+        return False
+
+
+def _dispatch_terminal_callback_from_message(job_id: str, message: dict, tier_from_msg: str) -> bool:
+    """Terminal AIJob 재배달 시 추론은 건너뛰고 저장된 결과로 도메인 callback만 재시도한다."""
+    try:
+        from apps.domains.ai.models import AIJobModel, AIResultModel
+
+        job = AIJobModel.objects.filter(job_id=job_id).first()
+        if not job or job.status not in _TERMINAL_AI_JOB_STATUSES:
+            return True
+
+        source_domain = job.source_domain or message.get("source_domain")
+        source_id = job.source_id or message.get("source_id")
+        if not source_domain or not source_id:
+            return True
+
+        result_row = AIResultModel.objects.filter(job=job).first()
+        result_payload = result_row.payload if result_row and isinstance(result_row.payload, dict) else {}
+        error = job.error_message or job.last_error or None
+        callback_status = "FAILED" if error else job.status
+        prepared = PreparedJob(
+            job_id=job.job_id,
+            job_type=job.job_type,
+            tier=job.tier or tier_from_msg,
+            payload=job.payload or {},
+            receipt_handle=message.get("receipt_handle") or "",
+            tenant_id=str(job.tenant_id) if job.tenant_id is not None else message.get("tenant_id"),
+            source_domain=source_domain,
+            source_id=source_id,
+        )
+        return _dispatch_domain_callback(
+            prepared,
+            status=callback_status,
+            result_payload=result_payload,
+            error=error,
+        )
+    except Exception:
+        logger.exception("Terminal domain callback retry failed before dispatch: job_id=%s", job_id)
+        return False
 
 
 InferenceHandler = Callable[[Any], Any]
@@ -260,8 +315,13 @@ def run_ai_sqs_worker(
                 )
 
                 if prepared is None:
-                    # 이미 완료/실패 등 → 메시지만 삭제 (멱등)
-                    queue.delete(receipt_handle, tier_from_msg)
+                    # 이미 완료/실패된 job의 재배달은 저장된 결과로 domain callback만 재시도한다.
+                    # callback 성공 또는 callback 대상 없음일 때만 SQS message를 삭제한다.
+                    callback_ok = _dispatch_terminal_callback_from_message(job_id, message, tier_from_msg)
+                    if callback_ok:
+                        queue.delete(receipt_handle, tier_from_msg)
+                    else:
+                        consecutive_errors += 1
                     logger.info("AI_JOB_IDEMPOTENT_SKIP | job_id=%s", job_id)
                     _current_receipt_handle = None
                     if _shutdown:
@@ -312,15 +372,14 @@ def run_ai_sqs_worker(
                                 "AI_JOB_STATE_TRANSITION_FAILED | step=fail_timeout | job_id=%s | "
                                 "DB still RUNNING — manual cleanup required", job_id,
                             )
-                        try:
-                            _dispatch_domain_callback(
+                        callback_ok = False
+                        if ok:
+                            callback_ok = _dispatch_domain_callback(
                                 prepared, status="FAILED", result_payload=None,
                                 error="inference_timeout_60min",
                             )
-                        except Exception:
-                            logger.exception("Domain callback during timeout failed (non-fatal)")
                         try:
-                            if not queue.delete(receipt_handle, tier_from_msg):
+                            if ok and callback_ok and not queue.delete(receipt_handle, tier_from_msg):
                                 logger.error(
                                     "AI_JOB_SQS_DELETE_FAILED | job_id=%s | timeout path", job_id,
                                 )
@@ -341,10 +400,19 @@ def run_ai_sqs_worker(
                                 "AI_JOB_STATE_TRANSITION_FAILED | step=fail | job_id=%s | "
                                 "DB still RUNNING — manual cleanup required", job_id,
                             )
-                        _dispatch_domain_callback(
+                            consecutive_errors += 1
+                            continue
+                        callback_ok = _dispatch_domain_callback(
                             prepared, status="FAILED", result_payload=None,
                             error="inference_error_no_result",
                         )
+                        if not callback_ok:
+                            logger.error(
+                                "AI_JOB_DOMAIN_CALLBACK_RETRY_DEFERRED | job_id=%s | status=FAILED",
+                                job_id,
+                            )
+                            consecutive_errors += 1
+                            continue
                         if not queue.delete(receipt_handle, tier_from_msg):
                             logger.error(
                                 "AI_JOB_SQS_DELETE_FAILED | job_id=%s | "
@@ -359,11 +427,20 @@ def run_ai_sqs_worker(
                                 "AI_JOB_STATE_TRANSITION_FAILED | step=complete | job_id=%s | "
                                 "DB still RUNNING — manual cleanup required", job_id,
                             )
-                        _dispatch_domain_callback(
+                            consecutive_errors += 1
+                            continue
+                        callback_ok = _dispatch_domain_callback(
                             prepared, status="DONE",
                             result_payload=result.result if isinstance(result.result, dict) else {},
                             error=None,
                         )
+                        if not callback_ok:
+                            logger.error(
+                                "AI_JOB_DOMAIN_CALLBACK_RETRY_DEFERRED | job_id=%s | status=DONE",
+                                job_id,
+                            )
+                            consecutive_errors += 1
+                            continue
                         if not queue.delete(receipt_handle, tier_from_msg):
                             logger.error(
                                 "AI_JOB_SQS_DELETE_FAILED | job_id=%s | "
@@ -379,10 +456,19 @@ def run_ai_sqs_worker(
                                 "AI_JOB_STATE_TRANSITION_FAILED | step=fail | job_id=%s | "
                                 "DB still RUNNING — manual cleanup required", job_id,
                             )
-                        _dispatch_domain_callback(
+                            consecutive_errors += 1
+                            continue
+                        callback_ok = _dispatch_domain_callback(
                             prepared, status="FAILED", result_payload=None,
                             error=result.error or "failed",
                         )
+                        if not callback_ok:
+                            logger.error(
+                                "AI_JOB_DOMAIN_CALLBACK_RETRY_DEFERRED | job_id=%s | status=FAILED",
+                                job_id,
+                            )
+                            consecutive_errors += 1
+                            continue
                         # DB 종단(FAILED) 전이 후 SQS message 삭제 — 재배달돼도 mark_running이
                         # idempotent skip 처리하므로 재시도 무의미 + DLQ 도달 방지.
                         if not queue.delete(receipt_handle, tier_from_msg):

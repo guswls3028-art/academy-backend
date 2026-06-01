@@ -223,7 +223,9 @@ class SubmissionViewSet(ModelViewSet):
             if target_type == Submission.TargetType.EXAM:
                 from apps.domains.exams.models import Exam
                 return Exam.objects.filter(
-                    id=int(target_id), sessions__lecture__tenant=tenant,
+                    id=int(target_id),
+                    tenant=tenant,
+                    sessions__lecture__tenant=tenant,
                 ).exists()
             elif target_type == Submission.TargetType.HOMEWORK:
                 from apps.domains.homework_results.models import Homework
@@ -274,6 +276,7 @@ class SubmissionViewSet(ModelViewSet):
 
             in_exam = ExamEnrollment.objects.filter(
                 exam_id=target_id_i,
+                exam__tenant=tenant,
                 enrollment_id=enrollment_id_i,
                 enrollment__tenant=tenant,
             ).exists()
@@ -283,6 +286,7 @@ class SubmissionViewSet(ModelViewSet):
             in_session = SessionEnrollment.objects.filter(
                 tenant=tenant,
                 session__exams__id=target_id_i,
+                session__exams__tenant=tenant,
                 enrollment_id=enrollment_id_i,
                 enrollment__status="ACTIVE",
                 enrollment__student__deleted_at__isnull=True,

@@ -21,7 +21,7 @@ from django.test import TestCase, TransactionTestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.exams.models import Exam, ExamEnrollment
+from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
@@ -30,6 +30,7 @@ from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.services.exam_grading_service import ExamGradingService
 from apps.domains.results.views.admin_exam_objective_score_view import AdminExamObjectiveScoreView
 from apps.domains.results.views.admin_exam_subjective_score_view import AdminExamSubjectiveScoreView
+from apps.domains.results.views.admin_exam_item_score_view import AdminExamItemScoreView
 from apps.domains.results.views.admin_exam_total_score_view import AdminExamTotalScoreView
 from apps.domains.submissions.models import Submission
 
@@ -367,6 +368,37 @@ class TestManualScoreClearsNotSubmitted(TestCase, BaseTestMixin):
         self.assertNotEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
         self.assertEqual((attempt.meta or {}).get("total_score"), 14.0)
         self.assertEqual(float(result.total_score), 14.0)
+
+    def test_item_score_clears_not_submitted_marker(self):
+        exam = self._create_exam(title="Item clears absent", max_score=5, pass_score=3)
+        sheet = Sheet.objects.create(exam=exam, name="MAIN", total_questions=1)
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=5)
+        self._mark_not_submitted(exam)
+
+        request = self.factory.patch(
+            "/results/admin/exams/items/",
+            {"score": 4, "answer": "2"},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+        response = AdminExamItemScoreView.as_view()(
+            request,
+            exam_id=exam.id,
+            enrollment_id=self.enrollment.id,
+            question_id=question.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        attempt = ExamAttempt.objects.get(exam=exam, enrollment=self.enrollment)
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+        )
+        self.assertNotEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
+        self.assertEqual((attempt.meta or {}).get("total_score"), 4.0)
+        self.assertEqual(float(result.total_score), 4.0)
 
 
 # ============================================================

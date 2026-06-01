@@ -11,6 +11,7 @@ from drf_yasg.utils import swagger_auto_schema
 from apps.core.permissions import (
     TenantResolved,
     TenantResolvedAndStaff,
+    is_effective_staff,
 )
 from apps.core.serializers import (
     ProgramPublicSerializer,
@@ -128,6 +129,14 @@ class SubscriptionView(APIView):
 
     permission_classes = [AllowAny, TenantResolved]
 
+    _BILLING_FIELDS = (
+        "billing_email",
+        "billing_mode",
+        "next_billing_at",
+        "cancel_at_period_end",
+        "canceled_at",
+    )
+
     @swagger_auto_schema(auto_schema=None)
     def get(self, request):
         tenant = getattr(request, "tenant", None)
@@ -153,7 +162,7 @@ class SubscriptionView(APIView):
         else:
             status_display = program.get_subscription_status_display()
 
-        return Response({
+        payload = {
             "plan": program.plan,
             "plan_display": program.get_plan_display(),
             "monthly_price": program.monthly_price,
@@ -166,11 +175,17 @@ class SubscriptionView(APIView):
             "subscription_expires_at": str(program.subscription_expires_at) if program.subscription_expires_at else None,
             "is_subscription_active": program.is_subscription_active,
             "days_remaining": program.days_remaining,
-            "billing_email": program.billing_email,
-            "billing_mode": program.billing_mode,
-            "next_billing_at": str(program.next_billing_at) if program.next_billing_at else None,
-            "cancel_at_period_end": program.cancel_at_period_end,
-            "canceled_at": str(program.canceled_at) if program.canceled_at else None,
             "tenant_code": tenant.code,
             "tenant_name": tenant.name or "",
-        })
+        }
+
+        if is_effective_staff(getattr(request, "user", None), tenant):
+            payload.update({
+                "billing_email": program.billing_email,
+                "billing_mode": program.billing_mode,
+                "next_billing_at": str(program.next_billing_at) if program.next_billing_at else None,
+                "cancel_at_period_end": program.cancel_at_period_end,
+                "canceled_at": str(program.canceled_at) if program.canceled_at else None,
+            })
+
+        return Response(payload)

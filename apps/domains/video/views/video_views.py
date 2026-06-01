@@ -49,7 +49,7 @@ from ..models import (
 )
 from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
 from ..services.access_resolver import resolve_access_modes_prefetched
-from ..services.video_encoding import create_job_and_submit_batch
+from ..services.video_encoding import REASON_SUBMIT_FAILED, create_job_and_submit_batch
 from .playback_mixin import VideoPlaybackMixin
 
 # 로거 설정
@@ -98,6 +98,34 @@ def _cache_failed_status(video: Video, reason: str) -> None:
         )
     except Exception as e:
         logger.debug("VIDEO_UPLOAD_FAILED_STATUS_CACHE_FAILED | video_id=%s | %s", getattr(video, "id", None), e)
+
+
+def _enqueue_uploaded_video_or_response(video: Video, *, context_reason: str = ""):
+    result = create_job_and_submit_batch(video)
+    if result.job:
+        return None
+    if result.reject_reason == REASON_SUBMIT_FAILED:
+        video.status = Video.Status.FAILED
+        video.error_reason = REASON_SUBMIT_FAILED
+        video.save(update_fields=["status", "error_reason", "updated_at"])
+        _cache_failed_status(video, REASON_SUBMIT_FAILED)
+        logger.error(
+            "VIDEO_UPLOAD_ENQUEUE_FAILED | video_id=%s | context=%s | reject=%s",
+            video.id, context_reason, result.reject_reason,
+        )
+        return Response(
+            {
+                "detail": "영상 인코딩 작업을 시작하지 못했습니다. 잠시 후 다시 시도하세요.",
+                "code": "VIDEO_BATCH_SUBMIT_FAILED",
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+        )
+    logger.warning(
+        "VIDEO_UPLOAD_ENQUEUE_DEFERRED | video_id=%s | context=%s | reject=%s | "
+        "video is UPLOADED; will be picked up by reconciliation or manual retry",
+        video.id, context_reason, result.reject_reason,
+    )
+    return None
 
 
 def _validate_source_media_via_ffprobe(url: str) -> tuple[bool, dict, str]:
@@ -803,13 +831,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 "VIDEO_UPLOAD_TRACE | before enqueue (ffprobe_fail reason=%s duration=%s) | video_id=%s execution=2_BEFORE_ENQUEUE",
                 reason, duration, video_id,
             )
-            result = create_job_and_submit_batch(video)
-            if not result.job:
-                logger.warning(
-                    "VIDEO_UPLOAD_ENQUEUE_DEFERRED | video_id=%s | reason=%s | reject=%s | "
-                    "video is UPLOADED; will be picked up by reconciliation or manual retry",
-                    video.id, reason, result.reject_reason,
-                )
+            enqueue_error = _enqueue_uploaded_video_or_response(video, context_reason=reason)
+            if enqueue_error is not None:
+                return enqueue_error
             return Response(VideoSerializer(video).data)
 
         min_dur = _safe_int(getattr(settings, "VIDEO_MIN_DURATION_SECONDS", 3), 3)
@@ -826,13 +850,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 "VIDEO_UPLOAD_TRACE | before enqueue (duration<min branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
                 video.id, _tid, video.file_key or "",
             )
-            result = create_job_and_submit_batch(video)
-            if not result.job:
-                logger.warning(
-                    "VIDEO_UPLOAD_ENQUEUE_DEFERRED | video_id=%s | reject=%s | "
-                    "video is UPLOADED; will be picked up by reconciliation or manual retry",
-                    video.id, result.reject_reason,
-                )
+            enqueue_error = _enqueue_uploaded_video_or_response(video, context_reason="duration_below_min")
+            if enqueue_error is not None:
+                return enqueue_error
             return Response(VideoSerializer(video).data)
 
         video.duration = duration
@@ -845,13 +865,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             "VIDEO_UPLOAD_TRACE | before enqueue (normal branch) | video_id=%s tenant_id=%s source_path=%s execution=2_BEFORE_ENQUEUE",
             video.id, _tid, video.file_key or "",
         )
-        result = create_job_and_submit_batch(video)
-        if not result.job:
-            logger.warning(
-                "VIDEO_UPLOAD_ENQUEUE_DEFERRED | video_id=%s | reject=%s | "
-                "video is UPLOADED; will be picked up by reconciliation or manual retry",
-                video.id, result.reject_reason,
-            )
+        enqueue_error = _enqueue_uploaded_video_or_response(video, context_reason="normal")
+        if enqueue_error is not None:
+            return enqueue_error
         return Response(VideoSerializer(video).data)
 
     # ==================================================

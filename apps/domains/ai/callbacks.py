@@ -28,7 +28,7 @@ def dispatch_ai_result_to_domain(
     source_domain: Optional[str],
     source_id: Optional[str],
     tier: str = "basic",
-) -> None:
+) -> bool:
     """
     AI Job 완료 후 도메인별 후속 처리 디스패처.
     source_domain에 따라 적절한 도메인 핸들러로 라우팅한다.
@@ -48,7 +48,8 @@ def dispatch_ai_result_to_domain(
                 "AI_CALLBACK_EXAM_FAILED | job_id=%s | source_id=%s",
                 job_id, source_id,
             )
-        return
+            return False
+        return True
 
     # matchup 도메인: matchup_analysis 결과 처리
     if source_domain == "matchup":
@@ -65,7 +66,8 @@ def dispatch_ai_result_to_domain(
                 "AI_CALLBACK_MATCHUP_FAILED | job_id=%s | source_id=%s",
                 job_id, source_id,
             )
-        return
+            return False
+        return True
 
     # matchup_index: 시험 문제 인덱싱 결과
     if source_domain == "matchup_index":
@@ -82,7 +84,8 @@ def dispatch_ai_result_to_domain(
                 "AI_CALLBACK_MATCHUP_INDEX_FAILED | job_id=%s | source_id=%s",
                 job_id, source_id,
             )
-        return
+            return False
+        return True
 
     # matchup_manual: 수동 크롭 problem OCR + 임베딩 결과
     if source_domain == "matchup_manual":
@@ -99,7 +102,8 @@ def dispatch_ai_result_to_domain(
                 "AI_CALLBACK_MATCHUP_MANUAL_FAILED | job_id=%s | problem_id=%s",
                 job_id, source_id,
             )
-        return
+            return False
+        return True
 
     # community_qna: 학생 Q&A 매치업 검색 결과
     if source_domain == "community_qna":
@@ -115,21 +119,22 @@ def dispatch_ai_result_to_domain(
                 "AI_CALLBACK_QNA_MATCHUP_FAILED | job_id=%s | post_id=%s",
                 job_id, source_id,
             )
-        return
+            return False
+        return True
 
     if source_domain != "submissions":
         logger.debug(
             "AI_CALLBACK_SKIP | source_domain=%s job_id=%s (not submissions)",
             source_domain, job_id,
         )
-        return
+        return True
 
     if not source_id:
         logger.warning(
             "AI_CALLBACK_SKIP | source_id empty | job_id=%s",
             job_id,
         )
-        return
+        return True
 
     t0 = time.monotonic()
     logger.info(
@@ -151,12 +156,14 @@ def dispatch_ai_result_to_domain(
             "AI_CALLBACK_SUCCESS | job_id=%s | submission_id=%s | elapsed_ms=%d",
             job_id, source_id, elapsed_ms,
         )
+        return True
     except Exception:
         elapsed_ms = int((time.monotonic() - t0) * 1000)
         logger.exception(
             "AI_CALLBACK_FAILED | job_id=%s | submission_id=%s | elapsed_ms=%d",
             job_id, source_id, elapsed_ms,
         )
+        return False
 
 
 def _handle_submission_ai_result(

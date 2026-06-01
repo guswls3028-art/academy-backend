@@ -1,7 +1,18 @@
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from apps.domains.messaging.sqs_queue import MessagingSQSQueue
 from apps.domains.messaging.services import enqueue_sms
 from apps.worker.messaging_worker.sqs_main import _video_encoding_block_reason
+
+
+class _FakeQueueClient:
+    def __init__(self):
+        self.messages = []
+
+    def send_message(self, *, queue_name: str, message: dict) -> bool:
+        self.messages.append(dict(message))
+        return True
 
 
 def test_video_encoding_complete_sms_is_blocked_even_when_sms_allowed() -> None:
@@ -47,3 +58,37 @@ def test_worker_blocks_video_encoding_complete_sms_and_missing_template() -> Non
         )
         == ""
     )
+
+
+def test_manual_enqueue_without_occurrence_key_gets_unique_business_key() -> None:
+    fake_client = _FakeQueueClient()
+    with (
+        patch("apps.domains.messaging.sqs_queue.get_queue_client", return_value=fake_client),
+        patch(
+            "apps.domains.messaging.sqs_queue.uuid4",
+            side_effect=[SimpleNamespace(hex="first"), SimpleNamespace(hex="second")],
+        ),
+    ):
+        queue = MessagingSQSQueue()
+        assert queue.enqueue(
+            tenant_id=1,
+            to="01012345678",
+            text="첫 번째",
+            message_mode="alimtalk",
+            event_type="manual_send",
+            target_type="student",
+            target_id=10,
+        )
+        assert queue.enqueue(
+            tenant_id=1,
+            to="01012345678",
+            text="두 번째",
+            message_mode="alimtalk",
+            event_type="manual_send",
+            target_type="student",
+            target_id=10,
+        )
+
+    keys = [m["business_idempotency_key"] for m in fake_client.messages]
+    assert len(keys) == 2
+    assert keys[0] != keys[1]

@@ -386,6 +386,43 @@ class TestC1bStudentCreateAllowed(_SecurityFixtureMixin, TestCase):
             ).exists()
         )
 
+    def test_create_rejects_foreign_exam_even_if_attached_to_local_session(self):
+        """잘못된 M2M drift가 있어도 foreign tenant exam 대상으로 제출 생성 불가."""
+        other_tenant = _make_tenant("ForeignExamAcademy", "foreign_exam")
+        foreign_exam = Exam.objects.create(
+            tenant=other_tenant,
+            title="Foreign Exam",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        foreign_exam.sessions.add(self.session)
+
+        view = SubmissionViewSet.as_view({"post": "create"})
+        with patch("apps.domains.submissions.views.submission_view.dispatch_submission") as mock_dispatch:
+            resp = self._call(
+                lambda: view,
+                "post",
+                "/api/v1/submissions/submissions/",
+                user=self.student_user,
+                data={
+                    "target_type": "exam",
+                    "target_id": foreign_exam.id,
+                    "source": "online",
+                    "enrollment_id": self.enrollment.id,
+                    "payload": {"answers": []},
+                },
+            )
+
+        self.assertEqual(resp.status_code, 403, resp.data)
+        mock_dispatch.assert_not_called()
+        self.assertFalse(
+            Submission.objects.filter(
+                tenant=self.tenant,
+                target_type=Submission.TargetType.EXAM,
+                target_id=foreign_exam.id,
+                enrollment_id=self.enrollment.id,
+            ).exists()
+        )
+
     def test_teacher_create_cross_tenant_enrollment_blocked(self):
         """스태프라도 현재 tenant 밖 enrollment_id는 제출에 사용할 수 없다."""
         other_tenant = _make_tenant("OtherSubmitAcademy", "submit_other")

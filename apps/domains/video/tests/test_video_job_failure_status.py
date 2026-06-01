@@ -18,6 +18,7 @@ from academy.adapters.db.django.repositories_video import (
 from apps.core.models import Tenant
 from apps.domains.video.models import Video, VideoTranscodeJob
 from apps.domains.video.serializers import VideoDetailSerializer
+from apps.domains.video.services.video_encoding import REASON_SUBMIT_FAILED
 from apps.domains.video.views.internal_views import VideoProcessingCompleteView, VideoScanStuckView
 from apps.domains.video.views.video_views import VideoViewSet
 
@@ -486,6 +487,50 @@ class VideoUploadCompleteStatusCacheTests(TestCase):
             status=Video.Status.UPLOADED,
             duration=60,
             ttl=21600,
+        )
+        mock_head_object.assert_called_once()
+        mock_presign.assert_called_once()
+        mock_probe.assert_called_once()
+        mock_enqueue.assert_called_once()
+
+    @patch("apps.domains.video.redis_status_cache.cache_video_status")
+    @patch(
+        "apps.domains.video.views.video_views.create_job_and_submit_batch",
+        return_value=SimpleNamespace(job=None, reject_reason=REASON_SUBMIT_FAILED),
+    )
+    @patch(
+        "apps.domains.video.views.video_views._validate_source_media_via_ffprobe",
+        return_value=(True, {"duration": 60}, ""),
+    )
+    @patch("apps.domains.video.views.video_views.create_presigned_get_url", return_value="https://example.test/raw.mp4")
+    @patch("apps.domains.video.views.video_views.head_object", return_value=(True, 1024))
+    def test_upload_complete_batch_submit_failure_is_not_reported_as_success(
+        self,
+        mock_head_object,
+        mock_presign,
+        mock_probe,
+        mock_enqueue,
+        mock_cache_status,
+    ):
+        response = VideoViewSet()._upload_complete_impl(self.video)
+
+        self.assertEqual(response.status_code, 503, response.data)
+        self.video.refresh_from_db()
+        self.assertEqual(self.video.status, Video.Status.FAILED)
+        self.assertEqual(self.video.error_reason, REASON_SUBMIT_FAILED)
+        mock_cache_status.assert_any_call(
+            tenant_id=self.tenant.id,
+            video_id=self.video.id,
+            status=Video.Status.UPLOADED,
+            duration=60,
+            ttl=21600,
+        )
+        mock_cache_status.assert_any_call(
+            tenant_id=self.tenant.id,
+            video_id=self.video.id,
+            status=Video.Status.FAILED,
+            error_reason=REASON_SUBMIT_FAILED,
+            ttl=None,
         )
         mock_head_object.assert_called_once()
         mock_presign.assert_called_once()

@@ -49,13 +49,13 @@ class TestDispatchRouting:
         )
 
     @patch("apps.domains.ai.callbacks._handle_submission_ai_result")
-    def test_handler_exception_swallowed(self, mock_handler):
+    def test_handler_exception_returns_false(self, mock_handler):
         mock_handler.side_effect = RuntimeError("boom")
-        dispatch_ai_result_to_domain(
+        handled = dispatch_ai_result_to_domain(
             job_id="j1", status="DONE", result_payload={},
             error=None, source_domain="submissions", source_id="42",
         )
-        # no exception propagated
+        assert handled is False
 
 
 # ==========================================================
@@ -220,7 +220,7 @@ class TestSQSWorkerCallback:
             payload={}, receipt_handle="rh",
             source_domain="submissions", source_id="42",
         )
-        _dispatch_domain_callback(p, status="DONE", result_payload={"a": 1}, error=None)
+        assert _dispatch_domain_callback(p, status="DONE", result_payload={"a": 1}, error=None) is True
         mock_dispatch.assert_called_once_with(
             job_id="j1", status="DONE", result_payload={"a": 1},
             error=None, source_domain="submissions", source_id="42", tier="basic",
@@ -237,4 +237,4 @@ class TestSQSWorkerCallback:
             payload={}, receipt_handle="rh",
             source_domain="submissions", source_id="42",
         )
-        _dispatch_domain_callback(p, status="DONE", result_payload={}, error=None)
+        assert _dispatch_domain_callback(p, status="DONE", result_payload={}, error=None) is False
