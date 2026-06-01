@@ -1,10 +1,12 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
+from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
 from apps.domains.results.views.admin_exam_item_score_view import AdminExamItemScoreView
@@ -168,3 +170,40 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
 
         self.assertEqual(response.status_code, 400, response.data)
         self._assert_no_manual_score_side_effects()
+
+    @patch("apps.domains.results.views.admin_exam_item_score_view.dispatch_progress_pipeline")
+    def test_item_score_recomputes_required_multi_choice_answer_on_server(self, mock_dispatch):
+        AnswerKey.objects.create(
+            exam=self.exam,
+            answers={str(self.question.id): "2,3"},
+        )
+
+        partial_response = self._patch(
+            AdminExamItemScoreView,
+            {"score": 5, "answer": "2"},
+            enrollment=self.assigned_enrollment,
+            question_id=self.question.id,
+        )
+
+        self.assertEqual(partial_response.status_code, 200, partial_response.data)
+        item = ResultItem.objects.get(
+            result__target_type="exam",
+            result__target_id=self.exam.id,
+            result__enrollment=self.assigned_enrollment,
+            question_id=self.question.id,
+        )
+        self.assertEqual(float(item.score), 0.0)
+        self.assertFalse(item.is_correct)
+
+        full_response = self._patch(
+            AdminExamItemScoreView,
+            {"score": 0, "answer": "2,3"},
+            enrollment=self.assigned_enrollment,
+            question_id=self.question.id,
+        )
+
+        self.assertEqual(full_response.status_code, 200, full_response.data)
+        item.refresh_from_db()
+        self.assertEqual(float(item.score), 5.0)
+        self.assertTrue(item.is_correct)
+        mock_dispatch.assert_called()

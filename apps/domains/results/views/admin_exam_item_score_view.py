@@ -19,13 +19,63 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
-from apps.domains.exams.models import ExamQuestion
+from apps.domains.exams.models import AnswerKey, ExamQuestion
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
+from apps.domains.results.services.answer_matching import answer_matches, correct_answer_sets
 
 # ✅ 단일 진실: session 매핑 + progress 트리거
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.submissions.models import Submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
+
+
+_OBJECTIVE_CHOICE_LABELS = {"1", "2", "3", "4", "5"}
+
+
+def _objective_correct_answer_for_question(*, exam, question_id: int):
+    answer_key = AnswerKey.objects.filter(
+        exam_id=int(exam.effective_template_exam_id),
+    ).first()
+    if not answer_key or not isinstance(answer_key.answers, dict):
+        return None
+
+    value = answer_key.answers.get(str(question_id))
+    if value is None:
+        return None
+
+    answer_sets = correct_answer_sets(value)
+    if not answer_sets:
+        return None
+
+    if all(
+        token in _OBJECTIVE_CHOICE_LABELS
+        for answer_set in answer_sets
+        for token in answer_set
+    ):
+        return value
+    return None
+
+
+def _score_objective_answer_from_key(
+    *,
+    exam,
+    question_id: int,
+    answer,
+    requested_score: float,
+    max_score: float,
+) -> tuple[float, bool | None]:
+    if answer is None:
+        return requested_score, None
+
+    correct_answer = _objective_correct_answer_for_question(
+        exam=exam,
+        question_id=question_id,
+    )
+    if correct_answer is None:
+        return requested_score, None
+
+    is_correct = answer_matches(answer, correct_answer)
+    return (float(max_score) if is_correct else 0.0), is_correct
 
 
 class AdminExamItemScoreView(APIView):
@@ -184,11 +234,23 @@ class AdminExamItemScoreView(APIView):
                         "code": "INVALID",
                     }
                 )
+            new_score, server_is_correct = _score_objective_answer_from_key(
+                exam=exam,
+                question_id=question_id,
+                answer=new_answer,
+                requested_score=new_score,
+                max_score=max_score,
+            )
+            item_is_correct = (
+                server_is_correct
+                if server_is_correct is not None
+                else bool(new_score >= max_score)
+            )
             item = ResultItem.objects.create(
                 result=result,
                 question_id=question_id,
                 answer=new_answer if new_answer is not None else "",
-                is_correct=bool(new_score >= max_score),
+                is_correct=item_is_correct,
                 score=float(new_score),
                 max_score=max_score,
                 source="manual",
@@ -204,6 +266,18 @@ class AdminExamItemScoreView(APIView):
                         "code": "INVALID",
                     }
                 )
+            new_score, server_is_correct = _score_objective_answer_from_key(
+                exam=exam,
+                question_id=question_id,
+                answer=new_answer,
+                requested_score=new_score,
+                max_score=max_score,
+            )
+            item_is_correct = (
+                server_is_correct
+                if server_is_correct is not None
+                else bool(new_score >= max_score)
+            )
 
         # -------------------------------------------------
         # 4️⃣ ResultFact (append-only 로그)
@@ -217,7 +291,7 @@ class AdminExamItemScoreView(APIView):
 
             question_id=question_id,
             answer=new_answer if new_answer is not None else (item.answer or ""),
-            is_correct=bool(new_score >= max_score),
+            is_correct=item_is_correct,
             score=float(new_score),
             max_score=max_score,
             source="manual",
@@ -232,7 +306,7 @@ class AdminExamItemScoreView(APIView):
         # -------------------------------------------------
         if not item_created:
             item.score = float(new_score)
-            item.is_correct = bool(new_score >= max_score)
+            item.is_correct = item_is_correct
             item.source = "manual"
             update_fields = ["score", "is_correct", "source"]
             if new_answer is not None:
