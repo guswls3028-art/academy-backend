@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.18.md](v1.2.18.md) | **CURRENT** | 2026-06-02 KST | OMR objective multi-mark exact grading + manual score hardening |
+| [v1.2.19.md](v1.2.19.md) | **CURRENT** | 2026-06-02 KST | OMR custom sheet shape matrix hardening |
+| [v1.2.18.md](v1.2.18.md) | production-deployed / v1.2.19로 승계 | 2026-06-02 KST | OMR objective multi-mark exact grading + manual score hardening |
 | [v1.2.17.md](v1.2.17.md) | production-deployed / v1.2.18로 승계 | 2026-06-01 KST | OMR mixed objective/essay sheet shape + tenant 2 real grading verification |
 | [v1.2.16.md](v1.2.16.md) | production-deployed / v1.2.17로 승계 | 2026-06-01 KST | OMR fact/readiness architecture + zero-answer grading prevention |
 | [v1.2.15.md](v1.2.15.md) | production-deployed / v1.2.16로 승계 | 2026-06-01 KST | OMR late AI answer auto-recovery in the existing 5-minute recovery job |
