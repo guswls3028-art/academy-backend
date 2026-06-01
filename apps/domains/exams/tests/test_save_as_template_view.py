@@ -83,6 +83,8 @@ class SaveAsTemplateViewTests(TestCase):
             exam=self.exam,
             name="MAIN",
             total_questions=2,
+            choice_count=1,
+            essay_count=1,
             file="exams/sheets/original.pdf",
         )
         source_q1 = ExamQuestion.objects.create(
@@ -136,6 +138,8 @@ class SaveAsTemplateViewTests(TestCase):
 
         template_sheet = template.sheet
         self.assertEqual(template_sheet.total_questions, 2)
+        self.assertEqual(template_sheet.choice_count, 1)
+        self.assertEqual(template_sheet.essay_count, 1)
         self.assertEqual(template_sheet.file.name, source_sheet.file.name)
         copied_questions = list(template_sheet.questions.order_by("number"))
         self.assertEqual([q.number for q in copied_questions], [1, 2])

@@ -77,8 +77,15 @@ class OMRDocumentService:
         if _mc_count is None:
             sheet_exam = resolve_template_exam_for_tenant(exam, tenant)
             sheet = getattr(sheet_exam, "sheet", None)
-            total_q = int(getattr(sheet, "total_questions", 0) or 0)
-            _mc_count = total_q if total_q > 0 else 20
+            if sheet:
+                from apps.support.omr.sheet_shape import resolve_omr_sheet_shape
+
+                shape = resolve_omr_sheet_shape(sheet=sheet, exam=sheet_exam)
+                _mc_count = shape.choice_count if shape.choice_count > 0 else 20
+                if essay_count is None:
+                    essay_count = shape.essay_count
+            else:
+                _mc_count = 20
 
         _essay_count = essay_count if essay_count is not None else 0
 

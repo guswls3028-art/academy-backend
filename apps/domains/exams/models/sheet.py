@@ -26,6 +26,10 @@ class Sheet(BaseModel):
 
     total_questions = models.PositiveIntegerField(default=0)
 
+    choice_count = models.PositiveIntegerField(default=0)
+
+    essay_count = models.PositiveIntegerField(default=0)
+
     file = models.FileField(
         upload_to="exams/sheets/",
         null=True,

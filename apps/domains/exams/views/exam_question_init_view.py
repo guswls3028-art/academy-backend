@@ -72,9 +72,25 @@ class ExamQuestionInitView(APIView):
             defaults={"name": "MAIN", "total_questions": total},
         )
 
-        if sheet.total_questions != total:
+        shape_updates = {
+            "total_questions": total,
+            "choice_count": int(choice_count or total),
+            "essay_count": int(essay_count or 0),
+        }
+        if not use_choice_essay:
+            shape_updates["choice_count"] = total
+            shape_updates["essay_count"] = 0
+
+        changed_fields = [
+            field
+            for field, value in shape_updates.items()
+            if getattr(sheet, field) != value
+        ]
+        if changed_fields:
             sheet.total_questions = total
-            sheet.save(update_fields=["total_questions", "updated_at"])
+            sheet.choice_count = shape_updates["choice_count"]
+            sheet.essay_count = shape_updates["essay_count"]
+            sheet.save(update_fields=[*changed_fields, "updated_at"])
 
         existing_numbers = set(
             ExamQuestion.objects.filter(sheet=sheet).values_list("number", flat=True)

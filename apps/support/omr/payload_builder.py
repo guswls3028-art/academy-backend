@@ -20,6 +20,7 @@ from apps.domains.assets.omr.services.meta_generator import (
 )
 from apps.domains.exams.models import ExamQuestion, Sheet
 from apps.domains.submissions.models import Submission
+from apps.support.omr.sheet_shape import resolve_omr_sheet_shape
 from apps.support.omr.sheet_resolver import resolve_omr_sheet_for_submission
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
 
@@ -86,11 +87,16 @@ def build_omr_payload(submission: Submission) -> dict[str, Any]:
         }
     )
 
-    question_count = int(getattr(sheet, "total_questions", 0) or 0)
-    if question_count > 0:
-        payload["question_count"] = question_count
+    shape = resolve_omr_sheet_shape(sheet=sheet)
+    if shape.choice_count > 0:
+        payload["question_count"] = shape.choice_count
+        payload["mc_count"] = shape.choice_count
+        payload["essay_count"] = shape.essay_count
+        payload["total_question_count"] = shape.total_questions
+        payload["omr"]["shape_source"] = shape.source
         payload["template_meta"] = build_objective_template_meta(
-            question_count=question_count
+            question_count=shape.choice_count,
+            essay_count=shape.essay_count,
         )
 
     return payload

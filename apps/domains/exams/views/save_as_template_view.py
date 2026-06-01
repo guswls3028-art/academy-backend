@@ -28,6 +28,8 @@ def _copy_sheet(source_exam: Exam, template_exam: Exam) -> dict[int, int]:
         exam=template_exam,
         name=source_sheet.name,
         total_questions=source_sheet.total_questions,
+        choice_count=source_sheet.choice_count,
+        essay_count=source_sheet.essay_count,
         file=source_sheet.file,
     )
 

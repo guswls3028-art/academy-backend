@@ -46,8 +46,18 @@ class GenerateOMRSheetAssetView(APIView):
         sheet = getattr(exam, "sheet", None)
         total_questions = int(getattr(sheet, "total_questions", 0) or 0)
 
-        mc_count = int(request.data.get("mc_count", 0) or total_questions)
-        essay_count = int(request.data.get("essay_count", 0) or 0)
+        if request.data.get("mc_count") in (None, "") and sheet:
+            from apps.support.omr.sheet_shape import resolve_omr_sheet_shape
+
+            shape = resolve_omr_sheet_shape(sheet=sheet, exam=exam)
+            default_mc = shape.choice_count or total_questions
+            default_essay = shape.essay_count
+        else:
+            default_mc = total_questions
+            default_essay = 0
+
+        mc_count = int(request.data.get("mc_count", 0) or default_mc)
+        essay_count = int(request.data.get("essay_count", 0) or default_essay)
         n_choices = int(request.data.get("n_choices", 5) or 5)
 
         if mc_count <= 0:
