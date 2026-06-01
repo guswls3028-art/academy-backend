@@ -24,6 +24,7 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.exams.models import Exam
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
+from apps.domains.results.services.exam_score_shape import get_exam_score_shape
 from apps.domains.submissions.models import Submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 from django.db.models import Max
@@ -64,10 +65,16 @@ class AdminExamObjectiveScoreView(APIView):
         if new_objective < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
 
-        max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
-        if new_objective > max_score:
+        score_shape = get_exam_score_shape(exam)
+        max_score = float(
+            score_shape.total_max_score
+            or getattr(exam, "max_score", 100.0)
+            or 100.0
+        )
+        objective_max = float(score_shape.objective_max_score or max_score)
+        if objective_max > 0 and new_objective > objective_max:
             raise ValidationError(
-                {"detail": f"score must be between 0 and {max_score}", "code": "INVALID"}
+                {"detail": f"score must be between 0 and {objective_max}", "code": "INVALID"}
             )
 
         result = (
@@ -140,7 +147,10 @@ class AdminExamObjectiveScoreView(APIView):
         current_total = float(getattr(result, "total_score", 0.0) or 0.0)
         current_subjective = max(0.0, current_total - current_objective)
         new_total = new_objective + current_subjective
-        exam = Exam.objects.filter(id=exam_id).first()
+        if max_score > 0 and new_total > max_score:
+            raise ValidationError(
+                {"detail": f"total score must be between 0 and {max_score}", "code": "INVALID"}
+            )
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
         submission_id = 0
@@ -166,19 +176,20 @@ class AdminExamObjectiveScoreView(APIView):
             question_id=0,
             answer="",
             is_correct=bool(float(new_total) >= float(pass_score)),
-            score=float(new_total),
-            max_score=float(result.max_score or max_score),
+            score=float(new_objective),
+            max_score=float(objective_max),
             source="manual_objective",
             meta={
                 "manual_objective": True,
                 "objective_score": new_objective,
+                "objective_max_score": objective_max,
                 "edited_at": timezone.now().isoformat(),
             },
         )
 
         result.objective_score = float(new_objective)
         result.total_score = float(new_total)
-        result.max_score = float(result.max_score or max_score)
+        result.max_score = float(max_score)
         result.save(update_fields=["objective_score", "total_score", "max_score", "updated_at"])
 
         if attempt and attempt.is_representative:
@@ -209,6 +220,7 @@ class AdminExamObjectiveScoreView(APIView):
                 "exam_id": exam_id,
                 "enrollment_id": enrollment_id,
                 "objective_score": float(result.objective_score or 0.0),
+                "objective_max_score": float(objective_max),
                 "total_score": float(result.total_score or 0.0),
                 "max_score": float(result.max_score or 0.0),
             },

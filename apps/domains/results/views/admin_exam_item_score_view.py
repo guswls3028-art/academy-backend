@@ -1,7 +1,4 @@
 # PATH: apps/domains/results/views/admin_exam_item_score_view.py
-# (동작 변경 없음: 이미 progress 트리거 포함)
-# 아래 파일은 "PHASE 7 종료 기준" 문서만 보강하고 로직은 그대로 둔다.
-
 from __future__ import annotations
 
 import logging
@@ -22,6 +19,7 @@ from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAtte
 from apps.domains.exams.models import AnswerKey, ExamQuestion
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.domains.results.services.answer_matching import answer_matches, correct_answer_sets
+from apps.domains.results.services.exam_score_shape import get_exam_score_shape
 
 # ✅ 단일 진실: session 매핑 + progress 트리거
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
@@ -117,6 +115,7 @@ class AdminExamItemScoreView(APIView):
             is_active=True,
             sessions__lecture__tenant=request.tenant,
         )
+        score_shape = get_exam_score_shape(exam)
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
         from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
@@ -316,32 +315,56 @@ class AdminExamItemScoreView(APIView):
 
         # -------------------------------------------------
         # 6️⃣ total_score 재계산
-        # ResultItem 에 question_id=0 주관식 합계 행이 있으면 items 가 객관식 전체를
-        # 표현하지 않음 → total = objective_score + sum(items).
-        # 없으면 items 가 모든 문항(객관식 자동채점)을 표현 → total = sum(items).
-        # (admin_exam_subjective_score_view 가 ResultItem 을 wipe + Q=0 단일 행으로
-        #  교체하는 패턴에 대응 — 이전엔 objective_score 가 total 에서 누락됐음)
+        # OMR 계약의 문항 종류를 기준으로 객관식/서술형 점수를 분리한다.
+        # 합계형 서술 점수는 Result.total_score - Result.objective_score로 보존한다.
         # -------------------------------------------------
         agg_items = list(ResultItem.objects.filter(result=result))
         items_sum = sum(float(x.score or 0.0) for x in agg_items)
         items_max_sum = sum(float(x.max_score or 0.0) for x in agg_items)
-        has_subjective_aggregate = any(int(x.question_id or 0) == 0 for x in agg_items)
 
-        if has_subjective_aggregate:
-            # items 가 객관식을 표현하지 않음 → objective_score 별도 보존
-            obj_score = float(result.objective_score or 0.0)
-            total_score = obj_score + items_sum
-            # 만점: exam.max_score 유지 (items_max 는 부분 합일 수 있음)
-            from apps.domains.exams.models import Exam as _Exam
-            exam_obj_for_max = _Exam.objects.filter(id=exam_id).first()
-            max_total = float(getattr(exam_obj_for_max, "max_score", 0.0) or 0.0) or items_max_sum
-        else:
+        choice_items_sum = 0.0
+        essay_items_sum = 0.0
+        has_choice_items = False
+        has_essay_items = False
+        has_unknown_items = False
+        for score_item in agg_items:
+            kind = score_shape.question_kind(int(score_item.question_id))
+            if kind == "choice":
+                choice_items_sum += float(score_item.score or 0.0)
+                has_choice_items = True
+            elif kind == "essay":
+                essay_items_sum += float(score_item.score or 0.0)
+                has_essay_items = True
+            else:
+                has_unknown_items = True
+
+        if has_unknown_items:
+            objective_score = float(result.objective_score or 0.0)
             total_score = items_sum
             max_total = items_max_sum
+        else:
+            previous_objective = float(result.objective_score or 0.0)
+            previous_total = float(result.total_score or 0.0)
+            previous_subjective = max(0.0, previous_total - previous_objective)
+            objective_score = choice_items_sum if has_choice_items else previous_objective
+            subjective_score = essay_items_sum if has_essay_items else previous_subjective
+            total_score = objective_score + subjective_score
+            max_total = float(
+                score_shape.total_max_score
+                or getattr(exam, "max_score", 0.0)
+                or items_max_sum
+                or 0.0
+            )
 
+        if max_total > 0 and total_score > max_total:
+            raise ValidationError(
+                {"detail": f"total score must be between 0 and {max_total}", "code": "INVALID"}
+            )
+
+        result.objective_score = float(objective_score)
         result.total_score = float(total_score)
         result.max_score = float(max_total)
-        result.save(update_fields=["total_score", "max_score"])
+        result.save(update_fields=["objective_score", "total_score", "max_score", "updated_at"])
 
         if attempt and attempt.is_representative:
             attempt.meta = attempt.meta or {}
@@ -386,6 +409,7 @@ class AdminExamItemScoreView(APIView):
                 "enrollment_id": enrollment_id,
                 "question_id": question_id,
                 "score": float(new_score),
+                "objective_score": float(result.objective_score or 0.0),
                 "total_score": float(total_score),
                 "max_score": float(max_total),
             },

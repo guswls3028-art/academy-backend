@@ -44,6 +44,7 @@ from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
+from apps.domains.results.services.exam_score_shape import get_exam_score_shape
 from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
 
 from apps.domains.lectures.models import Session
@@ -353,6 +354,16 @@ class SessionScoresView(APIView):
             else:
                 exam_questions_map[int(ex.id)] = questions_by_sheet.get(sheet.id, [])
 
+        score_shape_by_exam = {int(ex.id): get_exam_score_shape(ex) for ex in exams}
+        for exid, questions in exam_questions_map.items():
+            score_shape = score_shape_by_exam.get(int(exid))
+            if score_shape is None:
+                continue
+            for question in questions:
+                kind = score_shape.question_kind_by_id.get(int(question["question_id"]))
+                if kind:
+                    question["kind"] = kind
+
         # 시험/과제를 display_order 기준으로 정렬 (0이면 created_at 순)
         exams = sorted(exams, key=lambda e: (getattr(e, "display_order", 0) or 0, e.created_at, e.id))
         exam_ids = [int(e.id) for e in exams]
@@ -386,6 +397,11 @@ class SessionScoresView(APIView):
                     "title": str(getattr(ex, "title", "")),
                     "pass_score": float(getattr(ex, "pass_score", 0.0) or 0.0),
                     "max_score": float(getattr(ex, "max_score", 100.0) or 100.0),
+                    "choice_count": int(score_shape_by_exam[int(ex.id)].choice_count),
+                    "essay_count": int(score_shape_by_exam[int(ex.id)].essay_count),
+                    "objective_max_score": float(score_shape_by_exam[int(ex.id)].objective_max_score),
+                    "subjective_max_score": float(score_shape_by_exam[int(ex.id)].subjective_max_score),
+                    "score_shape_source": str(score_shape_by_exam[int(ex.id)].shape_source),
                     "display_order": int(getattr(ex, "display_order", 0) or 0),
                     "questions": exam_questions_map.get(int(ex.id), []),
                 }
@@ -792,12 +808,17 @@ class SessionScoresView(APIView):
 
                 items_payload: List[Dict[str, Any]] = []
                 if r is not None and hasattr(r, "items"):
+                    score_shape = score_shape_by_exam.get(int(exid))
                     for ri in items_list:
-                        items_payload.append({
+                        item_payload = {
                             "question_id": ri.question_id,
                             "score": float(ri.score or 0.0),
                             "max_score": float(ri.max_score or 0.0),
-                        })
+                        }
+                        if score_shape is not None:
+                            item_payload["question_number"] = score_shape.question_number_by_id.get(int(ri.question_id))
+                            item_payload["question_kind"] = score_shape.question_kind(int(ri.question_id))
+                        items_payload.append(item_payload)
 
                 exams_payload.append(
                     {

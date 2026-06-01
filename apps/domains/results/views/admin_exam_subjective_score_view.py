@@ -25,6 +25,7 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.exams.models import Exam
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
+from apps.domains.results.services.exam_score_shape import get_exam_score_shape
 from apps.domains.submissions.models import Submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 from django.db.models import Max
@@ -64,10 +65,20 @@ class AdminExamSubjectiveScoreView(APIView):
         if new_subjective < 0:
             raise ValidationError({"detail": "score must be >= 0", "code": "INVALID"})
 
-        max_score = float(getattr(exam, "max_score", 100.0) or 100.0)
-        if new_subjective > max_score:
+        score_shape = get_exam_score_shape(exam)
+        max_score = float(
+            score_shape.total_max_score
+            or getattr(exam, "max_score", 100.0)
+            or 100.0
+        )
+        subjective_max = float(score_shape.subjective_max_score or 0.0)
+        if subjective_max <= 0 and score_shape.shape_source != "no_sheet" and new_subjective > 0:
             raise ValidationError(
-                {"detail": f"score must be between 0 and {max_score}", "code": "INVALID"}
+                {"detail": "이 시험에는 채점 대상 서술형 문항이 없습니다.", "code": "INVALID"}
+            )
+        if subjective_max > 0 and new_subjective > subjective_max:
+            raise ValidationError(
+                {"detail": f"score must be between 0 and {subjective_max}", "code": "INVALID"}
             )
 
         result = (
@@ -137,6 +148,10 @@ class AdminExamSubjectiveScoreView(APIView):
 
         objective = float(getattr(result, "objective_score", 0.0) or 0.0)
         new_total = objective + new_subjective
+        if max_score > 0 and new_total > max_score:
+            raise ValidationError(
+                {"detail": f"total score must be between 0 and {max_score}", "code": "INVALID"}
+            )
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
         submission_id = 0
@@ -163,11 +178,12 @@ class AdminExamSubjectiveScoreView(APIView):
             answer="",
             is_correct=bool(float(new_total) >= float(pass_score)),
             score=float(new_subjective),
-            max_score=float(max_score),
+            max_score=float(subjective_max or max_score),
             source="manual_subjective",
             meta={
                 "manual_subjective": True,
                 "subjective_score": new_subjective,
+                "subjective_max_score": subjective_max,
                 "edited_at": timezone.now().isoformat(),
             },
         )
@@ -206,6 +222,7 @@ class AdminExamSubjectiveScoreView(APIView):
                 "enrollment_id": enrollment_id,
                 "objective_score": float(result.objective_score or 0.0),
                 "subjective_score": float(new_subjective),
+                "subjective_max_score": float(subjective_max),
                 "total_score": float(result.total_score or 0.0),
                 "max_score": float(result.max_score or 0.0),
             },

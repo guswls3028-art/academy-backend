@@ -13,6 +13,7 @@ from apps.domains.results.views.admin_exam_item_score_view import AdminExamItemS
 from apps.domains.results.views.admin_exam_objective_score_view import AdminExamObjectiveScoreView
 from apps.domains.results.views.admin_exam_subjective_score_view import AdminExamSubjectiveScoreView
 from apps.domains.results.views.admin_exam_total_score_view import AdminExamTotalScoreView
+from apps.domains.results.views.session_scores_view import SessionScoresView
 from apps.domains.students.models import Student
 
 
@@ -89,6 +90,70 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
             exam_id=self.exam.id,
             enrollment_id=(enrollment or self.unassigned_enrollment).id,
             **kwargs,
+        )
+
+    def _patch_for_exam(self, view_cls, exam, data=None, enrollment=None, **kwargs):
+        request = self.factory.patch("/results/admin/exams/manual/", data or {"score": 10}, format="json")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        return view_cls.as_view()(
+            request,
+            exam_id=exam.id,
+            enrollment_id=(enrollment or self.assigned_enrollment).id,
+            **kwargs,
+        )
+
+    def _get_session_scores(self):
+        request = self.factory.get("/results/admin/sessions/scores/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        return SessionScoresView.as_view()(request, session_id=self.session.id)
+
+    def _create_structured_exam(self, title: str, choice_scores: list[float], essay_scores: list[float]):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title=title,
+            exam_type=Exam.ExamType.REGULAR,
+            max_score=sum(choice_scores) + sum(essay_scores),
+            pass_score=60,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.assigned_enrollment)
+        SessionEnrollment.objects.get_or_create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.assigned_enrollment,
+        )
+        sheet = Sheet.objects.create(
+            exam=exam,
+            name="MAIN",
+            total_questions=len(choice_scores) + len(essay_scores),
+            choice_count=len(choice_scores),
+            essay_count=len(essay_scores),
+        )
+        questions = []
+        for number, score in enumerate([*choice_scores, *essay_scores], start=1):
+            questions.append(ExamQuestion.objects.create(sheet=sheet, number=number, score=score))
+        return exam, questions
+
+    def _create_result(self, exam, objective_score: float):
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.assigned_enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"total_score": float(objective_score), "max_score": float(exam.max_score or 0)},
+        )
+        return Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.assigned_enrollment,
+            attempt=attempt,
+            total_score=float(objective_score),
+            max_score=float(exam.max_score or 0),
+            objective_score=float(objective_score),
         )
 
     def _assert_no_manual_score_side_effects(self):
@@ -207,3 +272,137 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         self.assertEqual(float(item.score), 5.0)
         self.assertTrue(item.is_correct)
         mock_dispatch.assert_called()
+
+    @patch("apps.domains.results.views.admin_exam_subjective_score_view.dispatch_progress_pipeline")
+    def test_subjective_score_adds_to_objective_score_with_essay_cap(self, mock_dispatch):
+        exam, _questions = self._create_structured_exam("Mixed", [40, 40], [20])
+        result = self._create_result(exam, objective_score=70)
+
+        response = self._patch_for_exam(
+            AdminExamSubjectiveScoreView,
+            exam,
+            {"score": 18},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        result.refresh_from_db()
+        self.assertEqual(float(result.objective_score), 70.0)
+        self.assertEqual(float(result.total_score), 88.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        self.assertEqual(response.data["subjective_max_score"], 20.0)
+        fact = ResultFact.objects.filter(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment_id=self.assigned_enrollment.id,
+            source="manual_subjective",
+        ).latest("id")
+        self.assertEqual(float(fact.score), 18.0)
+        self.assertEqual(float(fact.max_score), 20.0)
+
+    @patch("apps.domains.results.views.admin_exam_subjective_score_view.dispatch_progress_pipeline")
+    def test_subjective_score_rejects_score_above_essay_max(self, mock_dispatch):
+        exam, _questions = self._create_structured_exam("Mixed cap", [40, 40], [20])
+        result = self._create_result(exam, objective_score=70)
+
+        response = self._patch_for_exam(
+            AdminExamSubjectiveScoreView,
+            exam,
+            {"score": 21},
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        result.refresh_from_db()
+        self.assertEqual(float(result.total_score), 70.0)
+        mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.results.views.admin_exam_subjective_score_view.dispatch_progress_pipeline")
+    def test_subjective_score_rejects_objective_only_sheet(self, mock_dispatch):
+        exam, _questions = self._create_structured_exam("Objective only", [50, 50], [])
+        result = self._create_result(exam, objective_score=80)
+
+        response = self._patch_for_exam(
+            AdminExamSubjectiveScoreView,
+            exam,
+            {"score": 5},
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        result.refresh_from_db()
+        self.assertEqual(float(result.total_score), 80.0)
+        mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.results.views.admin_exam_objective_score_view.dispatch_progress_pipeline")
+    def test_objective_score_rejects_score_above_objective_max(self, mock_dispatch):
+        exam, _questions = self._create_structured_exam("Objective cap", [40, 40], [20])
+        result = self._create_result(exam, objective_score=70)
+
+        response = self._patch_for_exam(
+            AdminExamObjectiveScoreView,
+            exam,
+            {"score": 90},
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        result.refresh_from_db()
+        self.assertEqual(float(result.objective_score), 70.0)
+        self.assertEqual(float(result.total_score), 70.0)
+        mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.results.views.admin_exam_item_score_view.dispatch_progress_pipeline")
+    def test_item_score_preserves_manual_subjective_total_when_objective_item_changes(self, mock_dispatch):
+        exam, questions = self._create_structured_exam("Item plus subjective", [40, 40], [20])
+        result = self._create_result(exam, objective_score=80)
+        result.total_score = 90
+        result.save(update_fields=["total_score", "updated_at"])
+        ResultItem.objects.create(
+            result=result,
+            question=questions[0],
+            answer="1",
+            is_correct=True,
+            score=40,
+            max_score=40,
+            source="omr",
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=questions[1],
+            answer="2",
+            is_correct=True,
+            score=40,
+            max_score=40,
+            source="omr",
+        )
+
+        response = self._patch_for_exam(
+            AdminExamItemScoreView,
+            exam,
+            {"score": 30, "answer": "1"},
+            question_id=questions[0].id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        result.refresh_from_db()
+        self.assertEqual(float(result.objective_score), 70.0)
+        self.assertEqual(float(result.total_score), 80.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        mock_dispatch.assert_called()
+
+    def test_session_scores_meta_exposes_score_shape_and_component_scores(self):
+        exam, _questions = self._create_structured_exam("Scores meta", [40, 40], [20])
+        result = self._create_result(exam, objective_score=70)
+        result.total_score = 88
+        result.save(update_fields=["total_score", "updated_at"])
+
+        response = self._get_session_scores()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        exam_meta = next(e for e in response.data["meta"]["exams"] if e["exam_id"] == exam.id)
+        self.assertEqual(exam_meta["choice_count"], 2)
+        self.assertEqual(exam_meta["essay_count"], 1)
+        self.assertEqual(exam_meta["objective_max_score"], 80.0)
+        self.assertEqual(exam_meta["subjective_max_score"], 20.0)
+        row = next(r for r in response.data["rows"] if r["enrollment_id"] == self.assigned_enrollment.id)
+        entry = next(e for e in row["exams"] if e["exam_id"] == exam.id)
+        self.assertEqual(entry["block"]["objective_score"], 70.0)
+        self.assertEqual(entry["block"]["subjective_score"], 18.0)
+        self.assertEqual(entry["block"]["score"], 88.0)

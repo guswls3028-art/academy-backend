@@ -44,6 +44,7 @@ from apps.domains.exams.models import Exam
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
+from apps.domains.results.services.exam_score_shape import get_exam_score_shape
 
 # ✅ OMR 스캔 이미지 presigned URL
 from apps.domains.submissions.models import Submission, SubmissionAnswer
@@ -73,6 +74,7 @@ class AdminExamResultDetailView(APIView):
         validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
 
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0)
+        score_shape = get_exam_score_shape(exam)
 
         # -------------------------------------------------
         # 1️⃣ Result (대표 스냅샷)
@@ -183,6 +185,9 @@ class AdminExamResultDetailView(APIView):
         data = StudentExamResultSerializer(result).data
 
         for item in data.get("items", []):
+            qid = int(item.get("question_id") or 0)
+            item["question_number"] = score_shape.question_number_by_id.get(qid)
+            item["question_kind"] = score_shape.question_kind(qid)
             item["is_editable"] = bool(
                 edit_state["can_edit"] and not edit_state["is_locked"]
             )
@@ -290,6 +295,15 @@ class AdminExamResultDetailView(APIView):
             "correct_answers": {
                 str(k): format_answer_for_display(v)
                 for k, v in (correct_answers or {}).items()
+            },
+            "score_shape": {
+                "total_questions": int(score_shape.total_questions),
+                "choice_count": int(score_shape.choice_count),
+                "essay_count": int(score_shape.essay_count),
+                "objective_max_score": float(score_shape.objective_max_score),
+                "subjective_max_score": float(score_shape.subjective_max_score),
+                "total_max_score": float(score_shape.total_max_score),
+                "source": str(score_shape.shape_source),
             },
             **scan_image_payload,
             "submission_id": submission_id_for_omr,
