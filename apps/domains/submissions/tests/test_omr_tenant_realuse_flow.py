@@ -740,13 +740,12 @@ class OMRMapperReviewPolicyTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertFalse(response.data["graded"])
 
-        from apps.domains.ai.callbacks import _handle_submission_ai_result
-
-        _handle_submission_ai_result(
-            job_id="manual-match-late-ai",
-            submission_id=submission.id,
-            status="DONE",
-            result_payload={
+        apply_omr_ai_result(
+            {
+                "job_id": "manual-match-late-ai",
+                "submission_id": submission.id,
+                "tenant_id": tenant.id,
+                "status": "DONE",
                 "version": "v15",
                 "aligned": True,
                 "alignment_method": "test",
@@ -771,10 +770,21 @@ class OMRMapperReviewPolicyTests(TestCase):
                         "confidence": 0.99,
                     },
                 ],
-            },
-            error=None,
-            tier="basic",
+            }
         )
+        from academy.application.use_cases.omr.grading_readiness import (
+            grade_omr_submission_if_ready,
+        )
+
+        decision = grade_omr_submission_if_ready(
+            submission.id,
+            actor="test.manual_match_late_ai",
+        )
+        self.assertTrue(decision.graded)
+
+        # The callback wrapper is covered separately in test_ai_callback_chain;
+        # this test stays inside the submissions/use-case boundary.
+        self.assertEqual(decision.status, Submission.Status.DONE)
 
         submission.refresh_from_db()
         self.assertEqual(submission.status, Submission.Status.DONE)
