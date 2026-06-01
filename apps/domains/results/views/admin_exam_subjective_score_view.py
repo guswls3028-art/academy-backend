@@ -25,7 +25,7 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
 from apps.domains.exams.models import Exam
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
-from apps.domains.results.services.exam_score_shape import get_exam_score_shape
+from apps.support.omr.score_shape import get_exam_score_shape
 from apps.domains.submissions.models import Submission
 from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 from django.db.models import Max

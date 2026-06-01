@@ -44,7 +44,7 @@ from apps.domains.exams.models import Exam
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
-from apps.domains.results.services.exam_score_shape import get_exam_score_shape
+from apps.support.omr.score_shape import get_exam_score_shape
 
 # ✅ OMR 스캔 이미지 presigned URL
 from apps.domains.submissions.models import Submission, SubmissionAnswer

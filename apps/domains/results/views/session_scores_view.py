@@ -44,7 +44,7 @@ from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
-from apps.domains.results.services.exam_score_shape import get_exam_score_shape
+from apps.support.omr.score_shape import get_exam_score_shape
 from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
 
 from apps.domains.lectures.models import Session

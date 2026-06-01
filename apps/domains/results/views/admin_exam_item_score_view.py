@@ -19,7 +19,7 @@ from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAtte
 from apps.domains.exams.models import AnswerKey, ExamQuestion
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.domains.results.services.answer_matching import answer_matches, correct_answer_sets
-from apps.domains.results.services.exam_score_shape import get_exam_score_shape
+from apps.support.omr.score_shape import get_exam_score_shape
 
 # ✅ 단일 진실: session 매핑 + progress 트리거
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
