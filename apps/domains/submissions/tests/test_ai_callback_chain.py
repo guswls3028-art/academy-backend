@@ -2,6 +2,7 @@
 """
 AI 결과 → Submission 상태 전이 체인 테스트.
 """
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -65,9 +66,20 @@ class TestDispatchRouting:
 # lazy import 경로: _handle_submission_ai_result 안에서 매번 import됨
 # apply_ai_result = apply_omr_ai_result (alias). 데코레이터 때문에 alias를 mock해야 함
 _MOD = "apps.domains.submissions.services.ai_omr_result_mapper"
-_GRADE_MOCK = "apps.domains.results.tasks.grading_tasks.grade_submission_task"
-_SUB_MODEL_MOCK = "apps.domains.submissions.models.Submission"
+_GRADE_GATE_MOCK = (
+    "academy.application.use_cases.omr.grading_readiness."
+    "grade_omr_submission_if_ready"
+)
 _AI_JOB_MODEL_MOCK = "apps.domains.ai.models.AIJobModel"
+
+
+def _decision(*, graded: bool, missing=None, status="answers_ready", reason=""):
+    return SimpleNamespace(
+        graded=graded,
+        status=status,
+        reason=reason,
+        readiness=SimpleNamespace(missing=list(missing or [])),
+    )
 
 
 class TestHandleSubmission:
@@ -77,50 +89,53 @@ class TestHandleSubmission:
             m_job.objects.filter.return_value.first.return_value = None
             yield
 
+    @patch(_GRADE_GATE_MOCK)
     @patch(f"{_MOD}.apply_ai_result")
-    def test_done_calls_apply_with_correct_payload(self, m_apply):
+    def test_done_calls_apply_with_correct_payload(self, m_apply, m_gate):
         """DONE 결과 → apply_ai_result 호출, submission_id/status 포함 확인."""
         m_apply.return_value = 42
+        m_gate.return_value = _decision(graded=True, status="done", reason="graded")
 
-        # Submission model import를 포함한 후속 코드는 DB 접근 → mock 필요
-        # grade 호출 여부는 통합 테스트에서 검증
-        with patch("apps.domains.submissions.models.Submission") as m_sub, \
-             patch(_GRADE_MOCK):
-            m_sub.objects.filter.return_value.values_list.return_value.first.return_value = "answers_ready"
-            m_sub.Status.ANSWERS_READY = "answers_ready"
-
-            _handle_submission_ai_result(
-                job_id="j1", submission_id=42, status="DONE",
-                result_payload={"answers": []}, error=None, tier="basic",
-            )
+        _handle_submission_ai_result(
+            job_id="j1", submission_id=42, status="DONE",
+            result_payload={"answers": []}, error=None, tier="basic",
+        )
 
         m_apply.assert_called_once()
+        m_gate.assert_called_once_with(42, actor="ai_callback.j1")
         p = m_apply.call_args[0][0]
         assert p["submission_id"] == 42
         assert p["status"] == "DONE"
 
-    @patch(_SUB_MODEL_MOCK)
-    @patch(_GRADE_MOCK)
+    @patch(_GRADE_GATE_MOCK)
     @patch(f"{_MOD}.apply_ai_result")
-    def test_skips_grading_when_needs_identification(self, m_apply, m_grade, m_sub):
+    def test_skips_grading_when_needs_identification(self, m_apply, m_gate):
         m_apply.return_value = 42
-        m_sub.objects.filter.return_value.values_list.return_value.first.return_value = "needs_identification"
-        m_sub.Status.ANSWERS_READY = "answers_ready"
+        m_gate.return_value = _decision(
+            graded=False,
+            missing=["student_match"],
+            status="needs_identification",
+            reason="not_ready",
+        )
 
         _handle_submission_ai_result(
             job_id="j1", submission_id=42, status="DONE",
             result_payload={}, error=None, tier="basic",
         )
 
-        m_grade.assert_not_called()
+        m_gate.assert_called_once_with(42, actor="ai_callback.j1")
 
-    @patch(_SUB_MODEL_MOCK)
+    @patch(_GRADE_GATE_MOCK)
     @patch(f"{_MOD}.apply_ai_result")
-    def test_failed_lite_passes_through_as_failed(self, m_apply, m_sub):
+    def test_failed_lite_passes_through_as_failed(self, m_apply, m_gate):
         """lite/basic tier FAILED도 FAILED로 전달 (0점 결과 방지)."""
         m_apply.return_value = 42
-        m_sub.objects.filter.return_value.values_list.return_value.first.return_value = "failed"
-        m_sub.Status.ANSWERS_READY = "answers_ready"
+        m_gate.return_value = _decision(
+            graded=False,
+            missing=["status:failed"],
+            status="failed",
+            reason="not_ready",
+        )
 
         _handle_submission_ai_result(
             job_id="j1", submission_id=42, status="FAILED",
@@ -131,12 +146,16 @@ class TestHandleSubmission:
         assert p["status"] == "FAILED"
         assert p["error"] == "oom"
 
-    @patch(_SUB_MODEL_MOCK)
+    @patch(_GRADE_GATE_MOCK)
     @patch(f"{_MOD}.apply_ai_result")
-    def test_failed_premium_passes_through(self, m_apply, m_sub):
+    def test_failed_premium_passes_through(self, m_apply, m_gate):
         m_apply.return_value = 42
-        m_sub.objects.filter.return_value.values_list.return_value.first.return_value = "failed"
-        m_sub.Status.ANSWERS_READY = "answers_ready"
+        m_gate.return_value = _decision(
+            graded=False,
+            missing=["status:failed"],
+            status="failed",
+            reason="not_ready",
+        )
 
         _handle_submission_ai_result(
             job_id="j1", submission_id=42, status="FAILED",
@@ -147,22 +166,26 @@ class TestHandleSubmission:
         assert p["status"] == "FAILED"
         assert p["error"] == "err"
 
+    @patch(_GRADE_GATE_MOCK)
     @patch(f"{_MOD}.apply_ai_result")
-    def test_apply_returns_none_no_grading(self, m_apply):
+    def test_apply_returns_none_no_grading(self, m_apply, m_gate):
         m_apply.return_value = None
 
         _handle_submission_ai_result(
             job_id="j1", submission_id=42, status="DONE",
             result_payload={}, error=None, tier="basic",
         )
-        # no exception, no grading call
+        m_gate.assert_not_called()
 
-    @patch(_SUB_MODEL_MOCK)
+    @patch(_GRADE_GATE_MOCK)
     @patch(f"{_MOD}.apply_ai_result")
-    def test_idempotent_duplicate(self, m_apply, m_sub):
+    def test_idempotent_duplicate(self, m_apply, m_gate):
         m_apply.return_value = 42
-        m_sub.objects.filter.return_value.values_list.return_value.first.return_value = "done"
-        m_sub.Status.ANSWERS_READY = "answers_ready"
+        m_gate.return_value = _decision(
+            graded=False,
+            status="done",
+            reason="already_done",
+        )
 
         _handle_submission_ai_result(
             job_id="j1", submission_id=42, status="DONE",
@@ -174,6 +197,7 @@ class TestHandleSubmission:
         )
 
         assert m_apply.call_count == 2
+        assert m_gate.call_count == 2
 
 
 # ==========================================================

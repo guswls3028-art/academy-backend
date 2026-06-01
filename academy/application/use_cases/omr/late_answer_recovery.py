@@ -17,9 +17,11 @@ from django.db.models import Count
 from django.utils import timezone
 
 from apps.domains.ai.models import AIJobModel, AIResultModel
-from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_result
+from academy.application.use_cases.omr.grading_readiness import (
+    grade_omr_submission_if_ready,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -261,9 +263,11 @@ def recover_late_ai_answers(
                 report.skipped.append((candidate.submission_id, "no_answers_written"))
                 continue
 
-            if submission.status == Submission.Status.ANSWERS_READY:
-                grade_submission(candidate.submission_id)
-                submission.refresh_from_db()
+            grade_omr_submission_if_ready(
+                candidate.submission_id,
+                actor="omr.late_answer_recovery",
+            )
+            submission.refresh_from_db()
 
             _mark_recovered(submission=submission, candidate=candidate, actor=actor)
             report.recovered.append(candidate.submission_id)

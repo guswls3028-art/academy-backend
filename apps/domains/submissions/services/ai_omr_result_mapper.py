@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 
 from django.db import transaction
 
-from apps.domains.submissions.models import Submission
+from apps.domains.submissions.models import OMRStudentMatch, Submission
 from apps.domains.submissions.services.omr_submission_guards import (
     duplicate_conflict_payload,
 )
@@ -199,11 +199,24 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     from apps.domains.submissions.omr_pipeline.services.answer_persister import (
         persist_answers,
     )
+    from apps.domains.submissions.omr_pipeline.services.facts import (
+        get_current_student_match,
+        record_recognition_fact,
+        record_student_match_fact,
+    )
 
     persist_result = persist_answers(
         submission=submission,
         answers_payload=answers if isinstance(answers, list) else [],
         worker_result_meta=result if isinstance(result, dict) else {},
+        exam_structure=exam_structure,
+    )
+    record_recognition_fact(
+        submission=submission,
+        job_id=str(job_id or ""),
+        status=str(status or ""),
+        error=str(error or "") if error else None,
+        worker_result=result if isinstance(result, dict) else {},
         exam_structure=exam_structure,
     )
 
@@ -217,14 +230,41 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     # 의 한 묶음을 단일 함수가 처리한다. mapper 는 결과 dataclass 만 보고 meta / transit 결정.
     from apps.domains.submissions.omr_pipeline.services.enrollment_finalizer import (
         finalize_enrollment,
+        finalize_existing_enrollment,
     )
 
-    if late_answer_hydration:
+    current_match = get_current_student_match(submission)
+    preserve_existing_match = bool(
+        submission.enrollment_id
+        and (
+            late_answer_hydration
+            or (
+                current_match is not None
+                and current_match.status == OMRStudentMatch.Status.CONFIRMED
+            )
+            or str(meta.get("identifier_status") or "").startswith("matched")
+        )
+    )
+
+    if preserve_existing_match:
         enrollment_id = int(submission.enrollment_id)
-        identifier_status = str(meta.get("identifier_status") or "matched")
-        identifier_match_kind = str(meta.get("identifier_match_kind") or "manual_late")
-        identifier_ok = True
-        duplicate_conflict = None
+        enroll_result = finalize_existing_enrollment(
+            submission=submission,
+            enrollment_id=enrollment_id,
+            identifier_payload=identifier,
+            identifier_status=str(meta.get("identifier_status") or "matched"),
+            identifier_match_kind=str(
+                meta.get("identifier_match_kind") or "preserved_manual"
+            ),
+        )
+        enrollment_id = enroll_result.enrollment_id
+        identifier_status = enroll_result.identifier_status
+        identifier_match_kind = enroll_result.identifier_match_kind
+        identifier_ok = enroll_result.identifier_ok
+        duplicate_conflict = enroll_result.duplicate_conflict
+        if enroll_result.manual_required:
+            manual_required = True
+        reasons.extend(enroll_result.review_reasons)
     else:
         enroll_result = finalize_enrollment(
             submission=submission, identifier_payload=identifier,
@@ -253,11 +293,33 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     submission.meta = meta
 
     if not identifier_ok:
+        record_student_match_fact(
+            submission=submission,
+            enrollment_id=None,
+            status=OMRStudentMatch.Status.UNMATCHED,
+            method=OMRStudentMatch.Method.AUTO_IDENTIFIER,
+            actor="ai_omr_mapper",
+            identifier_status=identifier_status,
+            identifier_payload=identifier,
+        )
         transit(submission, Submission.Status.NEEDS_IDENTIFICATION, actor="ai_omr_mapper")
         submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
         return submission.id
 
     if duplicate_conflict:
+        record_student_match_fact(
+            submission=submission,
+            enrollment_id=int(enrollment_id) if enrollment_id else None,
+            status=OMRStudentMatch.Status.DUPLICATE,
+            method=(
+                OMRStudentMatch.Method.PRESERVED_MANUAL
+                if preserve_existing_match
+                else OMRStudentMatch.Method.AUTO_IDENTIFIER
+            ),
+            actor="ai_omr_mapper",
+            identifier_status=identifier_status,
+            identifier_payload=identifier,
+        )
         transit(
             submission,
             Submission.Status.NEEDS_IDENTIFICATION,
@@ -268,6 +330,19 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         return submission.id
 
     submission.enrollment_id = int(enrollment_id)
+    record_student_match_fact(
+        submission=submission,
+        enrollment_id=int(enrollment_id),
+        status=OMRStudentMatch.Status.CONFIRMED,
+        method=(
+            OMRStudentMatch.Method.PRESERVED_MANUAL
+            if preserve_existing_match
+            else OMRStudentMatch.Method.AUTO_IDENTIFIER
+        ),
+        actor="ai_omr_mapper",
+        identifier_status=identifier_status,
+        identifier_payload=identifier,
+    )
     if late_answer_hydration and submission.status == Submission.Status.DONE:
         transit(
             submission,

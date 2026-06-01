@@ -175,7 +175,9 @@ def _handle_submission_ai_result(
     2. ANSWERS_READY가 되면 채점 파이프라인 실행
     """
     from apps.domains.submissions.services.ai_omr_result_mapper import apply_ai_result
-    from apps.domains.results.tasks.grading_tasks import grade_submission_task
+    from academy.application.use_cases.omr.grading_readiness import (
+        grade_omr_submission_if_ready,
+    )
 
     # 🔐 tenant 교차검증: AI job의 tenant_id와 submission의 tenant_id 일치 확인
     ai_job = None
@@ -219,20 +221,22 @@ def _handle_submission_ai_result(
         )
         return
 
-    # ANSWERS_READY가 된 경우에만 채점 실행
-    from apps.domains.submissions.models import Submission
     try:
-        sub_status = Submission.objects.filter(pk=returned_id).values_list("status", flat=True).first()
-        if sub_status == Submission.Status.ANSWERS_READY:
-            grade_submission_task(int(returned_id))
+        decision = grade_omr_submission_if_ready(
+            int(returned_id),
+            actor=f"ai_callback.{job_id}",
+        )
+        if decision.graded:
             logger.info(
                 "AI_CALLBACK_GRADING_TRIGGERED | submission_id=%s | job_id=%s",
                 returned_id, job_id,
             )
         else:
             logger.info(
-                "AI_CALLBACK_GRADING_SKIPPED | submission_id=%s | status=%s | job_id=%s",
-                returned_id, sub_status, job_id,
+                "AI_CALLBACK_GRADING_SKIPPED | submission_id=%s | status=%s | "
+                "reason=%s | missing=%s | job_id=%s",
+                returned_id, decision.status, decision.reason,
+                decision.readiness.missing, job_id,
             )
     except Exception:
         logger.exception(

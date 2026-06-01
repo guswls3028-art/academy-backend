@@ -139,6 +139,83 @@ def finalize_enrollment(
     )
 
 
+def finalize_existing_enrollment(
+    *,
+    submission: Submission,
+    enrollment_id: int,
+    identifier_payload: Any = None,
+    identifier_status: str = "matched",
+    identifier_match_kind: str = "manual",
+) -> EnrollmentFinalizeResult:
+    """
+    Validate an already selected enrollment against the exam context.
+
+    Manual matching is a durable fact. If the AI callback arrives later with a
+    blank or unreadable identifier, the mapper should preserve the manual match
+    after re-checking tenant/exam membership and duplicate conflicts.
+    """
+    reasons: list[str] = []
+    duplicate_conflict: Optional[Submission] = None
+    resolved_enrollment_id: Optional[int] = int(enrollment_id)
+    manual_required = False
+
+    if not submission.target_id:
+        return EnrollmentFinalizeResult(
+            enrollment_id=None,
+            identifier_status="no_match",
+            identifier_match_kind=identifier_match_kind,
+            identifier_ok=False,
+            duplicate_conflict=None,
+            review_reasons=["IDENTIFIER_NO_EXAM"],
+            manual_required=True,
+        )
+
+    locked = lock_exam_enrollment_candidate(
+        tenant=submission.tenant,
+        exam_id=int(submission.target_id),
+        enrollment_id=int(enrollment_id),
+    )
+    if not locked:
+        resolved_enrollment_id = None
+        identifier_status = "no_match"
+        reasons.append("IDENTIFIER_NO_EXAM_ENROLLMENT")
+    else:
+        duplicate_conflict = find_conflicting_exam_submission(
+            tenant=submission.tenant,
+            exam_id=int(submission.target_id),
+            enrollment_id=int(enrollment_id),
+            exclude_submission_id=int(submission.id),
+        )
+        if duplicate_conflict is not None:
+            manual_required = True
+            identifier_status = "matched_duplicate"
+            reasons.append("DUPLICATE_ENROLLMENT")
+
+    detected_code = ""
+    raw_identifier_status = ""
+    if isinstance(identifier_payload, dict):
+        detected_code = str(
+            identifier_payload.get("identifier")
+            or identifier_payload.get("raw_identifier")
+            or ""
+        ).strip()
+        raw_identifier_status = str(
+            identifier_payload.get("status") or ""
+        ).lower()
+
+    return EnrollmentFinalizeResult(
+        enrollment_id=resolved_enrollment_id,
+        identifier_status=identifier_status,
+        identifier_match_kind=identifier_match_kind,
+        identifier_ok=resolved_enrollment_id is not None,
+        duplicate_conflict=duplicate_conflict,
+        review_reasons=reasons,
+        manual_required=manual_required,
+        detected_code=detected_code,
+        raw_identifier_status=raw_identifier_status,
+    )
+
+
 def _match_kind_label(match_result: IdentifierMatchResult) -> str:
     if match_result.kind == "fuzzy":
         return "fuzzy"

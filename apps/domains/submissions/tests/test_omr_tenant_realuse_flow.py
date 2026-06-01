@@ -22,7 +22,13 @@ from apps.domains.results.models import Result
 from apps.domains.results.services.answer_matching import answer_matches
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.students.services.creation import create_student_account
-from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.submissions.models import (
+    OMRDetectedAnswer,
+    OMRRecognitionRun,
+    OMRStudentMatch,
+    Submission,
+    SubmissionAnswer,
+)
 from apps.domains.submissions.services.ai_omr_result_mapper import apply_omr_ai_result
 from apps.domains.submissions.views.submission_view import SubmissionViewSet
 from academy.adapters.ai.omr.engine import AnswerDetectConfig, detect_omr_answers_v7
@@ -563,6 +569,22 @@ class OMRMapperReviewPolicyTests(TestCase):
         self.assertEqual(submission.meta["identifier_status"], "matched")
         self.assertFalse(submission.meta["manual_review"]["required"])
         self.assertTrue(
+            OMRRecognitionRun.objects.filter(submission=submission).exists()
+        )
+        self.assertEqual(
+            OMRDetectedAnswer.objects.filter(submission=submission).count(),
+            2,
+        )
+        current_match = OMRStudentMatch.objects.get(
+            submission=submission,
+            is_current=True,
+        )
+        self.assertEqual(current_match.status, OMRStudentMatch.Status.CONFIRMED)
+        self.assertEqual(
+            current_match.method,
+            OMRStudentMatch.Method.AUTO_IDENTIFIER,
+        )
+        self.assertTrue(
             ExamEnrollment.objects.filter(exam=exam, enrollment=enrollment).exists()
         )
 
@@ -660,6 +682,134 @@ class OMRMapperReviewPolicyTests(TestCase):
         result = grade_submission(submission.id)
         self.assertEqual(result.total_score, 100)
         self.assertEqual(result.max_score, 100)
+
+    def test_manual_student_match_without_answers_does_not_grade_zero(self):
+        tenant, exam, enrollment, submission = self._make_exam()
+        request = APIRequestFactory().post(
+            f"/submissions/submissions/{submission.id}/manual-edit/",
+            {
+                "identifier": {"enrollment_id": enrollment.id},
+                "answers": [],
+                "note": "student matched first",
+            },
+            format="json",
+        )
+        request.tenant = tenant
+        force_authenticate(request, user=submission.user)
+        response = SubmissionViewSet.as_view({"post": "manual_edit"})(
+            request,
+            pk=submission.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data["graded"])
+        self.assertIn("answers", response.data["readiness"]["missing"])
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DISPATCHED)
+        self.assertEqual(submission.enrollment_id, enrollment.id)
+        self.assertFalse(
+            SubmissionAnswer.objects.filter(submission=submission).exists()
+        )
+        self.assertFalse(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment_id=enrollment.id,
+            ).exists()
+        )
+        current_match = OMRStudentMatch.objects.get(
+            submission=submission,
+            is_current=True,
+        )
+        self.assertEqual(current_match.status, OMRStudentMatch.Status.CONFIRMED)
+        self.assertEqual(current_match.method, OMRStudentMatch.Method.MANUAL)
+
+    def test_ai_answers_after_manual_match_preserve_student_and_grade(self):
+        tenant, exam, enrollment, submission = self._make_exam()
+        request = APIRequestFactory().post(
+            f"/submissions/submissions/{submission.id}/manual-edit/",
+            {"identifier": {"enrollment_id": enrollment.id}, "answers": []},
+            format="json",
+        )
+        request.tenant = tenant
+        force_authenticate(request, user=submission.user)
+        response = SubmissionViewSet.as_view({"post": "manual_edit"})(
+            request,
+            pk=submission.id,
+        )
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertFalse(response.data["graded"])
+
+        from apps.domains.ai.callbacks import _handle_submission_ai_result
+
+        _handle_submission_ai_result(
+            job_id="manual-match-late-ai",
+            submission_id=submission.id,
+            status="DONE",
+            result_payload={
+                "version": "v15",
+                "aligned": True,
+                "alignment_method": "test",
+                "identifier": {
+                    "status": "blank",
+                    "identifier": None,
+                    "raw_identifier": "????????",
+                },
+                "answers": [
+                    {
+                        "question_id": 1,
+                        "detected": ["1"],
+                        "status": "ok",
+                        "marking": "single",
+                        "confidence": 0.99,
+                    },
+                    {
+                        "question_id": 2,
+                        "detected": ["2"],
+                        "status": "ok",
+                        "marking": "single",
+                        "confidence": 0.99,
+                    },
+                ],
+            },
+            error=None,
+            tier="basic",
+        )
+
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.DONE)
+        self.assertEqual(submission.enrollment_id, enrollment.id)
+        self.assertEqual(submission.answers.count(), 2)
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment_id=enrollment.id,
+        )
+        self.assertEqual(float(result.total_score or 0), 100.0)
+        self.assertEqual(
+            OMRRecognitionRun.objects.filter(submission=submission).count(),
+            1,
+        )
+        self.assertEqual(
+            OMRDetectedAnswer.objects.filter(submission=submission).count(),
+            2,
+        )
+        current_match = OMRStudentMatch.objects.get(
+            submission=submission,
+            is_current=True,
+        )
+        self.assertEqual(current_match.status, OMRStudentMatch.Status.CONFIRMED)
+        self.assertEqual(
+            current_match.method,
+            OMRStudentMatch.Method.PRESERVED_MANUAL,
+        )
+        self.assertTrue(
+            OMRStudentMatch.objects.filter(
+                submission=submission,
+                method=OMRStudentMatch.Method.MANUAL,
+                is_current=False,
+            ).exists()
+        )
 
     def test_sparse_blank_answer_is_auto_zero_not_manual_review(self):
         tenant, _exam, enrollment, submission = self._make_exam()

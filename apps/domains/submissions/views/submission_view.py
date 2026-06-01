@@ -19,7 +19,7 @@ from apps.api.common.upload_validation import (
 )
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.domains.exams.models import ExamQuestion
-from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.submissions.models import OMRStudentMatch, Submission, SubmissionAnswer
 from apps.domains.submissions.serializers.submission import (
     SubmissionSerializer,
     SubmissionCreateSerializer,
@@ -39,7 +39,6 @@ from apps.domains.submissions.services.transition import (
     transit_save,
     InvalidTransitionError,
 )
-from apps.domains.results.services.grading_service import grade_submission
 
 
 class SubmissionViewSet(ModelViewSet):
@@ -521,11 +520,7 @@ class SubmissionViewSet(ModelViewSet):
                         target_type=Submission.TargetType.EXAM,
                         target_id=exam_id,
                         enrollment_id=candidate_eid,
-                        status__in=[
-                            Submission.Status.ANSWERS_READY,
-                            Submission.Status.GRADING,
-                            Submission.Status.DONE,
-                        ],
+                        status__in=OMR_CONFLICT_STATUSES,
                     )
                     .exclude(id=submission.id)
                     .order_by("-id")
@@ -602,17 +597,6 @@ class SubmissionViewSet(ModelViewSet):
                     return Response({"detail": "해당 시험의 문항만 수정할 수 있습니다."}, status=400)
                 validated_answers.append((eqid, str(a.get("answer") or "")))
 
-        # admin_override=True: DONE/FAILED/SUBMITTED/DISPATCHED/NI → ANSWERS_READY 허용
-        # GRADING/SUPERSEDED → ANSWERS_READY 차단 (transition.py에서 강제)
-        try:
-            transit_save(
-                submission, Submission.Status.ANSWERS_READY,
-                admin_override=True,
-                actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
-            )
-        except InvalidTransitionError as e:
-            return Response({"detail": str(e)}, status=409)
-
         updated = 0
 
         for eqid, ans in validated_answers:
@@ -650,12 +634,36 @@ class SubmissionViewSet(ModelViewSet):
             submission.enrollment_id = resolved_enrollment_id
             save_fields.append("enrollment_id")
             meta["identifier_status"] = "matched"
+            meta["identifier_match_kind"] = "manual"
 
         submission.meta = meta
         submission.save(update_fields=save_fields)
+        if resolved_enrollment_id is not None:
+            from apps.domains.submissions.omr_pipeline.services.facts import (
+                record_student_match_fact,
+            )
+
+            record_student_match_fact(
+                submission=submission,
+                enrollment_id=resolved_enrollment_id,
+                status=OMRStudentMatch.Status.CONFIRMED,
+                method=OMRStudentMatch.Method.MANUAL,
+                actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
+                identifier_status="matched",
+                identifier_payload=identifier,
+            )
 
         try:
-            result_obj = grade_submission(int(submission.id))
+            from academy.application.use_cases.omr.grading_readiness import (
+                grade_omr_submission_if_ready,
+                readiness_payload,
+            )
+
+            decision = grade_omr_submission_if_ready(
+                int(submission.id),
+                actor=f"admin.manual_edit.user_{getattr(request.user, 'id', '?')}",
+                allow_done_regrade=True,
+            )
         except Exception:
             transaction.set_rollback(True)
             return Response(
@@ -669,6 +677,23 @@ class SubmissionViewSet(ModelViewSet):
             )
 
         submission.refresh_from_db(fields=["status", "enrollment_id"])
+        if not decision.graded:
+            return Response(
+                {
+                    "submission_id": submission.id,
+                    "status": submission.status,
+                    "updated": updated,
+                    "graded": False,
+                    "result_id": None,
+                    "resolved_enrollment_id": resolved_enrollment_id,
+                    "enrollment_id": submission.enrollment_id,
+                    "score": None,
+                    "total_score": None,
+                    "max_score": None,
+                    "readiness": readiness_payload(decision.readiness),
+                }
+            )
+
         synced_score = None
         synced_max_score = None
         if submission.target_type == Submission.TargetType.EXAM and submission.enrollment_id:
@@ -699,7 +724,7 @@ class SubmissionViewSet(ModelViewSet):
                 "status": submission.status,
                 "updated": updated,
                 "graded": True,
-                "result_id": getattr(result_obj, "id", None),
+                "result_id": decision.result_id,
                 "resolved_enrollment_id": resolved_enrollment_id,
                 "enrollment_id": submission.enrollment_id,
                 "score": synced_score,
@@ -805,23 +830,32 @@ class SubmissionViewSet(ModelViewSet):
                 meta["identifier_status"] = "matched"
             submission.meta = meta
             submission.save(update_fields=["meta", "updated_at"])
+            from apps.domains.submissions.omr_pipeline.services.facts import (
+                record_student_match_fact,
+            )
 
-            if submission.status not in (
-                Submission.Status.ANSWERS_READY,
-                Submission.Status.GRADING,
-                Submission.Status.DONE,
-            ):
-                try:
-                    transit_save(
-                        submission, Submission.Status.ANSWERS_READY,
-                        admin_override=True,
-                        actor=actor,
-                    )
-                except InvalidTransitionError as e:
-                    return Response({"detail": str(e)}, status=409)
+            record_student_match_fact(
+                submission=submission,
+                enrollment_id=int(submission.enrollment_id),
+                status=OMRStudentMatch.Status.CONFIRMED,
+                method=OMRStudentMatch.Method.MANUAL,
+                actor=actor,
+                identifier_status=str(meta.get("identifier_status") or "matched"),
+                identifier_payload=meta.get("omr", {}).get("identifier_override")
+                if isinstance(meta.get("omr"), dict)
+                else {},
+            )
 
             try:
-                grade_submission(int(submission.id))
+                from academy.application.use_cases.omr.grading_readiness import (
+                    grade_omr_submission_if_ready,
+                )
+
+                decision = grade_omr_submission_if_ready(
+                    int(submission.id),
+                    actor=actor,
+                    allow_done_regrade=True,
+                )
             except Exception:
                 transaction.set_rollback(True)
                 return Response({"detail": "grading failed"}, status=500)
@@ -856,6 +890,13 @@ class SubmissionViewSet(ModelViewSet):
             "discarded_count": discarded_count,
             "superseded_count": superseded_count,
             "skipped": skipped[:20],
+            "graded": decision.graded,
+            "readiness": {
+                "can_grade": decision.readiness.can_grade,
+                "missing": list(decision.readiness.missing),
+                "answer_count": decision.readiness.answer_count,
+                "enrollment_id": decision.readiness.enrollment_id,
+            },
             "score": synced_score,
             "max_score": synced_max_score,
         }, status=200)
