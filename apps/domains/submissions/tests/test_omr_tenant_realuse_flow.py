@@ -624,6 +624,43 @@ class OMRMapperReviewPolicyTests(TestCase):
         self.assertEqual(result.total_score, 100)
         self.assertEqual(result.max_score, 100)
 
+    def test_late_ai_result_hydrates_answers_after_manual_student_match(self):
+        tenant, _exam, enrollment, submission = self._make_exam(
+            question_scores=(0, 0),
+        )
+        submission.enrollment_id = enrollment.id
+        submission.status = Submission.Status.DONE
+        submission.meta = {
+            "identifier_status": "matched",
+            "manual_review": {"required": False},
+            "manual_edits": [{"updated_answers_count": 0}],
+        }
+        submission.save(update_fields=["enrollment_id", "status", "meta", "updated_at"])
+
+        apply_omr_ai_result({
+            "submission_id": submission.id,
+            "tenant_id": tenant.id,
+            "status": "DONE",
+            "version": "v15",
+            "aligned": True,
+            "identifier": {"status": "blank", "identifier": None, "raw_identifier": "????????"},
+            "answers": [
+                {"question_id": 1, "detected": ["1"], "status": "ok", "marking": "single", "confidence": 0.99},
+                {"question_id": 2, "detected": ["2"], "status": "ok", "marking": "single", "confidence": 0.99},
+            ],
+        })
+
+        submission.refresh_from_db()
+        self.assertEqual(submission.status, Submission.Status.ANSWERS_READY)
+        self.assertEqual(submission.enrollment_id, enrollment.id)
+        self.assertEqual(submission.answers.count(), 2)
+        self.assertEqual(submission.meta["answer_stats"]["ok"], 2)
+        self.assertFalse(submission.meta["manual_review"]["required"])
+
+        result = grade_submission(submission.id)
+        self.assertEqual(result.total_score, 100)
+        self.assertEqual(result.max_score, 100)
+
     def test_sparse_blank_answer_is_auto_zero_not_manual_review(self):
         tenant, _exam, enrollment, submission = self._make_exam()
 

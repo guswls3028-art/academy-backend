@@ -24,6 +24,52 @@ _ALREADY_PROCESSED_STATUSES = frozenset({
 })
 
 
+def _extract_worker_result(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    AI worker result body extraction.
+
+    callbacks.py can pass the worker body either nested under ``result`` or
+    flattened at the top level. Keep this in one helper so the idempotency
+    guard can inspect late results before deciding to skip.
+    """
+    nested = payload.get("result")
+    if isinstance(nested, dict) and nested:
+        return nested
+
+    exclude = {"submission_id", "status", "error"}
+    return {k: v for k, v in payload.items() if k not in exclude}
+
+
+def _can_hydrate_late_ai_answers(
+    *,
+    submission: Submission,
+    result: Dict[str, Any],
+) -> bool:
+    """
+    Allow a narrow late-callback recovery path.
+
+    Operators may manually identify a student while the worker is still
+    running. The old flow immediately graded the submission with zero answers,
+    then the later AI callback was ignored because status=DONE. If the operator
+    already selected a valid enrollment and no answers exist yet, it is safe to
+    hydrate the worker answers and re-run grading.
+    """
+    if submission.source != Submission.Source.OMR_SCAN:
+        return False
+    if submission.status not in (Submission.Status.ANSWERS_READY, Submission.Status.DONE):
+        return False
+    if not submission.enrollment_id:
+        return False
+
+    answers = result.get("answers")
+    if not isinstance(answers, list) or not answers:
+        return False
+
+    from apps.domains.submissions.models import SubmissionAnswer
+
+    return not SubmissionAnswer.objects.filter(submission=submission).exists()
+
+
 def _validate_worker_contract(
     submission: Submission, payload: Dict[str, Any]
 ) -> Optional[int]:
@@ -101,26 +147,31 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             )
             return None
 
-    # 멱등성 가드: 이미 DISPATCHED 이후 단계로 진행된 submission은 건너뛴다
-    if submission.status in _ALREADY_PROCESSED_STATUSES:
-        logger.info(
-            "apply_omr_ai_result: submission %s already %s, skipping (idempotent)",
-            submission_id, submission.status,
-        )
-        return submission.id
-
     status = payload.get("status")
     error = payload.get("error")
 
     # AI worker는 version/answers/identifier를 payload 최상위에 보낸다.
     # 구버전 호환: payload["result"] 하위에 있을 수도 있다.
-    _nested = payload.get("result")
-    if isinstance(_nested, dict) and _nested:
-        result = _nested
-    else:
-        # payload 최상위에서 AI 결과 필드만 추출
-        _exclude = {"submission_id", "status", "error"}
-        result = {k: v for k, v in payload.items() if k not in _exclude}
+    result = _extract_worker_result(payload)
+
+    late_answer_hydration = False
+    if submission.status in _ALREADY_PROCESSED_STATUSES:
+        late_answer_hydration = _can_hydrate_late_ai_answers(
+            submission=submission,
+            result=result,
+        )
+        if not late_answer_hydration:
+            logger.info(
+                "apply_omr_ai_result: submission %s already %s, skipping (idempotent)",
+                submission_id, submission.status,
+            )
+            return submission.id
+        logger.warning(
+            "OMR_LATE_AI_RESULT_HYDRATE | submission_id=%s | status=%s | enrollment_id=%s",
+            submission.id,
+            submission.status,
+            submission.enrollment_id,
+        )
 
     meta = dict(submission.meta or {})
     meta["ai_result"] = {
@@ -168,17 +219,24 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         finalize_enrollment,
     )
 
-    enroll_result = finalize_enrollment(
-        submission=submission, identifier_payload=identifier,
-    )
-    enrollment_id = enroll_result.enrollment_id
-    identifier_status = enroll_result.identifier_status
-    identifier_match_kind = enroll_result.identifier_match_kind
-    identifier_ok = enroll_result.identifier_ok
-    duplicate_conflict = enroll_result.duplicate_conflict
-    if enroll_result.manual_required:
-        manual_required = True
-    reasons.extend(enroll_result.review_reasons)
+    if late_answer_hydration:
+        enrollment_id = int(submission.enrollment_id)
+        identifier_status = str(meta.get("identifier_status") or "matched")
+        identifier_match_kind = str(meta.get("identifier_match_kind") or "manual_late")
+        identifier_ok = True
+        duplicate_conflict = None
+    else:
+        enroll_result = finalize_enrollment(
+            submission=submission, identifier_payload=identifier,
+        )
+        enrollment_id = enroll_result.enrollment_id
+        identifier_status = enroll_result.identifier_status
+        identifier_match_kind = enroll_result.identifier_match_kind
+        identifier_ok = enroll_result.identifier_ok
+        duplicate_conflict = enroll_result.duplicate_conflict
+        if enroll_result.manual_required:
+            manual_required = True
+        reasons.extend(enroll_result.review_reasons)
 
     meta.setdefault("manual_review", {})
     meta["manual_review"]["required"] = bool(manual_required or not identifier_ok)
@@ -210,7 +268,15 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         return submission.id
 
     submission.enrollment_id = int(enrollment_id)
-    transit(submission, Submission.Status.ANSWERS_READY, actor="ai_omr_mapper")
+    if late_answer_hydration and submission.status == Submission.Status.DONE:
+        transit(
+            submission,
+            Submission.Status.ANSWERS_READY,
+            admin_override=True,
+            actor="ai_omr_mapper.late_result",
+        )
+    elif not late_answer_hydration:
+        transit(submission, Submission.Status.ANSWERS_READY, actor="ai_omr_mapper")
     submission.save(update_fields=["meta", "status", "enrollment_id", "error_message", "updated_at"])
 
     return submission.id

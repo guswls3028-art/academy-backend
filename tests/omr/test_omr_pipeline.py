@@ -142,10 +142,10 @@ def test_struct():
     check("A10. dispatcher build_omr_meta", "build_omr_meta" in disp_src)
     check("A10. no v1 engine import", "detect_omr_answers_v1" not in disp_src)
 
-    # A11. result_mapper question_id 호환
-    with open("apps/domains/submissions/services/ai_omr_result_mapper.py", encoding="utf-8") as f:
-        mapper_src = f.read()
-    check("A11. mapper question_id fallback", 'a.get("question_id")' in mapper_src)
+    # A11. answer_persister question_id 호환
+    with open("apps/domains/submissions/omr_pipeline/services/answer_persister.py", encoding="utf-8") as f:
+        answer_persister_src = f.read()
+    check("A11. mapper question_id fallback", 'a.get("question_id")' in answer_persister_src)
     with open("apps/support/omr/candidate_matching.py", encoding="utf-8") as f:
         candidate_src = f.read()
     check("A11. mapper enrollment resolver", "resolve_enrollment_by_identifier" in candidate_src)
