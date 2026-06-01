@@ -90,7 +90,7 @@ class AdminSessionExamsSummaryView(APIView):
                 participant_count=Count("id"),  # 이미 enrollment 1개씩으로 줄였으니 count(id)=participant
                 avg_score=Avg("total_score"),
                 min_score=Min("total_score"),
-                max_score=Max("total_score"),
+                highest_score=Max("total_score"),
             )
 
             pass_score = float(getattr(ex, "pass_score", 0.0) or 0.0)
@@ -111,7 +111,8 @@ class AdminSessionExamsSummaryView(APIView):
                 "participant_count": p_total,
                 "avg_score": float(agg["avg_score"] or 0.0),
                 "min_score": float(agg["min_score"] or 0.0),
-                "max_score": float(agg["max_score"] or 0.0),
+                "max_score": float(getattr(ex, "max_score", 0.0) or 0.0),
+                "highest_score": float(agg["highest_score"] or 0.0),
 
                 "pass_count": int(pcount),
                 "fail_count": int(fcount),

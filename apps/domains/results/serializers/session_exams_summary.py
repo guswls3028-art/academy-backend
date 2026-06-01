@@ -11,6 +11,7 @@ class SessionExamRowSerializer(serializers.Serializer):
     avg_score = serializers.FloatField()
     min_score = serializers.FloatField()
     max_score = serializers.FloatField()
+    highest_score = serializers.FloatField()
 
     pass_count = serializers.IntegerField()
     fail_count = serializers.IntegerField()

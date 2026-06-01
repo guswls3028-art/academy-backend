@@ -295,6 +295,46 @@ class AssessmentLifecycleSsotTests(TestCase):
         self.assertEqual(response.data["exams"][0]["pass_count"], 0)
         self.assertEqual(response.data["exams"][0]["fail_count"], 0)
 
+    def test_session_exams_summary_separates_exam_max_from_highest_score(self):
+        ExamAttempt = apps.get_model("results", "ExamAttempt")
+        Result = apps.get_model("results", "Result")
+
+        exam = self.Exam.objects.create(
+            tenant=self.tenant,
+            title="서술형 합산 시험",
+            exam_type="regular",
+            is_active=True,
+            max_score=100,
+            pass_score=60,
+        )
+        exam.sessions.add(self.session)
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=95,
+            max_score=100,
+        )
+
+        response = AdminSessionExamsSummaryView.as_view()(
+            self._request(
+                f"/api/v1/results/admin/sessions/{self.session.id}/exams/summary/"
+            ),
+            session_id=self.session.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["exams"][0]["max_score"], 100.0)
+        self.assertEqual(response.data["exams"][0]["highest_score"], 95.0)
+
     def test_detect_assessment_state_drift_command_reports_non_live_sources(self):
         inactive_exam = self.Exam.objects.create(
             tenant=self.tenant,
