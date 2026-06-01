@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.15.md](v1.2.15.md) | **CURRENT** | 2026-06-01 KST | OMR late AI answer auto-recovery in the existing 5-minute recovery job |
+| [v1.2.16.md](v1.2.16.md) | **CURRENT** | 2026-06-01 KST | OMR fact/readiness architecture + zero-answer grading prevention |
+| [v1.2.15.md](v1.2.15.md) | production-deployed / v1.2.16로 승계 | 2026-06-01 KST | OMR late AI answer auto-recovery in the existing 5-minute recovery job |
 | [v1.2.14.md](v1.2.14.md) | production-deployed / v1.2.15로 승계 | 2026-06-01 KST | tchul OMR late-result recovery: hydrate AI answers after manual student matching + regrade affected submissions |
 | [v1.2.13.md](v1.2.13.md) | production-deployed / v1.2.14로 승계 | 2026-05-30 KST | tchul QnA incident: show student attachment images inline + owner-only QnA alerts + 7 more unified alimtalk triggers + clinic_cancelled on session destroy |
 | [v1.2.12.md](v1.2.12.md) | production-deployed / v1.2.13로 승계 | 2026-05-30 KST | OMR same-student duplicate cluster UX + OMR pipeline domain split (Phases A–G) + state recovery cron |
