@@ -586,7 +586,7 @@ class OMRPdfRenderer:
 
     def _answer_area(self, c, doc):
         mc = doc.mc_count
-        ec = doc.essay_count
+        ec = doc.render_essay_count
         accent = _brand(doc)
         if mc <= 0 and ec <= 0:
             return
@@ -709,7 +709,7 @@ class OMRPdfRenderer:
             else:
                 c.setFont(_FB, 6); c.setFillColor(CT2)
                 c.drawCentredString(sxp + nw + (vwp - nw) / 2,
-                                    ft - hh + _mm(1.5), f"서술형 {cnt}문항")
+                                    ft - hh + _mm(1.5), doc.render_essay_label)
 
             for qi in range(cnt):
                 qn = ss + qi

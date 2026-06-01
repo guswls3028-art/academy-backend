@@ -30,6 +30,7 @@ class OMRHtmlRenderer:
     def _build_context(self, doc: OMRDocument) -> dict[str, Any]:
         mc_columns = self._build_mc_columns(doc)
         essay_rows = self._build_essay_rows(doc)
+        render_essay_count = doc.render_essay_count
 
         sub_parts = []
         if doc.lecture_name:
@@ -52,7 +53,9 @@ class OMRHtmlRenderer:
             "session_name": doc.session_name,
             "sub_line": " / ".join(sub_parts),
             "mc_count": doc.mc_count,
-            "essay_count": doc.essay_count,
+            "essay_count": render_essay_count,
+            "essay_label": doc.render_essay_label,
+            "logical_essay_count": doc.essay_count,
             "n_choices": doc.n_choices,
             "logo_url": doc.logo_url,
             "brand_color": doc.brand_color,
@@ -111,16 +114,17 @@ class OMRHtmlRenderer:
         return columns
 
     def _build_essay_rows(self, doc: OMRDocument) -> list[dict]:
-        if doc.essay_count <= 0:
+        render_essay_count = doc.render_essay_count
+        if render_essay_count <= 0:
             return []
 
         rows = []
-        for i in range(1, doc.essay_count + 1):
+        for i in range(1, render_essay_count + 1):
             group_idx = (i - 1) // 5
             rows.append({
                 "number": i,
-                "is_g5": (i % 5 == 0 and i != doc.essay_count),
-                "is_g10": (i % 10 == 0 and i != doc.essay_count),
+                "is_g5": (i % 5 == 0 and i != render_essay_count),
+                "is_g10": (i % 10 == 0 and i != render_essay_count),
                 "is_zebra": (group_idx % 2 == 1),
             })
         return rows

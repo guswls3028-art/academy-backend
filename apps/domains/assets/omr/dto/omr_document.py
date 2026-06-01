@@ -13,6 +13,9 @@ from typing import Optional
 from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS
 
 
+DECORATIVE_ESSAY_COUNT = 5
+
+
 @dataclass(frozen=True)
 class OMRDocument:
     """OMR 답안지 렌더링에 필요한 모든 콘텐츠 데이터."""
@@ -26,6 +29,7 @@ class OMRDocument:
     mc_count: int = 20  # 0~MAX_MC_QUESTIONS
     essay_count: int = 0  # 0~10
     n_choices: int = 5  # 4 or 5
+    decorative_essay_count: int = DECORATIVE_ESSAY_COUNT
 
     # -- 테넌트 브랜딩 --
     logo_url: Optional[str] = None  # presigned URL (HTML preview용)
@@ -39,6 +43,28 @@ class OMRDocument:
         """로고 바이너리가 추가된 새 인스턴스를 반환."""
         return replace(self, logo_bytes=logo_bytes, logo_mime=logo_mime)
 
+    @property
+    def render_essay_count(self) -> int:
+        if self.essay_count > 0:
+            return self.essay_count
+        if self.mc_count > 0:
+            return self.decorative_essay_count
+        return 0
+
+    @property
+    def has_decorative_essay_area(self) -> bool:
+        return (
+            self.essay_count <= 0
+            and self.mc_count > 0
+            and self.render_essay_count > 0
+        )
+
+    @property
+    def render_essay_label(self) -> str:
+        if self.has_decorative_essay_area:
+            return "서술형 공간"
+        return f"서술형 {self.render_essay_count}문항"
+
     def validate(self) -> list[str]:
         """유효성 검사. 오류 메시지 리스트 반환 (빈 리스트면 유효)."""
         errors = []
@@ -48,6 +74,8 @@ class OMRDocument:
             errors.append(f"객관식 문항 수는 0~{MAX_MC_QUESTIONS} 사이여야 합니다.")
         if self.essay_count < 0 or self.essay_count > 10:
             errors.append("서술형 문항 수는 0~10 사이여야 합니다.")
+        if self.decorative_essay_count < 0 or self.decorative_essay_count > 10:
+            errors.append("표시용 서술형 문항 수는 0~10 사이여야 합니다.")
         if self.mc_count + self.essay_count < 1:
             errors.append("문항이 최소 1개 이상이어야 합니다.")
         if self.n_choices != 5:
@@ -62,6 +90,8 @@ class OMRDocument:
             "session_name": self.session_name,
             "mc_count": self.mc_count,
             "essay_count": self.essay_count,
+            "render_essay_count": self.render_essay_count,
+            "render_essay_label": self.render_essay_label,
             "n_choices": self.n_choices,
             "logo_url": self.logo_url,
         }

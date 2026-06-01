@@ -7,6 +7,9 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
+from apps.domains.assets.omr.dto.omr_document import OMRDocument
+from apps.domains.assets.omr.renderer.html_renderer import OMRHtmlRenderer
+from apps.domains.assets.omr.renderer.pdf_renderer import OMRPdfRenderer
 from apps.domains.assets.omr.views.omr_pdf_views import OMRPdfView
 from apps.domains.exams.models import Exam, ExamAsset
 from apps.domains.lectures.models import Lecture, Session
@@ -79,3 +82,30 @@ class OMRPdfViewTests(TestCase):
         self.assertEqual(response.status_code, 404)
         generate_url.assert_not_called()
 
+
+class OMRDocumentRenderingTests(TestCase):
+    def test_objective_only_document_renders_decorative_essay_area(self):
+        doc = OMRDocument(exam_title="Exam", mc_count=20, essay_count=0)
+
+        self.assertEqual(doc.essay_count, 0)
+        self.assertEqual(doc.render_essay_count, 5)
+        self.assertTrue(doc.has_decorative_essay_area)
+        self.assertEqual(doc.render_essay_label, "서술형 공간")
+        self.assertEqual(doc.to_defaults_dict()["essay_count"], 0)
+        self.assertEqual(doc.to_defaults_dict()["render_essay_count"], 5)
+        self.assertEqual(doc.to_defaults_dict()["render_essay_label"], "서술형 공간")
+
+        html = OMRHtmlRenderer().render(doc).decode("utf-8")
+        self.assertIn("객관식 1번 ~ 20번", html)
+        self.assertIn("서술형 공간", html)
+        self.assertNotIn("서술형 5문항", html)
+
+        pdf = OMRPdfRenderer().render(doc)
+        self.assertTrue(pdf.startswith(b"%PDF"))
+
+    def test_real_essay_count_overrides_decorative_essay_area(self):
+        doc = OMRDocument(exam_title="Exam", mc_count=20, essay_count=3)
+
+        self.assertEqual(doc.render_essay_count, 3)
+        html = OMRHtmlRenderer().render(doc).decode("utf-8")
+        self.assertIn("서술형 3문항", html)
