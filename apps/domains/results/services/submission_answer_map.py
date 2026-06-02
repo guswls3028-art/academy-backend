@@ -15,12 +15,19 @@ def build_submission_answers_map(
     only have durable OMRDetectedAnswer facts, so re-sync must be able to read
     those facts without treating every objective answer as blank.
     """
-    from apps.domains.submissions.models import (
-        OMRDetectedAnswer,
-        OMRRecognitionRun,
-        Submission,
-        SubmissionAnswer,
+    submission_models = __import__(
+        "apps.domains.submissions.models",
+        fromlist=[
+            "OMRDetectedAnswer",
+            "OMRRecognitionRun",
+            "Submission",
+            "SubmissionAnswer",
+        ],
     )
+    OMRDetectedAnswer = submission_models.OMRDetectedAnswer
+    OMRRecognitionRun = submission_models.OMRRecognitionRun
+    Submission = submission_models.Submission
+    SubmissionAnswer = submission_models.SubmissionAnswer
 
     answers_map: dict[int, str] = {}
     for answer in SubmissionAnswer.objects.filter(submission=submission):
@@ -70,7 +77,10 @@ def require_complete_omr_answers(
     context: str,
     protect_existing_score: bool,
 ) -> None:
-    from apps.domains.submissions.models import Submission
+    Submission = __import__(
+        "apps.domains.submissions.models",
+        fromlist=["Submission"],
+    ).Submission
 
     if submission.source != Submission.Source.OMR_SCAN:
         return
