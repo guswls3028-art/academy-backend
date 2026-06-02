@@ -701,6 +701,21 @@ def _student_can_access_session(request, session) -> bool:
     return False
 
 
+def _progress_echo_response(*, video_id: int, enrollment_id: int, request) -> Response:
+    """Return the standard progress payload without writing VideoProgress."""
+    p = _safe_video_progress(request.data.get("progress"))
+    completed = request.data.get("completed", False)
+    return Response({
+        "id": 0,
+        "video_id": video_id,
+        "enrollment_id": enrollment_id,
+        "progress": p,
+        "progress_percent": round(p * 100, 1),
+        "completed": _safe_video_completed(completed),
+        "last_position": _safe_video_position(request.data.get("last_position")),
+    }, status=status.HTTP_200_OK)
+
+
 def _student_can_access_video(request, video) -> bool:
     """Video-level guard shared by playback, likes, and comments."""
     tenant = getattr(request, "tenant", None)
@@ -950,6 +965,8 @@ class StudentVideoPlaybackView(APIView):
         access_mode_value = None
         if enrollment_obj:
             access_mode_value = resolve_access_mode(video=video, enrollment=enrollment_obj).value
+            if access_mode_value == "BLOCKED":
+                raise PermissionDenied("이 영상은 시청이 제한되었습니다.")
 
         # 비디오 상태 확인 및 로깅
         import logging
@@ -1171,10 +1188,10 @@ class StudentVideoProgressView(APIView):
 
     def post(self, request, video_id: int):
         Video, _VideoPermission = _import_media_models()
-        from apps.domains.video.models import VideoProgress
+        from apps.domains.video.models import AccessMode, VideoProgress
+        from apps.domains.video.services.access_resolver import resolve_access_mode
 
         explicit_enrollment_id = _get_explicit_enrollment_id(request, include_body=True)
-        response_enrollment_id = explicit_enrollment_id or _get_student_enrollment_id(request) or 0
 
         try:
             video_qs = Video.objects.select_related("tenant", "session__lecture")
@@ -1185,38 +1202,17 @@ class StudentVideoProgressView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
-        # 학부모: 영상 시청은 가능하나 진행률 기록 저장 안 함 (읽기 전용)
-        if getattr(request.user, "parent_profile", None) is not None:
-            progress_value = request.data.get("progress", None)
-            completed = request.data.get("completed", False)
-            p = _safe_video_progress(progress_value)
-            return Response({
-                "id": 0,
-                "video_id": video_id,
-                "enrollment_id": response_enrollment_id,
-                "progress": p,
-                "progress_percent": round(p * 100, 1),
-                "completed": _safe_video_completed(completed),
-                "last_position": _safe_video_position(request.data.get("last_position")),
-            }, status=status.HTTP_200_OK)
-
         # 공개 영상: 수강등록 없이 시청 가능. VideoProgress는 (video, enrollment) 필수라 DB 저장 불가.
         # 동일 응답 형태로 200 반환해 프론트 스펙 유지 (DB 미저장)
         from apps.domains.video.models import Video as _VideoModel2
         is_public_video = getattr(video, "visibility", _VideoModel2.Visibility.ENROLLED) == _VideoModel2.Visibility.PUBLIC
         if is_public_video:
-            progress_value = request.data.get("progress", None)
-            completed = request.data.get("completed", False)
-            p = _safe_video_progress(progress_value)
-            return Response({
-                "id": 0,
-                "video_id": video.id,
-                "enrollment_id": 0,
-                "progress": p,
-                "progress_percent": round(p * 100, 1),
-                "completed": _safe_video_completed(completed),
-                "last_position": _safe_video_position(request.data.get("last_position")),
-            }, status=status.HTTP_200_OK)
+            if not _student_can_access_video(request, video):
+                return Response(
+                    {"detail": "공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            return _progress_echo_response(video_id=video.id, enrollment_id=0, request=request)
 
         enrollment, err = _find_active_enrollment_for_video(
             request,
@@ -1229,6 +1225,21 @@ class StudentVideoProgressView(APIView):
             return Response(
                 {"detail": "이 영상을 시청하려면 해당 강의에 수강 등록이 필요합니다."},
                 status=status.HTTP_403_FORBIDDEN,
+            )
+
+        access_mode = resolve_access_mode(video=video, enrollment=enrollment)
+        if access_mode == AccessMode.BLOCKED:
+            return Response(
+                {"detail": "이 영상은 시청이 제한되었습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # 학부모: 영상 시청은 가능하나 진행률 기록 저장 안 함 (읽기 전용)
+        if getattr(request.user, "parent_profile", None) is not None:
+            return _progress_echo_response(
+                video_id=video.id,
+                enrollment_id=enrollment.id,
+                request=request,
             )
 
         # 진행률 업데이트 또는 생성

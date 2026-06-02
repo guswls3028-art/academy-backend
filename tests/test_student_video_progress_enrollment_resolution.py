@@ -1,12 +1,13 @@
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.core.models import Tenant, User
+from apps.core.models import Tenant, TenantMembership, User
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.student_app.media.views import StudentVideoProgressView
+from apps.domains.parents.models import Parent
+from apps.domains.student_app.media.views import StudentVideoPlaybackView, StudentVideoProgressView
 from apps.domains.students.models import Student
-from apps.domains.video.models import Video, VideoProgress
+from apps.domains.video.models import AccessMode, Video, VideoAccess, VideoProgress
 
 
 class StudentVideoProgressEnrollmentResolutionTests(TestCase):
@@ -22,9 +23,22 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             password="testpass123",
             tenant=self.tenant,
         )
+        self.parent_user = User.objects.create_user(
+            username="student-video-progress-parent",
+            password="testpass123",
+            tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.parent_user, role="parent")
+        self.parent = Parent.objects.create(
+            tenant=self.tenant,
+            user=self.parent_user,
+            name="Video Parent",
+            phone="01099998888",
+        )
         self.student = Student.objects.create(
             tenant=self.tenant,
             user=self.user,
+            parent=self.parent,
             name="Video Student",
             ps_number="SVP-001",
             omr_code="12345678",
@@ -68,15 +82,26 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             duration=100,
         )
 
-    def _post_progress(self, payload):
+    def _post_progress(self, payload, *, user=None, selected_student_id=None):
         request = self.factory.post(
             f"/api/v1/student/video/videos/{self.video.id}/progress/",
             payload,
             format="json",
         )
+        if selected_student_id is not None:
+            request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
         request.tenant = self.tenant
-        force_authenticate(request, user=self.user)
+        force_authenticate(request, user=user or self.user)
         return StudentVideoProgressView.as_view()(request, video_id=self.video.id)
+
+    def _get_playback(self, *, user=None, enrollment_id=None):
+        path = f"/api/v1/student/video/videos/{self.video.id}/playback/"
+        if enrollment_id is not None:
+            path += f"?enrollment={enrollment_id}"
+        request = self.factory.get(path)
+        request.tenant = self.tenant
+        force_authenticate(request, user=user or self.user)
+        return StudentVideoPlaybackView.as_view()(request, video_id=self.video.id)
 
     def test_progress_without_explicit_enrollment_uses_video_lecture_enrollment(self):
         response = self._post_progress({
@@ -106,4 +131,61 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         })
 
         self.assertEqual(response.status_code, 400)
+        self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
+
+    def test_blocked_access_mode_rejects_progress_even_when_legacy_rule_is_free(self):
+        VideoAccess.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            rule="free",
+            access_mode=AccessMode.BLOCKED,
+        )
+
+        response = self._post_progress({"progress": 50})
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
+
+    def test_blocked_access_mode_rejects_playback_even_when_legacy_rule_is_free(self):
+        VideoAccess.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            rule="free",
+            access_mode=AccessMode.BLOCKED,
+        )
+
+        response = self._get_playback(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_parent_progress_echo_requires_selected_child_video_enrollment(self):
+        unlinked_parent_user = User.objects.create_user(
+            username="student-video-unlinked-parent",
+            password="testpass123",
+            tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=unlinked_parent_user, role="parent")
+        Parent.objects.create(
+            tenant=self.tenant,
+            user=unlinked_parent_user,
+            name="Unlinked Parent",
+            phone="01055556666",
+        )
+
+        response = self._post_progress({"progress": 50}, user=unlinked_parent_user)
+
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
+
+    def test_parent_progress_echo_uses_child_video_enrollment_without_saving(self):
+        response = self._post_progress(
+            {"progress": 90, "last_position": 90, "completed": True},
+            user=self.parent_user,
+            selected_student_id=self.student.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["enrollment_id"], self.target_enrollment.id)
+        self.assertEqual(response.data["progress_percent"], 90)
+        self.assertTrue(response.data["completed"])
         self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
