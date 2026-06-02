@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.23.md](v1.2.23.md) | **CURRENT** | 2026-06-02 KST | OMR structured essay scoring + manual score UX + session summary score semantics |
+| [v1.2.24.md](v1.2.24.md) | **CURRENT** | 2026-06-02 KST | OMR tenant 1 real-use canary + ungraded-exam clinic trigger guard |
+| [v1.2.23.md](v1.2.23.md) | production-deployed / v1.2.24로 승계 | 2026-06-02 KST | OMR structured essay scoring + manual score UX + session summary score semantics |
 | [v1.2.22.md](v1.2.22.md) | production-deployed / v1.2.23로 승계 | 2026-06-02 KST | OMR objective-only decorative essay area + static sheet production route proof |
 | [v1.2.21.md](v1.2.21.md) | production-deployed / v1.2.22로 승계 | 2026-06-02 KST | multi-domain hidden failure hardening + production verification closure |
 | [v1.2.20.md](v1.2.20.md) | production-deployed / v1.2.21로 승계 | 2026-06-02 KST | OMR v2 sheet contract pipeline refactor |
