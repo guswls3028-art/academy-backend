@@ -14,6 +14,10 @@ from apps.domains.results.services.answer_matching import (
     answer_matches,
     format_answer_for_display,
 )
+from apps.domains.results.services.submission_answer_map import (
+    build_submission_answers_map,
+    require_complete_omr_answers,
+)
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 
 
@@ -71,7 +75,7 @@ class ExamGradingService:
         exam: Exam,
         sheet,
         answer_key,
-        submission_answers,
+        answers_map: dict[int, str],
     ) -> Tuple[float, float, Dict]:
         """
         Returns:
@@ -83,13 +87,6 @@ class ExamGradingService:
             for k, v in answer_key.answers.items()
             if str(k).isdigit()
         }
-
-        answers_map: Dict[int, str] = {}
-        for a in submission_answers:
-            qid = int(getattr(a, "exam_question_id", 0) or 0)
-            ans = str(getattr(a, "answer", "") or "").strip()
-            if qid > 0:
-                answers_map[qid] = ans
 
         questions = list(sheet.questions.all())
 
@@ -136,11 +133,6 @@ class ExamGradingService:
     # ------------------------------------------------------------------
     @transaction.atomic
     def auto_grade_objective(self, *, submission_id: int) -> ExamResult:
-        SubmissionAnswer = __import__(
-            "apps.domains.submissions.models",
-            fromlist=["SubmissionAnswer"],
-        ).SubmissionAnswer
-
         submission = self._load_submission(submission_id)
         exam = self._load_exam(submission)
         validate_exam_submission_scope(submission=submission, exam=exam)
@@ -159,15 +151,30 @@ class ExamGradingService:
         if existing and existing.status == ExamResult.Status.FINAL:
             return existing
 
-        submission_answers = list(
-            SubmissionAnswer.objects.filter(submission=submission)
+        questions = list(sheet.questions.all().only("id", "number"))
+        sheet_question_ids = {int(q.id) for q in questions}
+        answers_map = build_submission_answers_map(
+            submission=submission,
+            question_number_to_id={int(q.number): int(q.id) for q in questions},
+        )
+        expected_question_ids = {
+            int(k)
+            for k in (answer_key.answers or {}).keys()
+            if str(k).isdigit()
+        } & sheet_question_ids
+        require_complete_omr_answers(
+            submission=submission,
+            answers_map=answers_map,
+            expected_question_ids=expected_question_ids,
+            context="ExamGradingService.auto_grade_objective",
+            protect_existing_score=existing is not None,
         )
 
         total_score, max_score, breakdown = self._compute_score(
             exam=exam,
             sheet=sheet,
             answer_key=answer_key,
-            submission_answers=submission_answers,
+            answers_map=answers_map,
         )
 
         pass_score = float(getattr(exam, "pass_score", 0) or 0)

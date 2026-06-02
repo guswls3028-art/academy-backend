@@ -10,11 +10,15 @@ from django.db import transaction
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.submissions.models import Submission
 from apps.domains.results.models import Result, ResultItem
 from apps.domains.results.guards.grading_contract import GradingContractGuard
 from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.services.answer_matching import answer_matches
+from apps.domains.results.services.submission_answer_map import (
+    build_submission_answers_map,
+    require_complete_omr_answers,
+)
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 from apps.support.omr.score_shape import get_exam_score_shape
 
@@ -52,13 +56,6 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         for k, v in (answer_key.answers or {}).items()
         if str(k).isdigit()
     }
-    answers_map = {}
-    for a in SubmissionAnswer.objects.filter(submission=submission):
-        qid = int(getattr(a, "exam_question_id", 0) or 0)
-        ans = str(getattr(a, "answer", "") or "").strip()
-        if qid > 0:
-            answers_map[qid] = ans
-
     questions = list(sheet.questions.all().order_by("number"))
     auto_score_questions = [
         q
@@ -70,6 +67,24 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         for q in questions
         if score_shape.question_kind(int(q.id)) == "essay"
     }
+    question_number_to_id = {int(q.number): int(q.id) for q in questions}
+    answers_map = build_submission_answers_map(
+        submission=submission,
+        question_number_to_id=question_number_to_id,
+    )
+
+    existing_result_prev = Result.objects.filter(
+        target_type="exam",
+        target_id=int(exam.id),
+        enrollment_id=int(enrollment_id),
+    ).first()
+    require_complete_omr_answers(
+        submission=submission,
+        answers_map=answers_map,
+        expected_question_ids={int(q.id) for q in auto_score_questions},
+        context="sync_result_from_exam_submission",
+        protect_existing_score=existing_result_prev is not None,
+    )
     exam_max_score = float(getattr(exam, "max_score", 0) or 0)
     raw_total_score = sum(float(getattr(q, "score", 0) or 0) for q in auto_score_questions)
     objective_max_score = float(score_shape.objective_max_score or 0.0)
@@ -118,12 +133,6 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         or max_total
         or 0.0
     )
-
-    existing_result_prev = Result.objects.filter(
-        target_type="exam",
-        target_id=int(exam.id),
-        enrollment_id=int(enrollment_id),
-    ).first()
 
     # 먼저 attempt 정책을 통과시킨다. 재응시 불가/최대 횟수 초과라면 Result를 건드리지 않는다.
     from apps.domains.results.models import ExamAttempt

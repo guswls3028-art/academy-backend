@@ -14,7 +14,12 @@ from apps.domains.results.services.sync_result_from_submission import (
     sync_result_from_exam_submission,
 )
 from apps.domains.students.models import Student
-from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.domains.submissions.models import (
+    OMRDetectedAnswer,
+    OMRRecognitionRun,
+    Submission,
+    SubmissionAnswer,
+)
 
 
 User = get_user_model()
@@ -466,3 +471,92 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(attempt.submission_id, 0)
         self.assertEqual(float(result.total_score), 80.0)
         self.assertEqual(float(result.objective_score), 80.0)
+
+    def test_sync_uses_omr_detected_answer_facts_when_submission_answers_missing(self):
+        exam, choice, essay = self._create_mixed_exam()
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            enrollment_id=self.enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.ANSWERS_READY,
+        )
+        run = OMRRecognitionRun.objects.create(
+            tenant=self.tenant,
+            submission=submission,
+            status="DONE",
+            answer_count=1,
+            answer_status_counts={"ok": 1},
+            contract_snapshot={"choice_count": 1},
+        )
+        OMRDetectedAnswer.objects.create(
+            tenant=self.tenant,
+            submission=submission,
+            recognition_run=run,
+            question_number=1,
+            exam_question_id=choice.id,
+            answer="1",
+            detected=["1"],
+            status="ok",
+            marking="single",
+            confidence=0.99,
+        )
+
+        result = sync_result_from_exam_submission(submission.id)
+
+        self.assertEqual(float(result.objective_score), 80.0)
+        self.assertEqual(float(result.total_score), 80.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        self.assertTrue(ResultItem.objects.filter(result=result, question=choice, source="online").exists())
+        self.assertFalse(ResultItem.objects.filter(result=result, question=essay).exists())
+
+    def test_sync_rejects_incomplete_omr_answers_without_mutating_existing_result(self):
+        exam, choice, essay = self._create_mixed_exam()
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"source": "manual_entry"},
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=15.0,
+            max_score=100.0,
+            objective_score=0.0,
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=essay,
+            answer="manual",
+            is_correct=True,
+            score=15.0,
+            max_score=20.0,
+            source="manual",
+        )
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            enrollment_id=self.enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.ANSWERS_READY,
+        )
+
+        with self.assertRaises(DjangoValidationError):
+            sync_result_from_exam_submission(submission.id)
+
+        attempt.refresh_from_db()
+        result.refresh_from_db()
+        self.assertEqual(attempt.submission_id, 0)
+        self.assertEqual(float(result.total_score), 15.0)
+        self.assertEqual(float(result.objective_score), 0.0)
+        self.assertFalse(ResultItem.objects.filter(result=result, question=choice).exists())
