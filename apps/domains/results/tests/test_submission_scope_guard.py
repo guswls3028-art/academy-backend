@@ -560,3 +560,37 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(float(result.total_score), 15.0)
         self.assertEqual(float(result.objective_score), 0.0)
         self.assertFalse(ResultItem.objects.filter(result=result, question=choice).exists())
+
+    def test_sync_uses_equal_score_fallback_for_zero_score_mixed_sheet(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Zero Score Mixed Scope Guard Exam",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        sheet = Sheet.objects.create(
+            exam=exam,
+            name="ZERO-MIXED",
+            total_questions=2,
+            choice_count=1,
+            essay_count=1,
+        )
+        choice = ExamQuestion.objects.create(sheet=sheet, number=1, score=0)
+        essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
+        AnswerKey.objects.create(exam=exam, answers={str(choice.id): "1"})
+        submission = self._submission_for_exam(exam, choice, answer="1")
+        submission.source = Submission.Source.OMR_SCAN
+        submission.save(update_fields=["source", "updated_at"])
+
+        result = sync_result_from_exam_submission(submission.id)
+
+        self.assertEqual(float(result.objective_score), 50.0)
+        self.assertEqual(float(result.total_score), 50.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        item = ResultItem.objects.get(result=result, question=choice)
+        self.assertEqual(float(item.score), 50.0)
+        self.assertEqual(float(item.max_score), 50.0)
+        self.assertFalse(ResultItem.objects.filter(result=result, question=essay).exists())

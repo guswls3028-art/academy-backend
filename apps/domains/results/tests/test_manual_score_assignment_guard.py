@@ -387,6 +387,52 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         self.assertEqual(float(result.max_score), 100.0)
         mock_dispatch.assert_called()
 
+    @patch("apps.domains.results.views.admin_exam_item_score_view.dispatch_progress_pipeline")
+    def test_item_score_uses_equal_fallback_for_zero_score_mixed_sheet(self, mock_dispatch):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Zero score mixed manual",
+            exam_type=Exam.ExamType.REGULAR,
+            max_score=100,
+            pass_score=0,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.assigned_enrollment)
+        SessionEnrollment.objects.get_or_create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.assigned_enrollment,
+        )
+        sheet = Sheet.objects.create(
+            exam=exam,
+            name="MAIN",
+            total_questions=2,
+            choice_count=1,
+            essay_count=1,
+        )
+        ExamQuestion.objects.create(sheet=sheet, number=1, score=0)
+        essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
+
+        response = self._patch_for_exam(
+            AdminExamItemScoreView,
+            exam,
+            {"score": 40, "answer": "manual"},
+            question_id=essay.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.assigned_enrollment,
+        )
+        item = ResultItem.objects.get(result=result, question=essay)
+        self.assertEqual(float(item.score), 40.0)
+        self.assertEqual(float(item.max_score), 50.0)
+        self.assertEqual(float(result.total_score), 40.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        mock_dispatch.assert_called()
+
     def test_session_scores_meta_exposes_score_shape_and_component_scores(self):
         exam, _questions = self._create_structured_exam("Scores meta", [40, 40], [20])
         result = self._create_result(exam, objective_score=70)

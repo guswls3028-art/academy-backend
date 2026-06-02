@@ -76,6 +76,22 @@ def _score_objective_answer_from_key(
     return (float(max_score) if is_correct else 0.0), is_correct
 
 
+def _question_max_score_from_shape(
+    *,
+    score_shape,
+    question_id: int,
+    raw_max_score: float,
+) -> float:
+    raw = float(raw_max_score or 0.0)
+    if raw > 0:
+        return raw
+    if score_shape.question_kind(int(question_id)) not in {"choice", "essay"}:
+        return 0.0
+    if score_shape.total_questions > 0 and score_shape.total_max_score > 0:
+        return float(score_shape.total_max_score) / int(score_shape.total_questions)
+    return 0.0
+
+
 class AdminExamItemScoreView(APIView):
     """
     PATCH /results/admin/exams/{exam_id}/enrollments/{enrollment_id}/items/{question_id}/
@@ -225,7 +241,11 @@ class AdminExamItemScoreView(APIView):
             ).first()
             if not exam_question:
                 raise NotFound({"detail": "question not found", "code": "NOT_FOUND"})
-            max_score = float(getattr(exam_question, "score", 0) or 0.0)
+            max_score = _question_max_score_from_shape(
+                score_shape=score_shape,
+                question_id=question_id,
+                raw_max_score=float(getattr(exam_question, "score", 0) or 0.0),
+            )
             if new_score < 0 or new_score > max_score:
                 raise ValidationError(
                     {
@@ -257,7 +277,11 @@ class AdminExamItemScoreView(APIView):
             item_created = True
         else:
             item_created = False
-            max_score = float(item.max_score or 0.0)
+            max_score = _question_max_score_from_shape(
+                score_shape=score_shape,
+                question_id=question_id,
+                raw_max_score=float(item.max_score or 0.0),
+            )
             if new_score < 0 or new_score > max_score:
                 raise ValidationError(
                     {
@@ -308,6 +332,9 @@ class AdminExamItemScoreView(APIView):
             item.is_correct = item_is_correct
             item.source = "manual"
             update_fields = ["score", "is_correct", "source"]
+            if float(item.max_score or 0.0) != float(max_score):
+                item.max_score = float(max_score)
+                update_fields.append("max_score")
             if new_answer is not None:
                 item.answer = new_answer
                 update_fields.append("answer")

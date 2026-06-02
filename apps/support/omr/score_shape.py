@@ -98,7 +98,12 @@ def get_exam_score_shape(exam) -> ExamScoreShape:
     component_total = objective_max + subjective_max
     total_max = component_total if component_total > 0 else exam_max_score
 
-    if contract.essay_count == 0 and exam_max_score > objective_max:
+    if component_total <= 0 and exam_max_score > 0 and contract.total_questions > 0:
+        equal_question_score = exam_max_score / int(contract.total_questions)
+        objective_max = equal_question_score * int(contract.choice_count)
+        subjective_max = equal_question_score * int(contract.essay_count)
+        total_max = exam_max_score
+    elif contract.essay_count == 0 and exam_max_score > objective_max:
         objective_max = exam_max_score
         total_max = exam_max_score
     elif exam_max_score > 0 and abs(exam_max_score - component_total) < 0.0001:
