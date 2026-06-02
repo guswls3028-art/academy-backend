@@ -129,8 +129,9 @@ class ExamAttemptService:
         actual OMR scan finishes. That placeholder should not consume the only
         allowed attempt and block the real OMR submission. Manual subjective
         scores are component scores, so they can attach and be preserved even
-        when non-zero. Non-zero manual total/objective scores are treated as
-        deliberate score entries and are not overwritten.
+        when non-zero. Per-item manual essay scoring is also attachable because
+        OMR only owns the objective component. Non-zero manual total/objective
+        scores are treated as deliberate score entries and are not overwritten.
         """
         qs = (
             ExamAttempt.objects
@@ -152,10 +153,16 @@ class ExamAttemptService:
         meta = dict(placeholder.meta or {}) if isinstance(placeholder.meta, dict) else {}
         initial = meta.get("initial_snapshot") if isinstance(meta.get("initial_snapshot"), dict) else {}
         source = str(initial.get("source") or "")
+        meta_source = str(meta.get("source") or "")
         initial_total = _safe_float(initial.get("total_score"))
-        if source not in _ATTACHABLE_MANUAL_SOURCES:
+        if source in _ATTACHABLE_MANUAL_SOURCES:
+            attach_mode = source
+        elif meta_source == "manual_entry":
+            attach_mode = "manual_entry"
+        else:
             return None
-        if source != "admin_manual_subjective" and initial_total != 0.0:
+
+        if attach_mode != "admin_manual_subjective" and attach_mode != "manual_entry" and initial_total != 0.0:
             return None
 
         from apps.domains.results.models import Result, ResultItem
@@ -171,12 +178,17 @@ class ExamAttemptService:
             )
             .first()
         )
-        if result:
+        if attach_mode == "manual_entry":
+            if result is None:
+                return None
+            if not _is_attachable_manual_essay_result(exam=placeholder.exam, result=result):
+                return None
+        elif result:
             if _safe_float(result.objective_score) != 0.0:
                 return None
             if ResultItem.objects.filter(result=result).exists():
                 return None
-            if source != "admin_manual_subjective" and _safe_float(result.total_score) != 0.0:
+            if attach_mode != "admin_manual_subjective" and _safe_float(result.total_score) != 0.0:
                 return None
 
         meta["manual_score_placeholder"] = {
@@ -184,12 +196,36 @@ class ExamAttemptService:
             "attached_at": timezone.now().isoformat(),
             "previous_submission_id": 0,
             "previous_initial_snapshot": initial,
+            "previous_meta_source": meta_source,
         }
         placeholder.submission_id = int(submission_id)
         placeholder.status = "pending"
         placeholder.meta = meta
         placeholder.save(update_fields=["submission_id", "status", "meta", "updated_at"])
         return placeholder
+
+
+def _is_attachable_manual_essay_result(*, exam: Exam, result) -> bool:
+    if _safe_float(result.objective_score) != 0.0:
+        return False
+
+    from apps.domains.results.models import ResultItem
+    from apps.support.omr.score_shape import get_exam_score_shape
+
+    items = list(ResultItem.objects.filter(result=result).select_related("question"))
+    if not items:
+        return _safe_float(result.total_score) == 0.0
+
+    score_shape = get_exam_score_shape(exam)
+    essay_score = 0.0
+    for item in items:
+        if str(item.source or "") != "manual":
+            return False
+        if score_shape.question_kind(int(item.question_id)) != "essay":
+            return False
+        essay_score += _safe_float(item.score)
+
+    return abs(_safe_float(result.total_score) - essay_score) < 0.0001
 
 
 def _safe_float(value) -> float:

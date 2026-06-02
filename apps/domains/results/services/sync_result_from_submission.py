@@ -187,8 +187,15 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
                 if isinstance(previous_initial, dict)
                 else None
             )
+            previous_meta_source = (
+                previous.get("previous_meta_source")
+                if isinstance(previous, dict)
+                else None
+            )
             if previous_source == "admin_manual_subjective" and existing_subjective > 0:
                 attempt.meta["initial_snapshot"]["source"] = "omr_attached_manual_subjective"
+            elif previous_meta_source == "manual_entry" and existing_subjective > 0:
+                attempt.meta["initial_snapshot"]["source"] = "omr_attached_manual_essay_items"
             else:
                 attempt.meta["initial_snapshot"]["source"] = "omr_replaced_manual_zero"
         else:

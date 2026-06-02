@@ -376,3 +376,93 @@ class SubmissionScopeGuardTests(TestCase):
             ).exists()
         )
         self.assertTrue(ResultItem.objects.filter(result=result, question=essay, source="manual").exists())
+
+    def test_sync_combines_omr_with_existing_manual_essay_item_score(self):
+        exam, choice, essay = self._create_mixed_exam()
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"source": "manual_entry"},
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=15.0,
+            max_score=100.0,
+            objective_score=0.0,
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=essay,
+            answer="manual",
+            is_correct=True,
+            score=15.0,
+            max_score=20.0,
+            source="manual",
+        )
+        submission = self._submission_for_exam(exam, choice, answer="1")
+
+        result = sync_result_from_exam_submission(submission.id)
+
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.submission_id, submission.id)
+        self.assertEqual(attempt.meta["initial_snapshot"]["source"], "omr_attached_manual_essay_items")
+        self.assertEqual(float(result.objective_score), 80.0)
+        self.assertEqual(float(result.total_score), 95.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        self.assertEqual(ResultItem.objects.filter(result=result).count(), 2)
+        self.assertTrue(ResultItem.objects.filter(result=result, question=essay, source="manual").exists())
+        self.assertTrue(ResultItem.objects.filter(result=result, question=choice, source="online").exists())
+        self.assertFalse(
+            ResultItem.objects.filter(
+                result=result,
+                question=essay,
+                source__in=["online", "omr"],
+            ).exists()
+        )
+
+    def test_sync_does_not_attach_manual_entry_with_objective_item_score(self):
+        exam, choice, _essay = self._create_mixed_exam()
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"source": "manual_entry"},
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=80.0,
+            max_score=100.0,
+            objective_score=80.0,
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=choice,
+            answer="1",
+            is_correct=True,
+            score=80.0,
+            max_score=80.0,
+            source="manual",
+        )
+        submission = self._submission_for_exam(exam, choice, answer="1")
+
+        with self.assertRaises(DjangoValidationError):
+            sync_result_from_exam_submission(submission.id)
+
+        attempt.refresh_from_db()
+        result.refresh_from_db()
+        self.assertEqual(attempt.submission_id, 0)
+        self.assertEqual(float(result.total_score), 80.0)
+        self.assertEqual(float(result.objective_score), 80.0)
