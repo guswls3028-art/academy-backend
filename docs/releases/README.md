@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.27.md](v1.2.27.md) | **CURRENT** | 2026-06-02 KST | Student video progress access hardening |
+| [v1.2.28.md](v1.2.28.md) | **CURRENT** | 2026-06-02 KST | Tenant 2 OMR fact fallback + zero-score custom sheet hardening |
+| [v1.2.27.md](v1.2.27.md) | production-deployed / v1.2.28로 승계 | 2026-06-02 KST | Student video progress access hardening |
 | [v1.2.26.md](v1.2.26.md) | production-deployed / v1.2.27로 승계 | 2026-06-02 KST | Student video progress enrollment resolution + limglish production evidence |
 | [v1.2.25.md](v1.2.25.md) | production-deployed / v1.2.26로 승계 | 2026-06-02 KST | Tenant 2 OMR manual placeholder composition + production canary |
 | [v1.2.24.md](v1.2.24.md) | production-deployed / v1.2.25로 승계 | 2026-06-02 KST | OMR tenant 1 real-use canary + ungraded-exam clinic trigger guard |
