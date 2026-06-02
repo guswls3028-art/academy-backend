@@ -109,6 +109,13 @@ class ClinicTriggerService:
             if not exam_id:
                 continue
 
+            # Missing/ungraded exams keep the session incomplete, but they are
+            # not a scored failure. Creating a ClinicLink here makes multi-exam
+            # sessions emit premature remediation/resolution notifications while
+            # the remaining exams are still being graded.
+            if exam_row.get("no_result") or exam_row.get("score") is None:
+                continue
+
             passed = exam_row.get("passed", True)
             if passed:
                 continue  # 이 시험은 합격 → ClinicLink 불필요

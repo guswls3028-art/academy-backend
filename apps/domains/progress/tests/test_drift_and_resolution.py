@@ -137,6 +137,92 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
         self.assertFalse(b_row.get("passed"))
         self.assertTrue(sp.exam_meta.get("missing_results"))
 
+    def test_missing_result_does_not_create_auto_clinic_link(self):
+        """미채점/미응시 시험은 세션 완료를 막지만 자동 클리닉 실패로 보지 않는다."""
+        from apps.domains.results.models import Result
+        from apps.domains.progress.services.session_calculator import (
+            SessionProgressCalculator,
+        )
+
+        exam_a = Exam.objects.create(tenant=self.tenant, title="A", pass_score=60.0, max_score=100.0)
+        exam_b = Exam.objects.create(tenant=self.tenant, title="B", pass_score=60.0, max_score=100.0)
+        exam_a.sessions.add(self.lec_session)
+        exam_b.sessions.add(self.lec_session)
+
+        Result.objects.create(
+            target_type="exam", target_id=exam_a.id,
+            enrollment=self.enrollment, total_score=80, max_score=100,
+        )
+
+        ProgressPolicy.objects.get_or_create(
+            lecture=self.lecture,
+            defaults={
+                "exam_pass_source": ProgressPolicy.ExamPassSource.EXAM,
+                "exam_start_session_order": 1,
+                "homework_start_session_order": 2,
+            },
+        )
+        sp = SessionProgressCalculator.calculate(
+            enrollment_id=self.enrollment.id,
+            session=self.lec_session,
+            attendance_type="online",
+            video_progress_rate=100,
+        )
+
+        self.assertFalse(sp.exam_passed)
+        self.assertTrue(sp.exam_meta.get("missing_results"))
+        ClinicTriggerService.auto_create_if_failed(sp)
+
+        self.assertFalse(
+            ClinicLink.objects.filter(
+                enrollment=self.enrollment,
+                session=self.lec_session,
+                source_type="exam",
+                source_id=exam_b.id,
+            ).exists(),
+            "Result 없는 시험은 자동 클리닉 대상으로 생성하면 안 됨",
+        )
+
+    def test_scored_failed_exam_still_creates_auto_clinic_link(self):
+        """실제 점수가 있는 불합격 시험은 기존처럼 자동 클리닉 대상이 된다."""
+        from apps.domains.results.models import Result
+        from apps.domains.progress.services.session_calculator import (
+            SessionProgressCalculator,
+        )
+
+        exam = Exam.objects.create(tenant=self.tenant, title="Failed", pass_score=60.0, max_score=100.0)
+        exam.sessions.add(self.lec_session)
+        Result.objects.create(
+            target_type="exam", target_id=exam.id,
+            enrollment=self.enrollment, total_score=40, max_score=100,
+        )
+        ProgressPolicy.objects.get_or_create(
+            lecture=self.lecture,
+            defaults={
+                "exam_pass_source": ProgressPolicy.ExamPassSource.EXAM,
+                "exam_start_session_order": 1,
+                "homework_start_session_order": 2,
+            },
+        )
+        sp = SessionProgressCalculator.calculate(
+            enrollment_id=self.enrollment.id,
+            session=self.lec_session,
+            attendance_type="online",
+            video_progress_rate=100,
+        )
+
+        ClinicTriggerService.auto_create_if_failed(sp)
+
+        self.assertTrue(
+            ClinicLink.objects.filter(
+                enrollment=self.enrollment,
+                session=self.lec_session,
+                source_type="exam",
+                source_id=exam.id,
+                resolved_at__isnull=True,
+            ).exists()
+        )
+
     def test_completed_at_preserved_on_regression(self):
         """completed=True → 점수 수정으로 False 회귀해도 completed_at 유지"""
         from apps.domains.results.models import Result
