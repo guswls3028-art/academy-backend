@@ -30,7 +30,35 @@ def _import_media_models():
     return Video, VideoAccess
 
 
+def _coerce_int(value: Any) -> Optional[int]:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _get_explicit_enrollment_id(request, *, include_body: bool = False) -> Optional[int]:
+    sources = [getattr(request, "query_params", None)]
+    if include_body:
+        sources.append(getattr(request, "data", None))
+    for source in sources:
+        if not source:
+            continue
+        for key in ("enrollment", "enrollment_id"):
+            value = _coerce_int(source.get(key))
+            if value is not None:
+                return value
+    return None
+
+
 def _get_student_enrollment_id(request) -> Optional[int]:
+    explicit = _get_explicit_enrollment_id(request)
+    if explicit is not None:
+        return explicit
+
     q = request.query_params.get("enrollment")
     if q:
         try:
@@ -94,6 +122,32 @@ def _get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_i
             {"detail": "수강 정보가 해당 강의와 일치하지 않습니다."},
             status=status.HTTP_400_BAD_REQUEST,
         )
+    return enrollment, None
+
+
+def _find_active_enrollment_for_video(request, video, explicit_enrollment_id: Optional[int] = None):
+    session = getattr(video, "session", None)
+    lecture_id = getattr(session, "lecture_id", None) if session else None
+    if explicit_enrollment_id:
+        return _get_enrollment_for_student(
+            request,
+            explicit_enrollment_id,
+            lecture_id=lecture_id,
+        )
+
+    student = get_request_student(request)
+    tenant = getattr(request, "tenant", None)
+    if not student or not tenant or not lecture_id:
+        return None, None
+
+    from apps.domains.enrollment.models import Enrollment
+
+    enrollment = (
+        Enrollment.objects
+        .filter(student=student, lecture_id=lecture_id, status="ACTIVE", tenant=tenant)
+        .order_by("-id")
+        .first()
+    )
     return enrollment, None
 
 
@@ -785,12 +839,14 @@ class StudentSessionVideoListView(APIView):
             items.append({
                 "id": int(v.id),
                 "session_id": int(v.session_id),
+                "enrollment_id": int(enrollment_obj.id) if enrollment_obj else None,
                 "title": str(v.title),
                 "status": str(getattr(v, "status", "READY")),
                 "thumbnail_url": thumb,
                 "duration": getattr(v, "duration", None),
                 "progress": progress_percent,  # 0-100
                 "completed": bool(progress_obj and progress_obj.completed) if progress_obj else False,
+                "last_position": int(getattr(progress_obj, "last_position", 0) or 0) if progress_obj else 0,
                 "updated_at": v.updated_at.isoformat() if hasattr(v, "updated_at") and v.updated_at else None,
                 "created_at": v.created_at.isoformat() if hasattr(v, "created_at") and v.created_at else None,
                 "order": getattr(v, "order", 0),
@@ -1041,14 +1097,31 @@ class StudentVideoPlaybackView(APIView):
             if video_tenant_id:
                 is_liked = VideoLike.objects.filter(video_id=video_id, student=student, tenant_id=video_tenant_id).exists()
 
+        progress_obj = None
+        if enrollment_obj:
+            from apps.domains.video.models import VideoProgress as _VideoProgress
+            progress_obj = _VideoProgress.objects.filter(
+                video=video,
+                enrollment=enrollment_obj,
+            ).first()
+        progress_percent = (
+            round(float(getattr(progress_obj, "progress", 0) or 0) * 100, 1)
+            if progress_obj
+            else 0
+        )
+
         payload = {
             "video": {
                 "id": int(video.id),
                 "session_id": int(video.session_id) if video.session_id is not None else None,
+                "enrollment_id": int(enrollment_obj.id) if enrollment_obj else None,
                 "title": str(video.title),
                 "status": str(getattr(video, "status", "READY")),
                 "thumbnail_url": thumb,
                 "duration": getattr(video, "duration", None),
+                "progress": progress_percent,
+                "completed": bool(progress_obj and progress_obj.completed),
+                "last_position": int(getattr(progress_obj, "last_position", 0) or 0) if progress_obj else 0,
                 "view_count": getattr(video, "view_count", 0),
                 "like_count": getattr(video, "like_count", 0),
                 "comment_count": getattr(video, "comment_count", 0),
@@ -1097,10 +1170,11 @@ class StudentVideoProgressView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def post(self, request, video_id: int):
-        Video, VideoPermission = _import_media_models()
+        Video, _VideoPermission = _import_media_models()
         from apps.domains.video.models import VideoProgress
 
-        enrollment_id = _get_student_enrollment_id(request)
+        explicit_enrollment_id = _get_explicit_enrollment_id(request, include_body=True)
+        response_enrollment_id = explicit_enrollment_id or _get_student_enrollment_id(request) or 0
 
         try:
             video_qs = Video.objects.select_related("tenant", "session__lecture")
@@ -1119,7 +1193,7 @@ class StudentVideoProgressView(APIView):
             return Response({
                 "id": 0,
                 "video_id": video_id,
-                "enrollment_id": enrollment_id or 0,
+                "enrollment_id": response_enrollment_id,
                 "progress": p,
                 "progress_percent": round(p * 100, 1),
                 "completed": _safe_video_completed(completed),
@@ -1144,19 +1218,16 @@ class StudentVideoProgressView(APIView):
                 "last_position": _safe_video_position(request.data.get("last_position")),
             }, status=status.HTTP_200_OK)
 
-        if not enrollment_id:
-            return Response(
-                {"detail": "enrollment_id가 필요합니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        lecture_id = getattr(video.session, "lecture_id", None) if video.session else None
-        enrollment, err = _get_enrollment_for_student(request, enrollment_id, lecture_id=lecture_id)
+        enrollment, err = _find_active_enrollment_for_video(
+            request,
+            video,
+            explicit_enrollment_id=explicit_enrollment_id,
+        )
         if err:
             return err
         if not enrollment:
             return Response(
-                {"detail": "해당 수강 정보로는 진행률을 저장할 수 없습니다."},
+                {"detail": "이 영상을 시청하려면 해당 강의에 수강 등록이 필요합니다."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 

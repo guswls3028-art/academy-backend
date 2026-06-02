@@ -4,6 +4,7 @@ from rest_framework import serializers
 class StudentVideoListItemSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     session_id = serializers.IntegerField(allow_null=True)
+    enrollment_id = serializers.IntegerField(allow_null=True, required=False)
     title = serializers.CharField()
 
     status = serializers.CharField()
@@ -13,6 +14,7 @@ class StudentVideoListItemSerializer(serializers.Serializer):
     # 진행률 (0-100)
     progress = serializers.FloatField(required=False, default=0)
     completed = serializers.BooleanField(required=False, default=False)
+    last_position = serializers.IntegerField(required=False, default=0)
     updated_at = serializers.DateTimeField(required=False, allow_null=True)
     created_at = serializers.DateTimeField(required=False, allow_null=True)
     order = serializers.IntegerField(required=False, default=0)
