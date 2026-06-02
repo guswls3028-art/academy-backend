@@ -8,7 +8,7 @@ from apps.core.models import Tenant
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import ExamAttempt, ExamResult, Result
+from apps.domains.results.models import ExamAttempt, ExamResult, Result, ResultItem
 from apps.domains.results.services.exam_grading_service import ExamGradingService
 from apps.domains.results.services.sync_result_from_submission import (
     sync_result_from_exam_submission,
@@ -85,6 +85,46 @@ class SubmissionScopeGuardTests(TestCase):
         )
         return submission
 
+    def _submission_for_exam(self, exam, question, answer="1"):
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            enrollment_id=self.enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.ANSWERS_READY,
+        )
+        SubmissionAnswer.objects.create(
+            tenant=self.tenant,
+            submission=submission,
+            exam_question_id=question.id,
+            answer=answer,
+        )
+        return submission
+
+    def _create_mixed_exam(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Mixed Scope Guard Exam",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        sheet = Sheet.objects.create(
+            exam=exam,
+            name="MIXED",
+            total_questions=2,
+            choice_count=1,
+            essay_count=1,
+        )
+        choice = ExamQuestion.objects.create(sheet=sheet, number=1, score=80)
+        essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=20)
+        AnswerKey.objects.create(exam=exam, answers={str(choice.id): "1"})
+        return exam, choice, essay
+
     def test_auto_grade_rejects_unassigned_submission_without_side_effects(self):
         submission = self._unassigned_submission()
 
@@ -137,3 +177,202 @@ class SubmissionScopeGuardTests(TestCase):
         result = Result.objects.get(target_id=self.exam.id, enrollment_id=self.enrollment.id)
         self.assertEqual(result.attempt.submission_id, first.id)
         self.assertFalse(ExamResult.objects.filter(submission=second).exists())
+
+    def test_sync_attaches_zero_manual_placeholder_to_real_submission(self):
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 0.0,
+                    "max_score": 10.0,
+                    "source": "admin_manual_total",
+                }
+            },
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=0.0,
+            max_score=10.0,
+            objective_score=0.0,
+        )
+        submission = self._unassigned_submission()
+
+        result = sync_result_from_exam_submission(submission.id)
+
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.submission_id, submission.id)
+        self.assertEqual(attempt.attempt_index, 1)
+        self.assertTrue(attempt.is_representative)
+        self.assertEqual(attempt.meta["initial_snapshot"]["source"], "omr_replaced_manual_zero")
+        self.assertEqual(float(result.total_score), 10.0)
+        self.assertEqual(float(result.objective_score), 10.0)
+        self.assertEqual(ExamAttempt.objects.filter(exam=self.exam, enrollment=self.enrollment).count(), 1)
+
+    def test_sync_attaches_zero_manual_component_placeholders_to_real_submission(self):
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+
+        for source in ("admin_manual_objective", "admin_manual_subjective"):
+            with self.subTest(source=source):
+                ExamAttempt.objects.filter(exam=self.exam, enrollment=self.enrollment).delete()
+                Result.objects.filter(target_id=self.exam.id, enrollment_id=self.enrollment.id).delete()
+                Submission.objects.filter(
+                    tenant=self.tenant,
+                    user=self.admin,
+                    target_type=Submission.TargetType.EXAM,
+                    target_id=self.exam.id,
+                ).delete()
+                submission = self._unassigned_submission()
+                attempt = ExamAttempt.objects.create(
+                    exam=self.exam,
+                    enrollment=self.enrollment,
+                    submission_id=0,
+                    attempt_index=1,
+                    is_representative=True,
+                    status="done",
+                    meta={
+                        "initial_snapshot": {
+                            "total_score": 0.0,
+                            "max_score": 10.0,
+                            "source": source,
+                        }
+                    },
+                )
+                Result.objects.create(
+                    target_type="exam",
+                    target_id=self.exam.id,
+                    enrollment=self.enrollment,
+                    attempt=attempt,
+                    total_score=0.0,
+                    max_score=10.0,
+                    objective_score=0.0,
+                )
+
+                result = sync_result_from_exam_submission(submission.id)
+
+                attempt.refresh_from_db()
+                self.assertEqual(attempt.submission_id, submission.id)
+                self.assertEqual(attempt.meta["initial_snapshot"]["source"], "omr_replaced_manual_zero")
+                self.assertEqual(float(result.total_score), 10.0)
+                self.assertEqual(float(result.objective_score), 10.0)
+
+    def test_sync_does_not_overwrite_nonzero_manual_placeholder(self):
+        ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 7.0,
+                    "max_score": 10.0,
+                    "source": "admin_manual_total",
+                }
+            },
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=7.0,
+            max_score=10.0,
+            objective_score=7.0,
+        )
+        submission = self._unassigned_submission()
+
+        with self.assertRaises(DjangoValidationError):
+            sync_result_from_exam_submission(submission.id)
+
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.submission_id, 0)
+        result = Result.objects.get(target_id=self.exam.id, enrollment_id=self.enrollment.id)
+        self.assertEqual(float(result.total_score), 7.0)
+        self.assertFalse(ExamResult.objects.filter(submission=submission).exists())
+
+    def test_sync_combines_omr_objective_with_existing_manual_subjective_score(self):
+        exam, choice, _essay = self._create_mixed_exam()
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 15.0,
+                    "max_score": 100.0,
+                    "source": "admin_manual_subjective",
+                }
+            },
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=15.0,
+            max_score=100.0,
+            objective_score=0.0,
+        )
+        submission = self._submission_for_exam(exam, choice, answer="1")
+
+        result = sync_result_from_exam_submission(submission.id)
+
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.submission_id, submission.id)
+        self.assertEqual(attempt.meta["initial_snapshot"]["source"], "omr_attached_manual_subjective")
+        self.assertEqual(float(result.objective_score), 80.0)
+        self.assertEqual(float(result.total_score), 95.0)
+        self.assertEqual(float(result.max_score), 100.0)
+
+    def test_sync_preserves_manual_subjective_score_and_skips_essay_result_items(self):
+        exam, choice, essay = self._create_mixed_exam()
+        submission = self._submission_for_exam(exam, choice, answer="1")
+
+        result = sync_result_from_exam_submission(submission.id)
+        self.assertEqual(float(result.objective_score), 80.0)
+        self.assertEqual(float(result.total_score), 80.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        self.assertTrue(ResultItem.objects.filter(result=result, question=choice).exists())
+        self.assertFalse(ResultItem.objects.filter(result=result, question=essay).exists())
+
+        ResultItem.objects.create(
+            result=result,
+            question=essay,
+            answer="manual",
+            is_correct=True,
+            score=15.0,
+            max_score=20.0,
+            source="manual",
+        )
+        result.total_score = 95.0
+        result.objective_score = 80.0
+        result.max_score = 100.0
+        result.save(update_fields=["total_score", "objective_score", "max_score", "updated_at"])
+
+        result = sync_result_from_exam_submission(submission.id)
+
+        self.assertEqual(float(result.objective_score), 80.0)
+        self.assertEqual(float(result.total_score), 95.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        self.assertFalse(
+            ResultItem.objects.filter(
+                result=result,
+                question=essay,
+                source__in=["online", "omr"],
+            ).exists()
+        )
+        self.assertTrue(ResultItem.objects.filter(result=result, question=essay, source="manual").exists())

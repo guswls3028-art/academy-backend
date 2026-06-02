@@ -13,6 +13,12 @@ from apps.domains.exams.models import Exam
 
 logger = logging.getLogger(__name__)
 
+_ATTACHABLE_MANUAL_SOURCES = {
+    "admin_manual_total",
+    "admin_manual_objective",
+    "admin_manual_subjective",
+}
+
 
 class ExamAttemptService:
     """
@@ -106,3 +112,88 @@ class ExamAttemptService:
             ) from e
 
         return attempt
+
+    @staticmethod
+    @transaction.atomic
+    def attach_manual_score_placeholder_for_submission(
+        *,
+        exam_id: int,
+        enrollment_id: int,
+        submission_id: int,
+    ) -> ExamAttempt | None:
+        """
+        Attach a real submission to a pre-existing manual score placeholder.
+
+        Admin score entry creates offline attempts with ``submission_id=0``.
+        In production OMR flows, a teacher can enter a temporary 0 before the
+        actual OMR scan finishes. That placeholder should not consume the only
+        allowed attempt and block the real OMR submission. Manual subjective
+        scores are component scores, so they can attach and be preserved even
+        when non-zero. Non-zero manual total/objective scores are treated as
+        deliberate score entries and are not overwritten.
+        """
+        qs = (
+            ExamAttempt.objects
+            .select_for_update()
+            .filter(exam_id=int(exam_id), enrollment_id=int(enrollment_id))
+        )
+        placeholder = (
+            qs.filter(
+                submission_id=0,
+                attempt_index=1,
+                is_representative=True,
+            )
+            .order_by("id")
+            .first()
+        )
+        if not placeholder:
+            return None
+
+        meta = dict(placeholder.meta or {}) if isinstance(placeholder.meta, dict) else {}
+        initial = meta.get("initial_snapshot") if isinstance(meta.get("initial_snapshot"), dict) else {}
+        source = str(initial.get("source") or "")
+        initial_total = _safe_float(initial.get("total_score"))
+        if source not in _ATTACHABLE_MANUAL_SOURCES:
+            return None
+        if source != "admin_manual_subjective" and initial_total != 0.0:
+            return None
+
+        from apps.domains.results.models import Result, ResultItem
+
+        result = (
+            Result.objects
+            .select_for_update()
+            .filter(
+                target_type="exam",
+                target_id=int(exam_id),
+                enrollment_id=int(enrollment_id),
+                attempt_id=int(placeholder.id),
+            )
+            .first()
+        )
+        if result:
+            if _safe_float(result.objective_score) != 0.0:
+                return None
+            if ResultItem.objects.filter(result=result).exists():
+                return None
+            if source != "admin_manual_subjective" and _safe_float(result.total_score) != 0.0:
+                return None
+
+        meta["manual_score_placeholder"] = {
+            "attached_submission_id": int(submission_id),
+            "attached_at": timezone.now().isoformat(),
+            "previous_submission_id": 0,
+            "previous_initial_snapshot": initial,
+        }
+        placeholder.submission_id = int(submission_id)
+        placeholder.status = "pending"
+        placeholder.meta = meta
+        placeholder.save(update_fields=["submission_id", "status", "meta", "updated_at"])
+        return placeholder
+
+
+def _safe_float(value) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0

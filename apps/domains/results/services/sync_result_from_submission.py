@@ -16,6 +16,7 @@ from apps.domains.results.guards.grading_contract import GradingContractGuard
 from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.services.answer_matching import answer_matches
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
+from apps.support.omr.score_shape import get_exam_score_shape
 
 
 @transaction.atomic
@@ -44,6 +45,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         sheet, answer_key = GradingContractGuard.validate_exam_for_grading(exam)
     except Exception:
         return None
+    score_shape = get_exam_score_shape(exam)
 
     key_map = {
         int(k): v
@@ -58,12 +60,33 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
             answers_map[qid] = ans
 
     questions = list(sheet.questions.all().order_by("number"))
+    auto_score_questions = [
+        q
+        for q in questions
+        if score_shape.question_kind(int(q.id)) != "essay"
+    ]
+    essay_question_ids = {
+        int(q.id)
+        for q in questions
+        if score_shape.question_kind(int(q.id)) == "essay"
+    }
     exam_max_score = float(getattr(exam, "max_score", 0) or 0)
-    raw_total_score = sum(float(getattr(q, "score", 0) or 0) for q in questions)
-    use_equal_score_fallback = bool(questions) and raw_total_score <= 0 and exam_max_score > 0
-    equal_question_score = exam_max_score / len(questions) if use_equal_score_fallback else 0.0
+    raw_total_score = sum(float(getattr(q, "score", 0) or 0) for q in auto_score_questions)
+    objective_max_score = float(score_shape.objective_max_score or 0.0)
+    if objective_max_score <= 0 and score_shape.essay_count == 0:
+        objective_max_score = exam_max_score
+    use_equal_score_fallback = (
+        bool(auto_score_questions)
+        and raw_total_score <= 0
+        and objective_max_score > 0
+    )
+    equal_question_score = (
+        objective_max_score / len(auto_score_questions)
+        if use_equal_score_fallback
+        else 0.0
+    )
     items_payload = []
-    for q in questions:
+    for q in auto_score_questions:
         qid = int(q.id)
         ans = answers_map.get(qid, "")
         correct_key = key_map.get(qid, "")
@@ -89,6 +112,19 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         total += item["score"]
         max_total += item["max_score"]
 
+    result_max_score = float(
+        score_shape.total_max_score
+        or getattr(exam, "max_score", 0.0)
+        or max_total
+        or 0.0
+    )
+
+    existing_result_prev = Result.objects.filter(
+        target_type="exam",
+        target_id=int(exam.id),
+        enrollment_id=int(enrollment_id),
+    ).first()
+
     # 먼저 attempt 정책을 통과시킨다. 재응시 불가/최대 횟수 초과라면 Result를 건드리지 않는다.
     from apps.domains.results.models import ExamAttempt
 
@@ -98,36 +134,71 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         .filter(submission_id=submission.id)
         .first()
     )
-    if attempt:
-        attempt.status = "done"
-        attempt.save(update_fields=["status", "updated_at"])
-    else:
+    attached_placeholder = False
+    created_attempt = False
+    if not attempt:
+        attempt = ExamAttemptService.attach_manual_score_placeholder_for_submission(
+            exam_id=int(exam.id),
+            enrollment_id=int(enrollment_id),
+            submission_id=int(submission.id),
+        )
+        attached_placeholder = attempt is not None
+
+    if not attempt:
         attempt = ExamAttemptService.create_for_submission(
             exam_id=int(exam.id),
             enrollment_id=int(enrollment_id),
             submission_id=int(submission.id),
         )
-        attempt.status = "done"
-        if int(attempt.attempt_index) == 1:
-            attempt.meta = {
-                "initial_snapshot": {
-                    "total_score": float(total),
-                    "max_score": float(max_total),
-                    "submitted_at": timezone.now().isoformat(),
-                    "submission_id": int(submission.id),
-                }
-            }
-            attempt.save(update_fields=["status", "meta", "updated_at"])
+        created_attempt = True
+
+    preserve_existing_subjective = bool(
+        existing_result_prev
+        and existing_result_prev.attempt_id
+        and int(existing_result_prev.attempt_id) == int(attempt.id)
+    )
+    existing_subjective = 0.0
+    if existing_result_prev and preserve_existing_subjective:
+        existing_subjective = max(
+            0.0,
+            float(existing_result_prev.total_score or 0.0)
+            - float(existing_result_prev.objective_score or 0.0),
+        )
+    result_total = float(total) + float(existing_subjective)
+
+    attempt.status = "done"
+    if int(attempt.attempt_index) == 1 and (created_attempt or attached_placeholder):
+        attempt.meta = dict(attempt.meta or {}) if isinstance(attempt.meta, dict) else {}
+        attempt.meta["initial_snapshot"] = {
+            "total_score": float(result_total),
+            "max_score": float(result_max_score),
+            "submitted_at": timezone.now().isoformat(),
+            "submission_id": int(submission.id),
+        }
+        if attached_placeholder:
+            previous = attempt.meta.get("manual_score_placeholder")
+            previous_initial = (
+                previous.get("previous_initial_snapshot")
+                if isinstance(previous, dict)
+                else None
+            )
+            previous_source = (
+                previous_initial.get("source")
+                if isinstance(previous_initial, dict)
+                else None
+            )
+            if previous_source == "admin_manual_subjective" and existing_subjective > 0:
+                attempt.meta["initial_snapshot"]["source"] = "omr_attached_manual_subjective"
+            else:
+                attempt.meta["initial_snapshot"]["source"] = "omr_replaced_manual_zero"
         else:
-            attempt.save(update_fields=["status", "updated_at"])
+            attempt.meta["initial_snapshot"]["source"] = "submission_sync"
+        attempt.save(update_fields=["status", "meta", "updated_at"])
+    else:
+        attempt.save(update_fields=["status", "updated_at"])
 
     # 기존 Result가 있으면 이전 대표 attempt의 meta에 최종 snapshot 보존.
     # 재응시로 Result가 덮어쓰여도 이전 점수 이력이 손실되지 않음.
-    existing_result_prev = Result.objects.filter(
-        target_type="exam",
-        target_id=int(exam.id),
-        enrollment_id=int(enrollment_id),
-    ).first()
     if existing_result_prev and existing_result_prev.attempt_id:
         from apps.domains.results.models import ExamAttempt as _EA
         prev_rep = (
@@ -192,6 +263,13 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         defaults={"total_score": 0, "max_score": 0},
     )
 
+    if essay_question_ids:
+        ResultItem.objects.filter(
+            result=result,
+            question_id__in=essay_question_ids,
+            source__in=["online", "omr"],
+        ).delete()
+
     for item in items_payload:
         ResultItem.objects.update_or_create(
             result=result,
@@ -204,8 +282,8 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
                 "source": item["source"],
             },
         )
-    result.total_score = total
-    result.max_score = max_total
+    result.total_score = result_total
+    result.max_score = result_max_score
     result.objective_score = total  # 자동채점 문항 합산 = objective score
     result.submitted_at = timezone.now()
     result.save(update_fields=["total_score", "max_score", "objective_score", "submitted_at", "updated_at"])
