@@ -38,7 +38,7 @@ from apps.domains.results.serializers.student_exam_result import (
     StudentExamResultSerializer,
 )
 
-from apps.domains.exams.models import Exam
+from apps.domains.exams.models import Exam, ExamQuestion
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
@@ -213,6 +213,28 @@ class AdminExamResultDetailView(APIView):
                 correct_answers.get(qid, "")
             )
 
+        questions_payload = []
+        if score_shape.sheet_id:
+            for question in (
+                ExamQuestion.objects
+                .filter(sheet_id=score_shape.sheet_id)
+                .only("id", "number", "score")
+                .order_by("number")
+            ):
+                qid = int(question.id)
+                kind = score_shape.question_kind(qid)
+                payload = {
+                    "question_id": qid,
+                    "number": int(question.number),
+                    "max_score": score_shape.question_max_score(
+                        qid,
+                        getattr(question, "score", 0),
+                    ),
+                }
+                if kind:
+                    payload["kind"] = kind
+                questions_payload.append(payload)
+
         # -------------------------------------------------
         # 9️⃣ OMR 스캔 정보 (image_url + per-answer meta)
         #     — 대표 attempt의 submission을 기반으로 주입
@@ -296,6 +318,7 @@ class AdminExamResultDetailView(APIView):
                 str(k): format_answer_for_display(v)
                 for k, v in (correct_answers or {}).items()
             },
+            "questions": questions_payload,
             "score_shape": {
                 "total_questions": int(score_shape.total_questions),
                 "choice_count": int(score_shape.choice_count),

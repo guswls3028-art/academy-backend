@@ -30,6 +30,20 @@ class ExamScoreShape:
     def question_kind(self, question_id: int) -> QuestionKind | None:
         return self.question_kind_by_id.get(int(question_id))
 
+    def question_max_score(
+        self,
+        question_id: int,
+        raw_max_score: float | int | None = None,
+    ) -> float:
+        raw = float(raw_max_score or 0.0)
+        if raw > 0:
+            return raw
+        if self.question_kind(int(question_id)) not in {"choice", "essay"}:
+            return 0.0
+        if self.total_questions > 0 and self.total_max_score > 0:
+            return float(self.total_max_score) / int(self.total_questions)
+        return 0.0
+
 
 def get_exam_score_shape(exam) -> ExamScoreShape:
     exam_id = int(getattr(exam, "id", 0) or 0)

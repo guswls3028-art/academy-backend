@@ -11,6 +11,7 @@ from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
 from apps.domains.results.views.admin_exam_item_score_view import AdminExamItemScoreView
 from apps.domains.results.views.admin_exam_objective_score_view import AdminExamObjectiveScoreView
+from apps.domains.results.views.admin_exam_result_detail_view import AdminExamResultDetailView
 from apps.domains.results.views.admin_exam_subjective_score_view import AdminExamSubjectiveScoreView
 from apps.domains.results.views.admin_exam_total_score_view import AdminExamTotalScoreView
 from apps.domains.results.views.session_scores_view import SessionScoresView
@@ -134,6 +135,34 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         questions = []
         for number, score in enumerate([*choice_scores, *essay_scores], start=1):
             questions.append(ExamQuestion.objects.create(sheet=sheet, number=number, score=score))
+        return exam, questions
+
+    def _create_zero_score_mixed_exam(self, title: str):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title=title,
+            exam_type=Exam.ExamType.REGULAR,
+            max_score=100,
+            pass_score=0,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.assigned_enrollment)
+        SessionEnrollment.objects.get_or_create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.assigned_enrollment,
+        )
+        sheet = Sheet.objects.create(
+            exam=exam,
+            name="MAIN",
+            total_questions=2,
+            choice_count=1,
+            essay_count=1,
+        )
+        questions = [
+            ExamQuestion.objects.create(sheet=sheet, number=1, score=0),
+            ExamQuestion.objects.create(sheet=sheet, number=2, score=0),
+        ]
         return exam, questions
 
     def _create_result(self, exam, objective_score: float):
@@ -389,29 +418,8 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
 
     @patch("apps.domains.results.views.admin_exam_item_score_view.dispatch_progress_pipeline")
     def test_item_score_uses_equal_fallback_for_zero_score_mixed_sheet(self, mock_dispatch):
-        exam = Exam.objects.create(
-            tenant=self.tenant,
-            title="Zero score mixed manual",
-            exam_type=Exam.ExamType.REGULAR,
-            max_score=100,
-            pass_score=0,
-        )
-        exam.sessions.add(self.session)
-        ExamEnrollment.objects.create(exam=exam, enrollment=self.assigned_enrollment)
-        SessionEnrollment.objects.get_or_create(
-            tenant=self.tenant,
-            session=self.session,
-            enrollment=self.assigned_enrollment,
-        )
-        sheet = Sheet.objects.create(
-            exam=exam,
-            name="MAIN",
-            total_questions=2,
-            choice_count=1,
-            essay_count=1,
-        )
-        ExamQuestion.objects.create(sheet=sheet, number=1, score=0)
-        essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
+        exam, questions = self._create_zero_score_mixed_exam("Zero score mixed manual")
+        essay = questions[1]
 
         response = self._patch_for_exam(
             AdminExamItemScoreView,
@@ -432,6 +440,33 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         self.assertEqual(float(result.total_score), 40.0)
         self.assertEqual(float(result.max_score), 100.0)
         mock_dispatch.assert_called()
+
+    def test_score_shape_questions_use_equal_fallback_for_zero_score_mixed_sheet(self):
+        exam, _questions = self._create_zero_score_mixed_exam("Zero score mixed metadata")
+
+        session_response = self._get_session_scores()
+
+        self.assertEqual(session_response.status_code, 200, session_response.data)
+        exam_meta = next(e for e in session_response.data["meta"]["exams"] if e["exam_id"] == exam.id)
+        self.assertEqual(
+            [(q["number"], q["kind"], q["max_score"]) for q in exam_meta["questions"]],
+            [(1, "choice", 50.0), (2, "essay", 50.0)],
+        )
+
+        request = self.factory.get("/results/admin/exams/detail/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        detail_response = AdminExamResultDetailView.as_view()(
+            request,
+            exam_id=exam.id,
+            enrollment_id=self.assigned_enrollment.id,
+        )
+
+        self.assertEqual(detail_response.status_code, 200, detail_response.data)
+        self.assertEqual(
+            [(q["number"], q["kind"], q["max_score"]) for q in detail_response.data["questions"]],
+            [(1, "choice", 50.0), (2, "essay", 50.0)],
+        )
 
     def test_session_scores_meta_exposes_score_shape_and_component_scores(self):
         exam, _questions = self._create_structured_exam("Scores meta", [40, 40], [20])

@@ -363,6 +363,10 @@ class SessionScoresView(APIView):
                 kind = score_shape.question_kind_by_id.get(int(question["question_id"]))
                 if kind:
                     question["kind"] = kind
+                question["max_score"] = score_shape.question_max_score(
+                    int(question["question_id"]),
+                    question.get("max_score"),
+                )
 
         # 시험/과제를 display_order 기준으로 정렬 (0이면 created_at 순)
         exams = sorted(exams, key=lambda e: (getattr(e, "display_order", 0) or 0, e.created_at, e.id))
