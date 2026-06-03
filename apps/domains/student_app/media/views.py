@@ -10,6 +10,13 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework import status
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
+from .access_context import (
+    StudentVideoAccessError,
+    ensure_student_video_watch_allowed,
+    resolve_student_session_video_context,
+    resolve_student_video_access_context,
+    student_can_access_video,
+)
 from .serializers import (
     StudentVideoListItemSerializer,
     StudentVideoPlaybackSerializer,
@@ -52,103 +59,6 @@ def _get_explicit_enrollment_id(request, *, include_body: bool = False) -> Optio
             if value is not None:
                 return value
     return None
-
-
-def _get_student_enrollment_id(request) -> Optional[int]:
-    explicit = _get_explicit_enrollment_id(request)
-    if explicit is not None:
-        return explicit
-
-    q = request.query_params.get("enrollment")
-    if q:
-        try:
-            return int(q)
-        except Exception:
-            return None
-
-    sp = get_request_student(request)
-    if not sp:
-        return None
-
-    for key in ["enrollment_id", "current_enrollment_id", "enrollment"]:
-        v = getattr(sp, key, None)
-        if isinstance(v, int):
-            return v
-
-    enrollments = getattr(sp, "enrollments", None)
-    try:
-        if enrollments and hasattr(enrollments, "first"):
-            first = enrollments.first()
-            if first and hasattr(first, "id"):
-                return int(first.id)
-    except Exception:
-        pass
-
-    return None
-
-
-def _get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_id: Optional[int] = None):
-    """
-    요청한 학생 소유의 수강정보만 허용 (IDOR 방지).
-    lecture_id가 주어지면 해당 강의의 수강인지 검증.
-    Returns: (enrollment_obj or None, error Response or None)
-    """
-    from apps.domains.enrollment.models import Enrollment
-
-    if not enrollment_id:
-        return None, None
-    student = get_request_student(request)
-    if not student:
-        return None, Response(
-            {"detail": "학생 정보를 확인할 수 없습니다."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    tenant = getattr(request, "tenant", None)
-    if not tenant:
-        return None, Response(
-            {"detail": "tenant required"},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    qs = Enrollment.objects.filter(id=enrollment_id, student=student, status="ACTIVE", tenant=tenant)
-    enrollment = qs.first()
-    if not enrollment:
-        return None, Response(
-            {"detail": "해당 수강 정보에 접근할 수 없습니다."},
-            status=status.HTTP_403_FORBIDDEN,
-        )
-    # lecture_id가 주어졌을 때 다른 강의 수강이면 에러 반환 (잘못된 enrollment_id로 다른 수강이 대체되는 것 방지)
-    if lecture_id is not None and enrollment.lecture_id != lecture_id:
-        return None, Response(
-            {"detail": "수강 정보가 해당 강의와 일치하지 않습니다."},
-            status=status.HTTP_400_BAD_REQUEST,
-        )
-    return enrollment, None
-
-
-def _find_active_enrollment_for_video(request, video, explicit_enrollment_id: Optional[int] = None):
-    session = getattr(video, "session", None)
-    lecture_id = getattr(session, "lecture_id", None) if session else None
-    if explicit_enrollment_id:
-        return _get_enrollment_for_student(
-            request,
-            explicit_enrollment_id,
-            lecture_id=lecture_id,
-        )
-
-    student = get_request_student(request)
-    tenant = getattr(request, "tenant", None)
-    if not student or not tenant or not lecture_id:
-        return None, None
-
-    from apps.domains.enrollment.models import Enrollment
-
-    enrollment = (
-        Enrollment.objects
-        .filter(student=student, lecture_id=lecture_id, status="ACTIVE", tenant=tenant)
-        .order_by("-id")
-        .first()
-    )
-    return enrollment, None
 
 
 def _safe_video_progress(value: Any) -> float:
@@ -661,46 +571,6 @@ class StudentVideoStatsView(APIView):
         })
 
 
-def _students_for_request(request):
-    """요청자에 연결된 학생들 (1명 또는 학부모의 모든 자녀). 권한 검사용."""
-    student = get_request_student(request)
-    if student:
-        return [student]
-    parent = getattr(request.user, "parent_profile", None)
-    if parent:
-        return list(parent.students.filter(deleted_at__isnull=True))
-    return []
-
-
-def _student_can_access_session(request, session) -> bool:
-    """세션 접근: 시스템 강의(공개 영상) = 콘텐츠 테넌트 내 학생이면 OK. 그 외 = 해당 강의 수강생만. X-Tenant-Code 미의존."""
-    from apps.domains.enrollment.models import Enrollment
-
-    lecture = getattr(session, "lecture", None)
-    if not lecture:
-        return False
-    tenant = getattr(lecture, "tenant", None)
-    if not tenant:
-        return False
-    tenant_id = getattr(tenant, "id", None)
-
-    # 시스템 강의(공개 영상): student.tenant_id == lecture.tenant_id 이면 허용
-    if getattr(lecture, "is_system", False):
-        students = _students_for_request(request)
-        return bool(students and any(getattr(s, "tenant_id", None) == tenant_id for s in students))
-
-    # 세션영상: 해당 세션 강의 수강생만
-    students = _students_for_request(request)
-    if not students:
-        return False
-    for student in students:
-        if Enrollment.objects.filter(
-            student=student, lecture=lecture, tenant=tenant, status="ACTIVE"
-        ).exists():
-            return True
-    return False
-
-
 def _progress_echo_response(*, video_id: int, enrollment_id: int, request) -> Response:
     """Return the standard progress payload without writing VideoProgress."""
     p = _safe_video_progress(request.data.get("progress"))
@@ -716,34 +586,6 @@ def _progress_echo_response(*, video_id: int, enrollment_id: int, request) -> Re
     }, status=status.HTTP_200_OK)
 
 
-def _student_can_access_video(request, video) -> bool:
-    """Video-level guard shared by playback, likes, and comments."""
-    tenant = getattr(request, "tenant", None)
-    if not tenant:
-        return False
-
-    video_tenant_id = getattr(video, "tenant_id", None)
-    if video_tenant_id is None:
-        video_tenant_id = (
-            getattr(video.session.lecture, "tenant_id", None)
-            if getattr(video, "session", None) and getattr(video.session, "lecture", None)
-            else None
-        )
-    if video_tenant_id != tenant.id:
-        return False
-
-    from apps.domains.video.models import Video as VideoModel
-
-    if getattr(video, "visibility", VideoModel.Visibility.ENROLLED) == VideoModel.Visibility.PUBLIC:
-        student = get_request_student(request)
-        return bool(student and getattr(student, "tenant_id", None) == tenant.id)
-
-    session = getattr(video, "session", None)
-    if not session:
-        return False
-    return _student_can_access_session(request, session)
-
-
 class StudentSessionVideoListView(APIView):
     """
     GET /student/video/sessions/{session_id}/videos/
@@ -755,9 +597,9 @@ class StudentSessionVideoListView(APIView):
         from apps.domains.lectures.models import Session as SessionModel
 
         Video, VideoPermission = _import_media_models()
-        enrollment_id = _get_student_enrollment_id(request)
+        explicit_enrollment_id = _get_explicit_enrollment_id(request)
 
-        # ✅ 테넌트 early-filter (defense-in-depth) — 후속 _student_can_access_session도
+        # ✅ 테넌트 early-filter (defense-in-depth) — 후속 access context도
         #    tenant 비교를 하지만, 1차 차단으로 cross-tenant lookup을 금지한다.
         tenant = getattr(request, "tenant", None)
         session_qs = SessionModel.objects.select_related("lecture__tenant")
@@ -767,48 +609,18 @@ class StudentSessionVideoListView(APIView):
         if session is None:
             raise Http404
 
-        lecture = getattr(session, "lecture", None)
-        is_public = lecture and getattr(lecture, "is_system", False)
+        try:
+            access_context = resolve_student_session_video_context(
+                request,
+                session,
+                explicit_enrollment_id=explicit_enrollment_id,
+            )
+        except StudentVideoAccessError as e:
+            if e.status_code == status.HTTP_400_BAD_REQUEST:
+                return Response({"detail": e.detail}, status=e.status_code)
+            raise PermissionDenied(e.detail)
 
-        # 공개 영상(시스템 강의): 테넌트 내 학생이면 enrollment 없이 허용
-        if is_public and _student_can_access_session(request, session):
-            enrollment_obj = None
-        else:
-            enrollment_obj = None
-            lecture_id_val = getattr(lecture, "id", None)
-
-            # query param 으로 명시 전달된 enrollment 만 strict 검증.
-            # student attr default 픽은 신뢰하지 않는다 (학생 N개 강의 enrolled 시 mismatch 400 결함 fix).
-            raw_q = request.query_params.get("enrollment")
-            explicit_enrollment_id = None
-            if raw_q:
-                try:
-                    explicit_enrollment_id = int(raw_q)
-                except Exception:
-                    explicit_enrollment_id = None
-
-            if explicit_enrollment_id:
-                enrollment_obj, err = _get_enrollment_for_student(
-                    request, explicit_enrollment_id, lecture_id=lecture_id_val
-                )
-                if err:
-                    return err
-
-            # session lecture 기준 학생 ACTIVE enrollment 자동 검색 (default path)
-            if enrollment_obj is None and lecture_id_val:
-                from apps.domains.enrollment.models import Enrollment as _Enroll
-                _student = get_request_student(request)
-                if _student:
-                    enrollment_obj = _Enroll.objects.filter(
-                        student=_student, lecture_id=lecture_id_val, status="ACTIVE",
-                    ).order_by("-id").first()
-            if enrollment_obj is None and not _student_can_access_session(request, session):
-                detail = (
-                    "공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."
-                    if is_public
-                    else "이 차시의 영상을 볼 수 있는 권한이 없습니다."
-                )
-                raise PermissionDenied(detail)
+        enrollment_obj = access_context.enrollment
 
         videos = list(Video.objects.filter(session_id=session_id).order_by("order", "title", "id"))
 
@@ -887,8 +699,7 @@ class StudentVideoPlaybackView(APIView):
 
     def get(self, request, video_id: int):
         Video, VideoPermission = _import_media_models()
-        enrollment_id = _get_student_enrollment_id(request)
-        enrollment_obj = None  # 일반 영상일 때 검증 후 설정, 전체공개는 None
+        explicit_enrollment_id = _get_explicit_enrollment_id(request)
 
         try:
             video_qs = Video.objects.select_related("tenant", "session__lecture__tenant")
@@ -899,53 +710,20 @@ class StudentVideoPlaybackView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
-        # 공개 영상인지 확인 (visibility 필드 기반)
-        from apps.domains.video.models import Video as _VideoModel
-        is_public_session = getattr(video, "visibility", _VideoModel.Visibility.ENROLLED) == _VideoModel.Visibility.PUBLIC
+        try:
+            access_context = resolve_student_video_access_context(
+                request,
+                video,
+                explicit_enrollment_id=explicit_enrollment_id,
+            )
+            ensure_student_video_watch_allowed(access_context)
+        except StudentVideoAccessError as e:
+            if e.status_code == status.HTTP_400_BAD_REQUEST:
+                return Response({"detail": e.detail}, status=e.status_code)
+            raise PermissionDenied(e.detail)
 
-        if is_public_session:
-            # 공개 영상: 수강등록 없이, 해당 테넌트 소속 학생만 시청 가능 (1테넌트=1프로그램)
-            student = get_request_student(request)
-            video_tenant_id = getattr(video, "tenant_id", None)
-            if video_tenant_id is None:
-                video_tenant_id = (
-                    getattr(video.session.lecture, "tenant_id", None) if video.session and video.session.lecture else None
-                )
-            if not student or getattr(student, "tenant_id", None) != video_tenant_id:
-                raise PermissionDenied("공개 영상은 해당 학원 소속 학생만 시청할 수 있습니다.")
-        else:
-            # 일반 영상: enrollment 자동 매칭 — video 의 lecture 에 맞는 학생 enrollment 를 항상 찾는다.
-            # 학생이 N개 강의 enrolled 시 student attr default 가 영상의 lecture 와 다른 강의를 가리켜
-            # mismatch 400 으로 막히던 결함 fix (2026-05-15, 이은호 학생 lecture 198 영상 시청 차단 root cause).
-            from apps.domains.enrollment.models import Enrollment as _Enrollment
-            lecture_id = getattr(video.session.lecture, "id", None) if video.session and video.session.lecture else None
-
-            # query param 으로 명시 전달된 enrollment 만 strict 검증.
-            # student attr 자동 픽 (lecture 무관) 은 신뢰하지 않는다.
-            raw_q = request.query_params.get("enrollment")
-            explicit_enrollment_id = None
-            if raw_q:
-                try:
-                    explicit_enrollment_id = int(raw_q)
-                except Exception:
-                    explicit_enrollment_id = None
-
-            if explicit_enrollment_id:
-                enrollment_obj, err = _get_enrollment_for_student(request, explicit_enrollment_id, lecture_id=lecture_id)
-                if err:
-                    return err
-
-            # 명시 query 없거나 (있어도 위에서 enrollment_obj None 인 케이스는 없음) 일반 경로:
-            # video lecture 기준으로 학생의 ACTIVE enrollment 자동 검색.
-            if not enrollment_obj and lecture_id:
-                _student = get_request_student(request)
-                if _student:
-                    enrollment_obj = _Enrollment.objects.filter(
-                        student=_student, lecture_id=lecture_id, status="ACTIVE",
-                    ).order_by("-id").first()
-
-            if not enrollment_obj:
-                raise PermissionDenied("이 영상을 시청하려면 해당 강의에 수강 등록이 필요합니다.")
+        enrollment_obj = access_context.enrollment
+        access_mode_value = access_context.access_mode_value
 
         perm_obj = None
         if VideoPermission and enrollment_obj:
@@ -959,15 +737,6 @@ class StudentVideoPlaybackView(APIView):
         if rule == "blocked":
             raise PermissionDenied("이 영상은 시청이 제한되었습니다.")
 
-        # Use SSOT access resolver (enrollment_obj는 위에서 검증된 객체만 사용)
-        from apps.domains.video.services.access_resolver import resolve_access_mode
-
-        access_mode_value = None
-        if enrollment_obj:
-            access_mode_value = resolve_access_mode(video=video, enrollment=enrollment_obj).value
-            if access_mode_value == "BLOCKED":
-                raise PermissionDenied("이 영상은 시청이 제한되었습니다.")
-
         # 비디오 상태 확인 및 로깅
         import logging
         logger = logging.getLogger(__name__)
@@ -978,7 +747,7 @@ class StudentVideoPlaybackView(APIView):
         
         logger.info(
             f"[StudentVideoPlaybackView] Video {video_id} playback request: "
-            f"status={video_status}, hls_path={hls_path}, file_key={file_key}, enrollment_id={enrollment_id}"
+            f"status={video_status}, hls_path={hls_path}, file_key={file_key}, enrollment_id={getattr(enrollment_obj, 'id', None)}"
         )
         
         # 비디오가 READY 상태가 아니면 에러 반환
@@ -1188,8 +957,7 @@ class StudentVideoProgressView(APIView):
 
     def post(self, request, video_id: int):
         Video, _VideoPermission = _import_media_models()
-        from apps.domains.video.models import AccessMode, VideoProgress
-        from apps.domains.video.services.access_resolver import resolve_access_mode
+        from apps.domains.video.models import VideoProgress
 
         explicit_enrollment_id = _get_explicit_enrollment_id(request, include_body=True)
 
@@ -1202,37 +970,22 @@ class StudentVideoProgressView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
+        try:
+            access_context = resolve_student_video_access_context(
+                request,
+                video,
+                explicit_enrollment_id=explicit_enrollment_id,
+            )
+            ensure_student_video_watch_allowed(access_context)
+        except StudentVideoAccessError as e:
+            return Response({"detail": e.detail}, status=e.status_code)
+
         # 공개 영상: 수강등록 없이 시청 가능. VideoProgress는 (video, enrollment) 필수라 DB 저장 불가.
         # 동일 응답 형태로 200 반환해 프론트 스펙 유지 (DB 미저장)
-        from apps.domains.video.models import Video as _VideoModel2
-        is_public_video = getattr(video, "visibility", _VideoModel2.Visibility.ENROLLED) == _VideoModel2.Visibility.PUBLIC
-        if is_public_video:
-            if not _student_can_access_video(request, video):
-                return Response(
-                    {"detail": "공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
+        if access_context.is_public_video:
             return _progress_echo_response(video_id=video.id, enrollment_id=0, request=request)
 
-        enrollment, err = _find_active_enrollment_for_video(
-            request,
-            video,
-            explicit_enrollment_id=explicit_enrollment_id,
-        )
-        if err:
-            return err
-        if not enrollment:
-            return Response(
-                {"detail": "이 영상을 시청하려면 해당 강의에 수강 등록이 필요합니다."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        access_mode = resolve_access_mode(video=video, enrollment=enrollment)
-        if access_mode == AccessMode.BLOCKED:
-            return Response(
-                {"detail": "이 영상은 시청이 제한되었습니다."},
-                status=status.HTTP_403_FORBIDDEN,
-            )
+        enrollment = access_context.enrollment
 
         # 학부모: 영상 시청은 가능하나 진행률 기록 저장 안 함 (읽기 전용)
         if getattr(request.user, "parent_profile", None) is not None:
@@ -1300,7 +1053,7 @@ class StudentVideoLikeView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
-        if not _student_can_access_video(request, video):
+        if not student_can_access_video(request, video):
             raise PermissionDenied("접근 권한이 없습니다.")
 
         from django.db import transaction, IntegrityError
@@ -1353,7 +1106,7 @@ class StudentVideoCommentListView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
-        if not _student_can_access_video(request, video):
+        if not student_can_access_video(request, video):
             raise PermissionDenied("접근 권한이 없습니다.")
 
         # 최상위 댓글만 (parent=None), 대댓글은 prefetch
@@ -1438,7 +1191,7 @@ class StudentVideoCommentListView(APIView):
         except Video.DoesNotExist:
             raise Http404
 
-        if not _student_can_access_video(request, video):
+        if not student_can_access_video(request, video):
             raise PermissionDenied("접근 권한이 없습니다.")
 
         content = str(request.data.get("content", "")).strip()
