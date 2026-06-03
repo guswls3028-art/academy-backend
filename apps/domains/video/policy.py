@@ -2,6 +2,29 @@ from __future__ import annotations
 
 from typing import Dict, Tuple, Optional
 
+VIDEO_COMPLETION_THRESHOLD = 0.9
+
+
+def normalize_video_progress(progress: object) -> float:
+    try:
+        value = float(progress or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    if value > 1:
+        value = value / 100
+    return max(0.0, min(1.0, value))
+
+
+def is_video_progress_complete(progress: object, completed: bool = False) -> bool:
+    return bool(completed) or normalize_video_progress(progress) >= VIDEO_COMPLETION_THRESHOLD
+
+
+def crossed_video_completion_threshold(previous: object, current: object) -> bool:
+    return (
+        normalize_video_progress(previous) < VIDEO_COMPLETION_THRESHOLD
+        <= normalize_video_progress(current)
+    )
+
 
 def evaluate_event_violation(
     *,

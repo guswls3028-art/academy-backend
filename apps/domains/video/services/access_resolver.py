@@ -15,6 +15,7 @@ from typing import Iterable, Mapping, Optional
 
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.video.models import Video, AccessMode
+from apps.domains.video.policy import is_video_progress_complete
 from academy.adapters.db.django import repositories_video as video_repo
 
 
@@ -30,10 +31,10 @@ def _resolve_access_mode_loaded(
     if attendance_status != "ONLINE":
         return AccessMode.FREE_REVIEW
 
-    # 90% 이상 시청 = 의무 완수. FREE_REVIEW로 자동 전환.
+    # 완료 기준 이상 시청 = 의무 완수. FREE_REVIEW로 자동 전환.
     # 동기화는 progress_views.VideoProgressViewSet.perform_update에서 proctored_completed_at에 시각을
     # 박아 두므로, Redis/DB lag 상황에도 다음 resolve가 안정적으로 FREE_REVIEW를 반환한다.
-    if progress and (progress.completed or (progress.progress is not None and float(progress.progress) >= 0.9)):
+    if progress and is_video_progress_complete(progress.progress, progress.completed):
         return AccessMode.FREE_REVIEW
 
     if perm and perm.proctored_completed_at is not None:

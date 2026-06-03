@@ -25,6 +25,7 @@ from apps.domains.video.encoding_progress import (
 from apps.domains.video.redis_status_cache import (
     get_video_status_from_redis,
 )
+from apps.domains.video.policy import crossed_video_completion_threshold
 from apps.domains.video.services.ops_events import emit_progress_layer_metrics
 
 
@@ -155,16 +156,16 @@ class VideoProgressViewSet(ModelViewSet):
     def perform_update(self, serializer):
         vp = serializer.instance
         prev_completed = vp.completed
-        prev_progress = float(vp.progress or 0.0)
+        prev_progress = vp.progress
 
         vp = serializer.save()
 
         # PROCTORED_CLASS → FREE_REVIEW SSOT.
-        # Trigger: completed=True OR progress crosses 0.9 (의무 완수 기준; access_resolver.py와 동일).
+        # Trigger: completed=True OR progress crosses the domain completion threshold.
         # progress가 Redis-DB lag로 흔들릴 때 proctored_completed_at을 박아두면
         # 다음 resolve가 안정적으로 FREE_REVIEW를 반환.
-        cur_progress = float(vp.progress or 0.0)
-        crossed_threshold = prev_progress < 0.9 <= cur_progress
+        cur_progress = vp.progress
+        crossed_threshold = crossed_video_completion_threshold(prev_progress, cur_progress)
         just_completed = (not prev_completed) and vp.completed
 
         if just_completed or crossed_threshold:
