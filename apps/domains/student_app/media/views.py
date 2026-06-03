@@ -10,7 +10,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework import status
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
-from .access_context import (
+from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
     ensure_student_video_watch_allowed,
     resolve_student_session_video_context,
