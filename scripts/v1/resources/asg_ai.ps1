@@ -117,7 +117,6 @@ function Ensure-AiSqsScaling {
         $alarmAgeName = "ai-worker-queue-age-high"
         $alarmInName = "ai-worker-queue-low"
         $scaleOutThreshold = $script:AiScaleOutThreshold
-        $scaleInThreshold = $script:AiScaleInThreshold
         $treatMissing = "notBreaching"
 
         $stepOut = '[{"MetricIntervalLowerBound":0,"MetricIntervalUpperBound":10,"ScalingAdjustment":1},{"MetricIntervalLowerBound":10,"MetricIntervalUpperBound":50,"ScalingAdjustment":3},{"MetricIntervalLowerBound":50,"ScalingAdjustment":5}]'
@@ -143,18 +142,6 @@ function Ensure-AiSqsScaling {
             "--cooldown", $script:AiScaleOutCooldown.ToString(),
             "--region", $region, "--output", "json")
         $policyAgeOutArn = $putAgeOut.PolicyARN
-
-        $stepIn = '[{"MetricIntervalUpperBound":0,"ScalingAdjustment":0}]'
-        $putIn = Invoke-AwsJson @("autoscaling", "put-scaling-policy",
-            "--auto-scaling-group-name", $script:AiASGName,
-            "--policy-name", $scaleInPolicyName,
-            "--policy-type", "StepScaling",
-            "--adjustment-type", "ExactCapacity",
-            "--metric-aggregation-type", "Average",
-            "--step-adjustments", $stepIn,
-            "--cooldown", $script:AiScaleInCooldown.ToString(),
-            "--region", $region, "--output", "json")
-        $policyInArn = $putIn.PolicyARN
 
         $ageAlarmActions = @($policyAgeOutArn)
         if ($script:AccountId) {
@@ -195,11 +182,22 @@ function Ensure-AiSqsScaling {
             "--namespace", "AWS/SQS",
             "--dimensions", $queueDimension,
             "--statistic", "Average", "--period", "60", "--evaluation-periods", "5",
-            "--threshold", $scaleInThreshold.ToString(),
+            "--threshold", "1",
             "--comparison-operator", "LessThanThreshold",
             "--treat-missing-data", $treatMissing,
-            "--alarm-actions", $policyInArn,
+            "--no-actions-enabled",
             "--region", $region) -ErrorMessage "put-metric-alarm ai scale-in" | Out-Null
+        try {
+            Invoke-Aws @("cloudwatch", "disable-alarm-actions", "--alarm-names", $alarmInName, "--region", $region) -ErrorMessage "disable ai scale-in alarm actions" | Out-Null
+        } catch {
+            Write-Warn "AI scale-in alarm action disable failed: $($_.Exception.Message)"
+        }
+        try {
+            Invoke-Aws @("autoscaling", "delete-policy", "--auto-scaling-group-name", $script:AiASGName, "--policy-name", $scaleInPolicyName, "--region", $region) -ErrorMessage "delete legacy ai scale-in policy" | Out-Null
+            Write-Ok "Legacy AI CloudWatch scale-in policy removed; worker owns idle scale-in"
+        } catch {
+            Write-Warn "Legacy AI scale-in policy delete skipped: $($_.Exception.Message)"
+        }
 
         $descOut = Invoke-AwsJson @("cloudwatch", "describe-alarms", "--alarm-names", $alarmOutName, $alarmAgeName, "--region", $region, "--output", "json")
         $descIn = Invoke-AwsJson @("cloudwatch", "describe-alarms", "--alarm-names", $alarmInName, "--region", $region, "--output", "json")
@@ -212,11 +210,12 @@ function Ensure-AiSqsScaling {
         if (-not $aAge -or -not $aAge.AlarmActions -or $aAge.AlarmActions -notcontains $policyAgeOutArn -or $aAge.Dimensions[0].Value -ne $queueName) {
             throw "Alarm $alarmAgeName does not reference queue=$queueName and age scale-out policy ARN"
         }
-        if (-not $aIn -or -not $aIn.AlarmActions -or $aIn.AlarmActions -notcontains $policyInArn -or $aIn.Dimensions[0].Value -ne $queueName) {
-            throw "Alarm $alarmInName does not reference queue=$queueName and scale-in policy ARN"
+        $aInActions = if ($aIn -and $aIn.AlarmActions) { @($aIn.AlarmActions) } else { @() }
+        if (-not $aIn -or $aIn.Dimensions[0].Value -ne $queueName -or $aIn.ActionsEnabled -or (($aInActions -join " ") -match "scalingPolicy")) {
+            throw "Alarm $alarmInName must be observability-only with disabled actions for queue=$queueName"
         }
 
-        Write-Ok "AI SQS scaling ensured (queue=$queueName)"
+        Write-Ok "AI SQS scaling ensured (queue=$queueName, scale-out alarms + worker-owned idle scale-in)"
     }
 
     if ($relaxed) {

@@ -33,3 +33,6 @@ class SQSAIQueueAdapter:
             tier=tier,
             visibility_timeout=visibility_timeout_seconds,
         )
+
+    def get_counts(self, tier: str = "basic") -> dict[str, int]:
+        return self._get_impl().get_queue_counts(tier=tier)

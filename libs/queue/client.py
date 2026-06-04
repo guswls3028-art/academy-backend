@@ -77,6 +77,10 @@ class QueueClient(ABC):
         """메시지 visibility 연장 (Long job 시 재노출 방지). 기본 구현은 no-op."""
         return True
 
+    def get_queue_counts(self, queue_name: str) -> Dict[str, int]:
+        """대기/처리중 메시지 수 조회. 지원하지 않는 구현은 빈 큐가 아님으로 취급한다."""
+        return {"visible": 1, "not_visible": 1, "delayed": 0}
+
 
 class SQSQueueClient(QueueClient):
     """AWS SQS 기반 큐 클라이언트 (프로덕션용)"""
@@ -188,6 +192,30 @@ class SQSQueueClient(QueueClient):
         except Exception as e:
             logger.error(f"Failed to change message visibility: {e}")
             return False
+
+    def get_queue_counts(self, queue_name: str) -> Dict[str, int]:
+        """SQS live attributes 기반 큐 깊이 조회."""
+        try:
+            queue_url = self._get_queue_url(queue_name)
+            response = self.sqs.get_queue_attributes(
+                QueueUrl=queue_url,
+                AttributeNames=[
+                    "ApproximateNumberOfMessages",
+                    "ApproximateNumberOfMessagesNotVisible",
+                    "ApproximateNumberOfMessagesDelayed",
+                ],
+            )
+            attrs = response.get("Attributes", {})
+            return {
+                "visible": int(attrs.get("ApproximateNumberOfMessages") or 0),
+                "not_visible": int(attrs.get("ApproximateNumberOfMessagesNotVisible") or 0),
+                "delayed": int(attrs.get("ApproximateNumberOfMessagesDelayed") or 0),
+            }
+        except QueueUnavailableError:
+            raise
+        except Exception as e:
+            logger.error("Failed to get queue counts for %s: %s", queue_name, e)
+            return {"visible": 1, "not_visible": 1, "delayed": 0}
 
 
 def get_queue_client() -> QueueClient:

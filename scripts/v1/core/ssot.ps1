@@ -198,9 +198,7 @@ function Load-SSOT {
     $script:AiDesiredCapacity = Coerce-Int $p["aiWorker"]["desiredCapacity"] 1
     $script:AiScaleInProtection = ($p["aiWorker"]["scaleInProtection"] -eq $true -or $p["aiWorker"]["scaleInProtection"] -eq "true")
     $script:AiScaleOutCooldown = Coerce-Int $p["aiWorker"]["scalingPolicyScaleOutCooldown"] 300
-    $script:AiScaleInCooldown = Coerce-Int $p["aiWorker"]["scalingPolicyScaleInCooldown"] 900
     $script:AiScaleOutThreshold = Coerce-Int $p["aiWorker"]["scalingPolicyScaleOutThreshold"] 20
-    $script:AiScaleInThreshold = Coerce-Int $p["aiWorker"]["scalingPolicyScaleInThreshold"] 1
     $script:AiSqsQueueUrl = if ($p["aiWorker"]["sqsQueueUrl"]) { $p["aiWorker"]["sqsQueueUrl"] } else { "" }
     $script:AiSqsQueueName = if ($p["aiWorker"]["sqsQueueName"]) { $p["aiWorker"]["sqsQueueName"] } else { "" }
     $script:AiVisibilityTimeoutSeconds = Coerce-Int $p["aiWorker"]["visibilityTimeoutSeconds"] 1800

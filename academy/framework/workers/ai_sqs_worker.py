@@ -22,6 +22,7 @@ from django.db import close_old_connections, connections
 from academy.adapters.db.django.uow import DjangoUnitOfWork
 from academy.adapters.queue.sqs.ai_queue import SQSAIQueueAdapter
 from academy.adapters.queue.sqs.visibility_extender import SQSVisibilityExtender
+from academy.adapters.compute.ec2_control import scale_down_ai_worker_asg_to_zero_if_idle
 from libs.queue import QueueUnavailableError
 from academy.application.use_cases.ai.process_ai_job_from_sqs import (
     prepare_ai_job,
@@ -47,6 +48,14 @@ VISIBILITY_EXTEND_INTERVAL = int(os.getenv("AI_VISIBILITY_EXTEND_INTERVAL", "60"
 BASIC_POLL_WEIGHT = int(os.getenv("AI_WORKER_BASIC_POLL_WEIGHT", "3"))
 LITE_POLL_WEIGHT = int(os.getenv("AI_WORKER_LITE_POLL_WEIGHT", "1"))
 MIN_JOB_INTERVAL_SECONDS = float(os.getenv("AI_WORKER_MIN_JOB_INTERVAL_SECONDS", "1.0"))
+IDLE_SCALE_IN_ENABLED = os.getenv("AI_WORKER_IDLE_SCALE_IN_ENABLED", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
+IDLE_EMPTY_POLLS_BEFORE_SCALE_IN = int(
+    os.getenv("AI_WORKER_IDLE_EMPTY_POLLS_BEFORE_SCALE_IN", "15")
+)
 # Lease 전략: (1) 고정. visibility 3600 - safety_margin 60 = 3540. 문서 §8.3.
 LEASE_SECONDS = int(os.getenv("AI_JOB_LEASE_SECONDS", "3540"))
 # inference 최대 60분. 초과 시 fail_ai_job + delete + extender stop. 문서 §8.3.
@@ -86,6 +95,22 @@ def _weighted_poll(queue: SQSAIQueueAdapter, *, tools_only: bool = False) -> tup
         tier = "basic" if random.randint(1, total) <= BASIC_POLL_WEIGHT else "lite"
     msg = queue.receive(tier=tier, wait_time_seconds=SQS_WAIT_TIME_SECONDS)
     return msg, tier
+
+
+def _queue_counts_are_idle(counts: dict[str, int]) -> bool:
+    return (
+        int(counts.get("visible") or 0) == 0
+        and int(counts.get("not_visible") or 0) == 0
+        and int(counts.get("delayed") or 0) == 0
+    )
+
+
+def _try_idle_scale_in(queue: SQSAIQueueAdapter, tier: str) -> bool:
+    counts = queue.get_counts(tier=tier)
+    if not _queue_counts_are_idle(counts):
+        logger.info("AI_IDLE_SCALE_IN_SKIP | counts=%s", counts)
+        return False
+    return scale_down_ai_worker_asg_to_zero_if_idle(counts)
 
 
 def _dispatch_domain_callback(
@@ -227,6 +252,7 @@ def run_ai_sqs_worker(
     consecutive_errors = 0
     max_consecutive_errors = 10
     last_job_finished_at = 0.0
+    empty_polls = 0
 
     try:
         while not _shutdown:
@@ -253,7 +279,18 @@ def run_ai_sqs_worker(
 
                 if not message:
                     consecutive_errors = 0
+                    if worker_kind != "tools" and IDLE_SCALE_IN_ENABLED:
+                        empty_polls += 1
+                        if empty_polls >= IDLE_EMPTY_POLLS_BEFORE_SCALE_IN:
+                            if _try_idle_scale_in(queue, tier):
+                                logger.info(
+                                    "AI_IDLE_SCALE_IN_REQUESTED | empty_polls=%d",
+                                    empty_polls,
+                                )
+                                return 0
+                            empty_polls = 0
                     continue
+                empty_polls = 0
 
                 # 워커 처리율 상한(초당 1/N)으로 DB 급격한 burst 완화
                 if MIN_JOB_INTERVAL_SECONDS > 0 and last_job_finished_at > 0:

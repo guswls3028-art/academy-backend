@@ -119,7 +119,7 @@ Workers use the same ASG instance refresh mechanism as API but with:
 
 Runtime scaling is split by worker:
 
-- **AI** uses AWS/SQS CloudWatch alarms (`ai-worker-queue-high`, `ai-worker-queue-low`, `ai-worker-queue-age-high`) and EC2 ASG StepScaling. SSOT min/desired is 0/0.
+- **AI** uses AWS/SQS CloudWatch scale-out alarms (`ai-worker-queue-high`, `ai-worker-queue-age-high`) plus API wake-up. Idle scale-in is worker-owned after live SQS depth is empty; `ai-worker-queue-low` is observability-only. SSOT min/desired is 0/0.
 - **Messaging** runs with ASG min/desired=1 baseline and AWS/SQS CloudWatch alarms for StepScaling up to SSOT max capacity. Deploys replace instances through ASG refresh.
 - **Video** is not an ASG worker. It is AWS Batch only.
 

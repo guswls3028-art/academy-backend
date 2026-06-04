@@ -302,6 +302,11 @@ class AISQSQueue:
             )
             return False
 
+    def get_queue_counts(self, tier: str = "basic") -> dict[str, int]:
+        """Live SQS depth for idle scale-in decisions."""
+        queue_name = self._get_queue_name(tier=tier)
+        return self.queue_client.get_queue_counts(queue_name=queue_name)
+
     def _ai_repo(self):
         from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
         return DjangoAIJobRepository()
