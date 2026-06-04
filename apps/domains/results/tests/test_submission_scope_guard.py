@@ -634,6 +634,22 @@ class SubmissionScopeGuardTests(TestCase):
         submission = self._submission_for_exam(exam, choice, answer="1")
         submission.source = Submission.Source.OMR_SCAN
         submission.save(update_fields=["source", "updated_at"])
+        attempt = ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enrollment,
+            submission_id=submission.id,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={
+                "initial_snapshot": {
+                    "total_score": 80.0,
+                    "max_score": 100.0,
+                    "source": "submission_sync",
+                    "submission_id": submission.id,
+                }
+            },
+        )
         ExamResult.objects.create(
             submission=submission,
             exam=exam,
@@ -654,6 +670,13 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(float(legacy.max_score), 100.0)
         self.assertEqual(list(legacy.breakdown.keys()), ["1"])
         self.assertNotIn(str(essay.number), legacy.breakdown)
+        attempt.refresh_from_db()
+        self.assertEqual(float(attempt.meta["initial_snapshot"]["total_score"]), 100.0)
+        self.assertEqual(float(attempt.meta["initial_snapshot"]["max_score"]), 100.0)
+        self.assertEqual(
+            attempt.meta["initial_snapshot"]["repair_source"],
+            "sync_result_from_exam_submission",
+        )
 
     def test_auto_grade_treats_zero_score_mixed_sheet_essay_as_decorative_without_essay_evidence(self):
         exam = Exam.objects.create(

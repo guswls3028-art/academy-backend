@@ -82,6 +82,52 @@ def _sync_legacy_exam_result_snapshot(
         ])
 
 
+def _repair_attempt_initial_snapshot_for_submission(
+    *,
+    attempt,
+    submission: Submission,
+    total_score: float,
+    max_score: float,
+) -> None:
+    if not attempt or int(getattr(attempt, "attempt_index", 0) or 0) != 1:
+        return
+
+    meta = dict(attempt.meta or {}) if isinstance(attempt.meta, dict) else {}
+    snapshot = meta.get("initial_snapshot")
+    if not isinstance(snapshot, dict):
+        return
+
+    try:
+        snapshot_submission_id = int(snapshot.get("submission_id") or 0)
+    except (TypeError, ValueError):
+        return
+    if snapshot_submission_id != int(submission.id):
+        return
+
+    if str(snapshot.get("source") or "") not in {
+        "submission_sync",
+        "omr_attached_manual_subjective",
+        "omr_attached_manual_essay_items",
+        "omr_replaced_manual_zero",
+    }:
+        return
+
+    repaired_total = round(float(total_score), 2)
+    repaired_max = round(float(max_score), 2)
+    current_total = round(float(snapshot.get("total_score") or 0.0), 2)
+    current_max = round(float(snapshot.get("max_score") or 0.0), 2)
+    if current_total == repaired_total and current_max == repaired_max:
+        return
+
+    snapshot["total_score"] = repaired_total
+    snapshot["max_score"] = repaired_max
+    snapshot["repaired_at"] = timezone.now().isoformat()
+    snapshot["repair_source"] = "sync_result_from_exam_submission"
+    meta["initial_snapshot"] = snapshot
+    attempt.meta = meta
+    attempt.save(update_fields=["meta", "updated_at"])
+
+
 @transaction.atomic
 def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     """
@@ -374,6 +420,12 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         items_payload=items_payload,
         objective_score=total,
         objective_max_score=max_total,
+    )
+    _repair_attempt_initial_snapshot_for_submission(
+        attempt=attempt,
+        submission=submission,
+        total_score=result_total,
+        max_score=result_max_score,
     )
 
     return result
