@@ -1,17 +1,17 @@
 ## V1.1.0 CI Build — latest 이미지 digest 스냅샷 (OIDC)
 
-**Generated:** 2026-06-04T19:19:31+00:00
+**Generated:** 2026-06-04T19:45:16+00:00
 **SSOT:** docs/infrastructure/deployment-architecture.md
 **Region:** ap-northeast-2
-**gitSha:** b838197c27cb986e59fa8b67182a7a027ea32ead
-**shortSha:** b838197c
+**gitSha:** fbd3318a872200ab819b9c94b6dd04f1c537daff
+**shortSha:** fbd3318a
 **Changes:** api=true video=false messaging=false ai=true tools=false force_full=false
 
 | repo | tags | imageDigest |
 |------|------|-------------|
 | academy-base | sha-5e3967be, sha-1f0eca7b, sha-8b31bb38, sha-062a0751, sha-e0262dc1, sha-2a4b9955, sha-de491871, sha-eaa6c3f1, sha-7c91161f, sha-b1d65e84, sha-b9f50248, sha-95de8eb9, sha-4243bac5, sha-ca3acd89, sha-8a1cf8d3, sha-6ac3676b, sha-3e848707, sha-54f0e483, sha-7e1d16f2, sha-dad02280, sha-642bbcbc, sha-34f38ff9, sha-9891313c, sha-4b80e69d, sha-f95d2df8, sha-9d49c75e, latest, sha-25ccfd22, sha-0bf1b624, sha-258252bb, sha-8e84bdb7, sha-0c467b57, sha-f070892c, sha-9ec02c39, sha-d9059b4b, sha-228d06ad | sha256:af7c49f6c07f3f77c89436e4a2d2e859d2b592a7311e18a61f4f8fcb6bf52ee8 |
-| academy-api | latest, sha-b838197c | sha256:49d1abf9d3067ca9eddddf7e6b000122d76f1d55da0e10ac4e2915972ccd0e4c |
+| academy-api | latest, sha-fbd3318a | sha256:0f3972e6e4c4088ec1a14d743e7712ab048f5aeadf5ab088d0972c4cb36ab2f8 |
 | academy-video-worker | latest, sha-5e3967be | sha256:fded13622caaa23ec1b99ff462c7ee5e8497e9e307fbdf1c8062d2994c1cd754 |
 | academy-messaging-worker | latest, sha-5e3967be | sha256:61b8520fd99a4996dd2498fe1656aa1f027ceace8d4b7e1665e9b9e4f7515926 |
-| academy-ai-worker-cpu | latest, sha-b838197c | sha256:3d5cc17b6d080f8610f5a28171eee3acb9d7c3a01b3c6da26cce66c4eaed6988 |
+| academy-ai-worker-cpu | latest, sha-fbd3318a | sha256:14ac6c374b816bb7855b1829135d4e634f6c3dc550cabf864efa1c7a7831863e |
 | academy-tools-worker | sha-5e3967be, latest | sha256:c4a917c0c95220497aae397cbe498484cd00a066d335cf88f173b7243a5bd718 |
