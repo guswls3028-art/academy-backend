@@ -382,6 +382,17 @@ class SubmissionScopeGuardTests(TestCase):
         )
         self.assertTrue(ResultItem.objects.filter(result=result, question=essay, source="manual").exists())
 
+    def test_auto_grade_scores_only_objective_component_for_structured_mixed_sheet(self):
+        exam, choice, _essay = self._create_mixed_exam()
+        submission = self._submission_for_exam(exam, choice, answer="1")
+
+        exam_result = ExamGradingService().auto_grade_objective(submission_id=submission.id)
+
+        self.assertEqual(float(exam_result.total_score), 80.0)
+        self.assertEqual(float(exam_result.objective_score), 80.0)
+        self.assertEqual(float(exam_result.max_score), 80.0)
+        self.assertEqual(list(exam_result.breakdown.keys()), ["1"])
+
     def test_sync_combines_omr_with_existing_manual_essay_item_score(self):
         exam, choice, essay = self._create_mixed_exam()
         attempt = ExamAttempt.objects.create(
@@ -594,3 +605,35 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(float(item.score), 100.0)
         self.assertEqual(float(item.max_score), 100.0)
         self.assertFalse(ResultItem.objects.filter(result=result, question=essay).exists())
+
+    def test_auto_grade_treats_zero_score_mixed_sheet_essay_as_decorative_without_essay_evidence(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Zero Score Mixed Auto Grade Exam",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        sheet = Sheet.objects.create(
+            exam=exam,
+            name="ZERO-MIXED-AUTO",
+            total_questions=2,
+            choice_count=1,
+            essay_count=1,
+        )
+        choice = ExamQuestion.objects.create(sheet=sheet, number=1, score=0)
+        essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
+        AnswerKey.objects.create(exam=exam, answers={str(choice.id): "1"})
+        submission = self._submission_for_exam(exam, choice, answer="1")
+        submission.source = Submission.Source.OMR_SCAN
+        submission.save(update_fields=["source", "updated_at"])
+
+        exam_result = ExamGradingService().auto_grade_objective(submission_id=submission.id)
+
+        self.assertEqual(float(exam_result.total_score), 100.0)
+        self.assertEqual(float(exam_result.objective_score), 100.0)
+        self.assertEqual(float(exam_result.max_score), 100.0)
+        self.assertEqual(list(exam_result.breakdown.keys()), ["1"])
+        self.assertNotIn(str(essay.number), exam_result.breakdown)

@@ -19,6 +19,7 @@ from apps.domains.results.services.submission_answer_map import (
     require_complete_omr_answers,
 )
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
+from apps.support.omr.score_shape import get_exam_score_shape
 
 
 class ExamGradingService:
@@ -35,14 +36,22 @@ class ExamGradingService:
     # ------------------------------------------------------------------
     @staticmethod
     def _get_question_max_score(exam: Exam, question_id: int) -> float:
-        """문항 DB에서 원본 만점 조회. 찾지 못하면 0 반환."""
+        """OMR score shape 기준 문항 만점 조회. 찾지 못하면 0 반환."""
         try:
             from apps.domains.exams.models import ExamQuestion
+            score_shape = get_exam_score_shape(exam)
             tid = exam.effective_template_exam_id
             q = ExamQuestion.objects.filter(
                 sheet__exam_id=tid, id=int(question_id),
             ).only("score").first()
-            return float(q.score) if q else 0.0
+            return (
+                score_shape.question_potential_max_score(
+                    int(question_id),
+                    getattr(q, "score", 0) if q else 0,
+                )
+                if q
+                else 0.0
+            )
         except Exception:
             return 0.0
 
@@ -88,15 +97,15 @@ class ExamGradingService:
             if str(k).isdigit()
         }
 
-        questions = list(sheet.questions.all())
+        score_shape = get_exam_score_shape(exam)
+        questions = [
+            q
+            for q in sheet.questions.all().order_by("number")
+            if score_shape.question_kind(int(q.id)) != "essay"
+        ]
 
         if not questions:
             return 0, 0.0, {}
-
-        exam_max_score = float(getattr(exam, "max_score", 0) or 0)
-        raw_total_score = sum(float(getattr(q, "score", 0) or 0) for q in questions)
-        use_equal_score_fallback = raw_total_score <= 0 and exam_max_score > 0
-        equal_question_score = exam_max_score / len(questions) if use_equal_score_fallback else 0.0
 
         total_score = 0
         max_score = 0.0
@@ -104,10 +113,9 @@ class ExamGradingService:
 
         for q in questions:
             qid = int(q.id)
-            q_score = (
-                equal_question_score
-                if use_equal_score_fallback
-                else float(getattr(q, "score", 0) or 0)
+            q_score = score_shape.question_max_score(
+                qid,
+                getattr(q, "score", 0),
             )
             max_score += q_score
             correct_answer = key_map.get(qid)
