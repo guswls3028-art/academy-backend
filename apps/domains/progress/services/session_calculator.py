@@ -64,6 +64,12 @@ class SessionProgressCalculator:
         except Exception:
             return default
 
+    @staticmethod
+    def _regular_order_for_policy(session: Session) -> int | None:
+        if session.session_type == Session.SessionType.SUPPLEMENT:
+            return None
+        return session.regular_order or session.order
+
     @classmethod
     def _aggregate_exam_results(
         cls,
@@ -290,7 +296,11 @@ class SessionProgressCalculator:
         else:
             obj.video_completed = obj.video_progress_rate >= int(policy.video_required_rate)
 
-        in_exam_range = bool(policy.exam_start_session_order <= session.order <= policy.exam_end_session_order)
+        regular_order = SessionProgressCalculator._regular_order_for_policy(session)
+        in_exam_range = bool(
+            regular_order is not None
+            and policy.exam_start_session_order <= regular_order <= policy.exam_end_session_order
+        )
         if in_exam_range:
             attempted, agg_score, passed, exam_meta = SessionProgressCalculator._aggregate_exam_results(
                 enrollment_id=enrollment_id,
@@ -312,7 +322,10 @@ class SessionProgressCalculator:
                 "note": "out_of_exam_range",
             }
 
-        in_hw_range = bool(policy.homework_start_session_order <= session.order <= policy.homework_end_session_order)
+        in_hw_range = bool(
+            regular_order is not None
+            and policy.homework_start_session_order <= regular_order <= policy.homework_end_session_order
+        )
         if in_hw_range:
             obj.homework_submitted = bool(homework_submitted)
 

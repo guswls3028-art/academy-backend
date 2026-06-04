@@ -157,7 +157,7 @@ class Command(BaseCommand):
                             send_to="parent",
                             context={
                                 "강의명": session.lecture.title or "",
-                                "차시명": session.title or f"{session.order}차시",
+                                "차시명": session.title or session.display_label,
                                 "과제명": homework.title or "",
                                 "_domain_object_id": f"hw_{homework.id}_s{student.id}",
                             },

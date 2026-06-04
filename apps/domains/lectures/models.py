@@ -267,6 +267,10 @@ class SectionAssignment(TimestampModel):
 
 
 class Session(TimestampModel):
+    class SessionType(models.TextChoices):
+        REGULAR = "REGULAR", "정규"
+        SUPPLEMENT = "SUPPLEMENT", "보강"
+
     lecture = models.ForeignKey(
         Lecture,
         on_delete=models.CASCADE,
@@ -281,7 +285,19 @@ class Session(TimestampModel):
         help_text="반별 차시 (section_mode=true). null이면 반 무관 공통 차시.",
     )
 
-    order = models.PositiveIntegerField()
+    order = models.PositiveIntegerField(help_text="화면 배치 순서. 보강 차시를 포함한다.")
+    session_type = models.CharField(
+        max_length=20,
+        choices=SessionType.choices,
+        default=SessionType.REGULAR,
+        db_index=True,
+        help_text="차시 유형. 정규 차시와 보강 차시를 제목 추론 없이 구분한다.",
+    )
+    regular_order = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="정규 n차시 번호. 보강 차시는 null이다.",
+    )
     title = models.CharField(max_length=255)
     date = models.DateField(null=True, blank=True)
 
@@ -301,8 +317,45 @@ class Session(TimestampModel):
                 condition=models.Q(section__isnull=True),
                 name="uniq_session_order_per_lecture_no_section",
             ),
+            models.UniqueConstraint(
+                fields=["lecture", "section", "regular_order"],
+                condition=models.Q(
+                    section__isnull=False,
+                    session_type="REGULAR",
+                ),
+                name="uniq_regular_session_order_per_section",
+            ),
+            models.UniqueConstraint(
+                fields=["lecture", "regular_order"],
+                condition=models.Q(
+                    section__isnull=True,
+                    session_type="REGULAR",
+                ),
+                name="uniq_regular_session_order_no_section",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(session_type="REGULAR", regular_order__isnull=False)
+                    | models.Q(session_type="SUPPLEMENT", regular_order__isnull=True)
+                ),
+                name="chk_session_regular_order_by_type",
+            ),
         ]
+
+    @property
+    def display_label(self):
+        if self.session_type == self.SessionType.SUPPLEMENT:
+            return "보강"
+        order = self.regular_order or self.order
+        return f"{order}차시"
+
+    def save(self, *args, **kwargs):
+        if self.session_type == self.SessionType.SUPPLEMENT:
+            self.regular_order = None
+        elif self.regular_order is None and self.order is not None:
+            self.regular_order = self.order
+        super().save(*args, **kwargs)
 
     def __str__(self):
         section_label = f" ({self.section.label}반)" if self.section else ""
-        return f"{self.lecture.title} - {self.order}차시{section_label}"
+        return f"{self.lecture.title} - {self.display_label}{section_label}"

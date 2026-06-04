@@ -64,7 +64,7 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
             enrollment=self.enrollment, total_score=40, max_score=100,
         )
 
-        # exam 범위에 session.order=1 포함하도록 policy 명시 (defaults는 order=2 이상만)
+        # exam 범위에 regular_order=1 포함하도록 policy 명시 (defaults는 2 이상)
         policy, _ = ProgressPolicy.objects.get_or_create(
             lecture=self.lecture,
             defaults={
@@ -232,7 +232,7 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
             target_type="exam", target_id=exam.id,
             enrollment=self.enrollment, total_score=80, max_score=100,
         )
-        # exam 범위에 session.order=1 포함
+        # exam 범위에 regular_order=1 포함
         ProgressPolicy.objects.get_or_create(
             lecture=self.lecture,
             defaults={
@@ -270,6 +270,53 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
             sp2.completed_at, first_completed_at,
             "completed_at은 최초 완료 시점으로 불변",
         )
+
+    def test_progress_policy_range_uses_regular_order_not_display_order(self):
+        """보강이 display order에 끼어도 진도 정책 범위는 정규 n차시 번호를 기준으로 한다."""
+        from apps.domains.lectures.models import Session
+        from apps.domains.progress.services.session_calculator import (
+            SessionProgressCalculator,
+        )
+
+        supplement = Session.objects.create(
+            lecture=self.lecture,
+            order=2,
+            session_type=Session.SessionType.SUPPLEMENT,
+            title="보강",
+        )
+        regular_second = Session.objects.create(
+            lecture=self.lecture,
+            order=3,
+            regular_order=2,
+            title="2차시",
+        )
+        ProgressPolicy.objects.update_or_create(
+            lecture=self.lecture,
+            defaults={
+                "exam_start_session_order": 2,
+                "exam_end_session_order": 2,
+                "homework_start_session_order": 2,
+                "homework_end_session_order": 2,
+            },
+        )
+
+        supplement_progress = SessionProgressCalculator.calculate(
+            enrollment_id=self.enrollment.id,
+            session=supplement,
+            attendance_type="online",
+            video_progress_rate=100,
+            homework_submitted=False,
+        )
+        second_progress = SessionProgressCalculator.calculate(
+            enrollment_id=self.enrollment.id,
+            session=regular_second,
+            attendance_type="online",
+            video_progress_rate=100,
+            homework_submitted=True,
+        )
+
+        self.assertEqual(supplement_progress.exam_meta.get("note"), "out_of_exam_range")
+        self.assertEqual(second_progress.exam_meta.get("note"), "no_exams_in_session")
 
 
 class AutoCreateMetaMergeTest(TestCase, ClinicTestMixin):

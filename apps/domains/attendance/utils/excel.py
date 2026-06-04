@@ -52,7 +52,7 @@ def build_attendance_excel(lecture):
     # Header
     header = ["학생명", "학생번호", "학부모번호"]
     for s in sessions:
-        label = f"{s.order}차시"
+        label = s.display_label
         if s.date:
             label += f" ({s.date})"
         header.append(label)

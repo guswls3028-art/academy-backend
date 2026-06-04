@@ -63,7 +63,7 @@ class LectureProgressSerializer(serializers.ModelSerializer):
 
 class ClinicLinkSerializer(serializers.ModelSerializer):
     enrollment_id = serializers.IntegerField(read_only=True)
-    session_title = serializers.CharField(source="session.title", read_only=True, default="")
+    session_title = serializers.SerializerMethodField()
     lecture_title = serializers.CharField(source="session.lecture.title", read_only=True, default="")
     student_name = serializers.SerializerMethodField()
 
@@ -94,6 +94,12 @@ class ClinicLinkSerializer(serializers.ModelSerializer):
             return obj.enrollment.student.name
         except Exception:
             return ""
+
+    def get_session_title(self, obj) -> str:
+        session = getattr(obj, "session", None)
+        if not session:
+            return ""
+        return (getattr(session, "title", "") or getattr(session, "display_label", "") or "")
 
 
 class RiskLogSerializer(serializers.ModelSerializer):

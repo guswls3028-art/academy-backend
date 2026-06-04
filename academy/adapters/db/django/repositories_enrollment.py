@@ -151,12 +151,25 @@ def enrollment_get_or_create_ret(tenant, lecture, student_id, defaults):
 
 def get_session_by_lecture_order(lecture, order):
     from apps.domains.lectures.models import Session
-    return Session.objects.filter(lecture=lecture, order=order).first()
+    return (
+        Session.objects.filter(
+            lecture=lecture,
+            session_type=Session.SessionType.REGULAR,
+            regular_order=order,
+        )
+        .order_by("order", "id")
+        .first()
+    )
 
 
 def create_session(lecture, order):
     from apps.domains.lectures.models import Session
-    return Session.objects.create(lecture=lecture, order=order)
+    return Session.objects.create(
+        lecture=lecture,
+        order=order,
+        session_type=Session.SessionType.REGULAR,
+        regular_order=order,
+    )
 
 
 def create_session_with_meta(lecture, order, title, date):
@@ -164,6 +177,8 @@ def create_session_with_meta(lecture, order, title, date):
     return Session.objects.create(
         lecture=lecture,
         order=order,
+        session_type=Session.SessionType.REGULAR,
+        regular_order=order,
         title=title,
         date=date,
     )

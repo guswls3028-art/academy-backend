@@ -386,8 +386,11 @@ class StudentVideoMeView(APIView):
             sessions_data = [
                 {
                     "id": s.id,
-                    "title": s.title or f"{s.order}차시",
+                    "title": s.title or s.display_label,
                     "order": s.order,
+                    "session_type": s.session_type,
+                    "regular_order": s.regular_order,
+                    "display_label": s.display_label,
                     "date": s.date.isoformat() if s.date else None,
                 }
                 for s in sessions

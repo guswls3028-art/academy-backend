@@ -76,7 +76,7 @@ def _send_attendance_notification(tenant, attendance, trigger, actor_id=None):
 
         context = {
             "강의명": lecture.title or "",
-            "차시명": session.title or f"{session.order}차시",
+            "차시명": session.title or session.display_label,
             "날짜": str(session_date) if session_date else now.strftime("%Y-%m-%d"),
             "시간": now.strftime("%H:%M"),
             "반이름": section_label,
@@ -427,6 +427,10 @@ class AttendanceViewSet(ModelViewSet):
                     {
                         "id": s.id,
                         "order": s.order,
+                        "session_type": s.session_type,
+                        "regular_order": s.regular_order,
+                        "display_label": s.display_label,
+                        "title": s.title,
                         "date": s.date,
                     }
                     for s in sessions

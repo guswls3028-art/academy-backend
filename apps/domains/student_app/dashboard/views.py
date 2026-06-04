@@ -120,7 +120,11 @@ class StudentDashboardView(APIView):
                 data["today_sessions"] = [
                     {
                         "id": s.id,
-                        "title": getattr(s, "title", "") or f"{getattr(s.lecture, 'title', '')} {s.order}차시",
+                        "title": getattr(s, "title", "") or f"{getattr(s.lecture, 'title', '')} {s.display_label}",
+                        "order": s.order,
+                        "session_type": s.session_type,
+                        "regular_order": s.regular_order,
+                        "display_label": s.display_label,
                         "date": s.date.isoformat() if s.date else None,
                         "status": None,
                         "type": "session",
@@ -146,6 +150,10 @@ class StudentDashboardView(APIView):
                     data["today_sessions"].append({
                         "id": cp.id * -1,
                         "title": f"클리닉 {sess.title or sess.location}" if sess else "클리닉",
+                        "order": None,
+                        "session_type": None,
+                        "regular_order": None,
+                        "display_label": None,
                         "date": today.isoformat(),
                         "status": "대기 중" if cp.status == "pending" else "예약됨",
                         "type": "clinic",

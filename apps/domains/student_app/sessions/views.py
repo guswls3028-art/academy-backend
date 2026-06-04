@@ -73,7 +73,11 @@ class StudentSessionListView(APIView):
         data = [
             {
                 "id": s.id,
-                "title": getattr(s, "title", "") or f"{getattr(s.lecture, 'title', '')} {s.order}차시",
+                "title": getattr(s, "title", "") or f"{getattr(s.lecture, 'title', '')} {s.display_label}",
+                "order": s.order,
+                "session_type": s.session_type,
+                "regular_order": s.regular_order,
+                "display_label": s.display_label,
                 "date": s.date.isoformat() if s.date else None,
                 "status": None,
                 "exam_ids": [],
@@ -106,6 +110,10 @@ class StudentSessionListView(APIView):
             data.append({
                 "id": cp.id * -1,  # 음수 ID로 클리닉 구분
                 "title": f"🏥 클리닉 {sess.title or sess.location}" if sess else "🏥 클리닉",
+                "order": None,
+                "session_type": None,
+                "regular_order": None,
+                "display_label": None,
                 "date": sess.date.isoformat() if sess and sess.date else None,
                 "status": status_label,
                 "exam_ids": [],
@@ -296,7 +304,7 @@ class StudentAttendanceSummaryView(APIView):
             recent.append({
                 "session_id": sess.id,
                 "lecture_title": getattr(sess.lecture, "title", "") if sess.lecture_id else "",
-                "session_title": sess.title or (f"{sess.order}차시" if sess.order else ""),
+                "session_title": sess.title or sess.display_label,
                 "date": sess.date.isoformat() if sess.date else None,
                 "status": att.status,
             })
@@ -355,7 +363,7 @@ class StudentSessionDetailView(APIView):
         )
         data = {
             "id": session.id,
-            "title": getattr(session, "title", "") or f"{getattr(session.lecture, 'title', '')} {session.order}차시",
+            "title": getattr(session, "title", "") or f"{getattr(session.lecture, 'title', '')} {session.display_label}",
             "date": session.date.isoformat() if session.date else None,
             "status": None,
             "exam_ids": exam_ids,

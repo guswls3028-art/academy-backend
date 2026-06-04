@@ -88,6 +88,70 @@ def _first_lecture_delete_blocker(lecture: Lecture) -> str | None:
     return None
 
 
+def _session_scope(lecture: Lecture, section: Section | None):
+    return Session.objects.filter(lecture=lecture, section=section)
+
+
+def _session_section_label(section: Section | None) -> str:
+    return f" ({section.label}반)" if section else ""
+
+
+def _next_display_order(scope) -> int:
+    return (scope.aggregate(max_order=Max("order"))["max_order"] or 0) + 1
+
+
+def _next_regular_order(scope) -> int:
+    return (
+        scope.filter(session_type=Session.SessionType.REGULAR)
+        .aggregate(max_order=Max("regular_order"))["max_order"]
+        or 0
+    ) + 1
+
+
+def _display_insert_order(scope, requested_order: int | None) -> int:
+    next_order = _next_display_order(scope)
+    if requested_order is None:
+        return next_order
+    return max(1, min(int(requested_order), next_order))
+
+
+def _regular_display_insert_order(
+    scope,
+    regular_order: int,
+    requested_order: int | None,
+) -> int:
+    if requested_order is not None:
+        return _display_insert_order(scope, requested_order)
+
+    next_regular = (
+        scope.filter(
+            session_type=Session.SessionType.REGULAR,
+            regular_order__gt=regular_order,
+        )
+        .order_by("regular_order", "order", "id")
+        .first()
+    )
+    if next_regular:
+        return _display_insert_order(scope, next_regular.order)
+    return _display_insert_order(scope, None)
+
+
+def _shift_display_orders(scope, starting_order: int) -> None:
+    for session in (
+        scope.filter(order__gte=starting_order)
+        .only("id", "order")
+        .order_by("-order", "-id")
+    ):
+        Session.objects.filter(pk=session.pk).update(order=session.order + 1)
+
+
+def _regular_order_exists(scope, regular_order: int) -> bool:
+    return scope.filter(
+        session_type=Session.SessionType.REGULAR,
+        regular_order=regular_order,
+    ).exists()
+
+
 class LectureViewSet(ModelViewSet):
     serializer_class = LectureSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
@@ -391,7 +455,7 @@ class SessionViewSet(ModelViewSet):
     def perform_create(self, serializer):
         """
         🔐 Session 생성 시 lecture.tenant 검증 + section 일관성 검증
-        order 미제공 시 해당 강의(+반)의 max(order)+1 자동 설정
+        정규 차시 번호와 화면 배치 순서를 분리해서 서버 단일 진실로 계산한다.
         """
         lecture = serializer.validated_data["lecture"]
         if lecture.tenant_id != self.request.tenant.id:
@@ -404,34 +468,58 @@ class SessionViewSet(ModelViewSet):
             if section.tenant_id != self.request.tenant.id:
                 raise PermissionDenied("다른 학원의 반에 세션을 추가할 수 없습니다.")
 
+        insert_after_order = serializer.validated_data.pop("insert_after_order", None)
         requested_order = serializer.validated_data.get("order")
+        requested_regular_order = serializer.validated_data.get("regular_order")
+        session_type = serializer.validated_data.get(
+            "session_type",
+            Session.SessionType.REGULAR,
+        )
         with transaction.atomic():
-            # same lecture session insert 직렬화: max(order)+1 레이스 방지
+            # same lecture session insert 직렬화: max/shift 레이스 방지
             Lecture.objects.select_for_update().filter(pk=lecture.pk).exists()
-            for _ in range(3):
-                order = requested_order
-                if order is None:
-                    if section:
-                        # section_mode: 반 내 순번
-                        agg = Session.objects.filter(
-                            lecture=lecture, section=section,
-                        ).aggregate(max_order=Max("order"))
-                    else:
-                        agg = enroll_repo.session_aggregate_max_order(lecture)
-                    order = (agg["max_order"] or 0) + 1
-                try:
-                    serializer.save(order=order)
-                    return
-                except IntegrityError:
-                    if requested_order is not None:
-                        section_label = f" ({section.label}반)" if section else ""
-                        raise ValidationError(
-                            {"order": f"이 강의{section_label}에 이미 {order}차시가 존재합니다."}
-                        )
-            section_label = f" ({section.label}반)" if section else ""
-            raise ValidationError(
-                {"order": f"차시 순번 계산 중 충돌이 발생했습니다. 다시 시도해 주세요. (강의{section_label})"}
-            )
+
+            scope = _session_scope(lecture, section)
+            if session_type == Session.SessionType.SUPPLEMENT:
+                regular_order = None
+                desired_order = (
+                    insert_after_order + 1
+                    if insert_after_order is not None
+                    else requested_order
+                )
+                order = _display_insert_order(scope, desired_order)
+            else:
+                regular_order = requested_regular_order or requested_order
+                if regular_order is None:
+                    regular_order = _next_regular_order(scope)
+                if _regular_order_exists(scope, regular_order):
+                    section_label = _session_section_label(section)
+                    raise ValidationError(
+                        {"regular_order": f"이 강의{section_label}에 이미 {regular_order}차시가 존재합니다."}
+                    )
+                order = _regular_display_insert_order(
+                    scope,
+                    regular_order,
+                    requested_order,
+                )
+
+            try:
+                _shift_display_orders(scope, order)
+                serializer.save(
+                    order=order,
+                    session_type=session_type,
+                    regular_order=regular_order,
+                )
+                return
+            except IntegrityError as e:
+                section_label = _session_section_label(section)
+                if "regular" in str(e).lower():
+                    raise ValidationError(
+                        {"regular_order": f"이 강의{section_label}에 이미 {regular_order}차시가 존재합니다."}
+                    )
+                raise ValidationError(
+                    {"order": f"차시 배치 순서 계산 중 충돌이 발생했습니다. 다시 시도해 주세요. (강의{section_label})"}
+                )
 
     def perform_update(self, serializer):
         """
@@ -448,7 +536,17 @@ class SessionViewSet(ModelViewSet):
             if section.tenant_id != self.request.tenant.id:
                 raise PermissionDenied("다른 학원의 반으로 세션을 이동할 수 없습니다.")
 
-        serializer.save()
+        serializer.validated_data.pop("insert_after_order", None)
+        session_type = serializer.validated_data.get(
+            "session_type",
+            serializer.instance.session_type,
+        )
+        if session_type == Session.SessionType.SUPPLEMENT:
+            serializer.save(regular_order=None)
+        elif serializer.instance.regular_order is None:
+            serializer.save(regular_order=serializer.instance.order)
+        else:
+            serializer.save()
 
     def destroy(self, request, *args, **kwargs):
         session = self.get_object()
@@ -555,17 +653,25 @@ class SectionViewSet(ModelViewSet):
             # 같은 강의의 동시 차시 일괄생성 직렬화
             Lecture.objects.select_for_update().filter(pk=lecture.pk).exists()
             selected_section_ids = [section_map[label].id for label in requested_labels]
-            agg = Session.objects.filter(
+            agg_display = Session.objects.filter(
                 lecture=lecture, section_id__in=selected_section_ids,
             ).aggregate(max_order=Max("order"))
-            next_order = (agg["max_order"] or 0) + 1
+            agg_regular = Session.objects.filter(
+                lecture=lecture,
+                section_id__in=selected_section_ids,
+                session_type=Session.SessionType.REGULAR,
+            ).aggregate(max_order=Max("regular_order"))
+            next_order = (agg_display["max_order"] or 0) + 1
+            next_regular_order = (agg_regular["max_order"] or 0) + 1
             for label in requested_labels:
                 section = section_map.get(label)
                 session = Session.objects.create(
                     lecture=lecture,
                     section=section,
                     order=next_order,
-                    title=title or f"{next_order}차시",
+                    session_type=Session.SessionType.REGULAR,
+                    regular_order=next_regular_order,
+                    title=title or f"{next_regular_order}차시",
                     date=parsed_dates[label],
                 )
                 created.append(SessionSerializer(session).data)

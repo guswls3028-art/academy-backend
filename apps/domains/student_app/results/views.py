@@ -195,7 +195,7 @@ class MyGradesSummaryView(APIView):
             session_title = None
             lecture_title = None
             if session:
-                session_title = getattr(session, "title", None) or f"{getattr(session, 'order', '')}차시"
+                session_title = getattr(session, "title", None) or getattr(session, "display_label", "")
                 if hasattr(session, "lecture") and session.lecture:
                     lecture_title = getattr(session.lecture, "title", None)
             # 시스템 강의(공개 영상 컨테이너)는 성적에서 제외
@@ -298,7 +298,7 @@ class MyGradesSummaryView(APIView):
             session_title = None
             lecture_title = None
             if session:
-                session_title = getattr(session, "title", None) or f"{getattr(session, 'order', '')}차시"
+                session_title = getattr(session, "title", None) or getattr(session, "display_label", "")
                 if hasattr(session, "lecture") and session.lecture:
                     lecture_title = getattr(session.lecture, "title", None)
 
@@ -369,7 +369,7 @@ class MyGradesSummaryView(APIView):
                     except (TypeError, ValueError):
                         pass
             if session:
-                assignment_session_title = getattr(session, "title", None) or f"{getattr(session, 'order', '')}차시"
+                assignment_session_title = getattr(session, "title", None) or getattr(session, "display_label", "")
                 assignment_lecture_title = (
                     getattr(session.lecture, "title", None)
                     if getattr(session, "lecture", None) else None

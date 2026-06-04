@@ -8,6 +8,8 @@ C. CLINIC auto_assign source 보존
 D. section 타입 검증
 E. 날짜 정합성 검증
 """
+from importlib import import_module
+
 from django.test import TestCase
 from django.db import IntegrityError, connection
 from django.contrib.auth import get_user_model
@@ -33,6 +35,19 @@ from apps.domains.enrollment.models import Enrollment
 from apps.domains.video.models import Video, VideoProgress
 
 User = get_user_model()
+
+
+class TestSessionMigrationBackfill(TestCase):
+    """기존 보강 포함 display order 데이터의 정규 차시 번호 backfill 규칙."""
+
+    def test_infer_regular_order_prefers_title_number(self):
+        migration = import_module(
+            "apps.domains.lectures.migrations.0007_session_regular_order_session_session_type_and_more"
+        )
+
+        self.assertEqual(migration.infer_regular_order("2차시 (10:00~11:00)", 3), 2)
+        self.assertEqual(migration.infer_regular_order("3회차", 5), 3)
+        self.assertEqual(migration.infer_regular_order("오리엔테이션", 1), 1)
 
 
 class LectureTestBase(TestCase):
@@ -101,24 +116,130 @@ class TestSessionOrderUnique(LectureTestBase):
             lecture=self.lecture, section=None, order=1, title="공통 1차시",
         )
 
-    def test_serializer_order_duplicate_rejected(self):
-        """시리얼라이저에서 order 중복이 거부됨"""
+    def test_serializer_regular_order_duplicate_rejected(self):
+        """시리얼라이저에서 정규 n차시 번호 중복이 거부됨"""
         Session.objects.create(lecture=self.lecture, order=1, title="1차시")
         serializer = SessionSerializer(data={
             "lecture": self.lecture.id,
             "section": None,
-            "order": 1,
+            "regular_order": 1,
             "title": "중복 차시",
         })
         valid = serializer.is_valid()
         self.assertFalse(valid)
-        # DB UniqueConstraint 또는 커스텀 validate에서 잡힘
-        has_order_error = "order" in serializer.errors
-        has_non_field_error = "non_field_errors" in serializer.errors
-        self.assertTrue(
-            has_order_error or has_non_field_error,
-            f"Expected order or non_field_errors error, got: {serializer.errors}",
+        self.assertIn("regular_order", serializer.errors)
+
+
+class TestSessionCreateOrdering(LectureTestBase):
+    """차시 생성 규칙은 정규 n차시 번호와 화면 배치 순서를 분리한다."""
+
+    def _create_session(self, payload):
+        request = self.factory.post(
+            "/api/v1/lectures/sessions/",
+            {"lecture": self.lecture.id, **payload},
+            format="json",
         )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        return SessionViewSet.as_view({"post": "create"})(request)
+
+    def _patch_session(self, session, payload):
+        request = self.factory.patch(
+            f"/api/v1/lectures/sessions/{session.id}/",
+            payload,
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        return SessionViewSet.as_view({"patch": "partial_update"})(request, pk=session.id)
+
+    def test_auto_regular_order_ignores_supplement_display_order(self):
+        """보강이 있어도 자동 정규 차시는 max(regular_order)+1을 사용."""
+        Session.objects.create(lecture=self.lecture, order=1, title="1차시")
+        Session.objects.create(
+            lecture=self.lecture,
+            order=2,
+            session_type=Session.SessionType.SUPPLEMENT,
+            title="보강",
+        )
+
+        response = self._create_session({"title": "2차시"})
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["session_type"], "REGULAR")
+        self.assertEqual(response.data["regular_order"], 2)
+        self.assertEqual(response.data["order"], 3)
+        self.assertEqual(response.data["display_label"], "2차시")
+
+    def test_direct_regular_order_inserts_before_next_regular(self):
+        """비어 있는 n차시는 다음 정규 차시 앞에 배치하고 뒤 순서를 민다."""
+        Session.objects.create(lecture=self.lecture, order=1, regular_order=1, title="1차시")
+        third = Session.objects.create(
+            lecture=self.lecture,
+            order=2,
+            regular_order=3,
+            title="3차시",
+        )
+
+        response = self._create_session({"title": "2차시", "regular_order": 2})
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["regular_order"], 2)
+        self.assertEqual(response.data["order"], 2)
+        third.refresh_from_db()
+        self.assertEqual(third.order, 3)
+
+    def test_supplement_insert_after_order_shifts_display_only(self):
+        """보강은 정규 번호 없이 지정 배치 뒤에 끼우고 display order만 민다."""
+        first = Session.objects.create(lecture=self.lecture, order=1, title="1차시")
+        second = Session.objects.create(lecture=self.lecture, order=2, title="2차시")
+
+        response = self._create_session({
+            "title": "보강",
+            "session_type": "SUPPLEMENT",
+            "insert_after_order": first.order,
+        })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["session_type"], "SUPPLEMENT")
+        self.assertIsNone(response.data["regular_order"])
+        self.assertEqual(response.data["order"], 2)
+        second.refresh_from_db()
+        self.assertEqual(second.order, 3)
+
+    def test_regular_order_null_update_rejected(self):
+        """정규 차시는 PATCH에서도 regular_order null을 허용하지 않는다."""
+        session = Session.objects.create(lecture=self.lecture, order=1, title="1차시")
+
+        response = self._patch_session(session, {"regular_order": None})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("regular_order", response.data)
+        session.refresh_from_db()
+        self.assertEqual(session.regular_order, 1)
+
+    def test_supplement_to_regular_update_rejects_duplicate_regular_order(self):
+        """보강을 정규로 전환할 때 암묵 번호가 기존 정규 차시와 겹치면 거부한다."""
+        Session.objects.create(lecture=self.lecture, order=1, regular_order=1, title="1차시")
+        supplement = Session.objects.create(
+            lecture=self.lecture,
+            order=2,
+            session_type=Session.SessionType.SUPPLEMENT,
+            title="보강",
+        )
+        Session.objects.create(
+            lecture=self.lecture,
+            order=3,
+            regular_order=2,
+            title="2차시",
+        )
+
+        response = self._patch_session(supplement, {"session_type": "REGULAR"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("regular_order", response.data)
+        supplement.refresh_from_db()
+        self.assertEqual(supplement.session_type, Session.SessionType.SUPPLEMENT)
 
 
 class TestSessionListNoPagination(LectureTestBase):

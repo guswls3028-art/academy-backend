@@ -121,7 +121,7 @@ def build_student_enrollment_matrix(*, tenant, student_id: int, lecture_id: int)
 
     sessions = list(
         Session.objects.filter(lecture=lecture).order_by("order", "id")
-        .values("id", "title", "order")
+        .values("id", "title", "order", "session_type", "regular_order")
     )
     session_ids = [s["id"] for s in sessions]
 
@@ -170,10 +170,18 @@ def build_student_enrollment_matrix(*, tenant, student_id: int, lecture_id: int)
     result_sessions = []
     for s in sessions:
         sid = s["id"]
+        display_label = (
+            "보강"
+            if s["session_type"] == Session.SessionType.SUPPLEMENT
+            else f"{s['regular_order'] or s['order']}차시"
+        )
         result_sessions.append({
             "id": sid,
             "title": s["title"] or f"세션 {s['order']}",
             "order": s["order"],
+            "session_type": s["session_type"],
+            "regular_order": s["regular_order"],
+            "display_label": display_label,
             "session_enrolled": sid in enrolled_session_ids,
             "exams": [
                 {"id": e["id"], "title": e["title"], "enrolled": e["id"] in enrolled_exam_ids}

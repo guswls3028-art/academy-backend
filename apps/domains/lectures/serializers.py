@@ -27,7 +27,20 @@ class LectureSerializer(serializers.ModelSerializer):
 
 
 class SessionSerializer(serializers.ModelSerializer):
-    order = serializers.IntegerField(required=False, allow_null=True)
+    order = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    session_type = serializers.ChoiceField(
+        choices=Session.SessionType.choices,
+        required=False,
+        default=Session.SessionType.REGULAR,
+    )
+    regular_order = serializers.IntegerField(required=False, allow_null=True, min_value=1)
+    insert_after_order = serializers.IntegerField(
+        required=False,
+        allow_null=True,
+        min_value=0,
+        write_only=True,
+    )
+    display_label = serializers.CharField(read_only=True)
     section_label = serializers.CharField(source="section.label", read_only=True, default=None)
     section_type = serializers.CharField(source="section.section_type", read_only=True, default=None)
 
@@ -45,7 +58,8 @@ class SessionSerializer(serializers.ModelSerializer):
     class Meta:
         model = Session
         fields = [
-            "id", "lecture", "section", "order", "title", "date",
+            "id", "lecture", "section", "order", "session_type", "regular_order",
+            "insert_after_order", "display_label", "title", "date",
             "section_label", "section_type",
             "lecture_title", "lecture_color",
             "start_time", "end_time", "location",
@@ -94,8 +108,13 @@ class SessionSerializer(serializers.ModelSerializer):
         날짜가 강의 기간 범위를 벗어나면 경고 (차단하지는 않음 — 보강 차시 등 운영 패턴 존재).
         order 중복 시 명확한 에러 메시지.
         """
-        section = attrs.get("section")
-        lecture = attrs.get("lecture")
+        section = attrs.get("section") if "section" in attrs else (
+            self.instance.section if self.instance else None
+        )
+        lecture = attrs.get("lecture") or (self.instance.lecture if self.instance else None)
+        session_type = attrs.get("session_type") or (
+            self.instance.session_type if self.instance else Session.SessionType.REGULAR
+        )
 
         if section and lecture:
             if section.lecture_id != lecture.id:
@@ -107,9 +126,47 @@ class SessionSerializer(serializers.ModelSerializer):
                     {"section": "반과 강의의 학원이 일치하지 않습니다."}
                 )
 
-        # order 중복 검증 (DB 제약과 별도로 명확한 에러 메시지 제공)
+        regular_order_provided = "regular_order" in attrs
+        regular_order = attrs.get("regular_order")
+
+        if session_type == Session.SessionType.SUPPLEMENT:
+            if attrs.get("regular_order") is not None:
+                raise serializers.ValidationError(
+                    {"regular_order": "보강 차시는 정규 차시 번호를 가질 수 없습니다."}
+                )
+
+        # regular_order 중복 검증 (정규 n차시 번호)
+        candidate_regular_order = regular_order
+        if self.instance and session_type == Session.SessionType.REGULAR:
+            if regular_order_provided and regular_order is None:
+                raise serializers.ValidationError(
+                    {"regular_order": "정규 차시 번호는 비울 수 없습니다."}
+                )
+            if not regular_order_provided:
+                candidate_regular_order = (
+                    self.instance.regular_order
+                    if self.instance.regular_order is not None
+                    else self.instance.order
+                )
+
+        if candidate_regular_order is not None and lecture and session_type == Session.SessionType.REGULAR:
+            qs = Session.objects.filter(
+                lecture=lecture,
+                section=section,
+                session_type=Session.SessionType.REGULAR,
+                regular_order=candidate_regular_order,
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                section_label = f" ({section.label}반)" if section else ""
+                raise serializers.ValidationError(
+                    {"regular_order": f"이 강의{section_label}에 이미 {candidate_regular_order}차시가 존재합니다."}
+                )
+
+        # update의 order 중복 검증. create의 order는 삽입 위치로 해석해 view에서 shift한다.
         order = attrs.get("order")
-        if order is not None and lecture:
+        if self.instance and order is not None and lecture:
             qs = Session.objects.filter(lecture=lecture, order=order, section=section)
             if self.instance:
                 qs = qs.exclude(pk=self.instance.pk)
