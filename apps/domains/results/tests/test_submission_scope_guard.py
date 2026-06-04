@@ -605,6 +605,55 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(float(item.score), 100.0)
         self.assertEqual(float(item.max_score), 100.0)
         self.assertFalse(ResultItem.objects.filter(result=result, question=essay).exists())
+        legacy = ExamResult.objects.get(submission=submission)
+        self.assertEqual(float(legacy.total_score), 100.0)
+        self.assertEqual(float(legacy.objective_score), 100.0)
+        self.assertEqual(float(legacy.max_score), 100.0)
+        self.assertEqual(list(legacy.breakdown.keys()), ["1"])
+
+    def test_sync_repairs_stale_draft_exam_result_snapshot_from_result_payload(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Stale Legacy Snapshot Exam",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        sheet = Sheet.objects.create(
+            exam=exam,
+            name="STALE-ZERO-MIXED",
+            total_questions=2,
+            choice_count=1,
+            essay_count=1,
+        )
+        choice = ExamQuestion.objects.create(sheet=sheet, number=1, score=0)
+        essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
+        AnswerKey.objects.create(exam=exam, answers={str(choice.id): "1"})
+        submission = self._submission_for_exam(exam, choice, answer="1")
+        submission.source = Submission.Source.OMR_SCAN
+        submission.save(update_fields=["source", "updated_at"])
+        ExamResult.objects.create(
+            submission=submission,
+            exam=exam,
+            total_score=80,
+            max_score=100,
+            objective_score=80,
+            status=ExamResult.Status.DRAFT,
+            breakdown={"1": {"question_id": choice.id, "earned": 80}},
+        )
+
+        result = sync_result_from_exam_submission(submission.id)
+
+        legacy = ExamResult.objects.get(submission=submission)
+        self.assertEqual(float(result.total_score), 100.0)
+        self.assertEqual(float(result.objective_score), 100.0)
+        self.assertEqual(float(legacy.total_score), 100.0)
+        self.assertEqual(float(legacy.objective_score), 100.0)
+        self.assertEqual(float(legacy.max_score), 100.0)
+        self.assertEqual(list(legacy.breakdown.keys()), ["1"])
+        self.assertNotIn(str(essay.number), legacy.breakdown)
 
     def test_auto_grade_treats_zero_score_mixed_sheet_essay_as_decorative_without_essay_evidence(self):
         exam = Exam.objects.create(

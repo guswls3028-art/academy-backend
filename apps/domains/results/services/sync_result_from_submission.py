@@ -11,16 +11,75 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from apps.domains.submissions.models import Submission
-from apps.domains.results.models import Result, ResultItem
+from apps.domains.results.models import ExamResult, Result, ResultItem
 from apps.domains.results.guards.grading_contract import GradingContractGuard
 from apps.domains.results.services.attempt_service import ExamAttemptService
-from apps.domains.results.services.answer_matching import answer_matches
+from apps.domains.results.services.answer_matching import (
+    answer_matches,
+    format_answer_for_display,
+)
 from apps.domains.results.services.submission_answer_map import (
     build_submission_answers_map,
     require_complete_omr_answers,
 )
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 from apps.support.omr.score_shape import get_exam_score_shape
+
+
+def _sync_legacy_exam_result_snapshot(
+    *,
+    submission: Submission,
+    exam,
+    items_payload: list[dict],
+    objective_score: float,
+    objective_max_score: float,
+) -> None:
+    legacy = (
+        ExamResult.objects
+        .select_for_update()
+        .filter(submission=submission)
+        .first()
+    )
+    if legacy and legacy.status == ExamResult.Status.FINAL:
+        return
+
+    is_new = legacy is None
+    legacy = legacy or ExamResult(
+        submission=submission,
+        exam=exam,
+        status=ExamResult.Status.DRAFT,
+    )
+    breakdown = {
+        str(item["question_number"]): {
+            "question_id": item["question_id"],
+            "correct": item["is_correct"],
+            "earned": item["score"],
+            "answer": item["answer"],
+            "correct_answer": format_answer_for_display(item["correct_answer"]),
+        }
+        for item in items_payload
+    }
+    pass_score = float(getattr(exam, "pass_score", 0) or 0)
+    legacy.exam = exam
+    legacy.total_score = round(float(objective_score), 2)
+    legacy.max_score = round(float(objective_max_score), 2)
+    legacy.objective_score = round(float(objective_score), 2)
+    legacy.breakdown = breakdown
+    legacy.is_passed = legacy.total_score >= pass_score if pass_score > 0 else True
+    legacy.status = ExamResult.Status.DRAFT
+    if is_new:
+        legacy.save()
+    else:
+        legacy.save(update_fields=[
+            "exam",
+            "total_score",
+            "max_score",
+            "objective_score",
+            "breakdown",
+            "is_passed",
+            "status",
+            "updated_at",
+        ])
 
 
 @transaction.atomic
@@ -114,10 +173,12 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         score = max_score if is_correct else 0.0
         items_payload.append({
             "question_id": qid,
+            "question_number": int(q.number),
             "answer": ans,
             "is_correct": is_correct,
             "score": score,
             "max_score": max_score,
+            "correct_answer": correct_key,
             "source": "online",
         })
 
@@ -306,5 +367,13 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
 
     result.attempt_id = attempt.id
     result.save(update_fields=["attempt_id", "updated_at"])
+
+    _sync_legacy_exam_result_snapshot(
+        submission=submission,
+        exam=exam,
+        items_payload=items_payload,
+        objective_score=total,
+        objective_max_score=max_total,
+    )
 
     return result
