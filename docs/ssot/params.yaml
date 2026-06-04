@@ -193,7 +193,7 @@ videoBatch:
   # 2026-05-12 audit: m6g.medium → t4g.medium. ECS_AL2023 ARM AMI(`/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended`) t4g 지원 검증. t4g.medium = 2 vCPU + 4GB RAM (m6g.medium = 1 vCPU + 4GB) + ~13% cheap. cron 잡 4-6분이라 burstable 충분.
   opsComputeEnvironmentName: academy-v1-video-ops-ce
   opsQueueName: academy-v1-video-ops-queue
-  opsInstanceType: t4g.medium
+  opsInstanceType: c6g.medium
   opsMaxvCpus: 2
   opsJobDefs:
     reconcile: academy-v1-video-ops-reconcile

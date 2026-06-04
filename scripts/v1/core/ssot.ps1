@@ -260,7 +260,7 @@ function Load-SSOT {
     }
     $script:OpsCEName = $p["videoBatch"]["opsComputeEnvironmentName"]
     $script:OpsQueueName = $p["videoBatch"]["opsQueueName"]
-    $script:OpsCEInstanceType = if ($p["videoBatch"]["opsInstanceType"]) { $p["videoBatch"]["opsInstanceType"] } else { "t4g.medium" }
+    $script:OpsCEInstanceType = if ($p["videoBatch"]["opsInstanceType"]) { $p["videoBatch"]["opsInstanceType"] } else { "c6g.medium" }
     $script:OpsCEMaxvCpus = Coerce-Int $p["videoBatch"]["opsMaxvCpus"] 2
     $script:OpsJobDefReconcile = "academy-v1-video-ops-reconcile"
     $script:OpsJobDefScanStuck = "academy-v1-video-ops-scanstuck"
