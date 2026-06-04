@@ -254,11 +254,11 @@ This keeps 10 rollback points and aggressively cleans untagged manifests. See `I
 
 | Endpoint | Purpose | Checks | Used By |
 |----------|---------|--------|---------|
-| `/healthz` | Liveness probe | App is running, can respond | ALB health check, deploy verification |
+| `/healthz` | Liveness probe | App is running, can respond | ALB health check, Docker HEALTHCHECK, deploy verification |
 | `/health` | Readiness probe | App + database connection | Deploy verification, smoke tests |
 | `/readyz` | Readiness check (same as /health) | App + database connection | Registered at `urls.py` lines 16-18 |
 
-- ALB uses `/healthz` for routing decisions (lightweight, no DB)
+- ALB and Docker container health use `/healthz` for liveness decisions (lightweight, no DB)
 - Deploy verification checks BOTH endpoints
 - `/health` failure with `/healthz` success indicates DB connectivity issue (not an app crash)
 

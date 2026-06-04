@@ -39,9 +39,9 @@ RUN pip install --user --no-cache-dir -r requirements/api.txt
 #   RUN pip install --user --no-cache-dir -r requirements/api-extras.txt
 #   RUN python -c "from sentence_transformers import CrossEncoder; CrossEncoder('<모델명>', max_length=512)"
 
-# 헬스체크
+# 헬스체크: 컨테이너/ALB 생존성은 DB readiness와 분리한다.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=5)" || exit 1
+    CMD python -c "import requests; requests.get('http://localhost:8000/healthz', timeout=5)" || exit 1
 
 # 포트 노출
 EXPOSE 8000

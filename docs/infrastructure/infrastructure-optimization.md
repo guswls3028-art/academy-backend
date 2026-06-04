@@ -698,7 +698,7 @@ if exists:
 **Mitigation:**
 - Automated daily snapshots (retained 7 days)
 - Point-in-time recovery enabled (5-min granularity)
-- `/health` endpoint checks DB connectivity; ALB routes away from unhealthy API instances
+- `/healthz` is the ALB/container liveness check; `/health` checks DB connectivity for readiness and operational smoke tests
 - Manual failover procedure documented: restore from snapshot → update RDS endpoint in SSM Parameter Store
 
 ### 11.2 Redis Single-Node
