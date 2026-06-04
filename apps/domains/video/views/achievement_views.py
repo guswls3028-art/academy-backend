@@ -6,6 +6,7 @@ from rest_framework.response import Response
 from apps.core.permissions import TenantResolvedAndStaff
 
 from academy.adapters.db.django import repositories_video as video_repo
+from apps.domains.video.policy import is_video_progress_complete
 
 
 class VideoAchievementView(APIView):
@@ -37,7 +38,11 @@ class VideoAchievementView(APIView):
             vp = progresses.get(enrollment.id)
 
             progress = vp.progress if vp else 0
-            completed = vp.completed if vp else False
+            completed = (
+                is_video_progress_complete(vp.progress, vp.completed)
+                if vp
+                else False
+            )
 
             if completed:
                 completed_count += 1
@@ -45,7 +50,7 @@ class VideoAchievementView(APIView):
             total_progress += progress
 
             # 상태 계산
-            if progress >= 0.95:
+            if completed:
                 status = "completed"
             elif progress >= 0.5:
                 status = "warning"

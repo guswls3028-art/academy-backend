@@ -2,10 +2,16 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership, User
+from apps.domains.attendance.models import Attendance
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.parents.models import Parent
-from apps.domains.student_app.media.views import StudentVideoPlaybackView, StudentVideoProgressView
+from apps.domains.student_app.media.views import (
+    StudentVideoPlaybackView,
+    StudentVideoProgressView,
+    StudentSessionVideoListView,
+    StudentVideoStatsView,
+)
 from apps.domains.students.models import Student
 from apps.domains.video.models import AccessMode, Video, VideoAccess, VideoProgress
 
@@ -103,6 +109,23 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         force_authenticate(request, user=user or self.user)
         return StudentVideoPlaybackView.as_view()(request, video_id=self.video.id)
 
+    def _get_me_stats(self, *, user=None, selected_student_id=None):
+        request = self.factory.get("/api/v1/student/video/me/stats/")
+        if selected_student_id is not None:
+            request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
+        request.tenant = self.tenant
+        force_authenticate(request, user=user or self.user)
+        return StudentVideoStatsView.as_view()(request)
+
+    def _get_session_videos(self, *, user=None, enrollment_id=None):
+        path = f"/api/v1/student/video/sessions/{self.target_session.id}/videos/"
+        if enrollment_id is not None:
+            path += f"?enrollment={enrollment_id}"
+        request = self.factory.get(path)
+        request.tenant = self.tenant
+        force_authenticate(request, user=user or self.user)
+        return StudentSessionVideoListView.as_view()(request, session_id=self.target_session.id)
+
     def _create_parent_child(self, suffix: str):
         child_user = User.objects.create_user(
             username=f"student-video-progress-child-{suffix}",
@@ -140,6 +163,53 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
                 enrollment=self.old_enrollment,
             ).exists()
         )
+
+    def test_student_stats_uses_domain_completion_threshold(self):
+        VideoProgress.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            progress=0.9,
+            completed=False,
+        )
+
+        response = self._get_me_stats()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["total_videos"], 1)
+        self.assertEqual(response.data["completed_videos"], 1)
+        self.assertEqual(response.data["completion_rate"], 100)
+        self.assertEqual(response.data["lectures"][0]["completed_count"], 1)
+
+    def test_session_video_list_uses_prefetched_completion_and_access_modes(self):
+        second_video = Video.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            title="Second Target Video",
+            status=Video.Status.READY,
+            duration=100,
+            order=2,
+        )
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+            status="ONLINE",
+        )
+        VideoProgress.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            progress=0.9,
+            completed=False,
+        )
+
+        response = self._get_session_videos(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = {row["id"]: row for row in response.data["items"]}
+        self.assertTrue(rows[self.video.id]["completed"])
+        self.assertEqual(rows[self.video.id]["access_mode"], AccessMode.FREE_REVIEW.value)
+        self.assertFalse(rows[second_video.id]["completed"])
+        self.assertEqual(rows[second_video.id]["access_mode"], AccessMode.PROCTORED_CLASS.value)
 
     def test_progress_body_enrollment_id_is_validated_against_video_lecture(self):
         response = self._post_progress({

@@ -1,4 +1,3 @@
-import math
 from typing import Any, Dict, Optional, Tuple
 
 from django.db.models import Prefetch
@@ -13,6 +12,8 @@ from apps.domains.student_app.permissions import IsStudentOrParent, get_request_
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
     ensure_student_video_watch_allowed,
+    is_video_progress_complete,
+    normalize_video_progress,
     resolve_student_session_video_context,
     resolve_student_video_access_context,
     student_can_access_video,
@@ -62,15 +63,7 @@ def _get_explicit_enrollment_id(request, *, include_body: bool = False) -> Optio
 
 
 def _safe_video_progress(value: Any) -> float:
-    try:
-        progress = float(value)
-    except (TypeError, ValueError):
-        return 0.0
-    if not math.isfinite(progress):
-        return 0.0
-    if progress > 1:
-        progress = progress / 100.0
-    return max(0.0, min(1.0, progress))
+    return normalize_video_progress(value)
 
 
 def _safe_video_duration(value: Any) -> int:
@@ -512,7 +505,10 @@ class StudentVideoStatsView(APIView):
             lecture_id = enrollment.lecture_id
             duration = _safe_video_duration(getattr(video, "duration", 0))
             progress = _safe_video_progress(getattr(p, "progress", 0))
-            completed = bool(getattr(p, "completed", False)) or progress >= 0.999
+            completed = is_video_progress_complete(
+                progress,
+                bool(getattr(p, "completed", False)),
+            )
 
             total_videos += 1
             total_content_duration += duration
@@ -622,7 +618,12 @@ class StudentSessionVideoListView(APIView):
 
         enrollment_obj = access_context.enrollment
 
-        videos = list(Video.objects.filter(session_id=session_id).order_by("order", "title", "id"))
+        videos = list(
+            Video.objects
+            .filter(session_id=session_id)
+            .select_related("tenant", "session__lecture__tenant")
+            .order_by("order", "title", "id")
+        )
 
         # 진행률 + 권한을 일괄 조회 (N+1 방지)
         from academy.adapters.db.django import repositories_video as video_repo
@@ -630,6 +631,7 @@ class StudentSessionVideoListView(APIView):
         video_ids = [v.id for v in videos]
         progress_map = {}
         perm_map = {}
+        attendance_status = None
         if enrollment_obj and video_ids:
             progresses = video_repo.video_progress_filter_video_enrollment_ids(
                 video=None,
@@ -644,25 +646,55 @@ class StudentSessionVideoListView(APIView):
                 )
                 perm_map = {p.video_id: p for p in perms}
 
+            attendance = (
+                video_repo.attendance_filter_session_enrollment(session, enrollment_obj)
+                .only("status")
+                .first()
+            )
+            attendance_status = attendance.status if attendance else None
+
+        access_mode_map = {}
+        if enrollment_obj and videos:
+            from apps.domains.video.services.access_resolver import (
+                resolve_access_modes_for_videos_prefetched,
+            )
+
+            access_mode_map = resolve_access_modes_for_videos_prefetched(
+                videos=videos,
+                enrollment=enrollment_obj,
+                progresses_by_video_id=progress_map,
+                access_by_video_id=perm_map,
+                attendance_status=attendance_status,
+            )
+
         items = []
         for v in videos:
             perm_obj = perm_map.get(v.id)
 
             thumb = _build_thumbnail_url(v)
 
-            # Use SSOT access resolver
-            from apps.domains.video.services.access_resolver import resolve_access_mode
-            
             access_mode_value = None
             if enrollment_obj:
-                access_mode_value = resolve_access_mode(video=v, enrollment=enrollment_obj).value
-            
+                access_mode = access_mode_map.get(v.id)
+                access_mode_value = access_mode.value if access_mode else None
+
             # 진행률 계산 (0-100)
             progress_obj = progress_map.get(v.id)
-            progress_percent = 0
-            if progress_obj:
-                progress_percent = round(float(progress_obj.progress or 0) * 100, 1)
-            
+            progress_ratio = (
+                normalize_video_progress(getattr(progress_obj, "progress", 0))
+                if progress_obj
+                else 0
+            )
+            progress_percent = round(progress_ratio * 100, 1)
+            completed = (
+                is_video_progress_complete(
+                    progress_ratio,
+                    bool(getattr(progress_obj, "completed", False)),
+                )
+                if progress_obj
+                else False
+            )
+
             items.append({
                 "id": int(v.id),
                 "session_id": int(v.session_id),
@@ -672,7 +704,7 @@ class StudentSessionVideoListView(APIView):
                 "thumbnail_url": thumb,
                 "duration": getattr(v, "duration", None),
                 "progress": progress_percent,  # 0-100
-                "completed": bool(progress_obj and progress_obj.completed) if progress_obj else False,
+                "completed": completed,
                 "last_position": int(getattr(progress_obj, "last_position", 0) or 0) if progress_obj else 0,
                 "updated_at": v.updated_at.isoformat() if hasattr(v, "updated_at") and v.updated_at else None,
                 "created_at": v.created_at.isoformat() if hasattr(v, "created_at") and v.created_at else None,
@@ -891,9 +923,17 @@ class StudentVideoPlaybackView(APIView):
                 enrollment=enrollment_obj,
             ).first()
         progress_percent = (
-            round(float(getattr(progress_obj, "progress", 0) or 0) * 100, 1)
+            round(normalize_video_progress(getattr(progress_obj, "progress", 0)) * 100, 1)
             if progress_obj
             else 0
+        )
+        completed = (
+            is_video_progress_complete(
+                getattr(progress_obj, "progress", 0),
+                bool(getattr(progress_obj, "completed", False)),
+            )
+            if progress_obj
+            else False
         )
 
         payload = {
@@ -906,7 +946,7 @@ class StudentVideoPlaybackView(APIView):
                 "thumbnail_url": thumb,
                 "duration": getattr(video, "duration", None),
                 "progress": progress_percent,
-                "completed": bool(progress_obj and progress_obj.completed),
+                "completed": completed,
                 "last_position": int(getattr(progress_obj, "last_position", 0) or 0) if progress_obj else 0,
                 "view_count": getattr(video, "view_count", 0),
                 "like_count": getattr(video, "like_count", 0),

@@ -48,6 +48,11 @@ class VideoPermissionViewSet(ModelViewSet):
 
         rule = request.data.get("rule")
         access_mode_str = request.data.get("access_mode")
+        mode_to_rule = {
+            AccessMode.FREE_REVIEW: "free",
+            AccessMode.PROCTORED_CLASS: "once",
+            AccessMode.BLOCKED: "blocked",
+        }
 
         if rule and not access_mode_str:
             rule_to_mode = {
@@ -56,10 +61,16 @@ class VideoPermissionViewSet(ModelViewSet):
                 "blocked": AccessMode.BLOCKED,
             }
             access_mode = rule_to_mode.get(rule, AccessMode.FREE_REVIEW)
+            rule = mode_to_rule[access_mode]
         elif access_mode_str:
-            access_mode = AccessMode(access_mode_str)
+            try:
+                access_mode = AccessMode(access_mode_str)
+            except ValueError:
+                return Response({"detail": "유효하지 않은 접근 모드입니다."}, status=400)
+            rule = mode_to_rule[access_mode]
         else:
             access_mode = AccessMode.PROCTORED_CLASS
+            rule = mode_to_rule[access_mode]
 
         objs = []
         for enrollment_id in enrollments:
@@ -68,7 +79,7 @@ class VideoPermissionViewSet(ModelViewSet):
                 enrollment_id,
                 defaults={
                     "access_mode": access_mode,
-                    "rule": rule or "free",
+                    "rule": rule,
                     "is_override": True,
                 },
             )

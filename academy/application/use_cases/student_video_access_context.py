@@ -8,6 +8,10 @@ from rest_framework import status
 from apps.domains.student_app.permissions import get_request_student
 from apps.domains.students.selectors import active_students_for_parent, student_for_tenant_user
 from apps.domains.video.models import AccessMode
+from apps.domains.video.policy import (
+    is_video_progress_complete,
+    normalize_video_progress,
+)
 from apps.domains.video.services.access_resolver import resolve_access_mode
 
 

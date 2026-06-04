@@ -105,6 +105,32 @@ def resolve_access_modes_prefetched(
     }
 
 
+def resolve_access_modes_for_videos_prefetched(
+    *,
+    videos: Iterable[Video],
+    enrollment: Enrollment,
+    progresses_by_video_id: Mapping[int, object],
+    access_by_video_id: Mapping[int, object],
+    attendance_status: Optional[str],
+) -> dict[int, AccessMode]:
+    """
+    Bulk resolve access modes for one enrollment across many videos.
+
+    Student session video lists already have the video, progress, permission,
+    and session attendance rows loaded. Reusing the loaded inputs keeps the
+    access-mode decision identical to resolve_access_mode while avoiding one
+    permission/progress/attendance query per video.
+    """
+    return {
+        video.id: _resolve_access_mode_loaded(
+            perm=access_by_video_id.get(video.id),
+            attendance_status=attendance_status,
+            progress=progresses_by_video_id.get(video.id),
+        )
+        for video in videos
+    }
+
+
 def get_effective_access_mode(
     *,
     video: Video,

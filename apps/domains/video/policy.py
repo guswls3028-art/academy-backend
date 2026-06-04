@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Dict, Tuple, Optional
 
 VIDEO_COMPLETION_THRESHOLD = 0.9
@@ -9,6 +10,8 @@ def normalize_video_progress(progress: object) -> float:
     try:
         value = float(progress or 0.0)
     except (TypeError, ValueError):
+        return 0.0
+    if not math.isfinite(value):
         return 0.0
     if value > 1:
         value = value / 100

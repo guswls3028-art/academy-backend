@@ -48,6 +48,7 @@ from ..models import (
     VideoFolder,
 )
 from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
+from ..policy import is_video_progress_complete
 from ..services.access_resolver import resolve_access_modes_prefetched
 from ..services.video_encoding import REASON_SUBMIT_FAILED, create_job_and_submit_batch
 from .playback_mixin import VideoPlaybackMixin
@@ -1094,11 +1095,16 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             vp = progresses.get(e.id)
             perm = perms.get(e.id)
             access_mode = access_modes[e.id]
+            completed = (
+                is_video_progress_complete(vp.progress, vp.completed)
+                if vp
+                else False
+            )
 
             # Legacy rule for backward compatibility
             rule = perm.rule if perm else "free"
             effective_rule = rule
-            if rule == "once" and vp and vp.completed:
+            if rule == "once" and completed:
                 effective_rule = "free"
 
             lecture = getattr(video.session, "lecture", None) if video.session else None
@@ -1122,7 +1128,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     "lecture_title": lecture.title if lecture else None,
                     "lecture_color": getattr(lecture, "color", None) if lecture else None,
                     "progress": vp.progress if vp else 0,
-                    "completed": vp.completed if vp else False,
+                    "completed": completed,
                     "rule": rule,  # Legacy field
                     "effective_rule": effective_rule,  # Legacy field
                     "access_mode": access_mode.value,  # New field
@@ -1164,12 +1170,16 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         total = enrollments.count()
 
         progresses = video_repo.get_video_progresses_for_video(video)
-        completed_count = progresses.filter(completed=True).count()
+        progress_rows = list(progresses)
+        completed_count = sum(
+            1 for p in progress_rows
+            if is_video_progress_complete(p.progress, p.completed)
+        )
 
         duration = int(video.duration or 0)
 
         watched_seconds = 0
-        for p in progresses.iterator():
+        for p in progress_rows:
             watched_seconds += int(float(p.progress or 0) * duration)
 
         completion_rate = (completed_count / total) if total else 0.0
