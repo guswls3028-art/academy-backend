@@ -443,14 +443,14 @@ class StudentVideoStatsView(APIView):
     """
     GET /student/video/me/stats/
     학생 영상 시청 통계 — 전체 진도율, 완료 영상 수, 강좌별 진도.
-    VideoProgress 모델 집계.
+    활성 수강 강좌의 READY 영상 전체를 분모로 삼고, VideoProgress는 진도만 보강한다.
     """
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request):
         from apps.domains.enrollment.models import Enrollment
-        from apps.domains.video.models import VideoProgress
+        from apps.domains.video.models import Video, VideoProgress
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -466,14 +466,15 @@ class StudentVideoStatsView(APIView):
             })
 
         # 활성 수강 목록
-        enrollments = Enrollment.objects.filter(
-            student=student,
-            tenant=tenant,
-            status="ACTIVE",
-        ).select_related("lecture")
+        enrollments = list(
+            Enrollment.objects.filter(
+                student=student,
+                tenant=tenant,
+                status="ACTIVE",
+            ).select_related("lecture")
+        )
 
-        enrollment_ids = list(enrollments.values_list("id", flat=True))
-        enrollment_map = {e.id: e for e in enrollments}
+        enrollment_ids = [e.id for e in enrollments]
 
         if not enrollment_ids:
             return Response({
@@ -485,11 +486,31 @@ class StudentVideoStatsView(APIView):
                 "lectures": [],
             })
 
-        # 전체 통계: VideoProgress 기반
-        progresses = VideoProgress.objects.filter(
-            enrollment_id__in=enrollment_ids,
-            video__status="READY",
-        ).select_related("video", "enrollment")
+        enrollments_by_lecture: Dict[int, list] = {}
+        for enrollment in enrollments:
+            enrollments_by_lecture.setdefault(enrollment.lecture_id, []).append(enrollment)
+
+        videos = list(
+            Video.objects.filter(
+                tenant=tenant,
+                session__lecture_id__in=list(enrollments_by_lecture.keys()),
+                session__lecture__tenant=tenant,
+                status=Video.Status.READY,
+            ).values("id", "duration", "session__lecture_id")
+        )
+
+        progress_map = {}
+        if videos:
+            video_ids = [v["id"] for v in videos]
+            progresses = VideoProgress.objects.filter(
+                enrollment_id__in=enrollment_ids,
+                video_id__in=video_ids,
+                video__status=Video.Status.READY,
+            ).values("enrollment_id", "video_id", "progress", "completed")
+            progress_map = {
+                (p["enrollment_id"], p["video_id"]): p
+                for p in progresses
+            }
 
         total_videos = 0
         completed_videos = 0
@@ -499,43 +520,40 @@ class StudentVideoStatsView(APIView):
         # 강좌별 집계
         lecture_stats: Dict[int, Dict[str, Any]] = {}
 
-        for p in progresses:
-            video = p.video
-            enrollment = enrollment_map.get(p.enrollment_id)
-            if not enrollment:
-                continue
+        for video in videos:
+            lecture_id = video["session__lecture_id"]
+            for enrollment in enrollments_by_lecture.get(lecture_id, []):
+                duration = _safe_video_duration(video.get("duration", 0))
+                progress_obj = progress_map.get((enrollment.id, video["id"]))
+                progress = _safe_video_progress(progress_obj.get("progress", 0)) if progress_obj else 0
+                completed = is_video_progress_complete(
+                    progress,
+                    bool(progress_obj.get("completed", False)) if progress_obj else False,
+                )
 
-            lecture_id = enrollment.lecture_id
-            duration = _safe_video_duration(getattr(video, "duration", 0))
-            progress = _safe_video_progress(getattr(p, "progress", 0))
-            completed = is_video_progress_complete(
-                progress,
-                bool(getattr(p, "completed", False)),
-            )
+                total_videos += 1
+                total_content_duration += duration
+                total_watch_duration += int(progress * duration)
+                if completed:
+                    completed_videos += 1
 
-            total_videos += 1
-            total_content_duration += duration
-            total_watch_duration += int(progress * duration)
-            if completed:
-                completed_videos += 1
+                if lecture_id not in lecture_stats:
+                    lecture_title = getattr(getattr(enrollment, "lecture", None), "title", None)
+                    lecture_stats[lecture_id] = {
+                        "lecture_id": lecture_id,
+                        "title": lecture_title or f"강좌 {lecture_id}",
+                        "video_count": 0,
+                        "completed_count": 0,
+                        "total_duration": 0,
+                        "watch_duration": 0,
+                    }
 
-            if lecture_id not in lecture_stats:
-                lecture_title = getattr(getattr(enrollment, "lecture", None), "title", None)
-                lecture_stats[lecture_id] = {
-                    "lecture_id": lecture_id,
-                    "title": lecture_title or f"강좌 {lecture_id}",
-                    "video_count": 0,
-                    "completed_count": 0,
-                    "total_duration": 0,
-                    "watch_duration": 0,
-                }
-
-            ls = lecture_stats[lecture_id]
-            ls["video_count"] += 1
-            ls["total_duration"] += duration
-            ls["watch_duration"] += int(progress * duration)
-            if completed:
-                ls["completed_count"] += 1
+                ls = lecture_stats[lecture_id]
+                ls["video_count"] += 1
+                ls["total_duration"] += duration
+                ls["watch_duration"] += int(progress * duration)
+                if completed:
+                    ls["completed_count"] += 1
 
         # 강좌별 진도율 계산
         lectures_data = []

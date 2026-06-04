@@ -180,6 +180,34 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.data["completion_rate"], 100)
         self.assertEqual(response.data["lectures"][0]["completed_count"], 1)
 
+    def test_student_stats_counts_ready_videos_without_progress(self):
+        Video.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            title="Unwatched Target Video",
+            status=Video.Status.READY,
+            duration=200,
+            order=2,
+        )
+        VideoProgress.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            progress=0.9,
+            completed=False,
+        )
+
+        response = self._get_me_stats()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["total_videos"], 2)
+        self.assertEqual(response.data["completed_videos"], 1)
+        self.assertEqual(response.data["completion_rate"], 50)
+        self.assertEqual(response.data["total_watch_duration"], 90)
+        self.assertEqual(response.data["total_content_duration"], 300)
+        self.assertEqual(response.data["lectures"][0]["video_count"], 2)
+        self.assertEqual(response.data["lectures"][0]["completed_count"], 1)
+        self.assertEqual(response.data["lectures"][0]["progress_pct"], 50)
+
     def test_session_video_list_uses_prefetched_completion_and_access_modes(self):
         second_video = Video.objects.create(
             tenant=self.tenant,
