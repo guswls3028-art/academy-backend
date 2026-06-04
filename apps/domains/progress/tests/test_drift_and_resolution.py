@@ -273,11 +273,12 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
 
     def test_progress_policy_range_uses_regular_order_not_display_order(self):
         """보강이 display order에 끼어도 진도 정책 범위는 정규 n차시 번호를 기준으로 한다."""
-        from apps.domains.lectures.models import Session
+        from django.apps import apps
         from apps.domains.progress.services.session_calculator import (
             SessionProgressCalculator,
         )
 
+        Session = apps.get_model("lectures", "Session")
         supplement = Session.objects.create(
             lecture=self.lecture,
             order=2,
