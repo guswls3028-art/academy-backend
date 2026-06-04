@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.32.md](v1.2.32.md) | **CURRENT** | 2026-06-05 KST | Lecture session order SSOT + supplement insertion hardening |
+| [v1.2.33.md](v1.2.33.md) | **CURRENT** | 2026-06-05 KST | OMR result projection cleanup + API liveness/readiness hardening |
+| [v1.2.32.md](v1.2.32.md) | production-deployed / v1.2.33로 승계 | 2026-06-05 KST | Lecture session order SSOT + supplement insertion hardening |
 | [v1.2.31.md](v1.2.31.md) | production-deployed / v1.2.32로 승계 | 2026-06-05 KST | OMR legacy auto-grading score-shape unification + production rollback proof |
 | [v1.2.30.md](v1.2.30.md) | production-deployed / v1.2.31로 승계 | 2026-06-04 KST | OMR decorative essay score-shape hardening + Tenant 2 production regrade |
 | [v1.2.29.md](v1.2.29.md) | production-deployed / v1.2.30로 승계 | 2026-06-03 KST | OMR score-shape question max SSOT + manual scoring UI contract |

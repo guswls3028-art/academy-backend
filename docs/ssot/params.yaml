@@ -232,7 +232,7 @@ dynamodb:
 
 rds:
   engine: postgres
-  engineVersion: "15.16"
+  engineVersion: "15.17"
   instanceClass: "db.t4g.large"
   allocatedStorage: 20
   dbIdentifier: academy-db
