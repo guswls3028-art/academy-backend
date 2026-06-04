@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.29.md](v1.2.29.md) | **CURRENT** | 2026-06-03 KST | OMR score-shape question max SSOT + manual scoring UI contract |
+| [v1.2.30.md](v1.2.30.md) | **CURRENT** | 2026-06-04 KST | OMR decorative essay score-shape hardening + Tenant 2 production regrade |
+| [v1.2.29.md](v1.2.29.md) | production-deployed / v1.2.30로 승계 | 2026-06-03 KST | OMR score-shape question max SSOT + manual scoring UI contract |
 | [v1.2.28.md](v1.2.28.md) | production-deployed / v1.2.29로 승계 | 2026-06-02 KST | Tenant 2 OMR fact fallback + zero-score custom sheet hardening |
 | [v1.2.27.md](v1.2.27.md) | production-deployed / v1.2.28로 승계 | 2026-06-02 KST | Student video progress access hardening |
 | [v1.2.26.md](v1.2.26.md) | production-deployed / v1.2.27로 승계 | 2026-06-02 KST | Student video progress enrollment resolution + limglish production evidence |
