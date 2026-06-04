@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from django.db.models import F, Q
+
 from apps.domains.exams.models import ExamQuestion
 from apps.domains.exams.models.sheet import Sheet
 from apps.domains.exams.services.template_resolver import resolve_template_exam
@@ -38,11 +40,83 @@ class ExamScoreShape:
         raw = float(raw_max_score or 0.0)
         if raw > 0:
             return raw
-        if self.question_kind(int(question_id)) not in {"choice", "essay"}:
+        kind = self.question_kind(int(question_id))
+        if kind == "choice" and self.choice_count > 0 and self.objective_max_score > 0:
+            return float(self.objective_max_score) / int(self.choice_count)
+        if kind == "essay" and self.essay_count > 0 and self.subjective_max_score > 0:
+            return float(self.subjective_max_score) / int(self.essay_count)
+        return 0.0
+
+    def question_potential_max_score(
+        self,
+        question_id: int,
+        raw_max_score: float | int | None = None,
+    ) -> float:
+        active_max_score = self.question_max_score(question_id, raw_max_score)
+        if active_max_score > 0:
+            return active_max_score
+
+        kind = self.question_kind(int(question_id))
+        if kind not in {"choice", "essay"}:
             return 0.0
         if self.total_questions > 0 and self.total_max_score > 0:
             return float(self.total_max_score) / int(self.total_questions)
         return 0.0
+
+
+def _answer_value_present(value) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple, set, dict)):
+        return bool(value)
+    return True
+
+
+def _has_essay_scoring_evidence(
+    *,
+    exam_id: int,
+    template_exam_id: int | None,
+    essay_question_ids: set[int],
+) -> bool:
+    if not essay_question_ids:
+        return False
+
+    from apps.domains.exams.models import AnswerKey
+    from apps.domains.results.models import Result, ResultFact, ResultItem
+
+    answer_key = (
+        AnswerKey.objects.filter(exam_id=int(template_exam_id)).first()
+        if template_exam_id is not None
+        else None
+    )
+    if answer_key and isinstance(answer_key.answers, dict):
+        for question_id in essay_question_ids:
+            if _answer_value_present(answer_key.answers.get(str(question_id))):
+                return True
+
+    if ResultItem.objects.filter(
+        result__target_type="exam",
+        result__target_id=int(exam_id),
+        question_id__in=essay_question_ids,
+    ).filter(Q(score__gt=0) | Q(max_score__gt=0)).exists():
+        return True
+
+    if ResultFact.objects.filter(
+        target_type="exam",
+        target_id=int(exam_id),
+    ).filter(
+        Q(question_id__in=essay_question_ids)
+        | Q(source__icontains="subjective")
+    ).filter(Q(score__gt=0) | Q(max_score__gt=0)).exists():
+        return True
+
+    return Result.objects.filter(
+        target_type="exam",
+        target_id=int(exam_id),
+        total_score__gt=F("objective_score"),
+    ).exists()
 
 
 def get_exam_score_shape(exam) -> ExamScoreShape:
@@ -111,11 +185,27 @@ def get_exam_score_shape(exam) -> ExamScoreShape:
 
     component_total = objective_max + subjective_max
     total_max = component_total if component_total > 0 else exam_max_score
+    shape_source = str(contract.shape_source or "unknown")
 
     if component_total <= 0 and exam_max_score > 0 and contract.total_questions > 0:
-        equal_question_score = exam_max_score / int(contract.total_questions)
-        objective_max = equal_question_score * int(contract.choice_count)
-        subjective_max = equal_question_score * int(contract.essay_count)
+        essay_question_ids = {
+            int(question_id)
+            for question_id, kind in kind_by_id.items()
+            if kind == "essay"
+        }
+        has_scoreable_essay = _has_essay_scoring_evidence(
+            exam_id=exam_id,
+            template_exam_id=template_exam_id,
+            essay_question_ids=essay_question_ids,
+        )
+        if contract.choice_count > 0 and contract.essay_count > 0 and not has_scoreable_essay:
+            objective_max = exam_max_score
+            subjective_max = 0.0
+            shape_source = f"{shape_source}:decorative_essay"
+        else:
+            equal_question_score = exam_max_score / int(contract.total_questions)
+            objective_max = equal_question_score * int(contract.choice_count)
+            subjective_max = equal_question_score * int(contract.essay_count)
         total_max = exam_max_score
     elif contract.essay_count == 0 and exam_max_score > objective_max:
         objective_max = exam_max_score
@@ -133,7 +223,7 @@ def get_exam_score_shape(exam) -> ExamScoreShape:
         objective_max_score=float(objective_max),
         subjective_max_score=float(subjective_max),
         total_max_score=float(total_max),
-        shape_source=str(contract.shape_source or "unknown"),
+        shape_source=shape_source,
         question_kind_by_id=kind_by_id,
         question_number_by_id=number_by_id,
     )

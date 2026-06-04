@@ -561,7 +561,7 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(float(result.objective_score), 0.0)
         self.assertFalse(ResultItem.objects.filter(result=result, question=choice).exists())
 
-    def test_sync_uses_equal_score_fallback_for_zero_score_mixed_sheet(self):
+    def test_sync_treats_zero_score_mixed_sheet_essay_as_decorative_without_essay_evidence(self):
         exam = Exam.objects.create(
             tenant=self.tenant,
             title="Zero Score Mixed Scope Guard Exam",
@@ -587,10 +587,10 @@ class SubmissionScopeGuardTests(TestCase):
 
         result = sync_result_from_exam_submission(submission.id)
 
-        self.assertEqual(float(result.objective_score), 50.0)
-        self.assertEqual(float(result.total_score), 50.0)
+        self.assertEqual(float(result.objective_score), 100.0)
+        self.assertEqual(float(result.total_score), 100.0)
         self.assertEqual(float(result.max_score), 100.0)
         item = ResultItem.objects.get(result=result, question=choice)
-        self.assertEqual(float(item.score), 50.0)
-        self.assertEqual(float(item.max_score), 50.0)
+        self.assertEqual(float(item.score), 100.0)
+        self.assertEqual(float(item.max_score), 100.0)
         self.assertFalse(ResultItem.objects.filter(result=result, question=essay).exists())

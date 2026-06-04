@@ -417,7 +417,7 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         mock_dispatch.assert_called()
 
     @patch("apps.domains.results.views.admin_exam_item_score_view.dispatch_progress_pipeline")
-    def test_item_score_uses_equal_fallback_for_zero_score_mixed_sheet(self, mock_dispatch):
+    def test_item_score_uses_potential_fallback_for_zero_score_mixed_sheet(self, mock_dispatch):
         exam, questions = self._create_zero_score_mixed_exam("Zero score mixed manual")
         essay = questions[1]
 
@@ -439,18 +439,31 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         self.assertEqual(float(item.max_score), 50.0)
         self.assertEqual(float(result.total_score), 40.0)
         self.assertEqual(float(result.max_score), 100.0)
+
+        session_response = self._get_session_scores()
+        self.assertEqual(session_response.status_code, 200, session_response.data)
+        exam_meta = next(e for e in session_response.data["meta"]["exams"] if e["exam_id"] == exam.id)
+        self.assertEqual(exam_meta["objective_max_score"], 50.0)
+        self.assertEqual(exam_meta["subjective_max_score"], 50.0)
+        self.assertEqual(
+            [(q["number"], q["kind"], q["max_score"]) for q in exam_meta["questions"]],
+            [(1, "choice", 50.0), (2, "essay", 50.0)],
+        )
         mock_dispatch.assert_called()
 
-    def test_score_shape_questions_use_equal_fallback_for_zero_score_mixed_sheet(self):
+    def test_score_shape_treats_zero_score_mixed_sheet_essay_as_decorative_without_essay_evidence(self):
         exam, _questions = self._create_zero_score_mixed_exam("Zero score mixed metadata")
 
         session_response = self._get_session_scores()
 
         self.assertEqual(session_response.status_code, 200, session_response.data)
         exam_meta = next(e for e in session_response.data["meta"]["exams"] if e["exam_id"] == exam.id)
+        self.assertEqual(exam_meta["objective_max_score"], 100.0)
+        self.assertEqual(exam_meta["subjective_max_score"], 0.0)
+        self.assertIn("decorative_essay", exam_meta["score_shape_source"])
         self.assertEqual(
             [(q["number"], q["kind"], q["max_score"]) for q in exam_meta["questions"]],
-            [(1, "choice", 50.0), (2, "essay", 50.0)],
+            [(1, "choice", 100.0), (2, "essay", 0.0)],
         )
 
         request = self.factory.get("/results/admin/exams/detail/")
@@ -465,7 +478,7 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         self.assertEqual(detail_response.status_code, 200, detail_response.data)
         self.assertEqual(
             [(q["number"], q["kind"], q["max_score"]) for q in detail_response.data["questions"]],
-            [(1, "choice", 50.0), (2, "essay", 50.0)],
+            [(1, "choice", 100.0), (2, "essay", 0.0)],
         )
 
     def test_session_scores_meta_exposes_score_shape_and_component_scores(self):
