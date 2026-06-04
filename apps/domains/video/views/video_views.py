@@ -224,6 +224,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "destroy",
         "public_session",
         "delete_folder",
+        "stats",
+        "summary",
     }
     # folders: GET=학생 허용(목록), POST=스태프만(생성)
     # list/retrieve: 스태프 전용 (학생은 /student/video/* endpoint만 사용해야 함)

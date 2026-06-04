@@ -192,6 +192,20 @@ class VideoStatsAccessModeTests(TestCase):
         self.assertEqual(summary_response.data["completed_count"], 1)
         self.assertEqual(summary_response.data["completion_rate"], 1.0)
 
+    def test_summary_requires_staff_membership(self):
+        non_staff = User.objects.create_user(
+            username="video_stats_non_staff",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        request = self.factory.get(f"/api/v1/media/videos/{self.video.id}/summary/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=non_staff)
+
+        response = VideoViewSet.as_view({"get": "summary"})(request, pk=self.video.id)
+
+        self.assertEqual(response.status_code, 403)
+
     def test_policy_impact_uses_prefetched_access_inputs(self):
         proctored = self._create_enrollment(5)
         completed = self._create_enrollment(6)
