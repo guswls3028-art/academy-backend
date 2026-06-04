@@ -123,7 +123,7 @@
 |--------|------------|------|-------|
 | `exams` | **출제(question authoring) SSOT** — 시험 정의·자산·템플릿 | Exam, Sheet, ExamQuestion, AnswerKey, ExamAsset, ExamEnrollment, QuestionExplanation, TemplateBundle | 답안·채점·결과·집계 |
 | `submissions` | **답안(answers) SSOT + 제출 상태머신** — 채점 미경유 | Submission(state: SUBMITTED→ANSWERS_READY→GRADING→DONE), SubmissionAnswer | 점수 계산·정답 판정 (results 호출만) |
-| `results` | **🔒 시험 결과 SSOT (SEALED)** — exam-only, 집계의 유일 책임지 | Result(FK=enrollment_id), ExamAttempt, ResultFact, ResultItem, ExamResult, ScoreEditDraft, WrongNotePDF | 숙제 결과 (homework_results 소관), 답안 (submissions 소관) |
+| `results` | **시험 결과 SSOT** — exam-only, 집계와 대표 결과 스냅샷 | Result(FK=enrollment_id), ExamAttempt, ResultFact, ResultItem, ExamResult(legacy compatibility), ScoreEditDraft, WrongNotePDF | 숙제 결과 (homework_results 소관), 답안 (submissions 소관) |
 | `homework` | **숙제 정책·배정** | HomeworkPolicy, HomeworkEnrollment, HomeworkAssignment | 숙제 정의·점수 (homework_results 소관) |
 | `homework_results` | **숙제 정의 + 점수 스냅샷** ⚠️ 이름 오해 주의 — "results"지만 본체는 Homework 정의. | Homework, HomeworkScore | 채점 (직접 점수 입력, Submission 미경유) |
 
@@ -144,14 +144,14 @@
 ### 알려진 부채
 
 - **`homework` ↔ `homework_results` 분리는 자의적**. URL prefix 가 `/api/v1/homework/` 와 `/api/v1/homeworks/` 두 개로 갈라져 있어 프런트가 매번 헷갈리는 실질 부담. 향후 multi-PR 통합 예정 (코드 위치 + URL 통합 + frontend api.ts 갱신).
-- **`results` 도메인 이름**은 "통합 결과"로 오해되기 쉽지만 실체는 exam-only. SEALED 라 rename 불가. README.md 와 본 표로 명문화하는 것이 답.
+- **`results` 도메인 이름**은 "통합 결과"로 오해되기 쉽지만 실체는 exam-only. README.md 와 본 표로 현재 책임 경계를 명문화한다.
 - **관리자 실사용 동선**은 도메인 이름보다 먼저 `강의 → 차시 → 성적/시험/과제` 로 검증한다. 구조 감사·E2E·시각검수는 직접 URL 진입만으로 완료 처리하지 않는다.
 
 ### 신규 변경 가이드
 
 - 시험 출제: `apps/domains/exams/` 만.
 - 답안 입력: `apps/domains/submissions/` 만 (채점은 호출하지 말고 dispatcher 사용).
-- 시험 채점·집계: `apps/domains/results/` (봉인 — 구조 변경 금지).
+- 시험 채점·집계: `apps/domains/results/` (OMR score shape와 Result 동기화 경로를 우선 기준으로 변경).
 - 숙제 정책·배정: `apps/domains/homework/`.
 - 숙제 정의·점수: `apps/domains/homework_results/` (당분간).
 

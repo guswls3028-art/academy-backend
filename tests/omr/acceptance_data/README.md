@@ -27,7 +27,7 @@ PYTHONIOENCODING=utf-8 python tests/omr/acceptance.py \
 1. 운영 시험 1회분 50~100매 스캔본 + 사람이 직접 본 ground truth 라벨링.
 2. `<batch>/scans/*.jpg` + `<batch>/labels.json` 작성.
 3. acceptance harness 실행 → 99% 미달 시 `report.json`의 `failure_examples`로 실패 패턴 분류.
-4. engine config / grader policy 튜닝 → 회귀 재측정.
+4. engine config / active grading path 튜닝 → 회귀 재측정.
 
 ## 정확도 정의
 

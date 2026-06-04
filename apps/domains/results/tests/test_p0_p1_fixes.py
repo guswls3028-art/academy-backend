@@ -5,10 +5,9 @@ Tests:
 A. ExamAttempt representative uniqueness
 B. Retake scenario (attempt_index >= 2)
 C. submission_id duplicate race condition
-D. Manual override max_score preservation
-E. Exam validation (max_attempts, pass_score, open_at/close_at)
-F. Homework tenant fallback removal
-G. HomeworkScore score > max_score validation
+D. Exam validation (max_attempts, pass_score, open_at/close_at)
+E. Homework tenant fallback removal
+F. HomeworkScore score > max_score validation
 """
 from __future__ import annotations
 
@@ -25,9 +24,8 @@ from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
-from apps.domains.results.models import ExamAttempt, ExamResult, Result
+from apps.domains.results.models import ExamAttempt, Result
 from apps.domains.results.services.attempt_service import ExamAttemptService
-from apps.domains.results.services.exam_grading_service import ExamGradingService
 from apps.domains.results.views.admin_exam_objective_score_view import AdminExamObjectiveScoreView
 from apps.domains.results.views.admin_exam_subjective_score_view import AdminExamSubjectiveScoreView
 from apps.domains.results.views.admin_exam_item_score_view import AdminExamItemScoreView
@@ -254,57 +252,6 @@ class TestSubmissionIdDuplicate(TransactionTestCase, BaseTestMixin):
             is_representative=True, status="done",
         )
         self.assertEqual(a2.attempt_index, 2)
-
-
-# ============================================================
-# D. Manual override max_score preservation
-# ============================================================
-class TestManualOverrideMaxScore(TestCase, BaseTestMixin):
-    """D. Manual override should not distort max_score."""
-
-    def setUp(self):
-        self._create_fixtures()
-
-    def test_override_preserves_original_max_score(self):
-        """Override score 3 on a 5-point question should keep max=5."""
-        exam = self._create_exam()
-        sub = self._create_submission(exam)
-
-        # Create ExamResult with existing breakdown
-        result = ExamResult.objects.create(
-            submission=sub, exam=exam,
-            total_score=5, max_score=10,
-            objective_score=5,
-            breakdown={
-                "1": {"question_id": 101, "correct": True, "earned": 5, "answer": "A", "correct_answer": "A"},
-                "2": {"question_id": 102, "correct": True, "earned": 5, "answer": "B", "correct_answer": "B"},
-            },
-            status=ExamResult.Status.DRAFT,
-        )
-
-        svc = ExamGradingService()
-        # Override question 101 from 5 to 3 WITHOUT providing max_score
-        result = svc.apply_manual_overrides(
-            submission_id=sub.id,
-            overrides={
-                "grades": [
-                    {"exam_question_id": 101, "score": 3},
-                    {"exam_question_id": 102, "score": 5},
-                ],
-            },
-        )
-        result.refresh_from_db()
-
-        overrides = result.manual_overrides
-        # Question 101 max_score should NOT be 3 (the earned score)
-        q101 = overrides.get("101", {})
-        self.assertEqual(q101["score"], 3)
-        # max_score should be preserved (from breakdown "earned" = 5)
-        self.assertEqual(q101["max_score"], 5)
-
-        # Total: 3 + 5 = 8, Max: 5 + 5 = 10
-        self.assertEqual(result.total_score, 8)
-        self.assertEqual(result.max_score, 10)
 
 
 class TestManualScoreClearsNotSubmitted(TestCase, BaseTestMixin):

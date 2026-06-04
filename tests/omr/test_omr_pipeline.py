@@ -129,10 +129,11 @@ def test_struct():
     labels = [c["label"] for c in meta["questions"][0]["choices"]]
     check("A8. answer labels numeric", labels == ["1", "2", "3", "4", "5"])
 
-    # A9. grader — meta 버전과 독립적으로 동작 확인
-    with open("apps/domains/results/services/grader.py", encoding="utf-8") as f:
-        grader_src = f.read()
-    check("A9. grader handles v8", "_grade_choice_v1" in grader_src)
+    # A9. active result grading path uses score_shape SSOT
+    with open("apps/domains/results/services/exam_grading_service.py", encoding="utf-8") as f:
+        grading_src = f.read()
+    check("A9. active grader uses score_shape", "get_exam_score_shape" in grading_src)
+    check("A9. active grader writes ExamResult snapshot", "auto_grade_objective" in grading_src)
 
     # A10. dispatcher v7 imports
     with open("academy/application/use_cases/ai/pipelines/dispatcher.py", encoding="utf-8") as f:

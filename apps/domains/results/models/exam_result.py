@@ -8,12 +8,16 @@ from apps.api.common.models import BaseModel
 
 class ExamResult(BaseModel):
     """
-    results SSOT
+    Legacy submission-level compatibility snapshot.
 
-    - submission 단위 결과 1개 (unique)
-    - objective는 자동채점
-    - subjective/descriptive는 수동채점(override)
-    - finalized 되면 불변(운영 사고 차단)
+    Canonical user-visible exam results live in Result / ResultItem /
+    ResultFact / ExamAttempt. ExamResult is retained for the historical
+    Submission OneToOne grading contract, provisional-status checks, and
+    older student/admin API compatibility.
+
+    Do not add new scoring rules here. OMR score shape is defined in
+    apps.support.omr.score_shape and synchronized into canonical Result
+    rows by apps.domains.results.services.sync_result_from_submission.
     """
 
     class Status(models.TextChoices):
@@ -47,7 +51,7 @@ class ExamResult(BaseModel):
     # 예: {"1": {"correct": true, "earned": 1, "answer": "A", "correct_answer": "A", "question_id": 123}, ...}
     breakdown = models.JSONField(default=dict, blank=True)
 
-    # 수동 채점 override (번호 기준)
+    # Legacy manual override snapshot (kept for historical rows/checks).
     # 예: {"6": {"earned": 2, "comment": "계산 실수"}, "10": {"earned": 0, "comment": "미제출"}}
     manual_overrides = models.JSONField(default=dict, blank=True)
 

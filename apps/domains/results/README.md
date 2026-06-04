@@ -1,194 +1,90 @@
-RESULTS 도메인 단일진실(SSOT) 봉인 문서
-📌 문서 목적 (READ FIRST)
+Results Domain SSOT
+===================
 
-이 문서는 results 도메인의 설계·책임·경계를 영구적으로 고정하기 위한 봉인 문서다.
+이 문서는 `apps/domains/results/`의 현재 책임 경계를 설명한다.
+코드와 문서가 충돌하면 변경자는 먼저 실제 코드 경로를 재측정하고,
+문서를 갱신한 뒤 코드를 수정한다.
 
-🎯 도메인 범위 (오해 방지 — READ FIRST)
+Scope
+-----
 
-본 도메인은 **시험(Exam) 결과 SSOT** 다.
-"통합 결과 도메인"이 아니다. 이름 때문에 오해되기 쉬우나:
+`results` 도메인은 시험(Exam) 결과만 소유한다.
 
-- ✅ Exam(시험) 의 채점·attempt·집계만 다룬다.
-- ❌ Homework(숙제) 결과는 다루지 않는다 — `apps/domains/homework_results/` 의 HomeworkScore 가 보관.
-- ❌ 클리닉/진척 cross-domain 합산이 필요하면 `progress` / `clinic` 도메인이 두 결과(ExamResult + HomeworkScore)를 모두 read 한다.
+- `Enrollment`가 결과의 주체다. `Result`는 `student_id`가 아니라 `enrollment_id`를 키로 사용한다.
+- 숙제 결과는 `apps/domains/homework_results/`가 소유한다.
+- 진척/클리닉 화면처럼 시험과 숙제를 함께 보여줘야 하는 경우는 각 도메인의 결과를 읽어 조합한다.
+- 시험지/문항/정답 정의는 `apps/domains/exams/`가 소유한다.
+- 답안 원본은 `apps/domains/submissions/`가 소유한다.
 
-신규 변경자는 results 안에 Homework 관련 모델/로직을 추가해서는 안 된다.
-본 도메인의 모든 모델·서비스·집계는 Exam 단위 결과만 처리한다.
+Canonical Records
+-----------------
 
-평가 5도메인 (exams / submissions / results / homework / homework_results) 책임 분담은
-`backend/docs/architecture/hexagonal-cutover-policy.md §8` 참조.
+운영 화면과 통계의 기준은 아래 네 모델이다.
 
-이 문서가 존재하는 한:
+- `ExamAttempt`: 시험 시도, 대표 시도, 재응시 상태
+- `ResultFact`: append-only 원시 이벤트
+- `ResultItem`: 문항 단위 채점 스냅샷
+- `Result`: 학생/학부모/관리자 화면의 대표 결과 스냅샷
 
-❌ 구조 재설계 금지
+`ExamResult`는 SSOT가 아니다. 이 모델은 과거 `Submission` OneToOne 채점 계약,
+임시 점수 상태 확인, 오래된 API 호환을 위해 유지하는 legacy compatibility
+snapshot이다. 신규 기능은 `Result` 계열 모델을 기준으로 작성한다.
 
-❌ 책임 이동 금지
+Scoring Flow
+------------
 
-❌ “편의상” 로직 추가 금지
+기본 OMR 채점 흐름은 다음 순서를 따른다.
 
-모든 변경은 이 문서와 충돌하지 않아야 하며,
-충돌 시 코드가 아니라 문서가 정답이다.
+1. `apps/domains/submissions/services/grading_dispatcher.py`
+2. `apps/domains/results/services/grading_service.py::grade_submission`
+3. `apps/domains/results/services/exam_grading_service.py::auto_grade_objective`
+4. `apps/domains/results/services/sync_result_from_submission.py::sync_result_from_exam_submission`
+5. progress dispatch
 
-🎯 최종 결론 (한 줄 요약)
+`ExamGradingService`는 legacy `ExamResult` 객관식 스냅샷만 만든다.
+학생/관리자 화면에 노출되는 대표 결과는 `sync_result_from_exam_submission`
+단계에서 `Result` / `ResultItem`으로 동기화된다.
 
-이 프로젝트의 results 도메인은 이미 “대기업 운영 레벨”로 완성되었으며,
-문제는 설계가 아니라 과거 잔존 코드와 집계 책임 혼재였다.
-본 문서는 그 혼재를 영구적으로 차단한다.
+OMR Score Shape
+---------------
 
-🧭 전체 도메인 단일진실 지도 (SSOT MAP)
-1️⃣ Identity & Ownership (절대 고정)
-Student
+OMR 배점 구조의 SSOT는 `apps/support/omr/score_shape.py`다.
 
-실존 인물
+- 객관식과 실제 서술형 배점은 `ExamQuestion.score`와 sheet/template 구조로 계산한다.
+- 0점 서술형은 장식용 서술형으로 취급한다.
+- 장식용 서술형은 OMR 레이아웃에는 남을 수 있지만 `Result.max_score`와 채점 분모에는 들어가지 않는다.
+- 20문항 객관식 + 5문항 장식용 서술형 시험지는 objective max 100, subjective max 0으로 계산되어야 한다.
 
-로그인(User)과 선택적으로 연결
+Manual Scoring
+--------------
 
-❌ 결과의 직접 주체 아님
+현행 수동 성적 입력은 view/service 단위로 나뉜 관리자 API가 처리한다.
 
-❌ 시험/통계 FK 금지
+- `admin_exam_total_score_view.py`
+- `admin_exam_objective_score_view.py`
+- `admin_exam_subjective_score_view.py`
+- `admin_exam_item_score_view.py`
 
-Enrollment ⭐⭐⭐ (핵심)
+죽은 legacy serializer/service override 경로는 사용하지 않는다. 수동 입력은 반드시
+`Result`, `ResultItem`, `ExamAttempt.meta`를 일관되게 갱신해야 하며,
+objective + subjective 합산과 문항별 만점 검증을 깨면 안 된다.
 
-모든 학습/시험/결과/통계의 유일한 주체
+Aggregation
+-----------
 
-(student, lecture) 단일
+집계/해석은 `apps/domains/results/aggregations/` 또는 명시된 BFF view에서만 수행한다.
+모델, serializer, 단순 CRUD view에 새로운 집계 로직을 넣지 않는다.
 
-Results FK는 무조건 enrollment_id
+주의할 예외:
 
-Student는 언제나 간접 참조만 허용
+- `session_scores_view.py`는 실사용 BFF라서 시험 결과와 숙제 제출 상태를 함께 읽을 수 있다.
+  이 경우에도 숙제 결과를 results 도메인이 소유한다는 뜻은 아니다.
 
-👉 Results는 Student를 절대 직접 참조하지 않는다.
+Change Rules
+------------
 
-2️⃣ Lecture / Session 도메인 (운영 단위)
-Lecture
-
-교육 상품
-
-여러 Session 보유
-
-❌ 시험/결과 계산 책임 없음
-
-Session
-
-운영 단위 (차시)
-
-Lecture FK
-
-Exam과 N:M
-
-“이 차시에 시험이 있었는가?”
-→ Result / Progress로 판단
-
-👉 lectures 도메인은 결과를 계산하지 않는다.
-
-3️⃣ Exam 도메인 (출제 단위)
-
-Exam은 template / regular
-
-시험 정의 / 자산 / 정답의 SSOT
-
-Session ↔ Exam = N:M
-
-❌ 결과/통계 책임 없음
-
-4️⃣ Submission → Results (가장 중요한 축)
-Submission
-
-답안의 SSOT
-
-상태 머신:
-
-CREATED
-  → ANSWERS_READY
-    → GRADING
-      → DONE
-
-Results ⭐⭐⭐
-
-단 하나의 결과 진실
-
-구성 요소:
-
-ExamAttempt (시도)
-
-ResultFact (append-only, 원시 로그)
-
-ResultItem (문항 스냅샷)
-
-Result (대표 결과)
-
-재시험 / 재채점 / 대표 attempt 교체 / 통계
-→ 전부 이 구조로 커버
-
-👉 Results는 사실만 기록한다.
-계산·해석·판단은 하지 않는다.
-
-🧱 Aggregation Layer (해석의 유일한 장소)
-apps/domains/results/aggregations/
-├─ session_results.py
-├─ lecture_results.py
-└─ global_results.py
-
-역할
-
-집계 / 통계 / 판단의 유일한 책임
-
-SQL, aggregation, business rule 허용
-
-View / Model / Serializer는 절대 계산 금지
-
-원칙
-
-Results = write-only facts
-
-Aggregations = read-only interpretation
-
-🚫 금지 사항 (영구 봉인)
-
-아래는 어떤 이유로도 금지된다:
-
-❌ Result에 session_id FK 추가
-
-❌ Session.exam FK 부활
-
-❌ Results에서 Student 직접 참조
-
-❌ View / Serializer / Model에 집계 로직 작성
-
-❌ “편의상” 계산 로직 추가
-
-❌ Aggregation 로직을 다른 도메인으로 이동
-
-⚠️ 과거 문제의 정체 (재발 방지용 기록)
-문제는 이것뿐이었다
-
-lectures 도메인에 남아 있던 구버전 시험 FK 사고
-
-Results에 집계 책임이 섞여 있던 상태
-
-Aggregation Layer 부재
-
-👉 설계 자체는 처음부터 정답이었다.
-
-✅ 현재 상태 선언 (FINAL)
-
-✅ Results 도메인: 완전 고정
-
-✅ Aggregation Layer: 단일진실
-
-✅ 운영 사고 가능성: 구조적으로 0
-
-✅ 백엔드 재방문 필요성: 없음
-
-이후 개발은 프론트엔드 작업만 진행한다.
-백엔드 변경이 필요하다면, 이 문서를 먼저 수정하고
-그 다음에 코드를 수정한다.
-
-🔒 봉인 선언
-
-이 문서 이후로:
-
-“results 도메인은 더 이상 실험 대상이 아니다.
-이미 운영 기준을 통과한 ‘완성품’이다.”
-
-— END —
+- 신규 채점 규칙은 먼저 OMR score shape와 Result 동기화 경로에 반영한다.
+- `ExamResult`에 새 기능을 추가하지 않는다. 호환 때문에 유지할 뿐이다.
+- 레거시 import나 죽은 serializer/view/service를 되살리지 않는다.
+- 배점, tenant scope, submission scope, representative attempt, manual score 합산을 바꾸는 변경은 focused test와 운영 검증 대상이다.
+- "이미 완성" 같은 선언보다 재현 가능한 검증 결과를 우선한다.

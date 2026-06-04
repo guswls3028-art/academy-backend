@@ -60,11 +60,11 @@ class TestScoreNormalization(TestCase):
 
 
 # ============================================================
-# C2: Manual grading field names
+# C2: Legacy ExamResult compatibility field names
 # ============================================================
 
 class TestManualGradingFields(TestCase):
-    """C2: ExamResult model must have the fields that apply_manual_overrides writes to."""
+    """C2: ExamResult keeps legacy fields required by historical data and checks."""
 
     def test_exam_result_has_manual_overrides_field(self):
         from apps.domains.results.models import ExamResult
@@ -75,7 +75,7 @@ class TestManualGradingFields(TestCase):
         self.assertTrue(hasattr(ExamResult, "subjective_score"))
 
     def test_exam_result_no_manual_breakdown_field(self):
-        """manual_breakdown is NOT a model field — apply_manual_overrides must use manual_overrides."""
+        """manual_breakdown was never a persisted compatibility field."""
         from apps.domains.results.models import ExamResult
         field_names = [f.name for f in ExamResult._meta.get_fields()]
         self.assertNotIn("manual_breakdown", field_names)

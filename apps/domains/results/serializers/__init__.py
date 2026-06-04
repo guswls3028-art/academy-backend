@@ -1,7 +1,3 @@
-# PATH: apps/domains/results/serializers/__init__.py
-from .exam_result import ManualGradeSerializer, ExamResultSerializer
+"""Public serializer exports for the results domain."""
 
-__all__ = [
-    "ManualGradeSerializer",
-    "ExamResultSerializer",
-]
+__all__: list[str] = []
