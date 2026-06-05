@@ -164,6 +164,16 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             ).exists()
         )
 
+    def test_progress_response_uses_domain_completion_threshold(self):
+        response = self._post_progress({
+            "progress": 90,
+            "last_position": 90,
+            "completed": False,
+        })
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(response.data["completed"])
+
     def test_student_stats_uses_domain_completion_threshold(self):
         VideoProgress.objects.create(
             video=self.video,
@@ -302,6 +312,18 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(response.data["enrollment_id"], self.target_enrollment.id)
         self.assertEqual(response.data["progress_percent"], 90)
+        self.assertTrue(response.data["completed"])
+        self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
+
+    def test_parent_progress_echo_uses_domain_completion_threshold(self):
+        response = self._post_progress(
+            {"progress": 90, "last_position": 90, "completed": False},
+            user=self.parent_user,
+            selected_student_id=self.student.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["enrollment_id"], self.target_enrollment.id)
         self.assertTrue(response.data["completed"])
         self.assertFalse(VideoProgress.objects.filter(video=self.video).exists())
 

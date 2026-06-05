@@ -591,14 +591,14 @@ class StudentVideoStatsView(APIView):
 def _progress_echo_response(*, video_id: int, enrollment_id: int, request) -> Response:
     """Return the standard progress payload without writing VideoProgress."""
     p = _safe_video_progress(request.data.get("progress"))
-    completed = request.data.get("completed", False)
+    completed = _safe_video_completed(request.data.get("completed", False))
     return Response({
         "id": 0,
         "video_id": video_id,
         "enrollment_id": enrollment_id,
         "progress": p,
         "progress_percent": round(p * 100, 1),
-        "completed": _safe_video_completed(completed),
+        "completed": is_video_progress_complete(p, completed),
         "last_position": _safe_video_position(request.data.get("last_position")),
     }, status=status.HTTP_200_OK)
 
@@ -1081,7 +1081,7 @@ class StudentVideoProgressView(APIView):
             "enrollment_id": enrollment.id,
             "progress": progress_obj.progress,
             "progress_percent": round(float(progress_obj.progress) * 100, 1),
-            "completed": progress_obj.completed,
+            "completed": is_video_progress_complete(progress_obj.progress, progress_obj.completed),
             "last_position": progress_obj.last_position,
         }, status=status.HTTP_200_OK)
 
