@@ -186,14 +186,9 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
 
     def test_public_video_progress_persists_with_hidden_enrollment(self):
         public_lecture = Lecture.get_or_create_system_lecture(self.tenant)
-        public_session, _ = Session.objects.get_or_create(
-            lecture=public_lecture,
-            order=1,
-            defaults={"title": "전체공개영상"},
-        )
         public_video = Video.objects.create(
             tenant=self.tenant,
-            session=public_session,
+            session=None,
             title="Public Progress Video",
             status=Video.Status.READY,
             visibility=Video.Visibility.PUBLIC,
@@ -208,6 +203,8 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.status_code, 200, response.data)
         self.assertNotEqual(response.data["enrollment_id"], 0)
         self.assertTrue(response.data["completed"])
+        public_video.refresh_from_db()
+        self.assertEqual(public_video.session.lecture_id, public_lecture.id)
         self.assertTrue(
             VideoProgress.objects.filter(
                 video=public_video,

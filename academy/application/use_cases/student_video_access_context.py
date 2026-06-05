@@ -148,7 +148,22 @@ def ensure_public_video_enrollment(request, video):
     session = getattr(video, "session", None)
     lecture = getattr(session, "lecture", None) if session else None
     if not lecture:
-        raise StudentVideoAccessError("공개 영상의 강의 정보를 확인할 수 없습니다.")
+        tenant = getattr(request, "tenant", None) or getattr(video, "tenant", None)
+        if not tenant:
+            raise StudentVideoAccessError("공개 영상의 강의 정보를 확인할 수 없습니다.")
+        from apps.domains.lectures.models import Lecture, Session
+        from apps.domains.video.models import Video
+
+        lecture = Lecture.get_or_create_system_lecture(tenant)
+        session, _ = Session.objects.get_or_create(
+            lecture=lecture,
+            order=1,
+            defaults={"title": "전체공개영상", "date": None},
+        )
+        if getattr(video, "session_id", None) is None:
+            Video.objects.filter(id=video.id, tenant=tenant, session__isnull=True).update(session=session)
+            video.session = session
+            video.session_id = session.id
     return ensure_public_lecture_enrollment(request, lecture)
 
 
