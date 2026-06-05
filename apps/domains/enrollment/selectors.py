@@ -19,6 +19,7 @@ def enrollments_for_tenant(tenant):
         Enrollment.objects
         .filter(tenant=tenant)
         .filter(student__deleted_at__isnull=True)
+        .exclude(lecture__is_system=True)
         .select_related("student", "lecture")
     )
 

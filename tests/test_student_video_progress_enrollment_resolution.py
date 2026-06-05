@@ -7,6 +7,7 @@ from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.parents.models import Parent
 from apps.domains.student_app.media.views import (
+    StudentVideoMeView,
     StudentVideoPlaybackView,
     StudentVideoProgressView,
     StudentSessionVideoListView,
@@ -88,9 +89,10 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             duration=100,
         )
 
-    def _post_progress(self, payload, *, user=None, selected_student_id=None):
+    def _post_progress(self, payload, *, user=None, selected_student_id=None, video=None):
+        target_video = video or self.video
         request = self.factory.post(
-            f"/api/v1/student/video/videos/{self.video.id}/progress/",
+            f"/api/v1/student/video/videos/{target_video.id}/progress/",
             payload,
             format="json",
         )
@@ -98,7 +100,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
         request.tenant = self.tenant
         force_authenticate(request, user=user or self.user)
-        return StudentVideoProgressView.as_view()(request, video_id=self.video.id)
+        return StudentVideoProgressView.as_view()(request, video_id=target_video.id)
 
     def _get_playback(self, *, user=None, enrollment_id=None):
         path = f"/api/v1/student/video/videos/{self.video.id}/playback/"
@@ -116,6 +118,14 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         request.tenant = self.tenant
         force_authenticate(request, user=user or self.user)
         return StudentVideoStatsView.as_view()(request)
+
+    def _get_me(self, *, user=None, selected_student_id=None):
+        request = self.factory.get("/api/v1/student/video/me/")
+        if selected_student_id is not None:
+            request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
+        request.tenant = self.tenant
+        force_authenticate(request, user=user or self.user)
+        return StudentVideoMeView.as_view()(request)
 
     def _get_session_videos(self, *, user=None, enrollment_id=None):
         path = f"/api/v1/student/video/sessions/{self.target_session.id}/videos/"
@@ -173,6 +183,50 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
 
         self.assertEqual(response.status_code, 200, response.data)
         self.assertTrue(response.data["completed"])
+
+    def test_public_video_progress_persists_with_hidden_enrollment(self):
+        public_lecture = Lecture.get_or_create_system_lecture(self.tenant)
+        public_session, _ = Session.objects.get_or_create(
+            lecture=public_lecture,
+            order=1,
+            defaults={"title": "전체공개영상"},
+        )
+        public_video = Video.objects.create(
+            tenant=self.tenant,
+            session=public_session,
+            title="Public Progress Video",
+            status=Video.Status.READY,
+            visibility=Video.Visibility.PUBLIC,
+            duration=100,
+        )
+
+        response = self._post_progress(
+            {"progress": 90, "last_position": 90, "completed": False},
+            video=public_video,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertNotEqual(response.data["enrollment_id"], 0)
+        self.assertTrue(response.data["completed"])
+        self.assertTrue(
+            VideoProgress.objects.filter(
+                video=public_video,
+                enrollment_id=response.data["enrollment_id"],
+            ).exists()
+        )
+
+        me_response = self._get_me()
+        self.assertEqual(me_response.status_code, 200, me_response.data)
+        self.assertEqual(me_response.data["public"]["lecture_id"], public_lecture.id)
+        self.assertNotIn(
+            public_lecture.id,
+            [lecture["id"] for lecture in me_response.data["lectures"]],
+        )
+
+        stats_response = self._get_me_stats()
+        self.assertEqual(stats_response.status_code, 200, stats_response.data)
+        self.assertEqual(stats_response.data["total_videos"], 2)
+        self.assertEqual(stats_response.data["completed_videos"], 1)
 
     def test_student_stats_uses_domain_completion_threshold(self):
         VideoProgress.objects.create(

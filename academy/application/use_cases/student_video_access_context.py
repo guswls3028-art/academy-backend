@@ -122,6 +122,36 @@ def find_active_enrollment_for_video(request, video, explicit_enrollment_id: Opt
     )
 
 
+def ensure_public_lecture_enrollment(request, lecture):
+    from apps.domains.enrollment.models import Enrollment
+
+    tenant = getattr(request, "tenant", None)
+    student = get_request_student(request)
+    if not tenant or not student:
+        raise StudentVideoAccessError("학생 정보를 확인할 수 없습니다.")
+    if getattr(lecture, "tenant_id", None) != tenant.id or getattr(student, "tenant_id", None) != tenant.id:
+        raise StudentVideoAccessError("공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다.")
+
+    enrollment, _ = Enrollment.objects.get_or_create(
+        tenant=tenant,
+        student=student,
+        lecture=lecture,
+        defaults={"status": "ACTIVE"},
+    )
+    if enrollment.status != "ACTIVE":
+        enrollment.status = "ACTIVE"
+        enrollment.save(update_fields=["status", "updated_at"])
+    return enrollment
+
+
+def ensure_public_video_enrollment(request, video):
+    session = getattr(video, "session", None)
+    lecture = getattr(session, "lecture", None) if session else None
+    if not lecture:
+        raise StudentVideoAccessError("공개 영상의 강의 정보를 확인할 수 없습니다.")
+    return ensure_public_lecture_enrollment(request, lecture)
+
+
 def student_can_access_session(request, session) -> bool:
     from apps.domains.enrollment.models import Enrollment
 
@@ -189,7 +219,10 @@ def resolve_student_session_video_context(
     is_public = bool(lecture and getattr(lecture, "is_system", False))
 
     if is_public and student_can_access_session(request, session):
-        return StudentSessionVideoContext(enrollment=None, is_public_session=True)
+        return StudentSessionVideoContext(
+            enrollment=ensure_public_lecture_enrollment(request, lecture),
+            is_public_session=True,
+        )
 
     lecture_id = getattr(lecture, "id", None)
     enrollment = find_active_enrollment_for_lecture(
@@ -221,7 +254,7 @@ def resolve_student_video_access_context(
         if not student_can_access_video(request, video):
             raise StudentVideoAccessError("공개 영상은 해당 학원 소속 학생만 이용할 수 있습니다.")
         return StudentVideoAccessContext(
-            enrollment=None,
+            enrollment=ensure_public_video_enrollment(request, video),
             access_mode=None,
             is_public_video=True,
         )

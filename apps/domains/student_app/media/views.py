@@ -316,6 +316,7 @@ class StudentVideoMeView(APIView):
             Enrollment.objects.filter(
                 student=student, tenant=tenant, status="ACTIVE",
                 lecture__tenant=tenant,  # defense-in-depth: lecture must match tenant
+                lecture__is_system=False,
             )
             .select_related("lecture")
             .order_by("lecture__title")
@@ -1041,12 +1042,9 @@ class StudentVideoProgressView(APIView):
         except StudentVideoAccessError as e:
             return Response({"detail": e.detail}, status=e.status_code)
 
-        # 공개 영상: 수강등록 없이 시청 가능. VideoProgress는 (video, enrollment) 필수라 DB 저장 불가.
-        # 동일 응답 형태로 200 반환해 프론트 스펙 유지 (DB 미저장)
-        if access_context.is_public_video:
-            return _progress_echo_response(video_id=video.id, enrollment_id=0, request=request)
-
         enrollment = access_context.enrollment
+        if enrollment is None:
+            return _progress_echo_response(video_id=video.id, enrollment_id=0, request=request)
 
         # 학부모: 영상 시청은 가능하나 진행률 기록 저장 안 함 (읽기 전용)
         if getattr(request.user, "parent_profile", None) is not None:
