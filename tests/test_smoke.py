@@ -12,8 +12,13 @@ Requirements:
 Run:  pytest tests/test_smoke.py
 """
 
-from django.test import TestCase, RequestFactory
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 from django.conf import settings
+from django.test import TestCase
 
 
 class TestHealthEndpoints(TestCase):
@@ -258,3 +263,24 @@ class TestSettingsIntegrity(TestCase):
             middleware.index(correlation_mw), 0,
             "Correlation middleware must be first in MIDDLEWARE list",
         )
+
+    def test_prod_ssl_redirect_default_is_proxy_safe(self):
+        """Prod defaults must not self-redirect API clients behind Cloudflare/ALB."""
+        env = os.environ.copy()
+        env["SECRET_KEY"] = "test-production-secret-key-with-safe-length"
+        env.pop("DJANGO_SECURE_SSL_REDIRECT", None)
+        code = (
+            "import apps.api.config.settings.prod as s; "
+            "assert s.SECURE_SSL_REDIRECT is False; "
+            "assert s.SESSION_COOKIE_SECURE is True; "
+            "assert s.CSRF_COOKIE_SECURE is True"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)

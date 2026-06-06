@@ -26,7 +26,10 @@ USE_X_FORWARDED_HOST = True
 
 SESSION_COOKIE_SECURE = True
 CSRF_COOKIE_SECURE = True
-SECURE_SSL_REDIRECT = _env_bool("DJANGO_SECURE_SSL_REDIRECT", True)
+# HTTPS is enforced at the edge/ALB. Keeping Django's redirect enabled by
+# default can create a self-redirect loop when proxy scheme metadata is not
+# preserved, which blocks API clients before auth/tenant code runs.
+SECURE_SSL_REDIRECT = _env_bool("DJANGO_SECURE_SSL_REDIRECT", False)
 SECURE_REDIRECT_EXEMPT = [
     r"^health/?$",
     r"^healthz/?$",
