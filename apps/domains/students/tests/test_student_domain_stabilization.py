@@ -264,6 +264,28 @@ class TestStudentExcelUploadValidation(TestCase):
         mock_upload.assert_not_called()
         mock_dispatch.assert_not_called()
 
+    @patch("apps.domains.students.views.student_views.dispatch_job")
+    @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
+    def test_legacy_xls_is_rejected_before_r2_upload(self, mock_upload, mock_dispatch):
+        upload = SimpleUploadedFile(
+            "legacy.xls",
+            b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1legacy",
+            content_type="application/vnd.ms-excel",
+        )
+        request = self.factory.post(
+            "/api/v1/students/bulk_create_from_excel/",
+            data={"file": upload, "initial_password": "0000"},
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_create_from_excel"})(request)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        mock_upload.assert_not_called()
+        mock_dispatch.assert_not_called()
+
     def test_excel_job_status_route_accepts_uuid_job_id(self):
         url = reverse(
             "student-excel-job-status",
@@ -276,26 +298,30 @@ class TestStudentExcelUploadValidation(TestCase):
         )
 
     def test_excel_parser_skips_legacy_template_example_rows_without_remark_column(self):
-        import openpyxl
+        import tempfile
         from pathlib import Path
-        from tempfile import NamedTemporaryFile
 
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.append(["이름", "학부모전화번호", "학생전화번호", "성별", "학교", "학년", "반", "계열", "메모"])
-        ws.append(["홍길동", "01087654321", "01012345678", "M", "한국고등학교", "1", "3", "이과", ""])
-        ws.append(["김영희", "01011112222", "", "F", "서울중학교", "2", "1", "", ""])
+        import openpyxl
 
-        with NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
-            path = tmp.name
+        from academy.application.services.excel_parsing_service import parse_student_excel_file
 
-        try:
-            wb.save(path)
-            rows, _lecture_title = parse_student_excel_file(path)
-        finally:
-            Path(path).unlink(missing_ok=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "students.xlsx"
+            workbook = openpyxl.Workbook()
+            worksheet = workbook.active
+            worksheet.append(["학생 일괄 등록 양식"])
+            worksheet.append([])
+            worksheet.append(["작성 안내"])
+            worksheet.append(["이름", "학부모전화번호", "학생전화번호", "성별", "학교", "학년", "반", "계열", "메모"])
+            worksheet.append(["홍길동", "01087654321", "01012345678", "M", "한국고등학교", "1", "3", "이과", ""])
+            worksheet.append(["김영희", "01011112222", "", "F", "서울중학교", "2", "1", "", ""])
+            worksheet.append(["실사용학생", "01022223333", "01033334444", "F", "한국고등학교", "1", "3", "이과", ""])
+            workbook.save(path)
 
-        self.assertEqual(rows, [])
+            rows, _lecture_title = parse_student_excel_file(str(path))
+
+        self.assertEqual([row["name"] for row in rows], ["실사용학생"])
+        self.assertEqual(rows[0]["parent_phone"], "01022223333")
 
 
 # ═══════════════════════════════════════════════════

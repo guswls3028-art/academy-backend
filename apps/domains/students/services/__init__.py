@@ -17,6 +17,13 @@ from .import_students import (
 )
 from .lecture_enroll import get_or_create_student_for_lecture_enroll
 from .bulk_from_excel import bulk_create_students_from_excel_rows
+from .identity import (
+    StudentIdentityError,
+    derive_student_omr_code,
+    normalize_student_phone,
+    resolve_student_login_id,
+    student_login_id_taken,
+)
 from .profile import (
     StudentProfileUpdateError,
     derive_omr_code,
@@ -49,6 +56,11 @@ __all__ = [
     "student_import_valid_school_types",
     "get_or_create_student_for_lecture_enroll",
     "bulk_create_students_from_excel_rows",
+    "StudentIdentityError",
+    "derive_student_omr_code",
+    "normalize_student_phone",
+    "resolve_student_login_id",
+    "student_login_id_taken",
     "StudentProfileUpdateError",
     "derive_omr_code",
     "normalize_phone",

@@ -18,6 +18,11 @@ from apps.core.models import Program
 from apps.core.models.user import user_display_username, user_internal_username
 from apps.domains.parents.services import ensure_parent_for_student
 from apps.domains.students.models import Student
+from apps.domains.students.services.identity import (
+    StudentIdentityError,
+    derive_student_omr_code,
+    normalize_student_phone,
+)
 from apps.domains.students.services.school import (
     ALL_SCHOOL_TYPES,
     get_valid_grades,
@@ -75,24 +80,28 @@ STRING_LIMITS = {
 
 
 def normalize_phone(value: Any, *, required: bool = False, field_label: str = "전화번호") -> str | None:
-    raw = "" if value is None else str(value).strip().replace("-", "").replace(" ", "").replace(".", "")
-    if not raw:
-        if required:
-            raise StudentProfileUpdateError({field_label: "필수입니다."})
-        return None
-    if not raw.isdigit() or len(raw) < 10 or len(raw) > 15:
-        raise StudentProfileUpdateError(f"올바른 {field_label}를 입력해 주세요.")
-    return raw[:20]
+    field_name = "parent_phone" if "학부모" in field_label else "phone"
+    try:
+        return normalize_student_phone(
+            value,
+            required=required,
+            field_name=field_name,
+            field_label=field_label,
+        )
+    except StudentIdentityError as exc:
+        raise StudentProfileUpdateError(exc.detail) from exc
 
 
 def derive_omr_code(*, phone: str | None, parent_phone: str | None, current: str) -> str:
-    phone_str = str(phone).strip() if phone else ""
-    parent_phone_str = str(parent_phone).strip() if parent_phone else ""
-    if len(phone_str) >= 8:
-        return phone_str[-8:]
-    if len(parent_phone_str) >= 8:
-        return parent_phone_str[-8:]
-    return current
+    try:
+        return derive_student_omr_code(
+            phone=phone,
+            parent_phone=parent_phone,
+            current=current,
+            required=False,
+        )
+    except StudentIdentityError as exc:
+        raise StudentProfileUpdateError(exc.detail) from exc
 
 
 def _validate_school(tenant, *, school_type: str | None, grade: Any) -> int | None:

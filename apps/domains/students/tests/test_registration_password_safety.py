@@ -94,6 +94,7 @@ class RegistrationPasswordSafetyTests(TestCase):
         self.assertEqual(send_mock.call_args.kwargs["parent_password"], "6666")
         reg.refresh_from_db()
         self.assertEqual(reg.initial_password_plain, "")
+        self.assertEqual(send_mock.call_args.kwargs["student_pk"], reg.student_id)
 
     @patch("apps.domains.students.views.registration_views.send_registration_approved_messages")
     def test_approval_message_says_parent_password_unchanged_for_existing_parent(self, send_mock):

@@ -56,6 +56,7 @@ def _send_registration_approved_notice(request, result: RegistrationApprovalResu
             student_password=notice.student_password,
             parent_phone=notice.parent_phone,
             parent_password=notice.parent_password,
+            student_pk=result.student.id,
         )
     except Exception as exc:
         logger.exception(

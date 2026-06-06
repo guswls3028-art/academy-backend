@@ -242,6 +242,71 @@ class TestSessionCreateOrdering(LectureTestBase):
         self.assertEqual(supplement.session_type, Session.SessionType.SUPPLEMENT)
 
 
+class TestSessionCreateAutoAssign(LectureTestBase):
+    """차시 생성 API는 신규 생성 순번을 서버에서 안전하게 배정한다."""
+
+    def _create_session(self, payload):
+        request = self.factory.post(
+            "/api/v1/lectures/sessions/",
+            payload,
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        return SessionViewSet.as_view({"post": "create"})(request)
+
+    def test_create_without_order_uses_max_plus_one_after_order_gap(self):
+        Session.objects.create(lecture=self.lecture, order=1, title="1차시")
+        Session.objects.create(lecture=self.lecture, order=3, title="3차시")
+
+        response = self._create_session({
+            "lecture": self.lecture.id,
+            "title": "4차시",
+        })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["order"], 4)
+        self.assertTrue(
+            Session.objects.filter(
+                lecture=self.lecture,
+                order=4,
+                title="4차시",
+            ).exists()
+        )
+
+    def test_section_create_without_order_uses_section_max_plus_one(self):
+        section = Section.objects.create(
+            tenant=self.tenant,
+            lecture=self.lecture,
+            label="A",
+            section_type="CLASS",
+            day_of_week=0,
+            start_time="10:00",
+        )
+        Session.objects.create(
+            lecture=self.lecture,
+            section=section,
+            order=1,
+            title="A반 1차시",
+        )
+        Session.objects.create(
+            lecture=self.lecture,
+            section=section,
+            order=3,
+            title="A반 3차시",
+        )
+
+        response = self._create_session({
+            "lecture": self.lecture.id,
+            "section": section.id,
+            "title": "A반 4차시",
+        })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data["order"], 4)
+        self.assertEqual(response.data["section"], section.id)
+
+
 class TestSessionListNoPagination(LectureTestBase):
     """차시 목록은 성적/시험/영상 트리 진입점에서 전체가 필요하다."""
 

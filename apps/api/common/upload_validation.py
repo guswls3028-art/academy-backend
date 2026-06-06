@@ -6,12 +6,10 @@ import zipfile
 from rest_framework.exceptions import ValidationError
 
 
-EXCEL_EXTENSIONS = {"xlsx", "xls", "csv"}
+EXCEL_EXTENSIONS = {"xlsx"}
+EXCEL_SIGNATURE_EXTENSIONS = {"xlsx", "xls", "csv"}
 EXCEL_CONTENT_TYPES = {
     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "application/vnd.ms-excel",
-    "text/csv",
-    "application/csv",
 }
 OMR_EXTENSIONS = {"jpg", "jpeg", "png", "tif", "tiff", "pdf"}
 OMR_CONTENT_TYPES = {"image/jpeg", "image/png", "image/tiff", "application/pdf"}
@@ -131,7 +129,7 @@ def validate_uploaded_file(
     if content_type and content_type != "application/octet-stream" and content_type not in allowed_types:
         raise ValidationError({"detail": f"{label} MIME 형식이 허용되지 않습니다."})
 
-    if ext in EXCEL_EXTENSIONS:
+    if ext in EXCEL_SIGNATURE_EXTENSIONS:
         _validate_excel_content(upload_file, ext, label)
 
     if ext in OMR_EXTENSIONS:

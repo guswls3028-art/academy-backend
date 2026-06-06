@@ -15,58 +15,12 @@ def build_submission_answers_map(
     only have durable OMRDetectedAnswer facts, so re-sync must be able to read
     those facts without treating every objective answer as blank.
     """
-    submission_models = __import__(
-        "apps.domains.submissions.models",
-        fromlist=[
-            "OMRDetectedAnswer",
-            "OMRRecognitionRun",
-            "Submission",
-            "SubmissionAnswer",
-        ],
+    from apps.domains.submissions.selectors import build_answer_text_by_question_id_from_submission
+
+    return build_answer_text_by_question_id_from_submission(
+        submission=submission,
+        question_number_to_id=question_number_to_id,
     )
-    OMRDetectedAnswer = submission_models.OMRDetectedAnswer
-    OMRRecognitionRun = submission_models.OMRRecognitionRun
-    Submission = submission_models.Submission
-    SubmissionAnswer = submission_models.SubmissionAnswer
-
-    answers_map: dict[int, str] = {}
-    for answer in SubmissionAnswer.objects.filter(submission=submission):
-        qid = int(getattr(answer, "exam_question_id", 0) or 0)
-        if qid > 0:
-            answers_map[qid] = str(getattr(answer, "answer", "") or "").strip()
-
-    if submission.source != Submission.Source.OMR_SCAN:
-        return answers_map
-
-    latest_run = (
-        OMRRecognitionRun.objects
-        .filter(submission=submission, answer_count__gt=0)
-        .order_by("-received_at", "-id")
-        .first()
-    )
-    if latest_run is None:
-        return answers_map
-
-    qnum_to_id = {
-        int(k): int(v)
-        for k, v in (question_number_to_id or {}).items()
-        if int(k) > 0 and int(v) > 0
-    }
-    for detected in OMRDetectedAnswer.objects.filter(recognition_run=latest_run):
-        qid = int(getattr(detected, "exam_question_id", 0) or 0)
-        if qid <= 0:
-            qid = qnum_to_id.get(int(detected.question_number or 0), 0)
-        if qid <= 0 or qid in answers_map:
-            continue
-
-        answer_text = str(getattr(detected, "answer", "") or "").strip()
-        if not answer_text:
-            raw_detected = getattr(detected, "detected", None)
-            if isinstance(raw_detected, list):
-                answer_text = ",".join(str(v).strip() for v in raw_detected if str(v).strip())
-        answers_map[qid] = answer_text
-
-    return answers_map
 
 
 def require_complete_omr_answers(
@@ -77,12 +31,9 @@ def require_complete_omr_answers(
     context: str,
     protect_existing_score: bool,
 ) -> None:
-    Submission = __import__(
-        "apps.domains.submissions.models",
-        fromlist=["Submission"],
-    ).Submission
+    from apps.domains.submissions.selectors import is_omr_scan_submission
 
-    if submission.source != Submission.Source.OMR_SCAN:
+    if not is_omr_scan_submission(submission):
         return
     if not expected_question_ids:
         return
@@ -90,9 +41,6 @@ def require_complete_omr_answers(
     missing = sorted(int(qid) for qid in expected_question_ids if int(qid) not in answers_map)
     if not missing:
         return
-    if not protect_existing_score:
-        return
-
     raise ValidationError(
         {
             "detail": (

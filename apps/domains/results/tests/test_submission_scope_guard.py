@@ -307,7 +307,7 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertFalse(ExamResult.objects.filter(submission=submission).exists())
 
     def test_sync_combines_omr_objective_with_existing_manual_subjective_score(self):
-        exam, choice, _essay = self._create_mixed_exam()
+        exam, choice, essay = self._create_mixed_exam()
         attempt = ExamAttempt.objects.create(
             exam=exam,
             enrollment=self.enrollment,
@@ -709,3 +709,28 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(float(exam_result.max_score), 100.0)
         self.assertEqual(list(exam_result.breakdown.keys()), ["1"])
         self.assertNotIn(str(essay.number), exam_result.breakdown)
+
+    def test_sync_rejects_incomplete_omr_answers_before_creating_first_result(self):
+        exam, choice, essay = self._create_mixed_exam()
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            enrollment_id=self.enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.ANSWERS_READY,
+        )
+
+        with self.assertRaises(DjangoValidationError):
+            sync_result_from_exam_submission(submission.id)
+
+        self.assertFalse(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                enrollment=self.enrollment,
+            ).exists()
+        )
+        self.assertFalse(ExamAttempt.objects.filter(exam=exam, enrollment=self.enrollment).exists())
+        self.assertFalse(ResultItem.objects.filter(question=choice).exists())

@@ -51,6 +51,21 @@ def test_strict_touched_filters_findings_to_changed_files(tmp_path, monkeypatch)
     assert strict_findings[0].kind == "cross_domain_internal_import"
 
 
+def test_strict_touched_allows_public_cross_domain_selector_import(tmp_path, monkeypatch):
+    snapshot = load_snapshot_module()
+    _, apps_domains = configure_snapshot_roots(snapshot, tmp_path, monkeypatch)
+
+    changed = apps_domains / "results" / "service.py"
+    changed.parent.mkdir()
+    changed.write_text("from apps.domains.submissions.selectors import read_answers\n", encoding="utf-8")
+
+    findings = snapshot.scan_file(changed)
+    strict_findings = snapshot.strict_findings_for_paths(findings, {"apps/domains/results/service.py"})
+
+    assert snapshot.summarize(findings) == {"cross_domain_import": 1}
+    assert strict_findings == []
+
+
 def test_collect_touched_files_keeps_only_scanned_python_paths(tmp_path, monkeypatch):
     snapshot = load_snapshot_module()
     _, apps_domains = configure_snapshot_roots(snapshot, tmp_path, monkeypatch)
@@ -76,3 +91,24 @@ def test_collect_touched_files_keeps_only_scanned_python_paths(tmp_path, monkeyp
     )
 
     assert touched == {"apps/domains/clinic/views.py"}
+
+
+def test_current_boundary_counts_do_not_exceed_baseline():
+    snapshot = load_snapshot_module()
+    files = [path for root in snapshot.SCAN_ROOTS for path in snapshot.iter_py_files(root)]
+    findings = []
+    for path in files:
+        findings.extend(snapshot.scan_file(path))
+
+    summary = snapshot.summarize(findings)
+    regressions = {
+        kind: (summary.get(kind, 0), baseline)
+        for kind, baseline in snapshot.BASELINE_SUMMARY.items()
+        if summary.get(kind, 0) > baseline
+    }
+
+    assert not regressions, (
+        "Refactor boundary baseline increased. Reduce the new coupling or, if "
+        "the increase is intentional, update BASELINE_SUMMARY with the audit evidence: "
+        f"{regressions}"
+    )

@@ -256,6 +256,7 @@ def _cell_str(row: list[Any], col_index: int | None) -> str:
 
 
 def _is_known_template_example_row(
+    *,
     name: str,
     parent_phone_raw: str,
     student_phone_raw: str,
@@ -267,7 +268,7 @@ def _is_known_template_example_row(
     ) or (
         name == "김영희"
         and parent_phone_raw == "01011112222"
-        and student_phone_raw == ""
+        and not student_phone_raw
     )
 
 
@@ -504,7 +505,11 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
         if (
             remark_col is not None
             and "예시" in _cell_str(row, remark_col)
-        ) or _is_known_template_example_row(name, parent_phone_raw, student_phone_raw):
+        ) or _is_known_template_example_row(
+            name=name,
+            parent_phone_raw=parent_phone_raw,
+            student_phone_raw=student_phone_raw,
+        ):
             continue
 
         if not name and not student_phone_raw and not parent_phone_raw:

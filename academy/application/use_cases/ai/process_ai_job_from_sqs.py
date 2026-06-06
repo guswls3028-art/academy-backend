@@ -56,15 +56,38 @@ def prepare_ai_job(
         now = datetime.now(timezone.utc)
     lease_expires_at = now + timedelta(seconds=lease_seconds)
 
-    if not tenant_id:
-        logger.warning(
-            "AI_JOB_MISSING_TENANT_ID | job_id=%s | source_domain=%s | source_id=%s | "
-            "tenant_id is None — audit trail incomplete, cross-tenant validation will be skipped",
-            job_id, source_domain, source_id,
-        )
-
     with uow:
         repo: AIJobRepository = uow.ai_jobs
+        existing = repo.get_for_update(job_id)
+        if existing is None:
+            logger.warning("AI_JOB_NOT_FOUND | job_id=%s", job_id)
+            return None
+        if not tenant_id:
+            logger.error(
+                "AI_JOB_MISSING_TENANT_ID_REJECTED | job_id=%s | source_domain=%s | source_id=%s",
+                job_id, source_domain, source_id,
+            )
+            if not existing.is_terminal():
+                repo.mark_failed(job_id, "missing_tenant_id_in_sqs_message", tier, now)
+            return None
+        if str(existing.tenant_id or "") != str(tenant_id):
+            logger.error(
+                "AI_JOB_TENANT_MISMATCH_REJECTED | job_id=%s | message_tenant_id=%s | db_tenant_id=%s",
+                job_id, tenant_id, existing.tenant_id,
+            )
+            if not existing.is_terminal():
+                repo.mark_failed(job_id, "tenant_mismatch_in_sqs_message", tier, now)
+            return None
+        payload_tenant_id = payload.get("tenant_id") if isinstance(payload, dict) else None
+        if payload_tenant_id is not None and str(payload_tenant_id) != str(tenant_id):
+            logger.error(
+                "AI_JOB_PAYLOAD_TENANT_MISMATCH_REJECTED | job_id=%s | "
+                "message_tenant_id=%s | payload_tenant_id=%s",
+                job_id, tenant_id, payload_tenant_id,
+            )
+            if not existing.is_terminal():
+                repo.mark_failed(job_id, "payload_tenant_mismatch_in_sqs_message", tier, now)
+            return None
         if not repo.mark_running(job_id, worker_id, lease_expires_at, now):
             return None
     return PreparedJob(

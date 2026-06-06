@@ -214,6 +214,40 @@ class AttendanceDestroyRosterCleanupTests(TestCase):
         self.assertEqual(self.enrollment.status, "ACTIVE")
         self.assertEqual(self.attendance.status, "PRESENT")
 
+    def test_secession_deactivates_enrollment_and_removes_all_targets(self):
+        request = self.factory.patch(
+            f"/api/v1/lectures/attendance/{self.attendance.id}/",
+            {"status": "SECESSION", "confirm_secession": True},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        view = AttendanceViewSet.as_view({"patch": "partial_update"})
+
+        response = view(request, pk=self.attendance.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.enrollment.refresh_from_db()
+        self.assertEqual(self.enrollment.status, "INACTIVE")
+        self.assertFalse(
+            Attendance.objects
+            .filter(tenant=self.tenant, enrollment=self.enrollment)
+            .exclude(status="SECESSION")
+            .exists()
+        )
+        self.assertFalse(
+            ExamEnrollment.objects.filter(
+                enrollment=self.enrollment,
+                enrollment__tenant=self.tenant,
+            ).exists()
+        )
+        self.assertFalse(
+            HomeworkAssignment.objects.filter(
+                tenant=self.tenant,
+                enrollment=self.enrollment,
+            ).exists()
+        )
+
     def test_secession_deactivates_auto_assigned_student_fee(self):
         fee_template = FeeTemplate.objects.create(
             tenant=self.tenant,

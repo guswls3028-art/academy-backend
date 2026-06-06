@@ -11,7 +11,6 @@ row-level student decision.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
 
@@ -21,8 +20,14 @@ from academy.adapters.db.django import repositories_core as core_repo
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from academy.adapters.db.django import repositories_students as student_repo
 
-from ..ps_number import _generate_unique_ps_number
 from .creation import create_student_account
+from .identity import (
+    StudentIdentityError,
+    derive_student_omr_code,
+    normalize_student_phone,
+    phone_digits,
+    resolve_student_login_id,
+)
 from .lifecycle import permanently_delete_students, restore_student
 from .school import get_valid_school_types, is_valid_grade, normalize_school_from_name
 
@@ -58,21 +63,38 @@ class _NormalizedImportRow:
 
 
 def _digits(value: Any) -> str:
-    return re.sub(r"\D", "", str(value or ""))
+    return phone_digits(value)
 
 
 def _valid_student_phone(value: Any) -> str | None:
-    phone = _digits(value)
-    if len(phone) == 11 and phone.startswith("010"):
-        return phone
-    return None
+    if not str(value or "").strip():
+        return None
+    try:
+        return normalize_student_phone(
+            value,
+            required=False,
+            field_name="phone",
+            field_label="학생 전화번호",
+        )
+    except StudentIdentityError as exc:
+        detail = exc.detail.get("phone", str(exc.detail)) if isinstance(exc.detail, dict) else exc.detail
+        raise StudentImportRowError(detail) from exc
 
 
 def _valid_parent_phone(value: Any) -> str:
-    phone = _digits(value)
-    if len(phone) == 11 and phone.startswith("010"):
-        return phone
-    raise StudentImportRowError("학부모 전화번호는 010XXXXXXXX 11자리여야 합니다.")
+    try:
+        phone = normalize_student_phone(
+            value,
+            required=True,
+            field_name="parent_phone",
+            field_label="학부모 전화번호",
+        )
+    except StudentIdentityError as exc:
+        detail = exc.detail.get("parent_phone", str(exc.detail)) if isinstance(exc.detail, dict) else exc.detail
+        raise StudentImportRowError(detail) from exc
+    if not phone:
+        raise StudentImportRowError("학부모 전화번호는 010XXXXXXXX 11자리여야 합니다.")
+    return phone
 
 
 def _grade_value(value: Any, school_type: str) -> int | None:
@@ -185,13 +207,15 @@ def _choose_ps_number(
     phone: str | None,
     identity_policy: StudentImportIdentityPolicy,
 ) -> str:
-    if (
-        identity_policy == "phone_if_available"
-        and phone
-        and not student_repo.student_filter_tenant_ps_number(tenant, phone).exists()
-    ):
-        return phone
-    return _generate_unique_ps_number(tenant=tenant)
+    try:
+        return resolve_student_login_id(
+            tenant=tenant,
+            requested_id="",
+            phone=phone if identity_policy == "phone_if_available" else "",
+        )
+    except StudentIdentityError as exc:
+        detail = exc.detail.get("ps_number", str(exc.detail)) if isinstance(exc.detail, dict) else exc.detail
+        raise StudentImportRowError(detail) from exc
 
 
 def resolve_student_import_row(
@@ -252,11 +276,14 @@ def resolve_student_import_row(
         phone=normalized.phone,
         identity_policy=identity_policy,
     )
-    omr_code = (
-        normalized.phone[-8:]
-        if normalized.phone and len(normalized.phone) >= 8
-        else normalized.parent_phone[-8:]
-    ).ljust(8, "0")[:8]
+    try:
+        omr_code = derive_student_omr_code(
+            phone=normalized.phone,
+            parent_phone=normalized.parent_phone,
+        )
+    except StudentIdentityError as exc:
+        detail = exc.detail.get("omr_code", str(exc.detail)) if isinstance(exc.detail, dict) else exc.detail
+        raise StudentImportRowError(detail) from exc
     student_data = {
         **normalized.student_data,
         "ps_number": ps_number,

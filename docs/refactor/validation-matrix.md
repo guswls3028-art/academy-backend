@@ -21,6 +21,7 @@ Also run markdown link checks when docs move.
 |---|---|
 | Python syntax/static | `cd C:\academy\backend; python -m ruff check apps/ academy/` |
 | Refactor boundary snapshot | `cd C:\academy\backend; python scripts\lint\refactor_boundary_snapshot.py` |
+| Refactor boundary baseline gate | `cd C:\academy\backend; python scripts\lint\refactor_boundary_snapshot.py --enforce-baseline` |
 | Refactor touched-file boundary gate | `cd C:\academy\backend; python scripts\lint\refactor_boundary_snapshot.py --strict-touched` |
 | ID/domain safety | `cd C:\academy\backend; python scripts\lint\check_id_domain_safety.py` |
 | Django config/imports | `cd C:\academy\backend; python manage.py check --settings apps.api.config.settings.test` |
@@ -77,6 +78,43 @@ notification templates:
 
 Do not write private phone numbers into docs or tests. Use environment/test
 configuration for real-send targets.
+
+## Student Domain Core
+
+Required when touching student identity, signup, import, profile writes,
+password reset, student-linked OMR/results/homework/clinic, or role-app student
+contracts. Owner SSOT: `../domain/student-core.md`.
+
+- verify `tenant -> active Student -> active Enrollment -> consumer projection`
+  for the touched workflow;
+- use the canonical student services instead of adding serializer/view-only
+  identity logic;
+- reject malformed phone numbers instead of silently switching identity mode;
+- verify no public password reset changes the actual password before pending
+  reset activation;
+- verify staff password reset requires authenticated active staff membership and
+  rolls back on notification delivery failure;
+- for OMR/results/homework/clinic, prove deleted/inactive/cross-tenant
+  enrollment is rejected;
+- for user-visible changes, verify the producer role and the student/parent
+  consumer role.
+
+Focused backend set:
+
+```powershell
+cd C:\academy\backend
+python -m pytest apps\domains\students\tests\test_student_identity_convergence.py apps\domains\students\tests\test_registration_password_safety.py apps\domains\students\tests\test_password_reset_safety.py apps\domains\students\tests\test_account_recovery.py -v --tb=short -x
+```
+
+Add when student-linked content is touched:
+
+```powershell
+cd C:\academy\backend
+python -m pytest apps\domains\students\tests\test_student_domain_stabilization.py apps\domains\results\tests\test_submission_scope_guard.py apps\support\omr\tests\test_candidate_matching.py -v --tb=short -x
+```
+
+Launch readiness uses the stricter gate in
+`student-domain-launch-readiness.md`.
 
 ## Worker Validation
 

@@ -235,6 +235,10 @@ jobs:
             python scripts/lint/refactor_boundary_snapshot.py --strict-touched
           fi
 
+      - name: Refactor boundary baseline guard
+        run: |
+          python scripts/lint/refactor_boundary_snapshot.py --enforce-baseline
+
   # ============================================================
   # Phase 1.5: Run smoke tests (deploy gate)
   # ============================================================

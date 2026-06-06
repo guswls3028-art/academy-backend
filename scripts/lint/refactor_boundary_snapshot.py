@@ -25,6 +25,11 @@ APPS_DOMAINS_DIR = BACKEND_DIR / "apps" / "domains"
 ACADEMY_DOMAIN_DIR = BACKEND_DIR / "academy" / "domain"
 ACADEMY_ADAPTERS_DIR = BACKEND_DIR / "academy" / "adapters"
 SCAN_ROOTS = (APPS_DOMAINS_DIR, ACADEMY_DOMAIN_DIR, ACADEMY_ADAPTERS_DIR)
+BASELINE_SUMMARY = {
+    "cross_domain_import": 115,
+    "cross_domain_internal_import": 652,
+    "domain_infra_import": 82,
+}
 
 SKIP_PARTS = {"__pycache__", ".git", ".venv", "venv", "migrations"}
 INFRA_IMPORTS = {
@@ -39,6 +44,14 @@ INFRA_IMPORTS = {
     "libs.redis",
 }
 DOMAIN_INTERNAL_SEGMENTS = {"models", "services", "views", "api", "serializers"}
+STRICT_FINDING_KINDS = {
+    "adapter_application_import",
+    "cross_domain_internal_import",
+    "decode_error",
+    "domain_infra_import",
+    "kernel_domain_django_import",
+    "syntax_error",
+}
 ADAPTER_APPLICATION_IMPORT_ALLOWLIST = {
     "academy.application.ports",
     "academy.application.video",
@@ -141,6 +154,14 @@ def collect_touched_files(
 
 def findings_for_paths(findings: list[Finding], paths: set[str]) -> list[Finding]:
     return [finding for finding in findings if finding.path in paths]
+
+
+def strict_findings_for_paths(findings: list[Finding], paths: set[str]) -> list[Finding]:
+    return [
+        finding
+        for finding in findings_for_paths(findings, paths)
+        if finding.kind in STRICT_FINDING_KINDS
+    ]
 
 
 def domain_name(path: Path) -> str | None:
@@ -267,6 +288,11 @@ def main() -> int:
         default=[],
         help="Explicit touched file path for strict-touched mode; repeatable",
     )
+    parser.add_argument(
+        "--enforce-baseline",
+        action="store_true",
+        help="Exit 1 when any finding count exceeds BASELINE_SUMMARY",
+    )
     args = parser.parse_args()
 
     files = [path for root in SCAN_ROOTS for path in iter_py_files(root)]
@@ -289,7 +315,7 @@ def main() -> int:
         except RuntimeError as exc:
             print(f"error: could not resolve touched files: {exc}", file=sys.stderr)
             return 2
-        strict_findings = findings_for_paths(findings, touched_files)
+        strict_findings = strict_findings_for_paths(findings, touched_files)
         if args.base_ref:
             base_findings = collect_base_findings(args.base_ref, touched_files)
             base_identities = {finding_identity(item) for item in base_findings}
@@ -339,6 +365,19 @@ def main() -> int:
         return 1
     if strict_touched and strict_findings:
         return 1
+    if args.enforce_baseline:
+        regressions = {
+            kind: (summary.get(kind, 0), baseline)
+            for kind, baseline in BASELINE_SUMMARY.items()
+            if summary.get(kind, 0) > baseline
+        }
+        if regressions:
+            for kind, (actual, baseline) in regressions.items():
+                print(
+                    f"baseline regression: {kind} actual={actual} baseline={baseline}",
+                    file=sys.stderr,
+                )
+            return 1
     return 0
 
 
