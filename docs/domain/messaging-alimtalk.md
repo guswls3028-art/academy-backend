@@ -1,6 +1,6 @@
 # 메시징 도메인 SSOT (알림톡/SMS 발송 시스템)
 
-> 최종 갱신: 2026-05-23 (계정복구 임시 비밀번호 6자리 SSOT 반영)
+> 최종 갱신: 2026-06-06 (공용 owner 알림톡 only, provider id 검증 반영)
 > 근거: 코드 직접 확인. 추측 없음.
 
 ---
@@ -86,7 +86,7 @@
     -> 통합 4종 템플릿 매핑 (CATEGORY_TO_TEMPLATE_TYPE)
     -> build_manual_replacements()       [alimtalk_content_builders.py:171]
     -> enqueue_sms()                     [services.py:111]
-      -> (이하 동일)
+      -> (이하 동일, tenant별 PFID/provider fallback 없음)
 ```
 
 ### 시스템 필수 알림톡 파이프라인 (가입/비번)
@@ -116,6 +116,8 @@
 | 메시징 워커 `main` | sqs_main.py:314 | SQS Long Polling, Redis 멱등 잠금, 예약 취소 확인, 잔액 검증/차감, 공급자별 발송, 로그 기록 |
 | `_dispatch_alimtalk` | sqs_main.py:630 | 공용 시스템 PFID + 공용 Solapi로 알림톡 발송 |
 | `_dispatch_sms` | sqs_main.py:617 | legacy 함수. 신규 발송은 정책에서 차단되며 큐 SMS payload도 실패 로그로 닫는다 |
+
+운영 실사용 검증은 `scripts/v1/run-messaging-verify-send.ps1` → `messaging_verify_common_alimtalk`로만 수행한다. 이 경로는 통제번호 `01031217466`으로 `password_reset_student` owner exact approved template을 발송하고, 워커가 `NotificationLog.provider_message_id`를 남긴 뒤 성공으로 판정한다.
 
 ---
 

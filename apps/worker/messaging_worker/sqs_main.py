@@ -980,6 +980,7 @@ def main() -> int:
                                 from academy.adapters.db.django.repositories_messaging import (
                                     create_notification_log, finalize_notification,
                                 )
+                                provider_message_id = str(result.get("group_id") or "")[:128]
                                 if result.get("status") == "ok":
                                     if claim_log_id is not None:
                                         finalize_notification(
@@ -988,6 +989,7 @@ def main() -> int:
                                             amount_deducted=Decimal(str(base_price)),
                                             template_summary=_get_template_summary(event_type_msg, template_id, message_mode),
                                             message_body=text[:2000],
+                                            provider_message_id=provider_message_id,
                                             notification_type=event_type_msg,
                                         )
                                     else:
@@ -1000,6 +1002,7 @@ def main() -> int:
                                             message_body=text[:2000],
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
+                                            provider_message_id=provider_message_id,
                                             notification_type=event_type_msg,
                                             source_tenant_id=source_tenant_id_msg,
                                             target_type=target_type_msg,
@@ -1027,6 +1030,7 @@ def main() -> int:
                                             success=False,
                                             failure_reason=failure_reason[:500],
                                             message_body=text[:2000],
+                                            provider_message_id=provider_message_id,
                                             notification_type=event_type_msg,
                                         )
                                     else:
@@ -1039,6 +1043,7 @@ def main() -> int:
                                             message_body=text[:2000],
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
+                                            provider_message_id=provider_message_id,
                                             notification_type=event_type_msg,
                                             source_tenant_id=source_tenant_id_msg,
                                             target_type=target_type_msg,

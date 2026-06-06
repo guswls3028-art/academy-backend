@@ -41,6 +41,13 @@ class NotificationLog(models.Model):
         max_length=128, blank=True, default="", db_index=True,
         help_text="SQS MessageId for dedup (empty for legacy logs)",
     )
+    provider_message_id = models.CharField(
+        max_length=128,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="Solapi group/message id returned by the provider",
+    )
     business_idempotency_key = models.CharField(
         max_length=64, blank=True, default="",
         help_text="SHA-256 hash of business dedup key (tenant+channel+event+target+recipient). Empty for legacy.",

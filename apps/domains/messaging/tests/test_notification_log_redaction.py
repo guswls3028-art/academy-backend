@@ -27,12 +27,14 @@ class NotificationLogRedactionTests(TestCase):
             template_summary="비밀번호 재설정(학생)",
             message_body="임시 비밀번호: 12345678",
             message_mode="alimtalk",
+            provider_message_id="group-create-1",
             notification_type="password_reset_student",
         )
 
         self.assertTrue(created)
         log = NotificationLog.objects.get()
         self.assertEqual(log.message_body, SENSITIVE_MESSAGE_PLACEHOLDER)
+        self.assertEqual(log.provider_message_id, "group-create-1")
 
     def test_finalize_redacts_sensitive_body_on_claimed_log(self):
         claimed, log_id = claim_notification_slot(
@@ -47,11 +49,13 @@ class NotificationLogRedactionTests(TestCase):
             log_id,
             success=True,
             message_body="인증번호: 112233",
+            provider_message_id="group-finalize-1",
             notification_type="password_find_otp",
         )
 
         log = NotificationLog.objects.get(id=log_id)
         self.assertEqual(log.message_body, SENSITIVE_MESSAGE_PLACEHOLDER)
+        self.assertEqual(log.provider_message_id, "group-finalize-1")
 
     def test_non_sensitive_body_keeps_body_but_masks_secret_like_lines(self):
         create_notification_log(

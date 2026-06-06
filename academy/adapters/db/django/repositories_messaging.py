@@ -29,6 +29,7 @@ def create_notification_log(
     message_body: str = "",
     message_mode: str = "",
     sqs_message_id: str = "",
+    provider_message_id: str = "",
     notification_type: str = "",
     source_tenant_id: int | None = None,
     target_type: str = "",
@@ -65,6 +66,7 @@ def create_notification_log(
         )[:2000],
         message_mode=message_mode[:20] if message_mode else "",
         sqs_message_id=sqs_message_id[:128] if sqs_message_id else "",
+        provider_message_id=provider_message_id[:128] if provider_message_id else "",
         notification_type=notification_type[:30] if notification_type else "",
         source_tenant_id=source_tenant_id,
         target_type=target_type[:30] if target_type else "",
@@ -102,6 +104,7 @@ def list_account_notification_logs(
             "status": log.status or ("sent" if log.success else "failed"),
             "notification_type": log.notification_type or "",
             "recipient_summary": log.recipient_summary or "",
+            "provider_message_id": log.provider_message_id or "",
             "failure_reason": log.failure_reason or "",
             "target_id": log.target_id or "",
             "target_name": log.target_name or "",
@@ -215,6 +218,7 @@ def finalize_notification(
     template_summary: str = "",
     failure_reason: str = "",
     message_body: str = "",
+    provider_message_id: str = "",
     notification_type: str = "",
 ) -> None:
     """Update a claimed notification slot with final result."""
@@ -227,6 +231,7 @@ def finalize_notification(
         status="sent" if success else "failed",
         template_summary=template_summary[:255] if template_summary else "",
         failure_reason=failure_reason[:500] if failure_reason else "",
+        provider_message_id=provider_message_id[:128] if provider_message_id else "",
         message_body=sanitize_message_body_for_log(
             message_body,
             notification_type=notification_type,

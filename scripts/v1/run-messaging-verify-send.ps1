@@ -1,8 +1,8 @@
 ﻿# ==============================================================================
-# API 인스턴스에서 메시징 검증: 학부모 01034137466 학생 생성 + 검증 SMS 1건 enqueue
+# API 인스턴스에서 메시징 검증: 공용 owner 알림톡 1건 발송 + NotificationLog/provider 결과 확인
 # ==============================================================================
 # 사용: pwsh scripts/v1/run-messaging-verify-send.ps1 [-AwsProfile default]
-# 배포 완료 후 실행. 01034137466으로 검증 문자가 발송됨.
+# 배포 완료 후 실행. 통제번호 01031217466으로만 검증 알림톡이 발송됨.
 # ==============================================================================
 param([string]$AwsProfile = "")
 
@@ -22,18 +22,18 @@ if (-not $ids -or $ids.Count -eq 0) {
 }
 
 $region = $script:Region
-$script = "docker exec academy-api python manage.py messaging_create_student_and_send_verify --tenant=1 --parent-phone=01034137466 2>&1"
+$script = "docker exec academy-api python manage.py messaging_verify_common_alimtalk --source-tenant=3 --phone=01031217466 --trigger=password_reset_student --wait-seconds=120 2>&1"
 $params = @{ commands = @($script) }
 $paramsJson = $params | ConvertTo-Json -Compress
 
-Write-Host "API 인스턴스에서 메시징 검증 실행 (학생 생성 + 01034137466 발송 enqueue)..." -ForegroundColor Cyan
+Write-Host "API 인스턴스에서 공용 알림톡 검증 실행 (01031217466 only + provider log 확인)..." -ForegroundColor Cyan
 foreach ($instId in $ids) {
     try {
         $sendOut = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instId, "--document-name", "AWS-RunShellScript", "--parameters", $paramsJson, "--region", $region, "--output", "json") 2>$null
         $cmdId = $sendOut.Command.CommandId
         if (-not $cmdId) { Write-Host "  $instId : send-command failed" -ForegroundColor Red; continue }
         $wait = 0
-        while ($wait -lt 90) {
+        while ($wait -lt 180) {
             Start-Sleep -Seconds 4
             $wait += 4
             $inv = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instId, "--region", $region, "--output", "json") 2>$null
@@ -54,4 +54,4 @@ foreach ($instId in $ids) {
         Write-Host "  $instId : $_" -ForegroundColor Red
     }
 }
-Write-Host "`n01034137466 수신 단말에서 문자 수신 여부 확인." -ForegroundColor Cyan
+Write-Host "`n01031217466 수신 단말에서 알림톡 수신 여부 확인." -ForegroundColor Cyan
