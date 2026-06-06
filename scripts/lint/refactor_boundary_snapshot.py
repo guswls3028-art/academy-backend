@@ -26,8 +26,8 @@ ACADEMY_DOMAIN_DIR = BACKEND_DIR / "academy" / "domain"
 ACADEMY_ADAPTERS_DIR = BACKEND_DIR / "academy" / "adapters"
 SCAN_ROOTS = (APPS_DOMAINS_DIR, ACADEMY_DOMAIN_DIR, ACADEMY_ADAPTERS_DIR)
 BASELINE_SUMMARY = {
-    "cross_domain_import": 115,
-    "cross_domain_internal_import": 652,
+    "cross_domain_import": 117,
+    "cross_domain_internal_import": 631,
     "domain_infra_import": 82,
 }
 
