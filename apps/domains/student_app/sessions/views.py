@@ -211,6 +211,7 @@ class StudentSessionHideView(APIView):
             owns = SessionEnrollment.objects.filter(
                 enrollment__student=student,
                 enrollment__tenant=tenant,
+                enrollment__status="ACTIVE",
                 session__lecture__tenant=tenant,
                 session_id=target_id,
             ).exists()
@@ -281,6 +282,8 @@ class StudentAttendanceSummaryView(APIView):
         qs = Attendance.objects.filter(
             tenant=tenant,
             enrollment__student=student,
+            enrollment__status="ACTIVE",
+            enrollment__student__deleted_at__isnull=True,
         )
 
         # 누적 카운트

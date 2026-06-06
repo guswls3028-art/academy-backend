@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.domains.community.selectors import get_notice_posts_for_tenant
+from apps.domains.enrollment.selectors import active_enrollments_for_student
 from apps.domains.lectures.models import Session as LectureSession
 from apps.domains.clinic.models import SessionParticipant
 from .serializers import StudentDashboardSerializer
@@ -75,12 +76,12 @@ class StudentDashboardView(APIView):
             notice_qs = get_notice_posts_for_tenant(tenant)
             student = get_request_student(request)
             if student:
-                from apps.domains.enrollment.models import Enrollment as _Enrollment
                 from apps.domains.community.models import ScopeNode as _ScopeNode, PostMapping as _PostMapping
                 from django.db.models import Q as _Q
                 _enrolled_lids = set(
-                    _Enrollment.objects.filter(
-                        tenant=tenant, student=student, status="ACTIVE"
+                    active_enrollments_for_student(
+                        tenant=tenant,
+                        student=student,
                     ).values_list("lecture_id", flat=True)
                 )
                 _visible_nids = set(

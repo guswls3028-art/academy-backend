@@ -154,6 +154,21 @@ Tenant
   -> Submission / Result / Achievement / Notification / Student app projection
 ```
 
+Canonical active-enrollment selector for student-facing projections:
+
+- `apps/domains/enrollment/selectors.py::active_enrollments_for_student()`
+- `apps/domains/enrollment/selectors.py::active_enrollments_for_students()`
+- `apps/domains/enrollment/selectors.py::active_enrollment_ids_for_student()`
+
+Student-facing exam lists/detail/submission, exam result detail, grades summary,
+homework summary, video visibility/progress, dashboard scope, clinic remediation,
+wrong-note/PDF, exam-attempt history, attendance summaries, schedule mutations,
+and future linked-content reads must use this selector or a narrower selector
+with the same tenant + active student + active enrollment constraints.
+Public video's synthetic system lecture is the only intentional exception; it
+must call the same selector with `include_system=True` and keep the exception
+local to public-video accounting.
+
 Rules:
 
 - no cross-tenant fallback;
@@ -198,7 +213,14 @@ Add for OMR/results/submission changes:
 
 ```powershell
 cd C:\academy\backend
-python -m pytest apps\domains\results\tests\test_submission_scope_guard.py apps\support\omr\tests\test_candidate_matching.py -v --tb=short -x
+python -m pytest apps\domains\student_app\tests\test_grades_summary_homework.py apps\domains\results\tests\test_submission_scope_guard.py apps\support\omr\tests\test_candidate_matching.py -v --tb=short -x
+```
+
+Add for student video/progress access changes:
+
+```powershell
+cd C:\academy\backend
+python -m pytest tests\test_student_video_progress_enrollment_resolution.py -v --tb=short -x
 ```
 
 Add for frontend account/student UI changes:

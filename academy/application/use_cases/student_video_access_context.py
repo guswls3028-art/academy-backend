@@ -5,6 +5,7 @@ from typing import Optional
 
 from rest_framework import status
 
+from apps.domains.enrollment.selectors import active_enrollments_for_students
 from apps.domains.student_app.permissions import get_request_student
 from apps.domains.students.selectors import active_students_for_parent, student_for_tenant_user
 from apps.domains.video.models import AccessMode
@@ -67,8 +68,6 @@ def get_students_for_request(request):
 
 
 def get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_id: Optional[int] = None):
-    from apps.domains.enrollment.models import Enrollment
-
     if not enrollment_id:
         return None
     students = get_students_for_request(request)
@@ -79,8 +78,12 @@ def get_enrollment_for_student(request, enrollment_id: Optional[int], lecture_id
         raise StudentVideoAccessError("tenant required")
 
     enrollment = (
-        Enrollment.objects
-        .filter(id=enrollment_id, student__in=students, status="ACTIVE", tenant=tenant)
+        active_enrollments_for_students(
+            tenant=tenant,
+            students=students,
+            include_system=True,
+        )
+        .filter(id=enrollment_id)
         .first()
     )
     if not enrollment:
@@ -102,11 +105,13 @@ def find_active_enrollment_for_lecture(request, lecture_id: Optional[int], expli
     if not students or not tenant or not lecture_id:
         return None
 
-    from apps.domains.enrollment.models import Enrollment
-
     return (
-        Enrollment.objects
-        .filter(student__in=students, lecture_id=lecture_id, status="ACTIVE", tenant=tenant)
+        active_enrollments_for_students(
+            tenant=tenant,
+            students=students,
+            include_system=True,
+        )
+        .filter(lecture_id=lecture_id)
         .order_by("-id")
         .first()
     )
@@ -168,8 +173,6 @@ def ensure_public_video_enrollment(request, video):
 
 
 def student_can_access_session(request, session) -> bool:
-    from apps.domains.enrollment.models import Enrollment
-
     lecture = getattr(session, "lecture", None)
     if not lecture:
         return False
@@ -184,15 +187,10 @@ def student_can_access_session(request, session) -> bool:
     if getattr(lecture, "is_system", False):
         return any(getattr(s, "tenant_id", None) == tenant_id for s in students)
 
-    for student in students:
-        if Enrollment.objects.filter(
-            student=student,
-            lecture=lecture,
-            tenant=tenant,
-            status="ACTIVE",
-        ).exists():
-            return True
-    return False
+    return active_enrollments_for_students(
+        tenant=tenant,
+        students=students,
+    ).filter(lecture=lecture).exists()
 
 
 def _video_tenant_id(video) -> int | None:

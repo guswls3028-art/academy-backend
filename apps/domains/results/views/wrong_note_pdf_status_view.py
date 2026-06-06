@@ -44,7 +44,11 @@ class WrongNotePDFStatusView(APIView):
         student = getattr(user, "student_profile", None)
         if not student:
             raise PermissionDenied("You cannot access this PDF job.")
-        if not qs.filter(student_id=student.id).exists():
+        if not qs.filter(
+            student_id=student.id,
+            status="ACTIVE",
+            student__deleted_at__isnull=True,
+        ).exists():
             raise PermissionDenied("You cannot access this PDF job.")
 
     def get(self, request, job_id: int):

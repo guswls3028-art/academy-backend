@@ -14,7 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.domains.results.services.student_result_service import get_my_exam_result_data
-from apps.domains.enrollment.models import Enrollment
+from apps.domains.enrollment.selectors import active_enrollment_ids_for_student
 from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.exams.models import Exam
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
@@ -111,11 +111,9 @@ class MyGradesSummaryView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"exams": [], "homeworks": []})
-        enrollment_ids = list(
-            Enrollment.objects.filter(
-                student=student,
-                tenant=tenant,
-            ).values_list("id", flat=True)
+        enrollment_ids = active_enrollment_ids_for_student(
+            tenant=tenant,
+            student=student,
         )
         if not enrollment_ids:
             return Response({"exams": [], "homeworks": []})

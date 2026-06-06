@@ -48,7 +48,11 @@ class WrongNotePDFCreateView(APIView):
         student = getattr(user, "student_profile", None)
         if not student:
             raise PermissionDenied("You cannot create PDF for this enrollment_id.")
-        if enrollment.student_id != student.id:
+        if (
+            enrollment.student_id != student.id
+            or enrollment.status != "ACTIVE"
+            or getattr(enrollment.student, "deleted_at", None) is not None
+        ):
             raise PermissionDenied("You cannot create PDF for this enrollment_id.")
         return enrollment
 

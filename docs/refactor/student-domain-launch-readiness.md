@@ -1,6 +1,6 @@
 # Student Domain Launch Readiness
 
-**Status:** [PROPOSED] pre-promotion gate
+**Status:** [ACTIVE] pre-promotion gate
 **Captured:** 2026-06-07 KST
 **Owner SSOT:** `../domain/student-core.md`
 
@@ -35,13 +35,25 @@ Repo-confirmed:
 - Student import row decisions are centralized in `import_students_from_rows()`
   and `resolve_student_import_row()`.
 - OMR/result scope guards exist for tenant + active enrollment matching.
+- Student-facing exam result detail and grades summary now use the canonical
+  active-enrollment selector, so inactive enrollments no longer leak scores or
+  homework summaries into the student app.
+- Student-facing exam list/detail/submission, wrong-note, wrong-note PDF,
+  exam-attempt history, attendance summary, session-hide mutations, dashboard
+  scoped notices, and video/progress projections now fail closed through the
+  canonical active-enrollment selector or its multi-student variant.
 - Frontend student API contract has a shared `students.ts` mapper used by admin
   and teacher flows.
+- `frontend/e2e/flows/signup-approval-roundtrip.spec.ts` now covers public
+  signup -> staff approval UI -> student login -> cleanup, with production
+  recipient guards.
 
 Runtime-unverified in this pass:
 
-- production Alimtalk delivery for signup/recovery/password reset;
-- full browser path from public signup -> approval -> student login;
+- production execution of the signup approval real-use spec. It is intentionally
+  blocked while controlled recipient `01031217466` is already attached to
+  active E2E fixture students in Tenant 1 (`id=1890`, `id=1201` from read-only
+  check on 2026-06-07 KST). Do not use an arbitrary phone to bypass this;
 - OMR upload -> match/review -> grading -> admin score board -> student result;
 - failed result -> clinic target -> clinic booking/attendance -> remediation;
 - homework creation -> student submission -> admin grading -> student result;
@@ -124,7 +136,7 @@ Backend P0:
 ```powershell
 cd C:\academy\backend
 python -m pytest apps\domains\students\tests\test_student_identity_convergence.py apps\domains\students\tests\test_registration_password_safety.py apps\domains\students\tests\test_password_reset_safety.py apps\domains\students\tests\test_account_recovery.py -v --tb=short -x
-python -m pytest apps\domains\students\tests\test_student_domain_stabilization.py apps\domains\results\tests\test_submission_scope_guard.py apps\support\omr\tests\test_candidate_matching.py -v --tb=short -x
+python -m pytest tests\test_student_video_progress_enrollment_resolution.py apps\domains\student_app\tests\test_parent_exam_child_selection.py apps\domains\student_app\tests\test_grades_summary_homework.py apps\domains\student_app\tests\test_session_tenant_isolation.py apps\domains\results\tests\test_security_regression.py apps\domains\students\tests\test_student_domain_stabilization.py apps\domains\results\tests\test_submission_scope_guard.py apps\support\omr\tests\test_candidate_matching.py -v --tb=short -x
 python manage.py check --settings apps.api.config.settings.test
 python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
 python -m ruff check apps/ academy/
@@ -140,6 +152,19 @@ pnpm lint
 pnpm build
 pnpm exec playwright test e2e\auth\account-recovery-modal.spec.ts --reporter=list
 ```
+
+Signup approval real-use canary:
+
+```powershell
+cd C:\academy\frontend
+$env:E2E_ALLOW_SIGNUP_APPROVAL_REAL_SEND = "1"
+$env:E2E_SIGNUP_CONTROLLED_PHONE = "01031217466"
+pnpm exec playwright test e2e/flows/signup-approval-roundtrip.spec.ts --reporter=list
+```
+
+Do not run this in production until the controlled recipient is not already used
+by an active student/parent fixture. The spec itself refuses production execution
+without the explicit allow flag and exact controlled recipient.
 
 Frontend E2E mode distinction:
 
@@ -194,13 +219,13 @@ If any of these are true, do not launch broadly:
 
 | Priority | Item | Disposition |
 |---|---|---|
-| P0 | Add or promote real-use signup approval E2E | needs implementation |
+| P0 | Add or promote real-use signup approval E2E | implemented as `frontend/e2e/flows/signup-approval-roundtrip.spec.ts`; production run safety-blocked by controlled-number collision |
 | P0 | Add account recovery activation E2E with pending reset proof | needs implementation |
-| P0 | Add OMR -> grading -> student result chain canary | needs implementation or existing spec promotion |
+| P0 | Add OMR -> grading -> student result chain canary | existing `frontend/e2e/student/score-report-realuse.spec.ts`; promote into repeatable gate after current pass |
 | P0 | Add clinic remediation chain canary | needs implementation |
 | P1 | Add homework submission chain canary | needs implementation |
 | P1 | Add account Alimtalk controlled-send runbook evidence template | needs manual/provider validation |
-| P1 | Audit student result visibility for final/draft/provisional policy | needs code inspection and test |
+| P1 | Audit student result visibility for final/draft/provisional policy | active/inactive enrollment projection covered for student detail, grades summary, exam list/submission, video/progress, wrong-note/PDF, attempt history, attendance, and session hide; final/draft policy still needs product decision |
 | P1 | Add mobile/narrow viewport review for student/admin account screens | needs browser visual validation |
 
 ## Reporting Standard

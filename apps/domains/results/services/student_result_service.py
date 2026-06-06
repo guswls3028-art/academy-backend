@@ -12,7 +12,6 @@ from django.http import Http404
 from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.serializers.student_exam_result import StudentExamResultSerializer
 from apps.domains.exams.models import Exam, ExamEnrollment
-from apps.domains.enrollment.models import Enrollment
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.ranking import compute_exam_rankings
@@ -20,6 +19,7 @@ from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 from apps.domains.results.services.answer_matching import format_answer_for_display
 from apps.domains.results.aggregations.exam_report import summarize_result_items
 from apps.domains.student_app.permissions import get_request_student
+from apps.domains.enrollment.selectors import active_enrollments_for_student
 
 
 def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
@@ -47,11 +47,13 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
 
     # 해당 시험의 응시 대상 enrollment만 사용 (한 학생이 여러 강의 수강 시 정확한 결과 조회)
     allowed_enrollment_ids = ExamEnrollment.objects.filter(
-        exam_id=exam_id
+        exam_id=exam_id,
+        enrollment__tenant=tenant,
     ).values_list("enrollment_id", flat=True)
-    # ⚠️ tenant 필터 필수: 타 테넌트 enrollment 접근 차단
-    enrollment_qs = Enrollment.objects.filter(id__in=allowed_enrollment_ids, tenant=tenant)
-    enrollment_qs = enrollment_qs.filter(student=student)
+    enrollment_qs = active_enrollments_for_student(
+        tenant=tenant,
+        student=student,
+    ).filter(id__in=allowed_enrollment_ids)
 
     enrollment = enrollment_qs.first()
     if not enrollment:

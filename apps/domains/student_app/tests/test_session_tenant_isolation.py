@@ -6,10 +6,12 @@ from django.utils import timezone
 
 from apps.core.models import Tenant, User
 from apps.core.models.user import user_internal_username
+from apps.domains.attendance.models import Attendance
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.domains.student_app.sessions.views import (
+    StudentAttendanceSummaryView,
     StudentSessionClearPastView,
     StudentSessionDetailView,
     StudentSessionHideView,
@@ -151,6 +153,59 @@ class StudentSessionTenantIsolationTests(TestCase):
         self.assertEqual(hide_response.status_code, 404)
         self.student_a.refresh_from_db()
         self.assertEqual(self.student_a.schedule_hidden_ids, [])
+
+    def test_session_hide_rejects_inactive_own_enrollment(self):
+        enrollment = self._enroll_student_a()
+        session = _create_session(self.lecture_a, title="Inactive own session")
+        SessionEnrollment.objects.create(
+            tenant=self.tenant_a,
+            enrollment=enrollment,
+            session=session,
+        )
+        enrollment.status = "INACTIVE"
+        enrollment.save(update_fields=["status", "updated_at"])
+
+        response = StudentSessionHideView().post(
+            _request(self.user_a, self.tenant_a, {"id": session.id})
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.student_a.refresh_from_db()
+        self.assertEqual(self.student_a.schedule_hidden_ids, [])
+
+    def test_attendance_summary_ignores_inactive_own_enrollment(self):
+        active_enrollment = self._enroll_student_a()
+        inactive_lecture = _create_lecture(self.tenant_a, "Inactive Attendance Lecture")
+        inactive_enrollment = Enrollment.objects.create(
+            tenant=self.tenant_a,
+            student=self.student_a,
+            lecture=inactive_lecture,
+            status="INACTIVE",
+        )
+        active_session = _create_session(self.lecture_a, order=1, title="Active attendance")
+        inactive_session = _create_session(inactive_lecture, order=1, title="Inactive attendance")
+        Attendance.objects.create(
+            tenant=self.tenant_a,
+            enrollment=active_enrollment,
+            session=active_session,
+            status="PRESENT",
+        )
+        Attendance.objects.create(
+            tenant=self.tenant_a,
+            enrollment=inactive_enrollment,
+            session=inactive_session,
+            status="ABSENT",
+        )
+
+        response = StudentAttendanceSummaryView().get(_request(self.user_a, self.tenant_a))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["summary"]["total"], 1)
+        self.assertEqual(response.data["summary"]["present"], 1)
+        self.assertEqual(response.data["summary"]["absent"], 0)
+        recent_session_ids = {row["session_id"] for row in response.data["recent"]}
+        self.assertIn(active_session.id, recent_session_ids)
+        self.assertNotIn(inactive_session.id, recent_session_ids)
 
     def test_clear_past_does_not_keep_cross_tenant_future_hidden_session_ids(self):
         tomorrow = timezone.localdate() + timedelta(days=1)

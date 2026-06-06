@@ -21,8 +21,9 @@ from apps.core.models.tenant_membership import TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.domains.students.models import Student
 from apps.domains.lectures.models import Lecture
-from apps.domains.exams.models import Exam
+from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.enrollment.models import Enrollment
+from apps.domains.results.models import ExamAttempt
 from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
 from apps.domains.results.views.wrong_note_pdf_status_view import WrongNotePDFStatusView
 from apps.domains.results.views.wrong_note_view import WrongNoteView
@@ -130,6 +131,16 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         resp = self._get(view, user=self.user_a, enrollment_id=self.enroll_a.id)
         self.assertEqual(resp.status_code, 200)
 
+    def test_student_cannot_access_wrong_note_for_inactive_own_enrollment(self):
+        """학생 본인 enrollment라도 비활성 수강이면 오답노트 조회 불가."""
+        self.enroll_a.status = "INACTIVE"
+        self.enroll_a.save(update_fields=["status", "updated_at"])
+
+        view = WrongNoteView.as_view()
+        resp = self._get(view, user=self.user_a, enrollment_id=self.enroll_a.id)
+
+        self.assertEqual(resp.status_code, 403)
+
     def test_pdf_create_user_b_cannot_use_student_a_enrollment(self):
         """WrongNotePDFCreate도 동일한 가드. PK 충돌로 타인 enrollment PDF 생성 불가."""
         view = WrongNotePDFCreateView.as_view()
@@ -141,6 +152,25 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         req.tenant = self.tenant
         resp = view(req)
         self.assertEqual(resp.status_code, 403)
+
+    def test_student_cannot_create_wrong_note_pdf_for_inactive_own_enrollment(self):
+        """학생 본인 enrollment라도 비활성 수강이면 오답노트 PDF 생성 불가."""
+        self.enroll_a.status = "INACTIVE"
+        self.enroll_a.save(update_fields=["status", "updated_at"])
+
+        view = WrongNotePDFCreateView.as_view()
+        req = self.factory.post(
+            "/api/v1/results/wrong-notes/pdf/",
+            data={"enrollment_id": self.enroll_a.id},
+            format="json",
+        )
+        force_authenticate(req, user=self.user_a)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(WrongNotePDF.objects.exists())
 
     def test_pdf_create_rejects_cross_tenant_lecture_id(self):
         """enrollment은 본인 것이어도 lecture_id가 다른 테넌트면 Job 생성 금지."""
@@ -336,6 +366,24 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
 
         self.assertEqual(resp.status_code, 403)
 
+    def test_student_cannot_poll_wrong_note_pdf_for_inactive_own_enrollment(self):
+        """학생 본인 PDF job이라도 수강이 비활성화되면 상태 조회 불가."""
+        self.enroll_a.status = "INACTIVE"
+        self.enroll_a.save(update_fields=["status", "updated_at"])
+        job = WrongNotePDF.objects.create(
+            enrollment_id=self.enroll_a.id,
+            status=WrongNotePDF.Status.PENDING,
+        )
+
+        view = WrongNotePDFStatusView.as_view()
+        req = self.factory.get(f"/api/v1/results/wrong-notes/pdf/{job.id}/")
+        force_authenticate(req, user=self.user_a)
+        req.tenant = self.tenant
+
+        resp = view(req, job_id=job.id)
+
+        self.assertEqual(resp.status_code, 403)
+
     def test_attempts_user_b_pk_collision_blocked(self):
         """MyExamAttemptsView에서도 PK 충돌 사용자가 타인 attempts 접근 불가.
 
@@ -350,5 +398,35 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         req.tenant = self.tenant
         resp = view(req, exam_id=9999)
         # 본인 enrollment만 봐야 하므로 enroll_a 데이터 노출 0건
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data, [])
+
+    def test_attempts_for_inactive_own_enrollment_hidden(self):
+        """본인 attempt라도 시험 대상 수강이 비활성화되면 학생 히스토리에서 숨김."""
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="비활성 attempt 시험",
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enroll_a)
+        ExamAttempt.objects.create(
+            exam=exam,
+            enrollment=self.enroll_a,
+            attempt_index=1,
+            is_retake=False,
+            is_representative=True,
+            status="done",
+        )
+        self.enroll_a.status = "INACTIVE"
+        self.enroll_a.save(update_fields=["status", "updated_at"])
+
+        view = MyExamAttemptsView.as_view()
+        req = self.factory.get(f"/api/v1/results/me/exams/{exam.id}/attempts/")
+        force_authenticate(req, user=self.user_a)
+        req.tenant = self.tenant
+
+        resp = view(req, exam_id=exam.id)
+
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data, [])

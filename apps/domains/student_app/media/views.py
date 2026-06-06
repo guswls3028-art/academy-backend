@@ -9,6 +9,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework import status
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
+from apps.domains.enrollment.selectors import active_enrollments_for_student
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
     ensure_student_video_watch_allowed,
@@ -302,7 +303,6 @@ class StudentVideoMeView(APIView):
 
     def get(self, request):
         from apps.domains.lectures.models import Lecture, Session
-        from apps.domains.enrollment.models import Enrollment
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -313,12 +313,7 @@ class StudentVideoMeView(APIView):
             )
 
         enrollments = (
-            Enrollment.objects.filter(
-                student=student, tenant=tenant, status="ACTIVE",
-                lecture__tenant=tenant,  # defense-in-depth: lecture must match tenant
-                lecture__is_system=False,
-            )
-            .select_related("lecture")
+            active_enrollments_for_student(tenant=tenant, student=student)
             .order_by("lecture__title")
         )
         enrollment_by_lecture = {e.lecture_id: e.id for e in enrollments}
@@ -450,7 +445,6 @@ class StudentVideoStatsView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request):
-        from apps.domains.enrollment.models import Enrollment
         from apps.domains.video.models import Video, VideoProgress
 
         tenant = getattr(request, "tenant", None)
@@ -468,11 +462,11 @@ class StudentVideoStatsView(APIView):
 
         # 활성 수강 목록
         enrollments = list(
-            Enrollment.objects.filter(
-                student=student,
+            active_enrollments_for_student(
                 tenant=tenant,
-                status="ACTIVE",
-            ).select_related("lecture")
+                student=student,
+                include_system=True,
+            )
         )
 
         enrollment_ids = [e.id for e in enrollments]

@@ -99,6 +99,55 @@ def get_active_enrollment_for_student_lecture(*, tenant, student, lecture):
     ).first()
 
 
+def active_enrollments_for_students(*, tenant, students, include_system: bool = False):
+    """Return current learning-access enrollments for active students."""
+    tenant = require_tenant(tenant)
+    student_iterable = [] if students is None else students
+    student_ids = [
+        getattr(student, "id", None)
+        for student in student_iterable
+        if getattr(student, "id", None) is not None
+    ]
+    if not student_ids:
+        return Enrollment.objects.none()
+    qs = (
+        Enrollment.objects
+        .filter(
+            tenant=tenant,
+            student_id__in=student_ids,
+            status="ACTIVE",
+            student__deleted_at__isnull=True,
+            lecture__tenant=tenant,
+        )
+        .select_related("student", "lecture")
+    )
+    if not include_system:
+        qs = qs.exclude(lecture__is_system=True)
+    return qs
+
+
+def active_enrollments_for_student(*, tenant, student, include_system: bool = False):
+    """Return current learning-access enrollments for one active student."""
+    if student is None:
+        return Enrollment.objects.none()
+    return active_enrollments_for_students(
+        tenant=tenant,
+        students=[student],
+        include_system=include_system,
+    )
+
+
+def active_enrollment_ids_for_student(*, tenant, student, include_system: bool = False) -> list[int]:
+    return list(
+        active_enrollments_for_student(
+            tenant=tenant,
+            student=student,
+            include_system=include_system,
+        )
+        .values_list("id", flat=True)
+    )
+
+
 def build_student_enrollment_matrix(*, tenant, student_id: int, lecture_id: int) -> dict:
     from apps.domains.exams.models import Exam, ExamEnrollment
     from apps.domains.homework.models import HomeworkAssignment

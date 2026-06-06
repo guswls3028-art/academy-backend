@@ -21,6 +21,7 @@ from rest_framework import status
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.domains.exams.models import Exam, ExamQuestion
 from apps.domains.exams.services.template_resolver import resolve_template_exam
+from apps.domains.enrollment.selectors import active_enrollment_ids_for_student
 from .serializers import StudentExamSerializer
 
 
@@ -36,12 +37,13 @@ def _exam_queryset_for_student(student, tenant, *, include_upcoming_days: int = 
     latest_open_at = now
     if include_upcoming_days > 0:
         latest_open_at = now + timedelta(days=include_upcoming_days)
+    enrollment_ids = active_enrollment_ids_for_student(tenant=tenant, student=student)
+    if not enrollment_ids:
+        return Exam.objects.none()
     return (
         Exam.objects.filter(
             exam_type=Exam.ExamType.REGULAR,
-            exam_enrollments__enrollment__student=student,
-            exam_enrollments__enrollment__tenant=tenant,
-            exam_enrollments__enrollment__status="ACTIVE",  # ✅ 퇴원 학생 방어
+            exam_enrollments__enrollment_id__in=enrollment_ids,
             is_active=True,
         )
         .filter(
@@ -104,15 +106,11 @@ class StudentExamListView(APIView):
         submission_status_map = {}
         if exams:
             from apps.domains.submissions.models.submission import Submission
-            from apps.domains.enrollment.models import Enrollment
 
             exam_ids = [e.id for e in exams]
-            enrollment_ids = list(
-                Enrollment.objects.filter(
-                    tenant=tenant,
-                    student=request_student,
-                    status="ACTIVE",
-                ).values_list("id", flat=True)
+            enrollment_ids = active_enrollment_ids_for_student(
+                tenant=tenant,
+                student=request_student,
             )
             subs = Submission.objects.filter(
                 enrollment_id__in=enrollment_ids,

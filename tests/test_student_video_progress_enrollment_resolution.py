@@ -269,6 +269,35 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         self.assertEqual(response.data["lectures"][0]["completed_count"], 1)
         self.assertEqual(response.data["lectures"][0]["progress_pct"], 50)
 
+    def test_video_me_hides_inactive_enrollment_lecture(self):
+        self.target_enrollment.status = "INACTIVE"
+        self.target_enrollment.save(update_fields=["status", "updated_at"])
+
+        response = self._get_me()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertNotIn(
+            self.target_lecture.id,
+            [lecture["id"] for lecture in response.data["lectures"]],
+        )
+
+    def test_student_stats_ignore_inactive_enrollment_videos_and_progress(self):
+        VideoProgress.objects.create(
+            video=self.video,
+            enrollment=self.target_enrollment,
+            progress=0.9,
+            completed=False,
+        )
+        self.target_enrollment.status = "INACTIVE"
+        self.target_enrollment.save(update_fields=["status", "updated_at"])
+
+        response = self._get_me_stats()
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["total_videos"], 0)
+        self.assertEqual(response.data["completed_videos"], 0)
+        self.assertEqual(response.data["lectures"], [])
+
     def test_session_video_list_uses_prefetched_completion_and_access_modes(self):
         second_video = Video.objects.create(
             tenant=self.tenant,
