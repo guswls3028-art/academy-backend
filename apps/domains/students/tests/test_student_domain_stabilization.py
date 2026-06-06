@@ -21,6 +21,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.core.models.user import user_internal_username
+from academy.application.services.excel_parsing_service import parse_student_excel_file
 from apps.domains.students.models import Student, Tag
 from apps.domains.students.views import StudentViewSet
 
@@ -273,6 +274,28 @@ class TestStudentExcelUploadValidation(TestCase):
             url,
             "/api/v1/students/excel_job_status/c9a6e1f8-4377-459c-8e4a-0f9356c3612f/",
         )
+
+    def test_excel_parser_skips_legacy_template_example_rows_without_remark_column(self):
+        import openpyxl
+        from pathlib import Path
+        from tempfile import NamedTemporaryFile
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["이름", "학부모전화번호", "학생전화번호", "성별", "학교", "학년", "반", "계열", "메모"])
+        ws.append(["홍길동", "01087654321", "01012345678", "M", "한국고등학교", "1", "3", "이과", ""])
+        ws.append(["김영희", "01011112222", "", "F", "서울중학교", "2", "1", "", ""])
+
+        with NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+            path = tmp.name
+
+        try:
+            wb.save(path)
+            rows, _lecture_title = parse_student_excel_file(path)
+        finally:
+            Path(path).unlink(missing_ok=True)
+
+        self.assertEqual(rows, [])
 
 
 # ═══════════════════════════════════════════════════

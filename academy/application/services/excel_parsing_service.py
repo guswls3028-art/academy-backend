@@ -255,6 +255,22 @@ def _cell_str(row: list[Any], col_index: int | None) -> str:
     return str(row[col_index] or "").strip()
 
 
+def _is_known_template_example_row(
+    name: str,
+    parent_phone_raw: str,
+    student_phone_raw: str,
+) -> bool:
+    return (
+        name == "홍길동"
+        and parent_phone_raw == "01087654321"
+        and student_phone_raw == "01012345678"
+    ) or (
+        name == "김영희"
+        and parent_phone_raw == "01011112222"
+        and student_phone_raw == ""
+    )
+
+
 def _to_raw_phone(v: str) -> str:
     return re.sub(r"\D", "", v)
 
@@ -481,12 +497,15 @@ def parse_student_excel_file(local_path: str) -> tuple[list[dict[str, Any]], str
     # 소제목/날짜 행 등이 parent_phone 검증 대상이 되면 잘못된 실패 발생.
     for r in range(header_idx + 1, len(rows)):
         row = rows[r]
-        if remark_col is not None and "예시" in _cell_str(row, remark_col):
-            continue
-
         name = _cell_str(row, name_col)
         student_phone_raw = _to_raw_phone(_cell_str(row, student_col))
         parent_phone_raw = _to_raw_phone(_cell_str(row, parent_col))
+
+        if (
+            remark_col is not None
+            and "예시" in _cell_str(row, remark_col)
+        ) or _is_known_template_example_row(name, parent_phone_raw, student_phone_raw):
+            continue
 
         if not name and not student_phone_raw and not parent_phone_raw:
             continue
