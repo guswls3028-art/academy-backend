@@ -70,17 +70,17 @@ def build_attendance_preview(
     if not trigger:
         return {"error": f"지원하지 않는 알림 유형: {notification_type}", "recipients": [], "total_count": 0, "excluded_count": 0}
 
-    # 템플릿 resolve (테넌트 → 오너 fallback)
+    # 템플릿 resolve: tenant config는 본문/설정, 검수 템플릿은 owner exact 또는 unified만 사용.
     config = get_auto_send_config(tenant.id, trigger)
     if not config:
-        owner_id = get_owner_tenant_id()
-        if int(tenant.id) != owner_id:
-            config = get_auto_send_config(owner_id, trigger)
-
-    template = config.template if config else None
+        return {"error": "발송 설정이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    content_template = config.template if config else None
+    owner_config = get_auto_send_config(get_owner_tenant_id(), trigger)
+    owner_template = owner_config.template if owner_config else None
+    template = content_template
     effective_mode = _alimtalk_only_mode(config.message_mode if config else "alimtalk")
-    solapi_template_id = (template.solapi_template_id or "").strip() if template else ""
-    solapi_approved = solapi_template_id and template.solapi_status == "APPROVED" if template else False
+    solapi_template_id = ""
+    solapi_approved = False
 
     # ── 통합 알림톡 템플릿 감지 (통합 4종이 있으면 항상 우선 사용) ──
     from apps.domains.messaging.alimtalk_content_builders import (
@@ -94,6 +94,10 @@ def build_attendance_preview(
         # 통합 템플릿 존재 → 개별 APPROVED 여부와 무관하게 항상 통합 사용
         solapi_template_id = unified_tid
         solapi_approved = True
+    elif owner_template:
+        template = owner_template
+        solapi_template_id = (owner_template.solapi_template_id or "").strip()
+        solapi_approved = bool(solapi_template_id and owner_template.solapi_status == "APPROVED")
 
     # Manual notification dispatch is alimtalk-only; approved template required.
     if not template or not (template.body or "").strip():
@@ -225,14 +229,14 @@ def build_student_list_preview(
 
     config = get_auto_send_config(tenant.id, trigger)
     if not config:
-        owner_id = get_owner_tenant_id()
-        if int(tenant.id) != owner_id:
-            config = get_auto_send_config(owner_id, trigger)
-
-    template = config.template if config else None
+        return {"error": "발송 설정이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    content_template = config.template if config else None
+    owner_config = get_auto_send_config(get_owner_tenant_id(), trigger)
+    owner_template = owner_config.template if owner_config else None
+    template = content_template
     effective_mode = _alimtalk_only_mode(config.message_mode if config else "alimtalk")
-    solapi_template_id = (template.solapi_template_id or "").strip() if template else ""
-    solapi_approved = solapi_template_id and template.solapi_status == "APPROVED" if template else False
+    solapi_template_id = ""
+    solapi_approved = False
 
     # ── 통합 알림톡 템플릿 감지 (통합 4종이 있으면 항상 우선 사용) ──
     from apps.domains.messaging.alimtalk_content_builders import (
@@ -245,6 +249,10 @@ def build_student_list_preview(
     if use_unified:
         solapi_template_id = unified_tid
         solapi_approved = True
+    elif owner_template:
+        template = owner_template
+        solapi_template_id = (owner_template.solapi_template_id or "").strip()
+        solapi_approved = bool(solapi_template_id and owner_template.solapi_status == "APPROVED")
 
     if not template or not (template.body or "").strip():
         return {"error": "발송 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}

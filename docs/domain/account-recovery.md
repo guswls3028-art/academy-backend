@@ -1,8 +1,8 @@
 # 계정 복구 SSOT
 
 **상태:** Active
-**최종 점검:** 2026-05-23
-**코드 기준:** `apps/core/views/account_recovery.py`, `apps/domains/students/services/account_recovery.py`, `apps/core/services/password.py`, `apps/api/common/auth_jwt.py`
+**최종 점검:** 2026-06-06
+**코드 기준:** `apps/core/views/account_recovery.py`, `apps/domains/students/services/account_recovery.py`, `apps/core/services/password.py`, `apps/api/common/auth_jwt.py`, `apps/domains/students/views/password_views.py`
 
 ## 1. 정본 경로
 
@@ -36,8 +36,8 @@ POST /api/v1/auth/account-recovery/dispatch/
 - 요청 전화번호는 숫자만 남긴 뒤 `010`으로 시작하는 11자리만 허용한다.
 - 조회 실패, 동명이인/공유번호 등 다건 매칭, 성공 모두 공개 응답은 generic message로 통일한다.
 - API 응답에 아이디나 비밀번호를 직접 반환하지 않는다.
-- 안내 발송은 검증된 전화번호로만 수행한다.
-- legacy 공개 호환 경로도 정본 계정복구 서비스로 위임하며, 사용자 존재 여부를 노출하지 않는다.
+- 안내 발송은 검증된 전화번호로만 수행한다. 이메일은 사용하지 않는다.
+- legacy 공개 호환 경로도 정본 계정복구 서비스로 위임하며, 사용자 존재 여부를 노출하지 않는다. OTP 인증번호 방식은 410으로 봉인한다.
 
 ## 3. 매칭 규칙
 
@@ -121,7 +121,7 @@ generate_temp_password() -> 숫자 6자리
 
 - 오너 테넌트의 승인된 알림톡 템플릿으로 발송한다.
 - SMS fallback은 없다.
-- `password_reset_*`, `password_find_otp` 템플릿이 승인되지 않았으면 가입 승인 템플릿으로 fallback할 수 있다.
+- `password_reset_*`, `password_find_otp` 템플릿이 승인되지 않았으면 발송 실패가 정답이다. 가입 승인 템플릿 등 다른 trigger로 fallback하지 않는다.
 - 테스트 테넌트의 메시징 disabled 상태에서는 실제 발송을 건너뛰고 성공으로 간주한다. 비밀번호 복구는 전달되지 않는 임시 비밀번호를 만들지 않기 위해 pending reset도 만들지 않는다.
 
 ## 7. Legacy compatibility
@@ -130,18 +130,26 @@ generate_temp_password() -> 숫자 6자리
 
 | 경로 | 현재 용도 |
 |------|-----------|
-| `/api/v1/students/password_find/request/` | legacy OTP 발급 |
-| `/api/v1/students/password_find/verify/` | legacy OTP 검증 + 새 비밀번호 설정 |
-| `/api/v1/students/password_reset_send/` | 관리자/선생님 비밀번호 재설정 + 공개 비밀번호 복구 호환 |
+| `/api/v1/students/password_find/request/` | legacy OTP 봉인: 410 Gone |
+| `/api/v1/students/password_find/verify/` | legacy OTP 봉인: 410 Gone |
+| `/api/v1/students/password_reset_send/` | 관리자/선생님 비밀번호 재설정 + 공개 비밀번호 복구 호환. 모두 정본 서비스 위임 |
 | `/api/v1/students/send_existing_credentials/` | legacy 중복가입 자격 안내 호환 |
+| `/api/v1/students/<id>/account-notifications/` | 학생 상세 최근 계정 알림톡 상태 |
 
 legacy 공개 호환 규칙:
 
 - 비인증/비staff `password_reset_send` 요청은 정본 비밀번호 복구 서비스로 위임하며 pending reset을 사용한다.
 - `send_existing_credentials` 요청은 정본 비밀번호 복구 서비스로 위임하며 pending reset을 사용한다.
+- 인증된 관리자/선생님 `password_reset_send` 요청은 정본 계정복구 서비스의 staff reset 경로로 위임한다. 비밀번호는 즉시 변경하고, 알림톡 발송 실패 시 비밀번호와 pending reset을 롤백한다.
 - 공개 호환 요청의 발송 대상은 요청자가 증명한 전화번호다. 저장된 다른 학생/학부모 번호로 대체 발송하지 않는다.
 - 조회 실패, 다건 매칭, parent side-effect 차단 케이스는 generic 200으로 응답하고 비밀번호를 변경하지 않는다.
 - `temp_password`, `skip_notify`는 인증된 관리자/선생님 요청에서만 호환 허용한다.
+
+계정 알림톡 로그:
+
+- `NotificationLog.source_tenant_id`, `target_type`, `target_id`, `target_name`으로 오너 대리발송 로그를 원 테넌트/학생에 다시 연결한다.
+- 학생 계정 target id는 `student:<student_id>`, 학부모 계정 target id는 `parent:<student_id>:<parent_phone>` 형식이다.
+- 학생 상세 화면은 본문/임시 비밀번호를 표시하지 않고 발송 시각, 종류, 성공/실패, 마스킹 수신자만 표시한다.
 
 이 경로를 수정하는 작업은 정본 서비스(`apps/domains/students/services/account_recovery.py`, `apps/core/services/password.py`)로 위임하거나, 호출처가 사라진 뒤 제거한다. 새 기능은 legacy view에 직접 추가하지 않는다.
 

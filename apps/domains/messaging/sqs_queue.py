@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 def _build_business_key(
     tenant_id: int,
+    source_tenant_id: int | None,
     channel: str,
     event_type: str = "manual_send",
     target_type: str = "",
@@ -31,7 +32,11 @@ def _build_business_key(
     template_id: str = "",
 ) -> str:
     """Build SHA-256 business idempotency key from domain fields."""
-    canonical = f"msg:{tenant_id}:{channel}:{event_type}:{target_type}:{target_id}:{recipient}:{occurrence_key}:{template_id}"
+    source_part = "" if source_tenant_id is None else str(int(source_tenant_id))
+    canonical = (
+        f"msg:{tenant_id}:{source_part}:{channel}:{event_type}:"
+        f"{target_type}:{target_id}:{recipient}:{occurrence_key}:{template_id}"
+    )
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
@@ -45,7 +50,7 @@ class MessagingSQSQueue:
         "text": str,
         "sender": str | None,
         "reservation_id": int | None,
-        "message_mode": "sms" | "alimtalk",  # sms=SMS만, alimtalk=알림톡만
+        "message_mode": "alimtalk",  # SMS/LMS 신규 실발송 금지
         "alimtalk_replacements": list[{"key": str, "value": str}] | None,
     }
     """
@@ -75,6 +80,7 @@ class MessagingSQSQueue:
         target_type: Optional[str] = None,
         target_id: Optional[int | str] = None,
         target_name: Optional[str] = None,
+        source_tenant_id: Optional[int] = None,
         occurrence_key: Optional[str] = None,
         source_domain: Optional[str] = None,
         source_use_case: Optional[str] = None,
@@ -85,14 +91,12 @@ class MessagingSQSQueue:
         발송 작업을 SQS에 추가
 
         Args:
-            tenant_id: 테넌트 ID (워커에서 잔액/PFID 조회용)
+            tenant_id: 공용 owner 테넌트 ID (업무 테넌트는 source_tenant_id)
             to: 수신 번호
             text: 본문
             sender: 발신 번호
             reservation_id: 예약 ID (워커에서 취소 시 스킵)
-            message_mode: "sms" | "alimtalk"
-                - sms: SMS만 발송
-                - alimtalk: 알림톡만 발송
+            message_mode: "alimtalk"만 허용
             alimtalk_replacements: 알림톡 치환 [{"key": "학생이름2", "value": "길동"}, ...]
             template_id: 알림톡 템플릿 ID (미지정 시 워커 기본값 사용)
         """
@@ -104,12 +108,15 @@ class MessagingSQSQueue:
                 message_mode, tenant_id, to,
             )
             mode = "alimtalk"
+        if mode == "sms":
+            logger.error("enqueue blocked: SMS/LMS sending is disabled service-wide (tenant=%s)", tenant_id)
+            return False
 
         message = {
             "tenant_id": int(tenant_id),
             "to": str(to).replace("-", "").strip(),
             "text": (text or "").strip(),
-            "sender": (sender or "").strip() or None,
+            "sender": None,
             "created_at": timezone.now().isoformat(),
             "message_mode": mode,
         }
@@ -125,6 +132,8 @@ class MessagingSQSQueue:
             message["target_id"] = str(target_id)
         if target_name:
             message["target_name"] = str(target_name)[:50]
+        if source_tenant_id is not None:
+            message["source_tenant_id"] = int(source_tenant_id)
         if source_domain:
             message["source_domain"] = str(source_domain)[:50]
         if source_use_case:
@@ -139,6 +148,7 @@ class MessagingSQSQueue:
         resolved_occurrence_key = occurrence_key or f"manual-{uuid4().hex}"
         message["business_idempotency_key"] = _build_business_key(
             tenant_id=int(tenant_id),
+            source_tenant_id=int(source_tenant_id) if source_tenant_id is not None else None,
             channel=mode,
             event_type=event_type or "manual_send",
             target_type=target_type or "",

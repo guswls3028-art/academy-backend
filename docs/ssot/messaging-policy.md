@@ -1,4 +1,4 @@
-# 메시징/알림톡 운영 정책 SSOT (2026-05-25 갱신)
+# 메시징/알림톡 운영 정책 SSOT (2026-06-06 갱신)
 
 ## 정책 분류 체계
 
@@ -58,9 +58,16 @@
 2. **SYSTEM_AUTO 외에는 사용자가 투명하게 보고 통제 가능.**
 3. **일반 강의와 클리닉 정책 절대 분리.**
 4. **숨겨진 자동 발송 금지.** 모든 발송 경로가 설정 콘솔에 노출.
+5. **공용 알림톡 only.** SMS/LMS, tenant별 PFID, tenant별 알림톡 provider는 실발송에 사용하지 않는다.
+6. **fallback 금지.** exact trigger의 공용 승인 템플릿 또는 명시 unified category 템플릿이 없으면 발송하지 않는다.
 
-## Owner Fallback 정책
-모든 트리거에서 owner tenant fallback 허용. config.enabled가 2차 가드.
+## 공용 알림톡 정책
+
+- 모든 알림톡 큐 payload는 `OWNER_TENANT_ID` 공용 채널로 정규화한다.
+- 원 업무 테넌트는 `source_tenant_id` 등 로그 메타데이터로만 남긴다.
+- tenant별 AutoSendConfig는 enabled/delay/본문 메모 등 업무 설정으로만 사용하고, Solapi 검수 템플릿/PFID/provider의 출처가 될 수 없다.
+- `send_alimtalk_via_owner()`는 `OWNER_TENANT_ID`의 exact trigger AutoSendConfig에 연결된 APPROVED 템플릿만 사용한다.
+- `password_reset_*` 또는 `password_find_otp`가 `registration_approved_*` 템플릿으로 대체되는 fallback은 금지한다.
 
 ## 안전장치 체계
 1. **AutoSendConfig.enabled** — DB 레벨 on/off (설정 콘솔에서 제어)
@@ -74,6 +81,7 @@
 9. **예약/지연 발송 drain** — `AutoSendConfig.delay_mode`가 만든 `ScheduledNotification`은 EventBridge `academy-v1-process-scheduled-notifications` → `process_scheduled_notifications`가 SQS로 전달한다.
 
 ## 변경 이력
+- 2026-06-06: SMS/LMS 및 tenant별 알림톡 채널/provider 사용을 금지하고, exact 공용 승인 템플릿 없으면 fail-closed하도록 정책 갱신.
 - 2026-05-25: `clinic_reminder` 운영 EventBridge 연결. `process_scheduled_notifications` 운영 스케줄 추가. 운영 스케줄이 없는 `assignment_not_submitted`는 자동발화 구현상태에서 제외해 원장 화면 혼선 방지.
 - 2026-05-23: 학생 등록 welcome/가입 승인 알림도 `registration_approved_student|parent` event metadata를 큐에 싣도록 정렬. 계정성 알림 로그 마스킹 기준을 문서화.
 - 2026-05-21: 공개 로그인 화면 계정복구 SSOT를 `/api/v1/auth/account-recovery/dispatch/`로 정리. `password_find_otp`는 legacy OTP 경로로 명시.

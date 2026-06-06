@@ -15,6 +15,7 @@ from .password_views import (
     StudentPasswordResetSendView,
 )
 from .credential_views import SendExistingCredentialsView
+from .account_notification_views import StudentAccountNotificationLogView
 
 __all__ = [
     "TagViewSet",
@@ -28,4 +29,5 @@ __all__ = [
     "_normalize_phone_for_reset",
     "StudentPasswordResetSendView",
     "SendExistingCredentialsView",
+    "StudentAccountNotificationLogView",
 ]

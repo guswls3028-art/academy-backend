@@ -1,7 +1,9 @@
 # apps/support/messaging/services/solapi_client.py
 # SSOT 문서: backend/docs/domain/messaging.md, backend/docs/domain/messaging-alimtalk.md
 """
-Solapi 클라이언트 — 인증 정보, Mock 모드, SMS 즉시 발송
+Solapi 클라이언트 — 인증 정보, Mock 모드.
+
+SMS/LMS 직접 발송은 정책상 비활성이다. 실발송은 SQS 공용 알림톡 경로만 사용한다.
 """
 
 import logging
@@ -57,49 +59,16 @@ def send_sms(
     tenant_id: Optional[int] = None,
 ) -> dict:
     """
-    SMS/LMS 즉시 발송 (Solapi).
+    SMS/LMS 즉시 발송은 정책상 비활성.
 
     Args:
         to: 수신 번호 (01012345678)
         text: 본문
-        sender: 발신 번호 (미지정 시 SOLAPI_SENDER 사용)
-        tenant_id: 요청 tenant. 지정 시 해당 tenant가 SMS 허용(내 테넌트)인지 검사.
+        sender: legacy argument, ignored
+        tenant_id: 요청 tenant, 로그용
 
     Returns:
-        dict: {"status": "ok"|"error"|"skipped", "group_id"?, "reason"?}
+        dict: {"status": "error", "reason": "sms_disabled"}
     """
-    if tenant_id is not None:
-        from apps.domains.messaging.policy import can_send_sms, is_messaging_disabled
-        if is_messaging_disabled(tenant_id):
-            logger.info("send_sms skipped: tenant_id=%s is test tenant (messaging disabled)", tenant_id)
-            return {"status": "skipped", "reason": "messaging_disabled_for_test_tenant"}
-        if not can_send_sms(tenant_id):
-            logger.warning(
-                "send_sms blocked by policy: tenant_id=%s is not owner tenant (SMS allowed only for owner)",
-                tenant_id,
-            )
-            return {"status": "error", "reason": "sms_allowed_only_for_owner_tenant"}
-
-    client = get_solapi_client()
-    if not client:
-        logger.info("send_sms skipped: Solapi not configured")
-        return {"status": "skipped", "reason": "solapi_not_configured"}
-
-    sender = (sender or "").strip() or os.environ.get("SOLAPI_SENDER") or getattr(settings, "SOLAPI_SENDER", "")
-    if not sender:
-        return {"status": "error", "reason": "sender_required"}
-
-    to = (to or "").replace("-", "").strip()
-    if not to or not (text or "").strip():
-        return {"status": "error", "reason": "to_and_text_required"}
-
-    try:
-        from solapi.model import RequestMessage
-        message = RequestMessage(from_=sender, to=to, text=text.strip())
-        response = client.send(message)
-        group_id = getattr(getattr(response, "group_info", None), "group_id", None)
-        logger.info("send_sms ok to=%s group_id=%s", to[:4] + "****", group_id)
-        return {"status": "ok", "group_id": group_id}
-    except Exception as e:
-        logger.exception("send_sms failed to=%s", to[:4] + "****")
-        return {"status": "error", "reason": str(e)[:500]}
+    logger.error("send_sms blocked: SMS/LMS sending is disabled service-wide (tenant_id=%s)", tenant_id)
+    return {"status": "error", "reason": "sms_disabled"}

@@ -2,8 +2,10 @@
 """
 메시징 발송 정책 및 채널 resolver — 단일 진입점.
 
-- SMS: OWNER_TENANT_ID(내 테넌트) 또는 자체 연동 키가 있는 테넌트에서 허용.
-- 알림톡: 모든 tenant 허용. tenant별 kakao_pfid 있으면 해당 채널, 없으면 시스템 기본 채널.
+SSOT: 실발송은 공용 오너 알림톡만 사용한다.
+- SMS/LMS 실발송 금지.
+- tenant별 카카오 채널/PFID 사용 금지.
+- 알림톡 템플릿 fallback 금지. trigger와 1:1로 연결된 공용 승인 템플릿만 사용한다.
 """
 
 import logging
@@ -175,7 +177,7 @@ def is_messaging_restricted(tenant_id: int) -> bool:
 
 
 def get_owner_tenant_id() -> int:
-    """SMS 발송이 허용된 tenant ID (내 테넌트)."""
+    """공용 알림톡 발송/템플릿을 소유하는 tenant ID."""
     return getattr(settings, "OWNER_TENANT_ID", 1)
 
 
@@ -276,15 +278,8 @@ def _has_own_sms_credentials(tenant_id: int) -> bool:
 
 
 def can_send_sms(tenant_id: int) -> bool:
-    """해당 tenant가 문자(SMS/LMS) 발송을 허용하는지 여부.
-    - 시스템 키 사용: OWNER_TENANT_ID만 허용 (플랫폼 SMS 비용 보호)
-    - 자체 연동 키 보유: 해당 테넌트 자체 계정 사용이므로 허용
-    """
-    if is_messaging_disabled(tenant_id):
-        return False
-    if int(tenant_id) == get_owner_tenant_id():
-        return True
-    return _has_own_sms_credentials(tenant_id)
+    """SMS/LMS 실발송은 전체 서비스에서 사용하지 않는다."""
+    return False
 
 
 class MessagingPolicyError(Exception):
@@ -298,23 +293,10 @@ def resolve_kakao_channel(tenant_id: int) -> dict:
     """
     알림톡 발송 시 사용할 카카오 채널(PF ID) 결정.
 
-    우선순위: (1) tenant 연동 채널(kakao_pfid) (2) 시스템 기본 채널(settings.SOLAPI_KAKAO_PF_ID).
-    테스트 tenant(9999)에서는 발송 스킵을 위해 pf_id 빈 문자열 반환.
+    SSOT: tenant별 kakao_pfid는 실발송에 사용하지 않는다.
+    모든 알림톡은 시스템 기본 PFID만 사용한다.
     """
-    if is_messaging_disabled(tenant_id):
-        return {"pf_id": "", "use_default": True}
-    pf_id_tenant = ""
-    if tenant_id is not None:
-        try:
-            from apps.domains.messaging.credit_services import get_tenant_messaging_info
-            info = get_tenant_messaging_info(int(tenant_id))
-            if info:
-                pf_id_tenant = (info.get("kakao_pfid") or "").strip()
-        except Exception as e:
-            logger.warning("resolve_kakao_channel get_tenant_messaging_info failed: %s", e)
     default_pf_id = (getattr(settings, "SOLAPI_KAKAO_PF_ID", None) or "").strip()
-    if pf_id_tenant:
-        return {"pf_id": pf_id_tenant, "use_default": False}
     return {"pf_id": default_pf_id or "", "use_default": True}
 
 
@@ -379,12 +361,11 @@ def resolve_messaging_provider(tenant_id: int, message_type: str) -> dict:
           {"allowed": True, "pf_id": str, "use_default": bool, "provider": str}
     """
     tenant_id = int(tenant_id)
-    provider = get_tenant_provider(tenant_id)
+    provider = get_tenant_provider(get_owner_tenant_id())
     if message_type == "sms":
-        allowed = can_send_sms(tenant_id)
         return {
-            "allowed": allowed,
-            "reason": None if allowed else "sms_not_allowed",
+            "allowed": False,
+            "reason": "sms_disabled",
             "provider": provider,
         }
     if message_type == "alimtalk":
@@ -398,11 +379,20 @@ def resolve_messaging_provider(tenant_id: int, message_type: str) -> dict:
     return {"allowed": False, "reason": "unknown_message_type", "provider": provider}
 
 
-def send_alimtalk_via_owner(trigger: str, to: str, replacements: dict[str, str]) -> bool:
+def send_alimtalk_via_owner(
+    trigger: str,
+    to: str,
+    replacements: dict[str, str],
+    *,
+    source_tenant_id: int | None = None,
+    log_target_type: str = "account",
+    log_target_id: int | str | None = None,
+    log_target_name: str = "",
+) -> bool:
     """
     오너 테넌트의 승인된 알림톡 템플릿으로 발송.
     모든 테넌트에서 학생 인증 관련 알림톡은 이 함수를 사용.
-    SMS fallback 없음 — 알림톡 온리.
+    SMS fallback / 템플릿 fallback / tenant별 채널 fallback 없음.
 
     Args:
         trigger: AutoSendConfig trigger (예: "password_find_otp")
@@ -425,31 +415,9 @@ def send_alimtalk_via_owner(trigger: str, to: str, replacements: dict[str, str])
     t = config.template if config else None
     solapi_id = (t.solapi_template_id or "").strip() if t else ""
 
-    # 승인된 템플릿이 없으면 fallback 트리거 시도
-    # 비번 리셋 → 가입 승인 템플릿 재활용 (같은 플레이스홀더)
-    FALLBACK_TRIGGERS = {
-        "password_reset_student": "registration_approved_student",
-        "password_reset_parent": "registration_approved_parent",
-        "password_find_otp": "registration_approved_student",
-    }
-    if not solapi_id or (t and t.solapi_status != "APPROVED"):
-        fallback_trigger = FALLBACK_TRIGGERS.get(trigger)
-        if fallback_trigger:
-            fb_config = get_auto_send_config(owner_id, fallback_trigger)
-            if fb_config and fb_config.template:
-                fb_t = fb_config.template
-                fb_id = (fb_t.solapi_template_id or "").strip()
-                if fb_id and fb_t.solapi_status == "APPROVED":
-                    logger.info(
-                        "send_alimtalk_via_owner: fallback %s → %s (template=%s)",
-                        trigger, fallback_trigger, fb_id,
-                    )
-                    t = fb_t
-                    solapi_id = fb_id
-
     if not t or not solapi_id or t.solapi_status != "APPROVED":
         logger.error(
-            "send_alimtalk_via_owner: no approved template trigger=%s owner=%s",
+            "send_alimtalk_via_owner: no exact approved owner template trigger=%s owner=%s",
             trigger, owner_id,
         )
         return False
@@ -484,9 +452,10 @@ def send_alimtalk_via_owner(trigger: str, to: str, replacements: dict[str, str])
             template_id=solapi_id,
             alimtalk_replacements=alimtalk_replacements,
             event_type=trigger,
-            target_type="account",
-            target_id=target_id,
-            target_name=target_name,
+            target_type=log_target_type or "account",
+            target_id=log_target_id if log_target_id is not None else target_id,
+            target_name=log_target_name or target_name,
+            source_tenant_id=source_tenant_id,
         )
     except Exception as exc:
         logger.error("send_alimtalk_via_owner: enqueue failed trigger=%s error=%s", trigger, exc)

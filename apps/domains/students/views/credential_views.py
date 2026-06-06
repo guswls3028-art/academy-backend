@@ -53,7 +53,7 @@ class SendExistingCredentialsView(APIView):
         except AccountRecoveryValidationError as e:
             return Response({"detail": e.detail}, status=400)
 
-        message = "입력한 정보가 등록되어 있다면 해당 번호로 아이디와 임시 비밀번호가 발송됩니다."
+        message = "입력한 정보가 등록되어 있다면 해당 번호로 아이디와 임시 비밀번호 알림톡이 발송됩니다."
         account = resolve_recovery_account(
             tenant=tenant,
             target=target,

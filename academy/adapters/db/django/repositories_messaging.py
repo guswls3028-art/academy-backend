@@ -21,6 +21,10 @@ def create_notification_log(
     message_mode: str = "",
     sqs_message_id: str = "",
     notification_type: str = "",
+    source_tenant_id: int | None = None,
+    target_type: str = "",
+    target_id: int | str | None = None,
+    target_name: str = "",
 ) -> bool:
     """
     NotificationLog 1건 생성. Worker에서 직접 ORM 접근 대신 이 함수만 사용.
@@ -53,6 +57,10 @@ def create_notification_log(
         message_mode=message_mode[:20] if message_mode else "",
         sqs_message_id=sqs_message_id[:128] if sqs_message_id else "",
         notification_type=notification_type[:30] if notification_type else "",
+        source_tenant_id=source_tenant_id,
+        target_type=target_type[:30] if target_type else "",
+        target_id=str(target_id)[:80] if target_id is not None else "",
+        target_name=target_name[:80] if target_name else "",
     )
     return True
 
@@ -63,6 +71,10 @@ def claim_notification_slot(
     business_idempotency_key: str,
     sqs_message_id: str = "",
     recipient_summary: str = "",
+    source_tenant_id: int | None = None,
+    target_type: str = "",
+    target_id: int | str | None = None,
+    target_name: str = "",
     stale_after_seconds: int = 300,
 ) -> tuple[bool, int | None]:
     """
@@ -91,6 +103,10 @@ def claim_notification_slot(
                 amount_deducted=Decimal("0"),
                 recipient_summary=recipient_summary[:500] if recipient_summary else "",
                 sqs_message_id=sqs_message_id[:128] if sqs_message_id else "",
+                source_tenant_id=source_tenant_id,
+                target_type=target_type[:30] if target_type else "",
+                target_id=str(target_id)[:80] if target_id is not None else "",
+                target_name=target_name[:80] if target_name else "",
             )
         return True, log.id
     except IntegrityError:
@@ -119,6 +135,10 @@ def claim_notification_slot(
                     failure_reason="",
                     sqs_message_id=sqs_message_id[:128],
                     recipient_summary=recipient_summary[:500] if recipient_summary else "",
+                    source_tenant_id=source_tenant_id,
+                    target_type=target_type[:30] if target_type else "",
+                    target_id=str(target_id)[:80] if target_id is not None else "",
+                    target_name=target_name[:80] if target_name else "",
                 )
                 if updated == 1:
                     return True, existing.id
@@ -132,6 +152,10 @@ def claim_notification_slot(
                 failure_reason="",
                 sqs_message_id=sqs_message_id[:128],
                 recipient_summary=recipient_summary[:500] if recipient_summary else "",
+                source_tenant_id=source_tenant_id,
+                target_type=target_type[:30] if target_type else "",
+                target_id=str(target_id)[:80] if target_id is not None else "",
+                target_name=target_name[:80] if target_name else "",
             )
             if updated == 1:
                 return True, existing.id

@@ -22,6 +22,13 @@ from apps.domains.students.models import Student
 
 RECOVERY_MODES = ("username", "password")
 RECOVERY_TARGETS = ("student", "parent")
+ACCOUNT_NOTIFICATION_TYPES = (
+    "registration_approved_student",
+    "registration_approved_parent",
+    "password_find_otp",
+    "password_reset_student",
+    "password_reset_parent",
+)
 
 
 class AccountRecoveryError(Exception):
@@ -152,12 +159,46 @@ def _send_owner_alimtalk(
     trigger: str,
     to: str,
     replacements: dict[str, str],
+    log_target_id: str,
+    log_target_name: str,
 ) -> bool:
     from apps.domains.messaging.policy import send_alimtalk_via_owner
 
     if _account_recovery_delivery_disabled(source_tenant_id):
         return True
-    return send_alimtalk_via_owner(trigger=trigger, to=to, replacements=replacements)
+    return send_alimtalk_via_owner(
+        trigger=trigger,
+        to=to,
+        replacements=replacements,
+        source_tenant_id=source_tenant_id,
+        log_target_type="account",
+        log_target_id=log_target_id,
+        log_target_name=log_target_name,
+    )
+
+
+def _log_target_id(account: RecoveryAccount) -> str:
+    if account.target == "parent":
+        return f"parent:{account.student.id}:{account.send_to}"
+    return f"student:{account.student.id}"
+
+
+def _password_replacements(account: RecoveryAccount, password: str) -> dict[str, str]:
+    notice = "로그인 후 설정에서 비밀번호를 변경하실 수 있습니다."
+    replacements = {
+        "학생이름": account.display_name or "",
+        "학생아이디": account.display_username or "",
+        "학생비밀번호": password,
+        "아이디": account.display_username or "",
+        "임시비밀번호": password,
+        "비밀번호안내": notice,
+        "사이트링크": _site_url(),
+    }
+    if account.target == "parent":
+        replacements["학생이름"] = account.student.name or ""
+        replacements["학부모아이디"] = account.display_username or ""
+        replacements["학부모비밀번호"] = password
+    return replacements
 
 
 def send_username_recovery(account: RecoveryAccount) -> None:
@@ -178,6 +219,8 @@ def send_username_recovery(account: RecoveryAccount) -> None:
                 "사이트링크": _site_url(),
                 "비밀번호안내": notice,
             },
+            log_target_id=_log_target_id(account),
+            log_target_name=account.student.name or account.display_name,
         )
     else:
         ok = _send_owner_alimtalk(
@@ -191,6 +234,8 @@ def send_username_recovery(account: RecoveryAccount) -> None:
                 "사이트링크": _site_url(),
                 "비밀번호안내": notice,
             },
+            log_target_id=_log_target_id(account),
+            log_target_name=account.student.name or account.display_name,
         )
 
     if not ok:
@@ -217,29 +262,169 @@ def send_password_recovery(account: RecoveryAccount, *, temp_password: str | Non
     previous_pending = snapshot_pending_password_reset(user)
     create_pending_password_reset(user, password)
 
-    notice = "로그인 후 설정에서 비밀번호를 변경하실 수 있습니다."
     trigger = "password_reset_parent" if account.target == "parent" else "password_reset_student"
-    replacements = {
-        "학생이름": account.display_name or "",
-        "학생아이디": account.display_username or "",
-        "학생비밀번호": password,
-        "아이디": account.display_username or "",
-        "임시비밀번호": password,
-        "비밀번호안내": notice,
-        "사이트링크": _site_url(),
-    }
-    if account.target == "parent":
-        replacements["학생이름"] = account.student.name or ""
-        replacements["학부모아이디"] = account.display_username or ""
-        replacements["학부모비밀번호"] = password
 
     if _send_owner_alimtalk(
         source_tenant_id=account.student.tenant_id,
         trigger=trigger,
         to=account.send_to,
-        replacements=replacements,
+        replacements=_password_replacements(account, password),
+        log_target_id=_log_target_id(account),
+        log_target_name=account.student.name or account.display_name,
     ):
         return
 
     restore_pending_password_reset(user, previous_pending)
     raise AccountRecoveryDeliveryError("임시 비밀번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+
+
+def resolve_staff_password_reset_account(
+    *,
+    tenant,
+    target: str,
+    student_name: str,
+    student_ps_number: str = "",
+    student_phone: str = "",
+    parent_phone: str = "",
+) -> RecoveryAccount:
+    target = str(target or "").strip().lower()
+    name = str(student_name or "").strip()
+    student_ps_number = str(student_ps_number or "").strip()
+    student_phone = normalize_recovery_phone(student_phone)
+    parent_phone = normalize_recovery_phone(parent_phone)
+
+    if target not in RECOVERY_TARGETS:
+        raise AccountRecoveryValidationError("대상을 선택해 주세요. (학생 / 학부모)")
+    if not name:
+        raise AccountRecoveryValidationError("학생 이름을 입력해 주세요.")
+
+    if target == "student":
+        if not student_ps_number and not student_phone:
+            raise AccountRecoveryValidationError("학생 아이디 또는 학생 전화번호를 입력해 주세요.")
+        qs = Student.objects.filter(
+            tenant=tenant,
+            deleted_at__isnull=True,
+            name__iexact=name,
+        ).select_related("user")
+        if student_ps_number:
+            student = qs.filter(ps_number=student_ps_number).first()
+        else:
+            matches = list(qs.filter(Q(phone=student_phone) | Q(parent_phone=student_phone)).order_by("id")[:2])
+            if len(matches) > 1:
+                raise AccountRecoveryValidationError("동명이인 또는 공유번호가 있어 학생 아이디로 다시 시도해 주세요.")
+            student = matches[0] if matches else None
+        if not student or not getattr(student, "user_id", None):
+            raise AccountRecoveryValidationError("해당 학생 정보를 찾을 수 없습니다.")
+
+        send_to = normalize_recovery_phone(student.phone) or normalize_recovery_phone(student.parent_phone)
+        if not send_to:
+            raise AccountRecoveryValidationError("등록된 휴대번호가 없어 발송할 수 없습니다. 학원에 문의해 주세요.")
+        return RecoveryAccount(
+            target="student",
+            student=student,
+            user=student.user,
+            send_to=send_to,
+            display_name=student.name or name,
+            display_username=student.ps_number or user_display_username(student.user),
+        )
+
+    if not parent_phone:
+        raise AccountRecoveryValidationError("학부모 전화번호를 010 11자리로 입력해 주세요.")
+
+    account = resolve_recovery_account(
+        tenant=tenant,
+        target="parent",
+        name=name,
+        phone=parent_phone,
+    )
+    if account is None:
+        raise AccountRecoveryValidationError("해당 학생 이름과 학부모 전화번호로 등록된 정보가 없습니다.")
+    return account
+
+
+def reset_staff_password(
+    account: RecoveryAccount,
+    *,
+    temp_password: str | None = None,
+    skip_notify: bool = False,
+) -> str:
+    password = (temp_password or "").strip() or generate_temp_password()
+    if len(password) < 4:
+        raise AccountRecoveryValidationError("임시 비밀번호는 최소 4자 이상이어야 합니다.")
+
+    from apps.core.services.password import (
+        clear_pending_password_reset,
+        force_reset_password,
+        restore_pending_password_reset,
+        rollback_password,
+        snapshot_pending_password_reset,
+    )
+
+    user = account.user
+    previous_password_hash = user.password
+    previous_must_change_password = bool(getattr(user, "must_change_password", False))
+    previous_pending = snapshot_pending_password_reset(user)
+
+    force_reset_password(user, password)
+    clear_pending_password_reset(user)
+
+    if skip_notify:
+        return "비밀번호가 변경되었습니다. (알림톡 미발송)"
+
+    if _account_recovery_delivery_disabled(account.student.tenant_id):
+        return "임시 비밀번호가 발송되었습니다. (테스트 환경에서는 실제 발송이 생략됩니다.)"
+
+    trigger = "password_reset_parent" if account.target == "parent" else "password_reset_student"
+    if _send_owner_alimtalk(
+        source_tenant_id=account.student.tenant_id,
+        trigger=trigger,
+        to=account.send_to,
+        replacements=_password_replacements(account, password),
+        log_target_id=_log_target_id(account),
+        log_target_name=account.student.name or account.display_name,
+    ):
+        return "임시 비밀번호가 발송되었습니다. 알림톡을 확인해 주세요."
+
+    rollback_password(
+        user,
+        previous_password_hash,
+        must_change_password=previous_must_change_password,
+    )
+    restore_pending_password_reset(user, previous_pending)
+    raise AccountRecoveryDeliveryError("임시 비밀번호 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+
+
+def list_recent_account_notification_logs(student: Student, *, limit: int = 5) -> list[dict[str, object]]:
+    from apps.domains.messaging.models import NotificationLog
+    from apps.domains.messaging.policy import get_owner_tenant_id
+
+    target_ids = [f"student:{student.id}"]
+    parent_phone = normalize_recovery_phone(student.parent_phone)
+    if parent_phone:
+        target_ids.append(f"parent:{student.id}:{parent_phone}")
+
+    qs = (
+        NotificationLog.objects
+        .filter(
+            tenant_id=get_owner_tenant_id(),
+            source_tenant_id=student.tenant_id,
+            target_type="account",
+            target_id__in=target_ids,
+            notification_type__in=ACCOUNT_NOTIFICATION_TYPES,
+        )
+        .order_by("-sent_at")[: max(1, min(int(limit), 20))]
+    )
+    return [
+        {
+            "id": log.id,
+            "sent_at": log.sent_at,
+            "success": log.success,
+            "status": log.status or ("sent" if log.success else "failed"),
+            "notification_type": log.notification_type or "",
+            "recipient_summary": log.recipient_summary or "",
+            "failure_reason": log.failure_reason or "",
+            "target_id": log.target_id or "",
+            "target_name": log.target_name or "",
+        }
+        for log in qs
+    ]

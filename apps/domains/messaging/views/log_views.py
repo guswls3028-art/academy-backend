@@ -42,6 +42,10 @@ class NotificationLogListView(APIView):
                 "failure_reason": r.failure_reason or "",
                 "message_body": r.message_body or "",
                 "message_mode": r.message_mode or "",
+                "source_tenant_id": r.source_tenant_id,
+                "target_type": r.target_type or "",
+                "target_id": r.target_id or "",
+                "target_name": r.target_name or "",
             }
             for r in qs
         ]
@@ -68,4 +72,8 @@ class NotificationLogDetailView(APIView):
             "failure_reason": log.failure_reason or "",
             "message_body": log.message_body or "",
             "message_mode": log.message_mode or "",
+            "source_tenant_id": log.source_tenant_id,
+            "target_type": log.target_type or "",
+            "target_id": log.target_id or "",
+            "target_name": log.target_name or "",
         })

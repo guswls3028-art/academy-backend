@@ -3,7 +3,7 @@
 SQS 큐 기반 메시지 발송.
 
 `enqueue_sms`는 기존 public API 이름이며, 실제로는 message_mode에 따라
-SMS 또는 알림톡을 큐에 넣는다.
+알림톡만 큐에 넣는다. SMS/LMS 실발송은 정책상 금지되어 있다.
 """
 
 import logging
@@ -26,6 +26,7 @@ def enqueue_sms(
     target_type: Optional[str] = None,
     target_id: Optional[int | str] = None,
     target_name: Optional[str] = None,
+    source_tenant_id: Optional[int] = None,
     occurrence_key: Optional[str] = None,
     source_domain: Optional[str] = None,
     source_use_case: Optional[str] = None,
@@ -33,20 +34,21 @@ def enqueue_sms(
     actor_id: Optional[int | str] = None,
 ) -> bool:
     """
-    메시지(SMS/알림톡)를 SQS에 넣어 워커가 비동기로 발송하도록 함.
+    알림톡을 SQS에 넣어 워커가 비동기로 발송하도록 함.
 
     Args:
-        tenant_id: 테넌트 ID (워커에서 잔액/PFID 조회)
+        tenant_id: 업무 테넌트 ID. 알림톡 큐 payload는 공용 오너 테넌트로 정규화한다.
         to: 수신 번호
         text: 본문
         sender: 발신 번호
         reservation_id: 예약 ID 있으면 워커에서 취소 여부 Double Check 후 발송/스킵
-        message_mode: "sms" | "alimtalk" (기본값: alimtalk)
+        message_mode: "alimtalk"만 허용 (기본값: alimtalk)
         alimtalk_replacements: 알림톡 템플릿 치환
         template_id: 알림톡 템플릿 ID (선택)
         event_type: 비즈니스 이벤트 유형 (멱등성 키용, 예: "check_in_complete")
         target_type: 대상 유형 (예: "student")
         target_id: 대상 ID (예: student.id)
+        source_tenant_id: 오너 대리발송일 때 실제 업무 테넌트 ID
         occurrence_key: 이벤트 발생 식별자 (예: "20260328_session_42"). 동일 이벤트 재전송 방지.
         source_domain/source_use_case/domain_object_id/actor_id: 추적용 발송 원천 메타데이터.
 
@@ -54,17 +56,25 @@ def enqueue_sms(
         bool: enqueue 성공 여부
     """
     from apps.domains.messaging.sqs_queue import MessagingSQSQueue
-    from apps.domains.messaging.policy import can_send_sms, MessagingPolicyError, is_messaging_disabled, check_recipient_allowed, is_messaging_restricted
+    from apps.domains.messaging.policy import (
+        MessagingPolicyError,
+        check_recipient_allowed,
+        get_owner_tenant_id,
+        is_messaging_disabled,
+        is_messaging_restricted,
+    )
+
+    original_tenant_id = int(tenant_id)
 
     # 로컬 테스트용 tenant(9999): 알림톡·문자 없이 기능만 동작 (발송 스킵)
-    if is_messaging_disabled(tenant_id):
-        logger.info("enqueue_sms skipped: tenant_id=%s is test tenant (messaging disabled)", tenant_id)
+    if is_messaging_disabled(original_tenant_id):
+        logger.info("enqueue_sms skipped: tenant_id=%s is test tenant (messaging disabled)", original_tenant_id)
         return False
 
     # 제한 테넌트: 계정 관련(registration/password) 외 메시징 차단
     # 계정 관련 발송은 OWNER_TENANT_ID로 enqueue되므로 여기서 차단되지 않음
-    if is_messaging_restricted(tenant_id):
-        logger.info("enqueue_sms blocked: tenant_id=%s messaging restricted (account-only)", tenant_id)
+    if is_messaging_restricted(original_tenant_id):
+        logger.info("enqueue_sms blocked: tenant_id=%s messaging restricted (account-only)", original_tenant_id)
         return False
 
     # Recipient whitelist guard (테스트 모드 시 허용 번호만 발송)
@@ -76,24 +86,18 @@ def enqueue_sms(
     if mode not in ("sms", "alimtalk"):
         mode = "alimtalk"
 
-    if mode == "sms" and (event_type or "").strip() == "video_encoding_complete":
-        logger.error(
-            "enqueue_sms blocked: video_encoding_complete must use alimtalk only (tenant_id=%s)",
-            tenant_id,
-        )
-        return False
-
-    # SMS 모드: 자체 키 보유 또는 OWNER 테넌트만 허용
     if mode == "sms":
-        if not can_send_sms(tenant_id):
-            logger.warning(
-                "enqueue_sms blocked by policy: tenant_id=%s cannot send SMS (no own credentials, not owner)",
-                tenant_id,
-            )
-            raise MessagingPolicyError(
-                "SMS 발송을 위해서는 자체 발송 계정을 연동하거나 운영자에게 문의하세요.",
-                reason="sms_not_allowed",
-            )
+        logger.error("enqueue_sms blocked: SMS/LMS sending is disabled service-wide (tenant_id=%s)", original_tenant_id)
+        raise MessagingPolicyError(
+            "SMS 발송은 사용하지 않습니다. 공용 알림톡만 발송할 수 있습니다.",
+            reason="sms_disabled",
+        )
+
+    owner_id = int(get_owner_tenant_id())
+    if source_tenant_id is None and original_tenant_id != owner_id:
+        source_tenant_id = original_tenant_id
+    tenant_id = owner_id
+    sender = None
 
     queue = MessagingSQSQueue()
     return queue.enqueue(
@@ -109,6 +113,7 @@ def enqueue_sms(
         target_type=target_type,
         target_id=target_id,
         target_name=target_name,
+        source_tenant_id=source_tenant_id,
         occurrence_key=occurrence_key,
         source_domain=source_domain,
         source_use_case=source_use_case,

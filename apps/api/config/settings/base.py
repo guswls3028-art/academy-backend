@@ -404,12 +404,12 @@ R2_ADMIN_PUBLIC_BASE_URL = os.getenv("R2_ADMIN_PUBLIC_BASE_URL", R2_PUBLIC_BASE_
 SITE_URL = os.getenv("SITE_URL", "")  # 예: https://academy.example.com
 
 # ==================================================
-# SOLAPI (SMS/LMS 발송) — 환경변수 권장, 코드에 키 노출 금지
+# SOLAPI (공용 알림톡 발송) — 환경변수 권장, 코드에 키 노출 금지
 # ==================================================
 
 SOLAPI_API_KEY = os.getenv("SOLAPI_API_KEY", "")
 SOLAPI_API_SECRET = os.getenv("SOLAPI_API_SECRET", "")
-SOLAPI_SENDER = os.getenv("SOLAPI_SENDER", "")  # 발신 번호 (예: 01012345678)
+SOLAPI_SENDER = os.getenv("SOLAPI_SENDER", "")  # 공용 알림톡 발신 번호 (예: 01012345678)
 # 알림톡: 카카오 검수 완료 템플릿만 ENV로 관리 (코드 수정 없이 교체)
 SOLAPI_KAKAO_PF_ID = os.getenv("SOLAPI_KAKAO_PF_ID", "")
 SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
@@ -422,13 +422,13 @@ VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "")
 VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
 VAPID_CONTACT_EMAIL = os.getenv("VAPID_CONTACT_EMAIL", "devhyun7466@gmail.com")
 
-# SMS 허용 tenant (내 테넌트). 해당 tenant에서만 문자(SMS/LMS) 발송 가능.
+# 공용 알림톡 owner tenant. SMS/LMS 실발송 허용 용도가 아니다.
 OWNER_TENANT_ID = int(os.getenv("OWNER_TENANT_ID", "1"))
 
 # /dev 운영 콘솔 알림 webhook (Slack incoming webhook URL).
 # 비어 있으면 전송 생략 — check_dev_alerts 커맨드는 조건 평가만 수행.
 DEV_ALERTS_WEBHOOK_URL = os.getenv("DEV_ALERTS_WEBHOOK_URL", "")
-# 로컬 기능 테스트용 tenant. 이 tenant에서는 알림톡·문자 발송 없이 기능만 동작.
+# 로컬 기능 테스트용 tenant. 이 tenant에서는 알림톡 발송 없이 기능만 동작.
 TEST_TENANT_ID = int(os.getenv("TEST_TENANT_ID", "9999"))
 
 # delete_r2 전용 SQS (Encoding = Batch ONLY)

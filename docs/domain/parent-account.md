@@ -78,7 +78,7 @@ Body: { "username": "{학부모전화번호}", "password": "{비밀번호}" }
 | `#{학생비밀번호}` | 가입 승인/학생 안내 값 또는 `변경되지 않음` |
 | `#{비밀번호안내}` | 상황별 안내 문구 |
 
-계정/비밀번호 복구 발송 정책은 `send_alimtalk_via_owner()`를 따른다. SMS fallback은 없다.
+계정/비밀번호 복구 발송 정책은 `send_alimtalk_via_owner()`를 따른다. SMS fallback과 템플릿 fallback은 없다.
 학생 직접 등록 welcome 경로와 가입 승인 경로 모두 큐 payload에
 `event_type=registration_approved_student|registration_approved_parent`를 실어
 운영 로그가 계정성 알림으로 분류되게 한다. 이 분류는

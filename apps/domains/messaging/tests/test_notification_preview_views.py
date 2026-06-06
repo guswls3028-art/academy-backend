@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -8,7 +8,7 @@ from apps.core.models.user import user_internal_username
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, NotificationPreviewToken
 from unittest.mock import patch
 
-from apps.domains.messaging.notification_dispatch import execute_notification_batch
+from apps.domains.messaging.notification_dispatch import build_student_list_preview, execute_notification_batch
 from apps.domains.messaging.views_notification import (
     AttendanceNotificationPreviewView,
     ManualNotificationPreviewView,
@@ -253,6 +253,71 @@ class NotificationPreviewViewValidationTests(TestCase):
         payload_recipient = token.payload["recipients"][0]
         self.assertEqual(payload_recipient["student_id"], active_student.id)
         self.assertEqual(payload_recipient["phone_raw"], "01055556666")
+
+    def test_manual_student_list_preview_uses_owner_exact_template_for_non_owner_tenant(self):
+        owner = Tenant.objects.create(code="msg-owner", name="Owner", is_active=True)
+        tenant = Tenant.objects.create(code="msg-child", name="Child", is_active=True)
+        student_user = User.objects.create_user(
+            username=user_internal_username(tenant, "S020"),
+            password="test1234",
+            tenant=tenant,
+            phone="01010102020",
+            name="비오너학생",
+        )
+        student = Student.objects.create(
+            tenant=tenant,
+            user=student_user,
+            ps_number="S020",
+            name="비오너학생",
+            phone="01010102020",
+            parent_phone="01088889999",
+            omr_code="20202020",
+        )
+        tenant_template = MessageTemplate.objects.create(
+            tenant=tenant,
+            category="grades",
+            name="테넌트 성적 안내",
+            subject="",
+            body="테넌트 문구 #{학생이름}",
+            solapi_template_id="TENANT-PENDING",
+            solapi_status="PENDING",
+        )
+        owner_template = MessageTemplate.objects.create(
+            tenant=owner,
+            category="grades",
+            name="오너 성적 안내",
+            subject="",
+            body="오너 검수 문구 #{학생이름}",
+            solapi_template_id="OWNER-APPROVED",
+            solapi_status="APPROVED",
+        )
+        AutoSendConfig.objects.create(
+            tenant=tenant,
+            trigger="owner_exact_manual_notice",
+            template=tenant_template,
+            enabled=True,
+            message_mode="alimtalk",
+        )
+        AutoSendConfig.objects.create(
+            tenant=owner,
+            trigger="owner_exact_manual_notice",
+            template=owner_template,
+            enabled=True,
+            message_mode="alimtalk",
+        )
+
+        with override_settings(OWNER_TENANT_ID=owner.id):
+            preview = build_student_list_preview(
+                tenant,
+                trigger="owner_exact_manual_notice",
+                student_ids=[student.id],
+                send_to="parent",
+            )
+
+        self.assertNotIn("error", preview)
+        self.assertEqual(preview["solapi_template_id"], "OWNER-APPROVED")
+        self.assertEqual(preview["message_template_body"], "오너 검수 문구 #{학생이름}")
+        self.assertEqual(preview["recipients"][0]["message_body"], "오너 검수 문구 비오너학생")
 
 
 class NotificationBatchDispatchPolicyTests(TestCase):

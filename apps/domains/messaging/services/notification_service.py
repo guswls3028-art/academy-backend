@@ -63,7 +63,6 @@ def send_event_notification(
         is_messaging_disabled,
         MessagingPolicyError,
         is_event_dry_run,
-        requires_tenant_auto_send_opt_in,
     )
     from apps.domains.messaging.alimtalk_content_builders import (
         get_solapi_template_id as get_unified_tid,
@@ -85,24 +84,9 @@ def send_event_notification(
         )
         return False
 
-    # 1) 현재 테넌트의 config 조회
+    # 1) 현재 테넌트의 config 조회: enabled/delay/body memo만 사용한다.
+    #    알림톡 검수 템플릿과 PFID는 공용 owner SSOT에서만 resolve한다.
     config = get_auto_send_config(tenant.id, trigger)
-    # 2) 없으면 오너 테넌트 config로 fallback (공용 템플릿 공유)
-    if not config and requires_tenant_auto_send_opt_in(trigger):
-        logger.debug(
-            "send_event_notification skipped: trigger=%s tenant=%s requires explicit tenant opt-in",
-            trigger, tenant.id,
-        )
-        return False
-    if not config:
-        owner_id = get_owner_tenant_id()
-        if int(tenant.id) != owner_id:
-            config = get_auto_send_config(owner_id, trigger)
-            if config:
-                logger.info(
-                    "send_event_notification: owner fallback trigger=%s tenant=%s→owner=%s",
-                    trigger, tenant.id, owner_id,
-                )
     if not config or not config.enabled:
         logger.debug(
             "send_event_notification skipped: trigger=%s tenant=%s (config not found or disabled)",
@@ -110,13 +94,20 @@ def send_event_notification(
         )
         return False
 
-    template = config.template
-    if not template:
+    content_template = config.template
+    if not content_template:
         logger.debug("send_event_notification skipped: trigger=%s no template linked", trigger)
         return False
 
-    solapi_template_id = (template.solapi_template_id or "").strip()
-    solapi_approved = solapi_template_id and template.solapi_status == "APPROVED"
+    owner_id = get_owner_tenant_id()
+    owner_config = get_auto_send_config(owner_id, trigger)
+    owner_template = owner_config.template if owner_config else None
+    owner_solapi_template_id = (owner_template.solapi_template_id or "").strip() if owner_template else ""
+    owner_solapi_approved = bool(
+        owner_template
+        and owner_solapi_template_id
+        and owner_template.solapi_status == "APPROVED"
+    )
 
     effective_mode = (config.message_mode or "alimtalk").strip().lower()
     if effective_mode != "alimtalk":
@@ -131,29 +122,12 @@ def send_event_notification(
     unified_tid = get_unified_tid(trigger)
     use_unified = bool(unified_tid)
 
-    # 알림톡 미승인 시: 통합 템플릿 > 오너 테넌트 승인 템플릿 폴백
-    owner_alimtalk_template_id = ""
-    if not solapi_approved and not use_unified:
-        # 오너 테넌트에서 같은 트리거의 승인 템플릿 조회
-        owner_id = get_owner_tenant_id()
-        if int(tenant.id) != owner_id:
-            owner_config = get_auto_send_config(owner_id, trigger)
-            if owner_config and owner_config.template:
-                ot = owner_config.template
-                ot_id = (ot.solapi_template_id or "").strip()
-                if ot_id and ot.solapi_status == "APPROVED":
-                    owner_alimtalk_template_id = ot_id
-                    logger.info(
-                        "send_event_notification: trigger=%s tenant=%s using owner alimtalk template=%s",
-                        trigger, tenant.id, ot_id,
-                    )
-        if not owner_alimtalk_template_id:
-            if effective_mode == "alimtalk":
-                logger.debug(
-                    "send_event_notification skipped: trigger=%s template not approved (status=%s)",
-                    trigger, template.solapi_status,
-                )
-                return False
+    if not use_unified and not owner_solapi_approved:
+        logger.debug(
+            "send_event_notification skipped: trigger=%s no exact approved owner template",
+            trigger,
+        )
+        return False
 
     # 수신자 전화번호
     phone = None
@@ -181,7 +155,7 @@ def send_event_notification(
     # ── 통합 템플릿 모드: #{선생님메모} + 변수 replacements 빌드 ──
     if use_unified:
         # template.body = #{선생님메모}에 들어갈 안내 문구 (선생님 편집 가능)
-        content_body = (template.body or "").strip()
+        content_body = (content_template.body or "").strip()
 
         # Solapi replacements: 선생님메모 + 학원이름 + 학생이름 + 도메인 변수 + 사이트링크
         replacements = build_unified_replacements(
@@ -201,7 +175,7 @@ def send_event_notification(
         _alimtalk_tid = unified_tid
 
     else:
-        # ── 기존 모드 (가입 안내 등 개별 승인 템플릿) ──
+        # ── 개별 승인 템플릿 모드: owner exact trigger 템플릿만 사용 ──
         replacements = [
             {"key": "학원명", "value": academy_name},
             {"key": "학생이름", "value": name},
@@ -214,18 +188,8 @@ def send_event_notification(
                 continue
             replacements.append({"key": k, "value": str(v)})
 
-        # 오너 폴백 시 #{공지내용} 조합
-        if owner_alimtalk_template_id and not any(r["key"] == "공지내용" for r in replacements):
-            _parts = []
-            for k, v in (context or {}).items():
-                if k.startswith("_") or not str(v).strip():
-                    continue
-                _parts.append(str(v).strip())
-            if _parts:
-                replacements.append({"key": "공지내용", "value": "\n".join(_parts)})
-
         # 메시지 본문 (템플릿 치환)
-        text = (template.body or "").strip()
+        text = (owner_template.body or "").strip()
         all_vars = {
             "학원명": academy_name, "학생이름": name, "학생이름2": name_2,
             "학생이름3": name_3, "사이트링크": site_url,
@@ -240,7 +204,7 @@ def send_event_notification(
         if required_missing:
             logger.error(
                 "send_event_notification BLOCKED: trigger=%s template=%s required_vars missing: %s",
-                trigger, template.name, required_missing,
+                trigger, owner_template.name, required_missing,
             )
             return False
         for opt in _OPTIONAL_VARS:
@@ -248,9 +212,9 @@ def send_event_notification(
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
 
         _enqueue_text = text
-        _alimtalk_tid = solapi_template_id if solapi_approved else owner_alimtalk_template_id
+        _alimtalk_tid = owner_solapi_template_id
 
-    sender = (getattr(tenant, "messaging_sender", "") or "").strip()
+    sender = ""
 
     # 멱등성 키
     student_id = getattr(student, "id", None) or getattr(student, "pk", None)
@@ -275,7 +239,7 @@ def send_event_notification(
 
     target_type = "parent" if send_to == "parent" else "student"
     payload = {
-        "tenant_id": tenant.id,
+        "tenant_id": owner_id,
         "to": phone,
         "text": _enqueue_text,
         "sender": sender,
@@ -286,6 +250,7 @@ def send_event_notification(
         "target_type": target_type,
         "target_id": student_id,
         "target_name": name,
+        "source_tenant_id": tenant.id if int(tenant.id) != int(owner_id) else None,
         "occurrence_key": stable_occurrence,
         "source_domain": source_domain,
         "source_use_case": source_use_case,

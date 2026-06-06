@@ -73,8 +73,8 @@ class SendMessageView(APIView):
         raw_subject = (data.get("raw_subject") or "").strip()
         scheduled_send_at = data.get("scheduled_send_at")
 
-        # 알림톡 전용 정책: 발신번호는 선택값이다.
-        sender = (tenant.messaging_sender or "").strip()
+        # 공용 알림톡 정책: 발신번호는 owner 설정을 worker가 사용한다.
+        sender = ""
 
         from apps.domains.messaging.services import get_tenant_site_url
         from apps.domains.messaging.policy import MessagingPolicyError
@@ -322,7 +322,7 @@ class SendMessageView(APIView):
                 )
             except MessagingPolicyError as e:
                 return Response(
-                    {"detail": str(e) or "문자(SMS) 발송은 내 테넌트에서만 가능합니다."},
+                    {"detail": str(e) or "SMS 발송은 사용하지 않습니다. 공용 알림톡만 발송할 수 있습니다."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
             if dispatch_result == "enqueued":
@@ -405,7 +405,7 @@ class SendMessageView(APIView):
                     unified_template_type = unified_tt
                     solapi_template_id = unified_sid
 
-        # 알림톡 모드에서 템플릿 미선택 시, 자유양식 승인 템플릿 자동 선택 (테넌트 → 오너 fallback)
+        # 알림톡 모드에서 템플릿 미선택 시, 공용 owner 자유양식 승인 템플릿 선택 (fallback 없음)
         if message_mode == "alimtalk" and not solapi_template_id:
             freeform = resolve_freeform_template(tenant.id)
             if freeform:
@@ -507,7 +507,7 @@ class SendMessageView(APIView):
                 )
             except MessagingPolicyError as e:
                 return Response(
-                    {"detail": str(e) or "문자(SMS) 발송은 내 테넌트에서만 가능합니다."},
+                    {"detail": str(e) or "SMS 발송은 사용하지 않습니다. 공용 알림톡만 발송할 수 있습니다."},
                     status=status.HTTP_403_FORBIDDEN,
                 )
             if dispatch_result == "enqueued":

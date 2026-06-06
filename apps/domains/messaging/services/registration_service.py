@@ -12,6 +12,28 @@ logger = logging.getLogger(__name__)
 REGISTRATION_APPROVED_NOTICE = "접속해서 ID·비밀번호를 변경할 수 있습니다."
 
 
+def _student_account_target_id(student) -> str:
+    student_pk = getattr(student, "id", None) or getattr(student, "pk", None)
+    if student_pk:
+        return f"student:{int(student_pk)}"
+    return (getattr(student, "ps_number", "") or "").strip()
+
+
+def _parent_account_target_id(student, parent_phone: str) -> str:
+    student_pk = getattr(student, "id", None) or getattr(student, "pk", None)
+    if student_pk and parent_phone:
+        return f"parent:{int(student_pk)}:{parent_phone}"
+    return parent_phone
+
+
+def _account_target_id_from_pk(student_pk: int | None, fallback: str, *, parent_phone: str = "") -> str:
+    if student_pk:
+        if parent_phone:
+            return f"parent:{int(student_pk)}:{parent_phone}"
+        return f"student:{int(student_pk)}"
+    return fallback
+
+
 def send_welcome_messages(
     *,
     created_students: list,
@@ -59,18 +81,12 @@ def send_welcome_messages(
     # 셀프가입 승인과 동일한 템플릿 resolve (학생용, 학부모용 각각)
     def _resolve(trigger: str):
         from apps.domains.messaging.selectors import get_auto_send_config
-        from apps.domains.messaging.models import MessageTemplate
         config = get_auto_send_config(owner_id, trigger)
         if config and config.enabled and config.template:
             t = config.template
             sid = (t.solapi_template_id or "").strip()
             if sid and t.solapi_status == "APPROVED":
                 return t, sid
-        t = MessageTemplate.objects.filter(
-            tenant_id=owner_id, category="signup", solapi_status="APPROVED",
-        ).exclude(solapi_template_id="").order_by("pk").first()
-        if t:
-            return t, (t.solapi_template_id or "").strip()
         return None, None
 
     tmpl_student, sid_student = _resolve("registration_approved_student")
@@ -110,8 +126,9 @@ def send_welcome_messages(
                     alimtalk_replacements=[{"key": k, "value": v} for k, v in replacements.items()],
                     event_type="registration_approved_student",
                     target_type="account",
-                    target_id=ps_number,
+                    target_id=_student_account_target_id(student),
                     target_name=name,
+                    source_tenant_id=tenant_id,
                     source_domain="students",
                     source_use_case="students.welcome.student",
                 )
@@ -153,8 +170,9 @@ def send_welcome_messages(
                     alimtalk_replacements=[{"key": k, "value": v} for k, v in replacements.items()],
                     event_type="registration_approved_parent",
                     target_type="account",
-                    target_id=parent_phone,
+                    target_id=_parent_account_target_id(student, parent_phone),
                     target_name=name,
+                    source_tenant_id=tenant_id,
                     source_domain="students",
                     source_use_case="students.welcome.parent",
                 )
@@ -177,9 +195,10 @@ def send_registration_approved_messages(
     student_password: str,
     parent_phone: str,
     parent_password: str,
+    student_pk: int | None = None,
 ) -> dict:
     """
-    가입 신청 승인 시 학생·학부모에게 알림톡/SMS 발송.
+    가입 신청 승인 시 학생·학부모에게 공용 알림톡 발송.
 
     - 학생용: 트리거 registration_approved_student 템플릿 사용
       플레이스홀더: #{학생이름}, #{학생아이디}, #{학생비밀번호}, #{사이트링크}, #{비밀번호안내}
@@ -190,7 +209,6 @@ def send_registration_approved_messages(
     """
     from apps.domains.messaging.selectors import get_auto_send_config
     from apps.domains.messaging.policy import MessagingPolicyError
-    from apps.domains.messaging.models import MessageTemplate
     from .queue_service import enqueue_sms
 
     sent = 0
@@ -200,28 +218,15 @@ def send_registration_approved_messages(
     notice = REGISTRATION_APPROVED_NOTICE
 
     def _resolve_template(trigger: str):
-        """오너 테넌트의 승인된 템플릿 사용 (모든 테넌트 공통). SMS fallback 없음."""
+        """오너 테넌트의 exact trigger 승인 템플릿만 사용. fallback 없음."""
         from apps.domains.messaging.policy import get_owner_tenant_id
         owner_id = get_owner_tenant_id()
-        # 1) 오너 테넌트의 AutoSendConfig
         config = get_auto_send_config(owner_id, trigger)
         if config and config.enabled and config.template:
             t = config.template
             solapi_id = (t.solapi_template_id or "").strip()
             if solapi_id and t.solapi_status == "APPROVED":
                 return t, solapi_id, "alimtalk"
-        # 2) 오너 테넌트의 승인된 signup 카테고리 템플릿 자동 발견
-        t = MessageTemplate.objects.filter(
-            tenant_id=owner_id,
-            category="signup",
-            solapi_status="APPROVED",
-        ).exclude(solapi_template_id="").order_by("pk").first()
-        if t:
-            logger.info(
-                "send_registration_approved fallback: trigger=%s using owner template=%s (id=%s)",
-                trigger, t.name, t.solapi_template_id,
-            )
-            return t, (t.solapi_template_id or "").strip(), "alimtalk"
         return None, None, "alimtalk"
 
     replacements_base = {
@@ -258,8 +263,9 @@ def send_registration_approved_messages(
                     alimtalk_replacements=alimtalk_replacements,
                     event_type="registration_approved_student",
                     target_type="account",
-                    target_id=student_id,
+                    target_id=_account_target_id_from_pk(student_pk, student_id),
                     target_name=student_name,
+                    source_tenant_id=tenant_id,
                     source_domain="students",
                     source_use_case="students.registration_approved.student",
                 ):
@@ -304,8 +310,13 @@ def send_registration_approved_messages(
                     alimtalk_replacements=alimtalk_replacements,
                     event_type="registration_approved_parent",
                     target_type="account",
-                    target_id=parent_id_display,
+                    target_id=_account_target_id_from_pk(
+                        student_pk,
+                        parent_id_display,
+                        parent_phone=parent_phone,
+                    ),
                     target_name=student_name,
+                    source_tenant_id=tenant_id,
                     source_domain="students",
                     source_use_case="students.registration_approved.parent",
                 ):

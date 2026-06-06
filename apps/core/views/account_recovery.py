@@ -17,8 +17,8 @@ from apps.domains.students.services.account_recovery import (
 
 
 GENERIC_MESSAGES = {
-    "username": "입력한 정보가 등록되어 있다면 해당 번호로 아이디 안내가 발송됩니다.",
-    "password": "입력한 정보가 등록되어 있다면 해당 번호로 임시 비밀번호가 발송됩니다.",
+    "username": "입력한 정보가 등록되어 있다면 해당 번호로 아이디 안내 알림톡이 발송됩니다.",
+    "password": "입력한 정보가 등록되어 있다면 해당 번호로 임시 비밀번호 알림톡이 발송됩니다.",
 }
 
 

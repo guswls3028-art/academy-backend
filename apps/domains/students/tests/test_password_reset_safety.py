@@ -9,11 +9,13 @@ from rest_framework_simplejwt.tokens import AccessToken
 from apps.core.models import PendingPasswordReset, Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.core.services.password import generate_temp_password
+from apps.domains.messaging.models import NotificationLog
 from apps.domains.students.models import Student
 from apps.domains.students.views.credential_views import SendExistingCredentialsView
 from apps.domains.students.views.password_views import (
     _pw_reset_cache_key,
     StudentPasswordFindRequestView,
+    StudentPasswordFindVerifyView,
     StudentPasswordResetSendView,
 )
 
@@ -45,6 +47,144 @@ class StudentPasswordResetSafetyTests(TestCase):
         request = self.factory.post(path, data, format="json")
         request.tenant = self.tenant
         return view_class.as_view()(request)
+
+    def _staff_auth_headers(self, *, role: str = "teacher") -> dict[str, str]:
+        User = get_user_model()
+        staff = User.objects.create_user(
+            username=user_internal_username(self.tenant, f"{role}01"),
+            password="staffpw123",
+            tenant=self.tenant,
+            token_version=0,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=staff, role=role)
+        token = AccessToken.for_user(staff)
+        token["tenant_id"] = self.tenant.id
+        token["token_version"] = 0
+        return {
+            "HTTP_HOST": "api.hakwonplus.com",
+            "HTTP_X_TENANT_CODE": self.tenant.code,
+            "HTTP_AUTHORIZATION": f"Bearer {str(token)}",
+        }
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def test_teacher_can_reset_student_password_by_ps_number_without_notify(self):
+        response = APIClient().post(
+            "/api/v1/students/password_reset_send/",
+            {
+                "target": "student",
+                "student_name": self.student.name,
+                "student_ps_number": self.student.ps_number,
+                "temp_password": "4444",
+                "skip_notify": True,
+            },
+            format="json",
+            **self._staff_auth_headers(role="teacher"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("4444"))
+        self.assertTrue(self.user.must_change_password)
+        self.assertEqual(self.user.token_version, 1)
+        self.assertFalse(PendingPasswordReset.objects.filter(user=self.user).exists())
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def test_teacher_can_reset_student_password_by_student_phone_without_notify(self):
+        response = APIClient().post(
+            "/api/v1/students/password_reset_send/",
+            {
+                "target": "student",
+                "student_name": self.student.name,
+                "student_phone": self.student.phone,
+                "temp_password": "5555",
+                "skip_notify": True,
+            },
+            format="json",
+            **self._staff_auth_headers(role="teacher"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("5555"))
+        self.assertTrue(self.user.must_change_password)
+        self.assertEqual(self.user.token_version, 1)
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def test_staff_reset_prefers_ps_number_over_phone_when_both_are_sent(self):
+        User = get_user_model()
+        other_user = User.objects.create_user(
+            username=user_internal_username(self.tenant, "S002"),
+            password="otherpw123",
+            tenant=self.tenant,
+            must_change_password=False,
+            token_version=0,
+        )
+        other_student = Student.objects.create(
+            tenant=self.tenant,
+            user=other_user,
+            ps_number="S002",
+            omr_code="99998888",
+            name=self.student.name,
+            phone="01099998888",
+            parent_phone="01077776666",
+        )
+
+        response = APIClient().post(
+            "/api/v1/students/password_reset_send/",
+            {
+                "target": "student",
+                "student_name": self.student.name,
+                "student_ps_number": self.student.ps_number,
+                "student_phone": other_student.phone,
+                "temp_password": "6666",
+                "skip_notify": True,
+            },
+            format="json",
+            **self._staff_auth_headers(role="teacher"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        other_user.refresh_from_db()
+        self.assertTrue(self.user.check_password("6666"))
+        self.assertFalse(other_user.check_password("6666"))
+        self.assertTrue(other_user.check_password("otherpw123"))
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def test_staff_password_reset_uses_account_recovery_log_metadata(self, send_mock):
+        response = APIClient().post(
+            "/api/v1/students/password_reset_send/",
+            {
+                "target": "student",
+                "student_name": self.student.name,
+                "student_ps_number": self.student.ps_number,
+                "temp_password": "7777",
+            },
+            format="json",
+            **self._staff_auth_headers(role="teacher"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("7777"))
+        kwargs = send_mock.call_args.kwargs
+        self.assertEqual(kwargs["source_tenant_id"], self.tenant.id)
+        self.assertEqual(kwargs["log_target_type"], "account")
+        self.assertEqual(kwargs["log_target_id"], f"student:{self.student.id}")
+        self.assertEqual(kwargs["log_target_name"], self.student.name)
 
     @override_settings(
         ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
@@ -197,7 +337,7 @@ class StudentPasswordResetSafetyTests(TestCase):
         self.assertTrue(PendingPasswordReset.objects.filter(user=self.user).exists())
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
-    def test_password_find_request_resets_previous_failure_counter(self, _send):
+    def test_legacy_password_find_request_is_gone_without_side_effects(self, send_mock):
         key = _pw_reset_cache_key(self.tenant.id, self.student.phone)
         cache.set(f"{key}:fail", 4, timeout=600)
 
@@ -210,27 +350,73 @@ class StudentPasswordResetSafetyTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertIsNone(cache.get(f"{key}:fail"))
-        payload = cache.get(key)
-        self.assertEqual(payload["user_id"], self.user.id)
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(cache.get(f"{key}:fail"), 4)
+        self.assertIsNone(cache.get(key))
+        send_mock.assert_not_called()
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=False)
-    def test_password_find_request_clears_otp_when_send_fails(self, _send):
+    def test_legacy_password_find_verify_is_gone_without_side_effects(self, send_mock):
         key = _pw_reset_cache_key(self.tenant.id, self.student.phone)
+        cache.set(key, {"user_id": self.user.id, "code": "123456"}, timeout=600)
 
         response = self._post(
-            StudentPasswordFindRequestView,
-            "/api/v1/students/password_find/request/",
+            StudentPasswordFindVerifyView,
+            "/api/v1/students/password_find/verify/",
             {
-                "name": self.student.name,
                 "phone": self.student.phone,
+                "code": "123456",
+                "new_password": "7777",
             },
         )
 
-        self.assertEqual(response.status_code, 503)
-        self.assertIsNone(cache.get(key))
+        self.assertEqual(response.status_code, 410)
+        self.assertIsNotNone(cache.get(key))
         self.assertIsNone(cache.get(f"{key}:fail"))
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("oldpw123"))
+        send_mock.assert_not_called()
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def test_student_account_notification_log_endpoint_uses_account_metadata(self):
+        NotificationLog.objects.create(
+            tenant=self.tenant,
+            source_tenant_id=self.tenant.id,
+            target_type="account",
+            target_id=f"student:{self.student.id}",
+            target_name=self.student.name,
+            notification_type="password_reset_student",
+            message_mode="alimtalk",
+            recipient_summary="홍길동 0101****",
+            success=True,
+            status="sent",
+        )
+        NotificationLog.objects.create(
+            tenant=self.tenant,
+            source_tenant_id=self.tenant.id,
+            target_type="account",
+            target_id="student:99999",
+            target_name="다른학생",
+            notification_type="password_reset_student",
+            message_mode="alimtalk",
+            recipient_summary="다른학생 0109****",
+            success=True,
+            status="sent",
+        )
+
+        response = APIClient().get(
+            f"/api/v1/students/{self.student.id}/account-notifications/",
+            **self._staff_auth_headers(role="teacher"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(response.data["results"]), 1)
+        item = response.data["results"][0]
+        self.assertEqual(item["notification_type"], "password_reset_student")
+        self.assertEqual(item["target_id"], f"student:{self.student.id}")
 
     def test_auto_temp_password_is_six_digits(self):
         temp_password = generate_temp_password()

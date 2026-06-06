@@ -1,8 +1,9 @@
 # SSOT 문서: backend/docs/domain/messaging.md, backend/docs/domain/messaging-alimtalk.md
 """
-Messaging Worker - SQS 기반 메시지 발송
+Messaging Worker - SQS 기반 공용 알림톡 발송
 
-SQS academy-messaging-jobs 에서 수신 → Solapi SMS/LMS 발송
+SQS academy-messaging-jobs 에서 수신 → Solapi 공용 알림톡 발송.
+SMS/LMS payload는 legacy 호환용 실패 로그만 남기고 실발송하지 않는다.
 SQS Long Polling + SIGTERM/SIGINT graceful shutdown 패턴.
 """
 
@@ -62,11 +63,11 @@ def _get_template_summary(event_type: str, template_id: str, message_mode: str) 
     trigger = event_type.removeprefix("manual_") if event_type else ""
     label = _TRIGGER_LABELS.get(trigger, "")
     if label:
-        mode = "알림톡" if message_mode == "alimtalk" else "SMS"
+        mode = "알림톡" if message_mode == "alimtalk" else "SMS(blocked)"
         return f"{label} ({mode})"
     if message_mode == "alimtalk" and template_id:
         return f"알림톡"
-    return "SMS" if message_mode == "sms" else message_mode or "SMS"
+    return "SMS(blocked)" if message_mode == "sms" else message_mode or "alimtalk"
 
 
 def _video_encoding_block_reason(event_type: str, message_mode: str, template_id: str) -> str:
@@ -95,13 +96,33 @@ _NON_RETRYABLE_SEND_FAILURES = (
     "sender_required",
     "to_and_text_required",
     "solapi_not_installed",
-    "sms_not_allowed_for_tenant",
+    "sms_disabled",
     "ppurio_not_configured",
     "ppurio_token_failed",
     "ppurio_token_rejected",
     "ppurio_token_client_error",
     "invalid_sender_profile_format",
 )
+
+
+def _normalize_worker_tenants(
+    raw_tenant_id,
+    raw_source_tenant_id,
+    *,
+    owner_tenant_id: int,
+) -> tuple[int, int | None]:
+    """Return (send_tenant_id, source_tenant_id) for common-owner Alimtalk."""
+    send_tenant_id = int(raw_tenant_id)
+    try:
+        source_tenant_id = int(raw_source_tenant_id) if raw_source_tenant_id is not None else None
+    except (TypeError, ValueError):
+        source_tenant_id = None
+
+    if send_tenant_id != int(owner_tenant_id):
+        if source_tenant_id is None:
+            source_tenant_id = send_tenant_id
+        send_tenant_id = int(owner_tenant_id)
+    return send_tenant_id, source_tenant_id
 
 
 def _is_non_retryable_send_failure(reason: str) -> bool:
@@ -509,11 +530,13 @@ def main() -> int:
                         _msg_deleted = True
                         continue
 
-                    # 로컬 기능 테스트용 tenant(9999): 발송·차감 없이 스킵, 메시지 삭제 후 진행
-                    if tenant_id is not None and int(tenant_id) == cfg.TEST_TENANT_ID:
-                        logger.info(
-                            "Message skipped: tenant_id=%s is test tenant (messaging disabled)",
+                    try:
+                        raw_tenant_id_int = int(tenant_id)
+                    except (TypeError, ValueError):
+                        logger.error(
+                            "Message has invalid tenant_id=%r, deleting message_id=%s",
                             tenant_id,
+                            message_id,
                         )
                         queue_client.delete_message(
                             queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
@@ -522,6 +545,46 @@ def main() -> int:
                         _msg_deleted = True
                         continue
 
+                    # 로컬 기능 테스트용 tenant(9999): 발송·차감 없이 스킵, 메시지 삭제 후 진행
+                    if raw_tenant_id_int == cfg.TEST_TENANT_ID:
+                        logger.info(
+                            "Message skipped: tenant_id=%s is test tenant (messaging disabled)",
+                            raw_tenant_id_int,
+                        )
+                        queue_client.delete_message(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                            receipt_handle=receipt_handle,
+                        )
+                        _msg_deleted = True
+                        continue
+
+                    raw_tenant_id = raw_tenant_id_int
+                    source_tenant_id_raw = data.get("source_tenant_id")
+                    tenant_id, source_tenant_id_msg = _normalize_worker_tenants(
+                        raw_tenant_id,
+                        source_tenant_id_raw,
+                        owner_tenant_id=cfg.OWNER_TENANT_ID,
+                    )
+                    business_tenant_id = source_tenant_id_msg or tenant_id
+                    if source_tenant_id_msg == cfg.TEST_TENANT_ID:
+                        logger.info(
+                            "Message skipped: source_tenant_id=%s is test tenant (messaging disabled)",
+                            source_tenant_id_msg,
+                        )
+                        queue_client.delete_message(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                            receipt_handle=receipt_handle,
+                        )
+                        _msg_deleted = True
+                        continue
+                    if int(raw_tenant_id) != int(tenant_id):
+                        logger.warning(
+                            "Messaging worker normalized tenant_id=%s to owner=%s source_tenant_id=%s",
+                            raw_tenant_id,
+                            tenant_id,
+                            source_tenant_id_msg,
+                        )
+
                     # 예약 취소 Double Check: 발송 직전 한 번 더 확인
                     reservation_id = data.get("reservation_id")
                     tenant_id_str = str(tenant_id) if tenant_id else None
@@ -529,7 +592,7 @@ def main() -> int:
                         _record_progress(job_id, "checking", 10, step_index=1, step_percent=100, tenant_id=tenant_id_str)
                         try:
                             from apps.domains.messaging.services import is_reservation_cancelled
-                            if is_reservation_cancelled(int(reservation_id), tenant_id=tenant_id):
+                            if is_reservation_cancelled(int(reservation_id), tenant_id=business_tenant_id):
                                 logger.info("reservation_id=%s cancelled, skip send", reservation_id)
                                 queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
@@ -549,9 +612,11 @@ def main() -> int:
                     text = str(data.get("text", ""))
                     sender = (data.get("sender") or "").strip()
                     target_name = (data.get("target_name") or "").strip()
+                    target_type_msg = (data.get("target_type") or "").strip()
+                    target_id_msg = str(data.get("target_id") or "").strip()
                     message_mode = (data.get("message_mode") or "").strip().lower()
                     if not message_mode or message_mode not in ("sms", "alimtalk"):
-                        message_mode = "sms"
+                        message_mode = "alimtalk"
                     alimtalk_replacements = data.get("alimtalk_replacements") or []
                     template_id_msg = data.get("template_id") or ""
                     event_type_msg = (data.get("event_type") or "").strip()[:30]
@@ -582,6 +647,10 @@ def main() -> int:
                                     message_mode=message_mode,
                                     sqs_message_id=message_id,
                                     notification_type=event_type_msg,
+                                    source_tenant_id=source_tenant_id_msg,
+                                    target_type=target_type_msg,
+                                    target_id=target_id_msg,
+                                    target_name=target_name,
                                 )
                             except Exception as e:
                                 logger.warning("create_notification_log failed: %s", e)
@@ -654,10 +723,14 @@ def main() -> int:
                             from academy.adapters.db.django.repositories_messaging import claim_notification_slot
                             claimed, claim_log_id = claim_notification_slot(
                                 tenant_id=int(tenant_id),
-                                message_mode=message_mode or "sms",
+                                message_mode=message_mode or "alimtalk",
                                 business_idempotency_key=business_key,
                                 sqs_message_id=message_id,
                                 recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****" if to else ""),
+                                source_tenant_id=source_tenant_id_msg,
+                                target_type=target_type_msg,
+                                target_id=target_id_msg,
+                                target_name=target_name,
                             )
                             if not claimed:
                                 if claim_log_id is not None:
@@ -743,6 +816,10 @@ def main() -> int:
                                         message_mode=message_mode,
                                         sqs_message_id=message_id,
                                         notification_type=event_type_msg,
+                                        source_tenant_id=source_tenant_id_msg,
+                                        target_type=target_type_msg,
+                                        target_id=target_id_msg,
+                                        target_name=target_name,
                                     )
                                 queue_client.delete_message(
                                     queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
@@ -815,24 +892,18 @@ def main() -> int:
                             template_id=template_id_, replacements=replacements_, text=text_,
                         )
 
-                    # SMS 정책: 자체 연동 키가 있는 테넌트는 허용, 없으면 OWNER_TENANT_ID만
-                    _sms_allowed = (
-                        tenant_id is None
-                        or int(tenant_id) == cfg.OWNER_TENANT_ID
-                        or bool(_own_solapi_key and _own_solapi_secret)
-                        or bool(_own_ppurio_key and _own_ppurio_acct)
-                    )
+                    # SMS/LMS 실발송 금지. 큐에 남은 legacy payload도 실패 로그로 닫는다.
+                    _sms_allowed = False
 
                     # message_mode: sms | alimtalk
                     try:
                         _record_progress(job_id, "sending", 70, step_index=3, step_percent=0, tenant_id=tenant_id_str)
                         result = None
                         if message_mode == "sms":
-                            # SMS: 자체 키 보유 또는 OWNER_TENANT_ID만 허용
                             if not _sms_allowed:
                                 logger.warning(
-                                    "SMS blocked by policy: tenant_id=%s (no own credentials, not owner_tenant=%s)",
-                                    tenant_id, cfg.OWNER_TENANT_ID,
+                                    "SMS blocked by policy: service-wide disabled (tenant_id=%s)",
+                                    tenant_id,
                                 )
                                 if deducted:
                                     try:
@@ -851,7 +922,7 @@ def main() -> int:
                                                 claim_log_id,
                                                 success=False,
                                                 amount_deducted=Decimal("0"),
-                                                failure_reason="sms_not_allowed_for_tenant",
+                                                failure_reason="sms_disabled",
                                                 message_body=text[:2000],
                                                 notification_type=event_type_msg,
                                             )
@@ -861,11 +932,15 @@ def main() -> int:
                                                 success=False,
                                                 amount_deducted=Decimal("0"),
                                                 recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
-                                                failure_reason="sms_not_allowed_for_tenant",
+                                                failure_reason="sms_disabled",
                                                 message_body=text[:2000],
                                                 message_mode=message_mode,
                                                 sqs_message_id=message_id,
                                                 notification_type=event_type_msg,
+                                                source_tenant_id=source_tenant_id_msg,
+                                                target_type=target_type_msg,
+                                                target_id=target_id_msg,
+                                                target_name=target_name,
                                             )
                                     except Exception as e:
                                         logger.warning("create_notification_log failed: %s", e)
@@ -892,7 +967,7 @@ def main() -> int:
                                     "SMS blocked by policy: tenant_id=%s (no own credentials, not owner)",
                                     tenant_id,
                                 )
-                                result = {"status": "error", "reason": "sms_not_allowed_for_tenant"}
+                                result = {"status": "error", "reason": "sms_disabled"}
                             else:
                                 result = _dispatch_sms(to, text, sender)
                         _record_progress(job_id, "sending", 90, step_index=3, step_percent=100, tenant_id=tenant_id_str)
@@ -926,6 +1001,10 @@ def main() -> int:
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
                                             notification_type=event_type_msg,
+                                            source_tenant_id=source_tenant_id_msg,
+                                            target_type=target_type_msg,
+                                            target_id=target_id_msg,
+                                            target_name=target_name,
                                         )
                                 else:
                                     if deducted:
@@ -961,6 +1040,10 @@ def main() -> int:
                                             message_mode=message_mode,
                                             sqs_message_id=message_id,
                                             notification_type=event_type_msg,
+                                            source_tenant_id=source_tenant_id_msg,
+                                            target_type=target_type_msg,
+                                            target_id=target_id_msg,
+                                            target_name=target_name,
                                         )
                             except Exception as e:
                                 logger.exception("NotificationLog/rollback failed: %s", e)

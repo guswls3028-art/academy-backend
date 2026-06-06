@@ -10,6 +10,7 @@ from .views import (
     StudentPasswordFindVerifyView,
     StudentPasswordResetSendView,
     SendExistingCredentialsView,
+    StudentAccountNotificationLogView,
 )
 from .views.enrollment_matrix_view import (
     StudentEnrollmentMatrixView,
@@ -28,6 +29,7 @@ urlpatterns = [
     path("password_find/verify/", StudentPasswordFindVerifyView.as_view(), name="student-password-find-verify"),
     path("password_reset_send/", StudentPasswordResetSendView.as_view(), name="student-password-reset-send"),
     path("send_existing_credentials/", SendExistingCredentialsView.as_view(), name="student-send-existing-credentials"),
+    path("<int:student_id>/account-notifications/", StudentAccountNotificationLogView.as_view(), name="student-account-notifications"),
     # Phase #11/#12 — 학생 단위 enrollment matrix (시험/과제 개별 추가/제거)
     path("<int:student_id>/enrollment-matrix/",
          StudentEnrollmentMatrixView.as_view(), name="student-enrollment-matrix"),

@@ -103,7 +103,7 @@ class TestSendEventNotification(TestCase):
         self.assertEqual(kw["target_type"], "parent")
         # 통합 4종 우선 라우팅 정책: check_in_complete는 attendance 통합 템플릿 사용
         self.assertEqual(kw["template_id"], "KA01TP260406121126868FGddLmrDFUC")
-        # SMS fallback text
+        # 알림톡 대체/미리보기 text
         self.assertIn("학원플러스", kw["text"])
         self.assertIn("길동", kw["text"])
         self.assertIn("수학A반", kw["text"])
@@ -245,23 +245,20 @@ class TestSendEventNotification(TestCase):
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
-    def test_owner_fallback_when_tenant_has_no_config(
+    def test_skips_when_tenant_has_no_config(
         self, mock_owner, mock_disabled, mock_config, mock_enqueue
     ):
-        """테넌트에 config 없으면 오너 테넌트 config로 fallback."""
+        """테넌트 config 없으면 owner config로 fallback하지 않고 스킵."""
         tenant = _make_tenant(tid=2, name="박철과학")
         student = _make_student()
-        config = _make_config("check_in_complete")
-        mock_config.side_effect = [None, config]
-        mock_enqueue.return_value = True
+        mock_config.return_value = None
 
         from apps.domains.messaging.services import send_event_notification
         result = send_event_notification(tenant=tenant, trigger="check_in_complete", student=student)
 
-        self.assertTrue(result)
-        self.assertEqual(mock_config.call_count, 2)
-        self.assertEqual(mock_config.call_args_list[0].args, (2, "check_in_complete"))
-        self.assertEqual(mock_config.call_args_list[1].args, (1, "check_in_complete"))
+        self.assertFalse(result)
+        mock_enqueue.assert_not_called()
+        mock_config.assert_called_once_with(2, "check_in_complete")
 
     @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
@@ -407,7 +404,7 @@ class TestTenantIsolation(TestCase):
     def test_event_notification_uses_correct_tenant_id(
         self, mock_owner, mock_disabled, mock_config, mock_enqueue
     ):
-        """send_event_notification이 올바른 tenant_id로 enqueue 호출."""
+        """send_event_notification이 owner tenant로 enqueue하고 source tenant를 메타데이터로 남김."""
         tenant_a = _make_tenant(tid=2, name="테넌트A")
         student = _make_student()
         config = _make_config("check_in_complete")
@@ -417,7 +414,8 @@ class TestTenantIsolation(TestCase):
         from apps.domains.messaging.services import send_event_notification
         send_event_notification(tenant=tenant_a, trigger="check_in_complete", student=student)
 
-        self.assertEqual(mock_enqueue.call_args.kwargs["tenant_id"], 2)
+        self.assertEqual(mock_enqueue.call_args.kwargs["tenant_id"], 1)
+        self.assertEqual(mock_enqueue.call_args.kwargs["source_tenant_id"], 2)
 
     @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_SEL}.get_auto_send_config")
@@ -426,7 +424,7 @@ class TestTenantIsolation(TestCase):
     def test_no_cross_tenant_channel_fallback(
         self, mock_owner, mock_disabled, mock_config, mock_enqueue
     ):
-        """테넌트 A 이벤트가 테넌트 B 채널을 사용하지 않음."""
+        """테넌트 A 이벤트도 공용 owner 채널로만 enqueue."""
         tenant_a = _make_tenant(tid=3, name="테넌트A")
         student = _make_student()
         config = _make_config("withdrawal_complete")
@@ -437,7 +435,8 @@ class TestTenantIsolation(TestCase):
         send_event_notification(tenant=tenant_a, trigger="withdrawal_complete", student=student)
 
         kw = mock_enqueue.call_args.kwargs
-        self.assertEqual(kw["tenant_id"], 3)
+        self.assertEqual(kw["tenant_id"], 1)
+        self.assertEqual(kw["source_tenant_id"], 3)
         reps = {r["key"]: r["value"] for r in kw["alimtalk_replacements"]}
         self.assertEqual(reps["학원명"], "테넌트A")
 
@@ -449,35 +448,30 @@ class TestTenantIsolation(TestCase):
 class TestEnqueueSmsPolicy(TestCase):
     """enqueue_sms 메시지 모드 및 정책 테스트."""
 
-    @patch(f"{_SQS}.MessagingSQSQueue")
-    @patch(f"{_POL}.can_send_sms", return_value=True)
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
-    def test_sms_mode_requires_can_send_sms(self, mock_disabled, mock_can, mock_queue_cls):
-        """SMS 모드에서 can_send_sms 검사."""
-        mock_queue = MagicMock()
-        mock_queue.enqueue.return_value = True
-        mock_queue_cls.return_value = mock_queue
-
-        from apps.domains.messaging.services import enqueue_sms
-        result = enqueue_sms(
-            tenant_id=1,
-            to="01012345678",
-            text="테스트",
-            message_mode="sms",
-        )
-
-        self.assertTrue(result)
-        mock_can.assert_called_once_with(1)
-
-    @patch(f"{_POL}.can_send_sms", return_value=False)
-    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
-    def test_sms_blocked_for_non_owner(self, mock_disabled, mock_can):
-        """SMS 권한 없는 테넌트는 MessagingPolicyError 발생."""
+    def test_sms_mode_is_disabled_service_wide(self, mock_disabled):
+        """SMS 모드는 전체 서비스에서 차단."""
         from apps.domains.messaging.services import enqueue_sms
         from apps.domains.messaging.policy import MessagingPolicyError
 
-        with self.assertRaises(MessagingPolicyError):
+        with self.assertRaises(MessagingPolicyError) as ctx:
+            enqueue_sms(
+                tenant_id=1,
+                to="01012345678",
+                text="테스트",
+                message_mode="sms",
+            )
+        self.assertEqual(ctx.exception.reason, "sms_disabled")
+
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    def test_sms_blocked_for_non_owner(self, mock_disabled):
+        """SMS는 owner 여부와 관계없이 MessagingPolicyError 발생."""
+        from apps.domains.messaging.services import enqueue_sms
+        from apps.domains.messaging.policy import MessagingPolicyError
+
+        with self.assertRaises(MessagingPolicyError) as ctx:
             enqueue_sms(tenant_id=5, to="01012345678", text="테스트", message_mode="sms")
+        self.assertEqual(ctx.exception.reason, "sms_disabled")
 
     @patch(f"{_SQS}.MessagingSQSQueue")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
@@ -490,9 +484,14 @@ class TestEnqueueSmsPolicy(TestCase):
         from apps.domains.messaging.services import enqueue_sms
         result = enqueue_sms(
             tenant_id=5, to="01012345678", text="테스트", message_mode="alimtalk",
+            sender="01099999999",
         )
 
         self.assertTrue(result)
+        kwargs = mock_queue.enqueue.call_args.kwargs
+        self.assertEqual(kwargs["tenant_id"], 1)
+        self.assertEqual(kwargs["source_tenant_id"], 5)
+        self.assertIsNone(kwargs["sender"])
 
     @patch(f"{_POL}.is_messaging_disabled", return_value=True)
     def test_test_tenant_skipped(self, mock_disabled):
@@ -516,12 +515,11 @@ class TestMessagingProviderResolution(TestCase):
         self.assertTrue(result["use_default"])
 
     @patch(f"{_POL}.get_tenant_provider", return_value="solapi")
-    @patch(f"{_POL}.can_send_sms", return_value=False)
-    def test_resolve_sms_provider_blocked(self, mock_can_sms, mock_provider):
+    def test_resolve_sms_provider_blocked(self, mock_provider):
         from apps.domains.messaging.policy import resolve_messaging_provider
         result = resolve_messaging_provider(tenant_id=5, message_type="sms")
         self.assertFalse(result["allowed"])
-        self.assertEqual(result["reason"], "sms_not_allowed")
+        self.assertEqual(result["reason"], "sms_disabled")
         self.assertEqual(result["provider"], "solapi")
 
 
@@ -761,7 +759,7 @@ class TestRegistrationMessages(TestCase):
         result = send_registration_approved_messages(
             tenant_id=2, site_url="https://hakwonplus.com",
             student_name="홍길동", student_phone="01012345678",
-            student_id="PS001", student_password="test1234",
+            student_id="PS001", student_password="test1234", student_pk=10,
             parent_phone="01087654321", parent_password="parent123",
         )
 
@@ -774,10 +772,12 @@ class TestRegistrationMessages(TestCase):
         parent_kwargs = mock_enqueue.call_args_list[1].kwargs
         self.assertEqual(student_kwargs["event_type"], "registration_approved_student")
         self.assertEqual(student_kwargs["target_type"], "account")
-        self.assertEqual(student_kwargs["target_id"], "PS001")
+        self.assertEqual(student_kwargs["target_id"], "student:10")
+        self.assertEqual(student_kwargs["source_tenant_id"], 2)
         self.assertEqual(parent_kwargs["event_type"], "registration_approved_parent")
         self.assertEqual(parent_kwargs["target_type"], "account")
-        self.assertEqual(parent_kwargs["target_id"], "01087654321")
+        self.assertEqual(parent_kwargs["target_id"], "parent:10:01087654321")
+        self.assertEqual(parent_kwargs["source_tenant_id"], 2)
 
     @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -800,6 +800,7 @@ class TestRegistrationMessages(TestCase):
             parent_phone="01087654321",
             ps_number="PS001",
             tenant_id=1,
+            id=10,
         )
 
         from apps.domains.messaging.services import send_welcome_messages
@@ -816,10 +817,12 @@ class TestRegistrationMessages(TestCase):
         parent_kwargs = mock_enqueue.call_args_list[1].kwargs
         self.assertEqual(student_kwargs["event_type"], "registration_approved_student")
         self.assertEqual(student_kwargs["target_type"], "account")
-        self.assertEqual(student_kwargs["target_id"], "PS001")
+        self.assertEqual(student_kwargs["target_id"], "student:10")
+        self.assertEqual(student_kwargs["source_tenant_id"], 1)
         self.assertEqual(parent_kwargs["event_type"], "registration_approved_parent")
         self.assertEqual(parent_kwargs["target_type"], "account")
-        self.assertEqual(parent_kwargs["target_id"], "01087654321")
+        self.assertEqual(parent_kwargs["target_id"], "parent:10:01087654321")
+        self.assertEqual(parent_kwargs["source_tenant_id"], 1)
 
     @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
@@ -1039,22 +1042,17 @@ class TestOwnerAlimtalkMetadata(TestCase):
     @patch(f"{_SEL}.get_auto_send_config")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
-    def test_fallback_template_keeps_original_event_type(
+    def test_missing_exact_template_does_not_fallback(
         self, mock_owner, mock_disabled, mock_config, mock_enqueue
     ):
-        """fallback 템플릿을 써도 로그 분류는 원래 trigger로 남김."""
+        """exact trigger 템플릿이 미승인이면 다른 trigger로 fallback하지 않음."""
         pending_config = _make_config(
             "password_find_otp",
             solapi_template_id="KA01TP_PENDING",
             solapi_status="PENDING",
             body="#{인증번호}",
         )
-        fallback_config = _make_config(
-            "registration_approved_student",
-            solapi_template_id="KA01TP_REGISTRATION",
-            body="#{학생이름} #{학생비밀번호}",
-        )
-        mock_config.side_effect = [pending_config, fallback_config]
+        mock_config.return_value = pending_config
         mock_enqueue.return_value = True
 
         from apps.domains.messaging.policy import send_alimtalk_via_owner
@@ -1067,12 +1065,9 @@ class TestOwnerAlimtalkMetadata(TestCase):
             },
         )
 
-        self.assertTrue(result)
-        kwargs = mock_enqueue.call_args.kwargs
-        self.assertEqual(kwargs["event_type"], "password_find_otp")
-        self.assertEqual(kwargs["target_type"], "account")
-        self.assertEqual(kwargs["target_name"], "전청조")
-        self.assertEqual(kwargs["template_id"], "KA01TP_REGISTRATION")
+        self.assertFalse(result)
+        mock_config.assert_called_once_with(1, "password_find_otp")
+        mock_enqueue.assert_not_called()
 
 
 class TestRecipientWhitelist(TestCase):

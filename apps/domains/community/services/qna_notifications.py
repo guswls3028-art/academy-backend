@@ -122,7 +122,7 @@ def _send_qna_alimtalk_to_recipients(
 
     academy_name = (getattr(tenant, "name", "") or "").strip()
     site_url = get_tenant_site_url(tenant) or ""
-    sender = (getattr(tenant, "messaging_sender", "") or "").strip()
+    sender = ""
 
     sent = 0
     for recipient in recipients:

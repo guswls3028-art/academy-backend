@@ -1,6 +1,6 @@
 # apps/support/messaging/management/commands/messaging_create_student_and_send_verify.py
 """
-1번 테넌트에 학부모 번호 01034137466인 학생을 생성하고, 해당 번호로 검증용 SMS 1건을 enqueue.
+1번 테넌트에 학부모 번호 01034137466인 학생을 생성하고, 해당 번호로 검증용 공용 알림톡 1건을 enqueue.
 실제 발송은 워커가 SQS에서 꺼내 Solapi로 전송.
 
 사용 (API 서버 또는 로컬):
@@ -16,7 +16,7 @@ from apps.domains.messaging.policy import MessagingPolicyError
 
 
 class Command(BaseCommand):
-    help = "Create a student (tenant 1, parent_phone 01034137466) and enqueue one verification SMS."
+    help = "Create a student (tenant 1, parent_phone 01034137466) and enqueue one verification Alimtalk."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -54,15 +54,6 @@ class Command(BaseCommand):
             self.stderr.write(self.style.ERROR(f"Tenant id={tenant_id} not found."))
             return
 
-        sender = (tenant.messaging_sender or "").strip()
-        if not sender:
-            self.stderr.write(
-                self.style.ERROR(
-                    "Tenant has no messaging_sender. Set it in Message settings first."
-                )
-            )
-            return
-
         item = {
             "name": name,
             "parent_phone": parent_phone,
@@ -95,8 +86,9 @@ class Command(BaseCommand):
                 tenant_id=tenant_id,
                 to=parent_phone,
                 text=text,
-                sender=sender,
-                message_mode="sms",
+                sender="",
+                message_mode="alimtalk",
+                event_type="manual_verify",
             )
         except MessagingPolicyError as e:
             self.stderr.write(self.style.ERROR(f"Policy error: {e}"))
@@ -105,7 +97,7 @@ class Command(BaseCommand):
         if ok:
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"Enqueued 1 SMS to {parent_phone[:4]}****. Worker will send shortly."
+                    f"Enqueued 1 Alimtalk to {parent_phone[:4]}****. Worker will send shortly."
                 )
             )
         else:

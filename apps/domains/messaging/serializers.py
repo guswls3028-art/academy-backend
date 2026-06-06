@@ -91,6 +91,10 @@ class NotificationLogSerializer(serializers.Serializer):
     failure_reason = serializers.CharField()
     message_body = serializers.CharField()
     message_mode = serializers.CharField()
+    source_tenant_id = serializers.IntegerField(allow_null=True)
+    target_type = serializers.CharField()
+    target_id = serializers.CharField()
+    target_name = serializers.CharField()
 
 
 class MessageTemplateSerializer(serializers.ModelSerializer):
