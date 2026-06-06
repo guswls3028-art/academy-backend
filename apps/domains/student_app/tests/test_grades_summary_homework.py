@@ -1,14 +1,13 @@
 from django.contrib.auth import get_user_model
+from django.apps import apps as django_apps
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment
-from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import Result
 from apps.domains.student_app.results.views import MyExamResultView, MyGradesSummaryView
 from apps.domains.students.models import Student
 
@@ -53,6 +52,9 @@ class MyGradesSummaryHomeworkTests(TestCase):
             lecture=self.lecture,
             status="ACTIVE",
         )
+        self.Exam = django_apps.get_model("exams", "Exam")
+        self.ExamEnrollment = django_apps.get_model("exams", "ExamEnrollment")
+        self.Result = django_apps.get_model("results", "Result")
 
     def _call(self):
         request = self.factory.get("/api/v1/student/grades/")
@@ -111,16 +113,16 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(response.data["homeworks"], [])
 
     def test_inactive_enrollment_exam_result_is_hidden_from_student_detail(self):
-        exam = Exam.objects.create(
+        exam = self.Exam.objects.create(
             tenant=self.tenant,
             title="비활성 수강 시험",
-            exam_type=Exam.ExamType.REGULAR,
+            exam_type=self.Exam.ExamType.REGULAR,
             is_active=True,
             max_score=100,
         )
         exam.sessions.add(self.session)
-        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
-        Result.objects.create(
+        self.ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        self.Result.objects.create(
             target_type="exam",
             target_id=exam.id,
             enrollment=self.enrollment,
@@ -135,16 +137,16 @@ class MyGradesSummaryHomeworkTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
     def test_inactive_enrollment_scores_are_hidden_from_student_summary(self):
-        exam = Exam.objects.create(
+        exam = self.Exam.objects.create(
             tenant=self.tenant,
             title="비활성 수강 성적",
-            exam_type=Exam.ExamType.REGULAR,
+            exam_type=self.Exam.ExamType.REGULAR,
             is_active=True,
             max_score=100,
         )
         exam.sessions.add(self.session)
-        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
-        Result.objects.create(
+        self.ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        self.Result.objects.create(
             target_type="exam",
             target_id=exam.id,
             enrollment=self.enrollment,

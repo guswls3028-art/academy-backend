@@ -14,8 +14,9 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsStudent
 from apps.domains.results.models import ExamAttempt
-from apps.domains.exams.models import ExamEnrollment
-from apps.domains.enrollment.selectors import active_enrollments_for_student
+from apps.domains.results.services.student_result_service import (
+    active_exam_enrollment_ids_for_student,
+)
 
 
 class MyExamAttemptsView(APIView):
@@ -30,17 +31,10 @@ class MyExamAttemptsView(APIView):
         if not student:
             return Response([])
 
-        allowed_enrollment_ids = ExamEnrollment.objects.filter(
+        enrollment_ids = active_exam_enrollment_ids_for_student(
+            tenant=request.tenant,
+            student=student,
             exam_id=int(exam_id),
-            enrollment__tenant=request.tenant,
-        ).values_list("enrollment_id", flat=True)
-        enrollment_ids = list(
-            active_enrollments_for_student(
-                tenant=request.tenant,
-                student=student,
-            )
-            .filter(id__in=allowed_enrollment_ids)
-            .values_list("id", flat=True)
         )
         if not enrollment_ids:
             return Response([])

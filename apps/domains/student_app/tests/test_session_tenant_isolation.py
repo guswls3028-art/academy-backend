@@ -1,12 +1,12 @@
 from datetime import timedelta
 from types import SimpleNamespace
 
+from django.apps import apps as django_apps
 from django.test import TestCase
 from django.utils import timezone
 
 from apps.core.models import Tenant, User
 from apps.core.models.user import user_internal_username
-from apps.domains.attendance.models import Attendance
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
@@ -174,6 +174,7 @@ class StudentSessionTenantIsolationTests(TestCase):
         self.assertEqual(self.student_a.schedule_hidden_ids, [])
 
     def test_attendance_summary_ignores_inactive_own_enrollment(self):
+        Attendance = django_apps.get_model("attendance", "Attendance")
         active_enrollment = self._enroll_student_a()
         inactive_lecture = _create_lecture(self.tenant_a, "Inactive Attendance Lecture")
         inactive_enrollment = Enrollment.objects.create(

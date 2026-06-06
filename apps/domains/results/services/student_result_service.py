@@ -22,6 +22,22 @@ from apps.domains.student_app.permissions import get_request_student
 from apps.domains.enrollment.selectors import active_enrollments_for_student
 
 
+def active_exam_enrollment_ids_for_student(*, tenant, student, exam_id: int) -> list[int]:
+    """Return active enrollment ids that connect one student to one tenant exam."""
+    allowed_enrollment_ids = ExamEnrollment.objects.filter(
+        exam_id=int(exam_id),
+        enrollment__tenant=tenant,
+    ).values_list("enrollment_id", flat=True)
+    return list(
+        active_enrollments_for_student(
+            tenant=tenant,
+            student=student,
+        )
+        .filter(id__in=allowed_enrollment_ids)
+        .values_list("id", flat=True)
+    )
+
+
 def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     """
     현재 사용자의 시험 결과 스냅샷 + 재시험/클리닉 정책.
@@ -45,17 +61,16 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     if not student:
         raise Http404("student not found")
 
-    # 해당 시험의 응시 대상 enrollment만 사용 (한 학생이 여러 강의 수강 시 정확한 결과 조회)
-    allowed_enrollment_ids = ExamEnrollment.objects.filter(
-        exam_id=exam_id,
-        enrollment__tenant=tenant,
-    ).values_list("enrollment_id", flat=True)
-    enrollment_qs = active_enrollments_for_student(
+    enrollment_ids = active_exam_enrollment_ids_for_student(
         tenant=tenant,
         student=student,
-    ).filter(id__in=allowed_enrollment_ids)
-
-    enrollment = enrollment_qs.first()
+        exam_id=exam_id,
+    )
+    enrollment = (
+        active_enrollments_for_student(tenant=tenant, student=student)
+        .filter(id__in=enrollment_ids)
+        .first()
+    )
     if not enrollment:
         raise Http404("enrollment not found")
 
