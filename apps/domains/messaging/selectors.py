@@ -71,3 +71,4 @@ def has_any_approved_template(tenant_id: int) -> bool:
         tenant_id=get_owner_tenant_id(),
         solapi_status="APPROVED",
     ).exists()
+

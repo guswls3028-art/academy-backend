@@ -22,13 +22,6 @@ from apps.domains.students.models import Student
 
 RECOVERY_MODES = ("username", "password")
 RECOVERY_TARGETS = ("student", "parent")
-ACCOUNT_NOTIFICATION_TYPES = (
-    "registration_approved_student",
-    "registration_approved_parent",
-    "password_find_otp",
-    "password_reset_student",
-    "password_reset_parent",
-)
 
 
 class AccountRecoveryError(Exception):
@@ -395,36 +388,15 @@ def reset_staff_password(
 
 
 def list_recent_account_notification_logs(student: Student, *, limit: int = 5) -> list[dict[str, object]]:
-    from apps.domains.messaging.models import NotificationLog
-    from apps.domains.messaging.policy import get_owner_tenant_id
+    from academy.adapters.db.django.repositories_messaging import list_account_notification_logs
 
     target_ids = [f"student:{student.id}"]
     parent_phone = normalize_recovery_phone(student.parent_phone)
     if parent_phone:
         target_ids.append(f"parent:{student.id}:{parent_phone}")
 
-    qs = (
-        NotificationLog.objects
-        .filter(
-            tenant_id=get_owner_tenant_id(),
-            source_tenant_id=student.tenant_id,
-            target_type="account",
-            target_id__in=target_ids,
-            notification_type__in=ACCOUNT_NOTIFICATION_TYPES,
-        )
-        .order_by("-sent_at")[: max(1, min(int(limit), 20))]
+    return list_account_notification_logs(
+        source_tenant_id=student.tenant_id,
+        target_ids=target_ids,
+        limit=limit,
     )
-    return [
-        {
-            "id": log.id,
-            "sent_at": log.sent_at,
-            "success": log.success,
-            "status": log.status or ("sent" if log.success else "failed"),
-            "notification_type": log.notification_type or "",
-            "recipient_summary": log.recipient_summary or "",
-            "failure_reason": log.failure_reason or "",
-            "target_id": log.target_id or "",
-            "target_name": log.target_name or "",
-        }
-        for log in qs
-    ]

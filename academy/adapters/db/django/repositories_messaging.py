@@ -10,6 +10,15 @@ from django.db import IntegrityError, transaction
 from django.utils import timezone as tz
 
 
+ACCOUNT_NOTIFICATION_TYPES = (
+    "registration_approved_student",
+    "registration_approved_parent",
+    "password_find_otp",
+    "password_reset_student",
+    "password_reset_parent",
+)
+
+
 def create_notification_log(
     tenant_id: int,
     success: bool,
@@ -63,6 +72,42 @@ def create_notification_log(
         target_name=target_name[:80] if target_name else "",
     )
     return True
+
+
+def list_account_notification_logs(
+    *,
+    source_tenant_id: int,
+    target_ids: list[str],
+    limit: int = 5,
+) -> list[dict[str, object]]:
+    from apps.domains.messaging.models import NotificationLog
+    from apps.domains.messaging.policy import get_owner_tenant_id
+
+    qs = (
+        NotificationLog.objects
+        .filter(
+            tenant_id=get_owner_tenant_id(),
+            source_tenant_id=source_tenant_id,
+            target_type="account",
+            target_id__in=target_ids,
+            notification_type__in=ACCOUNT_NOTIFICATION_TYPES,
+        )
+        .order_by("-sent_at")[: max(1, min(int(limit), 20))]
+    )
+    return [
+        {
+            "id": log.id,
+            "sent_at": log.sent_at,
+            "success": log.success,
+            "status": log.status or ("sent" if log.success else "failed"),
+            "notification_type": log.notification_type or "",
+            "recipient_summary": log.recipient_summary or "",
+            "failure_reason": log.failure_reason or "",
+            "target_id": log.target_id or "",
+            "target_name": log.target_name or "",
+        }
+        for log in qs
+    ]
 
 
 def claim_notification_slot(

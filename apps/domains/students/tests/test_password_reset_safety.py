@@ -1,3 +1,4 @@
+from decimal import Decimal
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -9,7 +10,6 @@ from rest_framework_simplejwt.tokens import AccessToken
 from apps.core.models import PendingPasswordReset, Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.core.services.password import generate_temp_password
-from apps.domains.messaging.models import NotificationLog
 from apps.domains.students.models import Student
 from apps.domains.students.views.credential_views import SendExistingCredentialsView
 from apps.domains.students.views.password_views import (
@@ -382,29 +382,31 @@ class StudentPasswordResetSafetyTests(TestCase):
         TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
     )
     def test_student_account_notification_log_endpoint_uses_account_metadata(self):
-        NotificationLog.objects.create(
-            tenant=self.tenant,
+        from academy.adapters.db.django.repositories_messaging import create_notification_log
+
+        create_notification_log(
+            tenant_id=self.tenant.id,
             source_tenant_id=self.tenant.id,
             target_type="account",
             target_id=f"student:{self.student.id}",
             target_name=self.student.name,
             notification_type="password_reset_student",
+            amount_deducted=Decimal("0"),
             message_mode="alimtalk",
             recipient_summary="홍길동 0101****",
             success=True,
-            status="sent",
         )
-        NotificationLog.objects.create(
-            tenant=self.tenant,
+        create_notification_log(
+            tenant_id=self.tenant.id,
             source_tenant_id=self.tenant.id,
             target_type="account",
             target_id="student:99999",
             target_name="다른학생",
             notification_type="password_reset_student",
+            amount_deducted=Decimal("0"),
             message_mode="alimtalk",
             recipient_summary="다른학생 0109****",
             success=True,
-            status="sent",
         )
 
         response = APIClient().get(
