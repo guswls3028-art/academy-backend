@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.35.md](v1.2.35.md) | **CURRENT** | 2026-06-06 KST | Common Alimtalk SSOT + account password recovery delivery hardening |
+| [v1.2.36.md](v1.2.36.md) | **CURRENT** | 2026-06-07 KST | Student-domain launch stability seal + production API redirect recovery + real-use E2E/Alimtalk proof |
+| [v1.2.35.md](v1.2.35.md) | production-deployed / v1.2.36로 승계 | 2026-06-06 KST | Common Alimtalk SSOT + account password recovery delivery hardening |
 | [v1.2.34.md](v1.2.34.md) | production-deployed / v1.2.35로 승계 | 2026-06-05 KST | OMR AI worker scale lifecycle stabilization + production canary proof |
 | [v1.2.33.md](v1.2.33.md) | production-deployed / v1.2.34로 승계 | 2026-06-05 KST | OMR result projection cleanup + API liveness/readiness hardening |
 | [v1.2.32.md](v1.2.32.md) | production-deployed / v1.2.33로 승계 | 2026-06-05 KST | Lecture session order SSOT + supplement insertion hardening |
