@@ -24,6 +24,15 @@ from apps.domains.progress.services.clinic_exam_rule_service import ClinicExamRu
 logger = logging.getLogger(__name__)
 
 
+_CLOSED_SOURCE_RESOLUTION_TYPES = {
+    ClinicLink.ResolutionType.EXAM_PASS,
+    ClinicLink.ResolutionType.HOMEWORK_PASS,
+    ClinicLink.ResolutionType.MANUAL_OVERRIDE,
+    ClinicLink.ResolutionType.WAIVED,
+    ClinicLink.ResolutionType.SOURCE_REMOVED,
+}
+
+
 def _resolve_tenant_id(enrollment_id: int) -> int | None:
     """enrollment_id에서 tenant_id를 조회한다."""
     from apps.domains.enrollment.models import Enrollment
@@ -56,6 +65,21 @@ def _idempotent_create_clinic_link(
             resolved_at__isnull=True,
         ).exists()
         if existing:
+            return None
+
+        latest_resolution_type = (
+            ClinicLink.objects.filter(
+                enrollment_id=enrollment_id,
+                session=session,
+                source_type=source_type,
+                source_id=source_id,
+                resolved_at__isnull=False,
+            )
+            .order_by("-resolved_at", "-id")
+            .values_list("resolution_type", flat=True)
+            .first()
+        )
+        if latest_resolution_type in _CLOSED_SOURCE_RESOLUTION_TYPES:
             return None
 
         max_cycle = ClinicLink.objects.filter(

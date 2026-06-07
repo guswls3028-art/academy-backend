@@ -223,6 +223,101 @@ class DriftResolutionTest(TestCase, ClinicTestMixin):
             ).exists()
         )
 
+    def test_exam_pass_resolution_does_not_recreate_failed_clinic_link(self):
+        """재시험 합격으로 닫힌 시험은 파이프라인 재실행 후에도 새 미해소 링크가 생기면 안 된다."""
+        from django.apps import apps
+        from apps.domains.progress.services.session_calculator import (
+            SessionProgressCalculator,
+        )
+
+        Result = apps.get_model("results", "Result")
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="RetakePass",
+            pass_score=60.0,
+            max_score=100.0,
+        )
+        exam.sessions.add(self.lec_session)
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            total_score=40,
+            max_score=100,
+        )
+        ProgressPolicy.objects.get_or_create(
+            lecture=self.lecture,
+            defaults={
+                "exam_pass_source": ProgressPolicy.ExamPassSource.EXAM,
+                "exam_start_session_order": 1,
+                "homework_start_session_order": 2,
+            },
+        )
+
+        sp = SessionProgressCalculator.calculate(
+            enrollment_id=self.enrollment.id,
+            session=self.lec_session,
+            attendance_type="online",
+            video_progress_rate=100,
+        )
+        ClinicTriggerService.auto_create_if_failed(sp)
+        link = ClinicLink.objects.get(
+            enrollment=self.enrollment,
+            session=self.lec_session,
+            source_type="exam",
+            source_id=exam.id,
+            resolved_at__isnull=True,
+        )
+
+        retake = ClinicRemediationService.submit_exam_retake(
+            clinic_link_id=link.id,
+            score=80.0,
+            max_score=100.0,
+            pass_score=60.0,
+            graded_by_user_id=self.enrollment.student.user_id,
+        )
+        self.assertTrue(retake.passed)
+        link.refresh_from_db()
+        self.assertEqual(link.resolution_type, ClinicLink.ResolutionType.EXAM_PASS)
+        self.assertFalse(
+            ClinicLink.objects.filter(
+                enrollment=self.enrollment,
+                session=self.lec_session,
+                source_type="exam",
+                source_id=exam.id,
+                resolved_at__isnull=True,
+            ).exists(),
+            "EXAM_PASS 해소 직후 미해소 링크가 남으면 안 됨",
+        )
+
+        sp_after = SessionProgressCalculator.calculate(
+            enrollment_id=self.enrollment.id,
+            session=self.lec_session,
+            attendance_type="online",
+            video_progress_rate=100,
+        )
+        ClinicTriggerService.auto_create_if_failed(sp_after)
+
+        self.assertEqual(
+            ClinicLink.objects.filter(
+                enrollment=self.enrollment,
+                session=self.lec_session,
+                source_type="exam",
+                source_id=exam.id,
+            ).count(),
+            1,
+            "해소된 같은 source에 cycle 2 미해소 링크를 재생성하면 안 됨",
+        )
+        self.assertFalse(
+            ClinicLink.objects.filter(
+                enrollment=self.enrollment,
+                session=self.lec_session,
+                source_type="exam",
+                source_id=exam.id,
+                resolved_at__isnull=True,
+            ).exists(),
+        )
+
     def test_completed_at_preserved_on_regression(self):
         """completed=True → 점수 수정으로 False 회귀해도 completed_at 유지"""
         from apps.domains.results.models import Result
@@ -569,6 +664,7 @@ class StudentResultRemediatedTest(TestCase, ClinicTestMixin):
         self.assertFalse(data["is_pass"], "1차는 불합격")
         self.assertTrue(data["remediated"])
         self.assertTrue(data["final_pass"])
+        self.assertFalse(data["clinic_required"])
         self.assertIsNotNone(data["clinic_retake"])
 
     def test_manual_override_resolution_sets_remediated(self):
@@ -588,6 +684,7 @@ class StudentResultRemediatedTest(TestCase, ClinicTestMixin):
             data["final_pass"],
             "MANUAL_OVERRIDE 해소 → 학생 상세에서도 최종 합격으로 보여야 함",
         )
+        self.assertFalse(data["clinic_required"])
 
     def test_waived_resolution_is_not_remediated(self):
         """WAIVED(면제)는 remediated에 포함되지 않음 (목록 뷰 정책과 일치)"""
@@ -599,6 +696,7 @@ class StudentResultRemediatedTest(TestCase, ClinicTestMixin):
         data = self._fetch()
         self.assertFalse(data["remediated"])
         self.assertFalse(data["final_pass"])
+        self.assertFalse(data["clinic_required"])
 
 
 class RankingFirstAttemptTest(TestCase, ClinicTestMixin):
