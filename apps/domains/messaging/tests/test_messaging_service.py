@@ -782,6 +782,39 @@ class TestRegistrationMessages(TestCase):
     @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     @patch(f"{_SEL}.get_auto_send_config")
+    def test_send_registration_approved_dedupes_same_student_parent_phone(self, mock_config, mock_owner, mock_enqueue):
+        """학생/학부모 수신번호가 같으면 종합 parent 템플릿 1건만 발송."""
+        parent_tmpl = SimpleNamespace(
+            body="#{학생이름} #{학생아이디} #{학생비밀번호} #{학부모아이디} #{학부모비밀번호}",
+            solapi_template_id="KA01TP_PARENT", solapi_status="APPROVED",
+            subject="가입 승인", name="가입승인학부모",
+        )
+        mock_config.side_effect = [
+            SimpleNamespace(enabled=True, template=parent_tmpl),
+        ]
+        mock_enqueue.return_value = True
+
+        from apps.domains.messaging.services import send_registration_approved_messages
+        result = send_registration_approved_messages(
+            tenant_id=2, site_url="https://hakwonplus.com",
+            student_name="홍길동", student_phone="01012345678",
+            student_id="PS001", student_password="test1234", student_pk=10,
+            parent_phone="01012345678", parent_password="parent123",
+        )
+
+        self.assertEqual(result["status"], "enqueued")
+        self.assertEqual(result["enqueued"], 1)
+        self.assertEqual(mock_enqueue.call_count, 1)
+        kwargs = mock_enqueue.call_args.kwargs
+        self.assertEqual(kwargs["event_type"], "registration_approved_parent")
+        self.assertEqual(kwargs["to"], "01012345678")
+        self.assertEqual(kwargs["target_id"], "parent:10:01012345678")
+        self.assertIn("PS001", kwargs["text"])
+        self.assertIn("parent123", kwargs["text"])
+
+    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    @patch(f"{_SEL}.get_auto_send_config")
     def test_send_welcome_passes_account_event_metadata(self, mock_config, mock_owner, mock_enqueue):
         """학생 직접 등록 welcome도 계정성 알림 trigger로 로그 분류된다."""
         student_config = _make_config(
@@ -823,6 +856,46 @@ class TestRegistrationMessages(TestCase):
         self.assertEqual(parent_kwargs["target_type"], "account")
         self.assertEqual(parent_kwargs["target_id"], "parent:10:01087654321")
         self.assertEqual(parent_kwargs["source_tenant_id"], 1)
+
+    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    @patch(f"{_SEL}.get_auto_send_config")
+    def test_send_welcome_dedupes_same_student_parent_phone(self, mock_config, mock_owner, mock_enqueue):
+        """직접 등록 welcome도 같은 번호에는 parent 템플릿 1건만 보낸다."""
+        student_config = _make_config(
+            "registration_approved_student",
+            body="#{학생이름} #{학생아이디} #{학생비밀번호}",
+        )
+        parent_config = _make_config(
+            "registration_approved_parent",
+            body="#{학생이름} #{학생아이디} #{학생비밀번호} #{학부모아이디} #{학부모비밀번호}",
+        )
+        mock_config.side_effect = [student_config, parent_config]
+        mock_enqueue.return_value = True
+        student = SimpleNamespace(
+            name="홍길동",
+            phone="01012345678",
+            parent_phone="01012345678",
+            ps_number="PS001",
+            tenant_id=1,
+            id=10,
+        )
+
+        from apps.domains.messaging.services import send_welcome_messages
+        result = send_welcome_messages(
+            created_students=[student],
+            student_password="test1234",
+            parent_password_by_phone={"01012345678": "4321"},
+            site_url="https://hakwonplus.com",
+        )
+
+        self.assertEqual(result["status"], "enqueued")
+        self.assertEqual(result["enqueued"], 1)
+        self.assertEqual(mock_enqueue.call_count, 1)
+        kwargs = mock_enqueue.call_args.kwargs
+        self.assertEqual(kwargs["event_type"], "registration_approved_parent")
+        self.assertEqual(kwargs["to"], "01012345678")
+        self.assertEqual(kwargs["target_id"], "parent:10:01012345678")
 
     @patch(f"{_QSV}.enqueue_sms")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)

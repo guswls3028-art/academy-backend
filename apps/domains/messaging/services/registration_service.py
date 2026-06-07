@@ -34,6 +34,12 @@ def _account_target_id_from_pk(student_pk: int | None, fallback: str, *, parent_
     return fallback
 
 
+def _same_recipient(left: str, right: str) -> bool:
+    left_norm = (left or "").replace("-", "").strip()
+    right_norm = (right or "").replace("-", "").strip()
+    return bool(left_norm and right_norm and left_norm == right_norm)
+
+
 def send_welcome_messages(
     *,
     created_students: list,
@@ -102,9 +108,10 @@ def send_welcome_messages(
         ps_number = (getattr(student, "ps_number", "") or "").strip()
         phone = (getattr(student, "phone", "") or "").replace("-", "").strip()
         parent_phone = (getattr(student, "parent_phone", "") or "").replace("-", "").strip()
+        same_recipient = _same_recipient(phone, parent_phone)
 
         # 학생용 — registration_approved_student 템플릿
-        if phone and len(phone) >= 10 and tmpl_student and sid_student:
+        if phone and len(phone) >= 10 and tmpl_student and sid_student and not same_recipient:
             replacements = {
                 "학생이름": name,
                 "학생아이디": ps_number,
@@ -214,6 +221,7 @@ def send_registration_approved_messages(
     sent = 0
     student_phone = (student_phone or "").replace("-", "").strip()
     parent_phone = (parent_phone or "").replace("-", "").strip()
+    same_recipient = _same_recipient(student_phone, parent_phone)
     site_url = (site_url or "").strip()
     notice = REGISTRATION_APPROVED_NOTICE
 
@@ -238,7 +246,7 @@ def send_registration_approved_messages(
     }
 
     # 학생용
-    if student_phone and len(student_phone) >= 10:
+    if student_phone and len(student_phone) >= 10 and not same_recipient:
         tmpl, solapi_id, mode = _resolve_template("registration_approved_student")
         if tmpl:
             body = (tmpl.body or "").strip()
