@@ -109,6 +109,22 @@ def find_first_video(token: str) -> tuple[int, int, int]:
         raise SmokeFail(f"/student/video/me/ {status}: {body}")
     lectures = body.get("lectures") or []
     if not lectures:
+        public = body.get("public") or {}
+        session_id = public.get("session_id")
+        lecture_id = public.get("lecture_id")
+        if session_id:
+            print(f"[2/7] public video session lecture={lecture_id} session={session_id}")
+            status, body = _get_json(
+                f"{API_URL}/api/v1/student/video/sessions/{session_id}/videos/",
+                token=token,
+            )
+            if status != 200:
+                raise SmokeFail(f"/sessions/{session_id}/videos/ {status}: {body}")
+            items = body.get("items") or []
+            if not items:
+                raise SmokeFail(f"public session {session_id} has no videos")
+            return int(lecture_id or 0), int(session_id), int(items[0]["id"])
+    if not lectures:
         raise SmokeFail(f"student has no enrolled lectures with videos - E2E_STUDENT_USER={STUDENT_USER}")
     lec = lectures[0]
     sessions = lec.get("sessions") or []

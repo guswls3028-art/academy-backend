@@ -10,13 +10,17 @@ feature checklist.
 
 ## Decision
 
-Do not run broad promotion or expansion launch until the student-domain chain is
-proved across account, identity, learning content, notification, and consumer
-role projections.
+Controlled/internal expansion is **GO** after the 2026-06-07 KST pass: the
+student-domain account, signup Alimtalk, active-enrollment projection, production
+E2E gate, video playback/progress, OMR backend real-use, score-report, and
+cleanup probes passed on the real production target.
 
-The product can still receive narrow fixes and internal hardening. The blocked
-activity is broad external launch that increases real student/parent load before
-the chain evidence exists.
+Broad public promotion or large external expansion is still **NO-GO / HOLD**
+until the remaining full-chain items below are either passed or explicitly
+accepted as documented launch exceptions. The product can receive narrow fixes,
+controlled customer onboarding, and internal hardening; the blocked activity is
+high-volume public promotion that increases real student/parent load before all
+major student-linked content chains are proven end-to-end.
 
 ## Current Evidence From This Pass
 
@@ -58,19 +62,39 @@ Repo-confirmed:
 - Frontend E2E hardening now tracks counsel posts across retries and deletes
   test-only posts through an independent admin token, so a failed admin login
   attempt cannot leave `[E2E] 상담 신청 ...` residue behind.
+- Production signup approval real-use canary passed after stale controlled-phone
+  fixtures were cleaned:
+  public signup -> admin approval UI -> student login -> cleanup -> provider log
+  `id=2839`, `target_id=parent:1932:01031217466`.
+- The signup approval canary now forces manual approval when Tenant 1
+  `student_registration_auto_approve` is temporarily enabled, disables retries
+  for the real-send run, restores the previous setting, and cleans accidental
+  direct-create students if an unexpected `200` response is returned.
+- Controlled recipient `01031217466` is available again after cleanup.
+- Production video HLS playback chain passed for the persistent E2E student
+  fixture (`student_id=1933`, enrollment `1052`, lecture `136`, session `159`,
+  video `284`), including master/variant/segment fetch.
+- Production video progress persistence passed by writing 42%, reading it back
+  from the session video list, then resetting progress to 0 and confirming the
+  reset.
+- Backend OMR tenant real-use regression file passed: `31 passed`.
+- Student score-report real-use spec passed after cleanup was changed to use
+  bulk delete/permanent delete instead of detail delete, avoiding withdrawal
+  notification side effects for generated test students.
+- Student dashboard/mobile/narrow viewport bundle passed: `14 passed`.
 
-Runtime-unverified in this pass:
+Runtime-unverified or launch-exception-required in this pass:
 
-- production execution of the signup approval real-use spec. It is intentionally
-  blocked while controlled recipient `01031217466` is already attached to
-  active E2E fixture students in Tenant 1 (`id=1890`, `id=1201` from read-only
-  check on 2026-06-07 KST). Do not use an arbitrary phone to bypass this;
-- OMR upload -> match/review -> grading -> admin score board -> student result;
+- public account-recovery activation as a browser chain:
+  modal -> pending reset -> old-password proof -> temporary-password login
+  activation -> must-change gate;
+- OMR upload -> match/review -> grading -> admin score board -> student result
+  as a full browser chain;
 - failed result -> clinic target -> clinic booking/attendance -> remediation;
 - homework creation -> student submission -> admin grading -> student result
   as a full create/submit/grade browser chain. Render/API data-flow passed;
-- broad mobile/narrow viewport checks for the touched student/admin/teacher
-  screens.
+- broad beginner/misuse exploration across back/forward, double-submit, stale
+  tabs, mobile keyboard, and repeated role switching.
 
 ## P0 Launch Gate
 
@@ -178,8 +202,11 @@ pnpm exec playwright test e2e/flows/signup-approval-roundtrip.spec.ts --reporter
 ```
 
 Do not run this in production until the controlled recipient is not already used
-by an active student/parent fixture. The spec itself refuses production execution
-without the explicit allow flag and exact controlled recipient.
+by an active student/parent fixture. As of the 2026-06-07 KST follow-up, stale
+fixtures were removed and the canary passed with `01031217466`; keep the
+pre-flight recipient availability check before every future real-send run. The
+spec itself refuses production execution without the explicit allow flag and
+exact controlled recipient.
 
 Frontend E2E mode distinction:
 
@@ -234,14 +261,14 @@ If any of these are true, do not launch broadly:
 
 | Priority | Item | Disposition |
 |---|---|---|
-| P0 | Add or promote real-use signup approval E2E | implemented as `frontend/e2e/flows/signup-approval-roundtrip.spec.ts`; production run safety-blocked by controlled-number collision |
+| P0 | Add or promote real-use signup approval E2E | passed in production with controlled real send to `01031217466`; latest verified log `id=2839`, `target_id=parent:1932:01031217466`; keep pre-flight duplicate check |
 | P0 | Add account recovery activation E2E with pending reset proof | needs implementation |
-| P0 | Add OMR -> grading -> student result chain canary | `frontend/e2e/student/score-report-realuse.spec.ts` passed against production API; OMR upload/match/review remains separate |
+| P0 | Add OMR -> grading -> student result chain canary | `frontend/e2e/student/score-report-realuse.spec.ts` and backend OMR tenant real-use tests passed; OMR upload/match/review browser chain remains separate |
 | P0 | Add clinic remediation chain canary | needs implementation |
 | P1 | Add homework submission chain canary | production render/API data-flow passed; full create-submit-grade browser chain still needed |
-| P1 | Add account Alimtalk controlled-send runbook evidence template | needs manual/provider validation |
+| P1 | Add account Alimtalk controlled-send runbook evidence template | signup approval provider/log path proved for controlled recipient; public account-recovery body/device confirmation still needs manual/provider validation |
 | P1 | Audit student result visibility for final/draft/provisional policy | active/inactive enrollment projection covered for student detail, grades summary, exam list/submission, video/progress, wrong-note/PDF, attempt history, attendance, and session hide; final/draft policy still needs product decision |
-| P1 | Add mobile/narrow viewport review for student/admin account screens | needs browser visual validation |
+| P1 | Add mobile/narrow viewport review for student/admin account screens | student dashboard/mobile/narrow bundle passed; admin/teacher account screens still need visual validation |
 
 ## Reporting Standard
 

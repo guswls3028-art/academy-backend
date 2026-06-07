@@ -65,21 +65,21 @@ another tenant.
 | Student uses back/forward after logout | Auth state should not leak protected screen | Existing stability specs | Partial |
 | User double-clicks signup submit | One pending request; duplicate/rate limit prevents repeat spam | Needs specific UI/API assertion | Open |
 | Production signup canary uses arbitrary phone | Must be blocked; only `01031217466` is allowed | New Playwright guard | Covered |
-| Controlled phone already belongs to active fixture | Do not run production signup canary; clean fixture or allocate dedicated controlled test recipient first | Read-only check found active fixtures `1890`, `1201` | Blocked |
+| Controlled phone already belongs to active fixture | Do not run production signup canary; clean fixture or allocate dedicated controlled test recipient first | Stale fixtures `1890`, `1201` were deleted/permanently deleted; final duplicate check returned available; signup canary passed | Covered |
 
 ## 4. Real-Use Scenario Ledger
 
 | Scenario | Minimum complete path | Current proof | Gap |
 |---|---|---|---|
-| Public signup | Login page signup UI -> staff approval UI -> student UI login -> cleanup | `frontend/e2e/flows/signup-approval-roundtrip.spec.ts` implemented | Production execution blocked by controlled-number collision |
+| Public signup | Login page signup UI -> staff approval UI -> student UI login -> cleanup | `frontend/e2e/flows/signup-approval-roundtrip.spec.ts` passed in production with controlled real Alimtalk; cleanup and settings restore verified | Covered for current gate |
 | Admin direct student create | Admin create -> student login -> profile/dashboard -> cleanup | Existing E2E fragments | Needs promoted canary |
 | Account recovery | Public modal -> pending reset -> old password proof -> temp login activation -> must-change gate | Backend + modal tests | Needs browser activation spec |
 | Teacher reset | Staff reset student/parent -> login proof -> restore | `password-reset-roundtrip.spec.ts` | Covered |
-| OMR/result | Roster/exam -> submit/grade -> student result detail/grades/wrong-note/attempt history | `score-report-realuse.spec.ts`, backend scope/security tests | Promote into launch gate bundle |
+| OMR/result | Roster/exam -> submit/grade -> student result detail/grades/wrong-note/attempt history | `score-report-realuse.spec.ts` passed; backend OMR tenant real-use file passed `31 passed`; backend scope/security tests passed | OMR upload/match/review browser chain still separate |
 | Clinic remediation | Failed result -> clinic target -> booking/approval/attendance -> student notification/projection | Backend/frontend fragments | Needs end-to-end canary |
 | Homework | Homework assignment -> student submit -> admin grade -> student grades | API/render fragments; `homework-scores-inventory-data-flow.spec.ts` passed production bundle + production API | Needs full create-submit-grade canary |
 | QnA/counsel | Student writes -> staff replies -> student sees reply | `qna-roundtrip`, `counsel-roundtrip` | Covered enough for current gate |
-| Video/progress | Ready video -> student play -> progress persists -> resume | `test_student_video_progress_enrollment_resolution.py`; projection now uses canonical selector; `video-session-data-flow.spec.ts` production render/API passed | Needs playback/progress browser canary |
+| Video/progress | Ready video -> student play -> progress persists -> resume | Production HLS playback smoke passed for lecture `136` / session `159` / video `284`; progress write/read/reset passed for enrollment `1052`; render/API bundle passed | Browser visual player canary still optional launch-hardening |
 | Tenant isolation | Cross-tenant student/enrollment/result access denied | Backend tests + frontend tenant isolation gate | Covered |
 
 ## 5. Evidence Commands From This Pass
@@ -97,9 +97,12 @@ python -m pytest apps\domains\student_app\tests\test_grades_summary_homework.py 
 python -m ruff check apps/domains/enrollment/selectors.py apps/domains/student_app/exams/views.py apps/domains/student_app/media/views.py apps/domains/student_app/dashboard/views.py academy/application/use_cases/student_video_access_context.py tests/test_student_video_progress_enrollment_resolution.py
 python -m ruff check apps\domains\enrollment\selectors.py apps\domains\results\services\student_result_service.py apps\domains\results\views\student_exam_attempts_view.py apps\domains\results\views\wrong_note_view.py apps\domains\results\views\wrong_note_pdf_view.py apps\domains\results\views\wrong_note_pdf_status_view.py apps\domains\student_app\results\views.py apps\domains\student_app\sessions\views.py apps\domains\student_app\tests\test_grades_summary_homework.py apps\domains\student_app\tests\test_session_tenant_isolation.py apps\domains\results\tests\test_security_regression.py
 python -m ruff check apps/ academy/
+python -m ruff check scripts\post_deploy_smoke\video_playback_chain.py apps\domains\submissions\tests\test_omr_tenant_realuse_flow.py
 python manage.py check --settings apps.api.config.settings.test
 python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
 python -m pytest tests/test_smoke.py -v --tb=short -x
+python -m pytest apps\domains\submissions\tests\test_omr_tenant_realuse_flow.py -v --tb=short -x
+python scripts\post_deploy_smoke\video_playback_chain.py
 ```
 
 Frontend already run:
@@ -115,6 +118,8 @@ pnpm build
 pnpm test:e2e:gate
 pnpm exec playwright test e2e/student/score-report-realuse.spec.ts e2e/admin/session-assessment-realuse.spec.ts --reporter=list
 pnpm exec playwright test e2e/flows/counsel-roundtrip.spec.ts e2e/flows/exam-data-flow.spec.ts e2e/flows/homework-scores-inventory-data-flow.spec.ts e2e/flows/video-session-data-flow.spec.ts --reporter=list
+pnpm exec playwright test e2e/flows/signup-approval-roundtrip.spec.ts --reporter=list
+pnpm exec playwright test e2e/student/dashboard-redesign.spec.ts e2e/student/dashboard-dark.spec.ts e2e/mobile-narrow-viewport-20260512.spec.ts --reporter=list
 ```
 
 Additional frontend evidence from the production bundle against the production
@@ -126,6 +131,12 @@ score-report-realuse + session-assessment-realuse -> 2 passed
 counsel + exam + homework/scores/inventory + video/session bundle -> 37 passed, 2 skipped
 final counsel retry-cleanup hardening check -> counsel-roundtrip 5 passed
 cleanup probe -> E2E Test Exam 0, [E2E] 상담 신청 0
+signup approval real-send canary -> 1 passed, provider log id=2839 target_id=parent:1932:01031217466
+score-report-realuse after cleanup hardening -> 1 passed
+student dashboard/mobile/narrow bundle -> 14 passed
+video HLS playback smoke -> ALL PASS (lecture=136 session=159 video=284)
+video progress persistence -> write 42%, read 42%, reset 0%, read 0%
+backend OMR tenant real-use regression -> 31 passed
 ```
 
 The two skipped cases are conditional student exam submit/result steps when the
@@ -140,18 +151,24 @@ backend post-deploy local verification -> PASS, GO/NO-GO: GO
 frontend GitHub Actions run 27079644677 -> success; typecheck, legacy guard, lint, build, Cloudflare Pages deploy, OG/static checks, Tenant 1 E2E passed
 ```
 
-Read-only production safety check:
+Production safety and real-send check:
 
 ```text
-Tenant 1 controlled recipient 01031217466 is unavailable for signup approval canary:
-- student id=1890, name=[E2E-ClinicNoticeVerify-20260601031458], parent_phone=01031217466
-- student id=1201, name=E2E알림톡테스트, phone=01031217466, parent_phone=01031217466
+Tenant 1 controlled recipient 01031217466 was cleaned before the signup canary:
+- deleted/permanently deleted stale active students id=1890 and id=1201
+- duplicate pre-flight after cleanup: available=true
+- signup approval canary: 1 passed
+- latest account notification log: id=2839, target_id=parent:1932:01031217466
+- final duplicate check after canary cleanup: available=true
+- registration setting restored: student_registration_auto_approve=true
 ```
 
 ## 6. Current Closure Criteria
 
-Broad promotion remains no-go until all P0 rows in
-`student-domain-launch-readiness.md` are `passed` or explicitly accepted as a
-documented exception. The largest open item is not code capability; it is safe
-production execution of account/signup notification canaries without using real
-student or parent phone numbers.
+Controlled/internal expansion is GO after this pass. Broad public promotion
+remains no-go until all required full-chain rows in
+`student-domain-launch-readiness.md` are `passed` or explicitly accepted as
+documented launch exceptions. The largest remaining gaps are not basic account
+creation anymore; they are full browser-chain proof for account-recovery
+activation, OMR upload/match/review, clinic remediation, homework submit/grade,
+and deliberate beginner/misuse behavior.

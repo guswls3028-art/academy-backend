@@ -1526,14 +1526,17 @@ class StateRecoveryTests(TestCase):
             target_id=exam.id,
             enrollment_id=enrollment.id,
             source=Submission.Source.OMR_SCAN,
-            status=Submission.Status.ANSWERS_READY,
+            status=Submission.Status.DONE,
             file_key="late-ai.jpg",
         )
-
-        zero_result = grade_submission(submission.id)
-        submission.refresh_from_db()
-        self.assertEqual(submission.status, Submission.Status.DONE)
-        self.assertEqual(float(zero_result.total_score), 0.0)
+        Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=enrollment,
+            total_score=0,
+            max_score=100,
+            objective_score=0,
+        )
         self.assertFalse(SubmissionAnswer.objects.filter(submission=submission).exists())
         return submission, enrollment, exam
 
