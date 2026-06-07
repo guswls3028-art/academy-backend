@@ -69,6 +69,8 @@ class AdminExamResultsView(ListAPIView):
                 target_type="exam",
                 target_id=int(exam_id),
             )
+            .filter(enrollment__tenant=self.request.tenant)
+            .exclude(enrollment_id__isnull=True)
             .order_by("enrollment_id")
         )
 
@@ -111,7 +113,7 @@ class AdminExamResultsView(ListAPIView):
         # -------------------------------------------------
         fact_qs = (
             ResultFact.objects
-            .filter(target_type="exam", target_id=exam_id)
+            .filter(target_type="exam", target_id=exam_id, enrollment__tenant=request.tenant)
             .exclude(attempt_id__isnull=True)
             .order_by("-attempt_id", "-id")
             .values("enrollment_id", "attempt_id", "submission_id")
