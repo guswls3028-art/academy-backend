@@ -12,8 +12,9 @@ feature checklist.
 
 Controlled/internal expansion is **GO** after the 2026-06-07 KST pass: the
 student-domain account, signup Alimtalk, active-enrollment projection, production
-E2E gate, video playback/progress, OMR backend real-use, score-report, homework
-submit/grade, and cleanup probes passed on the real production target.
+E2E gate, video playback/progress, OMR backend real-use, OMR browser
+upload/review/regrade, score-report, homework submit/grade, and cleanup probes
+passed on the real production target.
 
 Broad public promotion or large external expansion is still **NO-GO / HOLD**
 until the remaining full-chain items below are either passed or explicitly
@@ -78,6 +79,12 @@ Repo-confirmed:
   from the session video list, then resetting progress to 0 and confirming the
   reset.
 - Backend OMR tenant real-use regression file passed: `31 passed`.
+- OMR upload/review/regrade real-use canary passed in production with
+  `frontend/e2e/admin/omr-review-realuse.spec.ts`: admin API fixture generated
+  lecture/session/student/exam/answer key and real OMR PDF, admin browser UI
+  uploaded the PDF, the worker persisted OMR answer rows, the OMR review
+  workspace selected the student and saved corrected answers, regrade returned
+  `60/100`, and student grades reflected the result.
 - Student score-report real-use spec passed after cleanup was changed to use
   bulk delete/permanent delete instead of detail delete, avoiding withdrawal
   notification side effects for generated test students.
@@ -91,6 +98,9 @@ Repo-confirmed:
 - Post-deploy residue probe confirmed old homework canary leftovers
   `session=296` and `lecture=297` deleted with `204`, and active
   `[E2E-...] 과제체인` lectures/sessions/students were `0`.
+- OMR residue probe confirmed active `[E2E-...] OMR` lectures, sessions, and
+  students were `0`; inactive archived exams `399` and `400` are preserved
+  result history and return the expected delete guard `403`.
 - Student dashboard/mobile/narrow viewport bundle passed: `14 passed`.
 
 Runtime-unverified or launch-exception-required in this pass:
@@ -98,8 +108,6 @@ Runtime-unverified or launch-exception-required in this pass:
 - public account-recovery activation as a browser chain:
   modal -> pending reset -> old-password proof -> temporary-password login
   activation -> must-change gate;
-- OMR upload -> match/review -> grading -> admin score board -> student result
-  as a full browser chain;
 - failed result -> clinic target -> clinic booking/attendance -> remediation;
 - broad beginner/misuse exploration across back/forward, double-submit, stale
   tabs, mobile keyboard, and repeated role switching.
@@ -197,6 +205,7 @@ pnpm build
 pnpm test:e2e:gate
 pnpm exec playwright test e2e\auth\account-recovery-modal.spec.ts --reporter=list
 pnpm exec playwright test e2e\student\score-report-realuse.spec.ts e2e\admin\session-assessment-realuse.spec.ts --reporter=list
+pnpm exec playwright test e2e\admin\omr-review-realuse.spec.ts --reporter=list
 pnpm exec playwright test e2e\flows\counsel-roundtrip.spec.ts e2e\flows\exam-data-flow.spec.ts e2e\flows\homework-scores-inventory-data-flow.spec.ts e2e\flows\video-session-data-flow.spec.ts --reporter=list
 pnpm exec playwright test e2e\student\homework-submission-realuse.spec.ts --reporter=list
 ```
@@ -244,6 +253,7 @@ Real-use canary candidates:
 cd C:\academy\frontend
 pnpm exec playwright test e2e\student\score-report-realuse.spec.ts --reporter=list
 pnpm exec playwright test e2e\admin\session-assessment-realuse.spec.ts --reporter=list
+pnpm exec playwright test e2e\admin\omr-review-realuse.spec.ts --reporter=list
 pnpm exec playwright test e2e\flows\notice-roundtrip.spec.ts e2e\flows\qna-roundtrip.spec.ts --reporter=list
 ```
 
@@ -272,7 +282,7 @@ If any of these are true, do not launch broadly:
 |---|---|---|
 | P0 | Add or promote real-use signup approval E2E | passed in production with controlled real send to `01031217466`; latest verified log `id=2839`, `target_id=parent:1932:01031217466`; keep pre-flight duplicate check |
 | P0 | Add account recovery activation E2E with pending reset proof | needs implementation |
-| P0 | Add OMR -> grading -> student result chain canary | `frontend/e2e/student/score-report-realuse.spec.ts` and backend OMR tenant real-use tests passed; OMR upload/match/review browser chain remains separate |
+| P0 | Add OMR -> grading -> student result chain canary | passed in production with `frontend/e2e/admin/omr-review-realuse.spec.ts`; generated OMR PDF -> admin UI upload -> worker answer rows -> review/regrade `60/100` -> student grades projection; active residue `0`, inactive result-history exams `399`/`400` preserved by delete guard |
 | P0 | Add clinic remediation chain canary | needs implementation |
 | P1 | Add homework submission chain canary | passed in production with `e2e/student/homework-submission-realuse.spec.ts`; generated homework, submission, score, student projection, cleanup, and residue probe completed |
 | P1 | Add account Alimtalk controlled-send runbook evidence template | signup approval provider/log path proved for controlled recipient; public account-recovery body/device confirmation still needs manual/provider validation |

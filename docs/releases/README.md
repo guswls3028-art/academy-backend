@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.39.md](v1.2.39.md) | **CURRENT** | 2026-06-07 KST | Homework submit/grade real-use chain + cleanup delete guard + production residue proof |
+| [v1.2.40.md](v1.2.40.md) | **CURRENT** | 2026-06-07 KST | OMR browser upload/review/regrade real-use chain + student projection proof |
+| [v1.2.39.md](v1.2.39.md) | production-deployed / v1.2.40로 승계 | 2026-06-07 KST | Homework submit/grade real-use chain + cleanup delete guard + production residue proof |
 | [v1.2.38.md](v1.2.38.md) | production-deployed / v1.2.39로 승계 | 2026-06-07 KST | Student launch canary seal + signup Alimtalk dedupe + OMR/video real-use proof |
 | [v1.2.37.md](v1.2.37.md) | production-deployed / v1.2.38로 승계 | 2026-06-07 KST | Student active-enrollment SSOT + fail-closed projections + real-use E2E cleanup hardening |
 | [v1.2.36.md](v1.2.36.md) | production-deployed / v1.2.37로 승계 | 2026-06-07 KST | Student-domain launch stability seal + production API redirect recovery + real-use E2E/Alimtalk proof |

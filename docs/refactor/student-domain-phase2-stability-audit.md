@@ -75,7 +75,7 @@ another tenant.
 | Admin direct student create | Admin create -> student login -> profile/dashboard -> cleanup | Existing E2E fragments | Needs promoted canary |
 | Account recovery | Public modal -> pending reset -> old password proof -> temp login activation -> must-change gate | Backend + modal tests | Needs browser activation spec |
 | Teacher reset | Staff reset student/parent -> login proof -> restore | `password-reset-roundtrip.spec.ts` | Covered |
-| OMR/result | Roster/exam -> submit/grade -> student result detail/grades/wrong-note/attempt history | `score-report-realuse.spec.ts` passed; backend OMR tenant real-use file passed `31 passed`; backend scope/security tests passed | OMR upload/match/review browser chain still separate |
+| OMR/result | Roster/exam -> submit/grade -> student result detail/grades/wrong-note/attempt history | `score-report-realuse.spec.ts` passed; `admin/omr-review-realuse.spec.ts` passed through generated OMR PDF, admin UI upload, worker answer rows, review/regrade `60/100`, and student grades projection; backend OMR tenant real-use file passed `31 passed`; backend scope/security tests passed | Covered for current gate; fixture creation is API-assisted |
 | Clinic remediation | Failed result -> clinic target -> booking/approval/attendance -> student notification/projection | Backend/frontend fragments | Needs end-to-end canary |
 | Homework | Homework assignment -> student submit -> admin grade -> student grades | `homework-scores-inventory-data-flow.spec.ts` production bundle/API plus `student/homework-submission-realuse.spec.ts` full production create-submit-grade chain | Covered for current gate |
 | QnA/counsel | Student writes -> staff replies -> student sees reply | `qna-roundtrip`, `counsel-roundtrip` | Covered enough for current gate |
@@ -124,6 +124,8 @@ pnpm exec playwright test e2e/flows/signup-approval-roundtrip.spec.ts --reporter
 pnpm exec playwright test e2e/student/dashboard-redesign.spec.ts e2e/student/dashboard-dark.spec.ts e2e/mobile-narrow-viewport-20260512.spec.ts --reporter=list
 pnpm exec eslint e2e/student/homework-submission-realuse.spec.ts
 pnpm exec playwright test e2e/student/homework-submission-realuse.spec.ts --reporter=list
+pnpm exec eslint e2e/admin/omr-review-realuse.spec.ts
+pnpm exec playwright test e2e/admin/omr-review-realuse.spec.ts --reporter=list
 ```
 
 Additional frontend evidence from the production bundle against the production
@@ -143,6 +145,7 @@ video progress persistence -> write 42%, read 42%, reset 0%, read 0%
 backend OMR tenant real-use regression -> 31 passed
 homework-submission-realuse -> 1 passed; admin fixture -> student browser file submission -> admin score 92/100 -> student grades UI reflected result
 old homework canary residue cleanup -> session 296 DELETE 204, lecture 297 DELETE 204; lectures/sessions/students search returned 0 matches
+omr-review-realuse -> 1 passed; generated OMR PDF -> admin score-tab UI upload -> worker answer rows -> OMR review student select + regrade 60/100 -> student grades UI reflected result; active lectures/sessions/students residue 0; inactive result-history exams 399/400 delete guard 403
 ```
 
 The two skipped cases are conditional student exam submit/result steps when the
@@ -178,5 +181,4 @@ remains no-go until all required full-chain rows in
 `student-domain-launch-readiness.md` are `passed` or explicitly accepted as
 documented launch exceptions. The largest remaining gaps are not basic account
 creation anymore; they are full browser-chain proof for account-recovery
-activation, OMR upload/match/review, clinic remediation, and deliberate
-beginner/misuse behavior.
+activation, clinic remediation, and deliberate beginner/misuse behavior.
