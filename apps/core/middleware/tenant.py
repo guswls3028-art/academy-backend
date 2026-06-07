@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 
+from django.conf import settings
 from django.http import JsonResponse
 
 from apps.core.tenant.context import set_current_tenant, clear_current_tenant
@@ -19,6 +20,23 @@ BYPASS_PATHS = {"/health", "/health/", "/healthz", "/healthz/", "/readyz", "/rea
 BYPASS_PREFIXES = (
     "/api/v1/billing/webhooks/",
 )
+
+
+def _path_matches_prefix(path: str, prefix: str) -> bool:
+    prefix = (prefix or "").strip()
+    if not prefix:
+        return False
+    if path.startswith(prefix):
+        return True
+    trimmed_prefix = prefix.rstrip("/")
+    return bool(trimmed_prefix and path.rstrip("/") == trimmed_prefix)
+
+
+def _is_tenant_bypass_path(path: str) -> bool:
+    if any(path.startswith(p) for p in BYPASS_PREFIXES):
+        return True
+    configured_prefixes = getattr(settings, "TENANT_BYPASS_PATH_PREFIXES", ())
+    return any(_path_matches_prefix(path, str(prefix)) for prefix in configured_prefixes)
 
 
 class TenantMiddleware:
@@ -47,7 +65,7 @@ class TenantMiddleware:
         if (
             path in BYPASS_PATHS
             or norm in ("/health", "/healthz", "/readyz")
-            or any(path.startswith(p) for p in BYPASS_PREFIXES)
+            or _is_tenant_bypass_path(path)
         ):
             try:
                 return self.get_response(request)
