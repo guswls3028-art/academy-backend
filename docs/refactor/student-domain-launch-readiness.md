@@ -12,8 +12,8 @@ feature checklist.
 
 Controlled/internal expansion is **GO** after the 2026-06-07 KST pass: the
 student-domain account, signup Alimtalk, active-enrollment projection, production
-E2E gate, video playback/progress, OMR backend real-use, score-report, and
-cleanup probes passed on the real production target.
+E2E gate, video playback/progress, OMR backend real-use, score-report, homework
+submit/grade, and cleanup probes passed on the real production target.
 
 Broad public promotion or large external expansion is still **NO-GO / HOLD**
 until the remaining full-chain items below are either passed or explicitly
@@ -81,6 +81,16 @@ Repo-confirmed:
 - Student score-report real-use spec passed after cleanup was changed to use
   bulk delete/permanent delete instead of detail delete, avoiding withdrawal
   notification side effects for generated test students.
+- Student homework submission real-use spec passed in production:
+  admin API fixture created lecture/session/student/homework, student browser
+  submitted a real file, admin scoring API wrote `92/100`, and student grades UI
+  reflected the result.
+- Lecture/session cleanup guard now ignores homeworks already removed from the
+  session, so E2E cleanup can delete generated sessions/lectures after
+  homework deletion without weakening history-preserving blockers.
+- Post-deploy residue probe confirmed old homework canary leftovers
+  `session=296` and `lecture=297` deleted with `204`, and active
+  `[E2E-...] 과제체인` lectures/sessions/students were `0`.
 - Student dashboard/mobile/narrow viewport bundle passed: `14 passed`.
 
 Runtime-unverified or launch-exception-required in this pass:
@@ -91,8 +101,6 @@ Runtime-unverified or launch-exception-required in this pass:
 - OMR upload -> match/review -> grading -> admin score board -> student result
   as a full browser chain;
 - failed result -> clinic target -> clinic booking/attendance -> remediation;
-- homework creation -> student submission -> admin grading -> student result
-  as a full create/submit/grade browser chain. Render/API data-flow passed;
 - broad beginner/misuse exploration across back/forward, double-submit, stale
   tabs, mobile keyboard, and repeated role switching.
 
@@ -190,6 +198,7 @@ pnpm test:e2e:gate
 pnpm exec playwright test e2e\auth\account-recovery-modal.spec.ts --reporter=list
 pnpm exec playwright test e2e\student\score-report-realuse.spec.ts e2e\admin\session-assessment-realuse.spec.ts --reporter=list
 pnpm exec playwright test e2e\flows\counsel-roundtrip.spec.ts e2e\flows\exam-data-flow.spec.ts e2e\flows\homework-scores-inventory-data-flow.spec.ts e2e\flows\video-session-data-flow.spec.ts --reporter=list
+pnpm exec playwright test e2e\student\homework-submission-realuse.spec.ts --reporter=list
 ```
 
 Signup approval real-use canary:
@@ -265,7 +274,7 @@ If any of these are true, do not launch broadly:
 | P0 | Add account recovery activation E2E with pending reset proof | needs implementation |
 | P0 | Add OMR -> grading -> student result chain canary | `frontend/e2e/student/score-report-realuse.spec.ts` and backend OMR tenant real-use tests passed; OMR upload/match/review browser chain remains separate |
 | P0 | Add clinic remediation chain canary | needs implementation |
-| P1 | Add homework submission chain canary | production render/API data-flow passed; full create-submit-grade browser chain still needed |
+| P1 | Add homework submission chain canary | passed in production with `e2e/student/homework-submission-realuse.spec.ts`; generated homework, submission, score, student projection, cleanup, and residue probe completed |
 | P1 | Add account Alimtalk controlled-send runbook evidence template | signup approval provider/log path proved for controlled recipient; public account-recovery body/device confirmation still needs manual/provider validation |
 | P1 | Audit student result visibility for final/draft/provisional policy | active/inactive enrollment projection covered for student detail, grades summary, exam list/submission, video/progress, wrong-note/PDF, attempt history, attendance, and session hide; final/draft policy still needs product decision |
 | P1 | Add mobile/narrow viewport review for student/admin account screens | student dashboard/mobile/narrow bundle passed; admin/teacher account screens still need visual validation |

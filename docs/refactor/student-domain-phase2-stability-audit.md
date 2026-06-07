@@ -77,7 +77,7 @@ another tenant.
 | Teacher reset | Staff reset student/parent -> login proof -> restore | `password-reset-roundtrip.spec.ts` | Covered |
 | OMR/result | Roster/exam -> submit/grade -> student result detail/grades/wrong-note/attempt history | `score-report-realuse.spec.ts` passed; backend OMR tenant real-use file passed `31 passed`; backend scope/security tests passed | OMR upload/match/review browser chain still separate |
 | Clinic remediation | Failed result -> clinic target -> booking/approval/attendance -> student notification/projection | Backend/frontend fragments | Needs end-to-end canary |
-| Homework | Homework assignment -> student submit -> admin grade -> student grades | API/render fragments; `homework-scores-inventory-data-flow.spec.ts` passed production bundle + production API | Needs full create-submit-grade canary |
+| Homework | Homework assignment -> student submit -> admin grade -> student grades | `homework-scores-inventory-data-flow.spec.ts` production bundle/API plus `student/homework-submission-realuse.spec.ts` full production create-submit-grade chain | Covered for current gate |
 | QnA/counsel | Student writes -> staff replies -> student sees reply | `qna-roundtrip`, `counsel-roundtrip` | Covered enough for current gate |
 | Video/progress | Ready video -> student play -> progress persists -> resume | Production HLS playback smoke passed for lecture `136` / session `159` / video `284`; progress write/read/reset passed for enrollment `1052`; render/API bundle passed | Browser visual player canary still optional launch-hardening |
 | Tenant isolation | Cross-tenant student/enrollment/result access denied | Backend tests + frontend tenant isolation gate | Covered |
@@ -103,6 +103,8 @@ python manage.py makemigrations --check --dry-run --settings apps.api.config.set
 python -m pytest tests/test_smoke.py -v --tb=short -x
 python -m pytest apps\domains\submissions\tests\test_omr_tenant_realuse_flow.py -v --tb=short -x
 python scripts\post_deploy_smoke\video_playback_chain.py
+python -m pytest apps\domains\lectures\tests\test_lecture_session_delete_guards.py -v --tb=short -x
+python -m ruff check apps\domains\lectures\views.py apps\domains\lectures\tests\test_lecture_session_delete_guards.py
 ```
 
 Frontend already run:
@@ -120,6 +122,8 @@ pnpm exec playwright test e2e/student/score-report-realuse.spec.ts e2e/admin/ses
 pnpm exec playwright test e2e/flows/counsel-roundtrip.spec.ts e2e/flows/exam-data-flow.spec.ts e2e/flows/homework-scores-inventory-data-flow.spec.ts e2e/flows/video-session-data-flow.spec.ts --reporter=list
 pnpm exec playwright test e2e/flows/signup-approval-roundtrip.spec.ts --reporter=list
 pnpm exec playwright test e2e/student/dashboard-redesign.spec.ts e2e/student/dashboard-dark.spec.ts e2e/mobile-narrow-viewport-20260512.spec.ts --reporter=list
+pnpm exec eslint e2e/student/homework-submission-realuse.spec.ts
+pnpm exec playwright test e2e/student/homework-submission-realuse.spec.ts --reporter=list
 ```
 
 Additional frontend evidence from the production bundle against the production
@@ -137,6 +141,8 @@ student dashboard/mobile/narrow bundle -> 14 passed
 video HLS playback smoke -> ALL PASS (lecture=136 session=159 video=284)
 video progress persistence -> write 42%, read 42%, reset 0%, read 0%
 backend OMR tenant real-use regression -> 31 passed
+homework-submission-realuse -> 1 passed; admin fixture -> student browser file submission -> admin score 92/100 -> student grades UI reflected result
+old homework canary residue cleanup -> session 296 DELETE 204, lecture 297 DELETE 204; lectures/sessions/students search returned 0 matches
 ```
 
 The two skipped cases are conditional student exam submit/result steps when the
@@ -149,6 +155,8 @@ Deployment evidence:
 backend GitHub Actions run 27077258150 -> success; all six V1 images built/pushed and deploy verification passed
 backend post-deploy local verification -> PASS, GO/NO-GO: GO
 frontend GitHub Actions run 27079644677 -> success; typecheck, legacy guard, lint, build, Cloudflare Pages deploy, OG/static checks, Tenant 1 E2E passed
+backend GitHub Actions run 27091489662 -> success for `1106726e3`; post-deploy local verification at 2026-06-07T21:08 KST -> PASS, GO/NO-GO: GO
+frontend GitHub Actions run 27091489533 -> success for `9cdcfd63`; typecheck, legacy guard, lint, build, Cloudflare Pages deploy, OG/static checks, Tenant 1 E2E passed
 ```
 
 Production safety and real-send check:
@@ -170,5 +178,5 @@ remains no-go until all required full-chain rows in
 `student-domain-launch-readiness.md` are `passed` or explicitly accepted as
 documented launch exceptions. The largest remaining gaps are not basic account
 creation anymore; they are full browser-chain proof for account-recovery
-activation, OMR upload/match/review, clinic remediation, homework submit/grade,
-and deliberate beginner/misuse behavior.
+activation, OMR upload/match/review, clinic remediation, and deliberate
+beginner/misuse behavior.
