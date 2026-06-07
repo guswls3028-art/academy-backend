@@ -42,11 +42,22 @@ Repo-confirmed:
   exam-attempt history, attendance summary, session-hide mutations, dashboard
   scoped notices, and video/progress projections now fail closed through the
   canonical active-enrollment selector or its multi-student variant.
+- Frontend student exam detail now avoids retrying 4xx responses, so direct
+  access to a non-enrolled/non-accessible exam URL fails closed instead of
+  lingering in a loading state.
 - Frontend student API contract has a shared `students.ts` mapper used by admin
   and teacher flows.
 - `frontend/e2e/flows/signup-approval-roundtrip.spec.ts` now covers public
   signup -> staff approval UI -> student login -> cleanup, with production
   recipient guards.
+- Production bundle against production API additionally passed:
+  `test:e2e:gate` (35 passed), score-report/session-assessment (2 passed), and
+  counsel + exam + homework/scores/inventory + video/session bundle
+  (37 passed, 2 conditional skips). E2E cleanup probe confirmed
+  `E2E Test Exam` 0 and `[E2E] 상담 신청` 0 after final runs.
+- Frontend E2E hardening now tracks counsel posts across retries and deletes
+  test-only posts through an independent admin token, so a failed admin login
+  attempt cannot leave `[E2E] 상담 신청 ...` residue behind.
 
 Runtime-unverified in this pass:
 
@@ -56,7 +67,8 @@ Runtime-unverified in this pass:
   check on 2026-06-07 KST). Do not use an arbitrary phone to bypass this;
 - OMR upload -> match/review -> grading -> admin score board -> student result;
 - failed result -> clinic target -> clinic booking/attendance -> remediation;
-- homework creation -> student submission -> admin grading -> student result;
+- homework creation -> student submission -> admin grading -> student result
+  as a full create/submit/grade browser chain. Render/API data-flow passed;
 - broad mobile/narrow viewport checks for the touched student/admin/teacher
   screens.
 
@@ -150,7 +162,10 @@ pnpm typecheck
 pnpm guard:legacy-api
 pnpm lint
 pnpm build
+pnpm test:e2e:gate
 pnpm exec playwright test e2e\auth\account-recovery-modal.spec.ts --reporter=list
+pnpm exec playwright test e2e\student\score-report-realuse.spec.ts e2e\admin\session-assessment-realuse.spec.ts --reporter=list
+pnpm exec playwright test e2e\flows\counsel-roundtrip.spec.ts e2e\flows\exam-data-flow.spec.ts e2e\flows\homework-scores-inventory-data-flow.spec.ts e2e\flows\video-session-data-flow.spec.ts --reporter=list
 ```
 
 Signup approval real-use canary:
@@ -221,9 +236,9 @@ If any of these are true, do not launch broadly:
 |---|---|---|
 | P0 | Add or promote real-use signup approval E2E | implemented as `frontend/e2e/flows/signup-approval-roundtrip.spec.ts`; production run safety-blocked by controlled-number collision |
 | P0 | Add account recovery activation E2E with pending reset proof | needs implementation |
-| P0 | Add OMR -> grading -> student result chain canary | existing `frontend/e2e/student/score-report-realuse.spec.ts`; promote into repeatable gate after current pass |
+| P0 | Add OMR -> grading -> student result chain canary | `frontend/e2e/student/score-report-realuse.spec.ts` passed against production API; OMR upload/match/review remains separate |
 | P0 | Add clinic remediation chain canary | needs implementation |
-| P1 | Add homework submission chain canary | needs implementation |
+| P1 | Add homework submission chain canary | production render/API data-flow passed; full create-submit-grade browser chain still needed |
 | P1 | Add account Alimtalk controlled-send runbook evidence template | needs manual/provider validation |
 | P1 | Audit student result visibility for final/draft/provisional policy | active/inactive enrollment projection covered for student detail, grades summary, exam list/submission, video/progress, wrong-note/PDF, attempt history, attendance, and session hide; final/draft policy still needs product decision |
 | P1 | Add mobile/narrow viewport review for student/admin account screens | needs browser visual validation |

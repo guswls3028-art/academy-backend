@@ -54,6 +54,7 @@ another tenant.
 | Student hides a session from inactive enrollment | Request returns 404 and does not mutate hidden IDs | `test_session_tenant_isolation.py` | Covered in this pass |
 | Student views attendance after enrollment inactivation | Inactive enrollment attendance is excluded from summary and recent rows | `test_session_tenant_isolation.py` | Covered in this pass |
 | Student opens exam list/detail/submission after enrollment inactivation | Exam access resolves through canonical active enrollment ids | `test_parent_exam_child_selection.py`, selector inspection | Covered in this pass |
+| Student opens a non-enrolled/non-accessible exam detail URL directly | Student app fails closed instead of staying in a retry/loading state | `frontend/e2e/flows/exam-data-flow.spec.ts` production bundle + production API | Covered in this pass |
 | Student opens video list/stats after enrollment inactivation | Course video projection/progress excludes inactive enrollments; public system video is included only through explicit `include_system=True` | `test_student_video_progress_enrollment_resolution.py` | Covered in this pass |
 | Dashboard scoped notice checks stale lecture enrollment | Notice scope uses canonical active enrollment lecture ids | `StudentDashboardView` inspection | Covered by code, needs dedicated notice fixture test if notice scope changes |
 | OMR scan matches same name in another tenant | No cross-tenant match | `test_candidate_matching.py`, submission scope tests | Covered |
@@ -76,9 +77,9 @@ another tenant.
 | Teacher reset | Staff reset student/parent -> login proof -> restore | `password-reset-roundtrip.spec.ts` | Covered |
 | OMR/result | Roster/exam -> submit/grade -> student result detail/grades/wrong-note/attempt history | `score-report-realuse.spec.ts`, backend scope/security tests | Promote into launch gate bundle |
 | Clinic remediation | Failed result -> clinic target -> booking/approval/attendance -> student notification/projection | Backend/frontend fragments | Needs end-to-end canary |
-| Homework | Homework assignment -> student submit -> admin grade -> student grades | API/render fragments | Needs end-to-end canary |
+| Homework | Homework assignment -> student submit -> admin grade -> student grades | API/render fragments; `homework-scores-inventory-data-flow.spec.ts` passed production bundle + production API | Needs full create-submit-grade canary |
 | QnA/counsel | Student writes -> staff replies -> student sees reply | `qna-roundtrip`, `counsel-roundtrip` | Covered enough for current gate |
-| Video/progress | Ready video -> student play -> progress persists -> resume | `test_student_video_progress_enrollment_resolution.py`; projection now uses canonical selector | Needs playback/progress browser canary |
+| Video/progress | Ready video -> student play -> progress persists -> resume | `test_student_video_progress_enrollment_resolution.py`; projection now uses canonical selector; `video-session-data-flow.spec.ts` production render/API passed | Needs playback/progress browser canary |
 | Tenant isolation | Cross-tenant student/enrollment/result access denied | Backend tests + frontend tenant isolation gate | Covered |
 
 ## 5. Evidence Commands From This Pass
@@ -112,6 +113,31 @@ pnpm guard:legacy-api
 pnpm lint
 pnpm build
 pnpm test:e2e:gate
+pnpm exec playwright test e2e/student/score-report-realuse.spec.ts e2e/admin/session-assessment-realuse.spec.ts --reporter=list
+pnpm exec playwright test e2e/flows/counsel-roundtrip.spec.ts e2e/flows/exam-data-flow.spec.ts e2e/flows/homework-scores-inventory-data-flow.spec.ts e2e/flows/video-session-data-flow.spec.ts --reporter=list
+```
+
+Additional frontend evidence from the production bundle against the production
+API:
+
+```text
+pnpm test:e2e:gate -> 35 passed
+score-report-realuse + session-assessment-realuse -> 2 passed
+counsel + exam + homework/scores/inventory + video/session bundle -> 37 passed, 2 skipped
+final counsel retry-cleanup hardening check -> counsel-roundtrip 5 passed
+cleanup probe -> E2E Test Exam 0, [E2E] 상담 신청 0
+```
+
+The two skipped cases are conditional student exam submit/result steps when the
+current production fixture has no accessible exam questions/results for the E2E
+student. This is not counted as proof of a full exam-taking chain.
+
+Deployment evidence:
+
+```text
+backend GitHub Actions run 27077258150 -> success; all six V1 images built/pushed and deploy verification passed
+backend post-deploy local verification -> PASS, GO/NO-GO: GO
+frontend GitHub Actions run 27079644677 -> success; typecheck, legacy guard, lint, build, Cloudflare Pages deploy, OG/static checks, Tenant 1 E2E passed
 ```
 
 Read-only production safety check:
