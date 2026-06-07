@@ -3,7 +3,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
-from apps.domains.clinic.tests import ClinicTestMixin
+from apps.core.models import Tenant, TenantMembership
 from apps.domains.results.models import Result
 from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
 
@@ -11,23 +11,56 @@ from apps.domains.results.views.admin_exam_results_view import AdminExamResultsV
 User = get_user_model()
 
 
-class AdminExamResultsScopeTest(TestCase, ClinicTestMixin):
+class AdminExamResultsScopeTest(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
-        self.data = self.setup_full_tenant("admin-exam-results-scope", student_count=1)
-        self.tenant = self.data["tenant"]
-        self.enrollment = self.data["enrollments"][0]
-        self.lec_session = self.data["lec_session"]
+        self.tenant = Tenant.objects.create(
+            name="Admin Exam Results Scope",
+            code="admin-exam-results-scope",
+            is_active=True,
+        )
+        self.Lecture = django_apps.get_model("lectures", "Lecture")
+        self.Session = django_apps.get_model("lectures", "Session")
+        self.Student = django_apps.get_model("students", "Student")
+        self.Enrollment = django_apps.get_model("enrollment", "Enrollment")
         self.Exam = django_apps.get_model("exams", "Exam")
         self.admin_user = User.objects.create_user(
             username="admin_exam_results_scope_admin",
             password="test1234",
+            tenant=self.tenant,
             is_staff=True,
             is_superuser=True,
         )
-        if hasattr(self.admin_user, "tenant_id"):
-            self.admin_user.tenant_id = self.tenant.id
-            self.admin_user.save(update_fields=["tenant_id"])
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.admin_user, role="admin")
+        self.lecture = self.Lecture.objects.create(
+            tenant=self.tenant,
+            title="Scope Lecture",
+            name="Scope Lecture",
+            subject="MATH",
+        )
+        self.lec_session = self.Session.objects.create(lecture=self.lecture, order=1, title="1회차")
+        self.enrollment = self._make_enrollment(self.tenant, self.lecture, "SCOPE001", "범위 학생")
+
+    def _make_enrollment(self, tenant, lecture, ps_number: str, name: str):
+        user = User.objects.create_user(
+            username=f"{tenant.code}_{ps_number}",
+            password="test1234",
+            tenant=tenant,
+        )
+        student = self.Student.objects.create(
+            tenant=tenant,
+            user=user,
+            ps_number=ps_number,
+            omr_code=ps_number[-8:],
+            name=name,
+            parent_phone="01000000000",
+        )
+        return self.Enrollment.objects.create(
+            tenant=tenant,
+            student=student,
+            lecture=lecture,
+            status="ACTIVE",
+        )
 
     def _make_exam(self, title="scope exam"):
         exam = self.Exam.objects.create(
@@ -70,8 +103,18 @@ class AdminExamResultsScopeTest(TestCase, ClinicTestMixin):
 
     def test_cross_tenant_enrollment_result_is_ignored(self):
         exam = self._make_exam()
-        other = self.setup_full_tenant("admin-exam-results-scope-other", student_count=1)
-        other_enrollment = other["enrollments"][0]
+        other_tenant = Tenant.objects.create(
+            name="Admin Exam Results Scope Other",
+            code="admin-exam-results-scope-other",
+            is_active=True,
+        )
+        other_lecture = self.Lecture.objects.create(
+            tenant=other_tenant,
+            title="Other Lecture",
+            name="Other Lecture",
+            subject="MATH",
+        )
+        other_enrollment = self._make_enrollment(other_tenant, other_lecture, "OTHER001", "타 테넌트 학생")
         Result.objects.create(
             target_type="exam",
             target_id=exam.id,
