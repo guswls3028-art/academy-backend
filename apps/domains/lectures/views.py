@@ -52,7 +52,12 @@ def _first_session_delete_blocker(sessions) -> str | None:
         ("exams", Exam.objects.filter(sessions__in=sessions)),
         ("homework enrollments", HomeworkEnrollment.objects.filter(session_id__in=session_ids)),
         ("homework assignments", HomeworkAssignment.objects.filter(session_id__in=session_ids)),
-        ("homeworks", Homework.objects.filter(session_id__in=session_ids)),
+        (
+            "homeworks",
+            Homework.objects
+            .filter(session_id__in=session_ids)
+            .exclude(meta__removed_from_session_at__isnull=False),
+        ),
         ("homework scores", HomeworkScore.objects.filter(session_id__in=session_ids)),
         ("session progress", SessionProgress.objects.filter(session_id__in=session_ids)),
         ("lecture progress references", LectureProgress.objects.filter(last_session_id__in=session_ids)),

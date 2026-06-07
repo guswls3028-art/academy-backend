@@ -109,6 +109,24 @@ class LectureSessionDeleteGuardTests(TestCase):
         self.assertFalse(Session.objects.filter(id=session.id).exists())
         self.assertFalse(Lecture.objects.filter(id=lecture.id).exists())
 
+    def test_removed_homework_without_history_does_not_block_cleanup_delete(self):
+        lecture = self._create_lecture("removed-homework")
+        session = self._create_session(lecture, "removed-homework")
+        Homework.objects.create(
+            tenant=self.tenant,
+            session=session,
+            title="Removed homework",
+            meta={"removed_from_session_at": "2026-06-07T00:00:00+09:00"},
+        )
+
+        session_response = self._delete_session(session)
+        lecture_response = self._delete_lecture(lecture)
+
+        self.assertEqual(session_response.status_code, 204, session_response.data)
+        self.assertEqual(lecture_response.status_code, 204, lecture_response.data)
+        self.assertFalse(Session.objects.filter(id=session.id).exists())
+        self.assertFalse(Lecture.objects.filter(id=lecture.id).exists())
+
     def test_lecture_with_enrollment_cannot_be_deleted(self):
         lecture = self._create_lecture("enrolled")
         self._create_enrollment(lecture, "enrolled")
