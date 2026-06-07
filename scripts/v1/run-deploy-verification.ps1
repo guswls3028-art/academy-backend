@@ -238,6 +238,7 @@ try {
 # --- 5a. EIP 개수 (Solapi 고정 IP 취소 → NAT/EIP 잔여 시 비용/불필요 리소스 보고용) ---
 $eipCountTotal = 0
 $eipCountUnassociated = 0
+$natGatewayActiveCount = 0
 try {
     $addrs = Invoke-AwsJson @("ec2", "describe-addresses", "--region", $R, "--output", "json")
     if ($addrs -and $addrs.Addresses) {
@@ -245,6 +246,13 @@ try {
         $eipCountUnassociated = @($addrs.Addresses | Where-Object { -not $_.InstanceId -and -not $_.NetworkInterfaceId }).Count
     }
 } catch { }
+try {
+    $nat = Invoke-AwsJson @("ec2", "describe-nat-gateways", "--region", $R, "--output", "json")
+    if ($nat -and $nat.NatGateways) {
+        $natGatewayActiveCount = @($nat.NatGateways | Where-Object { $_.State -notin @("deleted", "failed") }).Count
+    }
+} catch { }
+$solapiCleanupCandidateCount = $eipCountUnassociated + $natGatewayActiveCount
 
 # --- 5b. Video E2E 근거 (VIDEO_E2E_TEST_JOB_ID 설정 시 자동 수집) ---
 $videoE2EEvidence = ""
@@ -395,7 +403,11 @@ $msgExpectedMinDesired = "$($script:MessagingMinSize)/$($script:MessagingDesired
 $apiConsensusOk = ([string]$ev.apiAsgMin -eq [string]$script:ApiASGMinSize -and [string]$ev.apiAsgDesired -eq [string]$script:ApiASGDesiredCapacity)
 $aiConsensusOk = ([string]$ev.asgAiMin -eq [string]$script:AiMinSize -and [string]$ev.asgAiDesired -eq [string]$script:AiDesiredCapacity)
 $msgConsensusOk = ([string]$ev.asgMessagingMin -eq [string]$script:MessagingMinSize -and [string]$ev.asgMessagingDesired -eq [string]$script:MessagingDesiredCapacity)
-$eipNote = if ($eipCountTotal -gt 0) { "EIP $eipCountTotal 개 (미연결 $eipCountUnassociated). Solapi 고정 IP 취소로 NAT/EIP 불필요·비용 검토 권장." } else { "EIP 없음 (합의 반영)" }
+$eipNote = if ($solapiCleanupCandidateCount -gt 0) {
+    "NAT Gateway $natGatewayActiveCount 개, EIP $eipCountTotal 개 (미연결 $eipCountUnassociated). Solapi 고정 IP 취소에 따라 삭제 후보 검토 필요."
+} else {
+    "NAT Gateway 0개, EIP $eipCountTotal 개 (미연결 0). 연결된 EIP는 활성 리소스 소유로 Solapi 정리 후보 아님."
+}
 $buildNote = "정상 (빌드 서버 없음, GitHub Actions only)"
 
 $consistencySb = [System.Text.StringBuilder]::new()
@@ -410,7 +422,7 @@ $consistencySb = [System.Text.StringBuilder]::new()
 [void]$consistencySb.AppendLine("| API ASG min/desired | $apiExpectedMinDesired | $($ev.apiAsgMin)/$($ev.apiAsgDesired) | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$consistencySb.AppendLine("| AI ASG min/desired | $aiExpectedMinDesired | $($ev.asgAiMin)/$($ev.asgAiDesired) | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$consistencySb.AppendLine("| Messaging ASG min/desired | $msgExpectedMinDesired | $($ev.asgMessagingMin)/$($ev.asgMessagingDesired) | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
-[void]$consistencySb.AppendLine("| Solapi 고정 IP(NAT/EIP) | 취소(불필요) | $eipNote | $(if ($eipCountTotal -eq 0) { 'PASS' } else { 'WARNING' }) |")
+[void]$consistencySb.AppendLine("| Solapi 고정 IP(NAT/EIP) | 취소(불필요) | $eipNote | $(if ($solapiCleanupCandidateCount -eq 0) { 'PASS' } else { 'WARNING' }) |")
 [void]$consistencySb.AppendLine("| 빌드 서버 | 사용하지 않음(0대) | $buildNote | PASS |")
 [void]$consistencySb.AppendLine("")
 [void]$consistencySb.AppendLine("## SSOT vs Actual (일부)")
@@ -606,7 +618,7 @@ Save-DeployVerificationReport -MarkdownContent $sb.ToString()
 # V1 최종 배포 검증 보고서 (reports/V1-FINAL-REPORT.md)
 $consistencySummary = "PASS"
 if (-not $apiConsensusOk -or -not $aiConsensusOk -or -not $msgConsensusOk) { $consistencySummary = "WARNING" }
-if ($eipCountTotal -gt 0) { if ($consistencySummary -eq "PASS") { $consistencySummary = "WARNING" } }
+if ($solapiCleanupCandidateCount -gt 0) { if ($consistencySummary -eq "PASS") { $consistencySummary = "WARNING" } }
 $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("# V1 최종 배포 검증 보고서")
 [void]$finalSb.AppendLine("")
@@ -628,7 +640,7 @@ $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("| API ASG min/desired=$apiExpectedMinDesired | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$finalSb.AppendLine("| AI ASG min/desired=$aiExpectedMinDesired | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$finalSb.AppendLine("| Messaging ASG min/desired=$msgExpectedMinDesired | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
-[void]$finalSb.AppendLine("| Solapi 고정 IP(NAT/EIP) 취소 | $(if ($eipCountTotal -eq 0) { 'PASS' } else { 'WARNING(EIP 잔여)' }) |")
+[void]$finalSb.AppendLine("| Solapi 고정 IP(NAT/EIP) 취소 | $(if ($solapiCleanupCandidateCount -eq 0) { 'PASS' } else { 'WARNING(삭제 후보 잔여)' }) |")
 [void]$finalSb.AppendLine("| 빌드 (GitHub Actions only) | PASS |")
 [void]$finalSb.AppendLine("")
 [void]$finalSb.AppendLine("## Front V1 연결")
@@ -642,7 +654,7 @@ $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("")
 [void]$finalSb.AppendLine("## 남은 WARNING 및 후속 작업")
 [void]$finalSb.AppendLine("- Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.")
-if ($eipCountTotal -gt 0) { [void]$finalSb.AppendLine("- EIP/NAT 잔여: Solapi 고정 IP 요구 취소에 따라 제거 검토(비용·불필요 리소스).") }
+if ($solapiCleanupCandidateCount -gt 0) { [void]$finalSb.AppendLine("- EIP/NAT 잔여: Solapi 고정 IP 요구 취소에 따라 미연결 EIP 또는 NAT Gateway 제거 검토 필요.") }
 if ($buildRunningCount -gt 0) { [void]$finalSb.AppendLine("- 빌드 서버: 현재 정책상 사용하지 않음(0대가 정상). 남아있다면 정리 대상.") }
 if ($findings.Count -gt 0) {
     foreach ($f in $findings) { [void]$finalSb.AppendLine("- [$($f.Severity)] $($f.Area): $($f.Message)") }

@@ -5,9 +5,9 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-06-08T01:35:16.9693663+09:00 |
+| 검증 시각 | 2026-06-08T01:42:28.5550006+09:00 |
 | 최종 상태 | PASS |
-| SSOT↔Actual 정합성 | **WARNING** |
+| SSOT↔Actual 정합성 | **PASS** |
 | GO/NO-GO | **GO** |
 
 
@@ -18,7 +18,7 @@
 | API ASG min/desired=1/1 | PASS |
 | AI ASG min/desired=0/0 | PASS |
 | Messaging ASG min/desired=1/1 | PASS |
-| Solapi 고정 IP(NAT/EIP) 취소 | WARNING(EIP 잔여) |
+| Solapi 고정 IP(NAT/EIP) 취소 | PASS |
 | 빌드 (GitHub Actions only) | PASS |
 
 ## Front V1 연결
@@ -32,7 +32,6 @@
 
 ## 남은 WARNING 및 후속 작업
 - Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.
-- EIP/NAT 잔여: Solapi 고정 IP 요구 취소에 따라 제거 검토(비용·불필요 리소스).
 - (현재 리스크 없음)
 
 ## 상세 보고서
