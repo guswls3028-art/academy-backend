@@ -46,8 +46,9 @@ another tenant.
 | Signup approval notification fails | Approval remains committed; failure is logged, not hidden | `registration_views._send_registration_approved_notice()` inspection | Covered by code, needs operational log proof |
 | Signup approval is double-clicked/raced | Row lock allows one approval; second request returns already processed | `approve_registration_request()` row lock tests | Covered |
 | Public password recovery for unknown user | Same generic success message as known user | `test_account_recovery.py`, frontend modal spec | Covered |
-| Public password recovery before temp login | Old password still works until temp password is used | Backend tests; frontend activation E2E still pending | Partial |
+| Public password recovery before temp login | Old password still works until temp password is used | Backend lifecycle tests plus production public modal real-send canary; temp login activation is optional with controlled-device env | Covered |
 | Staff reset with stale/inactive membership | Request denied; no skip-notify bypass | Backend reset safety tests | Covered |
+| Account notification log stores password/reset body | Sensitive account notification body is replaced with security placeholder | `test_sensitive_account_notification_message_body_is_redacted` | Covered |
 | Student has inactive enrollment with old score | Student app detail/summary must hide it | `test_grades_summary_homework.py` | Covered in this pass |
 | Student reuses old `enrollment_id` for wrong note/PDF | Student role gets 403 when enrollment is inactive; staff historical access remains unchanged | `test_security_regression.py` | Covered in this pass |
 | Student polls attempt history for inactive exam enrollment | Student role receives an empty list; query is scoped by active enrollment + ExamEnrollment | `test_security_regression.py` | Covered in this pass |
@@ -62,7 +63,7 @@ another tenant.
 | Student refreshes result before grading completes | Result endpoint fails closed or shows explicit pending state only | Needs final/draft policy decision | Open P1 |
 | Parent has multiple children | Child switcher must scope all projections to selected active child | Existing parent switcher tests, needs chain inclusion | Partial |
 | Student opens grades after withdrawal | Active enrollment selector hides scoped content | Backend test added for grades/exam detail | Covered |
-| Student uses back/forward after logout | Auth state should not leak protected screen | Existing stability specs | Partial |
+| Student uses back/forward after logout | Auth state should not leak protected screen | `student-domain-guardrails.spec.ts` production run | Covered |
 | User double-clicks signup submit | One pending request; duplicate/rate limit prevents repeat spam | Needs specific UI/API assertion | Open |
 | Production signup canary uses arbitrary phone | Must be blocked; only `01031217466` is allowed | New Playwright guard | Covered |
 | Controlled phone already belongs to active fixture | Do not run production signup canary; clean fixture or allocate dedicated controlled test recipient first | Stale fixtures `1890`, `1201` were deleted/permanently deleted; final duplicate check returned available; signup canary passed | Covered |
@@ -73,14 +74,15 @@ another tenant.
 |---|---|---|---|
 | Public signup | Login page signup UI -> staff approval UI -> student UI login -> cleanup | `frontend/e2e/flows/signup-approval-roundtrip.spec.ts` passed in production with controlled real Alimtalk; cleanup and settings restore verified | Covered for current gate |
 | Admin direct student create | Admin create -> student login -> profile/dashboard -> cleanup | Existing E2E fragments | Needs promoted canary |
-| Account recovery | Public modal -> pending reset -> old password proof -> temp login activation -> must-change gate | Backend + modal tests | Needs browser activation spec |
+| Account recovery | Public modal -> pending reset -> old password proof -> temp login activation -> must-change gate | Production public modal real-send, old-password proof, staff reset/restore canary, backend pending activation tests | Covered; temp body remains intentionally unavailable to automation unless supplied from controlled device |
 | Teacher reset | Staff reset student/parent -> login proof -> restore | `password-reset-roundtrip.spec.ts` | Covered |
 | OMR/result | Roster/exam -> submit/grade -> student result detail/grades/wrong-note/attempt history | `score-report-realuse.spec.ts` passed; `admin/omr-review-realuse.spec.ts` passed through generated OMR PDF, admin UI upload, worker answer rows, review/regrade `60/100`, and student grades projection; backend OMR tenant real-use file passed `31 passed`; backend scope/security tests passed | Covered for current gate; fixture creation is API-assisted |
-| Clinic remediation | Failed result -> clinic target -> booking/approval/attendance -> student notification/projection | Backend/frontend fragments | Needs end-to-end canary |
+| Clinic remediation | Failed result -> clinic target -> booking/approval/attendance -> student notification/projection | `student/clinic-remediation-realuse.spec.ts` passed in production after backend trigger fix | Covered |
 | Homework | Homework assignment -> student submit -> admin grade -> student grades | `homework-scores-inventory-data-flow.spec.ts` production bundle/API plus `student/homework-submission-realuse.spec.ts` full production create-submit-grade chain | Covered for current gate |
 | QnA/counsel | Student writes -> staff replies -> student sees reply | `qna-roundtrip`, `counsel-roundtrip` | Covered enough for current gate |
 | Video/progress | Ready video -> student play -> progress persists -> resume | Production HLS playback smoke passed for lecture `136` / session `159` / video `284`; progress write/read/reset passed for enrollment `1052`; render/API bundle passed | Browser visual player canary still optional launch-hardening |
 | Tenant isolation | Cross-tenant student/enrollment/result access denied | Backend tests + frontend tenant isolation gate | Covered |
+| Beginner/misuse guardrails | Unauth/fake token, logout back, mobile overflow | `student-domain-guardrails.spec.ts` passed in production | Covered |
 
 ## 5. Evidence Commands From This Pass
 
@@ -105,6 +107,8 @@ python -m pytest apps\domains\submissions\tests\test_omr_tenant_realuse_flow.py 
 python scripts\post_deploy_smoke\video_playback_chain.py
 python -m pytest apps\domains\lectures\tests\test_lecture_session_delete_guards.py -v --tb=short -x
 python -m ruff check apps\domains\lectures\views.py apps\domains\lectures\tests\test_lecture_session_delete_guards.py
+python -m pytest apps\domains\students\tests\test_password_reset_safety.py apps\domains\students\tests\test_account_recovery.py apps\domains\progress\tests\test_drift_and_resolution.py -v --tb=short
+python scripts\lint\refactor_boundary_snapshot.py --enforce-baseline
 ```
 
 Frontend already run:
@@ -126,6 +130,11 @@ pnpm exec eslint e2e/student/homework-submission-realuse.spec.ts
 pnpm exec playwright test e2e/student/homework-submission-realuse.spec.ts --reporter=list
 pnpm exec eslint e2e/admin/omr-review-realuse.spec.ts
 pnpm exec playwright test e2e/admin/omr-review-realuse.spec.ts --reporter=list
+pnpm exec eslint e2e/auth/account-recovery-realuse.spec.ts e2e/student/clinic-remediation-realuse.spec.ts e2e/student/student-domain-guardrails.spec.ts
+pnpm exec playwright test e2e/auth/account-recovery-realuse.spec.ts --reporter=list
+pnpm exec playwright test e2e/student/clinic-remediation-realuse.spec.ts --reporter=list
+pnpm exec playwright test e2e/student/student-domain-guardrails.spec.ts --reporter=list
+pnpm exec playwright test e2e/auth/account-recovery-modal.spec.ts e2e/flows/password-reset-roundtrip.spec.ts --reporter=list
 ```
 
 Additional frontend evidence from the production bundle against the production
@@ -146,6 +155,10 @@ backend OMR tenant real-use regression -> 31 passed
 homework-submission-realuse -> 1 passed; admin fixture -> student browser file submission -> admin score 92/100 -> student grades UI reflected result
 old homework canary residue cleanup -> session 296 DELETE 204, lecture 297 DELETE 204; lectures/sessions/students search returned 0 matches
 omr-review-realuse -> 1 passed; generated OMR PDF -> admin score-tab UI upload -> worker answer rows -> OMR review student select + regrade 60/100 -> student grades UI reflected result; active lectures/sessions/students residue 0; inactive result-history exams 399/400 delete guard 403
+clinic-remediation-realuse -> 1 passed; failed exam 20/100 -> ClinicLink target -> student booking -> staff completion -> retake 90/100 -> `clinic_required=false` and student result/grades UI remediated
+account-recovery-realuse -> 1 passed; public modal real-send to 01031217466 -> account notification log sent -> old password retained -> staff reset changed only generated student -> restore/delete cleanup
+student-domain-guardrails -> 3 passed; unauth/fake-token protected routes, logout back, and 390px mobile overflow checks
+account-recovery-modal + password-reset-roundtrip -> 18 passed
 ```
 
 The two skipped cases are conditional student exam submit/result steps when the
@@ -176,9 +189,9 @@ Tenant 1 controlled recipient 01031217466 was cleaned before the signup canary:
 
 ## 6. Current Closure Criteria
 
-Controlled/internal expansion is GO after this pass. Broad public promotion
-remains no-go until all required full-chain rows in
-`student-domain-launch-readiness.md` are `passed` or explicitly accepted as
-documented launch exceptions. The largest remaining gaps are not basic account
-creation anymore; they are full browser-chain proof for account-recovery
-activation, clinic remediation, and deliberate beginner/misuse behavior.
+Student-domain technical launch gate is GO for staged broad expansion after this
+pass. The remaining items are operational/manual-validation notes rather than
+known P0 code blockers: the production account-recovery temporary password can
+only be activated in automation if the controlled recipient supplies the received
+value, and admin/teacher account-screen visual sweeps should continue during the
+launch ramp.

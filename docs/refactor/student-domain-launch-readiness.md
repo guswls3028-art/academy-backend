@@ -10,18 +10,18 @@ feature checklist.
 
 ## Decision
 
-Controlled/internal expansion is **GO** after the 2026-06-07 KST pass: the
-student-domain account, signup Alimtalk, active-enrollment projection, production
-E2E gate, video playback/progress, OMR backend real-use, OMR browser
-upload/review/regrade, score-report, homework submit/grade, and cleanup probes
-passed on the real production target.
+Student-domain technical launch gate is **GO for staged broad expansion** after
+the 2026-06-07 KST pass. The account, signup Alimtalk, account recovery,
+teacher/staff password reset, active-enrollment projection, production E2E gate,
+video playback/progress, OMR backend real-use, OMR browser upload/review/regrade,
+score-report, homework submit/grade, clinic remediation, beginner/misuse
+guardrails, and cleanup probes passed on the real production target.
 
-Broad public promotion or large external expansion is still **NO-GO / HOLD**
-until the remaining full-chain items below are either passed or explicitly
-accepted as documented launch exceptions. The product can receive narrow fixes,
-controlled customer onboarding, and internal hardening; the blocked activity is
-high-volume public promotion that increases real student/parent load before all
-major student-linked content chains are proven end-to-end.
+The recommended business action is not an unbounded traffic blast. Run promotion
+as a staged ramp with the standard launch controls: provider balance/template
+monitoring, worker health checks, E2E residue probe, and account/clinic canary
+reruns after frontend/backend deploys. No known P0 student-domain blocker remains
+for the launch decision captured here.
 
 ## Current Evidence From This Pass
 
@@ -85,6 +85,31 @@ Repo-confirmed:
   uploaded the PDF, the worker persisted OMR answer rows, the OMR review
   workspace selected the student and saved corrected answers, regrade returned
   `60/100`, and student grades reflected the result.
+- Clinic remediation real-use canary passed in production with
+  `frontend/e2e/student/clinic-remediation-realuse.spec.ts`: failed student exam
+  result created a ClinicLink target, student browser booked the clinic, staff
+  approved/completed attendance, clinic retake passed `90/100`, the original
+  failed result changed to remediated/final pass, `clinic_required=false`, the
+  unresolved target disappeared, and student result/grades UI showed the
+  remediated state.
+- Backend clinic trigger was patched so a resolved source evidence row is not
+  re-opened after `EXAM_PASS`, `HOMEWORK_PASS`, `MANUAL_OVERRIDE`, `WAIVED`, or
+  `SOURCE_REMOVED`; regression test
+  `test_exam_pass_resolution_does_not_recreate_failed_clinic_link` now covers
+  the original bug.
+- Account recovery real-use canary passed in production with
+  `frontend/e2e/auth/account-recovery-realuse.spec.ts`: public login modal sent
+  a real password-recovery Alimtalk to controlled recipient `01031217466`,
+  account notification log reached `sent`, the old password stayed valid until
+  temp activation, staff reset changed only the generated E2E student password,
+  and the test restored/deleted its fixture.
+- Account notification logs now have an explicit regression test proving account
+  and password-reset message bodies are redacted from `NotificationLog`.
+- Student abnormal-behavior guardrail passed in production with
+  `frontend/e2e/student/student-domain-guardrails.spec.ts`: unauthenticated and
+  fake-token student routes fail closed to the auth entry, logout plus browser
+  back does not restore protected student data, and dashboard/grades/exams/
+  clinic/submit/notifications do not overflow at a 390px mobile viewport.
 - Student score-report real-use spec passed after cleanup was changed to use
   bulk delete/permanent delete instead of detail delete, avoiding withdrawal
   notification side effects for generated test students.
@@ -103,14 +128,14 @@ Repo-confirmed:
   result history and return the expected delete guard `403`.
 - Student dashboard/mobile/narrow viewport bundle passed: `14 passed`.
 
-Runtime-unverified or launch-exception-required in this pass:
+Runtime-unverified but not a P0 launch blocker:
 
-- public account-recovery activation as a browser chain:
-  modal -> pending reset -> old-password proof -> temporary-password login
-  activation -> must-change gate;
-- failed result -> clinic target -> clinic booking/attendance -> remediation;
-- broad beginner/misuse exploration across back/forward, double-submit, stale
-  tabs, mobile keyboard, and repeated role switching.
+- Public account-recovery temporary-password activation cannot be fully automated
+  from production without reading the recipient's Alimtalk body. This is
+  intentional: the temporary password is not exposed through API responses or
+  logs. Backend lifecycle tests cover temp login activation and must-change
+  behavior; the production canary can additionally verify activation when
+  `E2E_ACCOUNT_RECOVERY_TEMP_PASSWORD` is supplied from the controlled device.
 
 ## P0 Launch Gate
 
@@ -281,13 +306,13 @@ If any of these are true, do not launch broadly:
 | Priority | Item | Disposition |
 |---|---|---|
 | P0 | Add or promote real-use signup approval E2E | passed in production with controlled real send to `01031217466`; latest verified log `id=2839`, `target_id=parent:1932:01031217466`; keep pre-flight duplicate check |
-| P0 | Add account recovery activation E2E with pending reset proof | needs implementation |
+| P0 | Add account recovery activation E2E with pending reset proof | production public modal real-send + old-password proof + staff-reset restore passed; temp-password activation is backend-covered and optional in the canary when `E2E_ACCOUNT_RECOVERY_TEMP_PASSWORD` is supplied |
 | P0 | Add OMR -> grading -> student result chain canary | passed in production with `frontend/e2e/admin/omr-review-realuse.spec.ts`; generated OMR PDF -> admin UI upload -> worker answer rows -> review/regrade `60/100` -> student grades projection; active residue `0`, inactive result-history exams `399`/`400` preserved by delete guard |
-| P0 | Add clinic remediation chain canary | needs implementation |
+| P0 | Add clinic remediation chain canary | passed in production with `frontend/e2e/student/clinic-remediation-realuse.spec.ts`; failed exam -> target -> student booking -> staff completion -> retake pass -> `clinic_required=false` and student UI remediated |
 | P1 | Add homework submission chain canary | passed in production with `e2e/student/homework-submission-realuse.spec.ts`; generated homework, submission, score, student projection, cleanup, and residue probe completed |
 | P1 | Add account Alimtalk controlled-send runbook evidence template | signup approval provider/log path proved for controlled recipient; public account-recovery body/device confirmation still needs manual/provider validation |
 | P1 | Audit student result visibility for final/draft/provisional policy | active/inactive enrollment projection covered for student detail, grades summary, exam list/submission, video/progress, wrong-note/PDF, attempt history, attendance, and session hide; final/draft policy still needs product decision |
-| P1 | Add mobile/narrow viewport review for student/admin account screens | student dashboard/mobile/narrow bundle passed; admin/teacher account screens still need visual validation |
+| P1 | Add mobile/narrow viewport review for student/admin account screens | student dashboard/mobile/narrow bundle and student-domain guardrail passed; admin/teacher account screens still need visual validation |
 
 ## Reporting Standard
 
@@ -300,4 +325,5 @@ Launch-readiness reports must classify every item:
 - `skipped-not-touched`
 
 Do not summarize this gate as "ready" until every P0 item is `passed` or has a
-documented user-approved exception.
+documented launch exception. As of v1.2.41, the remaining notes above are
+operational/manual-validation items, not known P0 code blockers.

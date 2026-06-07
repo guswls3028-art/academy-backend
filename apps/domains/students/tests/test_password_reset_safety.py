@@ -420,6 +420,29 @@ class StudentPasswordResetSafetyTests(TestCase):
         self.assertEqual(item["notification_type"], "password_reset_student")
         self.assertEqual(item["target_id"], f"student:{self.student.id}")
 
+    def test_sensitive_account_notification_message_body_is_redacted(self):
+        from django.apps import apps
+
+        from academy.adapters.db.django.repositories_messaging import create_notification_log
+
+        create_notification_log(
+            tenant_id=self.tenant.id,
+            source_tenant_id=self.tenant.id,
+            target_type="account",
+            target_id=f"student:{self.student.id}",
+            target_name=self.student.name,
+            notification_type="password_reset_student",
+            amount_deducted=Decimal("0"),
+            message_mode="alimtalk",
+            recipient_summary="홍길동 0101****",
+            message_body="아이디: S001\n임시비밀번호: 123456",
+            success=True,
+        )
+
+        NotificationLog = apps.get_model("messaging", "NotificationLog")
+        log = NotificationLog.objects.get(target_id=f"student:{self.student.id}")
+        self.assertEqual(log.message_body, "[보안] 계정/인증 알림 본문은 저장하지 않습니다.")
+
     def test_auto_temp_password_is_six_digits(self):
         temp_password = generate_temp_password()
 
