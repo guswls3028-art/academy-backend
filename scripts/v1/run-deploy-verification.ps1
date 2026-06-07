@@ -147,18 +147,33 @@ $msgQueueDepth = ""
 $msgDlqDepth = ""
 $aiQueueDepth = ""
 $aiDlqDepth = ""
-function Get-SqsDepth {
-    param([string]$QueueUrl)
-    if (-not $QueueUrl) { return "n/a" }
+function Resolve-SqsQueueUrl {
+    param([string]$QueueUrl, [string]$QueueName)
+    if ($QueueUrl -and $QueueUrl.Trim() -ne "") { return $QueueUrl.Trim() }
+    if (-not $QueueName -or $QueueName.Trim() -eq "") { return "" }
     try {
-        $a = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $QueueUrl, "--attribute-names", "ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible", "--region", $R, "--output", "json")
-        $vis = [int](if ($null -eq $a.Attributes.ApproximateNumberOfMessages) { 0 } else { $a.Attributes.ApproximateNumberOfMessages })
-        $inFlight = [int](if ($null -eq $a.Attributes.ApproximateNumberOfMessagesNotVisible) { 0 } else { $a.Attributes.ApproximateNumberOfMessagesNotVisible })
+        $q = Invoke-AwsJson @("sqs", "get-queue-url", "--queue-name", $QueueName.Trim(), "--region", $R, "--output", "json")
+        if ($q -and $q.QueueUrl) { return $q.QueueUrl }
+    } catch { }
+    return ""
+}
+
+function Get-SqsDepth {
+    param([string]$QueueUrl, [string]$QueueName)
+    $resolvedQueueUrl = Resolve-SqsQueueUrl -QueueUrl $QueueUrl -QueueName $QueueName
+    if (-not $resolvedQueueUrl) { return "n/a" }
+    try {
+        $a = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $resolvedQueueUrl, "--attribute-names", "ApproximateNumberOfMessages", "ApproximateNumberOfMessagesNotVisible", "--region", $R, "--output", "json")
+        if (-not $a -or -not $a.Attributes) { return "error" }
+        $visRaw = $a.Attributes.ApproximateNumberOfMessages
+        $inFlightRaw = $a.Attributes.ApproximateNumberOfMessagesNotVisible
+        $vis = if ($null -eq $visRaw -or $visRaw -eq "") { 0 } else { [int]$visRaw }
+        $inFlight = if ($null -eq $inFlightRaw -or $inFlightRaw -eq "") { 0 } else { [int]$inFlightRaw }
         return "$vis (in-flight $inFlight)"
     } catch { return "error" }
 }
-if ($script:MessagingSqsQueueUrl) { $msgQueueDepth = Get-SqsDepth -QueueUrl $script:MessagingSqsQueueUrl }
-if ($script:AiSqsQueueUrl) { $aiQueueDepth = Get-SqsDepth -QueueUrl $script:AiSqsQueueUrl }
+if ($script:MessagingSqsQueueUrl -or $script:MessagingSqsQueueName) { $msgQueueDepth = Get-SqsDepth -QueueUrl $script:MessagingSqsQueueUrl -QueueName $script:MessagingSqsQueueName }
+if ($script:AiSqsQueueUrl -or $script:AiSqsQueueName) { $aiQueueDepth = Get-SqsDepth -QueueUrl $script:AiSqsQueueUrl -QueueName $script:AiSqsQueueName }
 $msgDlqUrl = $null
 $aiDlqUrl = $null
 if ($script:MessagingSqsQueueName -and $script:MessagingDlqSuffix) {

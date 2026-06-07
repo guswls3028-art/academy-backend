@@ -5,7 +5,7 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-06-07T23:38:27.4495288+09:00 |
+| 검증 시각 | 2026-06-08T01:35:16.9693663+09:00 |
 | 최종 상태 | PASS |
 | SSOT↔Actual 정합성 | **WARNING** |
 | GO/NO-GO | **GO** |
@@ -26,9 +26,9 @@
 
 | 항목 | 결과 |
 |------|------|
-| app 도메인 200 |  |
+| app 도메인 200 | PASS |
 | API 공개 /health | OK |
-| CORS/Cache | not checked / - |
+| CORS/Cache | OK / 1y |
 
 ## 남은 WARNING 및 후속 작업
 - Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.

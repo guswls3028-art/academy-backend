@@ -275,15 +275,17 @@ r2:
   publicBaseUrl: ""
 
 # 프론트 정적 + R2 + CDN (엔드투엔드). S3 미사용·R2만.
-# 도메인/라우팅: app.<domain> → CDN → R2(static), api.<domain> → ALB(또는 Cloudflare proxy 정책 명시).
+# 도메인/라우팅: hakwonplus.com → Cloudflare Pages, api.<domain> → ALB(또는 Cloudflare proxy 정책 명시).
 front:
   domains:
-    app: ""          # 예: app.hakwonplus.com, academy-frontend-26b.pages.dev
+    app: "hakwonplus.com"          # canonical frontend host
     api: "https://api.hakwonplus.com"  # Cloudflare CNAME → ALB
-  domainsApp: ""      # SSOT 스크립트용 flat 키 (domains.app과 동일)
+  domainsApp: "hakwonplus.com"      # SSOT 스크립트용 flat 키 (domains.app과 동일)
   domainsApi: "https://api.hakwonplus.com"  # SSOT 스크립트용 flat 키 (domains.api과 동일)
   cors:
-    allowedOrigins: []  # [ "https://app.hakwonplus.com" ] — 와일드카드 금지
+    allowedOrigins:
+      - "https://hakwonplus.com"
+      - "https://www.hakwonplus.com"
     credentials: true   # 쿠키 인증 사용 시 true
   deployStrategy: "versioned"  # versioned | atomic
   buildOutputDir: "dist"       # Vite 등 빌드 산출물 디렉터리(프론트 repo 기준)
