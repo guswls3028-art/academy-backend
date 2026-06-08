@@ -76,6 +76,7 @@ def _answer_value_present(value) -> bool:
             "none",
             "없음",
             "해설없음",
+            "해설참조",
             "정답없음",
         }
     if isinstance(value, (list, tuple, set, dict)):

@@ -129,7 +129,7 @@ class SubmissionScopeGuardTests(TestCase):
         essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=20)
         AnswerKey.objects.create(
             exam=exam,
-            answers={str(choice.id): "1", str(essay.id): "해설없음"},
+            answers={str(choice.id): "1", str(essay.id): "해설참조"},
         )
         return exam, choice, essay
 
@@ -596,7 +596,7 @@ class SubmissionScopeGuardTests(TestCase):
         essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
         AnswerKey.objects.create(
             exam=exam,
-            answers={str(choice.id): "1", str(essay.id): "해설없음"},
+            answers={str(choice.id): "1", str(essay.id): "해설참조"},
         )
         submission = self._submission_for_exam(exam, choice, answer="1")
         submission.source = Submission.Source.OMR_SCAN
@@ -638,7 +638,7 @@ class SubmissionScopeGuardTests(TestCase):
         essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
         AnswerKey.objects.create(
             exam=exam,
-            answers={str(choice.id): "1", str(essay.id): "해설없음"},
+            answers={str(choice.id): "1", str(essay.id): "해설참조"},
         )
         submission = self._submission_for_exam(exam, choice, answer="1")
         submission.source = Submission.Source.OMR_SCAN
@@ -708,7 +708,7 @@ class SubmissionScopeGuardTests(TestCase):
         essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
         AnswerKey.objects.create(
             exam=exam,
-            answers={str(choice.id): "1", str(essay.id): "해설없음"},
+            answers={str(choice.id): "1", str(essay.id): "해설참조"},
         )
         submission = self._submission_for_exam(exam, choice, answer="1")
         submission.source = Submission.Source.OMR_SCAN
