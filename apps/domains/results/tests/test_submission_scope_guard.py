@@ -722,6 +722,72 @@ class SubmissionScopeGuardTests(TestCase):
         self.assertEqual(list(exam_result.breakdown.keys()), ["1"])
         self.assertNotIn(str(essay.number), exam_result.breakdown)
 
+    def test_sync_honors_custom_choice_and_essay_question_scores(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Custom Weighted OMR Exam",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=100,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        sheet = Sheet.objects.create(
+            exam=exam,
+            name="CUSTOM-WEIGHTS",
+            total_questions=23,
+            choice_count=22,
+            essay_count=1,
+        )
+        questions = []
+        for number in range(1, 24):
+            if number <= 18:
+                score = 3
+            elif number <= 22:
+                score = 4
+            else:
+                score = 30
+            questions.append(ExamQuestion.objects.create(sheet=sheet, number=number, score=score))
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={
+                **{str(question.id): "1" for question in questions[:22]},
+                str(questions[22].id): "해설참조",
+            },
+        )
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            enrollment_id=self.enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.ANSWERS_READY,
+        )
+        for question in questions[:22]:
+            SubmissionAnswer.objects.create(
+                tenant=self.tenant,
+                submission=submission,
+                exam_question_id=question.id,
+                answer="1",
+            )
+
+        result = sync_result_from_exam_submission(submission.id)
+
+        self.assertEqual(float(result.objective_score), 70.0)
+        self.assertEqual(float(result.total_score), 70.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        self.assertEqual(ResultItem.objects.filter(result=result).count(), 22)
+        self.assertEqual(
+            sum(float(item.max_score) for item in ResultItem.objects.filter(result=result)),
+            70.0,
+        )
+        self.assertFalse(ResultItem.objects.filter(result=result, question=questions[22]).exists())
+        legacy = ExamResult.objects.get(submission=submission)
+        self.assertEqual(float(legacy.total_score), 70.0)
+        self.assertEqual(float(legacy.max_score), 70.0)
+        self.assertEqual(list(legacy.breakdown.keys()), [str(n) for n in range(1, 23)])
+
     def test_sync_rejects_incomplete_omr_answers_before_creating_first_result(self):
         exam, choice, essay = self._create_mixed_exam()
         submission = Submission.objects.create(

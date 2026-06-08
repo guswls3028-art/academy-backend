@@ -9,7 +9,8 @@ class ExamQuestionInitSerializer(serializers.Serializer):
     )
     default_score = serializers.FloatField(required=False, min_value=0.0)
 
-    # 객관식/주관식 분리: 모두 주어지면 total = choice_count + essay_count 로 생성
+    # 객관식/주관식 분리: count만 주면 기존 배점은 보존하고,
+    # choice_score/essay_score까지 주어진 경우에만 일괄 배점을 갱신한다.
     choice_count = serializers.IntegerField(required=False, min_value=0, max_value=500)
     choice_score = serializers.FloatField(required=False, min_value=0.0)
     essay_count = serializers.IntegerField(required=False, min_value=0, max_value=500)
@@ -21,11 +22,20 @@ class ExamQuestionInitSerializer(serializers.Serializer):
         choice_score = attrs.get("choice_score")
         essay_count = attrs.get("essay_count")
         essay_score = attrs.get("essay_score")
-        has_choice_essay = all(
-            v is not None for v in (choice_count, choice_score, essay_count, essay_score)
-        )
+        has_choice_essay_counts = choice_count is not None and essay_count is not None
+        has_any_choice_essay_score = choice_score is not None or essay_score is not None
+        has_all_choice_essay_scores = choice_score is not None and essay_score is not None
 
-        if has_choice_essay:
+        if has_any_choice_essay_score and not has_choice_essay_counts:
+            raise serializers.ValidationError(
+                "choice_score/essay_score 는 choice_count/essay_count 와 함께 보내야 합니다."
+            )
+
+        if has_choice_essay_counts:
+            if has_any_choice_essay_score and not has_all_choice_essay_scores:
+                raise serializers.ValidationError(
+                    "choice_score 와 essay_score 는 함께 보내야 합니다."
+                )
             if (choice_count or 0) + (essay_count or 0) == 0:
                 raise serializers.ValidationError(
                     "객관식+주관식 문항 수 합이 1 이상이어야 합니다."
@@ -34,6 +44,5 @@ class ExamQuestionInitSerializer(serializers.Serializer):
         if has_total:
             return attrs
         raise serializers.ValidationError(
-            "total_questions 를 보내거나, choice_count/choice_score/essay_count/essay_score 를 모두 보내세요."
+            "total_questions 를 보내거나, choice_count/essay_count 를 보내세요."
         )
-

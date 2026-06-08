@@ -11,6 +11,10 @@ from rest_framework.response import Response
 from apps.domains.exams.models import Exam, Sheet, ExamQuestion
 from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.serializers.question_init import ExamQuestionInitSerializer
+from apps.domains.exams.services.template_resolver import (
+    assert_template_editable,
+    resolve_template_exam,
+)
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
 
@@ -37,7 +41,8 @@ class ExamQuestionInitView(APIView):
             id=int(exam_id),
         )
 
-        owner = exam
+        owner = resolve_template_exam(exam)
+        assert_template_editable(owner)
 
         s = ExamQuestionInitSerializer(data=request.data)
         s.is_valid(raise_exception=True)
@@ -47,14 +52,10 @@ class ExamQuestionInitView(APIView):
         essay_count = s.validated_data.get("essay_count")
         essay_score_val = s.validated_data.get("essay_score")
 
-        use_choice_essay = (
-            choice_count is not None
-            and choice_score_val is not None
-            and essay_count is not None
-            and essay_score_val is not None
-        )
+        use_choice_essay_counts = choice_count is not None and essay_count is not None
+        use_choice_essay_scores = choice_score_val is not None and essay_score_val is not None
 
-        if use_choice_essay:
+        if use_choice_essay_counts:
             total = choice_count + essay_count
             if total == 0:
                 total = 0
@@ -62,9 +63,11 @@ class ExamQuestionInitView(APIView):
             total = int(s.validated_data["total_questions"])
         default_score = float(s.validated_data.get("default_score", 1.0))
 
-        def score_for_number(n: int) -> float:
-            if use_choice_essay:
+        def score_for_number(n: int, existing_score: float | None = None) -> float:
+            if use_choice_essay_scores:
                 return float(choice_score_val) if n <= choice_count else float(essay_score_val)
+            if existing_score is not None:
+                return float(existing_score)
             return default_score
 
         sheet, _ = Sheet.objects.get_or_create(
@@ -74,10 +77,10 @@ class ExamQuestionInitView(APIView):
 
         shape_updates = {
             "total_questions": total,
-            "choice_count": int(choice_count or total),
-            "essay_count": int(essay_count or 0),
+            "choice_count": int(choice_count) if choice_count is not None else total,
+            "essay_count": int(essay_count) if essay_count is not None else 0,
         }
-        if not use_choice_essay:
+        if not use_choice_essay_counts:
             shape_updates["choice_count"] = total
             shape_updates["essay_count"] = 0
 
@@ -111,10 +114,26 @@ class ExamQuestionInitView(APIView):
                 ignore_conflicts=True,
             )
 
-        # 객관식/주관식 모드: 기존 문항 점수도 번호에 맞게 갱신
-        if use_choice_essay:
+        # 객관식/주관식 배점까지 명시된 경우에만 기존 문항 점수를 갱신한다.
+        # count-only 적용은 선생님이 입력한 문항별 배점을 보존해야 한다.
+        if use_choice_essay_scores:
+            explicit_zero_reset = (
+                float(choice_score_val or 0.0) == 0.0
+                and float(essay_score_val or 0.0) == 0.0
+            )
+            has_existing_positive_score = ExamQuestion.objects.filter(
+                sheet=sheet,
+                score__gt=0,
+            ).exists()
+            should_update_existing_scores = not (
+                explicit_zero_reset and has_existing_positive_score
+            )
+        else:
+            should_update_existing_scores = False
+
+        if should_update_existing_scores:
             for q in ExamQuestion.objects.filter(sheet=sheet):
-                new_score = score_for_number(q.number)
+                new_score = score_for_number(q.number, q.score)
                 if q.score != new_score:
                     q.score = new_score
                     q.save(update_fields=["score", "updated_at"])
