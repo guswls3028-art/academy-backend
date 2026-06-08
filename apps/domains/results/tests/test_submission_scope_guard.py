@@ -8,7 +8,7 @@ from apps.core.models import Tenant
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import ExamAttempt, ExamResult, Result, ResultItem
+from apps.domains.results.models import ExamAttempt, ExamResult, Result, ResultFact, ResultItem
 from apps.domains.results.services.exam_grading_service import ExamGradingService
 from apps.domains.results.services.sync_result_from_submission import (
     sync_result_from_exam_submission,
@@ -384,6 +384,48 @@ class SubmissionScopeGuardTests(TestCase):
             ).exists()
         )
         self.assertTrue(ResultItem.objects.filter(result=result, question=essay, source="manual").exists())
+
+    def test_sync_drops_stale_subjective_difference_without_manual_evidence(self):
+        exam, choice, _essay = self._create_mixed_exam()
+        submission = self._submission_for_exam(exam, choice, answer="1")
+        result = sync_result_from_exam_submission(submission.id)
+        result.total_score = 85.0
+        result.objective_score = 80.0
+        result.save(update_fields=["total_score", "objective_score", "updated_at"])
+
+        result = sync_result_from_exam_submission(submission.id)
+
+        self.assertEqual(float(result.objective_score), 80.0)
+        self.assertEqual(float(result.total_score), 80.0)
+        self.assertEqual(float(result.max_score), 100.0)
+
+    def test_sync_preserves_manual_subjective_fact_on_regrade(self):
+        exam, choice, _essay = self._create_mixed_exam()
+        submission = self._submission_for_exam(exam, choice, answer="1")
+        result = sync_result_from_exam_submission(submission.id)
+        ResultFact.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.enrollment,
+            submission_id=submission.id,
+            attempt=result.attempt,
+            question_id=0,
+            answer="",
+            is_correct=True,
+            score=12.0,
+            max_score=20.0,
+            source="manual_subjective",
+            meta={"manual_subjective": True},
+        )
+        result.total_score = 92.0
+        result.objective_score = 80.0
+        result.save(update_fields=["total_score", "objective_score", "updated_at"])
+
+        result = sync_result_from_exam_submission(submission.id)
+
+        self.assertEqual(float(result.objective_score), 80.0)
+        self.assertEqual(float(result.total_score), 92.0)
+        self.assertEqual(float(result.max_score), 100.0)
 
     def test_auto_grade_scores_only_objective_component_for_structured_mixed_sheet(self):
         exam, choice, _essay = self._create_mixed_exam()
