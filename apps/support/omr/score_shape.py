@@ -68,7 +68,16 @@ def _answer_value_present(value) -> bool:
     if value is None:
         return False
     if isinstance(value, str):
-        return bool(value.strip())
+        normalized = "".join(value.strip().lower().split())
+        return bool(normalized) and normalized not in {
+            "-",
+            "n/a",
+            "na",
+            "none",
+            "없음",
+            "해설없음",
+            "정답없음",
+        }
     if isinstance(value, (list, tuple, set, dict)):
         return bool(value)
     return True

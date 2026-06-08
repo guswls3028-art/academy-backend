@@ -136,20 +136,20 @@ class ExamGradingService:
             return existing
 
         questions = list(sheet.questions.all().only("id", "number"))
-        sheet_question_ids = {int(q.id) for q in questions}
+        score_shape = get_exam_score_shape(exam)
+        auto_score_question_ids = {
+            int(q.id)
+            for q in questions
+            if score_shape.question_kind(int(q.id)) != "essay"
+        }
         answers_map = build_submission_answers_map(
             submission=submission,
             question_number_to_id={int(q.number): int(q.id) for q in questions},
         )
-        expected_question_ids = {
-            int(k)
-            for k in (answer_key.answers or {}).keys()
-            if str(k).isdigit()
-        } & sheet_question_ids
         require_complete_omr_answers(
             submission=submission,
             answers_map=answers_map,
-            expected_question_ids=expected_question_ids,
+            expected_question_ids=auto_score_question_ids,
             context="ExamGradingService.auto_grade_objective",
             protect_existing_score=existing is not None,
         )

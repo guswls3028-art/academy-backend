@@ -127,7 +127,10 @@ class SubmissionScopeGuardTests(TestCase):
         )
         choice = ExamQuestion.objects.create(sheet=sheet, number=1, score=80)
         essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=20)
-        AnswerKey.objects.create(exam=exam, answers={str(choice.id): "1"})
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={str(choice.id): "1", str(essay.id): "해설없음"},
+        )
         return exam, choice, essay
 
     def test_auto_grade_rejects_unassigned_submission_without_side_effects(self):
@@ -591,7 +594,10 @@ class SubmissionScopeGuardTests(TestCase):
         )
         choice = ExamQuestion.objects.create(sheet=sheet, number=1, score=0)
         essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
-        AnswerKey.objects.create(exam=exam, answers={str(choice.id): "1"})
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={str(choice.id): "1", str(essay.id): "해설없음"},
+        )
         submission = self._submission_for_exam(exam, choice, answer="1")
         submission.source = Submission.Source.OMR_SCAN
         submission.save(update_fields=["source", "updated_at"])
@@ -630,7 +636,10 @@ class SubmissionScopeGuardTests(TestCase):
         )
         choice = ExamQuestion.objects.create(sheet=sheet, number=1, score=0)
         essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
-        AnswerKey.objects.create(exam=exam, answers={str(choice.id): "1"})
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={str(choice.id): "1", str(essay.id): "해설없음"},
+        )
         submission = self._submission_for_exam(exam, choice, answer="1")
         submission.source = Submission.Source.OMR_SCAN
         submission.save(update_fields=["source", "updated_at"])
@@ -697,7 +706,10 @@ class SubmissionScopeGuardTests(TestCase):
         )
         choice = ExamQuestion.objects.create(sheet=sheet, number=1, score=0)
         essay = ExamQuestion.objects.create(sheet=sheet, number=2, score=0)
-        AnswerKey.objects.create(exam=exam, answers={str(choice.id): "1"})
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={str(choice.id): "1", str(essay.id): "해설없음"},
+        )
         submission = self._submission_for_exam(exam, choice, answer="1")
         submission.source = Submission.Source.OMR_SCAN
         submission.save(update_fields=["source", "updated_at"])
