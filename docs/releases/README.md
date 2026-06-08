@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.42.md](v1.2.42.md) | **CURRENT** | 2026-06-08 KST | Central API tenant-code auth + tenant bypass hardening + all-menu safe-click launch audit |
+| [v1.2.43.md](v1.2.43.md) | **CURRENT** | 2026-06-08 KST | OMR multi-mark recognition + review UI multi-select display |
+| [v1.2.42.md](v1.2.42.md) | production-deployed / v1.2.43로 승계 | 2026-06-08 KST | Central API tenant-code auth + tenant bypass hardening + all-menu safe-click launch audit |
 | [v1.2.41.md](v1.2.41.md) | production-deployed / v1.2.42로 승계 | 2026-06-07 KST | Clinic remediation bugfix + account recovery/staff reset real-use + student misuse guardrails |
 | [v1.2.40.md](v1.2.40.md) | production-deployed / v1.2.41로 승계 | 2026-06-07 KST | OMR browser upload/review/regrade real-use chain + student projection proof |
 | [v1.2.39.md](v1.2.39.md) | production-deployed / v1.2.40로 승계 | 2026-06-07 KST | Homework submit/grade real-use chain + cleanup delete guard + production residue proof |
