@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -7,10 +8,11 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.exams.models import Exam, ExamQuestion, Sheet
 from apps.domains.exams.views.exam_question_init_view import ExamQuestionInitView
-from apps.domains.lectures.models import Lecture, Session
 
 
 User = get_user_model()
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
 
 
 class ExamQuestionInitViewTests(TestCase):
