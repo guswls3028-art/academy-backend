@@ -2,6 +2,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
+from apps.api.common.auth_jwt import TenantAwareTokenObtainPairSerializer
 from apps.core.models import Tenant, TenantDomain
 from apps.core.models.user import user_internal_username
 
@@ -41,6 +42,27 @@ class TenantMiddlewareBypassTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn("access", response.data)
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def test_token_serializer_uses_initial_data_tenant_code_when_request_data_is_empty(self):
+        class RequestStub:
+            META = {}
+            data = {}
+
+            @staticmethod
+            def get_host():
+                return "api.hakwonplus.com"
+
+        serializer = TenantAwareTokenObtainPairSerializer(
+            data={"username": "admin", "password": "pw123456", "tenant_code": self.tenant.code},
+            context={"request": RequestStub()},
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        self.assertIn("access", serializer.validated_data)
 
     @override_settings(
         ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],

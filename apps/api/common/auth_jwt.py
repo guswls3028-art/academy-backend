@@ -1,6 +1,8 @@
 # JWT 발급 시 테넌트별 User 조회. 1테넌트=1프로그램 격리.
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from django.conf import settings
 
 from academy.adapters.db.django import repositories_core as core_repo
@@ -14,17 +16,43 @@ from apps.core.services.password import (
 )
 
 
-def _tenant_for_auth(request):
+def _extract_tenant_code(*sources) -> str:
+    for source in sources:
+        if not source:
+            continue
+        if isinstance(source, Mapping):
+            raw = source.get("tenant_code") or source.get("tenant")
+        else:
+            getter = getattr(source, "get", None)
+            raw = getter("tenant_code") or getter("tenant") if callable(getter) else None
+        if isinstance(raw, str):
+            raw = raw.strip()
+        if raw:
+            return str(raw).strip()
+    return ""
+
+
+def _is_tenant_code_allowed_host(host: str) -> bool:
+    allowed_hosts = getattr(
+        settings,
+        "TENANT_HEADER_CODE_ALLOWED_HOSTS",
+        ("api.hakwonplus.com",),
+    )
+    return host in allowed_hosts or host.endswith(".elb.amazonaws.com")
+
+
+def _tenant_for_auth(request, *payload_sources):
     """
-    로그인 시 테넌트 결정 (SSOT — host 우선).
+    로그인 시 테넌트 결정.
 
     /api/v1/token/ 은 TenantMiddleware bypass 경로라 request.tenant 가 None.
     여기서 다음 우선순위로 직접 resolve:
 
     1) request.tenant: 만약 미들웨어가 이미 결정한 경우 그대로 사용 (안전망).
-    2) host → TenantDomain 매핑이 있으면 그 테넌트 (운영 SSOT — tchul.com / limglish.kr 등).
-    3) host 가 header-allowed 목록(api.hakwonplus.com / localhost / *.elb.amazonaws.com)인
+    2) host 가 header-allowed 목록(api.hakwonplus.com / localhost / *.elb.amazonaws.com)인
        경우에만 X-Tenant-Code 헤더 또는 body tenant_code 를 사용.
+       중앙 API는 여러 테넌트 SPA가 공유하므로 이 경로가 Host 매핑보다 우선이다.
+    3) host → TenantDomain 매핑이 있으면 그 테넌트 (운영 SSOT — tchul.com / limglish.kr 등).
     4) 그 외 host 에서 헤더/body 입력은 무시 — 임의 도메인에서 다른 테넌트 계정으로의
        로그인 시도(테넌트 enumeration / 브루트포스 표면 확장)를 차단.
     """
@@ -38,7 +66,17 @@ def _tenant_for_auth(request):
     except Exception:
         host = ""
 
-    # 2) host → TenantDomain (운영 도메인은 여기서 결정)
+    raw = (
+        (request.META.get("HTTP_X_TENANT_CODE") or "").strip()
+        or _extract_tenant_code(*payload_sources, getattr(request, "data", None))
+    )
+
+    # 2) 중앙 API/API ALB에서는 body/header tenant_code가 Host 매핑보다 우선이다.
+    #    api.hakwonplus.com은 여러 테넌트 SPA가 공유하는 API entrypoint라 TenantDomain 상태에 의존하면 안 된다.
+    if raw and _is_tenant_code_allowed_host(host):
+        return core_repo.tenant_get_by_code(raw)
+
+    # 3) host → TenantDomain (운영 tenant 도메인은 여기서 결정)
     if host:
         try:
             from apps.core.tenant.resolver import _resolve_tenant_from_host
@@ -48,22 +86,10 @@ def _tenant_for_auth(request):
         except Exception:
             pass
 
-    # 3) header-allowed host 에서만 헤더/body fallback
-    allowed_hosts = getattr(
-        settings,
-        "TENANT_HEADER_CODE_ALLOWED_HOSTS",
-        ("api.hakwonplus.com",),
-    )
-    allowed = host in allowed_hosts or host.endswith(".elb.amazonaws.com")
-    if not allowed:
+    # 4) 그 외 host 에서 헤더/body 입력은 무시
+    if not _is_tenant_code_allowed_host(host):
         return None
 
-    raw = (
-        (request.META.get("HTTP_X_TENANT_CODE") or "").strip()
-        or (getattr(request, "data", None) or {}).get("tenant_code") or ""
-    )
-    if isinstance(raw, str):
-        raw = raw.strip()
     return core_repo.tenant_get_by_code(raw) if raw else None
 
 
@@ -85,7 +111,7 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
         username = (attrs.get("username") or "").strip()
         password = attrs.get("password") or ""
 
-        tenant = _tenant_for_auth(request) if request else None
+        tenant = _tenant_for_auth(request, getattr(self, "initial_data", None), attrs) if request else None
         if not tenant:
             raise serializers.ValidationError(
                 {"detail": "테넌트(학원) 정보가 필요합니다. 로그인 페이지에서 학원을 선택해 주세요."},
