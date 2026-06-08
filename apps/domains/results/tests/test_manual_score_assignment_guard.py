@@ -329,6 +329,58 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         self.assertEqual(float(fact.max_score), 20.0)
 
     @patch("apps.domains.results.views.admin_exam_subjective_score_view.dispatch_progress_pipeline")
+    def test_subjective_score_accepts_direct_input_for_positive_essay_score_without_answer_key_entry(self, mock_dispatch):
+        exam, questions = self._create_structured_exam("Mixed direct essay", [70], [30])
+        AnswerKey.objects.create(exam=exam, answers={str(questions[0].id): "1"})
+        result = self._create_result(exam, objective_score=42)
+
+        response = self._patch_for_exam(
+            AdminExamSubjectiveScoreView,
+            exam,
+            {"score": 27},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        result.refresh_from_db()
+        self.assertEqual(float(result.objective_score), 42.0)
+        self.assertEqual(float(result.total_score), 69.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        self.assertEqual(response.data["subjective_max_score"], 30.0)
+        fact = ResultFact.objects.filter(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment_id=self.assigned_enrollment.id,
+            source="manual_subjective",
+        ).latest("id")
+        self.assertEqual(float(fact.score), 27.0)
+        self.assertEqual(float(fact.max_score), 30.0)
+
+    @patch("apps.domains.results.views.admin_exam_subjective_score_view.dispatch_progress_pipeline")
+    def test_subjective_score_rejects_decorative_essay_space_without_positive_score(self, mock_dispatch):
+        exam, _questions = self._create_zero_score_mixed_exam("Decorative essay direct")
+        result = self._create_result(exam, objective_score=80)
+
+        response = self._patch_for_exam(
+            AdminExamSubjectiveScoreView,
+            exam,
+            {"score": 5},
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["code"], "INVALID")
+        self.assertIn("채점 대상 서술형", response.data["detail"])
+        result.refresh_from_db()
+        self.assertEqual(float(result.total_score), 80.0)
+        self.assertFalse(
+            ResultFact.objects.filter(
+                target_type="exam",
+                target_id=exam.id,
+                source="manual_subjective",
+            ).exists()
+        )
+        mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.results.views.admin_exam_subjective_score_view.dispatch_progress_pipeline")
     def test_subjective_score_rejects_score_above_essay_max(self, mock_dispatch):
         exam, _questions = self._create_structured_exam("Mixed cap", [40, 40], [20])
         result = self._create_result(exam, objective_score=70)
@@ -470,7 +522,7 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         mock_dispatch.assert_called()
 
     @patch("apps.domains.results.views.admin_exam_item_score_view.dispatch_progress_pipeline")
-    def test_item_score_uses_potential_fallback_for_zero_score_mixed_sheet(self, mock_dispatch):
+    def test_item_score_rejects_positive_score_for_decorative_essay_space(self, mock_dispatch):
         exam, questions = self._create_zero_score_mixed_exam("Zero score mixed manual")
         essay = questions[1]
 
@@ -481,28 +533,28 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
             question_id=essay.id,
         )
 
-        self.assertEqual(response.status_code, 200, response.data)
-        result = Result.objects.get(
-            target_type="exam",
-            target_id=exam.id,
-            enrollment=self.assigned_enrollment,
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(response.data["code"], "INVALID")
+        self.assertIn("score must be between 0 and 0.0", response.data["detail"])
+        self.assertFalse(
+            ResultItem.objects.filter(
+                result__target_type="exam",
+                result__target_id=exam.id,
+                question=essay,
+            ).exists()
         )
-        item = ResultItem.objects.get(result=result, question=essay)
-        self.assertEqual(float(item.score), 40.0)
-        self.assertEqual(float(item.max_score), 50.0)
-        self.assertEqual(float(result.total_score), 40.0)
-        self.assertEqual(float(result.max_score), 100.0)
 
         session_response = self._get_session_scores()
         self.assertEqual(session_response.status_code, 200, session_response.data)
         exam_meta = next(e for e in session_response.data["meta"]["exams"] if e["exam_id"] == exam.id)
-        self.assertEqual(exam_meta["objective_max_score"], 50.0)
-        self.assertEqual(exam_meta["subjective_max_score"], 50.0)
+        self.assertEqual(exam_meta["objective_max_score"], 100.0)
+        self.assertEqual(exam_meta["subjective_max_score"], 0.0)
+        self.assertIn("decorative_essay", exam_meta["score_shape_source"])
         self.assertEqual(
             [(q["number"], q["kind"], q["max_score"]) for q in exam_meta["questions"]],
-            [(1, "choice", 50.0), (2, "essay", 50.0)],
+            [(1, "choice", 100.0), (2, "essay", 0.0)],
         )
-        mock_dispatch.assert_called()
+        mock_dispatch.assert_not_called()
 
     def test_score_shape_treats_zero_score_mixed_sheet_essay_as_decorative_without_essay_evidence(self):
         exam, _questions = self._create_zero_score_mixed_exam("Zero score mixed metadata")

@@ -228,7 +228,7 @@ class AdminExamItemScoreView(APIView):
             ).first()
             if not exam_question:
                 raise NotFound({"detail": "question not found", "code": "NOT_FOUND"})
-            max_score = score_shape.question_potential_max_score(
+            max_score = score_shape.question_max_score(
                 question_id,
                 getattr(exam_question, "score", 0),
             )
