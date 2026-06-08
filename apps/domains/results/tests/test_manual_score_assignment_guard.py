@@ -383,6 +383,20 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         result = self._create_result(exam, objective_score=80)
         result.total_score = 90
         result.save(update_fields=["total_score", "updated_at"])
+        ResultFact.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment=self.assigned_enrollment,
+            submission_id=0,
+            attempt=result.attempt,
+            question_id=0,
+            answer="",
+            is_correct=True,
+            score=10,
+            max_score=20,
+            source="manual_subjective",
+            meta={"manual_subjective": True},
+        )
         ResultItem.objects.create(
             result=result,
             question=questions[0],
@@ -413,6 +427,45 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         result.refresh_from_db()
         self.assertEqual(float(result.objective_score), 70.0)
         self.assertEqual(float(result.total_score), 80.0)
+        self.assertEqual(float(result.max_score), 100.0)
+        mock_dispatch.assert_called()
+
+    @patch("apps.domains.results.views.admin_exam_item_score_view.dispatch_progress_pipeline")
+    def test_item_score_drops_stale_subjective_difference_without_manual_evidence(self, mock_dispatch):
+        exam, questions = self._create_structured_exam("Item stale subjective", [40, 40], [20])
+        result = self._create_result(exam, objective_score=80)
+        result.total_score = 90
+        result.save(update_fields=["total_score", "updated_at"])
+        ResultItem.objects.create(
+            result=result,
+            question=questions[0],
+            answer="1",
+            is_correct=True,
+            score=40,
+            max_score=40,
+            source="omr",
+        )
+        ResultItem.objects.create(
+            result=result,
+            question=questions[1],
+            answer="2",
+            is_correct=True,
+            score=40,
+            max_score=40,
+            source="omr",
+        )
+
+        response = self._patch_for_exam(
+            AdminExamItemScoreView,
+            exam,
+            {"score": 30, "answer": "1"},
+            question_id=questions[0].id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        result.refresh_from_db()
+        self.assertEqual(float(result.objective_score), 70.0)
+        self.assertEqual(float(result.total_score), 70.0)
         self.assertEqual(float(result.max_score), 100.0)
         mock_dispatch.assert_called()
 
@@ -480,6 +533,53 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
             [(q["number"], q["kind"], q["max_score"]) for q in detail_response.data["questions"]],
             [(1, "choice", 100.0), (2, "essay", 0.0)],
         )
+
+    def test_detail_exposes_positive_essay_score_without_answer_placeholder(self):
+        exam, questions = self._create_structured_exam("Essay no placeholder", [70], [30])
+        self._create_result(exam, objective_score=70)
+
+        request = self.factory.get("/results/admin/exams/detail/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = AdminExamResultDetailView.as_view()(
+            request,
+            exam_id=exam.id,
+            enrollment_id=self.assigned_enrollment.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["score_shape"]["objective_max_score"], 70.0)
+        self.assertEqual(response.data["score_shape"]["subjective_max_score"], 30.0)
+        self.assertEqual(response.data["score_shape"]["total_max_score"], 100.0)
+        self.assertEqual(
+            [(q["number"], q["kind"], q["max_score"]) for q in response.data["questions"]],
+            [(1, "choice", 70.0), (2, "essay", 30.0)],
+        )
+        self.assertNotIn(str(questions[1].id), response.data["correct_answers"])
+
+    def test_detail_exposes_user_entered_essay_answer_when_present(self):
+        exam, questions = self._create_structured_exam("Essay answer present", [70], [30])
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={
+                str(questions[0].id): "1",
+                str(questions[1].id): "서술 정답",
+            },
+        )
+        self._create_result(exam, objective_score=70)
+
+        request = self.factory.get("/results/admin/exams/detail/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+        response = AdminExamResultDetailView.as_view()(
+            request,
+            exam_id=exam.id,
+            enrollment_id=self.assigned_enrollment.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["score_shape"]["subjective_max_score"], 30.0)
+        self.assertEqual(response.data["correct_answers"][str(questions[1].id)], "서술 정답")
 
     def test_session_scores_meta_exposes_score_shape_and_component_scores(self):
         exam, _questions = self._create_structured_exam("Scores meta", [40, 40], [20])

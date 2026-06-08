@@ -19,6 +19,9 @@ from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAtte
 from apps.domains.exams.models import AnswerKey, ExamQuestion
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.domains.results.services.answer_matching import answer_matches, correct_answer_sets
+from apps.domains.results.services.manual_subjective_score import (
+    explicit_manual_subjective_score_for_result,
+)
 from apps.support.omr.score_shape import get_exam_score_shape
 
 # ✅ 단일 진실: session 매핑 + progress 트리거
@@ -322,7 +325,7 @@ class AdminExamItemScoreView(APIView):
         # -------------------------------------------------
         # 6️⃣ total_score 재계산
         # OMR 계약의 문항 종류를 기준으로 객관식/서술형 점수를 분리한다.
-        # 합계형 서술 점수는 Result.total_score - Result.objective_score로 보존한다.
+        # 합계형 서술 점수는 명시적 수동 서술 근거가 있을 때만 보존한다.
         # -------------------------------------------------
         agg_items = list(ResultItem.objects.filter(result=result))
         items_sum = sum(float(x.score or 0.0) for x in agg_items)
@@ -350,10 +353,13 @@ class AdminExamItemScoreView(APIView):
             max_total = items_max_sum
         else:
             previous_objective = float(result.objective_score or 0.0)
-            previous_total = float(result.total_score or 0.0)
-            previous_subjective = max(0.0, previous_total - previous_objective)
+            explicit_subjective = explicit_manual_subjective_score_for_result(
+                result=result,
+                attempt=attempt,
+                score_shape=score_shape,
+            )
             objective_score = choice_items_sum if has_choice_items else previous_objective
-            subjective_score = essay_items_sum if has_essay_items else previous_subjective
+            subjective_score = essay_items_sum if has_essay_items else explicit_subjective
             total_score = objective_score + subjective_score
             max_total = float(
                 score_shape.total_max_score

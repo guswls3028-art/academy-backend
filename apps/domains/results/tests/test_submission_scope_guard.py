@@ -794,7 +794,6 @@ class SubmissionScopeGuardTests(TestCase):
             exam=exam,
             answers={
                 **{str(question.id): "1" for question in questions[:22]},
-                str(questions[22].id): "해설참조",
             },
         )
         submission = Submission.objects.create(
