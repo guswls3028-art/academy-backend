@@ -189,6 +189,68 @@ def create_synthetic_omr(meta, marks=None):
     return img
 
 
+def create_synthetic_multi_mark_omr(meta, marks=None):
+    """
+    합성 OMR 이미지 생성.
+    marks: {question_number: {choice_label: mark_intensity}}
+      예: {"3": {"3": 0, "4": 95}} — 3번 문항의 3,4를 서로 다른 농도로 마킹.
+    """
+    w, h = 3508, 2480
+    img = np.ones((h, w, 3), dtype=np.uint8) * 255
+
+    page = meta["page"]
+    pw, ph = float(page["width"]), float(page["height"])
+    sx, sy = w / pw, h / ph
+
+    marks = marks or {}
+
+    for q in meta["questions"]:
+        q_num = str(q["question_number"])
+        selected = marks.get(q_num) or {}
+        for c in q["choices"]:
+            cx = int(round(float(c["center"]["x"]) * sx))
+            cy = int(round(float(c["center"]["y"]) * sy))
+            rx = int(round(float(c["radius_x"]) * sx))
+            ry = int(round(float(c["radius_y"]) * sy))
+
+            cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, (180, 180, 180), 1)
+            if c["label"] in selected:
+                intensity = int(selected[c["label"]])
+                color = (intensity, intensity, intensity)
+                cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, color, -1)
+
+    return img
+
+
+@pytest.mark.parametrize("question_count", [30, 45, 60])
+def test_engine_detects_unbalanced_double_marks_across_dense_layouts(question_count):
+    meta = build_omr_meta(question_count=question_count, n_choices=5)
+    per_col = int(meta["layout"]["per_col"])
+    question_numbers = sorted({
+        3,
+        min(question_count, per_col + 1),
+        question_count,
+    })
+    marks = {
+        str(qn): {"3": 0, "4": 95}
+        for qn in question_numbers
+    }
+    img = create_synthetic_multi_mark_omr(meta, marks=marks)
+
+    results = detect_omr_answers_v7(
+        image_bgr=img,
+        meta=meta,
+        config=AnswerDetectConfig(),
+    )
+    by_q = {r.question_id: r for r in results}
+
+    for qn in question_numbers:
+        result = by_q[qn]
+        assert result.status == "ok"
+        assert result.marking == "multi"
+        assert result.detected == ["3", "4"]
+
+
 def test_legacy_v14_corner_markers_are_detected_with_current_meta():
     meta = build_omr_meta(question_count=20, n_choices=5)
     w, h = 3508, 2480

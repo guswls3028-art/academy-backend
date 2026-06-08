@@ -516,43 +516,46 @@ def _detect_single_question(
             raw=raw_data,
         )
 
-    if gap < config.conf_gap_threshold:
-        # 복수 마킹 가능성 — 상대적 noise floor 기준
-        noise_floor = median_score + _REL_BLANK_TH
-        marked_pairs = [(l, s) for l, s, _ in fills if s >= noise_floor]
-        marked_labels = {l for l, _ in marked_pairs}
-        marked = sorted(
-            marked_labels,
-            key=lambda label: choice_order.get(str(label), len(choice_order)),
-        )
+    # 복수 마킹 가능성 — 상대적 noise floor 기준.
+    # 실제 학생 마킹은 두 버블 농도가 다르면 top-2 gap이 커질 수 있다. gap이 작을 때만
+    # multi를 검사하면 "진한 3번 + 연한 4번" 같은 명확한 이중마킹을 single로 접는다.
+    noise_floor = median_score + _REL_BLANK_TH
+    marked_pairs = [(l, s) for l, s, _ in fills if s >= noise_floor]
+    marked_labels = {l for l, _ in marked_pairs}
+    marked = sorted(
+        marked_labels,
+        key=lambda label: choice_order.get(str(label), len(choice_order)),
+    )
 
-        if len(marked_pairs) > 1:
-            weakest_mark = min(s for _, s in marked_pairs)
-            unmarked_scores = [s for l, s, _ in fills if l not in marked_labels]
-            next_score = max(unmarked_scores) if unmarked_scores else median_score
-            selected_separation = weakest_mark - next_score
-            strong_multi = (
-                top_score >= max(0.28, median_score + 0.12)
-                and weakest_mark >= median_score + 0.10
-                and selected_separation >= max(0.08, 3.0 * noise_std)
+    if len(marked_pairs) > 1:
+        weakest_mark = min(s for _, s in marked_pairs)
+        unmarked_scores = [s for l, s, _ in fills if l not in marked_labels]
+        next_score = max(unmarked_scores) if unmarked_scores else median_score
+        selected_separation = weakest_mark - next_score
+        strong_multi = (
+            top_score >= max(0.28, median_score + 0.12)
+            and weakest_mark >= median_score + 0.10
+            and selected_separation >= max(0.08, 3.0 * noise_std)
+        )
+        if strong_multi:
+            raw_data["multi_decision"] = {
+                "noise_floor": round(noise_floor, 4),
+                "weakest_mark": round(weakest_mark, 4),
+                "next_score": round(next_score, 4),
+                "selected_separation": round(selected_separation, 4),
+                "decision": "clear_multi",
+            }
+            return OMRAnswerV1(
+                version=meta_version,
+                question_id=q_num,
+                detected=marked,
+                marking="multi",
+                confidence=round(min(1.0, max(0.0, selected_separation / 0.3)), 4),
+                status="ok",
+                raw=raw_data,
             )
-            if strong_multi:
-                raw_data["multi_decision"] = {
-                    "noise_floor": round(noise_floor, 4),
-                    "weakest_mark": round(weakest_mark, 4),
-                    "next_score": round(next_score, 4),
-                    "selected_separation": round(selected_separation, 4),
-                    "decision": "clear_multi",
-                }
-                return OMRAnswerV1(
-                    version=meta_version,
-                    question_id=q_num,
-                    detected=marked,
-                    marking="multi",
-                    confidence=round(min(1.0, max(0.0, selected_separation / 0.3)), 4),
-                    status="ok",
-                    raw=raw_data,
-                )
+
+    if gap < config.conf_gap_threshold:
 
         raw_data["multi_decision"] = {
             "noise_floor": round(noise_floor, 4),
