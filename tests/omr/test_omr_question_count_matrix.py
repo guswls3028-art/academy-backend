@@ -5,12 +5,17 @@ import pytest
 from academy.adapters.ai.omr.engine import AnswerDetectConfig, detect_omr_answers_v7
 from academy.adapters.ai.omr.identifier import IdentifierConfigV1, detect_identifier_v1
 from academy.adapters.ai.omr.warp import align_to_a4_landscape
+from apps.domains.assets.omr.dto.omr_document import OMRDocument
+from apps.domains.assets.omr.renderer import html_renderer, pdf_renderer
+from apps.domains.assets.omr.renderer.html_renderer import OMRHtmlRenderer
+from apps.domains.assets.omr.renderer.pdf_renderer import OMRPdfRenderer
 from apps.domains.assets.omr.services.meta_generator import (
     BUB_H,
     MAX_COLS,
     MAX_MC_QUESTIONS,
     MAX_QUESTIONS_PER_COL,
     MIN_VERTICAL_GAP_MM,
+    build_mc_column_ranges,
     build_omr_meta,
     compute_safe_layout,
 )
@@ -87,6 +92,56 @@ def test_all_supported_question_counts_have_safe_layout_geometry():
                     prev,
                     current,
                 )
+
+
+@pytest.mark.parametrize(
+    ("question_count", "expected_ranges"),
+    [
+        (20, [(1, 20)]),
+        (21, [(1, 11), (12, 21)]),
+        (40, [(1, 20), (21, 40)]),
+        (41, [(1, 14), (15, 28), (29, 41)]),
+        (60, [(1, 20), (21, 40), (41, 60)]),
+    ],
+)
+def test_column_ranges_are_shared_by_meta_html_and_renderers(
+    question_count: int,
+    expected_ranges: list[tuple[int, int]],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls: list[tuple[str, int]] = []
+
+    def spy_column_ranges(value: int):
+        calls.append(("renderer", value))
+        return build_mc_column_ranges(value)
+
+    monkeypatch.setattr(html_renderer, "build_mc_column_ranges", spy_column_ranges)
+    monkeypatch.setattr(pdf_renderer, "build_mc_column_ranges", spy_column_ranges)
+
+    direct_ranges = [
+        (item["start"], item["end"])
+        for item in build_mc_column_ranges(question_count)
+    ]
+    meta = build_omr_meta(question_count=question_count, n_choices=5)
+    meta_ranges = [
+        (
+            column["questions"][0]["question_number"],
+            column["questions"][-1]["question_number"],
+        )
+        for column in meta["columns"]
+    ]
+    html_ranges = [
+        (column["rows"][0]["number"], column["rows"][-1]["number"])
+        for column in OMRHtmlRenderer()._build_mc_columns(  # noqa: SLF001
+            OMRDocument(exam_title="Matrix", mc_count=question_count)
+        )
+    ]
+    OMRPdfRenderer().render(OMRDocument(exam_title="Matrix", mc_count=question_count))
+
+    assert direct_ranges == expected_ranges
+    assert meta_ranges == expected_ranges
+    assert html_ranges == expected_ranges
+    assert calls == [("renderer", question_count), ("renderer", question_count)]
 
 
 def test_engine_detects_blank_single_multi_and_erasure_noise_for_every_supported_count():

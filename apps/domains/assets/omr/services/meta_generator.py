@@ -117,6 +117,30 @@ def compute_safe_layout(question_count: int) -> Dict[str, Any]:
     }
 
 
+def build_mc_column_ranges(question_count: int) -> List[Dict[str, int]]:
+    """객관식 문항을 OMR 컬럼별 번호 범위로 분할한다."""
+    layout = compute_safe_layout(question_count)
+    n_cols = int(layout["n_cols"])
+    per_col = int(layout["per_col"])
+    ranges: List[Dict[str, int]] = []
+
+    if question_count <= 0 or n_cols <= 0 or per_col <= 0:
+        return ranges
+
+    for column_index in range(n_cols):
+        start = column_index * per_col + 1
+        end = min(start + per_col - 1, question_count)
+        if start > end:
+            continue
+        ranges.append({
+            "column_index": column_index,
+            "start": start,
+            "end": end,
+            "count": end - start + 1,
+        })
+    return ranges
+
+
 def validate_layout(question_count: int, essay_count: int = 0) -> List[str]:
     """레이아웃 유효성 검증. 에러 메시지 리스트 반환 (빈 리스트 = OK)."""
     errors: List[str] = []
@@ -270,11 +294,11 @@ def build_omr_meta(
     questions: List[Dict[str, Any]] = []
     columns: List[Dict[str, Any]] = []
 
-    for c in range(n_cols):
+    for column_range in build_mc_column_ranges(question_count):
+        c = column_range["column_index"]
         col_x = ANS_X + c * (MC_COL_W + MC_COL_GAP)
-        start = c * per_col + 1
-        end = min(start + per_col - 1, question_count)
-        count_in_col = end - start + 1
+        start = column_range["start"]
+        count_in_col = column_range["count"]
         row_h = body_h / count_in_col if count_in_col > 0 else body_h
 
         bubble_xs = _calc_bubble_centers_x(col_x, n_choices)

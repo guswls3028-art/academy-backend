@@ -18,7 +18,7 @@ import sys
 from pathlib import Path
 
 from django.conf import settings
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 
 
 class TestHealthEndpoints(TestCase):
@@ -103,6 +103,52 @@ class TestModelsImportable(TestCase):
                 hasattr(model, "objects"),
                 f"{model.__name__} has no default manager",
             )
+
+
+class TestOMRLayoutSmoke(SimpleTestCase):
+    """OMR column layout boundaries must stay shared by generated meta and preview data."""
+
+    def test_omr_column_ranges_cover_layout_boundaries(self):
+        from apps.domains.assets.omr.dto.omr_document import OMRDocument
+        from apps.domains.assets.omr.renderer.html_renderer import OMRHtmlRenderer
+        from apps.domains.assets.omr.services.meta_generator import (
+            build_mc_column_ranges,
+            build_omr_meta,
+        )
+
+        cases = {
+            20: [(1, 20)],
+            21: [(1, 11), (12, 21)],
+            40: [(1, 20), (21, 40)],
+            41: [(1, 14), (15, 28), (29, 41)],
+            60: [(1, 20), (21, 40), (41, 60)],
+        }
+
+        renderer = OMRHtmlRenderer()
+        for question_count, expected_ranges in cases.items():
+            with self.subTest(question_count=question_count):
+                ranges = [
+                    (item["start"], item["end"])
+                    for item in build_mc_column_ranges(question_count)
+                ]
+                meta = build_omr_meta(question_count=question_count, n_choices=5)
+                meta_ranges = [
+                    (
+                        column["questions"][0]["question_number"],
+                        column["questions"][-1]["question_number"],
+                    )
+                    for column in meta["columns"]
+                ]
+                html_ranges = [
+                    (column["rows"][0]["number"], column["rows"][-1]["number"])
+                    for column in renderer._build_mc_columns(  # noqa: SLF001
+                        OMRDocument(exam_title="Smoke", mc_count=question_count)
+                    )
+                ]
+
+                self.assertEqual(ranges, expected_ranges)
+                self.assertEqual(meta_ranges, expected_ranges)
+                self.assertEqual(html_ranges, expected_ranges)
 
 
 class TestTenantIsolation(TestCase):

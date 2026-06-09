@@ -48,7 +48,6 @@ E. 인식 시스템 v15.2 (원칙: 모든 인식마크는 AI 엔진이 실제로
 from __future__ import annotations
 
 import io
-import math
 import os
 import platform
 import re
@@ -78,6 +77,7 @@ from apps.domains.assets.omr.services.meta_generator import (
     # 좌측 패널 수직 분할 + 식별번호 내부 구조 SSOT
     LP_H_NOTE, LP_H_PHONE, LP_H_NAME,
     ID_HEADER_H, ID_WRITE_TOP_PAD, ID_WRITE_H, ID_WRITE_BOT_PAD, ID_ANCHOR_SZ,
+    build_mc_column_ranges,
 )
 
 # ══════════════════════════════════════════════
@@ -591,10 +591,8 @@ class OMRPdfRenderer:
         if mc <= 0 and ec <= 0:
             return
 
-        if mc <= 0:    pc, nmc = 0, 0
-        elif mc <= 20: pc, nmc = mc, 1
-        elif mc <= 40: pc, nmc = math.ceil(mc/2), 2
-        else:          pc, nmc = math.ceil(mc/3), 3
+        mc_ranges = build_mc_column_ranges(mc)
+        nmc = len(mc_ranges)
 
         has_essay = ec > 0
 
@@ -614,11 +612,12 @@ class OMRPdfRenderer:
         # 섹션 경계 — visual width가 gap을 흡수하여 빈 틈 없음
         # (type, x_mm, vis_w_mm, data_w_mm, start, end)
         sections = []
-        for ci in range(nmc):
+        for index, column_range in enumerate(mc_ranges):
+            ci = column_range["column_index"]
             col_x = frame_x + ci * (MC_COL_W + MC_COL_GAP)
-            s = ci * pc + 1
-            e = min(s + pc - 1, mc)
-            if ci < nmc - 1 or has_essay:
+            s = column_range["start"]
+            e = column_range["end"]
+            if index < nmc - 1 or has_essay:
                 vw = MC_COL_W + MC_COL_GAP
             else:
                 vw = frame_x + frame_w - col_x

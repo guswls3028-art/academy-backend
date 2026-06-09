@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Optional
 
-from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS
+from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS, validate_layout
 
 
 DECORATIVE_ESSAY_COUNT = 5
@@ -80,6 +80,8 @@ class OMRDocument:
             errors.append("문항이 최소 1개 이상이어야 합니다.")
         if self.n_choices != 5:
             errors.append("보기 수는 5여야 합니다.")
+        if 0 <= self.mc_count <= MAX_MC_QUESTIONS and 0 <= self.render_essay_count <= 10:
+            errors.extend(validate_layout(self.mc_count, self.render_essay_count))
         return errors
 
     def to_defaults_dict(self) -> dict:

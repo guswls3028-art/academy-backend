@@ -7,14 +7,13 @@ CSS는 omr-sheet.html과 동일한 스타일을 사용.
 """
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from django.template.loader import render_to_string
 
 from apps.domains.assets.omr.dto.omr_document import OMRDocument
 from apps.domains.assets.omr.services.meta_generator import (
-    MARKER_OFF, MARKER_SZ, MARKER_TH,
+    MARKER_OFF, MARKER_SZ, MARKER_TH, build_mc_column_ranges,
 )
 
 
@@ -77,20 +76,10 @@ class OMRHtmlRenderer:
         if doc.mc_count <= 0:
             return []
 
-        mc = doc.mc_count
-        if mc <= 20:
-            per_col, n_cols = mc, 1
-        elif mc <= 40:
-            per_col = math.ceil(mc / 2)
-            n_cols = 2
-        else:
-            per_col = math.ceil(mc / 3)
-            n_cols = 3
-
         columns = []
-        for col_idx in range(n_cols):
-            start = col_idx * per_col + 1
-            end = min(start + per_col - 1, mc)
+        for column_range in build_mc_column_ranges(doc.mc_count):
+            start = column_range["start"]
+            end = column_range["end"]
 
             label = f"객관식 {start}번 ~ {end}번"
 
