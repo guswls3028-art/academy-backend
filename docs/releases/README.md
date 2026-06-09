@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.46.md](v1.2.46.md) | **CURRENT** | 2026-06-09 KST | OMR decorative essay fail-closed + scored direct-input essay proof |
+| [v1.2.47.md](v1.2.47.md) | **CURRENT** | 2026-06-09 KST | OMR 1/2/3-column layout SSOT + tenant 2 production layout proof |
+| [v1.2.46.md](v1.2.46.md) | production-deployed / v1.2.47로 승계 | 2026-06-09 KST | OMR decorative essay fail-closed + scored direct-input essay proof |
 | [v1.2.45.md](v1.2.45.md) | production-deployed / v1.2.46로 승계 | 2026-06-09 KST | OMR explicit subjective-score SSOT + no-placeholder essay score proof |
 | [v1.2.44.md](v1.2.44.md) | production-deployed / v1.2.45로 승계 | 2026-06-09 KST | OMR custom question weights preservation + tenant 2 exam 419 production regrade |
 | [v1.2.43.md](v1.2.43.md) | production-deployed / v1.2.44로 승계 | 2026-06-08 KST | OMR multi-mark recognition + review UI multi-select display |
