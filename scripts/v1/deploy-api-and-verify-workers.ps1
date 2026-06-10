@@ -188,13 +188,27 @@ if ($gitHeadSha -and $ciBuildReportSha) {
     } elseif ($ciRunStatus -eq "in_progress") {
         Add-Result "0-IMAGE" "freshness" "WARN" "New build in progress — ECR will update when CI completes"
     } else {
-        $commitsBehind = 0
+        $runtimeDeltaFiles = @()
+        $runtimeImageFiles = @()
         try {
             Push-Location $repoRoot
-            $commitsBehind = [int](git rev-list --count "$ciBuildReportSha..origin/main" 2>&1)
+            $runtimeDeltaFiles = @(git diff --name-only "$ciBuildReportSha..$gitHeadSha" 2>$null)
             Pop-Location
+            $runtimeImageFiles = @($runtimeDeltaFiles | Where-Object {
+                $_ -match '^(academy/|apps/|libs/|common/|manage\.py$|requirements|pyproject\.toml$|poetry\.lock$|Pipfile|Dockerfile|docker/)'
+            })
         } catch { Pop-Location }
-        Add-Result "0-IMAGE" "freshness" "WARN" "ECR is $commitsBehind commit(s) behind HEAD"
+        if ($runtimeDeltaFiles.Count -gt 0 -and $runtimeImageFiles.Count -eq 0) {
+            Add-Result "0-IMAGE" "freshness" "PASS" "Runtime images match CI build report; later HEAD changes do not affect images"
+        } else {
+            $commitsBehind = 0
+            try {
+                Push-Location $repoRoot
+                $commitsBehind = [int](git rev-list --count "$ciBuildReportSha..origin/main" 2>&1)
+                Pop-Location
+            } catch { Pop-Location }
+            Add-Result "0-IMAGE" "freshness" "WARN" "ECR is $commitsBehind commit(s) behind HEAD"
+        }
     }
 }
 
