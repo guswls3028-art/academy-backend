@@ -1,12 +1,12 @@
 # SSOT ↔ 실제 인프라 ↔ 합의사항 정합성
 
-**Generated:** 2026-06-10T14:38:59.3772765+09:00
+**Generated:** 2026-06-11T04:43:12.2366182+09:00
 **SSOT:** docs/ssot/params.yaml (prod)
 
 ## 합의사항 체크리스트
 | 항목 | 기대 | 실제 | 결과 |
 |------|------|------|------|
-| API ASG min/desired | 1/1 | 1/1 | PASS |
+| API ASG min/desired | 2/2 | 2/2 | PASS |
 | AI ASG min/desired | 0/0 | 0/0 | PASS |
 | Messaging ASG min/desired | 1/1 | 1/1 | PASS |
 | Solapi 고정 IP(NAT/EIP) | 취소(불필요) | NAT Gateway 0개, EIP 3 개 (미연결 0). 연결된 EIP는 활성 리소스 소유로 Solapi 정리 후보 아님. | PASS |

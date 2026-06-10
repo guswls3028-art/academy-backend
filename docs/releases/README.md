@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.2.48.md](v1.2.48.md) | **CURRENT** | 2026-06-10 KST | Global maintenance toggle incident fix + tenant lock recurrence prevention |
+| [v1.2.49.md](v1.2.49.md) | **CURRENT** | 2026-06-11 KST | Student-domain launch GO seal + video upload/HLS SSOT + API 2-instance launch baseline |
+| [v1.2.48.md](v1.2.48.md) | production-deployed / v1.2.49로 승계 | 2026-06-10 KST | Global maintenance toggle incident fix + tenant lock recurrence prevention |
 | [v1.2.47.md](v1.2.47.md) | production-deployed / v1.2.48로 승계 | 2026-06-09 KST | OMR 1/2/3-column layout SSOT + tenant 2 production layout proof |
 | [v1.2.46.md](v1.2.46.md) | production-deployed / v1.2.47로 승계 | 2026-06-09 KST | OMR decorative essay fail-closed + scored direct-input essay proof |
 | [v1.2.45.md](v1.2.45.md) | production-deployed / v1.2.46로 승계 | 2026-06-09 KST | OMR explicit subjective-score SSOT + no-placeholder essay score proof |

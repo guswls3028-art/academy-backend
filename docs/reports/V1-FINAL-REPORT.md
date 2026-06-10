@@ -5,7 +5,7 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-06-10T14:37:52.3456792+09:00 |
+| 검증 시각 | 2026-06-11T04:42:01.7398644+09:00 |
 | 최종 상태 | PASS |
 | SSOT↔Actual 정합성 | **PASS** |
 | GO/NO-GO | **GO** |
@@ -15,7 +15,7 @@
 ## 합의사항 체크
 | 항목 | 결과 |
 |------|------|
-| API ASG min/desired=1/1 | PASS |
+| API ASG min/desired=2/2 | PASS |
 | AI ASG min/desired=0/0 | PASS |
 | Messaging ASG min/desired=1/1 | PASS |
 | Solapi 고정 IP(NAT/EIP) 취소 | PASS |
@@ -30,6 +30,9 @@
 | API 공개 /health | OK |
 | CORS/Cache | OK / 1y |
 
+## Launch GO 실사용 검증
+결제 mutation을 제외한 학생 도메인 중심 전수 클릭, 영상 업로드/HLS canary, 워커/배포 검증, cleanup 증거는 **[launch-go-verification.latest.md](./launch-go-verification.latest.md)** 에 기록한다.
+
 ## 남은 WARNING 및 후속 작업
 - Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.
 - (현재 리스크 없음)
@@ -38,9 +41,11 @@
 - [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트/R2/CDN·SQS·Video·관측·GO/NO-GO 상세
 - [consistency.latest.md](./consistency.latest.md) — SSOT↔실제↔합의사항 정합성
 - [front-connection.latest.md](./front-connection.latest.md) — Front V1 연결 검증·근거
-- [scale-policy.latest.md](./scale-policy.latest.md) — API ASG 스케일 정책 (런칭 전 min/desired=1)
+- [scale-policy.latest.md](./scale-policy.latest.md) — API ASG 스케일 정책 (확장 런칭 min/desired=2)
 - [resource-cleanup.latest.md](./resource-cleanup.latest.md) — 리소스 정리 기록 (EIP/EBS/SG/ASG)
 - [cleanup-run.latest.md](./cleanup-run.latest.md) — 정리 스크립트 실행 결과
 - [front-pipeline-mapping.latest.md](./front-pipeline-mapping.latest.md) — 프론트 Git 파이프라인 ↔ SSOT 매핑
 - [audit.latest.md](./audit.latest.md) — 리소스·지표 스냅샷
 - [drift.latest.md](./drift.latest.md) — SSOT 대비 drift
+- [api-deploy-worker-verify.latest.md](./api-deploy-worker-verify.latest.md) — API 배포·워커·큐·Batch 검증
+- [launch-go-verification.latest.md](./launch-go-verification.latest.md) — 결제 제외 확장 GO 실사용 검증
