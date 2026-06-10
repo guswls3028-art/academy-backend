@@ -1,4 +1,4 @@
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership, User
@@ -14,7 +14,7 @@ from apps.domains.student_app.media.views import (
     StudentVideoStatsView,
 )
 from apps.domains.students.models import Student
-from apps.domains.video.models import AccessMode, Video, VideoAccess, VideoProgress
+from apps.domains.video.models import AccessMode, Video, VideoAccess, VideoPlaybackSession, VideoProgress
 
 
 class StudentVideoProgressEnrollmentResolutionTests(TestCase):
@@ -362,6 +362,27 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         response = self._get_playback(enrollment_id=self.target_enrollment.id)
 
         self.assertEqual(response.status_code, 403)
+
+    @override_settings(CDN_HLS_BASE_URL="https://cdn.example.test", CDN_HLS_SIGNING_SECRET="")
+    def test_proctored_playback_issues_session_with_aware_expiry(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.target_session,
+            enrollment=self.target_enrollment,
+            status="ONLINE",
+        )
+
+        response = self._get_playback(enrollment_id=self.target_enrollment.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["video"]["access_mode"], AccessMode.PROCTORED_CLASS.value)
+        self.assertEqual(response.data["policy"]["access_mode"], AccessMode.PROCTORED_CLASS.value)
+        self.assertIsNotNone(response.data["playback_session_id"])
+        self.assertIsNotNone(response.data["playback_token"])
+        session = VideoPlaybackSession.objects.get(session_id=response.data["playback_session_id"])
+        self.assertEqual(session.video_id, self.video.id)
+        self.assertEqual(session.enrollment_id, self.target_enrollment.id)
+        self.assertIsNotNone(session.expires_at.tzinfo)
 
     def test_parent_progress_echo_requires_selected_child_video_enrollment(self):
         unlinked_parent_user = User.objects.create_user(

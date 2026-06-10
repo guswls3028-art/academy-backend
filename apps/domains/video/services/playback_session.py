@@ -1,7 +1,7 @@
 
 import uuid
 from typing import Dict, Any, Tuple
-from datetime import timedelta
+from datetime import timedelta, timezone as datetime_timezone
 
 from django.conf import settings
 from django.utils import timezone
@@ -372,7 +372,7 @@ def create_playback_session(
 
     session_id = str(sess["session_id"])
     expires_at_timestamp = int(sess["expires_at"])
-    expires_at = timezone.datetime.fromtimestamp(expires_at_timestamp, tz=timezone.utc)
+    expires_at = timezone.datetime.fromtimestamp(expires_at_timestamp, tz=datetime_timezone.utc)
 
     video_repo.playback_session_create(
         video=video,

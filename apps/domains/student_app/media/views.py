@@ -1,3 +1,4 @@
+from datetime import timezone as datetime_timezone
 from typing import Any, Dict, Optional, Tuple
 
 from django.db.models import Prefetch
@@ -880,7 +881,7 @@ class StudentVideoPlaybackView(APIView):
                     playback_session_id = sess["session_id"]
                     expires_ts = int(sess["expires_at"])
                     playback_expires_at = expires_ts
-                    expires_at_dt = _tz.datetime.fromtimestamp(expires_ts, tz=_tz.utc)
+                    expires_at_dt = _tz.datetime.fromtimestamp(expires_ts, tz=datetime_timezone.utc)
                     from academy.adapters.db.django import repositories_video as _vr
                     _vr.playback_session_create(
                         video=video,
