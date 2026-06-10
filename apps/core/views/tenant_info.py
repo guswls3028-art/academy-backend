@@ -1,11 +1,11 @@
 # PATH: apps/core/views/tenant_info.py
-from django.db import transaction, connection
+from django.db import transaction
 
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 
-from apps.core.models import Program, Tenant, TenantDomain
+from apps.core.models import Program, TenantDomain
 from apps.core.permissions import (
     TenantResolvedAndOwner,
     TenantResolvedAndStaff,
@@ -22,7 +22,9 @@ class MaintenanceModeView(APIView):
     """
     GET/PATCH /api/v1/core/maintenance-mode/
 
-    - dev_app(owner) 전용: 전체 테넌트 Program.feature_flags["maintenance_mode"] ON/OFF
+    - dev_app(owner) 전용: 전체 테넌트 Program.feature_flags["maintenance_mode"] 현황 조회
+    - PATCH enabled=false: 운영 사고 복구용으로 남은 maintenance_mode 키 제거
+    - PATCH enabled=true: 전체 테넌트 잠금 사고 방지를 위해 거부
     - tenant 격리를 깨지 않도록, 응답은 aggregate(count)만 반환
     """
 
@@ -34,7 +36,11 @@ class MaintenanceModeView(APIView):
         exempt_codes = ("hakwonplus", "9999")
         qs = Program.objects.exclude(tenant__code__in=exempt_codes)
         total = qs.count()
-        enabled_count = qs.filter(feature_flags__maintenance_mode=True).count()
+        enabled_count = sum(
+            1
+            for flags in qs.values_list("feature_flags", flat=True)
+            if isinstance(flags, dict) and flags.get("maintenance_mode") is True
+        )
         enabled_for_all = bool(total and enabled_count == total)
         return Response({
             "enabled_for_all": enabled_for_all,
@@ -47,54 +53,37 @@ class MaintenanceModeView(APIView):
         if not is_platform_admin_tenant(request):
             return Response({"detail": "Platform admin tenant required."}, status=403)
         enabled = bool((request.data or {}).get("enabled"))
+        if enabled:
+            record_audit(
+                request,
+                action="maintenance.toggle.blocked",
+                summary="Blocked global maintenance mode ON",
+                payload={"enabled": enabled, "reason": "global_maintenance_disabled"},
+                result="failed",
+                error="global_maintenance_disabled",
+            )
+            return Response(
+                {
+                    "detail": "Global maintenance mode is disabled for production safety.",
+                    "code": "global_maintenance_disabled",
+                },
+                status=403,
+            )
 
-        exempt_codes = ("hakwonplus", "9999")
-        program_table = Program._meta.db_table
-        tenant_table = Tenant._meta.db_table
-
-        with connection.cursor() as cursor:
-            if enabled:
-                # 1) exempt tenant는 항상 OFF 강제
-                cursor.execute(
-                    f"""
-                    UPDATE {program_table} p
-                    SET feature_flags = COALESCE(p.feature_flags, '{{}}'::jsonb) - 'maintenance_mode'
-                    FROM {tenant_table} t
-                    WHERE p.tenant_id = t.id
-                      AND t.code = ANY(%s)
-                    """,
-                    [list(exempt_codes)],
-                )
-
-                # 2) 나머지 테넌트만 ON
-                cursor.execute(
-                    f"""
-                    UPDATE {program_table} p
-                    SET feature_flags = jsonb_set(
-                        COALESCE(p.feature_flags, '{{}}'::jsonb),
-                        '{{maintenance_mode}}',
-                        'true'::jsonb,
-                        true
-                    )
-                    FROM {tenant_table} t
-                    WHERE p.tenant_id = t.id
-                      AND NOT (t.code = ANY(%s))
-                    """,
-                    [list(exempt_codes)],
-                )
-            else:
-                # OFF: 전체에서 키 제거 (exempt 포함)
-                cursor.execute(
-                    f"""
-                    UPDATE {program_table}
-                    SET feature_flags = COALESCE(feature_flags, '{{}}'::jsonb) - 'maintenance_mode'
-                    """
-                )
+        # OFF: 전체에서 키 제거 (exempt 포함). Incident recovery path only.
+        for program in Program.objects.only("id", "feature_flags"):
+            flags = program.feature_flags if isinstance(program.feature_flags, dict) else {}
+            if "maintenance_mode" not in flags:
+                continue
+            next_flags = dict(flags)
+            next_flags.pop("maintenance_mode", None)
+            program.feature_flags = next_flags
+            program.save(update_fields=["feature_flags"])
 
         record_audit(
             request,
             action="maintenance.toggle",
-            summary=f"Maintenance mode {'ON' if enabled else 'OFF'}",
+            summary="Maintenance mode OFF",
             payload={"enabled": enabled},
         )
         return self.get(request)
