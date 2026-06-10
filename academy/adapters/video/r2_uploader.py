@@ -8,6 +8,7 @@ from pathlib import Path
 import boto3
 from boto3.s3.transfer import TransferConfig
 
+from academy.adapters.video.validate import effective_min_segments
 from academy.adapters.video.utils import guess_content_type, cache_control_for_object, trim_tail, backoff_sleep
 
 logger = logging.getLogger(__name__)
@@ -247,10 +248,17 @@ def verify_hls_integrity_r2(
     secret_key: str,
     region: str,
     min_segments: int = 3,
+    duration_seconds: float | int | None = None,
+    hls_time_seconds: float | int | None = None,
 ) -> None:
     client = _s3_client(endpoint_url, access_key, secret_key, region)
     prefix = final_prefix.rstrip("/") + "/"
     master_key = prefix + "master.m3u8"
+    required_segments = effective_min_segments(
+        min_segments,
+        duration_seconds=duration_seconds,
+        hls_time_seconds=hls_time_seconds,
+    )
     try:
         resp = client.get_object(Bucket=bucket, Key=master_key)
         body = resp["Body"].read().decode("utf-8", errors="replace")
@@ -266,17 +274,23 @@ def verify_hls_integrity_r2(
                 vbody = vr["Body"].read().decode("utf-8", errors="replace")
             except Exception:
                 raise UploadIntegrityError(f"variant playlist missing: {line}")
+            variant_segment_count = 0
             for vline in vbody.splitlines():
                 vline = vline.strip()
                 if vline and not vline.startswith("#") and vline.endswith(".ts"):
-                    segment_count += 1
+                    variant_segment_count += 1
                     seg_key = variant_key.rsplit("/", 1)[0] + "/" + vline
                     try:
                         client.head_object(Bucket=bucket, Key=seg_key)
                     except Exception:
                         raise UploadIntegrityError(f"segment missing: {seg_key}")
-    if segment_count < min_segments:
-        raise UploadIntegrityError(f"segment count {segment_count} < min_segments {min_segments}")
+            segment_count += variant_segment_count
+            if variant_segment_count < required_segments:
+                raise UploadIntegrityError(
+                    f"variant segment count {variant_segment_count} < min_segments {required_segments}: {line}"
+                )
+    if segment_count <= 0:
+        raise UploadIntegrityError("segment count 0 < min_segments 1")
     # 썸네일 invariant: 모바일 카드 UI가 thumbnail 비어있는 영상을 "처리안됨"으로
     # 인식하므로 hls 와 동급으로 final prefix 에 thumbnail.jpg 가 반드시 존재해야 한다.
     thumb_key = prefix + "thumbnail.jpg"

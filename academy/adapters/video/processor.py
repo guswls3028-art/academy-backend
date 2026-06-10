@@ -303,7 +303,12 @@ def process_video(
             },
             tenant_id=tenant_id_str,  # ✅ tenant_id 전달 추가
         )
-        validate_hls_output(out_dir, int(cfg.MIN_SEGMENTS_PER_VARIANT))
+        validate_hls_output(
+            out_dir,
+            int(cfg.MIN_SEGMENTS_PER_VARIANT),
+            duration_seconds=duration,
+            hls_time_seconds=int(cfg.HLS_TIME_SECONDS),
+        )
         # ✅ 단계 완료: 100%
         progress.record_progress(
             job_id,
@@ -463,7 +468,9 @@ def process_video(
                 access_key=cfg.R2_ACCESS_KEY,
                 secret_key=cfg.R2_SECRET_KEY,
                 region=cfg.R2_REGION,
-                min_segments=max(3, int(getattr(cfg, "MIN_SEGMENTS_PER_VARIANT", 3))),
+                min_segments=int(getattr(cfg, "MIN_SEGMENTS_PER_VARIANT", 1)),
+                duration_seconds=duration,
+                hls_time_seconds=int(cfg.HLS_TIME_SECONDS),
             )
         except UploadIntegrityError as e:
             from apps.domains.video.services.ops_events import emit_ops_event

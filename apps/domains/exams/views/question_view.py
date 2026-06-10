@@ -2,10 +2,9 @@ from __future__ import annotations
 
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import PermissionDenied
 
 from apps.core.permissions import TenantResolvedAndMember
-from apps.domains.exams.models import ExamQuestion, Exam
+from apps.domains.exams.models import ExamQuestion
 from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.services.template_resolver import assert_template_editable
 
@@ -27,12 +26,10 @@ class QuestionViewSet(ModelViewSet):
         # explanation은 reverse OneToOne — select_related로 N+1 회피
         # (QuestionSerializer.get_explanation_text/source가 obj.explanation 접근).
         return ExamQuestion.objects.filter(
-            sheet__exam__sessions__lecture__tenant=tenant
+            sheet__exam__tenant=tenant
         ).select_related("sheet", "sheet__exam", "explanation").distinct()
 
     def _assert_template_editable(self, obj: ExamQuestion):
-        if obj.sheet.exam.exam_type != Exam.ExamType.TEMPLATE:
-            raise PermissionDenied("Questions can be modified only in template exams.")
         assert_template_editable(obj.sheet.exam)
 
     def perform_update(self, serializer):
