@@ -1,6 +1,6 @@
 # Academy SSOT v1 — 풀셋팅 단일소스. scripts/v1 전용.
 # 1인 개발·운영(장애 대응 10~60분), 1k~1.5k 사용자·동시 50~300 버스트.
-# API ASG: 런칭 전 비용 절감으로 min/desired=1, max=2. 용량 기준은 docs/infrastructure/connection-budget.md.
+# API ASG: 확장 런칭 기준 min/desired=2, max=3. 용량 기준은 docs/infrastructure/connection-budget.md.
 
 global:
   env: prod
@@ -61,7 +61,7 @@ githubActions:
   deployRoleName: academy-gha-ecr-build
   deployPolicyName: EcrBuildPush
 
-# API: V1. 런칭 전 비용 절감으로 min/desired=1, max=2. 롤링 배포 시 instance-refresh MinHealthyPercentage.
+# API: V1. 확장 런칭 기준 min/desired=2, max=3. 롤링 배포 시 instance-refresh MinHealthyPercentage.
 # Gunicorn/ALB 타임아웃 60s 내 권장(동영상/AI는 비동기 전용).
 api:
   amiId: ami-0885e191a9bcf28b0
@@ -71,9 +71,9 @@ api:
   userData: ""
   asgName: academy-v1-api-asg
   asgLaunchTemplateName: academy-v1-api-lt
-  asgMinSize: 1
-  asgMaxSize: 2
-  asgDesiredCapacity: 1
+  asgMinSize: 2
+  asgMaxSize: 3
+  asgDesiredCapacity: 2
   instanceRefreshMinHealthyPercentage: 100
   instanceRefreshInstanceWarmup: 300
   healthCheckGracePeriodSeconds: 300
@@ -190,10 +190,11 @@ videoBatch:
     stuckDetectedAlarmEnabled: true
     logRetentionDays: 30
   # Ops: lightweight hourly recovery. 1 instance max (maxvCpus=2), scale to 0 when idle.
-  # 2026-05-12 audit: m6g.medium → t4g.medium. ECS_AL2023 ARM AMI(`/aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended`) t4g 지원 검증. t4g.medium = 2 vCPU + 4GB RAM (m6g.medium = 1 vCPU + 4GB) + ~13% cheap. cron 잡 4-6분이라 burstable 충분.
+  # m6g.medium = 1 vCPU + 4GB RAM. Ops reconcile/scanstuck jobdefs require 2048MB,
+  # so c6g.medium(2GB) cannot reliably place jobs after ECS/Batch overhead.
   opsComputeEnvironmentName: academy-v1-video-ops-ce
   opsQueueName: academy-v1-video-ops-queue
-  opsInstanceType: c6g.medium
+  opsInstanceType: m6g.medium
   opsMaxvCpus: 2
   opsJobDefs:
     reconcile: academy-v1-video-ops-reconcile

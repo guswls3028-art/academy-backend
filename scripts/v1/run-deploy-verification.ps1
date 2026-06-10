@@ -666,7 +666,7 @@ if ($findings.Count -gt 0) {
 [void]$finalSb.AppendLine("- [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트/R2/CDN·SQS·Video·관측·GO/NO-GO 상세")
 [void]$finalSb.AppendLine("- [consistency.latest.md](./consistency.latest.md) — SSOT↔실제↔합의사항 정합성")
 [void]$finalSb.AppendLine("- [front-connection.latest.md](./front-connection.latest.md) — Front V1 연결 검증·근거")
-[void]$finalSb.AppendLine("- [scale-policy.latest.md](./scale-policy.latest.md) — API ASG 스케일 정책 (런칭 전 min/desired=1)")
+[void]$finalSb.AppendLine("- [scale-policy.latest.md](./scale-policy.latest.md) — API ASG 스케일 정책 (확장 런칭 min/desired=2)")
 [void]$finalSb.AppendLine("- [resource-cleanup.latest.md](./resource-cleanup.latest.md) — 리소스 정리 기록 (EIP/EBS/SG/ASG)")
 [void]$finalSb.AppendLine("- [cleanup-run.latest.md](./cleanup-run.latest.md) — 정리 스크립트 실행 결과")
 [void]$finalSb.AppendLine("- [front-pipeline-mapping.latest.md](./front-pipeline-mapping.latest.md) — 프론트 Git 파이프라인 ↔ SSOT 매핑")

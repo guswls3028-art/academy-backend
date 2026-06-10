@@ -57,7 +57,7 @@
 ┌────────▼─────────┐  ┌─────────────▼──────────┐  ┌─────────────▼──────────┐
 │  API Server       │  │  Messaging Worker      │  │  AI Worker             │
 │  t4g.medium       │  │  t4g.medium            │  │  t4g.medium            │
-│  ASG: min=1 max=2 │  │  ASG: min=1 max=3     │  │  ASG: min=1 max=5     │
+│  ASG: min=2 max=3 │  │  ASG: min=1 max=3     │  │  ASG: min=1 max=5     │
 │  Gunicorn 4w      │  │  SQS long-poll         │  │  SQS long-poll         │
 │  gevent           │  │  SMS/LMS via Solapi    │  │  Always warm (정책)    │
 │  ❌ No ffmpeg     │  │                         │  │                        │
@@ -462,10 +462,10 @@ AI worker idle capacity is min/desired=0/0. OCR/AI tasks enter SQS, CloudWatch a
 ### 6.1 Zero-Downtime Deployment (Updated 2026-03-16)
 
 **API 무중단 배포 — Scale-Up 방식:**
-1. 현재 desired=1이면 desired=2로 scale-up
-2. 90초 대기 후 2대 Healthy 확인
+1. API ASG를 SSOT 기준 min=2 desired=2 max=3으로 보정
+2. 2대 Healthy 확인
 3. Instance refresh 실행 (`MinHealthyPercentage=100%`, `InstanceWarmup=300s`, `SkipMatching=false`)
-4. Refresh 완료 후 desired=1로 scale-down
+4. Refresh 완료 후에도 SSOT 기준 min=2 desired=2 max=3 유지
 
 **워커 배포:**
 - `MinHealthyPercentage=0%`, `InstanceWarmup=120s`

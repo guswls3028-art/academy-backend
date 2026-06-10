@@ -680,23 +680,27 @@ jobs:
             exit 1
           fi
 
-      - name: Scale up API ASG for zero-downtime (desired 1→2)
+      - name: Ensure API ASG launch baseline (desired=2)
         id: scaleup
         continue-on-error: true  # IAM 권한 없으면 skip하고 instance refresh는 진행
         run: |
-          CURRENT_DESIRED=$(aws autoscaling describe-auto-scaling-groups \
+          CURRENT=$(aws autoscaling describe-auto-scaling-groups \
             --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --query 'AutoScalingGroups[0].DesiredCapacity' \
-            --output text)
+            --query 'AutoScalingGroups[0].{Min:MinSize,Desired:DesiredCapacity,Max:MaxSize}' \
+            --output json)
+          CURRENT_MIN=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Min"])')
+          CURRENT_DESIRED=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Desired"])')
+          CURRENT_MAX=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Max"])')
           echo "current_desired=$CURRENT_DESIRED" >> $GITHUB_OUTPUT
-          if [ "$CURRENT_DESIRED" = "1" ]; then
-            echo "Scaling up to desired=2 for zero-downtime deploy..."
+          if [ "$CURRENT_MIN" != "2" ] || [ "$CURRENT_DESIRED" != "2" ] || [ "$CURRENT_MAX" != "3" ]; then
+            echo "Reconciling API ASG to launch baseline min=2 desired=2 max=3 (was min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
             aws autoscaling update-auto-scaling-group \
               --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
               --region ${{ env.AWS_REGION }} \
-              --desired-capacity 2 \
-              --max-size 3
+              --min-size 2 \
+              --max-size 3 \
+              --desired-capacity 2
 
             # Get ALB target group ARN for real health check. Do not hide IAM/query
             # failures: a hidden ELB describe denial previously appeared as
@@ -747,7 +751,7 @@ jobs:
               echo "::warning::Only $ALB_HEALTHY ALB-healthy target(s) after 5 min, proceeding with caution"
             fi
           else
-            echo "Already desired=$CURRENT_DESIRED, skipping scale-up"
+            echo "API ASG already matches launch baseline min=2 desired=2 max=3"
           fi
 
       - name: Start API ASG instance refresh
@@ -788,26 +792,28 @@ jobs:
           echo "::error::API ASG refresh timed out after 15 minutes"
           exit 1
 
-      - name: Restore API ASG capacity after deploy (SSOT desired=1)
+      - name: Reconcile API ASG capacity after deploy (SSOT min/desired=2 max=3)
         if: always() && steps.wait_refresh.outcome == 'success'
-        continue-on-error: true  # IAM 권한 없으면 경고만 남김. 운영 SSOT는 min/desired=1, max=2.
+        continue-on-error: true  # IAM 권한 없으면 경고만 남김. 운영 SSOT는 min/desired=2, max=3.
         run: |
           CURRENT=$(aws autoscaling describe-auto-scaling-groups \
             --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --query 'AutoScalingGroups[0].{Desired:DesiredCapacity,Max:MaxSize}' \
+            --query 'AutoScalingGroups[0].{Min:MinSize,Desired:DesiredCapacity,Max:MaxSize}' \
             --output json)
+          CURRENT_MIN=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Min"])')
           CURRENT_DESIRED=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Desired"])')
           CURRENT_MAX=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Max"])')
-          if [ "$CURRENT_DESIRED" != "1" ] || [ "$CURRENT_MAX" != "2" ]; then
-            echo "Restoring API ASG capacity to SSOT desired=1 max=2 (was desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
+          if [ "$CURRENT_MIN" != "2" ] || [ "$CURRENT_DESIRED" != "2" ] || [ "$CURRENT_MAX" != "3" ]; then
+            echo "Reconciling API ASG capacity to SSOT min=2 desired=2 max=3 (was min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
             aws autoscaling update-auto-scaling-group \
               --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
               --region ${{ env.AWS_REGION }} \
-              --desired-capacity 1 \
-              --max-size 2
+              --min-size 2 \
+              --max-size 3 \
+              --desired-capacity 2
           else
-            echo "API ASG capacity already matches SSOT desired=1 max=2"
+            echo "API ASG capacity already matches SSOT min=2 desired=2 max=3"
           fi
 
   deploy-messaging:
