@@ -67,6 +67,7 @@ try {
 $ciRunStatus = $null
 $ciRunConclusion = $null
 $reportOnlyHead = $false
+$runtimeImageUnchangedHead = $false
 try {
     $ghOutput = gh run list --limit 10 --json databaseId,status,conclusion,headSha,workflowName 2>&1
     $ghRuns = $ghOutput | ConvertFrom-Json
@@ -104,9 +105,15 @@ try {
                     $deltaFiles = @()
                 }
                 $nonReportFiles = @($deltaFiles | Where-Object { $_ -ne "docs/reports/ci-build.latest.md" })
+                $imageAffectingFiles = @($nonReportFiles | Where-Object {
+                    $_ -match '^(academy/|apps/|libs/|common/|manage\.py$|requirements|pyproject\.toml$|poetry\.lock$|Pipfile|Dockerfile|docker/)'
+                })
                 if ($deltaFiles.Count -gt 0 -and $nonReportFiles.Count -eq 0) {
                     $reportOnlyHead = $true
                     Add-Result "0-IMAGE" "ci/HEAD-sync" "PASS" "HEAD only contains CI build report after deployed build"
+                } elseif ($nonReportFiles.Count -gt 0 -and $imageAffectingFiles.Count -eq 0) {
+                    $runtimeImageUnchangedHead = $true
+                    Add-Result "0-IMAGE" "ci/HEAD-sync" "PASS" "HEAD has no runtime image changes since last image build"
                 } else {
                     Add-Result "0-IMAGE" "ci/HEAD-sync" "FAIL" "HEAD=$($gitHeadSha.Substring(0,7)) != lastBuild=$lastSuccessShort (no build running!)"
                 }
@@ -176,6 +183,8 @@ if ($gitHeadSha -and $ciBuildReportSha) {
         Add-Result "0-IMAGE" "freshness" "PASS" "Git HEAD = CI build = ECR latest (all in sync)"
     } elseif ($reportOnlyHead) {
         Add-Result "0-IMAGE" "freshness" "PASS" "Runtime images match last successful build; HEAD only updates CI build report"
+    } elseif ($runtimeImageUnchangedHead) {
+        Add-Result "0-IMAGE" "freshness" "PASS" "Runtime images match last successful image build; HEAD changes do not affect images"
     } elseif ($ciRunStatus -eq "in_progress") {
         Add-Result "0-IMAGE" "freshness" "WARN" "New build in progress — ECR will update when CI completes"
     } else {
