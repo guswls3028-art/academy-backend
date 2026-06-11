@@ -127,7 +127,7 @@ class ExamQuestionInitViewTests(TestCase):
         )
         self.assertEqual(scores, [5.0, 5.0, 20.0])
 
-    def test_template_bound_regular_does_not_edit_locked_template(self):
+    def test_template_bound_regular_initializes_regular_snapshot_not_template(self):
         template = Exam.objects.create(
             tenant=self.tenant,
             title="Locked Template",
@@ -144,6 +144,10 @@ class ExamQuestionInitViewTests(TestCase):
 
         response = self._post(regular, {"choice_count": 2, "essay_count": 1})
 
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertFalse(Sheet.objects.filter(exam=regular).exists())
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(Sheet.objects.filter(exam=regular).exists())
         self.assertFalse(Sheet.objects.filter(exam=template).exists())
+        self.assertEqual(
+            list(regular.sheet.questions.order_by("number").values_list("number", flat=True)),
+            [1, 2, 3],
+        )

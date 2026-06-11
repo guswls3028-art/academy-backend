@@ -204,15 +204,17 @@ class AnswerKeyViewTenantScopeTests(TestCase):
         answer_key.refresh_from_db()
         self.assertEqual(answer_key.exam_id, self.template_a.id)
 
-    def test_create_rejects_regular_exam_that_uses_template(self):
+    def test_create_for_template_bound_regular_claims_regular_structure(self):
         response = self._request(
             "post",
             "create",
             data={"exam": self.regular_from_template_a.id, "answers": {"1": "A"}},
         )
 
-        self.assertEqual(response.status_code, 400, response.data)
-        self.assertFalse(AnswerKey.objects.filter(exam=self.regular_from_template_a).exists())
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(Sheet.objects.filter(exam=self.regular_from_template_a).exists())
+        self.assertFalse(Sheet.objects.filter(exam=self.template_a).exists())
+        self.assertEqual(AnswerKey.objects.get(exam=self.regular_from_template_a).answers, {"1": "A"})
 
     def test_update_rejects_answer_key_for_used_template(self):
         answer_key = AnswerKey.objects.create(exam=self.template_a, answers={"1": "A"})
