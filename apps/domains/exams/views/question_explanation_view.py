@@ -25,7 +25,11 @@ from apps.domains.exams.serializers.question_explanation import (
     QuestionExplanationWriteSerializer,
     BulkExplanationSerializer,
 )
-from apps.domains.exams.services.template_resolver import resolve_template_exam
+from apps.domains.exams.services.template_resolver import (
+    assert_template_editable,
+    resolve_structure_exam,
+)
+from apps.domains.exams.services.structure_copy_service import ensure_regular_exam_owns_structure
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +49,7 @@ class ExamExplanationListView(APIView):
             ).distinct(),
             id=int(exam_id),
         )
-        template = resolve_template_exam(exam)
+        template = resolve_structure_exam(exam)
 
         explanations = (
             QuestionExplanation.objects
@@ -73,7 +77,8 @@ class ExamExplanationBulkView(APIView):
             ).distinct(),
             id=int(exam_id),
         )
-        template = resolve_template_exam(exam)
+        ensure_regular_exam_owns_structure(exam)
+        template = resolve_structure_exam(exam)
 
         serializer = BulkExplanationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -144,6 +149,7 @@ class QuestionExplanationDetailView(APIView):
     @transaction.atomic
     def put(self, request, question_id: int):
         question = self._get_tenant_filtered_question(request, question_id)
+        assert_template_editable(question.sheet.exam)
 
         serializer = QuestionExplanationWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

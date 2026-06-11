@@ -11,9 +11,9 @@ class Sheet(BaseModel):
     Sheet
 
     ✅ 확정 정책
-    - Sheet는 template exam에만 귀속된다 (단일 진실)
+    - Sheet는 template 또는 regular snapshot에 귀속된다 (단일 진실)
     - 1 Exam : 1 Sheet (OneToOne)
-    - regular exam은 sheet를 직접 가지지 않는다 (template을 통해 resolve)
+    - legacy regular는 sheet가 없으면 template을 통해 resolve한다
     """
 
     exam = models.OneToOneField(

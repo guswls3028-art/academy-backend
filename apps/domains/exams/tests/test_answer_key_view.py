@@ -5,7 +5,7 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.exams.models import AnswerKey, Exam
+from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion, Sheet
 from apps.domains.exams.views.answer_key_view import AnswerKeyViewSet
 
 
@@ -97,6 +97,64 @@ class AnswerKeyViewTenantScopeTests(TestCase):
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["id"], answer_key.id)
         self.assertEqual(items[0]["exam"], self.template_a.id)
+
+    def test_regular_exam_filter_prefers_owned_snapshot_answer_key(self):
+        Sheet.objects.create(exam=self.regular_from_template_a, name="MAIN", total_questions=1)
+        own_answer_key = AnswerKey.objects.create(
+            exam=self.regular_from_template_a,
+            answers={"10": "B"},
+        )
+        AnswerKey.objects.create(exam=self.template_a, answers={"1": "A"})
+
+        response = self._request(
+            "get",
+            "list",
+            query=f"exam={self.regular_from_template_a.id}",
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        items = self._items(response.data)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["id"], own_answer_key.id)
+        self.assertEqual(items[0]["exam"], self.regular_from_template_a.id)
+
+    def test_create_for_regular_snapshot_remaps_template_question_ids(self):
+        template_sheet = Sheet.objects.create(
+            exam=self.template_a,
+            name="MAIN",
+            total_questions=2,
+            choice_count=2,
+            essay_count=0,
+        )
+        source_q1 = ExamQuestion.objects.create(sheet=template_sheet, number=1, score=3)
+        source_q2 = ExamQuestion.objects.create(sheet=template_sheet, number=2, score=4)
+        AnswerKey.objects.create(
+            exam=self.template_a,
+            answers={str(source_q1.id): "A", str(source_q2.id): "B"},
+        )
+
+        response = self._request(
+            "post",
+            "create",
+            data={
+                "exam": self.regular_from_template_a.id,
+                "answers": {str(source_q1.id): "C", str(source_q2.id): "D"},
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        regular_sheet = Sheet.objects.get(exam=self.regular_from_template_a)
+        copied_questions = list(regular_sheet.questions.order_by("number"))
+        self.assertEqual([q.number for q in copied_questions], [1, 2])
+        regular_answer_key = AnswerKey.objects.get(exam=self.regular_from_template_a)
+        self.assertEqual(
+            regular_answer_key.answers,
+            {str(copied_questions[0].id): "C", str(copied_questions[1].id): "D"},
+        )
+        self.assertEqual(
+            AnswerKey.objects.get(exam=self.template_a).answers,
+            {str(source_q1.id): "A", str(source_q2.id): "B"},
+        )
 
     def test_create_rejects_other_tenant_exam_id(self):
         response = self._request(

@@ -1,6 +1,7 @@
 # PATH: apps/domains/exams/models/exam.py
 from __future__ import annotations
 
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import models
 from django.db.models import Q
 from apps.api.common.models import BaseModel
@@ -19,7 +20,7 @@ class Exam(BaseModel):
     ✅ 핵심
     - 시험의 정체성은 exam.id
     - 같은 시험(regular)을 여러 세션에 붙여 재사용 가능 (N:M)
-    - Sheet/Question/AnswerKey/Asset는 template_exam이 있으면 template, 없으면 자기 자신이 단일 진실
+    - Sheet/Question/AnswerKey/Asset는 regular snapshot이 있으면 regular, 없으면 template이 단일 진실
     """
 
     class ExamType(models.TextChoices):
@@ -149,17 +150,29 @@ class Exam(BaseModel):
         return self.title
 
     @property
-    def effective_template_exam_id(self) -> int:
+    def effective_structure_exam_id(self) -> int:
         """
-        ✅ 단일 진실 resolver
+        ✅ 구조 단일 진실 resolver
         - template이면 자기 자신
-        - regular이면 template_exam 또는 없으면 자기 자신(설정 전)
+        - regular이 자기 Sheet를 가지면 자기 자신
+        - legacy regular가 아직 자기 Sheet 없이 template_exam만 참조하면 template
+        - regular이 template_exam 없으면 자기 자신
         """
         if self.exam_type == self.ExamType.TEMPLATE:
             return int(self.id)
+        try:
+            if getattr(self, "sheet", None) is not None:
+                return int(self.id)
+        except ObjectDoesNotExist:
+            pass
         if self.template_exam_id:
             return int(self.template_exam_id)
         return int(self.id)
+
+    @property
+    def effective_template_exam_id(self) -> int:
+        """Backward-compatible name for the effective structure owner id."""
+        return self.effective_structure_exam_id
 
     def assert_template(self):
         if self.exam_type != self.ExamType.TEMPLATE:

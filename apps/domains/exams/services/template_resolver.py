@@ -2,30 +2,39 @@
 from __future__ import annotations
 
 from django.shortcuts import get_object_or_404
+
 try:
     from rest_framework.exceptions import ValidationError
 except ImportError:
     from django.core.exceptions import ValidationError
 
-from apps.domains.exams.models import Exam
+from apps.domains.exams.models import Exam, Sheet
 
 
-def resolve_template_exam(exam: Exam) -> Exam:
+def resolve_structure_exam(exam: Exam) -> Exam:
     """
-    시험 단일진실 resolver
+    시험 구조 단일진실 resolver
 
     - template → 자기 자신
-    - regular → template_exam (있으면) / 없으면 자기 자신(템플릿 선택 전 단계)
+    - regular with own Sheet → 자기 자신
+    - legacy regular without own Sheet → template_exam
+    - regular without template → 자기 자신
     """
     if exam.exam_type == Exam.ExamType.TEMPLATE:
         return exam
 
-    # regular은 template_exam이 있을 수도/없을 수도 있음 (템플릿 선택은 옵션)
+    if Sheet.objects.filter(exam_id=int(exam.id)).exists():
+        return exam
+
     if not getattr(exam, "template_exam_id", None):
         return exam
 
-    # select_related가 아닐 수 있으므로 안전하게 fetch
     return get_object_or_404(Exam, id=int(exam.template_exam_id), exam_type=Exam.ExamType.TEMPLATE)
+
+
+def resolve_template_exam(exam: Exam) -> Exam:
+    """Backward-compatible name. Returns the effective structure owner."""
+    return resolve_structure_exam(exam)
 
 
 def assert_template_editable(template_exam: Exam) -> None:
@@ -34,15 +43,15 @@ def assert_template_editable(template_exam: Exam) -> None:
 
     정책(신규):
     - 템플릿 선택은 옵션
-    - regular이 아직 template_exam이 없으면, 해당 regular 자체를 구조 단일진실로 간주하고 편집을 허용한다.
-    - regular이 template_exam을 참조 중이면, 구조 편집은 template에서 수행해야 한다.
+    - regular은 자기 구조 소유자로 간주하고 편집을 허용한다.
+    - template은 아직 live-linked legacy regular가 있으면 봉인한다.
     """
     if template_exam.exam_type == Exam.ExamType.TEMPLATE:
-        if template_exam.derived_exams.exists():
+        if template_exam.derived_exams.filter(sheet__isnull=True).exists():
             raise ValidationError({"detail": "이미 운영 시험에 사용된 템플릿은 수정할 수 없습니다."})
         return
 
-    if template_exam.exam_type == Exam.ExamType.REGULAR and template_exam.template_exam_id is None:
+    if template_exam.exam_type == Exam.ExamType.REGULAR:
         return
 
     raise ValidationError({"detail": "template exam required"})

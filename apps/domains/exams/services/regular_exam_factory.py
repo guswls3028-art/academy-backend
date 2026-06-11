@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework.exceptions import ValidationError
 
 from apps.domains.exams.models import Exam
+from apps.domains.exams.services.structure_copy_service import copy_exam_structure
 from apps.domains.exams.services.template_builder_service import TemplateBuilderService
 from apps.domains.exams.services.template_validation_service import TemplateValidationService
 from apps.domains.lectures.models import Session
@@ -19,7 +20,7 @@ class RegularExamFactory:
     템플릿(ExamType.TEMPLATE) 기반으로 실제 시험(regular)을 생성한다.
 
     원칙:
-    - template은 SSOT, regular은 template_exam만 참조
+    - template은 starter, regular은 생성 시점의 구조 복사본을 소유
     - template이 "regular 생성 가능한 상태"인지 서버에서 검증
     """
 
@@ -62,5 +63,6 @@ class RegularExamFactory:
             tenant=tenant,
         )
         regular.sessions.add(session)
+        copy_exam_structure(source_exam=template_exam, target_exam=regular)
 
         return regular

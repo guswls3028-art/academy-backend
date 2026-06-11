@@ -11,8 +11,8 @@ class AnswerKey(BaseModel):
     AnswerKey
 
     ✅ 단일 진실:
-    - template exam에만 존재
-    - regular exam에서는 template_exam을 통해 resolve
+    - template 또는 regular snapshot에 존재
+    - legacy regular는 answer_key가 없으면 template_exam을 통해 resolve
     """
 
     exam = models.OneToOneField(

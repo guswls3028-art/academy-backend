@@ -27,6 +27,7 @@ from apps.domains.exams.serializers.template_bundle import (
     TemplateBundleCreateSerializer,
     TemplateBundleSerializer,
 )
+from apps.domains.exams.services.structure_copy_service import copy_exam_structure
 from apps.domains.homework.models.homework_assignment import HomeworkAssignment
 from apps.domains.homework_results.models.homework import Homework
 from apps.domains.lectures.models import Session
@@ -204,6 +205,7 @@ class ApplyBundleView(GenericAPIView):
                         pass_score=config.get("pass_score", item.exam_template.pass_score),
                     )
                     exam.sessions.add(session)
+                    copy_exam_structure(source_exam=item.exam_template, target_exam=exam)
                     created_exams.append({"id": exam.id, "title": exam.title})
 
                 elif item.item_type == TemplateBundleItem.ItemType.HOMEWORK:

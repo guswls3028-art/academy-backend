@@ -13,8 +13,9 @@ from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.serializers.question_init import ExamQuestionInitSerializer
 from apps.domains.exams.services.template_resolver import (
     assert_template_editable,
-    resolve_template_exam,
+    resolve_structure_exam,
 )
+from apps.domains.exams.services.structure_copy_service import ensure_regular_exam_owns_structure
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
 
@@ -37,11 +38,13 @@ class ExamQuestionInitView(APIView):
             Exam.objects.filter(
                 Q(sessions__lecture__tenant=tenant)
                 | Q(derived_exams__sessions__lecture__tenant=tenant)
+                | Q(tenant=tenant)
             ).distinct(),
             id=int(exam_id),
         )
 
-        owner = resolve_template_exam(exam)
+        ensure_regular_exam_owns_structure(exam)
+        owner = resolve_structure_exam(exam)
         assert_template_editable(owner)
 
         s = ExamQuestionInitSerializer(data=request.data)

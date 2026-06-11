@@ -13,6 +13,10 @@ from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.exams.serializers.exam import ExamSerializer
 from apps.domains.exams.serializers.exam_create import ExamCreateSerializer
 from apps.domains.exams.serializers.exam_update import ExamUpdateSerializer
+from apps.domains.exams.services.structure_copy_service import (
+    copy_exam_structure,
+    ensure_regular_exam_owns_structure,
+)
 from apps.domains.lectures.models import Session
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
@@ -177,10 +181,17 @@ class ExamViewSet(ModelViewSet):
             )
 
             exam.sessions.add(session)
+            if template_exam is not None:
+                copy_exam_structure(source_exam=template_exam, target_exam=exam)
 
     # ================================
     # UPDATE 방어 + pass_score 변경 시 ClinicLink 해소 재계산
     # ================================
+    def perform_update(self, serializer):
+        exam = serializer.save()
+        if exam.exam_type == Exam.ExamType.REGULAR and exam.template_exam_id:
+            ensure_regular_exam_owns_structure(exam)
+
     def update(self, request, *args, **kwargs):
         self._reject_immutable_fields_on_update(request)
         return self._update_with_recalc(super().update, request, *args, **kwargs)

@@ -20,7 +20,8 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import Exam
-from apps.domains.exams.services.template_resolver import resolve_template_exam
+from apps.domains.exams.services.template_resolver import resolve_structure_exam
+from apps.domains.exams.services.structure_copy_service import ensure_regular_exam_owns_structure
 from apps.infrastructure.storage.r2 import (
     upload_fileobj_to_r2_storage,
     generate_presigned_get_url_storage,
@@ -45,7 +46,8 @@ class ExamImageUploadView(APIView):
             ).distinct(),
             id=int(exam_id),
         )
-        template = resolve_template_exam(exam)
+        ensure_regular_exam_owns_structure(exam)
+        template = resolve_structure_exam(exam)
 
         upload_file = request.FILES.get("file")
         if not upload_file:

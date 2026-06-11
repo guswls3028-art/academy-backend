@@ -9,7 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.domains.exams.models import Exam, ExamQuestion
-from apps.domains.exams.services.template_resolver import resolve_template_exam
+from apps.domains.exams.services.template_resolver import resolve_structure_exam
 
 
 class TemplateStatusView(APIView):
@@ -33,7 +33,7 @@ class TemplateStatusView(APIView):
             ).distinct(),
             id=int(exam_id),
         )
-        template = resolve_template_exam(exam)
+        template = resolve_structure_exam(exam)
 
         has_sheet = hasattr(template, "sheet")
         question_count = (

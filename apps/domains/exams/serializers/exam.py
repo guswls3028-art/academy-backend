@@ -1,6 +1,7 @@
 # apps/domains/exams/serializers/exam.py
 from rest_framework import serializers
 from apps.domains.exams.models import Exam
+from apps.domains.exams.services.template_resolver import resolve_structure_exam
 
 
 class ExamSerializer(serializers.ModelSerializer):
@@ -23,6 +24,8 @@ class ExamSerializer(serializers.ModelSerializer):
         queryset=Exam.sessions.rel.related_model.objects.all(),
         required=False,
     )
+    structure_owner_id = serializers.SerializerMethodField()
+    can_edit_structure = serializers.SerializerMethodField()
 
     class Meta:
         model = Exam
@@ -44,10 +47,22 @@ class ExamSerializer(serializers.ModelSerializer):
             "answer_visibility",
             "session_ids",
             "template_exam_id",
+            "structure_owner_id",
+            "can_edit_structure",
 
             "created_at",
             "updated_at",
         ]
+
+    def get_structure_owner_id(self, obj: Exam) -> int:
+        return int(resolve_structure_exam(obj).id)
+
+    def get_can_edit_structure(self, obj: Exam) -> bool:
+        if obj.exam_type == Exam.ExamType.REGULAR:
+            return True
+        if obj.exam_type == Exam.ExamType.TEMPLATE:
+            return not obj.derived_exams.filter(sheet__isnull=True).exists()
+        return False
 
     def validate(self, attrs):
         # P1-5: 시험 유효성 검증 (serializer 레벨)

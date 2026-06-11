@@ -13,7 +13,8 @@ from apps.domains.exams.serializers.question import QuestionSerializer
 class ExamQuestionsByExamView(APIView):
     """
     시험 기준 문항 조회
-    - regular exam인 경우 template_exam의 문항을 반환 (effective_template_exam_id 기반)
+    - regular가 자기 Sheet를 가지면 자기 문항을 반환
+    - legacy regular가 아직 Sheet 없이 template_exam만 참조하면 템플릿 문항을 반환
     """
 
     permission_classes = [IsAuthenticated]
@@ -25,7 +26,7 @@ class ExamQuestionsByExamView(APIView):
 
         tenant = request.tenant
 
-        # effective_template_exam_id resolve (regular → template)
+        # effective structure owner resolve
         # tenant 격리: 해당 테넌트 강의에 연결되었거나 테넌트 소유 시험만 허용
         exam = get_object_or_404(
             Exam.objects.filter(

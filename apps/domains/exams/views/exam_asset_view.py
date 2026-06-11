@@ -13,7 +13,8 @@ from rest_framework.exceptions import ValidationError
 
 from apps.domains.exams.models import Exam, ExamAsset
 from apps.domains.exams.serializers.exam_asset import ExamAssetSerializer
-from apps.domains.exams.services.template_resolver import resolve_template_exam, assert_template_editable
+from apps.domains.exams.services.template_resolver import resolve_structure_exam, assert_template_editable
+from apps.domains.exams.services.structure_copy_service import ensure_regular_exam_owns_structure
 from apps.core.r2_paths import ai_exam_asset_key
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
 from apps.core.permissions import TenantResolvedAndStaff
@@ -23,9 +24,9 @@ class ExamAssetView(APIView):
     """
     ExamAsset API (봉인)
 
-    - GET: 로그인만, regular → template resolve
-    - POST: Teacher/Admin + template only
-    - template이 regular에 의해 사용 중이면 자산 교체 금지(운영 사고 차단)
+    - GET: 로그인만, regular → structure owner resolve
+    - POST: Teacher/Admin + editable structure owner
+    - regular는 자기 복사본에 업로드하고 template 원본은 오염시키지 않는다.
     """
 
     def get_permissions(self):
@@ -43,7 +44,7 @@ class ExamAssetView(APIView):
             ).distinct(),
             id=int(exam_id),
         )
-        template = resolve_template_exam(exam)
+        template = resolve_structure_exam(exam)
 
         qs = ExamAsset.objects.filter(exam=template).order_by("asset_type")
         return Response(ExamAssetSerializer(qs, many=True).data)
@@ -58,10 +59,9 @@ class ExamAssetView(APIView):
             ).distinct(),
             id=int(exam_id),
         )
-        # regular → template resolve (GET과 동일 정책)
-        exam = resolve_template_exam(exam)
+        ensure_regular_exam_owns_structure(exam)
+        exam = resolve_structure_exam(exam)
 
-        # template이 사용 중이면 구조 봉인 (asset 포함)
         assert_template_editable(exam)
 
         asset_type = request.data.get("asset_type")
