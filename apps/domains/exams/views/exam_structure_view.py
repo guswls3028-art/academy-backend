@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from apps.core.permissions import TenantResolvedAndStaff
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -12,7 +13,6 @@ from apps.domains.exams.services.structure_copy_service import (
     ensure_regular_exam_owns_structure,
 )
 from apps.domains.exams.services.template_resolver import resolve_structure_exam
-from apps.domains.results.permissions import IsTeacherOrAdmin
 
 
 class ExamStructureEnsureView(APIView):
@@ -24,7 +24,7 @@ class ExamStructureEnsureView(APIView):
     and any existing question-id references are remapped by question number.
     """
 
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def post(self, request, exam_id: int):
         tenant = request.tenant
