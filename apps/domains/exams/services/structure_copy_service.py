@@ -202,12 +202,15 @@ def remap_exam_question_references(
     exam: Exam,
     question_id_map: dict[int, int],
 ) -> dict[str, int]:
-    from apps.domains.results.models import ExamResult, Result, ResultFact, ResultItem
-    from apps.domains.submissions.models import (
-        OMRDetectedAnswer,
-        Submission,
-        SubmissionAnswer,
-    )
+    from django.apps import apps
+
+    ExamResult = apps.get_model("results", "ExamResult")
+    Result = apps.get_model("results", "Result")
+    ResultFact = apps.get_model("results", "ResultFact")
+    ResultItem = apps.get_model("results", "ResultItem")
+    OMRDetectedAnswer = apps.get_model("submissions", "OMRDetectedAnswer")
+    Submission = apps.get_model("submissions", "Submission")
+    SubmissionAnswer = apps.get_model("submissions", "SubmissionAnswer")
 
     if not question_id_map:
         return {}

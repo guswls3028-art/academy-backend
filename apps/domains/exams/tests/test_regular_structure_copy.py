@@ -19,18 +19,18 @@ from apps.domains.exams.views.answer_key_view import AnswerKeyViewSet
 from apps.domains.exams.views.exam_structure_view import ExamStructureEnsureView
 from apps.domains.exams.views.question_explanation_view import QuestionExplanationDetailView
 from apps.domains.exams.views.question_view import QuestionViewSet
-from apps.domains.results.models import ExamResult, Result, ResultItem
-from apps.domains.submissions.models import (
-    OMRDetectedAnswer,
-    OMRRecognitionRun,
-    Submission,
-    SubmissionAnswer,
-)
 
 
 User = get_user_model()
 Lecture = apps.get_model("lectures", "Lecture")
 Session = apps.get_model("lectures", "Session")
+ExamResult = apps.get_model("results", "ExamResult")
+Result = apps.get_model("results", "Result")
+ResultItem = apps.get_model("results", "ResultItem")
+OMRDetectedAnswer = apps.get_model("submissions", "OMRDetectedAnswer")
+OMRRecognitionRun = apps.get_model("submissions", "OMRRecognitionRun")
+Submission = apps.get_model("submissions", "Submission")
+SubmissionAnswer = apps.get_model("submissions", "SubmissionAnswer")
 
 
 class RegularStructureCopyTests(TestCase):
