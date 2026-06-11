@@ -5,7 +5,7 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-06-11T04:42:01.7398644+09:00 |
+| 검증 시각 | 2026-06-11T10:35:44.7213082+09:00 |
 | 최종 상태 | PASS |
 | SSOT↔Actual 정합성 | **PASS** |
 | GO/NO-GO | **GO** |
@@ -30,9 +30,6 @@
 | API 공개 /health | OK |
 | CORS/Cache | OK / 1y |
 
-## Launch GO 실사용 검증
-결제 mutation을 제외한 학생 도메인 중심 전수 클릭, 영상 업로드/HLS canary, 워커/배포 검증, cleanup 증거는 **[launch-go-verification.latest.md](./launch-go-verification.latest.md)** 에 기록한다.
-
 ## 남은 WARNING 및 후속 작업
 - Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.
 - (현재 리스크 없음)
@@ -47,5 +44,3 @@
 - [front-pipeline-mapping.latest.md](./front-pipeline-mapping.latest.md) — 프론트 Git 파이프라인 ↔ SSOT 매핑
 - [audit.latest.md](./audit.latest.md) — 리소스·지표 스냅샷
 - [drift.latest.md](./drift.latest.md) — SSOT 대비 drift
-- [api-deploy-worker-verify.latest.md](./api-deploy-worker-verify.latest.md) — API 배포·워커·큐·Batch 검증
-- [launch-go-verification.latest.md](./launch-go-verification.latest.md) — 결제 제외 확장 GO 실사용 검증
