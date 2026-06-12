@@ -182,5 +182,5 @@ class MessagingOperationsStatusViewTests(MessagingOperationsBase):
         self.assertEqual(response.data["scheduled"]["failed_24h"], 1)
         self.assertEqual(response.data["log_24h"]["sent"], 1)
         self.assertEqual(response.data["log_24h"]["failed"], 1)
-        self.assertEqual(response.data["auto_send"]["enabled_without_template"], 1)
+        self.assertEqual(response.data["auto_send"]["enabled_without_template"], 0)
         self.assertTrue(any(item["code"] == "scheduled_overdue" for item in response.data["risks"]))

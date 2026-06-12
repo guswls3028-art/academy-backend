@@ -1,0 +1,33 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "VideoReadinessEventBridgeRules",
+      "Effect": "Allow",
+      "Action": "events:DescribeRule",
+      "Resource": [
+        "arn:aws:events:ap-northeast-2:809466760795:rule/academy-v1-reconcile-video-jobs",
+        "arn:aws:events:ap-northeast-2:809466760795:rule/academy-v1-video-scan-stuck-rate"
+      ]
+    },
+    {
+      "Sid": "VideoReadinessIamRoles",
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetInstanceProfile"
+      ],
+      "Resource": [
+        "arn:aws:iam::809466760795:role/aws-service-role/batch.amazonaws.com/AWSServiceRoleForBatch",
+        "arn:aws:iam::809466760795:role/academy-batch-ecs-instance-role",
+        "arn:aws:iam::809466760795:instance-profile/academy-batch-ecs-instance-profile"
+      ]
+    },
+    {
+      "Sid": "VideoReadinessCloudWatchAlarms",
+      "Effect": "Allow",
+      "Action": "cloudwatch:DescribeAlarms",
+      "Resource": "*"
+    }
+  ]
+}

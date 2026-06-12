@@ -1,7 +1,7 @@
 # V1.1.0 Deployment Architecture
 
 **Version:** V1.1.0
-**Date:** 2026-03-14 (checked 2026-05-25)
+**Date:** 2026-03-14 (checked 2026-06-12)
 **SSOT Status:** Active
 
 ## 1. Service Decomposition
@@ -15,6 +15,14 @@
 | Base | academy-base | — | — | Shared base image for all services |
 
 **Note (2026-05-10, checked 2026-05-22):** Daemon mode 폐기. 모든 영상은 AWS Batch로 1-shot 처리. long path도 폐기되어 단일 queue/jobdef만 사용한다. 현재 jobdef timeout은 6h이며, 실패/중단 케이스는 reconcile/scan_stuck이 재시도한다. ffmpeg는 `c6g.4xlarge` VCPU=8 + R2 병렬 업로드(16 worker)로 처리.
+
+## 1.1 Public API Edge
+
+- `api.hakwonplus.com`은 Cloudflare 프록시가 아니라 DNS-only CNAME으로 `academy-v1-api-alb`에 직접 연결한다.
+- Public HTTPS는 ALB 443 listener가 ACM 인증서 `api.hakwonplus.com`으로 종료하고, listener 기본 action은 `academy-v1-api-tg` forward다.
+- ALB 80 listener는 legacy/plain HTTP 호환용 forward로 남겨 두되, 운영 사용자/테스트 기준 API URL은 `https://api.hakwonplus.com`이다.
+- Cloudflare zone SSL mode는 Strict로 유지한다. API 레코드를 다시 proxied로 돌릴 때는 ALB HTTPS 443과 origin 검증을 먼저 확인한다.
+- SSOT 및 재현 스크립트: `docs/ssot/params.yaml`의 `api.acmCertificateArn`/`api.httpsSslPolicy`, `scripts/v1/resources/alb.ps1`의 `Ensure-HttpsListener`.
 
 ## 2. CI/CD Pipeline Architecture
 

@@ -221,9 +221,6 @@ class TestCollectAndSave(TestCase):
 class TestNoOperationalDeps(TestCase):
     def test_no_segment_dispatcher_or_vlm_or_ocr(self):
         mod_name = "academy.application.use_cases.ai.segmentation.fingerprint_collector"
-        if mod_name in sys.modules:
-            del sys.modules[mod_name]
-        importlib.import_module(mod_name)
         forbidden = [
             "academy.adapters.ai.detection.segment_dispatcher",
             "academy.adapters.ai.detection.vlm_fallback",
@@ -231,7 +228,21 @@ class TestNoOperationalDeps(TestCase):
             "ultralytics",
             "cv2",
         ]
-        loaded = [m for m in forbidden if m in sys.modules]
+        before_modules = set(sys.modules)
+        previous_module = sys.modules.pop(mod_name, None)
+        try:
+            importlib.import_module(mod_name)
+            loaded = [
+                m for m in forbidden
+                if m in sys.modules and m not in before_modules
+            ]
+        finally:
+            for m in forbidden:
+                if m not in before_modules:
+                    sys.modules.pop(m, None)
+            sys.modules.pop(mod_name, None)
+            if previous_module is not None:
+                sys.modules[mod_name] = previous_module
         self.assertEqual(
             loaded, [],
             f"fingerprint_collector 가 운영 dep 끌어들임: {loaded}",
@@ -241,8 +252,6 @@ class TestNoOperationalDeps(TestCase):
         # save_fingerprint 호출 전엔 Django model import 가 sys.modules 에 없어야 한다
         # (collect_and_save 가 호출 시점에만 lazy import — 모듈 로드 자체로는 0 의존)
         mod_name = "academy.application.use_cases.ai.segmentation.fingerprint_collector"
-        if mod_name in sys.modules:
-            del sys.modules[mod_name]
         # 운영 import 후 source 검사 — 함수 안에서만 model 을 import 하는지
         spec = importlib.util.find_spec(mod_name)  # type: ignore[attr-defined]
         with open(spec.origin, encoding="utf-8") as f:

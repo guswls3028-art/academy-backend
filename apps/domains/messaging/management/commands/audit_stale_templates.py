@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from django.core.management.base import BaseCommand
 
-from apps.core.models import Tenant
+from apps.domains.messaging.effective_templates import resolve_effective_template_status
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
 from apps.domains.messaging.policy import (
     TRIGGER_POLICY,
@@ -49,7 +49,7 @@ class Command(BaseCommand):
         unknown_triggers = []
         # 3) implementation_status == manual_only 인데 enabled=True (자동 발화 코드 부재)
         manual_only_enabled = []
-        # 4) template.solapi_status != APPROVED 인데 enabled=True (실제 발송 불가)
+        # 4) 실제 발송 resolver 기준 Solapi template 미승인인데 enabled=True
         not_approved_enabled = []
 
         for cfg in cfg_qs:
@@ -66,7 +66,7 @@ class Command(BaseCommand):
             if cfg.enabled and impl == "manual_only":
                 manual_only_enabled.append(cfg)
             if cfg.enabled and cfg.template:
-                if cfg.template.solapi_status != "APPROVED":
+                if not resolve_effective_template_status(cfg).is_approved:
                     not_approved_enabled.append(cfg)
 
         # MessageTemplate 점검: solapi_template_id 보유 + solapi_status != APPROVED + 사용 처 없음
@@ -112,9 +112,15 @@ class Command(BaseCommand):
             lambda c: f"tenant={c.tenant_id} trigger={c.trigger} template_id={c.template_id}",
         )
         report_section(
-            "enabled=True 이지만 template 미승인 (solapi_status!=APPROVED)",
+            "enabled=True 이지만 실효 Solapi template 미승인",
             not_approved_enabled,
-            lambda c: f"tenant={c.tenant_id} trigger={c.trigger} template={c.template.name if c.template else '?'} status={c.template.solapi_status if c.template else '?'}",
+            lambda c: (
+                f"tenant={c.tenant_id} trigger={c.trigger} "
+                f"template={c.template.name if c.template else '?'} "
+                f"linked_status={c.template.solapi_status if c.template else '?'} "
+                f"effective_source={resolve_effective_template_status(c).source} "
+                f"effective_status={resolve_effective_template_status(c).solapi_status}"
+            ),
         )
         report_section(
             "Orphan MessageTemplate (solapi_template_id 보유 + status!=APPROVED + active config 없음)",

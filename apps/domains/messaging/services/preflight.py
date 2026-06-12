@@ -13,6 +13,7 @@ from apps.domains.messaging.alimtalk_content_builders import (
     SYSTEM_TEMPLATE_CATEGORIES,
     get_unified_for_category,
 )
+from apps.domains.messaging.effective_templates import resolve_effective_template_status
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, NotificationLog, ScheduledNotification
 from apps.domains.messaging.policy import get_owner_tenant_id, get_trigger_implementation_status
 from apps.domains.messaging.selectors import resolve_freeform_template
@@ -348,11 +349,11 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
     for config in enabled_configs:
         if get_trigger_implementation_status(config.trigger) != "implemented":
             enabled_manual_only += 1
-        if not config.template_id:
+        effective_template = resolve_effective_template_status(config)
+        if not effective_template.solapi_template_id:
             enabled_without_template += 1
             continue
-        template = config.template
-        if template and (template.solapi_template_id or "").strip() and template.solapi_status != "APPROVED":
+        if not effective_template.is_approved:
             enabled_unapproved_template += 1
 
     freeform = resolve_freeform_template(tenant.id)

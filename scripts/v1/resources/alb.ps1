@@ -99,8 +99,54 @@ function Ensure-Listener {
     $script:ChangesMade = $true
 }
 
+function Ensure-HttpsListener {
+    if ($script:PlanMode) { return }
+    if (-not $script:ApiAlbArn -or -not $script:ApiTargetGroupArn) { return }
+    if (-not $script:ApiAcmCertificateArn) {
+        Write-Warn "HTTPS listener skipped: api.acmCertificateArn is empty"
+        return
+    }
+    Write-Step "Ensure Listener (HTTPS 443)"
+    $defaultAction = "Type=forward,TargetGroupArn=$script:ApiTargetGroupArn"
+    $certificate = "CertificateArn=$script:ApiAcmCertificateArn"
+    $sslPolicy = if ($script:ApiHttpsSslPolicy) { $script:ApiHttpsSslPolicy } else { "ELBSecurityPolicy-TLS13-1-2-2021-06" }
+    $r = Invoke-AwsJson @("elbv2", "describe-listeners", "--load-balancer-arn", $script:ApiAlbArn, "--region", $script:Region, "--output", "json")
+    $listener = $r.Listeners | Where-Object { $_.Port -eq 443 } | Select-Object -First 1
+    if ($listener) {
+        $currentTarget = ($listener.DefaultActions | Where-Object { $_.Type -eq "forward" } | Select-Object -First 1).TargetGroupArn
+        $currentCert = if ($listener.Certificates -and $listener.Certificates.Count -gt 0) { $listener.Certificates[0].CertificateArn } else { "" }
+        $currentPolicy = [string]$listener.SslPolicy
+        if ($listener.Protocol -ne "HTTPS" -or $currentTarget -ne $script:ApiTargetGroupArn -or $currentCert -ne $script:ApiAcmCertificateArn -or $currentPolicy -ne $sslPolicy) {
+            Invoke-Aws @("elbv2", "modify-listener",
+                "--listener-arn", $listener.ListenerArn,
+                "--protocol", "HTTPS",
+                "--port", "443",
+                "--ssl-policy", $sslPolicy,
+                "--certificates", $certificate,
+                "--default-actions", $defaultAction,
+                "--region", $script:Region) -ErrorMessage "modify-listener-443" | Out-Null
+            Write-Ok "Listener port 443 updated"
+            $script:ChangesMade = $true
+        } else {
+            Write-Ok "Listener port 443 exists"
+        }
+        return
+    }
+    Invoke-Aws @("elbv2", "create-listener",
+        "--load-balancer-arn", $script:ApiAlbArn,
+        "--protocol", "HTTPS",
+        "--port", "443",
+        "--ssl-policy", $sslPolicy,
+        "--certificates", $certificate,
+        "--default-actions", $defaultAction,
+        "--region", $script:Region) -ErrorMessage "create-listener-443" | Out-Null
+    Write-Ok "Listener created (443 HTTPS -> TargetGroup)"
+    $script:ChangesMade = $true
+}
+
 function Ensure-ALBStack {
     Ensure-ALB
     Ensure-TargetGroup
     Ensure-Listener
+    Ensure-HttpsListener
 }

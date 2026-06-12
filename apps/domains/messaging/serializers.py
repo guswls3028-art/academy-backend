@@ -5,6 +5,7 @@ from django.utils import timezone
 from rest_framework import serializers
 
 from apps.core.models import Tenant
+from apps.domains.messaging.effective_templates import resolve_effective_template_status
 from apps.domains.messaging.models import MessageTemplate, AutoSendConfig, ScheduledNotification
 
 
@@ -300,9 +301,29 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
     template_solapi_status = serializers.CharField(
         source="template.solapi_status", read_only=True, default=""
     )
+    effective_solapi_template_id = serializers.SerializerMethodField()
+    effective_template_solapi_status = serializers.SerializerMethodField()
+    effective_template_source = serializers.SerializerMethodField()
+    effective_template_is_approved = serializers.SerializerMethodField()
     # delay_mode/delay_value — 마이그레이션 전에도 안전하게 동작 (컬럼 미존재 시 기본값)
     delay_mode = serializers.SerializerMethodField()
     delay_value = serializers.SerializerMethodField()
+
+    @staticmethod
+    def _effective_status(obj):
+        return resolve_effective_template_status(obj)
+
+    def get_effective_solapi_template_id(self, obj) -> str:
+        return self._effective_status(obj).solapi_template_id
+
+    def get_effective_template_solapi_status(self, obj) -> str:
+        return self._effective_status(obj).solapi_status
+
+    def get_effective_template_source(self, obj) -> str:
+        return self._effective_status(obj).source
+
+    def get_effective_template_is_approved(self, obj) -> bool:
+        return self._effective_status(obj).is_approved
 
     def get_delay_mode(self, obj) -> str:
         try:
@@ -326,6 +347,10 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
             "template_subject",
             "template_body",
             "template_solapi_status",
+            "effective_solapi_template_id",
+            "effective_template_solapi_status",
+            "effective_template_source",
+            "effective_template_is_approved",
             "enabled",
             "message_mode",
             "minutes_before",

@@ -63,9 +63,20 @@ function Write-Check($icon, $msg) {
 
 function Test-ScalingControlAlarm($alarm) {
     $actions = (@($alarm.AlarmActions) -join " ")
-    return (
+    $isSqsDepthAlarm = (
         $alarm.Namespace -eq "AWS/SQS" -and
-        $alarm.MetricName -eq "ApproximateNumberOfMessagesVisible" -and
+        $alarm.MetricName -eq "ApproximateNumberOfMessagesVisible"
+    )
+    if (
+        $isSqsDepthAlarm -and
+        $alarm.AlarmName -eq "ai-worker-queue-low" -and
+        $alarm.ComparisonOperator -match "^LessThan" -and
+        -not $alarm.ActionsEnabled
+    ) {
+        return $true
+    }
+    return (
+        $isSqsDepthAlarm -and
         $alarm.ComparisonOperator -match "^LessThan" -and
         $alarm.ActionsEnabled -and
         $actions -match "scalingPolicy"

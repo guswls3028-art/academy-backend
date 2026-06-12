@@ -523,7 +523,7 @@ No additional drain work needed.
 
 ## 7. Monitoring & Continuous Verification
 
-**Existing CloudWatch alarms (confirmed 2026-03-15, 5 active, all OK):**
+**Existing CloudWatch alarms (confirmed 2026-06-12, enforced by `Ensure-VideoCloudWatchAlarms`, 5 active):**
 - `academy-video-BatchJobFailures` (AWS/Batch Failed)
 - `academy-video-DeadJobs` (Academy/Video DeadJobs)
 - `academy-video-FailedJobs` (Academy/Video FailedJobs)

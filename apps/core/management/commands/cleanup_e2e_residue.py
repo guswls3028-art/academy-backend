@@ -4,7 +4,7 @@ E2E 테스트 잔재 데이터 정리 커맨드.
 
 배경:
     운영 테넌트(Tenant 1 / hakwonplus)에 E2E 자동화 스펙이 생성한 학생·게시글·
-    메시지 템플릿·매치업 파일이 누적되어 학원 운영 화면의 품질을 저하시킴.
+    메시지 템플릿·매치업 파일·수납 비목이 누적되어 학원 운영 화면의 품질을 저하시킴.
 
 매칭 패턴 (자동화 스펙이 찍은 명백한 지문):
     - "[E2E-\\d+" / "[AUDIT-\\d+" / "[CHAOS-\\d+"
@@ -53,7 +53,7 @@ def matches_residue(text: str) -> bool:
 
 
 class Command(BaseCommand):
-    help = "Tenant별 E2E 자동화 잔재 데이터(학생·게시글·메시지 템플릿·매치업 문서)를 식별/삭제한다."
+    help = "Tenant별 E2E 자동화 잔재 데이터(학생·게시글·메시지 템플릿·매치업 문서·수납 비목)를 식별/삭제한다."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -92,6 +92,7 @@ class Command(BaseCommand):
         from apps.domains.messaging.models import MessageTemplate
         from apps.domains.exams.models.exam import Exam
         from apps.domains.homework_results.models.homework import Homework
+        from apps.domains.fees.models import FeeTemplate, InvoiceItem
         from apps.core.models import Tenant
 
         try:
@@ -137,7 +138,25 @@ class Command(BaseCommand):
             if matches_residue(h.title or "")
         ]
 
-        total = len(students) + len(posts) + len(matchups) + len(templates) + len(exams) + len(homeworks)
+        # 7. 수납 비목 — name. 연결된 학생비용/청구항목이 있으면 삭제 대신 비활성화한다.
+        fee_templates = [
+            f for f in FeeTemplate.objects.filter(tenant_id=tenant_id)
+            if matches_residue(f.name or "")
+        ]
+
+        def fee_template_ref_count(fee_template) -> int:
+            return (
+                fee_template.student_fees.count()
+                + InvoiceItem.objects.filter(fee_template=fee_template).count()
+            )
+
+        def fee_template_action(fee_template) -> str:
+            return "deactivate" if fee_template_ref_count(fee_template) else "delete"
+
+        total = (
+            len(students) + len(posts) + len(matchups) + len(templates)
+            + len(exams) + len(homeworks) + len(fee_templates)
+        )
 
         self._print_group("학생 (Student)", students, limit, lambda s: f"id={s.id} ps={s.ps_number} name={s.name!r}")
         self._print_group("게시글 (PostEntity)", posts, limit, lambda p: f"id={p.id} title={p.title!r}")
@@ -145,6 +164,15 @@ class Command(BaseCommand):
         self._print_group("메시지 템플릿 (MessageTemplate)", templates, limit, lambda t: f"id={t.id} name={t.name!r}")
         self._print_group("시험 (Exam)", exams, limit, lambda e: f"id={e.id} type={e.exam_type} title={e.title!r}")
         self._print_group("과제 (Homework)", homeworks, limit, lambda h: f"id={h.id} title={h.title!r}")
+        self._print_group(
+            "수납 비목 (FeeTemplate)",
+            fee_templates,
+            limit,
+            lambda f: (
+                f"id={f.id} name={f.name!r} active={f.is_active} "
+                f"refs={fee_template_ref_count(f)} action={fee_template_action(f)}"
+            ),
+        )
 
         self.stdout.write(self.style.HTTP_INFO(f"\n=== 합계: {total}건 ==="))
 
@@ -167,6 +195,17 @@ class Command(BaseCommand):
             t_del = sum(t.delete()[0] for t in templates)
             e_del = sum(e.delete()[0] for e in exams)
             h_del = sum(h.delete()[0] for h in homeworks)
+            f_del = 0
+            f_deactivated = 0
+            for fee_template in fee_templates:
+                if fee_template_ref_count(fee_template):
+                    if fee_template.is_active or fee_template.auto_assign:
+                        fee_template.is_active = False
+                        fee_template.auto_assign = False
+                        fee_template.save(update_fields=["is_active", "auto_assign", "updated_at"])
+                        f_deactivated += 1
+                else:
+                    f_del += fee_template.delete()[0]
 
         self.stdout.write(self.style.SUCCESS(
             f"\n삭제 완료:\n"
@@ -175,7 +214,9 @@ class Command(BaseCommand):
             f"  - 매치업 cascade rows: {m_del}\n"
             f"  - 템플릿 cascade rows: {t_del}\n"
             f"  - 시험 cascade rows: {e_del}\n"
-            f"  - 과제 cascade rows: {h_del}"
+            f"  - 과제 cascade rows: {h_del}\n"
+            f"  - 수납 비목 cascade rows: {f_del}\n"
+            f"  - 수납 비목 비활성화: {f_deactivated}"
         ))
 
     def _print_group(self, label: str, items, limit: int, fmt):

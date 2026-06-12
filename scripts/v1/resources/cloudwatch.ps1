@@ -28,6 +28,129 @@ function Ensure-VideoBatchLogRetention {
     }
 }
 
+function Ensure-VideoCloudWatchAlarms {
+    $R = $script:Region
+    $period = if ($script:ObservabilityAlarmPeriodSeconds -gt 0) { $script:ObservabilityAlarmPeriodSeconds } else { 300 }
+    $evalPeriods = if ($script:ObservabilityAlarmEvaluationPeriods -gt 0) { $script:ObservabilityAlarmEvaluationPeriods } else { 2 }
+    $queueDepthThreshold = if ($script:VideoQueueDepthAlarmThreshold -gt 0) { $script:VideoQueueDepthAlarmThreshold } else { 50 }
+    $failedJobsThreshold = if ($script:VideoFailedJobsAlarmThreshold -gt 0) { $script:VideoFailedJobsAlarmThreshold } else { 5 }
+
+    $alarmActionArgs = @()
+    $opsTopicArn = "arn:aws:sns:${R}:$($script:AccountId):academy-ops-alerts"
+    try {
+        Invoke-Aws @("sns", "get-topic-attributes", "--topic-arn", $opsTopicArn, "--region", $R) -ErrorMessage "sns-get-video-ops-alerts" | Out-Null
+        $alarmActionArgs = @("--alarm-actions", $opsTopicArn)
+    } catch {
+        Write-Host "  [CloudWatch] SNS topic not found, creating video alarms without actions: academy-ops-alerts" -ForegroundColor Yellow
+    }
+
+    $batchQueueArn = ""
+    if ($script:VideoQueueName) {
+        try {
+            $queue = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $R, "--output", "json")
+            if ($queue -and $queue.jobQueues -and $queue.jobQueues.Count -gt 0) {
+                $batchQueueArn = [string]$queue.jobQueues[0].jobQueueArn
+            }
+        } catch {
+            Write-Host "  [CloudWatch] Video Batch queue ARN lookup failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    $alarms = @(
+        @{
+            Name = "academy-video-DeadJobs"
+            Description = "Video encoding: at least one DeadJobs event (Academy/Video)"
+            Namespace = "Academy/Video"
+            Metric = "DeadJobs"
+            Statistic = "Sum"
+            Threshold = 0
+            EvalPeriods = 1
+            Operator = "GreaterThanThreshold"
+            Missing = "notBreaching"
+            Dimensions = @()
+        },
+        @{
+            Name = "academy-video-UploadFailures"
+            Description = "Video encoding: UploadFailures (R2 integrity) above threshold"
+            Namespace = "Academy/Video"
+            Metric = "UploadFailures"
+            Statistic = "Sum"
+            Threshold = $failedJobsThreshold
+            EvalPeriods = $evalPeriods
+            Operator = "GreaterThanThreshold"
+            Missing = "notBreaching"
+            Dimensions = @()
+        },
+        @{
+            Name = "academy-video-FailedJobs"
+            Description = "Video encoding: FailedJobs (BATCH_DESYNC) above threshold"
+            Namespace = "Academy/Video"
+            Metric = "FailedJobs"
+            Statistic = "Sum"
+            Threshold = $failedJobsThreshold
+            EvalPeriods = $evalPeriods
+            Operator = "GreaterThanThreshold"
+            Missing = "notBreaching"
+            Dimensions = @()
+        }
+    )
+
+    if ($batchQueueArn) {
+        $batchDimension = "Name=JobQueue,Value=$batchQueueArn"
+        $alarms += @(
+            @{
+                Name = "academy-video-BatchJobFailures"
+                Description = "AWS Batch: failed jobs in video queue (AWS/Batch metric)"
+                Namespace = "AWS/Batch"
+                Metric = "Failed"
+                Statistic = "Sum"
+                Threshold = $failedJobsThreshold
+                EvalPeriods = $evalPeriods
+                Operator = "GreaterThanThreshold"
+                Missing = "notBreaching"
+                Dimensions = @($batchDimension)
+            },
+            @{
+                Name = "academy-video-QueueRunnable"
+                Description = "AWS Batch: RUNNABLE job count above threshold (backlog)"
+                Namespace = "AWS/Batch"
+                Metric = "RUNNABLE"
+                Statistic = "Average"
+                Threshold = $queueDepthThreshold
+                EvalPeriods = $evalPeriods
+                Operator = "GreaterThanThreshold"
+                Missing = "notBreaching"
+                Dimensions = @($batchDimension)
+            }
+        )
+    } else {
+        Write-Host "  [CloudWatch] Video Batch metric alarms skipped: queue ARN unavailable" -ForegroundColor Yellow
+    }
+
+    foreach ($alarm in $alarms) {
+        $args = @(
+            "cloudwatch", "put-metric-alarm",
+            "--alarm-name", $alarm.Name,
+            "--alarm-description", $alarm.Description,
+            "--namespace", $alarm.Namespace,
+            "--metric-name", $alarm.Metric,
+            "--statistic", $alarm.Statistic,
+            "--period", $period.ToString(),
+            "--evaluation-periods", $alarm.EvalPeriods.ToString(),
+            "--threshold", $alarm.Threshold.ToString(),
+            "--comparison-operator", $alarm.Operator,
+            "--treat-missing-data", $alarm.Missing,
+            "--region", $R
+        )
+        if ($alarm.Dimensions -and $alarm.Dimensions.Count -gt 0) {
+            $args += @("--dimensions") + @($alarm.Dimensions)
+        }
+        $args += $alarmActionArgs
+        Invoke-Aws $args -ErrorMessage "put-metric-alarm $($alarm.Name)" | Out-Null
+        Write-Host "  [CloudWatch] Video alarm ensured: $($alarm.Name)" -ForegroundColor Gray
+    }
+}
+
 function Ensure-RdsCloudWatchAlarms {
     $R = $script:Region
     $dbId = $script:RdsDbIdentifier

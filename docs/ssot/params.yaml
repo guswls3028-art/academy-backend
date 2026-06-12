@@ -80,6 +80,8 @@ api:
   containerName: academy-api
   albName: academy-v1-api-alb
   targetGroupName: academy-v1-api-tg
+  acmCertificateArn: arn:aws:acm:ap-northeast-2:809466760795:certificate/5e96d8b9-cc4d-4722-b9fc-6042289d68e1
+  httpsSslPolicy: ELBSecurityPolicy-TLS13-1-2-2021-06
   # ALB/Docker liveness health check는 DB/외부 의존성 체크 금지. 200만 반환하는 /healthz 사용. /health는 DB 연동·503 가능 → readiness/관측용.
   healthPath: /healthz
   instanceTagKey: Name
@@ -276,11 +278,11 @@ r2:
   publicBaseUrl: ""
 
 # 프론트 정적 + R2 + CDN (엔드투엔드). S3 미사용·R2만.
-# 도메인/라우팅: hakwonplus.com → Cloudflare Pages, api.<domain> → ALB(또는 Cloudflare proxy 정책 명시).
+# 도메인/라우팅: hakwonplus.com → Cloudflare Pages, api.<domain> → DNS-only ALB HTTPS(Cloudflare proxy off).
 front:
   domains:
     app: "hakwonplus.com"          # canonical frontend host
-    api: "https://api.hakwonplus.com"  # Cloudflare CNAME → ALB
+    api: "https://api.hakwonplus.com"  # DNS-only CNAME → ALB HTTPS 443
   domainsApp: "hakwonplus.com"      # SSOT 스크립트용 flat 키 (domains.app과 동일)
   domainsApi: "https://api.hakwonplus.com"  # SSOT 스크립트용 flat 키 (domains.api과 동일)
   cors:

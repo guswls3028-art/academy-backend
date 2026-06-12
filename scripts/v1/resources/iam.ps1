@@ -192,6 +192,13 @@ function Ensure-EC2InstanceProfileSSM {
         Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyApiVideo -replace '\\','/')") -ErrorMessage "put API video upload policy" | Out-Null
         Write-Ok "Ensured inline policy $inlineName on $roleName (Batch+DynamoDB for upload_complete)"
     }
+    # API diagnostics: validate_video_production_readiness needs read-only infra/observability checks.
+    $policyVideoReadiness = Join-Path $TemplatesPath "policy_video_readiness_observability_readonly.json"
+    if (Test-Path $policyVideoReadiness) {
+        $inlineName = "academy-video-readiness-observability-readonly"
+        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyVideoReadiness -replace '\\','/')") -ErrorMessage "put video readiness observability policy" | Out-Null
+        Write-Ok "Ensured inline policy $inlineName on $roleName (video readiness read-only checks)"
+    }
     # Messaging/AI 워커: SQS ReceiveMessage, DeleteMessage, ChangeMessageVisibility
     $policyWorkersSqs = Join-Path $TemplatesPath "policy_workers_sqs.json"
     if (Test-Path $policyWorkersSqs) {

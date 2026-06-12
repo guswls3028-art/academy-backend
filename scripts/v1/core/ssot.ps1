@@ -151,6 +151,8 @@ function Load-SSOT {
     $script:ApiLaunchTemplateName = $p["api"]["asgLaunchTemplateName"]
     $script:ApiAlbName = if ($p["api"]["albName"]) { $p["api"]["albName"] } else { "" }
     $script:ApiTargetGroupName = if ($p["api"]["targetGroupName"]) { $p["api"]["targetGroupName"] } else { "" }
+    $script:ApiAcmCertificateArn = if ($p["api"]["acmCertificateArn"]) { $p["api"]["acmCertificateArn"] } else { "" }
+    $script:ApiHttpsSslPolicy = if ($p["api"]["httpsSslPolicy"]) { $p["api"]["httpsSslPolicy"] } else { "ELBSecurityPolicy-TLS13-1-2-2021-06" }
     $script:ApiHealthPath = if ($p["api"]["healthPath"]) { $p["api"]["healthPath"] } else { "/health" }
     $script:ApiASGMinSize = 1
     $script:ApiASGMaxSize = 2
@@ -242,6 +244,9 @@ function Load-SSOT {
     $script:VideoJobTimeoutStandardSeconds = Coerce-Int $(if ($vb["jobTimeoutStandardSeconds"]) { $vb["jobTimeoutStandardSeconds"] } elseif ($vbs["jobTimeoutSeconds"]) { $vbs["jobTimeoutSeconds"] } else { 21600 }) 21600
     $script:VideoStuckHeartbeatAgeStandardMinutes = Coerce-Int $(if ($vb["stuckHeartbeatAgeStandardMinutes"]) { $vb["stuckHeartbeatAgeStandardMinutes"] } elseif ($vbs["stuckHeartbeatAgeMinutes"]) { $vbs["stuckHeartbeatAgeMinutes"] } else { 20 }) 20
     $script:VideoUseSpot = ($vbs["useSpot"] -eq $true -or $vbs["useSpot"] -eq "true")
+    $videoObs = if ($vb["observability"]) { $vb["observability"] } else { @{} }
+    $script:VideoQueueDepthAlarmThreshold = Coerce-Int $videoObs["queueDepthAlarmThreshold"] 50
+    $script:VideoFailedJobsAlarmThreshold = Coerce-Int $videoObs["failedJobsAlarmThreshold"] 5
     # long path 폐기 (2026-05-10): SSOT 에 long.* 가 박혀 있어도 무시. 모든 영상이 short queue/jobdef.
     # 변수 자체는 남겨 둔다 — 다른 deploy/inventory 스크립트가 `if ($script:VideoLongQueueName)` 가드로
     # 분기하므로 $null 이면 자연스럽게 skip.
