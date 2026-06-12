@@ -12,6 +12,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.core.parsing import parse_bool
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.domains.messaging.effective_templates import resolve_effective_template_status
 from apps.domains.messaging.models import MessageTemplate, AutoSendConfig
 from apps.domains.messaging.policy import is_auto_send_enabled_by_default
 from apps.domains.messaging.serializers import AutoSendConfigSerializer
@@ -248,6 +249,17 @@ class AutoSendConfigView(APIView):
                         config.delay_value = max(0, parsed_delay_value)
                 elif requested_delay_mode is not None and delay_mode == "immediate":
                     config.delay_value = None
+
+            if config.enabled:
+                effective_template = resolve_effective_template_status(config)
+                if not effective_template.is_approved:
+                    return reject({
+                        "template_id": "자동발송을 켜려면 승인된 알림톡 템플릿이 필요합니다.",
+                        "trigger": trigger,
+                        "effective_template_source": effective_template.source,
+                        "effective_solapi_template_id": effective_template.solapi_template_id,
+                        "effective_solapi_status": effective_template.solapi_status,
+                    })
 
             config.save()
 

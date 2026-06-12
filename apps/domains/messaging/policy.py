@@ -91,9 +91,22 @@ TENANT_OPT_IN_AUTO_TRIGGERS: frozenset = frozenset([
 ])
 
 
+TEMPLATE_READY_OPT_IN_AUTO_TRIGGERS: frozenset = frozenset([
+    "video_encoding_complete",
+    "matchup_report_submitted",
+    "qna_answered",
+    "counsel_answered",
+])
+
+
 def requires_tenant_auto_send_opt_in(trigger: str) -> bool:
     """True면 테넌트가 자기 AutoSendConfig row를 명시적으로 켜야 한다."""
     return trigger in TENANT_OPT_IN_AUTO_TRIGGERS
+
+
+def requires_template_ready_opt_in(trigger: str) -> bool:
+    """True면 승인된 알림톡 템플릿 연결 전에는 자동 ON 금지."""
+    return trigger in TEMPLATE_READY_OPT_IN_AUTO_TRIGGERS
 
 
 def is_auto_send_enabled_by_default(trigger: str) -> bool:
@@ -101,6 +114,7 @@ def is_auto_send_enabled_by_default(trigger: str) -> bool:
     return (
         get_trigger_implementation_status(trigger) == "implemented"
         and not requires_tenant_auto_send_opt_in(trigger)
+        and not requires_template_ready_opt_in(trigger)
     )
 
 

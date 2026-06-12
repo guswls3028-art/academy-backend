@@ -497,6 +497,93 @@ class ProvisionDefaultTemplatesTests(TestCase):
             ).enabled
         )
 
+    def test_video_encoding_trigger_is_not_enabled_by_default_until_template_ready(self):
+        response = AutoSendConfigView.as_view()(
+            self._request("get", "/api/v1/messaging/auto-send/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        by_trigger = {item["trigger"]: item for item in response.data}
+        self.assertFalse(by_trigger["video_encoding_complete"]["enabled"])
+        self.assertFalse(
+            AutoSendConfig.objects.get(
+                tenant=self.tenant,
+                trigger="video_encoding_complete",
+            ).enabled
+        )
+
+    def test_autosend_patch_rejects_enable_without_effective_approved_template(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="상담 답변",
+            category="community",
+            subject="",
+            body="본문",
+            solapi_template_id="",
+            solapi_status="",
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {
+                    "configs": [
+                        {
+                            "trigger": "counsel_answered",
+                            "template_id": template.id,
+                            "enabled": True,
+                        }
+                    ]
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["trigger"], "counsel_answered")
+        self.assertIn("template_id", response.data)
+        self.assertFalse(
+            AutoSendConfig.objects.filter(
+                tenant=self.tenant,
+                trigger="counsel_answered",
+            ).exists()
+        )
+
+    def test_autosend_patch_allows_enable_with_approved_tenant_template(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="상담 답변",
+            category="community",
+            subject="",
+            body="본문",
+            solapi_template_id="KA01TP_APPROVED",
+            solapi_status="APPROVED",
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {
+                    "configs": [
+                        {
+                            "trigger": "counsel_answered",
+                            "template_id": template.id,
+                            "enabled": True,
+                        }
+                    ]
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        config = AutoSendConfig.objects.get(
+            tenant=self.tenant,
+            trigger="counsel_answered",
+        )
+        self.assertTrue(config.enabled)
+        self.assertEqual(config.template_id, template.id)
+
     def test_provision_defaults_does_not_auto_submit_kakao_template_review(self):
         self.tenant.kakao_pfid = "KA01PF"
         self.tenant.own_solapi_api_key = "key"
