@@ -150,6 +150,7 @@ class BusinessProfileSerializer(serializers.ModelSerializer):
 
 class TenantSubscriptionSummarySerializer(serializers.Serializer):
     """플랫폼 관리자용 테넌트 구독 현황 요약"""
+    program_id = serializers.IntegerField()
     tenant_id = serializers.IntegerField()
     tenant_code = serializers.CharField()
     tenant_name = serializers.CharField()

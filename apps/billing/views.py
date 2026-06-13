@@ -60,6 +60,7 @@ class AdminTenantSubscriptionListView(APIView):
         data = []
         for p in programs:
             data.append({
+                "program_id": p.id,
                 "tenant_id": p.tenant_id,
                 "tenant_code": p.tenant.code,
                 "tenant_name": p.tenant.name or "",

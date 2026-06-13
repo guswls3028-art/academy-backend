@@ -233,12 +233,14 @@ def extend(program_id: int, days: int) -> "Program":
         program.subscription_status = "active"
 
     program.subscription_expires_at = new_expires
+    program.next_billing_at = new_expires
     program.cancel_at_period_end = False
     program.canceled_at = None
 
     program.save(update_fields=[
         "subscription_status",
         "subscription_expires_at",
+        "next_billing_at",
         "cancel_at_period_end",
         "canceled_at",
         "updated_at",

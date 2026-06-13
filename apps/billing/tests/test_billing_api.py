@@ -157,13 +157,14 @@ class TestAdminTenantSubscriptionList(BillingApiTestBase):
         resp = self.client.get("/api/v1/billing/admin/tenants/", **self.headers_a)
         entry = next(t for t in resp.data if t["tenant_code"] == "api_test_a")
         required_fields = [
-            "tenant_id", "tenant_code", "tenant_name", "plan", "plan_display",
+            "program_id", "tenant_id", "tenant_code", "tenant_name", "plan", "plan_display",
             "monthly_price", "subscription_status", "subscription_expires_at",
             "days_remaining", "billing_mode", "cancel_at_period_end",
             "next_billing_at", "is_subscription_active",
         ]
         for f in required_fields:
             self.assertIn(f, entry, f"Missing field: {f}")
+        self.assertEqual(entry["program_id"], self.program_a.pk)
 
 
 class TestAdminExtendSubscription(BillingApiTestBase):
@@ -179,6 +180,7 @@ class TestAdminExtendSubscription(BillingApiTestBase):
         self.program_a.refresh_from_db()
         self.assertEqual(resp.data["subscription_status"], "active")
         self.assertIsNotNone(resp.data["subscription_expires_at"])
+        self.assertEqual(self.program_a.next_billing_at, self.program_a.subscription_expires_at)
 
     def test_owner_cannot_extend(self):
         self.client.force_authenticate(user=self.owner_a)
