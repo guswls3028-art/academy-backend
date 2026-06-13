@@ -24,6 +24,9 @@ class SubscriptionServiceTestBase(TestCase):
     """공통 fixture"""
 
     def setUp(self):
+        # 기본 설정의 exempt id(1, 2)를 먼저 소비해 상태 전이 테스트 대상은 live tenant가 되게 한다.
+        Tenant.objects.create(name="시스템 테넌트", code="billing_exempt_1", is_active=True)
+        Tenant.objects.create(name="테스트 테넌트", code="billing_exempt_2", is_active=True)
         self.tenant = Tenant.objects.create(
             name="테스트학원", code="test_billing", is_active=True
         )
@@ -175,6 +178,15 @@ class TestChangePlan(SubscriptionServiceTestBase):
 
     def test_change_plan(self):
         result = subscription_service.change_plan(self.program.pk, "max")
+        self.assertEqual(result.plan, "max")
+        self.assertEqual(result.monthly_price, 330_000)
+
+    def test_change_plan_overwrites_manual_price_override(self):
+        self.program.monthly_price = 150_000
+        self.program.save(update_fields=["monthly_price"])
+
+        result = subscription_service.change_plan(self.program.pk, "max")
+
         self.assertEqual(result.plan, "max")
         self.assertEqual(result.monthly_price, 330_000)
 
