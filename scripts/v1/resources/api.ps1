@@ -95,7 +95,9 @@ function Get-LatestApiImageUri {
 function Get-APIASGInstanceIds {
     $r = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $script:ApiASGName, "--region", $script:Region, "--output", "json")
     if (-not $r -or -not $r.AutoScalingGroups -or $r.AutoScalingGroups.Count -eq 0) { return @() }
-    $instances = $r.AutoScalingGroups[0].Instances | Where-Object { $_.LifecycleState -eq "InService" -or $_.LifecycleState -eq "Pending" } | ForEach-Object { $_.InstanceId }
+    $instances = $r.AutoScalingGroups[0].Instances |
+        Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" } |
+        ForEach-Object { $_.InstanceId }
     return @($instances)
 }
 
