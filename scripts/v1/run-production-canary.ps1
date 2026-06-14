@@ -146,6 +146,42 @@ function Test-HttpCanary {
     Add-CanaryResult -Stage "HTTP" -Name $Name -Severity "error" -Ok $ok -Detail $detail
 }
 
+function Get-HttpNoRedirect {
+    param([string]$Url)
+    $handler = [System.Net.Http.HttpClientHandler]::new()
+    $handler.AllowAutoRedirect = $false
+    $client = [System.Net.Http.HttpClient]::new($handler)
+    $client.Timeout = [TimeSpan]::FromSeconds($TimeoutSec)
+    try {
+        $response = $client.GetAsync($Url).GetAwaiter().GetResult()
+        $location = if ($response.Headers.Location) { [string]$response.Headers.Location } else { "" }
+        return [PSCustomObject]@{ Status = [int]$response.StatusCode; Location = $location; Error = "" }
+    } catch {
+        return [PSCustomObject]@{ Status = 0; Location = ""; Error = $_.Exception.Message }
+    } finally {
+        $client.Dispose()
+        $handler.Dispose()
+    }
+}
+
+function Test-HttpRedirectCanary {
+    param(
+        [string]$Name,
+        [string]$HttpUrl,
+        [string]$ExpectedHttpsPrefix
+    )
+    $result = Get-HttpNoRedirect -Url $HttpUrl
+    $isRedirect = $result.Status -in @(301, 302, 307, 308)
+    $locationOk = $result.Location -and $result.Location.StartsWith($ExpectedHttpsPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+    $ok = $isRedirect -and $locationOk
+    $detail = if ($ok) {
+        "HTTP $($result.Status) location=$($result.Location)"
+    } else {
+        "HTTP $($result.Status) location=$($result.Location) $($result.Error)"
+    }
+    Add-CanaryResult -Stage "HTTP" -Name $Name -Severity "error" -Ok $ok -Detail $detail
+}
+
 function Test-ScalingControlAlarm($alarm) {
     $actions = (@($alarm.AlarmActions) -join " ")
     $isSqsDepthAlarm = (
@@ -272,6 +308,10 @@ Write-CanaryHost ""
 
 Write-CanaryHost "[1/3] Public HTTP edge" -ForegroundColor Cyan -HasColor
 Test-HttpCanary -Name "api_healthz" -Url "$ApiBaseUrl/healthz"
+if ($ApiBaseUrl -match '^https://') {
+    $apiHttpBaseUrl = $ApiBaseUrl -replace '^https://', 'http://'
+    Test-HttpRedirectCanary -Name "api_http_redirects_to_https" -HttpUrl "$apiHttpBaseUrl/healthz" -ExpectedHttpsPrefix "$ApiBaseUrl/healthz"
+}
 Test-HttpCanary -Name "api_health" -Url "$ApiBaseUrl/health"
 Test-HttpCanary -Name "api_readyz" -Url "$ApiBaseUrl/readyz"
 Test-HttpCanary -Name "front_root" -Url "$FrontBaseUrl/"

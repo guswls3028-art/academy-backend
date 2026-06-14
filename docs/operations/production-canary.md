@@ -44,6 +44,7 @@ pwsh -File scripts/v1/run-production-canary.ps1 -Mode PostDeploy -AwsProfile def
 The wrapper checks:
 
 - public API and frontend HTTP edge
+- API plain HTTP redirects to HTTPS before reaching Django
 - tenant-scoped program API health (`2xx` only)
 - API and worker ASGs
 - ALB target health

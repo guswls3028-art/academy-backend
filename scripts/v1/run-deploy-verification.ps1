@@ -60,9 +60,11 @@ if ($driftFail -and $driftFail.Count -gt 0) {
     Add-Finding -Severity "WARNING" -Area "Drift" -Message ("SSOT와 불일치 $($driftFail.Count)건: " + (($driftFail | ForEach-Object { "$($_.ResourceType)/$($_.Name)" }) -join ", "))
 }
 
-# --- 2. ALB DNS 및 /health (상세) ---
-$apiHealthStatus = "unreachable"
+# --- 2. ALB edge 및 /health (상세) ---
+$apiHealthStatus = "not checked"
 $apiHealthResponseTime = ""
+$albHttpRedirectStatus = "not checked"
+$albHttpRedirectLocation = ""
 $albDns = ""
 $targetHealthyCount = 0
 $targetTotalCount = 0
@@ -74,16 +76,27 @@ if ($script:ApiAlbName) {
             $albDns = $alb.LoadBalancers[0].DNSName
             $healthUrl = "http://${albDns}/$($script:ApiHealthPath.TrimStart('/'))"
             $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            $handler = [System.Net.Http.HttpClientHandler]::new()
+            $handler.AllowAutoRedirect = $false
+            $client = [System.Net.Http.HttpClient]::new($handler)
+            $client.Timeout = [TimeSpan]::FromSeconds(10)
             try {
-                $hr = Invoke-WebRequest -Uri $healthUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                $hr = $client.GetAsync($healthUrl).GetAwaiter().GetResult()
                 $sw.Stop()
-                $apiHealthStatus = if ($hr.StatusCode -eq 200) { "OK" } else { "HTTP $($hr.StatusCode)" }
-                $apiHealthResponseTime = "$($sw.ElapsedMilliseconds)ms"
-                if ($hr.StatusCode -ne 200) { Add-Finding -Severity "WARNING" -Area "API" -Message "/health returned $($hr.StatusCode)" }
-                if ($sw.ElapsedMilliseconds -gt 2000) { Add-Finding -Severity "WARNING" -Area "API" -Message "/health 응답 > 2s ($apiHealthResponseTime)" }
+                $statusCode = [int]$hr.StatusCode
+                $location = if ($hr.Headers.Location) { [string]$hr.Headers.Location } else { "" }
+                $albHttpRedirectStatus = "HTTP $statusCode"
+                $albHttpRedirectLocation = $location
+                $redirectOk = $statusCode -in @(301, 302, 307, 308) -and $location.StartsWith("https://", [System.StringComparison]::OrdinalIgnoreCase)
+                if (-not $redirectOk) {
+                    Add-Finding -Severity "FAIL" -Area "API" -Message "ALB HTTP 80 must redirect to HTTPS; got HTTP $statusCode location=$location"
+                }
             } catch {
-                $apiHealthStatus = "unreachable"
-                Add-Finding -Severity "FAIL" -Area "API" -Message "/health unreachable: $($_.Exception.Message)"
+                $albHttpRedirectStatus = "unreachable"
+                Add-Finding -Severity "FAIL" -Area "API" -Message "ALB HTTP 80 redirect check unreachable: $($_.Exception.Message)"
+            } finally {
+                $client.Dispose()
+                $handler.Dispose()
             }
         }
         $tg = Invoke-AwsJson @("elbv2", "describe-target-groups", "--names", $script:ApiTargetGroupName, "--region", $R, "--output", "json")
@@ -101,6 +114,7 @@ if ($script:ApiAlbName) {
 
 # --- 2b. API 공개 URL(도메인/HTTPS) /health — API_PUBLIC_URL 또는 front.domains.api 기반
 $apiPublicHealthStatus = "not checked"
+$apiPublicHealthResponseTime = ""
 $apiPublicUrl = $env:API_PUBLIC_URL
 if (-not $apiPublicUrl -and $script:FrontDomainApi -and $script:FrontDomainApi.Trim() -ne "") {
     $dom = $script:FrontDomainApi.Trim()
@@ -110,13 +124,21 @@ if (-not $apiPublicUrl -and $script:FrontDomainApi -and $script:FrontDomainApi.T
 if ($apiPublicUrl) {
     $apiPublicUrl = $apiPublicUrl.TrimEnd('/')
     $publicHealthUrl = "$apiPublicUrl/$($script:ApiHealthPath.TrimStart('/'))"
+    $swPublic = [System.Diagnostics.Stopwatch]::StartNew()
     try {
         $phr = Invoke-WebRequest -Uri $publicHealthUrl -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+        $swPublic.Stop()
         $apiPublicHealthStatus = if ($phr.StatusCode -eq 200) { "OK" } else { "HTTP $($phr.StatusCode)" }
-        if ($phr.StatusCode -ne 200) { Add-Finding -Severity "WARNING" -Area "API" -Message "API_PUBLIC_URL/도메인 /health returned $($phr.StatusCode)" }
+        $apiPublicHealthResponseTime = "$($swPublic.ElapsedMilliseconds)ms"
+        $apiHealthStatus = $apiPublicHealthStatus
+        $apiHealthResponseTime = $apiPublicHealthResponseTime
+        if ($phr.StatusCode -ne 200) { Add-Finding -Severity "FAIL" -Area "API" -Message "API_PUBLIC_URL/도메인 /health returned $($phr.StatusCode)" }
+        if ($swPublic.ElapsedMilliseconds -gt 2000) { Add-Finding -Severity "WARNING" -Area "API" -Message "API 공개 /health 응답 > 2s ($apiPublicHealthResponseTime)" }
     } catch {
+        $swPublic.Stop()
         $apiPublicHealthStatus = "unreachable"
-        Add-Finding -Severity "WARNING" -Area "API" -Message "API 공개 URL /health unreachable: $publicHealthUrl — $($_.Exception.Message)"
+        $apiHealthStatus = "unreachable"
+        Add-Finding -Severity "FAIL" -Area "API" -Message "API 공개 URL /health unreachable: $publicHealthUrl — $($_.Exception.Message)"
     }
 }
 
@@ -377,12 +399,12 @@ if (-not $frontUrl -and $env:FRONT_APP_URL) {
         $frontStatus = if ($fr.StatusCode -eq 200) { "OK" } else { "HTTP $($fr.StatusCode)" }
     } catch { $frontStatus = "unreachable"; Add-Finding -Severity "WARNING" -Area "Front" -Message "Front URL unreachable" }
 }
-if ($albDns) {
-    $apiRoot = "http://${albDns}/"
+if ($apiPublicUrl) {
+    $apiRoot = "$apiPublicUrl/"
     try {
         $root = Invoke-WebRequest -Uri $apiRoot -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
         $apiSmokeStatus = "root $($root.StatusCode)"
-    } catch { $apiSmokeStatus = "root unreachable" }
+    } catch { $apiSmokeStatus = "root not a health endpoint" }
 }
 
 # --- 8. CloudWatch 알람 (있으면) ---
@@ -471,7 +493,6 @@ elseif ($driftFail -and $driftFail.Count -gt 0) { $s1Infra = "WARNING" }
 $s2Smoke = "PASS"
 if ($apiHealthStatus -ne "OK") { $s2Smoke = "FAIL" }
 elseif ($apiHealthResponseTime -and [int]($apiHealthResponseTime -replace 'ms','') -gt 2000) { $s2Smoke = "WARNING" }
-elseif ($apiSmokeStatus -eq "root unreachable") { $s2Smoke = "WARNING" }
 
 $s3Front = "PASS"
 if ($frontStatus -eq "not checked") { $s3Front = "WARNING" }
@@ -513,9 +534,9 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("|------|------|-------------------------------------|")
 [void]$sb.AppendLine("| API ASG min/desired/max | $($ev.apiAsgDesired)/$($ev.apiAsgMin)/$($ev.apiAsgMax) | reports/audit.latest.md (apiAsg*) |")
 [void]$sb.AppendLine("| ALB target health | $targetHealthyCount / $targetTotalCount healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |")
-[void]$sb.AppendLine("| /health 200 | $apiHealthStatus $apiHealthResponseTime | curl 위 URL 또는 ALB DNS 직접 호출 |")
+[void]$sb.AppendLine("| ALB HTTP 80 redirect | $albHttpRedirectStatus $albHttpRedirectLocation | HTTP listener는 HTTPS로 redirect해야 함 |")
 if ($apiPublicUrl) {
-    [void]$sb.AppendLine("| API 공개 URL(도메인) /health | $apiPublicHealthStatus | API_PUBLIC_URL 또는 front.domains.api: $apiPublicUrl |")
+    [void]$sb.AppendLine("| API 공개 URL(도메인) /health | $apiPublicHealthStatus $apiPublicHealthResponseTime | API_PUBLIC_URL 또는 front.domains.api: $apiPublicUrl |")
 }
 [void]$sb.AppendLine("| AI/Messaging ASG | $($ev.asgAiDesired)/$($ev.asgMessagingDesired) | reports/audit.latest.md (asgAi*, asgMessaging*) |")
 [void]$sb.AppendLine("| SQS queue 연결·DLQ | Messaging depth $msgQueueDepth DLQ $msgDlqDepth / AI depth $aiQueueDepth DLQ $aiDlqDepth | SQS Console 또는 get-queue-attributes |")
@@ -530,7 +551,7 @@ if ($apiPublicUrl) {
 [void]$sb.AppendLine("| 항목 | 결과 | 근거 |")
 [void]$sb.AppendLine("|------|------|------|")
 [void]$sb.AppendLine("| /health | $apiHealthStatus | 응답시간: $apiHealthResponseTime (기준 p95 &lt; 2s, 샘플 1회) |")
-[void]$sb.AppendLine("| API root | $apiSmokeStatus | 동일 ALB DNS |")
+[void]$sb.AppendLine("| API root | $apiSmokeStatus | 공개 HTTPS 도메인 기준, root는 필수 서비스 엔드포인트 아님 |")
 [void]$sb.AppendLine("| 핵심 API 1~2개(인증/CRUD) | 수동 검증 권장 | 샘플 20회 평균/최대 기록 시 reports/ 에 URL 또는 로그 경로 기입 |")
 [void]$sb.AppendLine("| **섹션 2 종합** | **$s2Smoke** | |")
 [void]$sb.AppendLine("")

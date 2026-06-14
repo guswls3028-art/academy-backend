@@ -86,16 +86,42 @@ function Ensure-TargetGroup {
 function Ensure-Listener {
     if ($script:PlanMode) { return }
     if (-not $script:ApiAlbArn -or -not $script:ApiTargetGroupArn) { return }
-    Write-Step "Ensure Listener (HTTP 80)"
+    Write-Step "Ensure Listener (HTTP 80 -> HTTPS redirect)"
     $r = Invoke-AwsJson @("elbv2", "describe-listeners", "--load-balancer-arn", $script:ApiAlbArn, "--region", $script:Region, "--output", "json")
     $listener = $r.Listeners | Where-Object { $_.Port -eq 80 } | Select-Object -First 1
+    $defaultAction = if ($script:ApiAcmCertificateArn) {
+        "Type=redirect,RedirectConfig={Protocol=HTTPS,Port=443,StatusCode=HTTP_301}"
+    } else {
+        Write-Warn "HTTPS redirect skipped on port 80: api.acmCertificateArn is empty"
+        "Type=forward,TargetGroupArn=$script:ApiTargetGroupArn"
+    }
     if ($listener) {
-        Write-Ok "Listener port 80 exists"
+        $redirect = $listener.DefaultActions | Where-Object { $_.Type -eq "redirect" } | Select-Object -First 1
+        $forward = $listener.DefaultActions | Where-Object { $_.Type -eq "forward" } | Select-Object -First 1
+        $hasHttpsRedirect = (
+            $script:ApiAcmCertificateArn -and
+            $listener.Protocol -eq "HTTP" -and
+            $redirect -and
+            $redirect.RedirectConfig.Protocol -eq "HTTPS" -and
+            [string]$redirect.RedirectConfig.Port -eq "443"
+        )
+        $hasForward = (-not $script:ApiAcmCertificateArn) -and $forward -and $forward.TargetGroupArn -eq $script:ApiTargetGroupArn
+        if (-not $hasHttpsRedirect -and -not $hasForward) {
+            Invoke-Aws @("elbv2", "modify-listener",
+                "--listener-arn", $listener.ListenerArn,
+                "--protocol", "HTTP",
+                "--port", "80",
+                "--default-actions", $defaultAction,
+                "--region", $script:Region) -ErrorMessage "modify-listener-80" | Out-Null
+            Write-Ok "Listener port 80 updated"
+            $script:ChangesMade = $true
+        } else {
+            Write-Ok "Listener port 80 exists"
+        }
         return
     }
-    $defaultAction = "Type=forward,TargetGroupArn=$script:ApiTargetGroupArn"
     Invoke-Aws @("elbv2", "create-listener", "--load-balancer-arn", $script:ApiAlbArn, "--protocol", "HTTP", "--port", "80", "--default-actions", $defaultAction, "--region", $script:Region) -ErrorMessage "create-listener" | Out-Null
-    Write-Ok "Listener created (80 -> TargetGroup)"
+    Write-Ok "Listener created (80 HTTP -> HTTPS redirect)"
     $script:ChangesMade = $true
 }
 

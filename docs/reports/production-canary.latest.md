@@ -1,12 +1,13 @@
 # Production Canary
 
-**Generated:** 2026-06-14T22:26:03.7634690+09:00
+**Generated:** 2026-06-14T23:25:52.7335330+09:00
 **Mode:** PostDeploy
 **Verdict:** PASS
 
 | Stage | Name | Status | Detail |
 |-------|------|--------|--------|
 | HTTP | api_healthz | PASS | HTTP 200 |
+| HTTP | api_http_redirects_to_https | PASS | HTTP 301 location=https://api.hakwonplus.com/healthz |
 | HTTP | api_health | PASS | HTTP 200 |
 | HTTP | api_readyz | PASS | HTTP 200 |
 | HTTP | front_root | PASS | HTTP 200 |
@@ -32,9 +33,9 @@
 | AWS | video_batch_ce | PASS | ENABLED/VALID |
 | AWS | video_ops_queue | PASS | ENABLED/VALID |
 | AWS | video_ops_ce | PASS | ENABLED/VALID |
-| REMOTE | django_check_deploy | PASS | instance=i-04e1bd8ff0bac86d6 status=Success rc=0 |
-| REMOTE | django_check_deploy | PASS | instance=i-0b5faae6a0e0ced4d status=Success rc=0 |
-| REMOTE | django_migrations_applied | PASS | instance=i-04e1bd8ff0bac86d6 status=Success rc=0 |
-| REMOTE | django_migrations_applied | PASS | instance=i-0b5faae6a0e0ced4d status=Success rc=0 |
-| REMOTE | django_production_canary | PASS | instance=i-04e1bd8ff0bac86d6 status=Success rc=0 |
-| REMOTE | django_production_canary | PASS | instance=i-0b5faae6a0e0ced4d status=Success rc=0 |
+| REMOTE | django_check_deploy | PASS | instance=i-06630ac37071c06ae status=Success rc=0 |
+| REMOTE | django_check_deploy | PASS | instance=i-0d077421efe08a4fe status=Success rc=0 |
+| REMOTE | django_migrations_applied | PASS | instance=i-06630ac37071c06ae status=Success rc=0 |
+| REMOTE | django_migrations_applied | PASS | instance=i-0d077421efe08a4fe status=Success rc=0 |
+| REMOTE | django_production_canary | PASS | instance=i-06630ac37071c06ae status=Success rc=0 |
+| REMOTE | django_production_canary | PASS | instance=i-0d077421efe08a4fe status=Success rc=0 |
