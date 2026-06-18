@@ -68,11 +68,10 @@ def test_single_anchor_not_split():
 
 
 def test_anchor_out_of_range_not_split():
-    """선택형 1~60 범위 밖 anchor 는 split 트리거 안 함."""
-    # "100. ..." 같은 블록은 본문 숫자일 가능성이 더 큼.
-    block = _tb("100. 추가 설명 으로 옳은 것은 200. 다음 중 옳지 않은 것은 ?")
+    """500 범위 밖 anchor 는 split 트리거 안 함."""
+    block = _tb("900. 추가 설명 으로 옳은 것은 901. 다음 중 옳지 않은 것은 ?")
     out = _split_multi_anchor_blocks([block])
-    # nums 둘 다 60 초과 → split 안 함
+    # nums 둘 다 500 초과 → split 안 함
     assert len(out) == 1
 
 

@@ -10,9 +10,13 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import cv2  # type: ignore
+import numpy as np
 
 from academy.adapters.ai.config import AIConfig
-from academy.adapters.ai.detection.segment_opencv import segment_questions_opencv
+from academy.adapters.ai.detection.segment_opencv import (
+    segment_questions_opencv,
+    segment_questions_scan_layout,
+)
 from academy.adapters.ai.detection.segment_yolo import segment_questions_yolo
 from academy.adapters.ai.detection.segment_ocr import (
     is_ocr_available,
@@ -25,6 +29,112 @@ _PDF_TO_PIXEL_SCALE = 200.0 / 72.0
 logger = logging.getLogger(__name__)
 
 BBox = Tuple[int, int, int, int]
+
+
+def _expand_single_text_regions_to_visual_content(
+    image_path: str,
+    regions: List,
+    *,
+    page_width: float,
+    page_height: float,
+) -> None:
+    """단일열 text-PDF crop의 x축을 렌더 이미지의 실제 잉크 범위까지 보강한다.
+
+    PyMuPDF text block은 그림/표/벡터 객체를 포함하지 않아, 실제 전폭 문제도
+    텍스트 폭만큼 반쪽 crop이 되는 경우가 있다. born-digital 단일열 페이지만
+    대상으로 삼고 y축은 splitter 결과를 유지해 다음 문항 침범을 막는다.
+    """
+    if not regions or page_width <= 0 or page_height <= 0:
+        return
+    gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if gray is None or gray.size == 0:
+        return
+
+    img_h, img_w = gray.shape[:2]
+    scale_x = img_w / page_width
+    scale_y = img_h / page_height
+    # White PDF background 기준. Anti-aliased text/vector까지 포함하되 연한 배경은 제외.
+    ink = gray < 245
+    pad = page_width * 0.012
+
+    for region in regions:
+        x0, y0, x1, y1 = region.bbox
+        if x1 - x0 >= page_width * 0.72:
+            continue
+        py0 = max(0, int(y0 * scale_y))
+        py1 = min(img_h, int(y1 * scale_y))
+        if py1 - py0 < 12:
+            continue
+        roi = ink[py0:py1, :]
+        col_counts = roi.sum(axis=0)
+        min_pixels = max(3, int((py1 - py0) * 0.003))
+        xs = np.flatnonzero(col_counts >= min_pixels)
+        if xs.size == 0:
+            continue
+
+        runs: List[Tuple[int, int]] = []
+        run_start = int(xs[0])
+        prev = int(xs[0])
+        max_inside_gap = max(2, int(img_w * 0.006))
+        min_run_width = max(2, int(img_w * 0.002))
+        for raw_x in xs[1:]:
+            curr = int(raw_x)
+            if curr - prev > max_inside_gap:
+                if prev - run_start + 1 >= min_run_width:
+                    runs.append((run_start, prev))
+                run_start = curr
+            prev = curr
+        if prev - run_start + 1 >= min_run_width:
+            runs.append((run_start, prev))
+        if not runs:
+            continue
+
+        orig_px0 = max(0, int(x0 * scale_x))
+        orig_px1 = min(img_w - 1, int(x1 * scale_x))
+        selected = [
+            run for run in runs
+            if run[1] >= orig_px0 and run[0] <= orig_px1
+        ]
+        if not selected:
+            continue
+
+        max_neighbor_gap = max(8, int(img_w * 0.18))
+        changed = True
+        while changed:
+            changed = False
+            sel_x0 = min(run[0] for run in selected)
+            sel_x1 = max(run[1] for run in selected)
+            for run in runs:
+                if run in selected:
+                    continue
+                gap = max(run[0] - sel_x1, sel_x0 - run[1], 0)
+                if gap <= max_neighbor_gap:
+                    selected.append(run)
+                    changed = True
+
+        vx0 = max(0.0, (float(min(run[0] for run in selected)) / scale_x) - pad)
+        vx1 = min(page_width, (float(max(run[1] for run in selected)) / scale_x) + pad)
+        if vx1 - vx0 <= (x1 - x0) * 1.08:
+            continue
+        region.bbox = (min(x0, vx0), y0, max(x1, vx1), y1)
+
+
+def _should_expand_text_regions_by_visual_x(
+    paper_type_result: object | None,
+    paper_type_debug: Dict | None,
+) -> bool:
+    """시각 x축 보강 대상 여부.
+
+    text 기준 dual/quad 신호가 없으면 pixel-dual은 전폭 그림/표 때문에 생긴
+    오분류일 수 있다. 이런 페이지는 region 개수는 유지하되 x축만 렌더 이미지로
+    보강한다.
+    """
+    if bool(getattr(paper_type_result, "is_quadrant", False)):
+        return False
+    debug = paper_type_debug or {}
+    if bool(debug.get("is_dual_text")):
+        return False
+    return True
 
 
 def _is_pdf(file_path: str) -> bool:
@@ -278,7 +388,7 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
             continue
         eligible_pages += 1
         m_count = count_marginal_anchor_candidates(
-            p["text_blocks"], p["page_width"],
+            p["text_blocks"], p["page_width"], p["page_height"],
         )
         if m_count >= 1:
             pages_with_marginal += 1
@@ -345,6 +455,16 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
                 else:
                     # 시험지: 1차 결과 그대로.
                     regions = first_pass_regions[idx]
+                if _should_expand_text_regions_by_visual_x(
+                    p.get("paper_type_result"),
+                    p.get("paper_type_debug"),
+                ):
+                    _expand_single_text_regions_to_visual_content(
+                        p["image_path"],
+                        regions,
+                        page_width=p["page_width"],
+                        page_height=p["page_height"],
+                    )
                 text_regions = list(regions)
                 scale = _PDF_TO_PIXEL_SCALE
                 for r in regions:
@@ -472,6 +592,18 @@ def _boxes_and_regions_for_pdf_page(
 
     image_path = page_info["image_path"]
 
+    # Born-digital PDF pages with embedded text should not be resurrected by
+    # OpenCV when the text splitter found no anchors. In tenant-2 workbooks
+    # this path turned concept/explanation pages into large false problems.
+    if page_info.get("has_embedded_text") and (page_info.get("page_text") or "").strip():
+        logger.info(
+            "PDF_TEXT_SPLIT_EMPTY_DROP | page=%d | paper_type=%s | chars=%d",
+            page_index,
+            page_info.get("paper_type") or "unknown",
+            len(page_info.get("page_text") or ""),
+        )
+        return [], []
+
     # 스캔본에서 OCR 가용 시 — OCR 결과 신뢰
     if not page_info["has_embedded_text"] and is_ocr_available():
         try:
@@ -502,6 +634,23 @@ def _boxes_and_regions_for_pdf_page(
                 image_path, e,
             )
             # fallthrough → OpenCV 안전망
+
+    if (
+        not page_info["has_embedded_text"]
+        and source_type == "school_exam_pdf"
+    ):
+        apply_clahe = _should_apply_opencv_clahe(
+            has_embedded_text=False,
+            source_type=source_type,
+        )
+        boxes = segment_questions_scan_layout(image_path, apply_clahe=apply_clahe)
+        if boxes:
+            _classify_and_record_paper_type(
+                page_info, image_path,
+                has_embedded_text=False,
+                handwriting_bias=handwriting_bias,
+            )
+            return boxes, []
 
     # 텍스트 있지만 분할 실패 OR OCR 크레덴셜 없음 OR OCR 예외
     skip_ocr = page_info["has_embedded_text"]

@@ -48,6 +48,20 @@ def test_anchor_pattern_with_space_still_works():
     assert _extract_question_number("3) 다음은 어느") == 3
 
 
+def test_anchor_pattern_after_source_prefix():
+    """`[언남고 기출] / 1.` 같은 출처 prefix 뒤 문항 번호도 인식한다."""
+    assert _extract_question_number("[ 언남고 기출 ] / 1. 그림은 생태계") == 1
+    assert (
+        _extract_question_number("[2019년 고1 6월 학평 통합과학 19번] / 16. 다음은")
+        == 16
+    )
+    assert (
+        _extract_question_number("[2017. 7. 평가원 16번 문제]\n  \n18.\n다음은")
+        == 18
+    )
+    assert _extract_question_number("[보기] ㄱ. 옳은 설명") is None
+
+
 def test_anchor_pattern_rejects_double_paren():
     """`1.1` 또는 `1..` 같이 같은 구두점이 연속이면 anchor 아님."""
     assert _extract_question_number("1..something") is None
@@ -114,6 +128,51 @@ def test_skip_answer_table():
     """정답표 페이지: "1. ④ 2. ④ 3. ① 4. ③ ..." 5+ 차단."""
     blocks = _blocks(
         "1. ④  2. ④  3. ①  4. ③  5. ③  6. ④  7. ④  8. ④  9. ⑤  10. ⑤"
+    )
+    assert is_non_question_page(blocks) is True
+
+
+def test_skip_workbook_answer_grid_with_step_sections():
+    """상용 workbook 끝부분의 Step별 정답/해설참조 grid는 문항 페이지가 아니다."""
+    blocks = _blocks(
+        "Part 03 생명체 구성 물질의 형성",
+        "Step 1. 개념완성",
+        "01 해설 참조 02 해설 참조 03 해설 참조 04 해설 참조 05 해설 참조",
+        "Step 2. 내신완성",
+        "01 / ① / 02 / ⑤ / 03 / ① / 04 해설 참조 / 05 / ⑤",
+        "06 / ④ / 07 해설 참조 / 08 / ④ / 09 / ①",
+        "Step 3. 수능완성",
+        "01 / ⑤ / 02 / ⑤ / 03 / ⑤ / 04 / ④ / 05 / ⑤",
+        "06 / ⑤ / 07 / ④ / 08 / ② / 09 / ③ / 10 / ⑤",
+    )
+    assert is_non_question_page(blocks) is True
+
+
+def test_skip_project_answer_grid_with_linebreak_cells():
+    """번호와 정답이 줄바꿈 분리된 PROJECT/고난도 정답표도 차단한다."""
+    blocks = _blocks(
+        "신과함께 PROJECT",
+        "Part 01 화학과 우리 생활",
+        "고난도 수능 모의평가 문항으로 1등급 만들기",
+        "01\n④\n02\n⑤\n03\n③\n04\n④\n05\n④",
+        "06\n⑤\n07\n⑤\n08\n⑤\n09\n⑤\n10\n⑤",
+        "고난도 대치동 기출변형 문항으로 1등급 다지기",
+        "01\n⑤\n02\n⑤\n03\n⑤\n04\n④\n05\n②",
+        "06\n⑤\n07\n⑤\n08\n③\n09\n⑤\n10\n⑤",
+    )
+    assert is_non_question_page(blocks) is True
+
+
+def test_skip_chemistry_test_appendix_page():
+    """화학 workbook의 TEST 부록/정답 나열 페이지는 문제 crop 대상이 아니다."""
+    blocks = _blocks(
+        "※ 다음 이온의 이온식을 쓰시오.",
+        "1. 수소이온 2. 나트륨이온 3. 리튬이온",
+        "4. 칼륨이온 5. 마그네슘이온 6. 칼슘이온",
+        "7. 은이온 8. 알루미늄이온 9. 아이오딘화이온",
+        "10. 구리이온 11. 염화이온 12. 납이온",
+        "13. 산화이온 14. 황화이온 15. 플루오린화이온",
+        "이온과 이온화 TEST",
     )
     assert is_non_question_page(blocks) is True
 
@@ -245,6 +304,185 @@ def test_split_with_no_space_anchors():
     assert [r.number for r in regions] == [12, 13, 14, 15]
 
 
+def test_prefer_marginal_preserves_body_anchors_in_other_column():
+    """workbook 모드에서도 marginal이 없는 반대쪽 column의 prefix형 본문 anchor는 보존."""
+    blocks = [
+        TextBlock("9.\n다음은 물질 A에 대한 설명이다.", 70, 150, 300, 170),
+        TextBlock("보기 ㄱ. 설명", 80, 250, 280, 260),
+        TextBlock("10.\n그림은 물질 B를 나타낸 것이다.", 70, 450, 300, 470),
+        TextBlock("보기 ㄴ. 설명", 80, 550, 280, 560),
+        TextBlock(
+            "[2021학년도 고3 10월 학평 1번]\n11.\n다음은 탄소 화합물 설명이다.",
+            330,
+            135,
+            560,
+            170,
+        ),
+        TextBlock("보기 ㄷ. 설명", 340, 250, 550, 260),
+        TextBlock(
+            "[2019학년도 고2 6월 학평 2번]\n12.\n다음은 문명 물질 설명이다.",
+            330,
+            430,
+            560,
+            465,
+        ),
+        TextBlock("보기 ㄹ. 설명", 340, 550, 550, 560),
+    ]
+
+    regions = split_questions(
+        blocks,
+        page_width=612.0,
+        page_height=858.0,
+        page_index=0,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [9, 10, 11, 12]
+    assert all(r.bbox[0] < 315 for r in regions[:2])
+    assert all(r.bbox[0] > 300 for r in regions[2:])
+
+
+def test_prefer_marginal_preserves_source_prefixed_body_anchor_same_column():
+    """같은 column의 source-prefixed body anchor는 소문항이 아니라 독립 문항이다."""
+    blocks = [
+        TextBlock(
+            "[2019년 고1 6월 학평 통합과학 4번]\n17.\n다음은 보드게임 문제이다.",
+            79,
+            135,
+            311,
+            169,
+        ),
+        TextBlock("보기 ㄱ. 설명", 85, 250, 300, 260),
+        TextBlock("18.\n그림은 우주의 일부를 나타낸 것이다.", 79, 439, 390, 469),
+        TextBlock("보기 ㄴ. 설명", 85, 550, 300, 560),
+    ]
+
+    regions = split_questions(
+        blocks,
+        page_width=612.0,
+        page_height=864.0,
+        page_index=0,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [17, 18]
+
+
+def test_prefer_marginal_still_drops_same_column_subitems():
+    """source prefix가 없는 같은 column의 (1)(2) 소문항은 main crop으로 승격하지 않는다."""
+    blocks = [
+        TextBlock("25.\n그림은 지권의 구조를 나타낸 것이다.", 79, 154, 262, 169),
+        TextBlock("(1) 대류 현상의 원인을 서술하시오.", 79, 671, 367, 679),
+        TextBlock("(2) 기상 현상이 나타나는 권을 쓰시오.", 79, 723, 317, 731),
+    ]
+
+    regions = split_questions(
+        blocks,
+        page_width=612.0,
+        page_height=864.0,
+        page_index=0,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [25]
+
+
+def test_split_questions_recovers_inline_main_anchor_inside_merged_block():
+    """선택지와 다음 문항 시작이 한 block에 합쳐져도 줄 시작 main anchor는 복구한다."""
+    blocks = [
+        TextBlock("3.\n그림은 X(g)에 대한 자료이다.", 42, 130, 283, 147),
+        TextBlock(
+            "① ㄱ\n② ㄷ\n③ ㄱ, ㄴ\n④ ㄴ, ㄷ\n⑤ ㄱ, ㄴ, ㄷ\n4.\n다음은 원자 X~Z에 대한 자료이다.",
+            42,
+            421,
+            277,
+            467,
+        ),
+        TextBlock("5.\n다음은 다른 자료이다.", 304, 130, 551, 147),
+    ]
+
+    regions = split_questions(
+        blocks,
+        page_width=612.0,
+        page_height=858.0,
+        page_index=0,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [3, 4, 5]
+    q3 = next(r for r in regions if r.number == 3)
+    q4 = next(r for r in regions if r.number == 4)
+    assert q3.bbox[3] <= q4.bbox[1]
+
+
+def test_split_questions_includes_separate_source_prefix_above_anchor():
+    """출처 prefix가 번호 줄과 분리된 PDF block이어도 같은 문항 상단에 포함한다."""
+    blocks = [
+        TextBlock("[2022년 고1 9월 학평 통합과학 18번]", 79, 135, 233, 144),
+        TextBlock("61.\n다음은 2, 3주기 원소 A~D에 대한 자료이다.", 79, 153, 271, 168),
+        TextBlock("이에 대한 설명으로 옳은 것은?", 79, 244, 435, 253),
+        TextBlock("62.\n다음은 다른 문항이다.", 79, 520, 271, 535),
+    ]
+
+    regions = split_questions(
+        blocks,
+        page_width=612.0,
+        page_height=864.0,
+        page_index=0,
+        prefer_marginal=True,
+    )
+
+    q61 = next(r for r in regions if r.number == 61)
+    assert q61.bbox[1] <= 135
+
+
+def test_split_questions_does_not_treat_bogi_as_source_prefix():
+    """[보기] 같은 bracket label은 출처 prefix 상단 확장 신호가 아니다."""
+    blocks = [
+        TextBlock("[보기]", 79, 135, 120, 144),
+        TextBlock("1.\n다음 설명으로 옳은 것은?", 79, 153, 271, 168),
+        TextBlock("2.\n다음은 다른 문항이다.", 79, 520, 271, 535),
+    ]
+
+    regions = split_questions(
+        blocks,
+        page_width=612.0,
+        page_height=864.0,
+        page_index=0,
+        prefer_marginal=True,
+    )
+
+    q1 = next(r for r in regions if r.number == 1)
+    assert q1.bbox[1] > 145
+
+
+def test_source_prefixed_main_question_absorbs_parenthesized_subitems():
+    """source-prefixed 큰 문항 내부 (1)(2)(3)은 별도 crop anchor가 아니다."""
+    blocks = [
+        TextBlock(
+            "[ 언남고 기출 ]\n9. 표는 방형구 조사 결과이다.",
+            28,
+            70,
+            566,
+            98,
+        ),
+        TextBlock("(1) ⓐ와 ⓑ에 해당하는 수를 쓰시오.", 28, 287, 181, 296),
+        TextBlock("(2) 우점종과 중요치를 쓰시오.", 28, 368, 401, 377),
+        TextBlock("(3) A와 B의 상대 빈도를 비교하시오.", 28, 436, 199, 445),
+    ]
+
+    regions = split_questions(
+        blocks,
+        page_width=595.0,
+        page_height=841.0,
+        page_index=0,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [9]
+    assert regions[0].bbox[3] > 445
+
+
 def test_validate_drops_cross_page_duplicate():
     """크로스-페이지 중복 anchor 제거 (본문 내 '그림 4는' 오탐)."""
     from academy.domain.tools.question_splitter import QuestionRegion
@@ -328,6 +566,215 @@ def test_validate_per_page_restart_still_drops_outliers_per_page():
         assert nums == [1, 2, 3, 4, 5], f"page {i}: {nums}"
 
 
+def test_validate_preserves_late_section_restart_after_high_sequence():
+    """연속 번호 자료 뒤쪽의 새 기출 섹션 1번 재시작은 전역 중복으로 버리지 않는다."""
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    pages = [
+        [
+            QuestionRegion(
+                number=i * 2 + 1,
+                bbox=(0, 0, 500, 80),
+                page_index=i,
+            ),
+            QuestionRegion(
+                number=i * 2 + 2,
+                bbox=(0, 80, 500, 160),
+                page_index=i,
+            ),
+        ]
+        for i in range(20)
+    ]
+    pages.extend(
+        [
+            [
+                QuestionRegion(number=1, bbox=(0, 0, 500, 80), page_index=20),
+                QuestionRegion(number=2, bbox=(0, 80, 500, 160), page_index=20),
+            ],
+            [
+                QuestionRegion(number=3, bbox=(0, 0, 500, 80), page_index=21),
+                QuestionRegion(number=4, bbox=(0, 80, 500, 160), page_index=21),
+            ],
+            [
+                QuestionRegion(number=5, bbox=(0, 0, 500, 80), page_index=22),
+                QuestionRegion(number=6, bbox=(0, 80, 500, 160), page_index=22),
+            ],
+            [
+                QuestionRegion(number=7, bbox=(0, 0, 500, 80), page_index=23),
+                QuestionRegion(number=8, bbox=(0, 80, 500, 160), page_index=23),
+            ],
+            [
+                QuestionRegion(number=1, bbox=(0, 120, 500, 150), page_index=24),
+                QuestionRegion(number=2, bbox=(0, 150, 500, 180), page_index=24),
+                QuestionRegion(number=3, bbox=(0, 180, 500, 210), page_index=24),
+                QuestionRegion(number=9, bbox=(0, 0, 500, 120), page_index=24),
+            ],
+        ]
+    )
+
+    out = validate_anchors_across_pages(pages)
+
+    assert [r.number for r in out[20]] == [1, 2]
+    assert [r.number for r in out[21]] == [3, 4]
+    assert [r.number for r in out[22]] == [5, 6]
+    assert [r.number for r in out[23]] == [7, 8]
+    assert [r.number for r in out[24]] == [9]
+
+
+def test_validate_preserves_step_section_restart_after_short_sequence():
+    """Step 1의 1-12 뒤 Step 2가 1번부터 다시 시작해도 버리지 않는다."""
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    pages = [
+        [
+            QuestionRegion(number=n, bbox=(0, i * 80, 500, i * 80 + 70), page_index=0)
+            for i, n in enumerate((1, 2, 3, 4))
+        ],
+        [
+            QuestionRegion(number=n, bbox=(0, i * 80, 500, i * 80 + 70), page_index=1)
+            for i, n in enumerate((5, 6, 7, 8))
+        ],
+        [
+            QuestionRegion(number=n, bbox=(0, i * 80, 500, i * 80 + 70), page_index=2)
+            for i, n in enumerate((9, 10, 11, 12))
+        ],
+        [
+            QuestionRegion(number=n, bbox=(0, i * 80, 500, i * 80 + 70), page_index=3)
+            for i, n in enumerate((1, 2, 3, 4))
+        ],
+        [
+            QuestionRegion(number=n, bbox=(0, i * 80, 500, i * 80 + 70), page_index=4)
+            for i, n in enumerate((5, 6, 7, 8))
+        ],
+        [
+            QuestionRegion(number=n, bbox=(0, i * 80, 500, i * 80 + 70), page_index=5)
+            for i, n in enumerate((9, 10, 11, 12))
+        ],
+    ]
+
+    out = validate_anchors_across_pages(pages)
+
+    assert [r.number for r in out[3]] == [1, 2, 3, 4]
+    assert [r.number for r in out[4]] == [5, 6, 7, 8]
+    assert [r.number for r in out[5]] == [9, 10, 11, 12]
+
+
+def test_validate_preserves_consecutive_late_section_restarts():
+    """후반부 새 섹션이 끝난 뒤 또 1번부터 시작하는 다음 섹션도 보존한다."""
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    pages = [
+        [
+            QuestionRegion(
+                number=i * 2 + 1,
+                bbox=(0, 0, 500, 80),
+                page_index=i,
+            ),
+            QuestionRegion(
+                number=i * 2 + 2,
+                bbox=(0, 80, 500, 160),
+                page_index=i,
+            ),
+        ]
+        for i in range(20)
+    ]
+    pages.extend(
+        [
+            [
+                QuestionRegion(number=1, bbox=(0, 0, 500, 80), page_index=20),
+                QuestionRegion(number=2, bbox=(0, 80, 500, 160), page_index=20),
+            ],
+            [
+                QuestionRegion(number=3, bbox=(0, 0, 500, 80), page_index=21),
+                QuestionRegion(number=4, bbox=(0, 80, 500, 160), page_index=21),
+            ],
+            [
+                QuestionRegion(number=5, bbox=(0, 0, 500, 80), page_index=22),
+                QuestionRegion(number=6, bbox=(0, 80, 500, 160), page_index=22),
+            ],
+            [
+                QuestionRegion(number=7, bbox=(0, 0, 500, 80), page_index=23),
+                QuestionRegion(number=8, bbox=(0, 80, 500, 160), page_index=23),
+            ],
+            [
+                QuestionRegion(number=1, bbox=(0, 0, 500, 80), page_index=24),
+                QuestionRegion(number=2, bbox=(0, 80, 500, 160), page_index=24),
+            ],
+            [
+                QuestionRegion(number=3, bbox=(0, 0, 500, 80), page_index=25),
+                QuestionRegion(number=4, bbox=(0, 80, 500, 160), page_index=25),
+            ],
+        ]
+    )
+
+    out = validate_anchors_across_pages(pages)
+
+    assert [r.number for r in out[20]] == [1, 2]
+    assert [r.number for r in out[21]] == [3, 4]
+    assert [r.number for r in out[22]] == [5, 6]
+    assert [r.number for r in out[23]] == [7, 8]
+    assert [r.number for r in out[24]] == [1, 2]
+    assert [r.number for r in out[25]] == [3, 4]
+
+
+def test_validate_rejects_mixed_false_low_anchors_after_short_sequence():
+    """짧은 연속 번호 뒤 실제 다음 번호와 섞인 낮은 번호 오탐은 재시작으로 보지 않는다."""
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    page0 = [
+        QuestionRegion(number=n, bbox=(0, i * 80, 500, i * 80 + 70), page_index=0)
+        for i, n in enumerate((1, 2, 3, 4))
+    ]
+    page1 = [
+        QuestionRegion(number=n, bbox=(0, i * 80, 500, i * 80 + 70), page_index=1)
+        for i, n in enumerate((5, 6, 7, 8))
+    ]
+    page2 = [
+        QuestionRegion(number=n, bbox=(0, i * 80, 500, i * 80 + 70), page_index=2)
+        for i, n in enumerate((1, 2, 3, 9, 10, 11, 12))
+    ]
+    page3 = [
+        QuestionRegion(number=n, bbox=(0, i * 80, 500, i * 80 + 70), page_index=3)
+        for i, n in enumerate((13, 14, 15, 16))
+    ]
+
+    out = validate_anchors_across_pages([page0, page1, page2, page3])
+
+    assert [r.number for r in out[2]] == [9, 10, 11, 12]
+
+
+def test_validate_still_drops_unconfirmed_late_low_false_anchors():
+    """다음 페이지 연속성이 없는 후반부 낮은 번호 오탐은 기존처럼 중복 제거한다."""
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    pages = [
+        [
+            QuestionRegion(
+                number=i * 2 + 1,
+                bbox=(0, 0, 500, 80),
+                page_index=i,
+            ),
+            QuestionRegion(
+                number=i * 2 + 2,
+                bbox=(0, 80, 500, 160),
+                page_index=i,
+            ),
+        ]
+        for i in range(15)
+    ]
+    pages.append(
+        [
+            QuestionRegion(number=1, bbox=(0, 0, 500, 80), page_index=15),
+            QuestionRegion(number=2, bbox=(0, 80, 500, 160), page_index=15),
+            QuestionRegion(number=3, bbox=(0, 160, 500, 240), page_index=15),
+        ]
+    )
+
+    out = validate_anchors_across_pages(pages)
+
+    assert out[15] == []
+
+
 def test_marginal_anchor_extracts_standalone_number():
     """marginal column standalone 'N.' / 'N' block 만 인식, 본문 anchor 거부."""
     from academy.domain.tools.question_splitter import _extract_marginal_question_number
@@ -341,7 +788,7 @@ def test_marginal_anchor_extracts_standalone_number():
     assert _extract_marginal_question_number("3. 다음") is None
     assert _extract_marginal_question_number("3.0") is None
     assert _extract_marginal_question_number("1)") is None
-    assert _extract_marginal_question_number("125.") is None  # > 60 (max legit)
+    assert _extract_marginal_question_number("501.") is None  # > 500 (max legit)
 
 
 def test_question_anchor_accepts_ocr_slash_separator():
@@ -433,6 +880,50 @@ def test_split_questions_dual_column_marginal_keeps_right_column():
     assert [r.number for r in regions] == [1, 2, 3, 4]
     right_regions = [r for r in regions if r.number in (3, 4)]
     assert all(r.bbox[0] >= pw * 0.5 - 2 for r in right_regions)
+
+
+def test_split_questions_dual_marginal_accepts_gutter_overlap_right_anchor():
+    """우측 column 번호 block이 gutter를 살짝 침범해도 marginal anchor로 유지한다.
+
+    T2 doc302 p15: PyMuPDF가 우측 Q7/Q8 block의 x0를 mid_x보다 약간 작게
+    반환했다. workbook marginal-only 모드가 이를 body anchor로 분류하면 Q7/Q8이
+    통째 누락되어 4문항 페이지가 2문항으로 잘린다.
+    """
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 612.0, 864.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.85,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+    )
+    blocks = [
+        TextBlock(text="5.\n다음은 측정과 관련된 설명이다.", x0=42.5, y0=130.5, x1=280.6, y1=145.2),
+        TextBlock(text="본문 5", x0=48.1, y0=176.3, x1=274.9, y1=196.9),
+        TextBlock(text="6.\n다음은 자연과 관련된 설명이다.", x0=42.5, y0=428.0, x1=280.6, y1=442.7),
+        TextBlock(text="본문 6", x0=48.1, y0=470.2, x1=277.1, y1=529.1),
+        # x0=303.2 is slightly smaller than mid_x=306.0, but the block center is right-column.
+        TextBlock(text="7.\n다양한 형태의 습도, 자기, 전기 신호", x0=303.2, y0=130.5, x1=541.3, y1=145.2),
+        TextBlock(text="본문 7", x0=324.7, y0=153.4, x1=511.3, y1=162.4),
+        TextBlock(text="8.\n아래의 빈칸에 알맞은 말을 써 넣으시오.", x0=303.2, y0=428.9, x1=468.9, y1=443.7),
+        TextBlock(text="본문 8", x0=303.2, y0=465.3, x1=541.3, y1=582.2),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=14,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [5, 6, 7, 8]
+    assert {r.number for r in regions if r.bbox[0] >= pw * 0.5 - 2} == {7, 8}
 
 
 def test_split_questions_prefer_marginal_threshold_one_anchor():
@@ -596,6 +1087,45 @@ def test_split_questions_scan_dual_expands_shared_range_material():
     assert by_num[10].bbox[3] < by_num[11].bbox[1]
 
 
+def test_question_type_label_belongs_to_following_question():
+    """서술형/단답형 라벨은 앞 문항 끝이 아니라 다음 문항 시작에 포함한다."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 600.0, 840.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_SINGLE,
+        confidence=0.9,
+        is_dual_column=False,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+    )
+    blocks = [
+        TextBlock(text="73. 그림은 태양의 내부 구조를 나타낸 것이다.", x0=70, y0=140, x1=520, y1=160),
+        TextBlock(text="이에 대한 설명으로 옳은 것은?", x0=70, y0=320, x1=520, y1=340),
+        TextBlock(text="서술형", x0=70, y0=500, x1=100, y1=512),
+        TextBlock(text="74. 빅뱅 이후 우주의 밀도가 어떻게 변했는지 설명하시오.", x0=70, y0=530, x1=520, y1=550),
+        TextBlock(text="서술형", x0=70, y0=650, x1=100, y1=662),
+        TextBlock(text="75. 수소와 헬륨의 질량비를 쓰시오.", x0=70, y0=680, x1=520, y1=700),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=0,
+        paper_type=pt,
+        prefer_marginal=False,
+    )
+    by_num = {r.number: r for r in regions}
+
+    assert by_num[73].bbox[3] < 500
+    assert by_num[74].bbox[1] <= 500
+    assert by_num[74].bbox[3] < 650
+    assert by_num[75].bbox[1] <= 650
+
+
 def test_validate_detection_threshold_protects_school_exam():
     """시험지에 본문 오탐으로 anchor 1개가 한 번 더 잡혀도 per-page-restart 로 오인식되면 안 됨.
 
@@ -625,6 +1155,181 @@ def test_validate_detection_threshold_protects_school_exam():
     p1_nums = [r.number for r in out[1]]
     assert 4 not in p1_nums, "중복 anchor 4 dedup 미작동"
     assert p1_nums == [6, 7]
+
+
+def test_learning_concept_page_with_sparse_circled_section_numbers_is_non_question():
+    """개념 설명 페이지의 ①/② 섹션 번호를 보기 번호로 오인하지 않는다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, is_non_question_page
+
+    blocks = [
+        TB(text="3) 시간과 길이의 측정", x0=80, y0=120, x1=420, y1=145),
+        TB(text="과거 : 천문학적 현상을 이용하여 시간을 측정하고", x0=80, y0=190, x1=520, y1=215),
+        TB(text="현대 : 시간과 길이의 측정 기술이 발전", x0=80, y0=250, x1=520, y1=275),
+        TB(text="① 시간 측정", x0=80, y0=340, x1=180, y1=365),
+        TB(text="세슘 원자시계를 이용하여 정밀한 시간 측정 가능", x0=180, y0=340, x1=520, y1=365),
+        TB(text="초고속 투과 전자 현미경을 이용하여 움직임을 분석할 수 있음", x0=180, y0=390, x1=550, y1=415),
+        TB(text="② 길이 측정", x0=80, y0=500, x1=180, y1=525),
+        TB(text="레이저 길이 측정기를 이용하여 정밀한 길이 측정 가능", x0=180, y0=500, x1=540, y1=525),
+        TB(text="위성 위치 확인 시스템 GPS를 이용하여 위치를 확인할 수 있음", x0=180, y0=550, x1=550, y1=575),
+        TB(text="추가 설명 : 세슘 원자시계", x0=620, y0=200, x1=780, y1=225),
+        TB(text="원자에서 나오는 빛의 진동수를 이용하여 시간을 측정한다.", x0=620, y0=245, x1=800, y1=310),
+        TB(text="추가 설명 : GPS 시스템", x0=620, y0=430, x1=780, y1=455),
+        TB(text="인공위성을 통하여 위치, 시각 등의 정보를 알 수 있다.", x0=620, y0=480, x1=800, y1=540),
+    ]
+
+    assert is_non_question_page(blocks) is True
+
+
+def test_unit_inner_concept_pages_with_numbered_titles_are_non_question():
+    """단원 내지의 '페이지 | N. 단원명' 번호를 문항 번호로 오인하지 않는다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, is_non_question_page
+
+    blocks = [
+        TB(text="7 | 2 . 빅뱅과 우주 초기 원소의 생성", x0=20, y0=80, x1=360, y1=110),
+        TB(text="( 1 ) 기본 입자 : 빅뱅 직후에 생긴 입자", x0=70, y0=160, x1=420, y1=190),
+        TB(text="( 2 ) 양성자 , 중성자", x0=70, y0=220, x1=300, y1=250),
+        TB(text="참고 ! 섭씨 온도와 절대 온도", x0=500, y0=160, x1=720, y1=190),
+        TB(text="-273℃ = 0K 절 = 섭 + 273", x0=500, y0=200, x1=720, y1=230),
+        TB(text="질량과 전하는 실제 수치가 아닌 상대적 수치를 사용", x0=500, y0=240, x1=760, y1=270),
+        TB(text="Ex ) 쿼크 3개가 모여 각각의 쿼크의 질량은 1 / 3", x0=500, y0=280, x1=780, y1=310),
+        TB(text="쿼크 3개가 모여 하나의 양성자가 된다.", x0=500, y0=220, x1=780, y1=260),
+        TB(text="up 쿼크 down 쿼크 전하량, 질량", x0=500, y0=300, x1=780, y1=340),
+    ]
+
+    assert is_non_question_page(blocks) is True
+
+
+def test_unit_inner_concept_page_without_pipe_is_non_question():
+    """페이지번호와 단원번호가 공백으로 붙은 개념 본문도 비문항으로 본다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, is_non_question_page
+
+    blocks = [
+        TB(text="11 2 . 지구와 생명체를 구성하는 원소의 생성", x0=40, y0=80, x1=420, y1=110),
+        TB(text="1 . 우주, 지구, 생명체를 구성하는 주요 원소의 질량비", x0=60, y0=140, x1=520, y1=170),
+        TB(text="- 우주에서 가장 많은 원소 : 수소 > 헬륨", x0=80, y0=190, x1=430, y1=220),
+        TB(text="- 지각에서 가장 많은 원소 : 산 > 규 > 알 > 철", x0=80, y0=240, x1=450, y1=270),
+        TB(text="- 해양에서 가장 많은 원소 : 산 > 수 > 염 > 나", x0=80, y0=290, x1=450, y1=320),
+        TB(text="- 대기에서 가장 많은 원소 : 질 > 산 > 아", x0=80, y0=340, x1=430, y1=370),
+        TB(text="암석 성분 = SiO2 = 규산염 광물", x0=80, y0=410, x1=400, y1=440),
+    ]
+
+    assert is_non_question_page(blocks) is True
+
+
+def test_dense_list_concept_page_without_step_is_non_question():
+    """Step 이전 개념 본문의 1) 2) 3) 목록 번호를 문항 번호로 보지 않는다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, is_non_question_page
+
+    blocks = [
+        TB(text="12 - 별의 탄생", x0=40, y0=80, x1=180, y1=110),
+        TB(text="1 ) 성운의 형성 성간 물질 가스 구름 성운", x0=60, y0=140, x1=420, y1=170),
+        TB(text="2 ) 원시별의 생성 원시별", x0=60, y0=210, x1=360, y1=240),
+        TB(text="3 ) 별 ( 주계열성 ) 의 탄생 주계열성 수소 핵융합 반응", x0=60, y0=280, x1=500, y1=310),
+        TB(text="중력 수축 = 내부 압력 별의 크기가 일정함", x0=60, y0=350, x1=480, y1=380),
+        TB(text="중심부에서 수소 핵융합 반응이 일어나 에너지를 방출하는 천체", x0=60, y0=420, x1=560, y1=450),
+        TB(text="참고 ! 성운 내부의 밀도가 큰 곳에서 여러 개의 원시별이 생성", x0=60, y0=490, x1=580, y1=520),
+    ]
+
+    assert is_non_question_page(blocks) is True
+
+
+def test_past_exam_analysis_table_is_non_question():
+    """기출 분석/문제 유형 표의 숫자를 문항 번호로 보지 않는다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, is_non_question_page
+
+    blocks = [
+        TB(text="숙명여고 [빅뱅과 원소의 생성 4개년 기출 분석] 문제 유형", x0=40, y0=80, x1=520, y1=110),
+        TB(text="2022 2023 2024 2025", x0=80, y0=170, x1=360, y1=200),
+        TB(text="우주론 비교 스펙트럼 분석 빅뱅 우주론 1 빅뱅 우주론 2", x0=80, y0=250, x1=540, y1=280),
+        TB(text="수소 헬륨 탄생과 질량비 우주배경복사 3", x0=80, y0=330, x1=540, y1=360),
+    ]
+
+    assert is_non_question_page(blocks) is True
+
+
+def test_note_concept_page_is_non_question():
+    """✑ Note 개념 본문의 단원 번호를 문항 번호로 보지 않는다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, is_non_question_page
+
+    blocks = [
+        TB(text="빅뱅과 원소의 생성", x0=40, y0=70, x1=260, y1=100),
+        TB(text="Ⅰ ✑ Note", x0=40, y0=110, x1=160, y1=140),
+        TB(text="1. 빅뱅 우주론의 확립", x0=60, y0=160, x1=260, y1=190),
+        TB(text="⑴ 우주와 관련된 주요 논쟁", x0=60, y0=220, x1=300, y1=250),
+        TB(text="우주가 팽창하고 있음을 관측을 통해 확인하였다.", x0=80, y0=280, x1=520, y1=310),
+        TB(text="정상 우주론과 빅뱅 우주론이 대립하였다.", x0=80, y0=340, x1=520, y1=370),
+        TB(text="수소와 헬륨의 질량비, 우주 배경 복사가 증거이다.", x0=80, y0=400, x1=540, y1=430),
+    ]
+
+    assert is_non_question_page(blocks) is True
+
+
+def test_biology_chapter_concept_page_is_non_question():
+    """생명과학 CHAPTER 개념 본문의 번호를 문항 번호로 보지 않는다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, is_non_question_page
+
+    blocks = [
+        TB(text="6 [ Li : Fe ] 생명과학은 철쌤 CHAPTER 04 신경계", x0=40, y0=70, x1=520, y1=100),
+        TB(text="1. 중추 신경계", x0=60, y0=130, x1=240, y1=160),
+        TB(text="1. 신경계 : 감각기에서 보내는 정보를 받아들이고 반응 명령을 전달하는 기관계", x0=70, y0=190, x1=560, y1=220),
+        TB(text="사람의 신경계 = 중추신경계 + 말초신경계", x0=70, y0=250, x1=520, y1=280),
+        TB(text="2. 중추 신경계 : 뇌와 척수, 연합 뉴런으로 구성", x0=70, y0=310, x1=540, y1=340),
+        TB(text="① 뇌: 대뇌, 소뇌, 사이뇌, 뇌줄기 등으로 구성", x0=70, y0=370, x1=540, y1=400),
+        TB(text="② 척수: 척수 반사의 중추", x0=70, y0=430, x1=360, y1=460),
+    ]
+
+    assert is_non_question_page(blocks) is True
+
+
+def test_hormone_homeostasis_concept_page_is_non_question():
+    """호르몬/항상성 개념 본문의 과정 번호를 문항 번호로 보지 않는다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, is_non_question_page
+
+    blocks = [
+        TB(text="생명과학 Ⅰ 9 체온유지가 중요한 이유", x0=40, y0=70, x1=420, y1=100),
+        TB(text="1. 물질대사에 관여하는 효소는 단백질로 구성되어 있다.", x0=60, y0=130, x1=540, y1=160),
+        TB(text="2. 우리 몸의 효소는 최적 온도가 36.5℃이다.", x0=60, y0=190, x1=500, y1=220),
+        TB(text="② 길항 작용: 같은 기관에 대해 서로 반대로 작용한다.", x0=60, y0=260, x1=540, y1=290),
+        TB(text="3. 항상성 조절 방법", x0=60, y0=330, x1=300, y1=360),
+        TB(text="① 사이뇌 시상 하부 중추, 혈중 포도당 농도 0.1% 유지", x0=70, y0=390, x1=560, y1=420),
+        TB(text="② 인슐린과 글루카곤의 길항 작용", x0=70, y0=450, x1=460, y1=480),
+        TB(text="4. 체온 조절: 열 발생과 열 발산 조절", x0=60, y0=520, x1=460, y1=550),
+    ]
+
+    assert is_non_question_page(blocks) is True
+
+
+def test_step_question_page_with_unit_context_stays_question():
+    """Step 문항 페이지는 단원명/페이지번호가 있어도 비문항으로 차단하지 않는다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, is_non_question_page
+
+    blocks = [
+        TB(text="17", x0=20, y0=20, x1=35, y1=40),
+        TB(text="Step 1. 개념완성", x0=60, y0=70, x1=220, y1=95),
+        TB(text="1.", x0=60, y0=150, x1=80, y1=170),
+        TB(text="그림은 빅뱅 우주론을 모형을 나타낸 것이다.", x0=90, y0=150, x1=420, y1=180),
+        TB(text="옳은 것은 ○표, 옳지 않은 것은 ×표 하시오.", x0=90, y0=190, x1=450, y1=220),
+        TB(text="2.", x0=60, y0=360, x1=80, y1=380),
+        TB(text="빅뱅 우주론의 증거에 대한 설명으로 옳은 것은 쓰시오.", x0=90, y0=360, x1=470, y1=390),
+    ]
+
+    assert is_non_question_page(blocks) is False
+
+
+def test_fill_blank_question_page_is_not_non_question():
+    """빈칸 채우기/OX 선택 문항은 하위 번호가 많아도 비문항이 아니다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, is_non_question_page
+
+    blocks = [
+        TB(text="7.", x0=60, y0=100, x1=80, y1=120),
+        TB(text="그림 (가)와 (나)는 서로 다른 두 우주론을 나타낸 것이다.", x0=90, y0=100, x1=520, y1=130),
+        TB(text="이에 대하여 다음 빈칸을 채우거나 옳고 그름을 선택하시오.", x0=90, y0=140, x1=540, y1=170),
+        TB(text="1. (가)에 해당하는 우주론은 (       )우주론 이다.", x0=100, y0=210, x1=520, y1=240),
+        TB(text="2. (나)에 해당하는 우주론은 (       )우주론 이다.", x0=100, y0=260, x1=520, y1=290),
+        TB(text="3. 우주배경복사는 ( (가) / (나) )를 지지하는 증거이다.", x0=100, y0=310, x1=540, y1=340),
+    ]
+
+    assert is_non_question_page(blocks) is False
 
 
 # ── 6. 4분할(quad) layout 감지 ──
@@ -741,6 +1446,122 @@ def test_dual_column_uses_full_column_width():
         assert width >= pw * 0.4, (
             f"q1 width={width} too narrow (column full width 사용 안 됨)"
         )
+
+
+def test_dual_classified_page_with_left_anchors_and_wide_text_uses_single_width():
+    """dual로 분류되어도 anchor가 좌측뿐이고 본문이 전폭이면 single-wide로 자른다."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 1000.0, 1400.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.85,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+    )
+    blocks = [
+        TB(text="5. 다음은 자료이다.", x0=100, y0=200, x1=420, y1=230),
+        TB(text="제임스웹 우주 망원경에는 거대한 주경이 달려 있다.", x0=110, y0=270, x1=930, y1=310),
+        TB(text="이에 대한 옳은 설명만을 보기에서 고른 것은?", x0=110, y0=520, x1=760, y1=550),
+        TB(text="6. 다음은 길이를 측정하는 다양한 사례이다.", x0=100, y0=760, x1=650, y1=790),
+        TB(text="지구에서 레이저로 빛을 쏘아 거리를 측정한다.", x0=110, y0=830, x1=940, y1=870),
+    ]
+
+    regions = split_questions(blocks, pw, ph, page_index=0, paper_type=pt)
+
+    assert [r.number for r in regions] == [5, 6]
+    assert regions[0].bbox[2] > pw * 0.80
+    assert regions[1].bbox[2] > pw * 0.80
+
+
+def test_dual_classified_full_width_anchor_is_not_right_column_anchor():
+    """전폭 문항 첫 줄이 우측까지 길어도 우측 컬럼 anchor로 오인하지 않는다.
+
+    T2 doc302 p28: Q10 첫 줄이 page 오른쪽까지 길어 center가 mid_x를 넘는다.
+    이를 우측 column으로 보면 Q9가 Q10 앞에서 끝나지 않고 footer 근처까지
+    늘어나 GT와 매칭되지 않는다.
+    """
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 612.0, 864.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.85,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+    )
+    blocks = [
+        TB(text="9.\n그림은 도로에서 발생한 소리를 스마트폰으로 측정한 결과이다.", x0=70.9, y0=149.6, x1=414.5, y1=167.7),
+        TB(text="이에 대한 옳은 설명만을 <보기>에서 있는 대로 고른 것은?", x0=70.9, y0=261.8, x1=265.7, y1=270.8),
+        TB(text="① ㄱ / ② ㄴ / ③ ㄱ, ㄷ / ④ ㄴ, ㄷ / ⑤ ㄱ, ㄴ, ㄷ", x0=76.1, y0=357.9, x1=477.4, y1=365.9),
+        TB(text="10.\n그림 (가)는 자연에서 발생한 신호를, (나)는 전기 신호로 변환한 것이다.", x0=70.9, y0=450.4, x1=569.7, y1=465.2),
+        TB(text="로그 신호 중 하나이다.", x0=101.5, y0=471.9, x1=204.1, y1=489.7),
+        TB(text="이에 대한 옳은 설명만을 <보기>에서 있는 대로 고른 것은?", x0=70.9, y0=594.2, x1=265.7, y1=603.2),
+        TB(text="① ㄱ / ② ㄷ / ③ ㄱ, ㄴ / ④ ㄴ, ㄷ / ⑤ ㄱ, ㄴ, ㄷ", x0=76.1, y0=690.3, x1=477.4, y1=698.3),
+        TB(text="28", x0=37.0, y0=819.8, x1=48.9, y1=830.8),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=27,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [9, 10]
+    q9, q10 = regions
+    assert q9.bbox[3] < q10.bbox[1]
+    assert q9.bbox[2] > pw * 0.75
+    assert q10.bbox[2] > pw * 0.75
+
+
+def test_pixel_only_dual_text_pdf_uses_single_y_order():
+    """픽셀만 dual인 embedded-text PDF는 y 분할을 단일열 순서로 수행한다."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 612.0, 864.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.72,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+        debug={
+            "has_embedded_text": True,
+            "is_dual_text": False,
+            "is_dual_pixel": True,
+        },
+    )
+    blocks = [
+        TB(text="[2021년 고1 11월 학평 통합과학 7번]", x0=79.3, y0=135.0, x1=300.0, y1=145.0),
+        TB(text="25.\n표 (가)는 사람을 구성하는 물질 A, B의 특성이다.", x0=79.3, y0=153.4, x1=541.4, y1=168.2),
+        TB(text="이에 대한 설명으로 옳은 것은?", x0=79.3, y0=300.0, x1=450.0, y1=315.0),
+        TB(text="26.\n다음은 생명 현상과 관련된 반응의 화학 반응식이다.", x0=79.3, y0=475.8, x1=293.9, y1=490.6),
+        TB(text="이에 대한 설명으로 옳은 것은?", x0=79.3, y0=700.0, x1=450.0, y1=715.0),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=86,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [25, 26]
+    assert regions[0].bbox[3] < regions[1].bbox[1]
+    assert regions[0].bbox[2] > pw * 0.75
 
 
 def test_split_questions_cross_column_anchor_fallback():

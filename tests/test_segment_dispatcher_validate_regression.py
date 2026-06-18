@@ -37,6 +37,98 @@ def _r(num: int, page_idx: int) -> QuestionRegion:
     )
 
 
+def test_expand_single_text_regions_to_visual_content_expands_x_only(tmp_path):
+    """단일열 text crop은 렌더 이미지의 그림/표 잉크까지 x축만 보강한다."""
+    import cv2
+    import numpy as np
+
+    from academy.adapters.ai.detection.segment_dispatcher import (
+        _expand_single_text_regions_to_visual_content,
+    )
+
+    image = np.full((200, 200), 255, dtype=np.uint8)
+    image[55:95, 25:80] = 0      # text area
+    image[60:90, 105:175] = 0    # nearby figure/table outside text bbox
+    image_path = str(tmp_path / "page.png")
+    cv2.imwrite(image_path, image)
+
+    region = QuestionRegion(
+        number=1,
+        bbox=(20.0, 50.0, 85.0, 110.0),
+        page_index=0,
+    )
+
+    _expand_single_text_regions_to_visual_content(
+        image_path,
+        [region],
+        page_width=200.0,
+        page_height=200.0,
+    )
+
+    assert region.bbox[0] == 20.0
+    assert region.bbox[2] > 170.0
+    assert region.bbox[1] == 50.0
+    assert region.bbox[3] == 110.0
+
+
+def test_expand_single_text_regions_to_visual_content_ignores_far_decoration(tmp_path):
+    """페이지 외곽 장식 띠는 본문 그림/표처럼 x축 확장에 포함하지 않는다."""
+    import cv2
+    import numpy as np
+
+    from academy.adapters.ai.detection.segment_dispatcher import (
+        _expand_single_text_regions_to_visual_content,
+    )
+
+    image = np.full((200, 200), 255, dtype=np.uint8)
+    image[55:95, 25:80] = 0       # text area
+    image[60:90, 105:145] = 0     # nearby figure/table
+    image[50:180, 185:198] = 0    # far page decoration/sidebar
+    image_path = str(tmp_path / "page.png")
+    cv2.imwrite(image_path, image)
+
+    region = QuestionRegion(
+        number=1,
+        bbox=(20.0, 50.0, 85.0, 110.0),
+        page_index=0,
+    )
+
+    _expand_single_text_regions_to_visual_content(
+        image_path,
+        [region],
+        page_width=200.0,
+        page_height=200.0,
+    )
+
+    assert 145.0 < region.bbox[2] < 170.0
+
+
+def test_should_expand_visual_x_for_pixel_dual_without_text_dual():
+    from academy.adapters.ai.detection.segment_dispatcher import (
+        _should_expand_text_regions_by_visual_x,
+    )
+
+    class _Paper:
+        is_quadrant = False
+
+    assert _should_expand_text_regions_by_visual_x(
+        _Paper(),
+        {"is_dual_text": False, "is_dual_pixel": True},
+    )
+    assert not _should_expand_text_regions_by_visual_x(
+        _Paper(),
+        {"is_dual_text": True, "is_dual_pixel": True},
+    )
+
+    class _Quad:
+        is_quadrant = True
+
+    assert not _should_expand_text_regions_by_visual_x(
+        _Quad(),
+        {"is_dual_text": False, "is_dual_pixel": True},
+    )
+
+
 def test_collect_pdf_pages_returns_validated_regions():
     """validate가 dup/outlier를 드롭하면 regions_per_page도 갱신되어 반환되어야 한다."""
     from academy.adapters.ai.detection import segment_dispatcher as sd

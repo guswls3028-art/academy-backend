@@ -228,6 +228,137 @@ def segment_questions_opencv(image_path: str, *, apply_clahe: bool = False) -> L
     return boxes
 
 
+def segment_questions_scan_layout(image_path: str, *, apply_clahe: bool = False) -> List[BBox]:
+    """Handwritten scan-safe school-exam layout fallback.
+
+    Projection over the raw grayscale page is easily polluted by red grading marks
+    and pencil 풀이. This fallback suppresses saturated colored strokes, forces the
+    common two-column school-exam layout, then merges small intra-question gaps.
+    It intentionally returns numberless boxes; OCR/VLM paths can still provide
+    numbered regions when available.
+    """
+    image_bgr = cv2.imread(image_path)
+    if image_bgr is None:
+        return []
+    if apply_clahe:
+        image_bgr = _apply_lab_clahe_mild(image_bgr)
+    h_img, w_img = image_bgr.shape[:2]
+    if w_img < 400 or h_img < 400:
+        return []
+
+    mask = _black_print_mask(image_bgr)
+    if mask is None:
+        return []
+    clean = _remove_structural_lines(mask, w_img, h_img)
+    columns = _detect_scan_exam_columns(mask, w_img, h_img)
+
+    boxes: List[BBox] = []
+    for x_start, x_end in columns:
+        regions = _find_content_regions(clean, x_start, x_end, h_img)
+        for y_start, y_end in _merge_scan_content_regions(regions, h_img):
+            boxes.append((x_start, y_start, x_end - x_start, y_end - y_start))
+
+    boxes = _filter_scan_layout_boxes(boxes, w_img, h_img)
+    mid_x = w_img // 2
+    boxes.sort(key=lambda b: (0 if b[0] < mid_x else 1, b[1]))
+    return boxes
+
+
+def _black_print_mask(image_bgr: np.ndarray) -> np.ndarray | None:
+    """Return dark, low-saturation strokes while suppressing red grading marks."""
+    if image_bgr is None or len(image_bgr.shape) != 3:
+        return None
+    hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+    mask = ((hsv[:, :, 2] < 150) & (hsv[:, :, 1] < 90)).astype("uint8") * 255
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+
+def _detect_scan_exam_columns(
+    mask: np.ndarray,
+    w_img: int,
+    h_img: int,
+) -> List[Tuple[int, int]]:
+    """Detect a central divider when visible, otherwise use a conservative half split."""
+    if w_img <= 0 or h_img <= 0:
+        return []
+    divider_x: int | None = None
+    try:
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(80, h_img // 8)))
+        v_lines = cv2.morphologyEx(mask, cv2.MORPH_OPEN, v_kernel)
+        projection = (v_lines > 0).sum(axis=0)
+        center_start = w_img // 3
+        center_end = (2 * w_img) // 3
+        if center_end > center_start:
+            center = projection[center_start:center_end]
+            best = int(np.argmax(center))
+            candidate = center_start + best
+            if projection[candidate] >= h_img * 0.16:
+                divider_x = candidate
+    except Exception:
+        divider_x = None
+
+    if divider_x is None:
+        divider_x = w_img // 2
+    min_col_w = int(w_img * 0.32)
+    if divider_x < min_col_w or (w_img - divider_x) < min_col_w:
+        return [(0, w_img)]
+    return [(0, divider_x), (divider_x, w_img)]
+
+
+def _merge_scan_content_regions(
+    regions: List[Tuple[int, int]],
+    h_img: int,
+) -> List[Tuple[int, int]]:
+    """Merge intra-question fragments after red/pencil suppression."""
+    if not regions or h_img <= 0:
+        return []
+    kept: List[Tuple[int, int]] = []
+    for y0, y1 in sorted(regions):
+        height = y1 - y0
+        if y0 < h_img * 0.08 and y1 < h_img * 0.16:
+            continue
+        if height < h_img * 0.045:
+            continue
+        kept.append((y0, y1))
+
+    merged: List[List[int]] = []
+    for y0, y1 in kept:
+        if not merged:
+            merged.append([y0, y1])
+            continue
+        gap = y0 - merged[-1][1]
+        combined_height = y1 - merged[-1][0]
+        if gap <= h_img * 0.025 and combined_height <= h_img * 0.38:
+            merged[-1][1] = y1
+        else:
+            merged.append([y0, y1])
+    return [(int(y0), int(y1)) for y0, y1 in merged]
+
+
+def _filter_scan_layout_boxes(
+    boxes: List[BBox],
+    w_img: int,
+    h_img: int,
+) -> List[BBox]:
+    """Remove obvious footer/scratch fragments from scan-layout fallback."""
+    filtered: List[BBox] = []
+    for x, y, w, h in boxes:
+        if w <= 0 or h <= 0:
+            continue
+        if h < h_img * 0.08:
+            continue
+        if y >= h_img * 0.90:
+            continue
+        # Very low, short fragments are usually footer notes or leftover 풀이.
+        if y >= h_img * 0.82 and h <= h_img * 0.16:
+            continue
+        if w < w_img * 0.25:
+            continue
+        filtered.append((x, y, w, h))
+    return filtered
+
+
 def _remove_structural_lines(
     thresh: np.ndarray, w_img: int, h_img: int,
 ) -> np.ndarray:

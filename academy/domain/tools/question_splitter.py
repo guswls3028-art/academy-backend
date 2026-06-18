@@ -16,11 +16,10 @@ if TYPE_CHECKING:
     from academy.domain.tools.paper_type import PaperTypeResult  # noqa: F401
 
 
-# 시험지 문항 번호 현실 상한.
-# 통합과학/화학/물리 등 정기고사 최대 관측: ~32.
-# 여유를 두고 60으로 상한 (수능형/심화 포함).
-# 이 상한을 넘는 OCR 결과는 오인식(예: "ㄷ8"→128)으로 간주해 거부.
-_MAX_LEGIT_QUESTION_NUMBER = 60
+# 시험지/워크북 문항 번호 현실 상한.
+# tenant2 과거 수동 GT에는 clean PDF workbook 문항 번호가 399까지 존재한다.
+# 500 초과는 연도/페이지/잡음 숫자일 가능성이 커 anchor로 쓰지 않는다.
+_MAX_LEGIT_QUESTION_NUMBER = 500
 
 
 @dataclass
@@ -45,8 +44,26 @@ def _looks_like_learning_concept_page(
     ``1)`` / ``2)`` 가 문항 anchor처럼 보인다. 강한 문항 신호가 있으면
     보존하고, 설명형 신호가 충분히 누적된 페이지만 비문항으로 본다.
     """
-    if has_choices or has_question_indicator:
+    if has_question_indicator:
         return False
+    if re.search(r"(?:✑\s*Note|\bNote\b)", full_text, re.IGNORECASE) and len(full_text) > 200:
+        return True
+    if (
+        "생명과학" in full_text
+        and not re.search(r"(?:ASCENT|개념\s*완성|유형\s*(?:쌓기|정복))", full_text)
+        and re.search(
+            r"(?:호르몬|항상성|삼투압|혈당량|체온|시상\s*하부|내분비샘|"
+            r"인슐린|글루카곤|타이록신|항이뇨\s*호르몬|ADH)",
+            full_text,
+            re.IGNORECASE,
+        )
+    ):
+        return True
+    choice_count = sum(full_text.count(p) for p in ("①", "②", "③", "④", "⑤"))
+    if has_choices and choice_count >= 4:
+        return False
+    if "기출 분석" in full_text and "문제 유형" in full_text:
+        return True
     if len(full_text) < 120:
         return False
 
@@ -59,12 +76,29 @@ def _looks_like_learning_concept_page(
             re.IGNORECASE,
         )
     )
+    unit_inner_title = bool(
+        re.search(
+            r"(?:^|\s)\d{1,3}\s*(?:\|\s*)?\d{1,2}\s*[.．]\s*[가-힣A-Za-z]",
+            full_text,
+        )
+    )
     learning_markers = re.findall(
         r"(?:개념\s*(?:완성|정리|학습)?|핵심\s*(?:개념|정리)?|"
         r"추가\s*설명|학습\s*목표|용어\s*정리|탐구\s*(?:활동|자료)?|"
+        r"기출\s*분석|문제\s*유형|✑\s*Note|\bNote\b|"
+        r"\[\s*설명\s*\]|참고\s*(?:예시|!)?|"
         r"구성\s*요소|상호\s*작용|계\s*\(\s*system\s*\)|"
         r"과학\s*의\s*기초|자연\s*세계\s*규모|미시\s*세계|거시\s*세계|"
-        r"시간\s*규모|공간\s*규모|Ex\s*\)|PROJECT|과학\s*개념)",
+        r"시간\s*규모|공간\s*규모|국제\s*단위계|기본량|유도량|"
+        r"물리량|측정\s*표준|아날로그\s*신호|디지털\s*신호|"
+        r"센서|자료와\s*정보|우주론|스펙트럼|기본\s*입자|쿼크|"
+        r"전하량|질량\s*에너지|우주\s*배경\s*복사|원자핵|"
+        r"성운|원시별|주계열성|핵융합|구성하는\s*원소|질량비|"
+        r"지각|해양|대기|규산염|신경계|중추\s*신경계|말초\s*신경계|"
+        r"대뇌|소뇌|사이뇌|뇌줄기|척수|반사|뉴런|"
+        r"호르몬|항상성|삼투압|혈당량|체온|시상\s*하부|내분비샘|"
+        r"인슐린|글루카곤|타이록신|항이뇨\s*호르몬|ADH|"
+        r"Ex\s*\)|PROJECT|과학\s*개념)",
         full_text,
         re.IGNORECASE,
     )
@@ -73,7 +107,7 @@ def _looks_like_learning_concept_page(
         full_text,
     )
     list_markers = re.findall(
-        r"(?:^|\s)(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]\s*[.)．]?|\d+\)|[-*ㆍ•]\s+)",
+        r"(?:^|\s)(?:[ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ]\s*[.)．]?|\d+\s*\)|[-*ㆍ•]\s+)",
         full_text,
     )
     explanatory_markers = re.findall(
@@ -84,7 +118,16 @@ def _looks_like_learning_concept_page(
     structural_count = len(definition_markers) + len(list_markers)
     explanation_count = structural_count + len(explanatory_markers)
 
+    if (
+        re.search(r"(?:✑\s*Note|\bNote\b)", full_text, re.IGNORECASE)
+        and (explanation_count >= 4 or len(learning_markers) >= 3)
+    ):
+        return True
     if chapter_or_unit and len(learning_markers) >= 2 and explanation_count >= 4:
+        return True
+    if unit_inner_title and len(learning_markers) >= 3 and explanation_count >= 2:
+        return True
+    if "추가 설명" in full_text and structural_count >= 3 and explanation_count >= 8:
         return True
     if len(learning_markers) >= 4 and structural_count >= 3:
         return True
@@ -121,9 +164,56 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
         question_indicators_early = [
             "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
             "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
+            "채우시오", "선택하시오",
         ]
         if not any(kw in full_text for kw in question_indicators_early):
             return True
+
+    # ── workbook 정답표 grid 감지 ──
+    # 운영 케이스 (T2 commercial workbook answer reference pages):
+    # "Part 03 ... Step 2. 내신완성 01 / ① / 02 / ⑤ ..." 또는
+    # "01 해설 참조 02 해설 참조 ..." 형태. 보기 기호가 많아도 실제 문항이
+    # 아니라 answer-key table 이므로 문항 지시문 판정보다 먼저 차단한다.
+    answer_grid_choice_cells = re.findall(
+        r"(?:^|\s)\d{1,2}\s*/\s*[①②③④⑤](?:\s*,\s*[①②③④⑤])*",
+        full_text,
+    )
+    answer_grid_choice_cells.extend(
+        re.findall(
+            r"(?:^|\s)\d{1,2}\s+[①②③④⑤](?:\s*,\s*[①②③④⑤])*",
+            full_text,
+        )
+    )
+    answer_grid_ref_cells = re.findall(
+        r"(?:^|\s)\d{1,2}\s*(?:/|\s)\s*해설\s*참조",
+        full_text,
+    )
+    has_workbook_answer_grid_context = bool(
+        re.search(r"\bPart\s*\d+\b|Step\s*\d+\s*[.:]?\s*(?:개념|내신|수능)\s*완성", full_text)
+    )
+    if has_workbook_answer_grid_context and (
+        len(answer_grid_choice_cells) >= 8
+        or len(answer_grid_ref_cells) >= 5
+        or len(answer_grid_choice_cells) + len(answer_grid_ref_cells) >= 12
+    ):
+        return True
+    if (
+        len(answer_grid_choice_cells) >= 12
+        and re.search(r"(?:PROJECT|고난도\s*(?:수능|대치동)|1등급\s*(?:만들기|다지기))", full_text)
+    ):
+        return True
+
+    # ── workbook appendix TEST/정답 페이지 ──
+    # T2 화학 workbook 후반부의 "이온과 이온화 TEST", "화학반응식 TEST"는
+    # 20~40개 암기 항목/정답을 나열하는 부록이며 학원장 수동 GT에서 문제 crop
+    # 대상으로 보지 않았다. 일반 시험지의 TEST 표제까지 과차단하지 않도록
+    # 해당 좁은 부록 제목 + 많은 번호 항목일 때만 제외한다.
+    appendix_numbered_items = re.findall(r"(?:^|\s)\d{1,2}\s*\.", full_text)
+    if (
+        len(appendix_numbered_items) >= 10
+        and re.search(r"(?:이온과\s*이온화|화학\s*반응식)\s*TEST(?:\s*정답)?", full_text)
+    ):
+        return True
 
     # 해설지 감지: "번호. ⑴ ...이다." 소문항 패턴
     sub_q_pattern = re.findall(r"\d+\.\s*[⑴⑵⑶⑷⑸⑹⑺⑻⑼]", full_text)
@@ -131,6 +221,7 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
         question_indicators_early = [
             "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
             "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
+            "채우시오", "선택하시오",
         ]
         if not any(kw in full_text for kw in question_indicators_early):
             return True
@@ -185,6 +276,7 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
         "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
         "물음에 답", "답하시오", "설명하시오", "쓰시오", "나열하시오",
         "옳지 않은 것", "서술형", "단답형", "약술형", "무엇인가",
+        "채우시오", "선택하시오",
     ]
     has_question_indicator = any(kw in full_text for kw in question_indicators)
 
@@ -325,6 +417,17 @@ _QUESTION_PATTERN = re.compile(
     r")"
 )
 
+_SOURCE_PREFIXED_QUESTION_PATTERN = re.compile(
+    r"^\s*[\[【]\s*[^\]】]{2,90}\s*[\]】]\s*(?:/|\s)*(.+)$",
+    re.DOTALL,
+)
+_SOURCE_PREFIX_ONLY_PATTERN = re.compile(
+    r"^\s*[\[【]\s*[^\]】]{2,90}\s*[\]】]\s*$"
+)
+_QUESTION_TYPE_PREFIX_ONLY_PATTERN = re.compile(
+    r"^\s*[\[【(（]?\s*(?:객관식|선택형|서술형|논술형|단답형|약술형|주관식)\s*[\]】)）]?\s*$"
+)
+
 # 서술형/논술형/단답형 섹션은 1부터 번호를 리셋하므로 선택형 번호와 충돌함.
 # 섹션별 number-space offset을 부여해 크로스-페이지 중복 제거 시 legit 문항이
 # 잘못 드롭되지 않도록 한다.
@@ -349,6 +452,9 @@ _SHARED_QUESTION_RANGE_PATTERN = re.compile(
     r"^\s*[\[【(]\s*"
     r"(\d{1,3})\s*(?:[,，~\-–]|및)\s*(\d{1,3})"
     r"\s*[\]】)]?"
+)
+_INLINE_MAIN_QUESTION_PATTERN = re.compile(
+    r"^\s*(\d{1,3})\s*[.)](?=\s|[가-힣A-Za-z(<【\[\"'“‘])"
 )
 
 
@@ -393,6 +499,70 @@ def _extract_marginal_question_number(text: str) -> Optional[int]:
     return None
 
 
+def _expand_inline_anchor_blocks(text_blocks: List[TextBlock]) -> List[TextBlock]:
+    """PyMuPDF가 한 block에 합친 후속 문항 anchor를 가상 block으로 보강한다.
+
+    예: 선택지 줄 뒤에 같은 block으로 ``4.\n다음은...`` 이 붙으면 기존 anchor
+    추출은 block 시작의 3번만 본다. 줄 시작의 plain ``N.`` main anchor만 보강하고,
+    ``(1)`` 같은 소문항은 보강하지 않는다.
+    """
+    expanded: List[TextBlock] = []
+    for block in text_blocks:
+        expanded.append(block)
+        lines = [line.strip() for line in block.text.splitlines()]
+        if len(lines) < 2:
+            continue
+        line_height = (block.y1 - block.y0) / max(len(lines), 1)
+        for line_idx, line in enumerate(lines[1:], start=1):
+            m = _INLINE_MAIN_QUESTION_PATTERN.match(line)
+            if not m:
+                m = _MARGINAL_NUMBER_PATTERN.match(line)
+                if m and not re.search(r"[.)]", line):
+                    continue
+            if not m:
+                continue
+            try:
+                num = int(m.group(1))
+            except ValueError:
+                continue
+            if not (1 <= num <= _MAX_LEGIT_QUESTION_NUMBER):
+                continue
+            virtual_text = "\n".join(lines[line_idx:]).strip()
+            if not virtual_text:
+                continue
+            tail_probe = " ".join(lines[line_idx:line_idx + 3])
+            if not (
+                re.search(
+                    r"(?:다음|그림|표|자료|이에|대한|설명|물음|쓰시오|고르)",
+                    tail_probe,
+                )
+                or re.search(r"[가-힣]{3,}", tail_probe)
+            ):
+                continue
+            y0 = block.y0 + line_height * line_idx
+            expanded.append(
+                TextBlock(
+                    text=virtual_text,
+                    x0=block.x0,
+                    y0=y0,
+                    x1=block.x1,
+                    y1=block.y1,
+                )
+            )
+    return expanded
+
+
+def _looks_like_source_prefix_only(text: str) -> bool:
+    stripped = (text or "").strip()
+    if not _SOURCE_PREFIX_ONLY_PATTERN.match(stripped):
+        return False
+    return bool(re.search(r"(?:년|학평|평가원|수능|기출|문제|번)", stripped))
+
+
+def _looks_like_question_type_prefix_only(text: str) -> bool:
+    return bool(_QUESTION_TYPE_PREFIX_ONLY_PATTERN.match((text or "").strip()))
+
+
 def _extract_question_number(text: str) -> Optional[int]:
     """Extract question number from text block content.
 
@@ -433,6 +603,10 @@ def _extract_question_number(text: str) -> Optional[int]:
 
     # 2. 선택형 번호 패턴
     m = _QUESTION_PATTERN.match(text)
+    if not m:
+        source_prefixed = _SOURCE_PREFIXED_QUESTION_PATTERN.match(text)
+        if source_prefixed:
+            m = _QUESTION_PATTERN.match(source_prefixed.group(1).strip())
     if not m:
         return None
 
@@ -584,6 +758,57 @@ def _filter_continuous_anchor_sequence(
     return [c for idx, c in enumerate(candidates) if idx in keep]
 
 
+def _tighten_region_to_content(
+    *,
+    blocks: List[TextBlock],
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    page_width: float,
+    page_height: float,
+    margin: float,
+) -> Tuple[float, float, float, float]:
+    """Shrink an anchor-derived region to the actual text content inside it."""
+    if not blocks or page_width <= 0 or page_height <= 0:
+        return x0, y0, x1, y1
+
+    footer_y = page_height * 0.92
+    region_blocks: List[TextBlock] = []
+    for block in blocks:
+        if block.y0 >= footer_y:
+            continue
+        if block.y1 < y0 or block.y0 > y1:
+            continue
+        overlap_x = max(0.0, min(x1, block.x1) - max(x0, block.x0))
+        block_w = max(1.0, block.x1 - block.x0)
+        if overlap_x / block_w < 0.35:
+            continue
+        region_blocks.append(block)
+
+    if not region_blocks:
+        return x0, y0, x1, y1
+
+    content_x0 = min(b.x0 for b in region_blocks)
+    content_x1 = max(b.x1 for b in region_blocks)
+    content_y1 = max(b.y1 for b in region_blocks)
+
+    pad_x = max(page_width * 0.012, margin * 2)
+    pad_y_bottom = max(page_height * 0.035, margin * 3)
+    min_w = page_width * 0.12
+    min_h = page_height * 0.06
+
+    tightened_x0 = max(x0, content_x0 - pad_x)
+    tightened_x1 = min(x1, content_x1 + pad_x)
+    tightened_y1 = min(y1, max(content_y1 + pad_y_bottom, y0 + min_h))
+
+    if tightened_x1 - tightened_x0 < min_w:
+        return x0, y0, x1, y1
+    if tightened_y1 - y0 < min_h:
+        return x0, y0, x1, y1
+    return tightened_x0, y0, tightened_x1, tightened_y1
+
+
 def _extract_shared_question_range(text: str) -> Optional[Tuple[int, int]]:
     m = _SHARED_QUESTION_RANGE_PATTERN.match((text or "").strip())
     if not m:
@@ -653,6 +878,7 @@ def _expand_shared_range_regions(
 def count_marginal_anchor_candidates(
     text_blocks: List[TextBlock],
     page_width: float,
+    page_height: float = 0.0,
 ) -> int:
     """페이지에서 marginal column 큰 번호 anchor 후보 개수.
 
@@ -663,8 +889,11 @@ def count_marginal_anchor_candidates(
     if not text_blocks or page_width <= 0:
         return 0
     threshold_x = page_width * 0.15
+    footer_y = page_height * 0.92 if page_height > 0 else None
     count = 0
     for b in text_blocks:
+        if footer_y is not None and b.y0 >= footer_y:
+            continue
         if b.x0 >= threshold_x:
             continue
         if _extract_marginal_question_number(b.text) is not None:
@@ -703,12 +932,25 @@ def split_questions(
     if not text_blocks:
         return []
 
+    text_blocks = _expand_inline_anchor_blocks(text_blocks)
+
     # paper_type이 명시되면 휴리스틱 우회. NON_QUESTION이면 빈 리스트 반환.
     if paper_type is not None:
         if paper_type.is_non_question:
             return []
+        debug = getattr(paper_type, "debug", {}) or {}
+        pixel_only_dual = (
+            bool(getattr(paper_type, "has_embedded_text", False))
+            and bool(getattr(paper_type, "is_dual_column", False))
+            and debug.get("is_dual_text") is False
+            and bool(debug.get("is_dual_pixel"))
+        )
         is_quad_layout = paper_type.is_quadrant
-        is_dual_column = paper_type.is_dual_column and not is_quad_layout
+        is_dual_column = (
+            paper_type.is_dual_column
+            and not is_quad_layout
+            and not pixel_only_dual
+        )
     else:
         # 4분할 레이아웃 우선 검사 — 가로 + 세로 gutter가 모두 있으면 quad.
         # 4분할이면 dual column 분기와 다른 좌표 구속 필요.
@@ -738,11 +980,19 @@ def split_questions(
         기존 판정은 page-left margin만 marginal로 보아 2단 워크북의 우측 column
         큰 번호(Q3/Q4 등)를 전부 body anchor로 밀어냈다. marginal-only 모드에서는
         그 결과 우측 column 전체가 누락되므로, dual/quad layout에서는 우측 column의
-        local-left margin도 같은 신호로 인정한다.
+        local-left margin도 같은 신호로 인정한다. PyMuPDF block x0가 gutter를
+        몇 pt 침범하는 경우가 있어 center가 우측 column이면 x0 살짝 좌측 진입을
+        허용한다.
         """
+        if page_height > 0 and block.y0 >= page_height * 0.92:
+            return False
         if block.x0 < marginal_threshold_x:
             return True
-        if (is_dual_column or is_quad_layout) and mid_x <= block.x0 < (mid_x + marginal_threshold_x):
+        if (
+            (is_dual_column or is_quad_layout)
+            and ((block.x0 + block.x1) / 2) >= mid_x
+            and block.x0 < (mid_x + marginal_threshold_x)
+        ):
             return True
         return False
 
@@ -764,6 +1014,51 @@ def split_questions(
     if not candidates:
         return []
 
+    def _same_layout_cell(left_idx: int, right_idx: int) -> bool:
+        left = sorted_blocks[left_idx]
+        right = sorted_blocks[right_idx]
+        if not (is_dual_column or is_quad_layout):
+            return True
+        same_cell = (
+            ((left.x0 + left.x1) / 2 < mid_x)
+            == ((right.x0 + right.x1) / 2 < mid_x)
+        )
+        if is_quad_layout:
+            same_cell = same_cell and (
+                ((left.y0 + left.y1) / 2 < mid_y)
+                == ((right.y0 + right.y1) / 2 < mid_y)
+            )
+        return same_cell
+
+    source_main_candidates = [
+        (qnum, idx)
+        for qnum, idx, is_marginal in candidates
+        if not is_marginal
+        and _SOURCE_PREFIXED_QUESTION_PATTERN.match(sorted_blocks[idx].text.strip())
+    ]
+    if source_main_candidates:
+        filtered_candidates: List[Tuple[int, int, bool]] = []
+        for candidate in candidates:
+            qnum, idx, is_marginal = candidate
+            block = sorted_blocks[idx]
+            is_parenthesized_subitem = bool(
+                re.match(r"^\s*\(\d{1,3}\)", block.text.strip())
+            )
+            drop_as_subitem = False
+            if is_parenthesized_subitem:
+                for main_num, main_idx in source_main_candidates:
+                    main_block = sorted_blocks[main_idx]
+                    if (
+                        qnum < main_num
+                        and block.y0 > main_block.y0
+                        and _same_layout_cell(main_idx, idx)
+                    ):
+                        drop_as_subitem = True
+                        break
+            if not drop_as_subitem:
+                filtered_candidates.append(candidate)
+        candidates = filtered_candidates
+
     # Marginal preference 분기:
     # - prefer_marginal=True (워크북 doc-level 신호): marginal candidate 1+ 면 마진만.
     #   페이지에 main question 1 개 (Q1) 만 있는 케이스도 학원장 mental model 의
@@ -774,7 +1069,37 @@ def split_questions(
     body_count = len(candidates) - marginal_count
     scan_continuous = _is_continuous_scan_type(paper_type)
     if prefer_marginal and marginal_count >= 1:
-        candidates = [c for c in candidates if c[2]]
+        marginal_columns: set[tuple[int, int]] = set()
+
+        def _candidate_column(block_idx: int) -> tuple[int, int]:
+            block = sorted_blocks[block_idx]
+            center_x = (block.x0 + block.x1) / 2
+            center_y = (block.y0 + block.y1) / 2
+            x_col = 1 if (is_dual_column or is_quad_layout) and center_x >= mid_x else 0
+            y_col = 1 if is_quad_layout and center_y >= mid_y else 0
+            return x_col, y_col
+
+        for _, idx, is_marginal in candidates:
+            if is_marginal:
+                marginal_columns.add(_candidate_column(idx))
+
+        def _is_source_prefixed_body_anchor(candidate: Tuple[int, int, bool]) -> bool:
+            if candidate[2]:
+                return False
+            block = sorted_blocks[candidate[1]]
+            return bool(_SOURCE_PREFIXED_QUESTION_PATTERN.match(block.text.strip()))
+
+        candidates = [
+            c for c in candidates
+            if (
+                c[2]
+                or _is_source_prefixed_body_anchor(c)
+                or (
+                (is_dual_column or is_quad_layout)
+                and _candidate_column(c[1]) not in marginal_columns
+                )
+            )
+        ]
     elif (
         not scan_continuous
         and marginal_count >= 2
@@ -784,6 +1109,29 @@ def split_questions(
 
     if scan_continuous and not prefer_marginal:
         candidates = _filter_continuous_anchor_sequence(candidates)
+
+    if is_dual_column and candidates:
+        anchor_blocks = [sorted_blocks[idx] for _, idx, _ in candidates]
+        right_anchor_count = sum(
+            1 for block in anchor_blocks
+            if (
+                ((block.x0 + block.x1) / 2) >= mid_x
+                and block.x0 >= (mid_x - marginal_threshold_x)
+            )
+        )
+        top_anchor_y = min(b.y0 for b in anchor_blocks)
+        wide_layout_margin = 2.0
+        content_reaches_right = any(
+            block.x1 >= page_width * 0.75
+            and block.y0 >= top_anchor_y - wide_layout_margin
+            and block.y0 <= page_height * 0.90
+            for block in text_blocks
+        )
+        if right_anchor_count == 0 and content_reaches_right:
+            is_dual_column = False
+            strategy = get_strategy_by_layout_flags(
+                is_quad=is_quad_layout, is_dual=False,
+            )
 
     question_starts: List[Tuple[int, int]] = [(qn, ix) for qn, ix, _ in candidates]
 
@@ -802,26 +1150,52 @@ def split_questions(
     regions: List[QuestionRegion] = []
     margin = 2.0  # small margin in points
 
+    def _prefix_idx_for_start(start_idx: int) -> Optional[int]:
+        if start_idx <= 0:
+            return None
+        prev_idx = start_idx - 1
+        prev_block = sorted_blocks[prev_idx]
+        start_block = sorted_blocks[start_idx]
+        if not _same_layout_cell(prev_idx, start_idx):
+            return None
+        if not (0 <= start_block.y0 - prev_block.y1 <= page_height * 0.06):
+            return None
+        if (
+            _looks_like_source_prefix_only(prev_block.text)
+            or _looks_like_question_type_prefix_only(prev_block.text)
+        ):
+            return prev_idx
+        return None
+
     for i, (qnum, start_idx) in enumerate(question_starts):
         start_block = sorted_blocks[start_idx]
-        next_block = (
-            sorted_blocks[question_starts[i + 1][1]]
-            if i + 1 < len(question_starts)
-            else None
-        )
+        next_start_idx = question_starts[i + 1][1] if i + 1 < len(question_starts) else None
+        next_block = sorted_blocks[next_start_idx] if next_start_idx is not None else None
 
         # Defensive: region_blocks 비면 skip (sort 결과 inconsistency 방어)
-        end_idx = question_starts[i + 1][1] if next_block is not None else len(sorted_blocks)
+        next_prefix_idx = (
+            _prefix_idx_for_start(next_start_idx)
+            if next_start_idx is not None
+            else None
+        )
+        end_idx = next_prefix_idx if next_prefix_idx is not None else (
+            next_start_idx if next_start_idx is not None else len(sorted_blocks)
+        )
         if not sorted_blocks[start_idx:end_idx]:
             continue
 
         # Strategy 호출: x range / y end 계산
         x0, x1 = strategy.compute_x_range(start_block, page_width, mid_x, margin)
         y0 = max(0, start_block.y0 - margin)
+        prefix_idx = _prefix_idx_for_start(start_idx)
+        if prefix_idx is not None:
+            y0 = max(0.0, sorted_blocks[prefix_idx].y0 - margin)
         y1 = strategy.compute_y_end(
             start_block, next_block,
             page_width, page_height, mid_x, mid_y, margin,
         )
+        if next_prefix_idx is not None:
+            y1 = min(y1, sorted_blocks[next_prefix_idx].y0 - margin)
 
         y1 = min(page_height, max(y1, y0 + 10))
 
@@ -837,6 +1211,26 @@ def split_questions(
         # Strategy post-clamp: quad는 quadrant 경계 / dual은 column 경계 추가 구속.
         x0, x1 = strategy.post_clamp_x(start_block, x0, x1, page_width, mid_x, margin)
         y0, y1 = strategy.post_clamp_y(start_block, y0, y1, page_height, mid_y, margin)
+        tighten_to_content = (
+            paper_type is None
+            or bool(getattr(paper_type, "has_embedded_text", True))
+        )
+        if tighten_to_content:
+            content_blocks = (
+                text_blocks
+                if getattr(strategy, "name", "") == "single"
+                else sorted_blocks[start_idx:end_idx]
+            )
+            x0, y0, x1, y1 = _tighten_region_to_content(
+                blocks=content_blocks,
+                x0=x0,
+                y0=y0,
+                x1=x1,
+                y1=y1,
+                page_width=page_width,
+                page_height=page_height,
+                margin=margin,
+            )
 
         regions.append(
             QuestionRegion(
@@ -914,6 +1308,98 @@ def _detect_per_page_restart(
     return signal_a or signal_b
 
 
+def _page_can_continue_late_restart(
+    nums: set[int],
+    *,
+    active_max: int,
+) -> bool:
+    """후반부 섹션 리셋이 다음 페이지로 자연스럽게 이어지는지 판단."""
+    if not nums:
+        return False
+    page_min = min(nums)
+    page_max = max(nums)
+    allowed_jump = max(active_max + 20, 30)
+    if page_max > allowed_jump:
+        return False
+    has_expected_next = any(
+        n in nums for n in (active_max + 1, active_max + 2, active_max + 3)
+    )
+    if page_min <= 3:
+        return active_max < 8 or has_expected_next
+    return page_min <= active_max + 3 or has_expected_next
+
+
+def _has_late_restart_continuation(
+    regions_per_page: List[List["QuestionRegion"]],
+    start_index: int,
+    current_nums: set[int],
+) -> bool:
+    """late section restart 후보가 단발 오탐이 아니라 다음 페이지로 이어지는지 확인."""
+    active_max = max(current_nums)
+    for page_regions in regions_per_page[start_index + 1:start_index + 3]:
+        next_nums = {r.number for r in page_regions}
+        if not next_nums:
+            continue
+        return _page_can_continue_late_restart(next_nums, active_max=active_max)
+    return False
+
+
+def _detect_late_section_restart_pages(
+    regions_per_page: List[List["QuestionRegion"]],
+) -> dict[int, int]:
+    """문서 후반부에서 번호가 1부터 다시 시작하는 섹션 page를 찾는다.
+
+    Continuous numbering 자료라도 뒤쪽에 "[언남고 기출] / 1." 같은 별도 섹션이
+    붙으면 기존 global dedup 이 1,2,3... 을 이전 문항 중복으로 오인해 전부 버린다.
+    다만 시험지 마지막 본문에 보이는 "1, 2, 3" 류 false anchor 는 계속 제거해야 하므로,
+    충분히 큰 선행 번호 진행 이후 + 낮은 번호 시작 + 다음 페이지 연속성 조건을 모두 요구한다.
+    """
+    restart_pages: dict[int, int] = {}
+    prior_max = 0
+    active_section: int | None = None
+    active_max = 0
+    section_id = 0
+
+    for page_idx, page_regions in enumerate(regions_per_page):
+        nums = {r.number for r in page_regions}
+
+        if active_section is not None:
+            if _page_can_continue_late_restart(nums, active_max=active_max):
+                restart_pages[page_idx] = active_section
+                active_max = max(active_max, max(nums))
+                continue
+            active_section = None
+            active_max = 0
+
+        if nums:
+            page_min = min(nums)
+            page_max = max(nums)
+            has_long_prior_section = prior_max >= 20
+            has_completed_short_section = (
+                prior_max >= 8
+                and page_max <= min(prior_max, 12)
+            )
+            is_restart_start = (
+                (has_long_prior_section or has_completed_short_section)
+                and page_min <= 3
+                and page_max <= 30
+                and _has_late_restart_continuation(
+                    regions_per_page,
+                    page_idx,
+                    nums,
+                )
+            )
+            if is_restart_start:
+                section_id += 1
+                active_section = section_id
+                active_max = page_max
+                restart_pages[page_idx] = section_id
+                continue
+            prior_max = max(prior_max, page_max)
+
+    return restart_pages
+
+
 def _drop_outliers_in_seen(
     seen_numbers: set[int],
 ) -> set[int]:
@@ -948,13 +1434,15 @@ def validate_anchors_across_pages(
     """
     여러 페이지의 anchor를 모아 문서 전역 검증.
 
-    두 모드:
+    세 모드:
       A. **Continuous numbering (시험지)** — 기본 모드.
          1. 크로스-페이지 중복 → 처음 등장 page 만 유지. 본문 내 "그림 4는" 같은 오탐 제거.
          2. Sequence outlier (median gap × 5 + abs ≥ 5) 드롭.
       B. **Per-page-restart (워크북/메인자료)** — `_detect_per_page_restart` 가 True 일 때.
          페이지마다 anchor 1, 2, 3... 가 리셋되는 doc 이라 global dedup 이 후속 페이지를 전부
          drop 시키는 결함을 방지. 페이지간 dedup 을 끄고 page-local outlier 만 적용.
+      C. **Late section restart** — continuous 자료 뒤쪽에 별도 기출/복습 섹션이 붙어 번호가
+         다시 1부터 시작하는 경우. 선행 섹션과는 dedup 하지 않고, 새 섹션 안에서는 dedup 한다.
 
     입력 형식: [per_page_regions]
     반환: 필터링된 [per_page_regions] (페이지 구조 유지, 내부 regions만 필터)
@@ -975,22 +1463,54 @@ def validate_anchors_across_pages(
             filtered.append([r for r in page_regions if r.number not in page_outliers])
         return filtered
 
-    # ── Continuous mode — 기존 시험지 dedup ──
+    # ── Continuous mode — 기존 시험지 dedup + late section restart 보정 ──
+    restart_pages = _detect_late_section_restart_pages(regions_per_page)
     seen_numbers: set[int] = set()
+    restart_seen: dict[int, set[int]] = {}
+    region_section: dict[tuple[int, int, tuple[float, float, float, float]], int] = {}
     filtered = []
-    for page_regions in regions_per_page:
+    for page_idx, page_regions in enumerate(regions_per_page):
         kept: List[QuestionRegion] = []
+        restart_section = restart_pages.get(page_idx)
         for r in page_regions:
-            if r.number in seen_numbers:
-                continue
-            seen_numbers.add(r.number)
+            if restart_section is not None:
+                section_seen = restart_seen.setdefault(restart_section, set())
+                if r.number in section_seen:
+                    continue
+                section_seen.add(r.number)
+                region_section[(r.page_index, r.number, r.bbox)] = restart_section
+            else:
+                if r.number in seen_numbers:
+                    continue
+                seen_numbers.add(r.number)
             kept.append(r)
         filtered.append(kept)
 
     outlier_nums = _drop_outliers_in_seen(seen_numbers)
+    restart_outliers = {
+        section: _drop_outliers_in_seen(nums)
+        for section, nums in restart_seen.items()
+    }
     if outlier_nums:
         filtered = [
-            [r for r in page_regions if r.number not in outlier_nums]
+            [
+                r for r in page_regions
+                if not (
+                    r.number in outlier_nums
+                    and (r.page_index, r.number, r.bbox) not in region_section
+                )
+            ]
+            for page_regions in filtered
+        ]
+    if restart_outliers:
+        filtered = [
+            [
+                r for r in page_regions
+                if r.number not in restart_outliers.get(
+                    region_section.get((r.page_index, r.number, r.bbox), -1),
+                    set(),
+                )
+            ]
             for page_regions in filtered
         ]
 
