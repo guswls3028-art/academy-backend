@@ -432,7 +432,9 @@ def _permanently_delete_selected_students(
     _SAFE_TABLES = frozenset({
         "results_result_item", "results_result", "results_exam_attempt",
         "results_fact", "results_wrong_note_pdf", "results_exam_result",
-        "submissions_submissionanswer", "submissions_submission",
+        "submissions_omr_detected_answer", "submissions_omr_student_match",
+        "submissions_omr_recognition_run", "submissions_submissionanswer",
+        "submissions_submission",
         "homework_results_homeworkscore", "homework_assignment", "homework_enrollment",
         "lectures_sectionassignment",
         "student_fee", "student_invoice", "student_invoice_item", "fee_payment",
@@ -542,6 +544,18 @@ def _permanently_delete_selected_students(
                 ),
                 (
                     "submissions_submissionanswer",
+                    "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN {enrollment_ids})",
+                ),
+                (
+                    "submissions_omr_detected_answer",
+                    "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN {enrollment_ids})",
+                ),
+                (
+                    "submissions_omr_student_match",
+                    "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN {enrollment_ids})",
+                ),
+                (
+                    "submissions_omr_recognition_run",
                     "submission_id IN (SELECT id FROM submissions_submission WHERE enrollment_id IN {enrollment_ids})",
                 ),
                 ("submissions_submission", "enrollment_id IN {enrollment_ids}"),
@@ -688,6 +702,17 @@ def _permanently_delete_selected_students(
                     + sub_ids_sql + ")",
                     [*removable_user_params, tenant_id],
                 )
+            for tbl in [
+                "submissions_omr_detected_answer",
+                "submissions_omr_student_match",
+                "submissions_omr_recognition_run",
+            ]:
+                if _table_exists(_safe_tbl(tbl)):
+                    cursor.execute(
+                        f"DELETE FROM {_safe_tbl(tbl)} WHERE submission_id IN ("
+                        + sub_ids_sql + ")",
+                        [*removable_user_params, tenant_id],
+                    )
             cursor.execute(
                 f"DELETE FROM submissions_submission WHERE user_id IN {removable_user_clause} AND tenant_id = %s",
                 [*removable_user_params, tenant_id],

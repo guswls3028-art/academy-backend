@@ -27,7 +27,12 @@ from apps.domains.lectures.models import Lecture
 from apps.domains.lectures.models import Section, SectionAssignment
 from apps.domains.parents.models import Parent
 from apps.domains.clinic.models import SessionParticipant
-from apps.domains.submissions.models import Submission
+from apps.domains.submissions.models import (
+    OMRDetectedAnswer,
+    OMRRecognitionRun,
+    OMRStudentMatch,
+    Submission,
+)
 from apps.domains.students.models import Student
 from apps.domains.students.services import (
     StudentLifecycleError,
@@ -412,6 +417,43 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
         self.assertFalse(StudentInvoice.objects.filter(student_id=self.student_a.id).exists())
         self.assertFalse(InvoiceItem.objects.filter(invoice=invoice).exists())
         self.assertFalse(FeePayment.objects.filter(student_id=self.student_a.id).exists())
+        self.assertFalse(Student.objects.filter(id=self.student_a.id).exists())
+
+    def test_service_deletes_omr_fact_dependencies_before_submission(self):
+        """OMR fact row가 붙은 submission도 학생 영구삭제에서 FK 오류 없이 정리된다."""
+        run = OMRRecognitionRun.objects.create(
+            tenant=self.tenant_a,
+            submission=self.sub_a,
+            job_id="omr-delete-test",
+            status="done",
+        )
+        OMRDetectedAnswer.objects.create(
+            tenant=self.tenant_a,
+            submission=self.sub_a,
+            recognition_run=run,
+            question_number=1,
+            exam_question_id=101,
+            answer="1",
+            status="detected",
+        )
+        OMRStudentMatch.objects.create(
+            tenant=self.tenant_a,
+            submission=self.sub_a,
+            enrollment_id=self.enrollment_a.id,
+            status=OMRStudentMatch.Status.CONFIRMED,
+            method=OMRStudentMatch.Method.MANUAL,
+        )
+
+        result = permanently_delete_students(
+            tenant=self.tenant_a,
+            student_ids=[self.student_a.id],
+        )
+
+        self.assertEqual(result.deleted_count, 1)
+        self.assertFalse(OMRDetectedAnswer.objects.filter(submission=self.sub_a).exists())
+        self.assertFalse(OMRStudentMatch.objects.filter(submission=self.sub_a).exists())
+        self.assertFalse(OMRRecognitionRun.objects.filter(submission=self.sub_a).exists())
+        self.assertFalse(Submission.objects.filter(id=self.sub_a.id).exists())
         self.assertFalse(Student.objects.filter(id=self.student_a.id).exists())
 
     def test_duplicate_cleanup_command_preserves_other_tenant_user_data(self):
