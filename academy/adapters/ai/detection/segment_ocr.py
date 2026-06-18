@@ -235,8 +235,27 @@ def is_ocr_available() -> bool:
     Vision API 크레덴셜이 설정되어 있는지 확인.
     GOOGLE_CREDENTIALS_JSON 또는 GOOGLE_APPLICATION_CREDENTIALS 둘 중 하나.
     """
+    import json
     import os
-    return bool(
-        os.getenv("GOOGLE_CREDENTIALS_JSON")
-        or os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
-    )
+    from pathlib import Path
+
+    creds_json = (os.getenv("GOOGLE_CREDENTIALS_JSON") or "").strip()
+    if creds_json:
+        try:
+            parsed = json.loads(creds_json)
+        except json.JSONDecodeError:
+            logger.warning("OCR_UNAVAILABLE_INVALID_GOOGLE_CREDENTIALS_JSON")
+            return False
+        return isinstance(parsed, dict) and bool(parsed)
+
+    creds_path = (os.getenv("GOOGLE_APPLICATION_CREDENTIALS") or "").strip()
+    if creds_path:
+        if Path(creds_path).is_file():
+            return True
+        logger.warning(
+            "OCR_UNAVAILABLE_MISSING_GOOGLE_APPLICATION_CREDENTIALS | path=%s",
+            creds_path,
+        )
+        return False
+
+    return False

@@ -15,6 +15,7 @@
 각 테스트는 mock pipeline + 결과 assert 형태. 실제 DB 안 건드림.
 """
 import pytest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 
@@ -456,6 +457,112 @@ def test_explanation_doc_skips_indexing_in_pipeline():
         "run_matchup_pipeline에 explanation/answer_key skip 분기 — verify 못함. "
         "MATCHUP_SKIP_INDEXING 또는 동일 의미 분기가 살아있어야"
     )
+
+
+def test_answer_key_skips_before_segmentation_even_with_missing_file():
+    """answer_key는 segmentation 전에 종료되어 파일/dispatcher 상태에 의존하지 않는다."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+    from apps.shared.contracts.ai_job import AIJob
+
+    progress = []
+
+    def record_progress(*args, **kwargs):
+        progress.append((args, kwargs))
+
+    job = AIJob.new(
+        type="matchup_analysis",
+        payload={"source_type": "answer_key", "document_id": "doc-answer-key"},
+        tenant_id="1",
+    )
+    result = matchup_pipeline.run_matchup_pipeline(
+        job=job,
+        local_path="C:/academy/_artifacts/does-not-exist-answer-key.pdf",
+        payload=job.payload,
+        tenant_id="1",
+        record_progress=record_progress,
+    )
+
+    assert result.status == "DONE"
+    assert result.result["problems"] == []
+    assert result.result["problem_count"] == 0
+    assert result.result["skipped_for_indexing"] is True
+    assert result.result["source_type"] == "answer_key"
+    assert progress[-1][0][1] == "done"
+
+
+def test_scan_page_all_unnumbered_is_low_confidence():
+    """스캔/학생사진에서 box는 있어도 번호가 전부 없으면 검수/VLM 후보 신호가 된다."""
+    from academy.application.use_cases.ai.pipelines.matchup_pipeline import _page_confidence
+
+    confidence, reasons = _page_confidence({
+        "page_index": 0,
+        "paper_type": "scan_dual",
+        "has_embedded_text": False,
+        "boxes": [(0, 0, 100, 100), (0, 100, 100, 100), (0, 200, 100, 100)],
+        "numbers": [None, None, None],
+    })
+
+    assert confidence < 0.55
+    assert "all_boxes_unnumbered" in reasons
+    assert "scan_counter_fallback" in reasons
+
+
+def test_vlm_underfilled_relabels_numberless_counter_fallback(monkeypatch):
+    """VLM이 기존 fallback box와 겹치면 box를 중복 추가하지 않고 번호만 보정한다."""
+    from academy.application.use_cases.ai.pipelines import matchup_pipeline
+
+    monkeypatch.setenv("MATCHUP_VLM_VISION_ADAPTER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+    page = {
+        "page_index": 0,
+        "image_path": "/tmp/page.png",
+        "paper_type": "scan_dual",
+        "has_embedded_text": False,
+        "boxes": [
+            (0, 0, 100, 100),
+            (120, 0, 100, 100),
+            (240, 0, 100, 100),
+            (0, 120, 100, 100),
+            (120, 120, 100, 100),
+        ],
+        "numbers": [None, None, None, None, None],
+    }
+    questions = matchup_pipeline._boxes_to_questions([page])
+    assert questions[0]["number"] == 1
+    assert questions[0]["meta_extra"]["number_source"] == "counter_fallback"
+
+    def fake_try_vlm_problem_bboxes(page_arg, document_id, tenant_id=None):
+        return (
+            SimpleNamespace(
+                problems=[
+                    SimpleNamespace(number=21, bbox=(0, 0, 100, 100)),
+                ],
+            ),
+            "scan_dual",
+        )
+
+    monkeypatch.setattr(
+        matchup_pipeline,
+        "_try_vlm_problem_bboxes",
+        fake_try_vlm_problem_bboxes,
+    )
+
+    stats = matchup_pipeline._augment_questions_with_vlm_for_underfilled_pages(
+        [page],
+        questions,
+        source_type="school_exam_pdf",
+        document_id=123,
+        tenant_id="1",
+    )
+
+    assert stats["candidates"] == 1
+    assert stats["relabeled_overlaps"] == 1
+    assert stats["added"] == 0
+    assert questions[0]["number"] == 21
+    assert questions[0]["meta_extra"]["number_source"] == "vlm_overlap_relabel"
+    assert questions[0]["meta_extra"]["previous_number"] == 1
+    assert questions[0]["meta_extra"]["number_source_reason"] == "numberless_scan_page"
 
 
 # ── 시나리오 9: VLM 결과 preview 없이 MatchupProblem 직접 덮어쓰기 X ─

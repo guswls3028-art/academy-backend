@@ -67,6 +67,14 @@ def test_workbook_local_number_preserved_in_meta():
     questions = _boxes_to_questions(pages)
     locals_ = [q.get("local_number") for q in questions]
     assert locals_ == [1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3]
+    assert all(
+        q.get("meta_extra", {}).get("number_source") == "counter_fallback"
+        for q in questions
+    )
+    assert all(
+        q.get("meta_extra", {}).get("number_source_reason") == "per_page_restart"
+        for q in questions
+    )
 
 
 def test_school_exam_counter_mode_NOT_forced():
@@ -86,6 +94,24 @@ def test_school_exam_counter_mode_NOT_forced():
     assert nums == expected, f"시험지 segment number 변형됨: {nums}"
     # local_number 메타는 시험지 모드에서는 박지 않음
     assert all("local_number" not in q for q in questions)
+    assert all(q.get("meta_extra", {}).get("number_source") == "segment" for q in questions)
+
+
+def test_scan_fallback_number_source_is_recorded():
+    """OpenCV fallback처럼 segment number가 없으면 counter fallback 사유를 meta에 남긴다."""
+    pages = [_make_page(0, "scan_dual", [None, None, None])]
+    questions = _boxes_to_questions(pages)
+
+    assert [q["number"] for q in questions] == [1, 2, 3]
+    assert all(
+        q.get("meta_extra", {}).get("number_source") == "counter_fallback"
+        for q in questions
+    )
+    assert all(
+        q.get("meta_extra", {}).get("number_source_reason")
+        == "missing_or_partial_segment_numbers"
+        for q in questions
+    )
 
 
 def test_school_exam_with_single_duplicate_anchor_still_continuous():

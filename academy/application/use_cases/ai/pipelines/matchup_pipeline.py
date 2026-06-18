@@ -237,6 +237,34 @@ def run_matchup_pipeline(
         except Exception as e:
             logger.warning("MATCHUP_SOURCE_TYPE_LOOKUP_FAIL | doc=%s | err=%s", document_id, e)
 
+    # ── 인덱싱 X 사이클 (explanation / answer_key) — 분할 전에 즉시 0 problems 반환 ──
+    # 매치업 후보 vector search에 노이즈로 들어가는 것 차단. 이 source_type들은
+    # dispatcher가 답지 표/해설 번호를 문항처럼 잘라낼 수 있어, segmentation 자체도
+    # 비용/오탐 위험이다.
+    if source_type in ("explanation", "answer_key"):
+        logger.info(
+            "MATCHUP_SKIP_INDEXING | job=%s | doc=%s | source_type=%s",
+            job_id, document_id, source_type,
+        )
+        record_progress(
+            job_id, "done", 100,
+            step_index=5, step_total=5,
+            step_name_display="완료",
+            step_percent=100, tenant_id=tenant_id,
+        )
+        return AIResult.done(job_id, {
+            "problems": [],
+            "document_id": document_id,
+            "problem_count": 0,
+            "source_type": source_type,
+            "skipped_for_indexing": True,
+            "skip_reason": "explanation/answer_key는 매치업 인덱스 대상 X",
+            "paper_type_summary": {
+                "primary": source_type, "warnings": [],
+                "distribution": {source_type: 1}, "low_confidence_ratio": 0.0,
+            },
+        })
+
     from academy.adapters.ai.detection.segment_dispatcher import (
         register_pdf_seg_tmp_dirs,
         segment_questions_multipage,
@@ -284,37 +312,6 @@ def run_matchup_pipeline(
         step_name_display="문제 분할",
         step_percent=100, tenant_id=tenant_id,
     )
-
-    # source_type은 segmentation 호출 전에 결정됨 (segment_dispatcher가 paper_type
-    # 분류기에 handwriting_bias로 전달해야 STUDENT_ANSWER_PHOTO 분기가 작동).
-    # 7-value: student_exam_photo / school_exam_pdf / commercial_workbook /
-    #          academy_workbook / explanation / answer_key / other
-
-    # ── 인덱싱 X 사이클 (explanation / answer_key) — 즉시 0 problems 반환 ──
-    # 매치업 후보 vector search에 노이즈로 들어가는 것 차단. doc.meta에 마커 저장.
-    if source_type in ("explanation", "answer_key"):
-        logger.info(
-            "MATCHUP_SKIP_INDEXING | job=%s | doc=%s | source_type=%s",
-            job_id, document_id, source_type,
-        )
-        record_progress(
-            job_id, "done", 100,
-            step_index=5, step_total=5,
-            step_name_display="완료",
-            step_percent=100, tenant_id=tenant_id,
-        )
-        return AIResult.done(job_id, {
-            "problems": [],
-            "document_id": document_id,
-            "problem_count": 0,
-            "source_type": source_type,
-            "skipped_for_indexing": True,
-            "skip_reason": "explanation/answer_key는 매치업 인덱스 대상 X",
-            "paper_type_summary": {
-                "primary": source_type, "warnings": [],
-                "distribution": {source_type: 1}, "low_confidence_ratio": 0.0,
-            },
-        })
 
     # legacy title 휴리스틱 — source_type=other인 doc에 한해 fallback (하위 호환).
     if source_type == "other" and doc_title:
@@ -841,6 +838,7 @@ def _page_confidence(page: Dict[str, Any]) -> Tuple[float, List[str]]:
     paper_type = page.get("paper_type") or "unknown"
     is_skip = bool(page.get("is_skip_page"))
     boxes = page.get("boxes") or []
+    numbers = page.get("numbers") or []
     n_boxes = len(boxes)
     has_text = bool(page.get("has_embedded_text"))
 
@@ -874,6 +872,21 @@ def _page_confidence(page: Dict[str, Any]) -> Tuple[float, List[str]]:
         if paper_type in ("scan_dual", "clean_pdf_dual", "quadrant"):
             score -= 0.15
             reasons.append("single_box_dual_layout")
+
+    if n_boxes > 0:
+        numbered_count = sum(1 for n in numbers if isinstance(n, int))
+        if len(numbers) != n_boxes:
+            score -= 0.20
+            reasons.append("number_length_mismatch")
+        elif numbered_count == 0:
+            score -= 0.35
+            reasons.append("all_boxes_unnumbered")
+            if not has_text:
+                score -= 0.15
+                reasons.append("scan_counter_fallback")
+        elif numbered_count < n_boxes:
+            score -= 0.20
+            reasons.append("partial_numbering")
 
     # 스캔본 + paper_type 모호 = OCR 부정확 가능성
     if not has_text and paper_type == "unknown":
@@ -1126,6 +1139,21 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
                 "image_path": img_path,
                 "bbox": list(bbox),
             }
+            if use_segment_numbers:
+                entry["meta_extra"] = {"number_source": "segment"}
+            else:
+                reason = (
+                    "per_page_restart"
+                    if is_per_page_restart
+                    else "missing_or_partial_segment_numbers"
+                )
+                meta_extra: Dict[str, Any] = {
+                    "number_source": "counter_fallback",
+                    "number_source_reason": reason,
+                }
+                if i < len(numbers):
+                    meta_extra["segment_number_raw"] = numbers[i]
+                entry["meta_extra"] = meta_extra
             if is_per_page_restart and i < len(numbers) and isinstance(numbers[i], int):
                 entry["local_number"] = int(numbers[i])
             questions.append(entry)
@@ -1479,6 +1507,27 @@ def _expected_min_boxes_for_underfilled_page(page: Dict[str, Any], source_type: 
     return 0
 
 
+def _is_numberless_scan_page(page: Dict[str, Any], source_type: str) -> bool:
+    """OCR/OpenCV fallback boxes exist, but no trustworthy segment numbers exist."""
+    boxes = page.get("boxes") or []
+    if not boxes:
+        return False
+    page_type = (page.get("paper_type") or "").strip().lower()
+    if source_type not in ("student_exam_photo", "school_exam_pdf"):
+        return False
+    if page_type not in (
+        "scan_single", "scan_dual", "quadrant", "student_answer_photo", "unknown",
+    ):
+        return False
+    numbers = page.get("numbers") or []
+    return len(numbers) != len(boxes) or not any(isinstance(n, int) for n in numbers)
+
+
+def _is_counter_fallback_question(question: Dict[str, Any]) -> bool:
+    meta = question.get("meta_extra") or {}
+    return meta.get("number_source") == "counter_fallback"
+
+
 def _augment_questions_with_vlm_for_underfilled_pages(
     pages: List[Dict],
     questions: List[Dict],
@@ -1514,6 +1563,7 @@ def _augment_questions_with_vlm_for_underfilled_pages(
 
     max_calls = max(0, _env_int("MATCHUP_VLM_UNDERFILLED_PAGE_MAX_CALLS", 20))
     candidates: List[Dict] = []
+    candidate_reasons: Dict[int, str] = {}
     cost_cap_hit = False
     for page in pages:
         if len(candidates) >= max_calls:
@@ -1524,10 +1574,13 @@ def _augment_questions_with_vlm_for_underfilled_pages(
             continue
         existing_count = len(page.get("boxes") or [])
         expected_min = _expected_min_boxes_for_underfilled_page(page, source_type)
-        if expected_min <= 0:
-            continue
-        if 0 < existing_count < expected_min:
+        is_underfilled = expected_min > 0 and 0 < existing_count < expected_min
+        is_numberless = _is_numberless_scan_page(page, source_type)
+        if is_underfilled or is_numberless:
             candidates.append(page)
+            candidate_reasons[int(page.get("page_index") or 0)] = (
+                "numberless_scan_page" if is_numberless else "underfilled_page"
+            )
 
     if not candidates:
         return {
@@ -1547,6 +1600,7 @@ def _augment_questions_with_vlm_for_underfilled_pages(
     added = 0
     duplicate_number_skips = 0
     overlap_skips = 0
+    relabeled_overlaps = 0
     pages_used = 0
     paper_type_updates = 0
 
@@ -1574,20 +1628,44 @@ def _augment_questions_with_vlm_for_underfilled_pages(
             continue
 
         page_idx = page.get("page_index")
+        page_reason = candidate_reasons.get(int(page_idx or 0), "underfilled_page")
         existing_page_questions = [
             q for q in questions
             if q.get("page_index") == page_idx and q.get("bbox")
         ]
         page_added = 0
+        page_relabeled = 0
         for prob in vlm.problems:
             bbox = list(prob.bbox)
-            if any(_bbox_iou_xywh(bbox, q.get("bbox")) >= 0.30 for q in existing_page_questions):
-                overlap_skips += 1
-                continue
             try:
                 proposed = int(prob.number or 0)
             except (TypeError, ValueError):
                 proposed = 0
+            overlaps = [
+                q for q in existing_page_questions
+                if _bbox_iou_xywh(bbox, q.get("bbox")) >= 0.50
+            ]
+            if proposed > 0 and len(overlaps) == 1 and _is_counter_fallback_question(overlaps[0]):
+                target = overlaps[0]
+                current_number = target.get("number")
+                if proposed != current_number and proposed in used_numbers:
+                    duplicate_number_skips += 1
+                    continue
+                if isinstance(current_number, int):
+                    used_numbers.discard(current_number)
+                target["number"] = proposed
+                used_numbers.add(proposed)
+                meta = target.setdefault("meta_extra", {})
+                meta["previous_number"] = current_number
+                meta["number_source"] = "vlm_overlap_relabel"
+                meta["number_source_reason"] = page_reason
+                meta["vlm_reason"] = "underfilled_page_fallback"
+                relabeled_overlaps += 1
+                page_relabeled += 1
+                continue
+            if any(_bbox_iou_xywh(bbox, q.get("bbox")) >= 0.30 for q in existing_page_questions):
+                overlap_skips += 1
+                continue
             if proposed > 0 and proposed in used_numbers:
                 duplicate_number_skips += 1
                 continue
@@ -1601,6 +1679,7 @@ def _augment_questions_with_vlm_for_underfilled_pages(
                 "meta_extra": {
                     "engine": "vlm",
                     "vlm_reason": "underfilled_page_fallback",
+                    "vlm_candidate_reason": page_reason,
                 },
             }
             if proposed <= 0:
@@ -1609,7 +1688,7 @@ def _augment_questions_with_vlm_for_underfilled_pages(
             existing_page_questions.append(q_entry)
             added += 1
             page_added += 1
-        if page_added:
+        if page_added or page_relabeled:
             pages_used += 1
 
     return {
@@ -1621,6 +1700,7 @@ def _augment_questions_with_vlm_for_underfilled_pages(
         "cost_cap_hit": cost_cap_hit,
         "duplicate_number_skips": duplicate_number_skips,
         "overlap_skips": overlap_skips,
+        "relabeled_overlaps": relabeled_overlaps,
         "paper_type_updates": paper_type_updates,
     }
 
