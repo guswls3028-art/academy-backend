@@ -27,6 +27,7 @@ env:
   AWS_REGION: ap-northeast-2
   ECR_REGISTRY: 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com
   ALB_DNS: academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com
+  API_PUBLIC_URL: https://api.hakwonplus.com
   # docker/build-push-action@v6 uploads a *.dockerbuild summary artifact per build
   # (separate from provenance/sbom). Disable to stop UI clutter — we already have
   # CloudWatch logs + ci-build-report for build observability.
@@ -672,11 +673,11 @@ jobs:
       - name: Pre-deploy health gate
         run: |
           echo "Verifying API is healthy before starting refresh..."
-          STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 15 \
-            "http://${{ env.ALB_DNS }}/healthz" || echo "000")
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 15 \
+            "${{ env.API_PUBLIC_URL }}/healthz" || echo "000")
           echo "Pre-deploy healthz final status: $STATUS"
           if [ "$STATUS" != "200" ]; then
-            echo "::error::API is not healthy before deploy after redirect follow (healthz=$STATUS). Aborting refresh."
+            echo "::error::API is not healthy before deploy (healthz=$STATUS). Aborting refresh."
             exit 1
           fi
 
@@ -1167,12 +1168,12 @@ jobs:
 
           for ATTEMPT in 1 2 3 4 5; do
             echo "--- Attempt $ATTEMPT/5 ---"
-            HEALTHZ_STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" \
+            HEALTHZ_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
               --connect-timeout 10 --max-time 15 \
-              "http://${{ env.ALB_DNS }}/healthz" || echo "000")
-            HEALTH_STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" \
+              "${{ env.API_PUBLIC_URL }}/healthz" || echo "000")
+            HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
               --connect-timeout 10 --max-time 15 \
-              "http://${{ env.ALB_DNS }}/health" || echo "000")
+              "${{ env.API_PUBLIC_URL }}/health" || echo "000")
             echo "healthz=$HEALTHZ_STATUS health=$HEALTH_STATUS"
 
             if [ "$HEALTHZ_STATUS" = "200" ] && [ "$HEALTH_STATUS" = "200" ]; then
@@ -1188,8 +1189,8 @@ jobs:
           done
 
           if [ "$PASS" != "true" ]; then
-            echo "::error::healthz returned $HEALTHZ_STATUS after redirect follow (expected 200)"
-            echo "::error::health returned $HEALTH_STATUS after redirect follow (expected 200)"
+            echo "::error::healthz returned $HEALTHZ_STATUS (expected 200)"
+            echo "::error::health returned $HEALTH_STATUS (expected 200)"
             PASS=false
           fi
 
