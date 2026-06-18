@@ -672,11 +672,11 @@ jobs:
       - name: Pre-deploy health gate
         run: |
           echo "Verifying API is healthy before starting refresh..."
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 15 \
+          STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 15 \
             "http://${{ env.ALB_DNS }}/healthz" || echo "000")
-          echo "Pre-deploy healthz: $STATUS"
+          echo "Pre-deploy healthz final status: $STATUS"
           if [ "$STATUS" != "200" ]; then
-            echo "::error::API is not healthy before deploy (healthz=$STATUS). Aborting refresh."
+            echo "::error::API is not healthy before deploy after redirect follow (healthz=$STATUS). Aborting refresh."
             exit 1
           fi
 
@@ -1167,10 +1167,10 @@ jobs:
 
           for ATTEMPT in 1 2 3 4 5; do
             echo "--- Attempt $ATTEMPT/5 ---"
-            HEALTHZ_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            HEALTHZ_STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" \
               --connect-timeout 10 --max-time 15 \
               "http://${{ env.ALB_DNS }}/healthz" || echo "000")
-            HEALTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            HEALTH_STATUS=$(curl -L -s -o /dev/null -w "%{http_code}" \
               --connect-timeout 10 --max-time 15 \
               "http://${{ env.ALB_DNS }}/health" || echo "000")
             echo "healthz=$HEALTHZ_STATUS health=$HEALTH_STATUS"
@@ -1188,8 +1188,8 @@ jobs:
           done
 
           if [ "$PASS" != "true" ]; then
-            echo "::error::healthz returned $HEALTHZ_STATUS (expected 200)"
-            echo "::error::health returned $HEALTH_STATUS (expected 200)"
+            echo "::error::healthz returned $HEALTHZ_STATUS after redirect follow (expected 200)"
+            echo "::error::health returned $HEALTH_STATUS after redirect follow (expected 200)"
             PASS=false
           fi
 
