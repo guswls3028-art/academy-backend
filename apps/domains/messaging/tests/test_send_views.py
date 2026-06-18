@@ -266,6 +266,28 @@ class SendMessageViewTests(TestCase):
         self.assertIn("block_category", response.data)
         enqueue_sms.assert_not_called()
 
+    def test_staff_target_manual_send_is_disabled(self):
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "staff",
+                "staff_ids": [1],
+                "raw_body": "직원 대상 안내입니다.",
+                "block_category": "default",
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
+            response = SendMessageView.as_view()(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("send_to", response.data)
+        enqueue_sms.assert_not_called()
+
     def test_staff_membership_cannot_send_manual_messages(self):
         staff_user = User.objects.create_user(
             username="msg-send-staff",

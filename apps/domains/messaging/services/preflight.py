@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
-from django.apps import apps as django_apps
 from django.db.models import Q
 from django.utils import timezone
 
@@ -178,19 +177,11 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
     resolved_count = 0
     phones: list[str] = []
 
-    if send_to == "staff":
-        Staff = django_apps.get_model("staffs", "Staff")
-        staff_ids = list(dict.fromkeys(int(staff_id) for staff_id in (data.get("staff_ids") or [])))
-        selected_count = len(staff_ids)
-        staffs = list(Staff.objects.filter(tenant=tenant, id__in=staff_ids).only("id", "phone"))
-        resolved_count = len(staffs)
-        phones = [normalize_phone(staff.phone) for staff in staffs]
-    else:
-        student_ids = list(dict.fromkeys(int(student_id) for student_id in (data.get("student_ids") or [])))
-        selected_count = len(student_ids)
-        recipients = resolve_student_message_recipients(tenant, student_ids, send_to=send_to)
-        resolved_count = len(recipients)
-        phones = [recipient.phone for recipient in recipients]
+    student_ids = list(dict.fromkeys(int(student_id) for student_id in (data.get("student_ids") or [])))
+    selected_count = len(student_ids)
+    recipients = resolve_student_message_recipients(tenant, student_ids, send_to=send_to)
+    resolved_count = len(recipients)
+    phones = [recipient.phone for recipient in recipients]
 
     invalid_or_deleted = max(0, selected_count - resolved_count)
     phone_summary = _phone_summary(phones)

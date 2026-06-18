@@ -1,12 +1,11 @@
 # apps/support/messaging/views/send_views.py
 """
-메시지 발송 뷰 — 학생/학부모/직원 대상 수동 발송
+알림톡 발송 뷰 — 학생/학부모 대상 수동 발송.
 """
 
 import re
 from datetime import timedelta
 
-from django.apps import apps as django_apps
 from django.utils import timezone
 
 from rest_framework import status
@@ -49,9 +48,8 @@ def _append_teacher_memo_aliases(replacements: list[dict], value: str) -> None:
 
 class SendMessageView(APIView):
     """
-    POST: 선택 학생(들) 또는 직원(들)에게 메시지 발송 (SQS enqueue → 워커가 Solapi 발송).
+    POST: 선택 학생(들)의 학생/학부모 번호로 알림톡 발송 (SQS enqueue → 워커가 Solapi 발송).
     - student_ids + send_to "student"|"parent": 학생/학부모 전화로 발송
-    - staff_ids + send_to "staff": 직원 전화로 발송
     """
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
@@ -59,7 +57,7 @@ class SendMessageView(APIView):
         tenant = request.tenant
         if not can_send_messages(request, tenant):
             return Response(
-                {"detail": "메시지 발송 권한이 없습니다. 관리자 또는 강사 권한이 필요합니다."},
+                {"detail": "알림톡 발송 권한이 없습니다. 관리자 또는 강사 권한이 필요합니다."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
@@ -88,12 +86,6 @@ class SendMessageView(APIView):
             return Response(
                 {"detail": "시간당 발송 한도(500건)를 초과했습니다. 잠시 후 다시 시도해 주세요."},
                 status=status.HTTP_429_TOO_MANY_REQUESTS,
-            )
-
-        if send_to == "staff":
-            return self._send_to_staff(
-                request, tenant, data, sender, message_mode,
-                template_id, raw_body, raw_subject, scheduled_send_at,
             )
 
         # 학생/학부모 수신
@@ -246,7 +238,7 @@ class SendMessageView(APIView):
 
             merged_context = {**alimtalk_extra_vars, **student_extra}
 
-            # SMS용 text: 변수 치환 — merged_context 전체 key 순회 (고정 list 제거).
+            # 알림톡 text 필드용 변수 치환 — merged_context 전체 key 순회 (고정 list 제거).
             text = (
                 student_body.replace("#{학생이름}", name)
                 .replace("#{학생이름2}", name_2)
@@ -317,191 +309,6 @@ class SendMessageView(APIView):
                         "event_type": "manual_send",
                         "target_type": "student" if send_to != "parent" else "parent",
                         "target_id": recipient.student_id,
-                        "target_name": name,
-                    },
-                )
-            except MessagingPolicyError as e:
-                return Response(
-                    {"detail": str(e) or "SMS 발송은 사용하지 않습니다. 공용 알림톡만 발송할 수 있습니다."},
-                    status=status.HTTP_403_FORBIDDEN,
-                )
-            if dispatch_result == "enqueued":
-                enqueued += 1
-            elif dispatch_result == "scheduled":
-                scheduled += 1
-            else:
-                enqueue_failed += 1
-
-        accepted = enqueued + scheduled
-        detail = f"{'예약됨' if scheduled_send_at else '발송 예정'} {accepted}건"
-        if enqueue_failed:
-            detail += f" (큐 등록 실패 {enqueue_failed}건)"
-        if skipped_no_phone:
-            detail += f" (전화번호 없음 {skipped_no_phone}건)"
-        return Response({
-            "detail": detail + ".",
-            "enqueued": enqueued,
-            "scheduled": scheduled,
-            "enqueue_failed": enqueue_failed,
-            "skipped_no_phone": skipped_no_phone,
-        }, status=status.HTTP_200_OK)
-
-    def _send_to_staff(
-        self, request, tenant, data, sender, message_mode,
-        template_id, raw_body, raw_subject, scheduled_send_at,
-    ):
-        Staff = django_apps.get_model("staffs", "Staff")
-        staff_ids = data.get("staff_ids") or []
-        staffs = list(
-            Staff.objects.filter(tenant=tenant, id__in=staff_ids).only("id", "name", "phone")
-        )
-        if not staffs:
-            return Response(
-                {"detail": "선택한 직원을 찾을 수 없습니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if len(staffs) > 200:
-            return Response(
-                {"detail": f"한 번에 최대 200명까지 발송할 수 있습니다. (선택: {len(staffs)}명)"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        body_base = (raw_body or "").strip()
-        subject_base = (raw_subject or "").strip()
-        t = None
-        solapi_template_id = ""
-        user_custom_content = ""
-        use_unified = False
-        unified_template_type = None
-
-        if template_id:
-            t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
-            # 오너 테넌트의 승인 시스템 템플릿도 허용 (알림톡 기본 채널 폴백)
-            if not t and message_mode == "alimtalk":
-                from apps.domains.messaging.policy import get_owner_tenant_id
-                owner_id = get_owner_tenant_id()
-                if int(tenant.id) != owner_id:
-                    t = MessageTemplate.objects.filter(
-                        tenant_id=owner_id, pk=template_id, solapi_status="APPROVED",
-                    ).first()
-            if not t:
-                return Response(
-                    {"detail": "템플릿을 찾을 수 없습니다."},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
-            tpl_body = t.body or ""
-            if body_base and any(marker in tpl_body for marker in CONTENT_PLACEHOLDERS):
-                user_custom_content = body_base
-            if not body_base:
-                body_base = (t.body or "").strip()
-            if not subject_base:
-                subject_base = (t.subject or "").strip()
-            solapi_template_id = (t.solapi_template_id or "").strip()
-            if message_mode == "alimtalk":
-                from apps.domains.messaging.alimtalk_content_builders import get_unified_for_category
-                unified_tt, unified_sid = get_unified_for_category(t.category, t.name, {})
-                if unified_tt and unified_sid:
-                    use_unified = True
-                    unified_template_type = unified_tt
-                    solapi_template_id = unified_sid
-
-        # 알림톡 모드에서 템플릿 미선택 시, 공용 owner 자유양식 승인 템플릿 선택 (fallback 없음)
-        if message_mode == "alimtalk" and not solapi_template_id:
-            freeform = resolve_freeform_template(tenant.id)
-            if freeform:
-                t = freeform
-                solapi_template_id = (freeform.solapi_template_id or "").strip()
-                user_custom_content = body_base
-                if not subject_base:
-                    subject_base = (freeform.subject or "").strip()
-
-        if message_mode == "alimtalk" and (not solapi_template_id or (t and getattr(t, "solapi_status", None) != "APPROVED")):
-            return Response(
-                {"detail": "알림톡 발송에는 검수 승인된 템플릿이 필요합니다. 템플릿 검수를 먼저 신청해 주세요."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if not body_base:
-            return Response(
-                {"detail": "발송할 본문이 비어 있습니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        from apps.domains.messaging.services import get_tenant_site_url
-        from apps.domains.messaging.policy import MessagingPolicyError
-
-        enqueued = 0
-        scheduled = 0
-        skipped_no_phone = 0
-        enqueue_failed = 0
-        for s in staffs:
-            phone = (s.phone or "").replace("-", "").strip()
-            if not phone or len(phone) < 10:
-                skipped_no_phone += 1
-                continue
-            name = (s.name or "").strip()
-            name_2 = name[-2:] if len(name) >= 2 else name  # 성(첫 글자) 제외 = 이름만
-            name_3 = name  # 전체 이름 (하위 호환: 기존 #{학생이름3} 치환)
-            site_url = get_tenant_site_url(request.tenant) or ""
-            academy_name = (tenant.name or "").strip()
-            text = (
-                body_base.replace("#{학생이름}", name)
-                .replace("#{학생이름2}", name_2)
-                .replace("#{학생이름3}", name_3)
-                .replace("#{학원명}", academy_name)
-                .replace("#{사이트링크}", site_url)
-                .replace("#{공지내용}", user_custom_content)
-                .replace("#{내용}", user_custom_content)
-            )
-            # 수동 발송: 잔여 변수 catch-all 제거
-            text = re.sub(r"#\{[^}]+\}", "", text)
-            text = re.sub(r"\n{3,}", "\n\n", text).strip()
-            if subject_base:
-                text = subject_base + "\n" + text
-
-            alimtalk_replacements = None
-            template_id_solapi = None
-            if message_mode == "alimtalk" and solapi_template_id:
-                template_id_solapi = solapi_template_id
-                if use_unified and unified_template_type:
-                    from apps.domains.messaging.alimtalk_content_builders import build_manual_replacements
-                    alimtalk_replacements = build_manual_replacements(
-                        template_type=unified_template_type,
-                        content_body=body_base,
-                        context={"내용": user_custom_content, "공지내용": user_custom_content},
-                        tenant_name=academy_name,
-                        student_name=name,
-                        site_url=site_url,
-                    )
-                else:
-                    alimtalk_replacements = [
-                        {"key": "학생이름", "value": name},
-                        {"key": "학생이름2", "value": name_2},
-                        {"key": "학생이름3", "value": name_3},
-                        {"key": "학원명", "value": academy_name},
-                        {"key": "사이트링크", "value": site_url},
-                    ]
-                    if user_custom_content:
-                        alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
-                        alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
-                        _append_teacher_memo_aliases(alimtalk_replacements, user_custom_content)
-
-            try:
-                dispatch_result = _dispatch_or_schedule_message(
-                    tenant_id=tenant.id,
-                    trigger="manual_send_staff",
-                    scheduled_send_at=scheduled_send_at,
-                    payload={
-                        "tenant_id": tenant.id,
-                        "to": phone,
-                        "text": text,
-                        "sender": sender,
-                        "message_mode": message_mode,
-                        "template_id": template_id_solapi,
-                        "alimtalk_replacements": alimtalk_replacements,
-                        "event_type": "manual_send_staff",
-                        "target_type": "staff",
-                        "target_id": s.id,
                         "target_name": name,
                     },
                 )

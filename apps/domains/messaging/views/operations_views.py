@@ -21,7 +21,7 @@ class SendMessagePreflightView(APIView):
         tenant = request.tenant
         if not can_send_messages(request, tenant):
             return Response(
-                {"detail": "메시지 발송 권한이 없습니다. 관리자 또는 강사 권한이 필요합니다."},
+                {"detail": "알림톡 발송 권한이 없습니다. 관리자 또는 강사 권한이 필요합니다."},
                 status=status.HTTP_403_FORBIDDEN,
             )
 
