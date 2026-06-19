@@ -29,6 +29,9 @@ _PDF_TO_PIXEL_SCALE = 200.0 / 72.0
 logger = logging.getLogger(__name__)
 
 BBox = Tuple[int, int, int, int]
+_SCAN_LAYOUT_BOXES_DEFAULT = "_scan_layout_boxes_default"
+_SCAN_LAYOUT_BOXES_FRAGMENT_MERGED = "_scan_layout_boxes_fragment_merged"
+_SCAN_LAYOUT_USE_FRAGMENT_MERGE = "_scan_layout_use_fragment_merge"
 
 
 def _expand_single_text_regions_to_visual_content(
@@ -46,6 +49,8 @@ def _expand_single_text_regions_to_visual_content(
     """
     if not regions or page_width <= 0 or page_height <= 0:
         return
+    if _regions_already_span_columns(regions, page_width=page_width):
+        return
     gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if gray is None or gray.size == 0:
         return
@@ -59,6 +64,8 @@ def _expand_single_text_regions_to_visual_content(
 
     for region in regions:
         x0, y0, x1, y1 = region.bbox
+        if y1 - y0 <= page_height * 0.08:
+            continue
         if x1 - x0 >= page_width * 0.72:
             continue
         py0 = max(0, int(y0 * scale_y))
@@ -117,6 +124,26 @@ def _expand_single_text_regions_to_visual_content(
         if vx1 - vx0 <= (x1 - x0) * 1.08:
             continue
         region.bbox = (min(x0, vx0), y0, max(x1, vx1), y1)
+
+
+def _regions_already_span_columns(regions: List, *, page_width: float) -> bool:
+    """Skip single-page visual x expansion when splitter already found columns."""
+    if page_width <= 0 or len(regions) < 2:
+        return False
+    mid_x = page_width * 0.5
+    has_left = False
+    has_right = False
+    for region in regions:
+        x0, _, x1, _ = region.bbox
+        width = x1 - x0
+        if width > page_width * 0.68:
+            return False
+        center_x = (x0 + x1) / 2
+        if center_x < mid_x:
+            has_left = True
+        else:
+            has_right = True
+    return has_left and has_right
 
 
 def _should_expand_text_regions_by_visual_x(
@@ -635,21 +662,38 @@ def _boxes_and_regions_for_pdf_page(
             )
             # fallthrough → OpenCV 안전망
 
+    if not page_info["has_embedded_text"]:
+        _classify_and_record_paper_type(
+            page_info, image_path,
+            has_embedded_text=False,
+            handwriting_bias=handwriting_bias,
+        )
+
     if (
         not page_info["has_embedded_text"]
-        and source_type == "school_exam_pdf"
+        and (
+            source_type == "school_exam_pdf"
+            or page_info.get("paper_type") in {"scan_single", "scan_dual"}
+        )
     ):
         apply_clahe = _should_apply_opencv_clahe(
             has_embedded_text=False,
             source_type=source_type,
         )
-        boxes = segment_questions_scan_layout(image_path, apply_clahe=apply_clahe)
-        if boxes:
-            _classify_and_record_paper_type(
-                page_info, image_path,
-                has_embedded_text=False,
-                handwriting_bias=handwriting_bias,
+        if page_info.get(_SCAN_LAYOUT_USE_FRAGMENT_MERGE):
+            cached_boxes = page_info.get(_SCAN_LAYOUT_BOXES_FRAGMENT_MERGED)
+        else:
+            cached_boxes = page_info.get(_SCAN_LAYOUT_BOXES_DEFAULT)
+        boxes = (
+            list(cached_boxes)
+            if cached_boxes is not None
+            else segment_questions_scan_layout(
+                image_path,
+                apply_clahe=apply_clahe,
+                merge_fragmented_columns=bool(page_info.get(_SCAN_LAYOUT_USE_FRAGMENT_MERGE)),
             )
+        )
+        if boxes:
             return boxes, []
 
     # 텍스트 있지만 분할 실패 OR OCR 크레덴셜 없음 OR OCR 예외
@@ -704,6 +748,113 @@ def _classify_and_record_paper_type(
             "PAPER_TYPE_CLASSIFY_FAIL | path=%s | err=%s",
             image_path, e,
         )
+
+
+def _prime_scan_layout_boxes_for_pdf(
+    page_infos: List[Dict],
+    *,
+    source_type: Optional[str],
+    handwriting_bias: Optional[float],
+) -> None:
+    """Precompute scan-layout boxes and choose document-level fragment merging.
+
+    Tenant-2 scan PDFs split into two buckets that look similar per page:
+    dense school-exam scans, and textless workbook scans where one question is
+    fragmented into stem/table/choices. Aggressive merging is enabled only when
+    the whole document shows the latter pattern.
+    """
+    if not page_infos or is_ocr_available():
+        return
+
+    apply_clahe = _should_apply_opencv_clahe(
+        has_embedded_text=False,
+        source_type=source_type,
+    )
+    candidates: List[Dict] = []
+    for info in page_infos:
+        if info.get("has_embedded_text") or info.get("is_skip_page"):
+            continue
+        image_path = info.get("image_path")
+        if not image_path:
+            continue
+        _classify_and_record_paper_type(
+            info,
+            image_path,
+            has_embedded_text=False,
+            handwriting_bias=handwriting_bias,
+        )
+        paper_type = info.get("paper_type")
+        should_use_scan_layout = (
+            source_type == "school_exam_pdf"
+            or paper_type in {"scan_single", "scan_dual"}
+        )
+        if not should_use_scan_layout:
+            continue
+        info[_SCAN_LAYOUT_BOXES_DEFAULT] = segment_questions_scan_layout(
+            image_path,
+            apply_clahe=apply_clahe,
+            merge_fragmented_columns=False,
+        )
+        if source_type != "school_exam_pdf" and paper_type == "scan_dual":
+            info[_SCAN_LAYOUT_BOXES_FRAGMENT_MERGED] = segment_questions_scan_layout(
+                image_path,
+                apply_clahe=apply_clahe,
+                merge_fragmented_columns=True,
+            )
+            candidates.append(info)
+
+    if _should_use_fragmented_scan_workbook_merge(
+        page_infos,
+        source_type=source_type,
+        candidates=candidates,
+    ):
+        for info in candidates:
+            info[_SCAN_LAYOUT_USE_FRAGMENT_MERGE] = True
+
+
+def _should_use_fragmented_scan_workbook_merge(
+    page_infos: List[Dict],
+    *,
+    source_type: Optional[str],
+    candidates: Optional[List[Dict]] = None,
+) -> bool:
+    if source_type == "school_exam_pdf":
+        return False
+    scan_pages = candidates if candidates is not None else [
+        info for info in page_infos
+        if not info.get("has_embedded_text")
+        and info.get("paper_type") == "scan_dual"
+        and _SCAN_LAYOUT_BOXES_DEFAULT in info
+        and _SCAN_LAYOUT_BOXES_FRAGMENT_MERGED in info
+    ]
+    if len(scan_pages) < 8:
+        return False
+
+    active_pages = [
+        info for info in page_infos
+        if not info.get("is_skip_page")
+    ]
+    if len(scan_pages) / max(1, len(active_pages)) < 0.80:
+        return False
+
+    default_counts = [
+        len(info.get(_SCAN_LAYOUT_BOXES_DEFAULT) or [])
+        for info in scan_pages
+    ]
+    merged_counts = [
+        len(info.get(_SCAN_LAYOUT_BOXES_FRAGMENT_MERGED) or [])
+        for info in scan_pages
+    ]
+    if not default_counts or not merged_counts:
+        return False
+
+    default_avg = sum(default_counts) / len(default_counts)
+    merged_avg = sum(merged_counts) / len(merged_counts)
+    return (
+        default_avg >= 4.0
+        and merged_avg <= 3.2
+        and (default_avg - merged_avg) >= 1.8
+    )
 
 
 def _filter_cover_like_boxes(
@@ -761,6 +912,11 @@ def _collect_pdf_pages(
     page_infos, tmp_dir = _pdf_to_images(image_path, handwriting_bias=handwriting_bias)
     if not page_infos:
         return [], [], [], tmp_dir
+    _prime_scan_layout_boxes_for_pdf(
+        page_infos,
+        source_type=source_type,
+        handwriting_bias=handwriting_bias,
+    )
 
     boxes_per_page: List[List[BBox]] = []
     regions_per_page: List[List] = []

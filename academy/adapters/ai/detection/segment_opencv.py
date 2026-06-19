@@ -228,7 +228,12 @@ def segment_questions_opencv(image_path: str, *, apply_clahe: bool = False) -> L
     return boxes
 
 
-def segment_questions_scan_layout(image_path: str, *, apply_clahe: bool = False) -> List[BBox]:
+def segment_questions_scan_layout(
+    image_path: str,
+    *,
+    apply_clahe: bool = False,
+    merge_fragmented_columns: bool = False,
+) -> List[BBox]:
     """Handwritten scan-safe school-exam layout fallback.
 
     Projection over the raw grayscale page is easily polluted by red grading marks
@@ -253,9 +258,14 @@ def segment_questions_scan_layout(image_path: str, *, apply_clahe: bool = False)
     columns = _detect_scan_exam_columns(mask, w_img, h_img)
 
     boxes: List[BBox] = []
+    aggressive_merge = merge_fragmented_columns and len(columns) >= 2
     for x_start, x_end in columns:
         regions = _find_content_regions(clean, x_start, x_end, h_img)
-        for y_start, y_end in _merge_scan_content_regions(regions, h_img):
+        for y_start, y_end in _merge_scan_content_regions(
+            regions,
+            h_img,
+            aggressive=aggressive_merge,
+        ):
             boxes.append((x_start, y_start, x_end - x_start, y_end - y_start))
 
     boxes = _filter_scan_layout_boxes(boxes, w_img, h_img)
@@ -309,6 +319,8 @@ def _detect_scan_exam_columns(
 def _merge_scan_content_regions(
     regions: List[Tuple[int, int]],
     h_img: int,
+    *,
+    aggressive: bool = False,
 ) -> List[Tuple[int, int]]:
     """Merge intra-question fragments after red/pencil suppression."""
     if not regions or h_img <= 0:
@@ -323,13 +335,15 @@ def _merge_scan_content_regions(
         kept.append((y0, y1))
 
     merged: List[List[int]] = []
+    max_gap = h_img * (0.035 if aggressive else 0.025)
+    max_combined_height = h_img * (0.82 if aggressive else 0.38)
     for y0, y1 in kept:
         if not merged:
             merged.append([y0, y1])
             continue
         gap = y0 - merged[-1][1]
         combined_height = y1 - merged[-1][0]
-        if gap <= h_img * 0.025 and combined_height <= h_img * 0.38:
+        if gap <= max_gap and combined_height <= max_combined_height:
             merged[-1][1] = y1
         else:
             merged.append([y0, y1])

@@ -164,10 +164,22 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
         question_indicators_early = [
             "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
             "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
-            "채우시오", "선택하시오",
+            "채우시오", "선택하시오", "써 넣으시오", "써넣으시오",
+            "빈칸에 알맞은",
         ]
         if not any(kw in full_text for kw in question_indicators_early):
             return True
+
+    # ── 서답형 답안지 표 감지 ──
+    # 운영 케이스 (Tenant 2 doc#197): "문항 번호 / 유형 / 배점 / 정답" 표에
+    # "서답형1", "(1) ..." 같은 답안 해설이 반복된다. 실제 문제지가 아니라
+    # 채점용 답안지이므로 서답형 번호를 문항 anchor로 쓰면 안 된다.
+    answer_sheet_header = all(
+        token in full_text for token in ("문항", "번호", "유형", "배점", "정답")
+    )
+    written_answer_rows = re.findall(r"서\s*답\s*형\s*\d{1,3}", full_text)
+    if answer_sheet_header and len(written_answer_rows) >= 2:
+        return True
 
     # ── workbook 정답표 grid 감지 ──
     # 운영 케이스 (T2 commercial workbook answer reference pages):
@@ -221,7 +233,8 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
         question_indicators_early = [
             "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
             "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
-            "채우시오", "선택하시오",
+            "채우시오", "선택하시오", "써 넣으시오", "써넣으시오",
+            "빈칸에 알맞은",
         ]
         if not any(kw in full_text for kw in question_indicators_early):
             return True
@@ -275,8 +288,10 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
         "옳은 것", "구하시오", "표시하시오", "고르시오", "서술하시오",
         "풀이 과정", "이에 대한 설명", "다음 중", "보기에서",
         "물음에 답", "답하시오", "설명하시오", "쓰시오", "나열하시오",
+        "적으시오", "적으십시오",
         "옳지 않은 것", "서술형", "단답형", "약술형", "무엇인가",
-        "채우시오", "선택하시오",
+        "채우시오", "선택하시오", "써 넣으시오", "써넣으시오",
+        "빈칸에 알맞은",
     ]
     has_question_indicator = any(kw in full_text for kw in question_indicators)
 
@@ -460,6 +475,23 @@ _SHARED_QUESTION_RANGE_PATTERN = re.compile(
 _INLINE_MAIN_QUESTION_PATTERN = re.compile(
     r"^\s*(\d{1,3})\s*[.)](?=\s|[가-힣A-Za-z(<【\[\"'“‘])"
 )
+_SHORT_WORKBOOK_PROMPT_PATTERN = re.compile(
+    r"(?:빈\s*칸|써\s*넣으시오|써넣으시오|쓰시오|적으시오|구하시오|"
+    r"서술하시오|설명하시오|답하시오|의미한다|나타낸다|\(\s*\))"
+)
+_WRITTEN_RESPONSE_PROMPT_PATTERN = re.compile(
+    r"(?:써\s*넣으시오|써넣으시오|쓰시오|적으시오|구하시오|"
+    r"서술하시오|설명하시오|답하시오)"
+)
+_FILL_IN_WORKSHEET_PROMPT_PATTERN = re.compile(
+    r"(?:빈\s*칸.{0,20}(?:알맞은|적절한).{0,20}(?:말|용어|기호).{0,20}"
+    r"(?:써\s*넣으시오|써넣으시오|쓰시오|적으시오)|"
+    r"(?:써\s*넣으시오|써넣으시오|쓰시오|적으시오).{0,20}빈\s*칸)"
+)
+_VISUAL_CONTEXT_PROMPT_PATTERN = re.compile(
+    r"(?:그림|그래프|자료|모형|사진|도표|(?<![가-힣])표(?=[\s는를의와과에,.]))"
+)
+_LARGE_VISUAL_CONTEXT_PROMPT_PATTERN = re.compile(r"(?:그림|그래프|자료|모형|사진|도표)")
 
 
 # Marginal 큰 번호 패턴 — 워크북/메인자료 페이지 좌측 marginal column 에 standalone
@@ -501,6 +533,151 @@ def _extract_marginal_question_number(text: str) -> Optional[int]:
     except ValueError:
         pass
     return None
+
+
+def _looks_like_footer_folio(
+    block: TextBlock,
+    *,
+    page_width: float,
+    page_height: float,
+) -> bool:
+    if page_width <= 0 or page_height <= 0:
+        return False
+    if block.y0 < page_height * 0.86:
+        return False
+    stripped = re.sub(r"\s+", "", (block.text or "").strip())
+    if not stripped or len(stripped) > 12:
+        return False
+    return bool(re.fullmatch(r"[-–—]?\d{1,3}(?:[/／]\d{1,3})?[-–—]?", stripped))
+
+
+def _looks_like_short_workbook_prompt(text: str) -> bool:
+    return bool(_SHORT_WORKBOOK_PROMPT_PATTERN.search(text or ""))
+
+
+def _looks_like_written_response_prompt(text: str) -> bool:
+    return bool(_WRITTEN_RESPONSE_PROMPT_PATTERN.search(text or ""))
+
+
+def _mentions_visual_context(text: str) -> bool:
+    return bool(_VISUAL_CONTEXT_PROMPT_PATTERN.search(text or ""))
+
+
+def _mentions_large_visual_context(text: str) -> bool:
+    return bool(_LARGE_VISUAL_CONTEXT_PROMPT_PATTERN.search(text or ""))
+
+
+def _has_bilateral_marginal_anchors(
+    blocks: List[TextBlock],
+    *,
+    page_width: float,
+    page_height: float,
+) -> bool:
+    """Pixel-only dual pages with real left/right marginal numbers are true dual."""
+    if page_width <= 0 or page_height <= 0:
+        return False
+    mid_x = page_width * 0.5
+    local_margin = page_width * 0.15
+    left_count = 0
+    right_count = 0
+    for block in blocks:
+        if _looks_like_footer_folio(
+            block,
+            page_width=page_width,
+            page_height=page_height,
+        ):
+            continue
+        if _extract_marginal_question_number(block.text) is None:
+            continue
+        center_x = (block.x0 + block.x1) / 2
+        if block.x0 < local_margin:
+            left_count += 1
+        elif center_x >= mid_x and block.x0 < (mid_x + local_margin):
+            right_count += 1
+    return left_count >= 1 and right_count >= 1
+
+
+def _looks_like_fill_in_worksheet_page(
+    blocks: List[TextBlock],
+    *,
+    page_width: float,
+    page_height: float,
+) -> bool:
+    """Dense fill-in worksheet pages are one worksheet problem, not 20 row problems."""
+    content_blocks = [
+        block for block in blocks
+        if not _looks_like_footer_folio(
+            block,
+            page_width=page_width,
+            page_height=page_height,
+        )
+    ]
+    if not content_blocks:
+        return False
+    first_block = min(content_blocks, key=lambda block: (block.y0, block.x0))
+    if not _FILL_IN_WORKSHEET_PROMPT_PATTERN.search(first_block.text or ""):
+        return False
+
+    top_level_numbers = [
+        _extract_marginal_question_number(block.text or "")
+        for block in content_blocks
+    ]
+    top_level_numbers = [number for number in top_level_numbers if number is not None]
+    if len(set(top_level_numbers)) > 1:
+        return False
+
+    numbers: list[int] = []
+    for block in content_blocks:
+        number = _extract_question_number(block.text or "")
+        if number is not None:
+            numbers.append(number)
+    if len(numbers) < 8:
+        return False
+    unique_numbers = sorted(set(numbers))
+    return min(unique_numbers) <= 2 and max(unique_numbers) >= 8
+
+
+def _build_fill_in_worksheet_region(
+    blocks: List[TextBlock],
+    *,
+    page_width: float,
+    page_height: float,
+    page_index: int,
+) -> QuestionRegion:
+    content_blocks = [
+        block for block in blocks
+        if not _looks_like_footer_folio(
+            block,
+            page_width=page_width,
+            page_height=page_height,
+        )
+    ]
+    if not content_blocks:
+        return QuestionRegion(number=1, bbox=(0.0, 0.0, page_width, page_height), page_index=page_index)
+
+    first_number = next(
+        (
+            _extract_question_number(block.text or "")
+            for block in content_blocks
+            if _extract_question_number(block.text or "") is not None
+        ),
+        1,
+    )
+    pad_x = max(page_width * 0.012, 2.0)
+    pad_top = 2.0
+    pad_bottom = max(page_height * 0.035, 8.0)
+    x0 = max(0.0, min(block.x0 for block in content_blocks) - pad_x)
+    y0 = max(0.0, min(block.y0 for block in content_blocks) - pad_top)
+    x1 = min(page_width, max(block.x1 for block in content_blocks) + pad_x)
+    y1 = min(page_height, max(block.y1 for block in content_blocks) + pad_bottom)
+    # Dense fill-in sheets often include bottom diagrams as vector/image objects
+    # without extractable text. Keep the whole worksheet body above the footer.
+    y1 = max(y1, page_height * 0.88)
+    return QuestionRegion(
+        number=first_number,
+        bbox=(x0, y0, x1, max(y1, y0 + page_height * 0.20)),
+        page_index=page_index,
+    )
 
 
 def _expand_inline_anchor_blocks(text_blocks: List[TextBlock]) -> List[TextBlock]:
@@ -567,6 +744,14 @@ def _looks_like_question_type_prefix_only(text: str) -> bool:
     return bool(_QUESTION_TYPE_PREFIX_ONLY_PATTERN.match((text or "").strip()))
 
 
+def _section_offset_from_text(text: str) -> int | None:
+    sec_m = _SECTION_PATTERN.match((text or "").strip())
+    if not sec_m:
+        return None
+    section_key = re.sub(r"\s+", "", sec_m.group(1))[:2]  # "서술" 등
+    return _SECTION_OFFSETS.get(section_key)
+
+
 def _extract_question_number(text: str) -> Optional[int]:
     """Extract question number from text block content.
 
@@ -596,8 +781,7 @@ def _extract_question_number(text: str) -> Optional[int]:
     # 1. 서술형/논술형/단답형/약술형 섹션 패턴 먼저 검사
     sec_m = _SECTION_PATTERN.match(text)
     if sec_m:
-        section_key = re.sub(r"\s+", "", sec_m.group(1))[:2]  # "서술" 등
-        offset = _SECTION_OFFSETS.get(section_key, 0)
+        offset = _section_offset_from_text(text) or 0
         try:
             sub_num = int(sec_m.group(2))
             if 1 <= sub_num <= _MAX_LEGIT_QUESTION_NUMBER:
@@ -775,6 +959,9 @@ def _tighten_region_to_content(
     page_width: float,
     page_height: float,
     margin: float,
+    allow_short_content: bool = False,
+    min_height_ratio: float | None = None,
+    allow_visual_context_min: bool = False,
 ) -> Tuple[float, float, float, float]:
     """Shrink an anchor-derived region to the actual text content inside it."""
     if not blocks or page_width <= 0 or page_height <= 0:
@@ -783,6 +970,12 @@ def _tighten_region_to_content(
     footer_y = page_height * 0.92
     region_blocks: List[TextBlock] = []
     for block in blocks:
+        if _looks_like_footer_folio(
+            block,
+            page_width=page_width,
+            page_height=page_height,
+        ):
+            continue
         if block.y0 >= footer_y:
             continue
         if block.y1 < y0 or block.y0 > y1:
@@ -796,6 +989,12 @@ def _tighten_region_to_content(
     if not region_blocks:
         return x0, y0, x1, y1
 
+    region_text = " ".join(b.text or "" for b in region_blocks)
+    inferred_min_height_ratio = min_height_ratio
+    if inferred_min_height_ratio is None:
+        if allow_visual_context_min and _mentions_large_visual_context(region_text):
+            inferred_min_height_ratio = 0.22
+
     content_x0 = min(b.x0 for b in region_blocks)
     content_x1 = max(b.x1 for b in region_blocks)
     content_y1 = max(b.y1 for b in region_blocks)
@@ -804,14 +1003,21 @@ def _tighten_region_to_content(
     pad_y_bottom = max(page_height * 0.035, margin * 3)
     min_w = page_width * 0.12
     min_h = page_height * 0.06
+    target_min_h = min_h
+    if inferred_min_height_ratio is not None:
+        target_min_h = max(target_min_h, page_height * inferred_min_height_ratio)
 
     tightened_x0 = max(x0, content_x0 - pad_x)
     tightened_x1 = min(x1, content_x1 + pad_x)
-    tightened_y1 = min(y1, max(content_y1 + pad_y_bottom, y0 + min_h))
+    tightened_y1 = min(y1, max(content_y1 + pad_y_bottom, y0 + target_min_h))
 
     if tightened_x1 - tightened_x0 < min_w:
         return x0, y0, x1, y1
     if tightened_y1 - y0 < min_h:
+        if allow_short_content:
+            short_min_h = max(page_height * 0.030, margin * 3, 12.0)
+            tightened_y1 = min(y1, max(tightened_y1, y0 + short_min_h))
+            return tightened_x0, y0, tightened_x1, tightened_y1
         return x0, y0, x1, y1
     return tightened_x0, y0, tightened_x1, tightened_y1
 
@@ -869,12 +1075,13 @@ def _expand_shared_range_regions(
 
         column_regions = [r for r in regions if _same_column(r)]
         y0 = max(0.0, block.y0 - margin)
-        y1 = page_height
+        group_bottom = max(r.bbox[3] for r in group)
+        y1 = min(page_height, max(y0 + 10, group_bottom))
         for r in sorted(column_regions, key=lambda item: item.bbox[1]):
             if r.number <= end:
                 continue
             if r.bbox[1] > block.y0:
-                y1 = max(y0 + 10, r.bbox[1] - margin)
+                y1 = min(page_height, max(y0 + 10, r.bbox[1] - margin))
                 break
 
         for r in group:
@@ -899,6 +1106,8 @@ def count_marginal_anchor_candidates(
     footer_y = page_height * 0.92 if page_height > 0 else None
     count = 0
     for b in text_blocks:
+        if _looks_like_footer_folio(b, page_width=page_width, page_height=page_height):
+            continue
         if footer_y is not None and b.y0 >= footer_y:
             continue
         if b.x0 >= threshold_x:
@@ -952,17 +1161,36 @@ def split_questions(
             and debug.get("is_dual_text") is False
             and bool(debug.get("is_dual_pixel"))
         )
+        bilateral_marginal_dual = pixel_only_dual and _has_bilateral_marginal_anchors(
+            text_blocks,
+            page_width=page_width,
+            page_height=page_height,
+        )
         is_quad_layout = paper_type.is_quadrant
         is_dual_column = (
             paper_type.is_dual_column
             and not is_quad_layout
-            and not pixel_only_dual
+            and (not pixel_only_dual or bilateral_marginal_dual)
         )
     else:
         # 4분할 레이아웃 우선 검사 — 가로 + 세로 gutter가 모두 있으면 quad.
         # 4분할이면 dual column 분기와 다른 좌표 구속 필요.
         is_quad_layout = _detect_quad_layout(text_blocks, page_width, page_height)
         is_dual_column = (not is_quad_layout) and _detect_column_layout(text_blocks, page_width)
+
+    if _looks_like_fill_in_worksheet_page(
+        text_blocks,
+        page_width=page_width,
+        page_height=page_height,
+    ):
+        return [
+            _build_fill_in_worksheet_region(
+                text_blocks,
+                page_width=page_width,
+                page_height=page_height,
+                page_index=page_index,
+            )
+        ]
     mid_x = page_width * 0.5
     mid_y = page_height * 0.5
 
@@ -1003,14 +1231,55 @@ def split_questions(
             return True
         return False
 
+    def _same_coarse_cell(left: TextBlock, right: TextBlock) -> bool:
+        if not (is_dual_column or is_quad_layout):
+            return True
+        same_cell = (
+            ((left.x0 + left.x1) / 2 < mid_x)
+            == ((right.x0 + right.x1) / 2 < mid_x)
+        )
+        if is_quad_layout:
+            same_cell = same_cell and (
+                ((left.y0 + left.y1) / 2 < mid_y)
+                == ((right.y0 + right.y1) / 2 < mid_y)
+            )
+        return same_cell
+
+    def _nearby_section_offset_for_marginal(block_idx: int) -> int | None:
+        """PyMuPDF가 "서답형 6."을 "6." + "서답형..."로 쪼갠 경우 보정."""
+        block = sorted_blocks[block_idx]
+        line_tolerance = max(8.0, page_height * 0.025)
+        for other_idx, other in enumerate(sorted_blocks):
+            if other_idx == block_idx:
+                continue
+            offset = _section_offset_from_text(other.text)
+            if offset is None:
+                continue
+            if not _same_coarse_cell(block, other):
+                continue
+            overlaps_y = block.y0 <= other.y1 + 1.0 and other.y0 <= block.y1 + 1.0
+            same_line = abs(block.y0 - other.y0) <= line_tolerance
+            if overlaps_y or same_line:
+                return offset
+        return None
+
     candidates: List[Tuple[int, int, bool]] = []  # (qnum, block_idx, is_marginal)
     for idx, block in enumerate(sorted_blocks):
+        if _looks_like_footer_folio(
+            block,
+            page_width=page_width,
+            page_height=page_height,
+        ):
+            continue
         # marginal candidate 우선 검사 (짧은 standalone block).
         marginal_num = _extract_marginal_question_number(block.text)
         if (
             marginal_num is not None
             and _is_marginal_position(block)
         ):
+            section_offset = _nearby_section_offset_for_marginal(idx)
+            if section_offset is not None:
+                marginal_num += section_offset
             candidates.append((marginal_num, idx, True))
             continue
         # body anchor (current regex).
@@ -1020,6 +1289,33 @@ def split_questions(
 
     if not candidates:
         return []
+
+    def _looks_like_exam_header_page_number(block: TextBlock) -> bool:
+        stripped = (block.text or "").strip()
+        first_line = stripped.split("\n", 1)[0].strip()
+        if not re.fullmatch(r"\d{1,3}\.?", first_line):
+            return False
+        if page_height <= 0 or block.y1 > page_height * 0.13:
+            return False
+        top_text = " ".join(
+            b.text or "" for b in sorted_blocks
+            if b.y1 <= page_height * 0.24
+        )
+        header_text = f"{top_text} {stripped}"
+        return bool(
+            re.search(
+                r"(?:문제지|제\s*\d+\s*교시|수험\s*번호|성\s*명|문항\s*번호|총\s*면수|학년|고사일|중간\s*고사|배점)",
+                header_text,
+            )
+        )
+
+    if len(candidates) > 1:
+        candidates = [
+            c for c in candidates
+            if not (c[2] and _looks_like_exam_header_page_number(sorted_blocks[c[1]]))
+        ]
+        if not candidates:
+            return []
 
     def _same_layout_cell(left_idx: int, right_idx: int) -> bool:
         left = sorted_blocks[left_idx]
@@ -1037,13 +1333,20 @@ def split_questions(
             )
         return same_cell
 
-    source_main_candidates = [
+    main_anchor_candidates = [
         (qnum, idx)
         for qnum, idx, is_marginal in candidates
         if not is_marginal
-        and _SOURCE_PREFIXED_QUESTION_PATTERN.match(sorted_blocks[idx].text.strip())
+        and (
+            _SOURCE_PREFIXED_QUESTION_PATTERN.match(sorted_blocks[idx].text.strip())
+            or _section_offset_from_text(sorted_blocks[idx].text) is not None
+            or (
+                qnum >= 10
+                and not re.match(r"^\s*\(\d{1,3}\)", sorted_blocks[idx].text.strip())
+            )
+        )
     ]
-    if source_main_candidates:
+    if main_anchor_candidates:
         filtered_candidates: List[Tuple[int, int, bool]] = []
         for candidate in candidates:
             qnum, idx, is_marginal = candidate
@@ -1053,7 +1356,7 @@ def split_questions(
             )
             drop_as_subitem = False
             if is_parenthesized_subitem:
-                for main_num, main_idx in source_main_candidates:
+                for main_num, main_idx in main_anchor_candidates:
                     main_block = sorted_blocks[main_idx]
                     if (
                         qnum < main_num
@@ -1143,7 +1446,7 @@ def split_questions(
     ):
         candidates = [c for c in candidates if c[2]]
 
-    if scan_continuous and not prefer_marginal:
+    if scan_continuous and not prefer_marginal and not is_quad_layout:
         candidates = _filter_continuous_anchor_sequence(candidates)
 
     if is_dual_column and candidates:
@@ -1203,6 +1506,23 @@ def split_questions(
             return prev_idx
         return None
 
+    def _allow_short_region_until_next_anchor(
+        start_idx: int,
+        next_start_idx: int | None,
+        *,
+        y0: float,
+        y1: float,
+    ) -> bool:
+        if next_start_idx is None:
+            return False
+        if len(question_starts) < 5:
+            return False
+        if not _same_layout_cell(start_idx, next_start_idx):
+            return False
+        if y1 <= y0 + max(10.0, page_height * 0.012):
+            return False
+        return _looks_like_short_workbook_prompt(sorted_blocks[start_idx].text)
+
     for i, (qnum, start_idx) in enumerate(question_starts):
         start_block = sorted_blocks[start_idx]
         next_start_idx = question_starts[i + 1][1] if i + 1 < len(question_starts) else None
@@ -1241,7 +1561,28 @@ def split_questions(
         # T2 운영 reanalyze (2026-04-30): 11건 strip 잔존 (h=10~100). 임계 100px도
         # doc#177 q1 (정확히 100px, h=y1-y0이 page_height의 0.9%)에서 통과되어
         # 5% 비율 임계로 변경. 11200 * 0.05 = 560px 최소.
-        if y1 - y0 < page_height * 0.05:
+        allow_short_until_next = _allow_short_region_until_next_anchor(
+            start_idx,
+            next_start_idx,
+            y0=y0,
+            y1=y1,
+        )
+        allow_short_content = allow_short_until_next or (
+            next_start_idx is None
+            and not (is_dual_column or is_quad_layout)
+            and _looks_like_short_workbook_prompt(start_block.text)
+            and not _mentions_visual_context(start_block.text)
+        )
+        response_min_height_ratio = None
+        if (
+            _looks_like_written_response_prompt(start_block.text)
+            and _mentions_large_visual_context(start_block.text)
+        ):
+            response_min_height_ratio = 0.22
+        if (
+            y1 - y0 < page_height * 0.05
+            and not allow_short_until_next
+        ):
             y1 = page_height
 
         # Strategy post-clamp: quad는 quadrant 경계 / dual은 column 경계 추가 구속.
@@ -1266,6 +1607,9 @@ def split_questions(
                 page_width=page_width,
                 page_height=page_height,
                 margin=margin,
+                allow_short_content=allow_short_content,
+                min_height_ratio=response_min_height_ratio,
+                allow_visual_context_min=_mentions_large_visual_context(start_block.text),
             )
 
         regions.append(
@@ -1442,8 +1786,10 @@ def _drop_outliers_in_seen(
     """sorted-unique number-space 별 sequence outlier 식별.
 
     100 단위 number-space 분리 (선택형 <100 / 서술형 100~ / 논술형 200~ / 단답 300~).
-    median gap 대비 5x + abs >= 5 인 gap 이후의 모든 번호를 outlier 로 표시.
+    median gap 대비 5x + abs >= 5 인 gap 이후 tail 이 짧으면 outlier 로 표시.
     예: [3, 4, 5, 6, 7, 46] → 46 드롭.
+    단, [1, 2, 3, 4, 11, 13, 19, 20] 같은 공식 발췌형 sparse
+    sequence는 tail anchor가 3개 이상이므로 보존한다.
     """
     outlier_nums: set[int] = set()
     by_space: dict[int, List[int]] = {}
@@ -1459,7 +1805,10 @@ def _drop_outliers_in_seen(
         median_gap = sorted_gaps[len(sorted_gaps) // 2]
         for i, gap in enumerate(gaps):
             if gap >= 5 and gap >= median_gap * 5:
-                outlier_nums.update(space_nums[i + 1:])
+                tail = space_nums[i + 1:]
+                if len(tail) >= 3:
+                    break
+                outlier_nums.update(tail)
                 break
     return outlier_nums
 
