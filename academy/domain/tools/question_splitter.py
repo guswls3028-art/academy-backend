@@ -403,6 +403,10 @@ class QuestionRegion:
 # (단, ")" 직후가 또 ")" 이거나 "."이면 보기 ①②③④⑤ 또는 본문 일부일 수 있어 거부.)
 _QUESTION_PATTERN = re.compile(
     r"^\s*(?:"
+    # PyMuPDF may duplicate overlaid/outlined problem numbers: "98 98. ..."
+    # Treat that as one anchor, not as body text.
+    r"(\d{1,3})\s+\1\s*[.)](?=\s|[가-힣A-Za-z(<【\[\"'“‘])"
+    r"|"
     r"(\d{1,3})\s*[.)](?=\s|[가-힣A-Za-z(<【\[\"'“‘])"  # "1." / "1) " / "12)그림"
     r"|"
     # OCR이 "1."을 "1 /"처럼 읽는 학생 촬영 시험지 보정. "1/2" 같은 비율은
@@ -462,7 +466,7 @@ _INLINE_MAIN_QUESTION_PATTERN = re.compile(
 # "3." / "4." 형식으로 박힌 큰 번호. 학원장 mental model 의 "한 문제 단위" anchor.
 # 본문 sub-item anchor ("1. 다음 글은...") 와 구분하기 위해 매우 짧은 standalone block 만 인정.
 _MARGINAL_NUMBER_PATTERN = re.compile(
-    r"^\s*(\d{1,3})\s*\.?\s*$"
+    r"^\s*(\d{1,3})(?:\s+\1)?\s*\.?\s*$"
 )
 
 
@@ -645,17 +649,20 @@ def _detect_column_layout(
     if right_count > len(blocks) * 0.2:
         return True
 
-    # Fallback: anchor "N."이 좌/우 column 모두에 배치되어 있으면 dual-column
-    anchor_pattern = re.compile(r"^\s*(\d{1,3})\s*[.)]")
+    # Fallback: anchor "N."이 좌/우 column 모두에 배치되어 있으면 dual-column.
+    # Some workbook pages have 2 left questions and only 1 right question; requiring
+    # 2+ anchors on each side misclassifies them as single-column and merges columns.
     left_anchors = sum(
         1 for b in blocks
-        if b.x0 <= mid_x and anchor_pattern.match(b.text or "")
+        if b.x0 <= mid_x and _extract_question_number(b.text or "") is not None
     )
     right_anchors = sum(
         1 for b in blocks
-        if b.x0 > mid_x and anchor_pattern.match(b.text or "")
+        if b.x0 > mid_x and _extract_question_number(b.text or "") is not None
     )
-    return left_anchors >= 2 and right_anchors >= 2
+    if left_anchors >= 2 and right_anchors >= 2:
+        return True
+    return left_anchors >= 2 and right_anchors >= 1 and (left_anchors + right_anchors) >= 3
 
 
 def _detect_quad_layout(
@@ -1082,24 +1089,53 @@ def split_questions(
         for _, idx, is_marginal in candidates:
             if is_marginal:
                 marginal_columns.add(_candidate_column(idx))
+        marginal_numbers = {
+            qnum for qnum, _, is_marginal in candidates if is_marginal
+        }
+        shared_material_columns: List[tuple[tuple[int, int], float]] = []
+        for idx, block in enumerate(sorted_blocks):
+            shared_range = _extract_shared_question_range(block.text)
+            if not shared_range:
+                continue
+            start, end = shared_range
+            if marginal_numbers & set(range(start, end + 1)):
+                shared_material_columns.append((_candidate_column(idx), block.y0))
 
         def _is_source_prefixed_body_anchor(candidate: Tuple[int, int, bool]) -> bool:
             if candidate[2]:
                 return False
             block = sorted_blocks[candidate[1]]
+            if _extract_shared_question_range(block.text):
+                return False
             return bool(_SOURCE_PREFIXED_QUESTION_PATTERN.match(block.text.strip()))
 
-        candidates = [
-            c for c in candidates
-            if (
-                c[2]
-                or _is_source_prefixed_body_anchor(c)
-                or (
-                (is_dual_column or is_quad_layout)
-                and _candidate_column(c[1]) not in marginal_columns
-                )
+        def _is_shared_material_body_anchor(candidate: Tuple[int, int, bool]) -> bool:
+            if candidate[2] or not shared_material_columns:
+                return False
+            block = sorted_blocks[candidate[1]]
+            block_col = _candidate_column(candidate[1])
+            return any(
+                block_col == shared_col and block.y0 >= shared_y - 2.0
+                for shared_col, shared_y in shared_material_columns
             )
-        ]
+
+        def _keep_prefer_marginal_candidate(
+            candidate: Tuple[int, int, bool],
+        ) -> bool:
+            if candidate[2]:
+                return True
+            if _is_source_prefixed_body_anchor(candidate):
+                return True
+            if candidate[0] in marginal_numbers:
+                return False
+            if _is_shared_material_body_anchor(candidate):
+                return False
+            return (
+                (is_dual_column or is_quad_layout)
+                and _candidate_column(candidate[1]) not in marginal_columns
+            )
+
+        candidates = [c for c in candidates if _keep_prefer_marginal_candidate(c)]
     elif (
         not scan_continuous
         and marginal_count >= 2

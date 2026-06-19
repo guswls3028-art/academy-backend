@@ -48,6 +48,11 @@ def test_anchor_pattern_with_space_still_works():
     assert _extract_question_number("3) 다음은 어느") == 3
 
 
+def test_anchor_pattern_accepts_duplicate_rendered_number():
+    """PyMuPDF가 겹친 번호를 `98 98.`처럼 추출해도 하나의 anchor로 인식."""
+    assert _extract_question_number("98 98. 내신기출 그림은 콩팥에서") == 98
+
+
 def test_anchor_pattern_after_source_prefix():
     """`[언남고 기출] / 1.` 같은 출처 prefix 뒤 문항 번호도 인식한다."""
     assert _extract_question_number("[ 언남고 기출 ] / 1. 그림은 생태계") == 1
@@ -784,6 +789,7 @@ def test_marginal_anchor_extracts_standalone_number():
     assert _extract_marginal_question_number("3") == 3
     assert _extract_marginal_question_number("10.") == 10
     assert _extract_marginal_question_number("3 . ") == 3
+    assert _extract_marginal_question_number("4 4.") == 4
     # reject (본문 anchor 형태)
     assert _extract_marginal_question_number("3. 다음") is None
     assert _extract_marginal_question_number("3.0") is None
@@ -924,6 +930,76 @@ def test_split_questions_dual_marginal_accepts_gutter_overlap_right_anchor():
 
     assert [r.number for r in regions] == [5, 6, 7, 8]
     assert {r.number for r in regions if r.bbox[0] >= pw * 0.5 - 2} == {7, 8}
+
+
+def test_split_questions_drops_shared_material_procedure_numbers():
+    """공통자료 `[1~3]` 안의 실험 절차 번호는 main question anchor가 아니다."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 595.0, 841.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.85,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+    )
+    blocks = [
+        TextBlock(text="[1~3] 다음은 소화효소 실험이다. 물음에 답하시오.", x0=28, y0=76, x1=292, y1=100),
+        TextBlock(text="[실험 과정]", x0=36, y0=119, x1=80, y1=128),
+        TextBlock(text="1. 물 10mL를 준비한다.", x0=36, y0=133, x1=295, y1=142),
+        TextBlock(text="2. 소화제를 섞는다.", x0=36, y0=162, x1=295, y1=171),
+        TextBlock(text="3. 색깔 변화를 관찰한다.", x0=36, y0=191, x1=295, y1=200),
+        TextBlock(text="4. 셀로판 튜브를 준비한다.", x0=36, y0=234, x1=295, y1=243),
+        TextBlock(text="5. 비커에 넣어 둔다.", x0=36, y0=346, x1=295, y1=355),
+        TextBlock(text="6. 용액을 옮긴다.", x0=36, y0=479, x1=295, y1=488),
+        TextBlock(text="7. 색 변화를 관찰한다.", x0=36, y0=522, x1=295, y1=531),
+        TextBlock(text="1 1.", x0=311, y0=75, x1=439, y1=86),
+        TextBlock(text="(가)~(다) 중 녹말이 분해된 셀로판 튜브", x0=311, y0=89, x1=559, y1=98),
+        TextBlock(text="2 2.", x0=311, y0=299, x1=439, y1=310),
+        TextBlock(text="시험관 b와 c에서 색깔이 변한 까닭", x0=311, y0=313, x1=559, y1=322),
+        TextBlock(text="3 3.", x0=311, y0=465, x1=439, y1=476),
+        TextBlock(text="소화효소의 역할을 설명하시오.", x0=311, y0=479, x1=559, y1=488),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=0,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [1, 2, 3]
+    assert all(r.bbox[0] >= pw * 0.5 - 2 for r in regions)
+
+
+def test_source_prefixed_anchor_wins_over_false_marginal_same_number():
+    """출처 prefix 문항은 표 안의 단독 숫자 marginal 오탐보다 우선한다."""
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 595.0, 841.0
+    blocks = [
+        TextBlock(text="[2025 은광여고 기출] 3. 그림은 주기율표이다.", x0=28, y0=70, x1=284, y1=98),
+        TextBlock(text="이에 대한 설명으로 옳은 것은?", x0=28, y0=220, x1=396, y1=229),
+        TextBlock(text="3", x0=64, y0=484, x1=68, y1=493),  # table row number, not a question
+        TextBlock(text="[2025 은광여고 기출] 4. 다음 문제", x0=28, y0=407, x1=193, y1=434),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=0,
+        prefer_marginal=True,
+    )
+
+    by_num = {r.number: r for r in regions}
+    assert sorted(by_num) == [3, 4]
+    assert by_num[3].bbox[1] < 100
 
 
 def test_split_questions_prefer_marginal_threshold_one_anchor():
@@ -1413,6 +1489,22 @@ def test_dual_column_anchor_distribution_fallback():
         TB(text="5. 그림", x0=4500, y0=3000, x1=8200, y1=3100),
         TB(text="6. 다음", x0=4500, y0=6000, x1=8200, y1=6100),
     ]
+    assert _detect_column_layout(blocks, pw) is True
+
+
+def test_dual_column_single_right_anchor_distribution_fallback():
+    """좌측 2문항 + 우측 1문항인 2단 페이지도 single-column으로 합치지 않는다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, _detect_column_layout
+
+    pw = 595.0
+    blocks = [
+        TB(text="98 98. 내신기출 그림은", x0=36, y0=75, x1=280, y1=98),
+        TB(text="99 99. EBS. 수특 표는", x0=36, y0=420, x1=280, y1=443),
+        TB(text="100 100. EBS. 수특 다음은", x0=311, y0=75, x1=559, y1=110),
+        TB(text="왼쪽 본문", x0=50, y0=120, x1=260, y1=150),
+        TB(text="오른쪽 본문", x0=320, y0=130, x1=540, y1=160),
+    ]
+
     assert _detect_column_layout(blocks, pw) is True
 
 
