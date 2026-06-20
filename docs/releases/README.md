@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.4.0.md](v1.4.0.md) | **CURRENT** | 2026-06-14 KST | API edge HTTP-to-HTTPS enforcement + deploy verification realignment |
+| [v1.4.1.md](v1.4.1.md) | **CURRENT** | 2026-06-21 KST | Tenant 2 matchup scan/PDF question segmentation recovery |
+| [v1.4.0.md](v1.4.0.md) | production-deployed / v1.4.1로 승계 | 2026-06-14 KST | API edge HTTP-to-HTTPS enforcement + deploy verification realignment |
 | [v1.3.1.md](v1.3.1.md) | production-deployed / v1.4.0로 승계 | 2026-06-14 KST | Production canary guardrails + frontend production smoke gate + deploy evidence refresh |
 | [v1.3.0.md](v1.3.0.md) | production-deployed / v1.3.1로 승계 | 2026-06-12 KST | Production audit risk closure + API edge HTTPS root fix + video/messaging observability seal |
 | [v1.2.49.md](v1.2.49.md) | production-deployed / v1.3.0로 승계 | 2026-06-11 KST | Student-domain launch GO seal + video upload/HLS SSOT + API 2-instance launch baseline |
