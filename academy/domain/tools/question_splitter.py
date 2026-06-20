@@ -409,6 +409,24 @@ class QuestionRegion:
     number: int
     bbox: Tuple[float, float, float, float]  # (x0, y0, x1, y1)
     page_index: int
+    body_bbox: Optional[Tuple[float, float, float, float]] = None
+    context_bbox: Optional[Tuple[float, float, float, float]] = None
+    display_bbox: Optional[Tuple[float, float, float, float]] = None
+    audit_bbox: Optional[Tuple[float, float, float, float]] = None
+    semantic_flags: Tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.body_bbox is None:
+            self.body_bbox = self.bbox
+        if self.display_bbox is None:
+            self.display_bbox = self.bbox
+        if self.audit_bbox is None:
+            self.audit_bbox = self.bbox
+
+    def set_display_bbox(self, bbox: Tuple[float, float, float, float]) -> None:
+        """Update the product-facing crop while preserving audit/body boxes."""
+        self.bbox = bbox
+        self.display_bbox = bbox
 
 
 # 선택형(객관식) 문항 번호 패턴. "1.", "1) ", "(1) ", "[1] ", "문제 1.", "문 1)".
@@ -445,6 +463,11 @@ _SOURCE_PREFIX_ONLY_PATTERN = re.compile(
 )
 _QUESTION_TYPE_PREFIX_ONLY_PATTERN = re.compile(
     r"^\s*[\[【(（]?\s*(?:객관식|선택형|서술형|논술형|단답형|약술형|주관식)\s*[\]】)）]?\s*$"
+)
+_SECTION_TITLE_PREFIX_PATTERN = re.compile(
+    r"^\s*(?:Step\s*\d+\s*[.:]?\s*)?"
+    r"(?:개념\s*완성|내신\s*완성|수능\s*완성|실전\s*문제|대표\s*문제)\s*$",
+    re.IGNORECASE,
 )
 
 # 서술형/논술형/단답형 섹션은 1부터 번호를 리셋하므로 선택형 번호와 충돌함.
@@ -483,6 +506,10 @@ _WRITTEN_RESPONSE_PROMPT_PATTERN = re.compile(
     r"(?:써\s*넣으시오|써넣으시오|쓰시오|적으시오|구하시오|"
     r"서술하시오|설명하시오|답하시오)"
 )
+_REASONING_RESPONSE_PROMPT_PATTERN = re.compile(
+    r"(?:(?:까닭|이유|원인).{0,40}(?:쓰시오|서술하시오|설명하시오|답하시오)|"
+    r"(?:쓰시오|서술하시오|설명하시오|답하시오).{0,40}(?:까닭|이유|원인))"
+)
 _FILL_IN_WORKSHEET_PROMPT_PATTERN = re.compile(
     r"(?:빈\s*칸.{0,20}(?:알맞은|적절한).{0,20}(?:말|용어|기호).{0,20}"
     r"(?:써\s*넣으시오|써넣으시오|쓰시오|적으시오)|"
@@ -492,6 +519,10 @@ _VISUAL_CONTEXT_PROMPT_PATTERN = re.compile(
     r"(?:그림|그래프|자료|모형|사진|도표|(?<![가-힣])표(?=[\s는를의와과에,.]))"
 )
 _LARGE_VISUAL_CONTEXT_PROMPT_PATTERN = re.compile(r"(?:그림|그래프|자료|모형|사진|도표)")
+_PRIOR_CONTEXT_REFERENCE_PATTERN = re.compile(
+    r"(?:(?<![가-힣])위\s*(?:의\s*)?(?:실험|그림|자료|물체|문제|내용|보기|표)|"
+    r"이를\s*토대로|해당\s*(?:자료|그림|실험))"
+)
 
 
 # Marginal 큰 번호 패턴 — 워크북/메인자료 페이지 좌측 marginal column 에 standalone
@@ -559,12 +590,20 @@ def _looks_like_written_response_prompt(text: str) -> bool:
     return bool(_WRITTEN_RESPONSE_PROMPT_PATTERN.search(text or ""))
 
 
+def _looks_like_reasoning_response_prompt(text: str) -> bool:
+    return bool(_REASONING_RESPONSE_PROMPT_PATTERN.search(text or ""))
+
+
 def _mentions_visual_context(text: str) -> bool:
     return bool(_VISUAL_CONTEXT_PROMPT_PATTERN.search(text or ""))
 
 
 def _mentions_large_visual_context(text: str) -> bool:
     return bool(_LARGE_VISUAL_CONTEXT_PROMPT_PATTERN.search(text or ""))
+
+
+def _references_prior_context(text: str) -> bool:
+    return bool(_PRIOR_CONTEXT_REFERENCE_PATTERN.search(text or ""))
 
 
 def _has_bilateral_marginal_anchors(
@@ -742,6 +781,10 @@ def _looks_like_source_prefix_only(text: str) -> bool:
 
 def _looks_like_question_type_prefix_only(text: str) -> bool:
     return bool(_QUESTION_TYPE_PREFIX_ONLY_PATTERN.match((text or "").strip()))
+
+
+def _looks_like_section_title_prefix_only(text: str) -> bool:
+    return bool(_SECTION_TITLE_PREFIX_PATTERN.match((text or "").strip()))
 
 
 def _section_offset_from_text(text: str) -> int | None:
@@ -1000,22 +1043,43 @@ def _tighten_region_to_content(
     content_y1 = max(b.y1 for b in region_blocks)
 
     pad_x = max(page_width * 0.012, margin * 2)
-    pad_y_bottom = max(page_height * 0.035, margin * 3)
+    pad_y_bottom = max(
+        page_height * (0.020 if allow_short_content else 0.035),
+        margin * 3,
+    )
     min_w = page_width * 0.12
     min_h = page_height * 0.06
+    wide_single_line_short = (
+        allow_short_content
+        and (content_x1 - content_x0) >= page_width * 0.78
+        and len(region_blocks) <= 3
+        and not _mentions_large_visual_context(region_text)
+    )
+    if allow_short_content:
+        ratio = 0.045 if wide_single_line_short else 0.075
+        min_h = max(page_height * ratio, margin * 3, 12.0)
     target_min_h = min_h
     if inferred_min_height_ratio is not None:
         target_min_h = max(target_min_h, page_height * inferred_min_height_ratio)
 
     tightened_x0 = max(x0, content_x0 - pad_x)
     tightened_x1 = min(x1, content_x1 + pad_x)
+    if (
+        allow_short_content
+        and not _mentions_large_visual_context(region_text)
+        and x0 >= page_width * 0.45
+        and (x1 - x0) <= page_width * 0.62
+        and (content_x1 - content_x0) <= (x1 - x0) * 0.72
+    ):
+        tightened_x1 = max(tightened_x1, x1)
     tightened_y1 = min(y1, max(content_y1 + pad_y_bottom, y0 + target_min_h))
 
     if tightened_x1 - tightened_x0 < min_w:
         return x0, y0, x1, y1
-    if tightened_y1 - y0 < min_h:
+    if tightened_y1 - y0 < min_h - 1e-6:
         if allow_short_content:
-            short_min_h = max(page_height * 0.030, margin * 3, 12.0)
+            ratio = 0.045 if wide_single_line_short else 0.075
+            short_min_h = max(page_height * ratio, margin * 3, 12.0)
             tightened_y1 = min(y1, max(tightened_y1, y0 + short_min_h))
             return tightened_x0, y0, tightened_x1, tightened_y1
         return x0, y0, x1, y1
@@ -1041,6 +1105,16 @@ def _extract_shared_question_range(text: str) -> Optional[Tuple[int, int]]:
     return None
 
 
+def _shared_range_uses_answer_instruction(text: str) -> bool:
+    compact = re.sub(r"\s+", "", text or "")
+    return bool(
+        re.search(
+            r"(?:물음|문제)에답|(?:다음|아래)물음",
+            compact,
+        )
+    )
+
+
 def _expand_shared_range_regions(
     regions: List[QuestionRegion],
     text_blocks: List[TextBlock],
@@ -1049,7 +1123,7 @@ def _expand_shared_range_regions(
     mid_x: float,
     margin: float,
 ) -> None:
-    """[9,10] 같은 공통 자료 묶음은 각 문항 crop에 공통 자료를 포함시킨다."""
+    """[9,10] 같은 공통 자료 묶음의 display/body/context 역할을 분리한다."""
     if len(regions) < 2:
         return
 
@@ -1073,20 +1147,161 @@ def _expand_shared_range_regions(
         if len(group) < 2:
             continue
 
-        column_regions = [r for r in regions if _same_column(r)]
         y0 = max(0.0, block.y0 - margin)
-        group_bottom = max(r.bbox[3] for r in group)
-        y1 = min(page_height, max(y0 + 10, group_bottom))
-        for r in sorted(column_regions, key=lambda item: item.bbox[1]):
-            if r.number <= end:
+        first_group_number = min(r.number for r in group)
+        group_body_top = min((r.body_bbox or r.bbox)[1] for r in group)
+        shared_text_parts = [block.text or ""]
+        for other in text_blocks:
+            if other is block:
                 continue
-            if r.bbox[1] > block.y0:
-                y1 = min(page_height, max(y0 + 10, r.bbox[1] - margin))
-                break
+            other_center = (other.x0 + other.x1) / 2
+            if (other_center < mid_x) != block_in_left:
+                continue
+            if not (block.y0 < other.y0 < group_body_top):
+                continue
+            shared_text_parts.append(other.text or "")
+        shared_instruction_text = " ".join(shared_text_parts)
+        group_bottom = min(
+            page_height,
+            max(y0 + 10, max(r.bbox[3] for r in group)),
+        )
+        duplicate_full_group = not _shared_range_uses_answer_instruction(shared_instruction_text)
 
         for r in group:
-            rx0, _, rx1, _ = r.bbox
-            r.bbox = (rx0, y0, rx1, y1)
+            rx0, _, rx1, original_y1 = r.bbox
+            body_bbox = r.body_bbox or r.bbox
+            if duplicate_full_group:
+                display_bbox = (rx0, y0, rx1, group_bottom)
+            else:
+                display_bbox = (rx0, y0, rx1, min(page_height, max(y0 + 10, original_y1)))
+            context_bbox = (rx0, y0, rx1, group_bottom)
+            r.body_bbox = body_bbox
+            r.context_bbox = context_bbox
+            shared_position_flag = (
+                "shared_context_first"
+                if r.number == first_group_number
+                else "shared_context_later"
+            )
+            r.semantic_flags = tuple(sorted({
+                *r.semantic_flags,
+                "shared_context",
+                shared_position_flag,
+            }))
+            r.set_display_bbox(display_bbox)
+            if duplicate_full_group or r.number == first_group_number:
+                r.audit_bbox = display_bbox
+
+
+def _collapse_cross_column_shared_instruction_regions(
+    regions: List[QuestionRegion],
+    text_blocks: List[TextBlock],
+    *,
+    page_width: float,
+    page_height: float,
+    mid_x: float,
+    margin: float,
+) -> List[QuestionRegion]:
+    """Collapse workbook pages where one shared prompt owns opposite-column answers.
+
+    Some tenant-2 workbooks place a full experiment/data passage in the left
+    column as ``[1~3] ... 물음에 답하시오`` and the short answer prompts 1/2/3
+    in the right column. Cropping the right prompts independently loses the
+    actual problem; duplicating three full-page crops also overstates the
+    product unit. Treat this layout as one physical question group.
+    """
+    if len(regions) < 2 or page_width <= 0 or page_height <= 0:
+        return regions
+
+    collapsed_ids: set[int] = set()
+    collapsed: list[QuestionRegion] = []
+
+    def _block_in_left(block: TextBlock) -> bool:
+        return ((block.x0 + block.x1) / 2) < mid_x
+
+    def _region_in_left(region: QuestionRegion) -> bool:
+        rx0, _, rx1, _ = region.body_bbox or region.bbox
+        return ((rx0 + rx1) / 2) < mid_x
+
+    def _same_column_block(block: TextBlock, in_left: bool) -> bool:
+        return _block_in_left(block) == in_left
+
+    for block in text_blocks:
+        shared_range = _extract_shared_question_range(block.text)
+        if not shared_range:
+            continue
+        start, end = shared_range
+        group = [r for r in regions if start <= r.number <= end]
+        if len(group) < 2:
+            continue
+
+        shared_in_left = _block_in_left(block)
+        opposite_group = [r for r in group if _region_in_left(r) != shared_in_left]
+        if len(opposite_group) < 2:
+            continue
+
+        group_numbers = {r.number for r in opposite_group}
+        if not group_numbers.issubset(set(range(start, end + 1))):
+            continue
+        if not all("written_response" in set(r.semantic_flags) for r in opposite_group):
+            continue
+
+        shared_text_parts = [block.text or ""]
+        answer_top = min((r.body_bbox or r.bbox)[1] for r in opposite_group)
+        answer_bottom = max((r.body_bbox or r.bbox)[3] for r in opposite_group)
+        for other in text_blocks:
+            if other is block:
+                continue
+            if not _same_column_block(other, shared_in_left):
+                continue
+            if block.y0 <= other.y0 <= max(answer_bottom, page_height * 0.88):
+                shared_text_parts.append(other.text or "")
+        if not _shared_range_uses_answer_instruction(" ".join(shared_text_parts)):
+            continue
+
+        content_blocks = [
+            other for other in text_blocks
+            if not _looks_like_footer_folio(
+                other,
+                page_width=page_width,
+                page_height=page_height,
+            )
+            and other.y0 >= block.y0 - margin
+            and other.y0 <= max(answer_bottom, page_height * 0.88)
+            and (
+                _same_column_block(other, shared_in_left)
+                or (
+                    not _same_column_block(other, shared_in_left)
+                    and answer_top - page_height * 0.04 <= other.y0 <= answer_bottom + page_height * 0.04
+                )
+            )
+        ]
+        if not content_blocks:
+            continue
+
+        pad_x = max(page_width * 0.012, margin * 2)
+        pad_bottom = max(page_height * 0.035, margin * 3)
+        x0 = max(0.0, min(b.x0 for b in content_blocks) - pad_x)
+        y0 = max(0.0, min(block.y0, min(b.y0 for b in content_blocks)) - margin)
+        x1 = min(page_width, max(b.x1 for b in content_blocks) + pad_x)
+        y1 = min(page_height, max(b.y1 for b in content_blocks) + pad_bottom)
+
+        collapsed_ids.update(id(r) for r in group)
+        collapsed.append(
+            QuestionRegion(
+                number=start,
+                bbox=(x0, y0, x1, y1),
+                page_index=opposite_group[0].page_index,
+                body_bbox=(x0, y0, x1, y1),
+                context_bbox=(x0, y0, x1, y1),
+                display_bbox=(x0, y0, x1, y1),
+                audit_bbox=(x0, y0, x1, y1),
+                semantic_flags=("shared_context", "shared_group", "written_response"),
+            )
+        )
+
+    if not collapsed:
+        return regions
+    return [r for r in regions if id(r) not in collapsed_ids] + collapsed
 
 
 def count_marginal_anchor_candidates(
@@ -1263,6 +1478,37 @@ def split_questions(
                 return offset
         return None
 
+    def _marginal_candidate_has_question_body(block_idx: int) -> bool:
+        """Reject standalone chart/page numbers that look like marginal anchors.
+
+        Real workbook marginal anchors are either extracted with the stem in the
+        same block ("10.\n다음은...") or have stem text immediately beside/below
+        the large number. Axis tick labels such as "40" / "80" do not.
+        """
+        block = sorted_blocks[block_idx]
+        text = block.text or ""
+        tail = "\n".join(text.strip().splitlines()[1:]).strip()
+        if re.search(r"[가-힣A-Za-z]{3,}", tail):
+            return True
+        if re.search(r"(?:[.)]|[~∼])", text) and re.search(r"[가-힣A-Za-z]{3,}", text):
+            return True
+
+        line_tolerance = max(10.0, page_height * 0.045)
+        for other_idx, other in enumerate(sorted_blocks):
+            if other_idx == block_idx:
+                continue
+            if not _same_coarse_cell(block, other):
+                continue
+            if other.y0 < block.y0 - 2.0:
+                continue
+            if other.y0 - block.y0 > line_tolerance:
+                continue
+            if other.x1 < block.x0 - page_width * 0.03:
+                continue
+            if re.search(r"[가-힣A-Za-z]{4,}", other.text or ""):
+                return True
+        return False
+
     candidates: List[Tuple[int, int, bool]] = []  # (qnum, block_idx, is_marginal)
     for idx, block in enumerate(sorted_blocks):
         if _looks_like_footer_folio(
@@ -1277,6 +1523,11 @@ def split_questions(
             marginal_num is not None
             and _is_marginal_position(block)
         ):
+            if (
+                not re.search(r"[.)]", block.text or "")
+                and not _marginal_candidate_has_question_body(idx)
+            ):
+                continue
             section_offset = _nearby_section_offset_for_marginal(idx)
             if section_offset is not None:
                 marginal_num += section_offset
@@ -1355,16 +1606,24 @@ def split_questions(
                 re.match(r"^\s*\(\d{1,3}\)", block.text.strip())
             )
             drop_as_subitem = False
-            if is_parenthesized_subitem:
-                for main_num, main_idx in main_anchor_candidates:
-                    main_block = sorted_blocks[main_idx]
-                    if (
-                        qnum < main_num
-                        and block.y0 > main_block.y0
-                        and _same_layout_cell(main_idx, idx)
-                    ):
-                        drop_as_subitem = True
-                        break
+            is_plain_low_subitem = bool(
+                not is_marginal
+                and qnum <= 4
+                and re.match(r"^\s*\d{1,2}\s*[.)]", block.text.strip())
+            )
+            for main_num, main_idx in main_anchor_candidates:
+                main_block = sorted_blocks[main_idx]
+                if not (
+                    qnum < main_num
+                    and block.y0 > main_block.y0
+                    and _same_layout_cell(main_idx, idx)
+                ):
+                    continue
+                if is_parenthesized_subitem or (
+                    is_plain_low_subitem and main_num >= 10
+                ):
+                    drop_as_subitem = True
+                    break
             if not drop_as_subitem:
                 filtered_candidates.append(candidate)
         candidates = filtered_candidates
@@ -1492,18 +1751,19 @@ def split_questions(
     def _prefix_idx_for_start(start_idx: int) -> Optional[int]:
         if start_idx <= 0:
             return None
-        prev_idx = start_idx - 1
-        prev_block = sorted_blocks[prev_idx]
         start_block = sorted_blocks[start_idx]
-        if not _same_layout_cell(prev_idx, start_idx):
-            return None
-        if not (0 <= start_block.y0 - prev_block.y1 <= page_height * 0.06):
-            return None
-        if (
-            _looks_like_source_prefix_only(prev_block.text)
-            or _looks_like_question_type_prefix_only(prev_block.text)
-        ):
-            return prev_idx
+        for prev_idx in range(start_idx - 1, max(-1, start_idx - 8), -1):
+            prev_block = sorted_blocks[prev_idx]
+            if not _same_layout_cell(prev_idx, start_idx):
+                continue
+            if not (0 <= start_block.y0 - prev_block.y1 <= page_height * 0.08):
+                continue
+            if (
+                _looks_like_source_prefix_only(prev_block.text)
+                or _looks_like_question_type_prefix_only(prev_block.text)
+                or _looks_like_section_title_prefix_only(prev_block.text)
+            ):
+                return prev_idx
         return None
 
     def _allow_short_region_until_next_anchor(
@@ -1567,17 +1827,37 @@ def split_questions(
             y0=y0,
             y1=y1,
         )
+        text_start_idx = prefix_idx if prefix_idx is not None else start_idx
+        region_text = " ".join(
+            block.text or ""
+            for block in sorted_blocks[text_start_idx:end_idx]
+        )
+        start_block_text = start_block.text or ""
         allow_short_content = allow_short_until_next or (
             next_start_idx is None
             and not (is_dual_column or is_quad_layout)
-            and _looks_like_short_workbook_prompt(start_block.text)
-            and not _mentions_visual_context(start_block.text)
+            and _looks_like_short_workbook_prompt(start_block_text)
+            and not _mentions_visual_context(region_text)
         )
         response_min_height_ratio = None
+        is_written_response = _looks_like_written_response_prompt(region_text)
+        mentions_large_visual = _mentions_large_visual_context(region_text)
         if (
-            _looks_like_written_response_prompt(start_block.text)
-            and _mentions_large_visual_context(start_block.text)
+            (is_written_response or _looks_like_short_workbook_prompt(region_text))
+            and not mentions_large_visual
         ):
+            allow_short_content = True
+            next_gap = (
+                sorted_blocks[next_start_idx].y0 - start_block.y0
+                if next_start_idx is not None
+                else page_height
+            )
+            if (
+                not (is_dual_column or is_quad_layout)
+                and next_gap >= page_height * 0.10
+            ):
+                y0 = max(0.0, y0 - page_height * 0.012)
+        if is_written_response and mentions_large_visual:
             response_min_height_ratio = 0.22
         if (
             y1 - y0 < page_height * 0.05
@@ -1609,20 +1889,41 @@ def split_questions(
                 margin=margin,
                 allow_short_content=allow_short_content,
                 min_height_ratio=response_min_height_ratio,
-                allow_visual_context_min=_mentions_large_visual_context(start_block.text),
+                allow_visual_context_min=mentions_large_visual,
             )
+
+        semantic_flags = set()
+        if _mentions_large_visual_context(region_text):
+            semantic_flags.add("visual_context")
+        if _looks_like_written_response_prompt(region_text):
+            semantic_flags.add("written_response")
+        if _looks_like_reasoning_response_prompt(region_text):
+            semantic_flags.add("reasoning_response")
+        if _looks_like_short_workbook_prompt(region_text):
+            semantic_flags.add("short_workbook_prompt")
+        if _references_prior_context(region_text):
+            semantic_flags.add("references_prior_context")
 
         regions.append(
             QuestionRegion(
                 number=qnum,
                 bbox=(x0, y0, x1, y1),
                 page_index=page_index,
+                semantic_flags=tuple(sorted(semantic_flags)),
             )
         )
 
     _expand_shared_range_regions(
         regions,
         sorted_blocks,
+        page_height=page_height,
+        mid_x=mid_x,
+        margin=margin,
+    )
+    regions = _collapse_cross_column_shared_instruction_regions(
+        regions,
+        sorted_blocks,
+        page_width=page_width,
         page_height=page_height,
         mid_x=mid_x,
         margin=margin,

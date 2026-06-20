@@ -33,6 +33,7 @@ ENGINE_DISPATCHER = "dispatcher"
 ENGINE_NATIVE_V54 = "native-v5-4"
 ENGINE_NATIVE_V55 = "native-v5-5"
 ENGINE_CHOICES = (ENGINE_DISPATCHER, ENGINE_NATIVE_V54, ENGINE_NATIVE_V55)
+PREDICTION_BOX_KINDS = ("display", "audit", "body", "context")
 
 
 @dataclass(frozen=True)
@@ -133,6 +134,106 @@ def _box_iou(a: NormBox, b: NormBox) -> float:
     return max(0.0, min(1.0, inter / union))
 
 
+def _duplicate_gt_groups(
+    gt_boxes: list[GroundTruthBox],
+    *,
+    duplicate_iou_threshold: float = 0.82,
+) -> list[list[GroundTruthBox]]:
+    """Group manual GT rows that point to the same physical crop."""
+    by_page: dict[int, list[GroundTruthBox]] = defaultdict(list)
+    for gt in gt_boxes:
+        by_page[gt.page_index].append(gt)
+
+    groups: list[list[GroundTruthBox]] = []
+    for page_boxes in by_page.values():
+        parent = {gt.index: gt.index for gt in page_boxes}
+
+        def find(idx: int) -> int:
+            while parent[idx] != idx:
+                parent[idx] = parent[parent[idx]]
+                idx = parent[idx]
+            return idx
+
+        def union(left: int, right: int) -> None:
+            l_root = find(left)
+            r_root = find(right)
+            if l_root != r_root:
+                parent[r_root] = l_root
+
+        for i, left in enumerate(page_boxes):
+            for right in page_boxes[i + 1:]:
+                if _box_iou(left.bbox, right.bbox) >= duplicate_iou_threshold:
+                    union(left.index, right.index)
+
+        grouped: dict[int, list[GroundTruthBox]] = defaultdict(list)
+        for gt in page_boxes:
+            grouped[find(gt.index)].append(gt)
+        groups.extend(sorted(group, key=lambda item: item.index) for group in grouped.values())
+    return groups
+
+
+def _physical_gt_summary(
+    gt_boxes: list[GroundTruthBox],
+    matches: list[dict[str, Any]],
+    missed: list[GroundTruthBox],
+) -> dict[str, Any]:
+    groups = _duplicate_gt_groups(gt_boxes)
+    matched_gt = {int(match["gt_index"]) for match in matches}
+    missed_gt = {gt.index for gt in missed}
+    physical_missed_groups: list[dict[str, Any]] = []
+    duplicate_missed_rows: list[dict[str, Any]] = []
+    duplicate_group_count = 0
+    duplicate_row_count = 0
+
+    for group in groups:
+        group_indices = {gt.index for gt in group}
+        group_matched = bool(group_indices & matched_gt)
+        group_missed = bool(group_indices & missed_gt)
+        if len(group) > 1:
+            duplicate_group_count += 1
+            duplicate_row_count += len(group) - 1
+            if group_matched and group_missed:
+                representative = next((gt for gt in group if gt.index in matched_gt), group[0])
+                for gt in group:
+                    if gt.index in missed_gt:
+                        duplicate_missed_rows.append({
+                            "gt_index": gt.index,
+                            "problem_id": gt.problem_id,
+                            "number": gt.number,
+                            "page_index": gt.page_index,
+                            "duplicate_of_gt_index": representative.index,
+                            "bbox": gt.bbox.as_tuple(),
+                        })
+        if not group_matched:
+            physical_missed_groups.append({
+                "gt_indices": [gt.index for gt in group],
+                "problem_ids": [gt.problem_id for gt in group],
+                "numbers": [gt.number for gt in group],
+                "page_index": group[0].page_index,
+                "bbox": group[0].bbox.as_tuple(),
+            })
+
+    physical_gt_count = len(groups)
+    physical_missed_count = len(physical_missed_groups)
+    physical_matched_count = physical_gt_count - physical_missed_count
+    physical_recall = (
+        physical_matched_count / physical_gt_count
+        if physical_gt_count
+        else 0.0
+    )
+    return {
+        "physical_gt_count": physical_gt_count,
+        "physical_matched_count": physical_matched_count,
+        "physical_missed_count": physical_missed_count,
+        "physical_recall": round(physical_recall, 6),
+        "duplicate_gt_group_count": duplicate_group_count,
+        "duplicate_gt_row_count": duplicate_row_count,
+        "duplicate_missed_count": len(duplicate_missed_rows),
+        "duplicate_missed": duplicate_missed_rows,
+        "physical_missed": physical_missed_groups,
+    }
+
+
 def _extract_ground_truth(document: dict[str, Any]) -> list[GroundTruthBox]:
     out: list[GroundTruthBox] = []
     for idx, row in enumerate(document.get("ground_truth") or []):
@@ -184,7 +285,35 @@ def _image_size(page: dict[str, Any]) -> tuple[int, int] | None:
         return None
 
 
-def _extract_predictions(result: dict[str, Any]) -> list[PredictedBox]:
+def _prediction_box_from_meta(
+    *,
+    raw: Any,
+    meta: Any,
+    box_kind: str,
+) -> Any:
+    if box_kind == "display":
+        return raw
+    if not isinstance(meta, dict):
+        return raw
+    key = f"{box_kind}_box"
+    candidate = meta.get(key)
+    if isinstance(candidate, (list, tuple)) and len(candidate) == 4:
+        return candidate
+    if box_kind == "audit":
+        for fallback_key in ("body_box", "display_box"):
+            candidate = meta.get(fallback_key)
+            if isinstance(candidate, (list, tuple)) and len(candidate) == 4:
+                return candidate
+    return raw
+
+
+def _extract_predictions(
+    result: dict[str, Any],
+    *,
+    box_kind: str = "display",
+) -> list[PredictedBox]:
+    if box_kind not in PREDICTION_BOX_KINDS:
+        raise ValueError(f"unsupported prediction box kind: {box_kind}")
     predictions: list[PredictedBox] = []
     pages = result.get("pages") or []
     if not isinstance(pages, list):
@@ -204,11 +333,19 @@ def _extract_predictions(result: dict[str, Any]) -> list[PredictedBox]:
         img_w, img_h = size
         boxes = page.get("boxes") or []
         numbers = page.get("numbers") or []
+        bbox_meta = page.get("bbox_meta") or []
         if not isinstance(boxes, list):
             continue
         if not isinstance(numbers, list):
             numbers = []
+        if not isinstance(bbox_meta, list):
+            bbox_meta = []
         for box_idx, raw in enumerate(boxes):
+            raw = _prediction_box_from_meta(
+                raw=raw,
+                meta=bbox_meta[box_idx] if box_idx < len(bbox_meta) else None,
+                box_kind=box_kind,
+            )
             if not isinstance(raw, (list, tuple)) or len(raw) != 4:
                 continue
             try:
@@ -336,22 +473,62 @@ def _match_page_boxes(
     *,
     iou_threshold: float,
 ) -> tuple[list[dict[str, Any]], list[GroundTruthBox], list[PredictedBox]]:
-    pairs: list[tuple[float, GroundTruthBox, PredictedBox]] = []
+    edges_by_gt: dict[int, list[tuple[bool, float, PredictedBox]]] = defaultdict(list)
+    gt_by_index = {gt.index: gt for gt in gt_boxes}
+    pred_by_index = {pred.index: pred for pred in pred_boxes}
+
+    def _same_number(gt: GroundTruthBox, pred: PredictedBox) -> bool:
+        return gt.number is not None and pred.number is not None and gt.number == pred.number
+
     for gt in gt_boxes:
         for pred in pred_boxes:
             iou = _box_iou(gt.bbox, pred.bbox)
             if iou >= iou_threshold:
-                pairs.append((iou, gt, pred))
-    pairs.sort(key=lambda item: item[0], reverse=True)
+                edges_by_gt[gt.index].append((_same_number(gt, pred), iou, pred))
+    for edges in edges_by_gt.values():
+        edges.sort(key=lambda item: (item[0], item[1]), reverse=True)
 
-    used_gt: set[int] = set()
-    used_pred: set[int] = set()
+    pred_to_gt: dict[int, int] = {}
+    pred_to_iou: dict[int, float] = {}
+
+    def _augment(gt: GroundTruthBox, seen_pred: set[int]) -> bool:
+        for _, iou, pred in edges_by_gt.get(gt.index, []):
+            if pred.index in seen_pred:
+                continue
+            seen_pred.add(pred.index)
+            previous_gt_index = pred_to_gt.get(pred.index)
+            if previous_gt_index is None or _augment(gt_by_index[previous_gt_index], seen_pred):
+                pred_to_gt[pred.index] = gt.index
+                pred_to_iou[pred.index] = iou
+                return True
+        return False
+
+    # Maximize recall first. Within that, process constrained GT boxes earlier
+    # and each GT's candidate preds by descending IoU.
+    gt_order = sorted(
+        gt_boxes,
+        key=lambda gt: (
+            len(edges_by_gt.get(gt.index, [])) or 10_000,
+            -max(
+                (
+                    (1.0 if same_number else 0.0) + iou
+                    for same_number, iou, _ in edges_by_gt.get(gt.index, [])
+                ),
+                default=0.0,
+            ),
+            gt.index,
+        ),
+    )
+    for gt in gt_order:
+        _augment(gt, set())
+
     matches: list[dict[str, Any]] = []
-    for iou, gt, pred in pairs:
-        if gt.index in used_gt or pred.index in used_pred:
-            continue
-        used_gt.add(gt.index)
-        used_pred.add(pred.index)
+    used_gt = set(pred_to_gt.values())
+    used_pred = set(pred_to_gt.keys())
+    for pred_index, gt_index in sorted(pred_to_gt.items(), key=lambda item: gt_by_index[item[1]].index):
+        gt = gt_by_index[gt_index]
+        pred = pred_by_index[pred_index]
+        iou = pred_to_iou[pred_index]
         matches.append({
             "gt_index": gt.index,
             "gt_problem_id": gt.problem_id,
@@ -417,9 +594,10 @@ def evaluate_predictions_against_gt(
         else 0.0
     )
     number_match_count = sum(1 for m in matches if m.get("number_match"))
+    physical_summary = _physical_gt_summary(gt_boxes, matches, missed)
     status = "pass" if (
         gt_count > 0
-        and recall >= min_recall
+        and physical_summary["physical_recall"] >= min_recall
         and precision >= min_precision
     ) else "fail"
 
@@ -435,6 +613,7 @@ def evaluate_predictions_against_gt(
         "mean_iou": round(mean_iou, 6),
         "number_match_count": number_match_count,
         "number_match_ratio": round(number_match_count / matched_count, 6) if matched_count else 0.0,
+        **physical_summary,
         "matches": matches,
         "missed": [
             {
@@ -555,6 +734,7 @@ def _write_report(summary: dict[str, Any], report_path: Path) -> None:
         f"- Manifest: `{summary['manifest']}`",
         f"- Input dir: `{summary['input_dir']}`",
         "- Mode: read-only, DB write 0, R2 write 0",
+        f"- Prediction box kind: `{summary.get('prediction_box_kind', 'display')}`",
         f"- IoU threshold: `{summary['iou_threshold']}`",
         f"- Files evaluated: `{agg['evaluated_docs']}/{agg['selected_docs']}`",
         f"- GT boxes: `{agg['gt_count']}`",
@@ -601,6 +781,12 @@ class Command(BaseCommand):
         parser.add_argument("--overlay-limit-pages", type=int, default=8)
         parser.add_argument("--include-student-photo", action="store_true", help="Do not exclude student_exam_photo docs.")
         parser.add_argument("--no-overlays", action="store_true", help="Disable overlay PNG generation.")
+        parser.add_argument(
+            "--prediction-box-kind",
+            choices=PREDICTION_BOX_KINDS,
+            default="display",
+            help="Which dispatcher bbox role to compare against manual GT.",
+        )
         parser.add_argument(
             "--engine",
             choices=ENGINE_CHOICES,
@@ -661,6 +847,7 @@ class Command(BaseCommand):
         if not selected:
             raise CommandError("no documents selected")
         engine = str(options["engine"])
+        prediction_box_kind = str(options["prediction_box_kind"])
 
         out_dir = Path(options.get("output") or _default_output_dir())
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -669,7 +856,8 @@ class Command(BaseCommand):
         overlay_root = None if options["no_overlays"] else out_dir / "overlays"
 
         self.stdout.write(self.style.NOTICE(
-            f"manual GT eval: docs={len(selected)} engine={engine} input={input_dir} -> {out_dir}"
+            f"manual GT eval: docs={len(selected)} engine={engine} "
+            f"box_kind={prediction_box_kind} input={input_dir} -> {out_dir}"
         ))
         self.stdout.write(self.style.WARNING("read-only: DB write 0, R2 write 0"))
 
@@ -719,7 +907,10 @@ class Command(BaseCommand):
                 else:
                     raise CommandError(f"unsupported engine: {engine}")
                 gt_boxes = _extract_ground_truth(doc)
-                pred_boxes = _extract_predictions(raw_result)
+                pred_boxes = _extract_predictions(
+                    raw_result,
+                    box_kind=prediction_box_kind,
+                )
                 metrics = evaluate_predictions_against_gt(
                     gt_boxes,
                     pred_boxes,
@@ -733,6 +924,7 @@ class Command(BaseCommand):
                     "source_type": doc.get("meta_source_type") or "",
                     "paper_primary": doc.get("paper_primary") or "",
                     "engine": engine,
+                    "prediction_box_kind": prediction_box_kind,
                     "engine_version": (
                         (raw_result.get("native_result") or {}).get("version")
                         if isinstance(raw_result.get("native_result"), dict)
@@ -833,6 +1025,7 @@ class Command(BaseCommand):
             "db_writes": 0,
             "r2_writes": 0,
             "engine": engine,
+            "prediction_box_kind": prediction_box_kind,
             "iou_threshold": iou_threshold,
             "min_recall": float(options["min_recall"]),
             "min_precision": float(options["min_precision"]),

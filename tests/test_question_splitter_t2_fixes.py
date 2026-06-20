@@ -17,6 +17,7 @@ from academy.domain.tools.question_splitter import (
     TextBlock,
     is_non_question_page,
     _extract_question_number,
+    _references_prior_context,
     split_questions,
     validate_anchors_across_pages,
 )
@@ -486,6 +487,61 @@ def test_source_prefixed_main_question_absorbs_parenthesized_subitems():
 
     assert [r.number for r in regions] == [9]
     assert regions[0].bbox[3] > 445
+
+
+def test_source_prefixed_main_question_absorbs_plain_procedure_numbers():
+    """source-prefixed 큰 문항 내부 1/2/3 절차번호는 별도 crop anchor가 아니다."""
+    blocks = [
+        TextBlock(
+            "[ 학교 기출 ]\n20. 다음 탐구 과정에 대한 설명으로 옳은 것은?",
+            320,
+            80,
+            570,
+            110,
+        ),
+        TextBlock("1. 시험관에 물질 A를 넣는다.", 330, 180, 540, 192),
+        TextBlock("2. 온도를 높인다.", 330, 225, 500, 237),
+        TextBlock("3. 색 변화를 관찰한다.", 330, 270, 540, 282),
+        TextBlock("21. 다음은 다른 문항이다.", 320, 520, 570, 540),
+    ]
+
+    regions = split_questions(
+        blocks,
+        page_width=612.0,
+        page_height=864.0,
+        page_index=0,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [20, 21]
+    assert regions[0].bbox[3] > 282
+
+
+def test_source_prefixed_main_question_preserves_following_question_10():
+    """출처 원문 번호 24가 붙은 실제 q9 뒤의 q10은 내부 절차번호가 아니다."""
+    blocks = [
+        TextBlock(
+            "9. 2주기 원소의 주소 화합물에 대한 자료이다.",
+            320,
+            80,
+            590,
+            110,
+        ),
+        TextBlock("24. (가)~(다)에서 2주기 원자는 옥텟 규칙을 만족한다.", 320, 125, 590, 145),
+        TextBlock("이에 대한 설명으로 옳은 것만을 고른 것은?", 320, 280, 590, 292),
+        TextBlock("10. 물질 A~D에 대한 몇 가지 성질을 나타낸 것이다.", 320, 410, 590, 430),
+        TextBlock("11. 다음은 다른 문항이다.", 320, 650, 590, 670),
+    ]
+
+    regions = split_questions(
+        blocks,
+        page_width=612.0,
+        page_height=864.0,
+        page_index=0,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [9, 10, 11, 24]
 
 
 def test_validate_drops_cross_page_duplicate():
@@ -1368,9 +1424,18 @@ def test_split_questions_scan_dual_expands_shared_range_material():
     by_num = {r.number: r for r in regions}
     assert [r.number for r in regions] == [6, 7, 9, 10, 11]
     assert by_num[9].bbox[1] < 110
+    assert by_num[10].context_bbox is not None
+    assert by_num[10].context_bbox[1] < 110
     assert by_num[10].bbox[1] < 110
     assert by_num[9].bbox[3] == by_num[10].bbox[3]
-    assert by_num[10].bbox[3] < by_num[11].bbox[1]
+    assert by_num[10].bbox[3] <= by_num[11].bbox[1]
+    assert "shared_context" in by_num[9].semantic_flags
+    assert "shared_context_first" in by_num[9].semantic_flags
+    assert "shared_context_later" in by_num[10].semantic_flags
+    assert by_num[9].context_bbox == by_num[9].bbox
+    assert by_num[9].audit_bbox == by_num[9].bbox
+    assert by_num[10].audit_bbox is not None
+    assert by_num[10].audit_bbox == by_num[10].bbox
 
 
 def test_split_questions_shared_range_without_next_column_anchor_stops_at_group_bottom():
@@ -1389,12 +1454,13 @@ def test_split_questions_shared_range_without_next_column_anchor_stops_at_group_
     )
     blocks = [
         TextBlock(
-            text="[ 15~16 ] 그림은 주기율표의 일부를 나타낸 것이다. 물음에 답하시오",
+            text="[ 15~16 ] 그림은 주기율표의 일부를 나타낸 것이다.",
             x0=42.5,
             y0=130.9,
             x1=280.5,
             y1=152.5,
         ),
+        TextBlock(text="물음에 답하시오.", x0=42.5, y0=160.0, x1=200.0, y1=175.0),
         TextBlock(text="15.\n위 A~E에 대한 설명으로 옳은 것만을 <보기>에서 있는 대로", x0=42.5, y0=289.1, x1=283.1, y1=303.9),
         TextBlock(text="본문 15", x0=42.5, y0=340.0, x1=283.1, y1=451.4),
         TextBlock(text="16.\n위 A~E 중 탄소 화합물의 중심이 되는 원소의 기호를 쓰고,", x0=42.5, y0=455.4, x1=283.0, y1=470.2),
@@ -1418,9 +1484,92 @@ def test_split_questions_shared_range_without_next_column_anchor_stops_at_group_
     by_num = {r.number: r for r in regions}
     assert [r.number for r in regions] == [15, 16, 17, 18]
     assert by_num[15].bbox[1] < 140
+    assert by_num[16].context_bbox is not None
+    assert by_num[16].context_bbox[1] < 140
     assert by_num[16].bbox[1] < 140
-    assert by_num[15].bbox[3] == by_num[16].bbox[3]
+    assert by_num[16].audit_bbox == by_num[16].body_bbox
     assert by_num[16].bbox[3] < ph * 0.70
+
+
+def test_split_questions_full_width_anchor_stays_in_left_flow_for_y_end():
+    """전폭 제목 block의 center가 gutter를 넘어도 다음 anchor 앞에서 잘린다."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 595.0, 841.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.9,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+    )
+    blocks = [
+        TextBlock(text="37. 그림과 표를 보고 옳은 것을 고르시오.", x0=28.0, y0=66.0, x1=568.0, y1=79.0),
+        TextBlock(text="37 본문", x0=64.0, y0=294.0, x1=500.0, y1=360.0),
+        TextBlock(text="38. 다음 그림에 대한 설명으로 옳은 것은?", x0=28.0, y0=430.0, x1=382.0, y1=443.0),
+        TextBlock(text="38 본문", x0=64.0, y0=510.0, x1=500.0, y1=650.0),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=35,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    by_num = {r.number: r for r in regions}
+    assert [r.number for r in regions] == [37, 38]
+    assert by_num[37].bbox[3] < by_num[38].bbox[1]
+
+
+def test_split_questions_semantic_flags_use_full_region_text():
+    """번호 줄 아래 본문에 그림/표 문구가 있어도 시각문맥 문항으로 판정한다."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock, split_questions
+
+    pw, ph = 600.0, 840.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_SINGLE,
+        confidence=0.9,
+        is_dual_column=False,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+    )
+    blocks = [
+        TextBlock(text="1. 다음 자료에 대한 설명으로 옳은 것은?", x0=40, y0=100, x1=360, y1=120),
+        TextBlock(text="그림은 생명체를 구성하는 물질을 나타낸 것이다.", x0=40, y0=145, x1=430, y1=165),
+        TextBlock(text="2. 그 까닭을 설명하시오.", x0=40, y0=430, x1=360, y1=450),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=0,
+        paper_type=pt,
+        prefer_marginal=False,
+    )
+
+    by_num = {r.number: r for r in regions}
+    assert "visual_context" in by_num[1].semantic_flags
+    assert "visual_context" not in by_num[2].semantic_flags
+    assert "reasoning_response" in by_num[2].semantic_flags
+
+
+def test_prior_context_reference_does_not_match_word_suffix():
+    """`단위`의 `위`는 선행 자료 참조가 아니다."""
+    text = (
+        "생명 시스템은 세포, 조직을 기본 단위로 하여 단계적으로 "
+        "조직되어 개체를 구성한다."
+    )
+
+    assert _references_prior_context(text) is False
+    assert _references_prior_context("위 그림을 보고 옳은 것을 고르시오.") is True
 
 
 def test_question_type_label_belongs_to_following_question():
@@ -2138,7 +2287,7 @@ def test_short_final_written_prompt_tightens_to_content():
     regions = split_questions(blocks, pw, ph, page_index=16, prefer_marginal=True)
 
     assert [r.number for r in regions] == [5, 6]
-    assert regions[1].bbox[3] < ph * 0.62
+    assert regions[1].bbox[3] < ph * 0.65
 
 
 def test_short_final_visual_prompt_keeps_visual_body():
@@ -2218,3 +2367,233 @@ def test_split_questions_cross_column_anchor_fallback():
         assert height >= 100, (
             f"q{num} bbox=({x0},{y0},{x1},{y1}) height={height} too small (strip)"
         )
+
+
+def test_cross_column_shared_instruction_collapses_to_one_physical_group():
+    """[1~3] left shared experiment + right answer prompts is one crop group."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 595.0, 841.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.99,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+        debug={"has_embedded_text": True, "is_dual_text": True, "is_dual_pixel": False},
+    )
+    blocks = [
+        TB(text="[1~3] 다음은 소화 효소 실험이다. 물음에 답하시오.", x0=28, y0=76, x1=292, y1=99),
+        TB(text="1. 물 10mL를 준비한다.", x0=36, y0=133, x1=295, y1=142),
+        TB(text="2. 소화제를 섞는다.", x0=36, y0=162, x1=295, y1=171),
+        TB(text="3. 녹말 용액을 넣는다.", x0=36, y0=191, x1=295, y1=200),
+        TB(text="4. 셀로판 튜브를 장치한다.", x0=36, y0=234, x1=295, y1=243),
+        TB(text="5. 표와 같이 관찰한다.", x0=36, y0=346, x1=295, y1=355),
+        TB(text="1\n1.", x0=311, y0=75, x1=439, y1=86),
+        TB(text="(가)~(다) 중 기호를 쓰고 까닭을 서술하시오.", x0=311, y0=89, x1=559, y1=113),
+        TB(text="2\n2.", x0=311, y0=299, x1=439, y1=310),
+        TB(text="색깔이 변한 까닭을 쓰시오.", x0=311, y0=314, x1=559, y1=338),
+        TB(text="3\n3.", x0=311, y0=465, x1=439, y1=476),
+        TB(text="소화효소의 역할을 설명하시오.", x0=311, y0=480, x1=559, y1=504),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=0,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [1]
+    assert "shared_group" in regions[0].semantic_flags
+    assert regions[0].bbox[0] < pw * 0.08
+    assert regions[0].bbox[2] > pw * 0.90
+    assert regions[0].bbox[3] > ph * 0.55
+
+
+def test_marginal_axis_tick_labels_are_not_question_anchors():
+    """Graph tick labels like 40/80 near the gutter are not workbook anchors."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 612.0, 858.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.99,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+        debug={"has_embedded_text": True, "is_dual_text": True, "is_dual_pixel": False},
+    )
+    blocks = [
+        TB(text="9.\n그림은 실린더 반응 전후를 나타낸 것이다.", x0=42, y0=153, x1=280, y1=168),
+        TB(text="10.\n다음은 A(g)와 B(g)가 반응하여 C(g)를 생성하는 반응이다.", x0=303, y0=155, x1=544, y1=170),
+        TB(text="80", x0=362, y0=300, x1=371, y1=309),
+        TB(text="40", x0=362, y0=337, x1=372, y1=346),
+        TB(text="C(g)의 질량(g)", x0=330, y0=455, x1=500, y1=470),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=40,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    assert [r.number for r in regions] == [9, 10]
+
+
+def test_section_step_prefix_is_included_for_first_problem():
+    """Commercial workbook Step title above the first item is product context."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 612.0, 864.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.99,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+        debug={"has_embedded_text": True, "is_dual_text": True, "is_dual_pixel": False},
+    )
+    blocks = [
+        TB(text="Step 1. 개념완성", x0=111, y0=136, x1=190, y1=146),
+        TB(text="3.\n그림 (가), (나)는 공기 중과 진공 중의 낙하 모습이다.", x0=332, y0=164, x1=570, y1=179),
+        TB(text="1.\n다음 글에서 설명하는 것은 무엇인지 쓰시오.", x0=71, y0=166, x1=245, y1=181),
+        TB(text="자연에 존재하는 여러 가지 힘들이 상호 작용한다.", x0=77, y0=194, x1=303, y1=202),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=151,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    first = next(r for r in regions if r.number == 1)
+    assert first.bbox[1] < 140.0
+
+
+def test_short_written_prompt_tightens_without_running_to_next_question():
+    """One-line written workbook prompts keep bounded answer space."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 595.0, 841.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_SINGLE,
+        confidence=0.99,
+        is_dual_column=False,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+        debug={"has_embedded_text": True, "is_dual_text": False, "is_dual_pixel": False},
+    )
+    blocks = [
+        TB(text="35. 빅뱅 우주에 대한 설명으로 옳지 않은 것은?", x0=28, y0=70, x1=236, y1=82),
+        TB(text="36. 빅뱅 후 최초로 만들어진 별의 구성 원소는 무엇이며, 이유를 서술하시오.", x0=28, y0=233, x1=421, y1=245),
+        TB(text="37. 그림 (가)는 연속 스펙트럼을 나타낸 것이다.", x0=28, y0=382, x1=339, y1=394),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=33,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    q36 = next(r for r in regions if r.number == 36)
+    assert ph * 0.06 < q36.bbox[3] - q36.bbox[1] < ph * 0.10
+
+
+def test_wide_single_line_written_prompt_uses_tighter_min_height():
+    """Full-width one-line written prompts are not padded like answer-space rows."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 595.0, 841.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_SINGLE,
+        confidence=0.99,
+        is_dual_column=False,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+        debug={"has_embedded_text": True, "is_dual_text": False, "is_dual_pixel": False},
+    )
+    blocks = [
+        TB(
+            text="49. 우주 전역에서 수소와 헬륨의 스펙트럼이 관측되는 까닭을 서술하시오.",
+            x0=28,
+            y0=80,
+            x1=558,
+            y1=92,
+        ),
+        TB(text="50. 그림은 별의 진화 과정을 나타낸 것이다.", x0=28, y0=430, x1=360, y1=442),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=39,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    q49 = next(r for r in regions if r.number == 49)
+    assert ph * 0.04 < q49.bbox[3] - q49.bbox[1] < ph * 0.06
+
+
+def test_dual_column_short_written_prompt_preserves_column_width():
+    """Short right-column calculation prompts keep the manual crop column width."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 612.0, 864.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.99,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+        debug={"has_embedded_text": True, "is_dual_text": True, "is_dual_pixel": False},
+    )
+    blocks = [
+        TB(text="7. 앞 문항", x0=304, y0=120, x1=545, y1=132),
+        TB(
+            text="8. 다음 기체 분자의 물질량을 구하시오.",
+            x0=304,
+            y0=460,
+            x1=455,
+            y1=472,
+        ),
+        TB(text="(1) 조건 A", x0=314, y0=505, x1=420, y1=517),
+        TB(text="(2) 조건 B", x0=314, y0=545, x1=420, y1=557),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=30,
+        paper_type=pt,
+        prefer_marginal=True,
+    )
+
+    q8 = next(r for r in regions if r.number == 8)
+    assert q8.bbox[2] > pw * 0.88

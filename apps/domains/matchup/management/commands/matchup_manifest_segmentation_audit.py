@@ -21,6 +21,7 @@ from apps.domains.matchup.management.commands.matchup_golden_eval import (
     _document_metrics,
 )
 from apps.domains.matchup.management.commands.matchup_manual_gt_eval import (
+    PREDICTION_BOX_KINDS,
     _extract_ground_truth,
     _extract_predictions,
     _find_original_file,
@@ -138,7 +139,11 @@ def _structural_flags(
         flags.append("many_unnumbered_boxes")
 
     if gt_metric is not None:
-        if _int_value(gt_metric.get("missed_count")) > 0:
+        effective_missed = _int_value(
+            gt_metric.get("physical_missed_count"),
+            _int_value(gt_metric.get("missed_count")),
+        )
+        if effective_missed > 0:
             flags.append("manifest_gt_missed")
         if float(gt_metric.get("precision") or 0.0) < 0.60:
             flags.append("manifest_gt_precision_low")
@@ -205,6 +210,13 @@ def _doc_summary(
                 "recall",
                 "precision",
                 "mean_iou",
+                "physical_gt_count",
+                "physical_matched_count",
+                "physical_missed_count",
+                "physical_recall",
+                "duplicate_gt_group_count",
+                "duplicate_gt_row_count",
+                "duplicate_missed_count",
             )
         } if gt_metric else None,
         "artifact_path": metric.get("artifact_path"),
@@ -220,6 +232,7 @@ def _write_report(summary: dict[str, Any], report_path: Path) -> None:
         f"- Manifest: `{summary['manifest']}`",
         f"- Input dir: `{summary['input_dir']}`",
         "- Mode: read-only, DB write 0, R2 write 0",
+        f"- Prediction box kind: `{summary.get('prediction_box_kind', 'display')}`",
         f"- Documents: `{aggregate['evaluated_docs']}/{aggregate['selected_docs']}` evaluated",
         f"- Files missing: `{aggregate['file_missing_docs']}`",
         f"- Pages: `{aggregate['page_count']}`",
@@ -253,6 +266,10 @@ def _write_report(summary: dict[str, Any], report_path: Path) -> None:
         f"- Extra: `{gt['extra_count']}`",
         f"- Recall: `{gt['recall']}`",
         f"- Precision: `{gt['precision']}`",
+        f"- Physical GT boxes: `{gt.get('physical_gt_count', 0)}`",
+        f"- Physical missed: `{gt.get('physical_missed_count', 0)}`",
+        f"- Physical recall: `{gt.get('physical_recall', 0.0)}`",
+        f"- Duplicate GT rows: `{gt.get('duplicate_gt_row_count', 0)}`",
         "",
         "## Documents",
         "",
@@ -262,7 +279,10 @@ def _write_report(summary: dict[str, Any], report_path: Path) -> None:
         flags = ", ".join(doc.get("manifest_structural_flags") or []) or "none"
         gt_metrics = doc.get("gt_metrics") or {}
         gt_text = (
-            f" gt_missed={gt_metrics.get('missed_count')} recall={gt_metrics.get('recall')}"
+            f" gt_missed={gt_metrics.get('missed_count')} "
+            f"physical_missed={gt_metrics.get('physical_missed_count')} "
+            f"recall={gt_metrics.get('recall')} "
+            f"physical_recall={gt_metrics.get('physical_recall')}"
             if gt_metrics
             else ""
         )
@@ -289,6 +309,12 @@ class Command(BaseCommand):
         parser.add_argument("--overlay-limit-docs", type=int, default=0)
         parser.add_argument("--overlay-limit-pages", type=int, default=4)
         parser.add_argument("--no-overlays", action="store_true")
+        parser.add_argument(
+            "--prediction-box-kind",
+            choices=PREDICTION_BOX_KINDS,
+            default="display",
+            help="Which dispatcher bbox role to compare against manual GT.",
+        )
 
     def handle(self, *args, **options):
         from academy.adapters.ai.detection.segment_dispatcher import (
@@ -310,6 +336,7 @@ class Command(BaseCommand):
         overlay_limit_pages = int(options["overlay_limit_pages"])
         if overlay_limit_docs < 0 or overlay_limit_pages < 0:
             raise CommandError("--overlay-limit-* must be >= 0")
+        prediction_box_kind = str(options["prediction_box_kind"])
 
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         selected = _select_documents(
@@ -339,7 +366,8 @@ class Command(BaseCommand):
             overlay_root = out_dir / "overlays"
 
         self.stdout.write(self.style.NOTICE(
-            f"manifest segmentation audit: docs={len(selected)} input={input_dir} -> {out_dir}"
+            f"manifest segmentation audit: docs={len(selected)} "
+            f"box_kind={prediction_box_kind} input={input_dir} -> {out_dir}"
         ))
         self.stdout.write(self.style.WARNING("read-only: DB write 0, R2 write 0"))
 
@@ -396,7 +424,10 @@ class Command(BaseCommand):
                 if gt_boxes:
                     gt_metric = evaluate_predictions_against_gt(
                         gt_boxes,
-                        _extract_predictions(raw_result),
+                        _extract_predictions(
+                            raw_result,
+                            box_kind=prediction_box_kind,
+                        ),
                         iou_threshold=iou_threshold,
                         min_recall=1.0,
                         min_precision=0.0,
@@ -488,6 +519,11 @@ class Command(BaseCommand):
         gt_matched = sum(_int_value((doc["gt_metrics"] or {}).get("matched_count")) for doc in gt_docs)
         gt_missed = sum(_int_value((doc["gt_metrics"] or {}).get("missed_count")) for doc in gt_docs)
         gt_extra = sum(_int_value((doc["gt_metrics"] or {}).get("extra_count")) for doc in gt_docs)
+        physical_gt_count = sum(_int_value((doc["gt_metrics"] or {}).get("physical_gt_count")) for doc in gt_docs)
+        physical_matched = sum(_int_value((doc["gt_metrics"] or {}).get("physical_matched_count")) for doc in gt_docs)
+        physical_missed = sum(_int_value((doc["gt_metrics"] or {}).get("physical_missed_count")) for doc in gt_docs)
+        duplicate_gt_rows = sum(_int_value((doc["gt_metrics"] or {}).get("duplicate_gt_row_count")) for doc in gt_docs)
+        duplicate_missed = sum(_int_value((doc["gt_metrics"] or {}).get("duplicate_missed_count")) for doc in gt_docs)
 
         summary = {
             "schema_version": SCHEMA_VERSION,
@@ -498,6 +534,7 @@ class Command(BaseCommand):
             "dry_run": True,
             "db_writes": 0,
             "r2_writes": 0,
+            "prediction_box_kind": prediction_box_kind,
             "aggregate": {
                 "selected_docs": len(selected),
                 "evaluated_docs": len(evaluated_docs),
@@ -520,6 +557,13 @@ class Command(BaseCommand):
                     "recall": round(gt_matched / gt_count, 6) if gt_count else 0.0,
                     "precision": round(gt_matched / (gt_matched + gt_extra), 6)
                     if gt_matched + gt_extra else 0.0,
+                    "physical_gt_count": physical_gt_count,
+                    "physical_matched_count": physical_matched,
+                    "physical_missed_count": physical_missed,
+                    "physical_recall": round(physical_matched / physical_gt_count, 6)
+                    if physical_gt_count else 0.0,
+                    "duplicate_gt_row_count": duplicate_gt_rows,
+                    "duplicate_missed_count": duplicate_missed,
                 },
             },
             "documents": documents,

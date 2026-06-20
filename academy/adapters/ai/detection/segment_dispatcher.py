@@ -34,6 +34,51 @@ _SCAN_LAYOUT_BOXES_FRAGMENT_MERGED = "_scan_layout_boxes_fragment_merged"
 _SCAN_LAYOUT_USE_FRAGMENT_MERGE = "_scan_layout_use_fragment_merge"
 
 
+def _add_region_semantic_flag(region: object, flag: str) -> None:
+    flags = set(getattr(region, "semantic_flags", ()) or ())
+    if flag in flags:
+        return
+    flags.add(flag)
+    try:
+        setattr(region, "semantic_flags", tuple(sorted(flags)))
+    except Exception:
+        return
+
+
+def _bbox_points_to_pixels(
+    bbox: Tuple[float, float, float, float],
+    *,
+    scale: float = _PDF_TO_PIXEL_SCALE,
+) -> BBox:
+    x0, y0, x1, y1 = bbox
+    return (
+        int(x0 * scale),
+        int(y0 * scale),
+        int((x1 - x0) * scale),
+        int((y1 - y0) * scale),
+    )
+
+
+def _region_bbox_meta(region: object) -> Dict[str, object]:
+    """Serialize v2 region boxes without changing the legacy ``boxes`` contract."""
+    display_bbox = getattr(region, "display_bbox", None) or getattr(region, "bbox")
+    audit_bbox = getattr(region, "audit_bbox", None) or display_bbox
+    body_bbox = getattr(region, "body_bbox", None) or audit_bbox
+    context_bbox = getattr(region, "context_bbox", None)
+    return {
+        "version": "question_region_v2",
+        "display_box": _bbox_points_to_pixels(display_bbox),
+        "audit_box": _bbox_points_to_pixels(audit_bbox),
+        "body_box": _bbox_points_to_pixels(body_bbox),
+        "context_box": (
+            _bbox_points_to_pixels(context_bbox)
+            if context_bbox is not None
+            else None
+        ),
+        "semantic_flags": list(getattr(region, "semantic_flags", ()) or ()),
+    }
+
+
 def _expand_single_text_regions_to_visual_content(
     image_path: str,
     regions: List,
@@ -60,9 +105,39 @@ def _expand_single_text_regions_to_visual_content(
     scale_y = img_h / page_height
     # White PDF background 기준. Anti-aliased text/vector까지 포함하되 연한 배경은 제외.
     ink = gray < 245
+    # Page frames are frequent in T2 workbook PDFs. If left/right border lines
+    # stay in the ink map, a short left-column text problem can look like it
+    # spans the whole page. Strip only the outer frame band; real content boxes
+    # begin further inside and are still visible to the expansion heuristic.
+    frame_band = max(2, int(img_w * 0.025))
+    ink[:, :frame_band] = False
+    ink[:, img_w - frame_band:] = False
     pad = page_width * 0.012
 
+    def _has_wide_non_header_ink(roi: np.ndarray) -> bool:
+        if roi.size == 0 or roi.shape[0] < 12:
+            return False
+        # Ignore the top strip of a region: page header rules and subject
+        # labels often overlap the first few rendered rows after tightening.
+        top_guard = max(8, int(roi.shape[0] * 0.08))
+        body_roi = roi[top_guard:, :]
+        if body_roi.size == 0:
+            return False
+        min_row_ink = max(16, int(img_w * 0.012))
+        min_span = int(img_w * 0.70)
+        wide_rows = 0
+        for row in body_roi:
+            xs = np.flatnonzero(row)
+            if xs.size < min_row_ink:
+                continue
+            if int(xs[-1]) - int(xs[0]) >= min_span:
+                wide_rows += 1
+                if wide_rows >= 6:
+                    return True
+        return False
+
     for region in regions:
+        semantic_flags = set(getattr(region, "semantic_flags", ()) or ())
         x0, y0, x1, y1 = region.bbox
         if y1 - y0 <= page_height * 0.08:
             continue
@@ -73,6 +148,9 @@ def _expand_single_text_regions_to_visual_content(
         if py1 - py0 < 12:
             continue
         roi = ink[py0:py1, :]
+        has_wide_content = _has_wide_non_header_ink(roi)
+        if "visual_context" not in semantic_flags and not has_wide_content:
+            continue
         col_counts = roi.sum(axis=0)
         min_pixels = max(3, int((py1 - py0) * 0.003))
         xs = np.flatnonzero(col_counts >= min_pixels)
@@ -123,7 +201,285 @@ def _expand_single_text_regions_to_visual_content(
         vx1 = min(page_width, (float(max(run[1] for run in selected)) / scale_x) + pad)
         if vx1 - vx0 <= (x1 - x0) * 1.08:
             continue
-        region.bbox = (min(x0, vx0), y0, max(x1, vx1), y1)
+        new_bbox = (min(x0, vx0), y0, max(x1, vx1), y1)
+        if has_wide_content:
+            _add_region_semantic_flag(region, "wide_content")
+        if hasattr(region, "set_display_bbox"):
+            region.set_display_bbox(new_bbox)
+        else:
+            region.bbox = new_bbox
+
+
+def _expand_commercial_written_response_answer_space(
+    regions: List,
+    *,
+    page_width: float,
+    page_height: float,
+) -> None:
+    if not regions or page_width <= 0 or page_height <= 0:
+        return
+    min_height = page_height * 0.165
+    same_column_gap = page_width * 0.08
+    for region in sorted(regions, key=lambda item: (item.bbox[1], item.bbox[0])):
+        flags = set(getattr(region, "semantic_flags", ()) or ())
+        should_include_answer_space = (
+            "written_response" in flags
+            or (
+                "short_workbook_prompt" in flags
+                and "visual_context" not in flags
+            )
+        )
+        if not should_include_answer_space:
+            continue
+        source_bbox = getattr(region, "body_bbox", None) or region.bbox
+        x0, y0, x1, y1 = source_bbox
+        if y1 - y0 >= min_height:
+            continue
+        if y1 - y0 < page_height * 0.10 and "reasoning_response" not in flags:
+            continue
+        center = (x0 + x1) / 2
+        next_tops = []
+        for other in regions:
+            if other is region:
+                continue
+            other_bbox = getattr(other, "body_bbox", None) or other.bbox
+            ox0, oy0, ox1, _ = other_bbox
+            if oy0 <= y0:
+                continue
+            other_center = (ox0 + ox1) / 2
+            if abs(other_center - center) > same_column_gap and not (
+                ox0 <= center <= ox1
+            ):
+                continue
+            next_tops.append(oy0)
+        next_top = min(next_tops) if next_tops else page_height
+        target_y1 = min(page_height, next_top - page_height * 0.01, y0 + min_height)
+        if target_y1 <= y1:
+            continue
+        new_bbox = (x0, y0, x1, target_y1)
+        _add_region_semantic_flag(region, "answer_space")
+        old_body = getattr(region, "body_bbox", None)
+        old_audit = getattr(region, "audit_bbox", None)
+        try:
+            region.body_bbox = new_bbox
+            if old_audit == old_body or old_audit == source_bbox:
+                region.audit_bbox = new_bbox
+        except Exception:
+            pass
+        if hasattr(region, "set_display_bbox"):
+            display_bbox = getattr(region, "display_bbox", None) or region.bbox
+            if display_bbox == source_bbox:
+                region.set_display_bbox(new_bbox)
+            else:
+                dx0, dy0, dx1, _ = display_bbox
+                region.set_display_bbox((dx0, dy0, dx1, max(display_bbox[3], target_y1)))
+        else:
+            region.bbox = new_bbox
+
+
+def _prefer_commercial_later_shared_body_display(
+    regions: List,
+    *,
+    page_height: float = 0.0,
+) -> None:
+    """Avoid rectangular crops that include previous subquestions in shared groups."""
+    for region in regions:
+        flags = set(getattr(region, "semantic_flags", ()) or ())
+        if "shared_context_later" not in flags:
+            continue
+        body_bbox = getattr(region, "body_bbox", None)
+        if body_bbox is None:
+            continue
+        body_starts_low = page_height > 0 and body_bbox[1] >= page_height * 0.60
+        should_prefer_body = (
+            "written_response" in flags
+            or "references_prior_context" not in flags
+            or body_starts_low
+        )
+        if not should_prefer_body:
+            continue
+        _add_region_semantic_flag(region, "shared_body_display")
+        if hasattr(region, "set_display_bbox"):
+            region.set_display_bbox(body_bbox)
+        else:
+            region.bbox = body_bbox
+
+
+def _prefer_commercial_first_shared_context_display(
+    regions: List,
+    *,
+    page_height: float = 0.0,
+) -> None:
+    """Use the prepared shared context crop for the first written subquestion."""
+    for region in regions:
+        flags = set(getattr(region, "semantic_flags", ()) or ())
+        if "shared_context_first" not in flags:
+            continue
+        if "written_response" not in flags and "short_workbook_prompt" not in flags:
+            continue
+        context_bbox = getattr(region, "context_bbox", None)
+        if context_bbox is None:
+            continue
+        display_bbox = getattr(region, "display_bbox", None) or region.bbox
+        context_height = context_bbox[3] - context_bbox[1]
+        display_height = display_bbox[3] - display_bbox[1]
+        if context_height <= display_height * 1.10:
+            continue
+        target_height = context_height
+        if page_height > 0:
+            target_height = min(context_height, max(display_height, page_height * 0.35))
+        if target_height <= display_height * 1.10:
+            continue
+        target_bbox = (
+            context_bbox[0],
+            context_bbox[1],
+            context_bbox[2],
+            min(context_bbox[3], context_bbox[1] + target_height),
+        )
+        _add_region_semantic_flag(region, "shared_context_answer_space")
+        if hasattr(region, "set_display_bbox"):
+            region.set_display_bbox(target_bbox)
+        else:
+            region.bbox = target_bbox
+
+
+def _trim_other_source_text_regions_to_ink(
+    image_path: str,
+    regions: List,
+    *,
+    page_width: float,
+    page_height: float,
+    source_type: Optional[str],
+) -> None:
+    """Trim overextended school/exam text-PDF crops to the visible content island.
+
+    ``other`` tenant-2 PDFs include school exams whose last written-response
+    question can be classified as single-column when the opposite column is
+    blank. The text splitter then stretches the crop to the footer/copyright
+    note. This keeps product display boxes rectangular, but drops isolated
+    footer bands after a large blank gap and shrinks x to the selected content.
+    """
+    if source_type != "other" or not regions or page_width <= 0 or page_height <= 0:
+        return
+    gray = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if gray is None or gray.size == 0:
+        return
+
+    img_h, img_w = gray.shape[:2]
+    scale_x = img_w / page_width
+    scale_y = img_h / page_height
+    ink = gray < 245
+    frame_band_x = max(2, int(img_w * 0.025))
+    frame_band_y = max(2, int(img_h * 0.018))
+    ink[:, :frame_band_x] = False
+    ink[:, img_w - frame_band_x:] = False
+    ink[:frame_band_y, :] = False
+    ink[img_h - frame_band_y:, :] = False
+    column_refs: list[tuple[float, float, float, float]] = []
+    for other in regions:
+        obox = getattr(other, "display_bbox", None) or other.bbox
+        ox0, oy0, ox1, oy1 = obox
+        ow = ox1 - ox0
+        if page_width * 0.25 <= ow <= page_width * 0.65:
+            column_refs.append((ox0, oy0, ox1, oy1))
+
+    def _active_runs(row_active: np.ndarray, *, max_gap: int) -> list[tuple[int, int]]:
+        ys = np.flatnonzero(row_active)
+        if ys.size == 0:
+            return []
+        runs: list[tuple[int, int]] = []
+        start = int(ys[0])
+        prev = int(ys[0])
+        for raw_y in ys[1:]:
+            y = int(raw_y)
+            if y - prev > max_gap:
+                runs.append((start, prev))
+                start = y
+            prev = y
+        runs.append((start, prev))
+        return runs
+
+    for region in regions:
+        flags = set(getattr(region, "semantic_flags", ()) or ())
+        x0, y0, x1, y1 = getattr(region, "display_bbox", None) or region.bbox
+        region_w = x1 - x0
+        region_h = y1 - y0
+        if region_h < page_height * 0.30 and region_w < page_width * 0.78:
+            continue
+        if "shared_group" in flags:
+            continue
+
+        px0 = max(0, int(x0 * scale_x))
+        px1 = min(img_w, int(x1 * scale_x))
+        py0 = max(0, int(y0 * scale_y))
+        py1 = min(img_h, int(y1 * scale_y))
+        if px1 - px0 < 20 or py1 - py0 < 30:
+            continue
+
+        roi = ink[py0:py1, px0:px1]
+        min_row_ink = max(8, int((px1 - px0) * 0.010))
+        row_active = roi.sum(axis=1) >= min_row_ink
+        runs = _active_runs(
+            row_active,
+            max_gap=max(8, int(img_h * 0.018)),
+        )
+        if not runs:
+            continue
+
+        kept = [runs[0]]
+        for run in runs[1:]:
+            prev = kept[-1]
+            gap = run[0] - prev[1]
+            kept_height = kept[-1][1] - kept[0][0]
+            absolute_run_y = py0 + run[0]
+            footer_like_late_band = (
+                absolute_run_y >= img_h * 0.78
+                and gap > img_h * 0.06
+            )
+            detached_far_band = gap > img_h * 0.20
+            if footer_like_late_band or detached_far_band:
+                break
+            kept.append(run)
+
+        keep_y0 = min(run[0] for run in kept)
+        keep_y1 = max(run[1] for run in kept)
+        selected = roi[keep_y0:keep_y1 + 1, :]
+        min_col_ink = max(4, int(selected.shape[0] * 0.006))
+        xs = np.flatnonzero(selected.sum(axis=0) >= min_col_ink)
+        if xs.size == 0:
+            continue
+
+        pad_x = page_width * 0.012
+        pad_bottom = page_height * 0.025
+        new_x0 = max(0.0, (px0 + int(xs[0])) / scale_x - pad_x)
+        new_x1 = min(page_width, (px0 + int(xs[-1])) / scale_x + pad_x)
+        new_y0 = y0
+        new_y1 = min(y1, (py0 + keep_y1) / scale_y + pad_bottom)
+
+        if new_y1 - new_y0 < page_height * 0.08:
+            continue
+        if (y1 - new_y1) < page_height * 0.08 and (x1 - x0) - (new_x1 - new_x0) < page_width * 0.12:
+            continue
+        if region_w > page_width * 0.78 and column_refs:
+            for rx0, _ry0, rx1, _ry1 in column_refs:
+                if abs(x0 - rx0) <= page_width * 0.08:
+                    new_x1 = min(new_x1, rx1 + page_width * 0.025)
+                    break
+                if abs(x1 - rx1) <= page_width * 0.08:
+                    new_x0 = max(new_x0, rx0 - page_width * 0.025)
+                    break
+
+        new_bbox = (
+            max(0.0, new_x0 if new_x0 < x0 else x0),
+            new_y0,
+            max(new_x1, new_x0 + 1.0),
+            new_y1,
+        )
+        _add_region_semantic_flag(region, "ink_trimmed")
+        if hasattr(region, "set_display_bbox"):
+            region.set_display_bbox(new_bbox)
+        else:
+            region.bbox = new_bbox
 
 
 def _regions_already_span_columns(regions: List, *, page_width: float) -> bool:
@@ -299,7 +655,12 @@ def cleanup_pdf_seg_tmp_dirs(tmp_dirs: List[str]) -> None:
             logger.warning("cleanup_pdf_seg failed: dir=%s err=%s", d, e)
 
 
-def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -> Tuple[List[Dict], str]:
+def _pdf_to_images(
+    pdf_path: str,
+    *,
+    handwriting_bias: Optional[float] = None,
+    source_type: Optional[str] = None,
+) -> Tuple[List[Dict], str]:
     """
     PDF 파일의 각 페이지를 이미지로 변환 + 텍스트 기반 문항 박스 사전 계산.
 
@@ -468,6 +829,7 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
     # ── Phase 3: 2차 split (workbook 일 때 prefer_marginal=True) ──
     for idx, p in enumerate(phase1):
         text_boxes: List[BBox] = []
+        text_box_meta: List[Dict[str, object]] = []
         text_regions: List = []
         if p["has_text"] and not p["is_skip_page"] and p["text_blocks"]:
             try:
@@ -482,6 +844,20 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
                 else:
                     # 시험지: 1차 결과 그대로.
                     regions = first_pass_regions[idx]
+                if source_type == "commercial_workbook":
+                    _expand_commercial_written_response_answer_space(
+                        regions,
+                        page_width=p["page_width"],
+                        page_height=p["page_height"],
+                    )
+                    _prefer_commercial_first_shared_context_display(
+                        regions,
+                        page_height=p["page_height"],
+                    )
+                    _prefer_commercial_later_shared_body_display(
+                        regions,
+                        page_height=p["page_height"],
+                    )
                 if _should_expand_text_regions_by_visual_x(
                     p.get("paper_type_result"),
                     p.get("paper_type_debug"),
@@ -492,16 +868,18 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
                         page_width=p["page_width"],
                         page_height=p["page_height"],
                     )
+                _trim_other_source_text_regions_to_ink(
+                    p["image_path"],
+                    regions,
+                    page_width=p["page_width"],
+                    page_height=p["page_height"],
+                    source_type=source_type,
+                )
                 text_regions = list(regions)
-                scale = _PDF_TO_PIXEL_SCALE
                 for r in regions:
-                    rx0, ry0, rx1, ry1 = r.bbox
-                    text_boxes.append((
-                        int(rx0 * scale),
-                        int(ry0 * scale),
-                        int((rx1 - rx0) * scale),
-                        int((ry1 - ry0) * scale),
-                    ))
+                    display_bbox = getattr(r, "display_bbox", None) or r.bbox
+                    text_boxes.append(_bbox_points_to_pixels(display_bbox))
+                    text_box_meta.append(_region_bbox_meta(r))
                 logger.info(
                     "PDF_TEXT_LAYOUT | page=%d | paper_type=%s | regions=%d | "
                     "workbook=%s",
@@ -517,6 +895,7 @@ def _pdf_to_images(pdf_path: str, *, handwriting_bias: Optional[float] = None) -
             "image_path": p["image_path"],
             "has_embedded_text": p["has_text"],
             "text_boxes": text_boxes,
+            "text_box_meta": text_box_meta,
             "text_regions": text_regions,
             "page_text": p.get("page_text") or "",
             "is_skip_page": p["is_skip_page"],
@@ -909,7 +1288,11 @@ def _collect_pdf_pages(
 
     handwriting_bias = _bias_handwriting_score(source_type)
 
-    page_infos, tmp_dir = _pdf_to_images(image_path, handwriting_bias=handwriting_bias)
+    page_infos, tmp_dir = _pdf_to_images(
+        image_path,
+        handwriting_bias=handwriting_bias,
+        source_type=source_type,
+    )
     if not page_infos:
         return [], [], [], tmp_dir
     _prime_scan_layout_boxes_for_pdf(
@@ -942,11 +1325,17 @@ def _collect_pdf_pages(
     for page_idx, (original, validated) in enumerate(zip(regions_per_page, validated_regions)):
         if not original or len(original) == len(validated):
             continue  # 변화 없음 or 애초에 번호 없음
-        kept_nums = {r.number for r in validated}
+        kept_region_ids = {id(r) for r in validated}
         boxes_per_page[page_idx] = [
             box for box, region in zip(boxes_per_page[page_idx], original)
-            if region.number in kept_nums
+            if id(region) in kept_region_ids
         ]
+        box_meta = list(page_infos[page_idx].get("text_box_meta") or [])
+        if box_meta:
+            page_infos[page_idx]["text_box_meta"] = [
+                meta for meta, region in zip(box_meta, original)
+                if id(region) in kept_region_ids
+            ]
         dropped = len(original) - len(validated)
         logger.info(
             "PDF_CROSS_PAGE_DROP | page=%d | dropped=%d | kept=%d",
@@ -1042,11 +1431,15 @@ def segment_questions_multipage(
                 numbers = [int(r.number) for r in regions]
             else:
                 numbers = [None] * len(boxes)
+            bbox_meta = list(info.get("text_box_meta") or [])
+            if len(bbox_meta) != len(boxes):
+                bbox_meta = []
             pages.append({
                 "page_index": idx,
                 "image_path": info["image_path"],
                 "boxes": boxes,
                 "numbers": numbers,
+                "bbox_meta": bbox_meta,
                 "has_embedded_text": info["has_embedded_text"],
                 # 페이지 단위 폴백 시 표지/해설지/lorem ipsum 페이지 제외용.
                 "is_skip_page": bool(info.get("is_skip_page")),
@@ -1081,6 +1474,7 @@ def segment_questions_multipage(
             "image_path": image_path,
             "boxes": boxes,
             "numbers": [None] * len(boxes),
+            "bbox_meta": [],
             "has_embedded_text": False,
             "paper_type": single_info.get("paper_type") or "unknown",
             "paper_type_debug": single_info.get("paper_type_debug") or {},

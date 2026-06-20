@@ -92,6 +92,311 @@ def test_visual_x_expansion_skips_short_text_regions(tmp_path):
     assert region.bbox == (20.0, 50.0, 40.0, 56.0)
 
 
+def test_visual_x_expansion_preserves_region_audit_bbox(tmp_path):
+    import cv2
+    import numpy as np
+
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    image = np.full((100, 100), 255, dtype=np.uint8)
+    image[20:80, 10:90] = 0
+    image_path = tmp_path / "wide-visual.png"
+    cv2.imwrite(str(image_path), image)
+    region = QuestionRegion(
+        number=1,
+        bbox=(40.0, 20.0, 55.0, 80.0),
+        page_index=0,
+        semantic_flags=("visual_context",),
+    )
+    original_audit = region.audit_bbox
+
+    segment_dispatcher._expand_single_text_regions_to_visual_content(
+        str(image_path),
+        [region],
+        page_width=100.0,
+        page_height=100.0,
+    )
+
+    assert region.bbox[0] < 20.0
+    assert region.bbox[2] > 80.0
+    assert region.display_bbox == region.bbox
+    assert region.audit_bbox == original_audit
+
+
+def test_visual_x_expansion_uses_wide_content_without_visual_flag(tmp_path):
+    import cv2
+    import numpy as np
+
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    image = np.full((100, 120), 255, dtype=np.uint8)
+    image[45:53, 12:112] = 0
+    image_path = tmp_path / "wide-content.png"
+    cv2.imwrite(str(image_path), image)
+    region = QuestionRegion(
+        number=1,
+        bbox=(12.0, 20.0, 52.0, 80.0),
+        page_index=0,
+    )
+
+    segment_dispatcher._expand_single_text_regions_to_visual_content(
+        str(image_path),
+        [region],
+        page_width=120.0,
+        page_height=100.0,
+    )
+
+    assert region.bbox[2] > 108.0
+    assert "wide_content" in region.semantic_flags
+
+
+def test_visual_x_expansion_ignores_top_frame_ink_without_visual_flag(tmp_path):
+    import cv2
+    import numpy as np
+
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    image = np.full((100, 120), 255, dtype=np.uint8)
+    image[21:24, 12:112] = 0
+    image[45:55, 12:45] = 0
+    image_path = tmp_path / "top-frame.png"
+    cv2.imwrite(str(image_path), image)
+    region = QuestionRegion(
+        number=1,
+        bbox=(12.0, 20.0, 52.0, 80.0),
+        page_index=0,
+    )
+
+    segment_dispatcher._expand_single_text_regions_to_visual_content(
+        str(image_path),
+        [region],
+        page_width=120.0,
+        page_height=100.0,
+    )
+
+    assert region.bbox == (12.0, 20.0, 52.0, 80.0)
+
+
+def test_commercial_written_response_answer_space_extends_body_and_audit_bbox():
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    region = QuestionRegion(
+        number=1,
+        bbox=(10.0, 20.0, 80.0, 32.0),
+        page_index=0,
+        semantic_flags=("written_response",),
+    )
+    next_region = QuestionRegion(
+        number=2,
+        bbox=(10.0, 70.0, 80.0, 90.0),
+        page_index=0,
+    )
+    segment_dispatcher._expand_commercial_written_response_answer_space(
+        [region, next_region],
+        page_width=100.0,
+        page_height=100.0,
+    )
+
+    assert region.bbox == (10.0, 20.0, 80.0, 36.5)
+    assert region.display_bbox == region.bbox
+    assert region.body_bbox == region.bbox
+    assert region.audit_bbox == region.bbox
+    assert "answer_space" in region.semantic_flags
+
+
+def test_commercial_short_written_stem_does_not_get_answer_space():
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    region = QuestionRegion(
+        number=30,
+        bbox=(10.0, 20.0, 80.0, 27.0),
+        page_index=0,
+        semantic_flags=("short_workbook_prompt", "written_response"),
+    )
+
+    segment_dispatcher._expand_commercial_written_response_answer_space(
+        [region],
+        page_width=100.0,
+        page_height=100.0,
+    )
+
+    assert region.bbox == (10.0, 20.0, 80.0, 27.0)
+    assert "answer_space" not in region.semantic_flags
+
+
+def test_commercial_reasoning_written_stem_gets_answer_space():
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    region = QuestionRegion(
+        number=183,
+        bbox=(10.0, 20.0, 80.0, 27.5),
+        page_index=0,
+        semantic_flags=("reasoning_response", "written_response"),
+    )
+
+    segment_dispatcher._expand_commercial_written_response_answer_space(
+        [region],
+        page_width=100.0,
+        page_height=100.0,
+    )
+
+    assert region.bbox == (10.0, 20.0, 80.0, 36.5)
+    assert "answer_space" in region.semantic_flags
+
+
+def test_commercial_short_workbook_prompt_answer_space_extends_display_bbox():
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    region = QuestionRegion(
+        number=284,
+        bbox=(10.0, 20.0, 80.0, 32.0),
+        page_index=0,
+        semantic_flags=("short_workbook_prompt",),
+    )
+    next_region = QuestionRegion(
+        number=285,
+        bbox=(10.0, 70.0, 80.0, 90.0),
+        page_index=0,
+    )
+
+    segment_dispatcher._expand_commercial_written_response_answer_space(
+        [region, next_region],
+        page_width=100.0,
+        page_height=100.0,
+    )
+
+    assert region.bbox == (10.0, 20.0, 80.0, 36.5)
+    assert region.body_bbox == region.bbox
+    assert "answer_space" in region.semantic_flags
+
+
+def test_commercial_visual_short_prompt_does_not_get_answer_space():
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    region = QuestionRegion(
+        number=1,
+        bbox=(10.0, 20.0, 80.0, 31.0),
+        page_index=0,
+        semantic_flags=("short_workbook_prompt", "visual_context"),
+    )
+
+    segment_dispatcher._expand_commercial_written_response_answer_space(
+        [region],
+        page_width=100.0,
+        page_height=100.0,
+    )
+
+    assert region.bbox == (10.0, 20.0, 80.0, 31.0)
+    assert "answer_space" not in region.semantic_flags
+
+
+def test_commercial_first_shared_context_uses_context_display():
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    region = QuestionRegion(
+        number=12,
+        bbox=(10.0, 10.0, 80.0, 40.0),
+        page_index=0,
+        body_bbox=(10.0, 30.0, 80.0, 40.0),
+        context_bbox=(10.0, 10.0, 80.0, 90.0),
+        semantic_flags=("shared_context_first", "written_response"),
+    )
+
+    segment_dispatcher._prefer_commercial_first_shared_context_display([region])
+
+    assert region.bbox == (10.0, 10.0, 80.0, 90.0)
+    assert region.body_bbox == (10.0, 30.0, 80.0, 40.0)
+    assert "shared_context_answer_space" in region.semantic_flags
+
+
+def test_commercial_first_shared_context_caps_display_height():
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    region = QuestionRegion(
+        number=5,
+        bbox=(10.0, 10.0, 80.0, 35.0),
+        page_index=0,
+        body_bbox=(10.0, 25.0, 80.0, 35.0),
+        context_bbox=(10.0, 10.0, 80.0, 90.0),
+        semantic_flags=("shared_context_first", "written_response"),
+    )
+
+    segment_dispatcher._prefer_commercial_first_shared_context_display(
+        [region],
+        page_height=100.0,
+    )
+
+    assert region.bbox == (10.0, 10.0, 80.0, 45.0)
+    assert "shared_context_answer_space" in region.semantic_flags
+
+
+def test_commercial_later_shared_written_prefers_body_display():
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    region = QuestionRegion(
+        number=13,
+        bbox=(10.0, 10.0, 80.0, 90.0),
+        page_index=0,
+        body_bbox=(10.0, 55.0, 80.0, 70.0),
+        semantic_flags=("shared_context_later", "written_response"),
+    )
+
+    segment_dispatcher._prefer_commercial_later_shared_body_display([region])
+
+    assert region.bbox == (10.0, 55.0, 80.0, 70.0)
+    assert region.body_bbox == (10.0, 55.0, 80.0, 70.0)
+    assert "shared_body_display" in region.semantic_flags
+
+
+def test_commercial_later_shared_reference_keeps_context_display():
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    region = QuestionRegion(
+        number=9,
+        bbox=(10.0, 10.0, 80.0, 90.0),
+        page_index=0,
+        body_bbox=(10.0, 55.0, 80.0, 70.0),
+        semantic_flags=("shared_context_later", "references_prior_context"),
+    )
+
+    segment_dispatcher._prefer_commercial_later_shared_body_display([region])
+
+    assert region.bbox == (10.0, 10.0, 80.0, 90.0)
+
+
+def test_other_source_ink_trim_drops_isolated_footer_band(tmp_path):
+    import cv2
+    import numpy as np
+
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    image = np.full((200, 120), 255, dtype=np.uint8)
+    image[25:95, 8:55] = 0       # question content
+    image[174:188, 70:114] = 0   # isolated footer/copyright note
+    image_path = tmp_path / "school-exam-footer.png"
+    cv2.imwrite(str(image_path), image)
+    region = QuestionRegion(
+        number=104,
+        bbox=(5.0, 20.0, 118.0, 195.0),
+        page_index=0,
+        semantic_flags=("written_response",),
+    )
+    original_audit = region.audit_bbox
+
+    segment_dispatcher._trim_other_source_text_regions_to_ink(
+        str(image_path),
+        [region],
+        page_width=120.0,
+        page_height=200.0,
+        source_type="other",
+    )
+
+    assert region.bbox[2] < 70.0
+    assert region.bbox[3] < 125.0
+    assert region.audit_bbox == original_audit
+    assert "ink_trimmed" in region.semantic_flags
+
+
 def test_pdf_school_exam_scan_uses_scan_layout_fallback(monkeypatch):
     page_info = {
         "image_path": "page.png",

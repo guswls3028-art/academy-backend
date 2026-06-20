@@ -119,6 +119,8 @@ class DualColumnStrategy(LayoutStrategy):
     def _is_left(block, mid_x: float) -> bool:
         # OCR may return a right-column sub-block whose x0 slightly crosses the
         # gutter after inline split. Use center for column ownership.
+        if block.x0 < mid_x * 0.35:
+            return True
         return ((block.x0 + block.x1) / 2) < mid_x
 
     def sort_blocks(self, blocks, mid_x: float, mid_y: float) -> list:
