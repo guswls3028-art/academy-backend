@@ -29,6 +29,7 @@
 | [runbooks/disaster-recovery.md](runbooks/disaster-recovery.md) | DB 장애/복구 |
 | [runbooks/emergency-mode.md](runbooks/emergency-mode.md) | 긴급 모드 |
 | [runbooks/incidents.md](runbooks/incidents.md) | 사고 일반 대응 |
+| [runbooks/matchup-segmentation-qa.md](runbooks/matchup-segmentation-qa.md) | 매치업 문항분리 감사/회귀 게이트 |
 | [runbooks/ops-prohibited.md](runbooks/ops-prohibited.md) | 운영 금지 사항 |
 | [runbooks/video-batch.md](runbooks/video-batch.md) | 영상 Batch 운영 |
 

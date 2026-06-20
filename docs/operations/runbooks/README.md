@@ -8,6 +8,7 @@
 | [disaster-recovery.md](disaster-recovery.md) | DB 장애/복구 |
 | [emergency-mode.md](emergency-mode.md) | 긴급 모드 |
 | [incidents.md](incidents.md) | 사고 일반 대응 |
+| [matchup-segmentation-qa.md](matchup-segmentation-qa.md) | 매치업 문항분리 감사/회귀 게이트 |
 | [ops-prohibited.md](ops-prohibited.md) | 운영 금지 사항 |
 | [video-batch.md](video-batch.md) | 영상 Batch 운영 |
 

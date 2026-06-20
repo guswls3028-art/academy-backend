@@ -20,6 +20,7 @@ DB 의존성:
 """
 from __future__ import annotations
 
+import json
 import uuid
 
 import pytest
@@ -28,8 +29,10 @@ from apps.core.models import Tenant
 from apps.domains.inventory.models import InventoryFile
 from apps.domains.matchup.models import MatchupDocument, MatchupProblem
 from apps.domains.matchup.services import find_similar_problems
+from apps.domains.matchup.views_hit_report import HitReportDraftView
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.test import RequestFactory
 
 User = get_user_model()
 
@@ -105,6 +108,11 @@ def _emb(seed: float) -> list[float]:
     return [seed * (i % 7 + 1) * 0.01 for i in range(768)]
 
 
+def _result_ids(results) -> set[int]:
+    """find_similar_problems currently returns (problem, score)."""
+    return {problem.id for problem, _score in results}
+
+
 @pytest.mark.django_db
 def test_test_paper_source_isolated_within_category(tenant, author):
     """시험지 source 는 같은 카테고리 안 자료만 후보로 받아야 한다 (db8ecb77 cross-school fix).
@@ -151,7 +159,7 @@ def test_test_paper_source_isolated_within_category(tenant, author):
         author_id=author.id,
     )
 
-    found_ids = {p.id for p, _, _ in results}
+    found_ids = _result_ids(results)
     assert ref_same_cat.id in found_ids, "같은 카테고리 자료는 후보로 떠야 함"
     assert ref_other_cat.id not in found_ids, (
         "다른 카테고리 자료는 cross-school 격리로 후보에서 제외 (db8ecb77 회귀 락)"
@@ -199,7 +207,7 @@ def test_reference_source_stays_within_category(tenant, author):
         author_id=author.id,
     )
 
-    found_ids = {p.id for p, _, _ in results}
+    found_ids = _result_ids(results)
     assert ref_same_cat.id in found_ids, "자료 source 는 같은 카테고리 자료를 후보로 받아야 함"
     assert ref_other_cat.id not in found_ids, (
         "자료 source 는 다른 카테고리 자료를 후보에서 제외해야 함 (회귀 락)"
@@ -242,7 +250,7 @@ def test_test_paper_self_doc_excluded(tenant, author):
     ref_other_doc = _make_problem(
         tenant=tenant,
         author=author,
-        category="박철T 워크북",
+        category="2026 중대부고 1학기 중간고사",
         source_type="academy_workbook",
         text="문제 1",
         embedding=_emb(3.01),
@@ -256,7 +264,7 @@ def test_test_paper_self_doc_excluded(tenant, author):
         author_id=author.id,
     )
 
-    found_ids = {p.id for p, _, _ in results}
+    found_ids = _result_ids(results)
     assert p2_same_doc.id not in found_ids, "self-doc trap — 자기 doc problem 은 후보에서 제외"
     assert ref_other_doc.id in found_ids, "다른 doc 의 자료는 후보로 떠야 함"
 
@@ -280,7 +288,7 @@ def test_author_isolation_preserved(tenant):
     ref_b = _make_problem(
         tenant=tenant,
         author=author_b,
-        category="B 강사 워크북",
+        category="2026 중대부고 1학기 중간고사",
         source_type="academy_workbook",
         text="문제",
         embedding=_emb(4.01),
@@ -294,5 +302,61 @@ def test_author_isolation_preserved(tenant):
         author_id=author_a.id,
     )
 
-    found_ids = {p.id for p, _, _ in results}
+    found_ids = _result_ids(results)
     assert ref_b.id not in found_ids, "다른 강사 자료는 후보 풀에서 제외 (강사 1인 격리 SSOT)"
+
+
+@pytest.mark.django_db
+def test_hit_report_draft_returns_candidates_from_split_exam_problem(tenant, author):
+    """분리된 시험지 문항이 hit-report draft에서 추천 후보로 이어지는 통합 경로."""
+    author.is_staff = True
+    author.save(update_fields=["is_staff"])
+
+    exam_inv = _make_inventory_file(tenant=tenant)
+    exam_doc = MatchupDocument.objects.create(
+        tenant_id=tenant.id,
+        author=author,
+        inventory_file=exam_inv,
+        title="2026 중대부고 시험지",
+        category="2026 중대부고 1학기 중간고사",
+        status="done",
+        r2_key=f"matchup/{uuid.uuid4().hex[:8]}-exam.pdf",
+        original_name="exam.pdf",
+        meta={"source_type": "school_exam_pdf"},
+    )
+    exam_problem = MatchupProblem.objects.create(
+        tenant_id=tenant.id,
+        document=exam_doc,
+        number=1,
+        text="다음 중 옳은 것은?",
+        embedding=_emb(5.0),
+        meta={"bbox": [0.1, 0.1, 0.4, 0.2]},
+    )
+    ref_problem = _make_problem(
+        tenant=tenant,
+        author=author,
+        category="2026 중대부고 1학기 중간고사",
+        source_type="academy_workbook",
+        text="다음 중 옳은 것은?",
+        embedding=_emb(5.01),
+        doc_title="중대부고 수업자료",
+    )
+
+    request = RequestFactory().get(
+        f"/api/v1/matchup/documents/{exam_doc.id}/hit-report-draft/"
+    )
+    request.user = author
+    request.tenant = tenant
+
+    response = HitReportDraftView().get(request, exam_doc.id)
+    payload = json.loads(response.content)
+
+    assert response.status_code == 200
+    assert payload["report"]["document_id"] == exam_doc.id
+    assert payload["exam_problems"][0]["id"] == exam_problem.id
+    candidate_ids = {
+        candidate["id"]
+        for problem in payload["exam_problems"]
+        for candidate in problem["candidates"]
+    }
+    assert ref_problem.id in candidate_ids
