@@ -277,7 +277,14 @@ def is_non_question_page(blocks: List[TextBlock]) -> bool:
     # "11. zb11) 다음은", "17. zb17) 그림 (가)는" — 학습 항목 ID로 본문에 다수 등장.
     # zb패턴이 있고 + 학습 항목 번호로 anchor가 5+ 잡히는 페이지는 학습자료 본문.
     zb_markers = re.findall(r"\bzb\s*\d{1,3}\s*\)", full_text)
-    if len(zb_markers) >= 3:
+    zb_real_question_signal = bool(
+        re.search(
+            r"(?:<\s*보\s*기|고른\s*것|옳은\s*것|옳지\s*않은\s*것|"
+            r"이에\s*대한\s*설명|①|②|③|④|⑤)",
+            full_text,
+        )
+    )
+    if len(zb_markers) >= 3 and not zb_real_question_signal:
         return True
 
     # 문항 페이지 강력 지표: 보기 번호 패턴
@@ -487,7 +494,7 @@ _SECTION_PATTERN = re.compile(
     # 형 필수 — "서술 1가지 방법..." 같은 본문 false positive 차단.
     # OCR이 형을 흘리는 경우는 드물고, 본문에서 "서술/논술/단답" 단어가
     # 숫자 앞에 등장하는 케이스가 더 흔함. 형 없는 패턴은 anchor 후보에서 제외.
-    r"\s*형\s*(\d{1,3})"
+    r"\s*형\s*[\]】)）]?\s*[\[【(（]?\s*(\d{1,3})"
 )
 
 _SHARED_QUESTION_RANGE_PATTERN = re.compile(
@@ -636,13 +643,13 @@ def _has_bilateral_marginal_anchors(
     return left_count >= 1 and right_count >= 1
 
 
-def _looks_like_fill_in_worksheet_page(
+def _looks_like_dense_fill_in_row_page(
     blocks: List[TextBlock],
     *,
     page_width: float,
     page_height: float,
 ) -> bool:
-    """Dense fill-in worksheet pages are one worksheet problem, not 20 row problems."""
+    """Dense fill-in worksheets should be cropped by numbered row."""
     content_blocks = [
         block for block in blocks
         if not _looks_like_footer_folio(
@@ -653,16 +660,8 @@ def _looks_like_fill_in_worksheet_page(
     ]
     if not content_blocks:
         return False
-    first_block = min(content_blocks, key=lambda block: (block.y0, block.x0))
-    if not _FILL_IN_WORKSHEET_PROMPT_PATTERN.search(first_block.text or ""):
-        return False
-
-    top_level_numbers = [
-        _extract_marginal_question_number(block.text or "")
-        for block in content_blocks
-    ]
-    top_level_numbers = [number for number in top_level_numbers if number is not None]
-    if len(set(top_level_numbers)) > 1:
+    full_text = "\n".join(block.text or "" for block in content_blocks)
+    if not _FILL_IN_WORKSHEET_PROMPT_PATTERN.search(full_text):
         return False
 
     numbers: list[int] = []
@@ -672,17 +671,16 @@ def _looks_like_fill_in_worksheet_page(
             numbers.append(number)
     if len(numbers) < 8:
         return False
-    unique_numbers = sorted(set(numbers))
-    return min(unique_numbers) <= 2 and max(unique_numbers) >= 8
+    return max(numbers) >= 8
 
 
-def _build_fill_in_worksheet_region(
+def _build_dense_fill_in_row_regions(
     blocks: List[TextBlock],
     *,
     page_width: float,
     page_height: float,
     page_index: int,
-) -> QuestionRegion:
+) -> List[QuestionRegion]:
     content_blocks = [
         block for block in blocks
         if not _looks_like_footer_folio(
@@ -692,31 +690,48 @@ def _build_fill_in_worksheet_region(
         )
     ]
     if not content_blocks:
-        return QuestionRegion(number=1, bbox=(0.0, 0.0, page_width, page_height), page_index=page_index)
+        return []
 
-    first_number = next(
-        (
-            _extract_question_number(block.text or "")
-            for block in content_blocks
-            if _extract_question_number(block.text or "") is not None
-        ),
-        1,
-    )
+    anchors: list[tuple[int, TextBlock]] = []
+    for block in sorted(content_blocks, key=lambda item: (item.y0, item.x0)):
+        number = _extract_question_number(block.text or "")
+        if number is None:
+            continue
+        if _FILL_IN_WORKSHEET_PROMPT_PATTERN.search(block.text or ""):
+            continue
+        anchors.append((number, block))
+    if len(anchors) < 2:
+        return []
+
     pad_x = max(page_width * 0.012, 2.0)
-    pad_top = 2.0
-    pad_bottom = max(page_height * 0.035, 8.0)
+    pad_top = max(page_height * 0.003, 2.0)
+    pad_bottom = max(page_height * 0.012, 6.0)
     x0 = max(0.0, min(block.x0 for block in content_blocks) - pad_x)
-    y0 = max(0.0, min(block.y0 for block in content_blocks) - pad_top)
     x1 = min(page_width, max(block.x1 for block in content_blocks) + pad_x)
-    y1 = min(page_height, max(block.y1 for block in content_blocks) + pad_bottom)
-    # Dense fill-in sheets often include bottom diagrams as vector/image objects
-    # without extractable text. Keep the whole worksheet body above the footer.
-    y1 = max(y1, page_height * 0.88)
-    return QuestionRegion(
-        number=first_number,
-        bbox=(x0, y0, x1, max(y1, y0 + page_height * 0.20)),
-        page_index=page_index,
-    )
+
+    footer_top = page_height * 0.94
+    regions: List[QuestionRegion] = []
+    for idx, (number, block) in enumerate(anchors):
+        y0 = max(0.0, block.y0 - pad_top)
+        if idx + 1 < len(anchors):
+            next_y0 = anchors[idx + 1][1].y0
+            y1 = max(y0 + page_height * 0.025, next_y0 - pad_top)
+        else:
+            lower_blocks = [b for b in content_blocks if b.y0 >= block.y0 - 1.0]
+            content_bottom = max((b.y1 for b in lower_blocks), default=block.y1)
+            y1 = min(page_height, max(content_bottom + pad_bottom, y0 + page_height * 0.035))
+        y1 = min(y1, footer_top)
+        if y1 <= y0:
+            continue
+        regions.append(
+            QuestionRegion(
+                number=number,
+                bbox=(x0, y0, x1, y1),
+                page_index=page_index,
+                semantic_flags=("short_workbook_prompt",),
+            )
+        )
+    return regions
 
 
 def _expand_inline_anchor_blocks(text_blocks: List[TextBlock]) -> List[TextBlock]:
@@ -1393,19 +1408,19 @@ def split_questions(
         is_quad_layout = _detect_quad_layout(text_blocks, page_width, page_height)
         is_dual_column = (not is_quad_layout) and _detect_column_layout(text_blocks, page_width)
 
-    if _looks_like_fill_in_worksheet_page(
+    if _looks_like_dense_fill_in_row_page(
         text_blocks,
         page_width=page_width,
         page_height=page_height,
     ):
-        return [
-            _build_fill_in_worksheet_region(
-                text_blocks,
-                page_width=page_width,
-                page_height=page_height,
-                page_index=page_index,
-            )
-        ]
+        dense_row_regions = _build_dense_fill_in_row_regions(
+            text_blocks,
+            page_width=page_width,
+            page_height=page_height,
+            page_index=page_index,
+        )
+        if dense_row_regions:
+            return dense_row_regions
     mid_x = page_width * 0.5
     mid_y = page_height * 0.5
 
@@ -2111,7 +2126,42 @@ def _drop_outliers_in_seen(
                     break
                 outlier_nums.update(tail)
                 break
+
+    low_space = by_space.get(0, [])
+    if len(low_space) >= 3:
+        for space, space_nums in by_space.items():
+            if space < 3 or len(space_nums) > 2:
+                continue
+            outlier_nums.update(space_nums)
     return outlier_nums
+
+
+def _page_outliers_with_dense_leading_continuation_kept(
+    page_regions: List["QuestionRegion"],
+) -> set[int]:
+    page_nums = {r.number for r in page_regions}
+    page_outliers = _drop_outliers_in_seen(page_nums)
+    if not page_outliers:
+        return page_outliers
+    has_dense_rows = any(
+        "short_workbook_prompt" in set(r.semantic_flags or ())
+        for r in page_regions
+    )
+    if not has_dense_rows:
+        return page_outliers
+
+    low_tops = [r.bbox[1] for r in page_regions if r.number <= 3]
+    if not low_tops:
+        return page_outliers
+    first_low_top = min(low_tops)
+    leading_continuations = {
+        r.number
+        for r in page_regions
+        if r.number in page_outliers
+        and r.number >= 10
+        and r.bbox[1] < first_low_top - 1.0
+    }
+    return page_outliers - leading_continuations
 
 
 def validate_anchors_across_pages(
@@ -2144,8 +2194,7 @@ def validate_anchors_across_pages(
         # outlier 는 페이지 안에서만 적용 (페이지 내 false anchor 잔존 방지).
         filtered: List[List[QuestionRegion]] = []
         for page_regions in regions_per_page:
-            page_nums = {r.number for r in page_regions}
-            page_outliers = _drop_outliers_in_seen(page_nums)
+            page_outliers = _page_outliers_with_dense_leading_continuation_kept(page_regions)
             filtered.append([r for r in page_regions if r.number not in page_outliers])
         return filtered
 

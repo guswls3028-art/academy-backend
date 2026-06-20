@@ -51,6 +51,9 @@ WARN_FLAGS = frozenset({
     "tiny_box_spike",
     "image_size_missing",
 })
+QUESTION_MARKER_RE = re.compile(
+    r"(?m)(?:^|\n)\s*(?:\d{1,3}\s*[.)]|[①-⑳]|(?:문제|[Qq])\s*\d{1,3})"
+)
 
 
 def _workspace_root() -> Path:
@@ -164,6 +167,7 @@ def _page_metrics(
 
     numbered = [n for n in numbers if isinstance(n, int)]
     unique_numbered = sorted(set(numbered))
+    page_text = str(page.get("page_text") or "")
     metric = {
         "page_index": int(page.get("page_index") or 0),
         "paper_type": str(page.get("paper_type") or "unknown"),
@@ -182,6 +186,8 @@ def _page_metrics(
         "large_box_count": large_box_count,
         "small_box_count": small_box_count,
         "area_ratios": ratios,
+        "page_text_len": len(page_text.strip()),
+        "question_marker_count": len(QUESTION_MARKER_RE.findall(page_text)),
         "overlay_path": overlay_path,
     }
     metric["quality_flags"] = _quality_flags(metric)
@@ -356,6 +362,10 @@ def _document_metrics(
     skip_page_count = sum(1 for p in page_metrics if p["is_skip_page"])
     text_page_count = sum(1 for p in page_metrics if p["has_embedded_text"])
     empty_page_count = sum(1 for p in page_metrics if int(p["box_count"]) == 0)
+    question_marker_count = sum(int(p["question_marker_count"]) for p in page_metrics)
+    question_marker_page_count = sum(
+        1 for p in page_metrics if int(p["question_marker_count"]) > 0
+    )
 
     flag_counts_dict = dict(sorted(flag_counts.items()))
     doc = {
@@ -372,6 +382,8 @@ def _document_metrics(
         "text_page_count": text_page_count,
         "skip_page_count": skip_page_count,
         "empty_page_count": empty_page_count,
+        "question_marker_count": question_marker_count,
+        "question_marker_page_count": question_marker_page_count,
         "paper_type_distribution": dict(sorted(paper_types.items())),
         "quality_flag_counts": flag_counts_dict,
         "overlay_errors": overlay_errors,

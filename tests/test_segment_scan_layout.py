@@ -4,6 +4,284 @@ from academy.adapters.ai.detection import segment_dispatcher
 from academy.adapters.ai.detection.segment_opencv import _merge_scan_content_regions
 
 
+class _TextLayerBlock:
+    def __init__(self, text: str, *, y0: float = 100.0, y1: float = 112.0):
+        self.text = text
+        self.y0 = y0
+        self.y1 = y1
+
+
+class _TextLayerWord:
+    def __init__(
+        self,
+        text: str,
+        *,
+        x0: float,
+        y0: float,
+        x1: float,
+        y1: float,
+    ):
+        self.text = text
+        self.x0 = x0
+        self.y0 = y0
+        self.x1 = x1
+        self.y1 = y1
+
+
+def test_sparse_problem_text_overlay_detects_anchor_only_scan_pages():
+    assert segment_dispatcher._looks_like_sparse_problem_text_overlay(
+        [_TextLayerBlock("14.\n15."), _TextLayerBlock("16.")],
+        page_height=1000.0,
+    )
+    assert segment_dispatcher._looks_like_sparse_problem_text_overlay(
+        [_TextLayerBlock("19.")],
+        page_height=1000.0,
+    )
+    assert segment_dispatcher._looks_like_sparse_problem_text_overlay(
+        [_TextLayerBlock("2")],
+        page_height=1000.0,
+    )
+
+
+def test_sparse_problem_text_overlay_rejects_footer_and_answer_noise():
+    assert not segment_dispatcher._looks_like_sparse_problem_text_overlay(
+        [_TextLayerBlock("2", y0=970.0, y1=982.0)],
+        page_height=1000.0,
+    )
+    assert not segment_dispatcher._looks_like_sparse_problem_text_overlay(
+        [_TextLayerBlock("정답 1. ①")],
+        page_height=1000.0,
+    )
+    assert not segment_dispatcher._looks_like_sparse_problem_text_overlay(
+        [_TextLayerBlock("12. 그림은 화산 분출 이후 기온 변화를 나타낸 것이다.")],
+        page_height=1000.0,
+    )
+
+
+def test_sparse_problem_number_anchors_from_words_keep_body_problem_numbers():
+    anchors = segment_dispatcher._sparse_problem_number_anchors_from_words(
+        [
+            _TextLayerWord("429.", x0=50.0, y0=127.0, x1=80.0, y1=141.0),
+            _TextLayerWord("14.", x0=49.0, y0=132.0, x1=63.0, y1=145.0),
+            _TextLayerWord("15.", x0=363.0, y0=138.0, x1=376.0, y1=151.0),
+            _TextLayerWord("16.", x0=368.0, y0=518.0, x1=382.0, y1=531.0),
+            _TextLayerWord("2", x0=360.0, y0=980.0, x1=366.0, y1=992.0),
+        ],
+        page_width=728.0,
+        page_height=1031.0,
+    )
+
+    assert [anchor["number"] for anchor in anchors] == [14, 15, 16]
+
+
+def test_sparse_scan_anchor_regions_replace_fragmented_columns():
+    boxes = [
+        (0, 504, 728, 307),
+        (0, 895, 728, 1073),
+        (728, 281, 728, 246),
+        (728, 637, 728, 484),
+        (728, 1171, 728, 632),
+    ]
+    page_info = {
+        "page_width": 728.0,
+        "page_height": 1031.0,
+        "image_size": (1456, 2062),
+        "sparse_problem_anchors": [
+            {"number": 14, "x0": 49.0, "y0": 132.0, "x1": 63.0, "y1": 145.0},
+            {"number": 15, "x0": 363.0, "y0": 138.0, "x1": 376.0, "y1": 151.0},
+            {"number": 16, "x0": 368.0, "y0": 518.0, "x1": 382.0, "y1": 531.0},
+        ],
+    }
+
+    merged, numbers = segment_dispatcher._scan_boxes_with_sparse_problem_anchors(
+        page_info,
+        boxes,
+    )
+
+    assert numbers == [14, 15, 16]
+    assert len(merged) == 3
+    assert merged[0][1] < boxes[0][1]
+    assert merged[0][1] + merged[0][3] == boxes[1][1] + boxes[1][3]
+
+
+def test_sparse_scan_single_right_written_anchor_merges_left_first_item():
+    boxes = [
+        (0, 76, 716, 1053),
+        (716, 81, 740, 259),
+        (716, 392, 740, 1579),
+        (0, 1203, 716, 763),
+    ]
+    page_info = {
+        "page_width": 728.0,
+        "page_height": 1031.0,
+        "image_size": (1456, 2062),
+        "sparse_problem_anchors": [
+            {"number": 2, "x0": 397.9, "y0": 138.0, "x1": 403.4, "y1": 151.3},
+        ],
+    }
+
+    merged, numbers = segment_dispatcher._scan_boxes_with_sparse_problem_anchors(
+        page_info,
+        boxes,
+    )
+
+    assert numbers == [1, 2]
+    assert len(merged) == 2
+    assert merged[0] == (0, 76, 716, 1890)
+
+
+def test_sparse_scan_anchor_regions_keep_leading_question_and_backfill_prior_column():
+    boxes = [
+        (0, 478, 728, 558),
+        (0, 1204, 728, 762),
+        (728, 280, 728, 329),
+        (728, 684, 728, 660),
+        (728, 1476, 728, 528),
+    ]
+    page_info = {
+        "page_width": 728.0,
+        "page_height": 1031.0,
+        "image_size": (1456, 2062),
+        "sparse_problem_anchors": [
+            {"number": 8, "x0": 373.0, "y0": 476.6, "x1": 380.7, "y1": 489.9},
+            {"number": 9, "x0": 372.0, "y0": 677.5, "x1": 379.7, "y1": 690.8},
+        ],
+    }
+
+    merged, numbers = segment_dispatcher._scan_boxes_with_sparse_problem_anchors(
+        page_info,
+        boxes,
+    )
+
+    assert numbers == [5, 6, 7, 8, 9]
+    assert merged[2] == boxes[2]
+
+
+def test_partial_text_overlay_scan_detects_missing_ink_column(tmp_path):
+    import cv2
+    import numpy as np
+
+    image = np.full((1000, 800), 255, dtype=np.uint8)
+    image[200:800, 80:300] = 0
+    image[300:700, 540:660] = 0
+    image_path = tmp_path / "partial-overlay.png"
+    cv2.imwrite(str(image_path), image)
+
+    blocks = [
+        _TextLayerBlock("8. right text", y0=250.0, y1=265.0),
+        _TextLayerBlock("9. right text", y0=500.0, y1=515.0),
+    ]
+    for block in blocks:
+        block.x0 = 500.0
+        block.x1 = 700.0
+
+    assert segment_dispatcher._looks_like_partial_text_overlay_scan_page(
+        blocks,
+        image_path=str(image_path),
+        page_width=800.0,
+    )
+
+
+def test_partial_text_overlay_scan_rejects_light_missing_side_ink(tmp_path):
+    import cv2
+    import numpy as np
+
+    image = np.full((1000, 800), 255, dtype=np.uint8)
+    image[180:820, 80:320] = 0
+    image[300:620, 560:660] = 0
+    image_path = tmp_path / "single-column-with-light-figure.png"
+    cv2.imwrite(str(image_path), image)
+
+    blocks = [
+        _TextLayerBlock("5. left text", y0=250.0, y1=265.0),
+        _TextLayerBlock("6. left text", y0=500.0, y1=515.0),
+    ]
+    for block in blocks:
+        block.x0 = 90.0
+        block.x1 = 310.0
+
+    assert not segment_dispatcher._looks_like_partial_text_overlay_scan_page(
+        blocks,
+        image_path=str(image_path),
+        page_width=800.0,
+    )
+
+
+def test_backfill_scan_numbers_from_next_numbered_page():
+    page_infos = [
+        {"paper_type": "scan_dual"},
+        {"paper_type": "scan_dual", "scan_box_numbers": [5, 6, 7, 8, 9]},
+    ]
+    boxes_per_page = [
+        [(0, 0, 100, 100), (0, 110, 100, 100), (100, 0, 100, 100), (100, 110, 100, 100)],
+        [(0, 0, 100, 100) for _ in range(5)],
+    ]
+
+    segment_dispatcher._backfill_scan_numbers_from_next_numbered_page(
+        page_infos,
+        boxes_per_page,
+        [[], []],
+    )
+
+    assert page_infos[0]["scan_box_numbers"] == [1, 2, 3, 4]
+
+
+def test_drop_terminal_unnumbered_scan_cover_page():
+    page_infos = [
+        {"paper_type": "scan_dual", "image_size": (1000, 1500), "scan_box_numbers": [1]},
+        {"paper_type": "scan_dual", "image_size": (1000, 1500)},
+    ]
+    boxes_per_page = [
+        [(50, 100, 900, 500)],
+        [(0, 600, 500, 120)],
+    ]
+
+    segment_dispatcher._drop_terminal_unnumbered_scan_cover_pages(
+        page_infos,
+        boxes_per_page,
+        [[], []],
+    )
+
+    assert boxes_per_page[0]
+    assert boxes_per_page[1] == []
+
+
+def test_drop_terminal_unnumbered_scan_cover_page_reads_image_size(tmp_path):
+    import cv2
+    import numpy as np
+
+    image = np.full((1500, 1000), 255, dtype=np.uint8)
+    image_path = tmp_path / "terminal-cover.png"
+    cv2.imwrite(str(image_path), image)
+    page_infos = [
+        {"paper_type": "scan_dual", "image_path": str(image_path)},
+    ]
+    boxes_per_page = [[(0, 600, 500, 120)]]
+
+    segment_dispatcher._drop_terminal_unnumbered_scan_cover_pages(
+        page_infos,
+        boxes_per_page,
+        [[]],
+    )
+
+    assert boxes_per_page[0] == []
+
+
+def test_drop_terminal_unnumbered_scan_cover_page_keeps_numbered_last_page():
+    page_infos = [
+        {"paper_type": "scan_dual", "image_size": (1000, 1500), "scan_box_numbers": [1]},
+    ]
+    boxes_per_page = [[(50, 100, 900, 500)]]
+
+    segment_dispatcher._drop_terminal_unnumbered_scan_cover_pages(
+        page_infos,
+        boxes_per_page,
+        [[]],
+    )
+
+    assert boxes_per_page[0] == [(50, 100, 900, 500)]
+
+
 def test_merge_scan_content_regions_drops_header_and_merges_small_gaps():
     h_img = 1000
     regions = [
@@ -49,6 +327,33 @@ def test_aggressive_merge_scan_content_regions_joins_fragmented_tables():
     ]
     assert _merge_scan_content_regions(regions, h_img, aggressive=True) == [
         (330, 1500),
+    ]
+
+
+def test_aggressive_merge_scan_content_regions_pairs_short_stems_without_chaining():
+    h_img = 2062
+    regions = [
+        (275, 454),    # q3 stem
+        (641, 946),    # q3 choices
+        (1115, 1574),  # q4 stem
+        (1651, 2005),  # q4 choices
+    ]
+
+    assert _merge_scan_content_regions(regions, h_img, aggressive=True) == [
+        (275, 946),
+        (1115, 2005),
+    ]
+
+
+def test_aggressive_merge_scan_content_regions_joins_short_stem_with_tall_body():
+    h_img = 2062
+    regions = [
+        (504, 811),    # q14 visual stem
+        (895, 1968),   # q14 choices/body
+    ]
+
+    assert _merge_scan_content_regions(regions, h_img, aggressive=True) == [
+        (504, 1968),
     ]
 
 

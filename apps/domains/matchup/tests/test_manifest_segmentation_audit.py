@@ -45,6 +45,26 @@ class ManifestSegmentationAuditHelperTests(SimpleTestCase):
         self.assertIn("severe_under_expected_count", flags)
         self.assertEqual(_manifest_quality_grade(flags)["status"], "fail")
 
+    def test_structural_flags_warn_text_sheet_without_question_markers(self):
+        flags = _structural_flags(
+            doc={"problem_rows": 5, "paper_primary": "clean_pdf_dual"},
+            metric={
+                "total_boxes": 0,
+                "page_count": 1,
+                "text_page_count": 1,
+                "question_marker_count": 0,
+                "numbered_box_count": 0,
+                "unnumbered_box_count": 0,
+            },
+            gt_metric=None,
+        )
+
+        self.assertIn("expected_count_without_question_markers", flags)
+        self.assertIn("manifest_expected_count_drift", flags)
+        self.assertNotIn("expected_positive_no_boxes", flags)
+        self.assertNotIn("severe_under_expected_count", flags)
+        self.assertEqual(_manifest_quality_grade(flags)["status"], "warn")
+
     def test_structural_flags_warn_under_count_without_severe_drop(self):
         flags = _structural_flags(
             doc={"problem_rows": 100, "paper_primary": "clean_pdf_dual"},
@@ -54,6 +74,91 @@ class ManifestSegmentationAuditHelperTests(SimpleTestCase):
 
         self.assertEqual(flags, ["under_expected_count"])
         self.assertEqual(_manifest_quality_grade(flags)["status"], "warn")
+
+    def test_structural_flags_demote_expected_drift_when_physical_gt_recall_complete(self):
+        flags = _structural_flags(
+            doc={"problem_rows": 100, "paper_primary": "clean_pdf_dual"},
+            metric={
+                "total_boxes": 40,
+                "numbered_box_count": 40,
+                "unnumbered_box_count": 0,
+            },
+            gt_metric={
+                "missed_count": 4,
+                "physical_gt_count": 40,
+                "physical_missed_count": 0,
+                "precision": 1.0,
+            },
+        )
+
+        self.assertEqual(flags, ["manifest_expected_count_drift"])
+        self.assertEqual(_manifest_quality_grade(flags)["status"], "warn")
+
+    def test_structural_flags_demote_gross_manifest_overcount_for_healthy_physical_pages(self):
+        flags = _structural_flags(
+            doc={"problem_rows": 448, "paper_primary": "clean_pdf_dual"},
+            metric={
+                "total_boxes": 152,
+                "numbered_box_count": 152,
+                "unnumbered_box_count": 0,
+                "quality_flag_counts": {},
+                "pages": [
+                    {"box_count": 4, "is_skip_page": False}
+                    for _ in range(38)
+                ],
+            },
+            gt_metric=None,
+        )
+
+        self.assertEqual(flags, ["manifest_expected_count_drift"])
+        self.assertEqual(_manifest_quality_grade(flags)["status"], "warn")
+
+    def test_structural_flags_demote_scan_partial_exam_manifest_overcount(self):
+        flags = _structural_flags(
+            doc={"problem_rows": 32, "paper_primary": "clean_pdf_dual"},
+            metric={
+                "total_boxes": 21,
+                "numbered_box_count": 21,
+                "unnumbered_box_count": 0,
+                "quality_flag_counts": {},
+                "paper_type_distribution": {
+                    "scan_dual": 4,
+                    "clean_pdf_dual": 2,
+                },
+                "pages": [
+                    {"box_count": 4, "is_skip_page": False},
+                    {"box_count": 5, "is_skip_page": False},
+                    {"box_count": 4, "is_skip_page": False},
+                    {"box_count": 3, "is_skip_page": False},
+                    {"box_count": 3, "is_skip_page": False},
+                    {"box_count": 2, "is_skip_page": False},
+                ],
+            },
+            gt_metric=None,
+        )
+
+        self.assertEqual(flags, ["manifest_expected_count_drift"])
+        self.assertEqual(_manifest_quality_grade(flags)["status"], "warn")
+
+    def test_structural_flags_keep_severe_under_when_physical_pages_are_unhealthy(self):
+        flags = _structural_flags(
+            doc={"problem_rows": 40, "paper_primary": "scanned_pdf"},
+            metric={
+                "total_boxes": 20,
+                "numbered_box_count": 4,
+                "unnumbered_box_count": 16,
+                "quality_flag_counts": {"all_boxes_unnumbered": 8},
+                "pages": [
+                    {"box_count": 2, "is_skip_page": False}
+                    for _ in range(10)
+                ],
+            },
+            gt_metric=None,
+        )
+
+        self.assertIn("severe_under_expected_count", flags)
+        self.assertNotIn("manifest_expected_count_drift", flags)
+        self.assertEqual(_manifest_quality_grade(flags)["status"], "fail")
 
     def test_structural_flags_fail_non_question_expected_empty_has_boxes(self):
         flags = _structural_flags(

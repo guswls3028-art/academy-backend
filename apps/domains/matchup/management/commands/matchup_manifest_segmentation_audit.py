@@ -43,9 +43,11 @@ STRUCTURAL_FAIL_FLAGS = frozenset({
     "severe_under_expected_count",
 })
 STRUCTURAL_WARN_FLAGS = frozenset({
+    "expected_count_without_question_markers",
     "under_expected_count",
     "over_expected_count",
     "many_unnumbered_boxes",
+    "manifest_expected_count_drift",
     "manifest_gt_missed",
     "manifest_gt_precision_low",
 })
@@ -108,6 +110,79 @@ def _select_documents(
     return selected
 
 
+def _has_complete_physical_gt_recall(gt_metric: dict[str, Any] | None) -> bool:
+    if gt_metric is None:
+        return False
+    physical_gt = _int_value(gt_metric.get("physical_gt_count"))
+    physical_missed = _int_value(
+        gt_metric.get("physical_missed_count"),
+        _int_value(gt_metric.get("missed_count")),
+    )
+    return physical_gt > 0 and physical_missed == 0
+
+
+def _looks_like_non_question_text_sheet(metric: dict[str, Any]) -> bool:
+    """Detect text-only note sheets where old manifest counts are not questions.
+
+    This is audit-only. The splitter should not invent crops for born-digital
+    concept notes that contain no question markers.
+    """
+    total_boxes = _int_value(metric.get("total_boxes"))
+    if total_boxes > 0:
+        return False
+    page_count = _int_value(metric.get("page_count"))
+    text_page_count = _int_value(metric.get("text_page_count"))
+    if page_count <= 0 or text_page_count <= 0:
+        return False
+    if _int_value(metric.get("question_marker_count"), -1) != 0:
+        return False
+    return True
+
+
+def _looks_like_manifest_overcounts_physical_crops(
+    *,
+    expected: int,
+    total_boxes: int,
+    metric: dict[str, Any],
+) -> bool:
+    if expected < 20 or total_boxes < 20:
+        return False
+    count_multiplier = expected / max(total_boxes, 1)
+    paper_type_distribution = metric.get("paper_type_distribution") or {}
+    has_scan_pages = any(
+        str(key).startswith("scan_") and _int_value(value) > 0
+        for key, value in paper_type_distribution.items()
+    )
+    if count_multiplier < 2.0 and not (
+        count_multiplier >= 1.45 and has_scan_pages
+    ):
+        return False
+
+    quality_flags = metric.get("quality_flag_counts") or {}
+    if _int_value(quality_flags.get("page_like_box")) > 0:
+        return False
+    if _int_value(quality_flags.get("all_boxes_unnumbered")) > 1:
+        return False
+
+    numbered = _int_value(metric.get("numbered_box_count"))
+    if numbered / max(total_boxes, 1) < 0.80:
+        return False
+
+    question_pages = [
+        page
+        for page in metric.get("pages") or []
+        if _int_value(page.get("box_count")) > 0 and not page.get("is_skip_page")
+    ]
+    if len(question_pages) < 5:
+        return False
+
+    boxes_per_question_page = total_boxes / max(len(question_pages), 1)
+    if not 1.5 <= boxes_per_question_page <= 6.0:
+        return False
+
+    return True
+
+
 def _structural_flags(
     *,
     doc: dict[str, Any],
@@ -119,17 +194,37 @@ def _structural_flags(
     total_boxes = _int_value(metric.get("total_boxes"))
     paper_primary = str(doc.get("paper_primary") or "")
     non_question_expected_empty = paper_primary in {"answer_key", "explanation"}
+    complete_physical_recall = _has_complete_physical_gt_recall(gt_metric)
+    non_question_text_sheet = _looks_like_non_question_text_sheet(metric)
+    manifest_overcounts_physical_crops = _looks_like_manifest_overcounts_physical_crops(
+        expected=expected,
+        total_boxes=total_boxes,
+        metric=metric,
+    )
 
     if expected > 0 and total_boxes == 0:
-        flags.append("expected_positive_no_boxes")
+        if non_question_text_sheet:
+            flags.append("expected_count_without_question_markers")
+        else:
+            flags.append("expected_positive_no_boxes")
     if non_question_expected_empty and total_boxes > 0:
         flags.append("non_question_expected_empty_has_boxes")
     if expected >= 5:
         ratio = total_boxes / expected if expected else 0.0
         if ratio < 0.75:
-            flags.append("severe_under_expected_count")
+            if (
+                non_question_text_sheet
+                or complete_physical_recall
+                or manifest_overcounts_physical_crops
+            ):
+                flags.append("manifest_expected_count_drift")
+            else:
+                flags.append("severe_under_expected_count")
         elif ratio < 0.90:
-            flags.append("under_expected_count")
+            if complete_physical_recall:
+                flags.append("manifest_expected_count_drift")
+            else:
+                flags.append("under_expected_count")
         if ratio > 1.60:
             flags.append("over_expected_count")
 

@@ -347,7 +347,49 @@ def _merge_scan_content_regions(
             merged[-1][1] = y1
         else:
             merged.append([y0, y1])
-    return [(int(y0), int(y1)) for y0, y1 in merged]
+    merged_tuples = [(int(y0), int(y1)) for y0, y1 in merged]
+    if aggressive:
+        merged_tuples = _merge_scan_fragment_pairs(merged_tuples, h_img)
+    return merged_tuples
+
+
+def _merge_scan_fragment_pairs(
+    regions: List[Tuple[int, int]],
+    h_img: int,
+) -> List[Tuple[int, int]]:
+    if len(regions) <= 1 or h_img <= 0:
+        return regions
+    out: List[Tuple[int, int]] = []
+    idx = 0
+    while idx < len(regions):
+        y0, y1 = regions[idx]
+        if idx + 1 >= len(regions):
+            out.append((y0, y1))
+            break
+        ny0, ny1 = regions[idx + 1]
+        height = y1 - y0
+        next_height = ny1 - ny0
+        gap = ny0 - y1
+        combined_height = ny1 - y0
+        short_stem_with_choices = (
+            height <= h_img * 0.24
+            and next_height <= h_img * 0.30
+            and gap <= h_img * 0.10
+            and combined_height <= h_img * 0.48
+        )
+        short_stem_with_tall_body = (
+            height <= h_img * 0.18
+            and next_height <= h_img * 0.58
+            and gap <= h_img * 0.05
+            and combined_height <= h_img * 0.78
+        )
+        if short_stem_with_choices or short_stem_with_tall_body:
+            out.append((y0, ny1))
+            idx += 2
+            continue
+        out.append((y0, y1))
+        idx += 1
+    return out
 
 
 def _filter_scan_layout_boxes(

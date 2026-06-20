@@ -85,8 +85,25 @@ class HelperTests(TestCase):
         self.assertEqual(metric["unnumbered_count"], 1)
         self.assertEqual(metric["large_box_count"], 1)
         self.assertEqual(metric["small_box_count"], 1)
+        self.assertEqual(metric["question_marker_count"], 0)
         self.assertIn("page_like_box", metric["quality_flags"])
         self.assertIn("mixed_numbering", metric["quality_flags"])
+
+    def test_page_metrics_count_question_markers_from_text_layer(self):
+        metric = cmd_module._page_metrics({
+            "page_index": 0,
+            "paper_type": "clean_pdf_dual",
+            "has_embedded_text": True,
+            "is_skip_page": False,
+            "image_size": [1000, 1000],
+            "boxes": [],
+            "numbers": [],
+            "page_text": "1. 다음 설명으로 옳은 것은?\n\n문제 2 아래 보기에서 고르시오.",
+        })
+
+        self.assertGreater(metric["page_text_len"], 0)
+        self.assertEqual(metric["question_marker_count"], 2)
+        self.assertIn("no_boxes_non_skip", metric["quality_flags"])
 
     def test_quality_grade(self):
         self.assertEqual(
@@ -132,6 +149,7 @@ class HelperTests(TestCase):
                     "image_size": [100, 100],
                     "boxes": [(0, 0, 10, 10), (10, 10, 10, 10)],
                     "numbers": [1, 2],
+                    "page_text": "1. A\n2. B",
                 },
                 {
                     "page_index": 1,
@@ -157,6 +175,8 @@ class HelperTests(TestCase):
         self.assertEqual(doc["total_boxes"], 3)
         self.assertEqual(doc["numbered_box_count"], 2)
         self.assertEqual(doc["unnumbered_box_count"], 1)
+        self.assertEqual(doc["question_marker_count"], 2)
+        self.assertEqual(doc["question_marker_page_count"], 1)
         self.assertEqual(doc["paper_type_distribution"]["clean_pdf_single"], 1)
         self.assertEqual(doc["paper_type_distribution"]["non_question"], 1)
         self.assertEqual(doc["quality_flag_counts"]["non_question_has_boxes"], 1)

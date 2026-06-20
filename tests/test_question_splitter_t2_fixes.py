@@ -76,6 +76,7 @@ def test_anchor_pattern_rejects_double_paren():
 def test_anchor_pattern_section_offset():
     """`[서답형 4]` → 104 (offset 100 + 4)."""
     assert _extract_question_number("[서답형 4] 주어진 단어를") == 104
+    assert _extract_question_number("서답형 \n[\n1] 다음은 분자식을 나타낸 것이다.") == 101
 
 
 def test_anchor_pattern_section_requires_hyeong():
@@ -203,6 +204,19 @@ def test_skip_zb_marker_page():
         "17. zb17) 그림 (가)는 레이저 길이 측정기,",
     )
     assert is_non_question_page(blocks) is True
+
+
+def test_zb_marker_page_with_choice_questions_is_not_non_question():
+    """zb 원본 ID가 붙어도 객관식 문제 신호가 있으면 본문 문제로 유지한다."""
+    blocks = _blocks(
+        "1. 그림은 질소 분자를 나타낸 것이다.zb1)",
+        "이에 대한 설명으로 옳은 것만을 <보기>에서 있는 대로 고른 것은?",
+        "< 보 기 > ㄱ. 공유 결합이다. ㄴ. 전자쌍을 공유한다.",
+        "① ㄱ ② ㄴ ③ ㄱ, ㄴ",
+        "2. 그림은 화합물 MX를 나타낸 것이다.zb2)",
+        "3. 그림은 A와 B의 전자 배치를 나타낸 것이다.zb3)",
+    )
+    assert is_non_question_page(blocks) is False
 
 
 def test_skip_chapter_concept_page_without_question_signal():
@@ -575,6 +589,20 @@ def test_validate_drops_outlier_after_gap():
     assert 46 not in nums_kept
 
 
+def test_validate_drops_isolated_high_space_ocr_number():
+    """Sparse scan OCR garbage like 429 must not survive beside normal exam numbers."""
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    page0 = [
+        QuestionRegion(number=n, bbox=(0, 0, 500, 100), page_index=0)
+        for n in (10, 11, 12, 13, 429)
+    ]
+
+    out = validate_anchors_across_pages([page0])
+
+    assert [r.number for r in out[0]] == [10, 11, 12, 13]
+
+
 def test_validate_preserves_sparse_official_exam_excerpt_numbers():
     """발췌형 공식 문항 번호는 큰 gap이 있어도 tail anchor 묶음이면 유지."""
     from academy.domain.tools.question_splitter import QuestionRegion
@@ -696,6 +724,42 @@ def test_section_subitems_do_not_cut_written_question_region():
 
     assert [r.number for r in regions] == [103, 104]
     assert regions[0].bbox[3] > 380
+
+
+def test_split_questions_handles_wrapped_written_section_labels_and_footer_numbers():
+    """PyMuPDF may split `[서답형 1]` into `서답형 \\n[\\n1]`.
+
+    The section label should start a written-response problem, while footer
+    checklist numbers remain outside the detected question set.
+    """
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.9,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+    )
+    blocks = [
+        TB(text="서답형 \n[\n1] 다음은 6가지 분자의 분자식을 나타낸 것이다.", x0=40, y0=180, x1=460, y1=205),
+        TB(text="(1) 주어진 분자 중 무극성 공유 결합이 있는 분자를 고르시오.", x0=55, y0=260, x1=450, y1=285),
+        TB(text="서답형 \n[\n2] 그림은 폼알데하이드의 구조식을 나타낸 것이다.", x0=40, y0=520, x1=460, y1=545),
+        TB(text="(1) 올바른 루이스 구조식을 나타내시오.", x0=55, y0=620, x1=450, y1=645),
+        TB(text="서답형 \n[\n3] 염화 수소 분자와 산소 분자를 비교한 것이다.", x0=540, y0=180, x1=960, y1=205),
+        TB(text="(1) 각 분자의 극성 여부를 서술하시오.", x0=555, y0=260, x1=950, y1=285),
+        TB(text="서답형 \n[\n4] 그림은 이온 사이의 거리와 에너지 변화를 나타낸 것이다.", x0=540, y0=520, x1=960, y1=545),
+        TB(text="(1) 점 A에서 작용하는 힘을 서술하시오.", x0=555, y0=620, x1=950, y1=645),
+        TB(text="1. 답안지의 해당란을 확인하십시오.", x0=560, y0=1180, x1=940, y1=1200),
+        TB(text="2. 저작권에 의해 전재와 복제는 금지됩니다.", x0=560, y0=1220, x1=940, y1=1240),
+    ]
+
+    regions = split_questions(blocks, 1000.0, 1400.0, paper_type=pt)
+
+    assert [r.number for r in regions] == [101, 102, 103, 104]
+    assert all(r.number not in {1, 2} for r in regions)
 
 
 def test_parenthesized_subitems_under_large_main_question_stay_inside_region():
@@ -835,6 +899,31 @@ def test_validate_per_page_restart_still_drops_outliers_per_page():
         nums = [r.number for r in page]
         assert 46 not in nums, f"page {i} outlier 46 not dropped: {nums}"
         assert nums == [1, 2, 3, 4, 5], f"page {i}: {nums}"
+
+
+def test_validate_preserves_dense_fill_leading_continuation_before_restart():
+    """Dense worksheet page can carry previous row 13 above a restarted 1-8 section."""
+    from academy.domain.tools.question_splitter import QuestionRegion
+
+    def row(num: int, page_idx: int, top: float) -> QuestionRegion:
+        return QuestionRegion(
+            number=num,
+            bbox=(0.0, top, 100.0, top + 20.0),
+            page_index=page_idx,
+            semantic_flags=("short_workbook_prompt",),
+        )
+
+    pages = [
+        [row(n, 0, n * 30.0) for n in range(1, 13)],
+        [row(13, 1, 20.0)] + [row(n, 1, 100.0 + n * 30.0) for n in range(1, 9)],
+        [row(n, 2, n * 30.0) for n in range(1, 5)],
+        [row(n, 3, n * 30.0) for n in range(1, 5)],
+        [row(n, 4, n * 30.0) for n in range(1, 5)],
+    ]
+
+    out = validate_anchors_across_pages(pages)
+
+    assert [r.number for r in out[1]] == [13, 1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_validate_preserves_late_section_restart_after_high_sequence():
@@ -2200,8 +2289,8 @@ def test_dense_short_fill_in_rows_do_not_expand_to_page_end():
     assert regions[0].bbox[3] <= regions[1].bbox[1]
 
 
-def test_fill_in_worksheet_prompt_collapses_dense_rows_to_one_region():
-    """빈칸 워크시트 한 장은 내부 1~20번 줄이 아니라 한 문제 단위로 유지한다."""
+def test_fill_in_worksheet_prompt_splits_dense_rows():
+    """빈칸 워크시트 한 장은 내부 행번호 단위로 자른다."""
     from academy.domain.tools.question_splitter import (
         TextBlock as TB,
         is_non_question_page,
@@ -2232,8 +2321,9 @@ def test_fill_in_worksheet_prompt_collapses_dense_rows_to_one_region():
     assert is_non_question_page(blocks) is False
     regions = split_questions(blocks, pw, ph, page_index=8, prefer_marginal=True)
 
-    assert [r.number for r in regions] == [1]
-    assert regions[0].bbox[3] - regions[0].bbox[1] > ph * 0.20
+    assert [r.number for r in regions] == list(range(1, 13))
+    assert all((r.bbox[3] - r.bbox[1]) < ph * 0.12 for r in regions[:11])
+    assert regions[0].bbox[3] <= regions[1].bbox[1]
 
 
 def test_fill_in_page_with_multiple_top_level_numbers_keeps_each_question():

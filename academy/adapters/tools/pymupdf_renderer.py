@@ -80,6 +80,28 @@ class PdfDocument:
                     ))
         return result
 
+    def extract_text_words(self, page_index: int) -> List[TextBlock]:
+        """Extract individual text words with positions from a single PDF page."""
+        if page_index < 0 or page_index >= len(self._doc):
+            raise IndexError(
+                f"Page index {page_index} out of range (0-{len(self._doc) - 1})"
+            )
+        page = self._doc[page_index]
+        raw_words = page.get_text("words")
+
+        result: List[TextBlock] = []
+        for word in raw_words:
+            text = str(word[4]).strip()
+            if text:
+                result.append(TextBlock(
+                    text=text,
+                    x0=word[0],
+                    y0=word[1],
+                    x1=word[2],
+                    y1=word[3],
+                ))
+        return result
+
     def render_page(self, page_index: int, dpi: int = 200) -> Image.Image:
         """Render a single PDF page as a PIL Image (RGB)."""
         import fitz  # PyMuPDF

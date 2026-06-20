@@ -4,6 +4,7 @@ from __future__ import annotations
 import contextvars
 import logging
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -32,6 +33,422 @@ BBox = Tuple[int, int, int, int]
 _SCAN_LAYOUT_BOXES_DEFAULT = "_scan_layout_boxes_default"
 _SCAN_LAYOUT_BOXES_FRAGMENT_MERGED = "_scan_layout_boxes_fragment_merged"
 _SCAN_LAYOUT_USE_FRAGMENT_MERGE = "_scan_layout_use_fragment_merge"
+_SPARSE_TEXT_DOTTED_ANCHOR_RE = re.compile(r"(?<!\d)(\d{1,3})\s*[.)](?!\d)")
+_SPARSE_TEXT_BARE_NUMBER_RE = re.compile(r"^\s*\d{1,3}\s*$")
+_SPARSE_PROBLEM_WORD_ANCHOR_RE = re.compile(r"^\s*(\d{1,3})(?:[.)])?\s*$")
+_SPARSE_TEXT_NON_QUESTION_RE = re.compile(
+    r"(?:정\s*답|해\s*설|목\s*차|차\s*례|WORKBOOK|PROJECT|"
+    r"문항\s*번호|유형|배점|답안지|성\s*명|학년도|중간\s*고사|기말\s*고사)",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_sparse_problem_text_overlay(
+    raw_blocks: List[object],
+    *,
+    page_height: float,
+) -> bool:
+    """Detect scanned PDF pages whose text layer contains only problem numbers.
+
+    Some tenant-2 school PDFs are image scans with a damaged/partial text layer:
+    PyMuPDF extracts only anchors such as ``14.`` or even a lone ``2`` from a
+    written-response label, while the actual question body exists only in the
+    rendered page image. Treating those pages as born-digital text pages makes
+    the non-question guard skip OCR/OpenCV entirely.
+    """
+    blocks = [
+        block for block in raw_blocks
+        if str(getattr(block, "text", "") or "").strip()
+    ]
+    if not blocks or len(blocks) > 3:
+        return False
+
+    full_text = "\n".join(str(getattr(block, "text", "") or "") for block in blocks).strip()
+    compact_text = re.sub(r"\s+", " ", full_text).strip()
+    if not compact_text or len(compact_text) > 120:
+        return False
+    if _SPARSE_TEXT_NON_QUESTION_RE.search(compact_text):
+        return False
+
+    def has_body_position(block: object) -> bool:
+        if page_height <= 0:
+            return True
+        y0 = float(getattr(block, "y0", 0.0) or 0.0)
+        y1 = float(getattr(block, "y1", y0) or y0)
+        cy = (y0 + y1) / 2.0
+        return page_height * 0.06 <= cy <= page_height * 0.94
+
+    signal_blocks = [
+        block for block in blocks
+        if (
+            _SPARSE_TEXT_DOTTED_ANCHOR_RE.search(
+                str(getattr(block, "text", "") or "")
+            )
+            or _SPARSE_TEXT_BARE_NUMBER_RE.match(
+                str(getattr(block, "text", "") or "")
+            )
+        )
+        and has_body_position(block)
+    ]
+    if not signal_blocks:
+        return False
+
+    anchor_remainder = _SPARSE_TEXT_DOTTED_ANCHOR_RE.sub("", full_text)
+    anchor_remainder = re.sub(r"(?<!\d)\d{1,3}(?!\d)", "", anchor_remainder)
+    anchor_remainder = re.sub(r"[\s.)\[\]<>:,\-]+", "", anchor_remainder)
+    if anchor_remainder:
+        return False
+
+    dotted_numbers = [
+        int(match.group(1))
+        for match in _SPARSE_TEXT_DOTTED_ANCHOR_RE.finditer(full_text)
+        if 1 <= int(match.group(1)) <= 500
+    ]
+    unique_dotted = set(dotted_numbers)
+    if len(unique_dotted) >= 2:
+        return True
+    if unique_dotted and max(unique_dotted) >= 10:
+        return True
+
+    # Written-response scans may expose only one bare digit from labels like
+    # "[서답형2]". Keep this limited to text layers made solely of digits and
+    # anchor punctuation, and require body-position evidence above.
+    if re.fullmatch(r"[\d\s.)]+", full_text):
+        bare_numbers = [
+            int(match.group(0))
+            for match in re.finditer(r"(?<!\d)\d{1,3}(?!\d)", full_text)
+            if 1 <= int(match.group(0)) <= 500
+        ]
+        if bare_numbers and (max(bare_numbers) >= 10 or len(compact_text) <= 3):
+            return True
+
+    return False
+
+
+def _sparse_problem_number_anchors_from_words(
+    raw_words: List[object],
+    *,
+    page_width: float,
+    page_height: float,
+) -> List[Dict[str, float | int]]:
+    anchors: List[Dict[str, float | int]] = []
+    for word in raw_words:
+        text = str(getattr(word, "text", "") or "").strip()
+        match = _SPARSE_PROBLEM_WORD_ANCHOR_RE.match(text)
+        if not match:
+            continue
+        number = int(match.group(1))
+        if not 1 <= number <= 120:
+            continue
+        x0 = float(getattr(word, "x0", 0.0) or 0.0)
+        y0 = float(getattr(word, "y0", 0.0) or 0.0)
+        x1 = float(getattr(word, "x1", x0) or x0)
+        y1 = float(getattr(word, "y1", y0) or y0)
+        if page_width > 0:
+            cx = (x0 + x1) / 2.0
+            if not page_width * 0.03 <= cx <= page_width * 0.97:
+                continue
+        if page_height > 0:
+            cy = (y0 + y1) / 2.0
+            if not page_height * 0.06 <= cy <= page_height * 0.94:
+                continue
+        anchors.append({
+            "number": number,
+            "x0": x0,
+            "y0": y0,
+            "x1": x1,
+            "y1": y1,
+        })
+
+    seen: set[tuple[int, int, int]] = set()
+    deduped: List[Dict[str, float | int]] = []
+    for anchor in sorted(
+        anchors,
+        key=lambda item: (
+            int(float(item["x0"]) >= page_width / 2.0),
+            float(item["y0"]),
+            float(item["x0"]),
+        ),
+    ):
+        key = (
+            int(anchor["number"]),
+            int(float(anchor["x0"]) // 2),
+            int(float(anchor["y0"]) // 2),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(anchor)
+    return deduped
+
+
+def _looks_like_partial_text_overlay_scan_page(
+    raw_blocks: List[object],
+    *,
+    image_path: str,
+    page_width: float,
+) -> bool:
+    blocks = [
+        block for block in raw_blocks
+        if str(getattr(block, "text", "") or "").strip()
+    ]
+    if len(blocks) < 2 or page_width <= 0:
+        return False
+    mid = page_width / 2.0
+    left_text = sum(
+        1 for block in blocks
+        if (float(getattr(block, "x0", 0.0) or 0.0) + float(getattr(block, "x1", 0.0) or 0.0)) / 2.0 < mid
+    )
+    right_text = len(blocks) - left_text
+    if left_text > 0 and right_text > 0:
+        return False
+
+    image = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if image is None or image.size == 0:
+        return False
+    h_img, w_img = image.shape[:2]
+    if h_img <= 0 or w_img <= 0:
+        return False
+    image_mid = w_img // 2
+    dark = image < 205
+    top_guard = int(h_img * 0.10)
+    bottom_guard = int(h_img * 0.93)
+    body = dark[top_guard:bottom_guard, :]
+    if body.size == 0:
+        return False
+    left_ink = int(body[:, :image_mid].sum())
+    right_ink = int(body[:, image_mid:].sum())
+    missing_side_ink = left_ink if left_text == 0 else right_ink
+    represented_side_ink = right_ink if left_text == 0 else left_ink
+    return (
+        missing_side_ink > body.size * 0.006
+        and missing_side_ink >= represented_side_ink * 1.60
+    )
+
+
+def _scan_image_size_for_page_info(page_info: Dict) -> tuple[int, int] | None:
+    image_size = page_info.get("image_size")
+    if (
+        isinstance(image_size, (list, tuple))
+        and len(image_size) == 2
+        and int(image_size[0]) > 0
+        and int(image_size[1]) > 0
+    ):
+        return int(image_size[0]), int(image_size[1])
+    image_path = str(page_info.get("image_path") or "")
+    if not image_path:
+        return None
+    image = cv2.imread(image_path)
+    if image is None:
+        return None
+    h_img, w_img = image.shape[:2]
+    if w_img <= 0 or h_img <= 0:
+        return None
+    return w_img, h_img
+
+
+def _scan_boxes_with_sparse_problem_anchors(
+    page_info: Dict,
+    boxes: List[BBox],
+    *,
+    fallback_boxes: Optional[List[BBox]] = None,
+) -> tuple[List[BBox], List[Optional[int]]]:
+    anchors = list(page_info.get("sparse_problem_anchors") or [])
+    if not anchors or not boxes:
+        return boxes, [None] * len(boxes)
+    image_size = _scan_image_size_for_page_info(page_info)
+    if image_size is None:
+        return boxes, [None] * len(boxes)
+    image_width, image_height = image_size
+    page_width = float(page_info.get("page_width") or 0.0)
+    page_height = float(page_info.get("page_height") or 0.0)
+    if page_width <= 0 or page_height <= 0:
+        return boxes, [None] * len(boxes)
+    scale_x = image_width / page_width
+    scale_y = image_height / page_height
+
+    def box_col(box: BBox) -> int:
+        x, _y, w, _h = box
+        return 0 if x + (w / 2.0) < image_width / 2.0 else 1
+
+    fallback_boxes = list(fallback_boxes or boxes)
+    anchors_by_col: dict[int, List[Dict[str, float | int]]] = {}
+    for anchor in anchors:
+        cx = (float(anchor["x0"]) + float(anchor["x1"])) / 2.0
+        col = 0 if cx < page_width / 2.0 else 1
+        anchors_by_col.setdefault(col, []).append(anchor)
+
+    output: List[tuple[BBox, Optional[int]]] = []
+    anchored_columns = set(anchors_by_col)
+
+    for col, col_anchors in anchors_by_col.items():
+        col_boxes = [box for box in boxes if box_col(box) == col]
+        if not col_boxes:
+            continue
+        x0 = min(box[0] for box in col_boxes)
+        x1 = max(box[0] + box[2] for box in col_boxes)
+        col_bottom = max(box[1] + box[3] for box in col_boxes)
+        col_anchors = sorted(col_anchors, key=lambda item: float(item["y0"]))
+        first_anchor_y = float(col_anchors[0]["y0"]) * scale_y
+        leading_boxes = [
+            box for box in col_boxes
+            if box[1] + box[3] < first_anchor_y - image_height * 0.025
+        ]
+        if len(leading_boxes) > 1:
+            lead_x0 = min(box[0] for box in leading_boxes)
+            lead_y0 = min(box[1] for box in leading_boxes)
+            lead_x1 = max(box[0] + box[2] for box in leading_boxes)
+            lead_y1 = max(box[1] + box[3] for box in leading_boxes)
+            if lead_y1 - lead_y0 <= image_height * 0.65:
+                leading_boxes = [(
+                    int(lead_x0),
+                    int(lead_y0),
+                    int(lead_x1 - lead_x0),
+                    int(lead_y1 - lead_y0),
+                )]
+        first_number = int(col_anchors[0]["number"])
+        leading_start = first_number - len(leading_boxes)
+        for offset, box in enumerate(sorted(leading_boxes, key=lambda item: item[1])):
+            inferred = leading_start + offset if leading_start >= 1 else None
+            output.append((box, inferred))
+        for index, anchor in enumerate(col_anchors):
+            anchor_y = float(anchor["y0"]) * scale_y
+            pad = max(8, int(image_height * 0.008))
+            y0 = max(0, int(anchor_y) - pad)
+            if index + 1 < len(col_anchors):
+                next_y = float(col_anchors[index + 1]["y0"]) * scale_y
+                y1 = max(y0 + 1, int(next_y) - pad)
+            else:
+                y1 = col_bottom
+            if y1 - y0 < image_height * 0.05:
+                continue
+            output.append((
+                (int(x0), int(y0), int(x1 - x0), int(y1 - y0)),
+                int(anchor["number"]),
+            ))
+
+    # Written-response final pages sometimes expose only the right-column "2"
+    # anchor. In that case the left column is the matching first written item.
+    if (
+        len(anchors) == 1
+        and int(anchors[0]["number"]) == 2
+        and 1 in anchored_columns
+    ):
+        left_boxes = [box for box in fallback_boxes if box_col(box) == 0]
+        if left_boxes:
+            x0 = min(box[0] for box in left_boxes)
+            y0 = min(box[1] for box in left_boxes)
+            x1 = max(box[0] + box[2] for box in left_boxes)
+            y1 = max(box[1] + box[3] for box in left_boxes)
+            output.append(((int(x0), int(y0), int(x1 - x0), int(y1 - y0)), 1))
+            anchored_columns.add(0)
+
+    for box in fallback_boxes:
+        if box_col(box) not in anchored_columns:
+            output.append((box, None))
+
+    output.sort(key=lambda item: (
+        0 if item[0][0] + item[0][2] / 2.0 < image_width / 2.0 else 1,
+        item[0][1],
+    ))
+    merged_boxes = [box for box, _number in output]
+    numbers = [number for _box, number in output]
+    first_numbered = next(
+        ((idx, number) for idx, number in enumerate(numbers) if number is not None),
+        None,
+    )
+    if first_numbered is not None:
+        first_idx, first_number = first_numbered
+        if first_idx > 0 and first_number > first_idx:
+            start = first_number - first_idx
+            for idx in range(first_idx):
+                if numbers[idx] is None:
+                    numbers[idx] = start + idx
+    return merged_boxes, numbers
+
+
+def _backfill_scan_numbers_from_next_numbered_page(
+    page_infos: List[Dict],
+    boxes_per_page: List[List[BBox]],
+    regions_per_page: List[List],
+) -> None:
+    for idx in range(len(page_infos) - 1):
+        info = page_infos[idx]
+        boxes = boxes_per_page[idx]
+        if not boxes or info.get("paper_type") not in {"scan_single", "scan_dual"}:
+            continue
+        existing = list(info.get("scan_box_numbers") or [])
+        if existing and any(number is not None for number in existing):
+            continue
+
+        next_info = page_infos[idx + 1]
+        next_boxes = boxes_per_page[idx + 1]
+        next_numbers = list(next_info.get("scan_box_numbers") or [])
+        if not next_numbers and regions_per_page[idx + 1] and len(regions_per_page[idx + 1]) == len(next_boxes):
+            next_numbers = [int(region.number) for region in regions_per_page[idx + 1]]
+        numbered_next = [number for number in next_numbers if number is not None]
+        if not numbered_next:
+            continue
+        first_next = int(numbered_next[0])
+        if first_next == len(boxes) + 1:
+            info["scan_box_numbers"] = list(range(1, first_next))
+
+
+def _drop_terminal_unnumbered_scan_cover_pages(
+    page_infos: List[Dict],
+    boxes_per_page: List[List[BBox]],
+    regions_per_page: List[List],
+) -> None:
+    """Remove textless decorative/end-cover scan pages left by image fallback.
+
+    Real scan problem pages are kept unless they sit at the document tail, have
+    no text/anchors/numbers, and only produce a small single fallback box.
+    """
+    for idx in range(len(page_infos) - 1, -1, -1):
+        info = page_infos[idx]
+        boxes = boxes_per_page[idx]
+        regions = regions_per_page[idx] if idx < len(regions_per_page) else []
+        if not boxes:
+            continue
+        if info.get("paper_type") not in {"scan_single", "scan_dual"}:
+            break
+        if info.get("has_embedded_text") or (info.get("page_text") or "").strip():
+            break
+        if info.get("sparse_problem_anchors"):
+            break
+        scan_numbers = list(info.get("scan_box_numbers") or [])
+        if any(number is not None for number in scan_numbers):
+            break
+        if regions:
+            break
+        if len(boxes) > 1:
+            break
+        image_size = info.get("image_size") or ()
+        if len(image_size) == 2:
+            img_w, img_h = int(image_size[0]), int(image_size[1])
+        else:
+            image_path = info.get("image_path")
+            img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE) if image_path else None
+            if img is None or img.size == 0:
+                break
+            img_h, img_w = img.shape[:2]
+        if img_w <= 0 or img_h <= 0:
+            break
+        box = boxes[0]
+        area_ratio = float(box[2] * box[3]) / float(img_w * img_h)
+        if area_ratio > 0.12:
+            break
+        logger.info(
+            "PDF_TERMINAL_SCAN_COVER_DROP | page=%d | area_ratio=%.4f | "
+            "box=(%d,%d,%d,%d)",
+            idx,
+            area_ratio,
+            box[0],
+            box[1],
+            box[2],
+            box[3],
+        )
+        boxes_per_page[idx] = []
 
 
 def _add_region_semantic_flag(region: object, flag: str) -> None:
@@ -713,6 +1130,10 @@ def _pdf_to_images(
                 has_text = len(raw_blocks) > 0
             except Exception:
                 raw_blocks = []
+            try:
+                raw_words = doc.extract_text_words(i) if has_text else []
+            except Exception:
+                raw_words = []
 
             tbs: List[SplitterTextBlock] = []
             pw, ph = 0.0, 0.0
@@ -720,30 +1141,80 @@ def _pdf_to_images(
             paper_type_debug: Dict = {}
             pt = None
             is_skip_page = False
+            page_text = ""
+            sparse_problem_anchors: List[Dict[str, float | int]] = []
             if has_text:
                 try:
                     tbs = [
                         SplitterTextBlock(text=b.text, x0=b.x0, y0=b.y0, x1=b.x1, y1=b.y1)
                         for b in raw_blocks
                     ]
+                    page_text = "\n".join(b.text for b in tbs)[:8000] if tbs else ""
                     pw, ph = doc.page_dimensions(i)
-                    pt = classify_paper_type(
-                        text_blocks=tbs,
-                        image_path=out_path,
-                        page_width=pw,
+                    if _looks_like_sparse_problem_text_overlay(
+                        raw_blocks,
                         page_height=ph,
-                        has_embedded_text=True,
-                        handwriting_score=handwriting_bias,
-                    )
-                    page_paper_type = pt.paper_type.value
-                    paper_type_debug = pt.debug
-                    if pt.is_non_question:
-                        is_skip_page = True
+                    ):
                         logger.info(
-                            "PDF_TEXT_NON_QUESTION_PAGE | page=%d | skip=True | "
-                            "paper_type=%s",
-                            i, page_paper_type,
+                            "PDF_SPARSE_TEXT_OVERLAY_AS_SCAN | page=%d | chars=%d | "
+                            "blocks=%d",
+                            i, len(page_text), len(raw_blocks),
                         )
+                        sparse_problem_anchors = _sparse_problem_number_anchors_from_words(
+                            raw_words,
+                            page_width=pw,
+                            page_height=ph,
+                        )
+                        has_text = False
+                        tbs = []
+                        paper_type_debug = {
+                            "sparse_problem_text_overlay": True,
+                            "raw_text_len": len(page_text),
+                            "sparse_problem_anchor_count": len(sparse_problem_anchors),
+                        }
+                    else:
+                        pt = classify_paper_type(
+                            text_blocks=tbs,
+                            image_path=out_path,
+                            page_width=pw,
+                            page_height=ph,
+                            has_embedded_text=True,
+                            handwriting_score=handwriting_bias,
+                        )
+                        page_paper_type = pt.paper_type.value
+                        paper_type_debug = pt.debug
+                        if pt.is_non_question:
+                            is_skip_page = True
+                            logger.info(
+                                "PDF_TEXT_NON_QUESTION_PAGE | page=%d | skip=True | "
+                                "paper_type=%s",
+                                i, page_paper_type,
+                            )
+                        elif _looks_like_partial_text_overlay_scan_page(
+                            raw_blocks,
+                            image_path=out_path,
+                            page_width=pw,
+                        ):
+                            logger.info(
+                                "PDF_PARTIAL_TEXT_OVERLAY_AS_SCAN | page=%d | chars=%d | "
+                                "blocks=%d | paper_type=%s",
+                                i, len(page_text), len(raw_blocks), page_paper_type,
+                            )
+                            sparse_problem_anchors = _sparse_problem_number_anchors_from_words(
+                                raw_words,
+                                page_width=pw,
+                                page_height=ph,
+                            )
+                            has_text = False
+                            tbs = []
+                            page_paper_type = PaperType.UNKNOWN.value
+                            pt = None
+                            paper_type_debug = {
+                                **paper_type_debug,
+                                "partial_text_overlay_scan": True,
+                                "raw_text_len": len(page_text),
+                                "sparse_problem_anchor_count": len(sparse_problem_anchors),
+                            }
                 except Exception as e:
                     logger.warning(
                         "PDF_TEXT_CLASSIFY_ERROR | page=%d | error=%s", i, e,
@@ -754,13 +1225,14 @@ def _pdf_to_images(
                 "image_path": out_path,
                 "has_text": has_text,
                 "text_blocks": tbs,
-                "page_text": "\n".join(b.text for b in tbs)[:8000] if tbs else "",
+                "page_text": page_text,
                 "page_width": pw,
                 "page_height": ph,
                 "paper_type": page_paper_type,
                 "paper_type_debug": paper_type_debug,
                 "paper_type_result": pt,
                 "is_skip_page": is_skip_page,
+                "sparse_problem_anchors": sparse_problem_anchors,
             })
 
     # ── Phase 2: doc-level workbook(per-page-restart) 감지 ──
@@ -898,6 +1370,9 @@ def _pdf_to_images(
             "text_box_meta": text_box_meta,
             "text_regions": text_regions,
             "page_text": p.get("page_text") or "",
+            "page_width": p.get("page_width") or 0.0,
+            "page_height": p.get("page_height") or 0.0,
+            "sparse_problem_anchors": p.get("sparse_problem_anchors") or [],
             "is_skip_page": p["is_skip_page"],
             "paper_type": p["paper_type"],
             "paper_type_debug": p["paper_type_debug"],
@@ -1072,6 +1547,17 @@ def _boxes_and_regions_for_pdf_page(
                 merge_fragmented_columns=bool(page_info.get(_SCAN_LAYOUT_USE_FRAGMENT_MERGE)),
             )
         )
+        if boxes and page_info.get("sparse_problem_anchors"):
+            default_boxes = list(page_info.get(_SCAN_LAYOUT_BOXES_DEFAULT) or boxes)
+            fallback_boxes = list(
+                page_info.get(_SCAN_LAYOUT_BOXES_FRAGMENT_MERGED) or boxes
+            )
+            boxes, scan_numbers = _scan_boxes_with_sparse_problem_anchors(
+                page_info,
+                default_boxes,
+                fallback_boxes=fallback_boxes,
+            )
+            page_info["scan_box_numbers"] = scan_numbers
         if boxes:
             return boxes, []
 
@@ -1174,13 +1660,25 @@ def _prime_scan_layout_boxes_for_pdf(
             apply_clahe=apply_clahe,
             merge_fragmented_columns=False,
         )
-        if source_type != "school_exam_pdf" and paper_type == "scan_dual":
+        if (
+            info.get("sparse_problem_anchors")
+            or (source_type != "school_exam_pdf" and paper_type == "scan_dual")
+        ):
             info[_SCAN_LAYOUT_BOXES_FRAGMENT_MERGED] = segment_questions_scan_layout(
                 image_path,
                 apply_clahe=apply_clahe,
                 merge_fragmented_columns=True,
             )
-            candidates.append(info)
+            if info.get("sparse_problem_anchors"):
+                info[_SCAN_LAYOUT_USE_FRAGMENT_MERGE] = True
+            elif source_type != "school_exam_pdf" and paper_type == "scan_dual":
+                candidates.append(info)
+
+    if any(info.get("sparse_problem_anchors") for info in page_infos):
+        for info in page_infos:
+            if _SCAN_LAYOUT_BOXES_FRAGMENT_MERGED in info:
+                info[_SCAN_LAYOUT_USE_FRAGMENT_MERGE] = True
+        return
 
     if _should_use_fragmented_scan_workbook_merge(
         page_infos,
@@ -1342,6 +1840,17 @@ def _collect_pdf_pages(
             page_idx, dropped, len(validated),
         )
 
+    _backfill_scan_numbers_from_next_numbered_page(
+        page_infos,
+        boxes_per_page,
+        validated_regions,
+    )
+    _drop_terminal_unnumbered_scan_cover_pages(
+        page_infos,
+        boxes_per_page,
+        validated_regions,
+    )
+
     return page_infos, boxes_per_page, validated_regions, tmp_dir
 
 
@@ -1429,6 +1938,11 @@ def segment_questions_multipage(
             # OpenCV fallback이면 빈 리스트 → None으로 정렬 길이 맞추기.
             if regions and len(regions) == len(boxes):
                 numbers = [int(r.number) for r in regions]
+            elif (
+                info.get("scan_box_numbers")
+                and len(info.get("scan_box_numbers") or []) == len(boxes)
+            ):
+                numbers = list(info.get("scan_box_numbers") or [])
             else:
                 numbers = [None] * len(boxes)
             bbox_meta = list(info.get("text_box_meta") or [])
