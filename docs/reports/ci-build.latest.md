@@ -1,17 +1,17 @@
 ## V1.1.0 CI Build — latest 이미지 digest 스냅샷 (OIDC)
 
-**Generated:** 2026-06-19T15:39:32+00:00
+**Generated:** 2026-06-20T00:46:58+00:00
 **SSOT:** docs/infrastructure/deployment-architecture.md
 **Region:** ap-northeast-2
-**gitSha:** efacdb19d00fc8d1f76c5af9ad2ba8251769ee2b
-**shortSha:** efacdb19
+**gitSha:** 5047c59d362dd55868a25a35a1b03d73f25f9f9e
+**shortSha:** 5047c59d
 **Changes:** api=true video=true messaging=true ai=true tools=true force_full=true
 
 | repo | tags | imageDigest |
 |------|------|-------------|
-| academy-base | sha-1246f088, sha-6ea1d751, latest, sha-efacdb19, sha-21f554cb | sha256:3fd32ec9bde17a69191eb2fbb41b49e52fe9edc540caf592d4edebc26f5e0c65 |
-| academy-api | sha-efacdb19, latest | sha256:fe0c256078a4017dae7b6353d30ec7df5c8b79ecec2ee4247709e5518ca2c188 |
-| academy-video-worker | sha-efacdb19, latest | sha256:2781f63720a6a087d871eac424ca9737ac9d8926eea2482ab7c0fe7c193074d1 |
-| academy-messaging-worker | latest, sha-efacdb19 | sha256:3f5a4f5f15734cdaa531868277fb10136df091809946b52ffc9c2f0ebe51db05 |
-| academy-ai-worker-cpu | latest, sha-efacdb19 | sha256:dc30cc4f9f758b7411db7dd69464eea16cf495dcb3b6fd110f44036b1e6ac5b9 |
-| academy-tools-worker | sha-efacdb19, latest | sha256:7a94b3485b15d1fd723f31d4caad781af3a6af6c97e992d211a4221389ca625e |
+| academy-base | sha-1246f088, sha-6ea1d751, latest, sha-5047c59d, sha-efacdb19, sha-21f554cb | sha256:3fd32ec9bde17a69191eb2fbb41b49e52fe9edc540caf592d4edebc26f5e0c65 |
+| academy-api | latest, sha-5047c59d | sha256:f0fec7a64d36c132a56326795a1e094d2e74336775929d577168e26c799cdd8b |
+| academy-video-worker | latest, sha-5047c59d | sha256:8b2b4425d47a604ff4d2e85acfaf0358ffba921659559ca641a8b9d00a0439a9 |
+| academy-messaging-worker | sha-5047c59d, latest | sha256:ac0f347339b5a9412eb4466f326cdde4f6ca4be03182b27a1b3c1f2ead7a93a1 |
+| academy-ai-worker-cpu | latest, sha-5047c59d | sha256:fd41689f108f8ec66da0c791f012a996113b1038e79523e3a9c90986b11c38ce |
+| academy-tools-worker | sha-5047c59d, latest | sha256:45cb9022debc21c27e74b15e2da22552c9fd3e3e868da5573739e01edcb5587d |
