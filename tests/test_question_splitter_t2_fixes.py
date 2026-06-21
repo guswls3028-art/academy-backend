@@ -251,6 +251,75 @@ def test_skip_chapter_science_basics_scale_concept_page():
     assert is_non_question_page(blocks) is True
 
 
+def test_skip_color_workbook_chemistry_concept_note_page():
+    """T2 26-1m 컬러 workbook 추가설명/필기형 화학 개념 노트는 문제로 자르지 않는다."""
+    blocks = _blocks(
+        "추가 설명",
+        "2. 다양한 원소들의 성질",
+        "1) 금속 원소",
+        "최외각전자 1, 2, 3개",
+        "전자를 잃기 쉽다",
+        "광택, 열 전도, 전기 전도",
+        "2) 비금속 원소",
+        "전자를 얻기 쉽다",
+        "공유 결합을 통해 전자를 모두 씀",
+        "전기전도성 거의 X",
+        "3) 비활성 기체",
+        "4) 알칼리 금속",
+    )
+    assert is_non_question_page(blocks) is True
+
+
+def test_skip_color_workbook_chemistry_formula_note_page():
+    """T2 26-1m 이온결합 예시/공식 노트는 번호가 있어도 문항이 아니다."""
+    blocks = _blocks(
+        "- 이온 결합 그림 그리기",
+        "1) MgO",
+        "Mg : 3주기 2족 -> [Ne]",
+        "가장 쉽게 안정화되는 방법 : 전자 2개를 버리기",
+        "O : 2주기 16족 -> [Ne]",
+        "2) CaO",
+        "Ca : 4주기 2족 -> [Ar]",
+        "3) Li2O",
+        "Li : 2주기 1족 -> [He]",
+    )
+    assert is_non_question_page(blocks) is True
+
+
+def test_skip_color_workbook_semiconductor_concept_page():
+    """T2 26-1m 반도체/다이오드 개념 페이지는 문제 crop 대상이 아니다."""
+    blocks = _blocks(
+        "물질의 전기적 성질",
+        "CHAPTER 03",
+        "1. 신소재의 개발과 이용",
+        "1. 전기적 성질을 이용한 신소재",
+        "[전기적 성질에 따른 물질 분류]",
+        "1. 순수 반도체 : 불순물 없이 완벽한 결정 구조를 갖는 반도체",
+        "2. 불순물 반도체 : 전기 전도성을 증가시킨 것",
+        "도체 절연체 반도체",
+        "전기저항 전류 다이오드 트랜지스터",
+    )
+    assert is_non_question_page(blocks) is True
+
+
+def test_skip_color_workbook_metal_bond_concept_page():
+    """T2 26-1m 금속결합 성질 정리 페이지는 번호가 있어도 문항이 아니다."""
+    blocks = _blocks(
+        "금속 결합 물질",
+        "금속 양이온 + 자유 전자",
+        "금속 결합 물질은 자기 원소로만 결합할 수 있음",
+        "1. 광택 O",
+        "2. 전기전도성 O, 열 전도성 O",
+        "3. 전성 O, 연성 O",
+        "자유전자가 존재하기 때문에 전류가 잘 통한다.",
+        "금속 양이온과 자유전자 간의 인력이 매우 커 잘 녹지 않는다.",
+        "녹는점이 높다.",
+        "금속은 힘을 가해도 자유전자가 따라오며 인력이 유지된다.",
+        "자유전자의 충돌이 에너지를 전달한다.",
+    )
+    assert is_non_question_page(blocks) is True
+
+
 def test_skip_standalone_jeongdap_answer_page():
     """OCR layout 깨진 해설지: "정답 ③" 만 3+ 반복 (N. 접두어 없음)."""
     blocks = _blocks(
@@ -2264,6 +2333,62 @@ def test_pixel_only_dual_with_bilateral_marginal_anchors_restores_dual_strategy(
     by_num = {r.number: r.bbox for r in regions}
     assert by_num[37][3] < by_num[38][1]
     assert by_num[39][0] >= pw * 0.45
+
+
+def test_pixel_only_dual_color_workbook_keeps_body_anchors_and_subitems():
+    """T2 26-1m 컬러 workbook p15: 2단 문항 5~8, 괄호 소문항은 독립 문항 아님."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 612.0, 864.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.65,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+        debug={
+            "has_embedded_text": True,
+            "is_dual_text": False,
+            "is_dual_pixel": True,
+        },
+    )
+    blocks = [
+        TB(text="5.\n다음은 측정과 관련된 설명이다. ( ) 안에 들어갈 알맞은 말", x0=42.5, y0=130.5, x1=280.6, y1=145.2),
+        TB(text="을 쓰시오. 5)", x0=64.0, y0=153.4, x1=107.4, y1=162.4),
+        TB(text="( ㉠ )이란 어떤 양을 측정하는 기준으로 쓰기 위하여 단위를 정의하고 이", x0=48.1, y0=176.3, x1=274.9, y1=184.1),
+        TB(text="를 재현하는 측정 기기, 측정 방법 체계를 정한 것을 말한다.", x0=48.1, y0=189.1, x1=228.1, y1=196.9),
+        TB(text="6.\n다음은 자연과 관련된 설명이다. ( ) 안에 들어갈 알맞은 말", x0=42.5, y0=428.0, x1=280.6, y1=442.7),
+        TB(text="을 쓰시오. 6)", x0=64.0, y0=450.7, x1=107.4, y1=459.8),
+        TB(text="하루 동안 기온은 계속 변하고, 바닷물의 높이도 주기적으로 변한다.", x0=48.1, y0=470.2, x1=277.1, y1=478.0),
+        TB(text="7.\n다양한 형태의 습도, 자기, 전기 신호를 전기 신호로 변환해야 하", x0=303.2, y0=130.5, x1=541.3, y1=145.2),
+        TB(text="는데, 이러한 역할을 하는 소자를 무엇이라고 하는가? 7)", x0=324.7, y0=153.4, x1=511.3, y1=162.4),
+        TB(text="8.\n아래의 빈칸에 알맞은 말을 써 넣으시오. 8)", x0=303.2, y0=428.9, x1=468.9, y1=443.7),
+        TB(text="(1) 비접촉형 체온계에는 적외선을 감지하는 ( )센서가 있다.", x0=303.2, y0=465.3, x1=487.3, y1=473.3),
+        TB(text="(2) 자동차는 앞뒤 범퍼에 ( )를 감지하는 센서가 있어서, 반사되어 오는 신", x0=303.2, y0=492.2, x1=541.3, y1=500.2),
+        TB(text="호를 감지하여 장애물까지의 거리를 측정한다.", x0=316.8, y0=506.2, x1=443.9, y1=514.2),
+        TB(text="(3) 스마트폰 속에는 기기가 ( )지는 방향을 감지하는 센서가 있어서 스마트", x0=303.2, y0=533.1, x1=541.3, y1=541.1),
+        TB(text="폰을 기울이며 게임 속 자동차의 방향을 바꿀 수 있다.", x0=316.8, y0=547.2, x1=467.5, y1=555.3),
+        TB(text="(4) 가스 누설 경보기에는 미세한 가스를 감지하는 ( ) 센서가 있다.", x0=303.2, y0=574.1, x1=508.9, y1=582.2),
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=14,
+        paper_type=pt,
+        prefer_marginal=False,
+    )
+
+    assert [r.number for r in regions] == [5, 6, 7, 8]
+    by_num = {r.number: r.bbox for r in regions}
+    assert by_num[5][2] < pw * 0.50
+    assert by_num[6][2] < pw * 0.50
+    assert by_num[7][0] > pw * 0.45
+    assert by_num[8][0] > pw * 0.45
+    assert by_num[8][3] > 580.0
 
 
 def test_dense_short_fill_in_rows_do_not_expand_to_page_end():

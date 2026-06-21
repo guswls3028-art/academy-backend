@@ -93,6 +93,14 @@ def _looks_like_learning_concept_page(
         r"물리량|측정\s*표준|아날로그\s*신호|디지털\s*신호|"
         r"센서|자료와\s*정보|우주론|스펙트럼|기본\s*입자|쿼크|"
         r"전하량|질량\s*에너지|우주\s*배경\s*복사|원자핵|"
+        r"주기율|주기율표|원소|금속\s*원소|비금속\s*원소|"
+        r"알칼리\s*금속|할로젠\s*원소|비활성\s*기체|"
+        r"화학\s*결합|이온\s*결합|공유\s*결합|금속\s*결합|"
+        r"양이온|음이온|자유\s*전자|전기적\s*인력|"
+        r"전기\s*전도성|녹는점|끓는점|반응성\s*순서|"
+        r"화학\s*반응식|분자|분자식|전자\s*배치|"
+        r"전기적\s*성질|반도체|다이오드|트랜지스터|"
+        r"도체|절연체|전기\s*저항|전류|양공|"
         r"성운|원시별|주계열성|핵융합|구성하는\s*원소|질량비|"
         r"지각|해양|대기|규산염|신경계|중추\s*신경계|말초\s*신경계|"
         r"대뇌|소뇌|사이뇌|뇌줄기|척수|반사|뉴런|"
@@ -117,11 +125,28 @@ def _looks_like_learning_concept_page(
 
     structural_count = len(definition_markers) + len(list_markers)
     explanation_count = structural_count + len(explanatory_markers)
+    chemistry_note_markers = re.findall(
+        r"(?:화학\s*결합|이온\s*결합|공유\s*결합|금속\s*결합|"
+        r"금속\s*양이온|자유\s*전자|전기적\s*인력|"
+        r"전기\s*전도성|녹는점|끓는점|반응성\s*순서|"
+        r"주기\s*\d+\s*족|\d+\s*주기\s*\d+\s*족|"
+        r"전자\s*배치|전기적\s*성질|반도체|다이오드|"
+        r"트랜지스터|도체|절연체|전기\s*저항|전류|양공)",
+        full_text,
+        re.IGNORECASE,
+    )
 
     if (
         re.search(r"(?:✑\s*Note|\bNote\b)", full_text, re.IGNORECASE)
         and (explanation_count >= 4 or len(learning_markers) >= 3)
     ):
+        return True
+    if (
+        len(chemistry_note_markers) >= 3
+        and (structural_count >= 2 or explanation_count >= 4)
+    ):
+        return True
+    if len(chemistry_note_markers) >= 5 and len(full_text) >= 180:
         return True
     if chapter_or_unit and len(learning_markers) >= 2 and explanation_count >= 4:
         return True
@@ -643,6 +668,42 @@ def _has_bilateral_marginal_anchors(
     return left_count >= 1 and right_count >= 1
 
 
+def _extract_top_level_question_number(text: str) -> Optional[int]:
+    stripped = (text or "").strip()
+    if re.match(r"^\s*\(\d{1,3}\)", stripped):
+        return None
+    return _extract_question_number(stripped)
+
+
+def _has_bilateral_top_level_question_anchors(
+    blocks: List[TextBlock],
+    *,
+    page_width: float,
+    page_height: float,
+) -> bool:
+    """Pixel-only dual pages with left/right body anchors are still dual."""
+    if page_width <= 0 or page_height <= 0:
+        return False
+    mid_x = page_width * 0.5
+    gutter_tolerance = page_width * 0.035
+    left_count = 0
+    right_count = 0
+    for block in blocks:
+        if _looks_like_footer_folio(
+            block,
+            page_width=page_width,
+            page_height=page_height,
+        ):
+            continue
+        if _extract_top_level_question_number(block.text or "") is None:
+            continue
+        if block.x0 >= mid_x - gutter_tolerance:
+            right_count += 1
+        else:
+            left_count += 1
+    return left_count >= 1 and right_count >= 1
+
+
 def _looks_like_dense_fill_in_row_page(
     blocks: List[TextBlock],
     *,
@@ -666,7 +727,7 @@ def _looks_like_dense_fill_in_row_page(
 
     numbers: list[int] = []
     for block in content_blocks:
-        number = _extract_question_number(block.text or "")
+        number = _extract_top_level_question_number(block.text or "")
         if number is not None:
             numbers.append(number)
     if len(numbers) < 8:
@@ -694,7 +755,7 @@ def _build_dense_fill_in_row_regions(
 
     anchors: list[tuple[int, TextBlock]] = []
     for block in sorted(content_blocks, key=lambda item: (item.y0, item.x0)):
-        number = _extract_question_number(block.text or "")
+        number = _extract_top_level_question_number(block.text or "")
         if number is None:
             continue
         if _FILL_IN_WORKSHEET_PROMPT_PATTERN.search(block.text or ""):
@@ -1396,11 +1457,20 @@ def split_questions(
             page_width=page_width,
             page_height=page_height,
         )
+        bilateral_body_dual = (
+            pixel_only_dual
+            and not bilateral_marginal_dual
+            and _has_bilateral_top_level_question_anchors(
+                text_blocks,
+                page_width=page_width,
+                page_height=page_height,
+            )
+        )
         is_quad_layout = paper_type.is_quadrant
         is_dual_column = (
             paper_type.is_dual_column
             and not is_quad_layout
-            and (not pixel_only_dual or bilateral_marginal_dual)
+            and (not pixel_only_dual or bilateral_marginal_dual or bilateral_body_dual)
         )
     else:
         # 4분할 레이아웃 우선 검사 — 가로 + 세로 gutter가 모두 있으면 quad.
@@ -1598,6 +1668,32 @@ def split_questions(
                 == ((right.y0 + right.y1) / 2 < mid_y)
             )
         return same_cell
+
+    def _is_parenthesized_body_subitem(candidate: Tuple[int, int, bool]) -> bool:
+        qnum, idx, is_marginal = candidate
+        if is_marginal:
+            return False
+        block = sorted_blocks[idx]
+        if not re.match(r"^\s*\(\d{1,3}\)", (block.text or "").strip()):
+            return False
+        for other_num, other_idx, other_is_marginal in candidates:
+            if other_idx == idx:
+                continue
+            other_block = sorted_blocks[other_idx]
+            if other_block.y0 >= block.y0:
+                continue
+            if not _same_layout_cell(other_idx, idx):
+                continue
+            if re.match(r"^\s*\(\d{1,3}\)", (other_block.text or "").strip()):
+                continue
+            return True
+        return False
+
+    if len(candidates) > 1:
+        candidates = [
+            c for c in candidates
+            if not _is_parenthesized_body_subitem(c)
+        ]
 
     main_anchor_candidates = [
         (qnum, idx)
