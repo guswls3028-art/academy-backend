@@ -1,17 +1,17 @@
 ## V1.1.0 CI Build — latest 이미지 digest 스냅샷 (OIDC)
 
-**Generated:** 2026-06-20T21:16:35+00:00
+**Generated:** 2026-06-21T09:25:36+00:00
 **SSOT:** docs/infrastructure/deployment-architecture.md
 **Region:** ap-northeast-2
-**gitSha:** 2628a1676bb0fcf9f0496ac78f76556754bbd07f
-**shortSha:** 2628a167
+**gitSha:** 34915f052c4c55e62e9b62389cec8e0764173c1c
+**shortSha:** 34915f05
 **Changes:** api=true video=true messaging=true ai=true tools=true force_full=true
 
 | repo | tags | imageDigest |
 |------|------|-------------|
-| academy-base | sha-1246f088, sha-2628a167, sha-6ea1d751, latest, sha-5047c59d, sha-efacdb19, sha-21f554cb | sha256:3fd32ec9bde17a69191eb2fbb41b49e52fe9edc540caf592d4edebc26f5e0c65 |
-| academy-api | sha-2628a167, latest | sha256:3e2c41f28b5d6c6a7d4775d9f04a091a6bf4e8bb02cbfcbbb780752e3695edac |
-| academy-video-worker | sha-2628a167, latest | sha256:3ff08aa566cf0294172eddf594519883a971c4646002447015e8362cd779a058 |
-| academy-messaging-worker | sha-2628a167, latest | sha256:7d64df76f58c8a61c0ecedd87dcecce4287194a135dbd05c92f86cd7da17c378 |
-| academy-ai-worker-cpu | latest, sha-2628a167 | sha256:0f2e67678ba7f34d9613f1c7e8524e550c559ecfcd809628c07a83d64dcd4f4b |
-| academy-tools-worker | sha-2628a167, latest | sha256:07b45b0bbba19dbe06445bfd94d1a0a20e923601ba58ab295f109e5249184f2c |
+| academy-base | sha-1246f088, sha-2628a167, sha-6ea1d751, latest, sha-34915f05, sha-5047c59d, sha-efacdb19, sha-21f554cb | sha256:3fd32ec9bde17a69191eb2fbb41b49e52fe9edc540caf592d4edebc26f5e0c65 |
+| academy-api | latest, sha-34915f05 | sha256:ab3c9cdf894b729e5180c513cc2fef11f69b77764b9e55ef1baee55efa3d7634 |
+| academy-video-worker | sha-34915f05, latest | sha256:c7428b3b977aab9fad059d6606ecdca780e9aa3a83b41c6767176f4595c6a505 |
+| academy-messaging-worker | sha-34915f05, latest | sha256:df2d0b05f39fee6c80c0d5cc50bc0e85f22f270df0656c6b2a70a58a99096f73 |
+| academy-ai-worker-cpu | sha-34915f05, latest | sha256:b25fd03800a90769812db122536f5377534093705e7b4ef9eb0484fc813e507c |
+| academy-tools-worker | latest, sha-34915f05 | sha256:35c91af9cb3f5cae7558bfef4346b3c071e051c1faaf6664ae3af2d60da2c3b2 |
