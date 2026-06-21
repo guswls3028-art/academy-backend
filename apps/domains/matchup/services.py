@@ -44,6 +44,54 @@ def document_has_protected_matchup_problems(document: MatchupDocument) -> bool:
     return bool(protected_matchup_problem_ids(document.problems.all()))
 
 
+_STALE_MANUAL_PROBLEM_META_KEYS = (
+    "bbox",
+    "bbox_norm",
+    "is_partial",
+    "low_quality",
+    "merge_suspect",
+    "number_mismatch",
+    "processing_quality",
+    "proposal_status",
+    "auto_merged_fragment_count",
+    "auto_merged_numbers",
+)
+
+
+def _build_manual_problem_meta(
+    existing: MatchupProblem | None,
+    *,
+    page_index: int,
+    bbox_norm: Tuple[float, float, float, float] | None = None,
+    paste: bool = False,
+) -> dict:
+    """수동 upsert 메타 생성.
+
+    기존 problem을 덮어쓸 때 manual_owner_pinned 같은 사용자 보호 메타는 유지하되,
+    자동 분리/검수 산물은 새 수동 입력과 충돌하므로 제거한다.
+    """
+    meta = dict(existing.meta or {}) if existing is not None else {}
+    for key in _STALE_MANUAL_PROBLEM_META_KEYS:
+        meta.pop(key, None)
+
+    existing_format = meta.get("format")
+    if existing_format not in {"choice", "essay"}:
+        existing_format = "choice"
+
+    meta.update({
+        "manual": True,
+        "page_index": int(page_index),
+        "format": existing_format,
+    })
+    if bbox_norm is not None:
+        x, y, w, h = bbox_norm
+        meta["bbox_norm"] = [float(x), float(y), float(w), float(h)]
+        meta.pop("paste", None)
+    elif paste:
+        meta["paste"] = True
+    return meta
+
+
 # ── Heuristic reranker 가중치 ───────────────────────────
 #
 # V2 측정(15 케이스)에서 발견된 부작용으로 V2.5 보수화:
@@ -1715,12 +1763,6 @@ def manually_crop_problem(
             fileobj=buf, key=problem_key, content_type="image/png",
         )
 
-        meta_payload = {
-            "manual": True,
-            "page_index": int(page_index),
-            "bbox_norm": [float(x), float(y), float(w), float(h)],
-            "format": "choice",  # 사용자가 명시 안 하면 기본 choice
-        }
         # update_or_create defaults — text embedding은 옛 값 유지, image embedding은 reset.
         # 정책 분리 (2026-05-06 본질 fix):
         #   text embedding: 옛 값 유지 (학원장 결함 fix 63f343ef). text 필드는 새 OCR 결과로
@@ -1735,6 +1777,11 @@ def manually_crop_problem(
             tenant=document.tenant, document=document, number=number,
         ).first()
         is_recreate = existing is not None
+        meta_payload = _build_manual_problem_meta(
+            existing,
+            page_index=int(page_index),
+            bbox_norm=(x, y, w, h),
+        )
         problem, created = MatchupProblem.objects.update_or_create(
             tenant=document.tenant,
             document=document,
@@ -1884,12 +1931,14 @@ def paste_image_as_problem(
         fileobj=buf, key=problem_key, content_type="image/png",
     )
 
-    meta_payload = {
-        "manual": True,
-        "paste": True,  # 매뉴얼 크롭 vs paste 구분
-        "page_index": 0,
-        "format": "choice",
-    }
+    existing = MatchupProblem.objects.filter(
+        tenant=document.tenant, document=document, number=number,
+    ).first()
+    meta_payload = _build_manual_problem_meta(
+        existing,
+        page_index=0,
+        paste=True,
+    )
     problem, created = MatchupProblem.objects.update_or_create(
         tenant=document.tenant,
         document=document,

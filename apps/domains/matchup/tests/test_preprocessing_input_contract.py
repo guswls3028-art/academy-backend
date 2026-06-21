@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+import subprocess
 import sys
 from dataclasses import FrozenInstanceError
 from unittest import TestCase
@@ -361,6 +363,19 @@ class TestSourceTypeDecision(TestCase):
             is_native_pdf=True,
         )
         self.assertFalse(d.camera_preprocessing_allowed())
+        self.assertIn("skip path", d.rationale)
+
+    def test_skip_source_type_takes_priority_over_native_density(self):
+        """인덱싱 제외 자료는 native PDF여도 source_type 정책이 먼저 적용된다."""
+        for source_type in (SourceType.EXPLANATION, SourceType.ANSWER_KEY):
+            with self.subTest(source_type=source_type):
+                d = decide_preprocessing(
+                    source_type=source_type,
+                    is_native_pdf=True,
+                    text_density=0.2,
+                )
+                self.assertFalse(d.camera_preprocessing_allowed())
+                self.assertIn("skip path", d.rationale)
 
     def test_commercial_workbook_skipped(self):
         d = decide_preprocessing(
@@ -368,6 +383,15 @@ class TestSourceTypeDecision(TestCase):
             is_native_pdf=False,
         )
         self.assertFalse(d.camera_preprocessing_allowed())
+
+    def test_commercial_workbook_takes_priority_over_native_density(self):
+        d = decide_preprocessing(
+            source_type=SourceType.COMMERCIAL_WORKBOOK,
+            is_native_pdf=True,
+            text_density=0.2,
+        )
+        self.assertFalse(d.camera_preprocessing_allowed())
+        self.assertIn("commercial_workbook", d.rationale)
 
     def test_native_pdf_low_density_falls_through_to_image(self):
         # native PDF 인데 text density 가 낮으면 image-based 로 떨어진다
@@ -448,21 +472,25 @@ class TestNoOperationalDeps(TestCase):
 
     def test_no_segment_dispatcher_or_vlm_or_ocr_imported(self):
         mod_name = "academy.domain.tools.preprocessing.contract"
-        # 깨끗한 상태에서 다시 로드
-        if mod_name in sys.modules:
-            del sys.modules[mod_name]
-        importlib.import_module(mod_name)
-
         forbidden = [
             "academy.adapters.ai.detection.segment_dispatcher",
             "academy.adapters.ai.detection.vlm_fallback",
             "academy.adapters.ai.ocr.google",
             "ultralytics",
         ]
-        loaded = []
-        for fmod in forbidden:
-            if fmod in sys.modules:
-                loaded.append(fmod)
+        probe = (
+            "import importlib, json, sys; "
+            f"importlib.import_module({mod_name!r}); "
+            f"forbidden = {forbidden!r}; "
+            "print(json.dumps([name for name in forbidden if name in sys.modules]))"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            check=True,
+            encoding="utf-8",
+        )
+        loaded = json.loads(result.stdout)
         self.assertEqual(
             loaded, [],
             f"preprocessing_input_contract import 가 운영 path 를 끌어들임: {loaded}",

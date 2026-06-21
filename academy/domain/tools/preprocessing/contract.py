@@ -331,19 +331,6 @@ def decide_preprocessing(
     - school_exam_pdf → native + text density 충분이면 skip, 아니면 image-based fallback
     - academy_workbook → 보통 native, low density 면 image fallback
     """
-    # native + 충분 density → preprocessing skip
-    if is_native_pdf and (text_density is None or text_density >= TEXT_DENSITY_THRESHOLD):
-        return PreprocessingDecision(
-            source_type=source_type,
-            is_native_pdf=True,
-            text_density=text_density,
-            detect_apply_clahe=False,
-            ocr_apply_clahe_deskew=False,
-            embedding_use_raw_crop=True,
-            vlm_use_raw=True,
-            rationale="native PDF with sufficient text density — skip preprocessing",
-        )
-
     # indexing skip path
     if source_type in (SourceType.EXPLANATION, SourceType.ANSWER_KEY):
         return PreprocessingDecision(
@@ -368,6 +355,19 @@ def decide_preprocessing(
             embedding_use_raw_crop=True,
             vlm_use_raw=True,
             rationale="commercial_workbook skip path",
+        )
+
+    # native + 충분 density → preprocessing skip
+    if is_native_pdf and (text_density is None or text_density >= TEXT_DENSITY_THRESHOLD):
+        return PreprocessingDecision(
+            source_type=source_type,
+            is_native_pdf=True,
+            text_density=text_density,
+            detect_apply_clahe=False,
+            ocr_apply_clahe_deskew=False,
+            embedding_use_raw_crop=True,
+            vlm_use_raw=True,
+            rationale="native PDF with sufficient text density — skip preprocessing",
         )
 
     # student_exam_photo — 학생 시험지 사진. CLAHE+deskew 후보.

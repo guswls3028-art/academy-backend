@@ -419,6 +419,34 @@ def run_matchup_pipeline(
             "problem_count": 0,
         })
 
+    # 세그멘테이션 직후 후처리.
+    # 여기서 최종 bbox set을 확정해야 skeleton/OCR/임베딩/썸네일이 같은 문항 단위를 바라본다.
+    questions_raw = _filter_questions_by_min_area(
+        questions_raw,
+        min_ratio_raw=os.environ.get("MATCHUP_BOX_AREA_MIN_RATIO", "0"),
+        document_id=document_id,
+    )
+    questions_raw = _auto_merge_fragment_questions(
+        questions_raw,
+        paper_type_summary=paper_type_summary,
+        enabled=os.environ.get("MATCHUP_AUTO_MERGE_FRAGMENT", "0") == "1",
+        document_id=document_id,
+    )
+    questions_raw = _filter_questions_by_hybrid_vlm(
+        questions_raw,
+        source_type=source_type,
+        document_id=document_id,
+        tenant_id=tenant_id,
+    )
+
+    if not questions_raw:
+        return AIResult.done(job_id, {
+            "problems": [],
+            "document_id": document_id,
+            "problem_count": 0,
+            "paper_type_summary": paper_type_summary,
+        })
+
     # ── Skeleton INSERT — 신규 업로드 사용자에게 즉시 부분 결과 노출 ──
     # 백엔드 파이프라인이 끝(Step 5)에 일괄 INSERT하던 결함으로, 신규 업로드 doc은
     # 처음부터 끝까지 빈 화면이었음 (재분석은 이전 결과 노출). 세그멘테이션 직후
@@ -470,240 +498,7 @@ def run_matchup_pipeline(
     # ── Step 4: 이미지 업로드 (90%) ──
     # "이미지 저장" 라벨은 사용자가 의미를 알기 어려워 "썸네일/이미지 캐시"로 명시.
     # 78페이지 PDF에서 5분간 "이미지 저장 85%" 정체로 보이던 UX 정체 해소를 위해
-    # Box minimum area filter (2026-05-10 자가 시각 검수 fix) — fragment box 사전 reject.
-    # V11 over-segmentation 으로 발문만/보기만/선택지만 cut 되는 fragment 가 다수.
-    # 면적 너무 작거나 aspect ratio 비정상 box 는 Hybrid VLM 호출 전 silent drop.
-    # ENV flag MATCHUP_BOX_AREA_MIN_RATIO (default off if "0", on with "0.05" 등).
-    box_area_min_ratio_raw = os.environ.get("MATCHUP_BOX_AREA_MIN_RATIO", "0")
-    try:
-        box_area_min_ratio = float(box_area_min_ratio_raw)
-    except (TypeError, ValueError):
-        box_area_min_ratio = 0.0
-    if box_area_min_ratio > 0:
-        import cv2 as _cv2_for_area
-        before_filter = len(questions_raw)
-        kept_after_area = []
-        rejected_area = 0
-        for _q in questions_raw:
-            try:
-                _img = _cv2_for_area.imread(_q.get("image_path", ""))
-                if _img is None or not _q.get("bbox"):
-                    kept_after_area.append(_q)
-                    continue
-                _ih, _iw = _img.shape[:2]
-                _x, _y, _w, _h = _q["bbox"]
-                page_area = _ih * _iw
-                box_area = _w * _h
-                if page_area > 0 and (box_area / page_area) < box_area_min_ratio:
-                    rejected_area += 1
-                    continue
-                kept_after_area.append(_q)
-            except Exception:
-                kept_after_area.append(_q)
-        if rejected_area > 0:
-            logger.info(
-                "MATCHUP_BOX_AREA_FILTER | doc=%s | before=%d | rejected=%d | min_ratio=%s",
-                document_id, before_filter, rejected_area, box_area_min_ratio,
-            )
-        questions_raw = kept_after_area
-
-    # Auto-merge fragment 후처리 (2026-05-10 자가 검수 fix) — V11 over-segmentation
-    # 으로 한 문항이 발문/보기/선택지 fragment 로 쪼개진 case 자동 합침.
-    # 알고리즘:
-    #   1. page_index 별 그룹 → column-aware 그룹 (clean_pdf_dual=2 / quadrant=4)
-    #   2. column 안 y_top sort
-    #   3. 인접 box (y_gap < threshold) + 다른 number 인 case 만 합침 보류 (false merge 방지)
-    #   4. 같은 number 또는 number 0 (미부여) 인 fragment 만 vertical union
-    # ENV flag MATCHUP_AUTO_MERGE_FRAGMENT (default off). T1 점진.
-    if os.environ.get("MATCHUP_AUTO_MERGE_FRAGMENT", "0") == "1":
-        try:
-            primary_pt = (paper_type_summary or {}).get("primary") or ""
-            cc = 1
-            if primary_pt in ("clean_pdf_dual", "scan_dual"):
-                cc = 2
-            elif primary_pt == "quadrant":
-                cc = 4
-            # page_index → list of question ref
-            from collections import defaultdict
-            by_page = defaultdict(list)
-            for _q in questions_raw:
-                pi = (_q.get("meta") or {}).get("page_index")
-                if isinstance(pi, int):
-                    by_page[pi].append(_q)
-            merged_count = 0
-            kept_after_merge = []
-            already_merged = set()  # id(q) of merged-into-others
-            for pi, page_qs in by_page.items():
-                # column 별 grouping
-                # column width 는 page width 기준 — page render 시 1700px standard
-                # 여기서 normalized 0~1 가정 (worker bbox 가 px 인지 norm 인지 확인 필요)
-                # 보수적 처리: bbox=(x,y,w,h) px 가정 (matchup_pipeline 표준)
-                # 같은 column 인지 = box center x / page_width / cc 로 col_idx 비교
-                # page width 추정 = max box (x+w)
-                if not page_qs:
-                    continue
-                page_width = max(
-                    (q.get("bbox") or [0, 0, 0, 0])[0] + (q.get("bbox") or [0, 0, 0, 0])[2]
-                    for q in page_qs if q.get("bbox")
-                ) or 1
-                col_buckets = defaultdict(list)
-                for q in page_qs:
-                    bbox = q.get("bbox")
-                    if not bbox:
-                        kept_after_merge.append(q)
-                        continue
-                    bx, by_, bw, bh = bbox
-                    cx = bx + bw / 2
-                    col_idx = max(0, min(cc - 1, int(cx / (page_width / cc))))
-                    col_buckets[col_idx].append((by_, q))
-                for col_idx, items in col_buckets.items():
-                    # y_top 기준 sort
-                    items.sort(key=lambda kv: kv[0])
-                    i = 0
-                    while i < len(items):
-                        _, q = items[i]
-                        if id(q) in already_merged:
-                            i += 1
-                            continue
-                        bbox = q.get("bbox")
-                        if not bbox:
-                            kept_after_merge.append(q)
-                            i += 1
-                            continue
-                        cur_x, cur_y, cur_w, cur_h = bbox
-                        cur_num = q.get("number") or 0
-                        # 다음 box 와 합침 시도 — 같은 number 또는 둘 다 number 0
-                        j = i + 1
-                        while j < len(items):
-                            _, nq = items[j]
-                            if id(nq) in already_merged:
-                                j += 1
-                                continue
-                            nb = nq.get("bbox")
-                            if not nb:
-                                break
-                            nx, ny, nw, nh = nb
-                            nnum = nq.get("number") or 0
-                            # number 다른데 둘 다 양수면 다른 문항 — skip
-                            if cur_num and nnum and cur_num != nnum:
-                                break
-                            # vertical 인접 (gap 작음) — gap 기준 = 현재 box height 의 30% 이내
-                            gap = ny - (cur_y + cur_h)
-                            if gap < 0:
-                                # overlap - merge 후보
-                                pass
-                            elif gap > cur_h * 0.30:
-                                break
-                            # 합침 — bbox union
-                            new_x = min(cur_x, nx)
-                            new_y = cur_y
-                            new_x2 = max(cur_x + cur_w, nx + nw)
-                            new_y2 = ny + nh
-                            cur_x, cur_w = new_x, new_x2 - new_x
-                            cur_h = new_y2 - cur_y
-                            if not cur_num and nnum:
-                                cur_num = nnum
-                            already_merged.add(id(nq))
-                            merged_count += 1
-                            j += 1
-                        # update q in-place with merged bbox
-                        q["bbox"] = (cur_x, cur_y, cur_w, cur_h)
-                        if cur_num:
-                            q["number"] = cur_num
-                        kept_after_merge.append(q)
-                        i = j
-            if merged_count > 0:
-                logger.info(
-                    "MATCHUP_AUTO_MERGE_FRAGMENT | doc=%s | merged=%d | total_after=%d",
-                    document_id, merged_count, len(kept_after_merge),
-                )
-                questions_raw = kept_after_merge
-        except Exception as _merge_err:  # noqa: BLE001
-            logger.warning(
-                "AUTO_MERGE_FRAGMENT_OUTER_FAIL | doc=%s | err=%s",
-                document_id, _merge_err,
-            )
-
-    # Hybrid VLM verifier (2026-05-09 basic_definition_2026_05_09 SSOT) —
-    # YOLO false positive 후처리. PoC v3 검증 prec 0.55→0.97. ENV flag
-    # MATCHUP_HYBRID_VLM_TENANTS 매치 시만 적용. fail-soft.
-    # 2026-05-10 자가 검수 후 prompt 강화 — problem_fragment 카테고리 reject.
-    #
-    # 2026-05-15 workbook source_type skip — academy_workbook / commercial_workbook 는
-    # marginal anchor main 단위 cut (그림+stem+sub-items 통째) 의도. VLM 이 main 박스를
-    # "problem_fragment" 로 잘못 분류해 reject 하는 결함 (운영 doc 774: 105 → 60, 42 fragment
-    # 거짓 reject). VLM 은 시험지 sub-item cut 단위 학습 — 워크북 main 단위 와 호환 X.
-    WORKBOOK_VLM_SKIP_TYPES = {"academy_workbook", "commercial_workbook"}
-    try:
-        from academy.adapters.ai.detection.hybrid_vlm_classifier import (
-            is_hybrid_vlm_enabled_for_tenant,
-            filter_questions_by_hybrid_vlm,
-        )
-        hybrid_source_allowed = _source_type_gate_allows(
-            "MATCHUP_HYBRID_VLM_SOURCE_TYPES",
-            source_type,
-            tuple(
-                sorted(
-                    {
-                        "student_exam_photo",
-                        "school_exam_pdf",
-                        "other",
-                    }
-                )
-            ),
-        )
-        if (
-            is_hybrid_vlm_enabled_for_tenant(tenant_id)
-            and hybrid_source_allowed
-        ):
-            before_count = len(questions_raw)
-            vlm_origin_questions = [
-                q for q in questions_raw
-                if _is_vlm_origin_question(q)
-            ]
-            hybrid_candidates = [
-                q for q in questions_raw
-                if not _is_vlm_origin_question(q)
-            ]
-            filtered_candidates, hvlm_stats = filter_questions_by_hybrid_vlm(
-                hybrid_candidates,
-                document_id=document_id,
-                tenant_id=tenant_id,
-                cost_cap_calls=200,
-            )
-            if vlm_origin_questions:
-                hvlm_stats["vlm_origin_bypassed"] = len(vlm_origin_questions)
-            questions_raw = filtered_candidates + vlm_origin_questions
-            questions_raw.sort(
-                key=lambda q: (
-                    int(q.get("page_index") or 0),
-                    int((q.get("bbox") or [0, 0, 0, 0])[1]),
-                    int((q.get("bbox") or [0, 0, 0, 0])[0]),
-                    int(q.get("number") or 0),
-                )
-            )
-            logger.info(
-                "HYBRID_VLM_FILTERED | doc=%s | before=%d | after=%d | stats=%s",
-                document_id, before_count, len(questions_raw), hvlm_stats,
-            )
-        elif source_type in WORKBOOK_VLM_SKIP_TYPES and not hybrid_source_allowed:
-            logger.info(
-                "HYBRID_VLM_SKIP_WORKBOOK | doc=%s | source_type=%s | "
-                "main 단위 cut 보존 (VLM 적용 X)",
-                document_id, source_type,
-            )
-        elif not hybrid_source_allowed:
-            logger.info(
-                "HYBRID_VLM_SKIP_SOURCE_TYPE | doc=%s | source_type=%s",
-                document_id, source_type,
-            )
-    except Exception as _hvlm_err:  # noqa: BLE001
-        # fail-soft — filter 자체 실패 시 raw questions_raw 그대로
-        logger.warning(
-            "HYBRID_VLM_OUTER_FAIL | doc=%s | err=%s",
-            document_id, _hvlm_err,
-        )
-
+    # 이미지 업로드 / CLIP 임베딩 / 페이지 캐시 3단계로 진행률 분산.
     # 이미지 업로드 / CLIP 임베딩 / 페이지 캐시 3단계로 진행률 분산.
     record_progress(
         job_id, "upload_images", 85,
@@ -1053,6 +848,296 @@ def _detect_per_page_restart_from_pages(pages: List[Dict]) -> bool:
     )
 
     return signal_a or signal_b
+
+
+def _question_page_index(question: Dict[str, Any]) -> Optional[int]:
+    """question dict의 page_index를 top-level/meta 양쪽에서 안전하게 읽는다."""
+    raw = question.get("page_index")
+    if raw is None:
+        raw = (question.get("meta") or {}).get("page_index")
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_bbox_xywh(bbox: Any) -> Optional[Tuple[float, float, float, float]]:
+    if not isinstance(bbox, (list, tuple)) or len(bbox) < 4:
+        return None
+    try:
+        x, y, w, h = (float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3]))
+    except (TypeError, ValueError):
+        return None
+    if w <= 0 or h <= 0:
+        return None
+    return x, y, w, h
+
+
+def _filter_questions_by_min_area(
+    questions: List[Dict[str, Any]],
+    *,
+    min_ratio_raw: str,
+    document_id: str | int | None,
+) -> List[Dict[str, Any]]:
+    """너무 작은 fragment bbox를 OCR/임베딩 전에 제거한다.
+
+    ENV `MATCHUP_BOX_AREA_MIN_RATIO`가 0이면 no-op. 이미지를 question마다 다시
+    읽던 기존 inline 경로는 문항 수가 많을수록 I/O가 커서 image_path별 캐시를 둔다.
+    """
+    try:
+        min_ratio = float(min_ratio_raw)
+    except (TypeError, ValueError):
+        min_ratio = 0.0
+    if min_ratio <= 0:
+        return questions
+
+    try:
+        import cv2 as _cv2_for_area
+    except ImportError:
+        logger.warning(
+            "MATCHUP_BOX_AREA_FILTER_NO_CV2 | doc=%s | keep_raw=%d",
+            document_id, len(questions),
+        )
+        return questions
+
+    before_filter = len(questions)
+    kept: List[Dict[str, Any]] = []
+    rejected = 0
+    image_cache: Dict[str, Any] = {}
+
+    for q in questions:
+        try:
+            image_path = q.get("image_path", "")
+            bbox = _coerce_bbox_xywh(q.get("bbox"))
+            if not image_path or bbox is None:
+                kept.append(q)
+                continue
+            if image_path not in image_cache:
+                image_cache[image_path] = _cv2_for_area.imread(image_path)
+            img = image_cache[image_path]
+            if img is None:
+                kept.append(q)
+                continue
+            ih, iw = img.shape[:2]
+            _, _, w, h = bbox
+            page_area = ih * iw
+            box_area = w * h
+            if page_area > 0 and (box_area / page_area) < min_ratio:
+                rejected += 1
+                continue
+            kept.append(q)
+        except Exception:
+            kept.append(q)
+
+    if rejected > 0:
+        logger.info(
+            "MATCHUP_BOX_AREA_FILTER | doc=%s | before=%d | rejected=%d | min_ratio=%s",
+            document_id, before_filter, rejected, min_ratio,
+        )
+    return kept
+
+
+def _can_auto_merge_fragment_pair(current: Dict[str, Any], nxt: Dict[str, Any]) -> bool:
+    cur_num = current.get("number") or 0
+    nxt_num = nxt.get("number") or 0
+    if cur_num and nxt_num and cur_num == nxt_num:
+        return True
+    if cur_num and nxt_num and cur_num != nxt_num:
+        cur_meta = current.get("meta_extra") or {}
+        nxt_meta = nxt.get("meta_extra") or {}
+        cur_counter = cur_meta.get("number_source") == "counter_fallback"
+        nxt_counter = nxt_meta.get("number_source") == "counter_fallback"
+        # partial segment numbers/counter fallback은 fragment가 서로 다른 새 번호를
+        # 받은 케이스가 많다. 단, 둘 다 원 segment 번호가 있으면 다른 문항일 수 있어 보존.
+        return (
+            cur_counter
+            and nxt_counter
+            and (
+                cur_meta.get("segment_number_raw") is None
+                or nxt_meta.get("segment_number_raw") is None
+            )
+        )
+    return True
+
+
+def _auto_merge_fragment_questions(
+    questions: List[Dict[str, Any]],
+    *,
+    paper_type_summary: Optional[Dict[str, Any]],
+    enabled: bool,
+    document_id: str | int | None,
+) -> List[Dict[str, Any]]:
+    """인접 fragment bbox를 OCR/임베딩 전 하나의 bbox로 합친다."""
+    if not enabled or len(questions) < 2:
+        return questions
+
+    try:
+        primary_pt = (paper_type_summary or {}).get("primary") or ""
+        column_count = _column_count_for_paper_type(str(primary_pt))
+
+        from collections import defaultdict
+        by_page: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
+        ungrouped: List[Dict[str, Any]] = []
+        for q in questions:
+            page_idx = _question_page_index(q)
+            if page_idx is None:
+                ungrouped.append(q)
+            else:
+                by_page[page_idx].append(q)
+
+        merged_count = 0
+        kept: List[Dict[str, Any]] = []
+        for page_idx in sorted(by_page):
+            page_qs = by_page[page_idx]
+            bbox_questions = [(q, _coerce_bbox_xywh(q.get("bbox"))) for q in page_qs]
+            valid_bboxes = [bbox for _, bbox in bbox_questions if bbox is not None]
+            if not valid_bboxes:
+                kept.extend(page_qs)
+                continue
+
+            page_width = max(x + w for x, _, w, _ in valid_bboxes) or 1.0
+            col_width = max(1.0, page_width / max(1, column_count))
+            col_buckets: Dict[int, List[Tuple[float, float, Dict[str, Any]]]] = defaultdict(list)
+            no_bbox: List[Dict[str, Any]] = []
+            for q, bbox in bbox_questions:
+                if bbox is None:
+                    no_bbox.append(q)
+                    continue
+                x, y, w, _ = bbox
+                cx = x + w / 2
+                col_idx = max(0, min(column_count - 1, int(cx / col_width)))
+                col_buckets[col_idx].append((y, x, q))
+
+            kept.extend(no_bbox)
+            for col_idx in sorted(col_buckets):
+                items = col_buckets[col_idx]
+                items.sort(key=lambda item: (item[0], item[1]))
+                idx = 0
+                while idx < len(items):
+                    _, _, q = items[idx]
+                    bbox = _coerce_bbox_xywh(q.get("bbox"))
+                    if bbox is None:
+                        kept.append(q)
+                        idx += 1
+                        continue
+                    cur_x, cur_y, cur_w, cur_h = bbox
+                    merged_numbers = [q.get("number")]
+                    merged_fragments = 1
+                    j = idx + 1
+                    while j < len(items):
+                        _, _, nq = items[j]
+                        nb = _coerce_bbox_xywh(nq.get("bbox"))
+                        if nb is None or not _can_auto_merge_fragment_pair(q, nq):
+                            break
+                        nx, ny, nw, nh = nb
+                        gap = ny - (cur_y + cur_h)
+                        if gap > cur_h * 0.30:
+                            break
+                        new_x = min(cur_x, nx)
+                        new_y = min(cur_y, ny)
+                        new_x2 = max(cur_x + cur_w, nx + nw)
+                        new_y2 = max(cur_y + cur_h, ny + nh)
+                        cur_x, cur_y = new_x, new_y
+                        cur_w, cur_h = new_x2 - new_x, new_y2 - new_y
+                        merged_numbers.append(nq.get("number"))
+                        merged_fragments += 1
+                        merged_count += 1
+                        j += 1
+
+                    if merged_fragments > 1:
+                        q["bbox"] = [cur_x, cur_y, cur_w, cur_h]
+                        meta = q.setdefault("meta_extra", {})
+                        meta["auto_merged_fragment_count"] = merged_fragments
+                        meta["auto_merged_numbers"] = [
+                            int(n) for n in merged_numbers
+                            if isinstance(n, int)
+                        ]
+                    kept.append(q)
+                    idx = j
+
+        if ungrouped:
+            kept.extend(ungrouped)
+        if merged_count > 0:
+            logger.info(
+                "MATCHUP_AUTO_MERGE_FRAGMENT | doc=%s | merged=%d | total_after=%d",
+                document_id, merged_count, len(kept),
+            )
+        return kept
+    except Exception as merge_err:  # noqa: BLE001
+        logger.warning(
+            "AUTO_MERGE_FRAGMENT_OUTER_FAIL | doc=%s | err=%s",
+            document_id, merge_err,
+        )
+        return questions
+
+
+def _filter_questions_by_hybrid_vlm(
+    questions: List[Dict[str, Any]],
+    *,
+    source_type: str,
+    document_id: str | int | None,
+    tenant_id: str | int | None,
+) -> List[Dict[str, Any]]:
+    """Hybrid VLM false-positive filter. Fail-soft: 장애 시 원본 questions 유지."""
+    # 2026-05-15 workbook source_type skip — academy_workbook / commercial_workbook 는
+    # marginal anchor main 단위 cut (그림+stem+sub-items 통째) 의도. VLM 이 main 박스를
+    # "problem_fragment" 로 잘못 분류해 reject 하는 결함 방지.
+    workbook_vlm_skip_types = {"academy_workbook", "commercial_workbook"}
+    try:
+        from academy.adapters.ai.detection.hybrid_vlm_classifier import (
+            is_hybrid_vlm_enabled_for_tenant,
+            filter_questions_by_hybrid_vlm,
+        )
+        hybrid_source_allowed = _source_type_gate_allows(
+            "MATCHUP_HYBRID_VLM_SOURCE_TYPES",
+            source_type,
+            tuple(sorted({"student_exam_photo", "school_exam_pdf", "other"})),
+        )
+        if (
+            is_hybrid_vlm_enabled_for_tenant(tenant_id)
+            and hybrid_source_allowed
+        ):
+            before_count = len(questions)
+            vlm_origin_questions = [q for q in questions if _is_vlm_origin_question(q)]
+            hybrid_candidates = [q for q in questions if not _is_vlm_origin_question(q)]
+            filtered_candidates, hvlm_stats = filter_questions_by_hybrid_vlm(
+                hybrid_candidates,
+                document_id=document_id,
+                tenant_id=tenant_id,
+                cost_cap_calls=200,
+            )
+            if vlm_origin_questions:
+                hvlm_stats["vlm_origin_bypassed"] = len(vlm_origin_questions)
+            filtered = filtered_candidates + vlm_origin_questions
+            filtered.sort(
+                key=lambda q: (
+                    _question_page_index(q) or 0,
+                    int((_coerce_bbox_xywh(q.get("bbox")) or (0, 0, 0, 0))[1]),
+                    int((_coerce_bbox_xywh(q.get("bbox")) or (0, 0, 0, 0))[0]),
+                    int(q.get("number") or 0),
+                )
+            )
+            logger.info(
+                "HYBRID_VLM_FILTERED | doc=%s | before=%d | after=%d | stats=%s",
+                document_id, before_count, len(filtered), hvlm_stats,
+            )
+            return filtered
+        if source_type in workbook_vlm_skip_types and not hybrid_source_allowed:
+            logger.info(
+                "HYBRID_VLM_SKIP_WORKBOOK | doc=%s | source_type=%s | main 단위 cut 보존 (VLM 적용 X)",
+                document_id, source_type,
+            )
+        elif not hybrid_source_allowed:
+            logger.info(
+                "HYBRID_VLM_SKIP_SOURCE_TYPE | doc=%s | source_type=%s",
+                document_id, source_type,
+            )
+    except Exception as hvlm_err:  # noqa: BLE001
+        logger.warning(
+            "HYBRID_VLM_OUTER_FAIL | doc=%s | err=%s",
+            document_id, hvlm_err,
+        )
+    return questions
 
 
 def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:

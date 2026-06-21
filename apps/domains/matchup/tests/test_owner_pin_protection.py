@@ -256,6 +256,113 @@ class TestPinHelperIntegration:
             meta__is_partial=True,
         ).exists()
 
+    def test_manual_crop_preserves_owner_pinned_meta_on_recut(self, tmp_path):
+        """같은 번호 재크롭은 이미지/분리 메타만 갱신하고 학원장 pin은 보존한다."""
+        from PIL import Image
+        from apps.domains.matchup.services import manually_crop_problem
+
+        tenant, doc, pinned, _auto = self._setup_tenant_and_problems()
+        inv = doc.inventory_file
+        inv.original_name = "pin-test.png"
+        inv.content_type = "image/png"
+        inv.save(update_fields=["original_name", "content_type", "updated_at"])
+        doc.original_name = inv.original_name
+        doc.content_type = inv.content_type
+        doc.save(update_fields=["original_name", "content_type", "updated_at"])
+
+        pinned.meta = {
+            "manual_owner_pinned": True,
+            "format": "essay",
+            "legacy_note": "keep",
+            "bbox_norm": [0.0, 0.0, 0.2, 0.2],
+            "is_partial": True,
+            "number_mismatch": {"expected": 1, "actual": 7},
+            "low_quality": True,
+            "proposal_status": "pending",
+        }
+        pinned.save(update_fields=["meta"])
+
+        page_path = tmp_path / "page.png"
+        Image.new("RGB", (120, 100), color="white").save(page_path)
+
+        with (
+            patch(
+                "apps.domains.matchup.services._download_inventory_to_temp",
+                return_value=str(page_path),
+            ),
+            patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage"),
+            patch("apps.domains.matchup.services._enqueue_manual_problem_index"),
+            patch("apps.domains.matchup.services._record_manual_correction_delta"),
+            patch("apps.domains.matchup.services._record_layout_fingerprint"),
+            patch("apps.domains.matchup.cache.invalidate_tenant_similar_cache"),
+        ):
+            problem = manually_crop_problem(
+                doc,
+                page_index=0,
+                bbox_norm=(0.1, 0.2, 0.5, 0.4),
+                number=pinned.number,
+                text="recut",
+            )
+
+        assert problem.id == pinned.id
+        problem.refresh_from_db()
+        meta = problem.meta
+        assert meta["manual_owner_pinned"] is True
+        assert meta["manual"] is True
+        assert meta["format"] == "essay"
+        assert meta["legacy_note"] == "keep"
+        assert meta["bbox_norm"] == [0.1, 0.2, 0.5, 0.4]
+        assert "paste" not in meta
+        assert "is_partial" not in meta
+        assert "number_mismatch" not in meta
+        assert "low_quality" not in meta
+        assert "proposal_status" not in meta
+
+    def test_paste_image_preserves_owner_pinned_meta_on_replace(self):
+        """붙여넣기 재등록도 기존 pinned 보호 메타를 잃지 않는다."""
+        import io
+        from PIL import Image
+        from apps.domains.matchup.services import paste_image_as_problem
+
+        _tenant, doc, pinned, _auto = self._setup_tenant_and_problems()
+        pinned.meta = {
+            "manual_owner_pinned": True,
+            "format": "essay",
+            "legacy_note": "keep",
+            "bbox_norm": [0.0, 0.0, 0.2, 0.2],
+            "is_partial": True,
+            "processing_quality": "failed",
+        }
+        pinned.save(update_fields=["meta"])
+
+        image_buf = io.BytesIO()
+        Image.new("RGB", (32, 32), color="white").save(image_buf, "PNG")
+
+        with (
+            patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage"),
+            patch("apps.domains.matchup.services._enqueue_manual_problem_index"),
+            patch("apps.domains.matchup.cache.invalidate_tenant_similar_cache"),
+        ):
+            problem = paste_image_as_problem(
+                doc,
+                image_bytes=image_buf.getvalue(),
+                content_type="image/png",
+                number=pinned.number,
+            )
+
+        assert problem.id == pinned.id
+        problem.refresh_from_db()
+        meta = problem.meta
+        assert meta["manual_owner_pinned"] is True
+        assert meta["manual"] is True
+        assert meta["paste"] is True
+        assert meta["page_index"] == 0
+        assert meta["format"] == "essay"
+        assert meta["legacy_note"] == "keep"
+        assert "bbox_norm" not in meta
+        assert "is_partial" not in meta
+        assert "processing_quality" not in meta
+
     def _staff_user(self, tenant):
         from django.contrib.auth import get_user_model
         from apps.core.models import TenantMembership
