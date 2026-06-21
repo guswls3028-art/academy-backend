@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.4.2.md](v1.4.2.md) | **CURRENT** | 2026-06-21 KST | Tenant 2 26-1m color workbook segmentation hardening |
+| [v1.4.3.md](v1.4.3.md) | **CURRENT** | 2026-06-21 KST | Tenant 2 dense workbook owner-row segmentation seal |
+| [v1.4.2.md](v1.4.2.md) | production-deployed / v1.4.3로 승계 | 2026-06-21 KST | Tenant 2 26-1m color workbook segmentation hardening |
 | [v1.4.1.md](v1.4.1.md) | production-deployed / v1.4.2로 승계 | 2026-06-21 KST | Tenant 2 matchup scan/PDF question segmentation recovery |
 | [v1.4.0.md](v1.4.0.md) | production-deployed / v1.4.1로 승계 | 2026-06-14 KST | API edge HTTP-to-HTTPS enforcement + deploy verification realignment |
 | [v1.3.1.md](v1.3.1.md) | production-deployed / v1.4.0로 승계 | 2026-06-14 KST | Production canary guardrails + frontend production smoke gate + deploy evidence refresh |
