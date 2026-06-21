@@ -2,6 +2,8 @@
 
 Tenant 2 matchup recovery의 재현 절차와 합격 기준이다. 목표는 테스트 우회가 아니라 실제 문항 분리 성공을 감사 결과와 육안 검수로 확인하는 것이다.
 
+Related proposed backlog: `../../refactor/matchup-segmentation-risk-backlog.md`.
+
 ## Scope
 
 - 대상: tenant 2의 과거 실사용 자료 중 손촬영 사진을 제외한 PDF, 스캔본, 텍스트 PDF.

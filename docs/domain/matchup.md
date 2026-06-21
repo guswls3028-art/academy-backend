@@ -37,7 +37,7 @@
 
 페이지 전체를 하나의 문항으로 넣는 fallback은 품질을 숨기는 방식이므로 정답 경로가 아니다. 문항 경계가 틀리면 이후 유사도, 적중률, 리포트 신뢰도가 모두 무너진다.
 
-[CURRENT 2026-06-20] Tenant 2 과거 실사용 자료 중 손촬영 사진을 제외한 PDF/스캔본/텍스트 PDF는 v55 full-display 감사에서 운영 baseline을 닫았다. 수동 GT가 있는 61개 문서의 물리 문항 기준 `physical_missed_count=0`, `physical_recall=1.0`이며, raw miss 11건은 중복 GT row로 설명된다. 재현 절차와 합격 기준은 `docs/operations/runbooks/matchup-segmentation-qa.md`를 정본으로 본다. 새 자료 유형이나 손촬영 사진은 이 baseline에 자동 포함하지 않고 별도 감사로 편입한다.
+[CURRENT 2026-06-20] Tenant 2 과거 실사용 자료 중 손촬영 사진을 제외한 PDF/스캔본/텍스트 PDF는 v55 full-display 감사에서 운영 baseline을 닫았다. 수동 GT가 있는 61개 문서의 물리 문항 기준 `physical_missed_count=0`, `physical_recall=1.0`이며, raw miss 11건은 중복 GT row로 설명된다. 재현 절차와 합격 기준은 `docs/operations/runbooks/matchup-segmentation-qa.md`를 정본으로 본다. 새 자료 유형이나 손촬영 사진은 이 baseline에 자동 포함하지 않고 별도 감사로 편입한다. 숨은 버그 후보와 다음 실행 단위는 `docs/refactor/matchup-segmentation-risk-backlog.md`에 [PROPOSED]로 둔다.
 
 ## 4. 잘 되는 유형과 취약한 유형
 

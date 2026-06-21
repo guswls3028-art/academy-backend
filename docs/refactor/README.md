@@ -15,6 +15,7 @@
 | [inventory.md](inventory.md) | verified/proposed | 현재 구조 실측과 병목 inventory |
 | [phase-0-guardrails.md](phase-0-guardrails.md) | proposed | 코드 이동 전 안전망 구축 계획 |
 | [validation-matrix.md](validation-matrix.md) | proposed | 단계별 검증 매트릭스 |
+| [matchup-segmentation-risk-backlog.md](matchup-segmentation-risk-backlog.md) | proposed | 매치업 문항분리 숨은 버그·잠재 리스크와 실행 단위 |
 | [backlog-student-grade-comparison.md](backlog-student-grade-comparison.md) | backlog | 학생 성적 비교 시스템 |
 
 ## 작성 규칙
