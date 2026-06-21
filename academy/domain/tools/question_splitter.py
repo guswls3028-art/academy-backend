@@ -547,6 +547,13 @@ _FILL_IN_WORKSHEET_PROMPT_PATTERN = re.compile(
     r"(?:써\s*넣으시오|써넣으시오|쓰시오|적으시오)|"
     r"(?:써\s*넣으시오|써넣으시오|쓰시오|적으시오).{0,20}빈\s*칸)"
 )
+_DENSE_OWNER_STEM_PATTERN = re.compile(
+    r"(?:다음|그림|표|자료|내용|설명|물음|빈\s*칸|"
+    r"써\s*넣으시오|써넣으시오|쓰시오|적으시오|답하시오|"
+    r"서술하시오|설명하시오|옳은|옳지\s*않은|고르)"
+)
+_PLAIN_NUMBERED_ROW_PATTERN = re.compile(r"^\s*\d{1,2}\s*[.)]\s+")
+_OX_MARKING_PATTERN = re.compile(r"(?:[Oo]\s*/\s*[Xx]|○|☓|옳은.{0,40}옳지)")
 _VISUAL_CONTEXT_PROMPT_PATTERN = re.compile(
     r"(?:그림|그래프|자료|모형|사진|도표|(?<![가-힣])표(?=[\s는를의와과에,.]))"
 )
@@ -673,6 +680,104 @@ def _extract_top_level_question_number(text: str) -> Optional[int]:
     if re.match(r"^\s*\(\d{1,3}\)", stripped):
         return None
     return _extract_question_number(stripped)
+
+
+def _looks_like_dense_owner_question_stem(text: str) -> bool:
+    return bool(_DENSE_OWNER_STEM_PATTERN.search(text or ""))
+
+
+def _looks_like_plain_numbered_subrow(text: str) -> bool:
+    stripped = (text or "").strip()
+    if not stripped or re.match(r"^\s*\(\d{1,3}\)", stripped):
+        return False
+    if _SOURCE_PREFIXED_QUESTION_PATTERN.match(stripped):
+        return False
+    if not _PLAIN_NUMBERED_ROW_PATTERN.match(stripped):
+        return False
+    number = _extract_question_number(stripped)
+    return number is not None and number <= 20
+
+
+def _looks_like_low_numbered_subrow_run(numbers: list[int]) -> bool:
+    present = {number for number in numbers if 1 <= number <= 20}
+    return len(numbers) >= 5 and {1, 2, 3, 4, 5}.issubset(present)
+
+
+def _looks_like_ox_marking_cluster(owner_text: str, row_texts: list[str]) -> bool:
+    owner_has_marking_instruction = bool(_OX_MARKING_PATTERN.search(owner_text or ""))
+    marked_rows = sum(1 for text in row_texts if _OX_MARKING_PATTERN.search(text or ""))
+    return owner_has_marking_instruction and marked_rows >= 4
+
+
+def _has_dense_numbered_subrows_under_main_stem(
+    blocks: List[TextBlock],
+    *,
+    page_width: float,
+    page_height: float,
+) -> bool:
+    """Detect one physical question that owns many numbered fill-in rows.
+
+    Some workbook pages have a large main question stem like ``1. 다음 ...`` or
+    ``33. ...`` followed by rows ``1.``, ``2.``, ... inside the same problem.
+    The dense-row fast path must not split those rows into product questions.
+    """
+    content_blocks = [
+        block for block in blocks
+        if not _looks_like_footer_folio(
+            block,
+            page_width=page_width,
+            page_height=page_height,
+        )
+    ]
+    if not content_blocks:
+        return False
+
+    anchors: list[tuple[int, TextBlock]] = []
+    for block in sorted(content_blocks, key=lambda item: (item.y0, item.x0)):
+        number = _extract_top_level_question_number(block.text or "")
+        if number is not None:
+            anchors.append((number, block))
+    if len(anchors) < 6:
+        return False
+
+    full_text = "\n".join(block.text or "" for block in content_blocks)
+    if not _looks_like_dense_owner_question_stem(full_text):
+        return False
+
+    plain_rows = [
+        (number, block)
+        for number, block in anchors
+        if _looks_like_plain_numbered_subrow(block.text)
+    ]
+    if len(plain_rows) < 5:
+        return False
+
+    numbers = [number for number, _ in anchors]
+    has_high_main = any(number >= 10 for number in numbers)
+    has_duplicate_leading_main = any(
+        number <= 5 and numbers.count(number) >= 2
+        for number in numbers[:4]
+    )
+    if not (has_high_main or has_duplicate_leading_main):
+        return False
+
+    stem_blocks = [
+        (number, block)
+        for number, block in anchors
+        if _looks_like_dense_owner_question_stem(block.text)
+    ]
+    if not stem_blocks:
+        return has_high_main
+
+    for number, stem in stem_blocks:
+        below_rows = [
+            row_number
+            for row_number, row in plain_rows
+            if row is not stem and row.y0 > stem.y0
+        ]
+        if len(below_rows) >= 5 and (number >= 10 or number in below_rows):
+            return True
+    return False
 
 
 def _has_bilateral_top_level_question_anchors(
@@ -1482,6 +1587,10 @@ def split_questions(
         text_blocks,
         page_width=page_width,
         page_height=page_height,
+    ) and not _has_dense_numbered_subrows_under_main_stem(
+        text_blocks,
+        page_width=page_width,
+        page_height=page_height,
     ):
         dense_row_regions = _build_dense_fill_in_row_regions(
             text_blocks,
@@ -1694,6 +1803,64 @@ def split_questions(
             c for c in candidates
             if not _is_parenthesized_body_subitem(c)
         ]
+
+    def _candidate_has_dense_subrows(candidate: Tuple[int, int, bool]) -> bool:
+        qnum, idx, _ = candidate
+        block = sorted_blocks[idx]
+        if not _looks_like_dense_owner_question_stem(block.text):
+            return False
+        lower_rows: list[int] = []
+        lower_row_texts: list[str] = []
+        for other_num, other_idx, other_is_marginal in candidates:
+            if other_idx == idx or other_is_marginal:
+                continue
+            other_block = sorted_blocks[other_idx]
+            if other_block.y0 <= block.y0:
+                continue
+            if not _same_layout_cell(idx, other_idx):
+                continue
+            if not _looks_like_plain_numbered_subrow(other_block.text):
+                continue
+            lower_rows.append(other_num)
+            lower_row_texts.append(other_block.text)
+        if len(lower_rows) < 5:
+            return False
+        if qnum >= 10:
+            return True
+        if qnum in lower_rows:
+            return True
+        if not _looks_like_low_numbered_subrow_run(lower_rows):
+            return False
+        return _mentions_large_visual_context(block.text) or _looks_like_ox_marking_cluster(
+            block.text,
+            lower_row_texts,
+        )
+
+    dense_owner_indices = {
+        idx
+        for candidate in candidates
+        for _, idx, _ in [candidate]
+        if _candidate_has_dense_subrows(candidate)
+    }
+    if dense_owner_indices:
+        filtered_candidates = []
+        for candidate in candidates:
+            _, idx, is_marginal = candidate
+            block = sorted_blocks[idx]
+            drop_as_dense_subrow = False
+            if not is_marginal and _looks_like_plain_numbered_subrow(block.text):
+                for owner_idx in dense_owner_indices:
+                    owner_block = sorted_blocks[owner_idx]
+                    if (
+                        idx != owner_idx
+                        and block.y0 > owner_block.y0
+                        and _same_layout_cell(owner_idx, idx)
+                    ):
+                        drop_as_dense_subrow = True
+                        break
+            if not drop_as_dense_subrow:
+                filtered_candidates.append(candidate)
+        candidates = filtered_candidates
 
     main_anchor_candidates = [
         (qnum, idx)

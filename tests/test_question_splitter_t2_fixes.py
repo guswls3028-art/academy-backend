@@ -2414,8 +2414,8 @@ def test_dense_short_fill_in_rows_do_not_expand_to_page_end():
     assert regions[0].bbox[3] <= regions[1].bbox[1]
 
 
-def test_fill_in_worksheet_prompt_splits_dense_rows():
-    """빈칸 워크시트 한 장은 내부 행번호 단위로 자른다."""
+def test_fill_in_worksheet_without_main_stem_splits_dense_rows():
+    """상위 문항 stem 없이 빈칸 행만 촘촘하면 내부 행번호 단위로 자른다."""
     from academy.domain.tools.question_splitter import (
         TextBlock as TB,
         is_non_question_page,
@@ -2425,7 +2425,7 @@ def test_fill_in_worksheet_prompt_splits_dense_rows():
     pw, ph = 595.0, 841.0
     blocks = [
         TB(
-            text="1. 다음은 지각과 생명체 구성 물질에 대한 내용이다. 빈칸에 알맞은 말을 써 넣으시오.",
+            text="빈칸에 알맞은 말을 써 넣으시오.",
             x0=28.0,
             y0=80.0,
             x1=500.0,
@@ -2449,6 +2449,37 @@ def test_fill_in_worksheet_prompt_splits_dense_rows():
     assert [r.number for r in regions] == list(range(1, 13))
     assert all((r.bbox[3] - r.bbox[1]) < ph * 0.12 for r in regions[:11])
     assert regions[0].bbox[3] <= regions[1].bbox[1]
+
+
+def test_fill_in_workbook_main_stem_absorbs_dense_numbered_subrows():
+    """큰 1번 stem 아래 1~20 빈칸 행은 한 물리 문항 안의 소행이다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 595.0, 841.0
+    blocks = [
+        TB(
+            text="1. 다음은 지각과 생명체 구성 물질에 대한 내용이다. 빈칸에 알맞은 말을 써 넣으시오.",
+            x0=28.0,
+            y0=80.0,
+            x1=560.0,
+            y1=96.0,
+        ),
+        *[
+            TB(
+                text=f"{num}. 생명체 구성 물질: (     ) > (     ) > 기타",
+                x0=32.0,
+                y0=118.0 + num * 23.0,
+                x1=560.0,
+                y1=128.0 + num * 23.0,
+            )
+            for num in range(1, 21)
+        ],
+    ]
+
+    regions = split_questions(blocks, pw, ph, page_index=8, prefer_marginal=True)
+
+    assert [r.number for r in regions] == [1]
+    assert regions[0].bbox[3] > 560.0
 
 
 def test_fill_in_page_with_multiple_top_level_numbers_keeps_each_question():
@@ -2481,11 +2512,102 @@ def test_fill_in_page_with_multiple_top_level_numbers_keeps_each_question():
             y1=508.0,
         ),
         TB(text="1. 두 탑 사이의 거리는 (      )m이다.", x0=28.0, y0=656.0, x1=180.0, y1=665.0),
+        TB(text="2. 충돌 직전 B의 속력은 (      )m/s이다.", x0=28.0, y0=690.0, x1=240.0, y1=699.0),
+        TB(text="3. B의 이동 거리는 (      )m이다.", x0=28.0, y0=724.0, x1=210.0, y1=733.0),
+        TB(text="4. 두 물체는 충돌한다/하지 않는다.", x0=28.0, y0=758.0, x1=240.0, y1=767.0),
+        TB(text="5. 속력은 서로 같다/다르다.", x0=28.0, y0=792.0, x1=210.0, y1=801.0),
     ]
 
     regions = split_questions(blocks, pw, ph, page_index=21, prefer_marginal=True)
 
     assert [r.number for r in regions] == [33, 34, 35]
+    assert regions[2].bbox[3] > 790.0
+
+
+def test_high_number_workbook_main_stems_absorb_dense_subrows():
+    """33/34/35 대형 문항 내부 1~13 행번호는 독립 문항이 아니다."""
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 595.0, 841.0
+    blocks = [
+        TB(text="33. 중력과 관련한 내용이다. 다음 빈칸에 알맞은 말을 쓰시오.", x0=28, y0=70, x1=450, y1=86),
+        *[
+            TB(text=f"{num}. 역학적 시스템에 대한 설명 ({num})", x0=28, y0=104 + num * 23, x1=540, y1=114 + num * 23)
+            for num in range(1, 6)
+        ],
+        TB(text="34. 다음은 중력과 관련된 여러 가지 자연현상이다.", x0=28, y0=300, x1=500, y1=316),
+        *[
+            TB(text=f"{num}. 자연현상 설명 행 ({num})", x0=28, y0=330 + num * 18, x1=540, y1=340 + num * 18)
+            for num in range(1, 14)
+        ],
+        TB(text="35. 그림과 같이 높이가 같은 두 탑 위에서 물체를 던졌다.", x0=28, y0=590, x1=560, y1=606),
+        *[
+            TB(text=f"{num}. 물음 ({num})에 답하시오.", x0=28, y0=700 + num * 20, x1=520, y1=710 + num * 20)
+            for num in range(1, 6)
+        ],
+    ]
+
+    regions = split_questions(blocks, pw, ph, page_index=21, prefer_marginal=True)
+
+    assert [r.number for r in regions] == [33, 34, 35]
+    assert regions[0].bbox[3] > 210.0
+    assert regions[1].bbox[3] > 560.0
+    assert regions[2].bbox[3] > 790.0
+
+
+def test_visual_ox_main_stem_absorbs_low_reset_rows_without_marginal_preference():
+    """Q8 그림/OX stem 아래 1~6 행은 prefer_marginal=False에서도 한 물리 문항이다."""
+    from academy.domain.tools.paper_type import PaperType, PaperTypeResult
+    from academy.domain.tools.question_splitter import TextBlock as TB, split_questions
+
+    pw, ph = 595.0, 841.0
+    pt = PaperTypeResult(
+        paper_type=PaperType.CLEAN_PDF_DUAL,
+        confidence=0.85,
+        is_dual_column=True,
+        is_quadrant=False,
+        is_handwriting_present=False,
+        has_embedded_text=True,
+        debug={"has_embedded_text": True, "is_dual_text": False, "is_dual_pixel": True},
+    )
+    blocks = [
+        TB(
+            text="8.\n그림은 위도에 따른 해수의 층상 구조를 나타낸 것이다.",
+            x0=28.3,
+            y0=80.1,
+            x1=322.6,
+            y1=94.8,
+        ),
+        TB(
+            text="이에 대한 설명으로 옳은 것은 O, 옳지 않은 것은 X로 표시하시오.",
+            x0=28.3,
+            y0=249.4,
+            x1=253.9,
+            y1=258.5,
+        ),
+        *[
+            TB(
+                text=f"{num}. 해수 층상 구조에 대한 설명이다. (O/X)",
+                x0=28.3,
+                y0=276.5 + (num - 1) * 25.6,
+                x1=284.4,
+                y1=284.6 + (num - 1) * 25.6,
+            )
+            for num in range(1, 7)
+        ],
+    ]
+
+    regions = split_questions(
+        blocks,
+        pw,
+        ph,
+        page_index=13,
+        paper_type=pt,
+        prefer_marginal=False,
+    )
+
+    assert [r.number for r in regions] == [8]
+    assert regions[0].bbox[3] > 400.0
 
 
 def test_short_final_written_prompt_tightens_to_content():
