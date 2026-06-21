@@ -73,7 +73,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 | 목적 | 방법 |
 |------|------|
 | 배포 후 API·인프라 상태 | deploy.ps1 출력의 After-Deploy Verification. 필요 시 `run-deploy-verification.ps1`. |
-| CI 빌드 digest와 서버 이미지 일치 | `docs/reports/ci-build.latest.md`의 academy-api digest vs 서버 `docker inspect academy-api --format '{{.RepoDigests}}'`. |
+| CI 빌드 digest와 서버 이미지 일치 | `run-deploy-verification.ps1`가 갱신하는 `docs/reports/runtime-images.latest.md`에서 `ci-build.latest.md`의 academy-api digest와 운영 인스턴스별 런타임 image digest 일치 여부 확인. |
 | API health | ALB DNS 또는 API 공개 URL로 `/health` 200 확인. |
 
 ---

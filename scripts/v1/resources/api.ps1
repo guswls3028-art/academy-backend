@@ -149,77 +149,214 @@ function Invoke-RefreshApiEnvOnInstances {
     }
 }
 
+# ci-build.latest.md의 현재 표 형식(| repo | tags | imageDigest |)을 파싱한다.
+function Get-CiBuildImageDigests {
+    param([string]$Path)
+
+    $digests = @{}
+    $gitSha = $null
+    if (-not $Path -or -not (Test-Path $Path)) {
+        return [PSCustomObject]@{ GitSha = $gitSha; Digests = $digests }
+    }
+
+    $content = Get-Content -Path $Path -Raw -ErrorAction SilentlyContinue
+    if ($content -match '\*\*gitSha:\*\*\s*([0-9a-fA-F]{7,40})') {
+        $gitSha = $matches[1]
+    } elseif ($content -match 'gitSha:\s*([0-9a-fA-F]{7,40})') {
+        $gitSha = $matches[1]
+    }
+
+    foreach ($line in ($content -split "`r?`n")) {
+        if ($line -match '^\|\s*(academy-[^|\s]+)\s*\|\s*([^|]*\blatest\b[^|]*)\|\s*(sha256:[a-fA-F0-9]{64})\s*\|') {
+            $digests[$matches[1]] = $matches[3]
+        }
+    }
+
+    return [PSCustomObject]@{ GitSha = $gitSha; Digests = $digests }
+}
+
+function Format-RuntimeImageMarkdownCell {
+    param($Value)
+    if ($null -eq $Value) { return "-" }
+    $text = [string]$Value
+    if ([string]::IsNullOrWhiteSpace($text)) { return "-" }
+    return (($text.Trim() -replace '\r?\n', ' ') -replace '\|', '\|')
+}
+
 # 배포 후 API 인스턴스에서 실제 실행 중인 이미지 digest 수집 → runtime-images.latest.md 기록.
-# ci-build.latest.md가 있으면 academy-api digest와 비교하여 불일치 시 보고서에 명시.
+# ci-build.latest.md가 있으면 academy-api digest와 인스턴스별 런타임 RepoDigests를 비교한다.
 function Invoke-CollectRuntimeImagesReport {
+    param([switch]$PassThru)
+
     $ids = @(Get-APIASGInstanceIds)
-    if (-not $ids -or $ids.Count -eq 0) { return }
     $containerName = if ($script:ApiContainerName) { $script:ApiContainerName } else { "academy-api" }
-    $cmd1 = "docker inspect $containerName --format '{{.Id}}' 2>/dev/null || echo NONE"
-    $cmd2 = "docker inspect $containerName --format '{{json .RepoDigests}}' 2>/dev/null || echo []"
-    $params = @{ commands = @($cmd1, $cmd2) }
+    $shellContainerName = $containerName -replace "'", "'\''"
+    $cmdTemplate = @'
+set -u
+CONTAINER_NAME='__CONTAINER_NAME__'
+if ! command -v docker >/dev/null 2>&1; then
+  echo "error=docker_not_found"
+  exit 0
+fi
+if ! docker inspect "$CONTAINER_NAME" >/dev/null 2>&1; then
+  echo "container_state=MISSING"
+  echo "error=container_not_found"
+  exit 0
+fi
+CONTAINER_ID="$(docker inspect "$CONTAINER_NAME" --format '{{.Id}}' 2>/dev/null || true)"
+CONTAINER_IMAGE_ID="$(docker inspect "$CONTAINER_NAME" --format '{{.Image}}' 2>/dev/null || true)"
+CONFIG_IMAGE="$(docker inspect "$CONTAINER_NAME" --format '{{.Config.Image}}' 2>/dev/null || true)"
+CONTAINER_STATE="$(docker inspect "$CONTAINER_NAME" --format '{{.State.Status}}' 2>/dev/null || true)"
+echo "container_id=$CONTAINER_ID"
+echo "container_image_id=$CONTAINER_IMAGE_ID"
+echo "config_image=$CONFIG_IMAGE"
+echo "container_state=$CONTAINER_STATE"
+if [ -n "$CONTAINER_IMAGE_ID" ]; then
+  IMAGE_ID="$(docker image inspect "$CONTAINER_IMAGE_ID" --format '{{.Id}}' 2>/dev/null || true)"
+  REPO_DIGESTS="$(docker image inspect "$CONTAINER_IMAGE_ID" --format '{{json .RepoDigests}}' 2>/dev/null || true)"
+  REPO_TAGS="$(docker image inspect "$CONTAINER_IMAGE_ID" --format '{{json .RepoTags}}' 2>/dev/null || true)"
+  echo "image_id=$IMAGE_ID"
+  echo "repo_digests=$REPO_DIGESTS"
+  echo "repo_tags=$REPO_TAGS"
+fi
+'@
+    $cmd = $cmdTemplate.Replace("__CONTAINER_NAME__", $shellContainerName)
+    $params = @{ commands = @($cmd) }
     $paramsJson = $params | ConvertTo-Json -Compress
+
     $rows = [System.Collections.ArrayList]::new()
     $generated = Get-Date -Format "o"
     foreach ($instId in $ids) {
-        $imageId = "N/A"
-        $repoDigests = "[]"
+        $row = [PSCustomObject]@{
+            InstanceId = $instId
+            Container = $containerName
+            ContainerState = "UNKNOWN"
+            ContainerId = ""
+            ContainerImageId = ""
+            ConfigImage = ""
+            ImageId = ""
+            RepoDigests = "[]"
+            RepoTags = "[]"
+            CiMatch = "UNKNOWN"
+            Error = ""
+        }
         try {
             $sendOut = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instId, "--document-name", "AWS-RunShellScript", "--parameters", $paramsJson, "--region", $script:Region, "--output", "json") 2>$null
             $cmdId = $sendOut.Command.CommandId
-            if (-not $cmdId) { continue }
+            if (-not $cmdId) {
+                $row.Error = "ssm_send_command_no_id"
+                [void]$rows.Add($row)
+                continue
+            }
+
             $wait = 0
-            while ($wait -lt 30) {
+            while ($wait -lt 40) {
                 Start-Sleep -Seconds 2
                 $wait += 2
-                $inv = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instId, "--region", $script:Region, "--output", "json") 2>$null
+                try {
+                    $inv = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $cmdId, "--instance-id", $instId, "--region", $script:Region, "--output", "json") 2>$null
+                } catch {
+                    continue
+                }
                 if ($inv.Status -eq "Success") {
                     $out = $inv.StandardOutputContent
                     if ($out) {
-                        $lines = $out.Trim() -split "`n"
-                        if ($lines.Count -ge 1) { $imageId = $lines[0].Trim() }
-                        if ($lines.Count -ge 2) { $repoDigests = $lines[1].Trim() }
+                        foreach ($line in ($out -split "`r?`n")) {
+                            if ($line -match '^\s*([^=]+)=(.*)$') {
+                                $key = $matches[1].Trim()
+                                $value = $matches[2].Trim()
+                                switch ($key) {
+                                    "container_id" { $row.ContainerId = $value }
+                                    "container_image_id" { $row.ContainerImageId = $value }
+                                    "config_image" { $row.ConfigImage = $value }
+                                    "container_state" { $row.ContainerState = $value }
+                                    "image_id" { $row.ImageId = $value }
+                                    "repo_digests" { $row.RepoDigests = if ($value) { $value } else { "[]" } }
+                                    "repo_tags" { $row.RepoTags = if ($value) { $value } else { "[]" } }
+                                    "error" { $row.Error = $value }
+                                }
+                            }
+                        }
                     }
                     break
                 }
-                if ($inv.Status -eq "Failed" -or $inv.Status -eq "Cancelled") { break }
+                if ($inv.Status -eq "Failed" -or $inv.Status -eq "Cancelled" -or $inv.Status -eq "TimedOut") {
+                    $row.Error = "ssm_status_$($inv.Status)"
+                    if ($inv.StandardErrorContent) { $row.Error = "$($row.Error): $($inv.StandardErrorContent.Trim())" }
+                    break
+                }
             }
-        } catch { }
-        [void]$rows.Add([PSCustomObject]@{ InstanceId = $instId; Image = $imageId; RepoDigests = $repoDigests })
+            if ($row.ContainerState -eq "UNKNOWN" -and -not $row.Error) { $row.Error = "ssm_get_command_timeout" }
+        } catch {
+            $row.Error = $_.Exception.Message
+        }
+        [void]$rows.Add($row)
     }
-    $ciDigest = $null
-    $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+
+    $repoRoot = if (Get-Command Get-RepoRoot -ErrorAction SilentlyContinue) {
+        Get-RepoRoot
+    } else {
+        (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
+    }
     $ciPath = Join-Path $repoRoot "docs\reports\ci-build.latest.md"
-    if (Test-Path $ciPath) {
-        $ciContent = Get-Content -Path $ciPath -Raw -ErrorAction SilentlyContinue
-        if ($ciContent -match '\|\s*academy-api\s*\|\s*latest\s*\|\s*(sha256:[a-fA-F0-9]+)\s*\|') {
-            $ciDigest = $matches[1].Trim()
+    $ciReport = Get-CiBuildImageDigests -Path $ciPath
+    $ciDigest = $ciReport.Digests["academy-api"]
+
+    foreach ($row in $rows) {
+        if (-not $ciDigest) {
+            $row.CiMatch = "NOT_CHECKED"
+        } elseif ($row.RepoDigests -and $row.RepoDigests -ne "[]" -and $row.RepoDigests -match [regex]::Escape($ciDigest)) {
+            $row.CiMatch = "PASS"
+        } elseif ($row.RepoDigests -and $row.RepoDigests -ne "[]") {
+            $row.CiMatch = "MISMATCH"
+        } else {
+            $row.CiMatch = "UNKNOWN"
         }
     }
-    $anyMatch = $false
-    if ($ciDigest) {
-        foreach ($r in $rows) {
-            if ($r.RepoDigests -and $r.RepoDigests -match [regex]::Escape($ciDigest)) { $anyMatch = $true; break }
-        }
+
+    $overallStatus = "UNKNOWN"
+    if ($rows.Count -eq 0) {
+        $overallStatus = "UNKNOWN"
+    } elseif (@($rows | Where-Object { $_.CiMatch -eq "MISMATCH" }).Count -gt 0) {
+        $overallStatus = "MISMATCH"
+    } elseif (@($rows | Where-Object { $_.CiMatch -eq "UNKNOWN" -or $_.CiMatch -eq "NOT_CHECKED" }).Count -gt 0) {
+        $overallStatus = "UNKNOWN"
+    } else {
+        $overallStatus = "PASS"
     }
+
     $sb = [System.Text.StringBuilder]::new()
     [void]$sb.AppendLine("# V1 Runtime Images — API 인스턴스 실제 실행 이미지")
     [void]$sb.AppendLine("")
     [void]$sb.AppendLine("**Generated:** $generated")
     [void]$sb.AppendLine("**SSOT:** docs/ssot/params.yaml")
+    [void]$sb.AppendLine("**Container:** $containerName")
     [void]$sb.AppendLine("")
-    if ($null -ne $ciDigest -and -not $anyMatch) {
-        [void]$sb.AppendLine("### CI vs Runtime")
-        [void]$sb.AppendLine("**MISMATCH** — CI digest(academy-api:latest)와 런타임 RepoDigests가 일치하지 않음. 배포/갱신 실패 가능.")
-        [void]$sb.AppendLine("- CI digest (ci-build.latest.md): $ciDigest")
-        [void]$sb.AppendLine("")
+    [void]$sb.AppendLine("### CI vs Runtime")
+    if ($overallStatus -eq "PASS") {
+        [void]$sb.AppendLine("**PASS** — 모든 API 인스턴스가 ci-build.latest.md의 academy-api digest와 일치합니다.")
+    } elseif ($overallStatus -eq "MISMATCH") {
+        [void]$sb.AppendLine("**MISMATCH** — 하나 이상의 API 인스턴스 런타임 RepoDigests가 CI digest와 다릅니다.")
+    } else {
+        [void]$sb.AppendLine("**UNKNOWN** — CI digest 또는 런타임 RepoDigests를 완전히 확인하지 못했습니다.")
     }
-    [void]$sb.AppendLine("| InstanceId | Image | RepoDigests |")
-    [void]$sb.AppendLine("|------------|-------|-------------|")
-    foreach ($r in $rows) {
-        [void]$sb.AppendLine("| $($r.InstanceId) | $($r.Image) | $($r.RepoDigests) |")
+    [void]$sb.AppendLine("- CI digest (academy-api): $(if ($ciDigest) { $ciDigest } else { 'not found' })")
+    [void]$sb.AppendLine("- Instance count: $($rows.Count)")
+    [void]$sb.AppendLine("")
+    [void]$sb.AppendLine("| InstanceId | Container | State | ConfigImage | ImageId | RepoDigests | CI Match | Error |")
+    [void]$sb.AppendLine("|------------|-----------|-------|-------------|---------|-------------|----------|-------|")
+    foreach ($row in $rows) {
+        [void]$sb.AppendLine("| $(Format-RuntimeImageMarkdownCell $row.InstanceId) | $(Format-RuntimeImageMarkdownCell $row.Container) | $(Format-RuntimeImageMarkdownCell $row.ContainerState) | $(Format-RuntimeImageMarkdownCell $row.ConfigImage) | $(Format-RuntimeImageMarkdownCell $row.ImageId) | $(Format-RuntimeImageMarkdownCell $row.RepoDigests) | $(Format-RuntimeImageMarkdownCell $row.CiMatch) | $(Format-RuntimeImageMarkdownCell $row.Error) |")
     }
     Save-RuntimeImagesReport -MarkdownContent $sb.ToString()
+
+    if ($PassThru) {
+        return [PSCustomObject]@{
+            Status = $overallStatus
+            CiDigest = $ciDigest
+            Rows = $rows
+        }
+    }
 }
 
 function Test-APIHealth200 {

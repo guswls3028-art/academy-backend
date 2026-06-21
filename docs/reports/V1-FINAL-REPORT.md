@@ -5,7 +5,7 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-06-21T22:53:47.7204035+09:00 |
+| 검증 시각 | 2026-06-21T23:20:36.2658980+09:00 |
 | 최종 상태 | PASS |
 | SSOT↔Actual 정합성 | **PASS** |
 | GO/NO-GO | **GO** |
@@ -38,6 +38,7 @@
 - [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트/R2/CDN·SQS·Video·관측·GO/NO-GO 상세
 - [consistency.latest.md](./consistency.latest.md) — SSOT↔실제↔합의사항 정합성
 - [front-connection.latest.md](./front-connection.latest.md) — Front V1 연결 검증·근거
+- [runtime-images.latest.md](./runtime-images.latest.md) — API 인스턴스별 런타임 이미지 digest와 CI digest 일치 여부
 - [scale-policy.latest.md](./scale-policy.latest.md) — API ASG 스케일 정책 (확장 런칭 min/desired=2)
 - [resource-cleanup.latest.md](./resource-cleanup.latest.md) — 리소스 정리 기록 (EIP/EBS/SG/ASG)
 - [cleanup-run.latest.md](./cleanup-run.latest.md) — 정리 스크립트 실행 결과

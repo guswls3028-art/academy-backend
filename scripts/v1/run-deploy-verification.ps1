@@ -20,6 +20,7 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
 . (Join-Path $ScriptRoot "core\diff.ps1")
 . (Join-Path $ScriptRoot "core\evidence.ps1")
 . (Join-Path $ScriptRoot "core\reports.ps1")
+. (Join-Path $ScriptRoot "resources\api.ps1")
 
 $null = Load-SSOT -Env prod
 $script:PlanMode = $true
@@ -140,6 +141,31 @@ if ($apiPublicUrl) {
         $apiHealthStatus = "unreachable"
         Add-Finding -Severity "FAIL" -Area "API" -Message "API 공개 URL /health unreachable: $publicHealthUrl — $($_.Exception.Message)"
     }
+}
+
+# --- 2b. Runtime image digest 증빙 ---
+$runtimeImagesStatus = "not checked"
+$runtimeImagesCiDigest = ""
+$runtimeImagesInstanceCount = 0
+Write-Host "`n[2b] Runtime image digest 수집..." -ForegroundColor Cyan
+try {
+    $runtimeImagesResult = Invoke-CollectRuntimeImagesReport -PassThru
+    if ($runtimeImagesResult) {
+        $runtimeImagesStatus = $runtimeImagesResult.Status
+        $runtimeImagesCiDigest = $runtimeImagesResult.CiDigest
+        $runtimeImagesInstanceCount = @($runtimeImagesResult.Rows).Count
+        if ($runtimeImagesStatus -eq "MISMATCH") {
+            Add-Finding -Severity "FAIL" -Area "RuntimeImage" -Message "API 런타임 image digest가 ci-build.latest.md academy-api digest와 불일치합니다. docs/reports/runtime-images.latest.md 확인 필요."
+        } elseif ($runtimeImagesStatus -eq "UNKNOWN") {
+            Add-Finding -Severity "WARNING" -Area "RuntimeImage" -Message "API 런타임 image digest를 완전히 확인하지 못했습니다. docs/reports/runtime-images.latest.md 확인 필요."
+        }
+    } else {
+        $runtimeImagesStatus = "UNKNOWN"
+        Add-Finding -Severity "WARNING" -Area "RuntimeImage" -Message "runtime-images.latest.md 생성 결과가 비어 있습니다."
+    }
+} catch {
+    $runtimeImagesStatus = "UNKNOWN"
+    Add-Finding -Severity "WARNING" -Area "RuntimeImage" -Message "runtime image digest 수집 실패: $($_.Exception.Message)"
 }
 
 # --- 3. RDS / Redis 상태 ---
@@ -487,6 +513,8 @@ Save-FrontConnectionReport -MarkdownContent $frontConnSb.ToString()
 $s1Infra = "PASS"
 if ($apiHealthStatus -ne "OK") { $s1Infra = "FAIL" }
 elseif ($targetHealthyCount -eq 0 -and $targetTotalCount -gt 0) { $s1Infra = "FAIL" }
+elseif ($runtimeImagesStatus -eq "MISMATCH") { $s1Infra = "FAIL" }
+elseif ($runtimeImagesStatus -eq "UNKNOWN") { $s1Infra = "WARNING" }
 elseif ($rdsStatus -ne "available" -or $redisStatus -ne "available") { $s1Infra = "WARNING" }
 elseif ($driftFail -and $driftFail.Count -gt 0) { $s1Infra = "WARNING" }
 
@@ -524,7 +552,7 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("| 검증 시각 | $verificationTime |")
 [void]$sb.AppendLine("| 리전 | $R |")
 [void]$sb.AppendLine("| 배포 스크립트 | scripts/v1/deploy.ps1 |")
-[void]$sb.AppendLine("| 근거·로그 | reports/audit.latest.md, reports/drift.latest.md |")
+[void]$sb.AppendLine("| 근거·로그 | reports/audit.latest.md, reports/drift.latest.md, reports/runtime-images.latest.md |")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("---")
 [void]$sb.AppendLine("")
@@ -538,6 +566,7 @@ $sb = [System.Text.StringBuilder]::new()
 if ($apiPublicUrl) {
     [void]$sb.AppendLine("| API 공개 URL(도메인) /health | $apiPublicHealthStatus $apiPublicHealthResponseTime | API_PUBLIC_URL 또는 front.domains.api: $apiPublicUrl |")
 }
+[void]$sb.AppendLine("| API runtime image digest | $runtimeImagesStatus | docs/reports/runtime-images.latest.md (instances=$runtimeImagesInstanceCount, ci=$runtimeImagesCiDigest) |")
 [void]$sb.AppendLine("| AI/Messaging ASG | $($ev.asgAiDesired)/$($ev.asgMessagingDesired) | reports/audit.latest.md (asgAi*, asgMessaging*) |")
 [void]$sb.AppendLine("| SQS queue 연결·DLQ | Messaging depth $msgQueueDepth DLQ $msgDlqDepth / AI depth $aiQueueDepth DLQ $aiDlqDepth | SQS Console 또는 get-queue-attributes |")
 [void]$sb.AppendLine("| Video Batch CE/Queue/JobDef | CE $($ev.batchVideoCeStatus) Queue $($ev.videoQueueState) JobDef rev $($ev.videoJobDefRevision) | reports/audit.latest.md, Batch Console |")
@@ -630,7 +659,7 @@ if ($findings.Count -gt 0) {
 [void]$sb.AppendLine("## 최종 상태")
 [void]$sb.AppendLine("**$finalStatus**")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("**연관 보고서:** audit.latest.md, drift.latest.md (동시 갱신됨).")
+[void]$sb.AppendLine("**연관 보고서:** audit.latest.md, drift.latest.md, runtime-images.latest.md (동시 갱신됨).")
 
 $reportPath = Join-Path $RepoRoot "docs\reports"
 if (-not (Test-Path $reportPath)) { New-Item -ItemType Directory -Path $reportPath -Force | Out-Null }
@@ -687,6 +716,7 @@ if ($findings.Count -gt 0) {
 [void]$finalSb.AppendLine("- [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트/R2/CDN·SQS·Video·관측·GO/NO-GO 상세")
 [void]$finalSb.AppendLine("- [consistency.latest.md](./consistency.latest.md) — SSOT↔실제↔합의사항 정합성")
 [void]$finalSb.AppendLine("- [front-connection.latest.md](./front-connection.latest.md) — Front V1 연결 검증·근거")
+[void]$finalSb.AppendLine("- [runtime-images.latest.md](./runtime-images.latest.md) — API 인스턴스별 런타임 이미지 digest와 CI digest 일치 여부")
 [void]$finalSb.AppendLine("- [scale-policy.latest.md](./scale-policy.latest.md) — API ASG 스케일 정책 (확장 런칭 min/desired=2)")
 [void]$finalSb.AppendLine("- [resource-cleanup.latest.md](./resource-cleanup.latest.md) — 리소스 정리 기록 (EIP/EBS/SG/ASG)")
 [void]$finalSb.AppendLine("- [cleanup-run.latest.md](./cleanup-run.latest.md) — 정리 스크립트 실행 결과")
@@ -701,7 +731,7 @@ Write-Host "  최종 상태: $finalStatus" -ForegroundColor $(if ($finalStatus -
 Write-Host "  GO/NO-GO: $goNoGo" -ForegroundColor Cyan
 Write-Host "  보고서: docs/reports/deploy-verification-latest.md" -ForegroundColor Cyan
 Write-Host "  V1 최종: docs/reports/V1-FINAL-REPORT.md" -ForegroundColor Cyan
-Write-Host "  audit.latest.md, drift.latest.md, consistency.latest.md, front-connection.latest.md 갱신됨." -ForegroundColor Gray
+Write-Host "  audit.latest.md, drift.latest.md, runtime-images.latest.md, consistency.latest.md, front-connection.latest.md 갱신됨." -ForegroundColor Gray
 if ($findings.Count -gt 0) {
     Write-Host "  발견 사항: $($findings.Count)건" -ForegroundColor Yellow
     $findings | ForEach-Object { Write-Host "    [$($_.Severity)] $($_.Area): $($_.Message)" -ForegroundColor Gray }

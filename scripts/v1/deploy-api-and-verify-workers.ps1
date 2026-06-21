@@ -133,15 +133,9 @@ $ciBuildReportPath = Join-Path $repoRoot "docs\reports\ci-build.latest.md"
 $ciBuildReportSha = $null
 if (Test-Path $ciBuildReportPath) {
     try {
-        $ciContent = Get-Content $ciBuildReportPath -Raw
-        if ($ciContent -match '\*\*gitSha:\*\*\s*([0-9a-f]{7,40})') { $ciBuildReportSha = $matches[1] }
-        elseif ($ciContent -match 'gitSha:\s*([0-9a-f]{7,40})') { $ciBuildReportSha = $matches[1] }
-        # Parse digest table: | repo | tag | digest |
-        foreach ($line in ($ciContent -split "`n")) {
-            if ($line -match '^\|\s*(academy-\S+)\s*\|\s*latest\s*\|\s*(sha256:\S+)\s*\|') {
-                $ciBuildDigests[$matches[1]] = $matches[2]
-            }
-        }
+        $ciReport = Get-CiBuildImageDigests -Path $ciBuildReportPath
+        $ciBuildReportSha = $ciReport.GitSha
+        $ciBuildDigests = $ciReport.Digests
         $ciReportShort = if ($ciBuildReportSha -and $ciBuildReportSha.Length -ge 7) { $ciBuildReportSha.Substring(0, 7) } elseif ($ciBuildReportSha) { $ciBuildReportSha } else { "unknown" }
         Add-Result "0-IMAGE" "ci-report/sha" "PASS" "$ciReportShort ($($ciBuildDigests.Count) images)"
     } catch {
