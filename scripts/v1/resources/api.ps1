@@ -220,7 +220,7 @@ if [ -n "$CONTAINER_IMAGE_ID" ]; then
   echo "repo_tags=$REPO_TAGS"
 fi
 '@
-    $cmd = $cmdTemplate.Replace("__CONTAINER_NAME__", $shellContainerName)
+    $cmd = $cmdTemplate.Replace("__CONTAINER_NAME__", $shellContainerName) -replace "`r`n", "`n"
     $params = @{ commands = @($cmd) }
     $paramsJson = $params | ConvertTo-Json -Compress
 
