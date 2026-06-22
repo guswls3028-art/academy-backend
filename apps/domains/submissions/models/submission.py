@@ -32,8 +32,8 @@ class Submission(TimestampModel):
         SUPERSEDED = "superseded", "Superseded"  # 재응시로 대체됨
 
     # ──────────────────────────────────────────────
-    # 상태 전이 SSOT → apps/domains/submissions/services/transition.py
-    # 모든 상태 변경은 transition.transit() 를 통해서만 수행할 것.
+    # 상태 전이표 SSOT -> apps/domains/submissions/services/transition.py
+    # 런타임 상태 변경은 services/lifecycle.py 의 의미 있는 public API로 수행.
     # ──────────────────────────────────────────────
 
     tenant = models.ForeignKey(

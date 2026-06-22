@@ -4,7 +4,7 @@ from django.db import transaction
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.domains.submissions.services.processor.base import BaseSubmissionProcessor
 from apps.domains.submissions.services.processor.online import OnlineSubmissionProcessor
-from apps.domains.submissions.services.transition import transit_save
+from apps.domains.submissions.services.lifecycle import mark_answers_ready
 
 PROCESSOR_MAP: dict[str, Type[BaseSubmissionProcessor]] = {
     Submission.Source.ONLINE: OnlineSubmissionProcessor,
@@ -22,5 +22,5 @@ class SubmissionService:
         processor = processor_cls(submission)
         answers = processor.process()
 
-        transit_save(submission, Submission.Status.ANSWERS_READY, actor="SubmissionService.process")
+        mark_answers_ready(submission, actor="SubmissionService.process")
         return answers

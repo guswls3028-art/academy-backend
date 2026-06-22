@@ -10,7 +10,12 @@ from apps.domains.submissions.models import OMRStudentMatch, Submission
 from apps.domains.submissions.services.omr_submission_guards import (
     duplicate_conflict_payload,
 )
-from apps.domains.submissions.services.transition import transit
+from apps.domains.submissions.services.lifecycle import (
+    fail_submission_in_memory,
+    mark_answers_ready_in_memory,
+    mark_needs_identification,
+    reopen_for_regrade_in_memory,
+)
 from apps.support.omr.exam_structure import load_submission_exam_structure
 
 logger = logging.getLogger(__name__)
@@ -184,7 +189,11 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
     submission.meta = meta
 
     if status == "FAILED":
-        transit(submission, Submission.Status.FAILED, error_message=error or "AI worker failed", actor="ai_omr_mapper")
+        fail_submission_in_memory(
+            submission,
+            error_message=error or "AI worker failed",
+            actor="ai_omr_mapper",
+        )
         submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
         return submission.id
 
@@ -302,7 +311,7 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             identifier_status=identifier_status,
             identifier_payload=identifier,
         )
-        transit(submission, Submission.Status.NEEDS_IDENTIFICATION, actor="ai_omr_mapper")
+        mark_needs_identification(submission, actor="ai_omr_mapper")
         submission.save(update_fields=["meta", "status", "error_message", "updated_at"])
         return submission.id
 
@@ -320,9 +329,8 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
             identifier_status=identifier_status,
             identifier_payload=identifier,
         )
-        transit(
+        mark_needs_identification(
             submission,
-            Submission.Status.NEEDS_IDENTIFICATION,
             error_message="duplicate_enrollment",
             actor="ai_omr_mapper",
         )
@@ -344,14 +352,9 @@ def apply_omr_ai_result(payload: Dict[str, Any]) -> Optional[int]:
         identifier_payload=identifier,
     )
     if late_answer_hydration and submission.status == Submission.Status.DONE:
-        transit(
-            submission,
-            Submission.Status.ANSWERS_READY,
-            admin_override=True,
-            actor="ai_omr_mapper.late_result",
-        )
+        reopen_for_regrade_in_memory(submission, actor="ai_omr_mapper.late_result")
     elif not late_answer_hydration:
-        transit(submission, Submission.Status.ANSWERS_READY, actor="ai_omr_mapper")
+        mark_answers_ready_in_memory(submission, actor="ai_omr_mapper")
     submission.save(update_fields=["meta", "status", "enrollment_id", "error_message", "updated_at"])
 
     return submission.id

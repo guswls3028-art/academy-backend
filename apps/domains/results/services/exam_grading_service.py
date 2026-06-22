@@ -7,7 +7,6 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.shortcuts import get_object_or_404
 
-from apps.domains.exams.models import Exam
 from apps.domains.results.models import ExamResult
 from apps.domains.results.guards.grading_contract import GradingContractGuard
 from apps.domains.results.services.answer_matching import (
@@ -20,6 +19,7 @@ from apps.domains.results.services.submission_answer_map import (
 )
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 from apps.support.omr.score_shape import get_exam_score_shape
+from apps.support.submissions.dependencies import complete_submission_after_auto_grade
 
 
 class ExamGradingService:
@@ -47,9 +47,14 @@ class ExamGradingService:
             id=int(submission_id),
         )
 
-    def _load_exam(self, submission) -> Exam:
+    def _load_exam(self, submission):
         if str(submission.target_type) != "exam":
             raise ValidationError("submission target_type must be exam")
+
+        Exam = __import__(
+            "apps.domains.exams.models",
+            fromlist=["Exam"],
+        ).Exam
 
         return get_object_or_404(Exam, id=int(submission.target_id))
 
@@ -59,7 +64,7 @@ class ExamGradingService:
     def _compute_score(
         self,
         *,
-        exam: Exam,
+        exam,
         sheet,
         answer_key,
         answers_map: dict[int, str],
@@ -182,25 +187,9 @@ class ExamGradingService:
             "breakdown", "is_passed", "status", "updated_at",
         ])
 
-        from apps.domains.submissions.services.transition import (
-            can_transit, transit_save,
+        complete_submission_after_auto_grade(
+            submission,
+            actor="ExamGradingService.auto_grade",
         )
-
-        if submission.status == "answers_ready":
-            transit_save(submission, "grading", actor="ExamGradingService.auto_grade")
-            transit_save(submission, "done", actor="ExamGradingService.auto_grade")
-        elif can_transit(submission.status, "done"):
-            transit_save(submission, "done", actor="ExamGradingService.auto_grade")
-        else:
-            import logging
-            logging.getLogger(__name__).error(
-                "Submission %s in status '%s' cannot transition to 'done'; "
-                "aborting grading to preserve data consistency.",
-                submission.id, submission.status,
-            )
-            raise ValidationError(
-                f"Submission {submission.id} in status '{submission.status}' "
-                f"cannot be graded — invalid state for transition to 'done'."
-            )
 
         return result

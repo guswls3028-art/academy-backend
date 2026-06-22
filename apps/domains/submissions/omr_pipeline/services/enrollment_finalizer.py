@@ -8,7 +8,7 @@
         손으로 되감았다 (테스트 시 의도 파악 어려움).
 
 이 모듈은 그 묶음을 단일 함수로 봉인하고, 결과 dataclass 만으로 mapper 가
-meta 와 transit 을 결정할 수 있게 한다.
+meta 와 lifecycle 전이를 결정할 수 있게 한다.
 
 책임:
 - IdentifierMatcher 한 번 호출.
@@ -19,7 +19,7 @@ meta 와 transit 을 결정할 수 있게 한다.
 
 비책임 (의도적 제외):
 - meta 직접 변경: mapper 가 결과 dataclass 를 보고 meta 를 빌드.
-- 상태 전이: mapper 가 transit() 호출.
+- 상태 전이: mapper 가 lifecycle public API 호출.
 - answer 처리: answer_persister.persist_answers() 가 담당.
 """
 from __future__ import annotations

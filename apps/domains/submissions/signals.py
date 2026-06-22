@@ -22,18 +22,6 @@ from django.dispatch import receiver
 from django.utils import timezone
 
 
-# DONE/SUPERSEDED 외 status 는 cascade discard 대상
-_ACTIVE_STATUSES = (
-    "submitted",
-    "dispatched",
-    "extracting",
-    "needs_identification",
-    "answers_ready",
-    "grading",
-    "failed",  # 이미 실패라도 source 삭제 시 discarded 메타로 보강
-)
-
-
 def _cascade_discard(target_type: str, target_id: int, tenant_id: int, reason: str) -> int:
     """
     target_type/target_id 에 매칭되는 active submission 을 FAILED + discarded 처리.
@@ -42,13 +30,16 @@ def _cascade_discard(target_type: str, target_id: int, tenant_id: int, reason: s
     Returns: 처리된 submission 개수.
     """
     from apps.domains.submissions.models import Submission
-    from apps.domains.submissions.services.transition import transit_save
+    from apps.domains.submissions.services.lifecycle import (
+        CASCADE_DISCARD_STATUSES,
+        fail_submission,
+    )
 
     qs = Submission.objects.filter(
         tenant_id=tenant_id,
         target_type=target_type,
         target_id=int(target_id),
-        status__in=_ACTIVE_STATUSES,
+        status__in=CASCADE_DISCARD_STATUSES,
     )
 
     count = 0
@@ -66,9 +57,8 @@ def _cascade_discard(target_type: str, target_id: int, tenant_id: int, reason: s
 
         s.meta = meta
         if s.status != Submission.Status.FAILED:
-            transit_save(
+            fail_submission(
                 s,
-                Submission.Status.FAILED,
                 error_message=f"discarded:{reason}",
                 actor="system.cascade_discard",
                 extra_update_fields=["meta"],

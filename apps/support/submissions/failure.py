@@ -38,7 +38,11 @@ def mark_submission_failed(
     from django.db import transaction
 
     from apps.domains.submissions.models import Submission
-    from apps.domains.submissions.services.transition import can_transit, transit_save
+    from apps.domains.submissions.services.lifecycle import (
+        InvalidTransitionError,
+        can_fail_submission,
+        fail_submission,
+    )
 
     filters: dict[str, int] = {"id": resolved_submission_id}
     if resolved_tenant_id is not None:
@@ -53,7 +57,7 @@ def mark_submission_failed(
         )
         if not submission or submission.status == Submission.Status.FAILED:
             return False
-        if not can_transit(submission.status, Submission.Status.FAILED):
+        if not can_fail_submission(submission.status):
             logger.warning(
                 "submission failure transition skipped: submission_id=%s tenant_id=%s status=%s actor=%s",
                 resolved_submission_id,
@@ -70,11 +74,20 @@ def mark_submission_failed(
             submission.meta = meta
             extra_update_fields.append("meta")
 
-        transit_save(
-            submission,
-            Submission.Status.FAILED,
-            error_message=error_message,
-            actor=actor,
-            extra_update_fields=extra_update_fields,
-        )
+        try:
+            fail_submission(
+                submission,
+                error_message=error_message,
+                actor=actor,
+                extra_update_fields=extra_update_fields,
+            )
+        except InvalidTransitionError:
+            logger.warning(
+                "submission failure transition failed: submission_id=%s tenant_id=%s status=%s actor=%s",
+                resolved_submission_id,
+                resolved_tenant_id,
+                getattr(submission, "status", None),
+                actor,
+            )
+            return False
         return True

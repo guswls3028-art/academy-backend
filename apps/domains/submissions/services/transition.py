@@ -2,7 +2,8 @@
 """
 Submission 상태 전이 SSOT.
 
-모든 Submission.status 변경은 이 모듈의 transit() 함수를 통해서만 이루어져야 한다.
+STATUS_FLOW와 guard의 SSOT다. 런타임 호출부는 이 모듈을 직접 부르지 말고
+apps.domains.submissions.services.lifecycle 의 의미 있는 함수로 상태를 바꾼다.
 Direct assignment (submission.status = ...) 금지.
 """
 from __future__ import annotations

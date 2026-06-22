@@ -10,7 +10,7 @@ from apps.domains.submissions.omr_pipeline.services.facts import (
     evaluate_omr_grade_readiness,
     write_readiness_meta,
 )
-from apps.domains.submissions.services.transition import transit
+from apps.domains.submissions.services.lifecycle import reopen_for_regrade_in_memory
 
 
 @dataclass(frozen=True)
@@ -71,12 +71,7 @@ def grade_omr_submission_if_ready(
             update_fields.append("enrollment_id")
 
         if submission.status != Submission.Status.ANSWERS_READY:
-            transit(
-                submission,
-                Submission.Status.ANSWERS_READY,
-                admin_override=True,
-                actor=actor,
-            )
+            reopen_for_regrade_in_memory(submission, actor=actor)
             update_fields.extend(["status", "error_message"])
 
         if len(update_fields) > 1:

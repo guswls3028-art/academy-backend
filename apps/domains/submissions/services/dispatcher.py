@@ -8,10 +8,14 @@ from django.db import transaction
 
 from apps.domains.submissions.models import Submission
 from apps.domains.submissions.services.submission_service import SubmissionService
-from apps.domains.submissions.services.transition import transit_save
+from apps.domains.submissions.services.lifecycle import (
+    fail_submission,
+    mark_dispatched,
+    mark_grading,
+)
 
 from apps.domains.ai.gateway import dispatch_job
-from apps.domains.results.services.grading_service import grade_submission
+from apps.support.submissions.dependencies import grade_submission_objective
 
 # AI 워커 EC2 제어 (2026-05-12: apps/domains/ai/services -> academy/adapters/compute 이관)
 from academy.adapters.compute.ec2_control import start_ai_worker_instance
@@ -106,30 +110,28 @@ def dispatch_submission(submission: Submission) -> None:
     # ONLINE — 즉시 채점
     if submission.source == Submission.Source.ONLINE:
         SubmissionService.process(submission)
-        transit_save(submission, Submission.Status.GRADING, actor="dispatcher.online")
-        grade_submission(int(submission.id))
+        mark_grading(submission, actor="dispatcher.online")
+        grade_submission_objective(int(submission.id))
         return
 
     # FILE 기반 — 파일 확인
     if not submission.file_key:
-        transit_save(
+        fail_submission(
             submission,
-            Submission.Status.FAILED,
             error_message="file_key missing",
             actor="dispatcher.file",
         )
         return
 
-    transit_save(submission, Submission.Status.DISPATCHED, actor="dispatcher.file")
+    mark_dispatched(submission, actor="dispatcher.file")
 
     # AI Job dispatch + 워커 기동
     job_type = _infer_ai_job_type(submission)
     try:
         payload = _build_ai_payload(submission)
     except ValueError as exc:
-        transit_save(
+        fail_submission(
             submission,
-            Submission.Status.FAILED,
             error_message=str(exc),
             actor="dispatcher.payload",
         )
@@ -152,9 +154,8 @@ def dispatch_submission(submission: Submission) -> None:
             "error": dispatch_result.get("error") or "AI dispatch failed",
         }
         submission.meta = meta
-        transit_save(
+        fail_submission(
             submission,
-            Submission.Status.FAILED,
             error_message=str(dispatch_result.get("error") or "AI dispatch failed"),
             actor="dispatcher.ai_dispatch",
             extra_update_fields=["meta"],

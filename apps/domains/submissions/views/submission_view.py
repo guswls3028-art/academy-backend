@@ -18,7 +18,6 @@ from apps.api.common.upload_validation import (
     validate_uploaded_file,
 )
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
-from apps.domains.exams.models import ExamQuestion
 from apps.domains.submissions.models import OMRStudentMatch, Submission, SubmissionAnswer
 from apps.domains.submissions.serializers.submission import (
     SubmissionSerializer,
@@ -35,9 +34,22 @@ from apps.domains.submissions.services.omr_submission_guards import (
     ensure_exam_enrollment_candidate,
     find_conflicting_exam_submission,
 )
-from apps.domains.submissions.services.transition import (
-    transit_save,
+from apps.domains.submissions.services.lifecycle import (
     InvalidTransitionError,
+    fail_submission,
+    retry_failed_submission,
+    supersede_submission,
+)
+from apps.support.submissions.dependencies import (
+    allowed_manual_exam_question_ids,
+    create_exam_enrollment_assignment,
+    enrollment_belongs_to_tenant,
+    exam_question_number_by_id,
+    get_synced_exam_score,
+    student_owns_enrollment,
+    target_belongs_to_tenant,
+    target_enrollment_assignment_exists,
+    validate_exam_enrollment_candidate,
 )
 
 
@@ -196,14 +208,15 @@ class SubmissionViewSet(ModelViewSet):
         # enrollment_id 소유권 검증: 학생은 자신의 enrollment만 사용 가능
         enrollment_id = serializer.validated_data.get("enrollment_id")
         if enrollment_id:
-            from apps.domains.enrollment.models import Enrollment
-            if not Enrollment.objects.filter(id=enrollment_id, tenant=tenant).exists():
+            if not enrollment_belongs_to_tenant(enrollment_id=enrollment_id, tenant=tenant):
                 raise PermissionDenied("해당 수강 정보에 접근할 수 없습니다.")
             student = getattr(self.request.user, "student_profile", None)
             if student:
-                if not Enrollment.objects.filter(
-                    id=enrollment_id, student=student, tenant=tenant,
-                ).exists():
+                if not student_owns_enrollment(
+                    enrollment_id=enrollment_id,
+                    student=student,
+                    tenant=tenant,
+                ):
                     raise PermissionDenied("해당 수강 정보에 접근할 수 없습니다.")
             if target_type and target_id and not self._validate_target_enrollment_assignment(
                 target_type,
@@ -219,25 +232,7 @@ class SubmissionViewSet(ModelViewSet):
     @staticmethod
     def _validate_target_tenant(target_type, target_id, tenant) -> bool:
         """target_id가 해당 tenant 소속인지 검증."""
-        try:
-            if target_type == Submission.TargetType.EXAM:
-                from apps.domains.exams.models import Exam
-                return Exam.objects.filter(
-                    id=int(target_id),
-                    tenant=tenant,
-                    sessions__lecture__tenant=tenant,
-                ).exists()
-            elif target_type == Submission.TargetType.HOMEWORK:
-                from apps.domains.homework_results.models import Homework
-                return Homework.objects.filter(
-                    id=int(target_id),
-                    session__lecture__tenant=tenant,
-                ).exclude(
-                    meta__removed_from_session_at__isnull=False,
-                ).exists()
-        except Exception:
-            pass
-        return False  # 알 수 없는 target_type은 거부 (fail-closed)
+        return target_belongs_to_tenant(target_type, target_id, tenant)
 
     @staticmethod
     def _validate_target_enrollment_assignment(
@@ -249,70 +244,13 @@ class SubmissionViewSet(ModelViewSet):
         ensure_exam_enrollment: bool = False,
     ) -> bool:
         """target과 enrollment가 같은 수업 배정 맥락인지 검증."""
-        try:
-            target_id_i = int(target_id)
-            enrollment_id_i = int(enrollment_id)
-        except (TypeError, ValueError):
-            return False
-
-        from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-
-        enrollment = (
-            Enrollment.objects
-            .filter(
-                id=enrollment_id_i,
-                tenant=tenant,
-                status="ACTIVE",
-                student__deleted_at__isnull=True,
-            )
-            .select_related("lecture")
-            .first()
+        return target_enrollment_assignment_exists(
+            target_type,
+            target_id,
+            enrollment_id,
+            tenant,
+            ensure_exam_enrollment=ensure_exam_enrollment,
         )
-        if not enrollment:
-            return False
-
-        if target_type == Submission.TargetType.EXAM:
-            from apps.domains.exams.models import ExamEnrollment
-
-            in_exam = ExamEnrollment.objects.filter(
-                exam_id=target_id_i,
-                exam__tenant=tenant,
-                enrollment_id=enrollment_id_i,
-                enrollment__tenant=tenant,
-            ).exists()
-            if in_exam:
-                return True
-
-            in_session = SessionEnrollment.objects.filter(
-                tenant=tenant,
-                session__exams__id=target_id_i,
-                session__exams__tenant=tenant,
-                enrollment_id=enrollment_id_i,
-                enrollment__status="ACTIVE",
-                enrollment__student__deleted_at__isnull=True,
-            ).exists()
-            if in_session and ensure_exam_enrollment:
-                ExamEnrollment.objects.get_or_create(
-                    exam_id=target_id_i,
-                    enrollment_id=enrollment_id_i,
-                )
-            return in_session
-
-        if target_type == Submission.TargetType.HOMEWORK:
-            from apps.domains.homework_results.models import Homework
-
-            return Homework.objects.filter(
-                id=target_id_i,
-                session__lecture_id=enrollment.lecture_id,
-                session__lecture__tenant=tenant,
-            ).exclude(
-                meta__removed_from_session_at__isnull=False,
-            ).filter(
-                assignments__tenant=tenant,
-                assignments__enrollment_id=enrollment_id_i,
-            ).exists()
-
-        return False
 
     @action(detail=True, methods=["post"])
     def retry(self, request, pk=None):
@@ -320,10 +258,7 @@ class SubmissionViewSet(ModelViewSet):
             submission = Submission.objects.select_for_update().get(pk=self.get_object().pk)
 
             try:
-                transit_save(
-                    submission, Submission.Status.SUBMITTED,
-                    actor="admin.retry",
-                )
+                retry_failed_submission(submission, actor="admin.retry")
             except InvalidTransitionError:
                 return Response(
                     {"detail": "Only FAILED submissions can be retried."},
@@ -352,13 +287,10 @@ class SubmissionViewSet(ModelViewSet):
             submission=submission,
         ))
         question_ids = [int(a.exam_question_id) for a in answers]
-        question_number_by_id = {
-            int(qid): int(number)
-            for qid, number in ExamQuestion.objects.filter(
-                id__in=question_ids,
-                sheet__exam__tenant=submission.tenant,
-            ).values_list("id", "number")
-        }
+        question_number_by_id = exam_question_number_by_id(
+            tenant=submission.tenant,
+            question_ids=question_ids,
+        )
         answers.sort(
             key=lambda a: (
                 question_number_by_id.get(int(a.exam_question_id), int(a.exam_question_id)),
@@ -481,37 +413,17 @@ class SubmissionViewSet(ModelViewSet):
                     status=400,
                 )
 
-            # 해당 시험의 enrollment 후보인지 검증 (ExamEnrollment → SessionEnrollment fallback)
-            from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-            from apps.domains.exams.models import ExamEnrollment
-
             exam_id = int(submission.target_id or 0) if submission.target_type == Submission.TargetType.EXAM else 0
 
-            if not Enrollment.objects.filter(id=candidate_eid, tenant=tenant).exists():
-                return Response(
-                    {"detail": f"enrollment_id={candidate_eid}는 현재 학원의 학생이 아닙니다."},
-                    status=400,
-                )
-
-            if exam_id:
-                in_exam = ExamEnrollment.objects.filter(
-                    exam_id=exam_id, enrollment_id=candidate_eid
-                ).exists()
-                if not in_exam:
-                    # fallback: SessionEnrollment
-                    in_session = SessionEnrollment.objects.filter(
-                        tenant=tenant,
-                        session__exams__id=exam_id,
-                        enrollment_id=candidate_eid,
-                        enrollment__status="ACTIVE",
-                        enrollment__student__deleted_at__isnull=True,
-                    ).exists()
-                    if not in_session:
-                        return Response(
-                            {"detail": "해당 시험에 등록되지 않은 학생입니다."},
-                            status=400,
-                        )
-                    should_create_exam_enrollment = True
+            # 해당 시험의 enrollment 후보인지 검증 (ExamEnrollment -> SessionEnrollment fallback)
+            candidate = validate_exam_enrollment_candidate(
+                tenant=tenant,
+                exam_id=exam_id,
+                enrollment_id=candidate_eid,
+            )
+            if not candidate.ok:
+                return Response({"detail": candidate.detail}, status=400)
+            should_create_exam_enrollment = candidate.should_create
 
             # ✅ 중복 매칭 차단 (기본): 같은 시험의 다른 submission이 이미 같은 enrollment로 active면 409.
             #    override=1 쿼리파라미터로만 덮어쓰기 허용 (운영자 명시적 선택).
@@ -544,7 +456,7 @@ class SubmissionViewSet(ModelViewSet):
 
             resolved_enrollment_id = candidate_eid
             if should_create_exam_enrollment:
-                _, exam_enrollment_created = ExamEnrollment.objects.get_or_create(
+                exam_enrollment_created = create_exam_enrollment_assignment(
                     exam_id=exam_id,
                     enrollment_id=candidate_eid,
                 )
@@ -564,26 +476,12 @@ class SubmissionViewSet(ModelViewSet):
             if submission.target_type != Submission.TargetType.EXAM:
                 return Response({"detail": "시험 제출 답안만 수동 수정할 수 있습니다."}, status=400)
 
-            from apps.domains.exams.models import Exam, ExamQuestion
-
-            exam = (
-                Exam.objects
-                .filter(id=int(submission.target_id or 0), tenant=tenant)
-                .select_related("template_exam")
-                .first()
+            allowed_question_ids = allowed_manual_exam_question_ids(
+                tenant=tenant,
+                exam_id=int(submission.target_id or 0),
             )
-            if not exam:
+            if allowed_question_ids is None:
                 return Response({"detail": "시험을 찾을 수 없습니다."}, status=400)
-
-            sheet_exam_ids = [exam.id]
-            if exam.template_exam_id:
-                sheet_exam_ids.append(exam.template_exam_id)
-            allowed_question_ids = set(
-                ExamQuestion.objects.filter(
-                    sheet__exam_id__in=sheet_exam_ids,
-                    sheet__exam__tenant=tenant,
-                ).values_list("id", flat=True)
-            )
             if not allowed_question_ids:
                 return Response({"detail": "수동 수정 가능한 시험 문항이 없습니다."}, status=400)
 
@@ -701,26 +599,11 @@ class SubmissionViewSet(ModelViewSet):
         synced_score = None
         synced_max_score = None
         if submission.target_type == Submission.TargetType.EXAM and submission.enrollment_id:
-            try:
-                from apps.domains.results.models import Result
-                synced_result = (
-                    Result.objects
-                    .filter(
-                        target_type="exam",
-                        target_id=int(submission.target_id),
-                        enrollment_id=int(submission.enrollment_id),
-                        enrollment__tenant=tenant,
-                    )
-                    .only("total_score", "max_score")
-                    .order_by("-id")
-                    .first()
-                )
-                if synced_result:
-                    synced_score = float(synced_result.total_score or 0.0)
-                    synced_max_score = float(synced_result.max_score or 0.0)
-            except Exception:
-                synced_score = None
-                synced_max_score = None
+            synced_score, synced_max_score = get_synced_exam_score(
+                tenant=tenant,
+                target_id=int(submission.target_id),
+                enrollment_id=int(submission.enrollment_id),
+            )
 
         return Response(
             {
@@ -793,12 +676,15 @@ class SubmissionViewSet(ModelViewSet):
                     err_msg = "discarded:duplicate"
                     reason = "duplicate"
                 try:
-                    transit_save(
-                        sib, target,
-                        admin_override=True,
-                        error_message=err_msg,
-                        actor=actor,
-                    )
+                    if target == Submission.Status.SUPERSEDED:
+                        supersede_submission(sib, actor=actor)
+                    else:
+                        fail_submission(
+                            sib,
+                            admin_override=True,
+                            error_message=err_msg,
+                            actor=actor,
+                        )
                 except InvalidTransitionError as e:
                     skipped.append({"id": sib.id, "reason": str(e)})
                     continue
@@ -869,24 +755,11 @@ class SubmissionViewSet(ModelViewSet):
         synced_score = None
         synced_max_score = None
         if submission.enrollment_id:
-            try:
-                from apps.domains.results.models import Result
-                r = (
-                    Result.objects.filter(
-                        target_type="exam",
-                        target_id=int(submission.target_id),
-                        enrollment_id=int(submission.enrollment_id),
-                        enrollment__tenant=tenant,
-                    )
-                    .only("total_score", "max_score")
-                    .order_by("-id")
-                    .first()
-                )
-                if r:
-                    synced_score = float(r.total_score or 0)
-                    synced_max_score = float(r.max_score or 0)
-            except Exception:
-                pass
+            synced_score, synced_max_score = get_synced_exam_score(
+                tenant=tenant,
+                target_id=int(submission.target_id),
+                enrollment_id=int(submission.enrollment_id),
+            )
 
         return Response({
             "submission_id": submission.id,
@@ -951,8 +824,8 @@ class SubmissionViewSet(ModelViewSet):
             qs = Submission.objects.select_for_update().filter(tenant=tenant, id__in=ids)
             for s in qs:
                 try:
-                    transit_save(
-                        s, Submission.Status.FAILED,
+                    fail_submission(
+                        s,
                         admin_override=True,
                         error_message=f"discarded:{reason}",
                         actor=f"admin.discard_batch.user_{getattr(request.user, 'id', '?')}",
@@ -996,8 +869,8 @@ class SubmissionViewSet(ModelViewSet):
         with transaction.atomic():
             submission: Submission = self.get_queryset().select_for_update().get(pk=pk)
             try:
-                transit_save(
-                    submission, Submission.Status.FAILED,
+                fail_submission(
+                    submission,
                     admin_override=True,
                     error_message=f"discarded:{reason}",
                     actor=f"admin.discard.user_{getattr(request.user, 'id', '?')}",

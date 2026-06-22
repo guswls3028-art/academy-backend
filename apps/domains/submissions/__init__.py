@@ -5,7 +5,8 @@ submissions 도메인 — 답안(answers) SSOT + 제출 상태머신.
 - Submission(target_type=exam|homework, 상태머신: SUBMITTED→ANSWERS_READY→GRADING→DONE).
 - SubmissionAnswer(문항별 raw answer 스냅샷).
 - 제출 채널별 processor (OMR/ONLINE/HOMEWORK_IMAGE/AI_MATCH).
-- transition.py = 상태 전이 SSOT.
+- transition.py = 상태 전이표/검증 엔진.
+- services/lifecycle.py = 런타임 상태 변경 public API.
 
 비책임 (다른 도메인 소유):
 - 채점 정확성·점수 계산: results.exam_grading_service.

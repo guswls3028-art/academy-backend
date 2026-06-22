@@ -88,7 +88,12 @@
 | `NEEDS_IDENTIFICATION` | 학생 식별 필요 | AI/OMR이 학생 매칭 실패 | 수동 매칭 완료(→ANSWERS_READY) |
 | `SUPERSEDED` | 재응시로 대체됨 | 새 제출이 기존 제출을 대체 | 종단 상태 |
 
-#### 허용 전이 (STATUS_FLOW) — SSOT: `transition.py`
+#### 허용 전이 (STATUS_FLOW) — 검증 엔진: `transition.py`
+
+런타임 호출부는 `transition.py`를 직접 호출하지 않는다. 상태 변경 public API는
+`apps/domains/submissions/services/lifecycle.py`이며, 이 facade가
+`mark_answers_ready`, `fail_submission`, `reopen_for_regrade`,
+`supersede_done_submissions` 같은 의미 있는 함수로 STATUS_FLOW를 통과한다.
 
 ```
 SUBMITTED      → {DISPATCHED, ANSWERS_READY, GRADING, FAILED}
@@ -156,7 +161,7 @@ GRADING/SUPERSEDED에서는 admin_override도 차단.
 
 #### 백엔드 불변조건
 
-1. **can_transit() 강제:** 모든 상태 변경은 `Submission.can_transit(from, to)`를 통과해야 함
+1. **lifecycle public API 강제:** 런타임 상태 변경은 `services/lifecycle.py` 함수로만 수행하며 내부에서 `STATUS_FLOW`를 통과해야 함
 2. **원자성:** 모든 상태 변경은 `@transaction.atomic` + `select_for_update` 내에서 수행
 3. **테넌트 격리:** `submission.tenant_id` 일치 검증 필수
 4. **단일 활성 제출:** `unique_active_submission_per_target` 제약조건 준수
@@ -722,15 +727,15 @@ true`가 필요하며 수강등록 비활성화, 자동 수납 비활성화, 시
 
 ### C1. CRITICAL — Submission can_transit() 미적용 → **FIXED**
 
-- **해결:** `apps/domains/submissions/services/transition.py` SSOT 모듈 생성
-- **적용:** 16개 live write path 전수 리팩터링 → 모든 상태 변경이 `transit()`/`transit_save()`를 통과
+- **해결:** `apps/domains/submissions/services/transition.py` 전이표/guard와 `services/lifecycle.py` 런타임 facade 분리
+- **적용:** live write path는 `mark_*`, `fail_submission`, `retry_failed_submission`, `supersede_*`, `reopen_for_regrade` 같은 의미 있는 lifecycle 함수로 라우팅
 - **추가 수정:**
   - grader.py FAILED no-op 버그 수정 (transaction rollback → FAILED 미persist 문제)
   - manual_edit SUPERSEDED→ANSWERS_READY 차단
   - STATUS_FLOW 현실화 (SUBMITTED→GRADING/ANSWERS_READY 추가, DONE→SUPERSEDED 추가)
   - EXTRACTING 상태를 STATUS_FLOW에 포함해 stuck recovery / cascade discard도 전이 가드를 통과
   - 데드코드 정리 (progress/ai_omr_result_mapper.py)
-- **테스트:** 전이/멱등/cascade/stuck recovery 테스트로 검증
+- **테스트:** 전이/라이프사이클/멱등/cascade/stuck recovery 테스트로 검증
 
 ### C2. CRITICAL — ExamResult FINAL→DRAFT 회귀 → **FIXED**
 
@@ -842,13 +847,13 @@ true`가 필요하며 수강등록 비활성화, 자동 수납 비활성화, 시
 - STATUS_FLOW에 정의되어 있지만 코드에서 설정되지 않음
 - AI/OMR 파이프라인이 이 상태를 건너뛰고 DISPATCHED → ANSWERS_READY로 직행
 - **리스크:** 낮음. stuck recovery / cascade discard는 EXTRACTING row를 처리할 수 있다.
-- **후속:** 새 워커 단계가 EXTRACTING을 명시적으로 쓰기 시작하면 dispatcher/worker entry에서 `transit()`로 진입시킨다.
+- **후속:** 새 워커 단계가 EXTRACTING을 명시적으로 쓰기 시작하면 dispatcher/worker entry에서 lifecycle facade로 진입시킨다.
 
 ### F2. Submission SUPERSEDED producer coverage
 
 - STATUS_FLOW는 DONE → SUPERSEDED를 허용한다.
 - 학생 재응시 / 중복 OMR 채택 등 producer가 이 전이를 사용한다.
-- **리스크:** 낮음. 새 supersede producer가 추가되면 반드시 `bulk_transit()` 또는 `transit_save()`를 사용한다.
+- **리스크:** 낮음. 새 supersede producer가 추가되면 반드시 `supersede_submission()` 또는 `supersede_done_submissions()`를 사용한다.
 
 ### F3. Video 관리 명령어 SFU 부재
 

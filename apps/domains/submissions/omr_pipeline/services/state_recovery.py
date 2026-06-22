@@ -28,9 +28,10 @@ from django.db import transaction
 from django.utils import timezone
 
 from apps.domains.submissions.models import Submission
-from apps.domains.submissions.services.transition import (
+from apps.domains.submissions.services.lifecycle import (
     InvalidTransitionError,
-    transit_save,
+    STUCK_RECOVERABLE_STATUSES,
+    fail_submission,
 )
 
 
@@ -40,10 +41,7 @@ logger = logging.getLogger(__name__)
 # 단계별 timeout. SQS visibility timeout · worker normal duration 보다 충분히 큼.
 # 운영 incidents 에서 자동 복구가 멈춰서는 안 되므로 보수적으로 잡는다.
 RECOVERY_TIMEOUTS_MIN: dict[str, int] = {
-    Submission.Status.SUBMITTED: 30,
-    Submission.Status.DISPATCHED: 30,
-    Submission.Status.EXTRACTING: 30,
-    Submission.Status.GRADING: 30,
+    status: 30 for status in STUCK_RECOVERABLE_STATUSES
 }
 
 
@@ -153,9 +151,8 @@ def recover_stuck_submissions(
                     report.skipped.append(alert.submission_id)
                     continue
                 try:
-                    transit_save(
+                    fail_submission(
                         sub,
-                        Submission.Status.FAILED,
                         error_message=f"stuck:{alert.status}_timeout",
                         actor=actor,
                     )

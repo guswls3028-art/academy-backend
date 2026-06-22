@@ -1,20 +1,10 @@
 from __future__ import annotations
 
 from apps.domains.submissions.models import Submission
+from apps.domains.submissions.services.lifecycle import OMR_CONFLICT_STATUSES
 from apps.support.omr.candidate_matching import (
     ensure_exam_enrollment_candidate,
     lock_exam_enrollment_candidate,
-)
-
-
-OMR_CONFLICT_STATUSES = (
-    Submission.Status.SUBMITTED,
-    Submission.Status.DISPATCHED,
-    Submission.Status.EXTRACTING,
-    Submission.Status.NEEDS_IDENTIFICATION,
-    Submission.Status.ANSWERS_READY,
-    Submission.Status.GRADING,
-    Submission.Status.DONE,
 )
 
 

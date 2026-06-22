@@ -20,7 +20,7 @@
 - identifier matching — IdentifierMatcher 가 담당.
 - exam enrollment lock / duplicate conflict — enrollment_finalizer 가 담당.
 - submission.meta 직접 변경 — orchestrator 가 결과를 반영.
-- 상태 전이 — orchestrator 가 transit() 호출.
+- 상태 전이 — orchestrator 가 lifecycle public API 호출.
 """
 from __future__ import annotations
 
