@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from academy.application.use_cases.tools.generate_ppt import _build_pdf_question_plan
+from academy.application.use_cases.tools.generate_ppt import (
+    _add_segmented_pdf_slides_to_composer,
+    _build_pdf_question_plan,
+)
 
 
 @dataclass
@@ -96,3 +99,114 @@ def test_ppt_pdf_plan_prefers_marginal_anchors_for_workbook_docs():
     assert plan.use_whole_page is False
     assert plan.workbook_doc is True
     assert [[r.number for r in page] for page in plan.regions_per_page] == [[1], [1], [1], [1], [1]]
+
+
+def test_ppt_pdf_plan_preserves_short_page_restart_workbook_docs():
+    pages = []
+    for idx in range(3):
+        y = 90 + idx
+        pages.append([
+            _Block("1.", 24, y, 36, y + 15),
+            _Block(
+                "다음 자료를 읽고 답하시오. ① 보기 하나 ② 보기 둘",
+                60,
+                y,
+                560,
+                y + 15,
+            ),
+            _Block("2.", 24, y + 230, 36, y + 245),
+            _Block(
+                "다음 설명으로 옳은 것은? ① 보기 하나 ② 보기 둘",
+                60,
+                y + 230,
+                560,
+                y + 245,
+            ),
+        ])
+
+    plan = _build_pdf_question_plan(_FakeDoc(pages))
+
+    assert plan.use_whole_page is False
+    assert plan.workbook_doc is True
+    assert [[r.number for r in page] for page in plan.regions_per_page] == [[1, 2], [1, 2], [1, 2]]
+
+
+def test_ppt_pdf_plan_does_not_treat_short_exam_false_low_anchor_as_restart():
+    pages = [
+        [
+            _Block(_question_text(1), 40, 90, 560, 110),
+            _Block(_question_text(2), 40, 230, 560, 250),
+            _Block(_question_text(3), 40, 370, 560, 390),
+        ],
+        [
+            _Block("1. 그림 1은 보기 자료의 번호입니다.", 60, 90, 560, 110),
+            _Block(_question_text(4), 40, 230, 560, 250),
+            _Block(_question_text(5), 40, 370, 560, 390),
+        ],
+    ]
+
+    plan = _build_pdf_question_plan(_FakeDoc(pages))
+
+    assert plan.use_whole_page is False
+    assert plan.workbook_doc is False
+    assert [[r.number for r in page] for page in plan.regions_per_page] == [[1, 2, 3], [4, 5]]
+
+
+def test_ppt_pdf_image_segmentation_fallback_adds_question_slides(tmp_path, monkeypatch):
+    from PIL import Image, ImageDraw
+
+    from academy.adapters.ai.detection import segment_dispatcher
+
+    image_path = tmp_path / "page.png"
+    image = Image.new("RGB", (320, 220), "white")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((20, 30, 130, 110), fill="black")
+    draw.rectangle((170, 30, 290, 110), fill="black")
+    image.save(image_path)
+
+    cleanup_calls: list[list[str]] = []
+
+    def fake_segment_questions_multipage(_pdf_path):
+        return {
+            "pages": [{
+                "page_index": 0,
+                "image_path": str(image_path),
+                "boxes": [(10, 20, 140, 110), (160, 20, 140, 110)],
+            }],
+            "total_boxes": 2,
+            "is_pdf": True,
+            "tmp_dirs": ["seg-tmp"],
+        }
+
+    def fake_cleanup_pdf_seg_tmp_dirs(paths):
+        cleanup_calls.append(paths)
+
+    class _Composer:
+        def __init__(self):
+            self.slides: list[bytes] = []
+
+        def add_slide(self, image_bytes: bytes):
+            self.slides.append(image_bytes)
+
+    monkeypatch.setattr(
+        segment_dispatcher,
+        "segment_questions_multipage",
+        fake_segment_questions_multipage,
+    )
+    monkeypatch.setattr(
+        segment_dispatcher,
+        "cleanup_pdf_seg_tmp_dirs",
+        fake_cleanup_pdf_seg_tmp_dirs,
+    )
+    composer = _Composer()
+
+    added = _add_segmented_pdf_slides_to_composer(
+        "source.pdf",
+        composer=composer,
+        apply_user_settings=lambda b: b,
+    )
+
+    assert added == 2
+    assert len(composer.slides) == 2
+    assert all(slide.startswith(b"\x89PNG") for slide in composer.slides)
+    assert cleanup_calls == [["seg-tmp"]]

@@ -2429,6 +2429,8 @@ def _page_outliers_with_dense_leading_continuation_kept(
 
 def validate_anchors_across_pages(
     regions_per_page: List[List[QuestionRegion]],
+    *,
+    force_per_page_restart: bool = False,
 ) -> List[List[QuestionRegion]]:
     """
     여러 페이지의 anchor를 모아 문서 전역 검증.
@@ -2437,7 +2439,8 @@ def validate_anchors_across_pages(
       A. **Continuous numbering (시험지)** — 기본 모드.
          1. 크로스-페이지 중복 → 처음 등장 page 만 유지. 본문 내 "그림 4는" 같은 오탐 제거.
          2. Sequence outlier (median gap × 5 + abs ≥ 5) 드롭.
-      B. **Per-page-restart (워크북/메인자료)** — `_detect_per_page_restart` 가 True 일 때.
+      B. **Per-page-restart (워크북/메인자료)** — `_detect_per_page_restart` 가 True
+         이거나 호출자가 `force_per_page_restart=True` 를 준 때.
          페이지마다 anchor 1, 2, 3... 가 리셋되는 doc 이라 global dedup 이 후속 페이지를 전부
          drop 시키는 결함을 방지. 페이지간 dedup 을 끄고 page-local outlier 만 적용.
       C. **Late section restart** — continuous 자료 뒤쪽에 별도 기출/복습 섹션이 붙어 번호가
@@ -2450,7 +2453,7 @@ def validate_anchors_across_pages(
         return regions_per_page
 
     # ── Per-page-restart 감지 — workbook/메인자료 페이지 리셋 패턴 ──
-    is_per_page_restart = _detect_per_page_restart(regions_per_page)
+    is_per_page_restart = force_per_page_restart or _detect_per_page_restart(regions_per_page)
 
     if is_per_page_restart:
         # 페이지간 dedup OFF — 각 페이지 anchor 그대로 유지.

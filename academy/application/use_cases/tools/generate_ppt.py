@@ -154,59 +154,79 @@ class GeneratePptFromPdfUseCase:
                 on_progress(0, "문항 구조 분석")
             question_plan = _build_pdf_question_plan(doc)
             use_whole_page = question_plan.use_whole_page
+            segmented_question_mode = False
 
-            for page_idx in range(page_count):
+            if use_whole_page:
                 if on_progress:
-                    pct = int(page_idx / max(page_count, 1) * 100)
-                    on_progress(pct, f"페이지 {page_idx + 1}/{page_count}")
-
-                if use_whole_page:
-                    # 스캔/이미지 PDF: 페이지 = 슬라이드. 문항 인식 불가.
-                    page_img = doc.render_page(page_idx, dpi=200)
-                    if max(page_img.size) > WHOLE_PAGE_MAX_LONG_EDGE:
-                        page_img.thumbnail(
-                            (WHOLE_PAGE_MAX_LONG_EDGE, WHOLE_PAGE_MAX_LONG_EDGE),
-                            resample=PILImage.LANCZOS,
-                        )
-                    export_img = preprocess_for_export(page_img)
-                    # 페이지 단위 = 사진 컨텐츠. JPEG가 PNG보다 1/3 사이즈 (50p PDF에 critical).
-                    img_bytes = _image_to_bytes(export_img, fmt="JPEG")
-                    img_bytes = _apply_user_settings(img_bytes)
-                    composer.add_slide(img_bytes)
-                    del page_img, export_img
-                    continue
-
-                # 텍스트 PDF: pre-pass에서 page type/workbook/cross-page 검증까지 끝낸 문항 crop.
-                regions = (
-                    question_plan.regions_per_page[page_idx]
-                    if page_idx < len(question_plan.regions_per_page)
-                    else []
+                    on_progress(0, "이미지 문항 영역 분석")
+                segmented_slide_count = _add_segmented_pdf_slides_to_composer(
+                    pdf_path,
+                    composer=composer,
+                    apply_user_settings=_apply_user_settings,
+                    on_progress=on_progress,
                 )
-                if not regions:
-                    continue
+                if segmented_slide_count > 0:
+                    use_whole_page = False
+                    segmented_question_mode = True
+                    logger.info(
+                        "PPT_PDF_IMAGE_SEGMENTATION_USED slides=%d path=%s",
+                        segmented_slide_count,
+                        pdf_path,
+                    )
 
-                page_img = doc.render_page(page_idx, dpi=200)
-                img_w, img_h = page_img.size
-                page_w, page_h = doc.page_dimensions(page_idx)
-                scale_x = img_w / page_w if page_w > 0 else 1.0
-                scale_y = img_h / page_h if page_h > 0 else 1.0
+            if not segmented_question_mode:
+                for page_idx in range(page_count):
+                    if on_progress:
+                        pct = int(page_idx / max(page_count, 1) * 100)
+                        on_progress(pct, f"페이지 {page_idx + 1}/{page_count}")
 
-                for region in regions:
-                    rx0, ry0, rx1, ry1 = region.bbox
-                    px0 = max(0, int(rx0 * scale_x))
-                    py0 = max(0, int(ry0 * scale_y))
-                    px1 = min(img_w, int(rx1 * scale_x))
-                    py1 = min(img_h, int(ry1 * scale_y))
-                    if px1 - px0 < 10 or py1 - py0 < 10:
+                    if use_whole_page:
+                        # 스캔/이미지 PDF: 이미지 세그멘테이션도 실패하면 페이지 단위로 안전 fallback.
+                        page_img = doc.render_page(page_idx, dpi=200)
+                        if max(page_img.size) > WHOLE_PAGE_MAX_LONG_EDGE:
+                            page_img.thumbnail(
+                                (WHOLE_PAGE_MAX_LONG_EDGE, WHOLE_PAGE_MAX_LONG_EDGE),
+                                resample=PILImage.LANCZOS,
+                            )
+                        export_img = preprocess_for_export(page_img)
+                        # 페이지 단위 = 사진 컨텐츠. JPEG가 PNG보다 1/3 사이즈 (50p PDF에 critical).
+                        img_bytes = _image_to_bytes(export_img, fmt="JPEG")
+                        img_bytes = _apply_user_settings(img_bytes)
+                        composer.add_slide(img_bytes)
+                        del page_img, export_img
                         continue
-                    crop = page_img.crop((px0, py0, px1, py1))
-                    crop = trim_bottom_whitespace(crop, padding_px=12)
-                    export_img = preprocess_for_export(crop)
-                    img_bytes = _image_to_bytes(export_img)
-                    img_bytes = _apply_user_settings(img_bytes)
-                    composer.add_slide(img_bytes)
-                    del crop, export_img
-                del page_img
+
+                    # 텍스트 PDF: pre-pass에서 page type/workbook/cross-page 검증까지 끝낸 문항 crop.
+                    regions = (
+                        question_plan.regions_per_page[page_idx]
+                        if page_idx < len(question_plan.regions_per_page)
+                        else []
+                    )
+                    if not regions:
+                        continue
+
+                    page_img = doc.render_page(page_idx, dpi=200)
+                    img_w, img_h = page_img.size
+                    page_w, page_h = doc.page_dimensions(page_idx)
+                    scale_x = img_w / page_w if page_w > 0 else 1.0
+                    scale_y = img_h / page_h if page_h > 0 else 1.0
+
+                    for region in regions:
+                        rx0, ry0, rx1, ry1 = region.bbox
+                        px0 = max(0, int(rx0 * scale_x))
+                        py0 = max(0, int(ry0 * scale_y))
+                        px1 = min(img_w, int(rx1 * scale_x))
+                        py1 = min(img_h, int(ry1 * scale_y))
+                        if px1 - px0 < 10 or py1 - py0 < 10:
+                            continue
+                        crop = page_img.crop((px0, py0, px1, py1))
+                        crop = trim_bottom_whitespace(crop, padding_px=12)
+                        export_img = preprocess_for_export(crop)
+                        img_bytes = _image_to_bytes(export_img)
+                        img_bytes = _apply_user_settings(img_bytes)
+                        composer.add_slide(img_bytes)
+                        del crop, export_img
+                    del page_img
 
             # 텍스트 모드로 갔지만 0 슬라이드인 경우 (예: 모든 페이지가 표지/목차로 분류된 short PDF):
             # 페이지 단위 fallback로 한 번 더 시도해야 사용자가 빈 결과를 보지 않음.
@@ -351,6 +371,11 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
             pages_with_marginal >= 3
             and (pages_with_marginal / eligible_pages) >= 0.3
         )
+    elif eligible_pages >= 2:
+        signal_a = (
+            pages_with_marginal >= 2
+            and (pages_with_marginal / eligible_pages) >= 0.5
+        )
 
     first_pass_regions: List[List[Any]] = []
     for page in phase1:
@@ -385,11 +410,31 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         if {r.number for r in regions} & {1, 2, 3}
     )
     eligible_with_anchors = sum(1 for regions in first_pass_regions if regions)
+    pages_per_number: dict[int, int] = {}
+    for regions in first_pass_regions:
+        for number in {r.number for r in regions}:
+            pages_per_number[number] = pages_per_number.get(number, 0) + 1
     signal_b = False
     if eligible_with_anchors >= 5:
         signal_b = (
             pages_with_low_anchor >= 3
             and (pages_with_low_anchor / eligible_with_anchors) >= 0.3
+        )
+    elif eligible_with_anchors >= 2:
+        repeated_low_numbers = sum(
+            1
+            for number, count in pages_per_number.items()
+            if number in {1, 2, 3} and count >= 2
+        )
+        all_anchor_pages_single_q1 = all(
+            len(regions) == 1 and regions[0].number == 1
+            for regions in first_pass_regions
+            if regions
+        )
+        signal_b = (
+            pages_with_low_anchor == eligible_with_anchors
+            and pages_per_number.get(1, 0) == eligible_with_anchors
+            and (repeated_low_numbers >= 2 or all_anchor_pages_single_q1)
         )
 
     workbook_doc = signal_a or signal_b
@@ -424,7 +469,10 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
             )
             planned_regions.append(first_pass_regions[idx])
 
-    validated_regions = validate_anchors_across_pages(planned_regions)
+    validated_regions = validate_anchors_across_pages(
+        planned_regions,
+        force_per_page_restart=workbook_doc,
+    )
     logger.info(
         "PPT_PDF_QUESTION_PLAN pages=%d eligible=%d anchors=%d "
         "marginal_pages=%d workbook=%s slides=%d",
@@ -440,6 +488,74 @@ def _build_pdf_question_plan(doc: Any) -> _PdfQuestionPlan:
         regions_per_page=validated_regions,
         workbook_doc=workbook_doc,
     )
+
+
+def _add_segmented_pdf_slides_to_composer(
+    pdf_path: str,
+    *,
+    composer: Any,
+    apply_user_settings: Callable[[bytes], bytes],
+    on_progress: Optional[Callable[[int, str], None]] = None,
+) -> int:
+    """Use the Matchup image segmentation path when a PDF has no text layer."""
+    from academy.adapters.ai.detection.segment_dispatcher import (
+        cleanup_pdf_seg_tmp_dirs,
+        segment_questions_multipage,
+    )
+    from academy.domain.tools.image_preprocessor import (
+        preprocess_for_export,
+        trim_bottom_whitespace,
+    )
+
+    result: dict[str, Any] | None = None
+    try:
+        result = segment_questions_multipage(pdf_path)
+        pages = list(result.get("pages") or [])
+        total_pages = len(pages)
+        added = 0
+        for page_idx, page in enumerate(pages):
+            boxes = list(page.get("boxes") or [])
+            if not boxes:
+                continue
+            image_path = page.get("image_path")
+            if not image_path:
+                continue
+            if on_progress:
+                pct = int(page_idx / max(total_pages, 1) * 100)
+                on_progress(pct, f"문항 슬라이드 {page_idx + 1}/{total_pages}")
+            with PILImage.open(image_path) as source_img:
+                page_img = source_img.convert("RGB")
+            try:
+                img_w, img_h = page_img.size
+                for box in boxes:
+                    x, y, w, h = box
+                    px0 = max(0, int(x))
+                    py0 = max(0, int(y))
+                    px1 = min(img_w, int(x + w))
+                    py1 = min(img_h, int(y + h))
+                    if px1 - px0 < 10 or py1 - py0 < 10:
+                        continue
+                    crop = page_img.crop((px0, py0, px1, py1))
+                    crop = trim_bottom_whitespace(crop, padding_px=12)
+                    export_img = preprocess_for_export(crop)
+                    img_bytes = _image_to_bytes(export_img)
+                    img_bytes = apply_user_settings(img_bytes)
+                    composer.add_slide(img_bytes)
+                    added += 1
+                    del crop, export_img
+            finally:
+                page_img.close()
+        return added
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "PPT_PDF_IMAGE_SEGMENTATION_FALLBACK_ERROR path=%s error=%s",
+            pdf_path,
+            exc,
+        )
+        return 0
+    finally:
+        if result is not None:
+            cleanup_pdf_seg_tmp_dirs(list(result.get("tmp_dirs") or []))
 
 
 def _image_to_bytes(img, fmt: str = "PNG") -> bytes:
