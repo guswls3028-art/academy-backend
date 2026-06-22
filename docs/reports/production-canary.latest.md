@@ -1,6 +1,6 @@
 # Production Canary
 
-**Generated:** 2026-06-22T22:51:34.4511592+09:00
+**Generated:** 2026-06-23T02:39:01.0271688+09:00
 **Mode:** PostDeploy
 **Verdict:** PASS
 
@@ -33,9 +33,9 @@
 | AWS | video_batch_ce | PASS | ENABLED/VALID |
 | AWS | video_ops_queue | PASS | ENABLED/VALID |
 | AWS | video_ops_ce | PASS | ENABLED/VALID |
-| REMOTE | django_check_deploy | PASS | instance=i-0204339a50470e737 status=Success rc=0 |
-| REMOTE | django_check_deploy | PASS | instance=i-0e2a8fc8189398dd0 status=Success rc=0 |
-| REMOTE | django_migrations_applied | PASS | instance=i-0204339a50470e737 status=Success rc=0 |
-| REMOTE | django_migrations_applied | PASS | instance=i-0e2a8fc8189398dd0 status=Success rc=0 |
-| REMOTE | django_production_canary | PASS | instance=i-0204339a50470e737 status=Success rc=0 |
-| REMOTE | django_production_canary | PASS | instance=i-0e2a8fc8189398dd0 status=Success rc=0 |
+| REMOTE | django_check_deploy | PASS | instance=i-0b7fdd400d099ed21 status=Success rc=0 |
+| REMOTE | django_check_deploy | PASS | instance=i-0e7740740d4238b1e status=Success rc=0 |
+| REMOTE | django_migrations_applied | PASS | instance=i-0b7fdd400d099ed21 status=Success rc=0 |
+| REMOTE | django_migrations_applied | PASS | instance=i-0e7740740d4238b1e status=Success rc=0 |
+| REMOTE | django_production_canary | PASS | instance=i-0b7fdd400d099ed21 status=Success rc=0 |
+| REMOTE | django_production_canary | PASS | instance=i-0e7740740d4238b1e status=Success rc=0 |
