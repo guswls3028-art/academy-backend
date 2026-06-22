@@ -188,6 +188,18 @@ def test_file_pipeline():
     assert sub.status == S.DONE
 
 
+def test_file_pipeline_with_extracting():
+    """FILE 제출 파이프라인: SUBMITTED → DISPATCHED → EXTRACTING → ANSWERS_READY → GRADING → DONE."""
+    sub = _make_submission(S.SUBMITTED)
+
+    transit(sub, S.DISPATCHED, actor="test")
+    transit(sub, S.EXTRACTING, actor="test")
+    transit(sub, S.ANSWERS_READY, actor="test")
+    transit(sub, S.GRADING, actor="test")
+    transit(sub, S.DONE, actor="test")
+    assert sub.status == S.DONE
+
+
 def test_file_pipeline_with_identification():
     """FILE 제출 (식별 필요): SUBMITTED → DISPATCHED → NEEDS_ID → ANSWERS_READY → GRADING → DONE."""
     sub = _make_submission(S.SUBMITTED)
@@ -303,16 +315,16 @@ def test_bulk_transit_allows_done_to_superseded():
 # ──────────────────────────────────────────────
 
 def test_all_statuses_in_flow():
-    """모든 상태가 STATUS_FLOW에 정의되어 있는지 확인 (EXTRACTING 제외 — orphan)."""
+    """모든 상태가 STATUS_FLOW에 정의되어 있는지 확인."""
     for s in ALL_STATUSES:
-        if s == S.EXTRACTING:
-            continue  # orphan — 의도적 미포함
         assert s in STATUS_FLOW, f"{s} is not in STATUS_FLOW"
 
 
-def test_extracting_not_in_flow():
-    """EXTRACTING은 orphan 상태 — STATUS_FLOW에 없어야 함."""
-    assert S.EXTRACTING not in STATUS_FLOW
+def test_extracting_recovery_transitions_are_guarded():
+    """EXTRACTING도 stuck recovery/cascade discard가 transit()로 처리할 수 있어야 한다."""
+    assert S.EXTRACTING in STATUS_FLOW
+    assert can_transit(S.DISPATCHED, S.EXTRACTING) is True
+    assert can_transit(S.EXTRACTING, S.FAILED) is True
 
 
 def test_no_self_transitions():

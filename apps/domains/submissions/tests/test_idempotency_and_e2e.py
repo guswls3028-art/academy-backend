@@ -128,6 +128,16 @@ class TestE2EPipeline:
         transit(sub, S.DONE, actor="grader")
         assert sub.status == S.DONE
 
+    def test_omr_scan_success_with_extracting(self):
+        """OMR 스캔 성공: SUBMITTED → DISPATCHED → EXTRACTING → ANSWERS_READY → GRADING → DONE."""
+        sub = _sub(S.SUBMITTED)
+        transit(sub, S.DISPATCHED, actor="dispatcher")
+        transit(sub, S.EXTRACTING, actor="worker")
+        transit(sub, S.ANSWERS_READY, actor="ai_callback")
+        transit(sub, S.GRADING, actor="grader")
+        transit(sub, S.DONE, actor="grader")
+        assert sub.status == S.DONE
+
     def test_omr_scan_needs_identification(self):
         """OMR 식별 실패: DISPATCHED → NEEDS_ID → (수동매칭) → ANSWERS_READY → GRADING → DONE."""
         sub = _sub(S.SUBMITTED)
@@ -230,20 +240,18 @@ class TestTransitionCoverage:
     def test_all_non_terminal_statuses_have_exit(self):
         """종단 아닌 모든 상태에서 최소 1개의 exit 전이가 존재."""
         for s in S:
-            if s == S.EXTRACTING:
-                continue  # orphan
             exits = STATUS_FLOW.get(s, set())
             if s in (S.DONE, S.SUPERSEDED):
                 # DONE은 SUPERSEDED로만 전이, SUPERSEDED는 종단
                 continue
             assert len(exits) > 0, f"{s} has no exit transitions"
 
-    def test_every_non_orphan_status_is_reachable(self):
-        """EXTRACTING 제외 모든 상태가 다른 상태에서 도달 가능."""
+    def test_every_non_initial_status_is_reachable(self):
+        """초기 상태를 제외한 모든 상태가 다른 상태에서 도달 가능."""
         reachable = set()
         for from_s, to_set in STATUS_FLOW.items():
             reachable.update(to_set)
         for s in S:
-            if s in (S.SUBMITTED, S.EXTRACTING):
-                continue  # SUBMITTED는 초기 상태, EXTRACTING은 orphan
+            if s == S.SUBMITTED:
+                continue  # SUBMITTED는 초기 상태
             assert s in reachable, f"{s} is not reachable from any other status"

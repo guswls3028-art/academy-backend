@@ -43,14 +43,14 @@
 
 | 우선순위 | 도메인 | 상태 수 | 위험도 | 근거 |
 |---------|--------|---------|--------|------|
-| P0 | Submission | 9 | CRITICAL | 상태기계 존재하나 미적용 (dead code) |
-| P0 | ExamResult | 2 | CRITICAL | FINAL→DRAFT 회귀 가능 |
+| P0 | Submission | 9 | FIXED | `transition.py` SSOT 적용, EXTRACTING 포함, stuck recovery/cascade도 전이 가드 통과 |
+| P0 | ExamResult | 2 | FIXED | `select_for_update` + FINAL early return으로 DRAFT 회귀 차단 |
 | P0 | StudentRegistrationRequest | 3 | FIXED | approve/reject 레이스는 `select_for_update`로 보강됨 |
 | P1 | Video | 5 | HIGH | 관리 명령어 SFU 미사용 |
-| P1 | VideoTranscodeJob | 7 | HIGH | cancel/mark_dead 가드 부재 |
-| P1 | ExamAttempt | 4 | MEDIUM | sync_result 원자성 부재 |
-| P1 | AIJobModel | 9 | MEDIUM | job_save_failed SFU 부재 |
-| P2 | Clinic SessionParticipant | 6 | MEDIUM | change_booking 전이 우회 |
+| P1 | VideoTranscodeJob | 7 | FIXED | cancel/mark_dead/fail_retry 종단 상태 가드 적용 |
+| P1 | ExamAttempt | 4 | FIXED | sync_result attempt 조회에 `select_for_update` 적용 |
+| P1 | AIJobModel | 9 | FIXED | job_save_failed atomic + `select_for_update` + terminal guard 적용 |
+| P2 | Clinic SessionParticipant | 6 | FIXED | change_booking이 lifecycle service의 lock + allowed-from 가드 사용 |
 | P2 | Enrollment | 3 | LOW | 단순 3상태, 제한된 변이 |
 | P2 | Invoice | 6 | N/A | 미구현 (모델만 존재) |
 | P2 | PaymentTransaction | 5 | N/A | 미구현 |
@@ -92,17 +92,19 @@
 
 ```
 SUBMITTED      → {DISPATCHED, ANSWERS_READY, GRADING, FAILED}
-DISPATCHED     → {ANSWERS_READY, NEEDS_IDENTIFICATION, FAILED}
+DISPATCHED     → {EXTRACTING, ANSWERS_READY, NEEDS_IDENTIFICATION, FAILED}
+EXTRACTING     → {ANSWERS_READY, NEEDS_IDENTIFICATION, FAILED}
 ANSWERS_READY  → {GRADING}
 GRADING        → {DONE, FAILED}
 FAILED         → {SUBMITTED}
-NEEDS_IDENTIFICATION → {ANSWERS_READY}
+NEEDS_IDENTIFICATION → {ANSWERS_READY, FAILED}
 DONE           → {SUPERSEDED}
 SUPERSEDED     → {} (종단)
 ```
 
-**EXTRACTING**: orphan 상태. choices에만 존재하며 STATUS_FLOW에서 제외.
-코드에서 설정되지 않음. DB 호환성을 위해 enum에서 제거하지 않음.
+**EXTRACTING**: 워커가 본격 추출 중임을 나타내는 진행 상태다. 현재 생성
+경로가 이 상태를 항상 사용하지는 않지만, pending inbox / stuck recovery /
+cascade discard가 실제 운영 row를 다루므로 STATUS_FLOW에 포함한다.
 
 **Admin Override (manual_edit 전용):**
 ```
@@ -112,9 +114,8 @@ GRADING/SUPERSEDED에서는 admin_override도 차단.
 
 #### 금지 전이
 
-- `DONE → *` (종단 상태, 절대 변경 불가)
+- `DONE → *` (`SUPERSEDED` 제외, 확정 결과 보존)
 - `SUPERSEDED → *` (종단 상태)
-- `SUBMITTED → GRADING` (중간 단계 생략 금지)
 - `SUBMITTED → DONE` (채점 없이 완료 금지)
 - `GRADING → SUBMITTED` (재시도는 FAILED 경유 필수)
 
@@ -727,16 +728,15 @@ true`가 필요하며 수강등록 비활성화, 자동 수납 비활성화, 시
   - grader.py FAILED no-op 버그 수정 (transaction rollback → FAILED 미persist 문제)
   - manual_edit SUPERSEDED→ANSWERS_READY 차단
   - STATUS_FLOW 현실화 (SUBMITTED→GRADING/ANSWERS_READY 추가, DONE→SUPERSEDED 추가)
-  - EXTRACTING orphan 상태 STATUS_FLOW에서 제외
+  - EXTRACTING 상태를 STATUS_FLOW에 포함해 stuck recovery / cascade discard도 전이 가드를 통과
   - 데드코드 정리 (progress/ai_omr_result_mapper.py)
-- **테스트:** 102개 (허용 12 + 금지 63 + 종단 7 + admin override 10 + 시나리오 8 + 구조 2)
+- **테스트:** 전이/멱등/cascade/stuck recovery 테스트로 검증
 
-### C2. CRITICAL — ExamResult FINAL→DRAFT 회귀
+### C2. CRITICAL — ExamResult FINAL→DRAFT 회귀 → **FIXED**
 
-- **위치:** `apps/domains/results/services/exam_grading_service.py:131`
-- **문제:** `auto_grade_objective()`가 기존 ExamResult를 로드할 때 FINAL 여부를 확인하지 않고 `status = DRAFT`로 설정
-- **영향:** 이미 확정된(FINAL) 시험 결과가 채점 서비스 재호출 시 DRAFT로 회귀 가능
-- **위반:** ExamResult 모델 docstring "finalized 되면 불변" 계약 위반
+- **해결:** `exam_grading_service.py`는 기존 `ExamResult`를 `select_for_update()`로 잠근 뒤 `FINAL`이면 early return한다.
+- **보강:** `sync_result_from_submission.py`의 legacy snapshot sync도 같은 방식으로 `FINAL`을 보존한다.
+- **효과:** 자동 재채점/동기화 재호출이 확정 결과를 DRAFT로 되돌리지 않는다.
 
 ### C3. HIGH — StudentRegistrationRequest approve/reject 레이스 → **FIXED**
 
@@ -747,32 +747,25 @@ true`가 필요하며 수강등록 비활성화, 자동 수납 비활성화, 시
   view compatibility layer에서 `select_for_update`와 상태 재확인을 사용한다.
 - **비고:** 새 레이스가 발견되면 이 항목을 새 증거와 함께 다시 열고, 현재 fixed 기록은 변경 이력으로 남긴다.
 
-### C4. HIGH — VideoTranscodeJob 종단 상태 덮어쓰기
+### C4. HIGH — VideoTranscodeJob 종단 상태 덮어쓰기 → **FIXED**
 
-- **위치:** `academy/adapters/db/django/repositories_video.py`
-- **문제:**
-  - `job_cancel()` — 상태 확인 없이 `→ CANCELLED` (SUCCEEDED도 덮어씀)
-  - `job_mark_dead()` — 상태 확인 없이 `→ DEAD` (SUCCEEDED도 덮어씀)
-  - `job_fail_retry()` — 상태 확인 없이 `→ RETRY_WAIT` (SUCCEEDED도 덮어씀)
-- **비고:** `job_mark_dead_if_active()`는 올바르게 가드됨. 하지만 `job_mark_dead()`도 여전히 가드 없이 호출됨.
+- **해결:** `repositories_video.py`의 `job_fail_retry()`, `job_cancel()`, `job_mark_dead()`가 terminal 상태를 보호한다.
+- **검증 기준:** `SUCCEEDED` / `DEAD` / `CANCELLED` 등 종단 상태는 retry/cancel/dead 업데이트 대상에서 제외한다.
 
-### C5. MEDIUM — ExamAttempt sync_result 원자성 부재
+### C5. MEDIUM — ExamAttempt sync_result 원자성 부재 → **FIXED**
 
-- **위치:** `apps/domains/results/services/sync_result_from_submission.py:118`
-- **문제:** `attempt.status = "done"` 설정 시 `select_for_update`도 `@transaction.atomic`도 없음
-- **영향:** grader와 sync가 동시 실행 시 레이스 컨디션
+- **해결:** `sync_result_from_submission.py`가 atomic 블록 안에서 기존 `ExamAttempt`를 `select_for_update()`로 조회한다.
+- **효과:** grader/sync 동시 실행 시 기존 attempt row의 상태와 snapshot 업데이트가 같은 잠금 경로를 탄다.
 
-### C6. MEDIUM — Clinic change_booking 전이 우회
+### C6. MEDIUM — Clinic change_booking 전이 우회 → **FIXED**
 
-- **위치:** `apps/domains/clinic/views/participant_views.py` `change_booking`
-- **문제:** 기존 예약을 CANCELLED로 변경할 때 전이 검증을 거치지 않음
-- **영향:** ATTENDED/NO_SHOW 상태의 예약이 CANCELLED로 변경될 수 있음
+- **해결:** `participant_views.py`는 `clinic/services/lifecycle.py::change_participant_booking()`에 위임한다.
+- **보강:** 서비스는 기존 예약을 `select_for_update()`로 잠그고, `PENDING` 예약만 변경 허용하며, cancel 직전 `PENDING/BOOKED` allowed-from을 재확인한다.
 
-### C7. MEDIUM — AIJobModel job_save_failed SFU 부재
+### C7. MEDIUM — AIJobModel job_save_failed SFU 부재 → **FIXED**
 
-- **위치:** `academy/adapters/db/django/repositories_ai.py:298`
-- **문제:** `job_save_failed()`에 `select_for_update` 없음
-- **영향:** DONE과 FAILED가 동시에 기록될 수 있음
+- **해결:** `repositories_ai.py::job_save_failed()`가 atomic 블록에서 `select_for_update()` 후 terminal 상태를 재확인한다.
+- **효과:** 이미 `DONE` / `FAILED` / `REJECTED_BAD_INPUT`인 job은 publish-failure path가 덮어쓰지 않는다.
 
 ### C8. LOW — Frontend UPLOADED 상태 미처리 (Student)
 
@@ -804,7 +797,7 @@ true`가 필요하며 수강등록 비활성화, 자동 수납 비활성화, 시
 | # | 불일치 | 위험도 | 수정 상태 | 수정 내용 |
 |---|--------|--------|----------|----------|
 | 1 | C2: ExamResult FINAL→DRAFT | CRITICAL | **FIXED** | `exam_grading_service.py`: FINAL 결과 재채점 시 early return |
-| 2 | C1: Submission can_transit | CRITICAL | **FIXED** | `transition.py` SSOT 생성, 16개 write path 전수 리팩터링, 102개 테스트 |
+| 2 | C1: Submission can_transit | CRITICAL | **FIXED** | `transition.py` SSOT 생성, live write path 리팩터링, EXTRACTING recovery/cascade 가드 포함 |
 | 3 | C3: Registration race | HIGH | **FIXED** | `students/services/registration_approval.py`: approve 상태 전이+학생 생성 atomic 처리; `registration_views.py`: reject/bulk_reject 잠금 유지 |
 | 4 | C4: Job terminal overwrite | HIGH | **FIXED** | `repositories_video.py`: job_cancel/mark_dead/fail_retry에 종단 상태 가드 |
 | 5 | C5: ExamAttempt atomic | MEDIUM | **FIXED** | `sync_result_from_submission.py`: select_for_update 추가 |
@@ -844,16 +837,18 @@ true`가 필요하며 수강등록 비활성화, 자동 수납 비활성화, 시
 
 ## F. 미검증 리스크
 
-### F1. Submission EXTRACTING 상태 (Orphan)
+### F1. Submission EXTRACTING producer adoption
 
 - STATUS_FLOW에 정의되어 있지만 코드에서 설정되지 않음
 - AI/OMR 파이프라인이 이 상태를 건너뛰고 DISPATCHED → ANSWERS_READY로 직행
-- **리스크:** EXTRACTING이 필요한 새 파이프라인이 추가되면 STATUS_FLOW와 코드가 불일치할 수 있음
+- **리스크:** 낮음. stuck recovery / cascade discard는 EXTRACTING row를 처리할 수 있다.
+- **후속:** 새 워커 단계가 EXTRACTING을 명시적으로 쓰기 시작하면 dispatcher/worker entry에서 `transit()`로 진입시킨다.
 
-### F2. Submission SUPERSEDED 전이 경로
+### F2. Submission SUPERSEDED producer coverage
 
-- SUPERSEDED는 STATUS_FLOW에 항목이 없음 (진입 경로 미정의)
-- 코드에서 SUPERSEDED로 설정되는 로직의 정확한 위치 확인 필요
+- STATUS_FLOW는 DONE → SUPERSEDED를 허용한다.
+- 학생 재응시 / 중복 OMR 채택 등 producer가 이 전이를 사용한다.
+- **리스크:** 낮음. 새 supersede producer가 추가되면 반드시 `bulk_transit()` 또는 `transit_save()`를 사용한다.
 
 ### F3. Video 관리 명령어 SFU 부재
 

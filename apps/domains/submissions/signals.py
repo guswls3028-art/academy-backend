@@ -42,6 +42,7 @@ def _cascade_discard(target_type: str, target_id: int, tenant_id: int, reason: s
     Returns: 처리된 submission 개수.
     """
     from apps.domains.submissions.models import Submission
+    from apps.domains.submissions.services.transition import transit_save
 
     qs = Submission.objects.filter(
         tenant_id=tenant_id,
@@ -65,9 +66,13 @@ def _cascade_discard(target_type: str, target_id: int, tenant_id: int, reason: s
 
         s.meta = meta
         if s.status != Submission.Status.FAILED:
-            s.status = Submission.Status.FAILED
-            s.error_message = f"discarded:{reason}"
-            s.save(update_fields=["meta", "status", "error_message", "updated_at"])
+            transit_save(
+                s,
+                Submission.Status.FAILED,
+                error_message=f"discarded:{reason}",
+                actor="system.cascade_discard",
+                extra_update_fields=["meta"],
+            )
         else:
             s.save(update_fields=["meta", "updated_at"])
         count += 1
