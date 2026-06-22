@@ -94,6 +94,8 @@
 `apps/domains/submissions/services/lifecycle.py`이며, 이 facade가
 `mark_answers_ready`, `fail_submission`, `reopen_for_regrade`,
 `supersede_done_submissions` 같은 의미 있는 함수로 STATUS_FLOW를 통과한다.
+`scripts/lint/check_submission_lifecycle_boundary.py`가 deploy lint gate에서
+런타임 코드의 `transition.py` 직접 import 회귀를 차단한다.
 
 ```
 SUBMITTED      → {DISPATCHED, ANSWERS_READY, GRADING, FAILED}

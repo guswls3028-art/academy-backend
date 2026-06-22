@@ -226,6 +226,10 @@ jobs:
         run: |
           ruff check apps/ academy/
 
+      - name: Submission lifecycle boundary guard
+        run: |
+          python scripts/lint/check_submission_lifecycle_boundary.py
+
       - name: Refactor boundary touched-file guard
         run: |
           if [ "${{ github.event_name }}" = "push" ] && \
