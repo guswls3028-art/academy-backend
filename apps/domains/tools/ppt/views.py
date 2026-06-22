@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import shutil
 import tempfile
 import uuid
@@ -93,6 +94,57 @@ def _validate_order(order: list, image_count: int) -> list[int] | None:
     if sorted(int_order) != list(range(image_count)):
         return None
     return int_order
+
+
+def _parse_adjustment_value(settings: dict, key: str) -> float:
+    raw_value = settings.get(key, 1.0)
+    try:
+        value = float(raw_value)
+    except (TypeError, ValueError):
+        raise ValueError(key) from None
+    if not math.isfinite(value):
+        raise ValueError(key)
+    return value
+
+
+def _normalise_per_slide_settings(per_slide: object) -> list | None:
+    if not isinstance(per_slide, list):
+        return None
+
+    normalised = []
+    for item in per_slide:
+        if not isinstance(item, dict):
+            normalised.append(item)
+            continue
+
+        slide_settings = dict(item)
+        for key in ("brightness", "contrast"):
+            if key in slide_settings:
+                slide_settings[key] = _parse_adjustment_value(slide_settings, key)
+        normalised.append(slide_settings)
+    return normalised
+
+
+def _build_image_settings_payload(ppt_settings: dict, *, include_per_slide: bool = False) -> dict:
+    image_settings = {
+        "invert": bool(ppt_settings.get("invert", False)),
+        "grayscale": bool(ppt_settings.get("grayscale", False)),
+        "auto_enhance": bool(ppt_settings.get("auto_enhance", False)),
+        "brightness": _parse_adjustment_value(ppt_settings, "brightness"),
+        "contrast": _parse_adjustment_value(ppt_settings, "contrast"),
+    }
+    if include_per_slide:
+        per_slide = _normalise_per_slide_settings(ppt_settings.get("per_slide"))
+        if per_slide is not None:
+            image_settings["per_slide"] = per_slide
+    return image_settings
+
+
+def _invalid_settings_response() -> JsonResponse:
+    return JsonResponse(
+        {"detail": "밝기/대비 설정이 올바르지 않습니다.", "code": "invalid_settings"},
+        status=400,
+    )
 
 
 def _safe_archive_ext(filename: str) -> str:
@@ -252,6 +304,11 @@ class PptGenerateView(View):
         if fit_mode not in ("contain", "cover", "stretch"):
             fit_mode = "contain"
 
+        try:
+            image_settings = _build_image_settings_payload(ppt_settings, include_per_slide=True)
+        except ValueError:
+            return _invalid_settings_response()
+
         # Upload all images as one ordered archive. 500 individual R2 PUTs made
         # the job-dispatch request exceed the frontend timeout before workers
         # could even start.
@@ -269,18 +326,6 @@ class PptGenerateView(View):
             )
         finally:
             archive_file.close()
-
-        # Build settings payload for worker
-        image_settings = {
-            "invert": bool(ppt_settings.get("invert", False)),
-            "grayscale": bool(ppt_settings.get("grayscale", False)),
-            "auto_enhance": bool(ppt_settings.get("auto_enhance", False)),
-            "brightness": float(ppt_settings.get("brightness", 1.0)),
-            "contrast": float(ppt_settings.get("contrast", 1.0)),
-        }
-        per_slide = ppt_settings.get("per_slide")
-        if isinstance(per_slide, list):
-            image_settings["per_slide"] = per_slide
 
         # Dispatch job
         from apps.domains.ai.gateway import dispatch_job
@@ -365,6 +410,11 @@ class PptGenerateView(View):
         if fit_mode not in ("contain", "cover", "stretch"):
             fit_mode = "contain"
 
+        try:
+            image_settings = _build_image_settings_payload(ppt_settings)
+        except ValueError:
+            return _invalid_settings_response()
+
         # Upload PDF to R2
         from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
 
@@ -376,15 +426,6 @@ class PptGenerateView(View):
             key=tmp_key,
             content_type="application/pdf",
         )
-
-        # Build image settings payload for worker
-        image_settings = {
-            "invert": bool(ppt_settings.get("invert", False)),
-            "grayscale": bool(ppt_settings.get("grayscale", False)),
-            "auto_enhance": bool(ppt_settings.get("auto_enhance", False)),
-            "brightness": float(ppt_settings.get("brightness", 1.0)),
-            "contrast": float(ppt_settings.get("contrast", 1.0)),
-        }
 
         # Dispatch job
         from apps.domains.ai.gateway import dispatch_job

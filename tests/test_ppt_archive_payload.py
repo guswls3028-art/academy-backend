@@ -1,9 +1,16 @@
+import json
 import zipfile
 from types import SimpleNamespace
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import RequestFactory
+import pytest
 
-from apps.domains.tools.ppt.views import _build_images_archive
+from apps.domains.tools.ppt.views import (
+    PptGenerateView,
+    _build_image_settings_payload,
+    _build_images_archive,
+)
 from apps.shared.contracts.ai_job import AIJob
 from academy.application.use_cases.ai.pipelines.ppt_handler import handle_ppt_generation_job
 
@@ -25,6 +32,93 @@ def test_build_images_archive_preserves_ordered_entries():
         assert files[1].tell() == 0
     finally:
         archive.close()
+
+
+def test_ppt_settings_payload_normalises_numeric_adjustments():
+    settings = _build_image_settings_payload(
+        {
+            "invert": True,
+            "brightness": "1.25",
+            "contrast": 0.9,
+            "per_slide": [{"brightness": "1.1"}, "legacy"],
+        },
+        include_per_slide=True,
+    )
+
+    assert settings["invert"] is True
+    assert settings["brightness"] == 1.25
+    assert settings["contrast"] == 0.9
+    assert settings["per_slide"] == [{"brightness": 1.1}, "legacy"]
+
+
+@pytest.mark.parametrize(
+    "bad_settings",
+    [
+        {"brightness": "bright"},
+        {"contrast": None},
+        {"brightness": float("nan")},
+        {"per_slide": [{"contrast": "high"}]},
+    ],
+)
+def test_ppt_settings_payload_rejects_invalid_adjustments(bad_settings):
+    with pytest.raises(ValueError):
+        _build_image_settings_payload(bad_settings, include_per_slide=True)
+
+
+def test_pdf_invalid_adjustment_rejected_before_r2_upload(monkeypatch):
+    upload_calls = []
+
+    def fake_upload_fileobj_to_r2_storage(**kwargs):
+        upload_calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage",
+        fake_upload_fileobj_to_r2_storage,
+    )
+
+    request = RequestFactory().post(
+        "/api/v1/tools/ppt/generate/",
+        data={"settings": json.dumps({"brightness": "bright"})},
+    )
+    pdf_file = SimpleUploadedFile(
+        "source.pdf",
+        b"%PDF-1.4\n%%EOF",
+        content_type="application/pdf",
+    )
+
+    response = PptGenerateView()._handle_pdf_mode(request, pdf_file, tenant_id="1")
+
+    assert response.status_code == 400
+    assert json.loads(response.content)["code"] == "invalid_settings"
+    assert upload_calls == []
+
+
+def test_image_invalid_adjustment_rejected_before_r2_upload(monkeypatch):
+    upload_calls = []
+
+    def fake_upload_fileobj_to_r2_storage(**kwargs):
+        upload_calls.append(kwargs)
+
+    monkeypatch.setattr(
+        "apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage",
+        fake_upload_fileobj_to_r2_storage,
+    )
+
+    request = RequestFactory().post(
+        "/api/v1/tools/ppt/generate/",
+        data={"settings": json.dumps({"contrast": "flat"})},
+    )
+    image_file = SimpleUploadedFile(
+        "source.png",
+        b"\x89PNG\r\n\x1a\nnot-a-real-png-but-valid-magic",
+        content_type="image/png",
+    )
+
+    response = PptGenerateView()._handle_images_mode(request, [image_file], tenant_id="1")
+
+    assert response.status_code == 400
+    assert json.loads(response.content)["code"] == "invalid_settings"
+    assert upload_calls == []
 
 
 def test_ppt_worker_accepts_single_image_archive(monkeypatch, tmp_path):
