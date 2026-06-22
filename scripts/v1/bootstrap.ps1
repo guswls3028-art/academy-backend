@@ -61,5 +61,5 @@ if (-not (Test-Path $ParamsPath)) {
 }
 Write-Host "OK: params.yaml found" -ForegroundColor Green
 
-Write-Host "`nNext: pwsh scripts/v1/deploy.ps1 -Plan" -ForegroundColor Cyan
+Write-Host "`nNext: pwsh scripts/v1/deploy.ps1 -Plan -AwsProfile default" -ForegroundColor Cyan
 Write-Host "=== Bootstrap done ===`n" -ForegroundColor Green

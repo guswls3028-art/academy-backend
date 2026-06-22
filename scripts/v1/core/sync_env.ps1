@@ -58,7 +58,7 @@ function Sync-ApiEnvFromSSOT {
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_PREMIUM" -NotePropertyValue $script:AiSqsQueueName -Force
     if ($script:ToolsSqsQueueName) { $obj | Add-Member -NotePropertyName "TOOLS_SQS_QUEUE_NAME" -NotePropertyValue $script:ToolsSqsQueueName -Force }
 
-    # SSOT: Video Batch (long path 폐기 2026-05-10 — short queue/jobdef 단일 운영)
+    # SSOT: Video Batch (long path 폐기 2026-05-10 — standard encoding queue/jobdef + separate ops queue/jobdefs)
     $obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_QUEUE" -NotePropertyValue $script:VideoQueueName -Force
     $obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_DEFINITION" -NotePropertyValue $script:VideoJobDefName -Force
     $obj | Add-Member -NotePropertyName "VIDEO_BATCH_COMPUTE_ENV_NAME" -NotePropertyValue $script:VideoCEName -Force

@@ -58,4 +58,4 @@ state=SUCCEEDED → Video.status=READY
 - 관리 명령: `backend/apps/domains/video/management/commands/`
 - 코드 SSOT: `backend/apps/domains/video/services/video_encoding.py`, `batch_submit.py`
 - 모델: `backend/apps/domains/video/models.py` (`Video`, `VideoTranscodeJob`, `VideoOpsEvent`)
-- CE/JobDef: AWS Batch — `academy-v1-video-batch-ce-200gb`(short CE) + `academy-v1-video-batch-jobdef`(VCPU=8, MEM=16GB, retryStrategy, timeout=6h) 단일 운영. long path는 2026-05-10 완전 폐기 (queue/jobdef/CE 모두 AWS에서 삭제).
+- CE/JobDef: AWS Batch — 영상 인코딩은 `academy-v1-video-batch-ce-200gb` + `academy-v1-video-batch-queue` + `academy-v1-video-batch-jobdef`(VCPU=8, MEM=16GB, retryStrategy, timeout=6h)를 사용한다. 복구·점검 cron은 `academy-v1-video-ops-ce` + `academy-v1-video-ops-queue` + `academy-v1-video-ops-*` jobdefs를 사용한다. long path는 2026-05-10 완전 폐기(queue/jobdef/CE 모두 AWS에서 삭제).

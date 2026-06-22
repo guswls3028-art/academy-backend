@@ -7,9 +7,14 @@
 | 파일 | 생성 주체 | 갱신 |
 |------|-----------|------|
 | [ci-build.latest.md](ci-build.latest.md) | `.github/workflows/v1-build-and-push-latest.yml` | main push 시 |
-| [audit.latest.md](audit.latest.md) | audit 스크립트 | 수동 |
-| [drift.latest.md](drift.latest.md) | drift 스크립트 | 수동 |
+| [production-canary.latest.md](production-canary.latest.md) | `scripts/v1/run-production-canary.ps1` | post-deploy canary 시 |
+| [deploy-verification-latest.md](deploy-verification-latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
+| [V1-FINAL-REPORT.md](V1-FINAL-REPORT.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
+| [audit.latest.md](audit.latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
+| [drift.latest.md](drift.latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
 | [runtime-images.latest.md](runtime-images.latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
+| [consistency.latest.md](consistency.latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
+| [front-connection.latest.md](front-connection.latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
 
 ## history
 

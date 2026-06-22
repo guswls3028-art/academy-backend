@@ -39,9 +39,5 @@
 - [consistency.latest.md](./consistency.latest.md) — SSOT↔실제↔합의사항 정합성
 - [front-connection.latest.md](./front-connection.latest.md) — Front V1 연결 검증·근거
 - [runtime-images.latest.md](./runtime-images.latest.md) — API 인스턴스별 런타임 이미지 digest와 CI digest 일치 여부
-- [scale-policy.latest.md](./scale-policy.latest.md) — API ASG 스케일 정책 (확장 런칭 min/desired=2)
-- [resource-cleanup.latest.md](./resource-cleanup.latest.md) — 리소스 정리 기록 (EIP/EBS/SG/ASG)
-- [cleanup-run.latest.md](./cleanup-run.latest.md) — 정리 스크립트 실행 결과
-- [front-pipeline-mapping.latest.md](./front-pipeline-mapping.latest.md) — 프론트 Git 파이프라인 ↔ SSOT 매핑
 - [audit.latest.md](./audit.latest.md) — 리소스·지표 스냅샷
 - [drift.latest.md](./drift.latest.md) — SSOT 대비 drift

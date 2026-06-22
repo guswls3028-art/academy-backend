@@ -7,7 +7,7 @@
 
 ## 🚨 §0. 학원장 mental model (절대 원칙, 모든 알림톡 작업의 base)
 
-이 박스를 **반드시 먼저 읽고** 알림톡/메시징 작업 진행. AI가 한 달 반 동안 학원장 의도를 못 따라가서 격분 누적된 핵심 원칙. 메모리 [[feedback_alimtalk_template_prefix_immutable]] 1:1 동기화.
+이 박스를 **반드시 먼저 읽고** 알림톡/메시징 작업 진행. AI가 한 달 반 동안 학원장 의도를 못 따라가서 격분 누적된 핵심 원칙. 메모리 [[feedback-alimtalk-envelope-model]] 1:1 동기화.
 
 ### 비유: 봉투와 편지
 
@@ -56,7 +56,7 @@
 4. NONE 자동발송 매핑(withdrawal_complete/payment_complete/payment_due_days_before) 제거 금지 — 시스템 안내 자동발송이 정상
 5. UI에서 양식 본문 편집 잠금 금지 — domain.md §5 "잠금/플래그 강제 금지" 정신
 
-관련: [[domain.md §5 / §5.5]] / [[feedback_alimtalk_template_prefix_immutable]] / [[project_alimtalk_audit_2026_05_13]]
+관련: `.claude/rules/domain.md §5 / §5.5` / `feedback-alimtalk-envelope-model` memory
 
 ---
 
@@ -199,7 +199,7 @@
 | `exam_scheduled_days_before` / `exam_start_minutes_before` / `exam_not_taken` / `retake_assigned` | score 매핑 한때 있었으나 자동 발화 결함 회피 위해 제거 (`ff2a3f93` / `2cfaea34`) |
 | `assignment_registered` / `assignment_due_hours_before` / `assignment_not_submitted` | 동일. `assignment_not_submitted`는 배치 명령은 있으나 운영 스케줄 미등록이라 자동발화 상태는 `manual_only` |
 | `video_encoding_complete` / `matchup_report_submitted` | "[성적표 안내]" prefix 의미 불일치 (강사 본인/owner/admin 알림) |
-| `qna_answered` / `counsel_answered` | 한 때 TYPE_SCORE 재사용 ([[v1_2_0_seal_2026_04_30]] §6) 이었으나 prefix 의미 불일치로 매핑 제거. test_alimtalk_content_builders.py:55-60 None assert 적용 |
+| `qna_answered` / `counsel_answered` | 한 때 TYPE_SCORE 재사용([v1.2.0 release](../releases/v1.2.0.md) §6) 이었으나 prefix 의미 불일치로 매핑 제거. test_alimtalk_content_builders.py:55-60 None assert 적용 |
 
 ### 매핑 X 트리거의 실제 발송 path
 

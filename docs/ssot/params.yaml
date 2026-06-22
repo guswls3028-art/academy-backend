@@ -53,7 +53,7 @@ ecr:
   messagingWorkerRepo: academy-messaging-worker
   aiWorkerRepo: academy-ai-worker-cpu
   toolsWorkerRepo: academy-tools-worker
-  # 이미지 빌드는 GitHub Actions만 사용. CI는 5개 이미지 모두 :latest 푸시. 풀배포(deploy.ps1)는 :latest 사용으로 정합.
+  # 이미지 빌드는 GitHub Actions만 사용. CI는 6개 이미지 모두 :latest 푸시. 풀배포(deploy.ps1)는 :latest 사용으로 정합.
   useLatestTag: true
   immutableTagRequired: false
 

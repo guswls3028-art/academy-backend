@@ -247,7 +247,7 @@ function Load-SSOT {
     $videoObs = if ($vb["observability"]) { $vb["observability"] } else { @{} }
     $script:VideoQueueDepthAlarmThreshold = Coerce-Int $videoObs["queueDepthAlarmThreshold"] 50
     $script:VideoFailedJobsAlarmThreshold = Coerce-Int $videoObs["failedJobsAlarmThreshold"] 5
-    # long path 폐기 (2026-05-10): SSOT 에 long.* 가 박혀 있어도 무시. 모든 영상이 short queue/jobdef.
+    # long path 폐기 (2026-05-10): SSOT 에 long.* 가 박혀 있어도 무시. 영상 인코딩은 standard queue/jobdef, 복구·점검은 ops queue/jobdefs.
     # 변수 자체는 남겨 둔다 — 다른 deploy/inventory 스크립트가 `if ($script:VideoLongQueueName)` 가드로
     # 분기하므로 $null 이면 자연스럽게 skip.
     $script:VideoLongCEName = $null

@@ -1,7 +1,7 @@
 # V1.1.0 Deployment Architecture
 
 **Version:** V1.1.0
-**Date:** 2026-03-14 (checked 2026-06-12)
+**Date:** 2026-03-14 (checked 2026-06-23)
 **SSOT Status:** Active
 
 ## 1. Service Decomposition
@@ -11,10 +11,11 @@
 | API | academy-api | academy-v1-api-asg | academy-api | Django REST API (Gunicorn) |
 | Messaging Worker | academy-messaging-worker | academy-v1-messaging-worker-asg | academy-messaging-worker | SQS message processing |
 | AI Worker | academy-ai-worker-cpu | academy-v1-ai-worker-asg | academy-ai-worker-cpu | AI task processing |
+| Tools Worker | academy-tools-worker | academy-v1-tools-worker-asg | academy-tools-worker | deterministic document/PDF/PPT/spreadsheet conversion jobs |
 | Video Worker | academy-video-worker | AWS Batch CE (`academy-v1-video-batch-ce-200gb`, c6g.4xlarge primary) | — | 영상 인코딩. 1 video = 1 Batch job. VCPU=8 / MEM=16GB / timeout=6h |
 | Base | academy-base | — | — | Shared base image for all services |
 
-**Note (2026-05-10, checked 2026-05-22):** Daemon mode 폐기. 모든 영상은 AWS Batch로 1-shot 처리. long path도 폐기되어 단일 queue/jobdef만 사용한다. 현재 jobdef timeout은 6h이며, 실패/중단 케이스는 reconcile/scan_stuck이 재시도한다. ffmpeg는 `c6g.4xlarge` VCPU=8 + R2 병렬 업로드(16 worker)로 처리.
+**Note (2026-05-10, checked 2026-06-23):** Daemon mode 폐기. 모든 영상 인코딩은 AWS Batch standard queue/jobdef(`academy-v1-video-batch-queue`, `academy-v1-video-batch-jobdef`)로 1-shot 처리한다. long path는 폐기되었고, 실패/중단 복구용 ops 작업은 별도 ops queue/jobdefs(`academy-v1-video-ops-*`)로 관리한다. 현재 jobdef timeout은 6h이며, 실패/중단 케이스는 recover/reconcile/scan_stuck 계열이 재시도한다. ffmpeg는 `c6g.4xlarge` VCPU=8 + R2 병렬 업로드로 처리한다.
 
 ## 1.1 Public API Edge
 
@@ -31,7 +32,8 @@ git push main
     |
     v
 [detect-changes] ─── analyze git diff ──> outputs: build_api, build_video,
-    |                                               build_messaging, build_ai, force_full
+    |                                               build_messaging, build_ai,
+    |                                               build_tools, force_full
     v
 [run-lint] ─── ruff deploy gate
     |
@@ -50,10 +52,13 @@ git push main
     |
     |── (if AI changed) ──> [deploy-ai] ─── ASG instance refresh (MinHealthy=0%, Warmup=120s)
     |
+    |── (if tools changed) ──> [deploy-tools] ─── ASG instance refresh (MinHealthy=0%, Warmup=120s)
+    |
     |── (if video changed) ──> [deploy-video] ─── Batch job definition revisions with SHA image
     |
     v
-[verify-deployment] ─── healthz 200 + health 200 + ASG healthy instances ──> PASS/FAIL
+[verify-deployment] ─── healthz 200 + health 200 + ASG healthy instances
+    |                    + tenant maintenance flag guard ──> PASS/FAIL
     |
     v
 [notify-on-failure] ─── failure-only notification
@@ -70,6 +75,7 @@ git push main
 | `apps/worker/video_worker/`, `apps/support/video/`, `apps/domains/video/`, `apps/api/config/settings/worker.py`, `docker/video-worker/`, `requirements/worker-video.txt` | Video Worker |
 | `apps/worker/messaging_worker/`, `apps/support/messaging/`, `apps/domains/messaging/`, `apps/api/config/settings/worker.py`, `docker/messaging-worker/`, `requirements/worker-messaging.txt` | Messaging Worker |
 | `apps/worker/ai_worker/`, `apps/worker/omr/`, `apps/domains/`, `apps/support/ai/`, `apps/api/config/settings/(worker|base).py`, `academy/`, `libs/queue/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
+| `apps/worker/tools_worker/`, `apps/domains/tools/`, `apps/domains/ai/queueing/`, `apps/support/ai/services/sqs_queue.py`, `academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/`, `docker/tools-worker/`, `requirements/worker-tools.txt` | Tools Worker |
 
 Base image build is CONDITIONAL — triggered only when `docker/Dockerfile.base`, `requirements/common.txt`, or `libs/` files change (or on workflow_dispatch). Conditional builds also apply to service-specific images.
 
@@ -87,12 +93,13 @@ Deploy jobs only run if the corresponding service was built:
 deploy-api:       if build_api == 'true' || force_full == 'true'
 deploy-messaging: if build_messaging == 'true' || force_full == 'true'
 deploy-ai:        if build_ai == 'true' || force_full == 'true'
+deploy-tools:     if build_tools == 'true' || force_full == 'true'
 deploy-video:     if build_video == 'true' || force_full == 'true'
 ```
 
 Dependencies:
 - `deploy-api` waits for `run-migrations` to succeed (or be skipped)
-- `deploy-messaging` and `deploy-ai` run in parallel, independently
+- `deploy-messaging`, `deploy-ai`, and `deploy-tools` run in parallel, independently
 - `verify-deployment` waits for all deploy jobs
 - `deploy-video` is included in the same workflow and runs when the video worker image changes
 
@@ -129,6 +136,7 @@ Runtime scaling is split by worker:
 
 - **AI** uses AWS/SQS CloudWatch scale-out alarms (`ai-worker-queue-high`, `ai-worker-queue-age-high`) plus API wake-up. Idle scale-in is worker-owned after live SQS depth is empty; `ai-worker-queue-low` is observability-only. SSOT min/desired is 0/0.
 - **Messaging** runs with ASG min/desired=1 baseline and AWS/SQS CloudWatch alarms for StepScaling up to SSOT max capacity. Deploys replace instances through ASG refresh.
+- **Tools** runs with ASG min/desired=1 warm baseline and AWS/SQS CloudWatch alarms for deterministic conversion queues. Deploys replace instances through ASG refresh.
 - **Video** is not an ASG worker. It is AWS Batch only.
 
 ### Worker UserData Flow
@@ -278,10 +286,11 @@ This keeps 10 rollback points and aggressively cleans untagged manifests. See `I
 
 | File | Purpose |
 |------|---------|
-| `.github/workflows/v1-build-and-push-latest.yml` | CI build, migration, API/messaging/AI/video deploy, verification |
+| `.github/workflows/v1-build-and-push-latest.yml` | CI build, migration, API/messaging/AI/tools/video deploy, verification |
 | `scripts/v1/resources/worker_userdata.ps1` | Worker UserData generation (Docker + ECR + SSM) |
 | `scripts/v1/resources/asg_ai.ps1` | AI ASG + launch template management |
 | `scripts/v1/resources/asg_messaging.ps1` | Messaging ASG + launch template management |
+| `scripts/v1/resources/asg_tools.ps1` | Tools ASG + launch template management |
 | `scripts/v1/resources/batch.ps1` | Video Batch CE/queue/job definition management |
 | `scripts/v1/resources/api.ps1` | API ASG + launch template management |
 | `scripts/v1/deploy.ps1` | Manual/bootstrap deployment (not used in CI/CD) |

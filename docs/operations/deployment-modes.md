@@ -1,7 +1,7 @@
 # 배포 방식 개요
 
 **기준:** 실제 스크립트·워크플로우. 문서는 실행 방식과 일치하도록 유지한다.
-**최종 갱신:** 2026-05-22
+**최종 갱신:** 2026-06-23
 
 ---
 
@@ -36,11 +36,11 @@
 main에 push하면 자동으로 서버 반영까지 완료된다:
 
 1. GitHub Actions `v1-build-and-push-latest.yml` 트리거
-2. 변경 감지 결과에 따라 필요한 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu)만 linux/arm64 빌드 → ECR `:latest` + `:sha-*` 푸시. `workflow_dispatch` 또는 core/shared 변경은 전체 빌드.
+2. 변경 감지 결과에 따라 필요한 이미지(base, api, video-worker, messaging-worker, ai-worker-cpu, tools-worker)만 linux/arm64 빌드 → ECR `:latest` + `:sha-*` 푸시. `workflow_dispatch` 또는 core/shared 변경은 전체 빌드.
 3. `run-migrations` job → 새 SHA 이미지로 one-shot `manage.py migrate`
-4. `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-video` job → 각 ASG/Bacth 리소스 refresh
+4. `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job → 각 ASG/Batch 리소스 refresh
 5. 새 인스턴스 기동 → UserData로 ECR pull + SSM env + docker run
-6. `verify-deployment` job → API health와 ASG 상태 확인
+6. `verify-deployment` job → API health, ASG 상태, tenant maintenance flag 확인
 
 **IAM:** `academy-gha-ecr-build` 역할에 ECR 권한 + `autoscaling:StartInstanceRefresh` + 배포 헬스 계측용 ELB target group read 권한 적용 완료 (2026-05-20).
 
@@ -72,9 +72,9 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 
 | 목적 | 방법 |
 |------|------|
-| 배포 후 API·인프라 상태 | deploy.ps1 출력의 After-Deploy Verification. 필요 시 `run-deploy-verification.ps1`. |
+| 배포 후 API·인프라 상태 | `run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` 후 `run-deploy-verification.ps1 -AwsProfile default`. |
 | CI 빌드 digest와 서버 이미지 일치 | `run-deploy-verification.ps1`가 갱신하는 `docs/reports/runtime-images.latest.md`에서 `ci-build.latest.md`의 academy-api digest와 운영 인스턴스별 런타임 image digest 일치 여부 확인. |
-| API health | ALB DNS 또는 API 공개 URL로 `/health` 200 확인. |
+| API health | API 공개 URL로 `/healthz`, `/health` 200 확인. |
 
 ---
 

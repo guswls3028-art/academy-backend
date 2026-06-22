@@ -24,7 +24,7 @@ provider "aws" {
     tags = {
       Project    = "academy"
       ManagedBy  = "terraform"
-      SSOT       = "docs/00-SSOT/v1/params.yaml"
+      SSOT       = "docs/ssot/params.yaml"
     }
   }
 }
