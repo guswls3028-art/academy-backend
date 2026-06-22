@@ -23,6 +23,9 @@ from apps.core.models.tenant import Tenant
 class InvoiceServiceTestBase(TestCase):
 
     def setUp(self):
+        # 기본 설정의 exempt id(1, 2)를 먼저 소비해 invoice 생성 테스트 대상은 live tenant가 되게 한다.
+        Tenant.objects.create(name="시스템 테넌트", code="invoice_exempt_1", is_active=True)
+        Tenant.objects.create(name="테스트 테넌트", code="invoice_exempt_2", is_active=True)
         self.tenant = Tenant.objects.create(
             name="테스트학원", code="test_inv", is_active=True
         )

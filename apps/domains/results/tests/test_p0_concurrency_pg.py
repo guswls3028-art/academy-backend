@@ -10,6 +10,8 @@ Run:
 from __future__ import annotations
 
 import threading
+import unittest
+
 import pytest
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError, connection, transaction
@@ -28,6 +30,14 @@ User = get_user_model()
 
 class TestP0ConcurrencyPG(TransactionTestCase):
     """Real PostgreSQL concurrency tests for P0 constraints."""
+
+    @classmethod
+    def setUpClass(cls):
+        if connection.vendor != "postgresql":
+            raise unittest.SkipTest(
+                "PostgreSQL database-level concurrency is required for this test."
+            )
+        super().setUpClass()
 
     def _setup_data(self):
         tenant = Tenant.objects.create(name="ConcTest", code="conc99", is_active=True)
