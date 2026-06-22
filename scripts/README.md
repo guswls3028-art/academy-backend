@@ -27,10 +27,10 @@
 |------|------|
 | Cloudflare/Gabia DNS | `add-cloudflare-zone*.ps1`, `get-zone-dns.ps1`, `zone-dns-*.ps1` |
 | 템플릿/데이터 점검 | `seed_templates.py`, `submit_templates_review.py`, `check_data_integrity.py`, `integrity_snapshot.py` |
-| legacy hot deploy 보조 | `hot_deploy_*.sh`, `deploy_api_on_server.sh` |
+| legacy deploy cron 정리 | `scripts/v1/disable-legacy-deploy-crons.ps1` |
 
-legacy hot deploy 계열은 운영 정식 배포 경로가 아니다. 운영 반영은 CI workflow 또는
-`scripts/v1/deploy.ps1` 기준으로 판단한다.
+legacy hot/rapid deploy 스크립트는 live tree에서 제거했다. 운영 반영은 CI workflow 또는
+`scripts/v1/deploy.ps1` 기준으로만 판단한다.
 
 ---
 

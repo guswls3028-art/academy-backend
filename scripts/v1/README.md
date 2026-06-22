@@ -39,6 +39,17 @@ production backend deploy/worker 변경 후에는 `run-production-canary.ps1 -Mo
 
 ---
 
+## legacy deploy cron 정리
+
+구 hot/rapid deploy cron은 정식 배포 경로가 아니다. 서버에 과거 cron 잔재가 의심될 때만 cleanup 전용 스크립트를 사용한다.
+
+```powershell
+pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Status -AwsProfile default
+pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
+```
+
+---
+
 ## params.yaml
 
 - **위치**: `docs/ssot/params.yaml`

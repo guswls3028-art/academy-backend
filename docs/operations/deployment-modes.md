@@ -13,7 +13,7 @@
 |------|------|
 | **트리거** | `git push origin main` (frontend 레포) |
 | **배포 대상** | Cloudflare Pages (자동 빌드·배포) |
-| **스크립트** | 불필요. `deploy-front.ps1`, `deploy.ps1 -DeployFront` 사용 금지. |
+| **스크립트** | backend 배포 스크립트로 프론트를 배포하지 않는다. |
 
 ---
 

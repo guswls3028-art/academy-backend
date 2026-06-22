@@ -1,4 +1,4 @@
-# Shared SSM helpers for running read-only commands on the live API container.
+# Shared SSM helpers for running shell commands on live API instances/containers.
 
 function Invoke-ApiSsmShellCommand {
     param(
