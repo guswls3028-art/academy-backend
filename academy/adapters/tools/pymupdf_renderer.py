@@ -139,6 +139,11 @@ class PdfBytesDocument:
     def extract_text(self) -> str:
         return "\n\n".join(page.get_text("text") or "" for page in self._doc)
 
+    def extract_page_text(self, page_index: int) -> str:
+        if page_index < 0 or page_index >= self.page_count():
+            raise IndexError(f"Page index {page_index} out of range (0-{self.page_count() - 1})")
+        return self._doc[page_index].get_text("text") or ""
+
     def render_page_bytes(self, page_index: int, *, zoom: float, jpg_quality: int = 82) -> tuple[str, bytes]:
         if page_index < 0 or page_index >= self.page_count():
             raise IndexError(f"Page index {page_index} out of range (0-{self.page_count() - 1})")

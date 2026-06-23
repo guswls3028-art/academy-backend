@@ -62,6 +62,7 @@ Backend:
 - Views: `backend/apps/domains/tools/problem_studio/views.py`
 - Service: `backend/apps/domains/tools/problem_studio/services.py`
 - Transfer package builder: `backend/apps/domains/tools/problem_studio/transfer_documents.py`
+- Source/question structure analyzer: `backend/apps/domains/tools/problem_studio/structure.py`
 - Worker entry: `backend/apps/domains/tools/problem_studio/worker.py`
 - AI job type: `problem_studio_package`
 - Worker payload stores extracted source text and source metadata, so the async worker does not depend on request file lifetime.
@@ -72,18 +73,31 @@ Backend:
   - `00_변환리포트.html`
   - `00_manifest.json`
   - `00_파일목록.csv`
+  - `01_자체양식_문제검수본.doc`
+- `00_manifest.json` uses `problem-studio-transfer-manifest/v2` and records:
+  - `structured_item_count`
+  - `structured_problem_count`
+  - `ocr_candidate_count`
+  - `quality_level`
+  - `structure.review_actions`
+  - `template_outputs`
+- The response also exposes these headers:
+  - `X-Problem-Studio-Structured-Item-Count`
+  - `X-Problem-Studio-OCR-Candidate-Count`
+  - `X-Problem-Studio-Quality-Level`
 
-Source extraction support:
+Source extraction and structure support:
 
-- PDF: server attempts text extraction with PyMuPDF.
-- Transfer package PDF: server renders every source page to embedded page images, split into 60-page `.doc` parts.
+- PDF: server attempts text extraction with PyMuPDF and records per-part text-layer results for structure analysis.
+- Transfer package PDF: server renders every source page to embedded page images, split into 60-page `.doc` parts. If the PDF has no text layer, the part is marked as an OCR candidate rather than treated as editable text.
 - HWPX: server reads `Preview/PrvText.txt` first, then XML content files.
 - DOCX: server reads `word/document.xml`.
 - HWP binary: transfer package extracts BodyText paragraph text and every image-like `BinData` stream into a Hangul/Word-compatible `.doc`; compressed BinData image bytes are inflated and normalized to browser/Office-safe PNG/JPEG data URLs. The editable text and image gallery are preserved, but exact original HWP layout is not yet guaranteed.
 - HWP binary beta rewrite also reuses the BodyText paragraph extractor for source text, but image/table layout still belongs to the base transfer package.
 - DOC binary: metadata/warning only.
 - ZIP: transfer package expands supported nested sources (`.pdf`, `.hwp`, `.hwpx`, `.docx`, `.doc`, image files) within safety limits and writes one or more `.doc` drafts per nested file. Beta rewrite also reads supported nested text documents within the same safety posture.
-- Image files: embedded as visual pages in the transfer package; there is no OCR in the current MVP.
+- Image files: embedded as visual pages in the transfer package and marked as OCR candidates for later text editability.
+- Structure analyzer: extracted PDF/HWP/HWPX/DOCX text is split into teacher-review problem/concept candidates. The result is a review aid, not an authoritative segmentation engine.
 - Fixture verification script: `backend/scripts/problem_studio_transfer_fixtures.py` converts a local source folder into the same transfer ZIP and JSON summary for regression checks.
 - UAT runbook: `backend/docs/operations/runbooks/problem-studio-source-transfer-uat.md`
 
@@ -91,16 +105,17 @@ Source extraction support:
 
 - Commercial default: sell this as "source transfer to editable teacher-review drafts", not as fully autonomous problem generation.
 - Value moment: teacher uploads the files they already receive and gets a Hangul/Word-compatible package without retyping. The first visible CTA must stay `원본 한글로 저장`.
-- The downloaded ZIP is itself part of the product. The teacher should open `00_먼저열기_검수체크리스트.doc` first, then use `00_변환리포트.html` and `00_파일목록.csv` to inspect warnings, missing files, and source-to-output mapping.
+- The downloaded ZIP is itself part of the product. The teacher should open `00_먼저열기_검수체크리스트.doc` first, then use `01_자체양식_문제검수본.doc`, `00_변환리포트.html`, and `00_파일목록.csv` to inspect structure candidates, warnings, missing files, and source-to-output mapping.
 - Beta positioning: rewrite candidates are optional, visibly marked Beta, and output to a review draft. A teacher should never need to touch beta controls to complete the base workflow.
 - Business risk: scanned/image-only sources still need OCR for editable text. The product should preserve them as images today and avoid promising exact native HWP layout.
 - Next conversion lever: template fidelity and OCR improve willingness to pay more than more generation modes.
 
 ## Known Limitations
 
-- No OCR. Scanned images and image-only PDFs are preserved as images unless they have extractable text elsewhere.
+- No synchronous OCR in the transfer endpoint. Scanned images and image-only PDFs are preserved as images and recorded as OCR candidates unless they have extractable text elsewhere.
 - No native HWP/HWPX writer yet. The current `.doc` is intentionally a compatibility draft.
 - HWP transfer preserves extracted text and embedded images, not exact object ordering or native HWP layout. It is a teacher review draft, not a final typeset workbook.
+- Problem/concept structure is heuristic. The system now produces a `01_자체양식_문제검수본.doc`, but teachers must still verify split boundaries, choices, answers, and explanations.
 - Automatic rewrite is available only as a collapsed Beta workflow. It is not the primary CTA and every result remains a teacher-review draft.
 - Template understanding is shallow. "매치업 기존 양식" and uploaded template names are recorded, but the system does not yet learn precise spacing/style rules from a template file.
 - The generated answer/explanation fields are review aids, not authoritative. Teacher verification remains required.
@@ -110,8 +125,8 @@ Source extraction support:
 Keep future work staged in this order unless product policy changes:
 
 1. Better source transfer
-   - OCR for scanned images/image PDFs.
-   - More reliable problem splitting and HWP text/image ordering.
+   - Async OCR worker connection for scanned images/image PDFs using the manifest OCR candidate contract.
+   - More reliable HWP text/image ordering and table/choice grouping.
    - Native HWPX output with real endnote objects.
 2. Template fidelity
    - Read a sample academy format and map title/class/header/question spacing rules.

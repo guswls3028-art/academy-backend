@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import zipfile
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any, Iterable
 from xml.etree import ElementTree
+
+from apps.domains.tools.problem_studio.structure import (
+    extract_problem_fields,
+    normalize_space,
+    split_source_blocks,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -56,14 +61,7 @@ def _source_kind(filename: str) -> str:
 
 
 def _normalize_space(text: str) -> str:
-    lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.replace("\r", "\n").split("\n")]
-    compact: list[str] = []
-    for line in lines:
-        if line:
-            compact.append(line)
-        elif compact and compact[-1] != "":
-            compact.append("")
-    return "\n".join(compact).strip()
+    return normalize_space(text)
 
 
 def _read_limited(uploaded: Any) -> bytes:
@@ -269,44 +267,17 @@ def _question_text_from_payload(payload: dict[str, Any]) -> str:
     return _normalize_space("\n\n".join(parts))
 
 
-_QUESTION_SPLIT_RE = re.compile(
-    r"\n(?=\s*(?:\d{1,3}\s*[.)]|문제\s*\d{1,3}|Q\s*\d{1,3})\s*)",
-    re.IGNORECASE,
-)
-_LEADING_NUMBER_RE = re.compile(r"^\s*(?:\d{1,3}\s*[.)]|문제\s*\d{1,3}|Q\s*\d{1,3})\s*", re.IGNORECASE)
-_CHOICE_RE = re.compile(r"^\s*(?:[①②③④⑤⑥⑦⑧⑨]|\([1-9]\)|[1-9]\))\s*")
-_ANSWER_RE = re.compile(r"(?:정답|답)\s*[:：]?\s*([①②③④⑤⑥⑦⑧⑨1-9A-Ea-e]+)")
-_EXPLANATION_RE = re.compile(r"(?:해설|풀이)\s*[:：]?\s*(.+)", re.DOTALL)
-
-
 def _split_source_questions(text: str) -> list[str]:
-    normalized = _normalize_space(text)
-    if not normalized:
-        return []
-    blocks = [block.strip() for block in _QUESTION_SPLIT_RE.split(f"\n{normalized}") if block.strip()]
-    if len(blocks) == 1 and len(blocks[0]) > 1800:
-        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", blocks[0]) if p.strip()]
-        blocks = paragraphs if len(paragraphs) > 1 else blocks
-    return blocks[:MAX_OUTPUT_QUESTIONS]
+    return split_source_blocks(text, max_blocks=MAX_OUTPUT_QUESTIONS)
 
 
 def _extract_question_fields(block: str) -> dict[str, Any]:
-    clean = _LEADING_NUMBER_RE.sub("", block).strip()
-    lines = [line.strip() for line in clean.splitlines() if line.strip()]
-    choices: list[str] = []
-    body_lines: list[str] = []
-    for line in lines:
-        if _CHOICE_RE.match(line):
-            choices.append(line)
-        elif not _ANSWER_RE.search(line) and not line.startswith(("해설", "풀이")):
-            body_lines.append(line)
-    answer_match = _ANSWER_RE.search(clean)
-    explanation_match = _EXPLANATION_RE.search(clean)
+    fields = extract_problem_fields(block)
     return {
-        "prompt": _normalize_space("\n".join(body_lines))[:3000],
-        "choices": choices[:10],
-        "answer": answer_match.group(1).strip() if answer_match else "",
-        "explanation": _normalize_space(explanation_match.group(1))[:800] if explanation_match else "",
+        "prompt": str(fields["prompt"])[:3000],
+        "choices": list(fields["choices"])[:10],
+        "answer": str(fields["answer"]),
+        "explanation": str(fields["explanation"])[:800],
     }
 
 
@@ -368,16 +339,14 @@ def _source_transfer_questions(text: str) -> list[dict[str, Any]]:
         return []
     output: list[dict[str, Any]] = []
     for block_index, block in enumerate(blocks, start=1):
-        answer_match = _ANSWER_RE.search(block)
-        explanation_match = _EXPLANATION_RE.search(block)
+        fields = _extract_question_fields(block)
         output.append({
             "prompt": block[:4000],
             "choices": [],
-            "answer": answer_match.group(1).strip() if answer_match else "원본 확인",
+            "answer": fields["answer"] or "원본 확인",
             "explanation": (
-                _normalize_space(explanation_match.group(1))[:800]
-                if explanation_match
-                else "원본 자료를 한글 검수 파일로 그대로 옮긴 초안입니다. 선생님 검수 후 수정합니다."
+                fields["explanation"]
+                or "원본 자료를 한글 검수 파일로 그대로 옮긴 초안입니다. 선생님 검수 후 수정합니다."
             ),
             "source_index": block_index,
             "variant_index": 1,

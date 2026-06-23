@@ -18,6 +18,12 @@ from urllib.parse import quote
 
 from django.http import HttpResponse
 
+from apps.domains.tools.problem_studio.structure import (
+    TransferStructure,
+    analyze_transfer_documents,
+    normalize_space,
+)
+
 
 TRANSFER_MAX_UPLOAD_BYTES = 120 * 1024 * 1024
 TRANSFER_MAX_ZIP_MEMBERS = 300
@@ -49,6 +55,7 @@ class TransferDocument:
     image_count: int = 0
     page_count: int = 0
     warning: str | None = None
+    plain_text: str = ""
 
 
 @dataclass
@@ -59,6 +66,9 @@ class TransferPackage:
     documents: list[TransferDocument] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     review_file_count: int = 0
+    structured_item_count: int = 0
+    ocr_candidate_count: int = 0
+    quality_level: str = ""
 
 
 def _escape(value: Any) -> str:
@@ -310,14 +320,18 @@ def _pdf_transfer_docs(name: str, data: bytes) -> list[TransferDocument]:
         page_count = pdf.page_count()
         for start in range(0, page_count, TRANSFER_PDF_PAGES_PER_DOC):
             end = min(start + TRANSFER_PDF_PAGES_PER_DOC, page_count)
+            part_text_chunks: list[str] = []
             page_html: list[str] = [
                 _meta_block(
                     "PDF 원본 페이지 이관",
                     name,
-                    f"스캔/페이지 이미지 보존 · {start + 1}-{end}쪽 / 총 {page_count}쪽",
+                    f"페이지 이미지 보존 + 텍스트 레이어 분석 · {start + 1}-{end}쪽 / 총 {page_count}쪽",
                 )
             ]
             for index in range(start, end):
+                page_text = normalize_space(pdf.extract_page_text(index))
+                if page_text:
+                    part_text_chunks.append(f"[{index + 1}쪽]\n{page_text}")
                 mime, image_bytes = pdf.render_page_bytes(index, zoom=TRANSFER_PDF_RENDER_ZOOM, jpg_quality=82)
                 page_no = index + 1
                 page_html.append(
@@ -335,6 +349,8 @@ def _pdf_transfer_docs(name: str, data: bytes) -> list[TransferDocument]:
                 kind="PDF",
                 page_count=end - start,
                 image_count=end - start,
+                text_chars=len(normalize_space("\n\n".join(part_text_chunks))),
+                plain_text=normalize_space("\n\n".join(part_text_chunks)),
             ))
     return documents
 
@@ -353,6 +369,7 @@ def _simple_text_transfer_doc(name: str, text: str, detail: str, warning: str | 
         kind=_source_kind(name),
         text_chars=len(text or ""),
         warning=warning,
+        plain_text=text or "",
     )
 
 
@@ -484,6 +501,7 @@ def _fast_hwp_transfer_doc(name: str, data: bytes) -> TransferDocument:
         kind="HWP",
         text_chars=len(text),
         image_count=len(images),
+        plain_text=text,
     )
 
 
@@ -572,11 +590,22 @@ def _review_status(doc: TransferDocument) -> str:
     return "검수 대기"
 
 
+def _quality_label(value: str) -> str:
+    return {
+        "structured_review_ready": "문제 단위 검수 가능",
+        "mixed_review_ocr_recommended": "혼합 자료 · OCR 권장",
+        "visual_only_ocr_required": "시각 이관 완료 · OCR 필요",
+        "needs_attention": "확인 필요",
+        "manual_review_required": "수동 검수 필요",
+    }.get(value, value or "수동 검수 필요")
+
+
 def _build_review_checklist_html(
     meta: dict[str, str],
     input_files: list[dict[str, Any]],
     documents: list[TransferDocument],
     warnings: list[str],
+    structure: TransferStructure,
 ) -> str:
     source_rows = "\n".join(
         f"<tr><td>{index}</td><td>{_escape(item['name'])}</td><td>{_escape(item['kind'])}</td><td>{_escape(item['sizeLabel'])}</td></tr>"
@@ -605,6 +634,7 @@ def _build_review_checklist_html(
   </div>
   <h2>1. 실사용 검수 순서</h2>
   <ol>
+    <li><strong>01_자체양식_문제검수본.doc</strong>에서 자동 분리된 문제/개념 블록을 먼저 확인합니다.</li>
     <li><strong>00_변환리포트.html</strong>에서 경고와 문서 수를 먼저 확인합니다.</li>
     <li>각 산출물 `.doc`을 한글 또는 Word에서 열고 편집 가능 여부를 확인합니다.</li>
     <li>원본의 첫 쪽, 중간 쪽, 마지막 쪽을 산출물과 대조합니다.</li>
@@ -614,25 +644,29 @@ def _build_review_checklist_html(
   <h2>2. 합격 기준</h2>
   <table>
     <tbody>
+      <tr><th>구조화</th><td>자동 분리 항목 {structure.structured_item_count}개, 문제 후보 {structure.structured_problem_count}개. 상태: {_escape(_quality_label(structure.quality_level))}</td></tr>
       <tr><th>열림</th><td>한글/Word에서 모든 `.doc` 파일이 열리고 저장됩니다.</td></tr>
       <tr><th>누락</th><td>원본 페이지 또는 주요 그림/표가 빠지지 않았습니다.</td></tr>
       <tr><th>수정성</th><td>선생님이 수업용으로 직접 고칠 수 있는 상태입니다.</td></tr>
+      <tr><th>OCR</th><td>OCR 후보 {structure.ocr_candidate_count}개. 스캔본은 시각 이관 후 OCR 연결 대상으로 분류합니다.</td></tr>
       <tr><th>Beta</th><td>재작성 후보는 참고용이며 정답/표현은 확정 전 검수합니다.</td></tr>
     </tbody>
   </table>
-  <h2>3. 원본 파일</h2>
+  <h2>3. 자동 검수 액션</h2>
+  <ul>{"".join(f"<li>{_escape(action)}</li>" for action in structure.review_actions)}</ul>
+  <h2>4. 원본 파일</h2>
   <table>
     <thead><tr><th>#</th><th>파일명</th><th>유형</th><th>크기</th></tr></thead>
     <tbody>{source_rows}</tbody>
   </table>
-  <h2>4. 산출물별 확인 포인트</h2>
+  <h2>5. 산출물별 확인 포인트</h2>
   <table>
     <thead><tr><th>#</th><th>산출물</th><th>유형</th><th>쪽수</th><th>이미지</th><th>상태</th><th>확인 포인트</th></tr></thead>
     <tbody>{review_rows}</tbody>
   </table>
-  <h2>5. 경고</h2>
+  <h2>6. 경고</h2>
   <ul>{warning_items}</ul>
-  <h2>6. 선생님 피드백 기록</h2>
+  <h2>7. 선생님 피드백 기록</h2>
   <table>
     <thead><tr><th>파일</th><th>위치</th><th>문제 유형</th><th>수정 필요 내용</th><th>처리</th></tr></thead>
     <tbody>
@@ -661,9 +695,10 @@ def _build_manifest_json(
     input_files: list[dict[str, Any]],
     documents: list[TransferDocument],
     warnings: list[str],
+    structure: TransferStructure,
 ) -> str:
     manifest = {
-        "schema": "problem-studio-transfer-manifest/v1",
+        "schema": "problem-studio-transfer-manifest/v2",
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "title": meta["title"],
         "class_name": meta["class_name"],
@@ -674,6 +709,10 @@ def _build_manifest_json(
         "image_count": sum(doc.image_count for doc in documents),
         "page_count": sum(doc.page_count for doc in documents),
         "text_chars": sum(doc.text_chars for doc in documents),
+        "structured_item_count": structure.structured_item_count,
+        "structured_problem_count": structure.structured_problem_count,
+        "ocr_candidate_count": structure.ocr_candidate_count,
+        "quality_level": structure.quality_level,
         "input_files": input_files,
         "documents": [
             {
@@ -690,6 +729,14 @@ def _build_manifest_json(
             for doc in documents
         ],
         "warnings": warnings,
+        "structure": structure.to_manifest(),
+        "template_outputs": [
+            {
+                "filename": "01_자체양식_문제검수본.doc",
+                "type": "academy_review_workbook",
+                "status": _quality_label(structure.quality_level),
+            }
+        ],
         "review_contract": {
             "base_workflow": "source_transfer_teacher_review",
             "teacher_must_verify_answers": True,
@@ -704,6 +751,7 @@ def _build_file_list_csv(
     input_files: list[dict[str, Any]],
     documents: list[TransferDocument],
     warnings: list[str],
+    structure: TransferStructure,
 ) -> str:
     out = io.StringIO()
     writer = csv.writer(out)
@@ -725,7 +773,95 @@ def _build_file_list_csv(
         ])
     for index, warning in enumerate(warnings, start=1):
         writer.writerow(["경고", index, "", "", "", "", "", "", "확인 필요", warning])
+    writer.writerow([
+        "검수본",
+        1,
+        "01_자체양식_문제검수본.doc",
+        "",
+        "자체양식",
+        structure.structured_item_count,
+        "",
+        structure.text_chars,
+        _quality_label(structure.quality_level),
+        "",
+    ])
     return "\ufeff" + out.getvalue()
+
+
+def _build_structured_workbook_html(meta: dict[str, str], structure: TransferStructure) -> str:
+    if structure.items:
+        item_html = []
+        for item in structure.items:
+            choices = (
+                f'<ol class="choices">{"".join(f"<li>{_escape(choice)}</li>" for choice in item.choices)}</ol>'
+                if item.choices
+                else '<p class="missing-field">보기 없음 · 원본 확인</p>'
+            )
+            flags = ", ".join(item.review_flags) if item.review_flags else "기본 검수"
+            item_html.append(f"""
+      <article class="problem-card">
+        <div class="problem-head">
+          <strong>{item.number}. {_escape("문제" if item.item_type == "problem" else "개념")}</strong>
+          <span>{_escape(item.source_name)} · 신뢰도 {item.confidence:.2f} · {_escape(flags)}</span>
+        </div>
+        <div class="prompt">{_escape(item.prompt)}</div>
+        {choices}
+        <table class="answer-table">
+          <tbody>
+            <tr><th>정답</th><td>{_escape(item.answer or "검수 필요")}</td></tr>
+            <tr><th>해설</th><td>{_escape(item.explanation or "검수 후 작성")}</td></tr>
+          </tbody>
+        </table>
+      </article>
+""")
+        body_items = "\n".join(item_html)
+    else:
+        body_items = """
+      <div class="warning">
+        자동 분리할 텍스트가 없습니다. PDF/이미지 원본은 시각 이관 문서를 먼저 확인하고,
+        OCR 연결 후 문제 단위 편집본을 다시 생성하세요.
+      </div>
+"""
+    ocr_rows = "\n".join(
+        f"<tr><td>{index}</td><td>{_escape(item['source_name'])}</td><td>{_escape(item['kind'])}</td><td>{item['page_count'] or item['image_count']}</td><td>{_escape(item['reason'])}</td></tr>"
+        for index, item in enumerate(structure.ocr_candidates, start=1)
+    ) or '<tr><td colspan="5">OCR 후보 없음</td></tr>'
+    action_items = "".join(f"<li>{_escape(action)}</li>" for action in structure.review_actions)
+    body = f"""
+  <h1>{_escape(meta['title'])} 자체양식 문제검수본</h1>
+  <div class="transfer-meta">
+    <strong>반명</strong> {_escape(meta['class_name'] or "-")}<br />
+    <strong>과목</strong> {_escape(meta['subject'] or "-")}<br />
+    <strong>기준 양식</strong> {_escape(meta['template_name'])}<br />
+    <strong>상태</strong> {_escape(_quality_label(structure.quality_level))}<br />
+    <strong>자동 분리</strong> {structure.structured_item_count}개 · 문제 후보 {structure.structured_problem_count}개 · 개념 블록 {structure.concept_block_count}개
+  </div>
+  <h2>검수 액션</h2>
+  <ol>{action_items}</ol>
+  <h2>문제/개념 단위 검수본</h2>
+  {body_items}
+  <h2>OCR 연결 후보</h2>
+  <table>
+    <thead><tr><th>#</th><th>원본</th><th>유형</th><th>쪽/이미지</th><th>사유</th></tr></thead>
+    <tbody>{ocr_rows}</tbody>
+  </table>
+"""
+    return _office_doc_shell(
+        f"{meta['title']} 자체양식 문제검수본",
+        body,
+        extra_style="""
+    h2 { margin: 9mm 0 3mm; font-size: 13pt; }
+    .problem-card { page-break-inside: avoid; border: 0.7pt solid #cbd5e1; padding: 4mm; margin: 0 0 5mm; }
+    .problem-head { display: flex; justify-content: space-between; gap: 4mm; border-bottom: 0.5pt solid #e5e7eb; padding-bottom: 2mm; margin-bottom: 3mm; }
+    .problem-head span { color: #64748b; font-size: 8.5pt; text-align: right; }
+    .prompt { white-space: pre-wrap; margin: 0 0 3mm; }
+    .choices { margin: 0 0 3mm 5mm; padding-left: 4mm; }
+    .missing-field { margin: 0 0 3mm; color: #92400e; font-size: 9pt; }
+    .answer-table, table { width: 100%; border-collapse: collapse; margin: 3mm 0 5mm; }
+    .answer-table th, .answer-table td, table th, table td { border: 0.5pt solid #cbd5e1; padding: 2mm; vertical-align: top; font-size: 9pt; }
+    .answer-table th, table th { width: 22mm; background: #f8fafc; }
+""",
+    )
 
 
 def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[Any]) -> TransferPackage:
@@ -767,6 +903,7 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
         documents.append(_simple_text_transfer_doc("empty.txt", "", "빈 요청", warning))
         warnings.append(warning)
 
+    structure = analyze_transfer_documents(documents, warnings)
     now = datetime.now().strftime("%Y%m%d-%H%M%S")
     package_name = f"{_safe_filename(title, default='problem-studio')}_원본이관_{now}.zip"
     buffer = io.BytesIO()
@@ -779,10 +916,11 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
                 zip_name = f"{index:02d}_{Path(base_name).stem}_{len(used_names) + 1}.doc"
             used_names.add(zip_name)
             zf.writestr(zip_name, "\ufeff" + doc.html)
-        zf.writestr("00_먼저열기_검수체크리스트.doc", "\ufeff" + _build_review_checklist_html(meta, input_files, documents, warnings))
-        zf.writestr("00_변환리포트.html", _build_report_html(title, documents, warnings))
-        zf.writestr("00_manifest.json", _build_manifest_json(meta, input_files, documents, warnings))
-        zf.writestr("00_파일목록.csv", _build_file_list_csv(input_files, documents, warnings))
+        zf.writestr("00_먼저열기_검수체크리스트.doc", "\ufeff" + _build_review_checklist_html(meta, input_files, documents, warnings, structure))
+        zf.writestr("00_변환리포트.html", _build_report_html(title, documents, warnings, structure))
+        zf.writestr("00_manifest.json", _build_manifest_json(meta, input_files, documents, warnings, structure))
+        zf.writestr("00_파일목록.csv", _build_file_list_csv(input_files, documents, warnings, structure))
+        zf.writestr("01_자체양식_문제검수본.doc", "\ufeff" + _build_structured_workbook_html(meta, structure))
 
     return TransferPackage(
         filename=package_name,
@@ -790,11 +928,19 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
         data=buffer.getvalue(),
         documents=documents,
         warnings=warnings,
-        review_file_count=4,
+        review_file_count=5,
+        structured_item_count=structure.structured_item_count,
+        ocr_candidate_count=structure.ocr_candidate_count,
+        quality_level=structure.quality_level,
     )
 
 
-def _build_report_html(title: str, documents: list[TransferDocument], warnings: list[str]) -> str:
+def _build_report_html(
+    title: str,
+    documents: list[TransferDocument],
+    warnings: list[str],
+    structure: TransferStructure,
+) -> str:
     rows = "\n".join(
         f"<tr>"
         f"<td>{index}</td>"
@@ -814,7 +960,8 @@ def _build_report_html(title: str, documents: list[TransferDocument], warnings: 
   <div class="transfer-meta">
     <strong>생성 시각</strong> {_escape(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}<br />
     <strong>문서 수</strong> {len(documents)}개<br />
-    <strong>이미지/페이지 수</strong> {sum(doc.image_count for doc in documents)}개
+    <strong>이미지/페이지 수</strong> {sum(doc.image_count for doc in documents)}개<br />
+    <strong>자동 구조화</strong> {_escape(_quality_label(structure.quality_level))} · 항목 {structure.structured_item_count}개 · OCR 후보 {structure.ocr_candidate_count}개
   </div>
   <h2>변환 결과</h2>
   <table>
@@ -825,6 +972,8 @@ def _build_report_html(title: str, documents: list[TransferDocument], warnings: 
   </table>
   <h2>경고</h2>
   <ul>{warning_items}</ul>
+  <h2>자동 검수 액션</h2>
+  <ul>{"".join(f"<li>{_escape(action)}</li>" for action in structure.review_actions)}</ul>
 """
     return _office_doc_shell(
         f"{title} 변환 리포트",
@@ -844,4 +993,7 @@ def package_to_response(package: TransferPackage) -> HttpResponse:
     response["X-Problem-Studio-Document-Count"] = str(len(package.documents))
     response["X-Problem-Studio-Warning-Count"] = str(len(package.warnings))
     response["X-Problem-Studio-Review-File-Count"] = str(package.review_file_count)
+    response["X-Problem-Studio-Structured-Item-Count"] = str(package.structured_item_count)
+    response["X-Problem-Studio-OCR-Candidate-Count"] = str(package.ocr_candidate_count)
+    response["X-Problem-Studio-Quality-Level"] = package.quality_level
     return response

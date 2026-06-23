@@ -21,6 +21,7 @@ from apps.domains.tools.problem_studio.worker import handle_problem_studio_packa
 from apps.domains.tools.problem_studio.transfer_documents import (
     TRANSFER_MAX_ZIP_MEMBERS,
     build_transfer_package,
+    package_to_response,
     _normalize_hwp_image_data,
 )
 
@@ -221,7 +222,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
             source_files=[uploaded],
         )
 
-        self.assertEqual(package.review_file_count, 4)
+        self.assertEqual(package.review_file_count, 5)
         self.assertEqual(len(package.documents), 1)
         self.assertEqual(len(package.warnings), 1)
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
@@ -231,18 +232,60 @@ class ProblemStudioServiceTests(SimpleTestCase):
             csv_text = zf.read("00_파일목록.csv").decode("utf-8-sig")
 
         self.assertIn("실사용 검수 순서", checklist)
+        self.assertIn("01_자체양식_문제검수본.doc", checklist)
         self.assertIn("legacy.doc", checklist)
         self.assertIn("DOCX/PDF로 저장", checklist)
-        self.assertEqual(manifest["schema"], "problem-studio-transfer-manifest/v1")
+        self.assertEqual(manifest["schema"], "problem-studio-transfer-manifest/v2")
         self.assertEqual(manifest["title"], "화학2 1단원")
         self.assertEqual(manifest["class_name"], "고3")
         self.assertEqual(manifest["document_count"], 1)
         self.assertEqual(manifest["warning_count"], 1)
+        self.assertEqual(manifest["structured_item_count"], 0)
+        self.assertEqual(manifest["quality_level"], "needs_attention")
         self.assertTrue(manifest["review_contract"]["teacher_must_verify_answers"])
         self.assertEqual(manifest["documents"][0]["status"], "확인 필요")
+        self.assertEqual(manifest["template_outputs"][0]["filename"], "01_자체양식_문제검수본.doc")
         self.assertIn("산출물", csv_text)
+        self.assertIn("검수본", csv_text)
         self.assertIn("legacy_원본이관.doc", csv_text)
         self.assertIn("00_manifest.json", names)
+        self.assertIn("01_자체양식_문제검수본.doc", names)
+
+    def test_transfer_package_builds_structured_workbook_from_docx_text(self):
+        uploaded = _zip_file(
+            "chemistry.docx",
+            {
+                "word/document.xml": (
+                    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    "<w:body>"
+                    "<w:p><w:r><w:t>1. 물의 자동 이온화 상수를 고르시오.</w:t></w:r></w:p>"
+                    "<w:p><w:r><w:t>① Kw ② Ka ③ Kb</w:t></w:r></w:p>"
+                    "<w:p><w:r><w:t>정답 ①</w:t></w:r></w:p>"
+                    "<w:p><w:r><w:t>해설 물의 자동 이온화 평형을 나타냅니다.</w:t></w:r></w:p>"
+                    "</w:body></w:document>"
+                )
+            },
+        )
+
+        package = build_transfer_package(payload={"title": "화학2 구조화"}, source_files=[uploaded])
+        response = package_to_response(package)
+
+        self.assertEqual(package.review_file_count, 5)
+        self.assertEqual(package.structured_item_count, 1)
+        self.assertEqual(package.ocr_candidate_count, 0)
+        self.assertEqual(response["X-Problem-Studio-Structured-Item-Count"], "1")
+        self.assertEqual(response["X-Problem-Studio-OCR-Candidate-Count"], "0")
+        self.assertEqual(response["X-Problem-Studio-Quality-Level"], "structured_review_ready")
+        with zipfile.ZipFile(BytesIO(package.data)) as zf:
+            workbook = zf.read("01_자체양식_문제검수본.doc").decode("utf-8-sig")
+            manifest = json.loads(zf.read("00_manifest.json").decode("utf-8"))
+
+        self.assertIn("자체양식 문제검수본", workbook)
+        self.assertIn("물의 자동 이온화 상수", workbook)
+        self.assertIn("정답", workbook)
+        self.assertEqual(manifest["structured_item_count"], 1)
+        self.assertEqual(manifest["structured_problem_count"], 1)
+        self.assertEqual(manifest["ocr_candidate_count"], 0)
 
     def test_transfer_package_reports_zip_with_too_many_members(self):
         uploaded = SimpleUploadedFile(
