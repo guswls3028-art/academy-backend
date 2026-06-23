@@ -12,7 +12,7 @@
   - `cross_domain_import=117`
   - `cross_domain_internal_import=590`
   - `domain_infra_import=81`
-  - `check_id_domain_safety.py`: 21 warning(s), 0 error(s)
+  - `check_id_domain_safety.py`: 20 warning(s), 0 error(s)
   - `UNORDERED_FIRST`: 0
   - `SILENT_FALLBACK`: 0
 - Frontend snapshot after this tranche:
@@ -167,12 +167,33 @@
 - Reduced ID-domain safety warnings from 32 to 21, `UNORDERED_FIRST` from 4 to
   0, and backend `cross_domain_internal_import` from 591 to 590.
 
+## Tranche 12 Changes
+
+- Converted nullable `Submission.enrollment_id` to a Django ForeignKey while
+  preserving the deployed `enrollment_id` DB column and public `_id` attname.
+- Made the DRF submission serializers explicitly keep the `enrollment_id`
+  input/output contract after the model field rename.
+- Added migration cleanup that sets invalid non-null submission enrollment refs
+  to `NULL` before adding the FK constraint. Production preflight measured 50
+  invalid non-null refs out of 144 submissions, all now handled by the
+  migration's `SET_NULL`-compatible normalization path.
+- Verified `SubmissionAnswer.exam_question_id` is not yet safe for FK
+  conversion: production preflight measured 165 invalid refs out of 2,625
+  answers, all attached to submissions whose target exam is already missing.
+  That candidate needs a submission/exam lifecycle cleanup plan before a
+  constraint can be added.
+- Verified `ResultFact.question_id` and `ExamAttempt.submission_id` are not
+  safe immediate FK candidates because both still use structural `0` marker
+  semantics in manual-score paths.
+- Reduced ID-domain safety warnings from 21 to 20 with no refactor boundary
+  baseline regression.
+
 ## Verification
 
 - Backend:
   - `python manage.py check --settings apps.api.config.settings.test`: passed.
   - `python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test`: passed.
-  - `python scripts\lint\check_id_domain_safety.py`: 21 warning(s), 0 error(s).
+  - `python scripts\lint\check_id_domain_safety.py`: 20 warning(s), 0 error(s).
   - `python scripts\lint\refactor_boundary_snapshot.py --strict-touched`: passed.
   - `python scripts\lint\refactor_boundary_snapshot.py --enforce-baseline`: passed.
   - `python -m ruff check <touched backend files>`: passed.
@@ -192,6 +213,7 @@
   - `python -m pytest apps/domains/homework_results/tests/test_homework_destroy_policy.py -v --tb=short`: 7 passed.
   - `python -m pytest apps/domains/results/tests/test_p0_p1_fixes.py::TestHomeworkScoreValidation -v --tb=short`: 6 passed.
   - `python -m pytest tests/test_smoke.py -v --tb=short -x`: 20 passed, 5 subtests passed.
+  - `pwsh scripts/v1/run-api-management-remote.ps1 -Command 'shell -c ...'`: production read-only preflight for remaining submission/question FK candidates completed; no data was modified.
 - Frontend:
   - `pnpm refactor:budget`: passed.
   - `pnpm typecheck`: passed.
@@ -201,9 +223,10 @@
 
 ## Next Tranche Candidates
 
-- Backend: plan the remaining `[ALLOWED]` integer-FK candidates by domain. Start
-  with `submissions.SubmissionAnswer.exam_question_id` or
-  `results.ResultFact.question_id`, because both touch assessment correctness.
+- Backend: plan the remaining `[ALLOWED]` integer-FK candidates by domain.
+  `SubmissionAnswer.exam_question_id` needs submission/exam orphan cleanup
+  first; `ResultFact.question_id` and `ExamAttempt.submission_id` need a
+  replacement for their manual-score `0` marker semantics before FK conversion.
 - Frontend: continue from same-app domain import hotspots:
   `app_admin/sessions -> lectures/results/exams`, remaining
   `app_admin/sessions -> homework` UI component imports, and

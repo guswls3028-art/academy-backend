@@ -19,6 +19,7 @@
 # domains/results/models/wrong_note_pdf.py:lecture_id — FK (0012)
 # domains/results/models/wrong_note_pdf.py:exam_id — FK (0012)
 # domains/homework_results/models/score.py:updated_by_user_id — FK (0010)
+# domains/submissions/models/submission.py:enrollment_id — FK (0008)
 # domains/homework/models/homework_enrollment.py:session_id — FK (0003)
 # domains/homework/models/homework_enrollment.py:enrollment_id — FK (0003)
 # domains/homework/models/homework_assignment.py:enrollment_id — FK (0003)
@@ -49,9 +50,6 @@ support/video/models.py:user_id
 # AI views — local variable, not model field
 domains/ai/views/exam_sheet.py:exam_id
 domains/ai/views/exam_sheet.py:sheet_id
-
-# Submission — enrollment_id is nullable, FK conversion possible but needs careful migration
-domains/submissions/models/submission.py:enrollment_id
 
 # Matchup legacy / denormalized source references
 domains/matchup/models.py:source_exam_id

@@ -82,10 +82,10 @@ Current baseline snapshot (latest local run: 2026-06-23 KST):
 - `cross_domain_import`: 117
 - `cross_domain_internal_import`: 590
 - `domain_infra_import`: 81
-- `check_id_domain_safety.py`: 21 warning(s), 0 error(s)
+- `check_id_domain_safety.py`: 20 warning(s), 0 error(s)
   - `UNORDERED_FIRST`: 0
   - `SILENT_FALLBACK`: 0
-  - Remaining warnings are 21 `[ALLOWED]` integer-FK candidates. These are
+  - Remaining warnings are 20 `[ALLOWED]` integer-FK candidates. These are
     polymorphic target/source ids, deleted-object log references, or structural
     mismatch fields that need domain-specific migration plans.
 

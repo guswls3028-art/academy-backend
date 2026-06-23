@@ -49,7 +49,14 @@ class Submission(TimestampModel):
         related_name="submissions",
     )
 
-    enrollment_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="enrollment_id",
+        related_name="submissions",
+    )
 
     target_type = models.CharField(max_length=20, choices=TargetType.choices)
     target_id = models.PositiveIntegerField()
@@ -73,7 +80,7 @@ class Submission(TimestampModel):
     class Meta:
         indexes = [
             models.Index(fields=["target_type", "target_id"]),
-            models.Index(fields=["enrollment_id", "created_at"]),
+            models.Index(fields=["enrollment", "created_at"]),
             models.Index(fields=["user", "created_at"]),
             models.Index(fields=["status"]),
             models.Index(fields=["source"]),

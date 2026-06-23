@@ -254,13 +254,14 @@ pnpm refactor:inventory
   enrollment reads.
 - NotificationLog `source_tenant_id`, OMR detected-answer `exam_question_id`,
   OMR student-match `enrollment_id`, result score-edit draft refs, wrong-note
-  PDF refs, and `HomeworkScore.updated_by_user_id` now use Django ForeignKey
-  fields while preserving the deployed DB column names. The ID-domain safety
-  guard reports zero new integer-FK errors in the 2026-06-23 snapshot. A
-  follow-up guardrail cleanup removed `SILENT_FALLBACK` and `UNORDERED_FIRST`
-  warnings; the remaining 21 warnings are `[ALLOWED]` integer-FK candidates
-  that are polymorphic ids, deleted-object log refs, or structural mismatch
-  fields needing domain-specific migration plans.
+  PDF refs, `HomeworkScore.updated_by_user_id`, and
+  `Submission.enrollment_id` now use Django ForeignKey fields while preserving
+  the deployed DB column names. The ID-domain safety guard reports zero new
+  integer-FK errors in the 2026-06-23 snapshot. A follow-up guardrail cleanup
+  removed `SILENT_FALLBACK` and `UNORDERED_FIRST` warnings; the remaining 20
+  warnings are `[ALLOWED]` integer-FK candidates that are polymorphic ids,
+  deleted-object log refs, or structural mismatch fields needing
+  domain-specific migration plans.
 - Frontend display string helpers for common date, money, and byte labels now
   live in `frontend/src/shared/utils/displayText.ts`. Dev tenant and assessment
   query-key literals were folded into shared key factories, assessment homework

@@ -18,9 +18,28 @@ from apps.infrastructure.storage.r2 import upload_fileobj_to_r2
 
 
 class SubmissionSerializer(serializers.ModelSerializer):
+    enrollment_id = serializers.IntegerField(required=False, allow_null=True)
+
     class Meta:
         model = Submission
-        fields = "__all__"
+        fields = (
+            "id",
+            "tenant",
+            "user",
+            "enrollment_id",
+            "target_type",
+            "target_id",
+            "source",
+            "file_key",
+            "file_type",
+            "file_size",
+            "payload",
+            "status",
+            "error_message",
+            "meta",
+            "created_at",
+            "updated_at",
+        )
         read_only_fields = (
             "id",
             "user",
@@ -33,6 +52,7 @@ class SubmissionSerializer(serializers.ModelSerializer):
 
 
 class SubmissionCreateSerializer(serializers.ModelSerializer):
+    enrollment_id = serializers.IntegerField(required=False, allow_null=True)
     file = serializers.FileField(required=False)
 
     class Meta:
