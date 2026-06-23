@@ -29,6 +29,9 @@ gevent>=23.0.0
 
 reportlab
 
+# Problem Studio HWP image normalization.
+pillow
+
 # Problem Studio HWP source-transfer extraction.
 olefile==0.47
 

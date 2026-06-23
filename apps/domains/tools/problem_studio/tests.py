@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import zipfile
 import base64
+import zlib
 from io import BytesIO
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -15,7 +16,7 @@ from apps.domains.tools.problem_studio.services import (
     source_extraction_to_payload,
 )
 from apps.domains.tools.problem_studio.worker import handle_problem_studio_package_job
-from apps.domains.tools.problem_studio.transfer_documents import build_transfer_package
+from apps.domains.tools.problem_studio.transfer_documents import build_transfer_package, _normalize_hwp_image_data
 
 
 def _zip_file(name: str, files: dict[str, str]) -> SimpleUploadedFile:
@@ -164,3 +165,27 @@ class ProblemStudioServiceTests(SimpleTestCase):
             names = zf.namelist()
         self.assertTrue(any(name.endswith(".doc") for name in names))
         self.assertIn("00_변환리포트.html", names)
+
+    def test_hwp_image_normalization_inflates_compressed_bindata(self):
+        from PIL import Image
+
+        bmp_buf = BytesIO()
+        Image.new("RGB", (2, 2), "white").save(bmp_buf, format="BMP")
+        compressor = zlib.compressobj(wbits=-15)
+        compressed_bmp = compressor.compress(bmp_buf.getvalue()) + compressor.flush()
+
+        mime, data = _normalize_hwp_image_data("BIN0001.bmp", compressed_bmp)
+
+        self.assertEqual(mime, "image/png")
+        with Image.open(BytesIO(data)) as image:
+            self.assertEqual(image.size, (2, 2))
+
+        jpg_buf = BytesIO()
+        Image.new("RGB", (2, 2), "black").save(jpg_buf, format="JPEG")
+        compressor = zlib.compressobj(wbits=-15)
+        compressed_jpg = compressor.compress(jpg_buf.getvalue()) + compressor.flush()
+
+        mime, data = _normalize_hwp_image_data("BIN0002.jpg", compressed_jpg)
+
+        self.assertEqual(mime, "image/jpeg")
+        self.assertTrue(data.startswith(b"\xff\xd8\xff"))

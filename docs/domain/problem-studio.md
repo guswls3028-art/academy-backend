@@ -1,6 +1,6 @@
 # Problem Studio Domain Note
 
-Last verified: 2026-05-25
+Last verified: 2026-06-23
 
 ## Product Philosophy
 
@@ -39,7 +39,7 @@ Frontend:
 - API client: `frontend/src/app_admin/domains/tools/problem-studio/api/problemStudio.api.ts`
 - Hangul-compatible document writer: `frontend/src/app_admin/domains/tools/problem-studio/utils/worksheetDocument.ts`
 - PDF/preview writer: `frontend/src/app_admin/domains/tools/problem-studio/utils/worksheetPdf.ts`
-- Accepted source extensions in UI: `.pdf`, `.hwp`, `.hwpx`, `.doc`, `.docx`, `.png`, `.jpg`, `.jpeg`, `.webp`
+- Accepted source extensions in UI: `.pdf`, `.hwp`, `.hwpx`, `.doc`, `.docx`, `.zip`, `.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`
 - Current primary action sends:
   - `variant_mode: "copy"`
   - `variant_count: 1`
@@ -70,10 +70,10 @@ Source extraction support:
 - Transfer package PDF: server renders every source page to embedded page images, split into 60-page `.doc` parts.
 - HWPX: server reads `Preview/PrvText.txt` first, then XML content files.
 - DOCX: server reads `word/document.xml`.
-- HWP binary: transfer package extracts BodyText paragraph text and every image-like `BinData` stream into a Hangul/Word-compatible `.doc`; the editable text and image gallery are preserved, but exact original HWP layout is not yet guaranteed.
+- HWP binary: transfer package extracts BodyText paragraph text and every image-like `BinData` stream into a Hangul/Word-compatible `.doc`; compressed BinData image bytes are inflated and normalized to browser/Office-safe PNG/JPEG data URLs. The editable text and image gallery are preserved, but exact original HWP layout is not yet guaranteed.
 - DOC binary: metadata/warning only.
 - ZIP: transfer package expands supported nested sources (`.pdf`, `.hwp`, `.hwpx`, `.docx`, `.doc`, image files) within safety limits and writes one or more `.doc` drafts per nested file.
-- Image files: kept on the frontend as visual attachments in the draft; there is no OCR in the current MVP.
+- Image files: embedded as visual pages in the transfer package; there is no OCR in the current MVP.
 - Fixture verification script: `backend/scripts/problem_studio_transfer_fixtures.py` converts a local source folder into the same transfer ZIP and JSON summary for regression checks.
 
 ## Known Limitations

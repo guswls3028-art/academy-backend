@@ -33,6 +33,7 @@ SUPPORTED_TRANSFER_SUFFIXES = {
     ".jpg",
     ".jpeg",
     ".webp",
+    ".bmp",
 }
 
 
@@ -86,6 +87,64 @@ def _mime_for_suffix(suffix: str) -> str:
     if suffix == ".gif":
         return "image/gif"
     return "application/octet-stream"
+
+
+def _mime_from_magic(data: bytes) -> str | None:
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
+        return "image/gif"
+    if data.startswith(b"BM"):
+        return "image/bmp"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+def _hwp_image_candidates(data: bytes) -> list[bytes]:
+    candidates = [data]
+    for wbits in (-15, zlib.MAX_WBITS):
+        try:
+            decompressed = zlib.decompress(data, wbits)
+        except Exception:
+            continue
+        if decompressed and decompressed not in candidates:
+            candidates.append(decompressed)
+    return candidates
+
+
+def _normalize_hwp_image_data(filename: str, data: bytes) -> tuple[str, bytes]:
+    """Return browser/Office-safe image bytes for a HWP BinData stream."""
+    suffix_mime = _mime_for_suffix(Path(filename).suffix)
+    for candidate in _hwp_image_candidates(data):
+        magic_mime = _mime_from_magic(candidate)
+        if magic_mime and magic_mime != "image/bmp":
+            return magic_mime, candidate
+
+        try:
+            from PIL import Image
+
+            with Image.open(io.BytesIO(candidate)) as image:
+                fmt = (image.format or "").upper()
+                if fmt in {"JPEG", "PNG", "GIF", "WEBP"} and magic_mime != "image/bmp":
+                    return {
+                        "JPEG": "image/jpeg",
+                        "PNG": "image/png",
+                        "GIF": "image/gif",
+                        "WEBP": "image/webp",
+                    }[fmt], candidate
+
+                if image.mode not in {"RGB", "RGBA", "L", "P"}:
+                    image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+                out = io.BytesIO()
+                image.save(out, format="PNG", optimize=True)
+                return "image/png", out.getvalue()
+        except Exception:
+            continue
+
+    return suffix_mime, data
 
 
 def _data_url(data: bytes, mime: str) -> str:
@@ -310,7 +369,7 @@ def _clean_hwp_text(text: str) -> str:
             continue
         code = ord(ch)
         category = unicodedata.category(ch)
-        if category[0] == "C" or 0xE000 <= code <= 0xF8FF:
+        if category[0] == "C" or 0xE000 <= code <= 0xF8FF or 0x4E00 <= code <= 0x9FFF:
             chars.append(" ")
         else:
             chars.append(ch)
@@ -361,7 +420,8 @@ def _extract_hwp_text_and_images(data: bytes) -> tuple[str, list[tuple[str, str,
             if suffix not in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}:
                 continue
             image_data = ole.openstream(parts).read()
-            images.append((filename, _mime_for_suffix(suffix), image_data))
+            mime, normalized = _normalize_hwp_image_data(filename, image_data)
+            images.append((filename, mime, normalized))
 
     return _clean_hwp_text("\n\n".join(text_chunks)), images
 
