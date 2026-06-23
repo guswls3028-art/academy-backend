@@ -32,7 +32,7 @@ SUBMISSION_STATUS_FAILED = submissions_repo.status_failed()
 PENDING_STATUSES = submissions_repo.pending_statuses()
 
 
-def _resolve_target_titles(submissions):
+def _resolve_target_titles(submissions, tenant):
     """exam_id → title, lecture/session 정보 일괄 매핑."""
     exam_ids = {int(s.target_id) for s in submissions if s.target_type == SUBMISSION_TARGET_EXAM}
     homework_ids = {
@@ -40,17 +40,17 @@ def _resolve_target_titles(submissions):
     }
 
     return (
-        exams_repo.exam_target_info_map(exam_ids),
-        homework_repo.homework_target_info_map(homework_ids),
+        exams_repo.exam_target_info_map(exam_ids, tenant=tenant),
+        homework_repo.homework_target_info_map(homework_ids, tenant=tenant),
     )
 
 
-def _enrollment_student_map(submissions):
+def _enrollment_student_map(submissions, tenant):
     enrollment_ids = {int(s.enrollment_id) for s in submissions if s.enrollment_id}
     if not enrollment_ids:
         return {}
 
-    return enrollment_repo.enrollment_student_map_by_ids(enrollment_ids)
+    return enrollment_repo.enrollment_student_map_by_ids(enrollment_ids, tenant=tenant)
 
 
 def _serialize_submissions(submissions, exam_map, homework_map, enrollment_map):
@@ -145,8 +145,8 @@ class AdminResultsLandingStatsView(APIView):
         )
 
         all_subs = pending_subs + recent_done
-        exam_map, homework_map = _resolve_target_titles(all_subs)
-        enrollment_map = _enrollment_student_map(all_subs)
+        exam_map, homework_map = _resolve_target_titles(all_subs, tenant)
+        enrollment_map = _enrollment_student_map(all_subs, tenant)
 
         return Response(
             {
