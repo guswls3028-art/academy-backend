@@ -92,7 +92,7 @@ Current baseline snapshot (latest local run: 2026-06-23 KST):
 Current frontend baseline snapshot (latest local run: 2026-06-23 KST):
 
 - `api_generated_dir_present`: false
-- `same_app_domain_import`: 150
+- `same_app_domain_import`: 148
 - `large_frontend_file`: 34
 - `local_format_defs`: 121
 - `status_map_defs`: 35

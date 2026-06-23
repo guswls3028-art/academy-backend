@@ -147,7 +147,7 @@ Frontend dependency risks:
 | Frontend source text files | 1454 | app/domain moves need automated boundaries |
 | Frontend E2E/script files | 225 | durable gates must be separated from audit specs |
 | Frontend durable E2E waitForTimeout calls | 34 | excludes `_local`, `_audit`, artifacts, reports, screenshots |
-| Frontend same-app domain imports | 150 | role app domain internals still import sibling domain internals |
+| Frontend same-app domain imports | 148 | role app domain internals still import sibling domain internals |
 | Frontend large files | 34 | files large enough to make safe UI/domain movement harder |
 | Frontend local format definitions | 121 | repeated formatting helpers/status-adjacent logic still need SSOT cleanup |
 | Frontend status map definitions | 35 | repeated status/tone maps still need SSOT cleanup |

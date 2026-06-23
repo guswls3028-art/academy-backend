@@ -16,7 +16,7 @@
   - `UNORDERED_FIRST`: 11
   - `SILENT_FALLBACK`: 0
 - Frontend snapshot after this tranche:
-  - `same_app_domain_import=150`
+  - `same_app_domain_import=148`
   - `large_frontend_file=34`
   - `e2e_wait_for_timeout=34`
   - `local_format_defs=121`
@@ -61,6 +61,18 @@
 - Left `[ALLOWED]` integer-FK candidates untouched; each needs a domain-specific
   migration/data-normalization plan rather than a mechanical field rewrite.
 
+## Tranche 3 Changes
+
+- Added shared assessment query keys in
+  `frontend/src/shared/api/queryKeys/assessments.ts`.
+- Routed session assessment homework list fetches through
+  `frontend/src/shared/api/contracts/assessments.ts` instead of importing admin
+  homework internals.
+- Made the admin homework policy key reuse the shared assessment key, keeping
+  sessions and homework cache invalidation on one contract.
+- Reduced frontend `same_app_domain_import` from 150 to 148 and
+  `app_admin/sessions` domain outbound imports from 21 to 19.
+
 ## Verification
 
 - Backend:
@@ -79,6 +91,8 @@
   - `pnpm refactor:budget`: passed.
   - `pnpm typecheck`: passed.
   - `pnpm guard:legacy-api`: passed.
+  - `pnpm lint`: passed.
+  - `pnpm build`: passed.
 
 ## Next Tranche Candidates
 
@@ -89,7 +103,8 @@
   with `submissions.SubmissionAnswer.exam_question_id` or
   `results.ResultFact.question_id`, because both touch assessment correctness.
 - Frontend: continue from same-app domain import hotspots:
-  `app_admin/sessions -> lectures/homework/results/exams` and
+  `app_admin/sessions -> lectures/results/exams`, remaining
+  `app_admin/sessions -> homework` UI component imports, and
   `app_admin/lectures -> scores/students/videos/messages`.
 - Contract rail: decide the OpenAPI generation path, then introduce generated
   frontend types for new or touched endpoints instead of adding more handwritten
