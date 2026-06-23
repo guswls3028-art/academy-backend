@@ -70,7 +70,15 @@ class OMRDetectedAnswer(BaseModel):
         related_name="detected_answers",
     )
     question_number = models.PositiveIntegerField(db_index=True)
-    exam_question_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    exam_question = models.ForeignKey(
+        "exams.ExamQuestion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="exam_question_id",
+        related_name="omr_detected_answers",
+        db_index=True,
+    )
     answer = models.TextField(blank=True)
     detected = models.JSONField(default=list, blank=True)
     status = models.CharField(max_length=32, blank=True, db_index=True)
@@ -122,7 +130,15 @@ class OMRStudentMatch(BaseModel):
         on_delete=models.CASCADE,
         related_name="omr_student_matches",
     )
-    enrollment_id = models.PositiveIntegerField(null=True, blank=True, db_index=True)
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="enrollment_id",
+        related_name="omr_student_matches",
+        db_index=True,
+    )
     status = models.CharField(
         max_length=32,
         choices=Status.choices,
@@ -146,7 +162,7 @@ class OMRStudentMatch(BaseModel):
         db_table = "submissions_omr_student_match"
         indexes = [
             models.Index(fields=["tenant", "submission", "is_current"]),
-            models.Index(fields=["tenant", "enrollment_id", "matched_at"]),
+            models.Index(fields=["tenant", "enrollment", "matched_at"]),
         ]
         constraints = [
             models.UniqueConstraint(

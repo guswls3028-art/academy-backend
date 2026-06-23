@@ -65,7 +65,16 @@ class NotificationLog(models.Model):
     batch_id = models.UUIDField(null=True, blank=True, db_index=True, help_text="수동 발송 배치 ID")
     sender_staff_id = models.IntegerField(null=True, blank=True, help_text="발송 요청 Staff ID")
     notification_type = models.CharField(max_length=30, blank=True, default="", help_text="check_in, absent 등")
-    source_tenant_id = models.IntegerField(null=True, blank=True, db_index=True, help_text="오너 대리발송의 원 소속 테넌트 ID")
+    source_tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="source_tenant_id",
+        related_name="source_notification_logs",
+        db_index=True,
+        help_text="오너 대리발송의 원 소속 테넌트",
+    )
     target_type = models.CharField(max_length=30, blank=True, default="", db_index=True, help_text="student, parent, account 등")
     target_id = models.CharField(max_length=80, blank=True, default="", db_index=True, help_text="대상 식별자")
     target_name = models.CharField(max_length=80, blank=True, default="", help_text="대상 표시명")

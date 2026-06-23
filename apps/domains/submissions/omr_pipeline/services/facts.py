@@ -125,8 +125,6 @@ def record_recognition_fact(
         exam_question_id = None
         if qnum_map_built:
             exam_question_id = qnum_to_pk.get(question_number)
-        else:
-            exam_question_id = question_number
 
         detected = _detected_values(item)
         OMRDetectedAnswer.objects.create(

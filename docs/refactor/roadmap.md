@@ -43,7 +43,7 @@ Goal: make current risk visible before moving code.
 
 Required work:
 
-- [ ] Generate and commit a current inventory snapshot.
+- [x] Generate and commit a current inventory snapshot.
 - [ ] Add backend import-boundary guard in baseline mode.
 - [ ] Add tenant-scope audit in baseline mode.
 - [ ] Add OpenAPI/schema generation path or prove the blocker.

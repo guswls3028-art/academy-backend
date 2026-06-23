@@ -1,7 +1,7 @@
 # Refactor Inventory
 
 **Status:** [VERIFIED] repository snapshot with [INFERRED] risk notes  
-**Captured:** 2026-05-25
+**Captured:** 2026-06-23
 **Purpose:** keep the large refactor grounded in measured code, not vibes.
 
 Numbers in this document are lightweight repository scans. Treat them as
@@ -126,9 +126,9 @@ Frontend dependency risks:
   imports in domains not yet migrated to shared contracts.
 - `src/core/router/AppRouter.tsx` is the practical top-level route SSOT.
 - E2E contains audit/local/date-stamped specs mixed with durable gates.
-- `frontend/e2e/README.md` had a stale `page.waitForTimeout` count. The new
-  durable-suite snapshot script excludes local/audit artifact folders and found
-  69 occurrences.
+- `frontend/e2e/README.md` had a stale `page.waitForTimeout` count. The current
+  refactor snapshot script excludes local/audit artifact folders and found
+  34 occurrences.
 
 ## Directional Scan Counts
 
@@ -138,23 +138,23 @@ Frontend dependency risks:
 |---|---:|---|
 | Backend serializer-related lines | 1129 | API surface is broad enough that manual FE type sync is unsafe |
 | Backend tenant-related query/assignment hits | 3486 | tenant scope is widespread and needs automated guardrails |
-| Backend cross-domain imports | 123 | semantic snapshot script, non-internal cross-domain imports; increased by deliberate selector/service boundary use |
-| Backend cross-domain internal imports | 678 | semantic snapshot script, direct imports into models/services/views/api/serializers |
-| Backend domain infra imports | 86 | domain code still reaches infra SDK/helper modules |
+| Backend cross-domain imports | 116 | semantic snapshot script, non-internal cross-domain imports; increased by deliberate selector/service boundary use |
+| Backend cross-domain internal imports | 606 | semantic snapshot script, direct imports into models/services/views/api/serializers |
+| Backend domain infra imports | 82 | domain code still reaches infra SDK/helper modules |
 | Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
-| Frontend source import files | 1067 | files scanned for import boundary snapshot |
-| Frontend source text files | 1424 | app/domain moves need automated boundaries |
+| Frontend source import files | 1090 | files scanned for import boundary snapshot |
+| Frontend source text files | 1454 | app/domain moves need automated boundaries |
 | Frontend E2E/script files | 225 | durable gates must be separated from audit specs |
-| Frontend durable E2E waitForTimeout calls | 69 | excludes `_local`, `_audit`, artifacts, reports, screenshots |
-| Frontend same-app domain imports | 217 | role app domain internals still import sibling domain internals |
+| Frontend durable E2E waitForTimeout calls | 34 | excludes `_local`, `_audit`, artifacts, reports, screenshots |
+| Frontend same-app domain imports | 150 | role app domain internals still import sibling domain internals |
 | Frontend large files | 34 | files large enough to make safe UI/domain movement harder |
-| Frontend local format definitions | 124 | repeated formatting helpers/status-adjacent logic still need SSOT cleanup |
-| Frontend status map definitions | 37 | repeated status/tone maps still need SSOT cleanup |
-| Frontend query key literals | 970 | query key factory adoption remains incomplete |
-| Frontend inline style objects | 3884 | existing style guard baseline remains broad |
+| Frontend local format definitions | 121 | repeated formatting helpers/status-adjacent logic still need SSOT cleanup |
+| Frontend status map definitions | 35 | repeated status/tone maps still need SSOT cleanup |
+| Frontend query key literals | 901 | query key factory adoption remains incomplete |
+| Frontend inline style objects | 3806 | existing style guard baseline remains broad |
 | Frontend raw badge classes | 21 | existing badge guard baseline remains non-zero |
-| Frontend API response type definitions | 105 | generated API type path is still absent |
+| Frontend API response type definitions | 102 | generated API type path is still absent |
 
 Snapshot commands:
 
@@ -252,6 +252,14 @@ pnpm refactor:inventory
   the target through `students.selectors.active_student_by_id`, rejecting
   malformed, cross-tenant, and same-tenant soft-deleted students before grade
   enrollment reads.
+- NotificationLog `source_tenant_id`, OMR detected-answer `exam_question_id`,
+  and OMR student-match `enrollment_id` now use Django ForeignKey fields while
+  preserving the deployed DB column names. The ID-domain safety guard reports
+  zero new integer-FK errors in the 2026-06-23 snapshot.
+- Frontend display string helpers for common date, money, and byte labels now
+  live in `frontend/src/shared/utils/displayText.ts`. Dev tenant query-key
+  literals were folded into the existing key factory, and the refactor budget
+  gate is back under baseline.
 - React runtime/types mismatch and missing lockfile policy can create unrelated
   noise during refactor validation.
 
@@ -275,8 +283,6 @@ pnpm refactor:inventory
   recipient resolver slice, and the results
   student-grades selector slice. Re-run the snapshot commands before each phase
   because active
-  refactors can change these counts quickly. The latest backend snapshot reports
-  `cross_domain_import=123`,
-  `cross_domain_internal_import=678`, and `domain_infra_import=86`; the
-  non-internal count rose because touched code now imports public selectors
-  instead of internal models/views.
+  refactors can change these counts quickly. The latest backend snapshot
+  (2026-06-23) reports `cross_domain_import=116`,
+  `cross_domain_internal_import=606`, and `domain_infra_import=82`.

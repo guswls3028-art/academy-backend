@@ -76,24 +76,26 @@ pytest tests\test_worker_settings_drift.py -v --tb=short -x
 $env:PYTHONPATH='C:\academy\backend'; $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.worker'; python tests\_worker_boot_check.py
 ```
 
-Current baseline snapshot (latest local run: 2026-05-25 KST):
+Current baseline snapshot (latest local run: 2026-06-23 KST):
 
 - `adapter_application_import`: 0
-- `cross_domain_import`: 123
-- `cross_domain_internal_import`: 678
-- `domain_infra_import`: 86
+- `cross_domain_import`: 116
+- `cross_domain_internal_import`: 606
+- `domain_infra_import`: 82
+- `check_id_domain_safety.py`: 52 warning(s), 0 error(s)
 
-Current frontend baseline snapshot (latest local run: 2026-05-25 KST):
+Current frontend baseline snapshot (latest local run: 2026-06-23 KST):
 
 - `api_generated_dir_present`: false
-- `same_app_domain_import`: 217
+- `same_app_domain_import`: 150
 - `large_frontend_file`: 34
-- `local_format_defs`: 124
-- `status_map_defs`: 37
-- `query_key_literals`: 970
-- `inline_style_objects`: 3884
-- `api_response_type_defs`: 105
-- `e2e_wait_for_timeout`: 69
+- `local_format_defs`: 121
+- `status_map_defs`: 35
+- `query_key_literals`: 901
+- `inline_style_objects`: 3806
+- `api_response_type_defs`: 102
+- `e2e_wait_for_timeout`: 34
+- `pnpm refactor:budget`: passed against `scripts/refactor-budget-baseline.json`
 
 Interpretation note:
 
@@ -217,7 +219,7 @@ Backend and frontend functional gates are selected by touched surface.
 
 - [x] Backend boundary guardrail command exists, is documented, and is wired into
       the backend deploy lint gate.
-- [ ] Existing violation counts are captured.
+- [x] Existing violation counts are captured.
 - [x] Touched-file strict mode is defined for backend boundary findings.
 - [ ] Generated type path is proven or blocker is documented.
 - [ ] Tenant/auth/account recovery validation path is defined.
