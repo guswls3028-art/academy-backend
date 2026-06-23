@@ -143,11 +143,11 @@ Frontend dependency risks:
 | Backend domain infra imports | 82 | domain code still reaches infra SDK/helper modules |
 | Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
-| Frontend source import files | 1090 | files scanned for import boundary snapshot |
-| Frontend source text files | 1454 | app/domain moves need automated boundaries |
+| Frontend source import files | 1091 | files scanned for import boundary snapshot |
+| Frontend source text files | 1455 | app/domain moves need automated boundaries |
 | Frontend E2E/script files | 225 | durable gates must be separated from audit specs |
 | Frontend durable E2E waitForTimeout calls | 34 | excludes `_local`, `_audit`, artifacts, reports, screenshots |
-| Frontend same-app domain imports | 148 | role app domain internals still import sibling domain internals |
+| Frontend same-app domain imports | 146 | role app domain internals still import sibling domain internals |
 | Frontend large files | 34 | files large enough to make safe UI/domain movement harder |
 | Frontend local format definitions | 121 | repeated formatting helpers/status-adjacent logic still need SSOT cleanup |
 | Frontend status map definitions | 35 | repeated status/tone maps still need SSOT cleanup |
@@ -261,9 +261,10 @@ pnpm refactor:inventory
   `[ALLOWED]` integer-FK candidates plus 11 `UNORDERED_FIRST` instances in
   files that need boundary extraction before touched-file strict cleanup.
 - Frontend display string helpers for common date, money, and byte labels now
-  live in `frontend/src/shared/utils/displayText.ts`. Dev tenant query-key
-  literals were folded into the existing key factory, and the refactor budget
-  gate is back under baseline.
+  live in `frontend/src/shared/utils/displayText.ts`. Dev tenant and assessment
+  query-key literals were folded into shared key factories, assessment homework
+  list/policy contracts moved behind `frontend/src/shared/api/contracts/assessments.ts`,
+  and the refactor budget gate is back under baseline.
 - React runtime/types mismatch and missing lockfile policy can create unrelated
   noise during refactor validation.
 
@@ -284,8 +285,8 @@ pnpm refactor:inventory
   contract slice, the lecture sections contract slice, the clinic
   active-student selector boundary slice, the clinic participant transition
   service slice, the attendance roster service boundary slice, the messaging
-  recipient resolver slice, and the results
-  student-grades selector slice. Re-run the snapshot commands before each phase
+  recipient resolver slice, the results student-grades selector slice, and the
+  assessment homework shared-contract slice. Re-run the snapshot commands before each phase
   because active
   refactors can change these counts quickly. The latest backend snapshot
   (2026-06-23) reports `cross_domain_import=116`,

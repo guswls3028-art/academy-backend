@@ -16,7 +16,7 @@
   - `UNORDERED_FIRST`: 11
   - `SILENT_FALLBACK`: 0
 - Frontend snapshot after this tranche:
-  - `same_app_domain_import=148`
+  - `same_app_domain_import=146`
   - `large_frontend_file=34`
   - `e2e_wait_for_timeout=34`
   - `local_format_defs=121`
@@ -72,6 +72,17 @@
   sessions and homework cache invalidation on one contract.
 - Reduced frontend `same_app_domain_import` from 150 to 148 and
   `app_admin/sessions` domain outbound imports from 21 to 19.
+
+## Tranche 4 Changes
+
+- Added assessment homework policy typing/fetching to
+  `frontend/src/shared/api/contracts/assessments.ts`.
+- Routed the session assessment side panel through the shared assessment
+  homework policy/list contract instead of importing admin homework internals.
+- Reduced frontend `same_app_domain_import` from 148 to 146 and
+  `app_admin/sessions` domain outbound imports from 19 to 17. The
+  `app_admin/sessions -> app_admin/homework` pair no longer appears in the
+  top-10 hot-pair list.
 
 ## Verification
 
