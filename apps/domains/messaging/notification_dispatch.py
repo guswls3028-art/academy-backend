@@ -11,6 +11,7 @@ import uuid
 from datetime import timedelta
 from typing import Optional
 
+from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -49,15 +50,11 @@ def build_attendance_preview(
             "notification_type": str,
         }
     """
-    from apps.domains.attendance.models import Attendance
-    from apps.domains.lectures.models import Session
     from apps.domains.messaging.selectors import get_auto_send_config
     from apps.domains.messaging.policy import get_owner_tenant_id
     from apps.domains.messaging.services import get_tenant_site_url
 
-    session = Session.objects.select_related("lecture").filter(
-        id=session_id, lecture__tenant_id=tenant.id,
-    ).first()
+    session = enroll_repo.get_session_with_lecture_by_id_for_tenant(session_id, tenant)
     if not session:
         return {"error": "세션을 찾을 수 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
 
@@ -111,15 +108,10 @@ def build_attendance_preview(
     else:  # absent
         status_filter = ["ABSENT"]
 
-    attendances = (
-        Attendance.objects
-        .filter(
-            session_id=session_id,
-            session__lecture__tenant_id=tenant.id,
-            status__in=status_filter,
-        )
-        .exclude(enrollment__status="INACTIVE")
-        .select_related("enrollment__student", "session__lecture")
+    attendances = enroll_repo.attendance_filter_session_tenant_statuses(
+        session_id,
+        tenant,
+        status_filter,
     )
 
     academy_name = (tenant.name or "").strip()
@@ -388,7 +380,7 @@ def consume_preview_token(token_str: str, tenant) -> dict:
     token = NotificationPreviewToken.objects.filter(
         token=token_uuid,
         tenant=tenant,
-    ).first()
+    ).order_by("-created_at", "-id").first()
 
     if not token:
         return {"error": "토큰을 찾을 수 없습니다."}

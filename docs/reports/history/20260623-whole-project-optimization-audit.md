@@ -10,10 +10,10 @@
 - `git -C C:\academy\frontend diff --check`: passed.
 - Backend snapshot after this tranche:
   - `cross_domain_import=117`
-  - `cross_domain_internal_import=604`
+  - `cross_domain_internal_import=602`
   - `domain_infra_import=82`
-  - `check_id_domain_safety.py`: 36 warning(s), 0 error(s)
-  - `UNORDERED_FIRST`: 8
+  - `check_id_domain_safety.py`: 35 warning(s), 0 error(s)
+  - `UNORDERED_FIRST`: 7
   - `SILENT_FALLBACK`: 0
 - Frontend snapshot after this tranche:
   - `same_app_domain_import=146`
@@ -106,12 +106,22 @@
   8, and backend `cross_domain_internal_import` from 605 to 604 while keeping
   `cross_domain_import` at 117.
 
+## Tranche 7 Changes
+
+- Moved attendance/session reads for manual attendance previews behind
+  `academy.adapters.db.django.repositories_enrollment` helpers.
+- Added deterministic ordering before `NotificationPreviewToken` consumption
+  lookup.
+- Reduced ID-domain safety warnings from 36 to 35, `UNORDERED_FIRST` from 8 to
+  7, and backend `cross_domain_internal_import` from 604 to 602 while keeping
+  `cross_domain_import` at 117.
+
 ## Verification
 
 - Backend:
   - `python manage.py check --settings apps.api.config.settings.test`: passed.
   - `python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test`: passed.
-  - `python scripts\lint\check_id_domain_safety.py`: 36 warning(s), 0 error(s).
+  - `python scripts\lint\check_id_domain_safety.py`: 35 warning(s), 0 error(s).
   - `python scripts\lint\refactor_boundary_snapshot.py --strict-touched`: passed.
   - `python scripts\lint\refactor_boundary_snapshot.py --enforce-baseline`: passed.
   - `python -m ruff check <touched backend files>`: passed.
@@ -132,7 +142,7 @@
 
 ## Next Tranche Candidates
 
-- Backend: extract public boundary helpers for the 8 remaining
+- Backend: extract public boundary helpers for the 7 remaining
   `UNORDERED_FIRST` sites in broad files, then add ordering without failing
   strict-touched.
 - Backend: plan the remaining `[ALLOWED]` integer-FK candidates by domain. Start

@@ -221,6 +221,30 @@ def attendance_get_or_create_tenant(tenant, enrollment, session, defaults):
     )
 
 
+def get_session_with_lecture_by_id_for_tenant(session_id, tenant):
+    from apps.domains.lectures.models import Session
+    return (
+        Session.objects.select_related("lecture")
+        .filter(id=session_id, lecture__tenant_id=tenant.id)
+        .order_by("id")
+        .first()
+    )
+
+
+def attendance_filter_session_tenant_statuses(session_id, tenant, statuses):
+    from apps.domains.attendance.models import Attendance
+    return (
+        Attendance.objects.filter(
+            session_id=session_id,
+            session__lecture__tenant_id=tenant.id,
+            status__in=statuses,
+        )
+        .exclude(enrollment__status="INACTIVE")
+        .select_related("enrollment__student", "session__lecture")
+        .order_by("id")
+    )
+
+
 def get_sessions_by_lecture(lecture):
     from apps.domains.lectures.models import Session
     return Session.objects.filter(lecture=lecture)
