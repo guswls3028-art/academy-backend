@@ -1,6 +1,6 @@
 # Problem Studio Domain Note
 
-Last verified: 2026-06-23
+Last verified: 2026-06-24
 
 ## Product Philosophy
 
@@ -67,7 +67,11 @@ Backend:
 - Worker payload stores extracted source text and source metadata, so the async worker does not depend on request file lifetime.
 - Transfer-only output uses `generation_engine: "source_transfer"` when extracted text exists.
 - Beta rewrite uses the async job path only. If the AI adapter or quota fails, the service returns a rule-based teacher-review candidate and warning instead of blocking the base transfer feature.
-- Large source-transfer downloads bypass the AI worker and JSON result payload. The transfer-document endpoint returns a ZIP package containing Hangul/Word-compatible `.doc` HTML drafts plus `00_변환리포트.html`.
+- Large source-transfer downloads bypass the AI worker and JSON result payload. The transfer-document endpoint returns a ZIP package containing Hangul/Word-compatible `.doc` HTML drafts plus:
+  - `00_먼저열기_검수체크리스트.doc`
+  - `00_변환리포트.html`
+  - `00_manifest.json`
+  - `00_파일목록.csv`
 
 Source extraction support:
 
@@ -81,11 +85,13 @@ Source extraction support:
 - ZIP: transfer package expands supported nested sources (`.pdf`, `.hwp`, `.hwpx`, `.docx`, `.doc`, image files) within safety limits and writes one or more `.doc` drafts per nested file. Beta rewrite also reads supported nested text documents within the same safety posture.
 - Image files: embedded as visual pages in the transfer package; there is no OCR in the current MVP.
 - Fixture verification script: `backend/scripts/problem_studio_transfer_fixtures.py` converts a local source folder into the same transfer ZIP and JSON summary for regression checks.
+- UAT runbook: `backend/docs/operations/runbooks/problem-studio-source-transfer-uat.md`
 
 ## Product Review
 
 - Commercial default: sell this as "source transfer to editable teacher-review drafts", not as fully autonomous problem generation.
 - Value moment: teacher uploads the files they already receive and gets a Hangul/Word-compatible package without retyping. The first visible CTA must stay `원본 한글로 저장`.
+- The downloaded ZIP is itself part of the product. The teacher should open `00_먼저열기_검수체크리스트.doc` first, then use `00_변환리포트.html` and `00_파일목록.csv` to inspect warnings, missing files, and source-to-output mapping.
 - Beta positioning: rewrite candidates are optional, visibly marked Beta, and output to a review draft. A teacher should never need to touch beta controls to complete the base workflow.
 - Business risk: scanned/image-only sources still need OCR for editable text. The product should preserve them as images today and avoid promising exact native HWP layout.
 - Next conversion lever: template fidelity and OCR improve willingness to pay more than more generation modes.
@@ -133,6 +139,8 @@ Before changing this feature:
   - frontend changed-file ESLint
   - frontend `pnpm build`
   - backend problem studio service tests if backend extraction/worker code changes
+  - real fixture transfer with `backend/scripts/problem_studio_transfer_fixtures.py` when package output changes
+  - visual QA over the generated ZIP when HTML/document layout changes
 
 Last deployed simplification:
 

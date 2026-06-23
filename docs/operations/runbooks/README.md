@@ -10,6 +10,7 @@
 | [incidents.md](incidents.md) | 사고 일반 대응 |
 | [matchup-segmentation-qa.md](matchup-segmentation-qa.md) | 매치업 문항분리 감사/회귀 게이트 |
 | [ops-prohibited.md](ops-prohibited.md) | 운영 금지 사항 |
+| [problem-studio-source-transfer-uat.md](problem-studio-source-transfer-uat.md) | 문제 제작 원본 이관 실사용 검수 |
 | [video-batch.md](video-batch.md) | 영상 Batch 운영 |
 
 ## 작성 규칙

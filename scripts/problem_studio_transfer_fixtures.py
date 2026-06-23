@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -49,11 +50,16 @@ def main() -> int:
 
     package_path = output_dir / package.filename
     package_path.write_bytes(package.data)
+    with zipfile.ZipFile(package_path) as zf:
+        package_files = zf.namelist()
 
     summary = {
         "package": str(package_path),
         "document_count": len(package.documents),
         "warning_count": len(package.warnings),
+        "review_file_count": package.review_file_count,
+        "package_file_count": len(package_files),
+        "package_files": package_files,
         "warnings": package.warnings,
         "documents": [
             {

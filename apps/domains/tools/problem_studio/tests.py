@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import zipfile
 import base64
+import json
+import zipfile
 import zlib
 from io import BytesIO
 
@@ -202,7 +203,46 @@ class ProblemStudioServiceTests(SimpleTestCase):
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
             names = zf.namelist()
         self.assertTrue(any(name.endswith(".doc") for name in names))
+        self.assertIn("00_먼저열기_검수체크리스트.doc", names)
         self.assertIn("00_변환리포트.html", names)
+        self.assertIn("00_manifest.json", names)
+        self.assertIn("00_파일목록.csv", names)
+
+    def test_transfer_package_includes_review_manifest_and_warning_actions(self):
+        uploaded = SimpleUploadedFile("legacy.doc", b"legacy-binary")
+
+        package = build_transfer_package(
+            payload={
+                "title": "화학2 1단원",
+                "class_name": "고3",
+                "subject": "화학II",
+                "template_name": "신민 샘플",
+            },
+            source_files=[uploaded],
+        )
+
+        self.assertEqual(package.review_file_count, 4)
+        self.assertEqual(len(package.documents), 1)
+        self.assertEqual(len(package.warnings), 1)
+        with zipfile.ZipFile(BytesIO(package.data)) as zf:
+            names = zf.namelist()
+            checklist = zf.read("00_먼저열기_검수체크리스트.doc").decode("utf-8-sig")
+            manifest = json.loads(zf.read("00_manifest.json").decode("utf-8"))
+            csv_text = zf.read("00_파일목록.csv").decode("utf-8-sig")
+
+        self.assertIn("실사용 검수 순서", checklist)
+        self.assertIn("legacy.doc", checklist)
+        self.assertIn("DOCX/PDF로 저장", checklist)
+        self.assertEqual(manifest["schema"], "problem-studio-transfer-manifest/v1")
+        self.assertEqual(manifest["title"], "화학2 1단원")
+        self.assertEqual(manifest["class_name"], "고3")
+        self.assertEqual(manifest["document_count"], 1)
+        self.assertEqual(manifest["warning_count"], 1)
+        self.assertTrue(manifest["review_contract"]["teacher_must_verify_answers"])
+        self.assertEqual(manifest["documents"][0]["status"], "확인 필요")
+        self.assertIn("산출물", csv_text)
+        self.assertIn("legacy_원본이관.doc", csv_text)
+        self.assertIn("00_manifest.json", names)
 
     def test_transfer_package_reports_zip_with_too_many_members(self):
         uploaded = SimpleUploadedFile(

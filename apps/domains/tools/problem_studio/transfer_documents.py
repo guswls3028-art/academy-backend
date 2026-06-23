@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import base64
+import csv
 import html
 import io
+import json
 import re
 import struct
 import unicodedata
@@ -56,6 +58,7 @@ class TransferPackage:
     data: bytes
     documents: list[TransferDocument] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    review_file_count: int = 0
 
 
 def _escape(value: Any) -> str:
@@ -165,6 +168,24 @@ def _read_upload(uploaded: Any) -> tuple[str, bytes]:
     if len(data) > TRANSFER_MAX_UPLOAD_BYTES:
         raise ValueError(f"{name} 파일 크기가 너무 큽니다.")
     return name, data
+
+
+def _source_size_label(size: int) -> str:
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size} B"
+
+
+def _payload_meta(payload: dict[str, Any]) -> dict[str, str]:
+    return {
+        "title": str(payload.get("title") or "문제 제작 원본 이관"),
+        "class_name": str(payload.get("class_name") or ""),
+        "subject": str(payload.get("subject") or ""),
+        "template_name": str(payload.get("template_name") or "매치업 기존 양식"),
+        "note_policy": str(payload.get("note_policy") or ""),
+    }
 
 
 def _source_kind(name: str) -> str:
@@ -527,13 +548,201 @@ def _expand_zip(name: str, data: bytes) -> tuple[list[tuple[str, bytes]], list[s
     return members, warnings
 
 
+def _review_focus(doc: TransferDocument) -> str:
+    if doc.warning:
+        return "경고 내용을 먼저 확인하고 원본 파일과 대조하세요."
+    if doc.kind == "PDF":
+        return "첫 쪽, 중간 쪽, 마지막 쪽을 원본과 대조하고 잘림/회전/누락을 확인하세요."
+    if doc.kind == "HWP":
+        return "본문 텍스트 순서, 그림/도표 이미지, 표·수식 위치를 원본과 대조하세요."
+    if doc.kind in {"HWPX", "DOCX"}:
+        return "본문 텍스트가 모두 들어왔는지 확인하고 표·그림은 원본과 대조하세요."
+    if doc.kind == "이미지":
+        return "이미지 해상도와 잘림을 확인하세요. 텍스트 편집은 OCR 보강 전까지 수동 작업입니다."
+    if doc.kind == "DOC":
+        return "DOC 바이너리는 본문 추출이 제한됩니다. DOCX/PDF로 저장한 뒤 다시 이관하는 편이 안전합니다."
+    return "원본과 산출물을 직접 대조하세요."
+
+
+def _review_status(doc: TransferDocument) -> str:
+    if doc.warning:
+        return "확인 필요"
+    if doc.kind in {"PDF", "이미지"} and doc.text_chars == 0:
+        return "시각 대조"
+    return "검수 대기"
+
+
+def _build_review_checklist_html(
+    meta: dict[str, str],
+    input_files: list[dict[str, Any]],
+    documents: list[TransferDocument],
+    warnings: list[str],
+) -> str:
+    source_rows = "\n".join(
+        f"<tr><td>{index}</td><td>{_escape(item['name'])}</td><td>{_escape(item['kind'])}</td><td>{_escape(item['sizeLabel'])}</td></tr>"
+        for index, item in enumerate(input_files, start=1)
+    ) or '<tr><td colspan="4">등록된 원본 파일 없음</td></tr>'
+    review_rows = "\n".join(
+        f"<tr>"
+        f"<td>{index}</td>"
+        f"<td>{_escape(doc.filename)}</td>"
+        f"<td>{_escape(doc.kind)}</td>"
+        f"<td>{doc.page_count}</td>"
+        f"<td>{doc.image_count}</td>"
+        f"<td>{_escape(_review_status(doc))}</td>"
+        f"<td>{_escape(_review_focus(doc))}</td>"
+        f"</tr>"
+        for index, doc in enumerate(documents, start=1)
+    )
+    warning_items = "\n".join(f"<li>{_escape(w)}</li>" for w in warnings) or "<li>경고 없음</li>"
+    body = f"""
+  <h1>{_escape(meta['title'])} 검수 체크리스트</h1>
+  <div class="transfer-meta">
+    <strong>반명</strong> {_escape(meta['class_name'] or "-")}<br />
+    <strong>과목</strong> {_escape(meta['subject'] or "-")}<br />
+    <strong>기준 양식</strong> {_escape(meta['template_name'])}<br />
+    <strong>생성 시각</strong> {_escape(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}
+  </div>
+  <h2>1. 실사용 검수 순서</h2>
+  <ol>
+    <li><strong>00_변환리포트.html</strong>에서 경고와 문서 수를 먼저 확인합니다.</li>
+    <li>각 산출물 `.doc`을 한글 또는 Word에서 열고 편집 가능 여부를 확인합니다.</li>
+    <li>원본의 첫 쪽, 중간 쪽, 마지막 쪽을 산출물과 대조합니다.</li>
+    <li>그림, 표, 수식, 선택지, 정답/해설이 누락되거나 섞이지 않았는지 표시합니다.</li>
+    <li>수업 배포 전 정답과 해설은 선생님이 직접 확정합니다.</li>
+  </ol>
+  <h2>2. 합격 기준</h2>
+  <table>
+    <tbody>
+      <tr><th>열림</th><td>한글/Word에서 모든 `.doc` 파일이 열리고 저장됩니다.</td></tr>
+      <tr><th>누락</th><td>원본 페이지 또는 주요 그림/표가 빠지지 않았습니다.</td></tr>
+      <tr><th>수정성</th><td>선생님이 수업용으로 직접 고칠 수 있는 상태입니다.</td></tr>
+      <tr><th>Beta</th><td>재작성 후보는 참고용이며 정답/표현은 확정 전 검수합니다.</td></tr>
+    </tbody>
+  </table>
+  <h2>3. 원본 파일</h2>
+  <table>
+    <thead><tr><th>#</th><th>파일명</th><th>유형</th><th>크기</th></tr></thead>
+    <tbody>{source_rows}</tbody>
+  </table>
+  <h2>4. 산출물별 확인 포인트</h2>
+  <table>
+    <thead><tr><th>#</th><th>산출물</th><th>유형</th><th>쪽수</th><th>이미지</th><th>상태</th><th>확인 포인트</th></tr></thead>
+    <tbody>{review_rows}</tbody>
+  </table>
+  <h2>5. 경고</h2>
+  <ul>{warning_items}</ul>
+  <h2>6. 선생님 피드백 기록</h2>
+  <table>
+    <thead><tr><th>파일</th><th>위치</th><th>문제 유형</th><th>수정 필요 내용</th><th>처리</th></tr></thead>
+    <tbody>
+      <tr><td>&nbsp;</td><td></td><td>누락 / 깨짐 / 순서 / 정답 / 기타</td><td></td><td></td></tr>
+      <tr><td>&nbsp;</td><td></td><td>누락 / 깨짐 / 순서 / 정답 / 기타</td><td></td><td></td></tr>
+      <tr><td>&nbsp;</td><td></td><td>누락 / 깨짐 / 순서 / 정답 / 기타</td><td></td><td></td></tr>
+    </tbody>
+  </table>
+"""
+    return _office_doc_shell(
+        f"{meta['title']} 검수 체크리스트",
+        body,
+        extra_style="""
+    h2 { margin: 9mm 0 3mm; font-size: 13pt; }
+    ol { margin: 0 0 5mm 6mm; padding-left: 5mm; }
+    li { margin: 1.5mm 0; }
+    table { width: 100%; border-collapse: collapse; margin: 4mm 0 7mm; }
+    th, td { border: 0.5pt solid #cbd5e1; padding: 2mm; vertical-align: top; font-size: 9pt; }
+    th { background: #eef2ff; color: #111827; }
+""",
+    )
+
+
+def _build_manifest_json(
+    meta: dict[str, str],
+    input_files: list[dict[str, Any]],
+    documents: list[TransferDocument],
+    warnings: list[str],
+) -> str:
+    manifest = {
+        "schema": "problem-studio-transfer-manifest/v1",
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "title": meta["title"],
+        "class_name": meta["class_name"],
+        "subject": meta["subject"],
+        "template_name": meta["template_name"],
+        "document_count": len(documents),
+        "warning_count": len(warnings),
+        "image_count": sum(doc.image_count for doc in documents),
+        "page_count": sum(doc.page_count for doc in documents),
+        "text_chars": sum(doc.text_chars for doc in documents),
+        "input_files": input_files,
+        "documents": [
+            {
+                "filename": doc.filename,
+                "source_name": doc.source_name,
+                "kind": doc.kind,
+                "page_count": doc.page_count,
+                "image_count": doc.image_count,
+                "text_chars": doc.text_chars,
+                "status": _review_status(doc),
+                "review_focus": _review_focus(doc),
+                "warning": doc.warning,
+            }
+            for doc in documents
+        ],
+        "warnings": warnings,
+        "review_contract": {
+            "base_workflow": "source_transfer_teacher_review",
+            "teacher_must_verify_answers": True,
+            "ocr_required_for_scanned_text": True,
+            "native_hwp_output": False,
+        },
+    }
+    return json.dumps(manifest, ensure_ascii=False, indent=2)
+
+
+def _build_file_list_csv(
+    input_files: list[dict[str, Any]],
+    documents: list[TransferDocument],
+    warnings: list[str],
+) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["구분", "번호", "파일명", "원본", "유형", "크기/쪽수", "이미지", "본문글자", "상태", "경고"])
+    for index, item in enumerate(input_files, start=1):
+        writer.writerow(["원본", index, item["name"], "", item["kind"], item["sizeLabel"], "", "", "등록", ""])
+    for index, doc in enumerate(documents, start=1):
+        writer.writerow([
+            "산출물",
+            index,
+            doc.filename,
+            doc.source_name,
+            doc.kind,
+            doc.page_count,
+            doc.image_count,
+            doc.text_chars,
+            _review_status(doc),
+            doc.warning or "",
+        ])
+    for index, warning in enumerate(warnings, start=1):
+        writer.writerow(["경고", index, "", "", "", "", "", "", "확인 필요", warning])
+    return "\ufeff" + out.getvalue()
+
+
 def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[Any]) -> TransferPackage:
-    title = str(payload.get("title") or "문제 제작 원본 이관")
+    meta = _payload_meta(payload)
+    title = meta["title"]
     documents: list[TransferDocument] = []
     warnings: list[str] = []
+    input_files: list[dict[str, Any]] = []
 
     for uploaded in source_files:
         name, data = _read_upload(uploaded)
+        input_files.append({
+            "name": name,
+            "kind": _source_kind(name),
+            "size": len(data),
+            "sizeLabel": _source_size_label(len(data)),
+        })
         if Path(name).suffix.lower() == ".zip":
             try:
                 members, zip_warnings = _expand_zip(name, data)
@@ -570,7 +779,10 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
                 zip_name = f"{index:02d}_{Path(base_name).stem}_{len(used_names) + 1}.doc"
             used_names.add(zip_name)
             zf.writestr(zip_name, "\ufeff" + doc.html)
+        zf.writestr("00_먼저열기_검수체크리스트.doc", "\ufeff" + _build_review_checklist_html(meta, input_files, documents, warnings))
         zf.writestr("00_변환리포트.html", _build_report_html(title, documents, warnings))
+        zf.writestr("00_manifest.json", _build_manifest_json(meta, input_files, documents, warnings))
+        zf.writestr("00_파일목록.csv", _build_file_list_csv(input_files, documents, warnings))
 
     return TransferPackage(
         filename=package_name,
@@ -578,6 +790,7 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
         data=buffer.getvalue(),
         documents=documents,
         warnings=warnings,
+        review_file_count=4,
     )
 
 
@@ -630,4 +843,5 @@ def package_to_response(package: TransferPackage) -> HttpResponse:
     response["Content-Disposition"] = f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(package.filename)}"
     response["X-Problem-Studio-Document-Count"] = str(len(package.documents))
     response["X-Problem-Studio-Warning-Count"] = str(len(package.warnings))
+    response["X-Problem-Studio-Review-File-Count"] = str(package.review_file_count)
     return response

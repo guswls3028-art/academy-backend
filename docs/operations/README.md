@@ -31,6 +31,7 @@
 | [runbooks/incidents.md](runbooks/incidents.md) | 사고 일반 대응 |
 | [runbooks/matchup-segmentation-qa.md](runbooks/matchup-segmentation-qa.md) | 매치업 문항분리 감사/회귀 게이트 |
 | [runbooks/ops-prohibited.md](runbooks/ops-prohibited.md) | 운영 금지 사항 |
+| [runbooks/problem-studio-source-transfer-uat.md](runbooks/problem-studio-source-transfer-uat.md) | 문제 제작 원본 이관 실사용 검수 |
 | [runbooks/video-batch.md](runbooks/video-batch.md) | 영상 Batch 운영 |
 
 ## 테넌트 셋업
