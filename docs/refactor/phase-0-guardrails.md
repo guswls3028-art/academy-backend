@@ -80,10 +80,10 @@ Current baseline snapshot (latest local run: 2026-06-23 KST):
 
 - `adapter_application_import`: 0
 - `cross_domain_import`: 117
-- `cross_domain_internal_import`: 594
-- `domain_infra_import`: 82
-- `check_id_domain_safety.py`: 33 warning(s), 0 error(s)
-  - `UNORDERED_FIRST`: 5
+- `cross_domain_internal_import`: 591
+- `domain_infra_import`: 81
+- `check_id_domain_safety.py`: 32 warning(s), 0 error(s)
+  - `UNORDERED_FIRST`: 4
   - `SILENT_FALLBACK`: 0
   - Remaining warnings are 28 `[ALLOWED]` integer-FK candidates plus
     `UNORDERED_FIRST` instances in files that require boundary extraction before

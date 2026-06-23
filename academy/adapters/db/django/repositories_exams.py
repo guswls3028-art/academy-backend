@@ -60,18 +60,18 @@ def answer_key_answers_for_exam(exam_id: int) -> dict:
     return answer_key.answers if answer_key and answer_key.answers else {}
 
 
-def exam_target_info_map(exam_ids) -> dict[int, dict]:
+def exam_target_info_map(exam_ids, tenant=None) -> dict[int, dict]:
     from apps.domains.exams.models import Exam
 
     info: dict[int, dict] = {}
     if not exam_ids:
         return info
 
-    for exam in (
-        Exam.objects.filter(id__in=exam_ids)
-        .prefetch_related("sessions__lecture")
-        .order_by("id")
-    ):
+    queryset = Exam.objects.filter(id__in=exam_ids)
+    if tenant is not None:
+        queryset = queryset.filter(tenant=tenant)
+
+    for exam in queryset.prefetch_related("sessions__lecture").order_by("id"):
         session = exam.sessions.order_by("id").first()
         info[exam.id] = {
             "target_title": exam.title,

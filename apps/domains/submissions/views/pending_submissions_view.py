@@ -11,8 +11,11 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from academy.adapters.db.django import repositories_enrollment as enrollment_repo
+from academy.adapters.db.django import repositories_exams as exams_repo
+from academy.adapters.db.django import repositories_homework as homework_repo
+from academy.adapters.db.django import repositories_submissions as submissions_repo
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.submissions.models import Submission
 
 
 def _get_photo_url(student) -> Optional[str]:
@@ -23,28 +26,23 @@ def _get_photo_url(student) -> Optional[str]:
     if not r2_key:
         return None
     try:
-        from django.conf import settings
-        from libs.r2_client.presign import create_presigned_get_url
+        from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
-        return create_presigned_get_url(
-            r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET
-        )
+        return generate_presigned_get_url_storage(key=r2_key, expires_in=3600)
     except Exception:
         return None
 
 
+SUBMISSION_TARGET_EXAM = submissions_repo.target_type_exam()
+SUBMISSION_TARGET_HOMEWORK = submissions_repo.target_type_homework()
+SUBMISSION_STATUS_DONE = submissions_repo.status_done()
+SUBMISSION_STATUS_FAILED = submissions_repo.status_failed()
+
 # Statuses considered "pending" (actively being processed)
-PENDING_STATUSES = [
-    "submitted",
-    "dispatched",
-    "extracting",
-    "needs_identification",
-    "answers_ready",
-    "grading",
-]
+PENDING_STATUSES = submissions_repo.pending_statuses()
 
 # Terminal statuses shown only if recent (last 24h)
-TERMINAL_STATUSES = ["done", "failed"]
+TERMINAL_STATUSES = [SUBMISSION_STATUS_DONE, SUBMISSION_STATUS_FAILED]
 
 
 class PendingSubmissionsView(APIView):
@@ -72,18 +70,13 @@ class PendingSubmissionsView(APIView):
 
         # ── Build queryset ──────────────────────────────────────
         if filter_mode == "pending":
-            qs = Submission.objects.filter(
-                tenant=tenant,
-                status__in=PENDING_STATUSES,
-            )
+            qs = submissions_repo.submission_filter_tenant(tenant).filter(status__in=PENDING_STATUSES)
         else:
             # 'all' (default): pending + terminal from last 24h
             from django.db.models import Q
 
             cutoff = now - timedelta(hours=24)
-            qs = Submission.objects.filter(
-                tenant=tenant,
-            ).filter(
+            qs = submissions_repo.submission_filter_tenant(tenant).filter(
                 Q(status__in=PENDING_STATUSES)
                 | Q(status__in=TERMINAL_STATUSES, created_at__gte=cutoff)
             )
@@ -101,9 +94,9 @@ class PendingSubmissionsView(APIView):
             eid = s.enrollment_id
             if eid:
                 enrollment_ids.add(int(eid))
-            if s.target_type == Submission.TargetType.EXAM:
+            if s.target_type == SUBMISSION_TARGET_EXAM:
                 exam_ids.add(int(s.target_id))
-            elif s.target_type == Submission.TargetType.HOMEWORK:
+            elif s.target_type == SUBMISSION_TARGET_HOMEWORK:
                 homework_ids.add(int(s.target_id))
 
         # ── Enrollment → student + lecture (batch) ──────────────
@@ -112,59 +105,17 @@ class PendingSubmissionsView(APIView):
         # 학생 메타가 노출될 수 있다. 명시적으로 tenant 강제.
         enrollment_map: Dict[int, Any] = {}
         if enrollment_ids:
-            from apps.domains.enrollment.models import Enrollment
-
-            for enr in (
-                Enrollment.objects.select_related("student", "lecture")
-                .filter(id__in=enrollment_ids, tenant=tenant)
-            ):
-                enrollment_map[enr.id] = enr
+            enrollment_map = enrollment_repo.enrollment_student_map_by_ids(enrollment_ids, tenant=tenant)
 
         # ── Exam targets → title + session info (batch) ────────
         exam_map: Dict[int, Dict[str, Any]] = {}
         if exam_ids:
-            from apps.domains.exams.models import Exam
-
-            exams = (
-                Exam.objects.filter(id__in=exam_ids, tenant=tenant)
-                .prefetch_related("sessions__lecture")
-            )
-            for exam in exams:
-                session = exam.sessions.first()
-                exam_map[exam.id] = {
-                    "target_title": exam.title,
-                    "session_id": session.id if session else None,
-                    "lecture_id": session.lecture_id if session else None,
-                    "lecture_title": (
-                        session.lecture.title
-                        if session and getattr(session, "lecture", None)
-                        else ""
-                    ),
-                }
+            exam_map = exams_repo.exam_target_info_map(exam_ids, tenant=tenant)
 
         # ── Homework targets → title + session info (batch) ────
         homework_map: Dict[int, Dict[str, Any]] = {}
         if homework_ids:
-            from apps.domains.homework_results.models import Homework
-
-            homeworks = (
-                Homework.objects.filter(id__in=homework_ids, tenant=tenant)
-                .select_related("session__lecture")
-            )
-            for hw in homeworks:
-                session = hw.session
-                homework_map[hw.id] = {
-                    "target_title": hw.title,
-                    "session_id": session.id if session else None,
-                    "lecture_id": (
-                        session.lecture_id if session else None
-                    ),
-                    "lecture_title": (
-                        session.lecture.title
-                        if session and getattr(session, "lecture", None)
-                        else ""
-                    ),
-                }
+            homework_map = homework_repo.homework_target_info_map(homework_ids, tenant=tenant)
 
         # ── Build response items ────────────────────────────────
         items: list[Dict[str, Any]] = []
@@ -185,9 +136,9 @@ class PendingSubmissionsView(APIView):
                 student_name = getattr(student, "name", "") or ""
 
             # Target info (title, session, lecture)
-            if s.target_type == Submission.TargetType.EXAM:
+            if s.target_type == SUBMISSION_TARGET_EXAM:
                 target_info = exam_map.get(int(s.target_id), {})
-            elif s.target_type == Submission.TargetType.HOMEWORK:
+            elif s.target_type == SUBMISSION_TARGET_HOMEWORK:
                 target_info = homework_map.get(int(s.target_id), {})
             else:
                 target_info = {}

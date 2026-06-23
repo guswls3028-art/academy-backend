@@ -300,18 +300,17 @@ def get_enrollments_by_ids_all(enrollment_ids, tenant):
     )
 
 
-def enrollment_student_map_by_ids(enrollment_ids):
+def enrollment_student_map_by_ids(enrollment_ids, tenant=None):
     from apps.domains.enrollment.models import Enrollment
 
     if not enrollment_ids:
         return {}
+    queryset = Enrollment.objects.select_related("student").filter(id__in=enrollment_ids)
+    if tenant is not None:
+        queryset = queryset.filter(tenant=tenant)
     return {
         enrollment.id: enrollment
-        for enrollment in (
-            Enrollment.objects.select_related("student")
-            .filter(id__in=enrollment_ids)
-            .order_by("id")
-        )
+        for enrollment in queryset.order_by("id")
     }
 
 
