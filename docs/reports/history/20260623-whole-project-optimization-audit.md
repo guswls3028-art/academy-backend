@@ -10,10 +10,10 @@
 - `git -C C:\academy\frontend diff --check`: passed.
 - Backend snapshot after this tranche:
   - `cross_domain_import=117`
-  - `cross_domain_internal_import=599`
+  - `cross_domain_internal_import=594`
   - `domain_infra_import=82`
-  - `check_id_domain_safety.py`: 34 warning(s), 0 error(s)
-  - `UNORDERED_FIRST`: 6
+  - `check_id_domain_safety.py`: 33 warning(s), 0 error(s)
+  - `UNORDERED_FIRST`: 5
   - `SILENT_FALLBACK`: 0
 - Frontend snapshot after this tranche:
   - `same_app_domain_import=146`
@@ -126,12 +126,22 @@
   6, and backend `cross_domain_internal_import` from 602 to 599 while keeping
   `cross_domain_import` at 117.
 
+## Tranche 9 Changes
+
+- Added submission and homework DB repositories and extended existing
+  enrollment/exams repositories for results landing-stats reads.
+- Routed `AdminResultsLandingStatsView` through adapter repositories instead of
+  direct submissions/exams/lectures/enrollment/homework model imports.
+- Reduced ID-domain safety warnings from 34 to 33, `UNORDERED_FIRST` from 6 to
+  5, and backend `cross_domain_internal_import` from 599 to 594 while keeping
+  `cross_domain_import` at 117.
+
 ## Verification
 
 - Backend:
   - `python manage.py check --settings apps.api.config.settings.test`: passed.
   - `python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test`: passed.
-  - `python scripts\lint\check_id_domain_safety.py`: 34 warning(s), 0 error(s).
+  - `python scripts\lint\check_id_domain_safety.py`: 33 warning(s), 0 error(s).
   - `python scripts\lint\refactor_boundary_snapshot.py --strict-touched`: passed.
   - `python scripts\lint\refactor_boundary_snapshot.py --enforce-baseline`: passed.
   - `python -m ruff check <touched backend files>`: passed.
@@ -153,7 +163,7 @@
 
 ## Next Tranche Candidates
 
-- Backend: extract public boundary helpers for the 6 remaining
+- Backend: extract public boundary helpers for the 5 remaining
   `UNORDERED_FIRST` sites in broad files, then add ordering without failing
   strict-touched.
 - Backend: plan the remaining `[ALLOWED]` integer-FK candidates by domain. Start

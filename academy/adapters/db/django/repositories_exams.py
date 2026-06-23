@@ -18,6 +18,16 @@ def regular_active_exam_for_tenant(exam_id: int, tenant):
     )
 
 
+def active_regular_exam_count(tenant) -> int:
+    from apps.domains.exams.models import Exam
+
+    return Exam.objects.filter(
+        tenant=tenant,
+        is_active=True,
+        exam_type=Exam.ExamType.REGULAR,
+    ).count()
+
+
 def exam_enrollment_ids_for_tenant_exam(exam_id: int, tenant):
     from apps.domains.exams.models import ExamEnrollment
 
@@ -48,3 +58,25 @@ def answer_key_answers_for_exam(exam_id: int) -> dict:
         .first()
     )
     return answer_key.answers if answer_key and answer_key.answers else {}
+
+
+def exam_target_info_map(exam_ids) -> dict[int, dict]:
+    from apps.domains.exams.models import Exam
+
+    info: dict[int, dict] = {}
+    if not exam_ids:
+        return info
+
+    for exam in (
+        Exam.objects.filter(id__in=exam_ids)
+        .prefetch_related("sessions__lecture")
+        .order_by("id")
+    ):
+        session = exam.sessions.order_by("id").first()
+        info[exam.id] = {
+            "target_title": exam.title,
+            "lecture_id": session.lecture_id if session else None,
+            "lecture_title": session.lecture.title if session and session.lecture else "",
+            "session_id": session.id if session else None,
+        }
+    return info

@@ -14,6 +14,11 @@ def lecture_filter_tenant(tenant):
     return Lecture.objects.filter(tenant=tenant)
 
 
+def active_non_system_lecture_count(tenant) -> int:
+    from apps.domains.lectures.models import Lecture
+    return Lecture.objects.filter(tenant=tenant, is_active=True, is_system=False).count()
+
+
 def enrollment_filter_lecture_active_students(tenant, lecture):
     from apps.domains.enrollment.models import Enrollment
     return (
@@ -293,6 +298,21 @@ def get_enrollments_by_ids_all(enrollment_ids, tenant):
         .select_related("student")
         .order_by("student__name", "id")
     )
+
+
+def enrollment_student_map_by_ids(enrollment_ids):
+    from apps.domains.enrollment.models import Enrollment
+
+    if not enrollment_ids:
+        return {}
+    return {
+        enrollment.id: enrollment
+        for enrollment in (
+            Enrollment.objects.select_related("student")
+            .filter(id__in=enrollment_ids)
+            .order_by("id")
+        )
+    }
 
 
 def get_attendances_for_lecture(tenant, lecture, enrollments):

@@ -18,57 +18,31 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
+from academy.adapters.db.django import repositories_enrollment as enrollment_repo
+from academy.adapters.db.django import repositories_exams as exams_repo
+from academy.adapters.db.django import repositories_homework as homework_repo
+from academy.adapters.db.django import repositories_submissions as submissions_repo
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.submissions.models import Submission
-from apps.domains.exams.models import Exam
-from apps.domains.lectures.models import Lecture
 
 
-PENDING_STATUSES = [
-    Submission.Status.SUBMITTED,
-    Submission.Status.DISPATCHED,
-    Submission.Status.EXTRACTING,
-    Submission.Status.NEEDS_IDENTIFICATION,
-    Submission.Status.ANSWERS_READY,
-    Submission.Status.GRADING,
-]
+SUBMISSION_TARGET_EXAM = submissions_repo.target_type_exam()
+SUBMISSION_TARGET_HOMEWORK = submissions_repo.target_type_homework()
+SUBMISSION_STATUS_DONE = submissions_repo.status_done()
+SUBMISSION_STATUS_FAILED = submissions_repo.status_failed()
+PENDING_STATUSES = submissions_repo.pending_statuses()
 
 
 def _resolve_target_titles(submissions):
     """exam_id → title, lecture/session 정보 일괄 매핑."""
-    exam_ids = {int(s.target_id) for s in submissions if s.target_type == Submission.TargetType.EXAM}
+    exam_ids = {int(s.target_id) for s in submissions if s.target_type == SUBMISSION_TARGET_EXAM}
     homework_ids = {
-        int(s.target_id) for s in submissions if s.target_type == Submission.TargetType.HOMEWORK
+        int(s.target_id) for s in submissions if s.target_type == SUBMISSION_TARGET_HOMEWORK
     }
 
-    exam_map = {}
-    if exam_ids:
-        for ex in Exam.objects.filter(id__in=exam_ids).prefetch_related("sessions__lecture"):
-            session = ex.sessions.first()
-            exam_map[ex.id] = {
-                "target_title": ex.title,
-                "lecture_id": session.lecture_id if session else None,
-                "lecture_title": session.lecture.title if session and session.lecture else "",
-                "session_id": session.id if session else None,
-            }
-
-    homework_map = {}
-    if homework_ids:
-        try:
-            from apps.domains.homework_results.models import Homework
-
-            for hw in Homework.objects.filter(id__in=homework_ids).select_related("session__lecture"):
-                session = hw.session
-                homework_map[hw.id] = {
-                    "target_title": hw.title,
-                    "lecture_id": session.lecture_id if session else None,
-                    "lecture_title": session.lecture.title if session and session.lecture else "",
-                    "session_id": session.id if session else None,
-                }
-        except Exception:
-            pass
-
-    return exam_map, homework_map
+    return (
+        exams_repo.exam_target_info_map(exam_ids),
+        homework_repo.homework_target_info_map(homework_ids),
+    )
 
 
 def _enrollment_student_map(submissions):
@@ -76,20 +50,15 @@ def _enrollment_student_map(submissions):
     if not enrollment_ids:
         return {}
 
-    from apps.domains.enrollment.models import Enrollment
-
-    return {
-        enr.id: enr
-        for enr in Enrollment.objects.select_related("student").filter(id__in=enrollment_ids)
-    }
+    return enrollment_repo.enrollment_student_map_by_ids(enrollment_ids)
 
 
 def _serialize_submissions(submissions, exam_map, homework_map, enrollment_map):
     items = []
     for s in submissions:
-        if s.target_type == Submission.TargetType.EXAM:
+        if s.target_type == SUBMISSION_TARGET_EXAM:
             t = exam_map.get(int(s.target_id), {})
-        elif s.target_type == Submission.TargetType.HOMEWORK:
+        elif s.target_type == SUBMISSION_TARGET_HOMEWORK:
             t = homework_map.get(int(s.target_id), {})
         else:
             t = {}
@@ -157,26 +126,22 @@ class AdminResultsLandingStatsView(APIView):
         cutoff_7d = now - timedelta(days=7)
         cutoff_24h = now - timedelta(hours=24)
 
-        active_lectures = Lecture.objects.filter(
-            tenant=tenant, is_active=True, is_system=False
-        ).count()
+        active_lectures = enrollment_repo.active_non_system_lecture_count(tenant)
 
-        active_exams = Exam.objects.filter(
-            tenant=tenant, is_active=True, exam_type=Exam.ExamType.REGULAR
-        ).count()
+        active_exams = exams_repo.active_regular_exam_count(tenant)
 
-        sub_qs = Submission.objects.filter(tenant=tenant)
+        sub_qs = submissions_repo.submission_filter_tenant(tenant)
         pending_count = sub_qs.filter(status__in=PENDING_STATUSES).count()
-        done_7d = sub_qs.filter(status=Submission.Status.DONE, created_at__gte=cutoff_7d).count()
+        done_7d = sub_qs.filter(status=SUBMISSION_STATUS_DONE, created_at__gte=cutoff_7d).count()
         failed_24h = sub_qs.filter(
-            status=Submission.Status.FAILED, created_at__gte=cutoff_24h
+            status=SUBMISSION_STATUS_FAILED, created_at__gte=cutoff_24h
         ).count()
 
         pending_subs = list(
             sub_qs.filter(status__in=PENDING_STATUSES).order_by("-created_at")[:5]
         )
         recent_done = list(
-            sub_qs.filter(status=Submission.Status.DONE).order_by("-created_at")[:5]
+            sub_qs.filter(status=SUBMISSION_STATUS_DONE).order_by("-created_at")[:5]
         )
 
         all_subs = pending_subs + recent_done
