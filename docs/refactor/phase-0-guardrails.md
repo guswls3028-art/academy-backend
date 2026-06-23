@@ -80,14 +80,14 @@ Current baseline snapshot (latest local run: 2026-06-23 KST):
 
 - `adapter_application_import`: 0
 - `cross_domain_import`: 117
-- `cross_domain_internal_import`: 591
+- `cross_domain_internal_import`: 590
 - `domain_infra_import`: 81
-- `check_id_domain_safety.py`: 32 warning(s), 0 error(s)
-  - `UNORDERED_FIRST`: 4
+- `check_id_domain_safety.py`: 21 warning(s), 0 error(s)
+  - `UNORDERED_FIRST`: 0
   - `SILENT_FALLBACK`: 0
-  - Remaining warnings are 28 `[ALLOWED]` integer-FK candidates plus
-    `UNORDERED_FIRST` instances in files that require boundary extraction before
-    strict-touched cleanup can be committed safely.
+  - Remaining warnings are 21 `[ALLOWED]` integer-FK candidates. These are
+    polymorphic target/source ids, deleted-object log references, or structural
+    mismatch fields that need domain-specific migration plans.
 
 Current frontend baseline snapshot (latest local run: 2026-06-23 KST):
 

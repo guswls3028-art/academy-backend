@@ -12,6 +12,13 @@
 # domains/results/models/exam_attempt.py:exam_id — FK (0006)
 # domains/results/models/exam_attempt.py:enrollment_id — FK (0006)
 # domains/results/models/result_item.py:question_id — FK (0006)
+# domains/results/models/score_edit_draft.py:session_id — FK (0011)
+# domains/results/models/score_edit_draft.py:tenant_id — FK (0011)
+# domains/results/models/score_edit_draft.py:editor_user_id — FK (0011)
+# domains/results/models/wrong_note_pdf.py:enrollment_id — FK (0012)
+# domains/results/models/wrong_note_pdf.py:lecture_id — FK (0012)
+# domains/results/models/wrong_note_pdf.py:exam_id — FK (0012)
+# domains/homework_results/models/score.py:updated_by_user_id — FK (0010)
 # domains/homework/models/homework_enrollment.py:session_id — FK (0003)
 # domains/homework/models/homework_enrollment.py:enrollment_id — FK (0003)
 # domains/homework/models/homework_assignment.py:enrollment_id — FK (0003)
@@ -35,14 +42,6 @@ domains/results/models/result_fact.py:question_id
 domains/results/models/exam_attempt.py:submission_id
 domains/submissions/models/submission_answer.py:exam_question_id
 
-# Temp/draft data — low risk
-domains/results/models/score_edit_draft.py:session_id
-domains/results/models/score_edit_draft.py:tenant_id
-domains/results/models/score_edit_draft.py:editor_user_id
-domains/results/models/wrong_note_pdf.py:enrollment_id
-domains/results/models/wrong_note_pdf.py:lecture_id
-domains/results/models/wrong_note_pdf.py:exam_id
-
 # Video ops/social — log preservation or performance
 support/video/models.py:video_id
 support/video/models.py:user_id
@@ -50,9 +49,6 @@ support/video/models.py:user_id
 # AI views — local variable, not model field
 domains/ai/views/exam_sheet.py:exam_id
 domains/ai/views/exam_sheet.py:sheet_id
-
-# Homework results — user_id for audit
-domains/homework_results/models/score.py:updated_by_user_id
 
 # Submission — enrollment_id is nullable, FK conversion possible but needs careful migration
 domains/submissions/models/submission.py:enrollment_id

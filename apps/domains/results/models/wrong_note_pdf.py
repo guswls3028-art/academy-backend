@@ -14,9 +14,28 @@ class WrongNotePDF(BaseModel):
         DONE = "DONE"
         FAILED = "FAILED"
 
-    enrollment_id = models.PositiveIntegerField()
-    lecture_id = models.PositiveIntegerField(null=True, blank=True)
-    exam_id = models.PositiveIntegerField(null=True, blank=True)
+    enrollment = models.ForeignKey(
+        "enrollment.Enrollment",
+        on_delete=models.CASCADE,
+        db_column="enrollment_id",
+        related_name="wrong_note_pdf_jobs",
+    )
+    lecture = models.ForeignKey(
+        "lectures.Lecture",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="lecture_id",
+        related_name="wrong_note_pdf_jobs",
+    )
+    exam = models.ForeignKey(
+        "exams.Exam",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="exam_id",
+        related_name="wrong_note_pdf_jobs",
+    )
 
     from_session_order = models.PositiveIntegerField(default=2)
 

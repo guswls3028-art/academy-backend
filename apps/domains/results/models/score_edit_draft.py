@@ -10,12 +10,27 @@ from django.db import models
 
 
 class ScoreEditDraft(models.Model):
-    session_id = models.PositiveIntegerField(db_index=True)
-    tenant_id = models.PositiveIntegerField(db_index=True)
-    editor_user_id = models.PositiveIntegerField(db_index=True)
+    session = models.ForeignKey(
+        "lectures.Session",
+        on_delete=models.CASCADE,
+        db_column="session_id",
+        related_name="score_edit_drafts",
+    )
+    tenant = models.ForeignKey(
+        "core.Tenant",
+        on_delete=models.CASCADE,
+        db_column="tenant_id",
+        related_name="score_edit_drafts",
+    )
+    editor_user = models.ForeignKey(
+        "core.User",
+        on_delete=models.CASCADE,
+        db_column="editor_user_id",
+        related_name="score_edit_drafts",
+    )
     payload = models.JSONField(default=list)  # list of { type, examId?, enrollmentId, homeworkId?, score?, metaStatus? }
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "results_score_edit_draft"
-        unique_together = (("tenant_id", "session_id", "editor_user_id"),)
+        unique_together = (("tenant", "session", "editor_user"),)

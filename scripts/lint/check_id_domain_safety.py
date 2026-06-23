@@ -303,6 +303,13 @@ def _is_pk_or_unique_lookup(lines: list, first_lineno: int) -> bool:
         # attendance_filter_session_enrollment / similar named functions that scope session+enrollment (unique_together)
         r"filter_session_enrollment\(",
         r"attendance_filter_.*enrollment\(",
+
+        # Model-specific unique constraints that the generic pattern matcher
+        # cannot infer from multiline queryset chains.
+        r"AIJobModel\.objects\.filter\([^)]*job_id\s*=",
+        r"MatchupDocument\.objects\.filter\([^)]*inventory_file\s*=",
+        r"_SP\.objects\.filter\([^)]*enrollment_id\s*=.*session\s*=",
+        r"SessionProgress\.objects\.filter\([^)]*enrollment_id\s*=.*session\s*=",
     ]
 
     for pattern in pk_patterns:

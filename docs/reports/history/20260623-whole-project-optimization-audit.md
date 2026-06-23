@@ -10,10 +10,10 @@
 - `git -C C:\academy\frontend diff --check`: passed.
 - Backend snapshot after this tranche:
   - `cross_domain_import=117`
-  - `cross_domain_internal_import=591`
+  - `cross_domain_internal_import=590`
   - `domain_infra_import=81`
-  - `check_id_domain_safety.py`: 32 warning(s), 0 error(s)
-  - `UNORDERED_FIRST`: 4
+  - `check_id_domain_safety.py`: 21 warning(s), 0 error(s)
+  - `UNORDERED_FIRST`: 0
   - `SILENT_FALLBACK`: 0
 - Frontend snapshot after this tranche:
   - `same_app_domain_import=146`
@@ -146,12 +146,33 @@
   4, backend `cross_domain_internal_import` from 594 to 591, and
   `domain_infra_import` from 82 to 81.
 
+## Tranche 11 Changes
+
+- Taught `check_id_domain_safety.py` to recognize existing model-level unique
+  constraints for `AIJobModel.job_id`, `MatchupDocument.inventory_file`, and
+  `SessionProgress(enrollment, session)`, eliminating 4 false-positive
+  `UNORDERED_FIRST` warnings without touching broad legacy runtime files.
+- Converted `ScoreEditDraft.session_id`, `tenant_id`, and `editor_user_id` to
+  Django ForeignKey fields while preserving the deployed DB column names and
+  the public `_id` attnames used by the API.
+- Converted `WrongNotePDF.enrollment_id`, `lecture_id`, and `exam_id` to
+  Django ForeignKey fields. Invalid enrollment jobs are deleted during
+  migration; invalid optional lecture/exam refs are nulled to preserve job
+  history safely.
+- Converted `HomeworkScore.updated_by_user_id` to a nullable `core.User`
+  ForeignKey and made the serializer explicitly keep the `updated_by_user_id`
+  response contract.
+- Removed the direct `apps.domains.lectures.models.Session` import from
+  `HomeworkScore` by using a string FK reference.
+- Reduced ID-domain safety warnings from 32 to 21, `UNORDERED_FIRST` from 4 to
+  0, and backend `cross_domain_internal_import` from 591 to 590.
+
 ## Verification
 
 - Backend:
   - `python manage.py check --settings apps.api.config.settings.test`: passed.
   - `python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test`: passed.
-  - `python scripts\lint\check_id_domain_safety.py`: 32 warning(s), 0 error(s).
+  - `python scripts\lint\check_id_domain_safety.py`: 21 warning(s), 0 error(s).
   - `python scripts\lint\refactor_boundary_snapshot.py --strict-touched`: passed.
   - `python scripts\lint\refactor_boundary_snapshot.py --enforce-baseline`: passed.
   - `python -m ruff check <touched backend files>`: passed.
@@ -164,6 +185,12 @@
   - `python -m pytest tests/test_omr_fact_fk_mapping.py apps/domains/submissions/tests/test_omr_dispatcher_sheet_resolution.py -v --tb=short`: 16 passed, 4 subtests passed.
   - `python -m pytest apps/domains/matchup/tests/test_proposal_number_conflict.py apps/domains/matchup/tests/test_proposal_helpers.py -v --tb=short`: 44 passed.
   - `python -m pytest apps/domains/messaging/tests/test_notification_preview_views.py apps/domains/messaging/tests/test_notification_log_redaction.py tests/test_messaging_queue_policy.py -v --tb=short`: 21 passed.
+  - `python -m pytest apps/domains/results/tests/test_security_regression.py -k "WrongNotePDF or wrong_note_pdf" -v --tb=short`: 3 passed.
+  - `python -m pytest apps/domains/results/tests/test_wrong_note_service.py -v --tb=short`: 2 passed.
+  - `python -m pytest apps/domains/lectures/tests/test_lecture_session_delete_guards.py -v --tb=short`: 5 passed, 8 subtests passed.
+  - `python -m pytest apps/domains/homework_results/tests/test_homework_quick_patch_scope.py -v --tb=short`: 6 passed.
+  - `python -m pytest apps/domains/homework_results/tests/test_homework_destroy_policy.py -v --tb=short`: 7 passed.
+  - `python -m pytest apps/domains/results/tests/test_p0_p1_fixes.py::TestHomeworkScoreValidation -v --tb=short`: 6 passed.
   - `python -m pytest tests/test_smoke.py -v --tb=short -x`: 20 passed, 5 subtests passed.
 - Frontend:
   - `pnpm refactor:budget`: passed.
@@ -174,9 +201,6 @@
 
 ## Next Tranche Candidates
 
-- Backend: extract public boundary helpers for the 4 remaining
-  `UNORDERED_FIRST` sites in broad files, then add ordering without failing
-  strict-touched.
 - Backend: plan the remaining `[ALLOWED]` integer-FK candidates by domain. Start
   with `submissions.SubmissionAnswer.exam_question_id` or
   `results.ResultFact.question_id`, because both touch assessment correctness.

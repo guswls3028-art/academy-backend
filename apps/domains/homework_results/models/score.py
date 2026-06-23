@@ -5,7 +5,6 @@ from __future__ import annotations
 from django.db import models
 
 from apps.api.common.models import TimestampModel
-from apps.domains.lectures.models import Session
 from apps.domains.homework_results.models.homework import Homework
 
 
@@ -58,7 +57,7 @@ class HomeworkScore(TimestampModel):
     )
 
     session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.CASCADE,
         related_name="homework_scores",
     )
@@ -87,7 +86,14 @@ class HomeworkScore(TimestampModel):
         blank=True,
     )
 
-    updated_by_user_id = models.PositiveIntegerField(null=True, blank=True)
+    updated_by_user = models.ForeignKey(
+        "core.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        db_column="updated_by_user_id",
+        related_name="updated_homework_scores",
+    )
 
     # ✅ 확장 필드(마이그레이션 없이): meta.status 만 사용
     meta = models.JSONField(null=True, blank=True)

@@ -25,6 +25,7 @@ class _StatusField(serializers.CharField):
 
 class HomeworkScoreSerializer(serializers.ModelSerializer):
     enrollment_id = serializers.IntegerField(read_only=True)
+    updated_by_user_id = serializers.IntegerField(read_only=True)
 
     # write-only convenience field (DB 컬럼 추가 아님)
     status = _StatusField(required=False, allow_null=True, allow_blank=True, write_only=True)
