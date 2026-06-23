@@ -4,7 +4,6 @@
 from django.urls import path
 from .ppt.views import PptGenerateView
 from .problem_studio.views import (
-    ProblemStudioGenerateView,
     ProblemStudioJobCreateView,
     ProblemStudioJobStatusView,
     ProblemStudioTransferDocumentView,
@@ -17,7 +16,6 @@ from apps.domains.assets.omr.views.omr_document_views import (
 
 urlpatterns = [
     path("ppt/generate/", PptGenerateView.as_view(), name="tools-ppt-generate"),
-    path("problem-studio/generate/", ProblemStudioGenerateView.as_view(), name="tools-problem-studio-generate"),
     path("problem-studio/transfer-document/", ProblemStudioTransferDocumentView.as_view(), name="tools-problem-studio-transfer-document"),
     path("problem-studio/jobs/", ProblemStudioJobCreateView.as_view(), name="tools-problem-studio-job-create"),
     path("problem-studio/jobs/<str:job_id>/", ProblemStudioJobStatusView.as_view(), name="tools-problem-studio-job-status"),

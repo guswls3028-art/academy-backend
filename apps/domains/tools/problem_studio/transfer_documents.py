@@ -179,6 +179,7 @@ def _source_kind(name: str) -> str:
         ".jpg": "이미지",
         ".jpeg": "이미지",
         ".webp": "이미지",
+        ".bmp": "이미지",
         ".zip": "ZIP",
     }.get(suffix, "기타")
 
@@ -380,7 +381,7 @@ def _clean_hwp_text(text: str) -> str:
     return cleaned.strip()
 
 
-def _extract_hwp_text_and_images(data: bytes) -> tuple[str, list[tuple[str, str, bytes]]]:
+def _extract_hwp_text_and_images(data: bytes, *, include_images: bool = True) -> tuple[str, list[tuple[str, str, bytes]]]:
     try:
         import olefile
     except Exception as exc:
@@ -412,18 +413,24 @@ def _extract_hwp_text_and_images(data: bytes) -> tuple[str, list[tuple[str, str,
                 if text:
                     text_chunks.append(text)
 
-        for parts in streams:
-            if len(parts) < 2 or parts[0] != "BinData":
-                continue
-            filename = parts[-1]
-            suffix = Path(filename).suffix.lower()
-            if suffix not in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}:
-                continue
-            image_data = ole.openstream(parts).read()
-            mime, normalized = _normalize_hwp_image_data(filename, image_data)
-            images.append((filename, mime, normalized))
+        if include_images:
+            for parts in streams:
+                if len(parts) < 2 or parts[0] != "BinData":
+                    continue
+                filename = parts[-1]
+                suffix = Path(filename).suffix.lower()
+                if suffix not in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}:
+                    continue
+                image_data = ole.openstream(parts).read()
+                mime, normalized = _normalize_hwp_image_data(filename, image_data)
+                images.append((filename, mime, normalized))
 
     return _clean_hwp_text("\n\n".join(text_chunks)), images
+
+
+def extract_hwp_text(data: bytes) -> str:
+    text, _images = _extract_hwp_text_and_images(data, include_images=False)
+    return text
 
 
 def _fast_hwp_transfer_doc(name: str, data: bytes) -> TransferDocument:
@@ -496,7 +503,7 @@ def _docs_from_named_bytes(name: str, data: bytes) -> tuple[list[TransferDocumen
         if suffix == ".doc":
             warning = "DOC 바이너리는 직접 렌더링하지 못해 원본 등록 리포트만 생성했습니다. DOCX/PDF로 저장하면 본문 이관이 가능합니다."
             return [_simple_text_transfer_doc(name, "", "DOC 원본 등록", warning)], [f"{name}: {warning}"]
-        if suffix in {".png", ".jpg", ".jpeg", ".webp"}:
+        if suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
             return [_image_transfer_doc(name, data)], warnings
     except Exception as exc:
         warning = f"{name}: 원본 이관 중 오류가 발생했습니다. ({exc})"

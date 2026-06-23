@@ -15,9 +15,10 @@ MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 MAX_TEXT_CHARS = 18_000
 MAX_OUTPUT_QUESTIONS = 40
 MAX_VARIANT_COUNT = 10
-MAX_ZIP_UNCOMPRESSED_BYTES = 25 * 1024 * 1024
+MAX_ZIP_UNCOMPRESSED_BYTES = 180 * 1024 * 1024
 
-SUPPORTED_TEXT_SUFFIXES = (".pdf", ".hwpx", ".docx")
+SUPPORTED_TEXT_SUFFIXES = (".pdf", ".hwp", ".hwpx", ".docx", ".zip")
+ZIP_TEXT_SUFFIXES = (".pdf", ".hwp", ".hwpx", ".docx")
 
 
 @dataclass(frozen=True)
@@ -49,6 +50,8 @@ def _source_kind(filename: str) -> str:
         return "DOCX"
     if name.endswith(".doc"):
         return "DOC"
+    if name.endswith(".zip"):
+        return "ZIP"
     return "기타"
 
 
@@ -136,6 +139,49 @@ def _extract_docx_text(data: bytes) -> str:
         return _normalize_space(_xml_text(zf.read("word/document.xml")))
 
 
+def _extract_hwp_text(data: bytes) -> str:
+    from apps.domains.tools.problem_studio.transfer_documents import extract_hwp_text
+
+    return _normalize_space(extract_hwp_text(data))
+
+
+def _extract_zip_text(data: bytes) -> tuple[str, list[str]]:
+    chunks: list[str] = []
+    warnings: list[str] = []
+    with zipfile.ZipFile(BytesIO(data)) as zf:
+        members = _safe_zip_members(zf)
+        for info in members:
+            if info.is_dir():
+                continue
+            name = info.filename
+            lower = name.lower()
+            if not lower.endswith(ZIP_TEXT_SUFFIXES):
+                continue
+            try:
+                member_data = zf.read(info)
+                if lower.endswith(".pdf"):
+                    text = _extract_pdf_text(member_data)
+                elif lower.endswith(".hwp"):
+                    text = _extract_hwp_text(member_data)
+                elif lower.endswith(".hwpx"):
+                    text = _extract_hwpx_text(member_data)
+                elif lower.endswith(".docx"):
+                    text = _extract_docx_text(member_data)
+                else:
+                    text = ""
+            except Exception:
+                logger.info("problem_studio_zip_member_extract_failed name=%s", name, exc_info=True)
+                warnings.append(f"{name}: 본문 추출 실패")
+                continue
+            if text:
+                chunks.append(f"[{name}]\n{text}")
+            if sum(len(chunk) for chunk in chunks) >= MAX_TEXT_CHARS:
+                break
+    if not chunks and not warnings:
+        warnings.append("ZIP 안에서 재작성에 사용할 텍스트 문서를 찾지 못했습니다.")
+    return _normalize_space("\n\n".join(chunks))[:MAX_TEXT_CHARS], warnings[:5]
+
+
 def extract_source(uploaded: Any) -> SourceExtraction:
     name = str(getattr(uploaded, "name", "source"))
     data = _read_limited(uploaded)
@@ -147,12 +193,15 @@ def extract_source(uploaded: Any) -> SourceExtraction:
         lower = name.lower()
         if lower.endswith(".pdf"):
             text = _extract_pdf_text(data)
+        elif lower.endswith(".hwp"):
+            text = _extract_hwp_text(data)
         elif lower.endswith(".hwpx"):
             text = _extract_hwpx_text(data)
         elif lower.endswith(".docx"):
             text = _extract_docx_text(data)
-        elif lower.endswith(".hwp"):
-            warning = "HWP 바이너리 파일은 현재 소스 등록만 지원합니다. HWPX/PDF로 저장하면 본문 추출까지 됩니다."
+        elif lower.endswith(".zip"):
+            text, zip_warnings = _extract_zip_text(data)
+            warning = " · ".join(zip_warnings) if zip_warnings else None
         elif lower.endswith(".doc"):
             warning = "DOC 파일은 현재 소스 등록만 지원합니다. DOCX/PDF로 저장하면 본문 추출까지 됩니다."
         else:

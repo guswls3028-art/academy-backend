@@ -13,10 +13,15 @@ from apps.domains.tools.problem_studio.services import (
     build_problem_studio_package,
     build_problem_studio_package_from_worker_payload,
     extract_source,
+    parse_payload,
     source_extraction_to_payload,
 )
 from apps.domains.tools.problem_studio.worker import handle_problem_studio_package_job
-from apps.domains.tools.problem_studio.transfer_documents import build_transfer_package, _normalize_hwp_image_data
+from apps.domains.tools.problem_studio.transfer_documents import (
+    TRANSFER_MAX_ZIP_MEMBERS,
+    build_transfer_package,
+    _normalize_hwp_image_data,
+)
 
 
 def _zip_file(name: str, files: dict[str, str]) -> SimpleUploadedFile:
@@ -69,6 +74,39 @@ class ProblemStudioServiceTests(SimpleTestCase):
 
         self.assertEqual(source.kind, "DOCX")
         self.assertIn("뉴클레오타이드", source.extracted_text)
+
+    def test_extracts_zip_nested_docx_text_for_beta_rewrite(self):
+        uploaded = _zip_file(
+            "sources.zip",
+            {
+                "unit1/source.docx": _zip_bytes({
+                    "word/document.xml": (
+                        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                        "<w:body><w:p><w:r><w:t>암모니아 합성 평형 이동 조건을 고르시오.</w:t></w:r></w:p>"
+                        "<w:p><w:r><w:t>정답 ②</w:t></w:r></w:p></w:body></w:document>"
+                    ).encode()
+                }),
+                "ignore.txt": b"skip",
+            },
+        )
+
+        source = extract_source(uploaded)
+
+        self.assertEqual(source.kind, "ZIP")
+        self.assertIn("암모니아 합성", source.extracted_text)
+        self.assertIsNone(source.warning)
+
+    def test_beta_zip_text_extraction_reports_too_many_members(self):
+        uploaded = SimpleUploadedFile(
+            "too-many.zip",
+            _zip_bytes({f"{index}.docx": b"not-a-docx" for index in range(401)}),
+        )
+
+        source = extract_source(uploaded)
+
+        self.assertEqual(source.kind, "ZIP")
+        self.assertEqual(source.extracted_text, "")
+        self.assertIn("파일 수가 너무 많습니다", source.warning or "")
 
     def test_build_package_returns_endnote_ready_questions_without_ai(self):
         payload = {
@@ -165,6 +203,22 @@ class ProblemStudioServiceTests(SimpleTestCase):
             names = zf.namelist()
         self.assertTrue(any(name.endswith(".doc") for name in names))
         self.assertIn("00_변환리포트.html", names)
+
+    def test_transfer_package_reports_zip_with_too_many_members(self):
+        uploaded = SimpleUploadedFile(
+            "many.zip",
+            _zip_bytes({f"{index}.png": _TINY_PNG for index in range(TRANSFER_MAX_ZIP_MEMBERS + 1)}),
+        )
+
+        package = build_transfer_package(payload={"title": "파괴 테스트"}, source_files=[uploaded])
+
+        self.assertEqual(len(package.documents), 1)
+        self.assertEqual(len(package.warnings), 1)
+        self.assertIn("ZIP 해제 중 오류", package.warnings[0])
+
+    def test_parse_payload_rejects_broken_json(self):
+        with self.assertRaises(ValueError):
+            parse_payload("{not-json")
 
     def test_hwp_image_normalization_inflates_compressed_bindata(self):
         from PIL import Image
