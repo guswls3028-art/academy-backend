@@ -12,7 +12,9 @@
   - `cross_domain_import=116`
   - `cross_domain_internal_import=606`
   - `domain_infra_import=82`
-  - `check_id_domain_safety.py`: 52 warning(s), 0 error(s)
+  - `check_id_domain_safety.py`: 39 warning(s), 0 error(s)
+  - `UNORDERED_FIRST`: 11
+  - `SILENT_FALLBACK`: 0
 - Frontend snapshot after this tranche:
   - `same_app_domain_import=150`
   - `large_frontend_file=34`
@@ -44,15 +46,35 @@
 - Renamed a few internal frontend raw payload/result types so hand-authored
   `Response`/`Dto` suffix debt stays within the committed refactor budget.
 
+## Tranche 2 Changes
+
+- Reduced ID-domain safety warnings from 52 to 39 without tripping
+  `refactor_boundary_snapshot.py --strict-touched`.
+- Added explicit ordering before `.first()` in strict-safe exam structure,
+  lecture system-container, matchup proposal, messaging selector, OMR support,
+  and submission failure support paths.
+- Replaced student exam enrollment literal `(None, None)` fallbacks with a named
+  `MISSING_EXAM_ENROLLMENT` result helper and deterministic enrollment lookup.
+- Left broad boundary-debt files untouched after verification showed that
+  touching them triggers strict cross-domain/import failures. Their remaining
+  `UNORDERED_FIRST` fixes should be paired with boundary extraction.
+- Left `[ALLOWED]` integer-FK candidates untouched; each needs a domain-specific
+  migration/data-normalization plan rather than a mechanical field rewrite.
+
 ## Verification
 
 - Backend:
   - `python manage.py check --settings apps.api.config.settings.test`: passed.
   - `python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test`: passed.
-  - `python scripts\lint\check_id_domain_safety.py`: passed with warnings only.
+  - `python scripts\lint\check_id_domain_safety.py`: 39 warning(s), 0 error(s).
+  - `python scripts\lint\refactor_boundary_snapshot.py --strict-touched`: passed.
+  - `python scripts\lint\refactor_boundary_snapshot.py --enforce-baseline`: passed.
   - `python -m ruff check <touched backend files>`: passed.
-  - `python -m pytest apps/domains/submissions/tests/test_omr_dispatcher_sheet_resolution.py -v --tb=short`: 16 passed.
-  - `python -m pytest apps/domains/messaging/tests/test_notification_log_redaction.py tests/test_messaging_queue_policy.py -v --tb=short`: 10 passed.
+  - `python -m pytest apps/domains/student_app/tests/test_parent_exam_child_selection.py -v --tb=short`: 4 passed.
+  - `python -m pytest tests/test_omr_fact_fk_mapping.py apps/domains/submissions/tests/test_omr_dispatcher_sheet_resolution.py -v --tb=short`: 16 passed, 4 subtests passed.
+  - `python -m pytest apps/domains/matchup/tests/test_proposal_number_conflict.py apps/domains/matchup/tests/test_proposal_helpers.py -v --tb=short`: 44 passed.
+  - `python -m pytest apps/domains/messaging/tests/test_notification_preview_views.py apps/domains/messaging/tests/test_notification_log_redaction.py tests/test_messaging_queue_policy.py -v --tb=short`: 21 passed.
+  - `python -m pytest tests/test_smoke.py -v --tb=short -x`: 20 passed, 5 subtests passed.
 - Frontend:
   - `pnpm refactor:budget`: passed.
   - `pnpm typecheck`: passed.
@@ -60,9 +82,12 @@
 
 ## Next Tranche Candidates
 
-- Backend: reduce `UNORDERED_FIRST` warnings in ID-sensitive paths, starting
-  with AI callbacks and OMR/notification selectors where deterministic row
-  selection affects tenant or student identity.
+- Backend: extract public boundary helpers for the 11 remaining
+  `UNORDERED_FIRST` sites in broad files, then add ordering without failing
+  strict-touched.
+- Backend: plan the remaining `[ALLOWED]` integer-FK candidates by domain. Start
+  with `submissions.SubmissionAnswer.exam_question_id` or
+  `results.ResultFact.question_id`, because both touch assessment correctness.
 - Frontend: continue from same-app domain import hotspots:
   `app_admin/sessions -> lectures/homework/results/exams` and
   `app_admin/lectures -> scores/students/videos/messages`.

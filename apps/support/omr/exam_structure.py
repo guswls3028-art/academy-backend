@@ -38,7 +38,7 @@ def load_submission_exam_structure(submission) -> OmrExamStructure:
         exam = Exam.objects.filter(
             id=int(submission.target_id),
             tenant=getattr(submission, "tenant", None),
-        ).first()
+        ).order_by("id").first()
         if not exam:
             return empty_exam_structure()
 
@@ -47,7 +47,7 @@ def load_submission_exam_structure(submission) -> OmrExamStructure:
         qnum_map_built = False
         contract = None
         contract_snapshot: dict[str, Any] = {}
-        sheet = Sheet.objects.filter(exam=template_exam).first()
+        sheet = Sheet.objects.filter(exam=template_exam).order_by("id").first()
         if sheet:
             contract = build_omr_sheet_contract(sheet=sheet, exam=template_exam)
             qnum_to_pk = contract.objective_question_ids_by_number
@@ -55,7 +55,7 @@ def load_submission_exam_structure(submission) -> OmrExamStructure:
             qnum_map_built = True
 
         correct_answers_by_pk: dict[str, Any] = {}
-        answer_key = AnswerKey.objects.filter(exam=template_exam).first()
+        answer_key = AnswerKey.objects.filter(exam=template_exam).order_by("id").first()
         if answer_key and isinstance(answer_key.answers, dict):
             correct_answers_by_pk = answer_key.answers
 

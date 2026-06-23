@@ -99,12 +99,12 @@ class Lecture(TimestampModel):
         from django.db import IntegrityError
 
         # 1. is_system=True인 강의 조회
-        lecture = cls.objects.filter(tenant=tenant, is_system=True).first()
+        lecture = cls.objects.filter(tenant=tenant, is_system=True).order_by("id").first()
         if lecture:
             return lecture
 
         # 2. 레거시: title='전체공개영상'인 강의가 있으면 is_system=True로 업그레이드
-        lecture = cls.objects.filter(tenant=tenant, title="전체공개영상").first()
+        lecture = cls.objects.filter(tenant=tenant, title="전체공개영상").order_by("id").first()
         if lecture:
             if not lecture.is_system:
                 lecture.is_system = True
@@ -125,11 +125,11 @@ class Lecture(TimestampModel):
             return lecture
         except IntegrityError:
             # race condition: 다른 요청이 먼저 생성함 → 재조회
-            lecture = cls.objects.filter(tenant=tenant, is_system=True).first()
+            lecture = cls.objects.filter(tenant=tenant, is_system=True).order_by("id").first()
             if lecture:
                 return lecture
             # title 충돌인 경우
-            lecture = cls.objects.filter(tenant=tenant, title="전체공개영상").first()
+            lecture = cls.objects.filter(tenant=tenant, title="전체공개영상").order_by("id").first()
             if lecture:
                 if not lecture.is_system:
                     lecture.is_system = True

@@ -361,6 +361,7 @@ def _existing_problem_number_conflict(
         MatchupProblem.objects
         .filter(document_id=document_id, number=number)
         .only("id")
+        .order_by("id")
         .first()
     )
     return existing.id if existing else None

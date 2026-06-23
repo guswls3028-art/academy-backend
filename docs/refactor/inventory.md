@@ -255,7 +255,11 @@ pnpm refactor:inventory
 - NotificationLog `source_tenant_id`, OMR detected-answer `exam_question_id`,
   and OMR student-match `enrollment_id` now use Django ForeignKey fields while
   preserving the deployed DB column names. The ID-domain safety guard reports
-  zero new integer-FK errors in the 2026-06-23 snapshot.
+  zero new integer-FK errors in the 2026-06-23 snapshot. A follow-up guardrail
+  cleanup removed `SILENT_FALLBACK` warnings and reduced deterministic row
+  selection debt to the strict-safe subset; the remaining 39 warnings are 28
+  `[ALLOWED]` integer-FK candidates plus 11 `UNORDERED_FIRST` instances in
+  files that need boundary extraction before touched-file strict cleanup.
 - Frontend display string helpers for common date, money, and byte labels now
   live in `frontend/src/shared/utils/displayText.ts`. Dev tenant query-key
   literals were folded into the existing key factory, and the refactor budget

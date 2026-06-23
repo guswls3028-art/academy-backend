@@ -6,10 +6,14 @@ this support boundary while broader domain cutover is in progress.
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from django.db.models import Q
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
+MISSING_EXAM_ENROLLMENT: tuple[None, None] = (None, None)
 
 
 class StudentExamSubmitError(Exception):
@@ -17,6 +21,11 @@ class StudentExamSubmitError(Exception):
         super().__init__(detail)
         self.detail = detail
         self.status_code = status_code
+
+
+def _missing_exam_enrollment(reason: str) -> tuple[None, None]:
+    logger.debug("student exam enrollment lookup missed: %s", reason)
+    return MISSING_EXAM_ENROLLMENT
 
 
 def student_exam_queryset(student, tenant, *, include_upcoming_days: int = 0):
@@ -90,11 +99,11 @@ def get_enrollment_for_student_exam(student, exam_id, tenant=None):
     from apps.domains.exams.models import ExamEnrollment
 
     if not student:
-        return None, None
+        return _missing_exam_enrollment("student is required")
     if not tenant:
-        return None, None
+        return _missing_exam_enrollment("tenant is required")
     if getattr(student, "tenant_id", None) != tenant.id:
-        return None, None
+        return _missing_exam_enrollment("student tenant mismatch")
     exam_enrollment = (
         ExamEnrollment.objects.filter(
             exam_id=int(exam_id),
@@ -103,10 +112,11 @@ def get_enrollment_for_student_exam(student, exam_id, tenant=None):
             enrollment__status="ACTIVE",
         )
         .select_related("enrollment", "enrollment__tenant")
+        .order_by("id")
         .first()
     )
     if not exam_enrollment or not exam_enrollment.enrollment:
-        return None, None
+        return _missing_exam_enrollment("active exam enrollment not found")
     return exam_enrollment.enrollment, getattr(exam_enrollment.enrollment, "tenant", None)
 
 

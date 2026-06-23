@@ -137,7 +137,7 @@ def _infer_choice_count_from_answer_key(*, sheet, template_exam, questions: list
     try:
         from apps.domains.exams.models import AnswerKey
 
-        answer_key = AnswerKey.objects.filter(exam=template_exam).first()
+        answer_key = AnswerKey.objects.filter(exam=template_exam).order_by("id").first()
         if not answer_key or not isinstance(answer_key.answers, dict) or not questions:
             return None
 

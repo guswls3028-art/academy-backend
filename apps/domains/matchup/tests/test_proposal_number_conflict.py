@@ -40,6 +40,7 @@ class TestExistingProblemNumberConflictHelper:
         from apps.domains.matchup.models import MatchupProblem
         qs = MagicMock()
         qs.only = MagicMock(return_value=qs)
+        qs.order_by = MagicMock(return_value=qs)
         qs.first = MagicMock(return_value=None)
         objects = MagicMock()
         objects.filter = MagicMock(return_value=qs)
@@ -55,6 +56,7 @@ class TestExistingProblemNumberConflictHelper:
         existing = MagicMock(); existing.id = 12345
         qs = MagicMock()
         qs.only = MagicMock(return_value=qs)
+        qs.order_by = MagicMock(return_value=qs)
         qs.first = MagicMock(return_value=existing)
         objects = MagicMock()
         objects.filter = MagicMock(return_value=qs)
@@ -69,12 +71,14 @@ class TestExistingProblemNumberConflictHelper:
         from apps.domains.matchup.models import MatchupProblem
         qs = MagicMock()
         qs.only = MagicMock(return_value=qs)
+        qs.order_by = MagicMock(return_value=qs)
         qs.first = MagicMock(return_value=None)
         objects = MagicMock()
         objects.filter = MagicMock(return_value=qs)
         with patch.object(MatchupProblem, "objects", objects):
             _existing_problem_number_conflict(document_id=100, number=5)
         qs.only.assert_called_once_with("id")
+        qs.order_by.assert_called_once_with("id")
 
 
 # ── 통합 mock — approve_proposal flow + number_conflict ─────────────
@@ -123,6 +127,7 @@ def _patch_problem_objects(create_captured: dict, conflict_id_or_none):
         existing = MagicMock(); existing.id = conflict_id_or_none
     filter_qs = MagicMock()
     filter_qs.only = MagicMock(return_value=filter_qs)
+    filter_qs.order_by = MagicMock(return_value=filter_qs)
     filter_qs.first = MagicMock(return_value=existing)
 
     def fake_create(**kwargs):

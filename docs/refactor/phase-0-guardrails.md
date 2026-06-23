@@ -82,7 +82,12 @@ Current baseline snapshot (latest local run: 2026-06-23 KST):
 - `cross_domain_import`: 116
 - `cross_domain_internal_import`: 606
 - `domain_infra_import`: 82
-- `check_id_domain_safety.py`: 52 warning(s), 0 error(s)
+- `check_id_domain_safety.py`: 39 warning(s), 0 error(s)
+  - `UNORDERED_FIRST`: 11
+  - `SILENT_FALLBACK`: 0
+  - Remaining warnings are 28 `[ALLOWED]` integer-FK candidates plus
+    `UNORDERED_FIRST` instances in files that require boundary extraction before
+    strict-touched cleanup can be committed safely.
 
 Current frontend baseline snapshot (latest local run: 2026-06-23 KST):
 

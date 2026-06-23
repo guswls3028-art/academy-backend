@@ -14,7 +14,7 @@ def get_auto_send_config(tenant_id: int, trigger: str) -> Optional[AutoSendConfi
     return AutoSendConfig.objects.filter(
         tenant_id=tenant_id,
         trigger=trigger,
-    ).select_related("template").first()
+    ).select_related("template").order_by("id").first()
 
 
 def get_all_auto_send_configs(tenant_id: int) -> dict[str, Optional[AutoSendConfig]]:
@@ -36,11 +36,11 @@ def resolve_freeform_template(tenant_id: int):
     owner_id = get_owner_tenant_id()
     freeform = MessageTemplate.objects.filter(
         tenant_id=owner_id, solapi_status="APPROVED", body__contains="#{공지내용}",
-    ).first()
+    ).order_by("-updated_at", "-id").first()
     if not freeform:
         freeform = MessageTemplate.objects.filter(
             tenant_id=owner_id, solapi_status="APPROVED", body__contains="#{내용}",
-        ).first()
+        ).order_by("-updated_at", "-id").first()
     return freeform
 
 
@@ -59,7 +59,7 @@ def resolve_category_template(tenant_id: int, extra_vars: dict = None):
     return MessageTemplate.objects.filter(
         tenant_id=owner_id, solapi_status="APPROVED",
         body__contains="#{시험성적}",
-    ).first()
+    ).order_by("-updated_at", "-id").first()
 
 
 def has_any_approved_template(tenant_id: int) -> bool:
@@ -71,4 +71,3 @@ def has_any_approved_template(tenant_id: int) -> bool:
         tenant_id=get_owner_tenant_id(),
         solapi_status="APPROVED",
     ).exists()
-

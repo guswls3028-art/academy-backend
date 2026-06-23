@@ -53,6 +53,7 @@ def mark_submission_failed(
             Submission.objects
             .select_for_update()
             .filter(**filters)
+            .order_by("id")
             .first()
         )
         if not submission or submission.status == Submission.Status.FAILED:

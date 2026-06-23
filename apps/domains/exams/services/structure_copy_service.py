@@ -48,7 +48,7 @@ def copy_exam_structure(
             source_exam_id=int(source_exam.id),
         )
 
-    source_sheet = Sheet.objects.filter(exam=source_exam).first()
+    source_sheet = Sheet.objects.filter(exam=source_exam).order_by("id").first()
     if source_sheet is None:
         Sheet.objects.create(
             exam=target_exam,
@@ -151,7 +151,7 @@ def _copy_or_remap_answer_key(
     target_exam: Exam,
     question_id_map: dict[int, int],
 ) -> None:
-    target_answer_key = AnswerKey.objects.filter(exam=target_exam).first()
+    target_answer_key = AnswerKey.objects.filter(exam=target_exam).order_by("id").first()
     if target_answer_key is not None:
         target_answer_key.answers = remap_answer_keys(
             target_answer_key.answers or {},
@@ -160,7 +160,7 @@ def _copy_or_remap_answer_key(
         target_answer_key.save(update_fields=["answers", "updated_at"])
         return
 
-    source_answer_key = AnswerKey.objects.filter(exam=source_exam).first()
+    source_answer_key = AnswerKey.objects.filter(exam=source_exam).order_by("id").first()
     if source_answer_key is None:
         return
 
