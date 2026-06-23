@@ -118,6 +118,44 @@ class PdfDocument:
         return img
 
 
+class PdfBytesDocument:
+    """Context manager for PDF bytes used by HTTP upload pipelines."""
+
+    def __init__(self, data: bytes):
+        import fitz  # PyMuPDF
+
+        self._fitz = fitz
+        self._doc = fitz.open(stream=data, filetype="pdf")
+
+    def __enter__(self) -> PdfBytesDocument:
+        return self
+
+    def __exit__(self, *_) -> None:
+        self._doc.close()
+
+    def page_count(self) -> int:
+        return int(self._doc.page_count)
+
+    def extract_text(self) -> str:
+        return "\n\n".join(page.get_text("text") or "" for page in self._doc)
+
+    def render_page_bytes(self, page_index: int, *, zoom: float, jpg_quality: int = 82) -> tuple[str, bytes]:
+        if page_index < 0 or page_index >= self.page_count():
+            raise IndexError(f"Page index {page_index} out of range (0-{self.page_count() - 1})")
+        page = self._doc[page_index]
+        matrix = self._fitz.Matrix(zoom, zoom)
+        pix = page.get_pixmap(matrix=matrix, alpha=False)
+        try:
+            return "image/jpeg", pix.tobytes("jpeg", jpg_quality=jpg_quality)
+        except TypeError:
+            return "image/png", pix.tobytes("png")
+
+
+def extract_pdf_text_from_bytes(data: bytes) -> str:
+    with PdfBytesDocument(data) as doc:
+        return doc.extract_text()
+
+
 # ---------------------------------------------------------------------------
 # Standalone functions (backward compatibility)
 # ---------------------------------------------------------------------------

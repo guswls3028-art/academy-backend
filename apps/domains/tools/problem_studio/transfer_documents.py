@@ -280,13 +280,13 @@ def _image_transfer_doc(name: str, data: bytes) -> TransferDocument:
 
 def _pdf_transfer_docs(name: str, data: bytes) -> list[TransferDocument]:
     try:
-        import fitz  # PyMuPDF
+        from academy.adapters.tools.pymupdf_renderer import PdfBytesDocument
     except Exception as exc:  # pragma: no cover - dependency is present in api image
         raise ValueError("PDF 렌더링 모듈을 사용할 수 없습니다.") from exc
 
     documents: list[TransferDocument] = []
-    with fitz.open(stream=data, filetype="pdf") as pdf:
-        page_count = int(pdf.page_count)
+    with PdfBytesDocument(data) as pdf:
+        page_count = pdf.page_count()
         for start in range(0, page_count, TRANSFER_PDF_PAGES_PER_DOC):
             end = min(start + TRANSFER_PDF_PAGES_PER_DOC, page_count)
             page_html: list[str] = [
@@ -297,15 +297,7 @@ def _pdf_transfer_docs(name: str, data: bytes) -> list[TransferDocument]:
                 )
             ]
             for index in range(start, end):
-                page = pdf[index]
-                matrix = fitz.Matrix(TRANSFER_PDF_RENDER_ZOOM, TRANSFER_PDF_RENDER_ZOOM)
-                pix = page.get_pixmap(matrix=matrix, alpha=False)
-                try:
-                    image_bytes = pix.tobytes("jpeg", jpg_quality=82)
-                    mime = "image/jpeg"
-                except TypeError:
-                    image_bytes = pix.tobytes("png")
-                    mime = "image/png"
+                mime, image_bytes = pdf.render_page_bytes(index, zoom=TRANSFER_PDF_RENDER_ZOOM, jpg_quality=82)
                 page_no = index + 1
                 page_html.append(
                     f'<section class="source-page">'

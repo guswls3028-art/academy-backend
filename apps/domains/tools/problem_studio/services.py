@@ -82,15 +82,11 @@ def _read_limited(uploaded: Any) -> bytes:
 
 def _extract_pdf_text(data: bytes) -> str:
     try:
-        import fitz  # PyMuPDF
+        from academy.adapters.tools.pymupdf_renderer import extract_pdf_text_from_bytes
     except Exception as exc:  # pragma: no cover - dependency is present in api image
         raise ValueError("PDF 텍스트 추출 모듈을 사용할 수 없습니다.") from exc
 
-    chunks: list[str] = []
-    with fitz.open(stream=data, filetype="pdf") as doc:
-        for page in doc:
-            chunks.append(page.get_text("text") or "")
-    return _normalize_space("\n\n".join(chunks))
+    return _normalize_space(extract_pdf_text_from_bytes(data))
 
 
 def _safe_zip_members(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
