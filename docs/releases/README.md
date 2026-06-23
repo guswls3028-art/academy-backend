@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.4.8.md](v1.4.8.md) | **CURRENT** | 2026-06-24 KST | Problem Studio source transfer + beta rewrite workflow |
+| [v1.4.9.md](v1.4.9.md) | **CURRENT** | 2026-06-24 KST | Problem Studio review package + real-source UAT seal |
+| [v1.4.8.md](v1.4.8.md) | production-deployed / v1.4.9로 승계 | 2026-06-24 KST | Problem Studio source transfer + beta rewrite workflow |
 | [v1.4.7.md](v1.4.7.md) | production-deployed / v1.4.8로 승계 | 2026-06-23 KST | Submission enrollment ForeignKey conversion + orphan preflight closure |
 | [v1.4.6.md](v1.4.6.md) | production-deployed / v1.4.7로 승계 | 2026-06-23 KST | Low-risk audit ID ForeignKey conversion + guardrail false-positive cleanup |
 | [v1.4.5.md](v1.4.5.md) | production-deployed / v1.4.6로 승계 | 2026-06-23 KST | Whole-project optimization audit + tenant metadata hardening + mobile submissions visual QA |
