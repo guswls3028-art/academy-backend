@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from django.http import Http404
 
+from academy.adapters.db.django import repositories_exams as exams_repo
 from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.serializers.student_exam_result import StudentExamResultSerializer
-from apps.domains.exams.models import Exam, ExamEnrollment
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
 from apps.domains.results.utils.ranking import compute_exam_rankings
@@ -24,10 +24,7 @@ from apps.domains.enrollment.selectors import active_enrollments_for_student
 
 def active_exam_enrollment_ids_for_student(*, tenant, student, exam_id: int) -> list[int]:
     """Return active enrollment ids that connect one student to one tenant exam."""
-    allowed_enrollment_ids = ExamEnrollment.objects.filter(
-        exam_id=int(exam_id),
-        enrollment__tenant=tenant,
-    ).values_list("enrollment_id", flat=True)
+    allowed_enrollment_ids = exams_repo.exam_enrollment_ids_for_tenant_exam(exam_id, tenant)
     return list(
         active_enrollments_for_student(
             tenant=tenant,
@@ -49,12 +46,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     if tenant is None:
         raise Http404("tenant resolution failed")
     exam_id = int(exam_id)
-    exam = Exam.objects.filter(
-        id=exam_id,
-        tenant=tenant,
-        exam_type=Exam.ExamType.REGULAR,
-        is_active=True,
-    ).first()
+    exam = exams_repo.regular_active_exam_for_tenant(exam_id, tenant)
     if not exam:
         raise Http404("exam not found")
     student = get_request_student(request)
@@ -69,6 +61,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     enrollment = (
         active_enrollments_for_student(tenant=tenant, student=student)
         .filter(id__in=enrollment_ids)
+        .order_by("id")
         .first()
     )
     if not enrollment:
@@ -145,26 +138,17 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     data["answers_visible"] = show_answers
 
     # question_id → question_number 매핑 (ExamQuestion.number 사용)
-    from apps.domains.exams.models.question import ExamQuestion
     item_question_ids = [
         item.get("question_id") for item in (data.get("items") or [])
         if item.get("question_id")
     ]
-    question_number_map = {}
-    if item_question_ids:
-        question_number_map = dict(
-            ExamQuestion.objects.filter(id__in=item_question_ids)
-            .values_list("id", "number")
-        )
+    question_number_map = exams_repo.exam_question_number_map(item_question_ids)
 
     # 정답 공개 시 answer key에서 correct_answer 주입
     correct_answer_map = {}
     if show_answers:
-        from apps.domains.exams.models import AnswerKey
         template_exam_id = exam.effective_template_exam_id
-        ak = AnswerKey.objects.filter(exam_id=template_exam_id).first()
-        if ak and ak.answers:
-            correct_answer_map = ak.answers  # key=question_id(str), value=answer
+        correct_answer_map = exams_repo.answer_key_answers_for_exam(template_exam_id)
 
     for item in data.get("items") or []:
         q_id = item.get("question_id")

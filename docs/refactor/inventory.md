@@ -139,7 +139,7 @@ Frontend dependency risks:
 | Backend serializer-related lines | 1129 | API surface is broad enough that manual FE type sync is unsafe |
 | Backend tenant-related query/assignment hits | 3486 | tenant scope is widespread and needs automated guardrails |
 | Backend cross-domain imports | 117 | semantic snapshot script, non-internal cross-domain imports; increased by deliberate selector/service boundary use |
-| Backend cross-domain internal imports | 602 | semantic snapshot script, direct imports into models/services/views/api/serializers |
+| Backend cross-domain internal imports | 599 | semantic snapshot script, direct imports into models/services/views/api/serializers |
 | Backend domain infra imports | 82 | domain code still reaches infra SDK/helper modules |
 | Backend adapter -> application imports | 0 | semantic snapshot script; application port/cancellation contracts allowed and concrete adapter -> use-case imports removed |
 | Frontend format/status/type hint hits | 360 | SSOT drift likely exists in UI labels, tones, and formatters |
@@ -257,8 +257,8 @@ pnpm refactor:inventory
   preserving the deployed DB column names. The ID-domain safety guard reports
   zero new integer-FK errors in the 2026-06-23 snapshot. A follow-up guardrail
   cleanup removed `SILENT_FALLBACK` warnings and reduced deterministic row
-  selection debt to the strict-safe subset; the remaining 35 warnings are 28
-  `[ALLOWED]` integer-FK candidates plus 7 `UNORDERED_FIRST` instances in
+  selection debt to the strict-safe subset; the remaining 34 warnings are 28
+  `[ALLOWED]` integer-FK candidates plus 6 `UNORDERED_FIRST` instances in
   files that need boundary extraction before touched-file strict cleanup.
 - Frontend display string helpers for common date, money, and byte labels now
   live in `frontend/src/shared/utils/displayText.ts`. Dev tenant and assessment
@@ -290,4 +290,4 @@ pnpm refactor:inventory
   because active
   refactors can change these counts quickly. The latest backend snapshot
   (2026-06-23) reports `cross_domain_import=117`,
-  `cross_domain_internal_import=602`, and `domain_infra_import=82`.
+  `cross_domain_internal_import=599`, and `domain_infra_import=82`.

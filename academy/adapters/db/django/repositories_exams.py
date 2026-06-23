@@ -1,0 +1,50 @@
+"""Exam-domain DB read helpers for cross-domain callers."""
+
+from __future__ import annotations
+
+
+def regular_active_exam_for_tenant(exam_id: int, tenant):
+    from apps.domains.exams.models import Exam
+
+    return (
+        Exam.objects.filter(
+            id=int(exam_id),
+            tenant=tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+        )
+        .order_by("id")
+        .first()
+    )
+
+
+def exam_enrollment_ids_for_tenant_exam(exam_id: int, tenant):
+    from apps.domains.exams.models import ExamEnrollment
+
+    return ExamEnrollment.objects.filter(
+        exam_id=int(exam_id),
+        enrollment__tenant=tenant,
+    ).values_list("enrollment_id", flat=True)
+
+
+def exam_question_number_map(question_ids) -> dict[int, int]:
+    from apps.domains.exams.models.question import ExamQuestion
+
+    if not question_ids:
+        return {}
+    return dict(
+        ExamQuestion.objects.filter(id__in=question_ids)
+        .order_by("id")
+        .values_list("id", "number")
+    )
+
+
+def answer_key_answers_for_exam(exam_id: int) -> dict:
+    from apps.domains.exams.models import AnswerKey
+
+    answer_key = (
+        AnswerKey.objects.filter(exam_id=int(exam_id))
+        .order_by("-updated_at", "-id")
+        .first()
+    )
+    return answer_key.answers if answer_key and answer_key.answers else {}

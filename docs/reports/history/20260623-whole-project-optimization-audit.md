@@ -10,10 +10,10 @@
 - `git -C C:\academy\frontend diff --check`: passed.
 - Backend snapshot after this tranche:
   - `cross_domain_import=117`
-  - `cross_domain_internal_import=602`
+  - `cross_domain_internal_import=599`
   - `domain_infra_import=82`
-  - `check_id_domain_safety.py`: 35 warning(s), 0 error(s)
-  - `UNORDERED_FIRST`: 7
+  - `check_id_domain_safety.py`: 34 warning(s), 0 error(s)
+  - `UNORDERED_FIRST`: 6
   - `SILENT_FALLBACK`: 0
 - Frontend snapshot after this tranche:
   - `same_app_domain_import=146`
@@ -116,16 +116,27 @@
   7, and backend `cross_domain_internal_import` from 604 to 602 while keeping
   `cross_domain_import` at 117.
 
+## Tranche 8 Changes
+
+- Added `academy.adapters.db.django.repositories_exams` for student-result exam,
+  exam-enrollment, question-number, and answer-key reads.
+- Routed `student_result_service` through the exams repository and added
+  deterministic ordering before active enrollment selection.
+- Reduced ID-domain safety warnings from 35 to 34, `UNORDERED_FIRST` from 7 to
+  6, and backend `cross_domain_internal_import` from 602 to 599 while keeping
+  `cross_domain_import` at 117.
+
 ## Verification
 
 - Backend:
   - `python manage.py check --settings apps.api.config.settings.test`: passed.
   - `python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test`: passed.
-  - `python scripts\lint\check_id_domain_safety.py`: 35 warning(s), 0 error(s).
+  - `python scripts\lint\check_id_domain_safety.py`: 34 warning(s), 0 error(s).
   - `python scripts\lint\refactor_boundary_snapshot.py --strict-touched`: passed.
   - `python scripts\lint\refactor_boundary_snapshot.py --enforce-baseline`: passed.
   - `python -m ruff check <touched backend files>`: passed.
   - `python -m pytest apps/domains/progress/tests/test_drift_and_resolution.py::AutoCreateMetaMergeTest -v --tb=short`: 1 passed.
+  - `python -m pytest apps/domains/progress/tests/test_drift_and_resolution.py -k "student_result_service or remediated or final_pass" -v --tb=short`: 3 passed, 18 deselected.
   - `python -m pytest apps/domains/matchup/tests/test_manual_correction_delta_hook.py apps/domains/matchup/tests/test_layout_fingerprint_hook.py -v --tb=short`: 41 passed.
   - `python -m pytest apps/domains/matchup/tests/test_owner_pin_protection.py -k manual_crop_preserves_owner_pinned_meta_on_recut -v --tb=short`: 1 passed, 12 deselected.
   - `python -m pytest apps/domains/student_app/tests/test_parent_exam_child_selection.py -v --tb=short`: 4 passed.
@@ -142,7 +153,7 @@
 
 ## Next Tranche Candidates
 
-- Backend: extract public boundary helpers for the 7 remaining
+- Backend: extract public boundary helpers for the 6 remaining
   `UNORDERED_FIRST` sites in broad files, then add ordering without failing
   strict-touched.
 - Backend: plan the remaining `[ALLOWED]` integer-FK candidates by domain. Start
