@@ -97,3 +97,14 @@ def inventory_folder_filter_parent(tenant, parent):
 def inventory_folder_filter_parent_id_name(tenant, parent_id, name):
     from apps.domains.inventory.models import InventoryFolder
     return InventoryFolder.objects.filter(tenant=tenant, parent_id=parent_id, name=name)
+
+
+def inventory_folder_get_or_create(tenant, *, scope, student_ps="", parent=None, name):
+    from apps.domains.inventory.models import InventoryFolder
+    return InventoryFolder.objects.get_or_create(
+        tenant=tenant,
+        scope=scope,
+        student_ps=student_ps or "",
+        parent=parent,
+        name=name,
+    )

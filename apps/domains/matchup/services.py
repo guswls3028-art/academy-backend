@@ -7,6 +7,7 @@ import logging
 import os
 from typing import List, Optional, Tuple
 
+from academy.adapters.db.django import repositories_inventory as inventory_repo
 from apps.shared.utils.vector import cosine_similarity
 from .models import MatchupDocument, MatchupProblem
 
@@ -1158,16 +1159,15 @@ MATCHUP_UPLOAD_ROOT = "매치업-업로드"
 
 def ensure_matchup_upload_folder(tenant):
     """매치업 페이지 직접 업로드용 폴더 (/매치업-업로드/{YYYY-MM}/) 자동 생성. Returns InventoryFolder."""
-    from apps.domains.inventory.models import InventoryFolder
     from datetime import datetime
 
-    root, _ = InventoryFolder.objects.get_or_create(
-        tenant=tenant, scope="admin", student_ps="",
+    root, _ = inventory_repo.inventory_folder_get_or_create(
+        tenant, scope="admin", student_ps="",
         parent=None, name=MATCHUP_UPLOAD_ROOT,
     )
     ym_key = datetime.now().strftime("%Y-%m")
-    ym_folder, _ = InventoryFolder.objects.get_or_create(
-        tenant=tenant, scope="admin", student_ps="",
+    ym_folder, _ = inventory_repo.inventory_folder_get_or_create(
+        tenant, scope="admin", student_ps="",
         parent=root, name=ym_key,
     )
     return ym_folder
@@ -1775,7 +1775,7 @@ def manually_crop_problem(
         #     유지 (text embedding은 옛 값 사용 중이므로 매치 신호 약화 보강).
         existing = MatchupProblem.objects.filter(
             tenant=document.tenant, document=document, number=number,
-        ).first()
+        ).order_by("-updated_at", "-id").first()
         is_recreate = existing is not None
         meta_payload = _build_manual_problem_meta(
             existing,
@@ -1933,7 +1933,7 @@ def paste_image_as_problem(
 
     existing = MatchupProblem.objects.filter(
         tenant=document.tenant, document=document, number=number,
-    ).first()
+    ).order_by("-updated_at", "-id").first()
     meta_payload = _build_manual_problem_meta(
         existing,
         page_index=0,
