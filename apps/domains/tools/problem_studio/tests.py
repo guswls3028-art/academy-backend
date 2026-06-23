@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import zipfile
+import base64
 from io import BytesIO
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -14,6 +15,7 @@ from apps.domains.tools.problem_studio.services import (
     source_extraction_to_payload,
 )
 from apps.domains.tools.problem_studio.worker import handle_problem_studio_package_job
+from apps.domains.tools.problem_studio.transfer_documents import build_transfer_package
 
 
 def _zip_file(name: str, files: dict[str, str]) -> SimpleUploadedFile:
@@ -22,6 +24,19 @@ def _zip_file(name: str, files: dict[str, str]) -> SimpleUploadedFile:
         for path, content in files.items():
             zf.writestr(path, content)
     return SimpleUploadedFile(name, buf.getvalue())
+
+
+def _zip_bytes(files: dict[str, bytes]) -> bytes:
+    buf = BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for path, content in files.items():
+            zf.writestr(path, content)
+    return buf.getvalue()
+
+
+_TINY_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+)
 
 
 class ProblemStudioServiceTests(SimpleTestCase):
@@ -129,3 +144,23 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertEqual(result.status, "DONE")
         self.assertEqual(result.result["generation_engine"], "source_transfer")
         self.assertIn("뉴클레오타이드", result.result["questions"][0]["prompt"])
+
+    def test_transfer_package_expands_zip_and_embeds_image_doc(self):
+        uploaded = SimpleUploadedFile(
+            "sources.zip",
+            _zip_bytes({"unit1/problem.png": _TINY_PNG, "ignored.txt": b"skip"}),
+        )
+
+        package = build_transfer_package(
+            payload={"title": "화학2 1단원"},
+            source_files=[uploaded],
+        )
+
+        self.assertEqual(package.content_type, "application/zip")
+        self.assertEqual(len(package.documents), 1)
+        self.assertEqual(package.documents[0].image_count, 1)
+        self.assertIn("data:image/png;base64", package.documents[0].html)
+        with zipfile.ZipFile(BytesIO(package.data)) as zf:
+            names = zf.namelist()
+        self.assertTrue(any(name.endswith(".doc") for name in names))
+        self.assertIn("00_변환리포트.html", names)

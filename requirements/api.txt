@@ -29,5 +29,8 @@ gevent>=23.0.0
 
 reportlab
 
+# Problem Studio HWP source-transfer extraction.
+olefile==0.47
+
 # Solapi (support.messaging views)
 solapi>=5.0.0

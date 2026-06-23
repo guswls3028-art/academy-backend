@@ -15,6 +15,10 @@ from apps.domains.tools.problem_studio.services import (
     parse_payload,
     source_extraction_to_payload,
 )
+from apps.domains.tools.problem_studio.transfer_documents import (
+    build_transfer_package,
+    package_to_response,
+)
 
 
 class ProblemStudioGenerateView(APIView):
@@ -37,6 +41,31 @@ class ProblemStudioGenerateView(APIView):
                 source_files=request.FILES.getlist("source_files"),
             )
             return Response(result)
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProblemStudioTransferDocumentView(APIView):
+    """POST /api/v1/tools/problem-studio/transfer-document/
+
+    원본 파일을 AI 생성 없이 한글/워드 호환 검수 문서 패키지로 이관한다.
+    큰 PDF/HWP/ZIP 산출물은 JSON/AI 워커 payload를 거치지 않고 바로 파일로
+    내려보내 용량 폭발을 피한다.
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def post(self, request):
+        try:
+            payload = parse_payload(request.data.get("payload") if hasattr(request.data, "get") else request.data)
+            if not payload and isinstance(request.data, dict):
+                payload = dict(request.data)
+            package = build_transfer_package(
+                payload=payload,
+                source_files=request.FILES.getlist("source_files"),
+            )
+            return package_to_response(package)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
