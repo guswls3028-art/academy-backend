@@ -208,6 +208,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertIn("00_변환리포트.html", names)
         self.assertIn("00_manifest.json", names)
         self.assertIn("00_파일목록.csv", names)
+        self.assertIn("02_OCR_연결후보.csv", names)
 
     def test_transfer_package_includes_review_manifest_and_warning_actions(self):
         uploaded = SimpleUploadedFile("legacy.doc", b"legacy-binary")
@@ -222,7 +223,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
             source_files=[uploaded],
         )
 
-        self.assertEqual(package.review_file_count, 5)
+        self.assertEqual(package.review_file_count, 6)
         self.assertEqual(len(package.documents), 1)
         self.assertEqual(len(package.warnings), 1)
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
@@ -233,6 +234,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
 
         self.assertIn("실사용 검수 순서", checklist)
         self.assertIn("01_자체양식_문제검수본.doc", checklist)
+        self.assertIn("02_OCR_연결후보.csv", checklist)
         self.assertIn("legacy.doc", checklist)
         self.assertIn("DOCX/PDF로 저장", checklist)
         self.assertEqual(manifest["schema"], "problem-studio-transfer-manifest/v2")
@@ -245,11 +247,13 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertTrue(manifest["review_contract"]["teacher_must_verify_answers"])
         self.assertEqual(manifest["documents"][0]["status"], "확인 필요")
         self.assertEqual(manifest["template_outputs"][0]["filename"], "01_자체양식_문제검수본.doc")
+        self.assertEqual(manifest["template_outputs"][1]["filename"], "02_OCR_연결후보.csv")
         self.assertIn("산출물", csv_text)
         self.assertIn("검수본", csv_text)
         self.assertIn("legacy_원본이관.doc", csv_text)
         self.assertIn("00_manifest.json", names)
         self.assertIn("01_자체양식_문제검수본.doc", names)
+        self.assertIn("02_OCR_연결후보.csv", names)
 
     def test_transfer_package_builds_structured_workbook_from_docx_text(self):
         uploaded = _zip_file(
@@ -270,7 +274,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
         package = build_transfer_package(payload={"title": "화학2 구조화"}, source_files=[uploaded])
         response = package_to_response(package)
 
-        self.assertEqual(package.review_file_count, 5)
+        self.assertEqual(package.review_file_count, 6)
         self.assertEqual(package.structured_item_count, 1)
         self.assertEqual(package.ocr_candidate_count, 0)
         self.assertEqual(response["X-Problem-Studio-Structured-Item-Count"], "1")
@@ -286,6 +290,26 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertEqual(manifest["structured_item_count"], 1)
         self.assertEqual(manifest["structured_problem_count"], 1)
         self.assertEqual(manifest["ocr_candidate_count"], 0)
+
+    def test_transfer_package_writes_ocr_queue_for_image_only_source(self):
+        uploaded = SimpleUploadedFile("scan.png", _TINY_PNG)
+
+        package = build_transfer_package(payload={"title": "스캔 검수"}, source_files=[uploaded])
+
+        self.assertEqual(package.review_file_count, 6)
+        self.assertEqual(package.ocr_candidate_count, 1)
+        self.assertEqual(package.quality_level, "visual_only_ocr_required")
+        with zipfile.ZipFile(BytesIO(package.data)) as zf:
+            manifest = json.loads(zf.read("00_manifest.json").decode("utf-8"))
+            ocr_csv = zf.read("02_OCR_연결후보.csv").decode("utf-8-sig")
+            workbook = zf.read("01_자체양식_문제검수본.doc").decode("utf-8-sig")
+
+        candidate = manifest["structure"]["ocr_candidates"][0]
+        self.assertEqual(candidate["candidate_id"], "ocr-001")
+        self.assertEqual(candidate["priority"], "high")
+        self.assertIn("scan.png", ocr_csv)
+        self.assertIn("ocr-001", ocr_csv)
+        self.assertIn("OCR 연결 후보", workbook)
 
     def test_transfer_package_reports_zip_with_too_many_members(self):
         uploaded = SimpleUploadedFile(

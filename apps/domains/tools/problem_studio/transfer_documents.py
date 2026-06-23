@@ -6,10 +6,7 @@ import html
 import io
 import json
 import re
-import struct
-import unicodedata
 import zipfile
-import zlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -18,6 +15,14 @@ from urllib.parse import quote
 
 from django.http import HttpResponse
 
+from apps.domains.tools.problem_studio.extractors import (
+    extract_docx_text,
+    extract_hwp_text as extract_hwp_text_only,
+    extract_hwp_text_and_images,
+    extract_hwpx_text,
+    normalize_hwp_image_data,
+    safe_zip_members,
+)
 from apps.domains.tools.problem_studio.structure import (
     TransferStructure,
     analyze_transfer_documents,
@@ -54,6 +59,8 @@ class TransferDocument:
     text_chars: int = 0
     image_count: int = 0
     page_count: int = 0
+    page_start: int = 0
+    page_end: int = 0
     warning: str | None = None
     plain_text: str = ""
 
@@ -102,62 +109,8 @@ def _mime_for_suffix(suffix: str) -> str:
     return "application/octet-stream"
 
 
-def _mime_from_magic(data: bytes) -> str | None:
-    if data.startswith(b"\xff\xd8\xff"):
-        return "image/jpeg"
-    if data.startswith(b"\x89PNG\r\n\x1a\n"):
-        return "image/png"
-    if data.startswith(b"GIF87a") or data.startswith(b"GIF89a"):
-        return "image/gif"
-    if data.startswith(b"BM"):
-        return "image/bmp"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
-
-
-def _hwp_image_candidates(data: bytes) -> list[bytes]:
-    candidates = [data]
-    for wbits in (-15, zlib.MAX_WBITS):
-        try:
-            decompressed = zlib.decompress(data, wbits)
-        except Exception:
-            continue
-        if decompressed and decompressed not in candidates:
-            candidates.append(decompressed)
-    return candidates
-
-
 def _normalize_hwp_image_data(filename: str, data: bytes) -> tuple[str, bytes]:
-    """Return browser/Office-safe image bytes for a HWP BinData stream."""
-    suffix_mime = _mime_for_suffix(Path(filename).suffix)
-    for candidate in _hwp_image_candidates(data):
-        magic_mime = _mime_from_magic(candidate)
-        if magic_mime and magic_mime != "image/bmp":
-            return magic_mime, candidate
-
-        try:
-            from PIL import Image
-
-            with Image.open(io.BytesIO(candidate)) as image:
-                fmt = (image.format or "").upper()
-                if fmt in {"JPEG", "PNG", "GIF", "WEBP"} and magic_mime != "image/bmp":
-                    return {
-                        "JPEG": "image/jpeg",
-                        "PNG": "image/png",
-                        "GIF": "image/gif",
-                        "WEBP": "image/webp",
-                    }[fmt], candidate
-
-                if image.mode not in {"RGB", "RGBA", "L", "P"}:
-                    image = image.convert("RGBA" if "A" in image.getbands() else "RGB")
-                out = io.BytesIO()
-                image.save(out, format="PNG", optimize=True)
-                return "image/png", out.getvalue()
-        except Exception:
-            continue
-
-    return suffix_mime, data
+    return normalize_hwp_image_data(filename, data)
 
 
 def _data_url(data: bytes, mime: str) -> str:
@@ -306,6 +259,8 @@ def _image_transfer_doc(name: str, data: bytes) -> TransferDocument:
         source_name=name,
         kind=_source_kind(name),
         image_count=1,
+        page_start=1,
+        page_end=1,
     )
 
 
@@ -348,6 +303,8 @@ def _pdf_transfer_docs(name: str, data: bytes) -> list[TransferDocument]:
                 source_name=name,
                 kind="PDF",
                 page_count=end - start,
+                page_start=start + 1,
+                page_end=end,
                 image_count=end - start,
                 text_chars=len(normalize_space("\n\n".join(part_text_chunks))),
                 plain_text=normalize_space("\n\n".join(part_text_chunks)),
@@ -373,94 +330,12 @@ def _simple_text_transfer_doc(name: str, text: str, detail: str, warning: str | 
     )
 
 
-def _iter_hwp_records(data: bytes):
-    pos = 0
-    size = len(data)
-    while pos + 4 <= size:
-        header = struct.unpack_from("<I", data, pos)[0]
-        pos += 4
-        tag = header & 0x3ff
-        level = (header >> 10) & 0x3ff
-        payload_size = (header >> 20) & 0xfff
-        if payload_size == 0xfff:
-            if pos + 4 > size:
-                break
-            payload_size = struct.unpack_from("<I", data, pos)[0]
-            pos += 4
-        payload = data[pos:pos + payload_size]
-        pos += payload_size
-        yield tag, level, payload
-
-
-def _clean_hwp_text(text: str) -> str:
-    chars: list[str] = []
-    for ch in text:
-        if ch in "\r\n\t":
-            chars.append("\n" if ch == "\r" else ch)
-            continue
-        code = ord(ch)
-        category = unicodedata.category(ch)
-        if category[0] == "C" or 0xE000 <= code <= 0xF8FF or 0x4E00 <= code <= 0x9FFF:
-            chars.append(" ")
-        else:
-            chars.append(ch)
-    cleaned = "".join(chars)
-    cleaned = re.sub(r"[ \t]+", " ", cleaned)
-    cleaned = re.sub(r" *\n *", "\n", cleaned)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    return cleaned.strip()
-
-
 def _extract_hwp_text_and_images(data: bytes, *, include_images: bool = True) -> tuple[str, list[tuple[str, str, bytes]]]:
-    try:
-        import olefile
-    except Exception as exc:
-        raise ValueError("HWP OLE 분석 모듈을 사용할 수 없습니다.") from exc
-
-    text_chunks: list[str] = []
-    images: list[tuple[str, str, bytes]] = []
-    with olefile.OleFileIO(io.BytesIO(data)) as ole:
-        header = ole.openstream(["FileHeader"]).read()
-        flags = struct.unpack_from("<I", header, 36)[0]
-        compressed = bool(flags & 1)
-        streams = ole.listdir(streams=True, storages=False)
-
-        section_names = sorted(
-            [parts for parts in streams if len(parts) >= 2 and parts[0] == "BodyText" and parts[1].startswith("Section")],
-            key=lambda parts: int(re.sub(r"\D+", "", parts[1]) or "0"),
-        )
-        for parts in section_names:
-            section_data = ole.openstream(parts).read()
-            if compressed:
-                try:
-                    section_data = zlib.decompress(section_data, -15)
-                except Exception:
-                    section_data = zlib.decompress(section_data)
-            for tag, _level, payload in _iter_hwp_records(section_data):
-                if tag != 67:
-                    continue
-                text = _clean_hwp_text(payload.decode("utf-16le", "ignore"))
-                if text:
-                    text_chunks.append(text)
-
-        if include_images:
-            for parts in streams:
-                if len(parts) < 2 or parts[0] != "BinData":
-                    continue
-                filename = parts[-1]
-                suffix = Path(filename).suffix.lower()
-                if suffix not in {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}:
-                    continue
-                image_data = ole.openstream(parts).read()
-                mime, normalized = _normalize_hwp_image_data(filename, image_data)
-                images.append((filename, mime, normalized))
-
-    return _clean_hwp_text("\n\n".join(text_chunks)), images
+    return extract_hwp_text_and_images(data, include_images=include_images)
 
 
 def extract_hwp_text(data: bytes) -> str:
-    text, _images = _extract_hwp_text_and_images(data, include_images=False)
-    return text
+    return extract_hwp_text_only(data)
 
 
 def _fast_hwp_transfer_doc(name: str, data: bytes) -> TransferDocument:
@@ -506,14 +381,10 @@ def _fast_hwp_transfer_doc(name: str, data: bytes) -> TransferDocument:
 
 
 def _extract_hwpx_text(data: bytes) -> str:
-    from apps.domains.tools.problem_studio.services import _extract_hwpx_text as extract_hwpx_text
-
     return extract_hwpx_text(data)
 
 
 def _extract_docx_text(data: bytes) -> str:
-    from apps.domains.tools.problem_studio.services import _extract_docx_text as extract_docx_text
-
     return extract_docx_text(data)
 
 
@@ -548,11 +419,11 @@ def _expand_zip(name: str, data: bytes) -> tuple[list[tuple[str, bytes]], list[s
     members: list[tuple[str, bytes]] = []
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         infos = [info for info in zf.infolist() if not info.is_dir()]
-        if len(infos) > TRANSFER_MAX_ZIP_MEMBERS:
-            raise ValueError(f"{name} 내부 파일 수가 너무 많습니다.")
-        total = sum(max(0, int(info.file_size or 0)) for info in infos)
-        if total > TRANSFER_MAX_ZIP_UNCOMPRESSED_BYTES:
-            raise ValueError(f"{name} 내부 용량이 너무 큽니다.")
+        safe_zip_members(
+            zf,
+            max_members=TRANSFER_MAX_ZIP_MEMBERS,
+            max_uncompressed_bytes=TRANSFER_MAX_ZIP_UNCOMPRESSED_BYTES,
+        )
         for info in infos:
             suffix = Path(info.filename).suffix.lower()
             if suffix not in SUPPORTED_TRANSFER_SUFFIXES:
@@ -636,6 +507,7 @@ def _build_review_checklist_html(
   <ol>
     <li><strong>01_자체양식_문제검수본.doc</strong>에서 자동 분리된 문제/개념 블록을 먼저 확인합니다.</li>
     <li><strong>00_변환리포트.html</strong>에서 경고와 문서 수를 먼저 확인합니다.</li>
+    <li><strong>02_OCR_연결후보.csv</strong>에서 스캔/이미지 전용 원본을 별도 처리 목록으로 확인합니다.</li>
     <li>각 산출물 `.doc`을 한글 또는 Word에서 열고 편집 가능 여부를 확인합니다.</li>
     <li>원본의 첫 쪽, 중간 쪽, 마지막 쪽을 산출물과 대조합니다.</li>
     <li>그림, 표, 수식, 선택지, 정답/해설이 누락되거나 섞이지 않았는지 표시합니다.</li>
@@ -735,7 +607,12 @@ def _build_manifest_json(
                 "filename": "01_자체양식_문제검수본.doc",
                 "type": "academy_review_workbook",
                 "status": _quality_label(structure.quality_level),
-            }
+            },
+            {
+                "filename": "02_OCR_연결후보.csv",
+                "type": "ocr_work_queue",
+                "status": "OCR 후보 " + str(structure.ocr_candidate_count) + "개",
+            },
         ],
         "review_contract": {
             "base_workflow": "source_transfer_teacher_review",
@@ -788,6 +665,28 @@ def _build_file_list_csv(
     return "\ufeff" + out.getvalue()
 
 
+def _build_ocr_queue_csv(structure: TransferStructure) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out)
+    writer.writerow(["후보ID", "원본", "산출물", "유형", "쪽시작", "쪽끝", "예상단위", "우선순위", "사유", "권장처리"])
+    if not structure.ocr_candidates:
+        writer.writerow(["", "", "", "", "", "", "", "", "OCR 후보 없음", ""])
+    for item in structure.ocr_candidates:
+        writer.writerow([
+            item.get("candidate_id", ""),
+            item.get("source_name", ""),
+            item.get("filename", ""),
+            item.get("kind", ""),
+            item.get("page_start", ""),
+            item.get("page_end", ""),
+            item.get("estimated_units", ""),
+            item.get("priority", ""),
+            item.get("reason", ""),
+            item.get("recommended_action", ""),
+        ])
+    return "\ufeff" + out.getvalue()
+
+
 def _build_structured_workbook_html(meta: dict[str, str], structure: TransferStructure) -> str:
     if structure.items:
         item_html = []
@@ -823,9 +722,9 @@ def _build_structured_workbook_html(meta: dict[str, str], structure: TransferStr
       </div>
 """
     ocr_rows = "\n".join(
-        f"<tr><td>{index}</td><td>{_escape(item['source_name'])}</td><td>{_escape(item['kind'])}</td><td>{item['page_count'] or item['image_count']}</td><td>{_escape(item['reason'])}</td></tr>"
+        f"<tr><td>{_escape(item.get('candidate_id', index))}</td><td>{_escape(item['source_name'])}</td><td>{_escape(item['kind'])}</td><td>{item.get('page_start') or '-'}-{item.get('page_end') or '-'}</td><td>{_escape(item.get('priority', ''))}</td><td>{_escape(item['reason'])}</td></tr>"
         for index, item in enumerate(structure.ocr_candidates, start=1)
-    ) or '<tr><td colspan="5">OCR 후보 없음</td></tr>'
+    ) or '<tr><td colspan="6">OCR 후보 없음</td></tr>'
     action_items = "".join(f"<li>{_escape(action)}</li>" for action in structure.review_actions)
     body = f"""
   <h1>{_escape(meta['title'])} 자체양식 문제검수본</h1>
@@ -842,7 +741,7 @@ def _build_structured_workbook_html(meta: dict[str, str], structure: TransferStr
   {body_items}
   <h2>OCR 연결 후보</h2>
   <table>
-    <thead><tr><th>#</th><th>원본</th><th>유형</th><th>쪽/이미지</th><th>사유</th></tr></thead>
+    <thead><tr><th>후보ID</th><th>원본</th><th>유형</th><th>쪽 범위</th><th>우선순위</th><th>사유</th></tr></thead>
     <tbody>{ocr_rows}</tbody>
   </table>
 """
@@ -921,6 +820,7 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
         zf.writestr("00_manifest.json", _build_manifest_json(meta, input_files, documents, warnings, structure))
         zf.writestr("00_파일목록.csv", _build_file_list_csv(input_files, documents, warnings, structure))
         zf.writestr("01_자체양식_문제검수본.doc", "\ufeff" + _build_structured_workbook_html(meta, structure))
+        zf.writestr("02_OCR_연결후보.csv", _build_ocr_queue_csv(structure))
 
     return TransferPackage(
         filename=package_name,
@@ -928,7 +828,7 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
         data=buffer.getvalue(),
         documents=documents,
         warnings=warnings,
-        review_file_count=5,
+        review_file_count=6,
         structured_item_count=structure.structured_item_count,
         ocr_candidate_count=structure.ocr_candidate_count,
         quality_level=structure.quality_level,

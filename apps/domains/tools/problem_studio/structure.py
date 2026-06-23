@@ -162,13 +162,24 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
             ))
         kind = str(getattr(doc, "kind", "") or "")
         if kind in {"PDF", "이미지"} and not plain_text:
+            page_count = int(getattr(doc, "page_count", 0) or 0)
+            image_count = int(getattr(doc, "image_count", 0) or 0)
+            page_start = int(getattr(doc, "page_start", 0) or 0)
+            page_end = int(getattr(doc, "page_end", 0) or 0)
+            estimated_units = page_count or image_count or 1
             ocr_candidates.append({
+                "candidate_id": f"ocr-{len(ocr_candidates) + 1:03d}",
                 "filename": str(getattr(doc, "filename", "") or ""),
                 "source_name": str(getattr(doc, "source_name", "") or ""),
                 "kind": kind,
-                "page_count": int(getattr(doc, "page_count", 0) or 0),
-                "image_count": int(getattr(doc, "image_count", 0) or 0),
+                "page_count": page_count,
+                "image_count": image_count,
+                "page_start": page_start,
+                "page_end": page_end,
+                "estimated_units": estimated_units,
+                "priority": "high" if kind == "이미지" or estimated_units <= 5 else "normal",
                 "reason": "텍스트 레이어가 없어 OCR 후 편집 가능한 본문을 만들 수 있습니다.",
+                "recommended_action": "OCR 처리 후 01_자체양식_문제검수본.doc를 재생성하거나 수동 전사하세요.",
             })
 
     items = items[:MAX_STRUCTURED_ITEMS]

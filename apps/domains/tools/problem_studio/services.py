@@ -6,8 +6,14 @@ import zipfile
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Any, Iterable
-from xml.etree import ElementTree
 
+from apps.domains.tools.problem_studio.extractors import (
+    extract_docx_text,
+    extract_hwp_text,
+    extract_hwpx_text,
+    extract_pdf_text,
+    safe_zip_members,
+)
 from apps.domains.tools.problem_studio.structure import (
     extract_problem_fields,
     normalize_space,
@@ -79,63 +85,22 @@ def _read_limited(uploaded: Any) -> bytes:
 
 
 def _extract_pdf_text(data: bytes) -> str:
-    try:
-        from academy.adapters.tools.pymupdf_renderer import extract_pdf_text_from_bytes
-    except Exception as exc:  # pragma: no cover - dependency is present in api image
-        raise ValueError("PDF 텍스트 추출 모듈을 사용할 수 없습니다.") from exc
-
-    return _normalize_space(extract_pdf_text_from_bytes(data))
+    return extract_pdf_text(data)
 
 
 def _safe_zip_members(zf: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
-    members = zf.infolist()
-    if len(members) > 400:
-        raise ValueError("문서 내부 파일 수가 너무 많습니다.")
-    total = sum(max(0, int(m.file_size or 0)) for m in members)
-    if total > MAX_ZIP_UNCOMPRESSED_BYTES:
-        raise ValueError("문서 내부 용량이 너무 큽니다.")
-    return members
-
-
-def _xml_text(xml_bytes: bytes) -> str:
-    try:
-        root = ElementTree.fromstring(xml_bytes)
-    except ElementTree.ParseError:
-        return ""
-    texts: list[str] = []
-    for elem in root.iter():
-        if elem.text and elem.text.strip():
-            tag = elem.tag.rsplit("}", 1)[-1]
-            if tag in {"t", "tab", "lineBreak", "p"}:
-                texts.append(elem.text.strip())
-    return " ".join(texts)
+    return safe_zip_members(zf, max_members=400, max_uncompressed_bytes=MAX_ZIP_UNCOMPRESSED_BYTES)
 
 
 def _extract_hwpx_text(data: bytes) -> str:
-    with zipfile.ZipFile(BytesIO(data)) as zf:
-        members = _safe_zip_members(zf)
-        names = [m.filename for m in members]
-        if "Preview/PrvText.txt" in names:
-            return _normalize_space(zf.read("Preview/PrvText.txt").decode("utf-8", "ignore"))
-        section_names = sorted(
-            name for name in names
-            if name.startswith("Contents/") and name.lower().endswith(".xml")
-        )
-        chunks = [_xml_text(zf.read(name)) for name in section_names]
-    return _normalize_space("\n".join(chunks))
+    return extract_hwpx_text(data)
 
 
 def _extract_docx_text(data: bytes) -> str:
-    with zipfile.ZipFile(BytesIO(data)) as zf:
-        _safe_zip_members(zf)
-        if "word/document.xml" not in zf.namelist():
-            return ""
-        return _normalize_space(_xml_text(zf.read("word/document.xml")))
+    return extract_docx_text(data)
 
 
 def _extract_hwp_text(data: bytes) -> str:
-    from apps.domains.tools.problem_studio.transfer_documents import extract_hwp_text
-
     return _normalize_space(extract_hwp_text(data))
 
 

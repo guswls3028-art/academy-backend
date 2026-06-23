@@ -62,6 +62,7 @@ Backend:
 - Views: `backend/apps/domains/tools/problem_studio/views.py`
 - Service: `backend/apps/domains/tools/problem_studio/services.py`
 - Transfer package builder: `backend/apps/domains/tools/problem_studio/transfer_documents.py`
+- Source text extraction SSOT: `backend/apps/domains/tools/problem_studio/extractors.py`
 - Source/question structure analyzer: `backend/apps/domains/tools/problem_studio/structure.py`
 - Worker entry: `backend/apps/domains/tools/problem_studio/worker.py`
 - AI job type: `problem_studio_package`
@@ -74,6 +75,7 @@ Backend:
   - `00_manifest.json`
   - `00_파일목록.csv`
   - `01_자체양식_문제검수본.doc`
+  - `02_OCR_연결후보.csv`
 - `00_manifest.json` uses `problem-studio-transfer-manifest/v2` and records:
   - `structured_item_count`
   - `structured_problem_count`
@@ -105,14 +107,14 @@ Source extraction and structure support:
 
 - Commercial default: sell this as "source transfer to editable teacher-review drafts", not as fully autonomous problem generation.
 - Value moment: teacher uploads the files they already receive and gets a Hangul/Word-compatible package without retyping. The first visible CTA must stay `원본 한글로 저장`.
-- The downloaded ZIP is itself part of the product. The teacher should open `00_먼저열기_검수체크리스트.doc` first, then use `01_자체양식_문제검수본.doc`, `00_변환리포트.html`, and `00_파일목록.csv` to inspect structure candidates, warnings, missing files, and source-to-output mapping.
+- The downloaded ZIP is itself part of the product. The teacher should open `00_먼저열기_검수체크리스트.doc` first, then use `01_자체양식_문제검수본.doc`, `02_OCR_연결후보.csv`, `00_변환리포트.html`, and `00_파일목록.csv` to inspect structure candidates, OCR work queue, warnings, missing files, and source-to-output mapping.
 - Beta positioning: rewrite candidates are optional, visibly marked Beta, and output to a review draft. A teacher should never need to touch beta controls to complete the base workflow.
 - Business risk: scanned/image-only sources still need OCR for editable text. The product should preserve them as images today and avoid promising exact native HWP layout.
 - Next conversion lever: template fidelity and OCR improve willingness to pay more than more generation modes.
 
 ## Known Limitations
 
-- No synchronous OCR in the transfer endpoint. Scanned images and image-only PDFs are preserved as images and recorded as OCR candidates unless they have extractable text elsewhere.
+- No synchronous OCR in the transfer endpoint. Scanned images and image-only PDFs are preserved as images and recorded as OCR candidates unless they have extractable text elsewhere. `02_OCR_연결후보.csv` is the current operational work queue for those sources.
 - No native HWP/HWPX writer yet. The current `.doc` is intentionally a compatibility draft.
 - HWP transfer preserves extracted text and embedded images, not exact object ordering or native HWP layout. It is a teacher review draft, not a final typeset workbook.
 - Problem/concept structure is heuristic. The system now produces a `01_자체양식_문제검수본.doc`, but teachers must still verify split boundaries, choices, answers, and explanations.
@@ -125,7 +127,7 @@ Source extraction and structure support:
 Keep future work staged in this order unless product policy changes:
 
 1. Better source transfer
-   - Async OCR worker connection for scanned images/image PDFs using the manifest OCR candidate contract.
+   - Async OCR worker connection for scanned images/image PDFs using the manifest OCR candidate contract and `02_OCR_연결후보.csv` queue fields.
    - More reliable HWP text/image ordering and table/choice grouping.
    - Native HWPX output with real endnote objects.
 2. Template fidelity

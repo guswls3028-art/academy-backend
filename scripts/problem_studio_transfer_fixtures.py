@@ -70,6 +70,8 @@ def main() -> int:
                 "source_name": doc.source_name,
                 "kind": doc.kind,
                 "page_count": doc.page_count,
+                "page_start": doc.page_start,
+                "page_end": doc.page_end,
                 "image_count": doc.image_count,
                 "text_chars": doc.text_chars,
                 "warning": doc.warning,
