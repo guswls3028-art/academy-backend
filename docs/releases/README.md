@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.4.5.md](v1.4.5.md) | **CURRENT** | 2026-06-23 KST | Whole-project optimization audit + tenant metadata hardening + mobile submissions visual QA |
+| [v1.4.6.md](v1.4.6.md) | **CURRENT** | 2026-06-23 KST | Low-risk audit ID ForeignKey conversion + guardrail false-positive cleanup |
+| [v1.4.5.md](v1.4.5.md) | production-deployed / v1.4.6로 승계 | 2026-06-23 KST | Whole-project optimization audit + tenant metadata hardening + mobile submissions visual QA |
 | [v1.4.4.md](v1.4.4.md) | production-deployed / v1.4.5로 승계 | 2026-06-22 KST | Submission lifecycle transition SSOT + deploy regression guard |
 | [v1.4.3.md](v1.4.3.md) | production-deployed / v1.4.4로 승계 | 2026-06-21 KST | Tenant 2 dense workbook owner-row segmentation seal |
 | [v1.4.2.md](v1.4.2.md) | production-deployed / v1.4.3로 승계 | 2026-06-21 KST | Tenant 2 26-1m color workbook segmentation hardening |
