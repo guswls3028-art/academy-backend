@@ -18,6 +18,7 @@ import logging
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 
+from apps.domains.enrollment.public_queries import get_enrollment_tenant_id
 from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_exam_rule_service import ClinicExamRuleService
 
@@ -35,8 +36,7 @@ _CLOSED_SOURCE_RESOLUTION_TYPES = {
 
 def _resolve_tenant_id(enrollment_id: int) -> int | None:
     """enrollment_id에서 tenant_id를 조회한다."""
-    from apps.domains.enrollment.models import Enrollment
-    return Enrollment.objects.filter(id=enrollment_id).values_list("tenant_id", flat=True).first()
+    return get_enrollment_tenant_id(enrollment_id)
 
 
 def _idempotent_create_clinic_link(
@@ -218,7 +218,7 @@ class ClinicTriggerService:
                 source_type="exam",
                 source_id=int(exam_id),
                 resolved_at__isnull=True,
-            ).first()
+            ).order_by("id").first()
 
             if existing:
                 # meta merge: 기존 kind 보존 + kinds 배열에 EXAM_RISK 누적

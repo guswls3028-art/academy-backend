@@ -79,11 +79,11 @@ $env:PYTHONPATH='C:\academy\backend'; $env:DJANGO_SETTINGS_MODULE='apps.api.conf
 Current baseline snapshot (latest local run: 2026-06-23 KST):
 
 - `adapter_application_import`: 0
-- `cross_domain_import`: 116
-- `cross_domain_internal_import`: 606
+- `cross_domain_import`: 117
+- `cross_domain_internal_import`: 605
 - `domain_infra_import`: 82
-- `check_id_domain_safety.py`: 39 warning(s), 0 error(s)
-  - `UNORDERED_FIRST`: 11
+- `check_id_domain_safety.py`: 38 warning(s), 0 error(s)
+  - `UNORDERED_FIRST`: 10
   - `SILENT_FALLBACK`: 0
   - Remaining warnings are 28 `[ALLOWED]` integer-FK candidates plus
     `UNORDERED_FIRST` instances in files that require boundary extraction before

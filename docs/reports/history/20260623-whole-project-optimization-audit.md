@@ -9,11 +9,11 @@
 - `git -C C:\academy\backend diff --check`: passed.
 - `git -C C:\academy\frontend diff --check`: passed.
 - Backend snapshot after this tranche:
-  - `cross_domain_import=116`
-  - `cross_domain_internal_import=606`
+  - `cross_domain_import=117`
+  - `cross_domain_internal_import=605`
   - `domain_infra_import=82`
-  - `check_id_domain_safety.py`: 39 warning(s), 0 error(s)
-  - `UNORDERED_FIRST`: 11
+  - `check_id_domain_safety.py`: 38 warning(s), 0 error(s)
+  - `UNORDERED_FIRST`: 10
   - `SILENT_FALLBACK`: 0
 - Frontend snapshot after this tranche:
   - `same_app_domain_import=146`
@@ -84,15 +84,27 @@
   `app_admin/sessions -> app_admin/homework` pair no longer appears in the
   top-10 hot-pair list.
 
+## Tranche 5 Changes
+
+- Added `apps.domains.enrollment.public_queries.get_enrollment_tenant_id` so
+  progress clinic trigger code no longer imports the enrollment model directly.
+- Added deterministic ordering before the unresolved `ClinicLink` lookup in
+  `ClinicTriggerService.auto_create_if_exam_risk`.
+- Reduced ID-domain safety warnings from 39 to 38, `UNORDERED_FIRST` from 11 to
+  10, and backend `cross_domain_internal_import` from 606 to 605. Public
+  `cross_domain_import` returned to 117 because the direct internal model import
+  became a public query boundary import.
+
 ## Verification
 
 - Backend:
   - `python manage.py check --settings apps.api.config.settings.test`: passed.
   - `python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test`: passed.
-  - `python scripts\lint\check_id_domain_safety.py`: 39 warning(s), 0 error(s).
+  - `python scripts\lint\check_id_domain_safety.py`: 38 warning(s), 0 error(s).
   - `python scripts\lint\refactor_boundary_snapshot.py --strict-touched`: passed.
   - `python scripts\lint\refactor_boundary_snapshot.py --enforce-baseline`: passed.
   - `python -m ruff check <touched backend files>`: passed.
+  - `python -m pytest apps/domains/progress/tests/test_drift_and_resolution.py::AutoCreateMetaMergeTest -v --tb=short`: 1 passed.
   - `python -m pytest apps/domains/student_app/tests/test_parent_exam_child_selection.py -v --tb=short`: 4 passed.
   - `python -m pytest tests/test_omr_fact_fk_mapping.py apps/domains/submissions/tests/test_omr_dispatcher_sheet_resolution.py -v --tb=short`: 16 passed, 4 subtests passed.
   - `python -m pytest apps/domains/matchup/tests/test_proposal_number_conflict.py apps/domains/matchup/tests/test_proposal_helpers.py -v --tb=short`: 44 passed.
@@ -107,7 +119,7 @@
 
 ## Next Tranche Candidates
 
-- Backend: extract public boundary helpers for the 11 remaining
+- Backend: extract public boundary helpers for the 10 remaining
   `UNORDERED_FIRST` sites in broad files, then add ordering without failing
   strict-touched.
 - Backend: plan the remaining `[ALLOWED]` integer-FK candidates by domain. Start
