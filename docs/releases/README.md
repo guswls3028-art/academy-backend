@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.4.12.md](v1.4.12.md) | **CURRENT** | 2026-06-24 KST | Problem Studio bounded OCR + HWPX companion review workbook + remaining-risk closure |
+| [v1.5.0.md](v1.5.0.md) | **CURRENT** | 2026-06-24 KST | Production cost scaling baseline: API 1-to-3 autoscaling + workers 0-to-needed scale-out |
+| [v1.4.12.md](v1.4.12.md) | production-deployed / v1.5.0로 승계 | 2026-06-24 KST | Problem Studio bounded OCR + HWPX companion review workbook + remaining-risk closure |
 | [v1.4.11.md](v1.4.11.md) | production-deployed / v1.4.12로 승계 | 2026-06-24 KST | Problem Studio transfer hardening + OCR review queue + production stability seal |
 | [v1.4.10.md](v1.4.10.md) | production-deployed / v1.4.11로 승계 | 2026-06-24 KST | Problem Studio structured review workbook + OCR candidate contract |
 | [v1.4.9.md](v1.4.9.md) | production-deployed / v1.4.10로 승계 | 2026-06-24 KST | Problem Studio review package + real-source UAT seal |

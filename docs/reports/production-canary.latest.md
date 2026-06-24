@@ -1,6 +1,6 @@
 # Production Canary
 
-**Generated:** 2026-06-24T17:08:19.6945574+09:00
+**Generated:** 2026-06-24T20:13:02.0860029+09:00
 **Mode:** PostDeploy
 **Verdict:** PASS
 
@@ -15,11 +15,11 @@
 | HTTP | api_program_tenant_healthy | PASS | HTTP 200 |
 | HTTP | api_invalid_login_no_5xx | PASS | HTTP 400 |
 | AWS | aws_identity | PASS | account=809466760795 |
-| AWS | api_asg | PASS | 2 healthy / min=2 desired=2 max=3 |
-| AWS | messaging_asg | PASS | 1 healthy / min=1 desired=1 max=3 |
+| AWS | api_asg | PASS | 1 healthy / min=1 desired=1 max=3 |
+| AWS | messaging_asg | PASS | 0 healthy / min=0 desired=0 max=3 |
 | AWS | ai_asg | PASS | 0 healthy / min=0 desired=0 max=5 |
-| AWS | tools_asg | PASS | 1 healthy / min=1 desired=1 max=2 |
-| AWS | alb_target_health | PASS | 2/2 healthy |
+| AWS | tools_asg | PASS | 0 healthy / min=0 desired=0 max=2 |
+| AWS | alb_target_health | PASS | 1/1 healthy |
 | AWS | rds_status | PASS | available |
 | AWS | redis_status | PASS | available |
 | AWS | messaging_queue | PASS | visible=0 in_flight=0 |
@@ -33,9 +33,6 @@
 | AWS | video_batch_ce | PASS | ENABLED/VALID |
 | AWS | video_ops_queue | PASS | ENABLED/VALID |
 | AWS | video_ops_ce | PASS | ENABLED/VALID |
-| REMOTE | django_check_deploy | PASS | instance=i-0594b0b0e3efef0f4 status=Success rc=0 |
-| REMOTE | django_check_deploy | PASS | instance=i-0e69f1455d8299bcd status=Success rc=0 |
-| REMOTE | django_migrations_applied | PASS | instance=i-0594b0b0e3efef0f4 status=Success rc=0 |
-| REMOTE | django_migrations_applied | PASS | instance=i-0e69f1455d8299bcd status=Success rc=0 |
-| REMOTE | django_production_canary | PASS | instance=i-0594b0b0e3efef0f4 status=Success rc=0 |
-| REMOTE | django_production_canary | PASS | instance=i-0e69f1455d8299bcd status=Success rc=0 |
+| REMOTE | django_check_deploy | PASS | instance=i-0478ab0bb4ad4f4ec status=Success rc=0 |
+| REMOTE | django_migrations_applied | PASS | instance=i-0478ab0bb4ad4f4ec status=Success rc=0 |
+| REMOTE | django_production_canary | PASS | instance=i-0478ab0bb4ad4f4ec status=Success rc=0 |
