@@ -10,10 +10,15 @@ FROM ${BASE_IMAGE} AS base
 # 앱 코드 (Base에 두지 않음 → 코드 변경 시 base 재빌드 불필요)
 USER root
 # upload_complete ffprobe 검증용 (ffmpeg 패키지에 ffprobe 포함)
+# Problem Studio transfer packages use bounded local OCR for scanned pages.
 # 참고: Amazon Linux 등 yum 기반 이미지 사용 시: RUN yum install -y ffmpeg
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    tesseract-ocr \
+    tesseract-ocr-kor \
     && rm -rf /var/lib/apt/lists/* \
-    && (ffprobe -version > /dev/null 2>&1 || (echo "ffprobe not in PATH" && exit 1))
+    && (ffprobe -version > /dev/null 2>&1 || (echo "ffprobe not in PATH" && exit 1)) \
+    && (tesseract --version > /dev/null 2>&1 || (echo "tesseract not in PATH" && exit 1))
 COPY academy ./academy
 COPY apps ./apps
 COPY libs ./libs

@@ -44,6 +44,8 @@ class TransferStructure:
     structured_problem_count: int
     concept_block_count: int
     ocr_candidate_count: int
+    ocr_completed_unit_count: int
+    ocr_pending_unit_count: int
     warning_count: int
     text_chars: int
     image_count: int
@@ -161,12 +163,22 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
                 start_number=len(items) + 1,
             ))
         kind = str(getattr(doc, "kind", "") or "")
-        if kind in {"PDF", "이미지"} and not plain_text:
+        pending_units = int(getattr(doc, "ocr_pending_units", 0) or 0)
+        completed_units = int(getattr(doc, "ocr_completed_units", 0) or 0)
+        if kind in {"PDF", "이미지"} and (pending_units > 0 or not plain_text):
             page_count = int(getattr(doc, "page_count", 0) or 0)
             image_count = int(getattr(doc, "image_count", 0) or 0)
             page_start = int(getattr(doc, "page_start", 0) or 0)
             page_end = int(getattr(doc, "page_end", 0) or 0)
-            estimated_units = page_count or image_count or 1
+            estimated_units = pending_units or page_count or image_count or 1
+            reason = "텍스트 레이어가 없어 OCR 후 편집 가능한 본문을 만들 수 있습니다."
+            recommended_action = "OCR 처리 후 01_자체양식_문제검수본.doc를 재생성하거나 수동 전사하세요."
+            if completed_units and pending_units:
+                reason = "자동 OCR이 일부 페이지만 처리되어 남은 페이지 확인이 필요합니다."
+                recommended_action = "자동 OCR 텍스트를 원본 이미지와 대조하고, 남은 페이지는 후속 OCR 또는 수동 전사하세요."
+            elif pending_units and plain_text:
+                reason = "일부 페이지는 텍스트가 있지만 OCR 대기 페이지가 남아 있습니다."
+                recommended_action = "텍스트가 있는 부분과 OCR 대기 쪽 범위를 분리해 검수하세요."
             ocr_candidates.append({
                 "candidate_id": f"ocr-{len(ocr_candidates) + 1:03d}",
                 "filename": str(getattr(doc, "filename", "") or ""),
@@ -178,8 +190,8 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
                 "page_end": page_end,
                 "estimated_units": estimated_units,
                 "priority": "high" if kind == "이미지" or estimated_units <= 5 else "normal",
-                "reason": "텍스트 레이어가 없어 OCR 후 편집 가능한 본문을 만들 수 있습니다.",
-                "recommended_action": "OCR 처리 후 01_자체양식_문제검수본.doc를 재생성하거나 수동 전사하세요.",
+                "reason": reason,
+                "recommended_action": recommended_action,
             })
 
     items = items[:MAX_STRUCTURED_ITEMS]
@@ -188,6 +200,8 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
     text_chars = sum(int(getattr(doc, "text_chars", 0) or 0) for doc in docs)
     image_count = sum(int(getattr(doc, "image_count", 0) or 0) for doc in docs)
     page_count = sum(int(getattr(doc, "page_count", 0) or 0) for doc in docs)
+    ocr_completed_unit_count = sum(int(getattr(doc, "ocr_completed_units", 0) or 0) for doc in docs)
+    ocr_pending_unit_count = sum(int(getattr(doc, "ocr_pending_units", 0) or 0) for doc in docs)
 
     if warning_list:
         quality_level = "needs_attention"
@@ -203,19 +217,23 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
     review_actions: list[str] = []
     if items:
         review_actions.append("01_자체양식_문제검수본.doc에서 문제 단위 분리 결과를 먼저 확인하세요.")
+    if ocr_completed_unit_count:
+        review_actions.append("자동 OCR 텍스트는 원본 이미지와 대조해 오인식, 수식, 선택지 누락을 표시하세요.")
     if ocr_candidates:
-        review_actions.append("스캔/이미지 전용 자료는 OCR 연결 후 텍스트 수정성을 높일 수 있습니다.")
+        review_actions.append("남은 스캔/이미지 전용 자료는 OCR 연결 후 텍스트 수정성을 높일 수 있습니다.")
     if warning_list:
         review_actions.append("경고가 있는 원본은 변환리포트와 원본 파일을 먼저 대조하세요.")
     review_actions.append("정답과 해설은 수업 배포 전 선생님이 직접 확정하세요.")
 
     return TransferStructure(
-        schema="problem-studio-transfer-structure/v1",
+        schema="problem-studio-transfer-structure/v2",
         quality_level=quality_level,
         structured_item_count=len(items),
         structured_problem_count=structured_problem_count,
         concept_block_count=concept_block_count,
         ocr_candidate_count=len(ocr_candidates),
+        ocr_completed_unit_count=ocr_completed_unit_count,
+        ocr_pending_unit_count=ocr_pending_unit_count,
         warning_count=len(warning_list),
         text_chars=text_chars,
         image_count=image_count,

@@ -23,6 +23,13 @@ from apps.domains.tools.problem_studio.extractors import (
     normalize_hwp_image_data,
     safe_zip_members,
 )
+from apps.domains.tools.problem_studio.hwpx_writer import build_hwpx_text_document
+from apps.domains.tools.problem_studio.ocr import (
+    OcrResult,
+    extract_ocr_text_from_image,
+    problem_studio_ocr_enabled,
+    problem_studio_ocr_max_units,
+)
 from apps.domains.tools.problem_studio.structure import (
     TransferStructure,
     analyze_transfer_documents,
@@ -63,6 +70,12 @@ class TransferDocument:
     page_end: int = 0
     warning: str | None = None
     plain_text: str = ""
+    ocr_text_chars: int = 0
+    ocr_completed_units: int = 0
+    ocr_pending_units: int = 0
+    ocr_status: str = "not_applicable"
+    ocr_engine: str = ""
+    ocr_warning: str | None = None
 
 
 @dataclass
@@ -76,6 +89,33 @@ class TransferPackage:
     structured_item_count: int = 0
     ocr_candidate_count: int = 0
     quality_level: str = ""
+
+
+@dataclass
+class TransferOcrContext:
+    enabled: bool = field(default_factory=problem_studio_ocr_enabled)
+    max_units: int = field(default_factory=problem_studio_ocr_max_units)
+    used_units: int = 0
+    disabled_reason: str = ""
+
+    @property
+    def remaining_units(self) -> int:
+        if not self.enabled:
+            return 0
+        return max(0, self.max_units - self.used_units)
+
+    def extract(self, data: bytes, *, mime: str) -> OcrResult:
+        if not self.enabled:
+            return OcrResult(text="", status="disabled", warning="OCR 비활성화")
+        if self.disabled_reason:
+            return OcrResult(text="", status="unavailable", warning=self.disabled_reason)
+        if self.used_units >= self.max_units:
+            return OcrResult(text="", status="skipped_limit", warning="자동 OCR 처리 한도 초과")
+        self.used_units += 1
+        result = extract_ocr_text_from_image(data, mime=mime)
+        if result.status in {"unavailable", "disabled"}:
+            self.disabled_reason = result.warning or "OCR 엔진을 사용할 수 없음"
+        return result
 
 
 def _escape(value: Any) -> str:
@@ -247,24 +287,74 @@ def _meta_block(title: str, source_name: str, detail: str) -> str:
 """
 
 
-def _image_transfer_doc(name: str, data: bytes) -> TransferDocument:
+def _ocr_status_from_units(completed: int, pending: int) -> str:
+    if completed and pending:
+        return "partial"
+    if completed:
+        return "extracted"
+    if pending:
+        return "queued"
+    return "not_applicable"
+
+
+def _ocr_note_html(result: OcrResult) -> str:
+    label = {
+        "skipped_limit": "자동 OCR 처리 한도를 초과해 후보로 남겼습니다.",
+        "unavailable": "자동 OCR 엔진을 사용할 수 없어 후보로 남겼습니다.",
+        "disabled": "자동 OCR이 비활성화되어 후보로 남겼습니다.",
+        "empty": "자동 OCR에서 편집 가능한 텍스트를 찾지 못했습니다.",
+        "error": "자동 OCR 처리 중 오류가 발생해 후보로 남겼습니다.",
+    }.get(result.status, "OCR 후보로 남겼습니다.")
+    warning = f" {_escape(result.warning)}" if result.warning else ""
+    return f'<p class="ocr-note"><strong>OCR 대기</strong> {_escape(label)}{warning}</p>'
+
+
+def _image_transfer_doc(name: str, data: bytes, *, ocr_context: TransferOcrContext) -> TransferDocument:
     mime = _mime_for_suffix(Path(name).suffix)
+    ocr_result = ocr_context.extract(data, mime=mime)
+    ocr_text = ocr_result.text if ocr_result.status == "extracted" else ""
+    ocr_html = ""
+    if ocr_text:
+        ocr_html = f"""
+  <h2>자동 OCR 텍스트</h2>
+  <div class="source-text">{_escape(ocr_text)}</div>
+"""
+    else:
+        ocr_html = _ocr_note_html(ocr_result)
+    ocr_completed = 1 if ocr_text else 0
+    ocr_pending = 0 if ocr_text else 1
     body = (
-        _meta_block("원본 이미지 이관", name, "이미지 원본 보존")
+        _meta_block("원본 이미지 이관", name, "이미지 원본 보존 + 자동 OCR 시도")
         + f'<img class="source-image" src="{_data_url(data, mime)}" alt="{_escape(name)}" />'
+        + ocr_html
     )
     return TransferDocument(
         filename=_doc_filename(name),
-        html=_office_doc_shell(name, body),
+        html=_office_doc_shell(
+            name,
+            body,
+            extra_style="""
+    h2 { margin: 9mm 0 3mm; font-size: 13pt; }
+    .ocr-note { margin: 5mm 0; padding: 3mm 4mm; border: 1pt solid #f59e0b; background: #fffbeb; color: #92400e; }
+""",
+        ),
         source_name=name,
         kind=_source_kind(name),
+        text_chars=len(ocr_text),
         image_count=1,
         page_start=1,
         page_end=1,
+        plain_text=ocr_text,
+        ocr_text_chars=len(ocr_text),
+        ocr_completed_units=ocr_completed,
+        ocr_pending_units=ocr_pending,
+        ocr_status=_ocr_status_from_units(ocr_completed, ocr_pending),
+        ocr_engine=ocr_result.engine if ocr_text else "",
+        ocr_warning=None if ocr_text else (ocr_result.warning or ocr_result.status),
     )
 
 
-def _pdf_transfer_docs(name: str, data: bytes) -> list[TransferDocument]:
+def _pdf_transfer_docs(name: str, data: bytes, *, ocr_context: TransferOcrContext) -> list[TransferDocument]:
     try:
         from academy.adapters.tools.pymupdf_renderer import PdfBytesDocument
     except Exception as exc:  # pragma: no cover - dependency is present in api image
@@ -276,11 +366,16 @@ def _pdf_transfer_docs(name: str, data: bytes) -> list[TransferDocument]:
         for start in range(0, page_count, TRANSFER_PDF_PAGES_PER_DOC):
             end = min(start + TRANSFER_PDF_PAGES_PER_DOC, page_count)
             part_text_chunks: list[str] = []
+            part_ocr_completed = 0
+            part_ocr_pending = 0
+            part_ocr_engine = ""
+            part_ocr_warning = ""
+            part_ocr_text_chars = 0
             page_html: list[str] = [
                 _meta_block(
                     "PDF 원본 페이지 이관",
                     name,
-                    f"페이지 이미지 보존 + 텍스트 레이어 분석 · {start + 1}-{end}쪽 / 총 {page_count}쪽",
+                    f"페이지 이미지 보존 + 텍스트 레이어 분석 + 자동 OCR 제한 처리 · {start + 1}-{end}쪽 / 총 {page_count}쪽",
                 )
             ]
             for index in range(start, end):
@@ -288,26 +383,54 @@ def _pdf_transfer_docs(name: str, data: bytes) -> list[TransferDocument]:
                 if page_text:
                     part_text_chunks.append(f"[{index + 1}쪽]\n{page_text}")
                 mime, image_bytes = pdf.render_page_bytes(index, zoom=TRANSFER_PDF_RENDER_ZOOM, jpg_quality=82)
+                ocr_page_html = ""
+                if not page_text:
+                    ocr_result = ocr_context.extract(image_bytes, mime=mime)
+                    if ocr_result.status == "extracted" and ocr_result.text:
+                        part_ocr_completed += 1
+                        part_ocr_engine = ocr_result.engine
+                        part_ocr_text_chars += len(ocr_result.text)
+                        part_text_chunks.append(f"[{index + 1}쪽 OCR]\n{ocr_result.text}")
+                        ocr_page_html = f'<div class="source-text ocr-text"><strong>자동 OCR 텍스트</strong><br />{_escape(ocr_result.text)}</div>'
+                    else:
+                        part_ocr_pending += 1
+                        part_ocr_warning = part_ocr_warning or ocr_result.warning or ocr_result.status
+                        ocr_page_html = _ocr_note_html(ocr_result)
                 page_no = index + 1
                 page_html.append(
                     f'<section class="source-page">'
                     f'<p><strong>{page_no}쪽</strong></p>'
                     f'<img src="{_data_url(image_bytes, mime)}" alt="{_escape(name)} {page_no}쪽" />'
+                    f'{ocr_page_html}'
                     f'</section>'
                 )
             part_label = f"_part{(start // TRANSFER_PDF_PAGES_PER_DOC) + 1:02d}" if page_count > TRANSFER_PDF_PAGES_PER_DOC else ""
             filename = _doc_filename(f"{Path(name).stem}{part_label}.pdf")
+            plain_text = normalize_space("\n\n".join(part_text_chunks))
             documents.append(TransferDocument(
                 filename=filename,
-                html=_office_doc_shell(f"{name} {start + 1}-{end}쪽", "\n".join(page_html)),
+                html=_office_doc_shell(
+                    f"{name} {start + 1}-{end}쪽",
+                    "\n".join(page_html),
+                    extra_style="""
+    .ocr-note { margin: 4mm 0; padding: 3mm 4mm; border: 1pt solid #f59e0b; background: #fffbeb; color: #92400e; }
+    .ocr-text { margin: 4mm 0 0; padding: 3mm 4mm; border-left: 3pt solid #0f766e; background: #f0fdfa; }
+""",
+                ),
                 source_name=name,
                 kind="PDF",
                 page_count=end - start,
                 page_start=start + 1,
                 page_end=end,
                 image_count=end - start,
-                text_chars=len(normalize_space("\n\n".join(part_text_chunks))),
-                plain_text=normalize_space("\n\n".join(part_text_chunks)),
+                text_chars=len(plain_text),
+                plain_text=plain_text,
+                ocr_text_chars=part_ocr_text_chars,
+                ocr_completed_units=part_ocr_completed,
+                ocr_pending_units=part_ocr_pending,
+                ocr_status=_ocr_status_from_units(part_ocr_completed, part_ocr_pending),
+                ocr_engine=part_ocr_engine,
+                ocr_warning=part_ocr_warning or None,
             ))
     return documents
 
@@ -388,12 +511,17 @@ def _extract_docx_text(data: bytes) -> str:
     return extract_docx_text(data)
 
 
-def _docs_from_named_bytes(name: str, data: bytes) -> tuple[list[TransferDocument], list[str]]:
+def _docs_from_named_bytes(
+    name: str,
+    data: bytes,
+    *,
+    ocr_context: TransferOcrContext,
+) -> tuple[list[TransferDocument], list[str]]:
     suffix = Path(name).suffix.lower()
     warnings: list[str] = []
     try:
         if suffix == ".pdf":
-            return _pdf_transfer_docs(name, data), warnings
+            return _pdf_transfer_docs(name, data, ocr_context=ocr_context), warnings
         if suffix == ".hwp":
             return [_fast_hwp_transfer_doc(name, data)], warnings
         if suffix == ".hwpx":
@@ -406,7 +534,7 @@ def _docs_from_named_bytes(name: str, data: bytes) -> tuple[list[TransferDocumen
             warning = "DOC 바이너리는 직접 렌더링하지 못해 원본 등록 리포트만 생성했습니다. DOCX/PDF로 저장하면 본문 이관이 가능합니다."
             return [_simple_text_transfer_doc(name, "", "DOC 원본 등록", warning)], [f"{name}: {warning}"]
         if suffix in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
-            return [_image_transfer_doc(name, data)], warnings
+            return [_image_transfer_doc(name, data, ocr_context=ocr_context)], warnings
     except Exception as exc:
         warning = f"{name}: 원본 이관 중 오류가 발생했습니다. ({exc})"
         return [_simple_text_transfer_doc(name, "", "오류 리포트", warning)], [warning]
@@ -440,6 +568,12 @@ def _expand_zip(name: str, data: bytes) -> tuple[list[tuple[str, bytes]], list[s
 def _review_focus(doc: TransferDocument) -> str:
     if doc.warning:
         return "경고 내용을 먼저 확인하고 원본 파일과 대조하세요."
+    if doc.ocr_pending_units and doc.ocr_completed_units:
+        return "자동 OCR 텍스트를 원본 이미지와 대조하고 남은 OCR 대기 범위를 확인하세요."
+    if doc.ocr_pending_units:
+        return "시각 보존 상태를 확인하고 OCR 후보로 남은 범위를 후속 처리하세요."
+    if doc.ocr_completed_units:
+        return "자동 OCR 텍스트의 오인식, 수식, 표, 선택지 누락을 원본과 대조하세요."
     if doc.kind == "PDF":
         return "첫 쪽, 중간 쪽, 마지막 쪽을 원본과 대조하고 잘림/회전/누락을 확인하세요."
     if doc.kind == "HWP":
@@ -456,6 +590,12 @@ def _review_focus(doc: TransferDocument) -> str:
 def _review_status(doc: TransferDocument) -> str:
     if doc.warning:
         return "확인 필요"
+    if doc.ocr_pending_units and doc.text_chars > 0:
+        return "OCR 일부 대기"
+    if doc.ocr_pending_units:
+        return "OCR 대기"
+    if doc.ocr_completed_units:
+        return "OCR 검수"
     if doc.kind in {"PDF", "이미지"} and doc.text_chars == 0:
         return "시각 대조"
     return "검수 대기"
@@ -506,8 +646,9 @@ def _build_review_checklist_html(
   <h2>1. 실사용 검수 순서</h2>
   <ol>
     <li><strong>01_자체양식_문제검수본.doc</strong>에서 자동 분리된 문제/개념 블록을 먼저 확인합니다.</li>
+    <li><strong>03_자체양식_문제검수본.hwpx</strong>를 한글에서 열어 텍스트 중심 검수본으로 사용할 수 있는지 확인합니다.</li>
     <li><strong>00_변환리포트.html</strong>에서 경고와 문서 수를 먼저 확인합니다.</li>
-    <li><strong>02_OCR_연결후보.csv</strong>에서 스캔/이미지 전용 원본을 별도 처리 목록으로 확인합니다.</li>
+    <li><strong>02_OCR_연결후보.csv</strong>에서 자동 OCR 후에도 남은 스캔/이미지 원본을 별도 처리 목록으로 확인합니다.</li>
     <li>각 산출물 `.doc`을 한글 또는 Word에서 열고 편집 가능 여부를 확인합니다.</li>
     <li>원본의 첫 쪽, 중간 쪽, 마지막 쪽을 산출물과 대조합니다.</li>
     <li>그림, 표, 수식, 선택지, 정답/해설이 누락되거나 섞이지 않았는지 표시합니다.</li>
@@ -517,10 +658,10 @@ def _build_review_checklist_html(
   <table>
     <tbody>
       <tr><th>구조화</th><td>자동 분리 항목 {structure.structured_item_count}개, 문제 후보 {structure.structured_problem_count}개. 상태: {_escape(_quality_label(structure.quality_level))}</td></tr>
-      <tr><th>열림</th><td>한글/Word에서 모든 `.doc` 파일이 열리고 저장됩니다.</td></tr>
+      <tr><th>열림</th><td>한글/Word에서 모든 `.doc` 파일이 열리고, 한글에서 `03_자체양식_문제검수본.hwpx`가 열립니다.</td></tr>
       <tr><th>누락</th><td>원본 페이지 또는 주요 그림/표가 빠지지 않았습니다.</td></tr>
       <tr><th>수정성</th><td>선생님이 수업용으로 직접 고칠 수 있는 상태입니다.</td></tr>
-      <tr><th>OCR</th><td>OCR 후보 {structure.ocr_candidate_count}개. 스캔본은 시각 이관 후 OCR 연결 대상으로 분류합니다.</td></tr>
+      <tr><th>OCR</th><td>자동 OCR 처리 {structure.ocr_completed_unit_count}단위, 남은 OCR 후보 {structure.ocr_candidate_count}개/{structure.ocr_pending_unit_count}단위.</td></tr>
       <tr><th>Beta</th><td>재작성 후보는 참고용이며 정답/표현은 확정 전 검수합니다.</td></tr>
     </tbody>
   </table>
@@ -584,6 +725,8 @@ def _build_manifest_json(
         "structured_item_count": structure.structured_item_count,
         "structured_problem_count": structure.structured_problem_count,
         "ocr_candidate_count": structure.ocr_candidate_count,
+        "ocr_completed_unit_count": structure.ocr_completed_unit_count,
+        "ocr_pending_unit_count": structure.ocr_pending_unit_count,
         "quality_level": structure.quality_level,
         "input_files": input_files,
         "documents": [
@@ -594,6 +737,12 @@ def _build_manifest_json(
                 "page_count": doc.page_count,
                 "image_count": doc.image_count,
                 "text_chars": doc.text_chars,
+                "ocr_text_chars": doc.ocr_text_chars,
+                "ocr_completed_units": doc.ocr_completed_units,
+                "ocr_pending_units": doc.ocr_pending_units,
+                "ocr_status": doc.ocr_status,
+                "ocr_engine": doc.ocr_engine,
+                "ocr_warning": doc.ocr_warning,
                 "status": _review_status(doc),
                 "review_focus": _review_focus(doc),
                 "warning": doc.warning,
@@ -609,16 +758,24 @@ def _build_manifest_json(
                 "status": _quality_label(structure.quality_level),
             },
             {
+                "filename": "03_자체양식_문제검수본.hwpx",
+                "type": "academy_review_workbook_hwpx",
+                "status": "한글 HWPX 텍스트 검수본",
+            },
+            {
                 "filename": "02_OCR_연결후보.csv",
                 "type": "ocr_work_queue",
-                "status": "OCR 후보 " + str(structure.ocr_candidate_count) + "개",
+                "status": "남은 OCR 후보 " + str(structure.ocr_candidate_count) + "개",
             },
         ],
         "review_contract": {
             "base_workflow": "source_transfer_teacher_review",
             "teacher_must_verify_answers": True,
-            "ocr_required_for_scanned_text": True,
+            "ocr_auto_enabled": problem_studio_ocr_enabled(),
+            "ocr_auto_max_units": problem_studio_ocr_max_units(),
+            "ocr_required_for_scanned_text": structure.ocr_candidate_count > 0,
             "native_hwp_output": False,
+            "native_hwpx_output": True,
         },
     }
     return json.dumps(manifest, ensure_ascii=False, indent=2)
@@ -632,9 +789,9 @@ def _build_file_list_csv(
 ) -> str:
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["구분", "번호", "파일명", "원본", "유형", "크기/쪽수", "이미지", "본문글자", "상태", "경고"])
+    writer.writerow(["구분", "번호", "파일명", "원본", "유형", "크기/쪽수", "이미지", "본문글자", "OCR처리", "OCR대기", "상태", "경고"])
     for index, item in enumerate(input_files, start=1):
-        writer.writerow(["원본", index, item["name"], "", item["kind"], item["sizeLabel"], "", "", "등록", ""])
+        writer.writerow(["원본", index, item["name"], "", item["kind"], item["sizeLabel"], "", "", "", "", "등록", ""])
     for index, doc in enumerate(documents, start=1):
         writer.writerow([
             "산출물",
@@ -645,11 +802,13 @@ def _build_file_list_csv(
             doc.page_count,
             doc.image_count,
             doc.text_chars,
+            doc.ocr_completed_units,
+            doc.ocr_pending_units,
             _review_status(doc),
             doc.warning or "",
         ])
     for index, warning in enumerate(warnings, start=1):
-        writer.writerow(["경고", index, "", "", "", "", "", "", "확인 필요", warning])
+        writer.writerow(["경고", index, "", "", "", "", "", "", "", "", "확인 필요", warning])
     writer.writerow([
         "검수본",
         1,
@@ -659,6 +818,22 @@ def _build_file_list_csv(
         structure.structured_item_count,
         "",
         structure.text_chars,
+        structure.ocr_completed_unit_count,
+        structure.ocr_pending_unit_count,
+        _quality_label(structure.quality_level),
+        "",
+    ])
+    writer.writerow([
+        "검수본",
+        2,
+        "03_자체양식_문제검수본.hwpx",
+        "",
+        "HWPX",
+        structure.structured_item_count,
+        "",
+        structure.text_chars,
+        structure.ocr_completed_unit_count,
+        structure.ocr_pending_unit_count,
         _quality_label(structure.quality_level),
         "",
     ])
@@ -668,9 +843,9 @@ def _build_file_list_csv(
 def _build_ocr_queue_csv(structure: TransferStructure) -> str:
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["후보ID", "원본", "산출물", "유형", "쪽시작", "쪽끝", "예상단위", "우선순위", "사유", "권장처리"])
+    writer.writerow(["후보ID", "원본", "산출물", "유형", "쪽시작", "쪽끝", "남은단위", "우선순위", "사유", "권장처리"])
     if not structure.ocr_candidates:
-        writer.writerow(["", "", "", "", "", "", "", "", "OCR 후보 없음", ""])
+        writer.writerow(["", "", "", "", "", "", "", "", "남은 OCR 후보 없음", ""])
     for item in structure.ocr_candidates:
         writer.writerow([
             item.get("candidate_id", ""),
@@ -718,7 +893,7 @@ def _build_structured_workbook_html(meta: dict[str, str], structure: TransferStr
         body_items = """
       <div class="warning">
         자동 분리할 텍스트가 없습니다. PDF/이미지 원본은 시각 이관 문서를 먼저 확인하고,
-        OCR 연결 후 문제 단위 편집본을 다시 생성하세요.
+        자동 OCR 결과 또는 OCR 연결 후 문제 단위 편집본을 다시 생성하세요.
       </div>
 """
     ocr_rows = "\n".join(
@@ -733,13 +908,14 @@ def _build_structured_workbook_html(meta: dict[str, str], structure: TransferStr
     <strong>과목</strong> {_escape(meta['subject'] or "-")}<br />
     <strong>기준 양식</strong> {_escape(meta['template_name'])}<br />
     <strong>상태</strong> {_escape(_quality_label(structure.quality_level))}<br />
-    <strong>자동 분리</strong> {structure.structured_item_count}개 · 문제 후보 {structure.structured_problem_count}개 · 개념 블록 {structure.concept_block_count}개
+    <strong>자동 분리</strong> {structure.structured_item_count}개 · 문제 후보 {structure.structured_problem_count}개 · 개념 블록 {structure.concept_block_count}개<br />
+    <strong>자동 OCR</strong> 처리 {structure.ocr_completed_unit_count}단위 · 남은 후보 {structure.ocr_candidate_count}개
   </div>
   <h2>검수 액션</h2>
   <ol>{action_items}</ol>
   <h2>문제/개념 단위 검수본</h2>
   {body_items}
-  <h2>OCR 연결 후보</h2>
+  <h2>자동 OCR 및 연결 후보</h2>
   <table>
     <thead><tr><th>후보ID</th><th>원본</th><th>유형</th><th>쪽 범위</th><th>우선순위</th><th>사유</th></tr></thead>
     <tbody>{ocr_rows}</tbody>
@@ -763,12 +939,63 @@ def _build_structured_workbook_html(meta: dict[str, str], structure: TransferStr
     )
 
 
+def _structured_workbook_text_paragraphs(meta: dict[str, str], structure: TransferStructure) -> list[str]:
+    paragraphs = [
+        f"반명: {meta['class_name'] or '-'}",
+        f"과목: {meta['subject'] or '-'}",
+        f"기준 양식: {meta['template_name']}",
+        f"상태: {_quality_label(structure.quality_level)}",
+        f"자동 분리: {structure.structured_item_count}개 / 문제 후보 {structure.structured_problem_count}개 / 개념 블록 {structure.concept_block_count}개",
+        f"자동 OCR: 처리 {structure.ocr_completed_unit_count}단위 / 남은 후보 {structure.ocr_candidate_count}개 / 남은 단위 {structure.ocr_pending_unit_count}",
+        "",
+        "[검수 액션]",
+        *structure.review_actions,
+        "",
+        "[문제/개념 단위 검수본]",
+    ]
+    if structure.items:
+        for item in structure.items:
+            flags = ", ".join(item.review_flags) if item.review_flags else "기본 검수"
+            choices = "\n".join(item.choices) if item.choices else "보기 없음 - 원본 확인"
+            paragraphs.extend([
+                "",
+                f"{item.number}. {'문제' if item.item_type == 'problem' else '개념'} / {item.source_name} / 신뢰도 {item.confidence:.2f} / {flags}",
+                item.prompt,
+                choices,
+                f"정답: {item.answer or '검수 필요'}",
+                f"해설: {item.explanation or '검수 후 작성'}",
+            ])
+    else:
+        paragraphs.append("자동 분리할 텍스트가 없습니다. PDF/이미지 원본은 시각 이관 문서를 먼저 확인하고 OCR 후보를 처리하세요.")
+
+    paragraphs.extend(["", "[OCR 연결 후보]"])
+    if structure.ocr_candidates:
+        for item in structure.ocr_candidates:
+            paragraphs.append(
+                f"{item.get('candidate_id', '')} / {item.get('source_name', '')} / {item.get('kind', '')} "
+                f"/ {item.get('page_start') or '-'}-{item.get('page_end') or '-'}쪽 "
+                f"/ 남은 {item.get('estimated_units', '')}단위 / {item.get('reason', '')}"
+            )
+    else:
+        paragraphs.append("남은 OCR 후보 없음")
+    return paragraphs
+
+
+def _build_structured_workbook_hwpx(meta: dict[str, str], structure: TransferStructure) -> bytes:
+    title = f"{meta['title']} 자체양식 문제검수본"
+    return build_hwpx_text_document(
+        title=title,
+        paragraphs=_structured_workbook_text_paragraphs(meta, structure),
+    )
+
+
 def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[Any]) -> TransferPackage:
     meta = _payload_meta(payload)
     title = meta["title"]
     documents: list[TransferDocument] = []
     warnings: list[str] = []
     input_files: list[dict[str, Any]] = []
+    ocr_context = TransferOcrContext()
 
     for uploaded in source_files:
         name, data = _read_upload(uploaded)
@@ -788,12 +1015,12 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
                 warnings.append(warning)
                 continue
             for member_name, member_data in members:
-                docs, doc_warnings = _docs_from_named_bytes(member_name, member_data)
+                docs, doc_warnings = _docs_from_named_bytes(member_name, member_data, ocr_context=ocr_context)
                 documents.extend(docs)
                 warnings.extend(doc_warnings)
             continue
 
-        docs, doc_warnings = _docs_from_named_bytes(name, data)
+        docs, doc_warnings = _docs_from_named_bytes(name, data, ocr_context=ocr_context)
         documents.extend(docs)
         warnings.extend(doc_warnings)
 
@@ -821,6 +1048,7 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
         zf.writestr("00_파일목록.csv", _build_file_list_csv(input_files, documents, warnings, structure))
         zf.writestr("01_자체양식_문제검수본.doc", "\ufeff" + _build_structured_workbook_html(meta, structure))
         zf.writestr("02_OCR_연결후보.csv", _build_ocr_queue_csv(structure))
+        zf.writestr("03_자체양식_문제검수본.hwpx", _build_structured_workbook_hwpx(meta, structure))
 
     return TransferPackage(
         filename=package_name,
@@ -828,7 +1056,7 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
         data=buffer.getvalue(),
         documents=documents,
         warnings=warnings,
-        review_file_count=6,
+        review_file_count=7,
         structured_item_count=structure.structured_item_count,
         ocr_candidate_count=structure.ocr_candidate_count,
         quality_level=structure.quality_level,
@@ -850,6 +1078,7 @@ def _build_report_html(
         f"<td>{doc.page_count}</td>"
         f"<td>{doc.image_count}</td>"
         f"<td>{doc.text_chars}</td>"
+        f"<td>{doc.ocr_completed_units}/{doc.ocr_pending_units}</td>"
         f"<td>{_escape(doc.warning or '')}</td>"
         f"</tr>"
         for index, doc in enumerate(documents, start=1)
@@ -861,12 +1090,12 @@ def _build_report_html(
     <strong>생성 시각</strong> {_escape(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))}<br />
     <strong>문서 수</strong> {len(documents)}개<br />
     <strong>이미지/페이지 수</strong> {sum(doc.image_count for doc in documents)}개<br />
-    <strong>자동 구조화</strong> {_escape(_quality_label(structure.quality_level))} · 항목 {structure.structured_item_count}개 · OCR 후보 {structure.ocr_candidate_count}개
+    <strong>자동 구조화</strong> {_escape(_quality_label(structure.quality_level))} · 항목 {structure.structured_item_count}개 · OCR 처리 {structure.ocr_completed_unit_count}단위 · 남은 OCR 후보 {structure.ocr_candidate_count}개
   </div>
   <h2>변환 결과</h2>
   <table>
     <thead>
-      <tr><th>#</th><th>원본</th><th>산출물</th><th>유형</th><th>쪽수</th><th>이미지</th><th>본문 글자</th><th>경고</th></tr>
+      <tr><th>#</th><th>원본</th><th>산출물</th><th>유형</th><th>쪽수</th><th>이미지</th><th>본문 글자</th><th>OCR 처리/대기</th><th>경고</th></tr>
     </thead>
     <tbody>{rows}</tbody>
   </table>

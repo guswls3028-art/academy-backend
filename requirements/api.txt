@@ -35,5 +35,8 @@ pillow
 # Problem Studio HWP source-transfer extraction.
 olefile==0.47
 
+# Problem Studio bounded local OCR for transfer packages.
+pytesseract
+
 # Solapi (support.messaging views)
 solapi>=5.0.0

@@ -5,6 +5,7 @@ import json
 import zipfile
 import zlib
 from io import BytesIO
+from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase
@@ -24,6 +25,8 @@ from apps.domains.tools.problem_studio.transfer_documents import (
     package_to_response,
     _normalize_hwp_image_data,
 )
+from apps.domains.tools.problem_studio.extractors import extract_hwpx_text
+from apps.domains.tools.problem_studio.ocr import OcrResult
 
 
 def _zip_file(name: str, files: dict[str, str]) -> SimpleUploadedFile:
@@ -209,6 +212,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertIn("00_manifest.json", names)
         self.assertIn("00_파일목록.csv", names)
         self.assertIn("02_OCR_연결후보.csv", names)
+        self.assertIn("03_자체양식_문제검수본.hwpx", names)
 
     def test_transfer_package_includes_review_manifest_and_warning_actions(self):
         uploaded = SimpleUploadedFile("legacy.doc", b"legacy-binary")
@@ -223,7 +227,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
             source_files=[uploaded],
         )
 
-        self.assertEqual(package.review_file_count, 6)
+        self.assertEqual(package.review_file_count, 7)
         self.assertEqual(len(package.documents), 1)
         self.assertEqual(len(package.warnings), 1)
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
@@ -235,6 +239,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertIn("실사용 검수 순서", checklist)
         self.assertIn("01_자체양식_문제검수본.doc", checklist)
         self.assertIn("02_OCR_연결후보.csv", checklist)
+        self.assertIn("03_자체양식_문제검수본.hwpx", checklist)
         self.assertIn("legacy.doc", checklist)
         self.assertIn("DOCX/PDF로 저장", checklist)
         self.assertEqual(manifest["schema"], "problem-studio-transfer-manifest/v2")
@@ -245,15 +250,19 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertEqual(manifest["structured_item_count"], 0)
         self.assertEqual(manifest["quality_level"], "needs_attention")
         self.assertTrue(manifest["review_contract"]["teacher_must_verify_answers"])
+        self.assertTrue(manifest["review_contract"]["native_hwpx_output"])
+        self.assertFalse(manifest["review_contract"]["native_hwp_output"])
         self.assertEqual(manifest["documents"][0]["status"], "확인 필요")
         self.assertEqual(manifest["template_outputs"][0]["filename"], "01_자체양식_문제검수본.doc")
-        self.assertEqual(manifest["template_outputs"][1]["filename"], "02_OCR_연결후보.csv")
+        self.assertEqual(manifest["template_outputs"][1]["filename"], "03_자체양식_문제검수본.hwpx")
+        self.assertEqual(manifest["template_outputs"][2]["filename"], "02_OCR_연결후보.csv")
         self.assertIn("산출물", csv_text)
         self.assertIn("검수본", csv_text)
         self.assertIn("legacy_원본이관.doc", csv_text)
         self.assertIn("00_manifest.json", names)
         self.assertIn("01_자체양식_문제검수본.doc", names)
         self.assertIn("02_OCR_연결후보.csv", names)
+        self.assertIn("03_자체양식_문제검수본.hwpx", names)
 
     def test_transfer_package_builds_structured_workbook_from_docx_text(self):
         uploaded = _zip_file(
@@ -274,7 +283,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
         package = build_transfer_package(payload={"title": "화학2 구조화"}, source_files=[uploaded])
         response = package_to_response(package)
 
-        self.assertEqual(package.review_file_count, 6)
+        self.assertEqual(package.review_file_count, 7)
         self.assertEqual(package.structured_item_count, 1)
         self.assertEqual(package.ocr_candidate_count, 0)
         self.assertEqual(response["X-Problem-Studio-Structured-Item-Count"], "1")
@@ -282,10 +291,12 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertEqual(response["X-Problem-Studio-Quality-Level"], "structured_review_ready")
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
             workbook = zf.read("01_자체양식_문제검수본.doc").decode("utf-8-sig")
+            hwpx_data = zf.read("03_자체양식_문제검수본.hwpx")
             manifest = json.loads(zf.read("00_manifest.json").decode("utf-8"))
 
         self.assertIn("자체양식 문제검수본", workbook)
         self.assertIn("물의 자동 이온화 상수", workbook)
+        self.assertIn("물의 자동 이온화 상수", extract_hwpx_text(hwpx_data))
         self.assertIn("정답", workbook)
         self.assertEqual(manifest["structured_item_count"], 1)
         self.assertEqual(manifest["structured_problem_count"], 1)
@@ -296,7 +307,7 @@ class ProblemStudioServiceTests(SimpleTestCase):
 
         package = build_transfer_package(payload={"title": "스캔 검수"}, source_files=[uploaded])
 
-        self.assertEqual(package.review_file_count, 6)
+        self.assertEqual(package.review_file_count, 7)
         self.assertEqual(package.ocr_candidate_count, 1)
         self.assertEqual(package.quality_level, "visual_only_ocr_required")
         with zipfile.ZipFile(BytesIO(package.data)) as zf:
@@ -309,7 +320,68 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertEqual(candidate["priority"], "high")
         self.assertIn("scan.png", ocr_csv)
         self.assertIn("ocr-001", ocr_csv)
-        self.assertIn("OCR 연결 후보", workbook)
+        self.assertIn("자동 OCR 및 연결 후보", workbook)
+
+    def test_transfer_package_includes_hwpx_review_workbook_package(self):
+        uploaded = _zip_file(
+            "chemistry.docx",
+            {
+                "word/document.xml": (
+                    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    "<w:body>"
+                    "<w:p><w:r><w:t>1. 산화수 보존을 확인하시오.</w:t></w:r></w:p>"
+                    "<w:p><w:r><w:t>정답 1</w:t></w:r></w:p>"
+                    "</w:body></w:document>"
+                )
+            },
+        )
+
+        package = build_transfer_package(payload={"title": "HWPX 검수"}, source_files=[uploaded])
+
+        with zipfile.ZipFile(BytesIO(package.data)) as outer:
+            hwpx_data = outer.read("03_자체양식_문제검수본.hwpx")
+        with zipfile.ZipFile(BytesIO(hwpx_data)) as inner:
+            first = inner.infolist()[0]
+            names = inner.namelist()
+            preview = inner.read("Preview/PrvText.txt").decode("utf-8")
+            section = inner.read("Contents/section0.xml").decode("utf-8")
+
+        self.assertEqual(first.filename, "mimetype")
+        self.assertEqual(first.compress_type, zipfile.ZIP_STORED)
+        self.assertIn("Contents/content.hpf", names)
+        self.assertIn("Contents/header.xml", names)
+        self.assertIn("산화수 보존", preview)
+        self.assertIn("<hp:t>", section)
+        self.assertIn("산화수 보존", extract_hwpx_text(hwpx_data))
+
+    def test_transfer_package_uses_successful_ocr_text_for_image_source(self):
+        uploaded = SimpleUploadedFile("scan.png", _TINY_PNG)
+
+        with patch(
+            "apps.domains.tools.problem_studio.transfer_documents.extract_ocr_text_from_image",
+            return_value=OcrResult(
+                text="1. 산과 염기의 중화 반응을 고르시오.\n① 중화\n정답 ①",
+                status="extracted",
+                engine="tesseract:kor+eng",
+            ),
+        ):
+            package = build_transfer_package(payload={"title": "자동 OCR"}, source_files=[uploaded])
+
+        self.assertEqual(package.ocr_candidate_count, 0)
+        self.assertEqual(package.structured_item_count, 1)
+        self.assertEqual(package.quality_level, "structured_review_ready")
+        self.assertEqual(package.documents[0].ocr_completed_units, 1)
+        self.assertEqual(package.documents[0].ocr_pending_units, 0)
+        with zipfile.ZipFile(BytesIO(package.data)) as zf:
+            manifest = json.loads(zf.read("00_manifest.json").decode("utf-8"))
+            workbook = zf.read("01_자체양식_문제검수본.doc").decode("utf-8-sig")
+            ocr_csv = zf.read("02_OCR_연결후보.csv").decode("utf-8-sig")
+
+        self.assertEqual(manifest["ocr_completed_unit_count"], 1)
+        self.assertEqual(manifest["ocr_pending_unit_count"], 0)
+        self.assertFalse(manifest["review_contract"]["ocr_required_for_scanned_text"])
+        self.assertIn("중화 반응", workbook)
+        self.assertIn("남은 OCR 후보 없음", ocr_csv)
 
     def test_transfer_package_reports_zip_with_too_many_members(self):
         uploaded = SimpleUploadedFile(

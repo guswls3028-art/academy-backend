@@ -74,6 +74,12 @@ def main() -> int:
                 "page_end": doc.page_end,
                 "image_count": doc.image_count,
                 "text_chars": doc.text_chars,
+                "ocr_text_chars": doc.ocr_text_chars,
+                "ocr_completed_units": doc.ocr_completed_units,
+                "ocr_pending_units": doc.ocr_pending_units,
+                "ocr_status": doc.ocr_status,
+                "ocr_engine": doc.ocr_engine,
+                "ocr_warning": doc.ocr_warning,
                 "warning": doc.warning,
             }
             for doc in package.documents
