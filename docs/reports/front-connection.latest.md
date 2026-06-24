@@ -1,6 +1,6 @@
 # Front V1 인프라 기준 연결 검증
 
-**Generated:** 2026-06-24T07:58:44.6556830+09:00
+**Generated:** 2026-06-24T09:01:56.4829835+09:00
 
 ## SSOT front.* / r2.* 확인
 | 항목 | 값 | 비고 |
@@ -17,7 +17,7 @@
 | app 도메인 200 | PASS | URL: https://hakwonplus.com/ |
 | API 공개 /health | OK | https://api.hakwonplus.com |
 | index.html Cache-Control | no-cache 계열 | |
-| 해시 자산 Cache-Control | 1년 | 샘플: https://hakwonplus.com/assets/index-CsAal8oY.js |
+| 해시 자산 Cache-Control | 1년 | 샘플: https://hakwonplus.com/assets/index-CY-Xn3gx.js |
 | CORS 정적 검사 | OK | app 도메인 포함됨 |
 | R2 버킷 | OK (wrangler list success) | wrangler r2 bucket list |
 

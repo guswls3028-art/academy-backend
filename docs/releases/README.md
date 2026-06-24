@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.4.10.md](v1.4.10.md) | **CURRENT** | 2026-06-24 KST | Problem Studio structured review workbook + OCR candidate contract |
+| [v1.4.11.md](v1.4.11.md) | **CURRENT** | 2026-06-24 KST | Problem Studio transfer hardening + OCR review queue + production stability seal |
+| [v1.4.10.md](v1.4.10.md) | production-deployed / v1.4.11로 승계 | 2026-06-24 KST | Problem Studio structured review workbook + OCR candidate contract |
 | [v1.4.9.md](v1.4.9.md) | production-deployed / v1.4.10로 승계 | 2026-06-24 KST | Problem Studio review package + real-source UAT seal |
 | [v1.4.8.md](v1.4.8.md) | production-deployed / v1.4.9로 승계 | 2026-06-24 KST | Problem Studio source transfer + beta rewrite workflow |
 | [v1.4.7.md](v1.4.7.md) | production-deployed / v1.4.8로 승계 | 2026-06-23 KST | Submission enrollment ForeignKey conversion + orphan preflight closure |
