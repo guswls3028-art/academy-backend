@@ -1,6 +1,6 @@
 # V1 Runtime Images — API 인스턴스 실제 실행 이미지
 
-**Generated:** 2026-06-24T20:13:42.2330071+09:00
+**Generated:** 2026-06-24T20:59:25.6318457+09:00
 **SSOT:** docs/ssot/params.yaml
 **Container:** academy-api
 
@@ -11,4 +11,4 @@
 
 | InstanceId | Container | State | ConfigImage | ImageId | RepoDigests | CI Match | Error |
 |------------|-----------|-------|-------------|---------|-------------|----------|-------|
-| i-0478ab0bb4ad4f4ec | academy-api | running | 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest | sha256:d3c60130e4f4116e5d8ba21b71fc99c133148cf0625e31c1ad5c8486c5883edc | ["809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api@sha256:b6a2964397baca6b094adf1e9730ab53432765fda34114f8f7bbf32dc6d28002"] | PASS | - |
+| i-0b05200ecf89ec301 | academy-api | running | 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest | sha256:d3c60130e4f4116e5d8ba21b71fc99c133148cf0625e31c1ad5c8486c5883edc | ["809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api@sha256:b6a2964397baca6b094adf1e9730ab53432765fda34114f8f7bbf32dc6d28002"] | PASS | - |
