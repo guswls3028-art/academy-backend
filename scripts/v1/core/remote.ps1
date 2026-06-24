@@ -119,6 +119,22 @@ function Invoke-ApiSsmDockerExec {
 
     $containerName = if ($script:ApiContainerName) { $script:ApiContainerName } else { "academy-api" }
     $encoded = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Command))
-    $remoteCommand = "printf '%s' '$encoded' | base64 -d | sudo docker exec -i $containerName sh 2>&1"
+    $remoteCommand = @"
+container='$containerName'
+for i in `$(seq 1 24); do
+  state=`$(sudo docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "`$container" 2>/dev/null || true)
+  if [ "`$state" = "running healthy" ] || [ "`$state" = "running none" ]; then
+    break
+  fi
+  sleep 5
+done
+state=`$(sudo docker inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "`$container" 2>/dev/null || true)
+if [ "`$state" != "running healthy" ] && [ "`$state" != "running none" ]; then
+  echo "container `$container not ready: `$state" >&2
+  sudo docker ps -a >&2 || true
+  exit 125
+fi
+printf '%s' '$encoded' | base64 -d | sudo docker exec -i "`$container" sh 2>&1
+"@
     return Invoke-ApiSsmShellCommand -Command $remoteCommand -TimeoutSec $TimeoutSec -AllInstances:$AllInstances
 }

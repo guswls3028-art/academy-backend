@@ -175,7 +175,7 @@ function Ensure-ToolsSqsScaling {
         "--evaluation-periods", "5",
         "--threshold", $script:ToolsScaleInThreshold.ToString(),
         "--comparison-operator", "LessThanOrEqualToThreshold",
-        "--treat-missing-data", "notBreaching",
+        "--treat-missing-data", "breaching",
         "--alarm-actions", $putIn.PolicyARN,
         "--metrics", $scaleInMetricsRef,
         "--region", $region) -ErrorMessage "put tools worker scale-in alarm" | Out-Null

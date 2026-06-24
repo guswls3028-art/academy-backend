@@ -115,7 +115,8 @@ function Ensure-MessagingSqsScaling {
         $alarmInName = "$($script:MessagingASGName)-sqs-scale-in"
         $scaleOutThreshold = $script:MessagingScaleOutThreshold
         $scaleInThreshold = $script:MessagingScaleInThreshold
-        $treatMissing = "notBreaching"
+        $scaleOutTreatMissing = "notBreaching"
+        $scaleInTreatMissing = "breaching"
 
         $stepOut = '[{"MetricIntervalLowerBound":0,"ScalingAdjustment":1}]'
         $putOut = Invoke-AwsJson @("autoscaling", "put-scaling-policy",
@@ -149,7 +150,7 @@ function Ensure-MessagingSqsScaling {
             "--statistic", "Average", "--period", "60", "--evaluation-periods", "1",
             "--threshold", $scaleOutThreshold.ToString(),
             "--comparison-operator", "GreaterThanThreshold",
-            "--treat-missing-data", $treatMissing,
+            "--treat-missing-data", $scaleOutTreatMissing,
             "--alarm-actions", $policyOutArn,
             "--region", $region) -ErrorMessage "put-metric-alarm scale-out" | Out-Null
         $scaleInMetrics = @(
@@ -205,7 +206,7 @@ function Ensure-MessagingSqsScaling {
             "--evaluation-periods", "5",
             "--threshold", $scaleInThreshold.ToString(),
             "--comparison-operator", "LessThanOrEqualToThreshold",
-            "--treat-missing-data", $treatMissing,
+            "--treat-missing-data", $scaleInTreatMissing,
             "--alarm-actions", $policyInArn,
             "--metrics", $scaleInMetricsRef,
             "--region", $region) -ErrorMessage "put-metric-alarm scale-in" | Out-Null
