@@ -7,7 +7,7 @@ from rest_framework.exceptions import ValidationError
 
 from apps.core.permissions import TenantResolved
 from apps.core.parsing import parse_bool
-from apps.api.common.throttles import SmsEndpointThrottle
+from apps.api.common.throttles import SmsEndpointThrottle, StaffPasswordResetThrottle
 from apps.core.models import TenantMembership
 
 
@@ -80,6 +80,11 @@ class StudentPasswordResetSendView(APIView):
         from apps.core.authentication import TokenVersionJWTAuthentication
 
         return [TokenVersionJWTAuthentication()]
+
+    def get_throttles(self):
+        if _is_staff_password_reset_request(getattr(self, "request", None)):
+            return [StaffPasswordResetThrottle()]
+        return [SmsEndpointThrottle()]
 
     def post(self, request):
         tenant = getattr(request, "tenant", None)

@@ -57,6 +57,9 @@ class StudentPasswordResetSafetyTests(TestCase):
             token_version=0,
         )
         TenantMembership.ensure_active(tenant=self.tenant, user=staff, role=role)
+        return self._headers_for_staff(staff)
+
+    def _headers_for_staff(self, staff) -> dict[str, str]:
         token = AccessToken.for_user(staff)
         token["tenant_id"] = self.tenant.id
         token["token_version"] = 0
@@ -90,6 +93,36 @@ class StudentPasswordResetSafetyTests(TestCase):
         self.assertTrue(self.user.must_change_password)
         self.assertEqual(self.user.token_version, 1)
         self.assertFalse(PendingPasswordReset.objects.filter(user=self.user).exists())
+
+    @override_settings(
+        ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
+        TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
+    )
+    def test_staff_password_reset_uses_staff_throttle_not_public_sms_ip_bucket(self):
+        User = get_user_model()
+        staff = User.objects.create_user(
+            username=user_internal_username(self.tenant, "teacher-throttle"),
+            password="staffpw123",
+            tenant=self.tenant,
+            token_version=0,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=staff, role="teacher")
+        headers = self._headers_for_staff(staff)
+
+        for idx in range(6):
+            response = APIClient().post(
+                "/api/v1/students/password_reset_send/",
+                {
+                    "target": "student",
+                    "student_name": self.student.name,
+                    "student_ps_number": self.student.ps_number,
+                    "temp_password": f"reset{idx}pw",
+                    "skip_notify": True,
+                },
+                format="json",
+                **headers,
+            )
+            self.assertEqual(response.status_code, 200, response.content)
 
     @override_settings(
         ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],

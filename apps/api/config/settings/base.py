@@ -309,6 +309,7 @@ REST_FRAMEWORK = {
         "user": "300/minute",
         "login": "10/minute",
         "sms_endpoint": "5/hour",
+        "staff_password_reset": "60/hour",
         "signup_check": "30/minute",
     },
 }

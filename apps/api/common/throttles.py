@@ -23,6 +23,28 @@ class SmsEndpointThrottle(SimpleRateThrottle):
         }
 
 
+class StaffPasswordResetThrottle(SimpleRateThrottle):
+    """
+    Staff-side student/parent password reset: tenant+user 기준 60회/시간.
+
+    Public account recovery remains on SmsEndpointThrottle's stricter IP bucket.
+    Staff users often process several student/parent resets from one academy
+    network, so sharing the public SMS IP bucket causes normal work to hit 429.
+    """
+    scope = "staff_password_reset"
+    rate = "60/hour"
+
+    def get_cache_key(self, request, view):
+        user = getattr(request, "user", None)
+        tenant = getattr(request, "tenant", None)
+        if not user or not user.is_authenticated or not tenant:
+            return None
+        return self.cache_format % {
+            "scope": self.scope,
+            "ident": f"{tenant.pk}:{user.pk}",
+        }
+
+
 class LoginThrottle(SimpleRateThrottle):
     """
     로그인 엔드포인트 전용: IP 기준 10회/분.

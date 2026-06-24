@@ -555,9 +555,11 @@ class TestThrottleConfiguration(TestCase):
     """비인증 엔드포인트에 throttle이 올바르게 적용됐는지 확인."""
 
     def test_sms_endpoint_throttle_class_exists(self):
-        from apps.api.common.throttles import SmsEndpointThrottle
+        from apps.api.common.throttles import SmsEndpointThrottle, StaffPasswordResetThrottle
         self.assertEqual(SmsEndpointThrottle.rate, "5/hour")
         self.assertEqual(SmsEndpointThrottle.scope, "sms_endpoint")
+        self.assertEqual(StaffPasswordResetThrottle.rate, "60/hour")
+        self.assertEqual(StaffPasswordResetThrottle.scope, "staff_password_reset")
 
     def test_signup_check_throttle_class_exists(self):
         from apps.api.common.throttles import SignupCheckThrottle
@@ -594,11 +596,13 @@ class TestThrottleConfiguration(TestCase):
     @override_settings(REST_FRAMEWORK={
         "DEFAULT_THROTTLE_RATES": {
             "anon": "60/minute", "user": "300/minute",
-            "sms_endpoint": "5/hour", "signup_check": "30/minute",
+            "sms_endpoint": "5/hour", "staff_password_reset": "60/hour",
+            "signup_check": "30/minute",
         },
     })
     def test_throttle_rates_in_settings(self):
         from django.conf import settings
         rates = settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {})
         self.assertIn("sms_endpoint", rates)
+        self.assertIn("staff_password_reset", rates)
         self.assertIn("signup_check", rates)
