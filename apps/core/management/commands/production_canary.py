@@ -71,6 +71,11 @@ class Command(BaseCommand):
             default=[],
             help="Allowlisted tenant id for fee_management feature flag. May be repeated.",
         )
+        parser.add_argument(
+            "--allow-idle-messaging-worker",
+            action="store_true",
+            help="Allow stale/missing messaging worker heartbeat when ASG desired=0 scale-to-zero is expected.",
+        )
 
     def handle(self, *args, **options):
         tenant = self._resolve_tenant(
@@ -81,7 +86,12 @@ class Command(BaseCommand):
 
         checks: list[CanaryCheck] = []
         checks.extend(self._check_core_tenant(tenant))
-        checks.extend(self._check_messaging(tenant))
+        checks.extend(
+            self._check_messaging(
+                tenant,
+                allow_idle_worker=bool(options["allow_idle_messaging_worker"]),
+            )
+        )
         checks.extend(
             self._check_video(
                 tenant,
@@ -159,7 +169,7 @@ class Command(BaseCommand):
             ),
         ]
 
-    def _check_messaging(self, tenant: Tenant) -> list[CanaryCheck]:
+    def _check_messaging(self, tenant: Tenant, *, allow_idle_worker: bool = False) -> list[CanaryCheck]:
         status = build_messaging_operations_status(tenant)
         auto_send = status["auto_send"]
         scheduled = status["scheduled"]
@@ -174,6 +184,14 @@ class Command(BaseCommand):
         auto_send_data = {
             **auto_send,
             "samples": self._sample_autosend_risks(tenant),
+        }
+        worker_status = worker["status"]
+        worker_ok = worker_status == "ok" or (
+            allow_idle_worker and worker_status in {"stale", "unknown"}
+        )
+        worker_data = {
+            **worker,
+            "idle_scale_to_zero_allowed": allow_idle_worker,
         }
 
         return [
@@ -201,9 +219,9 @@ class Command(BaseCommand):
             CanaryCheck(
                 name="messaging_worker_heartbeat",
                 severity="warning",
-                ok=worker["status"] == "ok",
-                detail="Messaging worker heartbeat should be fresh.",
-                data=worker,
+                ok=worker_ok,
+                detail="Messaging worker heartbeat should be fresh unless ASG desired=0 scale-to-zero is active.",
+                data=worker_data,
             ),
         ]
 

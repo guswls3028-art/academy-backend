@@ -58,6 +58,8 @@ $FrontBaseUrl = (ConvertTo-CanaryUrl $FrontBaseUrl)
 
 $warningsAreFailures = $StrictWarnings -or $Mode -in @("PostDeploy", "Deep")
 $script:CanaryRows = [System.Collections.ArrayList]::new()
+$script:MessagingActualMinSize = $null
+$script:MessagingActualDesiredCapacity = $null
 
 function Write-CanaryHost {
     param(
@@ -184,6 +186,12 @@ function Test-HttpRedirectCanary {
 
 function Test-ScalingControlAlarm($alarm) {
     $actions = (@($alarm.AlarmActions) -join " ")
+    if ($alarm.AlarmName -match '^TargetTracking-.+-Alarm(Low|High)-' -and $actions -match "scalingPolicy") {
+        return $true
+    }
+    if ($alarm.AlarmName -match '-sqs-scale-(in|out)$' -and $actions -match "scalingPolicy") {
+        return $true
+    }
     $isSqsDepthAlarm = (
         $alarm.Namespace -eq "AWS/SQS" -and
         $alarm.MetricName -eq "ApproximateNumberOfMessagesVisible"
@@ -216,6 +224,10 @@ function Test-AsgCanary {
         if (-not $asg) {
             Add-CanaryResult -Stage "AWS" -Name $Name -Severity $Severity -Ok $false -Detail "ASG not found: $AsgName"
             return
+        }
+        if ($AsgName -eq $script:MessagingASGName) {
+            $script:MessagingActualMinSize = [int]$asg.MinSize
+            $script:MessagingActualDesiredCapacity = [int]$asg.DesiredCapacity
         }
         $healthy = @($asg.Instances | Where-Object { $_.HealthStatus -eq "Healthy" -and $_.LifecycleState -eq "InService" }).Count
         $required = if ($Mode -in @("PostDeploy", "Deep")) { [int]$asg.DesiredCapacity } else { [int]$asg.MinSize }
@@ -407,6 +419,9 @@ if (-not $SkipRemoteDjango) {
     $migrationCommand = 'python manage.py showmigrations > /tmp/academy-showmigrations.txt 2>&1; rc=$?; cat /tmp/academy-showmigrations.txt; if [ $rc -ne 0 ]; then exit $rc; fi; if grep -E "^ \[ \]" /tmp/academy-showmigrations.txt; then exit 1; fi'
     Add-RemoteResult -Name "django_migrations_applied" -Results (Invoke-ApiSsmDockerExec -Command $migrationCommand -TimeoutSec $RemoteTimeoutSec -AllInstances:$allInstances)
     $invariantCommand = "python manage.py production_canary --tenant-id 1 --tenant-code hakwonplus --indent 2"
+    if ($script:MessagingActualMinSize -eq 0 -and $script:MessagingActualDesiredCapacity -eq 0) {
+        $invariantCommand += " --allow-idle-messaging-worker"
+    }
     if ($warningsAreFailures) {
         $invariantCommand += " --fail-on-warning"
     }

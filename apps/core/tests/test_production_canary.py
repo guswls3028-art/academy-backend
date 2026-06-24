@@ -9,7 +9,7 @@ from django.core.management import CommandError, call_command
 from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from apps.core.models import Tenant
+from apps.core.models import Tenant, WorkerHeartbeatModel
 from apps.core.models.program import Program
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
 from apps.domains.students.models import Student
@@ -70,6 +70,25 @@ class ProductionCanaryTests(TestCase):
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["summary"]["errors"], 0)
+
+    def test_idle_messaging_worker_option_allows_stale_heartbeat_with_fail_on_warning(self):
+        WorkerHeartbeatModel.objects.create(
+            name="messaging",
+            instance="i-idle-worker",
+            last_seen_at=timezone.now() - timedelta(minutes=10),
+        )
+
+        failed_payload = self._call_expect_fail("--fail-on-warning")
+        failed_check = next(
+            item for item in failed_payload["checks"] if item["name"] == "messaging_worker_heartbeat"
+        )
+        self.assertFalse(failed_check["ok"])
+
+        payload = self._call("--fail-on-warning", "--allow-idle-messaging-worker")
+
+        check = next(item for item in payload["checks"] if item["name"] == "messaging_worker_heartbeat")
+        self.assertTrue(check["ok"])
+        self.assertTrue(check["data"]["idle_scale_to_zero_allowed"])
 
     def test_enabled_autosend_without_effective_approved_template_fails(self):
         template = MessageTemplate.objects.create(
