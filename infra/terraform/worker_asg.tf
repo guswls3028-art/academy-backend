@@ -39,9 +39,9 @@ resource "aws_launch_template" "ai_worker" {
 resource "aws_autoscaling_group" "messaging_worker" {
   name                = "${var.naming_prefix}-messaging-worker-asg"
   vpc_zone_identifier = var.public_subnet_ids
-  min_size            = 1
+  min_size            = 0
   max_size            = 3
-  desired_capacity    = 1
+  desired_capacity    = 0
 
   launch_template {
     id      = aws_launch_template.messaging_worker.id
@@ -58,9 +58,9 @@ resource "aws_autoscaling_group" "messaging_worker" {
 resource "aws_autoscaling_group" "ai_worker" {
   name                = "${var.naming_prefix}-ai-worker-asg"
   vpc_zone_identifier = var.public_subnet_ids
-  min_size            = 1
+  min_size            = 0
   max_size            = 5
-  desired_capacity    = 1
+  desired_capacity    = 0
 
   launch_template {
     id      = aws_launch_template.ai_worker.id

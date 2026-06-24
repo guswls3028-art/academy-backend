@@ -430,6 +430,37 @@ function Ensure-API-LaunchTemplate {
     return @{ LtId = $ltId; Updated = $true }
 }
 
+function Ensure-APIScaling {
+    if ($script:PlanMode) { return }
+    if (-not $script:ApiASGName) { return }
+    $targetCpu = if ($script:ApiScalingTargetCpuPercent -gt 0) { $script:ApiScalingTargetCpuPercent } else { 55 }
+    if ($targetCpu -le 0) {
+        Write-Warn "API target tracking skipped: api.scalingPolicyTargetCpuPercent <= 0"
+        return
+    }
+
+    $policyName = "$($script:ApiASGName)-cpu-target-tracking"
+    $config = @{
+        PredefinedMetricSpecification = @{
+            PredefinedMetricType = "ASGAverageCPUUtilization"
+        }
+        TargetValue    = [double]$targetCpu
+        DisableScaleIn = $false
+    } | ConvertTo-Json -Depth 5 -Compress
+    $configRef = Convert-JsonArgToFileRef $config
+    $put = Invoke-AwsJson @("autoscaling", "put-scaling-policy",
+        "--auto-scaling-group-name", $script:ApiASGName,
+        "--policy-name", $policyName,
+        "--policy-type", "TargetTrackingScaling",
+        "--target-tracking-configuration", $configRef,
+        "--region", $script:Region,
+        "--output", "json")
+    if (-not $put -or -not $put.PolicyARN) {
+        throw "API target tracking policy ensure failed: $policyName"
+    }
+    Write-Ok "API target tracking ensured (ASGAverageCPUUtilization target=${targetCpu}%, min=$($script:ApiASGMinSize), max=$($script:ApiASGMaxSize))"
+}
+
 # Ensure API ASG: create if missing; capacity drift → update; LT updated → instance-refresh.
 function Ensure-API-ASG {
     Write-Step "Ensure API ASG $($script:ApiASGName)"
@@ -456,7 +487,9 @@ function Ensure-API-ASG {
         return
     }
 
-    $capacityDrift = ($asg.MinSize -ne $script:ApiASGMinSize) -or ($asg.MaxSize -ne $script:ApiASGMaxSize) -or ($asg.DesiredCapacity -ne $script:ApiASGDesiredCapacity)
+    $currentDesired = [int]$asg.DesiredCapacity
+    $clampedDesired = [Math]::Max($script:ApiASGMinSize, [Math]::Min($script:ApiASGMaxSize, $currentDesired))
+    $capacityDrift = ($asg.MinSize -ne $script:ApiASGMinSize) -or ($asg.MaxSize -ne $script:ApiASGMaxSize) -or ($currentDesired -ne $clampedDesired)
     $healthConfigDrift = ($asg.HealthCheckType -ne "ELB") -or ([int]$asg.HealthCheckGracePeriod -ne $script:ApiHealthCheckGracePeriodSeconds)
     $currentZones = ($asg.VpcZoneIdentifier -split "," | ForEach-Object { $_.Trim() }) -join ","
     $wantedZones = $vpcZone
@@ -472,8 +505,8 @@ function Ensure-API-ASG {
         Write-Ok "ASG instance-refresh started (new instances in public subnets)"
     }
     if ($capacityDrift) {
-        Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--min-size", $script:ApiASGMinSize.ToString(), "--max-size", $script:ApiASGMaxSize.ToString(), "--desired-capacity", $script:ApiASGDesiredCapacity.ToString(), "--region", $script:Region) -ErrorMessage "update-auto-scaling-group API ASG failed" | Out-Null
-        Write-Ok "ASG $($script:ApiASGName) capacity updated"
+        Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $script:ApiASGName, "--min-size", $script:ApiASGMinSize.ToString(), "--max-size", $script:ApiASGMaxSize.ToString(), "--desired-capacity", $clampedDesired.ToString(), "--region", $script:Region) -ErrorMessage "update-auto-scaling-group API ASG failed" | Out-Null
+        Write-Ok "ASG $($script:ApiASGName) capacity updated min=$($script:ApiASGMinSize) max=$($script:ApiASGMaxSize) desired(clamp)=$clampedDesired"
         $script:ChangesMade = $true
     }
     if ($healthConfigDrift) {
@@ -517,6 +550,7 @@ function Ensure-API-ASG {
             $script:ChangesMade = $true
         }
     }
+    Ensure-APIScaling
 }
 
 # Wait for ASG instance then health on ApiBaseUrl (ALB DNS). No EIP.

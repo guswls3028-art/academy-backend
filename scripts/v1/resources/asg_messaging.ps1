@@ -152,16 +152,62 @@ function Ensure-MessagingSqsScaling {
             "--treat-missing-data", $treatMissing,
             "--alarm-actions", $policyOutArn,
             "--region", $region) -ErrorMessage "put-metric-alarm scale-out" | Out-Null
+        $scaleInMetrics = @(
+            @{
+                Id = "visible"
+                MetricStat = @{
+                    Metric = @{
+                        Namespace = "AWS/SQS"
+                        MetricName = "ApproximateNumberOfMessagesVisible"
+                        Dimensions = @(@{ Name = "QueueName"; Value = $queueName })
+                    }
+                    Period = 60
+                    Stat = "Average"
+                }
+                ReturnData = $false
+            },
+            @{
+                Id = "inflight"
+                MetricStat = @{
+                    Metric = @{
+                        Namespace = "AWS/SQS"
+                        MetricName = "ApproximateNumberOfMessagesNotVisible"
+                        Dimensions = @(@{ Name = "QueueName"; Value = $queueName })
+                    }
+                    Period = 60
+                    Stat = "Average"
+                }
+                ReturnData = $false
+            },
+            @{
+                Id = "delayed"
+                MetricStat = @{
+                    Metric = @{
+                        Namespace = "AWS/SQS"
+                        MetricName = "ApproximateNumberOfMessagesDelayed"
+                        Dimensions = @(@{ Name = "QueueName"; Value = $queueName })
+                    }
+                    Period = 60
+                    Stat = "Average"
+                }
+                ReturnData = $false
+            },
+            @{
+                Id = "backlog"
+                Expression = "visible+inflight+delayed"
+                Label = "Messaging SQS backlog"
+                ReturnData = $true
+            }
+        ) | ConvertTo-Json -Depth 8 -Compress
+        $scaleInMetricsRef = Convert-JsonArgToFileRef $scaleInMetrics
         Invoke-Aws @("cloudwatch", "put-metric-alarm",
             "--alarm-name", $alarmInName,
-            "--metric-name", "ApproximateNumberOfMessagesVisible",
-            "--namespace", "AWS/SQS",
-            "--dimensions", "Name=QueueName,Value=$queueName",
-            "--statistic", "Average", "--period", "60", "--evaluation-periods", "1",
+            "--evaluation-periods", "5",
             "--threshold", $scaleInThreshold.ToString(),
             "--comparison-operator", "LessThanOrEqualToThreshold",
             "--treat-missing-data", $treatMissing,
             "--alarm-actions", $policyInArn,
+            "--metrics", $scaleInMetricsRef,
             "--region", $region) -ErrorMessage "put-metric-alarm scale-in" | Out-Null
 
         $descOut = Invoke-AwsJson @("cloudwatch", "describe-alarms", "--alarm-names", $alarmOutName, "--region", $region, "--output", "json")
@@ -175,7 +221,7 @@ function Ensure-MessagingSqsScaling {
             throw "Alarm $alarmInName alarm-actions does not reference policy ARN"
         }
 
-        Write-Ok "Messaging SQS scaling ensured (queue=$queueName)"
+        Write-Ok "Messaging SQS scaling ensured (queue=$queueName, scale-in uses visible+inflight+delayed backlog)"
     }
 
     if ($relaxed) {

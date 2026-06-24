@@ -122,18 +122,64 @@ function Ensure-ToolsSqsScaling {
         "--treat-missing-data", "notBreaching",
         "--alarm-actions", $putOut.PolicyARN,
         "--region", $region) -ErrorMessage "put tools worker scale-out alarm" | Out-Null
+    $scaleInMetrics = @(
+        @{
+            Id = "visible"
+            MetricStat = @{
+                Metric = @{
+                    Namespace = "AWS/SQS"
+                    MetricName = "ApproximateNumberOfMessagesVisible"
+                    Dimensions = @(@{ Name = "QueueName"; Value = $queueName })
+                }
+                Period = 60
+                Stat = "Average"
+            }
+            ReturnData = $false
+        },
+        @{
+            Id = "inflight"
+            MetricStat = @{
+                Metric = @{
+                    Namespace = "AWS/SQS"
+                    MetricName = "ApproximateNumberOfMessagesNotVisible"
+                    Dimensions = @(@{ Name = "QueueName"; Value = $queueName })
+                }
+                Period = 60
+                Stat = "Average"
+            }
+            ReturnData = $false
+        },
+        @{
+            Id = "delayed"
+            MetricStat = @{
+                Metric = @{
+                    Namespace = "AWS/SQS"
+                    MetricName = "ApproximateNumberOfMessagesDelayed"
+                    Dimensions = @(@{ Name = "QueueName"; Value = $queueName })
+                }
+                Period = 60
+                Stat = "Average"
+            }
+            ReturnData = $false
+        },
+        @{
+            Id = "backlog"
+            Expression = "visible+inflight+delayed"
+            Label = "Tools SQS backlog"
+            ReturnData = $true
+        }
+    ) | ConvertTo-Json -Depth 8 -Compress
+    $scaleInMetricsRef = Convert-JsonArgToFileRef $scaleInMetrics
     Invoke-Aws @("cloudwatch", "put-metric-alarm",
         "--alarm-name", $alarmInName,
-        "--metric-name", "ApproximateNumberOfMessagesVisible",
-        "--namespace", "AWS/SQS",
-        "--dimensions", $queueDimension,
-        "--statistic", "Average", "--period", "60", "--evaluation-periods", "5",
+        "--evaluation-periods", "5",
         "--threshold", $script:ToolsScaleInThreshold.ToString(),
         "--comparison-operator", "LessThanOrEqualToThreshold",
         "--treat-missing-data", "notBreaching",
         "--alarm-actions", $putIn.PolicyARN,
+        "--metrics", $scaleInMetricsRef,
         "--region", $region) -ErrorMessage "put tools worker scale-in alarm" | Out-Null
-    Write-Ok "Tools SQS scaling ensured (queue=$queueName)"
+    Write-Ok "Tools SQS scaling ensured (queue=$queueName, scale-in uses visible+inflight+delayed backlog)"
 }
 
 function Ensure-ASGTools {

@@ -116,6 +116,8 @@ Dependencies:
 - **ALB deregistration delay: 30s** — in-flight 연결 drain 후 즉시 정리
 - Scale-up 후 **ALB target health 실측 확인** (고정 대기 아닌 실제 healthy 2개 확인, max 5min)
 - Old instances are drained and terminated only after new ones pass ALB health checks
+- 평상시 API capacity는 SSOT `min=1 desired=1 max=3`이다. CI deploy는 refresh 직전에 일시적으로 `desired>=2` headroom을 만들고, refresh 성공 후 기존 desired baseline으로 되돌린다.
+- API runtime scale-out/scale-in은 ASG target tracking(`ASGAverageCPUUtilization`, target 55%)이 담당한다.
 
 ### Deployment Sequence
 
@@ -135,8 +137,8 @@ Workers use the same ASG instance refresh mechanism as API but with:
 Runtime scaling is split by worker:
 
 - **AI** uses AWS/SQS CloudWatch scale-out alarms (`ai-worker-queue-high`, `ai-worker-queue-age-high`) plus API wake-up. Idle scale-in is worker-owned after live SQS depth is empty; `ai-worker-queue-low` is observability-only. SSOT min/desired is 0/0.
-- **Messaging** runs with ASG min/desired=1 baseline and AWS/SQS CloudWatch alarms for StepScaling up to SSOT max capacity. Deploys replace instances through ASG refresh.
-- **Tools** runs with ASG min/desired=1 warm baseline and AWS/SQS CloudWatch alarms for deterministic conversion queues. Deploys replace instances through ASG refresh.
+- **Messaging** runs with ASG min/desired=0 baseline and AWS/SQS CloudWatch alarms for StepScaling up to SSOT max capacity. Any visible queue message wakes the worker; scale-in requires visible+in-flight+delayed backlog to stay 0 before reducing capacity.
+- **Tools** runs with ASG min/desired=0 baseline and AWS/SQS CloudWatch alarms for deterministic conversion queues. Any visible queue message wakes the worker; scale-in uses the same visible+in-flight+delayed backlog guard.
 - **Video** is not an ASG worker. It is AWS Batch only.
 
 ### Worker UserData Flow

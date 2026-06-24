@@ -196,9 +196,10 @@ function Get-StructuralDrift {
         } else {
             $a = @($matched)[0]
             $exp = $asgExpected[$asgName]
-            $capDrift = ($a.MinSize -ne $exp.Min) -or ($a.MaxSize -ne $exp.Max) -or ($a.DesiredCapacity -ne $exp.Desired)
+            $desiredOutOfRange = ($a.DesiredCapacity -lt $exp.Min) -or ($a.DesiredCapacity -gt $exp.Max)
+            $capDrift = ($a.MinSize -ne $exp.Min) -or ($a.MaxSize -ne $exp.Max) -or $desiredOutOfRange
             if ($capDrift) {
-                [void]$rows.Add([PSCustomObject]@{ ResourceType = "ASG"; Name = $asgName; Expected = "Min=$($exp.Min) Max=$($exp.Max) Desired=$($exp.Desired)"; Actual = "Min=$($a.MinSize) Max=$($a.MaxSize) Desired=$($a.DesiredCapacity)"; Action = "Update" })
+                [void]$rows.Add([PSCustomObject]@{ ResourceType = "ASG"; Name = $asgName; Expected = "Min=$($exp.Min) Max=$($exp.Max) Desired in range (baseline $($exp.Desired))"; Actual = "Min=$($a.MinSize) Max=$($a.MaxSize) Desired=$($a.DesiredCapacity)"; Action = "Update" })
             } else {
                 [void]$rows.Add([PSCustomObject]@{ ResourceType = "ASG"; Name = $asgName; Expected = "exists"; Actual = "exists"; Action = "NoOp" })
             }

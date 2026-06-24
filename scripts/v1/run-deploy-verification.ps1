@@ -445,12 +445,25 @@ try {
 
 # --- 8b. 정합성·프론트 연결 보고서 (consistency.latest.md, front-connection.latest.md) ---
 $buildRunningCount = 0  # build server 없음 (GitHub Actions only)
-$apiExpectedMinDesired = "$($script:ApiASGMinSize)/$($script:ApiASGDesiredCapacity)"
-$aiExpectedMinDesired = "$($script:AiMinSize)/$($script:AiDesiredCapacity)"
-$msgExpectedMinDesired = "$($script:MessagingMinSize)/$($script:MessagingDesiredCapacity)"
-$apiConsensusOk = ([string]$ev.apiAsgMin -eq [string]$script:ApiASGMinSize -and [string]$ev.apiAsgDesired -eq [string]$script:ApiASGDesiredCapacity)
-$aiConsensusOk = ([string]$ev.asgAiMin -eq [string]$script:AiMinSize -and [string]$ev.asgAiDesired -eq [string]$script:AiDesiredCapacity)
-$msgConsensusOk = ([string]$ev.asgMessagingMin -eq [string]$script:MessagingMinSize -and [string]$ev.asgMessagingDesired -eq [string]$script:MessagingDesiredCapacity)
+function Test-ASGCapacityPolicy {
+    param($ActualMin, $ActualDesired, $ActualMax, [int]$ExpectedMin, [int]$ExpectedMax)
+    try {
+        $min = [int]$ActualMin
+        $desired = [int]$ActualDesired
+        $max = [int]$ActualMax
+        return ($min -eq $ExpectedMin -and $max -eq $ExpectedMax -and $desired -ge $ExpectedMin -and $desired -le $ExpectedMax)
+    } catch {
+        return $false
+    }
+}
+$apiExpectedCapacity = "min=$($script:ApiASGMinSize) max=$($script:ApiASGMaxSize) desired=dynamic baseline $($script:ApiASGDesiredCapacity)"
+$aiExpectedCapacity = "min=$($script:AiMinSize) max=$($script:AiMaxSize) desired=dynamic baseline $($script:AiDesiredCapacity)"
+$msgExpectedCapacity = "min=$($script:MessagingMinSize) max=$($script:MessagingMaxSize) desired=dynamic baseline $($script:MessagingDesiredCapacity)"
+$toolsExpectedCapacity = "min=$($script:ToolsMinSize) max=$($script:ToolsMaxSize) desired=dynamic baseline $($script:ToolsDesiredCapacity)"
+$apiConsensusOk = Test-ASGCapacityPolicy $ev.apiAsgMin $ev.apiAsgDesired $ev.apiAsgMax $script:ApiASGMinSize $script:ApiASGMaxSize
+$aiConsensusOk = Test-ASGCapacityPolicy $ev.asgAiMin $ev.asgAiDesired $ev.asgAiMax $script:AiMinSize $script:AiMaxSize
+$msgConsensusOk = Test-ASGCapacityPolicy $ev.asgMessagingMin $ev.asgMessagingDesired $ev.asgMessagingMax $script:MessagingMinSize $script:MessagingMaxSize
+$toolsConsensusOk = Test-ASGCapacityPolicy $ev.asgToolsMin $ev.asgToolsDesired $ev.asgToolsMax $script:ToolsMinSize $script:ToolsMaxSize
 $eipNote = if ($solapiCleanupCandidateCount -gt 0) {
     "NAT Gateway $natGatewayActiveCount 개, EIP $eipCountTotal 개 (미연결 $eipCountUnassociated). Solapi 고정 IP 취소에 따라 삭제 후보 검토 필요."
 } else {
@@ -467,9 +480,10 @@ $consistencySb = [System.Text.StringBuilder]::new()
 [void]$consistencySb.AppendLine("## 합의사항 체크리스트")
 [void]$consistencySb.AppendLine("| 항목 | 기대 | 실제 | 결과 |")
 [void]$consistencySb.AppendLine("|------|------|------|------|")
-[void]$consistencySb.AppendLine("| API ASG min/desired | $apiExpectedMinDesired | $($ev.apiAsgMin)/$($ev.apiAsgDesired) | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
-[void]$consistencySb.AppendLine("| AI ASG min/desired | $aiExpectedMinDesired | $($ev.asgAiMin)/$($ev.asgAiDesired) | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
-[void]$consistencySb.AppendLine("| Messaging ASG min/desired | $msgExpectedMinDesired | $($ev.asgMessagingMin)/$($ev.asgMessagingDesired) | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| API ASG capacity policy | $apiExpectedCapacity | min=$($ev.apiAsgMin) max=$($ev.apiAsgMax) desired=$($ev.apiAsgDesired) | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| AI ASG capacity policy | $aiExpectedCapacity | min=$($ev.asgAiMin) max=$($ev.asgAiMax) desired=$($ev.asgAiDesired) | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| Messaging ASG capacity policy | $msgExpectedCapacity | min=$($ev.asgMessagingMin) max=$($ev.asgMessagingMax) desired=$($ev.asgMessagingDesired) | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| Tools ASG capacity policy | $toolsExpectedCapacity | min=$($ev.asgToolsMin) max=$($ev.asgToolsMax) desired=$($ev.asgToolsDesired) | $(if ($toolsConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$consistencySb.AppendLine("| Solapi 고정 IP(NAT/EIP) | 취소(불필요) | $eipNote | $(if ($solapiCleanupCandidateCount -eq 0) { 'PASS' } else { 'WARNING' }) |")
 [void]$consistencySb.AppendLine("| 빌드 서버 | 사용하지 않음(0대) | $buildNote | PASS |")
 [void]$consistencySb.AppendLine("")
@@ -667,7 +681,7 @@ Save-DeployVerificationReport -MarkdownContent $sb.ToString()
 
 # V1 최종 배포 검증 보고서 (reports/V1-FINAL-REPORT.md)
 $consistencySummary = "PASS"
-if (-not $apiConsensusOk -or -not $aiConsensusOk -or -not $msgConsensusOk) { $consistencySummary = "WARNING" }
+if (-not $apiConsensusOk -or -not $aiConsensusOk -or -not $msgConsensusOk -or -not $toolsConsensusOk) { $consistencySummary = "WARNING" }
 if ($solapiCleanupCandidateCount -gt 0) { if ($consistencySummary -eq "PASS") { $consistencySummary = "WARNING" } }
 $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("# V1 최종 배포 검증 보고서")
@@ -687,9 +701,10 @@ $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("## 합의사항 체크")
 [void]$finalSb.AppendLine("| 항목 | 결과 |")
 [void]$finalSb.AppendLine("|------|------|")
-[void]$finalSb.AppendLine("| API ASG min/desired=$apiExpectedMinDesired | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
-[void]$finalSb.AppendLine("| AI ASG min/desired=$aiExpectedMinDesired | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
-[void]$finalSb.AppendLine("| Messaging ASG min/desired=$msgExpectedMinDesired | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$finalSb.AppendLine("| API ASG capacity policy ($apiExpectedCapacity) | $(if ($apiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$finalSb.AppendLine("| AI ASG capacity policy ($aiExpectedCapacity) | $(if ($aiConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$finalSb.AppendLine("| Messaging ASG capacity policy ($msgExpectedCapacity) | $(if ($msgConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
+[void]$finalSb.AppendLine("| Tools ASG capacity policy ($toolsExpectedCapacity) | $(if ($toolsConsensusOk) { 'PASS' } else { 'Fix needed' }) |")
 [void]$finalSb.AppendLine("| Solapi 고정 IP(NAT/EIP) 취소 | $(if ($solapiCleanupCandidateCount -eq 0) { 'PASS' } else { 'WARNING(삭제 후보 잔여)' }) |")
 [void]$finalSb.AppendLine("| 빌드 (GitHub Actions only) | PASS |")
 [void]$finalSb.AppendLine("")

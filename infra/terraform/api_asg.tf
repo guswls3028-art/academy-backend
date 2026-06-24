@@ -32,7 +32,7 @@ resource "aws_autoscaling_group" "api" {
   name                = "${var.naming_prefix}-api-asg"
   vpc_zone_identifier = var.private_subnet_ids
   min_size            = 1
-  max_size            = 2
+  max_size            = 3
   desired_capacity    = 1
 
   target_group_arns = [aws_lb_target_group.api.arn]
@@ -46,6 +46,21 @@ resource "aws_autoscaling_group" "api" {
     key                 = "Name"
     value               = "${var.naming_prefix}-api"
     propagate_at_launch = true
+  }
+}
+
+resource "aws_autoscaling_policy" "api_cpu_target_tracking" {
+  name                   = "${var.naming_prefix}-api-cpu-target-tracking"
+  autoscaling_group_name = aws_autoscaling_group.api.name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+
+    target_value     = 55
+    disable_scale_in = false
   }
 }
 

@@ -163,6 +163,7 @@ function Load-SSOT {
     $script:ApiInstanceRefreshMinHealthyPercentage = Coerce-Int $p["api"]["instanceRefreshMinHealthyPercentage"] 100
     $script:ApiInstanceRefreshInstanceWarmup = Coerce-Int $p["api"]["instanceRefreshInstanceWarmup"] 300
     $script:ApiHealthCheckGracePeriodSeconds = Coerce-Int $p["api"]["healthCheckGracePeriodSeconds"] 300
+    $script:ApiScalingTargetCpuPercent = Coerce-Int $p["api"]["scalingPolicyTargetCpuPercent"] 55
 
     # Build server DEPRECATED: 빌드는 GitHub Actions에서만 수행한다.
     $script:BuildTagKey = ""
@@ -179,9 +180,9 @@ function Load-SSOT {
     $script:MessagingInstanceTagValue = if ($p["messagingWorker"]["instanceTagValue"]) { $p["messagingWorker"]["instanceTagValue"] } else { "academy-v1-messaging-worker" }
     $script:MessagingAmiId = $p["messagingWorker"]["amiId"]
     $script:MessagingInstanceType = if ($p["messagingWorker"]["instanceType"]) { $p["messagingWorker"]["instanceType"] } else { "t4g.medium" }
-    $script:MessagingMinSize = Coerce-Int $p["messagingWorker"]["minSize"] 1
+    $script:MessagingMinSize = Coerce-Int $p["messagingWorker"]["minSize"] 0
     $script:MessagingMaxSize = Coerce-Int $p["messagingWorker"]["maxSize"] 10
-    $script:MessagingDesiredCapacity = Coerce-Int $p["messagingWorker"]["desiredCapacity"] 1
+    $script:MessagingDesiredCapacity = Coerce-Int $p["messagingWorker"]["desiredCapacity"] 0
     $script:MessagingScaleInProtection = ($p["messagingWorker"]["scaleInProtection"] -eq $true -or $p["messagingWorker"]["scaleInProtection"] -eq "true")
     $script:MessagingScaleOutCooldown = Coerce-Int $p["messagingWorker"]["scalingPolicyScaleOutCooldown"] 300
     $script:MessagingScaleInCooldown = Coerce-Int $p["messagingWorker"]["scalingPolicyScaleInCooldown"] 900
@@ -211,9 +212,9 @@ function Load-SSOT {
     $script:ToolsInstanceTagValue = if ($tools["instanceTagValue"]) { $tools["instanceTagValue"] } else { "academy-v1-tools-worker" }
     $script:ToolsAmiId = if ($tools["amiId"]) { $tools["amiId"] } else { $script:AiAmiId }
     $script:ToolsInstanceType = if ($tools["instanceType"]) { $tools["instanceType"] } else { "t4g.small" }
-    $script:ToolsMinSize = Coerce-Int $tools["minSize"] 1
+    $script:ToolsMinSize = Coerce-Int $tools["minSize"] 0
     $script:ToolsMaxSize = Coerce-Int $tools["maxSize"] 2
-    $script:ToolsDesiredCapacity = Coerce-Int $tools["desiredCapacity"] 1
+    $script:ToolsDesiredCapacity = Coerce-Int $tools["desiredCapacity"] 0
     $script:ToolsScaleInProtection = ($tools["scaleInProtection"] -eq $true -or $tools["scaleInProtection"] -eq "true")
     $script:ToolsScaleOutCooldown = Coerce-Int $tools["scalingPolicyScaleOutCooldown"] 300
     $script:ToolsScaleInCooldown = Coerce-Int $tools["scalingPolicyScaleInCooldown"] 900

@@ -1,6 +1,8 @@
 # Academy SSOT v1 — 풀셋팅 단일소스. scripts/v1 전용.
 # 1인 개발·운영(장애 대응 10~60분), 1k~1.5k 사용자·동시 50~300 버스트.
-# API ASG: 확장 런칭 기준 min/desired=2, max=3. 용량 기준은 docs/infrastructure/connection-budget.md.
+# API ASG: 비용 최적화 기준 평시 min/desired=1, max=3.
+# 배포 시에는 무중단 refresh를 위해 CI가 일시적으로 desired>=2를 만들 수 있고,
+# 평상시에는 ASG target tracking이 1~3대 사이에서 자동 증감한다.
 
 global:
   env: prod
@@ -61,7 +63,7 @@ githubActions:
   deployRoleName: academy-gha-ecr-build
   deployPolicyName: EcrBuildPush
 
-# API: V1. 확장 런칭 기준 min/desired=2, max=3. 롤링 배포 시 instance-refresh MinHealthyPercentage.
+# API: V1. 평시 min/desired=1, max=3. 롤링 배포 시 instance-refresh MinHealthyPercentage.
 # Gunicorn/ALB 타임아웃 60s 내 권장(동영상/AI는 비동기 전용).
 api:
   amiId: ami-0885e191a9bcf28b0
@@ -71,12 +73,13 @@ api:
   userData: ""
   asgName: academy-v1-api-asg
   asgLaunchTemplateName: academy-v1-api-lt
-  asgMinSize: 2
+  asgMinSize: 1
   asgMaxSize: 3
-  asgDesiredCapacity: 2
+  asgDesiredCapacity: 1
   instanceRefreshMinHealthyPercentage: 100
   instanceRefreshInstanceWarmup: 300
   healthCheckGracePeriodSeconds: 300
+  scalingPolicyTargetCpuPercent: 55
   containerName: academy-api
   albName: academy-v1-api-alb
   targetGroupName: academy-v1-api-tg
@@ -95,16 +98,16 @@ messagingWorker:
   instanceTagValue: academy-v1-messaging-worker
   amiId: ami-0885e191a9bcf28b0
   instanceType: t4g.medium
-  minSize: 1
+  minSize: 0
   # 운영 단순화: 메시징 워커 스케일 상한 축소
   maxSize: 3
-  desiredCapacity: 1
-  # V1.1.1: scale-in protection 비활성화. min=1이면 ASG가 1 밑으로 안 내림.
+  desiredCapacity: 0
+  # V1.1.1: scale-in protection 비활성화. min=0이면 큐가 비었을 때 0까지 축소 가능.
   # protection=true면 instance refresh 실패 → 배포 차단 (근본 원인 확인됨).
   scaleInProtection: false
   scalingPolicyScaleOutCooldown: 300
   scalingPolicyScaleInCooldown: 900
-  scalingPolicyScaleOutThreshold: 20
+  scalingPolicyScaleOutThreshold: 0
   scalingPolicyScaleInThreshold: 0
   sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-messaging-queue
   sqsQueueName: academy-v1-messaging-queue
@@ -138,19 +141,19 @@ aiWorker:
 
 toolsWorker:
   # PPT/PDF 등 도구성 변환 작업은 AI/OCR 모델 캐시와 분리한다.
-  # 사용자 체감 대기시간을 줄이기 위해 1대 warm baseline을 유지한다.
+  # 비용 최적화를 위해 평시 0대. 큐에 작업이 들어오면 SQS alarm이 워커를 깨운다.
   asgName: academy-v1-tools-worker-asg
   launchTemplateName: academy-v1-tools-worker-lt
   instanceTagValue: academy-v1-tools-worker
   amiId: ami-0885e191a9bcf28b0
   instanceType: t4g.small
-  minSize: 1
+  minSize: 0
   maxSize: 2
-  desiredCapacity: 1
+  desiredCapacity: 0
   scaleInProtection: false
   scalingPolicyScaleOutCooldown: 300
   scalingPolicyScaleInCooldown: 900
-  scalingPolicyScaleOutThreshold: 2
+  scalingPolicyScaleOutThreshold: 0
   scalingPolicyScaleInThreshold: 0
   sqsQueueUrl: https://sqs.ap-northeast-2.amazonaws.com/809466760795/academy-v1-tools-queue
   sqsQueueName: academy-v1-tools-queue

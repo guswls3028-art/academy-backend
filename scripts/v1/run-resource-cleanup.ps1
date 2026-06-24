@@ -1,7 +1,7 @@
 # V1 불필요 리소스 정리 — 돈 새는 리소스 우선. 배포 수정 전 실행 권장.
 # PHASE 1: EIP 전부 release (association 없음)
 # PHASE 2: ENI에 연결되지 않은 Security Group 삭제 (SSOT 유지 SG 제외)
-# PHASE 3: API ASG SSOT 용량 확인 (min=2 desired=2 max=3)
+# PHASE 3: API ASG SSOT 용량 확인 (min=1 desired=1 max=3)
 # PHASE 4: describe-* 로 재검증 후 docs/reports/resource-cleanup.latest.md 기록
 # 사용: pwsh -File scripts/v1/run-resource-cleanup.ps1 [-AwsProfile default] [-Execute]
 param(
@@ -92,19 +92,20 @@ else {
 }
 
 # --- PHASE 3: API ASG SSOT 용량 확인 ---
-Write-Host "`n[PHASE 3] API ASG SSOT 용량 확인 (min=2 desired=2 max=3)" -ForegroundColor Cyan
+Write-Host "`n[PHASE 3] API ASG SSOT 용량 확인 (min=1 desired=1 max=3)" -ForegroundColor Cyan
 $asgDesc = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $ApiASGName, "--region", $R, "--output", "json")
 if (-not $asgDesc -or -not $asgDesc.AutoScalingGroups -or $asgDesc.AutoScalingGroups.Count -eq 0) {
     Write-Host "  $ApiASGName 없음, 건너뜀." -ForegroundColor Yellow
 } else {
     $a = $asgDesc.AutoScalingGroups[0]
     $min = $a.MinSize; $des = $a.DesiredCapacity; $max = $a.MaxSize
-    if ($min -eq 2 -and $des -eq 2 -and $max -eq 3) { Write-Host "  이미 2/2/3." -ForegroundColor Green }
+    if ($min -eq 1 -and $des -ge 1 -and $des -le 3 -and $max -eq 3) { Write-Host "  이미 min=1 max=3, desired=$des(동적 범위)." -ForegroundColor Green }
     else {
-        Write-Host "  현재 min=$min desired=$des max=$max → 2/2/3" -ForegroundColor $(if ($Execute) { "Yellow" } else { "Gray" })
+        $targetDesired = [Math]::Max(1, [Math]::Min(3, [int]$des))
+        Write-Host "  현재 min=$min desired=$des max=$max → min=1 desired=$targetDesired max=3" -ForegroundColor $(if ($Execute) { "Yellow" } else { "Gray" })
         if ($Execute) {
             try {
-                Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $ApiASGName, "--min-size", "2", "--desired-capacity", "2", "--max-size", "3", "--region", $R) -ErrorMessage "update-asg" | Out-Null
+                Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $ApiASGName, "--min-size", "1", "--desired-capacity", "$targetDesired", "--max-size", "3", "--region", $R) -ErrorMessage "update-asg" | Out-Null
                 Write-Host "      Updated." -ForegroundColor Green
             } catch { Write-Warning "      Failed: $_" }
         }
