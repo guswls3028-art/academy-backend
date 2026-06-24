@@ -151,3 +151,15 @@ class ExamQuestionInitViewTests(TestCase):
             list(regular.sheet.questions.order_by("number").values_list("number", flat=True)),
             [1, 2, 3],
         )
+
+    def test_choice_essay_combined_count_is_capped(self):
+        exam, _ = self._regular_exam_with_questions()
+
+        response = self._post(exam, {"choice_count": 500, "essay_count": 1})
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertIn("최대 500문항", str(response.data))
+        self.assertEqual(
+            list(exam.sheet.questions.order_by("number").values_list("number", flat=True)),
+            [1, 2, 3],
+        )

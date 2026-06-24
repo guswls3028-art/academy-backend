@@ -3,17 +3,20 @@ from __future__ import annotations
 from rest_framework import serializers
 
 
+MAX_EXAM_QUESTIONS = 500
+
+
 class ExamQuestionInitSerializer(serializers.Serializer):
     total_questions = serializers.IntegerField(
-        min_value=0, max_value=500, required=False
+        min_value=0, max_value=MAX_EXAM_QUESTIONS, required=False
     )
     default_score = serializers.FloatField(required=False, min_value=0.0)
 
     # 객관식/주관식 분리: count만 주면 기존 배점은 보존하고,
     # choice_score/essay_score까지 주어진 경우에만 일괄 배점을 갱신한다.
-    choice_count = serializers.IntegerField(required=False, min_value=0, max_value=500)
+    choice_count = serializers.IntegerField(required=False, min_value=0, max_value=MAX_EXAM_QUESTIONS)
     choice_score = serializers.FloatField(required=False, min_value=0.0)
-    essay_count = serializers.IntegerField(required=False, min_value=0, max_value=500)
+    essay_count = serializers.IntegerField(required=False, min_value=0, max_value=MAX_EXAM_QUESTIONS)
     essay_score = serializers.FloatField(required=False, min_value=0.0)
 
     def validate(self, attrs):
@@ -36,9 +39,14 @@ class ExamQuestionInitSerializer(serializers.Serializer):
                 raise serializers.ValidationError(
                     "choice_score 와 essay_score 는 함께 보내야 합니다."
                 )
-            if (choice_count or 0) + (essay_count or 0) == 0:
+            total_count = (choice_count or 0) + (essay_count or 0)
+            if total_count == 0:
                 raise serializers.ValidationError(
                     "객관식+주관식 문항 수 합이 1 이상이어야 합니다."
+                )
+            if total_count > MAX_EXAM_QUESTIONS:
+                raise serializers.ValidationError(
+                    f"객관식+주관식 문항 수 합은 최대 {MAX_EXAM_QUESTIONS}문항입니다."
                 )
             return attrs
         if has_total:
