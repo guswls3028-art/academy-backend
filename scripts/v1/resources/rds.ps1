@@ -174,6 +174,38 @@ function Ensure-RdsProtection {
     }
 }
 
+function Ensure-RdsInstanceClass {
+    param($DbInstance)
+    if ($script:PlanMode) { return }
+    if (-not $script:RdsDbIdentifier -or -not $DbInstance -or -not $script:RdsInstanceClass) { return }
+
+    $currentClass = $DbInstance.DBInstanceClass
+    $pendingClass = ""
+    if ($DbInstance.PendingModifiedValues -and $DbInstance.PendingModifiedValues.PSObject.Properties["DBInstanceClass"]) {
+        $pendingClass = $DbInstance.PendingModifiedValues.DBInstanceClass
+    }
+
+    if ($currentClass -eq $script:RdsInstanceClass) {
+        Write-Ok "RDS $($script:RdsDbIdentifier) instance class matches SSOT ($currentClass)"
+        return
+    }
+
+    if ($pendingClass -eq $script:RdsInstanceClass) {
+        Write-Ok "RDS $($script:RdsDbIdentifier) instance class pending SSOT ($currentClass -> $pendingClass)"
+        return
+    }
+
+    Invoke-Aws @(
+        "rds", "modify-db-instance",
+        "--db-instance-identifier", $script:RdsDbIdentifier,
+        "--db-instance-class", $script:RdsInstanceClass,
+        "--no-apply-immediately",
+        "--region", $script:Region
+    ) -ErrorMessage "modify RDS instance class" | Out-Null
+    Write-Ok "RDS $($script:RdsDbIdentifier) instance class scheduled for maintenance window: $currentClass -> $($script:RdsInstanceClass)"
+    $script:ChangesMade = $true
+}
+
 function Ensure-RdsProxyHardening {
     if ($script:PlanMode) { return }
     if (-not $script:RdsProxyName -or $script:RdsProxyName.Trim() -eq "") { return }
@@ -277,6 +309,7 @@ function Confirm-RDSState {
                 $ep = $db.Endpoint
                 Write-Ok "RDS $($script:RdsDbIdentifier) available (endpoint: $($ep.Address):$($ep.Port))"
                 Ensure-RDSSecurityGroup -DbInstance $db
+                Ensure-RdsInstanceClass -DbInstance $db
                 Ensure-RdsProtection -DbInstance $db
                 Ensure-RdsProxyHardening
                 Ensure-RdsObservability -DbInstance $db

@@ -12,6 +12,7 @@
 | Production canary | PASS=30 WARN=0 FAIL=0 | public HTTP, AWS infra, and remote Django invariants healthy |
 | Deploy verification | PASS / GO | drift/evidence/runtime/front reports regenerated |
 | Cleanup dry-run | no delete target | no destructive cleanup executed |
+| RDS downsize | pending `db.t4g.large -> db.t4g.medium` | scheduled for next RDS maintenance window, no immediate restart |
 
 ## Capacity SSOT vs Actual
 
@@ -67,7 +68,8 @@ Time period: 2026-06-01 through 2026-06-25, unblended cost, estimated.
 
 ## Right-Size Notes
 
-- RDS is the largest non-burst cost. Actual class is `db.t4g.large`; the 7-day CloudWatch sample shows CPU average 5.18%, max 50.26%, DB connections average 2.31, max 14, and freeable memory average ~4.72 GiB (min ~4.68 GiB). This is a downsize candidate only after slow-query, connection-budget, backup window, and peak workload review.
+- RDS is the largest non-burst cost. Downsize target is `db.t4g.medium`: current `db.t4g.large` price is $0.203/hr, target `db.t4g.medium` is $0.102/hr in ap-northeast-2 Single-AZ PostgreSQL, saving about $0.101/hr (~$73.73 per 730-hour month) before storage/backup/tax. The change is pending on `academy-db` and is scheduled for the RDS maintenance window (`thu:20:20-thu:20:50` UTC, Friday 05:20-05:50 KST).
+- The 7-day CloudWatch sample supports the downsize: CPU average 5.18%, max 50.26%, DB connections average 2.30, max 14, freeable memory average ~4.72 GiB, swap usage ~1 MiB, and CPU credit balance stayed full. The 30-day connection spike reached 588 on 2026-06-08/10, so the connection alarm remains at 320 and DB connection budget docs were updated for medium.
 - API is already at the intended cost floor for user-facing HTTP: one warm `t4g.medium` baseline with target tracking up to 3.
 - Messaging/AI/Tools have no idle EC2 baseline. Do not reserve worker instances while their SSOT remains scale-to-zero.
 - Video ops now has one-instance burst cap. If the 10-minute `enqueue_uploaded_videos` recovery schedule still keeps Batch warm too often, the next optimization is to move that tiny recovery check to an API-side scheduled command or lengthen the recovery interval after product latency review.

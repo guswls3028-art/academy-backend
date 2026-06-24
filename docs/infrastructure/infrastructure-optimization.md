@@ -389,7 +389,7 @@ done
 | **ECR Storage** | **$213** | **~$5** | **-98%** | 5.2TB → <50GB after cleanup (검증 완료 2026-03-17) |
 | **VPC** | $82 | ~$20 | -76% | Interface endpoints removed, self-resolving |
 | **EC2 Compute** | $87 | API 1대 baseline + worker burst runtime | Variable | API는 평시 1대 + target tracking. Messaging/AI/Tools는 SSOT상 idle min/desired=0/0이며 SQS 알람으로 scale-out |
-| **RDS** | $71 historical | $134.69 MTD (2026-06-01..25) | actual higher | Current SSOT is db.t4g.large Single-AZ; right-size only after connection/perf review |
+| **RDS** | $136.44 MTD (2026-06-01..25) | ~$73/mo instance compute floor + storage/backup | -$73/mo projected compute | SSOT downsize to db.t4g.medium, scheduled via RDS maintenance window |
 | **ElastiCache** | $38 | $38 | 0% | Keep cache.t4g.small |
 | **EC2-Other** | $44 | $35 | -20% | IPv4 reduction where possible |
 | **ALB** | $10 | $10 | 0% | Required |
@@ -416,7 +416,7 @@ Messaging/AI/Tools idle capacity is min/desired=0/0. Jobs enter SQS, CloudWatch 
 | Resource | RI Type | On-Demand | RI Price | Savings |
 |----------|---------|-----------|----------|---------|
 | API t4g.medium x1 | 1yr no-upfront | $29/mo | $18/mo | $11/mo |
-| RDS db.t4g.large | 1yr no-upfront | use current pricing/Cost Explorer | TBD | TBD |
+| RDS db.t4g.medium | 1yr no-upfront | $0.102/hr on-demand | $0.0792/hr | consider only after 3 months stable on medium |
 | **Total RI savings** | | | | **API known + RDS TBD after 3 months** |
 
 **Note:** Only commit to RIs after 3 months of stable usage patterns. Do not reserve worker capacity while Messaging/AI/Tools SSOT idle baseline remains min/desired=0/0.
@@ -426,7 +426,7 @@ Messaging/AI/Tools idle capacity is min/desired=0/0. Jobs enter SQS, CloudWatch 
 | Resource | Why Keep |
 |----------|---------|
 | API t4g.medium | Gunicorn 4w + gevent needs headroom; downsizing risks latency spikes |
-| RDS db.t4g.large | Current SSOT/actual runtime; downsize only after connection, memory, and slow-query review |
+| RDS db.t4g.medium | Current SSOT target after downsize; keep until connection, memory, and slow-query data proves another move safe |
 | Redis cache.t4g.small | Video progress + session cache; t4g.micro has only 0.5GB |
 | API baseline | API stays warm for request latency; workers are intentionally queue-woken from min/desired=0/0. |
 | MinHealthyPercentage: API=100%, Workers=0% | Zero-downtime via scale-up strategy (API) and SQS buffering (workers) |

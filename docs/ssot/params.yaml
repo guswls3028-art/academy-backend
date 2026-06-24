@@ -238,7 +238,7 @@ dynamodb:
 rds:
   engine: postgres
   engineVersion: "15.17"
-  instanceClass: "db.t4g.large"
+  instanceClass: "db.t4g.medium"
   allocatedStorage: 20
   dbIdentifier: academy-db
   dbSubnetGroupName: academy-v1-db-subnets
