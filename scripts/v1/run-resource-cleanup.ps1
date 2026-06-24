@@ -149,11 +149,22 @@ $eipCount = 0
 $unassociatedEipCount = 0
 $eipRows = [System.Collections.ArrayList]::new()
 if ($addrRes -and $addrRes.Addresses) {
+    $eipEniVpcById = @{}
+    $eipEniIds = @($addrRes.Addresses | Where-Object { $_.NetworkInterfaceId } | ForEach-Object { $_.NetworkInterfaceId } | Select-Object -Unique)
+    if ($eipEniIds.Count -gt 0) {
+        $eniRes = Invoke-AwsJson (@("ec2", "describe-network-interfaces", "--network-interface-ids") + $eipEniIds + @("--region", $R, "--output", "json"))
+        if ($eniRes -and $eniRes.NetworkInterfaces) {
+            foreach ($eni in $eniRes.NetworkInterfaces) {
+                $eipEniVpcById[$eni.NetworkInterfaceId] = $eni.VpcId
+            }
+        }
+    }
     $eipCount = $addrRes.Addresses.Count
     foreach ($a in $addrRes.Addresses) {
         $associated = ($null -ne $a.InstanceId -or $null -ne $a.NetworkInterfaceId)
         if (-not $associated) { $unassociatedEipCount++ }
-        [void]$eipRows.Add([PSCustomObject]@{ AllocationId = $a.AllocationId; PublicIp = $a.PublicIp; Associated = $associated })
+        $eipVpcId = if ($a.NetworkInterfaceId -and $eipEniVpcById.ContainsKey($a.NetworkInterfaceId)) { $eipEniVpcById[$a.NetworkInterfaceId] } else { "" }
+        [void]$eipRows.Add([PSCustomObject]@{ AllocationId = $a.AllocationId; PublicIp = $a.PublicIp; Associated = $associated; VpcId = $eipVpcId })
     }
 }
 
@@ -178,7 +189,7 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("|------|-----|----------------|")
 [void]$sb.AppendLine("| running instances in VPC | $runningCount | API baseline 1 + active Batch/worker burst |")
 [void]$sb.AppendLine("| Security Groups (VPC) | $sgCount | SSOT keep + in-use DB legacy SG only |")
-[void]$sb.AppendLine("| Elastic IP total | $eipCount | informational; ALB/public endpoints may use associated IPv4 |")
+[void]$sb.AppendLine("| Elastic IP total (region) | $eipCount | informational; academy ALB/public endpoints may use associated IPv4 |")
 [void]$sb.AppendLine("| unassociated Elastic IP | $unassociatedEipCount | 0 |")
 [void]$sb.AppendLine("| ASG (academy/v1 + Batch-managed) | $($asgRows.Count) | API/workers + Batch CE managed ASGs |")
 [void]$sb.AppendLine("")
@@ -193,9 +204,9 @@ foreach ($r in $instanceRows) { [void]$sb.AppendLine("| $($r.Id) | $($r.Name) | 
 foreach ($r in $sgRows) { [void]$sb.AppendLine("| $($r.GroupId) | $($r.GroupName) |") }
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Elastic IP")
-[void]$sb.AppendLine("| AllocationId | PublicIp | Associated |")
-[void]$sb.AppendLine("|--------------|----------|------------|")
-foreach ($r in $eipRows) { [void]$sb.AppendLine("| $($r.AllocationId) | $($r.PublicIp) | $($r.Associated) |") }
+[void]$sb.AppendLine("| AllocationId | PublicIp | Associated | VpcId |")
+[void]$sb.AppendLine("|--------------|----------|------------|-------|")
+foreach ($r in $eipRows) { [void]$sb.AppendLine("| $($r.AllocationId) | $($r.PublicIp) | $($r.Associated) | $($r.VpcId) |") }
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## ASG (academy/v1 + Batch-managed)")
 [void]$sb.AppendLine("| Name | Min | Desired | Max |")

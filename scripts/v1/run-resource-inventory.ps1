@@ -92,12 +92,25 @@ if ($VpcId) {
     }
 }
 $eipRes = Invoke-AwsJson @("ec2", "describe-addresses", "--region", $R, "--output", "json")
+$eipEniVpcById = @{}
+if ($eipRes -and $eipRes.Addresses) {
+    $eipEniIds = @($eipRes.Addresses | Where-Object { $_.NetworkInterfaceId } | ForEach-Object { $_.NetworkInterfaceId } | Select-Object -Unique)
+    if ($eipEniIds.Count -gt 0) {
+        $eniRes = Invoke-AwsJson (@("ec2", "describe-network-interfaces", "--network-interface-ids") + $eipEniIds + @("--region", $R, "--output", "json"))
+        if ($eniRes -and $eniRes.NetworkInterfaces) {
+            foreach ($eni in $eniRes.NetworkInterfaces) {
+                $eipEniVpcById[$eni.NetworkInterfaceId] = $eni.VpcId
+            }
+        }
+    }
+}
 if ($eipRes -and $eipRes.Addresses) {
     foreach ($a in $eipRes.Addresses) {
         $isNat = ($natAllocId -and $a.AllocationId -eq $natAllocId)
         $attached = [bool]$a.AssociationId
-        $ssot = if ($isNat -or $attached) { "KEEP" } else { "LEGACY_CANDIDATE" }
-        $eipList += [PSCustomObject]@{ AllocationId = $a.AllocationId; PublicIp = $a.PublicIp; AssociationId = $a.AssociationId; SSOT = $ssot }
+        $eipVpcId = if ($a.NetworkInterfaceId -and $eipEniVpcById.ContainsKey($a.NetworkInterfaceId)) { $eipEniVpcById[$a.NetworkInterfaceId] } else { "" }
+        $ssot = if ($eipVpcId -and $VpcId -and $eipVpcId -ne $VpcId) { "OUT_OF_SCOPE" } elseif ($isNat -or $attached) { "KEEP" } else { "LEGACY_CANDIDATE" }
+        $eipList += [PSCustomObject]@{ AllocationId = $a.AllocationId; PublicIp = $a.PublicIp; AssociationId = $a.AssociationId; NetworkInterfaceId = $a.NetworkInterfaceId; VpcId = $eipVpcId; SSOT = $ssot }
     }
 }
 # --- Security Groups (VPC) ---
@@ -212,9 +225,9 @@ foreach ($e in $ec2List) {
 foreach ($a in $asgList) { [void]$sb.AppendLine("| $($a.Name) | $($a.Desired) | $($a.Min) | $($a.Max) | $($a.SSOT) |") }
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Elastic IPs")
-[void]$sb.AppendLine("| AllocationId | PublicIp | AssociationId | SSOT |")
-[void]$sb.AppendLine("|--------------|----------|---------------|------|")
-foreach ($e in $eipList) { [void]$sb.AppendLine("| $($e.AllocationId) | $($e.PublicIp) | $($e.AssociationId) | $($e.SSOT) |") }
+[void]$sb.AppendLine("| AllocationId | PublicIp | AssociationId | NetworkInterfaceId | VpcId | SSOT |")
+[void]$sb.AppendLine("|--------------|----------|---------------|--------------------|-------|------|")
+foreach ($e in $eipList) { [void]$sb.AppendLine("| $($e.AllocationId) | $($e.PublicIp) | $($e.AssociationId) | $($e.NetworkInterfaceId) | $($e.VpcId) | $($e.SSOT) |") }
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Security Groups (VPC)")
 [void]$sb.AppendLine("| GroupId | GroupName | ENICount | SSOT |")

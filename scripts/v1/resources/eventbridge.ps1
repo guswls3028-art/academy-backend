@@ -5,6 +5,27 @@ $V4Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $EventBridgePath = Join-Path $V4Root "templates\eventbridge"
 $IamPath = Join-Path $V4Root "templates\iam"
 
+function Remove-StaleEventBridgeTargets {
+    param(
+        [string]$RuleName,
+        [object[]]$DesiredTargets,
+        [string]$Label
+    )
+    $desiredIds = @($DesiredTargets | ForEach-Object { "$($_.Id)" } | Where-Object { $_ })
+    if ($desiredIds.Count -eq 0) { return }
+
+    $current = Invoke-AwsJson @("events", "list-targets-by-rule", "--rule", $RuleName, "--region", $script:Region, "--output", "json")
+    if (-not $current -or -not $current.Targets) { return }
+
+    $staleIds = @($current.Targets | Where-Object { $_.Id -and $_.Id -notin $desiredIds } | ForEach-Object { "$($_.Id)" })
+    if ($staleIds.Count -eq 0) { return }
+
+    $args = @("events", "remove-targets", "--rule", $RuleName, "--ids") + $staleIds + @("--region", $script:Region)
+    Invoke-Aws $args -ErrorMessage "remove stale EventBridge targets $Label" | Out-Null
+    $script:ChangesMade = $true
+    Write-Host "  Removed stale EventBridge targets for ${RuleName}: $($staleIds -join ', ')" -ForegroundColor Yellow
+}
+
 function Ensure-EventBridgeRules {
     if ($script:PlanMode) { return }
     Write-Step "Ensure EventBridge rules"
@@ -56,6 +77,7 @@ function Ensure-EventBridgeRules {
         [System.IO.File]::WriteAllText($tmpFile, $targetsInput, [System.Text.UTF8Encoding]::new($false))
         Invoke-Aws @("events", "put-targets", "--cli-input-json", "file://$($tmpFile -replace '\\','/')", "--region", $script:Region) -ErrorMessage "put-targets reconcile"
     } finally { Remove-Item $tmpFile -Force -ErrorAction SilentlyContinue }
+    Remove-StaleEventBridgeTargets -RuleName $script:EventBridgeReconcileRule -DesiredTargets @($targetsObj) -Label "reconcile"
     Write-Ok "EventBridge $($script:EventBridgeReconcileRule) targets updated"
     $rule2Exists = $false
     try { $rule2 = Invoke-AwsJson @("events", "describe-rule", "--name", $script:EventBridgeScanStuckRule, "--region", $script:Region, "--output", "json"); $rule2Exists = ($null -ne $rule2) } catch { }
@@ -81,6 +103,7 @@ function Ensure-EventBridgeRules {
         [System.IO.File]::WriteAllText($tmpFile2, $targetsInput2, [System.Text.UTF8Encoding]::new($false))
         Invoke-Aws @("events", "put-targets", "--cli-input-json", "file://$($tmpFile2 -replace '\\','/')", "--region", $script:Region) -ErrorMessage "put-targets scan_stuck"
     } finally { Remove-Item $tmpFile2 -Force -ErrorAction SilentlyContinue }
+    Remove-StaleEventBridgeTargets -RuleName $script:EventBridgeScanStuckRule -DesiredTargets @($targetsObj2) -Label "scan_stuck"
     Write-Ok "EventBridge $($script:EventBridgeScanStuckRule) targets updated"
 
     # --- enqueue-uploaded-videos rule ---
@@ -111,6 +134,7 @@ function Ensure-EventBridgeRules {
             [System.IO.File]::WriteAllText($tmpFile3, $targetsInput3, [System.Text.UTF8Encoding]::new($false))
             Invoke-Aws @("events", "put-targets", "--cli-input-json", "file://$($tmpFile3 -replace '\\','/')", "--region", $script:Region) -ErrorMessage "put-targets enqueue_uploaded"
         } finally { Remove-Item $tmpFile3 -Force -ErrorAction SilentlyContinue }
+        Remove-StaleEventBridgeTargets -RuleName $script:EventBridgeEnqueueUploadedRule -DesiredTargets @($targetsObj3) -Label "enqueue_uploaded"
         Write-Ok "EventBridge $($script:EventBridgeEnqueueUploadedRule) targets updated"
     }
 
@@ -155,6 +179,7 @@ function Ensure-EventBridgeRules {
             [System.IO.File]::WriteAllText($tmp, $tgtInput, [System.Text.UTF8Encoding]::new($false))
             Invoke-Aws @("events", "put-targets", "--cli-input-json", "file://$($tmp -replace '\\','/')", "--region", $script:Region) -ErrorMessage "put-targets $($r.Label)"
         } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+        Remove-StaleEventBridgeTargets -RuleName $r.Name -DesiredTargets @($tgtObj) -Label $r.Label
         Write-Ok "EventBridge $($r.Name) targets updated"
     }
 }

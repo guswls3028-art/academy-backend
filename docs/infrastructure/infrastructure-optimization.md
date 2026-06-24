@@ -140,7 +140,7 @@
 | CE | 인스턴스 | max vCPU | 용도 |
 |----|---------|----------|------|
 | academy-v1-video-batch-ce-200gb | c6g.4xlarge / c6g.2xlarge / c6g.xlarge | 40 | 전체 영상 인코딩 |
-| academy-v1-video-ops-ce | m6g.medium | 2 | scan/reconcile 운영 작업 |
+| academy-v1-video-ops-ce | m6g.medium | 1 | scan/reconcile 운영 작업 |
 
 - 전체 min=0 → 영상 없을 때 0대, 비용 없음
 - 비버스트 전용 CPU → 인코딩 성능 안정적

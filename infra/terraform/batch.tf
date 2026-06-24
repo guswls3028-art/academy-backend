@@ -57,7 +57,7 @@ resource "aws_batch_compute_environment" "ops" {
     type                = "EC2"
     allocation_strategy = "BEST_FIT"
     min_vcpus           = 0
-    max_vcpus           = 2
+    max_vcpus           = 1
     instance_types      = ["m6g.medium"]
     subnets             = var.private_subnet_ids
     security_group_ids  = [aws_security_group.batch.id]

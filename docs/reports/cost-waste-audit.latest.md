@@ -1,8 +1,17 @@
 # Cost/Waste Audit — Current Runtime
 
-**Generated:** 2026-06-24T21:25:00+09:00
+**Generated:** 2026-06-25T02:59:16+09:00
 **Scope:** academy V1 production resources in `ap-northeast-2`.
-**Truth sources:** AWS actual state, `docs/ssot/params.yaml`, `docs/reports/aws-resource-inventory.latest.md`, `docs/reports/resource-cleanup.latest.md`, Cost Explorer, and CloudWatch.
+**Truth sources:** AWS actual state, `docs/ssot/params.yaml`, `docs/reports/aws-resource-inventory.latest.md`, `docs/reports/resource-cleanup.latest.md`, Cost Explorer, CloudWatch, and post-deploy canary.
+
+## Post-Deploy Verification
+
+| Check | Result | Disposition |
+|-------|--------|-------------|
+| Deploy plan | NoOp | SSOT resources exist; no deploy refresh needed |
+| Production canary | PASS=30 WARN=0 FAIL=0 | public HTTP, AWS infra, and remote Django invariants healthy |
+| Deploy verification | PASS / GO | drift/evidence/runtime/front reports regenerated |
+| Cleanup dry-run | no delete target | no destructive cleanup executed |
 
 ## Capacity SSOT vs Actual
 
@@ -12,20 +21,30 @@
 | Messaging worker ASG | min=0 desired=0 max=3 | min=0 desired=0 max=3 | repo-confirmed + runtime-confirmed |
 | AI worker ASG | min=0 desired=0 max=5 | min=0 desired=0 max=5 | repo-confirmed + runtime-confirmed |
 | Tools worker ASG | min=0 desired=0 max=2 | min=0 desired=0 max=2 | repo-confirmed + runtime-confirmed |
-| Video Batch CE | min=0 max=40 vCPU | desired >0 while video jobs are running | active workload, not idle waste |
-| Video Ops CE | min=0 max=2 vCPU | returns to 0 after scheduled jobs | expected transient burst |
+| Video Batch CE | min=0 max=40 vCPU | CE ENABLED/VALID; idle ASG min=0 desired=0 max=0 | scale-to-zero confirmed |
+| Video Ops CE | min=0 max=1 vCPU | CE ENABLED/VALID; idle ASG min=0 desired=0 max=0 | optimized from max=2 to max=1 |
+
+## Optimizations Applied
+
+| Item | Before | After | Result |
+|------|--------|-------|--------|
+| `academy-v1-detect-stuck-videos` EventBridge targets | 2 targets | 1 target | duplicate Batch job removed |
+| `academy-v1-recover-dead-video-jobs` EventBridge targets | 2 targets | 1 target | duplicate Batch job removed |
+| `academy-v1-video-ops-ce` max vCPU | 2 | 1 | ops burst EC2 peak capped at one `m6g.medium` |
+| Resource inventory EIP scope | all associated EIPs looked like KEEP | academy VPC EIPs are KEEP, outside VPC EIP is OUT_OF_SCOPE | SSOT report no longer blends non-academy resources |
 
 ## Waste Checks
 
 | Check | Result | Disposition |
 |-------|--------|-------------|
-| Unassociated Elastic IP | 0 | fixed/clean |
+| Running EC2 in academy VPC | 1 (`academy-v1-api`) after ops scale-down | clean |
+| Unassociated Elastic IP | 0 | clean |
 | NAT Gateway | 0 available in academy VPC | clean |
 | Unattached EBS volume | 0 | clean |
-| Worker queues | Messaging/AI/Tools visible=0, in-flight=0, delayed=0 | clean |
-| Worker scale-in alarms | Messaging/Tools scale-in `TreatMissingData=breaching`; scale-out `notBreaching` | clean |
+| Worker queues | Messaging/AI/Tools visible=0, in-flight=0, DLQ=0 | clean |
+| EventBridge Batch targets | 1 target per managed video ops rule | clean |
 | Cleanup dry-run | no delete/release target | clean |
-| Batch compute | standard video Batch had active running jobs during audit | intentionally running |
+| Batch compute | standard Batch idle; ops Batch returns to desired=0 after scheduled jobs | clean |
 
 ## Cost Explorer Snapshot
 
@@ -33,16 +52,22 @@ Time period: 2026-06-01 through 2026-06-25, unblended cost, estimated.
 
 | Service | Cost |
 |---------|------|
-| Amazon RDS | 134.69 USD |
-| EC2 Compute | 83.45 USD |
-| Tax | 28.24 USD |
+| Amazon RDS | 136.44 USD |
+| EC2 Compute | 84.84 USD |
+| Tax | 28.61 USD |
 | ElastiCache | 25.38 USD |
-| VPC | 19.36 USD |
-| Elastic Load Balancing | 12.49 USD |
-| EC2 - Other | 5.05 USD |
+| VPC | 19.63 USD |
+| Elastic Load Balancing | 12.64 USD |
+| EC2 - Other | 5.11 USD |
+| Amazon ECR | 0.70 USD |
+| AWS Secrets Manager | 0.64 USD |
+| CloudWatch | 0.36 USD |
+| AWS Systems Manager | 0.11 USD |
+| Amazon S3 | 0.10 USD |
 
 ## Right-Size Notes
 
-- RDS is the largest non-burst cost. Actual class is `db.t4g.large`; 7-day CloudWatch sample showed low CPU average (~5.17%), max spike ~50.26%, average connections ~2.27, max 14, and freeable memory around 4.7GB. This is a downsize candidate only after slow-query, connection-budget, and peak workload review.
+- RDS is the largest non-burst cost. Actual class is `db.t4g.large`; the 7-day CloudWatch sample shows CPU average 5.18%, max 50.26%, DB connections average 2.31, max 14, and freeable memory average ~4.72 GiB (min ~4.68 GiB). This is a downsize candidate only after slow-query, connection-budget, backup window, and peak workload review.
 - API is already at the intended cost floor for user-facing HTTP: one warm `t4g.medium` baseline with target tracking up to 3.
 - Messaging/AI/Tools have no idle EC2 baseline. Do not reserve worker instances while their SSOT remains scale-to-zero.
+- Video ops now has one-instance burst cap. If the 10-minute `enqueue_uploaded_videos` recovery schedule still keeps Batch warm too often, the next optimization is to move that tiny recovery check to an API-side scheduled command or lengthen the recovery interval after product latency review.

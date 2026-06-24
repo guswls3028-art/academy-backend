@@ -194,13 +194,13 @@ videoBatch:
     failedJobsAlarmThreshold: 5
     stuckDetectedAlarmEnabled: true
     logRetentionDays: 30
-  # Ops: lightweight hourly recovery. 1 instance max (maxvCpus=2), scale to 0 when idle.
+  # Ops: lightweight recovery. 1 instance max (maxvCpus=1), scale to 0 when idle.
   # m6g.medium = 1 vCPU + 4GB RAM. Ops reconcile/scanstuck jobdefs require 2048MB,
   # so c6g.medium(2GB) cannot reliably place jobs after ECS/Batch overhead.
   opsComputeEnvironmentName: academy-v1-video-ops-ce
   opsQueueName: academy-v1-video-ops-queue
   opsInstanceType: m6g.medium
-  opsMaxvCpus: 2
+  opsMaxvCpus: 1
   opsJobDefs:
     reconcile: academy-v1-video-ops-reconcile
     scanstuck: academy-v1-video-ops-scanstuck
