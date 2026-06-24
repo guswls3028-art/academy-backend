@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Exam, ExamQuestion
 from apps.domains.exams.services.template_resolver import resolve_structure_exam
 
@@ -22,7 +23,7 @@ class TemplateStatusView(APIView):
     - 이 템플릿으로 '실제 시험 생성 가능 여부' 판단
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request, exam_id: int):
         tenant = request.tenant
@@ -30,6 +31,7 @@ class TemplateStatusView(APIView):
             Exam.objects.filter(
                 Q(sessions__lecture__tenant=tenant)
                 | Q(derived_exams__sessions__lecture__tenant=tenant)
+                | Q(tenant=tenant)
             ).distinct(),
             id=int(exam_id),
         )

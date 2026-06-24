@@ -12,6 +12,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Exam, ExamQuestion, AnswerKey, Sheet
 from apps.domains.exams.services.template_builder_service import TemplateBuilderService
 from apps.domains.results.permissions import IsTeacherOrAdmin
@@ -28,7 +29,7 @@ class BulkTemplateCreateView(APIView):
     응답: { "id": exam_id }
     """
 
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember, IsTeacherOrAdmin]
 
     def post(self, request):
         tenant = getattr(request, "tenant", None)

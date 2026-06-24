@@ -1,6 +1,7 @@
 # PATH: apps/core/views/expense.py
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.exceptions import ValidationError
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.core.serializers import ExpenseSerializer
@@ -33,9 +34,13 @@ class MyExpenseViewSet(viewsets.ModelViewSet):
         if not tenant:
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied("Tenant is required.")
-        raw_amount = self.request.data.get("amount")
+        raw_amount = serializer.validated_data.get("amount")
+        try:
+            amount = normalize_expense_amount(raw_amount)
+        except ValueError as exc:
+            raise ValidationError({"amount": str(exc)}) from exc
         serializer.save(
             tenant=tenant,
             user=self.request.user,
-            amount=normalize_expense_amount(raw_amount),
+            amount=amount,
         )

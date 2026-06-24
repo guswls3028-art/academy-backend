@@ -109,3 +109,53 @@ class VideoUploadInitFolderTests(TestCase):
 
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(Video.objects.count(), 0)
+
+    def test_upload_init_rejects_out_of_range_max_speed(self):
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="일반 강의",
+            name="일반 강의",
+            subject="MATH",
+        )
+        session = Session.objects.create(lecture=lecture, title="1차시", order=1)
+
+        response = self._post_upload_init(
+            {
+                "session": session.id,
+                "title": "잘못된 배속 영상",
+                "filename": "lesson.mp4",
+                "max_speed": 9,
+            }
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(Video.objects.count(), 0)
+
+    def test_partial_update_rejects_out_of_range_max_speed_without_mutating_video(self):
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="일반 강의",
+            name="일반 강의",
+            subject="MATH",
+        )
+        session = Session.objects.create(lecture=lecture, title="1차시", order=1)
+        video = Video.objects.create(
+            tenant=self.tenant,
+            session=session,
+            title="정상 영상",
+            file_key="videos/raw/lesson.mp4",
+            max_speed=1.5,
+        )
+
+        request = self.factory.patch(
+            f"/api/v1/media/videos/{video.id}/",
+            {"max_speed": 0},
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+        response = VideoViewSet.as_view({"patch": "partial_update"})(request, pk=video.id)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        video.refresh_from_db()
+        self.assertEqual(video.max_speed, 1.5)

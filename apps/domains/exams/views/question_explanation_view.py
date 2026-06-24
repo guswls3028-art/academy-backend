@@ -18,7 +18,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import TenantResolvedAndStaff
+from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from apps.domains.exams.models import Exam, ExamQuestion, QuestionExplanation
 from apps.domains.exams.serializers.question_explanation import (
     QuestionExplanationSerializer,
@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 class ExamExplanationListView(APIView):
     """GET /exams/<exam_id>/explanations/ — 시험 문항 해설 전체 조회."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request, exam_id: int):
         tenant = request.tenant
@@ -120,7 +120,7 @@ class QuestionExplanationDetailView(APIView):
 
     def get_permissions(self):
         if self.request.method == "GET":
-            return [IsAuthenticated()]
+            return [IsAuthenticated(), TenantResolvedAndMember()]
         return [IsAuthenticated(), TenantResolvedAndStaff()]
 
     def _get_tenant_filtered_question(self, request, question_id: int) -> ExamQuestion:

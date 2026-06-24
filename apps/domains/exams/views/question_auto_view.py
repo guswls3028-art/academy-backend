@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Sheet, Exam, ExamQuestion
 from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.serializers.question_auto import QuestionAutoCreateSerializer
@@ -27,7 +28,7 @@ class SheetAutoQuestionsView(APIView):
     """
 
     def get_permissions(self):
-        return [IsAuthenticated(), IsTeacherOrAdmin()]
+        return [IsAuthenticated(), TenantResolvedAndMember(), IsTeacherOrAdmin()]
 
     def post(self, request, sheet_id: int):
         tenant = request.tenant
@@ -35,6 +36,7 @@ class SheetAutoQuestionsView(APIView):
             Sheet.objects.select_related("exam").filter(
                 Q(exam__sessions__lecture__tenant=tenant)
                 | Q(exam__derived_exams__sessions__lecture__tenant=tenant)
+                | Q(exam__tenant=tenant)
             ).distinct(),
             id=int(sheet_id),
         )

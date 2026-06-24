@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Exam
 from apps.domains.exams.services.template_builder_service import TemplateBuilderService
 from apps.domains.exams.serializers.template_editor import TemplateEditorSummarySerializer
@@ -25,7 +26,7 @@ class TemplateEditorView(APIView):
     - builder 보장 + 상태 요약 반환
     """
 
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember, IsTeacherOrAdmin]
 
     def get(self, request, exam_id: int):
         tenant = request.tenant
@@ -33,6 +34,7 @@ class TemplateEditorView(APIView):
             Exam.objects.filter(
                 Q(sessions__lecture__tenant=tenant)
                 | Q(derived_exams__sessions__lecture__tenant=tenant)
+                | Q(tenant=tenant)
             ).distinct(),
             id=int(exam_id),
         )

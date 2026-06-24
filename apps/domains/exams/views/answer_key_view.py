@@ -25,7 +25,7 @@ class AnswerKeyViewSet(ModelViewSet):
     def get_permissions(self):
         if self.action in {"list", "retrieve"}:
             return [IsAuthenticated(), TenantResolvedAndMember()]
-        return [IsAuthenticated(), IsTeacherOrAdmin()]
+        return [IsAuthenticated(), TenantResolvedAndMember(), IsTeacherOrAdmin()]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)

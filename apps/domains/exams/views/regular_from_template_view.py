@@ -8,6 +8,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Exam
 from apps.domains.exams.serializers.exam import ExamSerializer
 from apps.domains.exams.services.regular_exam_factory import RegularExamFactory
@@ -25,7 +26,7 @@ class RegularExamFromTemplateView(APIView):
     - 템플릿 화면에서 "이 템플릿으로 실제 시험 만들기"를 더 단순하게 제공
     """
 
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember, IsTeacherOrAdmin]
 
     def post(self, request, exam_id: int):
         tenant = request.tenant

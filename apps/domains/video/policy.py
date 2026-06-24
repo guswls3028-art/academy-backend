@@ -4,6 +4,20 @@ import math
 from typing import Dict, Tuple, Optional
 
 VIDEO_COMPLETION_THRESHOLD = 0.9
+MIN_VIDEO_MAX_SPEED = 0.25
+MAX_VIDEO_MAX_SPEED = 5.0
+
+
+def normalize_video_max_speed(value: object) -> float:
+    try:
+        speed = float(value)
+    except (TypeError, ValueError):
+        raise ValueError("max_speed must be a number") from None
+    if not math.isfinite(speed):
+        raise ValueError("max_speed must be finite")
+    if speed < MIN_VIDEO_MAX_SPEED or speed > MAX_VIDEO_MAX_SPEED:
+        raise ValueError(f"max_speed must be between {MIN_VIDEO_MAX_SPEED} and {MAX_VIDEO_MAX_SPEED}")
+    return speed
 
 
 def normalize_video_progress(progress: object) -> float:

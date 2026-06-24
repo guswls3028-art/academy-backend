@@ -22,14 +22,16 @@ class SheetViewSet(ModelViewSet):
         if self.action in {"list", "retrieve"}:
             return [IsAuthenticated(), TenantResolvedAndMember()]
         # 생성/수정/삭제는 Teacher/Admin
-        return [IsAuthenticated(), IsTeacherOrAdmin()]
+        return [IsAuthenticated(), TenantResolvedAndMember(), IsTeacherOrAdmin()]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return Sheet.objects.none()
         return Sheet.objects.filter(
-            exam__sessions__lecture__tenant=tenant
+            Q(exam__sessions__lecture__tenant=tenant)
+            | Q(exam__derived_exams__sessions__lecture__tenant=tenant)
+            | Q(exam__tenant=tenant)
         ).select_related("exam").distinct()
 
     def _assert_exam_is_template(self, exam_id: int) -> Exam:
@@ -39,6 +41,8 @@ class SheetViewSet(ModelViewSet):
                 sessions__lecture__tenant=tenant
             ) | Q(
                 derived_exams__sessions__lecture__tenant=tenant
+            ) | Q(
+                tenant=tenant
             ) if tenant else Q()
             exam = Exam.objects.filter(tenant_filter).distinct().get(id=int(exam_id))
         except Exam.DoesNotExist:

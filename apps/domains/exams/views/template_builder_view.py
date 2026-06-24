@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Exam
 from apps.domains.exams.services.template_builder_service import TemplateBuilderService
 from apps.domains.results.permissions import IsTeacherOrAdmin
@@ -24,7 +25,7 @@ class TemplateBuilderView(APIView):
     - 프론트에서 템플릿 편집 화면 진입 시 단일 호출
     """
 
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember, IsTeacherOrAdmin]
 
     def post(self, request, exam_id: int):
         tenant = request.tenant
@@ -32,6 +33,7 @@ class TemplateBuilderView(APIView):
             Exam.objects.filter(
                 Q(sessions__lecture__tenant=tenant)
                 | Q(derived_exams__sessions__lecture__tenant=tenant)
+                | Q(tenant=tenant)
             ).distinct(),
             id=int(exam_id),
         )

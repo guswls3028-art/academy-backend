@@ -48,7 +48,7 @@ from ..models import (
     VideoFolder,
 )
 from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSerializer
-from ..policy import is_video_progress_complete
+from ..policy import is_video_progress_complete, normalize_video_max_speed
 from ..services.access_resolver import resolve_access_modes_prefetched
 from ..services.video_encoding import REASON_SUBMIT_FAILED, create_job_and_submit_batch
 from .playback_mixin import VideoPlaybackMixin
@@ -308,7 +308,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         filename = request.data.get("filename")
 
         allow_skip = parse_bool(request.data.get("allow_skip", False), field_name="allow_skip")
-        max_speed = float(request.data.get("max_speed", 1.0) or 1.0)
+        try:
+            max_speed = normalize_video_max_speed(request.data.get("max_speed", 1.0))
+        except ValueError as exc:
+            raise ValidationError({"max_speed": str(exc)}) from exc
         show_watermark = parse_bool(
             request.data.get("show_watermark", True),
             field_name="show_watermark",

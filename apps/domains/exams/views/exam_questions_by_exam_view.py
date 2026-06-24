@@ -6,6 +6,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import ExamQuestion
 from apps.domains.exams.serializers.question import QuestionSerializer
 
@@ -17,7 +18,7 @@ class ExamQuestionsByExamView(APIView):
     - legacy regular가 아직 Sheet 없이 template_exam만 참조하면 템플릿 문항을 반환
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     def get(self, request, exam_id: int):
         from apps.domains.exams.models import Exam

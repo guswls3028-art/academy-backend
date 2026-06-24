@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Exam, Sheet, ExamQuestion
 from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.serializers.question_init import ExamQuestionInitSerializer
@@ -29,7 +30,7 @@ class ExamQuestionInitView(APIView):
     - 템플릿은 선택: 요청한 exam_id 시험에 직접 문항을 생성/수정한다.
     """
 
-    permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember, IsTeacherOrAdmin]
 
     @transaction.atomic
     def post(self, request, exam_id: int):

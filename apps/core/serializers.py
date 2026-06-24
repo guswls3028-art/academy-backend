@@ -213,6 +213,11 @@ class AttendanceSerializer(serializers.ModelSerializer):
 
 
 class ExpenseSerializer(serializers.ModelSerializer):
+    def validate_amount(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("금액은 1원 이상이어야 합니다.")
+        return value
+
     class Meta:
         model = Expense
         fields = "__all__"

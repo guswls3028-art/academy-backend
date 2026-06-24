@@ -13,6 +13,7 @@ from .encoding_progress import (
     get_video_encoding_snapshot,
 )
 from academy.adapters.db.django import repositories_video as video_repo
+from .policy import normalize_video_max_speed
 
 # ========================================================
 # Video
@@ -119,6 +120,12 @@ class VideoSerializer(serializers.ModelSerializer):
                         "Session does not belong to your program."
                     )
         return value
+
+    def validate_max_speed(self, value):
+        try:
+            return normalize_video_max_speed(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
 
     # ---------------------------
     # helpers
