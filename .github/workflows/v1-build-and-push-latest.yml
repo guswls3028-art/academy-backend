@@ -702,12 +702,12 @@ jobs:
           if [ "$TARGET_DESIRED" -lt 2 ]; then
             TARGET_DESIRED=2
           fi
-          if [ "$CURRENT_MIN" -ne 2 ] || [ "$CURRENT_DESIRED" -lt 2 ] || [ "$CURRENT_MAX" -ne 3 ]; then
-            echo "Reconciling API ASG for deploy headroom min=2 desired=$TARGET_DESIRED max=3 (was min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
+          if [ "$CURRENT_MIN" -ne 1 ] || [ "$CURRENT_DESIRED" -lt 2 ] || [ "$CURRENT_MAX" -ne 3 ]; then
+            echo "Reconciling API ASG for deploy headroom min=1 desired=$TARGET_DESIRED max=3 (was min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
             aws autoscaling update-auto-scaling-group \
               --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
               --region ${{ env.AWS_REGION }} \
-              --min-size 2 \
+              --min-size 1 \
               --max-size 3 \
               --desired-capacity "$TARGET_DESIRED"
 
@@ -760,7 +760,7 @@ jobs:
               echo "::warning::Only $ALB_HEALTHY ALB-healthy target(s) after 5 min, proceeding with caution"
             fi
           else
-            echo "API ASG already has deploy headroom min=2 desired=$CURRENT_DESIRED max=3"
+            echo "API ASG already has deploy headroom min=1 desired=$CURRENT_DESIRED max=3"
           fi
 
       - name: Start API ASG instance refresh
@@ -801,9 +801,9 @@ jobs:
           echo "::error::API ASG refresh timed out after 15 minutes"
           exit 1
 
-      - name: Restore API ASG availability baseline after deploy (SSOT min/desired=2 max=3)
+      - name: Restore API ASG cost baseline after deploy (SSOT min/desired=1 max=3)
         if: always() && steps.wait_refresh.outcome == 'success'
-        continue-on-error: true  # IAM 권한 없으면 경고만 남김. 운영 SSOT는 min/desired=2, max=3.
+        continue-on-error: true  # IAM 권한 없으면 경고만 남김. 운영 SSOT는 min/desired=1, max=3.
         run: |
           CURRENT=$(aws autoscaling describe-auto-scaling-groups \
             --auto-scaling-group-names ${{ env.API_ASG_NAME }} \
@@ -815,25 +815,25 @@ jobs:
           CURRENT_MAX=$(echo "$CURRENT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["Max"])')
           ORIGINAL_DESIRED="${{ steps.scaleup.outputs.current_desired }}"
           if ! [[ "$ORIGINAL_DESIRED" =~ ^[0-9]+$ ]]; then
-            ORIGINAL_DESIRED=2
+            ORIGINAL_DESIRED=1
           fi
           TARGET_DESIRED=$ORIGINAL_DESIRED
-          if [ "$TARGET_DESIRED" -lt 2 ]; then
-            TARGET_DESIRED=2
+          if [ "$TARGET_DESIRED" -lt 1 ]; then
+            TARGET_DESIRED=1
           fi
           if [ "$TARGET_DESIRED" -gt 3 ]; then
             TARGET_DESIRED=3
           fi
-          if [ "$CURRENT_MIN" -ne 2 ] || [ "$CURRENT_DESIRED" -ne "$TARGET_DESIRED" ] || [ "$CURRENT_MAX" -ne 3 ]; then
-            echo "Restoring API ASG capacity to availability baseline min=2 desired=$TARGET_DESIRED max=3 (was min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
+          if [ "$CURRENT_MIN" -ne 1 ] || [ "$CURRENT_DESIRED" -ne "$TARGET_DESIRED" ] || [ "$CURRENT_MAX" -ne 3 ]; then
+            echo "Restoring API ASG capacity to cost baseline min=1 desired=$TARGET_DESIRED max=3 (was min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
             aws autoscaling update-auto-scaling-group \
               --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
               --region ${{ env.AWS_REGION }} \
-              --min-size 2 \
+              --min-size 1 \
               --max-size 3 \
               --desired-capacity "$TARGET_DESIRED"
           else
-            echo "API ASG capacity already matches availability baseline min=2 desired=$TARGET_DESIRED max=3"
+            echo "API ASG capacity already matches cost baseline min=1 desired=$TARGET_DESIRED max=3"
           fi
 
   deploy-messaging:

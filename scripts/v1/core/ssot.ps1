@@ -154,9 +154,9 @@ function Load-SSOT {
     $script:ApiAcmCertificateArn = if ($p["api"]["acmCertificateArn"]) { $p["api"]["acmCertificateArn"] } else { "" }
     $script:ApiHttpsSslPolicy = if ($p["api"]["httpsSslPolicy"]) { $p["api"]["httpsSslPolicy"] } else { "ELBSecurityPolicy-TLS13-1-2-2021-06" }
     $script:ApiHealthPath = if ($p["api"]["healthPath"]) { $p["api"]["healthPath"] } else { "/health" }
-    $script:ApiASGMinSize = 2
+    $script:ApiASGMinSize = 1
     $script:ApiASGMaxSize = 3
-    $script:ApiASGDesiredCapacity = 2
+    $script:ApiASGDesiredCapacity = 1
     if ($p["api"]["asgMinSize"]) { $script:ApiASGMinSize = [int]$p["api"]["asgMinSize"] }
     if ($p["api"]["asgMaxSize"]) { $script:ApiASGMaxSize = [int]$p["api"]["asgMaxSize"] }
     if ($p["api"]["asgDesiredCapacity"]) { $script:ApiASGDesiredCapacity = [int]$p["api"]["asgDesiredCapacity"] }

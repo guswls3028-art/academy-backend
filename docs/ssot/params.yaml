@@ -1,8 +1,8 @@
 # Academy SSOT v1 — 풀셋팅 단일소스. scripts/v1 전용.
 # 1인 개발·운영(장애 대응 10~60분), 1k~1.5k 사용자·동시 50~300 버스트.
-# API ASG: 운영 가용성 기준 평시 min/desired=2, max=3.
-# 배포 시에도 2대 이상 ALB healthy를 유지하고,
-# 평상시에는 ASG target tracking이 2~3대 사이에서 자동 증감한다.
+# API ASG: 비용 최적화 기준 평시 min/desired=1, max=3.
+# 배포 시에는 무중단 refresh를 위해 CI가 일시적으로 desired>=2를 만들 수 있고,
+# 평상시에는 ASG target tracking이 1~3대 사이에서 자동 증감한다.
 
 global:
   env: prod
@@ -63,7 +63,7 @@ githubActions:
   deployRoleName: academy-gha-ecr-build
   deployPolicyName: EcrBuildPush
 
-# API: V1. 평시 min/desired=2, max=3. 롤링 배포 시 instance-refresh MinHealthyPercentage.
+# API: V1. 평시 min/desired=1, max=3. 롤링 배포 시 instance-refresh MinHealthyPercentage.
 # Gunicorn/ALB 타임아웃 60s 내 권장(동영상/AI는 비동기 전용).
 api:
   amiId: ami-0885e191a9bcf28b0
@@ -73,9 +73,9 @@ api:
   userData: ""
   asgName: academy-v1-api-asg
   asgLaunchTemplateName: academy-v1-api-lt
-  asgMinSize: 2
+  asgMinSize: 1
   asgMaxSize: 3
-  asgDesiredCapacity: 2
+  asgDesiredCapacity: 1
   instanceRefreshMinHealthyPercentage: 100
   instanceRefreshInstanceWarmup: 300
   healthCheckGracePeriodSeconds: 300
