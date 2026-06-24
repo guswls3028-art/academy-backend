@@ -17,6 +17,8 @@ from apps.domains.results.services.answer_matching import (
 from apps.domains.results.services.grading_service import grade_submission
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission, SubmissionAnswer
+from apps.support.omr.score_adjustment import SCORE_ADJUSTMENT_KEY
+from apps.support.omr.score_shape import get_exam_score_shape
 
 
 User = get_user_model()
@@ -155,4 +157,74 @@ class MultipleCorrectAnswerGradingTests(TestCase):
         self.assertTrue(items[self.q1.id].is_correct)
         self.assertTrue(items[self.q2.id].is_correct)
         self.assertFalse(items[self.q3.id].is_correct)
+        mock_dispatch.assert_called_once_with(submission_id=submission.id)
+
+    @patch("apps.domains.results.services.grading_service.dispatch_progress_pipeline")
+    def test_decimal_auto_score_adjustment_is_added_to_objective_total(self, mock_dispatch):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Decimal Auto Score Exam",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=10,
+        )
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        sheet = Sheet.objects.create(
+            exam=exam,
+            name="DECIMAL",
+            total_questions=3,
+            choice_count=3,
+            essay_count=0,
+        )
+        questions = [
+            ExamQuestion.objects.create(sheet=sheet, number=number, score=3.3)
+            for number in range(1, 4)
+        ]
+        AnswerKey.objects.create(
+            exam=exam,
+            answers={
+                **{str(question.id): "1" for question in questions},
+                SCORE_ADJUSTMENT_KEY: {"objective": 0.1},
+            },
+        )
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=self.admin,
+            enrollment_id=self.enrollment.id,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.OMR_SCAN,
+            status=Submission.Status.ANSWERS_READY,
+        )
+        for question in questions:
+            SubmissionAnswer.objects.create(
+                tenant=self.tenant,
+                submission=submission,
+                exam_question_id=question.id,
+                answer="1",
+            )
+
+        grade_submission(submission.id)
+
+        score_shape = get_exam_score_shape(exam)
+        self.assertEqual(round(float(score_shape.objective_max_score), 1), 10.0)
+        self.assertEqual(round(float(score_shape.total_max_score), 1), 10.0)
+
+        exam_result = ExamResult.objects.get(submission=submission)
+        self.assertEqual(float(exam_result.total_score), 10.0)
+        self.assertEqual(float(exam_result.objective_score), 10.0)
+        self.assertEqual(float(exam_result.max_score), 10.0)
+
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=exam.id,
+            enrollment_id=self.enrollment.id,
+        )
+        self.assertEqual(float(result.total_score), 10.0)
+        self.assertEqual(float(result.objective_score), 10.0)
+        self.assertEqual(float(result.max_score), 10.0)
+        self.assertEqual(
+            round(sum(float(item.max_score) for item in ResultItem.objects.filter(result=result)), 1),
+            9.9,
+        )
         mock_dispatch.assert_called_once_with(submission_id=submission.id)

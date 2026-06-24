@@ -9,6 +9,7 @@ from apps.domains.exams.models import ExamQuestion
 from apps.domains.exams.models.sheet import Sheet
 from apps.domains.exams.services.template_resolver import resolve_template_exam
 from apps.support.omr.contract_builder import build_omr_sheet_contract
+from apps.support.omr.score_adjustment import get_score_adjustment_from_answers
 
 
 QuestionKind = Literal["choice", "essay"]
@@ -164,6 +165,19 @@ def get_exam_score_shape(exam) -> ExamScoreShape:
         )
 
     contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
+    answer_key = None
+    if template_exam_id is not None:
+        from apps.domains.exams.models import AnswerKey
+
+        answer_key = (
+            AnswerKey.objects
+            .filter(exam_id=int(template_exam_id))
+            .only("answers")
+            .first()
+        )
+    score_adjustment = get_score_adjustment_from_answers(
+        getattr(answer_key, "answers", None),
+    )
     questions = list(
         ExamQuestion.objects.filter(sheet=sheet)
         .only("id", "number", "score")
@@ -192,6 +206,11 @@ def get_exam_score_shape(exam) -> ExamScoreShape:
             objective_max += score_float
         else:
             subjective_max += score_float
+
+    if contract.choice_count > 0:
+        objective_max += score_adjustment.objective
+    if contract.essay_count > 0:
+        subjective_max += score_adjustment.subjective
 
     component_total = objective_max + subjective_max
     total_max = component_total if component_total > 0 else exam_max_score

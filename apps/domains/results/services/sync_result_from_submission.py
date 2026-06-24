@@ -26,6 +26,7 @@ from apps.domains.results.services.submission_answer_map import (
     require_complete_omr_answers,
 )
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
+from apps.support.omr.score_adjustment import get_score_adjustment_from_answers
 from apps.support.omr.score_shape import get_exam_score_shape
 
 
@@ -164,6 +165,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         for k, v in (answer_key.answers or {}).items()
         if str(k).isdigit()
     }
+    score_adjustment = get_score_adjustment_from_answers(answer_key.answers or {})
     questions = list(sheet.questions.all().order_by("number"))
     auto_score_questions = [
         q
@@ -237,6 +239,17 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         total += item["score"]
         max_total += item["max_score"]
 
+    objective_adjustment = (
+        score_adjustment.objective
+        if auto_score_questions
+        else 0.0
+    )
+    if objective_adjustment > 0:
+        total += objective_adjustment
+        max_total += objective_adjustment
+    total = round(float(total), 2)
+    max_total = round(float(max_total), 2)
+
     result_max_score = float(
         score_shape.total_max_score
         or getattr(exam, "max_score", 0.0)
@@ -283,7 +296,7 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
             attempt=attempt,
             score_shape=score_shape,
         )
-    result_total = float(total) + float(existing_subjective)
+    result_total = round(float(total) + float(existing_subjective), 2)
 
     attempt.status = "done"
     if int(attempt.attempt_index) == 1 and (created_attempt or attached_placeholder):

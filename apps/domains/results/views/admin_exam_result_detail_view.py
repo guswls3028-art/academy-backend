@@ -317,6 +317,7 @@ class AdminExamResultDetailView(APIView):
             "correct_answers": {
                 str(k): format_answer_for_display(v)
                 for k, v in (correct_answers or {}).items()
+                if str(k).isdigit()
             },
             "questions": questions_payload,
             "score_shape": {

@@ -19,6 +19,7 @@ from apps.domains.results.services.submission_answer_map import (
 )
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 from apps.support.omr.score_shape import get_exam_score_shape
+from apps.support.omr.score_adjustment import get_score_adjustment_from_answers
 from apps.support.submissions.dependencies import complete_submission_after_auto_grade
 
 
@@ -116,6 +117,13 @@ class ExamGradingService:
                 "answer": student_answer,
                 "correct_answer": format_answer_for_display(correct_answer),
             }
+
+        objective_adjustment = get_score_adjustment_from_answers(
+            answer_key.answers,
+        ).objective
+        if objective_adjustment > 0:
+            total_score += objective_adjustment
+            max_score += objective_adjustment
 
         return round(float(total_score), 2), round(max_score, 2), breakdown
 

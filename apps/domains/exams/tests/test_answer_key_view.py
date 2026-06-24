@@ -7,6 +7,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion, Sheet
 from apps.domains.exams.views.answer_key_view import AnswerKeyViewSet
+from apps.support.omr.score_adjustment import SCORE_ADJUSTMENT_KEY
 
 
 User = get_user_model()
@@ -189,6 +190,32 @@ class AnswerKeyViewTenantScopeTests(TestCase):
         answer_key = AnswerKey.objects.get(exam=editable_template)
         self.assertEqual(answer_key.answers["101"], ["1", "3"])
         self.assertEqual(answer_key.answers["102"], "2|4")
+
+    def test_create_preserves_score_adjustment_metadata(self):
+        editable_template = Exam.objects.create(
+            tenant=self.tenant_a,
+            title="Editable Decimal Score Template",
+            exam_type=Exam.ExamType.TEMPLATE,
+        )
+
+        response = self._request(
+            "post",
+            "create",
+            data={
+                "exam": editable_template.id,
+                "answers": {
+                    "101": "1",
+                    SCORE_ADJUSTMENT_KEY: {"objective": 0.1},
+                },
+            },
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        answer_key = AnswerKey.objects.get(exam=editable_template)
+        self.assertEqual(
+            answer_key.answers[SCORE_ADJUSTMENT_KEY],
+            {"objective": 0.1},
+        )
 
     def test_update_rejects_cross_tenant_exam_move(self):
         answer_key = AnswerKey.objects.create(exam=self.template_a, answers={"1": "A"})
