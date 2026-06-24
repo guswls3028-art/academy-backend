@@ -60,6 +60,7 @@ def resolve_tier(
         "excel_parsing",
         "ppt_generation",
         "problem_studio_package",
+        "problem_studio_transfer",
     ):
         return "basic"
     

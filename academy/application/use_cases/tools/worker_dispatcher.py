@@ -14,6 +14,13 @@ def handle_tools_job(job: AIJob) -> AIResult:
 
         return handle_ppt_generation_job(job)
 
+    if job_type == "problem_studio_transfer":
+        from academy.application.use_cases.ai.pipelines.problem_studio_transfer_handler import (
+            handle_problem_studio_transfer_job,
+        )
+
+        return handle_problem_studio_transfer_job(job)
+
     if job_type == "excel_parsing":
         from academy.application.use_cases.ai.pipelines.excel_handler import handle_excel_parsing_job
 

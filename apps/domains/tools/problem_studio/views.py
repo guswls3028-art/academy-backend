@@ -10,6 +10,7 @@ from apps.core.permissions import TenantResolvedAndStaff
 from academy.adapters.db.django import repositories_ai as ai_repo
 from apps.domains.ai.gateway import dispatch_job
 from apps.domains.tools.problem_studio.services import extract_sources, parse_payload, source_extraction_to_payload
+from apps.domains.tools.problem_studio.async_transfer import build_source_archive
 from apps.domains.tools.problem_studio.transfer_documents import (
     build_transfer_package,
     package_to_response,
@@ -39,6 +40,94 @@ class ProblemStudioTransferDocumentView(APIView):
             return package_to_response(package)
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ProblemStudioTransferJobCreateView(APIView):
+    """POST /api/v1/tools/problem-studio/transfer-jobs/
+
+    대용량 원본 이관은 API/ALB 60초 경계를 넘을 수 있으므로 R2 임시 소스
+    아카이브 + tools worker로 처리한다. 완료 결과는 generic job status
+    endpoint의 result.download_url로 내려간다.
+    """
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def post(self, request):
+        archive_file = None
+        archive_key = ""
+        try:
+            payload = parse_payload(request.data.get("payload") if hasattr(request.data, "get") else request.data)
+            if not payload and isinstance(request.data, dict):
+                payload = dict(request.data)
+            source_files = request.FILES.getlist("source_files")
+            if not source_files:
+                return Response({"detail": "원본으로 옮길 소스 파일을 먼저 올려 주세요."}, status=status.HTTP_400_BAD_REQUEST)
+
+            archive_file, source_manifest = build_source_archive(source_files)
+
+            import uuid
+            from apps.infrastructure.storage.r2 import delete_object_r2_storage, upload_fileobj_to_r2_storage
+
+            tenant_id = str(request.tenant.id)
+            unique = uuid.uuid4().hex[:12]
+            archive_key = f"tenants/{tenant_id}/tools/problem-studio/tmp/{unique}/sources.zip"
+            upload_fileobj_to_r2_storage(
+                fileobj=archive_file,
+                key=archive_key,
+                content_type="application/zip",
+            )
+
+            result = dispatch_job(
+                job_type="problem_studio_transfer",
+                payload={
+                    "problem_studio_payload": payload,
+                    "source_archive_key": archive_key,
+                    "source_files": source_manifest,
+                    "tenant_id": tenant_id,
+                },
+                tenant_id=tenant_id,
+                source_domain="tools_problem_studio",
+                source_id=None,
+                tier="basic",
+            )
+            if not result.get("ok"):
+                if archive_key:
+                    try:
+                        delete_object_r2_storage(key=archive_key)
+                    except Exception:
+                        pass
+                return Response(
+                    {
+                        "detail": result.get("error") or "원본 이관 작업을 시작할 수 없습니다.",
+                        "rejection_code": result.get("rejection_code"),
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            return Response(
+                {
+                    "job_id": result["job_id"],
+                    "status": "PENDING",
+                    "source_files": [
+                        {
+                            "name": item["name"],
+                            "kind": item["name"].rsplit(".", 1)[-1].upper() if "." in item["name"] else "기타",
+                            "sizeLabel": f"{item['size'] / (1024 * 1024):.1f}MB" if item["size"] >= 1024 * 1024 else f"{item['size'] / 1024:.1f}KB",
+                            "extractedChars": 0,
+                            "warning": None,
+                        }
+                        for item in source_manifest
+                    ],
+                    "warnings": [],
+                    "source_text_chars": 0,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        finally:
+            if archive_file is not None:
+                archive_file.close()
 
 
 class ProblemStudioJobCreateView(APIView):

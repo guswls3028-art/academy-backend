@@ -37,6 +37,7 @@ class ToolWorkerRoutingTests(TestCase):
             "excel_parsing",
             "attendance_excel_export",
             "staff_excel_export",
+            "problem_studio_transfer",
         ):
             with self.subTest(job_type=job_type):
                 client = Mock()
@@ -137,8 +138,8 @@ class ToolWorkerRoutingTests(TestCase):
         assert result.status == "FAILED"
         assert "Unsupported tools job type" in (result.error or "")
 
-    def test_basic_tier_allows_excel_exports(self):
-        for job_type in ("attendance_excel_export", "staff_excel_export"):
+    def test_basic_tier_allows_deterministic_tools_jobs(self):
+        for job_type in ("attendance_excel_export", "staff_excel_export", "problem_studio_transfer"):
             with self.subTest(job_type=job_type):
                 allowed, error = enforce_tier_limits(tier="basic", job_type=job_type)
 

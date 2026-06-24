@@ -18,6 +18,7 @@ AI_JOB_TYPES = frozenset({
     "staff_excel_export",
     "ppt_generation",
     "problem_studio_package",
+    "problem_studio_transfer",
     "matchup_analysis",
     "matchup_index_exam",
     "matchup_search_qna",
@@ -26,6 +27,7 @@ AI_JOB_TYPES = frozenset({
 
 TOOL_WORKER_JOB_TYPES = frozenset({
     "ppt_generation",
+    "problem_studio_transfer",
     "excel_parsing",
     "attendance_excel_export",
     "staff_excel_export",
@@ -44,6 +46,7 @@ BASIC_ALLOWED_JOB_TYPES = frozenset({
     "staff_excel_export",
     "ppt_generation",
     "problem_studio_package",
+    "problem_studio_transfer",
     "question_segmentation",
     "matchup_analysis",
     "matchup_index_exam",

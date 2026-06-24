@@ -5,3 +5,5 @@ pillow
 python-pptx==1.0.2
 PyMuPDF==1.25.3
 openpyxl>=3.1.0
+olefile==0.47
+pytesseract

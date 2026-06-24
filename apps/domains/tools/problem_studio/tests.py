@@ -27,6 +27,11 @@ from apps.domains.tools.problem_studio.transfer_documents import (
 )
 from apps.domains.tools.problem_studio.extractors import extract_hwpx_text
 from apps.domains.tools.problem_studio.ocr import OcrResult
+from apps.domains.tools.problem_studio.async_transfer import (
+    SOURCE_ARCHIVE_MANIFEST,
+    build_source_archive,
+    source_files_from_archive,
+)
 
 
 def _zip_file(name: str, files: dict[str, str]) -> SimpleUploadedFile:
@@ -382,6 +387,37 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertFalse(manifest["review_contract"]["ocr_required_for_scanned_text"])
         self.assertIn("중화 반응", workbook)
         self.assertIn("남은 OCR 후보 없음", ocr_csv)
+
+    def test_async_transfer_archive_round_trips_uploaded_sources(self):
+        uploaded = _zip_file(
+            "chemistry.docx",
+            {
+                "word/document.xml": (
+                    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    "<w:body>"
+                    "<w:p><w:r><w:t>1. 암모니아 합성 평형 조건은?</w:t></w:r></w:p>"
+                    "<w:p><w:r><w:t>정답 ②</w:t></w:r></w:p>"
+                    "</w:body></w:document>"
+                )
+            },
+        )
+
+        archive_file, manifest_files = build_source_archive([uploaded])
+        try:
+            self.assertEqual(manifest_files[0]["name"], "chemistry.docx")
+            with zipfile.ZipFile(archive_file) as zf:
+                names = zf.namelist()
+                self.assertIn(SOURCE_ARCHIVE_MANIFEST, names)
+            archive_file.seek(0)
+            with source_files_from_archive(archive_file) as source_files:
+                package = build_transfer_package(payload={"title": "비동기 이관"}, source_files=source_files)
+        finally:
+            archive_file.close()
+
+        self.assertEqual(package.structured_item_count, 1)
+        with zipfile.ZipFile(BytesIO(package.data)) as zf:
+            workbook = zf.read("01_자체양식_문제검수본.doc").decode("utf-8-sig")
+        self.assertIn("암모니아 합성 평형", workbook)
 
     def test_transfer_package_reports_zip_with_too_many_members(self):
         uploaded = SimpleUploadedFile(

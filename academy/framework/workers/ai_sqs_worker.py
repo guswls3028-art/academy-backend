@@ -189,6 +189,32 @@ def _dispatch_terminal_callback_from_message(job_id: str, message: dict, tier_fr
         return False
 
 
+def _cleanup_terminal_artifacts(prepared: PreparedJob) -> None:
+    """Best-effort cleanup for artifacts no longer needed after DB terminal state."""
+    if (prepared.job_type or "").strip().lower() != "problem_studio_transfer":
+        return
+    payload = prepared.payload if isinstance(prepared.payload, dict) else {}
+    source_archive_key = str(payload.get("source_archive_key") or "").strip()
+    if not source_archive_key:
+        return
+    try:
+        from apps.infrastructure.storage.r2 import delete_object_r2_storage
+
+        delete_object_r2_storage(key=source_archive_key)
+        logger.info(
+            "AI_JOB_TERMINAL_ARTIFACT_CLEANUP_DONE | job_id=%s | key=%s",
+            prepared.job_id,
+            source_archive_key,
+        )
+    except Exception:
+        logger.warning(
+            "AI_JOB_TERMINAL_ARTIFACT_CLEANUP_FAILED | job_id=%s | key=%s",
+            prepared.job_id,
+            source_archive_key,
+            exc_info=True,
+        )
+
+
 InferenceHandler = Callable[[Any], Any]
 
 
@@ -411,6 +437,7 @@ def run_ai_sqs_worker(
                             )
                         callback_ok = False
                         if ok:
+                            _cleanup_terminal_artifacts(prepared)
                             callback_ok = _dispatch_domain_callback(
                                 prepared, status="FAILED", result_payload=None,
                                 error="inference_timeout_60min",
@@ -439,6 +466,7 @@ def run_ai_sqs_worker(
                             )
                             consecutive_errors += 1
                             continue
+                        _cleanup_terminal_artifacts(prepared)
                         callback_ok = _dispatch_domain_callback(
                             prepared, status="FAILED", result_payload=None,
                             error="inference_error_no_result",
@@ -466,6 +494,7 @@ def run_ai_sqs_worker(
                             )
                             consecutive_errors += 1
                             continue
+                        _cleanup_terminal_artifacts(prepared)
                         callback_ok = _dispatch_domain_callback(
                             prepared, status="DONE",
                             result_payload=result.result if isinstance(result.result, dict) else {},
@@ -495,6 +524,7 @@ def run_ai_sqs_worker(
                             )
                             consecutive_errors += 1
                             continue
+                        _cleanup_terminal_artifacts(prepared)
                         callback_ok = _dispatch_domain_callback(
                             prepared, status="FAILED", result_payload=None,
                             error=result.error or "failed",

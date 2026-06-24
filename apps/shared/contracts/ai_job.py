@@ -21,6 +21,7 @@ AIJobType = Literal[
     "staff_excel_export",
     "ppt_generation",
     "problem_studio_package",
+    "problem_studio_transfer",
     "matchup_analysis",
     "matchup_index_exam",
     "matchup_search_qna",
