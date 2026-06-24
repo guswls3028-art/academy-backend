@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import isfinite
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any
 
 
 SCORE_ADJUSTMENT_KEY = "__score_adjustment__"
+SCORE_UNIT = Decimal("0.1")
 
 
 @dataclass(frozen=True)
@@ -15,7 +16,7 @@ class ScoreAdjustment:
 
     @property
     def total(self) -> float:
-        return round(self.objective + self.subjective, 2)
+        return round(self.objective + self.subjective, 1)
 
     def to_payload(self) -> dict[str, float]:
         payload: dict[str, float] = {}
@@ -28,12 +29,12 @@ class ScoreAdjustment:
 
 def _non_negative_float(value: Any) -> float:
     try:
-        parsed = float(value)
-    except (TypeError, ValueError):
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError):
         return 0.0
-    if not isfinite(parsed) or parsed <= 0:
+    if not parsed.is_finite() or parsed <= 0:
         return 0.0
-    return round(parsed, 2)
+    return float(parsed.quantize(SCORE_UNIT, rounding=ROUND_HALF_UP))
 
 
 def normalize_score_adjustment_payload(value: Any) -> dict[str, float]:

@@ -205,7 +205,10 @@ class AnswerKeyViewTenantScopeTests(TestCase):
                 "exam": editable_template.id,
                 "answers": {
                     "101": "1",
-                    SCORE_ADJUSTMENT_KEY: {"objective": 0.1},
+                    SCORE_ADJUSTMENT_KEY: {
+                        "objective": 0.16,
+                        "subjective": 0.14,
+                    },
                 },
             },
         )
@@ -214,7 +217,7 @@ class AnswerKeyViewTenantScopeTests(TestCase):
         answer_key = AnswerKey.objects.get(exam=editable_template)
         self.assertEqual(
             answer_key.answers[SCORE_ADJUSTMENT_KEY],
-            {"objective": 0.1},
+            {"objective": 0.2, "subjective": 0.1},
         )
 
     def test_update_rejects_cross_tenant_exam_move(self):
