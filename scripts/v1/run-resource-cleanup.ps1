@@ -1,7 +1,7 @@
 # V1 불필요 리소스 정리 — 돈 새는 리소스 우선. 배포 수정 전 실행 권장.
 # PHASE 1: EIP 전부 release (association 없음)
 # PHASE 2: ENI에 연결되지 않은 Security Group 삭제 (SSOT 유지 SG 제외)
-# PHASE 3: API ASG SSOT 용량 확인 (min=1 desired=1 max=3)
+# PHASE 3: API ASG SSOT 용량 확인 (min=2 desired=2 max=3)
 # PHASE 4: describe-* 로 재검증 후 docs/reports/resource-cleanup.latest.md 기록
 # 사용: pwsh -File scripts/v1/run-resource-cleanup.ps1 [-AwsProfile default] [-Execute]
 param(
@@ -28,7 +28,7 @@ $R = $script:Region
 $VpcId = $script:VpcId
 $script:PlanMode = $false
 
-$KeepSGNames = @("academy-v1-sg-app", "academy-v1-sg-batch", "academy-v1-sg-data", "default")
+$KeepSGNames = @("academy-v1-sg-app", "academy-v1-sg-batch", "academy-v1-sg-data", "academy-rds", "default")
 $KeepSGIds = @($script:SecurityGroupApp, $script:BatchSecurityGroupId, $script:SecurityGroupData) | Where-Object { $_ -and $_.Trim() -ne "" }
 $ApiASGName = $script:ApiASGName
 
@@ -92,20 +92,20 @@ else {
 }
 
 # --- PHASE 3: API ASG SSOT 용량 확인 ---
-Write-Host "`n[PHASE 3] API ASG SSOT 용량 확인 (min=1 desired=1 max=3)" -ForegroundColor Cyan
+Write-Host "`n[PHASE 3] API ASG SSOT 용량 확인 (min=2 desired=2 max=3)" -ForegroundColor Cyan
 $asgDesc = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $ApiASGName, "--region", $R, "--output", "json")
 if (-not $asgDesc -or -not $asgDesc.AutoScalingGroups -or $asgDesc.AutoScalingGroups.Count -eq 0) {
     Write-Host "  $ApiASGName 없음, 건너뜀." -ForegroundColor Yellow
 } else {
     $a = $asgDesc.AutoScalingGroups[0]
     $min = $a.MinSize; $des = $a.DesiredCapacity; $max = $a.MaxSize
-    if ($min -eq 1 -and $des -ge 1 -and $des -le 3 -and $max -eq 3) { Write-Host "  이미 min=1 max=3, desired=$des(동적 범위)." -ForegroundColor Green }
+    if ($min -eq 2 -and $des -ge 2 -and $des -le 3 -and $max -eq 3) { Write-Host "  이미 min=2 max=3, desired=$des(동적 범위)." -ForegroundColor Green }
     else {
-        $targetDesired = [Math]::Max(1, [Math]::Min(3, [int]$des))
-        Write-Host "  현재 min=$min desired=$des max=$max → min=1 desired=$targetDesired max=3" -ForegroundColor $(if ($Execute) { "Yellow" } else { "Gray" })
+        $targetDesired = [Math]::Max(2, [Math]::Min(3, [int]$des))
+        Write-Host "  현재 min=$min desired=$des max=$max → min=2 desired=$targetDesired max=3" -ForegroundColor $(if ($Execute) { "Yellow" } else { "Gray" })
         if ($Execute) {
             try {
-                Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $ApiASGName, "--min-size", "1", "--desired-capacity", "$targetDesired", "--max-size", "3", "--region", $R) -ErrorMessage "update-asg" | Out-Null
+                Invoke-Aws @("autoscaling", "update-auto-scaling-group", "--auto-scaling-group-name", $ApiASGName, "--min-size", "2", "--desired-capacity", "$targetDesired", "--max-size", "3", "--region", $R) -ErrorMessage "update-asg" | Out-Null
                 Write-Host "      Updated." -ForegroundColor Green
             } catch { Write-Warning "      Failed: $_" }
         }
@@ -116,13 +116,20 @@ if (-not $asgDesc -or -not $asgDesc.AutoScalingGroups -or $asgDesc.AutoScalingGr
 Write-Host "`n[PHASE 4] 리소스 재검증 및 보고서 기록" -ForegroundColor Cyan
 $runAt = Get-Date -Format "o"
 
-$instRes = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=instance-state-name,Values=running", "Name=tag:Project,Values=academy", "--region", $R, "--output", "json")
+$instFilters = @("Name=instance-state-name,Values=running")
+if ($VpcId) { $instFilters += "Name=vpc-id,Values=$VpcId" }
+$instRes = Invoke-AwsJson (@("ec2", "describe-instances", "--filters") + $instFilters + @("--region", $R, "--output", "json"))
 $runningCount = 0
 $instanceRows = [System.Collections.ArrayList]::new()
 if ($instRes -and $instRes.Reservations) {
     foreach ($rev in $instRes.Reservations) {
         foreach ($i in $rev.Instances) {
-            if ($i) { $runningCount++; $name = ($i.Tags | Where-Object { $_.Key -eq "Name" } | Select-Object -First 1).Value; [void]$instanceRows.Add([PSCustomObject]@{ Id = $i.InstanceId; Name = $name; Type = $i.InstanceType }) }
+            if ($i) {
+                $runningCount++
+                $name = ($i.Tags | Where-Object { $_.Key -eq "Name" } | Select-Object -First 1).Value
+                $asgName = ($i.Tags | Where-Object { $_.Key -eq "aws:autoscaling:groupName" } | Select-Object -First 1).Value
+                [void]$instanceRows.Add([PSCustomObject]@{ Id = $i.InstanceId; Name = $name; Type = $i.InstanceType; Asg = $asgName })
+            }
         }
     }
 }
@@ -139,10 +146,15 @@ if ($VpcId -and $sgRes -and $sgRes.SecurityGroups) {
 
 $addrRes = Invoke-AwsJson @("ec2", "describe-addresses", "--region", $R, "--output", "json")
 $eipCount = 0
+$unassociatedEipCount = 0
 $eipRows = [System.Collections.ArrayList]::new()
 if ($addrRes -and $addrRes.Addresses) {
     $eipCount = $addrRes.Addresses.Count
-    foreach ($a in $addrRes.Addresses) { [void]$eipRows.Add([PSCustomObject]@{ AllocationId = $a.AllocationId; PublicIp = $a.PublicIp; Associated = ($null -ne $a.InstanceId -or $null -ne $a.NetworkInterfaceId) }) }
+    foreach ($a in $addrRes.Addresses) {
+        $associated = ($null -ne $a.InstanceId -or $null -ne $a.NetworkInterfaceId)
+        if (-not $associated) { $unassociatedEipCount++ }
+        [void]$eipRows.Add([PSCustomObject]@{ AllocationId = $a.AllocationId; PublicIp = $a.PublicIp; Associated = $associated })
+    }
 }
 
 $asgRes = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--region", $R, "--output", "json")
@@ -164,15 +176,16 @@ $sb = [System.Text.StringBuilder]::new()
 [void]$sb.AppendLine("## 요약")
 [void]$sb.AppendLine("| 항목 | 값 | 목표(V1 정상) |")
 [void]$sb.AppendLine("|------|-----|----------------|")
-[void]$sb.AppendLine("| running instances | $runningCount | 3 |")
-[void]$sb.AppendLine("| Security Groups (VPC) | $sgCount | 6~8 |")
-[void]$sb.AppendLine("| Elastic IP | $eipCount | 0 |")
-[void]$sb.AppendLine("| ASG (academy/v1) | $($asgRows.Count) | 3 + Batch ops |")
+[void]$sb.AppendLine("| running instances in VPC | $runningCount | API baseline 2 + active Batch/worker burst |")
+[void]$sb.AppendLine("| Security Groups (VPC) | $sgCount | SSOT keep + in-use DB legacy SG only |")
+[void]$sb.AppendLine("| Elastic IP total | $eipCount | informational; ALB/public endpoints may use associated IPv4 |")
+[void]$sb.AppendLine("| unassociated Elastic IP | $unassociatedEipCount | 0 |")
+[void]$sb.AppendLine("| ASG (academy/v1 + Batch-managed) | $($asgRows.Count) | API/workers + Batch CE managed ASGs |")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("## Running instances (Project=academy)")
-[void]$sb.AppendLine("| InstanceId | Name | Type |")
-[void]$sb.AppendLine("|------------|------|------|")
-foreach ($r in $instanceRows) { [void]$sb.AppendLine("| $($r.Id) | $($r.Name) | $($r.Type) |") }
+[void]$sb.AppendLine("## Running instances (VPC)")
+[void]$sb.AppendLine("| InstanceId | Name | Type | ASG |")
+[void]$sb.AppendLine("|------------|------|------|-----|")
+foreach ($r in $instanceRows) { [void]$sb.AppendLine("| $($r.Id) | $($r.Name) | $($r.Type) | $($r.Asg) |") }
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Security Groups (VPC)")
 [void]$sb.AppendLine("| GroupId | GroupName |")
@@ -184,7 +197,7 @@ foreach ($r in $sgRows) { [void]$sb.AppendLine("| $($r.GroupId) | $($r.GroupName
 [void]$sb.AppendLine("|--------------|----------|------------|")
 foreach ($r in $eipRows) { [void]$sb.AppendLine("| $($r.AllocationId) | $($r.PublicIp) | $($r.Associated) |") }
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("## ASG (academy/v1)")
+[void]$sb.AppendLine("## ASG (academy/v1 + Batch-managed)")
 [void]$sb.AppendLine("| Name | Min | Desired | Max |")
 [void]$sb.AppendLine("|------|-----|---------|-----|")
 foreach ($r in $asgRows) { [void]$sb.AppendLine("| $($r.Name) | $($r.Min) | $($r.Desired) | $($r.Max) |") }

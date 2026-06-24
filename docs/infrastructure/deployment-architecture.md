@@ -116,7 +116,7 @@ Dependencies:
 - **ALB deregistration delay: 30s** — in-flight 연결 drain 후 즉시 정리
 - Scale-up 후 **ALB target health 실측 확인** (고정 대기 아닌 실제 healthy 2개 확인, max 5min)
 - Old instances are drained and terminated only after new ones pass ALB health checks
-- 평상시 API capacity는 SSOT `min=1 desired=1 max=3`이다. CI deploy는 refresh 직전에 일시적으로 `desired>=2` headroom을 만들고, refresh 성공 후 기존 desired baseline으로 되돌린다.
+- 평상시 API capacity는 SSOT `min=2 desired=2 max=3`이다. CI deploy도 2대 이상 ALB healthy 상태를 유지하고, refresh 성공 후 availability baseline으로 되돌린다.
 - API runtime scale-out/scale-in은 ASG target tracking(`ASGAverageCPUUtilization`, target 55%)이 담당한다.
 
 ### Deployment Sequence

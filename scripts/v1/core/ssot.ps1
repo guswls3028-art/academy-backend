@@ -154,9 +154,9 @@ function Load-SSOT {
     $script:ApiAcmCertificateArn = if ($p["api"]["acmCertificateArn"]) { $p["api"]["acmCertificateArn"] } else { "" }
     $script:ApiHttpsSslPolicy = if ($p["api"]["httpsSslPolicy"]) { $p["api"]["httpsSslPolicy"] } else { "ELBSecurityPolicy-TLS13-1-2-2021-06" }
     $script:ApiHealthPath = if ($p["api"]["healthPath"]) { $p["api"]["healthPath"] } else { "/health" }
-    $script:ApiASGMinSize = 1
-    $script:ApiASGMaxSize = 2
-    $script:ApiASGDesiredCapacity = 1
+    $script:ApiASGMinSize = 2
+    $script:ApiASGMaxSize = 3
+    $script:ApiASGDesiredCapacity = 2
     if ($p["api"]["asgMinSize"]) { $script:ApiASGMinSize = [int]$p["api"]["asgMinSize"] }
     if ($p["api"]["asgMaxSize"]) { $script:ApiASGMaxSize = [int]$p["api"]["asgMaxSize"] }
     if ($p["api"]["asgDesiredCapacity"]) { $script:ApiASGDesiredCapacity = [int]$p["api"]["asgDesiredCapacity"] }
@@ -325,7 +325,7 @@ function Load-SSOT {
     $script:RdsDbSubnetGroupName = $p["rds"]["dbSubnetGroupName"]
     $script:RdsEngine = if ($p["rds"]["engine"]) { $p["rds"]["engine"] } else { "postgres" }
     $script:RdsEngineVersion = if ($p["rds"]["engineVersion"]) { $p["rds"]["engineVersion"] } else { "" }
-    $script:RdsInstanceClass = if ($p["rds"]["instanceClass"]) { $p["rds"]["instanceClass"] } else { "db.t4g.medium" }
+    $script:RdsInstanceClass = if ($p["rds"]["instanceClass"]) { $p["rds"]["instanceClass"] } else { "db.t4g.large" }
     $script:RdsAllocatedStorage = Coerce-Int $p["rds"]["allocatedStorage"] 20
     $script:RdsMasterUsername = $p["rds"]["masterUsername"]
     $script:RdsMasterPasswordSsmParam = $p["rds"]["masterPasswordSsmParam"]

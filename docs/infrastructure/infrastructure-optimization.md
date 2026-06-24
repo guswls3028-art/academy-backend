@@ -57,7 +57,7 @@
 ┌────────▼─────────┐  ┌─────────────▼──────────┐  ┌─────────────▼──────────┐
 │  API Server       │  │  Messaging Worker      │  │  AI Worker             │
 │  t4g.medium       │  │  t4g.medium            │  │  t4g.medium            │
-│  ASG: min=1 max=3 │  │  ASG: min=0 max=3     │  │  ASG: min=0 max=5     │
+│  ASG: min=2 max=3 │  │  ASG: min=0 max=3     │  │  ASG: min=0 max=5     │
 │  Gunicorn 4w      │  │  SQS long-poll         │  │  SQS long-poll         │
 │  gevent           │  │  SMS/LMS via Solapi    │  │  queue-woken           │
 │  ❌ No ffmpeg     │  │                         │  │                        │
@@ -81,7 +81,7 @@
          │  └─────────────────────────────────────────────────┘
          │
 ┌────────▼──────────────────────────────────────────────────────┐
-│  RDS db.t4g.medium  │  ElastiCache cache.t4g.small (Redis)   │
+│  RDS db.t4g.large   │  ElastiCache cache.t4g.small (Redis)   │
 │  PostgreSQL 15      │  1 node                                 │
 │  Single-AZ, 20GB    │  Progress tracking + session cache      │
 └───────────────────────────────────────────────────────────────┘
@@ -388,15 +388,15 @@ done
 |---------|-----------------|-----------------|--------|-------|
 | **ECR Storage** | **$213** | **~$5** | **-98%** | 5.2TB → <50GB after cleanup (검증 완료 2026-03-17) |
 | **VPC** | $82 | ~$20 | -76% | Interface endpoints removed, self-resolving |
-| **EC2 Compute** | $87 | API 1대 baseline + worker burst runtime | Variable | API는 평시 1대 + target tracking. Messaging/AI/Tools는 SSOT상 idle min/desired=0/0이며 SQS 알람으로 scale-out |
-| **RDS** | $71 | $71 | 0% | Keep db.t4g.medium Single-AZ (see §11 Accepted Risks) |
+| **EC2 Compute** | $87 | API 2대 baseline + worker burst runtime | Variable | API는 평시 2대 + target tracking. Messaging/AI/Tools는 SSOT상 idle min/desired=0/0이며 SQS 알람으로 scale-out |
+| **RDS** | $71 historical | $134.69 MTD (2026-06-01..25) | actual higher | Current SSOT is db.t4g.large Single-AZ; right-size only after connection/perf review |
 | **ElastiCache** | $38 | $38 | 0% | Keep cache.t4g.small |
 | **EC2-Other** | $44 | $35 | -20% | IPv4 reduction where possible |
 | **ALB** | $10 | $10 | 0% | Required |
 | **Tax** | $61 | ~$25 | Proportional | |
-| **Total** | **~$606** | **~$250 미만 + worker burst runtime** | **~59% + variable** | API 1대 baseline + worker idle min/desired=0/0 반영 |
+| **Total** | **~$606** | **~$280 미만 + worker burst runtime** | **~54% + variable** | API 2대 baseline + worker idle min/desired=0/0 반영 |
 
-**Cost floor (theoretical minimum):** API 1대 baseline + managed services + worker burst runtime. Messaging/AI/Tools workers는 상시 RI 대상이 아니며, idle baseline은 `docs/ssot/params.yaml`의 min/desired=0/0을 따른다. Requires 1yr no-upfront RIs. Only commit after 3 months of stable usage.
+**Cost floor (theoretical minimum):** API 2대 baseline + managed services + worker burst runtime. Messaging/AI/Tools workers는 상시 RI 대상이 아니며, idle baseline은 `docs/ssot/params.yaml`의 min/desired=0/0을 따른다. Requires 1yr no-upfront RIs. Only commit after 3 months of stable usage.
 
 ### 5.1.1 Worker Scale-To-Zero Policy
 
@@ -405,7 +405,7 @@ done
 | **Messaging** | t4g.medium min/desired=0/0 max=3 | Idle baseline removed | SQS CloudWatch alarm wakes the ASG from the first queued message; scale-in waits for visible+in-flight+delayed backlog to stay 0. |
 | **AI** | t4g.medium min/desired=0/0 max=5 | Idle baseline removed | SQS CloudWatch alarms and API wake-up start work; worker-owned live SQS depth check scales back to 0. |
 | **Tools** | t4g.small min/desired=0/0 max=2 | Idle baseline removed | Deterministic conversion jobs can wait for queue-woken cold start; scale-in uses visible+in-flight+delayed backlog. |
-| **API** | t4g.medium min/desired=1/1 max=3 | One always-on instance retained | Gunicorn 4w + gevent needs 4GB headroom; target tracking adds capacity during bursts. |
+| **API** | t4g.medium min/desired=2/2 max=3 | Two always-on instances retained | Target tracking adds capacity during bursts; CI keeps two ALB-healthy targets through rolling refresh. |
 
 **Worker Capacity Policy (SSOT):**
 
@@ -415,9 +415,9 @@ Messaging/AI/Tools idle capacity is min/desired=0/0. Jobs enter SQS, CloudWatch 
 
 | Resource | RI Type | On-Demand | RI Price | Savings |
 |----------|---------|-----------|----------|---------|
-| API t4g.medium | 1yr no-upfront | $29/mo | $18/mo | $11/mo |
-| RDS db.t4g.medium | 1yr no-upfront | $71/mo | $36.50/mo | $34.50/mo |
-| **Total RI savings** | | | | **$45.50/mo** |
+| API t4g.medium x1 | 1yr no-upfront | $29/mo | $18/mo | $11/mo |
+| RDS db.t4g.large | 1yr no-upfront | use current pricing/Cost Explorer | TBD | TBD |
+| **Total RI savings** | | | | **API known + RDS TBD after 3 months** |
 
 **Note:** Only commit to RIs after 3 months of stable usage patterns. Do not reserve worker capacity while Messaging/AI/Tools SSOT idle baseline remains min/desired=0/0.
 
@@ -426,7 +426,7 @@ Messaging/AI/Tools idle capacity is min/desired=0/0. Jobs enter SQS, CloudWatch 
 | Resource | Why Keep |
 |----------|---------|
 | API t4g.medium | Gunicorn 4w + gevent needs headroom; downsizing risks latency spikes |
-| RDS db.t4g.medium | PostgreSQL query workload; t4g.small has only 2GB RAM |
+| RDS db.t4g.large | Current SSOT/actual runtime; downsize only after connection, memory, and slow-query review |
 | Redis cache.t4g.small | Video progress + session cache; t4g.micro has only 0.5GB |
 | API baseline | API stays warm for request latency; workers are intentionally queue-woken from min/desired=0/0. |
 | MinHealthyPercentage: API=100%, Workers=0% | Zero-downtime via scale-up strategy (API) and SQS buffering (workers) |
@@ -458,10 +458,10 @@ Messaging/AI/Tools idle capacity is min/desired=0/0. Jobs enter SQS, CloudWatch 
 ### 6.1 Zero-Downtime Deployment (Updated 2026-03-16)
 
 **API 무중단 배포 — Scale-Up 방식:**
-1. API ASG를 refresh 직전에 min=1 max=3, desired>=2로 일시 보정
+1. API ASG를 refresh 직전에 min=2 max=3, desired>=2로 보정
 2. 2대 Healthy 확인
 3. Instance refresh 실행 (`MinHealthyPercentage=100%`, `InstanceWarmup=300s`, `SkipMatching=false`)
-4. Refresh 완료 후 SSOT 기준 min=1 desired=1 max=3 baseline으로 복귀. 이후 target tracking이 부하에 맞춰 증감
+4. Refresh 완료 후 SSOT 기준 min=2 desired=2 max=3 availability baseline으로 복귀. 이후 target tracking이 부하에 맞춰 증감
 
 **워커 배포:**
 - `MinHealthyPercentage=0%`, `InstanceWarmup=120s`
@@ -682,7 +682,7 @@ if exists:
 
 | Parameter | Value |
 |-----------|-------|
-| **Current config** | db.t4g.medium, Single-AZ, 20GB gp3 |
+| **Current config** | db.t4g.large, Single-AZ, 20GB gp3 |
 | **RPO (Recovery Point Objective)** | **5 minutes** — automated backups with 5-min backup window |
 | **RTO (Recovery Time Objective)** | **10-30 minutes** — Single-AZ failover requires instance replacement |
 | **Downtime risk** | AZ failure → 10-30min full database outage |

@@ -54,7 +54,7 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
 
 - **위치**: `docs/ssot/params.yaml`
 - **수정**: 환경별 값(리전, 계정, VPC 등)만 변경. 스크립트는 이 파일만 참조.
-- **API ASG 용량**: 평시 min/desired=1, max=3. 배포 시 CI가 일시적으로 desired>=2를 만들고, CPU target tracking이 평상시 자동 증감/복귀를 담당한다.
+- **API ASG 용량**: 평시 min/desired=2, max=3. 배포 시 CI도 2대 이상 ALB healthy 기준을 유지하고, CPU target tracking이 평상시 자동 증감/복귀를 담당한다.
 - **ECR 이미지**: GitHub Actions가 6개 repo(`academy-base`, `academy-api`, `academy-video-worker`, `academy-messaging-worker`, `academy-ai-worker-cpu`, `academy-tools-worker`)를 빌드·푸시한다. `deploy.ps1`은 로컬 빌드 없이 ECR `:latest`를 pull/refresh한다.
 
 ---

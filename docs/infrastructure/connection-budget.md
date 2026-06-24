@@ -16,13 +16,14 @@
 | GUNICORN_WORKER_CONNECTIONS | 1000 |
 | DB_CONN_MAX_AGE | 0 |
 | 평시 커넥션 (1대) | ~2-6 |
-| 확장 런칭 baseline | API 2대 |
+| 운영 baseline | API 2대 |
+| 배포 headroom | API 2대 이상 유지 |
 | ASG min/max | 2/3 |
 
 ## Workers
 | 워커 | 인스턴스 | 평시 커넥션 |
 |---|---|---|
-| Messaging | 1 | ~4 |
+| Messaging | 0 baseline, 작업 시 scale-out | 0 |
 | AI | 0 | 0 |
 | RDS admin | - | ~3 |
 | Background | - | ~5 |
@@ -30,7 +31,8 @@
 ## 시나리오별 예산
 | 시나리오 | 예상 커넥션 | 여유 |
 |---|---|---|
-| 확장 런칭 평시 (API 2대) | ~15-30 | 92%+ |
+| 평시 (API 2대, workers idle) | ~15-30 | 92%+ |
+| 배포 headroom (API 2대 이상 유지) | ~15-30 | 92%+ |
 | Rolling refresh (API 3대 순간) | ~25-45 | 88%+ |
 | 장애 시 재시도 폭주 | 400 포화 가능 | 0% |
 

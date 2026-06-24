@@ -35,14 +35,27 @@ $KeepBatchQueue = @(
     $script:VideoQueueName,
     $script:OpsQueueName
 ) | Where-Object { $_ -and $_.Trim() -ne "" }
-$KeepSGNames = @("academy-v1-sg-app", "academy-v1-sg-batch", "academy-v1-sg-data", "default")
+$KeepSGNames = @("academy-v1-sg-app", "academy-v1-sg-batch", "academy-v1-sg-data", "academy-rds", "default")
 $KeepSGIds = @(
     $script:SecurityGroupApp,
     $script:BatchSecurityGroupId,
     $script:SecurityGroupData
 ) | Where-Object { $_ -and $_.Trim() -ne "" }
-$BatchOpsASGPrefix = "academy-v1-video-ops-ce-asg-"
-$BatchVideoASGPrefix = "academy-v1-video-batch-ce-asg-"
+$BatchASGPrefixes = @(
+    "AWSBatch-$($script:VideoCEName)-asg-",
+    "$($script:VideoCEName)-asg-",
+    "AWSBatch-$($script:OpsCEName)-asg-",
+    "$($script:OpsCEName)-asg-"
+) | Where-Object { $_ -and $_.Trim() -ne "" }
+
+function Test-KeepAutoScalingGroupName {
+    param([string]$Name)
+    if ($Name -in $KeepASG) { return $true }
+    foreach ($prefix in $BatchASGPrefixes) {
+        if ($Name -like "$prefix*") { return $true }
+    }
+    return $false
+}
 
 Write-Host ""
 Write-Host ('=== V1 AWS Resource Inventory (region ' + $R + ') ===') -ForegroundColor Cyan
@@ -65,7 +78,7 @@ $asgList = @()
 $asgRes = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--region", $R, "--output", "json")
 if ($asgRes -and $asgRes.AutoScalingGroups) {
     foreach ($a in $asgRes.AutoScalingGroups) {
-        $match = $a.AutoScalingGroupName -in $KeepASG -or $a.AutoScalingGroupName -like "${BatchOpsASGPrefix}*" -or $a.AutoScalingGroupName -like "${BatchVideoASGPrefix}*"
+        $match = Test-KeepAutoScalingGroupName -Name $a.AutoScalingGroupName
         $asgList += [PSCustomObject]@{ Name = $a.AutoScalingGroupName; Desired = $a.DesiredCapacity; Min = $a.MinSize; Max = $a.MaxSize; SSOT = $(if ($match) { "KEEP" } else { "LEGACY_CANDIDATE" }) }
     }
 }
@@ -141,7 +154,7 @@ if ($tgRes -and $tgRes.TargetGroups) {
 # --- Used instance IDs (keep ASG + build tag + Batch-managed) ---
 $usedInstanceIds = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($asg in $asgRes.AutoScalingGroups) {
-    $keep = $asg.AutoScalingGroupName -in $KeepASG -or $asg.AutoScalingGroupName -like "${BatchOpsASGPrefix}*" -or $asg.AutoScalingGroupName -like "*academy-v1-video*"
+    $keep = Test-KeepAutoScalingGroupName -Name $asg.AutoScalingGroupName
     if (-not $keep) { continue }
     foreach ($inst in $asg.Instances) { [void]$usedInstanceIds.Add($inst.InstanceId) }
 }
@@ -229,7 +242,7 @@ foreach ($a in $albList) { [void]$sb.AppendLine("| $($a.Name) | $($a.Scheme) | $
 foreach ($t in $tgList) { [void]$sb.AppendLine("| $($t.Name) | $($t.Port) | $($t.VpcId) | $($t.SSOT) |") }
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("---")
-[void]$sb.AppendLine("SSOT keep: API ASG/ALB/TG, Workers ASG, Batch CE/Queue, academy-db, academy-v1-redis. Others LEGACY_CANDIDATE.")
+[void]$sb.AppendLine("SSOT keep: API ASG/ALB/TG, Workers ASG, Batch CE/Queue/managed ASG, academy-db/academy-rds SG, academy-v1-redis. Others LEGACY_CANDIDATE.")
 Set-Content -Path $invPath -Value $sb.ToString() -Encoding UTF8 -Force
 Write-Host '  Inventory:' $invPath -ForegroundColor Green
 
@@ -260,8 +273,8 @@ foreach ($s in $unusedSGs) {
 [void]$planSb.AppendLine("")
 [void]$planSb.AppendLine("## 실행 방법")
 [void]$planSb.AppendLine('```powershell')
-[void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1   # DryRun 기본")
-[void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-with-env.ps1 -- pwsh -NoProfile -File scripts/v1/cleanup-legacy.ps1 -Execute   # 실제 적용")
+[void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-resource-cleanup.ps1 -AwsProfile default   # DryRun 기본")
+[void]$planSb.AppendLine("pwsh -NoProfile -File scripts/v1/run-resource-cleanup.ps1 -AwsProfile default -Execute   # 실제 적용")
 [void]$planSb.AppendLine('```')
 [void]$planSb.AppendLine("")
 [void]$planSb.AppendLine('Before cleanup, confirm this plan and aws-resource-inventory.latest.md.')
