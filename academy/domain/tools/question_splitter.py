@@ -1836,6 +1836,8 @@ def split_questions(
             lower_row_texts,
         )
 
+    scan_continuous = _is_continuous_scan_type(paper_type)
+
     dense_owner_indices = {
         idx
         for candidate in candidates
@@ -1845,10 +1847,13 @@ def split_questions(
     if dense_owner_indices:
         filtered_candidates = []
         for candidate in candidates:
-            _, idx, is_marginal = candidate
+            qnum, idx, is_marginal = candidate
             block = sorted_blocks[idx]
             drop_as_dense_subrow = False
             if not is_marginal and _looks_like_plain_numbered_subrow(block.text):
+                if scan_continuous and qnum >= 10:
+                    filtered_candidates.append(candidate)
+                    continue
                 for owner_idx in dense_owner_indices:
                     owner_block = sorted_blocks[owner_idx]
                     if (
@@ -1914,7 +1919,6 @@ def split_questions(
     #   임계). 시험지에 standalone "N." block 우연히 1개 있는 경우 본문 anchor 도 사용.
     marginal_count = sum(1 for _, _, m in candidates if m)
     body_count = len(candidates) - marginal_count
-    scan_continuous = _is_continuous_scan_type(paper_type)
     if prefer_marginal and marginal_count >= 1:
         marginal_columns: set[tuple[int, int]] = set()
 

@@ -1083,6 +1083,19 @@ def _filter_questions_by_hybrid_vlm(
     # marginal anchor main 단위 cut (그림+stem+sub-items 통째) 의도. VLM 이 main 박스를
     # "problem_fragment" 로 잘못 분류해 reject 하는 결함 방지.
     workbook_vlm_skip_types = {"academy_workbook", "commercial_workbook"}
+    # School exam PDFs with OCR-derived question numbers are recall-critical:
+    # cross-page anchor validation already removed obvious false anchors, while
+    # the visual classifier can mistake legitimate split-looking exam crops for
+    # fragments. Keep the numbered OCR set intact and let the review UI handle
+    # any surplus boxes rather than silently deleting real questions.
+    if source_type == "school_exam_pdf":
+        logger.info(
+            "HYBRID_VLM_SKIP_SCHOOL_EXAM | doc=%s | questions=%d "
+            "(preserve OCR-numbered exam segments)",
+            document_id,
+            len(questions),
+        )
+        return questions
     try:
         from academy.adapters.ai.detection.hybrid_vlm_classifier import (
             is_hybrid_vlm_enabled_for_tenant,
