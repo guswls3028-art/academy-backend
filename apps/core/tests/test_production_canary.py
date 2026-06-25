@@ -71,7 +71,7 @@ class ProductionCanaryTests(TestCase):
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["summary"]["errors"], 0)
 
-    def test_idle_messaging_worker_option_allows_stale_heartbeat_with_fail_on_warning(self):
+    def test_idle_messaging_worker_option_allows_idle_heartbeat_with_fail_on_warning(self):
         WorkerHeartbeatModel.objects.create(
             name="messaging",
             instance="i-idle-worker",
@@ -88,6 +88,7 @@ class ProductionCanaryTests(TestCase):
 
         check = next(item for item in payload["checks"] if item["name"] == "messaging_worker_heartbeat")
         self.assertTrue(check["ok"])
+        self.assertEqual(check["data"]["status"], "idle")
         self.assertTrue(check["data"]["idle_scale_to_zero_allowed"])
 
     def test_enabled_autosend_without_effective_approved_template_fails(self):

@@ -74,7 +74,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--allow-idle-messaging-worker",
             action="store_true",
-            help="Allow stale/missing messaging worker heartbeat when ASG desired=0 scale-to-zero is expected.",
+            help="Allow idle/stale/missing messaging worker heartbeat when ASG desired=0 scale-to-zero is expected.",
         )
 
     def handle(self, *args, **options):
@@ -187,7 +187,7 @@ class Command(BaseCommand):
         }
         worker_status = worker["status"]
         worker_ok = worker_status == "ok" or (
-            allow_idle_worker and worker_status in {"stale", "unknown"}
+            allow_idle_worker and worker_status in {"idle", "stale", "unknown"}
         )
         worker_data = {
             **worker,
