@@ -25,9 +25,9 @@ PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL = (
 
 
 def is_problem_delete_protected(problem: MatchupProblem) -> bool:
-    """학원장 데이터 보호 SSOT: 수동/보고서 선별 문제는 hard delete 대상이 아니다."""
+    """단건 삭제 보호: 보고서 선별 문제만 차단하고, 사용자가 직접 만든 수동 문제는 삭제 허용."""
     meta = problem.meta or {}
-    return meta.get("manual") is True or meta.get("manual_owner_pinned") is True
+    return meta.get("manual_owner_pinned") is True
 
 
 def protected_matchup_problem_ids(problem_queryset) -> list[int]:
