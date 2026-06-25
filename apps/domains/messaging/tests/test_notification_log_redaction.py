@@ -119,3 +119,44 @@ class NotificationLogRedactionTests(TestCase):
 
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(detail_response.data["provider_message_id"], "group-provider-proof")
+
+    def test_log_api_includes_owner_proxy_logs_for_source_tenant(self):
+        owner = Tenant.objects.create(name="Owner Sender", code="owner-sender", is_active=True)
+        create_notification_log(
+            tenant_id=owner.id,
+            source_tenant_id=self.tenant.id,
+            success=True,
+            amount_deducted=Decimal("1"),
+            recipient_summary="010****7466",
+            template_summary="가입 안내(학부모)",
+            message_body="학부모 가입 안내",
+            message_mode="alimtalk",
+            provider_message_id="group-source-tenant-proof",
+            notification_type="registration_approved_parent",
+            target_type="account",
+            target_id="parent:123:01031217466",
+            target_name="E2E 학생",
+        )
+        log = NotificationLog.objects.get(provider_message_id="group-source-tenant-proof")
+
+        list_request = self.factory.get("/api/v1/messaging/log/")
+        force_authenticate(list_request, user=self.admin)
+        list_request.user = self.admin
+        list_request.tenant = self.tenant
+        list_response = NotificationLogListView.as_view()(list_request)
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.data["results"][0]["id"], log.id)
+        self.assertEqual(list_response.data["results"][0]["notification_type"], "registration_approved_parent")
+        self.assertEqual(list_response.data["results"][0]["source_tenant_id"], self.tenant.id)
+        self.assertEqual(list_response.data["results"][0]["target_id"], "parent:123:01031217466")
+
+        detail_request = self.factory.get(f"/api/v1/messaging/log/{log.id}/")
+        force_authenticate(detail_request, user=self.admin)
+        detail_request.user = self.admin
+        detail_request.tenant = self.tenant
+        detail_response = NotificationLogDetailView.as_view()(detail_request, pk=log.id)
+
+        self.assertEqual(detail_response.status_code, 200)
+        self.assertEqual(detail_response.data["notification_type"], "registration_approved_parent")
+        self.assertEqual(detail_response.data["provider_message_id"], "group-source-tenant-proof")

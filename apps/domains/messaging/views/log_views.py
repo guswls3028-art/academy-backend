@@ -7,6 +7,7 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.db.models import Q
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import NotificationLog
@@ -22,7 +23,9 @@ class NotificationLogListView(APIView):
         offset = (page - 1) * page_size
         # status 필터: success / failure / all (기본 all)
         status_filter = (request.query_params.get("status") or "").strip().lower()
-        base_qs = NotificationLog.objects.filter(tenant=request.tenant)
+        base_qs = NotificationLog.objects.filter(
+            Q(tenant=request.tenant) | Q(source_tenant=request.tenant)
+        )
         if status_filter == "success":
             base_qs = base_qs.filter(success=True)
         elif status_filter == "failure":
@@ -43,6 +46,7 @@ class NotificationLogListView(APIView):
                 "failure_reason": r.failure_reason or "",
                 "message_body": r.message_body or "",
                 "message_mode": r.message_mode or "",
+                "notification_type": r.notification_type or "",
                 "source_tenant_id": r.source_tenant_id,
                 "target_type": r.target_type or "",
                 "target_id": r.target_id or "",
@@ -58,7 +62,10 @@ class NotificationLogDetailView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request, pk):
-        log = NotificationLog.objects.filter(tenant=request.tenant, pk=pk).first()
+        log = NotificationLog.objects.filter(
+            Q(tenant=request.tenant) | Q(source_tenant=request.tenant),
+            pk=pk,
+        ).first()
         if not log:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response({
@@ -74,6 +81,7 @@ class NotificationLogDetailView(APIView):
             "failure_reason": log.failure_reason or "",
             "message_body": log.message_body or "",
             "message_mode": log.message_mode or "",
+            "notification_type": log.notification_type or "",
             "source_tenant_id": log.source_tenant_id,
             "target_type": log.target_type or "",
             "target_id": log.target_id or "",
