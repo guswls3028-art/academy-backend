@@ -184,3 +184,20 @@ class MessagingOperationsStatusViewTests(MessagingOperationsBase):
         self.assertEqual(response.data["log_24h"]["failed"], 1)
         self.assertEqual(response.data["auto_send"]["enabled_without_template"], 0)
         self.assertTrue(any(item["code"] == "scheduled_overdue" for item in response.data["risks"]))
+
+    def test_operations_status_marks_stale_heartbeat_idle_when_no_backlog(self):
+        WorkerHeartbeatModel.objects.create(
+            name="messaging",
+            instance="i-old",
+            last_seen_at=timezone.now() - timedelta(minutes=10),
+            version="sha-old",
+        )
+
+        response = MessagingOperationsStatusView.as_view()(
+            self._request("get", "/api/v1/messaging/operations/status/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["worker"]["status"], "idle")
+        self.assertEqual(response.data["worker"]["idle_reason"], "scale_to_zero_no_backlog")
+        self.assertFalse(any(item["code"] == "worker_attention" for item in response.data["risks"]))

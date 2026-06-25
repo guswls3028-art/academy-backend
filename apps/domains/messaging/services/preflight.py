@@ -360,7 +360,13 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
     if failed or failed_scheduled_24h:
         risks.append({"code": "recent_failures", "title": "최근 실패", "detail": f"최근 24시간 실패 로그 {failed}건, 예약 실패 {failed_scheduled_24h}건입니다."})
     heartbeat = _latest_worker_heartbeat()
-    if heartbeat["status"] != "ok":
+    if heartbeat["status"] in {"unknown", "stale"} and not pending and not due_now and not processing:
+        heartbeat = {
+            **heartbeat,
+            "status": "idle",
+            "idle_reason": "scale_to_zero_no_backlog",
+        }
+    if heartbeat["status"] not in {"ok", "idle"}:
         risks.append({"code": "worker_attention", "title": "워커 확인", "detail": "메시징 워커 heartbeat가 없거나 오래되었습니다."})
     if not freeform:
         risks.append({"code": "freeform_missing", "title": "자유양식 없음", "detail": "직접 작성 알림톡에 사용할 승인 자유양식이 없습니다."})
