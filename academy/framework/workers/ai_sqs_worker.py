@@ -56,6 +56,14 @@ IDLE_SCALE_IN_ENABLED = os.getenv("AI_WORKER_IDLE_SCALE_IN_ENABLED", "1").strip(
 IDLE_EMPTY_POLLS_BEFORE_SCALE_IN = int(
     os.getenv("AI_WORKER_IDLE_EMPTY_POLLS_BEFORE_SCALE_IN", "15")
 )
+IDLE_SCALE_IN_CONFIRM_SECONDS = float(
+    os.getenv("AI_WORKER_IDLE_SCALE_IN_CONFIRM_SECONDS", "30")
+)
+IDLE_SCALE_IN_COUNT_TIERS = tuple(
+    tier.strip().lower()
+    for tier in os.getenv("AI_WORKER_IDLE_SCALE_IN_COUNT_TIERS", "basic,lite,premium").split(",")
+    if tier.strip()
+) or ("basic", "lite", "premium")
 # Lease 전략: (1) 고정. visibility 3600 - safety_margin 60 = 3540. 문서 §8.3.
 LEASE_SECONDS = int(os.getenv("AI_JOB_LEASE_SECONDS", "3540"))
 # inference 최대 60분. 초과 시 fail_ai_job + delete + extender stop. 문서 §8.3.
@@ -105,12 +113,69 @@ def _queue_counts_are_idle(counts: dict[str, int]) -> bool:
     )
 
 
+def _scale_in_count_tiers(current_tier: str) -> tuple[str, ...]:
+    tiers = list(IDLE_SCALE_IN_COUNT_TIERS)
+    current = (current_tier or "").strip().lower()
+    if current and current not in tiers:
+        tiers.insert(0, current)
+    return tuple(tiers)
+
+
+def _combined_queue_counts_for_scale_in(
+    queue: SQSAIQueueAdapter,
+    *,
+    current_tier: str,
+) -> dict[str, int]:
+    combined = {"visible": 0, "not_visible": 0, "delayed": 0}
+    for tier_name in _scale_in_count_tiers(current_tier):
+        counts = queue.get_counts(tier=tier_name)
+        for key in combined:
+            combined[key] = max(combined[key], int(counts.get(key) or 0))
+    return combined
+
+
+def _active_running_ai_jobs_exist() -> bool:
+    try:
+        from django.db.models import Q
+        from django.utils import timezone
+        from apps.domains.ai.models import AIJobModel
+
+        now = timezone.now()
+        return (
+            AIJobModel.objects.filter(status="RUNNING")
+            .filter(Q(lease_expires_at__isnull=True) | Q(lease_expires_at__gt=now))
+            .exists()
+        )
+    except Exception:
+        logger.warning("AI_IDLE_SCALE_IN_RUNNING_JOB_CHECK_FAILED", exc_info=True)
+        return True
+
+
 def _try_idle_scale_in(queue: SQSAIQueueAdapter, tier: str) -> bool:
-    counts = queue.get_counts(tier=tier)
+    counts = _combined_queue_counts_for_scale_in(queue, current_tier=tier)
     if not _queue_counts_are_idle(counts):
         logger.info("AI_IDLE_SCALE_IN_SKIP | counts=%s", counts)
         return False
-    return scale_down_ai_worker_asg_to_zero_if_idle(counts)
+    if _active_running_ai_jobs_exist():
+        logger.info("AI_IDLE_SCALE_IN_SKIP | active_running_job=true")
+        return False
+    if IDLE_SCALE_IN_CONFIRM_SECONDS > 0:
+        time.sleep(IDLE_SCALE_IN_CONFIRM_SECONDS)
+    if _shutdown:
+        return False
+    confirmed_counts = _combined_queue_counts_for_scale_in(queue, current_tier=tier)
+    if not _queue_counts_are_idle(confirmed_counts):
+        logger.info(
+            "AI_IDLE_SCALE_IN_SKIP_AFTER_CONFIRM | before=%s | after=%s",
+            counts,
+            confirmed_counts,
+        )
+        return False
+    if _active_running_ai_jobs_exist():
+        logger.info("AI_IDLE_SCALE_IN_SKIP_AFTER_CONFIRM | active_running_job=true")
+        return False
+    return scale_down_ai_worker_asg_to_zero_if_idle(confirmed_counts)
+
 
 
 def _dispatch_domain_callback(
