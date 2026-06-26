@@ -26,7 +26,7 @@ def publish_ai_job_sqs(job_model: AIJobModel) -> None:
 
     if is_tool_worker_job_type(job_model.job_type):
         queue_name = getattr(settings, "TOOLS_SQS_QUEUE_NAME", DEFAULT_TOOLS_QUEUE_NAME)
-        queue = AISQSQueue(queue_name_override=queue_name)
+        queue = AISQSQueue(queue_name_override=queue_name, wake_ai_workers=False)
         queue.enqueue(job_model)
         logger.info(
             "Tool job enqueued: job_id=%s job_type=%s queue=%s",

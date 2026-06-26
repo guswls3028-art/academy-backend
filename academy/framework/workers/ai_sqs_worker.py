@@ -15,6 +15,7 @@ import sys
 import threading
 import time
 import uuid
+from datetime import timedelta
 from typing import Any, Callable, Optional
 
 from django.db import close_old_connections, connections
@@ -58,6 +59,9 @@ IDLE_EMPTY_POLLS_BEFORE_SCALE_IN = int(
 )
 IDLE_SCALE_IN_CONFIRM_SECONDS = float(
     os.getenv("AI_WORKER_IDLE_SCALE_IN_CONFIRM_SECONDS", "30")
+)
+IDLE_SCALE_IN_PENDING_JOB_WINDOW_SECONDS = int(
+    os.getenv("AI_WORKER_IDLE_SCALE_IN_PENDING_JOB_WINDOW_SECONDS", "21600")
 )
 IDLE_SCALE_IN_COUNT_TIERS = tuple(
     tier.strip().lower()
@@ -141,10 +145,17 @@ def _active_running_ai_jobs_exist() -> bool:
         from apps.domains.ai.models import AIJobModel
 
         now = timezone.now()
+        pending_since = now - timedelta(
+            seconds=max(60, IDLE_SCALE_IN_PENDING_JOB_WINDOW_SECONDS)
+        )
         return (
             AIJobModel.objects.filter(status="RUNNING")
             .filter(Q(lease_expires_at__isnull=True) | Q(lease_expires_at__gt=now))
             .exists()
+            or AIJobModel.objects.filter(
+                status__in=("PENDING", "RETRYING"),
+                updated_at__gte=pending_since,
+            ).exists()
         )
     except Exception:
         logger.warning("AI_IDLE_SCALE_IN_RUNNING_JOB_CHECK_FAILED", exc_info=True)

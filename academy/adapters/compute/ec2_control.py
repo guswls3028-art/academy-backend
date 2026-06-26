@@ -30,6 +30,53 @@ def _aws_client(service: str):
     return boto3.client(service, region_name=REGION)
 
 
+def ensure_ai_worker_asg_min_capacity(min_capacity: int = 3) -> bool:
+    """
+    Ensure the AI worker ASG has enough desired capacity for newly queued work.
+
+    This is intentionally called from enqueue paths, not only CloudWatch alarms:
+    SQS visible-message metrics can lag long enough for a real user upload to sit
+    in "processing" while the worker fleet is still at zero.
+    """
+    try:
+        min_capacity = max(1, int(min_capacity or 1))
+    except (TypeError, ValueError):
+        min_capacity = 3
+
+    try:
+        asg = _aws_client("autoscaling")
+        resp = asg.describe_auto_scaling_groups(
+            AutoScalingGroupNames=[AI_WORKER_ASG_NAME]
+        )
+        groups = resp.get("AutoScalingGroups", [])
+        if not groups:
+            logger.warning("[AI] ASG %s not found — skip capacity ensure", AI_WORKER_ASG_NAME)
+            return False
+
+        group = groups[0]
+        desired = int(group.get("DesiredCapacity") or 0)
+        max_size = int(group.get("MaxSize") or min_capacity)
+        target_capacity = min(min_capacity, max_size)
+        if desired >= target_capacity:
+            logger.info(
+                "[AI] ASG desired already sufficient (desired=%d target=%d)",
+                desired,
+                target_capacity,
+            )
+            return True
+
+        logger.info("[AI] ASG desired=%d → setting to %d", desired, target_capacity)
+        asg.set_desired_capacity(
+            AutoScalingGroupName=AI_WORKER_ASG_NAME,
+            DesiredCapacity=target_capacity,
+            HonorCooldown=False,
+        )
+        return True
+    except Exception:
+        logger.warning("[AI] AI worker capacity ensure failed — job remains queued", exc_info=True)
+        return False
+
+
 def start_ai_worker_instance():
     """
     API 서버에서 호출
@@ -38,6 +85,7 @@ def start_ai_worker_instance():
     - 이미 running이면 no-op (idempotent)
     """
     try:
+        ensure_ai_worker_asg_min_capacity(min_capacity=1)
         asg = _aws_client("autoscaling")
         resp = asg.describe_auto_scaling_groups(
             AutoScalingGroupNames=[AI_WORKER_ASG_NAME]
@@ -52,11 +100,6 @@ def start_ai_worker_instance():
         instances = group.get("Instances", [])
 
         if desired == 0:
-            logger.info("[AI] ASG desired=0 → setting to 1")
-            asg.set_desired_capacity(
-                AutoScalingGroupName=AI_WORKER_ASG_NAME,
-                DesiredCapacity=1,
-            )
             return
 
         ec2 = _aws_client("ec2")

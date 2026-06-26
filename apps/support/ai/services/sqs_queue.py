@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from typing import Optional
 
 from datetime import timedelta
@@ -58,9 +59,40 @@ class AISQSQueue:
     
     MAX_RECEIVE_COUNT = 3  # DLQ로 전송 전 최대 재시도 횟수
     
-    def __init__(self, queue_name_override: Optional[str] = None):
+    def __init__(
+        self,
+        queue_name_override: Optional[str] = None,
+        *,
+        wake_ai_workers: Optional[bool] = None,
+    ):
         self.queue_client = get_queue_client()
         self.queue_name_override = queue_name_override
+        self.wake_ai_workers = (queue_name_override is None) if wake_ai_workers is None else bool(wake_ai_workers)
+
+    def _enqueue_wake_capacity(self) -> int:
+        raw_value = os.getenv(
+            "AI_WORKER_ENQUEUE_WAKE_CAPACITY",
+            str(getattr(settings, "AI_WORKER_ENQUEUE_WAKE_CAPACITY", 3)),
+        )
+        try:
+            return max(1, int(raw_value))
+        except (TypeError, ValueError):
+            return 3
+
+    def _wake_ai_workers_after_enqueue(self) -> None:
+        if not self.wake_ai_workers:
+            return
+        try:
+            from academy.adapters.compute.ec2_control import ensure_ai_worker_asg_min_capacity
+
+            ensure_ai_worker_asg_min_capacity(
+                min_capacity=self._enqueue_wake_capacity(),
+            )
+        except Exception:
+            logger.warning(
+                "AI worker wake-up failed after enqueue; job remains queued",
+                exc_info=True,
+            )
     
     def _get_queue_name(self, tier: str) -> str:
         """
@@ -160,6 +192,7 @@ class AISQSQueue:
                     tier,
                     queue_name,
                 )
+                self._wake_ai_workers_after_enqueue()
             else:
                 logger.error("Failed to enqueue AI job: job_id=%s, tier=%s", job.job_id, tier)
             

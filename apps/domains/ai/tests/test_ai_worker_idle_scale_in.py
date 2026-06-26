@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
+from django.utils import timezone
 
 from academy.framework.workers import ai_sqs_worker
+from apps.domains.ai.models import AIJobModel
 
 
 class _Queue:
@@ -127,3 +130,36 @@ class AIWorkerIdleScaleInTests(SimpleTestCase):
             self.assertFalse(ai_sqs_worker._try_idle_scale_in(queue, "basic"))
 
         scale_down.assert_not_called()
+
+
+class AIWorkerActiveJobQueryTests(TestCase):
+    def test_active_job_check_treats_recent_pending_job_as_work(self):
+        AIJobModel.objects.create(
+            job_id="pending-matchup",
+            job_type="matchup_analysis",
+            status="PENDING",
+            tier="basic",
+            tenant_id="1",
+            source_domain="matchup",
+            source_id="1",
+        )
+
+        with patch.object(ai_sqs_worker, "IDLE_SCALE_IN_PENDING_JOB_WINDOW_SECONDS", 21600):
+            self.assertTrue(ai_sqs_worker._active_running_ai_jobs_exist())
+
+    def test_active_job_check_ignores_stale_pending_job(self):
+        job = AIJobModel.objects.create(
+            job_id="stale-pending-matchup",
+            job_type="matchup_analysis",
+            status="PENDING",
+            tier="basic",
+            tenant_id="1",
+            source_domain="matchup",
+            source_id="1",
+        )
+        AIJobModel.objects.filter(pk=job.pk).update(
+            updated_at=timezone.now() - timedelta(hours=7)
+        )
+
+        with patch.object(ai_sqs_worker, "IDLE_SCALE_IN_PENDING_JOB_WINDOW_SECONDS", 21600):
+            self.assertFalse(ai_sqs_worker._active_running_ai_jobs_exist())
