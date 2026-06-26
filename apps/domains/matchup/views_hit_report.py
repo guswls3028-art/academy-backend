@@ -11,7 +11,7 @@ import hashlib
 import io
 import logging
 
-from django.http import JsonResponse, HttpResponse
+from django.http import JsonResponse, HttpResponse, StreamingHttpResponse
 from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -914,149 +914,11 @@ def _notify_hit_report_submitted(report, request) -> None:
 
     재사용: TYPE_SCORE 템플릿 (메모리 `community_alimtalk` 패턴, 신규 카카오 검수 회피).
     """
-    from apps.domains.messaging.selectors import get_auto_send_config
-    from apps.domains.messaging.services import enqueue_sms
-    from apps.domains.messaging.alimtalk_content_builders import (
-        get_solapi_template_id, build_unified_replacements,
-    )
-    from apps.domains.messaging.policy import is_messaging_disabled
-    from apps.core.models import TenantMembership
-
-    trigger = "matchup_report_submitted"
-    tenant = report.tenant
-    tenant_id = tenant.id
-
-    if is_messaging_disabled(tenant_id):
-        logger.info("hit_report_notify skipped: tenant %s messaging disabled", tenant_id)
-        return
-
-    config = get_auto_send_config(tenant_id, trigger)
-    if not config or not config.enabled:
-        logger.debug(
-            "hit_report_notify skipped: trigger=%s tenant=%s (config disabled or missing)",
-            trigger, tenant_id,
-        )
-        return
-
-    template = config.template
-    template_body = (template.body if template else "") or (
-        "강사가 매치업 적중 보고서를 제출했습니다.\n"
-        "어드민 → 매치업에서 보고서 inbox를 확인해 주세요."
+    from academy.adapters.db.django.repositories_matchup_notifications import (
+        notify_hit_report_submitted,
     )
 
-    tenant_name = (tenant.name or "").strip() or "학원"
-    site_url = "https://hakwonplus.com"
-    if tenant.code:
-        site_url = f"https://{tenant.code}.hakwonplus.com"
-
-    author_name = ""
-    if report.author_id and report.author is not None:
-        from apps.core.models.user import user_display_username
-        author_name = (
-            getattr(report.author, "name", None)
-            or user_display_username(report.author)
-            or ""
-        )
-    if not author_name:
-        author_name = report.submitted_by_name or "강사"
-
-    doc = report.document
-    doc_title = (doc.title if doc else "") or "시험지"
-    doc_category = (doc.category if doc else "") or ""
-
-    # ITEM_LIST 슬롯 매핑 — score 템플릿 재사용 ("강의명"=학교/카테고리, "차시명"=시험지+강사)
-    context = {
-        "강의명": (doc_category or doc_title)[:30],
-        "차시명": f"{doc_title[:20]}  ·  {author_name} 강사"[:30],
-    }
-
-    # 수신자 — owner/admin 멀티 (TenantMembership active)
-    memberships = list(
-        TenantMembership.objects.filter(
-            tenant=tenant, is_active=True, role__in=["owner", "admin"],
-        ).select_related("user").only(
-            "user__id", "user__name", "user__username", "user__phone",
-        )
-    )
-    if not memberships:
-        logger.info("hit_report_notify: no owner/admin in tenant %s", tenant_id)
-        return
-
-    # 1인 학원 silent suppress (2026-05-11 학원장 mental model 정정):
-    # 1인 학원 (강사=학원장) 케이스에서 author 가 유일한 owner/admin 이면
-    # 본인 자신에게 "본인이 게시했습니다" 알림 = noise. 멀티 owner/admin 학원에서만
-    # 발송 (강사 → 학원 owner KPI 보고 의미 살아있음).
-    if report.author_id:
-        non_author_recipients = [
-            m for m in memberships
-            if getattr(getattr(m, "user", None), "id", None) != report.author_id
-        ]
-        if not non_author_recipients:
-            logger.info(
-                "hit_report_notify suppressed: solo academy (author=%s sole owner/admin), tenant=%s",
-                report.author_id, tenant_id,
-            )
-            return
-        memberships = non_author_recipients
-
-    solapi_tid = get_solapi_template_id(trigger)
-    if not solapi_tid:
-        # 카카오 검수 통과된 양식이 없으면 알림톡 발송 미수행 (silent).
-        # 옛 score 좀비 fallback 종료 — 운영자가 새 양식 검수 받으면 매핑 추가.
-        logger.info(
-            "hit_report_notify suppressed: no approved alimtalk template for %s (tenant=%s)",
-            trigger, tenant_id,
-        )
-        return
-    sent_count = 0
-    sent_user_ids: list[int] = []
-    for m in memberships:
-        u = getattr(m, "user", None)
-        if not u:
-            continue
-        phone = (getattr(u, "phone", "") or "").replace("-", "").strip()
-        if not phone:
-            logger.debug(
-                "hit_report_notify: user %s has no phone, skip", getattr(u, "id", "?"),
-            )
-            continue
-
-        recipient_name = getattr(u, "name", None) or getattr(u, "username", "") or ""
-
-        replacements = build_unified_replacements(
-            trigger=trigger,
-            content_body=template_body,
-            context=context,
-            tenant_name=tenant_name,
-            student_name=recipient_name,
-            site_url=site_url,
-        )
-        sms_kwargs = dict(
-            tenant_id=tenant_id,
-            to=phone,
-            text=template_body,
-            message_mode="alimtalk",
-            template_id=solapi_tid,
-            alimtalk_replacements=replacements,
-        )
-
-        try:
-            ok = enqueue_sms(**sms_kwargs)
-            if ok:
-                sent_count += 1
-                sent_user_ids.append(u.id)
-        except Exception as e:
-            logger.warning(
-                "hit_report_notify enqueue failed: report=%s user=%s err=%s",
-                report.id, u.id, e,
-            )
-
-    # 발송 로그 — meta에 영구 기록 (운영 감사 추적용. 본 컬럼은 신규 추가 없이 jsonb meta 활용 가능하나
-    # MatchupHitReport는 meta 필드가 없으므로 logger.info만 남긴다).
-    logger.info(
-        "HIT_REPORT_NOTIFIED | tenant=%s report=%s author=%s recipients=%d/%d user_ids=%s",
-        tenant_id, report.id, report.author_id, sent_count, len(memberships), sent_user_ids,
-    )
+    notify_hit_report_submitted(report, request)
 
 
 def _hit_report_pdf_version(report) -> str:
@@ -1208,7 +1070,11 @@ class HitReportZipExportView(View):
             )
 
         try:
-            zip_bytes = _build_hit_report_share_zip(report)
+            zip_iter = _iter_hit_report_share_zip(report)
+            first_chunk = next(zip_iter)
+        except StopIteration:
+            logger.exception("hit_report_share_zip generated no content (report=%s)", report.id)
+            return JsonResponse({"detail": "ZIP 생성 실패"}, status=500)
         except Exception:
             logger.exception("hit_report_share_zip failed (report=%s)", report.id)
             return JsonResponse({"detail": "ZIP 생성 실패"}, status=500)
@@ -1216,54 +1082,148 @@ class HitReportZipExportView(View):
         from urllib.parse import quote
         title = report.title or report.document.title or f"matchup-hitreport-{report.id}"
         safe_name = quote(title[:80])
-        resp = HttpResponse(zip_bytes, content_type="application/zip")
+
+        def stream():
+            yield first_chunk
+            yield from zip_iter
+
+        resp = StreamingHttpResponse(stream(), content_type="application/zip")
         resp["Content-Disposition"] = (
             f"attachment; filename=\"matchup-hitreport-{report.id}-share.zip\"; "
             f"filename*=UTF-8''{safe_name}-카페공유.zip"
         )
         resp["Cache-Control"] = "private, no-cache"
+        resp["X-Accel-Buffering"] = "no"
+        resp["X-Matchup-Zip-Mode"] = "stream"
         return resp
 
 
 def _build_hit_report_share_zip(report) -> bytes:
-    """PDF → 페이지별 PNG + summary.md + README.txt → in-memory ZIP.
+    """PDF → 페이지별 PNG + summary.md + README.txt → ZIP bytes.
 
-    PyMuPDF로 PDF 페이지 → 200dpi PNG 변환. 이미 PDF 생성 로직(이미지 prefetch +
-    레이아웃)을 재사용하므로 ZIP 생성은 PDF 1회 빌드 + 페이지 렌더 비용.
+    Backward-compatible helper for unit tests and ad-hoc scripts. The API view
+    uses `_iter_hit_report_share_zip` so large reports do not sit behind the
+    gateway idle timeout before the first byte is sent.
     """
+    return b"".join(_iter_hit_report_share_zip(report))
+
+
+class _StreamingZipBuffer:
+    """Small write-only buffer consumed by `zipfile` during StreamingHttpResponse."""
+
+    def __init__(self):
+        self._chunks: list[bytes] = []
+
+    def write(self, data):
+        if data:
+            self._chunks.append(bytes(data))
+        return len(data)
+
+    def flush(self):
+        return None
+
+    def close(self):
+        return None
+
+    def drain(self):
+        chunks = self._chunks
+        self._chunks = []
+        return chunks
+
+
+def _hit_report_zip_render_dpi(page_count: int) -> int:
+    if page_count >= 100:
+        return 120
+    if page_count >= 60:
+        return 140
+    return 180
+
+
+def _iter_hit_report_share_zip(report):
+    """Stream report.zip chunks instead of building the entire archive in memory."""
     import io
     import zipfile
-    from datetime import datetime
 
-    from .pdf_report import generate_curated_hit_report_pdf, _compute_display_sim
     from academy.adapters.tools.pymupdf_renderer import PdfDocument
 
-    pdf_bytes = generate_curated_hit_report_pdf(report)
+    pdf_bytes, cache_state = _get_or_generate_curated_hit_report_pdf(report)
+    summary_md, readme_txt = _build_hit_report_share_text_files(report)
 
-    # PDF → 페이지별 PNG (200 dpi — 카페 업로드 시 화질 충분, 사이즈 적정).
-    page_pngs: list[bytes] = []
-    pdf_temp = io.BytesIO(pdf_bytes)
-    pdf_temp.seek(0)
-    import tempfile
-    import os
-    tmp_path = None
+    sink = _StreamingZipBuffer()
+    zf = zipfile.ZipFile(sink, "w", zipfile.ZIP_DEFLATED, allowZip64=True)
     try:
-        fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
-        os.close(fd)
-        with open(tmp_path, "wb") as f:
-            f.write(pdf_bytes)
-        with PdfDocument(tmp_path) as doc_pdf:
-            for i in range(doc_pdf.page_count()):
-                page_img = doc_pdf.render_page(i, dpi=200)
-                buf = io.BytesIO()
-                page_img.save(buf, "PNG", optimize=True)
-                page_pngs.append(buf.getvalue())
+        zf.writestr("summary.md", summary_md)
+        yield from sink.drain()
+
+        zf.writestr("README.txt", readme_txt)
+        yield from sink.drain()
+
+        # Keep the original PDF in the package. Even if a later PNG render page
+        # fails, teachers still receive the official report and can use it.
+        zf.writestr("report.pdf", pdf_bytes, compress_type=zipfile.ZIP_STORED)
+        yield from sink.drain()
+
+        # PDF → 페이지별 PNG. PNG/PDF are already compressed, so storing avoids
+        # double-deflate CPU cost that caused 60s gateway timeouts on large reports.
+        import tempfile
+        import os
+        tmp_path = None
+        rendered = 0
+        try:
+            fd, tmp_path = tempfile.mkstemp(suffix=".pdf")
+            os.close(fd)
+            with open(tmp_path, "wb") as f:
+                f.write(pdf_bytes)
+            with PdfDocument(tmp_path) as doc_pdf:
+                page_count = doc_pdf.page_count()
+                render_dpi = _hit_report_zip_render_dpi(page_count)
+                logger.info(
+                    "HIT_REPORT_ZIP_STREAM_START | report=%s pages=%s dpi=%s pdf_cache=%s",
+                    getattr(report, "id", "?"), page_count, render_dpi, cache_state,
+                )
+                for i in range(page_count):
+                    page_img = doc_pdf.render_page(i, dpi=render_dpi)
+                    buf = io.BytesIO()
+                    page_img.save(buf, "PNG", optimize=False, compress_level=3)
+                    png = buf.getvalue()
+                    zf.writestr(
+                        f"pages/page_{i + 1:03d}.png",
+                        png,
+                        compress_type=zipfile.ZIP_STORED,
+                    )
+                    if i == 0:
+                        zf.writestr("cover.png", png, compress_type=zipfile.ZIP_STORED)
+                    rendered += 1
+                    yield from sink.drain()
+        except Exception as exc:
+            logger.exception(
+                "hit_report_share_zip page render failed (report=%s rendered=%s)",
+                getattr(report, "id", "?"), rendered,
+            )
+            zf.writestr(
+                "ERROR.txt",
+                (
+                    "페이지 PNG 생성 중 오류가 발생했습니다.\n"
+                    "report.pdf, summary.md, README.txt 는 정상 포함되어 있습니다.\n"
+                    f"error={type(exc).__name__}: {exc}\n"
+                ).encode("utf-8"),
+            )
+            yield from sink.drain()
+        finally:
+            if tmp_path:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
     finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
+        zf.close()
+        yield from sink.drain()
+
+
+def _build_hit_report_share_text_files(report) -> tuple[bytes, bytes]:
+    from datetime import datetime
+
+    from .pdf_report import _compute_display_sim
 
     # summary.md — 카페 본문에 paste 가능한 markdown
     document = report.document
@@ -1381,17 +1341,7 @@ def _build_hit_report_share_zip(report) -> bytes:
     ]
     readme_txt = "\n".join(readme_lines).encode("utf-8")
 
-    # ZIP 패키징
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for i, png in enumerate(page_pngs, start=1):
-            zf.writestr(f"pages/page_{i:03d}.png", png)
-        if page_pngs:
-            zf.writestr("cover.png", page_pngs[0])  # 페이지 1 alias = 표지
-        zf.writestr("summary.md", summary_md)
-        zf.writestr("README.txt", readme_txt)
-
-    return zip_buf.getvalue()
+    return summary_md, readme_txt
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")

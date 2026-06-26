@@ -131,7 +131,7 @@ function Ensure-AiSqsScaling {
             "--region", $region, "--output", "json")
         $policyOutArn = $putOut.PolicyARN
 
-        $stepAgeOut = '[{"MetricIntervalLowerBound":0,"ScalingAdjustment":1}]'
+        $stepAgeOut = '[{"MetricIntervalLowerBound":0,"ScalingAdjustment":3}]'
         $putAgeOut = Invoke-AwsJson @("autoscaling", "put-scaling-policy",
             "--auto-scaling-group-name", $script:AiASGName,
             "--policy-name", $ageScaleOutPolicyName,
