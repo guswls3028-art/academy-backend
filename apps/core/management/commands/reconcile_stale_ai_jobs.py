@@ -20,6 +20,7 @@ class ReconcileCandidate:
     job_id: str
     source_id: str | None
     reason: str
+    action: str = "fail_job"
 
 
 def _is_stale(job: AIJobModel, cutoff) -> bool:
@@ -32,6 +33,7 @@ def iter_stale_matchup_candidates(
     *,
     older_than_hours: int,
     limit: int,
+    include_processing_source: bool = False,
     terminal_source_statuses: Iterable[str] = DEFAULT_TERMINAL_SOURCE_STATUSES,
 ) -> list[ReconcileCandidate]:
     cutoff = timezone.now() - timezone.timedelta(hours=older_than_hours)
@@ -62,6 +64,19 @@ def iter_stale_matchup_candidates(
         current_job_id = str(doc.ai_job_id or "")
         if current_job_id and current_job_id != str(job.job_id) and str(doc.status).lower() in terminal_statuses:
             candidates.append(ReconcileCandidate(job.job_id, source_id, f"superseded_source:{doc.status}"))
+            continue
+
+        if (
+            include_processing_source
+            and current_job_id == str(job.job_id)
+            and str(doc.status).lower() == "processing"
+        ):
+            candidates.append(ReconcileCandidate(
+                job.job_id,
+                source_id,
+                "expired_processing_source",
+                "retry_processing_source",
+            ))
 
     return candidates
 
@@ -94,8 +109,27 @@ def reconcile_candidates(candidates: Iterable[ReconcileCandidate], *, execute: b
                 "lease_expires_at",
                 "updated_at",
             ])
+            if candidate.action == "retry_processing_source" and str(job.source_id or "").isdigit():
+                doc = MatchupDocument.objects.select_for_update().filter(
+                    id=int(str(job.source_id)),
+                    ai_job_id=job.job_id,
+                    status="processing",
+                ).first()
+                if doc:
+                    doc.status = "failed"
+                    doc.error_message = error
+                    doc.save(update_fields=["status", "error_message", "updated_at"])
             updated += 1
+            if candidate.action == "retry_processing_source" and str(job.source_id or "").isdigit():
+                transaction.on_commit(lambda doc_id=int(str(job.source_id)): _retry_failed_matchup_document(doc_id))
     return updated
+
+
+def _retry_failed_matchup_document(doc_id: int) -> None:
+    from apps.domains.matchup.services import retry_document
+
+    doc = MatchupDocument.objects.get(id=doc_id)
+    retry_document(doc, require_failed=True)
 
 
 class Command(BaseCommand):
@@ -104,6 +138,15 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--older-than-hours", type=int, default=24)
         parser.add_argument("--limit", type=int, default=100)
+        parser.add_argument(
+            "--include-processing-source",
+            action="store_true",
+            help=(
+                "Also recover expired RUNNING jobs whose source document is still processing "
+                "and still points at that job. With --execute, marks the stale job/doc failed "
+                "and immediately dispatches a fresh retry job."
+            ),
+        )
         parser.add_argument("--execute", action="store_true")
 
     def handle(self, *args, **options):
@@ -114,11 +157,13 @@ class Command(BaseCommand):
         candidates = iter_stale_matchup_candidates(
             older_than_hours=older_than_hours,
             limit=limit,
+            include_processing_source=bool(options["include_processing_source"]),
         )
         for candidate in candidates:
             self.stdout.write(
                 f"{'[EXEC]' if execute else '[DRY]'} "
-                f"job_id={candidate.job_id} source_id={candidate.source_id} reason={candidate.reason}"
+                f"job_id={candidate.job_id} source_id={candidate.source_id} "
+                f"reason={candidate.reason} action={candidate.action}"
             )
 
         updated = reconcile_candidates(candidates, execute=execute)
