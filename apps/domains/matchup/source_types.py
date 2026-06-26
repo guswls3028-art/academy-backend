@@ -71,7 +71,7 @@ INDEXABLE_SOURCE_TYPES: Final[frozenset[str]] = frozenset({
 LEGACY_INTENT_TO_SOURCE_TYPE: Final[dict[str, str]] = {
     "test":      "school_exam_pdf",   # 시험지는 학교 PDF로 가정 (학생 사진은 별도 식별 어려움)
     "exam_sheet": "school_exam_pdf",  # services._handle ... 에서 derived 값
-    "reference": "other",             # 참고자료는 보수적 default — 학원장이 명시 지정해야 정확
+    "reference": "academy_workbook",  # frontend intentToSourceType와 동일한 legacy 호환 default
 }
 
 

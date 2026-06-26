@@ -76,6 +76,35 @@ def _source_type_gate_allows(
     return "*" in allowed or source_type in allowed
 
 
+_ANSWER_KEY_NAME_RE = re.compile(r"(답안|정답|answer\s*key|answers?)", re.IGNORECASE)
+_EXPLANATION_NAME_RE = re.compile(r"(해설|풀이|solution|explanation)", re.IGNORECASE)
+_SCHOOL_EXAM_NAME_RE = re.compile(
+    r"(시험지|시험|기출|중간고사|기말고사|모의고사|평가|고사|exam|test)",
+    re.IGNORECASE,
+)
+
+
+def _infer_source_type_from_names(source_type: str, *names: str) -> str:
+    """Recover a better routing type for legacy/empty uploads before segmentation.
+
+    The splitter strategy is selected before paper-type derivation, so this must run
+    before `segment_questions_multipage()`. Explicit 7-value source types other than
+    `other` stay protected.
+    """
+    if source_type != "other":
+        return source_type
+    haystack = " ".join(name for name in names if name).strip()
+    if not haystack:
+        return source_type
+    if _ANSWER_KEY_NAME_RE.search(haystack):
+        return "answer_key"
+    if _EXPLANATION_NAME_RE.search(haystack):
+        return "explanation"
+    if _SCHOOL_EXAM_NAME_RE.search(haystack):
+        return "school_exam_pdf"
+    return source_type
+
+
 def _real_vlm_vision_configured() -> bool:
     adapter = os.environ.get("MATCHUP_VLM_VISION_ADAPTER", "mock").strip().lower()
     return adapter.startswith("gemini") and bool(os.environ.get("GEMINI_API_KEY"))
@@ -222,6 +251,7 @@ def run_matchup_pipeline(
         payload.get("source_type") or payload.get("upload_intent")
     )
     upload_intent = source_type  # legacy alias 보존
+    payload_filename = str(payload.get("filename") or "")
     doc_title = ""
     if (source_type == "other") and document_id:
         # payload에 명시 안 됐으면 DB에서 읽기 (race-safe)
@@ -236,6 +266,19 @@ def run_matchup_pipeline(
             doc_title = doc.title or ""
         except Exception as e:
             logger.warning("MATCHUP_SOURCE_TYPE_LOOKUP_FAIL | doc=%s | err=%s", document_id, e)
+
+    inferred_source_type = _infer_source_type_from_names(
+        source_type,
+        payload_filename,
+        doc_title,
+    )
+    if inferred_source_type != source_type:
+        logger.info(
+            "MATCHUP_SOURCE_TYPE_INFERRED | job=%s | doc=%s | %s -> %s | filename=%s | title=%s",
+            job_id, document_id, source_type, inferred_source_type, payload_filename, doc_title,
+        )
+        source_type = inferred_source_type
+        upload_intent = source_type
 
     # ── 인덱싱 X 사이클 (explanation / answer_key) — 분할 전에 즉시 0 problems 반환 ──
     # 매치업 후보 vector search에 노이즈로 들어가는 것 차단. 이 source_type들은
@@ -312,16 +355,6 @@ def run_matchup_pipeline(
         step_name_display="문제 분할",
         step_percent=100, tenant_id=tenant_id,
     )
-
-    # legacy title 휴리스틱 — source_type=other인 doc에 한해 fallback (하위 호환).
-    if source_type == "other" and doc_title:
-        title_l = doc_title
-        if any(k in title_l for k in (
-            "시험지", "중간고사", "기말고사", "모의고사", "TEST", "Test",
-            "기출 통과", "고난도",
-        )):
-            source_type = "school_exam_pdf"
-            upload_intent = source_type
 
     page_count = len(pages)
     avg_per_page = total_boxes / max(1, page_count)
@@ -417,6 +450,10 @@ def run_matchup_pipeline(
             "problems": [],
             "document_id": document_id,
             "problem_count": 0,
+            "source_type": source_type,
+            "upload_intent": upload_intent,
+            "paper_type_summary": paper_type_summary,
+            "zero_problem_reason": "no_questions_after_segmentation",
         })
 
     # 세그멘테이션 직후 후처리.
@@ -444,7 +481,10 @@ def run_matchup_pipeline(
             "problems": [],
             "document_id": document_id,
             "problem_count": 0,
+            "source_type": source_type,
+            "upload_intent": upload_intent,
             "paper_type_summary": paper_type_summary,
+            "zero_problem_reason": "no_questions_after_post_filter",
         })
 
     # ── Skeleton INSERT — 신규 업로드 사용자에게 즉시 부분 결과 노출 ──
