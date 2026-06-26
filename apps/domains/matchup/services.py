@@ -27,7 +27,8 @@ PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL = (
     "학원장/수동 선별 문제가 포함된 매치업 문서는 삭제할 수 없습니다."
 )
 PUBLIC_CLEANUP_META_KEY = "public_cleanup"
-PUBLIC_CLEANUP_MODE_RED_MARKS = "red_marks"
+PUBLIC_CLEANUP_MODE_STUDENT_MARKS = "student_marks"
+PUBLIC_CLEANUP_VERSION_STUDENT_MARKS = "student-marks-v2"
 
 
 def is_problem_delete_protected(problem: MatchupProblem) -> bool:
@@ -73,6 +74,8 @@ def _cleanup_meta_public_key(meta: dict | None, *, source_image_key: str | None)
     source_key = cleanup.get("source_image_key")
     if source_key != source_image_key:
         return ""
+    if cleanup.get("version") != PUBLIC_CLEANUP_VERSION_STUDENT_MARKS:
+        return ""
     return public_key
 
 
@@ -89,7 +92,7 @@ def public_image_key_for_report(problem: MatchupProblem) -> str:
 def _public_cleanup_key(problem: MatchupProblem) -> str:
     return (
         f"tenants/{problem.tenant_id}/matchup/public-cleanup/problems/"
-        f"{problem.id}-{PUBLIC_CLEANUP_MODE_RED_MARKS}.png"
+        f"{problem.id}-{PUBLIC_CLEANUP_MODE_STUDENT_MARKS}.png"
     )
 
 
@@ -139,8 +142,12 @@ def clean_problem_public_image(
         "version": result.version,
         "source_image_key": problem.image_key,
         "public_image_key": public_key,
-        "red_mask_ratio": result.mask_ratio,
+        "mark_mask_ratio": result.mask_ratio,
+        "red_mask_ratio": result.red_mask_ratio,
+        "dark_mask_ratio": result.dark_mask_ratio,
         "mask_pixels": result.mask_pixels,
+        "red_mask_pixels": result.red_mask_pixels,
+        "dark_mask_pixels": result.dark_mask_pixels,
         "total_pixels": result.total_pixels,
         "width": result.width,
         "height": result.height,
@@ -154,8 +161,12 @@ def clean_problem_public_image(
         "problem_id": problem.id,
         "status": "processed",
         "public_image_key": public_key,
-        "red_mask_ratio": result.mask_ratio,
+        "mark_mask_ratio": result.mask_ratio,
+        "red_mask_ratio": result.red_mask_ratio,
+        "dark_mask_ratio": result.dark_mask_ratio,
         "mask_pixels": result.mask_pixels,
+        "red_mask_pixels": result.red_mask_pixels,
+        "dark_mask_pixels": result.dark_mask_pixels,
         "total_pixels": result.total_pixels,
     }
 
