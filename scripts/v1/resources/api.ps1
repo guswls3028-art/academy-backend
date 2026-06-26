@@ -596,8 +596,22 @@ function Ensure-API-Instance {
                 $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
                 $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
                 $prefs = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;InstanceWarmup=$warmup} | ConvertTo-Json -Compress)
-                Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" 2>$null | Out-Null
-                $script:ChangesMade = $true
+                try {
+                    $refreshes = Invoke-AwsJson @("autoscaling", "describe-instance-refreshes", "--auto-scaling-group-name", $script:ApiASGName, "--region", $script:Region, "--output", "json") 2>$null
+                    $inProgress = $refreshes.InstanceRefreshes | Where-Object { $_.Status -eq "InProgress" -or $_.Status -eq "Pending" } | Select-Object -First 1
+                    if ($inProgress) {
+                        Write-Warn "API instance refresh already in progress (id=$($inProgress.InstanceRefreshId)); skip duplicate refresh after health timeout."
+                    } else {
+                        Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed" 2>$null | Out-Null
+                        $script:ChangesMade = $true
+                    }
+                } catch {
+                    if ($_.Exception.Message -match "InstanceRefreshInProgress") {
+                        Write-Warn "API instance refresh already in progress; skip duplicate refresh after health timeout."
+                    } else {
+                        Write-Warn "API health timeout recovery refresh skipped: $($_.Exception.Message)"
+                    }
+                }
             }
         }
     } else {
