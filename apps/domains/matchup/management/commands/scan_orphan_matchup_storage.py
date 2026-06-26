@@ -9,7 +9,7 @@ R2 storage 버킷의 매치업 prefix에서 DB와 매칭되지 않는 orphan 파
 
 수집되는 DB 키:
   1. MatchupDocument.r2_key
-  2. MatchupProblem.image_key
+  2. MatchupProblem.image_key + meta.public_cleanup.public_image_key
   3. ProblemSegmentationProposal.image_key
   4. MatchupHitReport.image_key (있다면)
   5. MatchupDocument.meta["page_image_keys"] (list)
@@ -207,7 +207,7 @@ class Command(BaseCommand):
                     if isinstance(k, str) and k:
                         keys.add(k)
 
-        # 2. MatchupProblem.image_key (+ manual=True 별도 set)
+        # 2. MatchupProblem.image_key + public cleanup image (+ manual=True 별도 set)
         prob_qs = MatchupProblem.objects.exclude(image_key="")
         if only_tenant is not None:
             prob_qs = prob_qs.filter(tenant_id=only_tenant)
@@ -216,6 +216,12 @@ class Command(BaseCommand):
             if not image_key:
                 continue
             keys.add(image_key)
+            if isinstance(meta, dict):
+                cleanup = meta.get("public_cleanup")
+                if isinstance(cleanup, dict):
+                    public_key = cleanup.get("public_image_key")
+                    if isinstance(public_key, str) and public_key:
+                        keys.add(public_key)
             if isinstance(meta, dict) and meta.get("manual"):
                 manual_keys.add(image_key)
         self._manual_protected_count = len(manual_keys)

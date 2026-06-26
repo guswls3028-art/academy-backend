@@ -3,10 +3,14 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import os
 from typing import List, Optional, Tuple
 
+from django.utils import timezone
+
+from academy.adapters.ai.image_cleanup import remove_colored_marks_from_image_bytes
 from academy.adapters.db.django import repositories_inventory as inventory_repo
 from apps.shared.utils.vector import cosine_similarity
 from .models import MatchupDocument, MatchupProblem
@@ -22,6 +26,8 @@ PROTECTED_MATCHUP_PROBLEM_DELETE_DETAIL = "학원장/수동 선별 문제는 삭
 PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL = (
     "학원장/수동 선별 문제가 포함된 매치업 문서는 삭제할 수 없습니다."
 )
+PUBLIC_CLEANUP_META_KEY = "public_cleanup"
+PUBLIC_CLEANUP_MODE_RED_MARKS = "red_marks"
 
 
 def is_problem_delete_protected(problem: MatchupProblem) -> bool:
@@ -43,6 +49,167 @@ def protected_matchup_problem_ids(problem_queryset) -> list[int]:
 
 def document_has_protected_matchup_problems(document: MatchupDocument) -> bool:
     return bool(protected_matchup_problem_ids(document.problems.all()))
+
+
+def _cleanup_meta_any_public_key(meta: dict | None) -> str:
+    cleanup = (meta or {}).get(PUBLIC_CLEANUP_META_KEY)
+    if not isinstance(cleanup, dict):
+        return ""
+    public_key = cleanup.get("public_image_key")
+    if not isinstance(public_key, str) or not public_key:
+        return ""
+    return public_key
+
+
+def _cleanup_meta_public_key(meta: dict | None, *, source_image_key: str | None) -> str:
+    if not source_image_key:
+        return ""
+    cleanup = (meta or {}).get(PUBLIC_CLEANUP_META_KEY)
+    if not isinstance(cleanup, dict):
+        return ""
+    public_key = _cleanup_meta_any_public_key(meta)
+    if not public_key:
+        return ""
+    source_key = cleanup.get("source_image_key")
+    if source_key != source_image_key:
+        return ""
+    return public_key
+
+
+def get_problem_public_image_key(problem: MatchupProblem) -> str:
+    """Return the current public-facing cleanup key, if it matches image_key."""
+    return _cleanup_meta_public_key(problem.meta, source_image_key=problem.image_key)
+
+
+def public_image_key_for_report(problem: MatchupProblem) -> str:
+    """Official PDF/report image key: cleaned public copy first, original fallback."""
+    return get_problem_public_image_key(problem) or (problem.image_key or "")
+
+
+def _public_cleanup_key(problem: MatchupProblem) -> str:
+    return (
+        f"tenants/{problem.tenant_id}/matchup/public-cleanup/problems/"
+        f"{problem.id}-{PUBLIC_CLEANUP_MODE_RED_MARKS}.png"
+    )
+
+
+def clean_problem_public_image(
+    problem: MatchupProblem,
+    *,
+    force: bool = False,
+    actor=None,
+) -> dict:
+    """Create/update a public-facing cleaned copy for a single problem image."""
+    if not problem.image_key:
+        return {
+            "problem_id": problem.id,
+            "status": "skipped",
+            "reason": "no_image",
+        }
+
+    existing_public_key = get_problem_public_image_key(problem)
+    if existing_public_key and not force:
+        return {
+            "problem_id": problem.id,
+            "status": "skipped",
+            "reason": "existing",
+            "public_image_key": existing_public_key,
+        }
+
+    from apps.infrastructure.storage.r2 import (
+        get_object_bytes_r2_storage,
+        upload_fileobj_to_r2_storage,
+    )
+
+    original_bytes = get_object_bytes_r2_storage(key=problem.image_key)
+    if not original_bytes:
+        raise ValueError("원본 문항 이미지를 찾을 수 없습니다.")
+
+    result = remove_colored_marks_from_image_bytes(original_bytes)
+    public_key = _public_cleanup_key(problem)
+    upload_fileobj_to_r2_storage(
+        fileobj=io.BytesIO(result.image_bytes),
+        key=public_key,
+        content_type="image/png",
+    )
+
+    meta = dict(problem.meta or {})
+    meta[PUBLIC_CLEANUP_META_KEY] = {
+        "mode": result.mode,
+        "version": result.version,
+        "source_image_key": problem.image_key,
+        "public_image_key": public_key,
+        "red_mask_ratio": result.mask_ratio,
+        "mask_pixels": result.mask_pixels,
+        "total_pixels": result.total_pixels,
+        "width": result.width,
+        "height": result.height,
+        "generated_at": timezone.now().isoformat(),
+        "generated_by_id": getattr(actor, "id", None),
+    }
+    problem.meta = meta
+    problem.save(update_fields=["meta", "updated_at"])
+
+    return {
+        "problem_id": problem.id,
+        "status": "processed",
+        "public_image_key": public_key,
+        "red_mask_ratio": result.mask_ratio,
+        "mask_pixels": result.mask_pixels,
+        "total_pixels": result.total_pixels,
+    }
+
+
+def clean_document_public_images(
+    document: MatchupDocument,
+    *,
+    force: bool = False,
+    actor=None,
+) -> dict:
+    """Create public-facing cleaned copies for all problem images in a document."""
+    rows = []
+    failed = []
+    processed = 0
+    skipped = 0
+    mask_ratios: list[float] = []
+    problems = list(
+        document.problems.exclude(image_key="")
+        .select_related("tenant", "document")
+        .order_by("number", "id")
+    )
+
+    for problem in problems:
+        try:
+            row = clean_problem_public_image(problem, force=force, actor=actor)
+            rows.append(row)
+            if row.get("status") == "processed":
+                processed += 1
+                ratio = row.get("red_mask_ratio")
+                if isinstance(ratio, (int, float)):
+                    mask_ratios.append(float(ratio))
+            else:
+                skipped += 1
+        except Exception as exc:
+            logger.warning(
+                "MATCHUP_PUBLIC_CLEANUP_FAILED | doc=%s | problem=%s",
+                document.id,
+                problem.id,
+                exc_info=True,
+            )
+            failed.append({"problem_id": problem.id, "error": str(exc)})
+
+    return {
+        "ok": not failed,
+        "doc_id": document.id,
+        "total": len(problems),
+        "processed": processed,
+        "skipped": skipped,
+        "failed": failed,
+        "avg_red_mask_ratio": (
+            sum(mask_ratios) / len(mask_ratios) if mask_ratios else None
+        ),
+        "results": rows,
+    }
 
 
 _STALE_MANUAL_PROBLEM_META_KEYS = (
@@ -552,12 +719,16 @@ def cleanup_matchup_problem_images(document: MatchupDocument) -> int:
 
     Returns: 삭제 시도한 problem 이미지 개수.
     """
-    problem_keys = list(
-        document.problems.exclude(image_key="").values_list("image_key", flat=True)
-    )
+    problem_keys = []
+    for image_key, meta in document.problems.values_list("image_key", "meta"):
+        if image_key:
+            problem_keys.append(image_key)
+        public_key = _cleanup_meta_any_public_key(meta)
+        if public_key:
+            problem_keys.append(public_key)
     # 수동 크롭 모달이 PDF 페이지를 R2에 캐시했다면 함께 정리 — orphan 방지.
     page_cache_keys = list((document.meta or {}).get("page_image_keys") or [])
-    all_keys = [k for k in (problem_keys + page_cache_keys) if k]
+    all_keys = list(dict.fromkeys(k for k in (problem_keys + page_cache_keys) if k))
 
     if not delete_object_r2_storage:
         return 0
@@ -2337,14 +2508,18 @@ def delete_problem_with_r2(problem: MatchupProblem) -> None:
 
     수동 추가/자동 추출 모두 동일하게 처리.
     """
-    if problem.image_key and delete_object_r2_storage:
-        try:
-            delete_object_r2_storage(key=problem.image_key)
-        except Exception:
-            logger.warning(
-                "R2 problem image delete failed: %s", problem.image_key,
-                exc_info=True,
-            )
+    keys = list(dict.fromkeys(
+        k for k in [problem.image_key, _cleanup_meta_any_public_key(problem.meta)] if k
+    ))
+    for key in keys:
+        if delete_object_r2_storage:
+            try:
+                delete_object_r2_storage(key=key)
+            except Exception:
+                logger.warning(
+                    "R2 problem image delete failed: %s", key,
+                    exc_info=True,
+                )
     doc_id = problem.document_id
     tenant_id = problem.tenant_id
     problem.delete()

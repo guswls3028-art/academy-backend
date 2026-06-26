@@ -600,6 +600,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
     from reportlab.pdfgen import canvas
 
     from apps.domains.matchup.models import MatchupProblem
+    from apps.domains.matchup.services import public_image_key_for_report
 
     fn_reg, fn_bold = _ensure_korean_font()
 
@@ -649,8 +650,11 @@ def generate_curated_hit_report_pdf(report) -> bytes:
     # P1 fix (2026-05-04): 100+ 문항 케이스에서 max_dim 1000 → 800으로 추가 절감
     # (PDF 사이즈 ~30% 감소 / download 시간 ~25% 절감). 운영 검증: 32문항×3=96 페이지
     # 30.9s/7.6MB → ~22s/5.4MB 추정.
-    ep_url_by_id = {ep.id: _safe_url(ep.image_key) for ep in exam_problems}
-    sel_url_by_pid = {p.id: _safe_url(p.image_key) for p in selected_meta.values()}
+    ep_url_by_id = {ep.id: _safe_url(public_image_key_for_report(ep)) for ep in exam_problems}
+    sel_url_by_pid = {
+        p.id: _safe_url(public_image_key_for_report(p))
+        for p in selected_meta.values()
+    }
     all_urls = [u for u in list(ep_url_by_id.values()) + list(sel_url_by_pid.values()) if u]
     # 100+ 문항 doc은 페이지 사이즈가 클수록 perf 영향 큼 → max_dim 적응적 조정.
     pdf_max_dim = 800 if body_page_count >= 80 else 1000

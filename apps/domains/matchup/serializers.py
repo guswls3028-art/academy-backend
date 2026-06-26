@@ -45,11 +45,18 @@ class MatchupDocumentUpdateSerializer(serializers.Serializer):
 
 
 class MatchupProblemSerializer(serializers.ModelSerializer):
+    public_image_key = serializers.SerializerMethodField()
+
+    def get_public_image_key(self, obj):
+        from .services import get_problem_public_image_key
+
+        return get_problem_public_image_key(obj) or ""
+
     class Meta:
         model = MatchupProblem
         fields = [
             "id", "document_id", "number", "text",
-            "image_key", "meta", "created_at",
+            "image_key", "public_image_key", "meta", "created_at",
         ]
         read_only_fields = fields
 

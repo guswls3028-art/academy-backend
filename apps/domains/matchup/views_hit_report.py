@@ -23,6 +23,7 @@ from .models import (
     MatchupProblem,
 )
 from .serializers import MatchupHitReportSerializer
+from .services import get_problem_public_image_key, public_image_key_for_report
 from .views import (
     _jwt_required,
     _tenant_required,
@@ -279,7 +280,7 @@ class HitReportDraftView(View):
         # 시험지 problems
         exam_problems = list(
             doc.problems.order_by("number").only(
-                "id", "number", "text", "image_key", "embedding",
+                "id", "number", "text", "image_key", "embedding", "meta",
             )
         )
         # entry 미리 로드
@@ -340,6 +341,7 @@ class HitReportDraftView(View):
                     "text_preview": (cp.text or "")[:120],
                     "similarity": round(sim, 4),
                     "image_key": cp.image_key,
+                    "public_image_key": get_problem_public_image_key(cp),
                     "page_index": int(page_index) if isinstance(page_index, int) else None,
                 })
                 all_candidate_ids.add(cp.id)
@@ -349,6 +351,7 @@ class HitReportDraftView(View):
                 "number": ep.number,
                 "text_preview": (ep.text or "")[:200],
                 "image_key": ep.image_key,
+                "public_image_key": get_problem_public_image_key(ep),
                 "candidates": cand,
                 "entry": (
                     {
@@ -366,16 +369,18 @@ class HitReportDraftView(View):
         url_map: dict = {}
         if generate_presigned_get_url_storage:
             for ep in exam_problems:
-                if ep.image_key and ep.image_key not in url_map:
-                    url_map[ep.image_key] = generate_presigned_get_url_storage(
-                        key=ep.image_key, expires_in=3600,
+                key = public_image_key_for_report(ep)
+                if key and key not in url_map:
+                    url_map[key] = generate_presigned_get_url_storage(
+                        key=key, expires_in=3600,
                     )
             # 후보 image_keys
             cand_keys = set()
             for pd in problem_data:
                 for c in pd["candidates"]:
-                    if c["image_key"]:
-                        cand_keys.add(c["image_key"])
+                    key = c.get("public_image_key") or c["image_key"]
+                    if key:
+                        cand_keys.add(key)
             # 사용자 명시 선택 problem (자동 후보에 없을 수도) — 보강
             extra_qs = MatchupProblem.objects.filter(
                 tenant=request.tenant,
@@ -386,19 +391,22 @@ class HitReportDraftView(View):
             ).only("id", "image_key", "document_id", "number", "text", "meta")
             extra_meta = {p.id: p for p in extra_qs}
             for p in extra_qs:
-                if p.image_key:
-                    cand_keys.add(p.image_key)
+                key = public_image_key_for_report(p)
+                if key:
+                    cand_keys.add(key)
             for k in cand_keys:
                 if k not in url_map:
                     url_map[k] = generate_presigned_get_url_storage(
                         key=k, expires_in=3600,
                     )
             for pd in problem_data:
-                if pd["image_key"]:
-                    pd["image_url"] = url_map.get(pd["image_key"])
+                key = pd.get("public_image_key") or pd["image_key"]
+                if key:
+                    pd["image_url"] = url_map.get(key)
                 for c in pd["candidates"]:
-                    if c["image_key"]:
-                        c["image_url"] = url_map.get(c["image_key"])
+                    key = c.get("public_image_key") or c["image_key"]
+                    if key:
+                        c["image_url"] = url_map.get(key)
         else:
             extra_meta = {}
 
@@ -448,7 +456,9 @@ class HitReportDraftView(View):
                     "number": p.number,
                     "text_preview": (p.text or "")[:120],
                     "image_key": p.image_key,
-                    "image_url": url_map.get(p.image_key) if p.image_key else None,
+                    "public_image_key": get_problem_public_image_key(p),
+                    "image_url": url_map.get(public_image_key_for_report(p))
+                    if public_image_key_for_report(p) else None,
                     "page_index": (
                         int((p.meta or {}).get("page_index"))
                         if isinstance(p.meta, dict)

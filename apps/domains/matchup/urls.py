@@ -18,6 +18,7 @@ urlpatterns = [
     path("documents/<int:doc_id>/page-states/<int:page_idx>/", views.DocumentPageStateSingleView.as_view()),
     path("documents/<int:doc_id>/reanalyze/", views.DocumentReanalyzeView.as_view()),
     path("documents/<int:doc_id>/manual-crop/", views.DocumentManualCropView.as_view()),
+    path("documents/<int:doc_id>/public-cleanup/", views.DocumentPublicCleanupView.as_view()),
     path("documents/<int:doc_id>/paste-problem/", views.DocumentPasteProblemView.as_view()),
     path("documents/<int:doc_id>/merge-problems/", views.DocumentMergeProblemsView.as_view()),
     path("documents/<int:doc_id>/bulk-delete-problems/", views.DocumentBulkDeleteProblemsView.as_view()),

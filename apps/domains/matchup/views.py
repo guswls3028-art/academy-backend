@@ -31,6 +31,8 @@ from .services import (
     paste_image_as_problem,
     merge_problems,
     delete_problem_with_r2,
+    clean_document_public_images,
+    get_problem_public_image_key,
     document_has_protected_matchup_problems,
     get_page_states,
     is_problem_delete_protected,
@@ -104,6 +106,25 @@ def _is_tenant_staff(request):
         (getattr(user, "is_superuser", False) or getattr(user, "is_staff", False))
         and getattr(user, "tenant_id", None) == tenant.id
     )
+
+
+def _attach_problem_image_urls(data, problem: MatchupProblem | None = None) -> None:
+    if not generate_presigned_get_url_storage:
+        return
+    image_key = data.get("image_key")
+    if image_key:
+        data["image_url"] = generate_presigned_get_url_storage(
+            key=image_key, expires_in=3600
+        )
+    public_key = data.get("public_image_key")
+    if not public_key and problem is not None:
+        public_key = get_problem_public_image_key(problem)
+        if public_key:
+            data["public_image_key"] = public_key
+    if public_key:
+        data["public_image_url"] = generate_presigned_get_url_storage(
+            key=public_key, expires_in=3600
+        )
 
 
 def _is_tenant_admin(request) -> bool:
@@ -845,13 +866,8 @@ class ProblemListView(View):
             qs = qs.filter(document_id=doc_id)
         data = MatchupProblemSerializer(qs, many=True).data
 
-        if generate_presigned_get_url_storage:
-            for row in data:
-                key = row.get("image_key")
-                if key:
-                    row["image_url"] = generate_presigned_get_url_storage(
-                        key=key, expires_in=3600
-                    )
+        for row in data:
+            _attach_problem_image_urls(row)
 
         return JsonResponse(data, safe=False)
 
@@ -880,11 +896,7 @@ class ProblemDetailView(View):
 
         data = MatchupProblemSerializer(problem).data
 
-        # 이미지 presigned URL 추가
-        if problem.image_key and generate_presigned_get_url_storage:
-            data["image_url"] = generate_presigned_get_url_storage(
-                key=problem.image_key, expires_in=3600
-            )
+        _attach_problem_image_urls(data, problem)
 
         return JsonResponse(data)
 
@@ -923,10 +935,7 @@ class ProblemDetailView(View):
             return JsonResponse({"detail": str(e)}, status=409)
 
         data = MatchupProblemSerializer(problem).data
-        if problem.image_key and generate_presigned_get_url_storage:
-            data["image_url"] = generate_presigned_get_url_storage(
-                key=problem.image_key, expires_in=3600
-            )
+        _attach_problem_image_urls(data, problem)
         return JsonResponse(data)
 
     def delete(self, request, problem_id):
@@ -1015,11 +1024,43 @@ class DocumentManualCropView(View):
             return JsonResponse({"detail": "수동 자르기 처리에 실패했습니다."}, status=500)
 
         data = MatchupProblemSerializer(problem).data
-        if problem.image_key and generate_presigned_get_url_storage:
-            data["image_url"] = generate_presigned_get_url_storage(
-                key=problem.image_key, expires_in=3600,
-            )
+        _attach_problem_image_urls(data, problem)
         return JsonResponse(data, status=201)
+
+
+@method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
+class DocumentPublicCleanupView(View):
+    """POST /api/v1/matchup/documents/<id>/public-cleanup/
+
+    공개 자료용 파생 이미지를 생성한다. 원본 image_key는 그대로 유지한다.
+    """
+
+    def post(self, request, doc_id):
+        if not _is_tenant_staff(request):
+            return JsonResponse({"detail": "Staff only"}, status=403)
+
+        try:
+            doc = MatchupDocument.objects.get(id=doc_id, tenant=request.tenant)
+        except MatchupDocument.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        import json
+        try:
+            body = json.loads(request.body) if request.body else {}
+        except Exception:
+            return JsonResponse({"detail": "Invalid JSON"}, status=400)
+
+        try:
+            result = clean_document_public_images(
+                doc,
+                force=bool(body.get("force")),
+                actor=getattr(request, "user", None),
+            )
+        except Exception:
+            logger.exception("public cleanup failed (doc=%s)", doc.id)
+            return JsonResponse({"detail": "공개용 이미지 정리에 실패했습니다."}, status=500)
+
+        return JsonResponse(result, status=200 if result.get("ok") else 207)
 
 
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
@@ -1180,10 +1221,7 @@ class DocumentMergeProblemsView(View):
             return JsonResponse({"detail": "문항 합치기 처리에 실패했습니다."}, status=500)
 
         data = MatchupProblemSerializer(problem).data
-        if problem.image_key and generate_presigned_get_url_storage:
-            data["image_url"] = generate_presigned_get_url_storage(
-                key=problem.image_key, expires_in=3600,
-            )
+        _attach_problem_image_urls(data, problem)
         return JsonResponse(data, status=200)
 
 
@@ -1233,10 +1271,7 @@ class DocumentPasteProblemView(View):
             return JsonResponse({"detail": "이미지 붙여넣기 처리에 실패했습니다."}, status=500)
 
         data = MatchupProblemSerializer(problem).data
-        if problem.image_key and generate_presigned_get_url_storage:
-            data["image_url"] = generate_presigned_get_url_storage(
-                key=problem.image_key, expires_in=3600,
-            )
+        _attach_problem_image_urls(data, problem)
         return JsonResponse(data, status=201)
 
 
