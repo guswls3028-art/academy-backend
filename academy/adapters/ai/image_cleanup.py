@@ -9,6 +9,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+QUALITY_READY = "ready"
+QUALITY_REVIEW_REQUIRED = "review_required"
+REASON_DARK_MARKS_DETECTED = "dark_marks_detected"
+REASON_HEAVY_MARKUP_DETECTED = "heavy_markup_detected"
+
 
 @dataclass(frozen=True)
 class MarkCleanupResult:
@@ -22,8 +27,11 @@ class MarkCleanupResult:
     dark_mask_pixels: int = 0
     red_mask_ratio: float = 0.0
     dark_mask_ratio: float = 0.0
+    quality_status: str = QUALITY_READY
+    quality_score: float = 1.0
+    review_reasons: tuple[str, ...] = ()
     mode: str = "student_marks"
-    version: str = "student-marks-v2"
+    version: str = "student-marks-v3"
 
 
 def remove_colored_marks_from_image_bytes(image_bytes: bytes) -> MarkCleanupResult:
@@ -45,12 +53,15 @@ def remove_colored_marks_from_image_bytes(image_bytes: bytes) -> MarkCleanupResu
         raise ValueError("decoded image is empty")
 
     red_mask = _build_red_mark_mask(image, cv2, np)
-    dark_mask = _build_dark_handwriting_mask(image, cv2, np)
+    dark_mask = _build_dark_handwriting_mask(image, cv2, np, red_mask=red_mask)
     mask = cv2.bitwise_or(red_mask, dark_mask)
 
     red_mask_pixels = int(cv2.countNonZero(red_mask))
     dark_mask_pixels = int(cv2.countNonZero(dark_mask))
     mask_pixels = int(cv2.countNonZero(mask))
+    red_mask_ratio = red_mask_pixels / total_pixels
+    dark_mask_ratio = dark_mask_pixels / total_pixels
+    mask_ratio = mask_pixels / total_pixels
     if mask_pixels == 0:
         cleaned = image
     else:
@@ -67,18 +78,50 @@ def remove_colored_marks_from_image_bytes(image_bytes: bytes) -> MarkCleanupResu
     if not ok:
         raise RuntimeError("cleaned image could not be encoded")
 
+    quality_status, quality_score, review_reasons = _assess_public_cleanup_quality(
+        mask_ratio=mask_ratio,
+        dark_mask_pixels=dark_mask_pixels,
+        dark_mask_ratio=dark_mask_ratio,
+        total_pixels=total_pixels,
+    )
+
     return MarkCleanupResult(
         image_bytes=encoded.tobytes(),
-        mask_ratio=mask_pixels / total_pixels,
+        mask_ratio=mask_ratio,
         mask_pixels=mask_pixels,
         total_pixels=total_pixels,
         width=int(width),
         height=int(height),
         red_mask_pixels=red_mask_pixels,
         dark_mask_pixels=dark_mask_pixels,
-        red_mask_ratio=red_mask_pixels / total_pixels,
-        dark_mask_ratio=dark_mask_pixels / total_pixels,
+        red_mask_ratio=red_mask_ratio,
+        dark_mask_ratio=dark_mask_ratio,
+        quality_status=quality_status,
+        quality_score=quality_score,
+        review_reasons=review_reasons,
     )
+
+
+def _assess_public_cleanup_quality(
+    *,
+    mask_ratio: float,
+    dark_mask_pixels: int,
+    dark_mask_ratio: float,
+    total_pixels: int,
+) -> tuple[str, float, tuple[str, ...]]:
+    """Risk score for official/public use, not OCR or match accuracy."""
+    reasons: list[str] = []
+    dark_review_pixel_floor = max(500, int(total_pixels * 0.004))
+    if dark_mask_pixels >= dark_review_pixel_floor:
+        reasons.append(REASON_DARK_MARKS_DETECTED)
+    if mask_ratio >= 0.12:
+        reasons.append(REASON_HEAVY_MARKUP_DETECTED)
+
+    dark_penalty = min(0.55, dark_mask_ratio * 80)
+    markup_penalty = min(0.35, max(0.0, mask_ratio - 0.04) * 3)
+    quality_score = max(0.0, min(1.0, 1.0 - dark_penalty - markup_penalty))
+    status = QUALITY_REVIEW_REQUIRED if reasons else QUALITY_READY
+    return status, round(quality_score, 4), tuple(reasons)
 
 
 def _build_red_mark_mask(image, cv2, np):
@@ -112,12 +155,15 @@ def _build_red_mark_mask(image, cv2, np):
     return cv2.dilate(mask, kernel_dilate, iterations=1)
 
 
-def _build_dark_handwriting_mask(image, cv2, np):
+def _build_dark_handwriting_mask(image, cv2, np, *, red_mask=None):
     """Detect thick dark annotations while preserving thin printed strokes."""
     height, width = image.shape[:2]
     total_pixels = max(1, int(height * width))
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     dark = cv2.inRange(gray, 0, 76)
+    if red_mask is not None:
+        red_guard = cv2.dilate(red_mask, np.ones((3, 3), np.uint8), iterations=1)
+        dark = cv2.bitwise_and(dark, cv2.bitwise_not(red_guard))
 
     # Thick marker strokes survive erosion; ordinary printed glyphs mostly vanish.
     seed = cv2.erode(dark, np.ones((3, 3), np.uint8), iterations=1)
@@ -142,6 +188,10 @@ def _build_dark_handwriting_mask(image, cv2, np):
         if aspect > 14:
             continue
         density = area / max(w * h, 1)
+        if density < 0.18 and aspect > 2.5:
+            continue
+        if density < 0.16 and (w > 40 or h > 40):
+            continue
         if density > 0.58:
             continue
         near_public_annotation_zone = (

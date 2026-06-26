@@ -212,6 +212,19 @@ def handle_ai_job(job: AIJob) -> AIResult:
                 record_progress=_record_progress,
             )
 
+        # Matchup public cleanup (문항 이미지 공개본 정리)
+        # download_url 불필요 — document_id 기준으로 DB/R2에서 직접 처리.
+        if job.type == "matchup_public_cleanup":
+            from academy.application.use_cases.ai.pipelines.matchup_public_cleanup import (
+                run_matchup_public_cleanup,
+            )
+            return run_matchup_public_cleanup(
+                job=job,
+                payload=payload,
+                tenant_id=tenant_id,
+                record_progress=_record_progress,
+            )
+
         cfg = AIConfig.load()
 
         download_url = payload.get("download_url")

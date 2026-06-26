@@ -23,6 +23,7 @@ AI_JOB_TYPES = frozenset({
     "matchup_index_exam",
     "matchup_search_qna",
     "matchup_manual_index",
+    "matchup_public_cleanup",
 })
 
 TOOL_WORKER_JOB_TYPES = frozenset({
@@ -52,9 +53,11 @@ BASIC_ALLOWED_JOB_TYPES = frozenset({
     "matchup_index_exam",
     "matchup_search_qna",
     "matchup_manual_index",
+    "matchup_public_cleanup",
 })
 
 DETERMINISTIC_JOB_TYPES = TOOL_WORKER_JOB_TYPES | frozenset({
     "matchup_index_exam",
     "matchup_manual_index",
+    "matchup_public_cleanup",
 })

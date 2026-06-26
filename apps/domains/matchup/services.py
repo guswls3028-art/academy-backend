@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import logging
 import os
 from typing import List, Optional, Tuple
@@ -28,7 +29,19 @@ PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL = (
 )
 PUBLIC_CLEANUP_META_KEY = "public_cleanup"
 PUBLIC_CLEANUP_MODE_STUDENT_MARKS = "student_marks"
-PUBLIC_CLEANUP_VERSION_STUDENT_MARKS = "student-marks-v2"
+PUBLIC_CLEANUP_MODE_MANUAL_UPLOAD = "manual_upload"
+PUBLIC_CLEANUP_VERSION_STUDENT_MARKS = "student-marks-v3"
+PUBLIC_CLEANUP_VERSION_MANUAL_UPLOAD = "manual-upload-v1"
+PUBLIC_CLEANUP_VALID_VERSIONS = frozenset({
+    PUBLIC_CLEANUP_VERSION_STUDENT_MARKS,
+    PUBLIC_CLEANUP_VERSION_MANUAL_UPLOAD,
+})
+PUBLIC_CLEANUP_STATUS_READY = "ready"
+PUBLIC_CLEANUP_STATUS_REVIEW_REQUIRED = "review_required"
+PUBLIC_CLEANUP_STATUS_APPROVED = "approved"
+PUBLIC_CLEANUP_STATUS_PROCESSING = "processing"
+PUBLIC_CLEANUP_STATUS_FAILED = "failed"
+PUBLIC_CLEANUP_REVIEW_STATUSES = frozenset({PUBLIC_CLEANUP_STATUS_REVIEW_REQUIRED})
 
 
 def is_problem_delete_protected(problem: MatchupProblem) -> bool:
@@ -62,6 +75,22 @@ def _cleanup_meta_any_public_key(meta: dict | None) -> str:
     return public_key
 
 
+def _problem_public_cleanup_meta(problem: MatchupProblem) -> dict:
+    cleanup = (problem.meta or {}).get(PUBLIC_CLEANUP_META_KEY)
+    return cleanup if isinstance(cleanup, dict) else {}
+
+
+def _cleanup_quality_status(cleanup: dict | None) -> str:
+    status = (cleanup or {}).get("status")
+    if status in (
+        PUBLIC_CLEANUP_STATUS_READY,
+        PUBLIC_CLEANUP_STATUS_REVIEW_REQUIRED,
+        PUBLIC_CLEANUP_STATUS_APPROVED,
+    ):
+        return str(status)
+    return PUBLIC_CLEANUP_STATUS_READY
+
+
 def _cleanup_meta_public_key(meta: dict | None, *, source_image_key: str | None) -> str:
     if not source_image_key:
         return ""
@@ -74,7 +103,7 @@ def _cleanup_meta_public_key(meta: dict | None, *, source_image_key: str | None)
     source_key = cleanup.get("source_image_key")
     if source_key != source_image_key:
         return ""
-    if cleanup.get("version") != PUBLIC_CLEANUP_VERSION_STUDENT_MARKS:
+    if cleanup.get("version") not in PUBLIC_CLEANUP_VALID_VERSIONS:
         return ""
     return public_key
 
@@ -92,7 +121,14 @@ def public_image_key_for_report(problem: MatchupProblem) -> str:
 def _public_cleanup_key(problem: MatchupProblem) -> str:
     return (
         f"tenants/{problem.tenant_id}/matchup/public-cleanup/problems/"
-        f"{problem.id}-{PUBLIC_CLEANUP_MODE_STUDENT_MARKS}.png"
+        f"{problem.id}-{PUBLIC_CLEANUP_MODE_STUDENT_MARKS}-v3.png"
+    )
+
+
+def _public_cleanup_manual_key(problem: MatchupProblem) -> str:
+    return (
+        f"tenants/{problem.tenant_id}/matchup/public-cleanup/problems/"
+        f"{problem.id}-{PUBLIC_CLEANUP_MODE_MANUAL_UPLOAD}.png"
     )
 
 
@@ -112,11 +148,18 @@ def clean_problem_public_image(
 
     existing_public_key = get_problem_public_image_key(problem)
     if existing_public_key and not force:
+        cleanup = _problem_public_cleanup_meta(problem)
         return {
             "problem_id": problem.id,
             "status": "skipped",
             "reason": "existing",
             "public_image_key": existing_public_key,
+            "quality_status": _cleanup_quality_status(cleanup),
+            "review_required": _cleanup_quality_status(cleanup) in PUBLIC_CLEANUP_REVIEW_STATUSES,
+            "review_reasons": cleanup.get("review_reasons") or [],
+            "mark_mask_ratio": cleanup.get("mark_mask_ratio"),
+            "red_mask_ratio": cleanup.get("red_mask_ratio"),
+            "dark_mask_ratio": cleanup.get("dark_mask_ratio"),
         }
 
     from apps.infrastructure.storage.r2 import (
@@ -140,6 +183,10 @@ def clean_problem_public_image(
     meta[PUBLIC_CLEANUP_META_KEY] = {
         "mode": result.mode,
         "version": result.version,
+        "status": result.quality_status,
+        "quality_score": result.quality_score,
+        "review_required": result.quality_status in PUBLIC_CLEANUP_REVIEW_STATUSES,
+        "review_reasons": list(result.review_reasons),
         "source_image_key": problem.image_key,
         "public_image_key": public_key,
         "mark_mask_ratio": result.mask_ratio,
@@ -153,6 +200,8 @@ def clean_problem_public_image(
         "height": result.height,
         "generated_at": timezone.now().isoformat(),
         "generated_by_id": getattr(actor, "id", None),
+        "approved_at": None,
+        "approved_by_id": None,
     }
     problem.meta = meta
     problem.save(update_fields=["meta", "updated_at"])
@@ -161,6 +210,10 @@ def clean_problem_public_image(
         "problem_id": problem.id,
         "status": "processed",
         "public_image_key": public_key,
+        "quality_status": result.quality_status,
+        "quality_score": result.quality_score,
+        "review_required": result.quality_status in PUBLIC_CLEANUP_REVIEW_STATUSES,
+        "review_reasons": list(result.review_reasons),
         "mark_mask_ratio": result.mask_ratio,
         "red_mask_ratio": result.red_mask_ratio,
         "dark_mask_ratio": result.dark_mask_ratio,
@@ -176,12 +229,17 @@ def clean_document_public_images(
     *,
     force: bool = False,
     actor=None,
+    job_id: str | None = None,
+    on_progress=None,
 ) -> dict:
     """Create public-facing cleaned copies for all problem images in a document."""
     rows = []
     failed = []
     processed = 0
     skipped = 0
+    ready = 0
+    review_required = 0
+    approved = 0
     mask_ratios: list[float] = []
     problems = list(
         document.problems.exclude(image_key="")
@@ -189,17 +247,25 @@ def clean_document_public_images(
         .order_by("number", "id")
     )
 
-    for problem in problems:
+    for idx, problem in enumerate(problems, start=1):
         try:
             row = clean_problem_public_image(problem, force=force, actor=actor)
             rows.append(row)
             if row.get("status") == "processed":
                 processed += 1
-                ratio = row.get("red_mask_ratio")
+                ratio = row.get("mark_mask_ratio")
                 if isinstance(ratio, (int, float)):
                     mask_ratios.append(float(ratio))
             else:
                 skipped += 1
+            quality_status = str(row.get("quality_status") or PUBLIC_CLEANUP_STATUS_READY)
+            if quality_status == PUBLIC_CLEANUP_STATUS_APPROVED:
+                approved += 1
+                ready += 1
+            elif quality_status in PUBLIC_CLEANUP_REVIEW_STATUSES:
+                review_required += 1
+            else:
+                ready += 1
         except Exception as exc:
             logger.warning(
                 "MATCHUP_PUBLIC_CLEANUP_FAILED | doc=%s | problem=%s",
@@ -208,18 +274,284 @@ def clean_document_public_images(
                 exc_info=True,
             )
             failed.append({"problem_id": problem.id, "error": str(exc)})
+        finally:
+            if on_progress is not None:
+                on_progress(idx, len(problems))
 
-    return {
+    official_ready = bool(problems) and not failed and review_required == 0
+    status = (
+        PUBLIC_CLEANUP_STATUS_FAILED
+        if failed and not processed and not skipped
+        else PUBLIC_CLEANUP_STATUS_REVIEW_REQUIRED
+        if review_required or failed
+        else PUBLIC_CLEANUP_STATUS_READY
+    )
+    result = {
         "ok": not failed,
         "doc_id": document.id,
+        "job_id": job_id or "",
+        "status": status,
+        "official_ready": official_ready,
         "total": len(problems),
         "processed": processed,
         "skipped": skipped,
+        "ready": ready,
+        "approved": approved,
+        "review_required": review_required,
         "failed": failed,
-        "avg_red_mask_ratio": (
+        "avg_mark_mask_ratio": (
             sum(mask_ratios) / len(mask_ratios) if mask_ratios else None
         ),
         "results": rows,
+    }
+    result["avg_red_mask_ratio"] = result["avg_mark_mask_ratio"]
+    meta = dict(document.meta or {})
+    meta[PUBLIC_CLEANUP_META_KEY] = {
+        "version": PUBLIC_CLEANUP_VERSION_STUDENT_MARKS,
+        "status": status,
+        "official_ready": official_ready,
+        "job_id": job_id or "",
+        "total": len(problems),
+        "processed": processed,
+        "skipped": skipped,
+        "ready": ready,
+        "approved": approved,
+        "review_required": review_required,
+        "failed": len(failed),
+        "avg_mark_mask_ratio": result["avg_mark_mask_ratio"],
+        "generated_at": timezone.now().isoformat(),
+        "generated_by_id": getattr(actor, "id", None),
+    }
+    document.meta = meta
+    document.save(update_fields=["meta", "updated_at"])
+    return result
+
+
+def refresh_document_public_cleanup_summary(
+    document: MatchupDocument,
+    *,
+    actor=None,
+    job_id: str | None = None,
+) -> dict:
+    """Recompute document-level official readiness from problem cleanup metadata."""
+    problems = list(document.problems.exclude(image_key="").only("id", "image_key", "meta"))
+    total = len(problems)
+    ready = 0
+    approved = 0
+    review_required = 0
+    missing = 0
+    ratios: list[float] = []
+
+    for problem in problems:
+        public_key = _cleanup_meta_public_key(problem.meta, source_image_key=problem.image_key)
+        cleanup = _problem_public_cleanup_meta(problem)
+        if not public_key:
+            missing += 1
+            continue
+        status = _cleanup_quality_status(cleanup)
+        if status == PUBLIC_CLEANUP_STATUS_APPROVED:
+            approved += 1
+            ready += 1
+        elif status in PUBLIC_CLEANUP_REVIEW_STATUSES:
+            review_required += 1
+        else:
+            ready += 1
+        ratio = cleanup.get("mark_mask_ratio")
+        if isinstance(ratio, (int, float)):
+            ratios.append(float(ratio))
+
+    official_ready = bool(total) and missing == 0 and review_required == 0
+    status = (
+        PUBLIC_CLEANUP_STATUS_READY
+        if official_ready
+        else PUBLIC_CLEANUP_STATUS_REVIEW_REQUIRED
+        if total
+        else PUBLIC_CLEANUP_STATUS_FAILED
+    )
+    current_cleanup = (document.meta or {}).get(PUBLIC_CLEANUP_META_KEY)
+    current_job_id = current_cleanup.get("job_id", "") if isinstance(current_cleanup, dict) else ""
+    summary = {
+        "version": PUBLIC_CLEANUP_VERSION_STUDENT_MARKS,
+        "status": status,
+        "official_ready": official_ready,
+        "job_id": job_id or current_job_id,
+        "total": total,
+        "processed": total - missing,
+        "skipped": 0,
+        "ready": ready,
+        "approved": approved,
+        "review_required": review_required + missing,
+        "failed": missing,
+        "avg_mark_mask_ratio": sum(ratios) / len(ratios) if ratios else None,
+        "generated_at": timezone.now().isoformat(),
+        "generated_by_id": getattr(actor, "id", None),
+    }
+    meta = dict(document.meta or {})
+    meta[PUBLIC_CLEANUP_META_KEY] = summary
+    document.meta = meta
+    document.save(update_fields=["meta", "updated_at"])
+    return summary
+
+
+def mark_document_public_cleanup_failed(
+    document: MatchupDocument,
+    *,
+    job_id: str | None = None,
+    error: str = "",
+) -> dict:
+    meta = dict(document.meta or {})
+    current = meta.get(PUBLIC_CLEANUP_META_KEY)
+    if not isinstance(current, dict):
+        current = {}
+    summary = {
+        **current,
+        "version": PUBLIC_CLEANUP_VERSION_STUDENT_MARKS,
+        "status": PUBLIC_CLEANUP_STATUS_FAILED,
+        "official_ready": False,
+        "job_id": job_id or current.get("job_id", ""),
+        "error": error or "공개용 이미지 정리 실패",
+        "failed_at": timezone.now().isoformat(),
+    }
+    meta[PUBLIC_CLEANUP_META_KEY] = summary
+    document.meta = meta
+    document.save(update_fields=["meta", "updated_at"])
+    return summary
+
+
+def dispatch_document_public_cleanup(
+    document: MatchupDocument,
+    *,
+    force: bool = False,
+    actor=None,
+) -> dict:
+    """Queue public image cleanup for AI worker execution."""
+    from apps.domains.ai.gateway import dispatch_job
+
+    actor_id = getattr(actor, "id", None)
+    fingerprint_src = "|".join(
+        f"{row[0]}:{row[1]}:{row[2].isoformat() if row[2] else ''}"
+        for row in document.problems.exclude(image_key="")
+        .order_by("id")
+        .values_list("id", "image_key", "updated_at")
+    )
+    fingerprint = hashlib.sha1(fingerprint_src.encode("utf-8")).hexdigest()[:16]
+    result = dispatch_job(
+        job_type="matchup_public_cleanup",
+        payload={
+            "tenant_id": str(document.tenant_id),
+            "document_id": document.id,
+            "force": bool(force),
+            "actor_id": actor_id,
+            "cleanup_version": PUBLIC_CLEANUP_VERSION_STUDENT_MARKS,
+        },
+        tenant_id=str(document.tenant_id),
+        source_domain="matchup_public_cleanup",
+        source_id=str(document.id),
+        tier="basic",
+        idempotency_key=(
+            f"matchup_public_cleanup:{document.tenant_id}:{document.id}:"
+            f"{PUBLIC_CLEANUP_VERSION_STUDENT_MARKS}:{fingerprint}"
+        ),
+        force_rerun=bool(force),
+        rerun_reason="force public cleanup" if force else None,
+    )
+    if result.get("ok"):
+        meta = dict(document.meta or {})
+        meta[PUBLIC_CLEANUP_META_KEY] = {
+            **(meta.get(PUBLIC_CLEANUP_META_KEY) if isinstance(meta.get(PUBLIC_CLEANUP_META_KEY), dict) else {}),
+            "version": PUBLIC_CLEANUP_VERSION_STUDENT_MARKS,
+            "status": PUBLIC_CLEANUP_STATUS_PROCESSING,
+            "official_ready": False,
+            "job_id": result.get("job_id") or "",
+            "queued_at": timezone.now().isoformat(),
+            "queued_by_id": actor_id,
+        }
+        document.meta = meta
+        document.save(update_fields=["meta", "updated_at"])
+    return result
+
+
+def approve_problem_public_image(problem: MatchupProblem, *, actor=None) -> dict:
+    cleanup = _problem_public_cleanup_meta(problem)
+    public_key = _cleanup_meta_public_key(problem.meta, source_image_key=problem.image_key)
+    if not public_key:
+        raise ValueError("승인할 공개용 이미지가 없습니다.")
+
+    cleanup = dict(cleanup)
+    cleanup.update({
+        "status": PUBLIC_CLEANUP_STATUS_APPROVED,
+        "review_required": False,
+        "review_reasons": [],
+        "approved_at": timezone.now().isoformat(),
+        "approved_by_id": getattr(actor, "id", None),
+    })
+    meta = dict(problem.meta or {})
+    meta[PUBLIC_CLEANUP_META_KEY] = cleanup
+    problem.meta = meta
+    problem.save(update_fields=["meta", "updated_at"])
+    if problem.document_id and problem.document is not None:
+        refresh_document_public_cleanup_summary(problem.document, actor=actor)
+    return {
+        "problem_id": problem.id,
+        "status": PUBLIC_CLEANUP_STATUS_APPROVED,
+        "public_image_key": public_key,
+    }
+
+
+def upload_problem_public_image(problem: MatchupProblem, *, image_file, actor=None) -> dict:
+    """Store a teacher-reviewed clean public replacement image."""
+    content_type = (getattr(image_file, "content_type", "") or "").lower()
+    if content_type not in {"image/png", "image/jpeg", "image/jpg", "image/webp"}:
+        raise ValueError("PNG, JPG, WEBP 이미지만 업로드할 수 있습니다.")
+
+    try:
+        from PIL import Image
+    except Exception as exc:  # pragma: no cover - deployment dependency guard
+        raise RuntimeError("Pillow dependency is not available") from exc
+
+    try:
+        img = Image.open(image_file).convert("RGB")
+        out = io.BytesIO()
+        img.save(out, format="PNG")
+    except Exception as exc:
+        raise ValueError("이미지 파일을 읽을 수 없습니다.") from exc
+
+    from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
+
+    public_key = _public_cleanup_manual_key(problem)
+    upload_fileobj_to_r2_storage(
+        fileobj=io.BytesIO(out.getvalue()),
+        key=public_key,
+        content_type="image/png",
+    )
+
+    meta = dict(problem.meta or {})
+    now = timezone.now().isoformat()
+    meta[PUBLIC_CLEANUP_META_KEY] = {
+        "mode": PUBLIC_CLEANUP_MODE_MANUAL_UPLOAD,
+        "version": PUBLIC_CLEANUP_VERSION_MANUAL_UPLOAD,
+        "status": PUBLIC_CLEANUP_STATUS_APPROVED,
+        "quality_score": 1.0,
+        "review_required": False,
+        "review_reasons": [],
+        "source_image_key": problem.image_key,
+        "public_image_key": public_key,
+        "width": img.width,
+        "height": img.height,
+        "generated_at": now,
+        "generated_by_id": getattr(actor, "id", None),
+        "approved_at": now,
+        "approved_by_id": getattr(actor, "id", None),
+        "original_filename": getattr(image_file, "name", ""),
+    }
+    problem.meta = meta
+    problem.save(update_fields=["meta", "updated_at"])
+    if problem.document_id and problem.document is not None:
+        refresh_document_public_cleanup_summary(problem.document, actor=actor)
+    return {
+        "problem_id": problem.id,
+        "status": PUBLIC_CLEANUP_STATUS_APPROVED,
+        "public_image_key": public_key,
     }
 
 

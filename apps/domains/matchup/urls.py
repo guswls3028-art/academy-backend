@@ -1,6 +1,6 @@
 # PATH: apps/domains/matchup/urls.py
 from django.urls import path
-from . import views, views_hit_report, views_proposal
+from . import views, views_hit_report, views_proposal, views_public_cleanup
 
 urlpatterns = [
     # Documents
@@ -18,7 +18,7 @@ urlpatterns = [
     path("documents/<int:doc_id>/page-states/<int:page_idx>/", views.DocumentPageStateSingleView.as_view()),
     path("documents/<int:doc_id>/reanalyze/", views.DocumentReanalyzeView.as_view()),
     path("documents/<int:doc_id>/manual-crop/", views.DocumentManualCropView.as_view()),
-    path("documents/<int:doc_id>/public-cleanup/", views.DocumentPublicCleanupView.as_view()),
+    path("documents/<int:doc_id>/public-cleanup/", views_public_cleanup.DocumentPublicCleanupView.as_view()),
     path("documents/<int:doc_id>/paste-problem/", views.DocumentPasteProblemView.as_view()),
     path("documents/<int:doc_id>/merge-problems/", views.DocumentMergeProblemsView.as_view()),
     path("documents/<int:doc_id>/bulk-delete-problems/", views.DocumentBulkDeleteProblemsView.as_view()),
@@ -60,6 +60,11 @@ urlpatterns = [
     path("problems/", views.ProblemListView.as_view()),
     path("problems/presign/", views.ProblemPresignView.as_view()),
     path("problems/<int:problem_id>/", views.ProblemDetailView.as_view()),
+    path(
+        "problems/<int:problem_id>/public-cleanup/approve/",
+        views_public_cleanup.ProblemPublicCleanupApproveView.as_view(),
+    ),
+    path("problems/<int:problem_id>/public-image/", views_public_cleanup.ProblemPublicImageUploadView.as_view()),
     path("problems/<int:problem_id>/similar/", views.SimilarProblemView.as_view()),
 
     # Stage 3 Phase 3.4 — ProblemSegmentationProposal admin API.
