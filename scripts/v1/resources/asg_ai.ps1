@@ -119,7 +119,7 @@ function Ensure-AiSqsScaling {
         $scaleOutThreshold = $script:AiScaleOutThreshold
         $treatMissing = "notBreaching"
 
-        $stepOut = '[{"MetricIntervalLowerBound":0,"MetricIntervalUpperBound":10,"ScalingAdjustment":1},{"MetricIntervalLowerBound":10,"MetricIntervalUpperBound":50,"ScalingAdjustment":3},{"MetricIntervalLowerBound":50,"ScalingAdjustment":5}]'
+        $stepOut = '[{"MetricIntervalLowerBound":0,"MetricIntervalUpperBound":50,"ScalingAdjustment":3},{"MetricIntervalLowerBound":50,"ScalingAdjustment":5}]'
         $putOut = Invoke-AwsJson @("autoscaling", "put-scaling-policy",
             "--auto-scaling-group-name", $script:AiASGName,
             "--policy-name", $scaleOutPolicyName,
