@@ -2726,27 +2726,55 @@ def _should_clip_crop_padding_to_column(
     return bbox_width <= column_w * 1.08
 
 
+def _horizontal_overlap_ratio(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> float:
+    ax, _, aw, _ = a
+    bx, _, bw, _ = b
+    left = max(ax, bx)
+    right = min(ax + aw, bx + bw)
+    overlap = max(0.0, right - left)
+    base = min(aw, bw)
+    if base <= 0:
+        return 0.0
+    return overlap / base
+
+
+def _same_crop_flow(a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]) -> bool:
+    """Return whether two bboxes belong to the same vertical reading flow."""
+    return _horizontal_overlap_ratio(a, b) >= 0.20
+
+
 def _next_crop_top_limits(questions: List[Dict]) -> Dict[int, float]:
-    """Return same-page next-question top y for each question index."""
-    by_image: Dict[str, List[Tuple[int, float]]] = {}
+    """Return same-page, same-flow next-question top y for each question index."""
+    by_page: Dict[str, List[Tuple[int, Tuple[float, float, float, float]]]] = {}
     for idx, q in enumerate(questions):
         bbox = q.get("bbox")
-        image_path = q.get("image_path")
-        if not image_path or not bbox or len(bbox) < 4:
+        page_key = q.get("image_path") or q.get("page_index")
+        if page_key is None or not bbox or len(bbox) < 4:
             continue
         try:
-            y = float(bbox[1])
+            xywh = (
+                float(bbox[0]),
+                float(bbox[1]),
+                float(bbox[2]),
+                float(bbox[3]),
+            )
         except (TypeError, ValueError):
             continue
-        by_image.setdefault(str(image_path), []).append((idx, y))
+        by_page.setdefault(str(page_key), []).append((idx, xywh))
 
     limits: Dict[int, float] = {}
-    for items in by_image.values():
-        ordered = sorted(items, key=lambda item: item[1])
-        for pos, (idx, y) in enumerate(ordered[:-1]):
-            next_y = ordered[pos + 1][1]
-            if next_y > y:
-                limits[idx] = next_y
+    for items in by_page.values():
+        for idx, bbox in items:
+            _, y, _, _ = bbox
+            below_same_flow = [
+                candidate_bbox[1]
+                for candidate_idx, candidate_bbox in items
+                if candidate_idx != idx
+                and candidate_bbox[1] > y
+                and _same_crop_flow(bbox, candidate_bbox)
+            ]
+            if below_same_flow:
+                limits[idx] = min(below_same_flow)
     return limits
 
 

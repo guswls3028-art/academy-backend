@@ -164,3 +164,44 @@ class CropUploadColumnClipTests(TestCase):
         )
 
         self.assertEqual(capped_h, 1015)
+
+    def test_next_crop_limit_uses_same_column_not_other_column(self):
+        limits = matchup_pipeline._next_crop_top_limits(
+            [
+                {
+                    "image_path": "page-12.png",
+                    "bbox": [97, 372, 702, 952],
+                },
+                {
+                    "image_path": "page-12.png",
+                    "bbox": [97, 1339, 708, 402],
+                },
+                {
+                    "image_path": "page-12.png",
+                    "bbox": [844, 452, 550, 528],
+                },
+                {
+                    "image_path": "page-12.png",
+                    "bbox": [844, 1338, 686, 372],
+                },
+            ]
+        )
+
+        self.assertEqual(limits[0], 1339)
+        self.assertEqual(limits[2], 1338)
+
+    def test_next_crop_limit_still_caps_full_width_questions(self):
+        limits = matchup_pipeline._next_crop_top_limits(
+            [
+                {
+                    "image_path": "page-37.png",
+                    "bbox": [21, 368, 1463, 860],
+                },
+                {
+                    "image_path": "page-37.png",
+                    "bbox": [176, 1229, 1330, 967],
+                },
+            ]
+        )
+
+        self.assertEqual(limits[0], 1229)
