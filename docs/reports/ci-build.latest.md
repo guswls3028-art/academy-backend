@@ -1,6 +1,6 @@
 ## V1.1.0 CI Build — latest 이미지 digest 스냅샷 (OIDC)
 
-**Generated:** 2026-06-27T09:24:40+00:00
+**Generated:** 2026-06-27T09:41:41+00:00
 **SSOT:** docs/infrastructure/deployment-architecture.md
 **Region:** ap-northeast-2
 **gitSha:** a304744609d71b3d9cc049b4dfe9edfd85abbf03
