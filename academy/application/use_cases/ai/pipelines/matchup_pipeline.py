@@ -2726,6 +2726,42 @@ def _should_clip_crop_padding_to_column(
     return bbox_width <= column_w * 1.08
 
 
+def _next_crop_top_limits(questions: List[Dict]) -> Dict[int, float]:
+    """Return same-page next-question top y for each question index."""
+    by_image: Dict[str, List[Tuple[int, float]]] = {}
+    for idx, q in enumerate(questions):
+        bbox = q.get("bbox")
+        image_path = q.get("image_path")
+        if not image_path or not bbox or len(bbox) < 4:
+            continue
+        try:
+            y = float(bbox[1])
+        except (TypeError, ValueError):
+            continue
+        by_image.setdefault(str(image_path), []).append((idx, y))
+
+    limits: Dict[int, float] = {}
+    for items in by_image.values():
+        ordered = sorted(items, key=lambda item: item[1])
+        for pos, (idx, y) in enumerate(ordered[:-1]):
+            next_y = ordered[pos + 1][1]
+            if next_y > y:
+                limits[idx] = next_y
+    return limits
+
+
+def _cap_padded_crop_to_next_question(
+    *, y: float, h: float, original_bottom: float, next_top: float | None,
+) -> float:
+    """Prevent padding from pulling the following question header into a crop."""
+    if next_top is None or next_top <= y:
+        return h
+    if original_bottom > next_top:
+        return h
+    capped_bottom = min(y + h, next_top - 1.0)
+    return max(1.0, capped_bottom - y)
+
+
 def _upload_cropped_images(
     questions: List[Dict],
     tenant_id: str | None,
@@ -2762,8 +2798,10 @@ def _upload_cropped_images(
     if isinstance(paper_type_summary, dict):
         primary_paper_type = str(paper_type_summary.get("primary") or "")
     default_column_count = _column_count_for_paper_type(primary_paper_type)
+    next_crop_top_limits = _next_crop_top_limits(questions)
 
-    for processed, q in enumerate(questions, 1):
+    for q_idx, q in enumerate(questions):
+        processed = q_idx + 1
         try:
             img = cv2.imread(q["image_path"])
             if img is None:
@@ -2771,6 +2809,7 @@ def _upload_cropped_images(
 
             if q.get("bbox"):
                 x, y, w, h = q["bbox"]
+                original_bottom = float(y) + float(h)
                 img_h, img_w = img.shape[:2]
 
                 # Phase C step 2 (2026-05-09 basic_definition_2026_05_09 SSOT) —
@@ -2811,6 +2850,12 @@ def _upload_cropped_images(
 
                     y = y - pad_y_top
                     h = h + pad_y_top + pad_y_bottom
+                    h = _cap_padded_crop_to_next_question(
+                        y=float(y),
+                        h=float(h),
+                        original_bottom=original_bottom,
+                        next_top=next_crop_top_limits.get(q_idx),
+                    )
 
                 x, y = max(0, int(x)), max(0, int(y))
                 x2, y2 = min(img_w, x + int(w)), min(img_h, y + int(h))

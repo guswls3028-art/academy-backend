@@ -144,3 +144,23 @@ class CropUploadColumnClipTests(TestCase):
                 column_count=2,
             )
         )
+
+    def test_padding_does_not_cross_next_question_top(self):
+        capped_h = matchup_pipeline._cap_padded_crop_to_next_question(
+            y=342,
+            h=1015,
+            original_bottom=1228,
+            next_top=1229,
+        )
+
+        self.assertEqual(capped_h, 886)
+
+    def test_existing_overlap_is_not_hidden_by_padding_cap(self):
+        capped_h = matchup_pipeline._cap_padded_crop_to_next_question(
+            y=342,
+            h=1015,
+            original_bottom=1240,
+            next_top=1229,
+        )
+
+        self.assertEqual(capped_h, 1015)
