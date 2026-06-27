@@ -1,6 +1,6 @@
 # SSOT ↔ 실제 인프라 ↔ 합의사항 정합성
 
-**Generated:** 2026-06-27T18:03:41.1195137+09:00
+**Generated:** 2026-06-28T00:41:23.8133408+09:00
 **SSOT:** docs/ssot/params.yaml (prod)
 
 ## 합의사항 체크리스트
@@ -8,7 +8,7 @@
 |------|------|------|------|
 | API ASG capacity policy | min=1 max=3 desired=dynamic baseline 1 | min=1 max=3 desired=1 | PASS |
 | AI ASG capacity policy | min=0 max=5 desired=dynamic baseline 0 | min=0 max=5 desired=0 | PASS |
-| Messaging ASG capacity policy | min=0 max=3 desired=dynamic baseline 0 | min=0 max=3 desired=0 | PASS |
+| Messaging ASG capacity policy | min=1 max=3 desired=dynamic baseline 1 | min=1 max=3 desired=1 | PASS |
 | Tools ASG capacity policy | min=0 max=2 desired=dynamic baseline 0 | min=0 max=2 desired=0 | PASS |
 | Solapi 고정 IP(NAT/EIP) | 취소(불필요) | NAT Gateway 0개, EIP 3 개 (미연결 0). 연결된 EIP는 활성 리소스 소유로 Solapi 정리 후보 아님. | PASS |
 | 빌드 서버 | 사용하지 않음(0대) | 정상 (빌드 서버 없음, GitHub Actions only) | PASS |

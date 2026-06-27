@@ -1,6 +1,6 @@
 # Production Canary
 
-**Generated:** 2026-06-27T18:00:29.7530869+09:00
+**Generated:** 2026-06-28T00:40:01.6297224+09:00
 **Mode:** PostDeploy
 **Verdict:** PASS
 
@@ -16,7 +16,7 @@
 | HTTP | api_invalid_login_no_5xx | PASS | HTTP 400 |
 | AWS | aws_identity | PASS | account=809466760795 |
 | AWS | api_asg | PASS | 1 healthy / min=1 desired=1 max=3 |
-| AWS | messaging_asg | PASS | 0 healthy / min=0 desired=0 max=3 |
+| AWS | messaging_asg | PASS | 1 healthy / min=1 desired=1 max=3 |
 | AWS | ai_asg | PASS | 0 healthy / min=0 desired=0 max=5 |
 | AWS | tools_asg | PASS | 0 healthy / min=0 desired=0 max=2 |
 | AWS | alb_target_health | PASS | 1/1 healthy |
@@ -33,6 +33,6 @@
 | AWS | video_batch_ce | PASS | ENABLED/VALID |
 | AWS | video_ops_queue | PASS | ENABLED/VALID |
 | AWS | video_ops_ce | PASS | ENABLED/VALID |
-| REMOTE | django_check_deploy | PASS | instance=i-034b02008e3b7015a status=Success rc=0 |
-| REMOTE | django_migrations_applied | PASS | instance=i-034b02008e3b7015a status=Success rc=0 |
-| REMOTE | django_production_canary | PASS | instance=i-034b02008e3b7015a status=Success rc=0 |
+| REMOTE | django_check_deploy | PASS | instance=i-05d9f7edaab8880dc status=Success rc=0 |
+| REMOTE | django_migrations_applied | PASS | instance=i-05d9f7edaab8880dc status=Success rc=0 |
+| REMOTE | django_production_canary | PASS | instance=i-05d9f7edaab8880dc status=Success rc=0 |

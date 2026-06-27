@@ -5,7 +5,7 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-06-27T18:01:54.2330438+09:00 |
+| 검증 시각 | 2026-06-28T00:40:02.5923115+09:00 |
 | 최종 상태 | PASS |
 | SSOT↔Actual 정합성 | **PASS** |
 | GO/NO-GO | **GO** |
@@ -17,7 +17,7 @@
 |------|------|
 | API ASG capacity policy (min=1 max=3 desired=dynamic baseline 1) | PASS |
 | AI ASG capacity policy (min=0 max=5 desired=dynamic baseline 0) | PASS |
-| Messaging ASG capacity policy (min=0 max=3 desired=dynamic baseline 0) | PASS |
+| Messaging ASG capacity policy (min=1 max=3 desired=dynamic baseline 1) | PASS |
 | Tools ASG capacity policy (min=0 max=2 desired=dynamic baseline 0) | PASS |
 | Solapi 고정 IP(NAT/EIP) 취소 | PASS |
 | 빌드 (GitHub Actions only) | PASS |
