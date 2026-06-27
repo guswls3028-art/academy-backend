@@ -180,9 +180,9 @@ function Load-SSOT {
     $script:MessagingInstanceTagValue = if ($p["messagingWorker"]["instanceTagValue"]) { $p["messagingWorker"]["instanceTagValue"] } else { "academy-v1-messaging-worker" }
     $script:MessagingAmiId = $p["messagingWorker"]["amiId"]
     $script:MessagingInstanceType = if ($p["messagingWorker"]["instanceType"]) { $p["messagingWorker"]["instanceType"] } else { "t4g.medium" }
-    $script:MessagingMinSize = Coerce-Int $p["messagingWorker"]["minSize"] 0
+    $script:MessagingMinSize = Coerce-Int $p["messagingWorker"]["minSize"] 1
     $script:MessagingMaxSize = Coerce-Int $p["messagingWorker"]["maxSize"] 10
-    $script:MessagingDesiredCapacity = Coerce-Int $p["messagingWorker"]["desiredCapacity"] 0
+    $script:MessagingDesiredCapacity = Coerce-Int $p["messagingWorker"]["desiredCapacity"] 1
     $script:MessagingScaleInProtection = ($p["messagingWorker"]["scaleInProtection"] -eq $true -or $p["messagingWorker"]["scaleInProtection"] -eq "true")
     $script:MessagingScaleOutCooldown = Coerce-Int $p["messagingWorker"]["scalingPolicyScaleOutCooldown"] 300
     $script:MessagingScaleInCooldown = Coerce-Int $p["messagingWorker"]["scalingPolicyScaleInCooldown"] 900

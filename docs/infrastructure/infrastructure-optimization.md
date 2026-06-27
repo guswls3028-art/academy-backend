@@ -388,28 +388,28 @@ done
 |---------|-----------------|-----------------|--------|-------|
 | **ECR Storage** | **$213** | **~$5** | **-98%** | 5.2TB → <50GB after cleanup (검증 완료 2026-03-17) |
 | **VPC** | $82 | ~$20 | -76% | Interface endpoints removed, self-resolving |
-| **EC2 Compute** | $87 | API 1대 baseline + worker burst runtime | Variable | API는 평시 1대 + target tracking. Messaging/AI/Tools는 SSOT상 idle min/desired=0/0이며 SQS 알람으로 scale-out |
+| **EC2 Compute** | $87 | API 1대 + Messaging 1대 baseline + worker burst runtime | Variable | API는 평시 1대 + target tracking. Messaging은 계정복구/알림톡 즉시성을 위해 평시 1대. AI/Tools는 SSOT상 idle min/desired=0/0이며 SQS 알람으로 scale-out |
 | **RDS** | $136.44 MTD (2026-06-01..25) | ~$73/mo instance compute floor + storage/backup | -$73/mo projected compute | SSOT downsize to db.t4g.medium, scheduled via RDS maintenance window |
 | **ElastiCache** | $38 | $38 | 0% | Keep cache.t4g.small |
 | **EC2-Other** | $44 | $35 | -20% | IPv4 reduction where possible |
 | **ALB** | $10 | $10 | 0% | Required |
 | **Tax** | $61 | ~$25 | Proportional | |
-| **Total** | **~$606** | **~$260 미만 + worker burst runtime** | **~57% + variable** | API 1대 baseline + worker idle min/desired=0/0 반영 |
+| **Total** | **~$606** | **~$260 미만 + Messaging baseline + worker burst runtime** | **~57% + variable** | API 1대 baseline + Messaging 1대 baseline + AI/Tools idle min/desired=0/0 반영 |
 
-**Cost floor (theoretical minimum):** API 1대 baseline + managed services + worker burst runtime. Messaging/AI/Tools workers는 상시 RI 대상이 아니며, idle baseline은 `docs/ssot/params.yaml`의 min/desired=0/0을 따른다. Requires 1yr no-upfront RIs. Only commit after 3 months of stable usage.
+**Cost floor (theoretical minimum):** API 1대 baseline + Messaging 1대 baseline + managed services + AI/Tools worker burst runtime. Messaging은 계정복구/알림톡 즉시성을 위해 warm baseline을 유지한다. AI/Tools workers는 상시 RI 대상이 아니며, idle baseline은 `docs/ssot/params.yaml`의 min/desired=0/0을 따른다. Requires 1yr no-upfront RIs. Only commit after 3 months of stable usage.
 
 ### 5.1.1 Worker Scale-To-Zero Policy
 
 | Worker | Current SSOT | Savings | Justification |
 |--------|--------------|---------|---------------|
-| **Messaging** | t4g.medium min/desired=0/0 max=3 | Idle baseline removed | SQS CloudWatch alarm wakes the ASG from the first queued message; scale-in waits for visible+in-flight+delayed backlog to stay 0. |
+| **Messaging** | t4g.medium min/desired=1/1 max=3 | Warm baseline restored for user-facing sends | Account recovery and Alimtalk delivery stay warm; SQS CloudWatch alarm can still scale above baseline, and scale-in returns to 1. |
 | **AI** | t4g.medium min/desired=0/0 max=5 | Idle baseline removed | SQS CloudWatch alarms and API wake-up start work; worker-owned live SQS depth check scales back to 0. |
 | **Tools** | t4g.small min/desired=0/0 max=2 | Idle baseline removed | Deterministic conversion jobs can wait for queue-woken cold start; scale-in uses visible+in-flight+delayed backlog. |
 | **API** | t4g.medium min/desired=1/1 max=3 | One always-on instance retained | Target tracking adds capacity during bursts; CI creates temporary deploy headroom before rolling refresh. |
 
 **Worker Capacity Policy (SSOT):**
 
-Messaging/AI/Tools idle capacity is min/desired=0/0. Jobs enter SQS, CloudWatch alarms scale the ASGs out on visible messages, and scale-in returns them to 0 after idle time. This matches `docs/ssot/params.yaml` and `docs/infrastructure/deployment-architecture.md`; CI deploy logs may therefore warn that worker ASGs have no current instances without indicating a failed deploy.
+Messaging idle capacity is min/desired=1/1 because account recovery and Alimtalk delivery are user-facing wait paths. AI/Tools idle capacity is min/desired=0/0. Jobs enter SQS, CloudWatch alarms scale worker ASGs out on visible messages, and scale-in returns Messaging to 1 and AI/Tools to 0 after idle time. This matches `docs/ssot/params.yaml` and `docs/infrastructure/deployment-architecture.md`; CI deploy logs may still warn for AI/Tools when they have no current instances without indicating a failed deploy.
 
 ### 5.1.2 Reserved Instance Recommendation [PROPOSED]
 
@@ -419,7 +419,7 @@ Messaging/AI/Tools idle capacity is min/desired=0/0. Jobs enter SQS, CloudWatch 
 | RDS db.t4g.medium | 1yr no-upfront | $0.102/hr on-demand | $0.0792/hr | consider only after 3 months stable on medium |
 | **Total RI savings** | | | | **API known + RDS TBD after 3 months** |
 
-**Note:** Only commit to RIs after 3 months of stable usage patterns. Do not reserve worker capacity while Messaging/AI/Tools SSOT idle baseline remains min/desired=0/0.
+**Note:** Only commit to RIs after 3 months of stable usage patterns. Messaging has a 1-instance stability baseline; do not reserve AI/Tools worker capacity while their SSOT idle baseline remains min/desired=0/0.
 
 ### 5.2 What NOT to Cut
 
@@ -428,7 +428,7 @@ Messaging/AI/Tools idle capacity is min/desired=0/0. Jobs enter SQS, CloudWatch 
 | API t4g.medium | Gunicorn 4w + gevent needs headroom; downsizing risks latency spikes |
 | RDS db.t4g.medium | Current SSOT target after downsize; keep until connection, memory, and slow-query data proves another move safe |
 | Redis cache.t4g.small | Video progress + session cache; t4g.micro has only 0.5GB |
-| API baseline | API stays warm for request latency; workers are intentionally queue-woken from min/desired=0/0. |
+| API/Messaging baseline | API stays warm for request latency; Messaging stays warm for account-recovery/Alimtalk latency; AI/Tools are intentionally queue-woken from min/desired=0/0. |
 | MinHealthyPercentage: API=100%, Workers=0% | Zero-downtime via scale-up strategy (API) and SQS buffering (workers) |
 
 **What CAN be cut further (after measurement):** worker instance types can be right-sized separately from scale-to-zero if cold-start runtime and memory data prove it safe.

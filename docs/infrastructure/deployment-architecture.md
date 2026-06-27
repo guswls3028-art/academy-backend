@@ -137,7 +137,7 @@ Workers use the same ASG instance refresh mechanism as API but with:
 Runtime scaling is split by worker:
 
 - **AI** uses AWS/SQS CloudWatch scale-out alarms (`ai-worker-queue-high`, `ai-worker-queue-age-high`) plus API wake-up. Idle scale-in is worker-owned after live SQS depth is empty; `ai-worker-queue-low` is observability-only. SSOT min/desired is 0/0.
-- **Messaging** runs with ASG min/desired=0 baseline and AWS/SQS CloudWatch alarms for StepScaling up to SSOT max capacity. Any visible queue message wakes the worker; scale-in requires visible+in-flight+delayed backlog to stay 0 before reducing capacity.
+- **Messaging** runs with ASG min/desired=1 warm baseline and AWS/SQS CloudWatch alarms for StepScaling up to SSOT max capacity. Account recovery and Alimtalk delivery are user-facing wait paths, so the worker is not allowed to cold-start from zero during normal operation. Scale-in requires visible+in-flight+delayed backlog to stay 0 and then returns only to the warm baseline.
 - **Tools** runs with ASG min/desired=0 baseline and AWS/SQS CloudWatch alarms for deterministic conversion queues. Any visible queue message wakes the worker; scale-in uses the same visible+in-flight+delayed backlog guard.
 - **Video** is not an ASG worker. It is AWS Batch only.
 

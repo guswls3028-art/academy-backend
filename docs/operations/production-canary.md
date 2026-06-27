@@ -23,7 +23,7 @@ The command fails on critical user-facing risks:
 Warnings are emitted for operational debt that should be reviewed but may be accepted temporarily:
 
 - overdue or failed messaging jobs
-- stale messaging worker heartbeat
+- stale messaging worker heartbeat (Messaging warm baseline is expected; stale heartbeat is acceptable only when the wrapper proves ASG min/desired=0 during a temporary scale-to-zero policy)
 - READY videos missing thumbnails
 - READY videos still tied to an active transcode job
 - recent DEAD video jobs

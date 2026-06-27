@@ -74,7 +74,7 @@ class Command(BaseCommand):
         parser.add_argument(
             "--allow-idle-messaging-worker",
             action="store_true",
-            help="Allow idle/stale/missing messaging worker heartbeat when ASG desired=0 scale-to-zero is expected.",
+            help="Allow idle/stale/missing messaging worker heartbeat only when AWS proves messaging ASG min/desired=0.",
         )
 
     def handle(self, *args, **options):
@@ -220,7 +220,7 @@ class Command(BaseCommand):
                 name="messaging_worker_heartbeat",
                 severity="warning",
                 ok=worker_ok,
-                detail="Messaging worker heartbeat should be fresh unless ASG desired=0 scale-to-zero is active.",
+                detail="Messaging worker heartbeat should be fresh unless a temporary ASG min/desired=0 policy is active.",
                 data=worker_data,
             ),
         ]

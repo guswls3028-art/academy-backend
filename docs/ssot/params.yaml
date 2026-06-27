@@ -98,11 +98,13 @@ messagingWorker:
   instanceTagValue: academy-v1-messaging-worker
   amiId: ami-0885e191a9bcf28b0
   instanceType: t4g.medium
-  minSize: 0
+  # 계정복구/알림톡은 로그인 전 사용자 대기 흐름이므로 cold-start 지연을
+  # 허용하지 않는다. Messaging worker는 1대 warm baseline을 유지한다.
+  minSize: 1
   # 운영 단순화: 메시징 워커 스케일 상한 축소
   maxSize: 3
-  desiredCapacity: 0
-  # V1.1.1: scale-in protection 비활성화. min=0이면 큐가 비었을 때 0까지 축소 가능.
+  desiredCapacity: 1
+  # V1.1.1: scale-in protection 비활성화. min=1이면 큐가 비어도 1대 warm baseline을 유지한다.
   # protection=true면 instance refresh 실패 → 배포 차단 (근본 원인 확인됨).
   scaleInProtection: false
   scalingPolicyScaleOutCooldown: 300
