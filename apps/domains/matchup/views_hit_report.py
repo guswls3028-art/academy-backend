@@ -33,6 +33,7 @@ from .views import (
 )
 
 logger = logging.getLogger(__name__)
+_HIT_REPORT_PDF_RENDER_VERSION = "grouped-1n-v1"
 
 try:
     from apps.infrastructure.storage.r2 import (
@@ -939,6 +940,7 @@ def _hit_report_pdf_version(report) -> str:
     """
     doc = getattr(report, "document", None)
     raw = "|".join([
+        _HIT_REPORT_PDF_RENDER_VERSION,
         str(getattr(report, "tenant_id", "")),
         str(getattr(report, "id", "")),
         getattr(getattr(report, "updated_at", None), "isoformat", lambda: "x")(),

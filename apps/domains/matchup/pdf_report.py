@@ -13,9 +13,10 @@
   매치업 홈 우측 추천 패널에서 후보 클릭 시 뜨는 ProblemDetailModal과
   같은 좌-우 2-pane 비교 형태를 PDF에서도 그대로 재사용.
     - A4 landscape (297×210mm) → 두 이미지 풀폭 비교
-    - 페이지 = 시험지 문항 1개 × 큐레이션 후보 1건 (후보 N개면 N 페이지)
+    - 페이지 = 시험지 문항 1개 + 큐레이션 후보 묶음
+      (후보 2~4개는 한 페이지, 5개 이상은 4개씩 다음 페이지)
     - 좌 pane (warning 톤): 실제 시험 문항
-    - 우 pane (적중 분류 색): 강사 수업 자료 + 유사도 라벨
+    - 우 pane (적중 분류 색): 강사 수업 자료 여러 건 + 유사도 라벨
     - 하단 코멘트 band: 페이지마다 반복 (강사의 지도 노트)
 """
 from __future__ import annotations
@@ -50,6 +51,7 @@ _MATCH_DEFAULT_BG = "#DBEAFE"   # blue-100
 _DIRECT_HIT = 0.85   # 직접 적중 — 거의 같은 문제 (변형 포함)
 _TYPE_HIT = 0.75     # 유형 적중 — 풀이 구조 동일
 _CONCEPT_HIT = 0.60  # 개념 커버 — 같은 단원/개념
+_MAX_MATCHES_PER_GROUP_PAGE = 4
 
 
 # ── 폰트 ────────────────────────────────────────────────────
@@ -456,6 +458,158 @@ def _draw_compare_page(c, *, page_w, page_h, margin, inner_w,
     )
 
 
+def _draw_group_compare_page(c, *, page_w, page_h, margin, inner_w,
+                             fn_reg, fn_bold, tenant_name,
+                             q_number, group_idx, group_count,
+                             total_matches, match_start_idx,
+                             label_text, header_classification,
+                             left_label, left_sub, left_url,
+                             matches,
+                             comment_text=None,
+                             footer_idx=0, footer_total=0,
+                             image_cache=None):
+    """문항 1개와 후보 여러 건을 한 페이지에 묶어 보여주는 비교 페이지."""
+    from reportlab.lib.colors import HexColor, white
+    from reportlab.lib.units import mm
+
+    has_comment = bool(comment_text and comment_text.strip())
+
+    # ── 상단 헤더
+    header_h = 16 * mm
+    c.setFillColor(HexColor(_HEADER_COLOR))
+    c.rect(0, page_h - header_h, page_w, header_h, fill=1, stroke=0)
+    c.setFillColor(white)
+    c.setFont(fn_bold, 14)
+    q_text = f"Q{q_number}"
+    if total_matches > 0:
+        q_text += f"  ·  대비 자료 {total_matches}건"
+        if group_count > 1:
+            group_end = match_start_idx + len(matches) - 1
+            q_text += f"  ({match_start_idx}-{group_end}/{total_matches})"
+    else:
+        q_text += "  ·  선택 없음"
+    c.drawString(margin, page_h - 11 * mm, q_text)
+
+    if header_classification:
+        c.setFillColor(HexColor(_pane_color_for_class(header_classification)))
+    else:
+        c.setFillColor(HexColor(_MISS_COLOR))
+    c.setFont(fn_bold, 12)
+    c.drawRightString(page_w - margin, page_h - 11 * mm, label_text or "")
+
+    # ── 푸터
+    footer_h = 10 * mm
+    c.setFont(fn_reg, 9)
+    c.setFillColor(HexColor("#94A3B8"))
+    if footer_total > 0:
+        c.drawCentredString(
+            page_w / 2, 5 * mm,
+            f"{tenant_name}  ·  {footer_idx} / {footer_total}",
+        )
+    else:
+        c.drawCentredString(page_w / 2, 5 * mm, tenant_name)
+
+    # ── 코멘트 band
+    comment_band_h = 28 * mm if has_comment else 0
+    if has_comment:
+        cb_y = footer_h
+        cb_h = comment_band_h
+        c.setFillColor(HexColor(_BG_SUBTLE))
+        c.rect(margin, cb_y, inner_w, cb_h, fill=1, stroke=0)
+        c.setStrokeColor(HexColor("#E2E8F0"))
+        c.rect(margin, cb_y, inner_w, cb_h, fill=0, stroke=1)
+        c.setFillColor(HexColor("#0F172A"))
+        c.setFont(fn_bold, 10)
+        c.drawString(margin + 4 * mm, cb_y + cb_h - 6 * mm, "지도 코멘트")
+        c.setFont(fn_reg, 9.5)
+        c.setFillColor(HexColor("#334155"))
+
+        def _wrap_visual(s: str, max_w: int = 110) -> List[str]:
+            out, cur, cur_w = [], "", 0
+            for ch in s:
+                w = 2 if ord(ch) >= 0x3000 else 1
+                if cur_w + w > max_w:
+                    out.append(cur)
+                    cur, cur_w = ch, w
+                else:
+                    cur += ch
+                    cur_w += w
+            if cur:
+                out.append(cur)
+            return out
+
+        lines: List[str] = []
+        for raw in comment_text.split("\n"):
+            line = raw.strip()
+            if not line:
+                continue
+            lines.extend(_wrap_visual(line, 110))
+        ty = cb_y + cb_h - 11 * mm
+        max_lines = 3
+        shown = lines[:max_lines]
+        for ln in shown:
+            c.drawString(margin + 4 * mm, ty, ln)
+            ty -= 5 * mm
+        if len(lines) > max_lines:
+            c.setFillColor(HexColor("#94A3B8"))
+            c.setFont(fn_reg, 8)
+            c.drawString(
+                margin + 4 * mm, ty + 1 * mm,
+                f"… +{len(lines) - max_lines}줄 더 (편집기에서 전체 확인)",
+            )
+
+    # ── Pane 영역
+    pane_top = page_h - header_h - 4 * mm
+    pane_bottom = footer_h + comment_band_h + 4 * mm
+    pane_h = pane_top - pane_bottom
+    gap = 6 * mm
+    left_w = inner_w * 0.42
+    right_w = inner_w - left_w - gap
+
+    _draw_single_pane(
+        c, x=margin, y=pane_bottom, w=left_w, h=pane_h,
+        label=left_label, sub=left_sub, image_url=left_url,
+        accent_color=_SOURCE_PANE_COLOR, accent_bg=_SOURCE_PANE_BG,
+        fn_reg=fn_reg, fn_bold=fn_bold,
+        image_cache=image_cache,
+    )
+
+    right_x = margin + left_w + gap
+    if not matches:
+        _draw_single_pane(
+            c, x=right_x, y=pane_bottom, w=right_w, h=pane_h,
+            label="큐레이션 자료", sub="선택된 자료가 없습니다", image_url=None,
+            accent_color=_MISS_COLOR, accent_bg="#F1F5F9",
+            fn_reg=fn_reg, fn_bold=fn_bold,
+            placeholder_text="큐레이션 미작성",
+            image_cache=image_cache,
+        )
+        return
+
+    match_gap = 3 * mm
+    rows = 1 if len(matches) == 1 else 2
+    cols = 1 if len(matches) <= 2 else 2
+    cell_w = (right_w - match_gap * (cols - 1)) / cols
+    cell_h = (pane_h - match_gap * (rows - 1)) / rows
+    for idx, match in enumerate(matches):
+        col = idx % cols
+        row = idx // cols
+        x = right_x + col * (cell_w + match_gap)
+        y = pane_bottom + (rows - 1 - row) * (cell_h + match_gap)
+        cls = match.get("classification")
+        _draw_single_pane(
+            c, x=x, y=y, w=cell_w, h=cell_h,
+            label=match.get("label") or f"대비 자료 {match_start_idx + idx}",
+            sub=match.get("sub") or "",
+            image_url=match.get("url") or None,
+            accent_color=_pane_color_for_class(cls) if cls else _MISS_COLOR,
+            accent_bg=_pane_bg_for_class(cls) if cls else "#F1F5F9",
+            fn_reg=fn_reg, fn_bold=fn_bold,
+            placeholder_text=match.get("placeholder") or "이미지 없음",
+            image_cache=image_cache,
+        )
+
+
 def _draw_cover(c, *, page_w, page_h, margin, inner_w,
                 fn_reg, fn_bold, tenant_name, report_title,
                 document_category, author_label, issued_at,
@@ -592,8 +746,9 @@ def generate_curated_hit_report_pdf(report) -> bytes:
 
     페이지 구성:
       1. 표지
-      2. 각 시험지 문항 × 선택 후보 1건 = 1 페이지 (A4 landscape, 좌-우 2-pane).
-         후보 N개면 N 페이지. 선택 0건이면 placeholder 1 페이지.
+      2. 시험지 문항 1개 + 선택 후보 묶음 = 1 페이지.
+         후보 2~4개는 같은 페이지에 표시하고, 5개 이상은 4개씩 다음 페이지로 넘긴다.
+         선택 0건이면 placeholder 1 페이지.
     """
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.units import mm
@@ -642,7 +797,13 @@ def generate_curated_hit_report_pdf(report) -> bytes:
     for ep in exam_problems:
         e = entries_by_eid.get(ep.id)
         sel = (e.selected_problem_ids if e else []) or []
-        body_page_count += max(1, len(sel))
+        if not sel:
+            body_page_count += 1
+        else:
+            body_page_count += max(
+                1,
+                (len(sel) + _MAX_MATCHES_PER_GROUP_PAGE - 1) // _MAX_MATCHES_PER_GROUP_PAGE,
+            )
 
     # ── 이미지 prefetch (병렬) ──
     # 게이트웨이 60s 컷 회피. 후보 N개 × 2 pane 직렬 다운로드는 N=20 정도부터 timeout.
@@ -751,7 +912,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
     )
     c.showPage()
 
-    # ── 본문: 문항 × 후보 페이지 ──
+    # ── 본문: 문항 단위 그룹 페이지 ──
     page_idx = 0
     doc_title_short = (document.title or "시험지")[:60]
 
@@ -782,14 +943,15 @@ def generate_curated_hit_report_pdf(report) -> bytes:
             c.showPage()
             continue
 
-        for ci, pid in enumerate(sel_ids, start=1):
+        if len(sel_ids) == 1:
+            pid = sel_ids[0]
             page_idx += 1
             p = selected_meta.get(int(pid))
             if not p:
                 _draw_compare_page(
                     c, page_w=page_w, page_h=page_h, margin=margin, inner_w=inner_w,
                     fn_reg=fn_reg, fn_bold=fn_bold, tenant_name=tenant_name,
-                    q_number=ep.number, page_idx_in_q=ci, q_pages=len(sel_ids),
+                    q_number=ep.number, page_idx_in_q=1, q_pages=len(sel_ids),
                     classification=None, label_text="자료 누락",
                     left_label="실제 시험",
                     left_sub=f"{doc_title_short}  ·  {ep.number}번",
@@ -829,7 +991,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
             _draw_compare_page(
                 c, page_w=page_w, page_h=page_h, margin=margin, inner_w=inner_w,
                 fn_reg=fn_reg, fn_bold=fn_bold, tenant_name=tenant_name,
-                q_number=ep.number, page_idx_in_q=ci, q_pages=len(sel_ids),
+                q_number=ep.number, page_idx_in_q=1, q_pages=len(sel_ids),
                 classification=cls, label_text=label_text,
                 left_label="실제 시험",
                 left_sub=f"{doc_title_short}  ·  {ep.number}번",
@@ -837,6 +999,88 @@ def generate_curated_hit_report_pdf(report) -> bytes:
                 right_label="큐레이션 자료",
                 right_sub=mat_sub,
                 right_url=mat_url,
+                comment_text=comment if comment else None,
+                footer_idx=page_idx, footer_total=body_page_count,
+                image_cache=image_cache,
+            )
+            c.showPage()
+            continue
+
+        match_items = []
+        for ci, pid in enumerate(sel_ids, start=1):
+            p = selected_meta.get(int(pid))
+            if not p:
+                match_items.append({
+                    "classification": None,
+                    "label": f"대비 자료 {ci}/{len(sel_ids)}",
+                    "sub": f"#{pid} (자료 누락)",
+                    "url": None,
+                    "placeholder": "자료를 찾을 수 없음",
+                    "label_text": "자료 누락",
+                })
+                continue
+
+            sim = _compute_display_sim(ep, p)
+            if sim is None:
+                cls = None
+                label_text = "유사도 측정 불가"
+            else:
+                cls = _classify_match(sim)
+                label_text = {
+                    "direct": f"직접 적중  ·  {sim*100:.1f}%",
+                    "type": f"유형 적중  ·  {sim*100:.1f}%",
+                    "concept": f"개념 커버  ·  {sim*100:.1f}%",
+                }.get(cls, f"유사도 {sim*100:.1f}%")
+
+            mat_url = sel_url_by_pid.get(p.id, "")
+            mat_doc_title = ""
+            try:
+                mat_doc_title = (p.document.title or "")[:50] if p.document_id else ""
+            except Exception:
+                mat_doc_title = ""
+            mat_sub = (mat_doc_title or "학원 자료") + f"  ·  {p.number}번"
+            match_items.append({
+                "classification": cls,
+                "label": f"대비 자료 {ci}/{len(sel_ids)}",
+                "sub": f"{mat_sub}  ·  {label_text}",
+                "url": mat_url,
+                "placeholder": "이미지 없음",
+                "label_text": label_text,
+            })
+
+        group_count = max(
+            1,
+            (len(match_items) + _MAX_MATCHES_PER_GROUP_PAGE - 1) // _MAX_MATCHES_PER_GROUP_PAGE,
+        )
+        rank = {"direct": 4, "type": 3, "concept": 2, "miss": 1}
+        best = max(
+            match_items,
+            key=lambda item: rank.get(item.get("classification") or "", 0),
+        )
+        best_cls = best.get("classification")
+        best_label = best.get("label_text") or ""
+        header_label = (
+            f"최고 {best_label}"
+            if best_cls and best_label
+            else f"선택 자료 {len(sel_ids)}건"
+        )
+        for offset in range(0, len(match_items), _MAX_MATCHES_PER_GROUP_PAGE):
+            page_idx += 1
+            chunk = match_items[offset:offset + _MAX_MATCHES_PER_GROUP_PAGE]
+            _draw_group_compare_page(
+                c, page_w=page_w, page_h=page_h, margin=margin, inner_w=inner_w,
+                fn_reg=fn_reg, fn_bold=fn_bold, tenant_name=tenant_name,
+                q_number=ep.number,
+                group_idx=(offset // _MAX_MATCHES_PER_GROUP_PAGE) + 1,
+                group_count=group_count,
+                total_matches=len(match_items),
+                match_start_idx=offset + 1,
+                label_text=header_label,
+                header_classification=best_cls,
+                left_label="실제 시험",
+                left_sub=f"{doc_title_short}  ·  {ep.number}번",
+                left_url=ep_url,
+                matches=chunk,
                 comment_text=comment if comment else None,
                 footer_idx=page_idx, footer_total=body_page_count,
                 image_cache=image_cache,
