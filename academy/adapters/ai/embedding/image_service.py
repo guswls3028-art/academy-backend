@@ -30,6 +30,11 @@ _CLIP_MODEL_NAME = "clip-ViT-B-32"
 # t4g.medium(2 vCPU, 4GB) 기준 batch 16 = 메모리 ~600MB peak, ~6s/batch.
 # 무제한일 때(~400 images) OOM/wedge 사고 발생(2026-04-29). 환경변수로 조정.
 _CLIP_BATCH_SIZE = max(1, int(os.getenv("CLIP_IMAGE_BATCH_SIZE", "16")))
+_CLIP_MAX_IMAGE_SIDE = max(224, int(os.getenv("CLIP_IMAGE_MAX_SIDE", "1024")))
+_CLIP_MAX_IMAGE_PIXELS = max(
+    224 * 224,
+    int(os.getenv("CLIP_IMAGE_MAX_PIXELS", str(1024 * 1024))),
+)
 
 try:
     from sentence_transformers import SentenceTransformer  # type: ignore
@@ -47,6 +52,45 @@ def _get_clip_model() -> "SentenceTransformer":
         raise RuntimeError("sentence-transformers not installed")
     _clip_model = SentenceTransformer(_CLIP_MODEL_NAME)
     return _clip_model
+
+
+def _load_image_for_clip(path: str):
+    """Load a model-input copy capped to CLIP-sized bounds.
+
+    Matchup scan crops can be full-page 8k+ images. SentenceTransformer's CLIP
+    preprocessor eventually resizes them, but handing large PIL images to the
+    CPU encoder can wedge a small worker before that point.
+    """
+    from PIL import Image
+
+    with Image.open(path) as raw:
+        img = raw.convert("RGB")
+
+    width, height = img.size
+    if (
+        max(width, height) <= _CLIP_MAX_IMAGE_SIDE
+        and width * height <= _CLIP_MAX_IMAGE_PIXELS
+    ):
+        return img
+
+    ratio_side = _CLIP_MAX_IMAGE_SIDE / max(width, height)
+    ratio_pixels = (_CLIP_MAX_IMAGE_PIXELS / max(1, width * height)) ** 0.5
+    ratio = min(1.0, ratio_side, ratio_pixels)
+    target = (
+        max(1, int(width * ratio)),
+        max(1, int(height * ratio)),
+    )
+    resampling = getattr(Image, "Resampling", Image).LANCZOS
+    img.thumbnail(target, resampling)
+    logger.info(
+        "CLIP_IMAGE_DOWNSCALED | path=%s | from=%sx%s | to=%sx%s",
+        path,
+        width,
+        height,
+        img.size[0],
+        img.size[1],
+    )
+    return img
 
 
 @dataclass
@@ -86,7 +130,7 @@ def get_image_embeddings(image_paths: List[str]) -> ImageEmbeddingBatch:
         local_indices: List[int] = []
         for offset, p in enumerate(batch_paths):
             try:
-                img = Image.open(p).convert("RGB")
+                img = _load_image_for_clip(p)
                 images.append(img)
                 local_indices.append(start + offset)
             except Exception as e:
@@ -94,7 +138,12 @@ def get_image_embeddings(image_paths: List[str]) -> ImageEmbeddingBatch:
         if not images:
             continue
         try:
-            vectors = model.encode(images, convert_to_numpy=False, batch_size=_CLIP_BATCH_SIZE)
+            vectors = model.encode(
+                images,
+                convert_to_numpy=False,
+                batch_size=min(_CLIP_BATCH_SIZE, len(images)),
+                show_progress_bar=False,
+            )
             for idx, vec in zip(local_indices, vectors):
                 out[idx] = list(map(float, vec))
         except Exception as e:
