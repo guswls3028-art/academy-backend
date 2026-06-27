@@ -290,6 +290,107 @@ class HitReportDraftView(View):
             for e in report.entries.all()
         }
 
+        def _entry_payload(entry):
+            if not entry:
+                return None
+            return {
+                "id": entry.id,
+                "selected_problem_ids": entry.selected_problem_ids or [],
+                "comment": entry.comment or "",
+                "order": entry.order,
+                "excluded": bool(entry.excluded),
+            }
+
+        selected_problem_ids: list[int] = []
+        for e in entries_by_pid.values():
+            for pid in (e.selected_problem_ids or []):
+                try:
+                    selected_problem_ids.append(int(pid))
+                except (TypeError, ValueError):
+                    pass
+        selected_problem_ids = list(dict.fromkeys(selected_problem_ids))
+
+        if mode == "quick":
+            # Fast shell for the editor: render the report immediately, then let the
+            # frontend hydrate expensive vector candidates in the background.
+            extra_qs = list(MatchupProblem.objects.filter(
+                tenant=request.tenant,
+                id__in=selected_problem_ids,
+            ).only("id", "image_key", "document_id", "number", "text", "meta"))
+
+            url_map: dict = {}
+            if generate_presigned_get_url_storage:
+                for p in [*exam_problems, *extra_qs]:
+                    key = public_image_key_for_report(p)
+                    if key and key not in url_map:
+                        url_map[key] = generate_presigned_get_url_storage(
+                            key=key, expires_in=3600,
+                        )
+
+            doc_ids: set = {doc.id}
+            for p in extra_qs:
+                doc_ids.add(p.document_id)
+
+            doc_meta_by_id: dict = {}
+            if doc_ids:
+                for d in MatchupDocument.objects.filter(
+                    tenant=request.tenant, id__in=doc_ids,
+                ).only("id", "title", "category", "meta"):
+                    src = ""
+                    if isinstance(d.meta, dict):
+                        src = str(
+                            d.meta.get("source_type")
+                            or d.meta.get("upload_intent")
+                            or ""
+                        )
+                    doc_meta_by_id[d.id] = {
+                        "document_title": d.title or "",
+                        "document_category": d.category or "",
+                        "source_type": src,
+                    }
+
+            def _doc_label(doc_id: int) -> dict:
+                return doc_meta_by_id.get(doc_id) or {
+                    "document_title": "", "document_category": "", "source_type": "",
+                }
+
+            return JsonResponse({
+                "report": MatchupHitReportSerializer(report).data,
+                "exam_problems": [
+                    {
+                        "id": ep.id,
+                        "number": ep.number,
+                        "text_preview": (ep.text or "")[:200],
+                        "image_key": ep.image_key,
+                        "public_image_key": get_problem_public_image_key(ep),
+                        "image_url": url_map.get(public_image_key_for_report(ep))
+                        if public_image_key_for_report(ep) else None,
+                        "candidates": [],
+                        "entry": _entry_payload(entries_by_pid.get(ep.id)),
+                    }
+                    for ep in exam_problems
+                ],
+                "selected_problem_meta": [
+                    {
+                        "id": p.id, "document_id": p.document_id,
+                        "number": p.number,
+                        "text_preview": (p.text or "")[:120],
+                        "image_key": p.image_key,
+                        "public_image_key": get_problem_public_image_key(p),
+                        "image_url": url_map.get(public_image_key_for_report(p))
+                        if public_image_key_for_report(p) else None,
+                        "page_index": (
+                            int((p.meta or {}).get("page_index"))
+                            if isinstance(p.meta, dict)
+                            and isinstance((p.meta or {}).get("page_index"), int)
+                            else None
+                        ),
+                        **_doc_label(p.document_id),
+                    }
+                    for p in extra_qs
+                ],
+            })
+
         # 자동 후보 매치 (find_similar_problems) — 카테고리 격리 적용됨.
         # 큐레이션 보고서 작성자는 자동 top_k=5보다 많은 후보를 보고 직접 골라야 정확도가 올라감
         # 학원장 결함 fix (2026-05-05): "15문항 이외의 다른 문항도 떴으면" — 사용자가
@@ -354,16 +455,7 @@ class HitReportDraftView(View):
                 "image_key": ep.image_key,
                 "public_image_key": get_problem_public_image_key(ep),
                 "candidates": cand,
-                "entry": (
-                    {
-                        "id": entry.id,
-                        "selected_problem_ids": entry.selected_problem_ids or [],
-                        "comment": entry.comment or "",
-                        "order": entry.order,
-                        "excluded": bool(entry.excluded),
-                    }
-                    if entry else None
-                ),
+                "entry": _entry_payload(entry),
             })
 
         # presigned URL 일괄 — 시험지 problem + 후보 problem
@@ -385,10 +477,7 @@ class HitReportDraftView(View):
             # 사용자 명시 선택 problem (자동 후보에 없을 수도) — 보강
             extra_qs = MatchupProblem.objects.filter(
                 tenant=request.tenant,
-                id__in=[
-                    pid for e in entries_by_pid.values()
-                    for pid in (e.selected_problem_ids or [])
-                ],
+                id__in=selected_problem_ids,
             ).only("id", "image_key", "document_id", "number", "text", "meta")
             extra_meta = {p.id: p for p in extra_qs}
             for p in extra_qs:
