@@ -35,6 +35,10 @@ _CLIP_MAX_IMAGE_PIXELS = max(
     224 * 224,
     int(os.getenv("CLIP_IMAGE_MAX_PIXELS", str(1024 * 1024))),
 )
+_CLIP_HARD_SKIP_IMAGE_PIXELS = max(
+    _CLIP_MAX_IMAGE_PIXELS,
+    int(os.getenv("CLIP_IMAGE_HARD_SKIP_PIXELS", str(16 * 1024 * 1024))),
+)
 
 try:
     from sentence_transformers import SentenceTransformer  # type: ignore
@@ -64,24 +68,36 @@ def _load_image_for_clip(path: str):
     from PIL import Image
 
     with Image.open(path) as raw:
-        img = raw.convert("RGB")
+        width, height = raw.size
+        pixels = width * height
+        if pixels > _CLIP_HARD_SKIP_IMAGE_PIXELS:
+            logger.info(
+                "CLIP_IMAGE_SKIPPED_TOO_LARGE | path=%s | size=%sx%s | pixels=%s | hard_cap=%s",
+                path,
+                width,
+                height,
+                pixels,
+                _CLIP_HARD_SKIP_IMAGE_PIXELS,
+            )
+            return None
 
-    width, height = img.size
-    if (
-        max(width, height) <= _CLIP_MAX_IMAGE_SIDE
-        and width * height <= _CLIP_MAX_IMAGE_PIXELS
-    ):
-        return img
+        if (
+            max(width, height) <= _CLIP_MAX_IMAGE_SIDE
+            and pixels <= _CLIP_MAX_IMAGE_PIXELS
+        ):
+            return raw.convert("RGB").copy()
 
-    ratio_side = _CLIP_MAX_IMAGE_SIDE / max(width, height)
-    ratio_pixels = (_CLIP_MAX_IMAGE_PIXELS / max(1, width * height)) ** 0.5
-    ratio = min(1.0, ratio_side, ratio_pixels)
-    target = (
-        max(1, int(width * ratio)),
-        max(1, int(height * ratio)),
-    )
-    resampling = getattr(Image, "Resampling", Image).LANCZOS
-    img.thumbnail(target, resampling)
+        ratio_side = _CLIP_MAX_IMAGE_SIDE / max(width, height)
+        ratio_pixels = (_CLIP_MAX_IMAGE_PIXELS / max(1, pixels)) ** 0.5
+        ratio = min(1.0, ratio_side, ratio_pixels)
+        target = (
+            max(1, int(width * ratio)),
+            max(1, int(height * ratio)),
+        )
+        resampling = getattr(Image, "Resampling", Image).LANCZOS
+        raw.thumbnail(target, resampling)
+        img = raw.convert("RGB").copy()
+
     logger.info(
         "CLIP_IMAGE_DOWNSCALED | path=%s | from=%sx%s | to=%sx%s",
         path,
@@ -131,6 +147,8 @@ def get_image_embeddings(image_paths: List[str]) -> ImageEmbeddingBatch:
         for offset, p in enumerate(batch_paths):
             try:
                 img = _load_image_for_clip(p)
+                if img is None:
+                    continue
                 images.append(img)
                 local_indices.append(start + offset)
             except Exception as e:
