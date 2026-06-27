@@ -2711,6 +2711,21 @@ def _column_count_for_paper_type(paper_type: str) -> int:
     return 1
 
 
+def _should_clip_crop_padding_to_column(
+    *, bbox_width: float, image_width: int, column_count: int,
+) -> bool:
+    """Return whether over-crop padding should stay inside one layout column.
+
+    A bbox that already spans more than one column is intentional full-width
+    content on a page whose doc-level primary type may still be clean_pdf_dual.
+    Clipping those boxes back to the left/right column recreates half-crops.
+    """
+    if column_count < 2 or image_width <= 0 or bbox_width <= 0:
+        return False
+    column_w = image_width / column_count
+    return bbox_width <= column_w * 1.08
+
+
 def _upload_cropped_images(
     questions: List[Dict],
     tenant_id: str | None,
@@ -2775,7 +2790,11 @@ def _upload_cropped_images(
                     # paper_type=clean_pdf_dual → 2 column → 좌측 box 의 우측 padding 이
                     # 페이지 중앙 (img_w/2) 못 넘게. 4분할 (quadrant) 동일 원리.
                     cc = default_column_count
-                    if cc >= 2:
+                    if cc >= 2 and _should_clip_crop_padding_to_column(
+                        bbox_width=float(w),
+                        image_width=img_w,
+                        column_count=cc,
+                    ):
                         column_w = img_w / cc
                         box_center_x = x + w / 2
                         col_idx = int(box_center_x / column_w)
