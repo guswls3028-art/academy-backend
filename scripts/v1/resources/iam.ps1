@@ -206,12 +206,12 @@ function Ensure-EC2InstanceProfileSSM {
         Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyWorkersSqs -replace '\\','/')") -ErrorMessage "put workers SQS policy" | Out-Null
         Write-Ok "Ensured inline policy $inlineName on $roleName (Messaging/AI SQS consume)"
     }
-    # OMR/AI worker scaling: API wakes the AI worker ASG; worker scales itself in after live idle checks.
+    # OMR/AI and messaging worker scaling: API wakes worker ASGs after enqueue; AI worker scales itself in after live idle checks.
     $policyApiAiWorkerScale = Join-Path $TemplatesPath "policy_api_ai_worker_scale.json"
     if (Test-Path $policyApiAiWorkerScale) {
         $inlineName = "academy-api-ai-worker-scale"
         Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyApiAiWorkerScale -replace '\\','/')") -ErrorMessage "put API AI worker scale policy" | Out-Null
-        Write-Ok "Ensured inline policy $inlineName on $roleName (AI worker ASG wake/idle scale-in)"
+        Write-Ok "Ensured inline policy $inlineName on $roleName (AI/messaging worker ASG wake + AI idle scale-in)"
     }
     # 워커 UserData: 부팅 시 aws ssm get-parameter로 /academy/workers/env 조회
     $policyEc2Ssm = Join-Path $TemplatesPath "policy_ec2_ssm_get_parameters.json"

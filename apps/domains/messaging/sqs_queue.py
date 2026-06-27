@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 from typing import Optional
 from uuid import uuid4
 
@@ -59,11 +60,37 @@ class MessagingSQSQueue:
     QUEUE_NAME = "academy-v1-messaging-queue"
     DLQ_NAME = "academy-v1-messaging-queue-dlq"
 
-    def __init__(self):
+    def __init__(self, *, wake_messaging_workers: Optional[bool] = None):
         self.queue_client = get_queue_client()
+        self.wake_messaging_workers = True if wake_messaging_workers is None else bool(wake_messaging_workers)
 
     def _get_queue_name(self) -> str:
         return getattr(settings, "MESSAGING_SQS_QUEUE_NAME", self.QUEUE_NAME)
+
+    def _enqueue_wake_capacity(self) -> int:
+        raw_value = os.getenv(
+            "MESSAGING_WORKER_ENQUEUE_WAKE_CAPACITY",
+            str(getattr(settings, "MESSAGING_WORKER_ENQUEUE_WAKE_CAPACITY", 1)),
+        )
+        try:
+            return max(1, int(raw_value))
+        except (TypeError, ValueError):
+            return 1
+
+    def _wake_messaging_workers_after_enqueue(self) -> None:
+        if not self.wake_messaging_workers:
+            return
+        try:
+            from academy.adapters.compute.ec2_control import ensure_messaging_worker_asg_min_capacity
+
+            ensure_messaging_worker_asg_min_capacity(
+                min_capacity=self._enqueue_wake_capacity(),
+            )
+        except Exception:
+            logger.warning(
+                "Messaging worker wake-up failed after enqueue; message remains queued",
+                exc_info=True,
+            )
 
     def enqueue(
         self,
@@ -167,6 +194,7 @@ class MessagingSQSQueue:
             )
             if ok:
                 logger.info("Messaging job enqueued: to=%s", message["to"][:4] + "****")
+                self._wake_messaging_workers_after_enqueue()
             return bool(ok)
         except Exception as e:
             logger.exception("Error enqueuing messaging job: %s", e)

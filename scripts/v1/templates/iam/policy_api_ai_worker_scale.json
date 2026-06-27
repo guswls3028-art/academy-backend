@@ -2,16 +2,19 @@
   "Version": "2012-10-17",
   "Statement": [
     {
-      "Sid": "AIWorkerASGRead",
+      "Sid": "WorkerASGRead",
       "Effect": "Allow",
       "Action": "autoscaling:DescribeAutoScalingGroups",
       "Resource": "*"
     },
     {
-      "Sid": "AIWorkerASGScaleDesired",
+      "Sid": "WorkerASGScaleDesired",
       "Effect": "Allow",
       "Action": "autoscaling:SetDesiredCapacity",
-      "Resource": "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:*:autoScalingGroupName/academy-v1-ai-worker-asg"
+      "Resource": [
+        "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:*:autoScalingGroupName/academy-v1-ai-worker-asg",
+        "arn:aws:autoscaling:ap-northeast-2:809466760795:autoScalingGroup:*:autoScalingGroupName/academy-v1-messaging-worker-asg"
+      ]
     },
     {
       "Sid": "AIWorkerEC2Read",
