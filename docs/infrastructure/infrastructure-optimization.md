@@ -533,7 +533,7 @@ No additional drain work needed.
 | `/healthz` response | 200 | Every deploy + continuous ALB | Page on failure |
 | `/health` response | 200 | Every deploy | Investigate DB |
 | SQS DLQ depth | 0 | Daily | Investigate failed messages |
-| **SQS ApproximateAgeOfOldestMessage** | **< 300s** | **CloudWatch alarm** | **Worker stall — investigate immediately** |
+| **SQS visible backlog age** | **< 300s when `ApproximateNumberOfMessagesVisible > 0`** | **CloudWatch metric-math alarm** | **Worker scale-out/backlog stall — investigate visible messages. Long in-flight OCR jobs are guarded by worker lease/timeout instead of this alarm.** |
 | ECR total images | < 100/repo | Weekly | Run ecr-cleanup.py |
 | ECR `lastEvaluatedAt` | < 7 days old | Weekly | Re-apply policy if stale. **CONFIRMED working 2026-03-17 (lastEvaluatedAt: 2026-03-17T05:02:57)** |
 | RDS CPU | < 70% | CloudWatch | Consider scaling if sustained |

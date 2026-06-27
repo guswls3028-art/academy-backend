@@ -165,12 +165,47 @@ function Ensure-AiSqsScaling {
             "--treat-missing-data", $treatMissing,
             "--alarm-actions", $policyOutArn,
             "--region", $region) -ErrorMessage "put-metric-alarm ai scale-out" | Out-Null
+        $ageAlarmDimensions = @(@{ Name = "QueueName"; Value = $queueName })
+        $ageAlarmMetrics = @(
+            @{
+                Id = "age"
+                MetricStat = @{
+                    Metric = @{
+                        Namespace = "AWS/SQS"
+                        MetricName = "ApproximateAgeOfOldestMessage"
+                        Dimensions = $ageAlarmDimensions
+                    }
+                    Period = 60
+                    Stat = "Average"
+                }
+                ReturnData = $false
+            },
+            @{
+                Id = "visible"
+                MetricStat = @{
+                    Metric = @{
+                        Namespace = "AWS/SQS"
+                        MetricName = "ApproximateNumberOfMessagesVisible"
+                        Dimensions = $ageAlarmDimensions
+                    }
+                    Period = 60
+                    Stat = "Average"
+                }
+                ReturnData = $false
+            },
+            @{
+                Id = "visible_age"
+                Expression = "IF(visible>0,age,0)"
+                Label = "VisibleBacklogAgeSeconds"
+                ReturnData = $true
+            }
+        ) | ConvertTo-Json -Depth 8 -Compress
         $ageAlarmArgs = @("cloudwatch", "put-metric-alarm",
             "--alarm-name", $alarmAgeName,
-            "--metric-name", "ApproximateAgeOfOldestMessage",
-            "--namespace", "AWS/SQS",
-            "--dimensions", $queueDimension,
-            "--statistic", "Average", "--period", "60", "--evaluation-periods", "1",
+            "--alarm-description", "AI SQS visible backlog age >= 300s; ignores active in-flight long OCR jobs",
+            "--metrics", $ageAlarmMetrics,
+            "--evaluation-periods", "1",
+            "--datapoints-to-alarm", "1",
             "--threshold", "300",
             "--comparison-operator", "GreaterThanOrEqualToThreshold",
             "--treat-missing-data", $treatMissing,
@@ -207,8 +242,23 @@ function Ensure-AiSqsScaling {
         if (-not $aOut -or -not $aOut.AlarmActions -or $aOut.AlarmActions -notcontains $policyOutArn -or $aOut.Dimensions[0].Value -ne $queueName) {
             throw "Alarm $alarmOutName does not reference queue=$queueName and scale-out policy ARN"
         }
-        if (-not $aAge -or -not $aAge.AlarmActions -or $aAge.AlarmActions -notcontains $policyAgeOutArn -or $aAge.Dimensions[0].Value -ne $queueName) {
-            throw "Alarm $alarmAgeName does not reference queue=$queueName and age scale-out policy ARN"
+        $ageQueueNames = @()
+        if ($aAge -and $aAge.PSObject.Properties['Dimensions'] -and $aAge.Dimensions) {
+            $ageQueueNames += @($aAge.Dimensions | Where-Object { $_.Name -eq "QueueName" } | ForEach-Object { $_.Value })
+        }
+        if ($aAge -and $aAge.PSObject.Properties['Metrics'] -and $aAge.Metrics) {
+            foreach ($metricQuery in @($aAge.Metrics)) {
+                if ($metricQuery.PSObject.Properties['MetricStat'] -and $metricQuery.MetricStat -and $metricQuery.MetricStat.Metric) {
+                    $ageQueueNames += @($metricQuery.MetricStat.Metric.Dimensions | Where-Object { $_.Name -eq "QueueName" } | ForEach-Object { $_.Value })
+                }
+            }
+        }
+        $hasVisibleAgeExpression = $false
+        if ($aAge -and $aAge.PSObject.Properties['Metrics'] -and $aAge.Metrics) {
+            $hasVisibleAgeExpression = [bool](@($aAge.Metrics | Where-Object { $_.Id -eq "visible_age" -and $_.Expression -eq "IF(visible>0,age,0)" } | Select-Object -First 1))
+        }
+        if (-not $aAge -or -not $aAge.AlarmActions -or $aAge.AlarmActions -notcontains $policyAgeOutArn -or $ageQueueNames -notcontains $queueName -or -not $hasVisibleAgeExpression) {
+            throw "Alarm $alarmAgeName does not reference queue=$queueName, visible-backlog age expression, and age scale-out policy ARN"
         }
         $aInActions = if ($aIn -and $aIn.AlarmActions) { @($aIn.AlarmActions) } else { @() }
         if (-not $aIn -or $aIn.Dimensions[0].Value -ne $queueName -or $aIn.ActionsEnabled -or (($aInActions -join " ") -match "scalingPolicy")) {

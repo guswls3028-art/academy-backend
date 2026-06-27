@@ -4,9 +4,11 @@
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 
 from django.http import JsonResponse
 from django.views import View
+from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
@@ -65,6 +67,7 @@ ALLOWED_CONTENT_TYPES = {
 }
 MAX_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2GB — 사용자(악용 risk 없는 학원 SaaS) 제한 풀라는 요청 반영
 MAX_DOCUMENTS_PER_TENANT = 500
+AI_JOB_EXPIRED_LEASE_RECONCILE_GRACE = timedelta(minutes=10)
 
 
 # ── helpers ──────────────────────────────────────────
@@ -220,6 +223,60 @@ def _reconcile_document_from_ai_job(doc: MatchupDocument) -> bool:
                 source_id=str(doc.id),
             )
             doc.refresh_from_db(fields=["status", "problem_count", "error_message", "meta"])
+            return True
+
+        if (
+            job.status == "RUNNING"
+            and job.lease_expires_at
+            and job.lease_expires_at <= timezone.now() - AI_JOB_EXPIRED_LEASE_RECONCILE_GRACE
+        ):
+            error = "AI 작업이 중단되었습니다. 다시 시도해 주세요."
+            job.status = "FAILED"
+            job.error_message = error
+            job.last_error = error
+            job.locked_by = None
+            job.locked_at = None
+            job.lease_expires_at = None
+            job.completed_at = timezone.now()
+            job.save(update_fields=[
+                "status",
+                "error_message",
+                "last_error",
+                "locked_by",
+                "locked_at",
+                "lease_expires_at",
+                "completed_at",
+                "updated_at",
+            ])
+            try:
+                from apps.domains.ai.redis_status_cache import cache_job_status
+
+                cache_job_status(
+                    tenant_id=str(job.tenant_id or ""),
+                    job_id=job.job_id,
+                    status="FAILED",
+                    job_type=job.job_type,
+                    error_message=error,
+                    ttl=None,
+                )
+            except Exception:
+                logger.warning(
+                    "MATCHUP_RECONCILE_EXPIRED_LEASE_CACHE_FAILED | doc_id=%s | job_id=%s",
+                    doc.id, doc.ai_job_id,
+                    exc_info=True,
+                )
+            _handle_matchup_ai_result(
+                job_id=job.job_id,
+                status="FAILED",
+                result_payload={},
+                error=error,
+                source_id=str(doc.id),
+            )
+            doc.refresh_from_db(fields=["status", "problem_count", "error_message", "meta"])
+            logger.warning(
+                "MATCHUP_RECONCILE_EXPIRED_LEASE_FAILED | doc_id=%s | job_id=%s",
+                doc.id, job.job_id,
+            )
             return True
     except Exception:
         logger.exception(
