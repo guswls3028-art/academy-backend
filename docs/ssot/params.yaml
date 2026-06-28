@@ -217,10 +217,10 @@ eventBridge:
   enqueueUploadedRuleName: academy-v1-enqueue-uploaded-videos
   detectStuckRuleName: academy-v1-detect-stuck-videos
   roleName: academy-v1-eventbridge-batch-video-role
-  # 1시간 주기: ops CE 스케일업 빈도 감소 (30분이면 매 30분마다 새 job 제출 → 계속 켜짐)
+  # 1시간 주기: ops CE 스케일업 빈도 감소 (10~30분이면 짧은 recovery job이 Batch EC2를 계속 깨울 수 있음)
   reconcileSchedule: "rate(1 hour)"
   scanStuckSchedule: "rate(1 hour)"
-  enqueueUploadedSchedule: "rate(10 minutes)"
+  enqueueUploadedSchedule: "rate(1 hour)"
   # 운영 자동 복구: 규칙은 ENABLED 유지. 배포 시 DISABLED면 ENABLED로 재설정 (resources/eventbridge.ps1).
   reconcileState: ENABLED
   scanStuckState: ENABLED

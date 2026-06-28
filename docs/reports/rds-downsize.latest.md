@@ -1,6 +1,6 @@
 # RDS Downsize Report
 
-**Generated:** 2026-06-25T03:18:00+09:00
+**Generated:** 2026-06-29T05:20:00+09:00
 **DB:** `academy-db`
 **Region:** `ap-northeast-2`
 
@@ -8,13 +8,14 @@
 
 | Item | Value |
 |------|-------|
-| Current class | `db.t4g.large` |
+| Current class | `db.t4g.medium` |
 | Target class | `db.t4g.medium` |
-| Apply mode | next maintenance window (`--no-apply-immediately`) |
+| Apply mode | applied |
 | Maintenance window | `thu:20:20-thu:20:50` UTC / Friday 05:20-05:50 KST |
-| PendingModifiedValues | `DBInstanceClass=db.t4g.medium` |
+| PendingModifiedValues | `{}` |
 | Backup retention | 7 days |
-| Latest restorable time at scheduling | 2026-06-24T18:15:03Z |
+| Latest restorable time at verification | 2026-06-28T20:08:54Z |
+| Verified runtime | PostgreSQL `15.17`, Single-AZ, 20 GB, available |
 
 ## Evidence
 
@@ -41,4 +42,5 @@ Storage, backup, Performance Insights, and tax are separate from the instance co
 
 - `academy-rds-DatabaseConnectionsHigh` remains at threshold `320`, about 80% of the expected `db.t4g.medium` connection budget.
 - `scripts/v1/resources/rds.ps1` now treats `docs/ssot/params.yaml` `rds.instanceClass` as an enforceable pending-aware SSOT.
+- Runtime verification on 2026-06-29 confirmed `db.t4g.medium` with no pending modifications.
 - Post-schedule canary passed with `PASS=30 WARN=0 FAIL=0`.

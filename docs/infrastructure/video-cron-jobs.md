@@ -1,6 +1,6 @@
 # Video Encoding Cron Jobs — SSOT
 
-**Date:** 2026-05-11 (count 정정: 7종)
+**Date:** 2026-06-29 (ops cost cadence updated; count 정정: 7종)
 **Status:** Active
 
 영상 인코딩 파이프라인 주변에서 도는 EventBridge cron 7종의 책임 분리 SSOT.
@@ -10,7 +10,7 @@
 
 | Rule (EventBridge) | 주기 | 관리 명령 | 대상 상태 | 책임 |
 |---|---|---|---|---|
-| `academy-v1-enqueue-uploaded-videos` | 10분 | `enqueue_uploaded_videos` | `Video.status=UPLOADED` AND active job 없음 | 동시성 limit으로 거부된 업로드 회복 (테넌트 6 동시 한도) |
+| `academy-v1-enqueue-uploaded-videos` | 1시간 | `enqueue_uploaded_videos` | `Video.status=UPLOADED` AND active job 없음 | 동시성 limit으로 거부된 업로드 회복 (테넌트 6 동시 한도); Batch ops EC2 상시 기동 방지 |
 | `academy-v1-detect-stuck-videos` | 30분 | `detect_stuck_videos` | `Video.status=PROCESSING` AND old + active job 없음 | API/Worker 통신 실패로 status가 PROCESSING으로 굳어진 좀비 영상 회복 |
 | `academy-v1-video-scan-stuck-rate` | 1시간 | `scan_stuck_video_jobs` | `Job.state=RUNNING` AND last_heartbeat_at 오래됨 | heartbeat 끊긴 RUNNING job → RETRY_WAIT + Batch 재제출 또는 DEAD |
 | `academy-v1-reconcile-video-jobs` | 1시간 | `reconcile_batch_video_jobs` | `Job.state IN (QUEUED,RUNNING,RETRY_WAIT)` AND aws_batch_job_id 존재 | DB 상태 ↔ AWS Batch 실제 상태 동기화. Batch FAILED 감지 시 자동 재제출 (5회 한도 후 DEAD) |
@@ -27,7 +27,7 @@ status=PENDING (file_key 없음)
    ↓ presigned PUT 완료
 status=UPLOADED (file_key 있음)
    ↓ create_job_and_submit_batch (동시성 limit 통과 시 즉시)
-   ↓ 거부되면 → enqueue-uploaded-videos가 10분 내 회수
+   ↓ 거부되면 → enqueue-uploaded-videos가 1시간 내 회수
 Job 생성: state=QUEUED + aws_batch_job_id
    ↓
 state=RUNNING (worker가 job_set_running)

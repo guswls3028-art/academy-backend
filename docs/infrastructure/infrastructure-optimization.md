@@ -81,7 +81,7 @@
          │  └─────────────────────────────────────────────────┘
          │
 ┌────────▼──────────────────────────────────────────────────────┐
-│  RDS db.t4g.large   │  ElastiCache cache.t4g.small (Redis)   │
+│  RDS db.t4g.medium  │  ElastiCache cache.t4g.small (Redis)   │
 │  PostgreSQL 15      │  1 node                                 │
 │  Single-AZ, 20GB    │  Progress tracking + session cache      │
 └───────────────────────────────────────────────────────────────┘
@@ -389,7 +389,7 @@ done
 | **ECR Storage** | **$213** | **~$5** | **-98%** | 5.2TB → <50GB after cleanup (검증 완료 2026-03-17) |
 | **VPC** | $82 | ~$20 | -76% | Interface endpoints removed, self-resolving |
 | **EC2 Compute** | $87 | API 1대 + Messaging 1대 baseline + worker burst runtime | Variable | API는 평시 1대 + target tracking. Messaging은 계정복구/알림톡 즉시성을 위해 평시 1대. AI/Tools는 SSOT상 idle min/desired=0/0이며 SQS 알람으로 scale-out |
-| **RDS** | $136.44 MTD (2026-06-01..25) | ~$73/mo instance compute floor + storage/backup | -$73/mo projected compute | SSOT downsize to db.t4g.medium, scheduled via RDS maintenance window |
+| **RDS** | $136.44 MTD (2026-06-01..25) | ~$73/mo instance compute floor + storage/backup | -$73/mo projected compute | SSOT downsize to db.t4g.medium, applied |
 | **ElastiCache** | $38 | $38 | 0% | Keep cache.t4g.small |
 | **EC2-Other** | $44 | $35 | -20% | IPv4 reduction where possible |
 | **ALB** | $10 | $10 | 0% | Required |
@@ -682,7 +682,7 @@ if exists:
 
 | Parameter | Value |
 |-----------|-------|
-| **Current config** | db.t4g.large, Single-AZ, 20GB gp3 |
+| **Current config** | db.t4g.medium, Single-AZ, 20GB gp3 |
 | **RPO (Recovery Point Objective)** | **5 minutes** — automated backups with 5-min backup window |
 | **RTO (Recovery Time Objective)** | **10-30 minutes** — Single-AZ failover requires instance replacement |
 | **Downtime risk** | AZ failure → 10-30min full database outage |

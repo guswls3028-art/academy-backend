@@ -51,12 +51,143 @@ function Get-CEArn { param([string]$Name)
     return $r.computeEnvironments[0].computeEnvironmentArn
 }
 
+function Get-VideoCEComputeResourceType {
+    if ($script:VideoUseSpot) { return "SPOT" }
+    return "EC2"
+}
+
+function Get-BatchActiveJobSummaries {
+    param([string]$QueueName)
+    $active = [System.Collections.ArrayList]::new()
+    foreach ($status in @("SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING")) {
+        $jobs = Invoke-AwsJson @("batch", "list-jobs", "--job-queue", $QueueName, "--job-status", $status, "--region", $script:Region, "--output", "json")
+        if (-not $jobs -or -not $jobs.jobSummaryList) { continue }
+        foreach ($job in $jobs.jobSummaryList) {
+            [void]$active.Add([PSCustomObject]@{
+                Status = $status
+                JobId = $job.jobId
+                JobName = $job.jobName
+            })
+        }
+    }
+    return @($active)
+}
+
+function Assert-NoActiveBatchJobs {
+    param([string]$QueueName, [string]$Reason)
+    $active = @(Get-BatchActiveJobSummaries -QueueName $QueueName)
+    if ($active.Count -eq 0) { return }
+    $sample = @($active | Select-Object -First 5 | ForEach-Object { "$($_.Status):$($_.JobName):$($_.JobId)" }) -join ", "
+    throw "Refusing Batch CE rebuild for $Reason because $QueueName has $($active.Count) active job(s): $sample"
+}
+
+function Remove-BatchJobQueueIfExists {
+    param([string]$QueueName)
+    $qCheck = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $QueueName, "--region", $script:Region, "--output", "json")
+    if (-not $qCheck -or -not $qCheck.jobQueues -or $qCheck.jobQueues.Count -eq 0) { return }
+    Invoke-Aws @("batch", "update-job-queue", "--job-queue", $QueueName, "--state", "DISABLED", "--region", $script:Region) -ErrorMessage "disable Batch queue $QueueName" | Out-Null
+    $wait = 0
+    while ($wait -lt 120) {
+        Start-Sleep -Seconds 5
+        $wait += 5
+        $q = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $QueueName, "--region", $script:Region, "--output", "json")
+        if ($q -and $q.jobQueues -and $q.jobQueues[0].state -eq "DISABLED") { break }
+    }
+    Invoke-Aws @("batch", "delete-job-queue", "--job-queue", $QueueName, "--region", $script:Region) -ErrorMessage "delete Batch queue $QueueName" | Out-Null
+    Wait-QueueDeleted -QueueName $QueueName -Reg $script:Region
+}
+
+function Remove-BatchComputeEnvironmentIfExists {
+    param([string]$CEName)
+    $ce = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $CEName, "--region", $script:Region, "--output", "json")
+    if (-not $ce -or -not $ce.computeEnvironments -or $ce.computeEnvironments.Count -eq 0) { return }
+    Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $CEName, "--state", "DISABLED", "--region", $script:Region) -ErrorMessage "disable Batch CE $CEName" | Out-Null
+    $wait = 0
+    while ($wait -lt 180) {
+        Start-Sleep -Seconds 5
+        $wait += 5
+        $ce2 = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $CEName, "--region", $script:Region, "--output", "json")
+        if ($ce2 -and $ce2.computeEnvironments -and $ce2.computeEnvironments[0].state -eq "DISABLED") { break }
+    }
+    $deleteRetries = 0
+    while ($deleteRetries -lt 5) {
+        try {
+            Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $CEName, "--region", $script:Region) -ErrorMessage "delete Batch CE $CEName" | Out-Null
+            break
+        } catch {
+            if ($_.Exception.Message -match "resource is being modified" -and $deleteRetries -lt 4) {
+                Write-Host "  Batch CE delete delayed (resource modifying); retry in 30s..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 30
+                $deleteRetries++
+            } else { throw }
+        }
+    }
+    Wait-CEDeleted -CEName $CEName -Reg $script:Region
+}
+
+function Recreate-VideoCEAndQueue {
+    param([string]$Reason)
+    Assert-NoActiveBatchJobs -QueueName $script:VideoQueueName -Reason $Reason
+    Write-Host "  Recreating Video CE and queue: $Reason" -ForegroundColor Yellow
+    $script:ChangesMade = $true
+    Remove-BatchJobQueueIfExists -QueueName $script:VideoQueueName
+    Remove-BatchComputeEnvironmentIfExists -CEName $script:VideoCEName
+    New-VideoCE
+    Wait-CEValidEnabled -CEName $script:VideoCEName -Reg $script:Region
+    $ceArn = Get-CEArn -Name $script:VideoCEName
+    if (-not $ceArn) { throw "Video CE $($script:VideoCEName) was recreated but ARN was not found." }
+    New-VideoQueue -CeArn $ceArn
+    Write-Ok "Video CE and queue recreated"
+}
+
+function Update-VideoCEInPlace {
+    param([string]$Reason, $CurrentComputeResources)
+    Assert-NoActiveBatchJobs -QueueName $script:VideoQueueName -Reason $Reason
+    Write-Host "  Updating Video CE in place: $Reason" -ForegroundColor Yellow
+    $script:ChangesMade = $true
+
+    $desiredTypes = @($script:VideoCEInstanceTypes | Where-Object { $_ })
+    if (-not $desiredTypes -or $desiredTypes.Count -eq 0) { $desiredTypes = @($script:VideoCEInstanceType) }
+    $subnets = if ($CurrentComputeResources -and $CurrentComputeResources.subnets) { @($CurrentComputeResources.subnets | Where-Object { $_ }) } else { @($script:PrivateSubnets | Where-Object { $_ }) }
+    if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
+    $securityGroups = if ($CurrentComputeResources -and $CurrentComputeResources.securityGroupIds) { @($CurrentComputeResources.securityGroupIds | Where-Object { $_ }) } else { @($script:BatchSecurityGroupId) }
+    $instanceRole = if ($CurrentComputeResources -and $CurrentComputeResources.instanceRole) { "$($CurrentComputeResources.instanceRole)" } else { "$($script:BatchIam.InstanceProfileArn)" }
+    $launchTemplate = [ordered]@{ version = '$Latest' }
+    if ($CurrentComputeResources -and $CurrentComputeResources.launchTemplate -and $CurrentComputeResources.launchTemplate.launchTemplateId) {
+        $launchTemplate.launchTemplateId = "$($CurrentComputeResources.launchTemplate.launchTemplateId)"
+    } elseif ($CurrentComputeResources -and $CurrentComputeResources.launchTemplate -and $CurrentComputeResources.launchTemplate.launchTemplateName) {
+        $launchTemplate.launchTemplateName = "$($CurrentComputeResources.launchTemplate.launchTemplateName)"
+    } else {
+        $launchTemplate.launchTemplateName = Ensure-BatchLaunchTemplate -TemplateName "academy-video-batch-200gb" -RootVolumeSizeGb $script:VideoCERootVolumeSizeGb -Region $script:Region
+    }
+
+    $computeResources = [ordered]@{
+        type = Get-VideoCEComputeResourceType
+        allocationStrategy = "BEST_FIT_PROGRESSIVE"
+        minvCpus = [int]$script:VideoCEMinvCpus
+        maxvCpus = [int]$script:VideoCEMaxvCpus
+        instanceTypes = @($desiredTypes)
+        subnets = @($subnets)
+        securityGroupIds = @($securityGroups)
+        instanceRole = $instanceRole
+        launchTemplate = $launchTemplate
+    }
+    $json = $computeResources | ConvertTo-Json -Depth 10 -Compress
+    $tmp = [System.IO.Path]::GetTempFileName()
+    [System.IO.File]::WriteAllText($tmp, $json, $utf8NoBom)
+    try {
+        Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $script:VideoCEName, "--compute-resources", "file://$($tmp -replace '\\','/')", "--region", $script:Region) -ErrorMessage "update Video CE" | Out-Null
+    } finally { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+    Wait-CEValidEnabled -CEName $script:VideoCEName -Reg $script:Region
+    Write-Ok "Video CE updated"
+}
+
 function New-VideoCE {
     $iam = $script:BatchIam
     $subnets = @($script:PrivateSubnets | Where-Object { $_ })
     if (-not $subnets -or $subnets.Count -eq 0) { $subnets = @($script:PublicSubnets | Where-Object { $_ }) }
     $subnetArr = ($subnets | ForEach-Object { "`"$_`"" }) -join ","
-    $ltName = Ensure-BatchLaunchTemplate -TemplateName "academy-v1-video-batch-lt" -RootVolumeSizeGb $script:VideoCERootVolumeSizeGb -Region $script:Region
+    $ltName = Ensure-BatchLaunchTemplate -TemplateName "academy-video-batch-200gb" -RootVolumeSizeGb $script:VideoCERootVolumeSizeGb -Region $script:Region
     $path = Join-Path $BatchPath "video_compute_env.json"
     $content = [System.IO.File]::ReadAllText($path, $utf8NoBom)
     $content = $content -replace "PLACEHOLDER_COMPUTE_ENV_NAME", $script:VideoCEName
@@ -66,6 +197,7 @@ function New-VideoCE {
     $content = $content -replace "PLACEHOLDER_SUBNETS", $subnetArr
     $content = $content -replace "PLACEHOLDER_MIN_VCPUS", $script:VideoCEMinvCpus
     $content = $content -replace "PLACEHOLDER_MAX_VCPUS", $script:VideoCEMaxvCpus
+    $content = $content -replace "PLACEHOLDER_COMPUTE_RESOURCE_TYPE", (Get-VideoCEComputeResourceType)
     $videoInstanceTypes = @($script:VideoCEInstanceTypes | Where-Object { $_ })
     if (-not $videoInstanceTypes -or $videoInstanceTypes.Count -eq 0) { $videoInstanceTypes = @($script:VideoCEInstanceType) }
     $instanceTypesJson = ($videoInstanceTypes | ForEach-Object { "`"$_`"" }) -join ","
@@ -148,37 +280,29 @@ function Ensure-VideoCE {
     $res = $c.computeResources
     $currentMax = if ($res -and $res.maxvCpus) { [int]$res.maxvCpus } else { 0 }
     $currentTypes = if ($res -and $res.instanceTypes) { @($res.instanceTypes | Where-Object { $_ }) } else { @() }
+    $currentResourceType = if ($res -and $res.PSObject.Properties["type"] -and $res.type) { "$($res.type)" } else { "" }
+    $currentAllocation = if ($res -and $res.PSObject.Properties["allocationStrategy"] -and $res.allocationStrategy) { "$($res.allocationStrategy)" } else { "" }
+    $desiredResourceType = Get-VideoCEComputeResourceType
+    $desiredAllocation = "BEST_FIT_PROGRESSIVE"
     $desiredTypes = @($script:VideoCEInstanceTypes | Where-Object { $_ })
     if (-not $desiredTypes -or $desiredTypes.Count -eq 0) { $desiredTypes = @($script:VideoCEInstanceType) }
     $currentTypesKey = ($currentTypes | Sort-Object) -join ","
     $desiredTypesKey = ($desiredTypes | Sort-Object) -join ","
-    $videoCEDrift = ($currentMax -ne $script:VideoCEMaxvCpus) -or ($currentTypesKey -ne $desiredTypesKey)
+    $driftReasons = [System.Collections.ArrayList]::new()
+    if ($currentResourceType -ne $desiredResourceType) { [void]$driftReasons.Add("type $currentResourceType -> $desiredResourceType") }
+    if ($currentAllocation -ne $desiredAllocation) { [void]$driftReasons.Add("allocation $currentAllocation -> $desiredAllocation") }
+    if ($currentMax -ne $script:VideoCEMaxvCpus) { [void]$driftReasons.Add("maxvCpus $currentMax -> $($script:VideoCEMaxvCpus)") }
+    if ($currentTypesKey -ne $desiredTypesKey) { [void]$driftReasons.Add("types $currentTypesKey -> $desiredTypesKey") }
+    $videoCEDrift = ($driftReasons.Count -gt 0)
     if ($c.status -eq "INVALID" -or $videoCEDrift) {
+        $reason = if ($c.status -eq "INVALID") { "status INVALID" } else { $driftReasons -join "; " }
         if (-not $script:AllowRebuild) {
-            if ($videoCEDrift) { Write-Warn "Video CE drift (current max=$currentMax types=$currentTypesKey, SSOT max=$($script:VideoCEMaxvCpus) types=$desiredTypesKey); run with -AllowRebuild to recreate." }
+            if ($videoCEDrift) { Write-Warn "Video CE drift ($reason); run deploy (not -Plan) to update in place." }
             else { Write-Warn "Video CE INVALID; skip recreate." }
             return
         }
-        if ($videoCEDrift) {
-            Write-Warn "Video CE drift detected. CE delete requires queue to be re-pointed first; skipping rebuild to avoid JobQueue relationship error. Deploy continues."
-            return
-        }
-        if ($c.status -eq "INVALID") { Write-Host "  INVALID -> disable queue, disable CE, delete, wait, create, wait" -ForegroundColor Yellow }
-        $script:ChangesMade = $true
-        $qCheck = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $script:Region, "--output", "json")
-        if ($qCheck -and $qCheck.jobQueues -and $qCheck.jobQueues.Count -gt 0) {
-            Invoke-Aws @("batch", "update-job-queue", "--job-queue", $script:VideoQueueName, "--state", "DISABLED", "--region", $script:Region) 2>$null | Out-Null
-            $wait = 0; while ($wait -lt 90) { Start-Sleep -Seconds 5; $wait += 5; $q = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $script:Region, "--output", "json"); if ($q -and $q.jobQueues -and $q.jobQueues[0].state -eq "DISABLED") { break } }
-        }
-        Invoke-Aws @("batch", "update-compute-environment", "--compute-environment", $script:VideoCEName, "--state", "DISABLED", "--region", $script:Region) | Out-Null
-        $wait = 0; while ($wait -lt 120) { Start-Sleep -Seconds 5; $wait += 5; $ce2 = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:VideoCEName, "--region", $script:Region, "--output", "json"); if ($ce2 -and $ce2.computeEnvironments -and $ce2.computeEnvironments[0].state -eq "DISABLED") { break } }
-        Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $script:VideoCEName, "--region", $script:Region) | Out-Null
-        Wait-CEDeleted -CEName $script:VideoCEName -Reg $script:Region
-        New-VideoCE
-        Wait-CEValidEnabled -CEName $script:VideoCEName -Reg $script:Region
-        $ceArn = Get-CEArn -Name $script:VideoCEName
-        $qAfter = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $script:Region, "--output", "json")
-        if ($qAfter -and $qAfter.jobQueues -and $qAfter.jobQueues.Count -gt 0) { Set-JobQueueEnabled -QueueName $script:VideoQueueName -CeArn $ceArn -Region $script:Region }
+        if ($c.status -eq "INVALID") { Recreate-VideoCEAndQueue -Reason $reason }
+        else { Update-VideoCEInPlace -Reason $reason -CurrentComputeResources $res }
         return
     }
     if ($c.state -eq "DISABLED") {

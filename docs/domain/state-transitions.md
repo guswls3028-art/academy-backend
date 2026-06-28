@@ -231,7 +231,7 @@ READY      → {} (종단, soft-delete만)
 
 - **FAILED:** 재시도 가능. retry API → UPLOADED → 새 작업 생성
 - **재시도 제한:** `VIDEO_MAX_JOBS_PER_VIDEO` (기본 10)
-- **자동 재시도:** `enqueue_uploaded_videos` cron (10분 간격)
+- **자동 재시도:** `enqueue_uploaded_videos` cron (1시간 간격)
 - **자동 복구:** `recover_stuck_videos` cron (30분 간격, PENDING 정체 복구)
 
 #### UI 허용 액션

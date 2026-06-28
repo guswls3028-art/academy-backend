@@ -4,7 +4,7 @@
 | 항목 | 값 |
 |---|---|
 | RDS 인스턴스 | db.t4g.medium |
-| max_connections | ~405 expected after downsize (current db.t4g.large runtime observed 838 before maintenance apply) |
+| max_connections | ~405 expected on current db.t4g.medium |
 | rds_superuser_reserved | 2 (기본값) |
 | 유효 max | ~403 expected |
 
@@ -23,7 +23,7 @@
 ## Workers
 | 워커 | 인스턴스 | 평시 커넥션 |
 |---|---|---|
-| Messaging | 0 baseline, 작업 시 scale-out | 0 |
+| Messaging | 1 warm baseline | ~1-3 |
 | AI | 0 | 0 |
 | RDS admin | - | ~3 |
 | Background | - | ~5 |
@@ -31,7 +31,7 @@
 ## 시나리오별 예산
 | 시나리오 | 예상 커넥션 | 여유 |
 |---|---|---|
-| 평시 (API 1대, workers idle) | ~10-20 | 95%+ |
+| 평시 (API 1대, Messaging 1대, AI/Tools idle) | ~10-25 | 93%+ |
 | 배포 headroom (API 2대 일시) | ~15-30 | 92%+ |
 | Rolling refresh (API 3대 순간) | ~25-45 | 88%+ |
 | 장애 시 재시도 폭주 | 400 포화 가능 | 0% |

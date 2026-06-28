@@ -5,16 +5,16 @@
 
 ---
 
-## 1. 현재 상태 (2026-04-30 기준)
+## 1. 현재 상태 (2026-06-29 기준)
 
 ```
 RDS instance: academy-db
-Engine:       PostgreSQL 15.16
-Class:        db.t4g.large
+Engine:       PostgreSQL 15.17
+Class:        db.t4g.medium
 AZ:           ap-northeast-2b (Single-AZ)
 Storage:      20 GB
 Backup:       자동 7일 retention, 16:18-16:48 UTC (= 01:18-01:48 KST)
-Snapshots:    8 automated + 1 manual (4-30 시점)
+Snapshots:    9 automated + 4 manual
 ```
 
 **확인 명령:**
@@ -75,7 +75,7 @@ aws rds restore-db-instance-to-point-in-time \
   --source-db-instance-identifier academy-db \
   --target-db-instance-identifier academy-db-restore \
   --restore-time "$TARGET_TIME" \
-  --db-instance-class db.t4g.large \
+  --db-instance-class db.t4g.medium \
   --region ap-northeast-2
 
 # 3) 인스턴스가 available 될 때까지 대기 (~10-15분).
@@ -105,7 +105,7 @@ aws rds describe-db-snapshots \
 aws rds restore-db-instance-from-db-snapshot \
   --source-db-snapshot-identifier <SNAPSHOT_ID> \
   --target-db-instance-identifier academy-db-restore \
-  --db-instance-class db.t4g.large \
+  --db-instance-class db.t4g.medium \
   --region ap-northeast-2
 
 # 3) 동일하게 wait → 검증 → endpoint 스왑.

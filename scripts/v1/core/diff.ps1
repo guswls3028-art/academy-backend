@@ -78,6 +78,75 @@ function Add-UnexpectedBatchResourceRows {
     }
 }
 
+function ConvertTo-SortedCsv {
+    param([array]$Items)
+    return (@($Items | Where-Object { $_ } | Sort-Object) -join ",")
+}
+
+function Get-ExpectedBatchCESpec {
+    param([string]$Name)
+    if ($Name -eq $script:VideoCEName) {
+        return [PSCustomObject]@{
+            Type = $(if ($script:VideoUseSpot) { "SPOT" } else { "EC2" })
+            Allocation = "BEST_FIT_PROGRESSIVE"
+            Max = [int]$script:VideoCEMaxvCpus
+            Types = ConvertTo-SortedCsv -Items $script:VideoCEInstanceTypes
+        }
+    }
+    if ($Name -eq $script:OpsCEName) {
+        return [PSCustomObject]@{
+            Type = "EC2"
+            Allocation = "BEST_FIT_PROGRESSIVE"
+            Max = [int]$script:OpsCEMaxvCpus
+            Types = ConvertTo-SortedCsv -Items @($script:OpsCEInstanceType)
+        }
+    }
+    return $null
+}
+
+function Get-ActualBatchCESpec {
+    param($ComputeEnvironment)
+    $res = $ComputeEnvironment.computeResources
+    return [PSCustomObject]@{
+        Type = if ($res -and $res.PSObject.Properties["type"]) { "$($res.type)" } else { "" }
+        Allocation = if ($res -and $res.PSObject.Properties["allocationStrategy"]) { "$($res.allocationStrategy)" } else { "" }
+        Max = if ($res -and $res.maxvCpus) { [int]$res.maxvCpus } else { 0 }
+        Types = if ($res -and $res.instanceTypes) { ConvertTo-SortedCsv -Items $res.instanceTypes } else { "" }
+    }
+}
+
+function Format-BatchCESpec {
+    param($Status, $State, $Spec)
+    return "$Status/$State type=$($Spec.Type) allocation=$($Spec.Allocation) max=$($Spec.Max) types=$($Spec.Types)"
+}
+
+function Normalize-EventBridgeRuleState {
+    param([string]$State)
+    if ($State -eq "DISABLED") { return "DISABLED" }
+    return "ENABLED"
+}
+
+function Get-ExpectedEventBridgeRuleSpec {
+    param([string]$Name)
+    $expected = @{
+        $script:EventBridgeReconcileRule = @{ Schedule = $script:EventBridgeReconcileSchedule; State = (Normalize-EventBridgeRuleState $script:EventBridgeReconcileState) }
+        $script:EventBridgeScanStuckRule = @{ Schedule = $script:EventBridgeScanStuckSchedule; State = (Normalize-EventBridgeRuleState $script:EventBridgeScanStuckState) }
+        $script:EventBridgeEnqueueUploadedRule = @{ Schedule = $script:EventBridgeEnqueueUploadedSchedule; State = (Normalize-EventBridgeRuleState $script:EventBridgeEnqueueUploadedState) }
+        $script:EventBridgeDetectStuckRule = @{ Schedule = $script:EventBridgeDetectStuckSchedule; State = (Normalize-EventBridgeRuleState $script:EventBridgeDetectStuckState) }
+        $script:EventBridgeRecoverDeadRule = @{ Schedule = $script:EventBridgeRecoverDeadSchedule; State = (Normalize-EventBridgeRuleState $script:EventBridgeRecoverDeadState) }
+        $script:EventBridgePurgeRawRule = @{ Schedule = $script:EventBridgePurgeRawSchedule; State = (Normalize-EventBridgeRuleState $script:EventBridgePurgeRawState) }
+        $script:EventBridgeCleanupOrphanRule = @{ Schedule = $script:EventBridgeCleanupOrphanSchedule; State = (Normalize-EventBridgeRuleState $script:EventBridgeCleanupOrphanState) }
+    }
+    if (-not $expected.ContainsKey($Name)) { return $null }
+    $spec = $expected[$Name]
+    return [PSCustomObject]@{ Schedule = $spec.Schedule; State = $spec.State }
+}
+
+function Format-EventBridgeRuleSpec {
+    param($Spec)
+    return "schedule=$($Spec.Schedule) state=$($Spec.State)"
+}
+
 function Get-ExpectedApiSecurityGroupForDrift {
     if ($script:ApiSecurityGroupId) { return ($script:ApiSecurityGroupId -split '#')[0].Trim() }
     if ($script:SecurityGroupApp) { return ($script:SecurityGroupApp -split '#')[0].Trim() }
@@ -114,8 +183,39 @@ function Get-StructuralDrift {
         }
         $ce = @($matched)[0]
         $status = $ce.status
+        $state = $ce.state
         if ($status -eq "INVALID") {
             [void]$rows.Add([PSCustomObject]@{ ResourceType = "Batch CE"; Name = $ceName; Expected = "VALID"; Actual = "INVALID"; Action = "Recreate" })
+            continue
+        }
+        $expectedSpec = Get-ExpectedBatchCESpec -Name $ceName
+        if ($expectedSpec) {
+            $actualSpec = Get-ActualBatchCESpec -ComputeEnvironment $ce
+            $specDrift = (
+                $state -ne "ENABLED" -or
+                $status -ne "VALID" -or
+                $actualSpec.Type -ne $expectedSpec.Type -or
+                $actualSpec.Allocation -ne $expectedSpec.Allocation -or
+                $actualSpec.Max -ne $expectedSpec.Max -or
+                $actualSpec.Types -ne $expectedSpec.Types
+            )
+            if ($specDrift) {
+                [void]$rows.Add([PSCustomObject]@{
+                    ResourceType = "Batch CE"
+                    Name = $ceName
+                    Expected = (Format-BatchCESpec -Status "VALID" -State "ENABLED" -Spec $expectedSpec)
+                    Actual = (Format-BatchCESpec -Status $status -State $state -Spec $actualSpec)
+                    Action = "Update"
+                })
+            } else {
+                [void]$rows.Add([PSCustomObject]@{
+                    ResourceType = "Batch CE"
+                    Name = $ceName
+                    Expected = (Format-BatchCESpec -Status "VALID" -State "ENABLED" -Spec $expectedSpec)
+                    Actual = (Format-BatchCESpec -Status $status -State $state -Spec $actualSpec)
+                    Action = "NoOp"
+                })
+            }
         } else {
             [void]$rows.Add([PSCustomObject]@{ ResourceType = "Batch CE"; Name = $ceName; Expected = "exists"; Actual = "exists"; Action = "NoOp" })
         }
@@ -169,7 +269,20 @@ function Get-StructuralDrift {
             if (-not $rule) {
                 [void]$rows.Add([PSCustomObject]@{ ResourceType = "EventBridge"; Name = $ruleName; Expected = "exists"; Actual = "missing"; Action = "Create" })
             } else {
-                [void]$rows.Add([PSCustomObject]@{ ResourceType = "EventBridge"; Name = $ruleName; Expected = "exists"; Actual = "exists"; Action = "NoOp" })
+                $expectedRule = Get-ExpectedEventBridgeRuleSpec -Name $ruleName
+                if ($expectedRule) {
+                    $actualRule = [PSCustomObject]@{ Schedule = "$($rule.ScheduleExpression)"; State = "$($rule.State)" }
+                    $action = if ($actualRule.Schedule -ne $expectedRule.Schedule -or $actualRule.State -ne $expectedRule.State) { "Update" } else { "NoOp" }
+                    [void]$rows.Add([PSCustomObject]@{
+                        ResourceType = "EventBridge"
+                        Name = $ruleName
+                        Expected = (Format-EventBridgeRuleSpec -Spec $expectedRule)
+                        Actual = (Format-EventBridgeRuleSpec -Spec $actualRule)
+                        Action = $action
+                    })
+                } else {
+                    [void]$rows.Add([PSCustomObject]@{ ResourceType = "EventBridge"; Name = $ruleName; Expected = "exists"; Actual = "exists"; Action = "NoOp" })
+                }
             }
         } catch {
             Write-Host "  [DRIFT-DEBUG] EventBridge describe-rule threw: $($_.Exception.Message)" -ForegroundColor DarkGray

@@ -63,7 +63,7 @@ Write-Host ('=== V1 AWS Resource Inventory (region ' + $R + ') ===') -Foreground
 # --- EC2 ---
 $ec2List = @()
 if ($VpcId) {
-    $res = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=vpc-id,Values=$VpcId", "--region", $R, "--output", "json")
+    $res = Invoke-AwsJson @("ec2", "describe-instances", "--filters", "Name=vpc-id,Values=$VpcId", "Name=instance-state-name,Values=pending,running,stopping,stopped", "--region", $R, "--output", "json")
     if ($res -and $res.Reservations) {
         foreach ($rev in $res.Reservations) {
             foreach ($i in $rev.Instances) {
@@ -133,7 +133,11 @@ $ceRes = Invoke-AwsJson @("batch", "describe-compute-environments", "--region", 
 if ($ceRes -and $ceRes.computeEnvironments) {
     foreach ($ce in $ceRes.computeEnvironments) {
         $match = $ce.computeEnvironmentName -in $KeepBatchCE
-        $ceList += [PSCustomObject]@{ Name = $ce.computeEnvironmentName; State = $ce.state; Status = $ce.status; SSOT = $(if ($match) { "KEEP" } else { "LEGACY_CANDIDATE" }) }
+        $res = $ce.computeResources
+        $resourceType = if ($res -and $res.PSObject.Properties["type"]) { "$($res.type)" } else { "" }
+        $max = if ($res -and $res.maxvCpus) { [int]$res.maxvCpus } else { 0 }
+        $types = if ($res -and $res.instanceTypes) { (@($res.instanceTypes | Where-Object { $_ } | Sort-Object) -join ",") } else { "" }
+        $ceList += [PSCustomObject]@{ Name = $ce.computeEnvironmentName; State = $ce.state; Status = $ce.status; Type = $resourceType; Max = $max; InstanceTypes = $types; SSOT = $(if ($match) { "KEEP" } else { "LEGACY_CANDIDATE" }) }
     }
 }
 # --- Batch Job Queues ---
@@ -235,9 +239,9 @@ foreach ($e in $eipList) { [void]$sb.AppendLine("| $($e.AllocationId) | $($e.Pub
 foreach ($s in $sgList) { [void]$sb.AppendLine("| $($s.GroupId) | $($s.GroupName) | $($s.ENICount) | $($s.SSOT) |") }
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Batch Compute Environments")
-[void]$sb.AppendLine("| Name | State | Status | SSOT |")
-[void]$sb.AppendLine("|------|-------|--------|------|")
-foreach ($c in $ceList) { [void]$sb.AppendLine("| $($c.Name) | $($c.State) | $($c.Status) | $($c.SSOT) |") }
+[void]$sb.AppendLine("| Name | State | Status | Type | Max vCPU | InstanceTypes | SSOT |")
+[void]$sb.AppendLine("|------|-------|--------|------|----------|---------------|------|")
+foreach ($c in $ceList) { [void]$sb.AppendLine("| $($c.Name) | $($c.State) | $($c.Status) | $($c.Type) | $($c.Max) | $($c.InstanceTypes) | $($c.SSOT) |") }
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## Batch Job Queues")
 [void]$sb.AppendLine("| Name | State | SSOT |")

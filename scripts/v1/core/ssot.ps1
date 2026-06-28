@@ -293,7 +293,7 @@ function Load-SSOT {
     $script:EventBridgeReconcileState = if ($p["eventBridge"]["reconcileState"]) { $p["eventBridge"]["reconcileState"] } else { "ENABLED" }
     $script:EventBridgeScanStuckState = if ($p["eventBridge"]["scanStuckState"]) { $p["eventBridge"]["scanStuckState"] } else { "ENABLED" }
     $script:EventBridgeEnqueueUploadedRule = if ($p["eventBridge"]["enqueueUploadedRuleName"]) { $p["eventBridge"]["enqueueUploadedRuleName"] } else { "academy-v1-enqueue-uploaded-videos" }
-    $script:EventBridgeEnqueueUploadedSchedule = if ($p["eventBridge"]["enqueueUploadedSchedule"]) { $p["eventBridge"]["enqueueUploadedSchedule"] } else { "rate(10 minutes)" }
+    $script:EventBridgeEnqueueUploadedSchedule = if ($p["eventBridge"]["enqueueUploadedSchedule"]) { $p["eventBridge"]["enqueueUploadedSchedule"] } else { "rate(1 hour)" }
     $script:EventBridgeEnqueueUploadedState = if ($p["eventBridge"]["enqueueUploadedState"]) { $p["eventBridge"]["enqueueUploadedState"] } else { "ENABLED" }
     # 신규 4종 rule (2026-05-11 IaC 보강).
     # KST 기준 시간을 cron(UTC) 으로 변환: KST 18:00 → UTC 09:00, KST 19:00 → UTC 10:00.
@@ -325,7 +325,7 @@ function Load-SSOT {
     $script:RdsDbSubnetGroupName = $p["rds"]["dbSubnetGroupName"]
     $script:RdsEngine = if ($p["rds"]["engine"]) { $p["rds"]["engine"] } else { "postgres" }
     $script:RdsEngineVersion = if ($p["rds"]["engineVersion"]) { $p["rds"]["engineVersion"] } else { "" }
-    $script:RdsInstanceClass = if ($p["rds"]["instanceClass"]) { $p["rds"]["instanceClass"] } else { "db.t4g.large" }
+    $script:RdsInstanceClass = if ($p["rds"]["instanceClass"]) { $p["rds"]["instanceClass"] } else { "db.t4g.medium" }
     $script:RdsAllocatedStorage = Coerce-Int $p["rds"]["allocatedStorage"] 20
     $script:RdsMasterUsername = $p["rds"]["masterUsername"]
     $script:RdsMasterPasswordSsmParam = $p["rds"]["masterPasswordSsmParam"]
