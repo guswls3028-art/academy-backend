@@ -33,7 +33,7 @@ from .views import (
 )
 
 logger = logging.getLogger(__name__)
-_HIT_REPORT_PDF_RENDER_VERSION = "grouped-1n-v1"
+_HIT_REPORT_PDF_RENDER_VERSION = "grouped-1n-readable-v2"
 _HIT_REPORT_CANDIDATE_BATCH_LIMIT = 32
 
 try:
