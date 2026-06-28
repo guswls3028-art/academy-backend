@@ -5,7 +5,7 @@
 ## 배포 정보
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-06-28T23:42:28.3405385+09:00 |
+| 검증 시각 | 2026-06-28T22:50:09.6396280+09:00 |
 | 리전 | ap-northeast-2 |
 | 배포 스크립트 | scripts/v1/deploy.ps1 |
 | 근거·로그 | reports/audit.latest.md, reports/drift.latest.md, reports/runtime-images.latest.md |
@@ -19,11 +19,11 @@
 | API ASG min/desired/max | 1/1/3 | reports/audit.latest.md (apiAsg*) |
 | ALB target health | 1 / 1 healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |
 | ALB HTTP 80 redirect | HTTP 301 https://academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com/healthz | HTTP listener는 HTTPS로 redirect해야 함 |
-| API 공개 URL(도메인) /health | OK 68ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
-| API runtime image digest | PASS | docs/reports/runtime-images.latest.md (instances=1, ci=sha256:73c55151db882e56c4f652f275e1177ddf86ca1de201832fd1656d289ae364c2) |
+| API 공개 URL(도메인) /health | OK 64ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
+| API runtime image digest | PASS | docs/reports/runtime-images.latest.md (instances=1, ci=sha256:570eaf4c12d1e9aaa0796a99512cac27955bde344753108ec6742695ce62814e) |
 | AI/Messaging ASG | 0/1 | reports/audit.latest.md (asgAi*, asgMessaging*) |
 | SQS queue 연결·DLQ | Messaging depth 0 (in-flight 0) DLQ 0 / AI depth 0 (in-flight 0) DLQ 0 | SQS Console 또는 get-queue-attributes |
-| Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 271 | reports/audit.latest.md, Batch Console |
+| Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 270 | reports/audit.latest.md, Batch Console |
 | Video Ops CE/Queue, EventBridge | Ops CE VALID Ops Queue ENABLED Reconcile ENABLED ScanStuck ENABLED | reports/audit.latest.md, rca.video.latest.md |
 | RDS 연결 가능 | available | RDS describe-db-instances (연결 테스트는 앱/psql 수동) |
 | Redis 연결 가능 | available | ElastiCache describe-replication-groups |
@@ -33,7 +33,7 @@
 
 | 항목 | 결과 | 근거 |
 |------|------|------|
-| /health | OK | 응답시간: 68ms (기준 p95 &lt; 2s, 샘플 1회) |
+| /health | OK | 응답시간: 64ms (기준 p95 &lt; 2s, 샘플 1회) |
 | API root | root not a health endpoint | 공개 HTTPS 도메인 기준, root는 필수 서비스 엔드포인트 아님 |
 | 핵심 API 1~2개(인증/CRUD) | 수동 검증 권장 | 샘플 20회 평균/최대 기록 시 reports/ 에 URL 또는 로그 경로 기입 |
 | **섹션 2 종합** | **PASS** | |

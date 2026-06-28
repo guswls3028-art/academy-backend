@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.5.3.md](v1.5.3.md) | **CURRENT** | 2026-06-28 KST | Tenant 2 matchup question-crop incident closure |
+| [v1.5.4.md](v1.5.4.md) | **CURRENT** | 2026-06-28 KST | Clean-PDF matchup reading-flow segmentation seal |
+| [v1.5.3.md](v1.5.3.md) | production-deployed / v1.5.4로 승계 | 2026-06-28 KST | Tenant 2 matchup question-crop incident closure |
 | [v1.5.2.md](v1.5.2.md) | production-deployed / v1.5.3로 승계 | 2026-06-24 KST | Problem Studio production UAT + visual QA + cost-baseline seal |
 | [v1.5.1.md](v1.5.1.md) | production-deployed / v1.5.2로 승계 | 2026-06-24 KST | Scale-to-zero return-path closure for idle workers |
 | [v1.5.0.md](v1.5.0.md) | production-deployed / v1.5.1로 승계 | 2026-06-24 KST | Production cost scaling baseline: API 1-to-3 autoscaling + workers 0-to-needed scale-out |
