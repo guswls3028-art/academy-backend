@@ -221,6 +221,9 @@ eventBridge:
   reconcileSchedule: "rate(1 hour)"
   scanStuckSchedule: "rate(1 hour)"
   enqueueUploadedSchedule: "rate(1 hour)"
+  recoverDeadRuleName: academy-v1-recover-dead-video-jobs
+  recoverDeadSchedule: "rate(2 hours)"
+  recoverDeadState: ENABLED
   # 운영 자동 복구: 규칙은 ENABLED 유지. 배포 시 DISABLED면 ENABLED로 재설정 (resources/eventbridge.ps1).
   reconcileState: ENABLED
   scanStuckState: ENABLED
@@ -230,6 +233,9 @@ eventBridge:
   purgeRawRuleName: academy-v1-purge-raw-videos
   purgeRawSchedule: "cron(0 18 * * ? *)"
   purgeRawState: ENABLED
+  cleanupOrphanRuleName: academy-v1-cleanup-orphan-video-storage
+  cleanupOrphanSchedule: "cron(0 19 ? * SAT *)"
+  cleanupOrphanState: ENABLED
 
 dynamodb:
   lockTableName: academy-v1-video-job-lock

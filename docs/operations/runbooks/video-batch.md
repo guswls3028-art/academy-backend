@@ -1,18 +1,21 @@
 # Video Batch Production Runbook
 
 **Status:** Active
-**Last checked:** 2026-05-22
+**Last checked:** 2026-06-29
 **Executable truth:** `.github/workflows/v1-build-and-push-latest.yml`, `scripts/v1/resources/batch.ps1`, `apps/worker/video_worker/`
 
 ## 1. Current Architecture
 
 - Video encoding runs only through AWS Batch. Daemon/long-path worker mode is retired.
-- Main compute environment: `academy-v1-video-batch-ce-200gb`
-- Main queue: `academy-video-batch-queue`
+- Main compute environment: `academy-v1-video-batch-ce-200gb` (`SPOT`, desired=0 max=40 vCPU)
+- Main queue: `academy-v1-video-batch-queue`
 - Main job definition: `academy-v1-video-batch-jobdef`
+- Ops compute environment: `academy-v1-video-ops-ce` (`EC2`, desired=0 max=1 vCPU)
+- Ops queue: `academy-v1-video-ops-queue`
 - Worker image: ECR `academy-video-worker`
 - Runtime shape: c6g.4xlarge, 8 vCPU, 16GB memory, 200GB EBS, job timeout 6h.
 - Ops jobs such as reconcile/scan_stuck/netprobe use the same worker image and worker settings.
+Current runtime snapshot: `docs/ssot/runtime-current.md`.
 
 ## 2. Deploy Path
 

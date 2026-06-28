@@ -1,6 +1,6 @@
 # V1 리소스 정리·재검증 결과
 
-**리전:** ap-northeast-2 **갱신:** 2026-06-29T05:25:12.6421080+09:00 **모드:** DryRun
+**리전:** ap-northeast-2 **갱신:** 2026-06-29T05:59:09.9217006+09:00 **모드:** DryRun
 **SSOT:** docs/ssot/params.yaml
 
 ## 요약
@@ -16,7 +16,7 @@
 | InstanceId | Name | Type | ASG |
 |------------|------|------|-----|
 | i-04f24828b1631da9d | academy-v1-messaging-worker | t4g.medium | academy-v1-messaging-worker-asg |
-| i-03369fd74104bfedf | academy-v1-api | t4g.medium | academy-v1-api-asg |
+| i-098d6cc8aae98e732 | academy-v1-api | t4g.medium | academy-v1-api-asg |
 
 ## Security Groups (VPC)
 | GroupId | GroupName |

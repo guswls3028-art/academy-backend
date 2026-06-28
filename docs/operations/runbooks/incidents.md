@@ -217,7 +217,7 @@ RUN_ENV aws autoscaling describe-scaling-activities \
 **Batch 작업이 과다 실행:**
 ```bash
 # 활성 Batch 작업 확인
-RUN_ENV aws batch list-jobs --job-queue academy-video-batch-queue --job-status RUNNING --output table
+RUN_ENV aws batch list-jobs --job-queue academy-v1-video-batch-queue --job-status RUNNING --output table
 ```
 
 **ECR 이미지 과다 누적:**

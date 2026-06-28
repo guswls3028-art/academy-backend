@@ -232,7 +232,7 @@ READY      → {} (종단, soft-delete만)
 - **FAILED:** 재시도 가능. retry API → UPLOADED → 새 작업 생성
 - **재시도 제한:** `VIDEO_MAX_JOBS_PER_VIDEO` (기본 10)
 - **자동 재시도:** `enqueue_uploaded_videos` cron (1시간 간격)
-- **자동 복구:** `recover_stuck_videos` cron (30분 간격, PENDING 정체 복구)
+- **수동 복구:** `recover_stuck_videos` (자동 cron 미설정, PENDING 정체 복구 필요 시 운영자가 실행)
 
 #### UI 허용 액션
 
@@ -254,7 +254,7 @@ READY      → {} (종단, soft-delete만)
 #### E2E 테스트 시나리오
 
 1. 정상: PENDING → UPLOADED → (Job:QUEUED→RUNNING→SUCCEEDED) → READY
-2. 업로드 실패: PENDING → (타임아웃) → recover_stuck_videos → FAILED
+2. 업로드 실패: PENDING → (타임아웃) → 운영자 `recover_stuck_videos` 실행 → FAILED
 3. 인코딩 실패: PROCESSING → Job:RETRY_WAIT → (5회 실패) → Job:DEAD → FAILED
 4. 재시도: FAILED → retry API → UPLOADED → 새 Job → READY
 5. 동시성: 같은 영상에 동시 retry → DDB lock으로 1개만 성공

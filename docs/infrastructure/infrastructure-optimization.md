@@ -187,7 +187,7 @@ def _select_variant(input_w: int, input_h: int) -> dict:
 | Duration | Route | Worker |
 |----------|-------|--------|
 | < 90 min | Daemon (DB polling) | Video Worker ASG |
-| >= 90 min | AWS Batch (on-demand) | Batch compute environment |
+| >= 90 min | AWS Batch (`SPOT` standard CE) | Batch compute environment |
 
 **Config [APPLIED 2026-03-17]:** `DAEMON_MAX_DURATION_SECONDS=5400` (changed from 1800 in `base.py`, `daemon_main.py`, `video_encoding.py`)
 
