@@ -34,6 +34,7 @@ from .views import (
 
 logger = logging.getLogger(__name__)
 _HIT_REPORT_PDF_RENDER_VERSION = "grouped-1n-v1"
+_HIT_REPORT_CANDIDATE_BATCH_LIMIT = 32
 
 try:
     from apps.infrastructure.storage.r2 import (
@@ -45,6 +46,42 @@ except ImportError:
     upload_fileobj_to_r2_storage = None
     generate_presigned_get_url_storage = None
     get_object_bytes_r2_storage = None
+
+
+def _parse_hit_report_candidate_problem_ids(raw: str | None) -> list[int]:
+    """Parse a bounded comma-separated exam-problem id list for candidate batches."""
+    if raw is None or not raw.strip():
+        return []
+
+    ids: list[int] = []
+    seen: set[int] = set()
+    for token in raw.replace(";", ",").split(","):
+        value = token.strip()
+        if not value:
+            continue
+        try:
+            problem_id = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("problem_ids must be comma-separated integers") from exc
+        if problem_id <= 0:
+            raise ValueError("problem_ids must be positive integers")
+        if problem_id in seen:
+            continue
+        ids.append(problem_id)
+        seen.add(problem_id)
+
+    if len(ids) > _HIT_REPORT_CANDIDATE_BATCH_LIMIT:
+        raise ValueError(
+            f"problem_ids can include at most {_HIT_REPORT_CANDIDATE_BATCH_LIMIT} ids",
+        )
+    return ids
+
+
+def _filter_hit_report_candidate_exam_problems(exam_problems, problem_ids: list[int]):
+    if not problem_ids:
+        return list(exam_problems)
+    allowed = set(problem_ids)
+    return [ep for ep in exam_problems if int(getattr(ep, "id", 0)) in allowed]
 
 
 # ── Curated Hit Report (강사 1인의 매치업 적중 보고서) ────────────
@@ -258,6 +295,19 @@ class HitReportDraftView(View):
         )
 
         mode = (request.GET.get("mode") or "").strip().lower()
+        candidate_problem_ids: list[int] = []
+        if mode in ("candidate", "candidates"):
+            try:
+                candidate_problem_ids = _parse_hit_report_candidate_problem_ids(
+                    request.GET.get("problem_ids"),
+                )
+            except ValueError as exc:
+                return JsonResponse({"detail": str(exc)}, status=400)
+            if not candidate_problem_ids:
+                return JsonResponse(
+                    {"detail": "problem_ids is required for candidate batches"},
+                    status=400,
+                )
         if mode in ("pins", "summary"):
             entries = [
                 {
@@ -279,10 +329,14 @@ class HitReportDraftView(View):
             })
 
         # 시험지 problems
-        exam_problems = list(
+        all_exam_problems = list(
             doc.problems.order_by("number").only(
                 "id", "number", "text", "image_key", "embedding", "meta",
             )
+        )
+        exam_problems = _filter_hit_report_candidate_exam_problems(
+            all_exam_problems,
+            candidate_problem_ids,
         )
         # entry 미리 로드
         entries_by_pid = {
