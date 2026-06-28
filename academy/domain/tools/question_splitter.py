@@ -1583,6 +1583,33 @@ def split_questions(
         is_quad_layout = _detect_quad_layout(text_blocks, page_width, page_height)
         is_dual_column = (not is_quad_layout) and _detect_column_layout(text_blocks, page_width)
 
+    if (
+        paper_type is not None
+        and bool(getattr(paper_type, "has_embedded_text", False))
+    ):
+        from academy.domain.tools.clean_pdf_question_splitter_v2 import (
+            split_clean_pdf_questions_v2,
+        )
+
+        clean_pdf_result = split_clean_pdf_questions_v2(
+            text_blocks,
+            page_width=page_width,
+            page_height=page_height,
+            is_dual_hint=is_dual_column,
+            is_quadrant_hint=is_quad_layout,
+            prefer_marginal=prefer_marginal,
+        )
+        if clean_pdf_result.handled:
+            return [
+                QuestionRegion(
+                    number=region.number,
+                    bbox=region.bbox,
+                    page_index=page_index,
+                    semantic_flags=region.semantic_flags,
+                )
+                for region in clean_pdf_result.regions
+            ]
+
     if _looks_like_dense_fill_in_row_page(
         text_blocks,
         page_width=page_width,
@@ -1600,6 +1627,7 @@ def split_questions(
         )
         if dense_row_regions:
             return dense_row_regions
+
     mid_x = page_width * 0.5
     mid_y = page_height * 0.5
 
