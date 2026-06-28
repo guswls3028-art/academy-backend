@@ -4,6 +4,16 @@
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용.
 $ErrorActionPreference = "Stop"
 
+function Get-RuntimeApiBaseUrl {
+    if ($script:FrontDomainApi -and $script:FrontDomainApi.Trim() -ne "") {
+        return $script:FrontDomainApi.Trim().TrimEnd("/")
+    }
+    if ($script:ApiBaseUrl -and $script:ApiBaseUrl.Trim() -ne "") {
+        return $script:ApiBaseUrl.Trim().TrimEnd("/")
+    }
+    return ""
+}
+
 function Sync-ApiEnvFromSSOT {
     <#
     .SYNOPSIS
@@ -57,6 +67,8 @@ function Sync-ApiEnvFromSSOT {
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_LITE" -NotePropertyValue $script:AiSqsQueueName -Force
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_PREMIUM" -NotePropertyValue $script:AiSqsQueueName -Force
     if ($script:ToolsSqsQueueName) { $obj | Add-Member -NotePropertyName "TOOLS_SQS_QUEUE_NAME" -NotePropertyValue $script:ToolsSqsQueueName -Force }
+    $runtimeApiBaseUrl = Get-RuntimeApiBaseUrl
+    if ($runtimeApiBaseUrl) { $obj | Add-Member -NotePropertyName "API_BASE_URL" -NotePropertyValue $runtimeApiBaseUrl -Force }
 
     # SSOT: Video Batch (long path 폐기 2026-05-10 — standard encoding queue/jobdef + separate ops queue/jobdefs)
     $obj | Add-Member -NotePropertyName "VIDEO_BATCH_JOB_QUEUE" -NotePropertyValue $script:VideoQueueName -Force
@@ -128,6 +140,8 @@ function Sync-WorkersEnvFromSSOT {
         $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_PREMIUM" -NotePropertyValue $script:AiSqsQueueName -Force
     }
     if ($script:ToolsSqsQueueName) { $obj | Add-Member -NotePropertyName "TOOLS_SQS_QUEUE_NAME" -NotePropertyValue $script:ToolsSqsQueueName -Force }
+    $runtimeApiBaseUrl = Get-RuntimeApiBaseUrl
+    if ($runtimeApiBaseUrl) { $obj | Add-Member -NotePropertyName "API_BASE_URL" -NotePropertyValue $runtimeApiBaseUrl -Force }
     # 옛 long path SSM 잔재 청소 (workers env). API env 동기와 동일 패턴.
     $obj.PSObject.Properties.Remove("VIDEO_BATCH_JOB_QUEUE_LONG") | Out-Null
     $obj.PSObject.Properties.Remove("VIDEO_BATCH_JOB_DEFINITION_LONG") | Out-Null
