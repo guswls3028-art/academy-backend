@@ -5,7 +5,7 @@
 ## 배포 정보
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-06-28T18:30:59.5393500+09:00 |
+| 검증 시각 | 2026-06-27T15:58:45.0251554+09:00 |
 | 리전 | ap-northeast-2 |
 | 배포 스크립트 | scripts/v1/deploy.ps1 |
 | 근거·로그 | reports/audit.latest.md, reports/drift.latest.md, reports/runtime-images.latest.md |
@@ -16,24 +16,24 @@
 
 | 항목 | 결과 | 근거(로그/지표/스크린샷 경로) |
 |------|------|-------------------------------------|
-| API ASG min/desired/max | 1/1/3 | reports/audit.latest.md (apiAsg*) |
-| ALB target health | 1 / 1 healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |
+| API ASG min/desired/max | 2/1/3 | reports/audit.latest.md (apiAsg*) |
+| ALB target health | 1 / 2 healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |
 | ALB HTTP 80 redirect | HTTP 301 https://academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com/healthz | HTTP listener는 HTTPS로 redirect해야 함 |
-| API 공개 URL(도메인) /health | OK 71ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
-| API runtime image digest | PASS | docs/reports/runtime-images.latest.md (instances=1, ci=sha256:0954fa7b83656fbaad371947c32be0b4d43d37bf92aca2370764158dd2a501d9) |
-| AI/Messaging ASG | 0/1 | reports/audit.latest.md (asgAi*, asgMessaging*) |
-| SQS queue 연결·DLQ | Messaging depth 0 (in-flight 0) DLQ 0 / AI depth 0 (in-flight 0) DLQ 0 | SQS Console 또는 get-queue-attributes |
-| Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 269 | reports/audit.latest.md, Batch Console |
+| API 공개 URL(도메인) /health | OK 77ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
+| API runtime image digest | UNKNOWN | docs/reports/runtime-images.latest.md (instances=2, ci=sha256:39e1b04e521c46cd8d396649de9900381f72c840a5840e34bf714f3e4079b3a5) |
+| AI/Messaging ASG | 3/0 | reports/audit.latest.md (asgAi*, asgMessaging*) |
+| SQS queue 연결·DLQ | Messaging depth 0 (in-flight 0) DLQ 0 / AI depth 0 (in-flight 1) DLQ 0 | SQS Console 또는 get-queue-attributes |
+| Video Batch CE/Queue/JobDef | CE VALID Queue ENABLED JobDef rev 262 | reports/audit.latest.md, Batch Console |
 | Video Ops CE/Queue, EventBridge | Ops CE VALID Ops Queue ENABLED Reconcile ENABLED ScanStuck ENABLED | reports/audit.latest.md, rca.video.latest.md |
 | RDS 연결 가능 | available | RDS describe-db-instances (연결 테스트는 앱/psql 수동) |
 | Redis 연결 가능 | available | ElastiCache describe-replication-groups |
-| **섹션 1 종합** | **PASS** | |
+| **섹션 1 종합** | **WARNING** | |
 
 ## 2) 기능 Smoke Test (PASS/WARNING/FAIL + 근거)
 
 | 항목 | 결과 | 근거 |
 |------|------|------|
-| /health | OK | 응답시간: 71ms (기준 p95 &lt; 2s, 샘플 1회) |
+| /health | OK | 응답시간: 77ms (기준 p95 &lt; 2s, 샘플 1회) |
 | API root | root not a health endpoint | 공개 HTTPS 도메인 기준, root는 필수 서비스 엔드포인트 아님 |
 | 핵심 API 1~2개(인증/CRUD) | 수동 검증 권장 | 샘플 20회 평균/최대 기록 시 reports/ 에 URL 또는 로그 경로 기입 |
 | **섹션 2 종합** | **PASS** | |
@@ -44,7 +44,7 @@
 |------|------|------|
 | 프론트 URL 접속 | OK | URL: https://hakwonplus.com/ 응답코드: 200 |
 | index.html Cache-Control | PASS (no-cache 계열) | public, must-revalidate, max-age=0 |
-| 해시 자산(JS/CSS) Cache-Control | PASS (1년) | 샘플: https://hakwonplus.com/assets/index-CVpcdcM7.js → public, max-age=31536000, immutable |
+| 해시 자산(JS/CSS) Cache-Control | PASS (1년) | 샘플: https://hakwonplus.com/assets/index-BXyhiicy.js → public, max-age=31536000, immutable |
 | 정적 자산(JS/CSS) 로딩 | 자동 검사 완료 | 위 해시 자산 요청 근거 |
 | CDN 캐시 정책 | 근거 위 참조 | Cache-Control 헤더, 배포 시 purge: SSOT front.purgeOnDeploy |
 | 프론트→API(CORS/쿠키/CSRF) | 수동 검증 권장 | 동일 도메인/credentials 요청 |
@@ -82,12 +82,12 @@
 ## 7) 리스크 및 GO/NO-GO 권고
 
 ### 발견 사항(리스크)
-- Drift 없음, 인프라 상태 정상 범위.
+- **WARNING** [RuntimeImage] API 런타임 image digest를 완전히 확인하지 못했습니다. docs/reports/runtime-images.latest.md 확인 필요.
 
 ### GO/NO-GO
 | 판정 | 내용 |
 |------|------|
-| **GO** |  |
+| **CONDITIONAL GO** | WARNING 영향도·완화책·추적 계획 확인 후 배포 판단. 상세: 아래 리스크 섹션 및 deploy-verification-latest.md. |
 
 - **FAIL 1건 이상** → **NO-GO**. 재검증 후 재실행.
 - **WARNING만** → **CONDITIONAL GO**. 영향도·완화책·추적 계획 확인 후 배포 여부 결정.
@@ -96,6 +96,6 @@
 ---
 
 ## 최종 상태
-**PASS**
+**WARNING**
 
 **연관 보고서:** audit.latest.md, drift.latest.md, runtime-images.latest.md (동시 갱신됨).
