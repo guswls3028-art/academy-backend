@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+import binascii
+import struct
+import tempfile
+import zlib
+from pathlib import Path
 from unittest import TestCase
 
+from academy.application.use_cases.ai.pipelines.matchup_pipeline import (
+    _boxes_to_questions,
+    _filter_questions_by_min_area,
+)
 from academy.domain.tools.paper_type import PaperType, PaperTypeResult
 from academy.domain.tools.question_splitter import TextBlock, split_questions
 
@@ -16,6 +25,26 @@ def _paper_type(*, dual: bool) -> PaperTypeResult:
         has_embedded_text=True,
         debug={"is_dual_text": dual},
     )
+
+
+def _write_blank_png(path: Path, *, width: int, height: int) -> None:
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", binascii.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    row = b"\x00" + (b"\x00\x00\x00" * width)
+    raw = row * height
+    payload = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(raw, level=1))
+        + chunk(b"IEND", b"")
+    )
+    path.write_bytes(payload)
 
 
 class CleanPdfQuestionSplitterV2Tests(TestCase):
@@ -144,3 +173,54 @@ class CleanPdfQuestionSplitterV2Tests(TestCase):
         )
 
         self.assertEqual(regions, [])
+
+
+class CleanPdfQuestionPipelineV2Tests(TestCase):
+    def test_boxes_to_questions_propagates_clean_pdf_v2_flags(self):
+        questions = _boxes_to_questions([
+            {
+                "page_index": 18,
+                "image_path": "page_018.png",
+                "boxes": [(97, 326, 596, 131)],
+                "numbers": [13],
+                "bbox_meta": [{"semantic_flags": ["clean_pdf_v2", "flow_left"]}],
+                "paper_type": "clean_pdf_dual",
+            }
+        ])
+
+        self.assertEqual(len(questions), 1)
+        self.assertEqual(questions[0]["number"], 13)
+        self.assertEqual(
+            questions[0]["meta_extra"]["segmentation_flags"],
+            ["clean_pdf_v2", "flow_left"],
+        )
+
+    def test_min_area_filter_keeps_short_clean_pdf_v2_questions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            image_path = Path(tmp) / "page.png"
+            _write_blank_png(image_path, width=2000, height=2000)
+            questions = [
+                {
+                    "number": 13,
+                    "image_path": str(image_path),
+                    "bbox": [97, 326, 596, 131],
+                    "meta_extra": {
+                        "number_source": "segment",
+                        "segmentation_flags": ["clean_pdf_v2"],
+                    },
+                },
+                {
+                    "number": 99,
+                    "image_path": str(image_path),
+                    "bbox": [97, 326, 100, 100],
+                    "meta_extra": {"number_source": "segment"},
+                },
+            ]
+
+            kept = _filter_questions_by_min_area(
+                questions,
+                min_ratio_raw="0.02",
+                document_id=303,
+            )
+
+        self.assertEqual([q["number"] for q in kept], [13])

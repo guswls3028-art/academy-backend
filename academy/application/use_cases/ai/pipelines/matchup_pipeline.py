@@ -947,6 +947,10 @@ def _filter_questions_by_min_area(
 
     for q in questions:
         try:
+            meta_extra = q.get("meta_extra") or {}
+            if "clean_pdf_v2" in set(meta_extra.get("segmentation_flags") or []):
+                kept.append(q)
+                continue
             image_path = q.get("image_path", "")
             bbox = _coerce_bbox_xywh(q.get("bbox"))
             if not image_path or bbox is None:
@@ -1237,6 +1241,7 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
         img_path = page["image_path"]
         boxes = page.get("boxes", []) or []
         numbers = page.get("numbers", []) or []
+        bbox_meta = page.get("bbox_meta", []) or []
         page_type = (page.get("paper_type") or "").strip().lower()
         if page_type in _NON_PROBLEM_PAGE_TYPES:
             logger.info(
@@ -1277,6 +1282,8 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
                 "image_path": img_path,
                 "bbox": list(bbox),
             }
+            region_meta = bbox_meta[i] if i < len(bbox_meta) and isinstance(bbox_meta[i], dict) else {}
+            semantic_flags = list(region_meta.get("semantic_flags") or [])
             if use_segment_numbers:
                 entry["meta_extra"] = {"number_source": "segment"}
             else:
@@ -1292,6 +1299,8 @@ def _boxes_to_questions(pages: List[Dict]) -> List[Dict]:
                 if i < len(numbers):
                     meta_extra["segment_number_raw"] = numbers[i]
                 entry["meta_extra"] = meta_extra
+            if semantic_flags:
+                entry["meta_extra"]["segmentation_flags"] = semantic_flags
             if is_per_page_restart and i < len(numbers) and isinstance(numbers[i], int):
                 entry["local_number"] = int(numbers[i])
             questions.append(entry)
