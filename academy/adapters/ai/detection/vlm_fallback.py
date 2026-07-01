@@ -611,17 +611,24 @@ class GeminiVLMVisionAdapter:
         scale = 1.0
         try:
             from PIL import Image  # type: ignore
-            img = Image.open(_io.BytesIO(img_bytes))
-            orig_w, orig_h = img.size
+            _orig = Image.open(_io.BytesIO(img_bytes))
+            orig_w, orig_h = _orig.size
             if max(orig_w, orig_h) > _GEMINI_VISION_MAX_DIM:
                 scale = _GEMINI_VISION_MAX_DIM / max(orig_w, orig_h)
                 new_size = (int(orig_w * scale), int(orig_h * scale))
-                img = img.convert("RGB").resize(new_size, Image.LANCZOS)
+                _rsz = _orig.convert("RGB").resize(new_size, Image.LANCZOS)
+                # 원본 이미지(최대 ~275MB) 즉시 해제 — Gemini 호출(~30s) 동안 메모리 점유 방지
+                _orig.close()
+                del _orig
                 buf = _io.BytesIO()
-                img.save(buf, format="JPEG", quality=_GEMINI_VISION_JPEG_Q, optimize=True)
+                _rsz.save(buf, format="JPEG", quality=_GEMINI_VISION_JPEG_Q, optimize=True)
+                _rsz.close()
+                del _rsz
                 img_bytes = buf.getvalue()
                 mime = "image/jpeg"
             else:
+                _orig.close()
+                del _orig
                 mime, _ = mimetypes.guess_type(image_path)
                 mime = mime or "image/png"
         except Exception:

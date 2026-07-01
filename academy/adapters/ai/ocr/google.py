@@ -146,36 +146,48 @@ def _prepare_image_for_vision(image_path: str) -> bytes:
     pixels_ok = pixels <= _MAX_VISION_PIXELS
 
     if size_ok and pixels_ok:
+        img.close()
+        del img
         return content
 
     # Resize + 재인코딩 필요
     if img.mode != "RGB":
-        img = img.convert("RGB")
+        _rgb = img.convert("RGB")
+        img.close()
+        del img
+        img = _rgb
 
     if max(img.size) > _MAX_IMAGE_DIMENSION:
         scale = _MAX_IMAGE_DIMENSION / max(img.size)
-        img = img.resize(
+        _rsz = img.resize(
             (int(img.width * scale), int(img.height * scale)),
             Image.LANCZOS,
         )
+        img.close()
+        del img
+        img = _rsz
 
-    for quality in (85, 70, 55):
-        buf = io.BytesIO()
-        img.save(buf, format="JPEG", quality=quality, optimize=True)
-        out = buf.getvalue()
-        if len(out) <= _MAX_VISION_IMAGE_BYTES:
-            logger.info(
-                "OCR_IMAGE_COMPRESSED | path=%s | orig=%dKB(%dx%d) | new=%dKB(%dx%d) | q=%d",
-                image_path, len(content) // 1024, w, h,
-                len(out) // 1024, img.width, img.height, quality,
-            )
-            return out
+    try:
+        for quality in (85, 70, 55):
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=quality, optimize=True)
+            out = buf.getvalue()
+            if len(out) <= _MAX_VISION_IMAGE_BYTES:
+                logger.info(
+                    "OCR_IMAGE_COMPRESSED | path=%s | orig=%dKB(%dx%d) | new=%dKB(%dx%d) | q=%d",
+                    image_path, len(content) // 1024, w, h,
+                    len(out) // 1024, img.width, img.height, quality,
+                )
+                return out
 
-    logger.warning(
-        "OCR_IMAGE_STILL_LARGE | path=%s | compressed=%dKB | sending anyway",
-        image_path, len(out) // 1024,
-    )
-    return out
+        logger.warning(
+            "OCR_IMAGE_STILL_LARGE | path=%s | compressed=%dKB | sending anyway",
+            image_path, len(out) // 1024,
+        )
+        return out
+    finally:
+        img.close()
+        del img
 
 # CloudWatch custom metric 상수 — Vision OCR 호출량/에러 추적용.
 # 캐시 히트는 lru_cache가 함수 본문 실행을 생략하므로 자동으로 제외됨 (비용 메트릭 의도).

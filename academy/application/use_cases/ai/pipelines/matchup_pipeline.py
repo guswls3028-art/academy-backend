@@ -1887,6 +1887,7 @@ def _validate_vlm_bboxes(result, image_path: str, page_idx: int) -> Optional[Any
     if img is None:
         return result
     h_img, w_img = img.shape[:2]
+    del img  # 원본 이미지(최대 ~275MB numpy array) 즉시 해제 — 다음 페이지 VLM 전 메모리 확보
     if h_img < 100 or w_img < 100:
         return result
 
