@@ -1,17 +1,17 @@
 ## V1.1.0 CI Build — latest 이미지 digest 스냅샷 (OIDC)
 
-**Generated:** 2026-06-28T17:14:48+00:00
+**Generated:** 2026-07-01T16:52:49+00:00
 **SSOT:** docs/infrastructure/deployment-architecture.md
 **Region:** ap-northeast-2
-**gitSha:** 646e5c71d7e528a8813b20be9594afb61f79e6d9
-**shortSha:** 646e5c71
-**Changes:** api=true video=false messaging=false ai=true tools=false force_full=false
+**gitSha:** bdb33723305973c3bf5cc9bb8d9f5e6703bcb6ef
+**shortSha:** bdb33723
+**Changes:** api=true video=true messaging=true ai=true tools=true force_full=true
 
 | repo | tags | imageDigest |
 |------|------|-------------|
-| academy-base | sha-f331a503, sha-37cc9d4a, sha-4c193bef, sha-25c1f539, sha-a35a41fe, sha-209947a4, sha-8a106b29, sha-76fb4eb4, latest, sha-6edcf36e, sha-ad5f0189, sha-939e51d3, sha-f2244a23, sha-9cb5b869, sha-b7fbf71d, sha-2d4dce0c | sha256:c38bbb72265819f60efa5cfac1558dd441b00d237c224932a125563b465e683c |
-| academy-api | sha-646e5c71, latest | sha256:ad945f4c99646411da758fcd9c6f91912a88ff0579bec8d866d3380ffb967801 |
-| academy-video-worker | sha-2d4dce0c, latest | sha256:7f6df0e5eb114b744a6ce9f99c50ae7ffb717afffc8ada62830df9bcf252cb60 |
-| academy-messaging-worker | latest, sha-2d4dce0c | sha256:ba2d8f1141a1bee14151ead3d4e6a18224c99000326870130a12790572f68508 |
-| academy-ai-worker-cpu | sha-646e5c71, latest | sha256:260c391a0826a031e94c4fe0f1aaef0a913fa8ef3ddd3ebdf97ff9e90d435d05 |
-| academy-tools-worker | sha-2d4dce0c, latest | sha256:7ae56c64c0d3da6b6dd3a4d45e42f456f5192ed2b98ae240ce426e330016293b |
+| academy-base | sha-f331a503, sha-37cc9d4a, sha-4c193bef, sha-25c1f539, sha-a35a41fe, sha-209947a4, sha-8a106b29, sha-76fb4eb4, latest, sha-6edcf36e, sha-bdb33723, sha-ad5f0189, sha-939e51d3, sha-f2244a23, sha-9cb5b869, sha-b7fbf71d, sha-2d4dce0c | sha256:c38bbb72265819f60efa5cfac1558dd441b00d237c224932a125563b465e683c |
+| academy-api | latest, sha-bdb33723 | sha256:dcf1502e45b15c429dcbd374ef78c1c19ae09c109601eb1c413a3259a8c2152c |
+| academy-video-worker | sha-bdb33723, latest | sha256:ab3801e51e6b7d457b7f276729a88e3925b4855713676706d8513c5bf41db381 |
+| academy-messaging-worker | latest, sha-bdb33723 | sha256:5ff48f7eb766797645b5a9c8a65e1177c43c0d283076c4937c5470df1e82a8b7 |
+| academy-ai-worker-cpu | latest, sha-bdb33723 | sha256:6c195e88649299ea7d7a95ad6d181134810140eac8b8db43e2b8fb1dd92c25a8 |
+| academy-tools-worker | sha-bdb33723, latest | sha256:178daa5105d3b5466bc085d769fb5fd586066ff34cb3ce3cd5989f95b400cf27 |
