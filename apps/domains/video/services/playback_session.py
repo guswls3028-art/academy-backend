@@ -8,35 +8,17 @@ from django.utils import timezone
 from django.db import transaction
 
 from academy.adapters.db.django import repositories_video as video_repo
+from academy.adapters.cache.redis_playback_session_buffer import (
+    buffer_heartbeat_session_ttl,
+    buffer_session_event,
+    flush_session_buffer,
+    flush_session_stats,
+    get_session_violation_stats_redis,
+    has_session_meta,
+    init_session_redis,
+    is_redis_available,
+)
 from apps.domains.video.models import VideoPlaybackSession
-
-# Redis 보호 레이어 (선택적, 장애 시 DB fallback)
-try:
-    from libs.redis import is_redis_available
-    from libs.redis.watch_buffer import (
-        init_session_redis,
-        buffer_heartbeat_session_ttl,
-        buffer_session_event,
-        get_session_violation_stats_redis,
-        flush_session_stats,
-        flush_session_buffer,
-    )
-except ImportError:
-    def is_redis_available():
-        return False
-    def init_session_redis(*args, **kwargs):
-        return False
-    def buffer_heartbeat_session_ttl(*args, **kwargs):
-        return False
-    def buffer_session_event(*args, **kwargs):
-        return False, {"total": 0, "violated": 0}
-    def get_session_violation_stats_redis(*args, **kwargs):
-        return None
-    def flush_session_stats(*args, **kwargs):
-        pass
-    def flush_session_buffer(*args, **kwargs):
-        return False
-
 
 # =======================================================
 # DB-based Session Management (Redis 제거됨)
@@ -196,14 +178,9 @@ def is_session_active(*, student_id: int, session_id: str) -> bool:
     - Redis 미사용/장애 시: DB 기반
     """
     if is_redis_available():
-        try:
-            from libs.redis.client import get_redis_client
-            client = get_redis_client()
-            if client and client.exists(f"session:{session_id}:meta"):
-                return True
-            # Redis에 키 없으면 DB fallback (세션 시작 직후 첫 heartbeat 전)
-        except Exception:
-            pass
+        if has_session_meta(session_id):
+            return True
+        # Redis에 키 없으면 DB fallback (세션 시작 직후 첫 heartbeat 전)
 
     now = timezone.now()
 
