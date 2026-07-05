@@ -3,9 +3,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Literal, Optional
-import json
 import uuid
-from datetime import datetime, timezone
+from ._common import contract_from_json, contract_to_json, utc_now_iso
 
 
 AIJobType = Literal[
@@ -28,10 +27,6 @@ AIJobType = Literal[
     "matchup_manual_index",
     "matchup_public_cleanup",
 ]
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass(frozen=True)
@@ -76,7 +71,7 @@ class AIJob:
             source_domain=source_domain,
             source_id=source_id,
             payload=payload or {},
-            created_at=_now_iso(),
+            created_at=utc_now_iso(),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -86,7 +81,7 @@ class AIJob:
         return d
 
     def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False)
+        return contract_to_json(self.to_dict())
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "AIJob":
@@ -102,4 +97,4 @@ class AIJob:
 
     @staticmethod
     def from_json(raw: str) -> "AIJob":
-        return AIJob.from_dict(json.loads(raw))
+        return AIJob.from_dict(contract_from_json(raw))

@@ -3,15 +3,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Literal, Optional
-import json
-from datetime import datetime, timezone
+from ._common import contract_from_json, contract_to_json, utc_now_iso
 
 
 AIJobStatus = Literal["DONE", "FAILED"]
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 @dataclass(frozen=True)
@@ -42,7 +37,7 @@ class AIResult:
             status="DONE",
             result=result or {},
             error=None,
-            finished_at=_now_iso(),
+            finished_at=utc_now_iso(),
         )
 
     @staticmethod
@@ -52,7 +47,7 @@ class AIResult:
             status="FAILED",
             result={},
             error=error,
-            finished_at=_now_iso(),
+            finished_at=utc_now_iso(),
         )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -62,7 +57,7 @@ class AIResult:
         return d
 
     def to_json(self) -> str:
-        return json.dumps(self.to_dict(), ensure_ascii=False)
+        return contract_to_json(self.to_dict())
 
     @staticmethod
     def from_dict(data: Dict[str, Any]) -> "AIResult":
@@ -76,4 +71,4 @@ class AIResult:
 
     @staticmethod
     def from_json(raw: str) -> "AIResult":
-        return AIResult.from_dict(json.loads(raw))
+        return AIResult.from_dict(contract_from_json(raw))
