@@ -69,7 +69,7 @@ def process_video(
     from academy.adapters.video.transcoder import transcode_to_hls
     from academy.adapters.video.validate import validate_hls_output
     from academy.adapters.video.r2_uploader import upload_directory
-    from libs.r2_client.presign import create_presigned_get_url
+    from academy.adapters.storage.r2_presign import create_presigned_get_url
 
     video_id = int(job.get("video_id"))
     file_key = str(job.get("file_key") or "")

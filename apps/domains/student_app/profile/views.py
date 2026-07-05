@@ -18,7 +18,7 @@ def _get_profile_photo_url(student):
     if r2_key:
         try:
             from django.conf import settings
-            from libs.r2_client.presign import create_presigned_get_url
+            from academy.adapters.storage.r2_presign import create_presigned_get_url
             return create_presigned_get_url(r2_key, expires_in=3600, bucket=settings.R2_STORAGE_BUCKET)
         except Exception:
             logger.warning("Failed to generate presigned URL for profile photo r2_key=%s", r2_key)

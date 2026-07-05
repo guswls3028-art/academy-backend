@@ -128,7 +128,7 @@ def clinic_reason_for_unresolved_auto_links(tenant, enrollment_id: int | None) -
 
 def storage_presigned_get_url(r2_key: str, *, expires_in: int = 3600) -> str:
     from django.conf import settings
-    from libs.r2_client.presign import create_presigned_get_url
+    from academy.adapters.storage.r2_presign import create_presigned_get_url
 
     return create_presigned_get_url(
         r2_key,

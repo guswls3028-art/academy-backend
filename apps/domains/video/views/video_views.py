@@ -25,7 +25,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
 from apps.core.parsing import parse_bool
 
-from libs.r2_client.presign import (
+from academy.adapters.storage.r2_presign import (
     create_presigned_put_url,
     create_presigned_get_url,
     create_multipart_upload,
@@ -1120,7 +1120,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             if r2_key:
                 try:
                     from django.conf import settings as _settings
-                    from libs.r2_client.presign import create_presigned_get_url
+                    from academy.adapters.storage.r2_presign import create_presigned_get_url
                     profile_photo_url = create_presigned_get_url(r2_key, expires_in=3600, bucket=_settings.R2_STORAGE_BUCKET)
                 except Exception:
                     pass
