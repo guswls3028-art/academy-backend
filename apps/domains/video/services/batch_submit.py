@@ -11,6 +11,11 @@ import logging
 from typing import Optional
 
 from django.conf import settings
+from academy.adapters.compute.aws_batch import (
+    AwsBatchClientError,
+    submit_video_batch_job,
+    terminate_batch_job,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,34 +49,21 @@ def submit_batch_job(video_job_id: str, duration_seconds: int | None = None) -> 
         video_job_id, duration_seconds, queue_name,
     )
 
-    import boto3
-    from botocore.exceptions import ClientError
-
     region = getattr(settings, "AWS_REGION", None) or getattr(settings, "AWS_DEFAULT_REGION", "ap-northeast-2")
 
-    # Ref::job_id 치환이 깨져도 env로 전달되도록 containerOverrides 사용 (관측/디버깅 강화)
-    container_overrides = {
-        "environment": [
-            {"name": "VIDEO_JOB_ID", "value": str(video_job_id)},
-        ],
-    }
-
     try:
-        client = boto3.client("batch", region_name=region)
-        resp = client.submit_job(
-            jobName=f"video-{video_job_id[:8]}",
-            jobQueue=queue_name,
-            jobDefinition=job_def_name,
-            parameters={"job_id": str(video_job_id)},
-            containerOverrides=container_overrides,
+        aws_job_id = submit_video_batch_job(
+            video_job_id=video_job_id,
+            queue_name=queue_name,
+            job_definition=job_def_name,
+            region=region,
         )
-        aws_job_id = resp.get("jobId")
         logger.info(
             "BATCH_SUBMIT | job_id=%s | aws_job_id=%s | queue=%s",
             video_job_id, aws_job_id, queue_name,
         )
         return (aws_job_id, None)
-    except ClientError as e:
+    except AwsBatchClientError as e:
         err_msg = str(e)[:2000]
         logger.exception(
             "BATCH_SUBMIT_FAILED | job_id=%s | error=%s",
@@ -113,9 +105,7 @@ def terminate_video_job(video_job_id: str, reason: str = "superseded") -> bool:
 
     region = getattr(settings, "AWS_REGION", None) or getattr(settings, "AWS_DEFAULT_REGION", "ap-northeast-2")
     try:
-        import boto3
-        client = boto3.client("batch", region_name=region)
-        client.terminate_job(jobId=aws_batch_job_id, reason=reason[:256])
+        terminate_batch_job(aws_batch_job_id=aws_batch_job_id, reason=reason, region=region)
         logger.info("BATCH_TERMINATE | job_id=%s aws_job_id=%s reason=%s", video_job_id, aws_batch_job_id, reason)
         return True
     except Exception as e:

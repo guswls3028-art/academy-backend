@@ -12,6 +12,8 @@ import random
 import time
 from typing import Optional
 
+from academy.adapters.compute.aws_batch import describe_batch_jobs, terminate_batch_job
+
 logger = logging.getLogger(__name__)
 
 # Terminal Batch job statuses for which we skip TerminateJob (idempotent)
@@ -55,10 +57,7 @@ def terminate_aws_batch_job(
 
     if _describe_first:
         try:
-            import boto3
-            client = boto3.client("batch", region_name=region)
-            desc = client.describe_jobs(jobs=[aws_batch_job_id])
-            jobs = desc.get("jobs") or []
+            jobs = describe_batch_jobs(aws_batch_job_ids=[aws_batch_job_id], region=region)
             if jobs:
                 status = (jobs[0].get("status") or "").strip().upper()
                 if status in _BATCH_JOB_TERMINAL:
@@ -84,9 +83,7 @@ def terminate_aws_batch_job(
 
     for attempt in range(max_attempts):
         try:
-            import boto3
-            client = boto3.client("batch", region_name=region)
-            client.terminate_job(jobId=aws_batch_job_id, reason=reason_str)
+            terminate_batch_job(aws_batch_job_id=aws_batch_job_id, reason=reason_str, region=region)
             logger.info(
                 "VIDEO_DELETE_TERMINATE_OK | video_id=%s job_id=%s aws_batch_job_id=%s",
                 video_id, job_id, aws_batch_job_id,
