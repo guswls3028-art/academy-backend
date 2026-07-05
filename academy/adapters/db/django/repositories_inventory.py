@@ -108,3 +108,12 @@ def inventory_folder_get_or_create(tenant, *, scope, student_ps="", parent=None,
         parent=parent,
         name=name,
     )
+
+
+def iter_inventory_r2_keys(*, tenant_id: int | None = None):
+    from apps.domains.inventory.models import InventoryFile
+
+    qs = InventoryFile.objects.exclude(r2_key="")
+    if tenant_id is not None:
+        qs = qs.filter(tenant_id=tenant_id)
+    yield from qs.values_list("r2_key", flat=True)

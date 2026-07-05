@@ -29,6 +29,13 @@ from django.conf import settings
 from django.db.models import Q
 from django.utils import timezone
 
+from academy.adapters.storage.r2_objects import (
+    delete_r2_objects,
+    delete_r2_prefix,
+    iter_r2_objects,
+    r2_head_exists,
+)
+
 logger = logging.getLogger(__name__)
 
 HLS_KEY_PAT = re.compile(r"^(tenants/[^/]+/video/hls/[^/]+/)")
@@ -66,15 +73,6 @@ class Command(BaseCommand):
         if not bucket:
             raise CommandError("R2_VIDEO_BUCKET not configured")
 
-        import boto3
-        s3 = boto3.client(
-            "s3",
-            region_name="auto",
-            endpoint_url=settings.R2_ENDPOINT,
-            aws_access_key_id=settings.R2_ACCESS_KEY,
-            aws_secret_access_key=settings.R2_SECRET_KEY,
-        )
-
         from apps.domains.video.models import Video
 
         # 살아있는 영상은 모든 status 보존. soft-deleted는 READY만 180일 retention 명분으로 보존.
@@ -95,39 +93,37 @@ class Command(BaseCommand):
         tmp_orphans: list[tuple[str, int]] = []
         too_young = 0
 
-        paginator = s3.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=bucket, Prefix="tenants/"):
-            for obj in page.get("Contents") or []:
-                k = obj.get("Key") or ""
-                sz = int(obj.get("Size") or 0)
-                lm = obj.get("LastModified")
-                if lm is not None and (now - lm) < min_age:
-                    too_young += 1
-                    continue
+        for obj in iter_r2_objects(bucket=bucket, prefix="tenants/"):
+            k = obj.get("Key") or ""
+            sz = int(obj.get("Size") or 0)
+            lm = obj.get("LastModified")
+            if lm is not None and (now - lm) < min_age:
+                too_young += 1
+                continue
 
-                if "/video/raw/" in k:
-                    if k in db_raw_keys:
-                        continue
-                    if do_raw:
-                        raw_orphans.append((k, sz))
+            if "/video/raw/" in k:
+                if k in db_raw_keys:
                     continue
+                if do_raw:
+                    raw_orphans.append((k, sz))
+                continue
 
-                if "/video/hls/" not in k:
-                    continue
+            if "/video/hls/" not in k:
+                continue
 
-                if "/_tmp/" in k:
-                    if do_tmp:
-                        tmp_orphans.append((k, sz))
-                    continue
+            if "/_tmp/" in k:
+                if do_tmp:
+                    tmp_orphans.append((k, sz))
+                continue
 
-                m = HLS_KEY_PAT.match(k)
-                if not m:
-                    continue
-                root = m.group(1)
-                if root in valid_hls_roots:
-                    continue
-                if do_hls:
-                    hls_orphans_by_root.setdefault(root, []).append((k, sz))
+            m = HLS_KEY_PAT.match(k)
+            if not m:
+                continue
+            root = m.group(1)
+            if root in valid_hls_roots:
+                continue
+            if do_hls:
+                hls_orphans_by_root.setdefault(root, []).append((k, sz))
 
         pending_rows = []
         if do_pending:
@@ -138,11 +134,7 @@ class Command(BaseCommand):
             for v in pending_qs:
                 exists = False
                 if v.file_key:
-                    try:
-                        s3.head_object(Bucket=bucket, Key=v.file_key)
-                        exists = True
-                    except Exception:
-                        exists = False
+                    exists = r2_head_exists(bucket=bucket, key=v.file_key)
                 if not exists:
                     pending_rows.append(v)
 
@@ -174,27 +166,18 @@ class Command(BaseCommand):
         # --- delete raw ---
         for i in range(0, len(raw_orphans), 1000):
             batch = raw_orphans[i:i + 1000]
-            s3.delete_objects(
-                Bucket=bucket,
-                Delete={"Objects": [{"Key": k} for k, _ in batch], "Quiet": True},
-            )
-            deleted_objects += len(batch)
+            deleted_objects += delete_r2_objects(bucket=bucket, keys=(k for k, _ in batch))
             logger.info("cleanup_orphan_video_storage: raw batch deleted count=%s", len(batch))
 
         # --- delete tmp ---
         for i in range(0, len(tmp_orphans), 1000):
             batch = tmp_orphans[i:i + 1000]
-            s3.delete_objects(
-                Bucket=bucket,
-                Delete={"Objects": [{"Key": k} for k, _ in batch], "Quiet": True},
-            )
-            deleted_objects += len(batch)
+            deleted_objects += delete_r2_objects(bucket=bucket, keys=(k for k, _ in batch))
             logger.info("cleanup_orphan_video_storage: tmp batch deleted count=%s", len(batch))
 
         # --- delete HLS per root (use delete_prefix for safety) ---
-        from apps.infrastructure.storage.r2 import delete_prefix_r2_video
         for root in sorted(hls_orphans_by_root.keys()):
-            n = delete_prefix_r2_video(prefix=root)
+            n = delete_r2_prefix(bucket=bucket, prefix=root)
             deleted_objects += n
             logger.info("cleanup_orphan_video_storage: hls root=%s deleted=%s", root, n)
             self.stdout.write(f"  deleted HLS root={root} count={n}")

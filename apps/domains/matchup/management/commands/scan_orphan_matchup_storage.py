@@ -37,6 +37,9 @@ from django.core.management.base import BaseCommand, CommandError
 from django.conf import settings
 from django.utils import timezone
 
+from academy.adapters.db.django.repositories_inventory import iter_inventory_r2_keys
+from academy.adapters.storage.r2_objects import iter_r2_objects
+
 logger = logging.getLogger(__name__)
 
 
@@ -54,7 +57,7 @@ class Command(BaseCommand):
         )
         parser.add_argument(
             "--tenant", type=int, default=None,
-            help="Scan only this tenant id. REQUIRED — set explicitly to avoid "
+            help="Scan only this tenant id. REQUIRED - set explicitly to avoid "
                  "accidental cross-tenant scan that could expose 학원장 cuts as orphan.",
         )
         parser.add_argument(
@@ -80,22 +83,13 @@ class Command(BaseCommand):
         if not bucket:
             raise CommandError("R2_STORAGE_BUCKET not configured")
 
-        import boto3
-        s3 = boto3.client(
-            "s3",
-            region_name="auto",
-            endpoint_url=settings.R2_ENDPOINT,
-            aws_access_key_id=settings.R2_ACCESS_KEY,
-            aws_secret_access_key=settings.R2_SECRET_KEY,
-        )
-
         db_keys = self._collect_db_keys(only_tenant=only_tenant)
 
         self.stdout.write(self.style.HTTP_INFO("=== DB known keys ==="))
         self.stdout.write(f"total db-known keys (matchup-related): {len(db_keys)}")
         manual_n = getattr(self, "_manual_protected_count", 0)
         self.stdout.write(self.style.SUCCESS(
-            f"  ↳ 학원장 manual cut/paste protected: {manual_n} keys"
+            f"  - 학원장 manual cut/paste protected: {manual_n} keys"
         ))
 
         now = timezone.now()
@@ -114,32 +108,30 @@ class Command(BaseCommand):
         else:
             prefixes = ["tenants/"]
 
-        paginator = s3.get_paginator("list_objects_v2")
         for prefix in prefixes:
-            for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
-                for obj in page.get("Contents") or []:
-                    k = obj.get("Key") or ""
-                    if "/matchup/" not in k:
-                        continue
-                    sz = int(obj.get("Size") or 0)
-                    lm = obj.get("LastModified")
-                    total_objects += 1
-                    total_bytes += sz
+            for obj in iter_r2_objects(bucket=bucket, prefix=prefix):
+                k = obj.get("Key") or ""
+                if "/matchup/" not in k:
+                    continue
+                sz = int(obj.get("Size") or 0)
+                lm = obj.get("LastModified")
+                total_objects += 1
+                total_bytes += sz
 
-                    sub = self._sub_prefix(k)
-                    sub_prefix_count[sub] = sub_prefix_count.get(sub, 0) + 1
-                    sub_prefix_bytes[sub] = sub_prefix_bytes.get(sub, 0) + sz
+                sub = self._sub_prefix(k)
+                sub_prefix_count[sub] = sub_prefix_count.get(sub, 0) + 1
+                sub_prefix_bytes[sub] = sub_prefix_bytes.get(sub, 0) + sz
 
-                    if k in db_keys:
-                        known_objects += 1
-                        known_bytes += sz
-                        continue
+                if k in db_keys:
+                    known_objects += 1
+                    known_bytes += sz
+                    continue
 
-                    if lm is not None and (now - lm) < min_age:
-                        too_young += 1
-                        continue
+                if lm is not None and (now - lm) < min_age:
+                    too_young += 1
+                    continue
 
-                    orphan_keys.append((k, sz, lm.isoformat() if lm else ""))
+                orphan_keys.append((k, sz, lm.isoformat() if lm else ""))
 
         orphan_bytes = sum(s for _, s, _ in orphan_keys)
 
@@ -184,14 +176,14 @@ class Command(BaseCommand):
 
     def _collect_db_keys(self, only_tenant: int | None) -> set[str]:
         """모든 매치업 관련 R2 키 수집. 학원장 manual cut(meta.manual=True) 키는
-        명시적으로 protected set으로도 따로 카운트해서 report에 노출 → false orphan 0 보장.
+        명시적으로 protected set으로도 따로 카운트해서 report에 노출 -> false orphan 0 보장.
         """
         from apps.domains.matchup.models import (
             MatchupDocument,
             MatchupProblem,
         )
         keys: set[str] = set()
-        manual_keys: set[str] = set()  # 학원장 직접 cut/paste keys — 절대 orphan 아님
+        manual_keys: set[str] = set()  # 학원장 직접 cut/paste keys - 절대 orphan 아님
 
         doc_qs = MatchupDocument.objects.all()
         if only_tenant is not None:
@@ -238,17 +230,10 @@ class Command(BaseCommand):
             pass
 
         # 4. MatchupHitReport: 현재 모델에는 image_key 컬럼 없음 (PDF on-demand generate).
-        #    R2 영구 저장 없음 → DB 키 세트 기여 0.
+        #    R2 영구 저장 없음 -> DB 키 세트 기여 0.
 
-        # 5. InventoryFile.r2_key — matchup prefix 가리킬 수 있음.
-        try:
-            from apps.domains.inventory.models import InventoryFile
-            inv_qs = InventoryFile.objects.exclude(r2_key="")
-            if only_tenant is not None:
-                inv_qs = inv_qs.filter(tenant_id=only_tenant)
-            keys.update(inv_qs.values_list("r2_key", flat=True))
-        except (ImportError, AttributeError):
-            pass
+        # 5. InventoryFile.r2_key - matchup prefix 가리킬 수 있음.
+        keys.update(iter_inventory_r2_keys(tenant_id=only_tenant))
 
         # blanks 제거
         return {k for k in keys if isinstance(k, str) and k}

@@ -16,11 +16,10 @@ from __future__ import annotations
 
 import logging
 
-import boto3
-from botocore.config import Config as BotoConfig
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
+from academy.adapters.storage.r2_objects import r2_head_exists
 from apps.core.r2_paths import video_hls_prefix
 from apps.domains.video.models import Video
 
@@ -46,14 +45,6 @@ class Command(BaseCommand):
             qs = qs.filter(tenant_id=tenant_id)
         qs = qs.order_by("tenant_id", "id")
 
-        client = boto3.client(
-            "s3",
-            endpoint_url=settings.R2_ENDPOINT,
-            aws_access_key_id=settings.R2_ACCESS_KEY,
-            aws_secret_access_key=settings.R2_SECRET_KEY,
-            region_name="auto",
-            config=BotoConfig(retries={"max_attempts": 3, "mode": "standard"}),
-        )
         bucket = settings.R2_VIDEO_BUCKET
 
         total = qs.count()
@@ -70,9 +61,7 @@ class Command(BaseCommand):
                 already += 1
                 continue
             key = f"{video_hls_prefix(tenant_id=v.tenant_id, video_id=v.id).rstrip('/')}/thumbnail.jpg"
-            try:
-                client.head_object(Bucket=bucket, Key=key)
-            except Exception:
+            if not r2_head_exists(bucket=bucket, key=key, retry_max_attempts=3):
                 missing.append((v.tenant_id, v.id, v.title))
                 continue
             if dry:
