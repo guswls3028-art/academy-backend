@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from typing import Optional
 
-# 워커 processor에서 사용하는 job_id = f"video:{video_id}"
-VIDEO_JOB_ID_PREFIX = "video:"
+from academy.adapters.cache.redis_video_status_cache import get_video_progress_payload as _get_progress_payload
 
 # step → 대략적 % (워커 단계 순서와 맞춤)
 _STEP_PERCENT = {
@@ -18,42 +16,6 @@ _STEP_PERCENT = {
     "thumbnail": 90,
     "uploading": 95,
 }
-
-
-def _get_progress_payload(video_id: int, tenant_id: Optional[int] = None) -> Optional[dict]:
-    """Redis에서 tenant:{tenant_id}:video:{video_id}:progress payload 조회."""
-    try:
-        from libs.redis.client import get_redis_client
-    except ImportError:
-        return None
-
-    client = get_redis_client()
-    if not client:
-        return None
-
-    # ✅ Tenant namespace 키 우선 조회 (Batch mode: key often missing — never json.loads(None))
-    if tenant_id:
-        key = f"tenant:{tenant_id}:video:{video_id}:progress"
-        try:
-            raw = client.get(key)
-            if raw is not None and raw:
-                return json.loads(raw)
-        except Exception:
-            pass
-
-        # 하위 호환성: tenant namespace 키가 없으면 기존 키 형식 확인
-        job_id = f"{VIDEO_JOB_ID_PREFIX}{video_id}"
-        legacy_key = f"job:{job_id}:progress"
-        try:
-            raw = client.get(legacy_key)
-            if raw is not None and raw:
-                return json.loads(raw)
-        except Exception:
-            pass
-
-    return None
-
-
 def _extract_encoding_progress(payload: dict) -> Optional[int]:
     if not payload:
         return None

@@ -10,6 +10,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+VIDEO_JOB_ID_PREFIX = "video:"
+
 
 def _get_video_status_key(tenant_id: int, video_id: int) -> str:
     """비디오 상태 Redis 키 (Tenant 네임스페이스)"""
@@ -143,6 +145,36 @@ def get_video_status_from_redis(tenant_id: int, video_id: int) -> Optional[Dict[
         return json.loads(cached_data)
     except Exception as e:
         logger.debug("Redis video status lookup failed: %s", e)
+        return None
+
+
+def get_video_progress_payload(video_id: int, tenant_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """Read encoding progress payload from tenant namespace, then legacy job key."""
+    try:
+        redis_client = get_redis_client()
+        if not redis_client:
+            return None
+
+        if tenant_id:
+            key = _get_video_progress_key(tenant_id, video_id)
+            try:
+                raw = redis_client.get(key)
+                if raw is not None and raw:
+                    return json.loads(raw)
+            except Exception:
+                pass
+
+            job_id = f"{VIDEO_JOB_ID_PREFIX}{video_id}"
+            legacy_key = f"job:{job_id}:progress"
+            try:
+                raw = redis_client.get(legacy_key)
+                if raw is not None and raw:
+                    return json.loads(raw)
+            except Exception:
+                pass
+        return None
+    except Exception as e:
+        logger.debug("Redis video progress lookup failed: %s", e)
         return None
 
 
