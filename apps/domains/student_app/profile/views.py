@@ -97,7 +97,7 @@ class StudentProfileView(APIView):
             try:
                 import uuid
                 from apps.core.r2_paths import profile_photo_key
-                from libs.r2_client.client import upload_fileobj
+                from academy.adapters.storage.r2_objects import upload_fileobj
 
                 ext = (photo.name or "photo.jpg").rsplit(".", 1)[-1].lower() or "jpg"
                 if ext not in ("jpg", "jpeg", "png", "gif", "webp"):

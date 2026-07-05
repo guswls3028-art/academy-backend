@@ -33,7 +33,7 @@ from academy.adapters.storage.r2_presign import (
     complete_multipart_upload,
     abort_multipart_upload,
 )
-from libs.r2_client.client import head_object
+from academy.adapters.storage.r2_objects import head_object
 
 
 from apps.core.r2_paths import video_raw_key

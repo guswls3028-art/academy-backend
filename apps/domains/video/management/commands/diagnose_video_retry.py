@@ -12,7 +12,8 @@ from apps.domains.video.models import Video, VideoTranscodeJob
 
 
 def _head_object(key: str):
-    from libs.r2_client.client import head_object
+    from academy.adapters.storage.r2_objects import head_object
+
     return head_object(key)
 
 
