@@ -161,6 +161,11 @@ def extract_pdf_text_from_bytes(data: bytes) -> str:
         return doc.extract_text()
 
 
+def get_page_count_from_bytes(data: bytes) -> int:
+    with PdfBytesDocument(data) as doc:
+        return doc.page_count()
+
+
 # ---------------------------------------------------------------------------
 # Standalone functions (backward compatibility)
 # ---------------------------------------------------------------------------

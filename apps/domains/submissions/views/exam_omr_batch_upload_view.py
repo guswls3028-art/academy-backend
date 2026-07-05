@@ -19,10 +19,9 @@ def _pdf_page_count(upload_file) -> int:
     try:
         upload_file.seek(0)
         data = upload_file.read()
-        import fitz  # PyMuPDF
+        from academy.adapters.tools.pymupdf_renderer import get_page_count_from_bytes
 
-        with fitz.open(stream=data, filetype="pdf") as doc:
-            return len(doc)
+        return get_page_count_from_bytes(data)
     finally:
         try:
             upload_file.seek(pos)
