@@ -10,7 +10,7 @@ from __future__ import annotations
 import inspect
 from unittest.mock import MagicMock, patch
 
-import pytest
+REDIS_CLIENT_PATCH = "academy.adapters.cache.redis_matchup_similarity_cache.get_redis_client"
 
 
 def test_cache_module_get_set_roundtrip():
@@ -34,7 +34,7 @@ def test_cache_module_get_set_roundtrip():
     bd2 = {"text_sim": 0.85, "image_sim": None, "is_manual": False, "is_page_fallback": False}
     bd3 = {"text_sim": 0.79, "image_sim": 0.70, "is_manual": False, "is_page_fallback": True}
 
-    with patch("apps.domains.matchup.cache.get_redis_client", return_value=fake_redis):
+    with patch(REDIS_CLIENT_PATCH, return_value=fake_redis):
         mc.set_cached_similar(
             tenant_id=1, problem_id=42, top_k=10, author_id=7,
             results=[(101, 0.95, bd1), (102, 0.88, bd2), (103, 0.81, bd3)],
@@ -57,7 +57,7 @@ def test_cache_key_includes_all_params():
     fake_redis = MagicMock()
     fake_redis.get.return_value = None
 
-    with patch("apps.domains.matchup.cache.get_redis_client", return_value=fake_redis):
+    with patch(REDIS_CLIENT_PATCH, return_value=fake_redis):
         mc.get_cached_similar(tenant_id=1, problem_id=42, top_k=10, author_id=7)
         mc.get_cached_similar(tenant_id=2, problem_id=42, top_k=10, author_id=7)
         mc.get_cached_similar(tenant_id=1, problem_id=43, top_k=10, author_id=7)
@@ -75,7 +75,7 @@ def test_cache_fail_open_when_redis_unavailable():
     """REDIS_HOST 미설정/장애 시 get/set 모두 silent (None / no-op)."""
     from apps.domains.matchup import cache as mc
 
-    with patch("apps.domains.matchup.cache.get_redis_client", return_value=None):
+    with patch(REDIS_CLIENT_PATCH, return_value=None):
         result = mc.get_cached_similar(
             tenant_id=1, problem_id=42, top_k=10, author_id=None,
         )
@@ -96,7 +96,7 @@ def test_cache_get_handles_redis_exception():
     fake_redis = MagicMock()
     fake_redis.get.side_effect = ConnectionError("redis down")
 
-    with patch("apps.domains.matchup.cache.get_redis_client", return_value=fake_redis):
+    with patch(REDIS_CLIENT_PATCH, return_value=fake_redis):
         result = mc.get_cached_similar(
             tenant_id=1, problem_id=42, top_k=10, author_id=None,
         )
@@ -111,7 +111,7 @@ def test_cache_get_handles_corrupted_payload():
     fake_redis = MagicMock()
     fake_redis.get.return_value = "not a valid json"
 
-    with patch("apps.domains.matchup.cache.get_redis_client", return_value=fake_redis):
+    with patch(REDIS_CLIENT_PATCH, return_value=fake_redis):
         result = mc.get_cached_similar(
             tenant_id=1, problem_id=42, top_k=10, author_id=None,
         )
