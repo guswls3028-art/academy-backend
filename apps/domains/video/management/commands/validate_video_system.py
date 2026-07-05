@@ -20,6 +20,12 @@ from django.db import models
 from django.utils import timezone
 from django.conf import settings
 
+from academy.adapters.compute.aws_batch import iter_batch_job_summaries, terminate_batch_job
+from academy.adapters.compute.aws_video_ops import (
+    describe_batch_job_queues,
+    describe_event_rule,
+    list_event_rule_targets,
+)
 from apps.domains.video.models import Video, VideoTranscodeJob
 
 logger = logging.getLogger(__name__)
@@ -50,23 +56,20 @@ class Command(BaseCommand):
 
         # 0. EventBridge scheduler rules
         try:
-            import boto3
-            events = boto3.client("events", region_name=REGION)
-            batch = boto3.client("batch", region_name=REGION)
             queue_arn = None
             try:
-                q = batch.describe_job_queues(jobQueues=[VIDEO_BATCH_JOB_QUEUE])
-                if q.get("jobQueues"):
-                    queue_arn = q["jobQueues"][0].get("jobQueueArn")
+                queues = describe_batch_job_queues(names=[VIDEO_BATCH_JOB_QUEUE], region=REGION)
+                if queues:
+                    queue_arn = queues[0].get("jobQueueArn")
             except Exception:
                 pass
             for rule_name in [RECONCILE_RULE_NAME, SCAN_STUCK_RULE_NAME]:
                 try:
-                    r = events.describe_rule(Name=rule_name)
+                    r = describe_event_rule(name=rule_name, region=REGION)
                     if r.get("State") != "ENABLED":
                         errors.append(f"EventBridge rule {rule_name} state is {r.get('State')} (expected ENABLED)")
                         self.stdout.write(self.style.ERROR(f"ERROR: EventBridge rule {rule_name} not ENABLED"))
-                    targets = events.list_targets_by_rule(Rule=rule_name).get("Targets") or []
+                    targets = list_event_rule_targets(rule_name=rule_name, region=REGION)
                     if not targets:
                         errors.append(f"EventBridge rule {rule_name} has no targets")
                         self.stdout.write(self.style.ERROR(f"ERROR: EventBridge rule {rule_name} has no target"))
@@ -200,21 +203,21 @@ class Command(BaseCommand):
         )
         orphan_aws_ids = []
         try:
-            import boto3
-            client = boto3.client("batch", region_name=REGION)
             for status_filter in ["RUNNING", "RUNNABLE"]:
-                paginator = client.get_paginator("list_jobs")
-                for page in paginator.paginate(jobQueue=VIDEO_BATCH_JOB_QUEUE, jobStatus=status_filter):
-                    for j in page.get("jobSummaryList") or []:
-                        aws_id = j.get("jobId")
-                        if aws_id and aws_id not in db_aws_ids:
-                            errors.append(f"Orphan AWS job: aws_batch_job_id={aws_id}")
-                            orphan_aws_ids.append(aws_id)
-                            self.stdout.write(self.style.WARNING(f"Orphan AWS job: {aws_id}"))
+                for j in iter_batch_job_summaries(
+                    queue_name=VIDEO_BATCH_JOB_QUEUE,
+                    job_status=status_filter,
+                    region=REGION,
+                ):
+                    aws_id = j.get("jobId")
+                    if aws_id and aws_id not in db_aws_ids:
+                        errors.append(f"Orphan AWS job: aws_batch_job_id={aws_id}")
+                        orphan_aws_ids.append(aws_id)
+                        self.stdout.write(self.style.WARNING(f"Orphan AWS job: {aws_id}"))
             if fix and orphan_aws_ids and not dry_run:
                 for aws_id in orphan_aws_ids:
                     try:
-                        client.terminate_job(jobId=aws_id, reason="validate_video_system_orphan")
+                        terminate_batch_job(aws_batch_job_id=aws_id, reason="validate_video_system_orphan", region=REGION)
                         self.stdout.write(self.style.SUCCESS(f"FIX: terminated orphan aws_id={aws_id}"))
                     except Exception as e:
                         logger.warning("terminate orphan %s failed: %s", aws_id, e)

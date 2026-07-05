@@ -333,3 +333,10 @@ def redis_incr_with_ttl(key: str, ttl_seconds: int) -> Optional[int]:
     value = redis_client.incr(key)
     redis_client.expire(key, ttl_seconds)
     return int(value)
+
+
+def redis_ping() -> Optional[bool]:
+    redis_client = get_redis_client()
+    if not redis_client:
+        return None
+    return bool(redis_client.ping())

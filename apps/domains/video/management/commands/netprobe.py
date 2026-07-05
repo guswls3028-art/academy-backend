@@ -13,17 +13,22 @@ import sys
 
 from django.core.management.base import BaseCommand
 
+from academy.adapters.compute.aws_video_ops import get_ssm_parameter_value
+
 
 def _load_env_from_ssm():
     """If DB_HOST not in env, try SSM /academy/workers/env."""
     if os.environ.get("DB_HOST"):
         return
     try:
-        import boto3
         region = os.environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
-        ssm = boto3.client("ssm", region_name=region)
-        r = ssm.get_parameter(Name="/academy/workers/env", WithDecryption=True)
-        payload = json.loads(r["Parameter"]["Value"])
+        payload = json.loads(
+            get_ssm_parameter_value(
+                name="/academy/workers/env",
+                region=region,
+                with_decryption=True,
+            )
+        )
         for k, v in (payload or {}).items():
             if isinstance(v, str) and k not in os.environ:
                 os.environ[k] = v

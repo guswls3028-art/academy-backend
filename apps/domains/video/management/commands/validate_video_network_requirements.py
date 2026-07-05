@@ -9,6 +9,13 @@ import logging
 from django.core.management.base import BaseCommand
 from django.conf import settings
 
+from academy.adapters.compute.aws_video_ops import (
+    describe_batch_compute_environments,
+    describe_ec2_main_route_tables_for_vpcs,
+    describe_ec2_route_tables_for_subnets,
+    describe_ec2_subnets,
+)
+
 logger = logging.getLogger(__name__)
 
 REGION = getattr(settings, "AWS_DEFAULT_REGION", None) or __import__("os").environ.get("AWS_DEFAULT_REGION", "ap-northeast-2")
@@ -19,21 +26,12 @@ class Command(BaseCommand):
     help = "Validate video Batch compute environment network requirements"
 
     def handle(self, *args, **options):
-        try:
-            import boto3
-        except ImportError:
-            self.stdout.write(self.style.ERROR("boto3 required"))
-            return
-
-        client_batch = boto3.client("batch", region_name=REGION)
-        client_ec2 = boto3.client("ec2", region_name=REGION)
         errors = []
         warnings = []
 
         # 1) Describe compute environment and get subnets
         try:
-            resp = client_batch.describe_compute_environments(computeEnvironments=[COMPUTE_ENV_NAME])
-            envs = resp.get("computeEnvironments") or []
+            envs = describe_batch_compute_environments(names=[COMPUTE_ENV_NAME], region=REGION)
         except Exception as e:
             self.stdout.write(self.style.ERROR(f"describe_compute_environments failed: {e}"))
             return
@@ -63,18 +61,11 @@ class Command(BaseCommand):
             return
 
         try:
-            route_tables = client_ec2.describe_route_tables(
-                Filters=[{"Name": "association.subnet-id", "Values": subnets}]
-            ).get("RouteTables", [])
+            route_tables = describe_ec2_route_tables_for_subnets(subnet_ids=subnets, region=REGION)
             # Also get main route tables for VPCs of these subnets
-            subnet_details = client_ec2.describe_subnets(SubnetIds=subnets).get("Subnets", [])
+            subnet_details = describe_ec2_subnets(subnet_ids=subnets, region=REGION)
             vpc_ids = list({s["VpcId"] for s in subnet_details})
-            main_tables = client_ec2.describe_route_tables(
-                Filters=[
-                    {"Name": "vpc-id", "Values": vpc_ids},
-                    {"Name": "association.main", "Values": ["true"]},
-                ]
-            ).get("RouteTables", [])
+            main_tables = describe_ec2_main_route_tables_for_vpcs(vpc_ids=vpc_ids, region=REGION)
             all_tables = route_tables + main_tables
             has_igw_route = False
             for rt in all_tables:
