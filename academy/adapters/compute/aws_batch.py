@@ -48,5 +48,44 @@ def describe_batch_jobs(*, aws_batch_job_ids: list[str], region: str) -> list[di
     return list(resp.get("jobs") or [])
 
 
+def get_batch_queue_primary_compute_environment_desired_vcpus(
+    *,
+    queue_name: str,
+    region: str,
+) -> int | None:
+    client = _batch_client(region)
+    resp = client.describe_job_queues(jobQueues=[queue_name])
+    queues = resp.get("jobQueues") or []
+    if not queues:
+        return None
+
+    ce_arn = None
+    for order in queues[0].get("computeEnvironmentOrder") or []:
+        if order.get("order") == 1:
+            ce_arn = order.get("computeEnvironment")
+            break
+    if not ce_arn:
+        return None
+
+    ce_name = ce_arn.split("/")[-1] if "/" in ce_arn else ce_arn.split(":")[-1]
+    ce_resp = client.describe_compute_environments(computeEnvironments=[ce_name])
+    environments = ce_resp.get("computeEnvironments") or []
+    if not environments:
+        return None
+    resources = environments[0].get("computeResources") or {}
+    return int(resources.get("desiredvCpus") or 0)
+
+
+def iter_batch_job_summaries(
+    *,
+    queue_name: str,
+    job_status: str,
+    region: str,
+):
+    paginator = _batch_client(region).get_paginator("list_jobs")
+    for page in paginator.paginate(jobQueue=queue_name, jobStatus=job_status):
+        yield from page.get("jobSummaryList") or []
+
+
 def terminate_batch_job(*, aws_batch_job_id: str, reason: str, region: str) -> None:
     _batch_client(region).terminate_job(jobId=aws_batch_job_id, reason=reason[:256])

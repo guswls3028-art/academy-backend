@@ -309,3 +309,27 @@ def redis_get_video_backlog_total() -> int:
     except Exception as e:
         logger.warning("Redis get video backlog total failed: %s", e)
         return 0
+
+
+def redis_setnx_with_ttl(key: str, value: str, ttl_seconds: int) -> Optional[bool]:
+    redis_client = get_redis_client()
+    if not redis_client:
+        return None
+    return bool(redis_client.set(key, value, nx=True, ex=ttl_seconds))
+
+
+def redis_delete_key(key: str) -> bool:
+    redis_client = get_redis_client()
+    if not redis_client:
+        return False
+    redis_client.delete(key)
+    return True
+
+
+def redis_incr_with_ttl(key: str, ttl_seconds: int) -> Optional[int]:
+    redis_client = get_redis_client()
+    if not redis_client:
+        return None
+    value = redis_client.incr(key)
+    redis_client.expire(key, ttl_seconds)
+    return int(value)

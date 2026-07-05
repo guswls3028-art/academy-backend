@@ -22,6 +22,17 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 from django.conf import settings
 
+from academy.adapters.cache.redis_video_status_cache import (
+    redis_delete_key,
+    redis_incr_with_ttl,
+    redis_setnx_with_ttl,
+)
+from academy.adapters.compute.aws_batch import (
+    describe_batch_jobs,
+    get_batch_queue_primary_compute_environment_desired_vcpus,
+    iter_batch_job_summaries,
+    terminate_batch_job,
+)
 from apps.domains.video.models import VideoTranscodeJob
 from apps.domains.video.services.batch_submit import submit_batch_job
 
@@ -46,13 +57,10 @@ RECONCILE_ORPHAN_DISABLED = getattr(settings, "RECONCILE_ORPHAN_DISABLED", False
 def _acquire_reconcile_lock() -> bool:
     """Redis SETNX with TTL. Returns True if lock acquired."""
     try:
-        from libs.redis.client import get_redis_client
-        r = get_redis_client()
-        if not r:
+        ok = redis_setnx_with_ttl(RECONCILE_LOCK_KEY, "1", RECONCILE_LOCK_TTL_SECONDS)
+        if ok is None:
             logger.warning("reconcile: Redis not available, skipping lock (proceed at own risk)")
             return True
-        # set(key, value, nx=True, ex=ttl) -> True if set, False if key exists
-        ok = r.set(RECONCILE_LOCK_KEY, "1", nx=True, ex=RECONCILE_LOCK_TTL_SECONDS)
         return bool(ok)
     except Exception as e:
         logger.warning("reconcile: lock acquire failed: %s", e)
@@ -61,10 +69,7 @@ def _acquire_reconcile_lock() -> bool:
 
 def _release_reconcile_lock() -> None:
     try:
-        from libs.redis.client import get_redis_client
-        r = get_redis_client()
-        if r:
-            r.delete(RECONCILE_LOCK_KEY)
+        redis_delete_key(RECONCILE_LOCK_KEY)
     except Exception as e:
         logger.debug("reconcile: lock release failed: %s", e)
 
@@ -72,14 +77,11 @@ def _release_reconcile_lock() -> None:
 def _incr_not_found_count(job_id: str) -> int:
     """Increment consecutive not_found count for job. Returns new count."""
     try:
-        from libs.redis.client import get_redis_client
-        r = get_redis_client()
-        if not r:
-            return 0
         key = f"{NOT_FOUND_COUNT_KEY_PREFIX}{job_id}"
-        n = r.incr(key)
-        r.expire(key, NOT_FOUND_COUNT_TTL_SECONDS)
-        return n
+        count = redis_incr_with_ttl(key, NOT_FOUND_COUNT_TTL_SECONDS)
+        if count is None:
+            return 0
+        return count
     except Exception as e:
         logger.debug("reconcile: not_found count incr failed: %s", e)
         return 0
@@ -87,10 +89,7 @@ def _incr_not_found_count(job_id: str) -> int:
 
 def _reset_not_found_count(job_id: str) -> None:
     try:
-        from libs.redis.client import get_redis_client
-        r = get_redis_client()
-        if r:
-            r.delete(f"{NOT_FOUND_COUNT_KEY_PREFIX}{job_id}")
+        redis_delete_key(f"{NOT_FOUND_COUNT_KEY_PREFIX}{job_id}")
     except Exception as e:
         logger.debug("reconcile: not_found count reset failed: %s", e)
 
@@ -102,16 +101,12 @@ def _failure_already_counted(job: VideoTranscodeJob, aws_id: str) -> bool:
 
 def _describe_jobs_boto3(aws_job_ids: list[str]) -> list:
     """
-    boto3 describe_jobs. On any failure (AccessDenied, Throttling, etc.) raises.
+    AWS Batch describe_jobs. On any failure (AccessDenied, Throttling, etc.) raises.
     Caller must not change any DB state when this raises.
     """
     if not aws_job_ids:
         return []
-    import boto3
-
-    client = boto3.client("batch", region_name=REGION)
-    resp = client.describe_jobs(jobs=aws_job_ids)
-    return resp.get("jobs") or []
+    return describe_batch_jobs(aws_batch_job_ids=aws_job_ids, region=REGION)
 
 
 class Command(BaseCommand):
@@ -419,27 +414,12 @@ class Command(BaseCommand):
     def _run_orphan_terminate(self, dry_run: bool) -> None:
         """Terminate Batch jobs in video queue that have no DB row (orphans). Skips RUNNABLE jobs
         that are still pending scale-up (young or CE desiredvCpus=0)."""
-        import boto3
-        batch_client = boto3.client("batch", region_name=REGION)
-
         ce_desiredv_cpus = None
         try:
-            q = batch_client.describe_job_queues(jobQueues=[VIDEO_BATCH_JOB_QUEUE])
-            queues = q.get("jobQueues") or []
-            if queues:
-                order = (queues[0].get("computeEnvironmentOrder") or [])
-                ce_arn = None
-                for o in order:
-                    if o.get("order") == 1:
-                        ce_arn = o.get("computeEnvironment")
-                        break
-                if ce_arn:
-                    ce_name = ce_arn.split("/")[-1] if "/" in ce_arn else ce_arn.split(":")[-1]
-                    ce_desc = batch_client.describe_compute_environments(computeEnvironments=[ce_name])
-                    ces = ce_desc.get("computeEnvironments") or []
-                    if ces:
-                        cr = ces[0].get("computeResources") or {}
-                        ce_desiredv_cpus = cr.get("desiredvCpus", 0)
+            ce_desiredv_cpus = get_batch_queue_primary_compute_environment_desired_vcpus(
+                queue_name=VIDEO_BATCH_JOB_QUEUE,
+                region=REGION,
+            )
             if ce_desiredv_cpus is None:
                 ce_desiredv_cpus = 0
         except Exception as e:
@@ -461,68 +441,67 @@ class Command(BaseCommand):
         min_runnable_minutes = RECONCILE_ORPHAN_MIN_RUNNABLE_MINUTES
 
         try:
-            paginator = batch_client.get_paginator("list_jobs")
             for status_filter in ["RUNNING", "RUNNABLE"]:
-                for page in paginator.paginate(
-                    jobQueue=VIDEO_BATCH_JOB_QUEUE,
-                    jobStatus=status_filter,
+                for j in iter_batch_job_summaries(
+                    queue_name=VIDEO_BATCH_JOB_QUEUE,
+                    job_status=status_filter,
+                    region=REGION,
                 ):
-                    for j in page.get("jobSummaryList") or []:
-                        aws_id = j.get("jobId")
-                        if not aws_id or aws_id in db_aws_ids:
-                            continue
-                        job_status = (j.get("status") or "").strip().upper()
-                        created_at = j.get("createdAt")
-                        runnable_age_minutes = None
-                        if job_status == "RUNNABLE" and created_at:
-                            try:
-                                from django.utils import timezone as tz
-                                if getattr(created_at, "tzinfo", None):
-                                    created_dt = created_at
-                                else:
-                                    created_dt = tz.make_aware(created_at, tz.utc)
-                                runnable_age_minutes = (now - created_dt).total_seconds() / 60.0
-                            except Exception:
-                                runnable_age_minutes = 0.0
-                            skip_pending = (
-                                runnable_age_minutes < min_runnable_minutes
-                                or ce_desiredv_cpus == 0
+                    aws_id = j.get("jobId")
+                    if not aws_id or aws_id in db_aws_ids:
+                        continue
+                    job_status = (j.get("status") or "").strip().upper()
+                    created_at = j.get("createdAt")
+                    runnable_age_minutes = None
+                    if job_status == "RUNNABLE" and created_at:
+                        try:
+                            from django.utils import timezone as tz
+                            if getattr(created_at, "tzinfo", None):
+                                created_dt = created_at
+                            else:
+                                created_dt = tz.make_aware(created_at, tz.utc)
+                            runnable_age_minutes = (now - created_dt).total_seconds() / 60.0
+                        except Exception:
+                            runnable_age_minutes = 0.0
+                        skip_pending = (
+                            runnable_age_minutes < min_runnable_minutes
+                            or ce_desiredv_cpus == 0
+                        )
+                        if skip_pending:
+                            logger.info(
+                                "reconcile skip orphan (RUNNABLE pending scale-up)",
+                                extra={
+                                    "event": "reconcile_skip_orphan_pending_scale",
+                                    "aws_batch_job_id": aws_id,
+                                    "runnable_age_minutes": round(runnable_age_minutes, 1),
+                                    "ce_desiredv_cpus": ce_desiredv_cpus,
+                                    "min_runnable_minutes": min_runnable_minutes,
+                                },
                             )
-                            if skip_pending:
-                                logger.info(
-                                    "reconcile skip orphan (RUNNABLE pending scale-up)",
-                                    extra={
-                                        "event": "reconcile_skip_orphan_pending_scale",
-                                        "aws_batch_job_id": aws_id,
-                                        "runnable_age_minutes": round(runnable_age_minutes, 1),
-                                        "ce_desiredv_cpus": ce_desiredv_cpus,
-                                        "min_runnable_minutes": min_runnable_minutes,
-                                    },
-                                )
-                                self.stdout.write(
-                                    f"RECONCILE skip orphan aws_id={aws_id} (RUNNABLE {runnable_age_minutes:.0f}min < {min_runnable_minutes}min or CE desiredvCpus={ce_desiredv_cpus})"
-                                )
-                                continue
-                        if not dry_run:
+                            self.stdout.write(
+                                f"RECONCILE skip orphan aws_id={aws_id} (RUNNABLE {runnable_age_minutes:.0f}min < {min_runnable_minutes}min or CE desiredvCpus={ce_desiredv_cpus})"
+                            )
+                            continue
+                    if not dry_run:
+                        try:
+                            terminate_batch_job(aws_batch_job_id=aws_id, reason="reconcile_orphan", region=REGION)
+                            logger.info(
+                                "reconcile orphan terminated",
+                                extra={
+                                    "event": "reconcile_orphan_terminated",
+                                    "aws_batch_job_id": aws_id,
+                                    "job_status": job_status,
+                                },
+                            )
                             try:
-                                batch_client.terminate_job(jobId=aws_id, reason="reconcile_orphan")
-                                logger.info(
-                                    "reconcile orphan terminated",
-                                    extra={
-                                        "event": "reconcile_orphan_terminated",
-                                        "aws_batch_job_id": aws_id,
-                                        "job_status": job_status,
-                                    },
-                                )
-                                try:
-                                    from apps.domains.video.services.ops_events import emit_ops_event
-                                    emit_ops_event("ORPHAN_CANCELLED", severity="WARNING", aws_batch_job_id=aws_id, payload={"reason": "reconcile_orphan"})
-                                except Exception:
-                                    pass
-                                self.stdout.write(self.style.WARNING(f"RECONCILE orphan terminated aws_id={aws_id}"))
-                            except Exception as e:
-                                logger.warning("terminate orphan %s failed: %s", aws_id, e)
-                        else:
-                            self.stdout.write(f"DRY-RUN RECONCILE would terminate orphan aws_id={aws_id}")
+                                from apps.domains.video.services.ops_events import emit_ops_event
+                                emit_ops_event("ORPHAN_CANCELLED", severity="WARNING", aws_batch_job_id=aws_id, payload={"reason": "reconcile_orphan"})
+                            except Exception:
+                                pass
+                            self.stdout.write(self.style.WARNING(f"RECONCILE orphan terminated aws_id={aws_id}"))
+                        except Exception as e:
+                            logger.warning("terminate orphan %s failed: %s", aws_id, e)
+                    else:
+                        self.stdout.write(f"DRY-RUN RECONCILE would terminate orphan aws_id={aws_id}")
         except Exception as e:
             logger.warning("orphan cancel list/terminate failed: %s", e)
