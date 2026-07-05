@@ -1482,27 +1482,20 @@ class DocumentPageVlmClassifyView(View):
         if not page_url:
             return JsonResponse({"detail": "페이지 URL 없음"}, status=500)
 
+        from academy.adapters.ai.storage.downloader import cleanup_tmp_for_path, download_to_tmp
+
         # presigned URL → temp file 다운로드 (R2 ap-northeast 통과 시간 + 큰 PDF 페이지 고려)
-        import os
-        import tempfile
-        import requests
         try:
-            r = requests.get(page_url, timeout=60)
-            r.raise_for_status()
+            tmp_path = download_to_tmp(download_url=page_url, job_id=f"matchup-vlm-{doc.id}-{page_idx_i}")
         except Exception as e:
             logger.warning("VLM page image download fail (doc=%s page=%s): %s", doc.id, page_idx_i, e)
             return JsonResponse({"detail": "페이지 이미지 다운로드 실패"}, status=502)
 
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
         try:
-            tmp.write(r.content)
-            tmp.flush()
-            tmp.close()
-
             from academy.adapters.ai.detection.vlm_fallback import detect_problems_vision
             try:
                 result = detect_problems_vision(
-                    image_path=tmp.name,
+                    image_path=tmp_path,
                     page_meta={
                         "document_id": doc.id,
                         "page_index": page_idx_i,
@@ -1519,10 +1512,7 @@ class DocumentPageVlmClassifyView(View):
                 logger.exception("VLM detect_problems_vision failed (doc=%s page=%s)", doc.id, page_idx_i)
                 return JsonResponse({"detail": "VLM 분석 실패"}, status=500)
         finally:
-            try:
-                os.unlink(tmp.name)
-            except OSError:
-                pass
+            cleanup_tmp_for_path(tmp_path)
 
         return JsonResponse({
             "ok": True,
