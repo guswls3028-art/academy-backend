@@ -51,6 +51,8 @@ def _publish_metric(
     aws_batch_job_id: str = "",
 ) -> None:
     """Publish CloudWatch metric for event type (DeadJobs, UploadFailures, etc.)."""
+    from academy.adapters.monitoring.cloudwatch_metrics import put_video_metric_data
+
     metric_map = {
         "JOB_DEAD": "DeadJobs",
         "BATCH_DESYNC": "FailedJobs",
@@ -61,27 +63,16 @@ def _publish_metric(
     metric_name = metric_map.get(event_type)
     if not metric_name:
         return
-    try:
-        import boto3
-        from django.conf import settings
-        region = getattr(settings, "AWS_DEFAULT_REGION", None) or getattr(settings, "AWS_REGION", "ap-northeast-2")
-        namespace = getattr(settings, "VIDEO_CLOUDWATCH_NAMESPACE", "Academy/Video")
-        cw = boto3.client("cloudwatch", region_name=region)
-        cw.put_metric_data(
-            Namespace=namespace,
-            MetricData=[
-                {
-                    "MetricName": metric_name,
-                    "Value": 1,
-                    "Unit": "Count",
-                    "Dimensions": [
-                        {"Name": "EventType", "Value": event_type},
-                    ],
-                }
+    put_video_metric_data([
+        {
+            "MetricName": metric_name,
+            "Value": 1,
+            "Unit": "Count",
+            "Dimensions": [
+                {"Name": "EventType", "Value": event_type},
             ],
-        )
-    except Exception as e:
-        logger.debug("CloudWatch put_metric_data failed: %s", e)
+        }
+    ])
 
 
 def emit_progress_layer_metrics(
@@ -93,33 +84,24 @@ def emit_progress_layer_metrics(
     """Progress endpoint 관측: ProgressRequests, RedisMiss, ProgressEndpointDBHit (0 기대)."""
     if progress_requests == 0 and redis_miss == 0:
         return
-    try:
-        import boto3
-        from django.conf import settings
-        region = getattr(settings, "AWS_DEFAULT_REGION", None) or getattr(settings, "AWS_REGION", "ap-northeast-2")
-        namespace = getattr(settings, "VIDEO_CLOUDWATCH_NAMESPACE", "Academy/Video")
-        cw = boto3.client("cloudwatch", region_name=region)
-        metrics = []
-        if progress_requests:
-            metrics.append({
-                "MetricName": "ProgressRequests",
-                "Value": progress_requests,
-                "Unit": "Count",
-            })
-        if redis_miss:
-            metrics.append({
-                "MetricName": "RedisMiss",
-                "Value": redis_miss,
-                "Unit": "Count",
-            })
+    from academy.adapters.monitoring.cloudwatch_metrics import put_video_metric_data
+
+    metrics = []
+    if progress_requests:
         metrics.append({
-            "MetricName": "ProgressEndpointDBHit",
-            "Value": db_hit,
+            "MetricName": "ProgressRequests",
+            "Value": progress_requests,
             "Unit": "Count",
         })
-        cw.put_metric_data(
-            Namespace=namespace,
-            MetricData=metrics,
-        )
-    except Exception as e:
-        logger.debug("CloudWatch progress layer metrics failed: %s", e)
+    if redis_miss:
+        metrics.append({
+            "MetricName": "RedisMiss",
+            "Value": redis_miss,
+            "Unit": "Count",
+        })
+    metrics.append({
+        "MetricName": "ProgressEndpointDBHit",
+        "Value": db_hit,
+        "Unit": "Count",
+    })
+    put_video_metric_data(metrics)
