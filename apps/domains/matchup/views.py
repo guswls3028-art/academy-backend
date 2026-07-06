@@ -47,6 +47,13 @@ from .services import (
     PAGE_STATE_VALUES,
 )
 from apps.shared.utils.vector import cosine_similarity
+from apps.support.matchup.view_dependencies import (
+    cache_ai_job_status,
+    get_ai_reconcile_models,
+    get_inventory_file_model,
+    get_inventory_r2_helpers,
+    handle_matchup_ai_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -178,8 +185,7 @@ def _reconcile_document_from_ai_job(doc: MatchupDocument) -> bool:
         return False
 
     try:
-        from apps.domains.ai.models import AIJobModel, AIResultModel
-        from apps.domains.ai.callbacks import _handle_matchup_ai_result
+        AIJobModel, AIResultModel = get_ai_reconcile_models()
 
         job = AIJobModel.objects.filter(
             job_id=doc.ai_job_id,
@@ -204,7 +210,7 @@ def _reconcile_document_from_ai_job(doc: MatchupDocument) -> bool:
                     doc.id, doc.ai_job_id,
                 )
                 return False
-            _handle_matchup_ai_result(
+            handle_matchup_ai_result(
                 job_id=job.job_id,
                 status="DONE",
                 result_payload=result.payload,
@@ -215,7 +221,7 @@ def _reconcile_document_from_ai_job(doc: MatchupDocument) -> bool:
             return True
 
         if job.status in ("FAILED", "REJECTED_BAD_INPUT", "REVIEW_REQUIRED"):
-            _handle_matchup_ai_result(
+            handle_matchup_ai_result(
                 job_id=job.job_id,
                 status="FAILED",
                 result_payload={},
@@ -249,9 +255,7 @@ def _reconcile_document_from_ai_job(doc: MatchupDocument) -> bool:
                 "updated_at",
             ])
             try:
-                from apps.domains.ai.redis_status_cache import cache_job_status
-
-                cache_job_status(
+                cache_ai_job_status(
                     tenant_id=str(job.tenant_id or ""),
                     job_id=job.job_id,
                     status="FAILED",
@@ -265,7 +269,7 @@ def _reconcile_document_from_ai_job(doc: MatchupDocument) -> bool:
                     doc.id, doc.ai_job_id,
                     exc_info=True,
                 )
-            _handle_matchup_ai_result(
+            handle_matchup_ai_result(
                 job_id=job.job_id,
                 status="FAILED",
                 result_payload={},
@@ -343,8 +347,8 @@ class DocumentUploadView(View):
         )
 
         # 1) /매치업-업로드/{YYYY-MM}/ 폴더에 InventoryFile 생성
-        from apps.domains.inventory.r2_path import build_r2_key, safe_filename, folder_path_string
-        from apps.domains.inventory.models import InventoryFile
+        build_r2_key, safe_filename, folder_path_string = get_inventory_r2_helpers()
+        InventoryFile = get_inventory_file_model()
 
         ym_folder = ensure_matchup_upload_folder(tenant)
         path_parts = []
@@ -425,7 +429,7 @@ class DocumentPromoteFromInventoryView(View):
         if not inv_file_id:
             return JsonResponse({"detail": "inventory_file_id required"}, status=400)
 
-        from apps.domains.inventory.models import InventoryFile
+        InventoryFile = get_inventory_file_model()
         try:
             inv_file = InventoryFile.objects.get(
                 id=int(inv_file_id), tenant=request.tenant,
