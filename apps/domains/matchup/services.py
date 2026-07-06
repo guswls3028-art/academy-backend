@@ -13,6 +13,7 @@ from django.utils import timezone
 
 from academy.adapters.ai.image_cleanup import remove_colored_marks_from_image_bytes
 from academy.adapters.db.django import repositories_inventory as inventory_repo
+from apps.support.matchup.service_dependencies import dispatch_ai_job
 from apps.shared.utils.vector import cosine_similarity
 from .models import MatchupDocument, MatchupProblem
 
@@ -425,8 +426,6 @@ def dispatch_document_public_cleanup(
     actor=None,
 ) -> dict:
     """Queue public image cleanup for AI worker execution."""
-    from apps.domains.ai.gateway import dispatch_job
-
     actor_id = getattr(actor, "id", None)
     fingerprint_src = "|".join(
         f"{row[0]}:{row[1]}:{row[2].isoformat() if row[2] else ''}"
@@ -435,7 +434,7 @@ def dispatch_document_public_cleanup(
         .values_list("id", "image_key", "updated_at")
     )
     fingerprint = hashlib.sha1(fingerprint_src.encode("utf-8")).hexdigest()[:16]
-    result = dispatch_job(
+    result = dispatch_ai_job(
         job_type="matchup_public_cleanup",
         payload={
             "tenant_id": str(document.tenant_id),
@@ -1560,7 +1559,6 @@ def retry_document(document: MatchupDocument, *, require_failed: bool = False) -
     silent drop되어 manual이 우선권을 가짐.
     """
     from django.db import transaction
-    from apps.domains.ai.gateway import dispatch_job
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 
     with transaction.atomic():
@@ -1631,7 +1629,7 @@ def retry_document(document: MatchupDocument, *, require_failed: bool = False) -
         # 워커가 segmentation 결과에서 해당 페이지 skip → 다시 problem 생성 X.
         excluded_pages = list((meta.get("excluded_pages") or []))
 
-        result = dispatch_job(
+        result = dispatch_ai_job(
             job_type="matchup_analysis",
             payload={
                 "download_url": download_url,
@@ -1743,7 +1741,6 @@ def promote_inventory_to_matchup(
     author: 자료를 업로드/소유하는 강사 (User). find_similar 격리의 baseline.
     None=공용 풀(레거시 호환). 호출자(view)가 request.user 전달.
     """
-    from apps.domains.ai.gateway import dispatch_job
     from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
     from apps.domains.matchup.source_types import normalize_source_type, is_indexable
 
@@ -1784,7 +1781,7 @@ def promote_inventory_to_matchup(
         download_url = generate_presigned_get_url_storage(
             key=inventory_file.r2_key, expires_in=21600,
         )
-        result = dispatch_job(
+        result = dispatch_ai_job(
             job_type="matchup_analysis",
             payload={
                 "download_url": download_url,
@@ -1853,14 +1850,12 @@ def _enqueue_manual_problem_index(problem: MatchupProblem) -> None:
 
     잡 디스패치 결과(ai_job_id 또는 error)를 problem.meta에 기록 — 디버깅 용이.
     """
-    from apps.domains.ai.gateway import dispatch_job
-
     if not problem.image_key:
         return
 
     # paste 이미지(클립보드/외부 캡처)는 카메라 사진 가능성 → OCR 전처리 적용 플래그.
     is_paste = bool((problem.meta or {}).get("paste"))
-    result = dispatch_job(
+    result = dispatch_ai_job(
         job_type="matchup_manual_index",
         payload={
             "problem_id": problem.id,
