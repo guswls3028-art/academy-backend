@@ -24,15 +24,18 @@ from .services import create_attendance_roster
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
 
-from apps.domains.lectures.models import Session
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.exams.models import ExamEnrollment
-from apps.domains.fees.services import (
+from apps.support.attendance.view_dependencies import (
+    Enrollment,
+    ExamEnrollment,
+    HomeworkAssignment,
+    Session,
+    SessionEnrollment,
+    compute_clinic_highlight_map,
     deactivate_fees_for_enrollment,
+    dispatch_job,
+    get_exams_for_session,
+    send_event_notification,
 )
-from apps.domains.homework.models import HomeworkAssignment
-from apps.domains.results.utils.session_exam import get_exams_for_session
-from apps.domains.ai.gateway import dispatch_job
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +50,6 @@ def _send_attendance_notification(tenant, attendance, trigger, actor_id=None):
     학부모에게 "입실하였습니다" 알림을 보내면 안 됨.
     """
     try:
-        from apps.domains.messaging.services import send_event_notification
         from django.utils import timezone
 
         enrollment = attendance.enrollment
@@ -376,7 +378,6 @@ class AttendanceViewSet(ModelViewSet):
         }
 
         # ✅ 클리닉 하이라이트 일괄 계산
-        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
         highlight_map = compute_clinic_highlight_map(
             tenant=tenant,
             enrollment_ids=set(en.id for en in enrollments),
