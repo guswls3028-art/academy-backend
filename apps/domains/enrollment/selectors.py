@@ -5,6 +5,14 @@ from __future__ import annotations
 from rest_framework.exceptions import NotFound, ValidationError
 
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
+from apps.support.enrollment.selectors_dependencies import (
+    get_exam_enrollment_models,
+    get_homework_assignment_model,
+    get_homework_model,
+    get_lecture_model,
+    get_session_model,
+    get_student_model,
+)
 
 
 def require_tenant(tenant):
@@ -61,7 +69,7 @@ def active_enrollment_ids_for_session(*, tenant, session_id: int) -> set[int]:
 
 
 def get_student_for_tenant_or_404(*, tenant, student_id: int):
-    from apps.domains.students.models import Student
+    Student = get_student_model()
 
     tenant = require_tenant(tenant)
     try:
@@ -71,7 +79,7 @@ def get_student_for_tenant_or_404(*, tenant, student_id: int):
 
 
 def get_lecture_for_tenant_or_404(*, tenant, lecture_id: int):
-    from apps.domains.lectures.models import Lecture
+    Lecture = get_lecture_model()
 
     tenant = require_tenant(tenant)
     try:
@@ -81,7 +89,7 @@ def get_lecture_for_tenant_or_404(*, tenant, lecture_id: int):
 
 
 def get_session_for_lecture_or_404(*, lecture, session_id: int):
-    from apps.domains.lectures.models import Session
+    Session = get_session_model()
 
     try:
         return Session.objects.get(id=session_id, lecture=lecture)
@@ -149,10 +157,10 @@ def active_enrollment_ids_for_student(*, tenant, student, include_system: bool =
 
 
 def build_student_enrollment_matrix(*, tenant, student_id: int, lecture_id: int) -> dict:
-    from apps.domains.exams.models import Exam, ExamEnrollment
-    from apps.domains.homework.models import HomeworkAssignment
-    from apps.domains.homework_results.models import Homework
-    from apps.domains.lectures.models import Session
+    Exam, ExamEnrollment = get_exam_enrollment_models()
+    HomeworkAssignment = get_homework_assignment_model()
+    Homework = get_homework_model()
+    Session = get_session_model()
 
     student = get_student_for_tenant_or_404(tenant=tenant, student_id=student_id)
     lecture = get_lecture_for_tenant_or_404(tenant=tenant, lecture_id=lecture_id)
