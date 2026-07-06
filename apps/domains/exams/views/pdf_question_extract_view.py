@@ -12,7 +12,7 @@ from rest_framework.views import APIView
 from rest_framework.parsers import MultiPartParser
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.ai.gateway import dispatch_job
+from apps.support.exams.view_dependencies import dispatch_ai_job, pdf_extract_exam_validation_error
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage, generate_presigned_get_url_storage as generate_presigned_download_url
 
 logger = logging.getLogger(__name__)
@@ -49,15 +49,16 @@ class PdfQuestionExtractView(APIView):
 
         # Template exam만 문항 구조 변경 가능 — regular exam은 사전 차단
         if exam_id:
-            try:
-                from apps.domains.exams.models import Exam
-                exam = Exam.objects.get(id=int(exam_id), tenant=tenant)
-                if exam.exam_type != Exam.ExamType.TEMPLATE:
-                    return Response(
-                        {"detail": "문항 분할은 템플릿 시험에서만 가능합니다."},
-                        status=status.HTTP_400_BAD_REQUEST,
-                    )
-            except Exam.DoesNotExist:
+            validation_error = pdf_extract_exam_validation_error(
+                tenant=tenant,
+                exam_id=int(exam_id),
+            )
+            if validation_error == "not_template":
+                return Response(
+                    {"detail": "문항 분할은 템플릿 시험에서만 가능합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if validation_error == "not_found":
                 return Response(
                     {"detail": "시험을 찾을 수 없습니다."},
                     status=status.HTTP_404_NOT_FOUND,
@@ -77,7 +78,7 @@ class PdfQuestionExtractView(APIView):
             download_url = generate_presigned_download_url(key=r2_key)
 
             # Submit AI job
-            result = dispatch_job(
+            result = dispatch_ai_job(
                 job_type="question_segmentation",
                 payload={
                     "download_url": download_url,

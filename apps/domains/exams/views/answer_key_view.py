@@ -16,7 +16,7 @@ from apps.domains.exams.services.structure_copy_service import (
     remap_answer_keys,
 )
 
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 
 
 class AnswerKeyViewSet(ModelViewSet):

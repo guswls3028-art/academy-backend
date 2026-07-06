@@ -2,12 +2,11 @@
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound
-from django.db.models import Q
 from django.http import HttpResponseRedirect
 
 from apps.core.permissions import TenantResolvedAndMember
-from apps.domains.exams.models import ExamAsset as Asset
 from apps.infrastructure.storage.r2 import generate_presigned_get_url
+from apps.support.omr.view_dependencies import get_omr_sheet_asset_for_tenant
 
 
 class OMRPdfView(APIView):
@@ -21,14 +20,7 @@ class OMRPdfView(APIView):
         if not tenant:
             raise NotFound("테넌트 정보가 없습니다.")
 
-        asset = Asset.objects.filter(
-            id=asset_id,
-            asset_type=Asset.AssetType.OMR_SHEET,
-        ).filter(
-            Q(exam__tenant=tenant)
-            | Q(exam__sessions__lecture__tenant=tenant)
-            | Q(exam__derived_exams__sessions__lecture__tenant=tenant)
-        ).first()
+        asset = get_omr_sheet_asset_for_tenant(tenant=tenant, asset_id=asset_id)
         if not asset:
             raise NotFound("해당 자료를 찾을 수 없습니다.")
 

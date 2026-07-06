@@ -6,6 +6,8 @@ from django.shortcuts import get_object_or_404
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
+from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS
+
 
 def get_session_model():
     from apps.domains.lectures.models import Session
@@ -17,6 +19,48 @@ def get_session_for_tenant_or_404(*, session_id: int, tenant):
     from apps.domains.lectures.models import Session
 
     return get_object_or_404(Session, id=int(session_id), lecture__tenant=tenant)
+
+
+def get_session_or_404(*, session_id: int):
+    from apps.domains.lectures.models import Session
+
+    return get_object_or_404(Session, id=int(session_id))
+
+
+def build_omr_meta(**kwargs):
+    from apps.domains.assets.omr.services.meta_generator import build_omr_meta as _build
+
+    return _build(**kwargs)
+
+
+def dispatch_ai_job(**kwargs):
+    from apps.domains.ai.gateway import dispatch_job
+
+    return dispatch_job(**kwargs)
+
+
+def active_enrollment_ids_for_session(**kwargs) -> set[int]:
+    from apps.domains.enrollment.selectors import active_enrollment_ids_for_session as _ids
+
+    return _ids(**kwargs)
+
+
+def active_session_enrollments_for_session(**kwargs):
+    from apps.domains.enrollment.selectors import active_session_enrollments_for_session as _rows
+
+    return _rows(**kwargs)
+
+
+def pdf_extract_exam_validation_error(*, tenant, exam_id: int) -> str | None:
+    from apps.domains.exams.models import Exam
+
+    try:
+        exam = Exam.objects.get(id=int(exam_id), tenant=tenant)
+    except Exam.DoesNotExist:
+        return "not_found"
+    if exam.exam_type != Exam.ExamType.TEMPLATE:
+        return "not_template"
+    return None
 
 
 def get_homework_template_for_bundle_item(*, homework_template_id: int, tenant):

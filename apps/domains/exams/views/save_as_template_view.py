@@ -15,7 +15,7 @@ from django.db import transaction
 from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import AnswerKey, Exam, ExamAsset, ExamQuestion, Sheet
 from apps.domains.exams.serializers.exam import ExamSerializer
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 
 
 def _copy_sheet(source_exam: Exam, template_exam: Exam) -> dict[int, int]:

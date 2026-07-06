@@ -11,7 +11,7 @@ from apps.domains.exams.models import Exam
 from apps.domains.exams.services.structure_copy_service import copy_exam_structure
 from apps.domains.exams.services.template_builder_service import TemplateBuilderService
 from apps.domains.exams.services.template_validation_service import TemplateValidationService
-from apps.domains.lectures.models import Session
+from apps.support.exams.view_dependencies import get_session_or_404
 
 
 class RegularExamFactory:
@@ -45,7 +45,7 @@ class RegularExamFactory:
         if not valid.get("ok"):
             raise ValidationError({"detail": f"template not ready: {valid.get('reason')}"})
 
-        session = get_object_or_404(Session, id=int(session_id))
+        session = get_session_or_404(session_id=int(session_id))
 
         # 3) tenant 검증: session이 요청 테넌트 소속인지 확인
         if tenant and hasattr(session, "lecture") and session.lecture_id:

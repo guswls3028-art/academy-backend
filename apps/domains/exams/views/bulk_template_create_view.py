@@ -15,7 +15,7 @@ from rest_framework.exceptions import ValidationError
 from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Exam, ExamQuestion, AnswerKey, Sheet
 from apps.domains.exams.services.template_builder_service import TemplateBuilderService
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 
 
 class BulkTemplateCreateView(APIView):

@@ -15,8 +15,7 @@ from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.exams.models import ExamEnrollment
 from apps.domains.exams.models.exam import Exam
-
-from apps.domains.enrollment.selectors import (
+from apps.support.exams.view_dependencies import (
     active_enrollment_ids_for_session,
     active_session_enrollments_for_session,
 )

@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import re
 
-from django.db.models import Q
 from django.http import HttpResponse
-from django.shortcuts import get_object_or_404
 
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -19,23 +17,17 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.exams.models import Exam
 from apps.domains.assets.omr.dto.omr_document import OMRDocument
 from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS
 from apps.domains.assets.omr.services.omr_document_service import OMRDocumentService
 from apps.domains.assets.omr.renderer.html_renderer import OMRHtmlRenderer
 from apps.domains.assets.omr.renderer.pdf_renderer import OMRPdfRenderer
+from apps.support.omr.view_dependencies import get_exam_for_omr_document
 
 
-def _get_exam(tenant, exam_id: int) -> Exam:
+def _get_exam(tenant, exam_id: int):
     """테넌트 격리된 시험 조회."""
-    return get_object_or_404(
-        Exam.objects.filter(
-            Q(sessions__lecture__tenant=tenant)
-            | Q(derived_exams__sessions__lecture__tenant=tenant)
-        ).distinct(),
-        id=int(exam_id),
-    )
+    return get_exam_for_omr_document(tenant=tenant, exam_id=exam_id)
 
 
 def _parse_omr_params(data: dict) -> dict:

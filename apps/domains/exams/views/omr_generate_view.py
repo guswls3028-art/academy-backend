@@ -19,8 +19,8 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from apps.domains.exams.models import Exam
-from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS, build_omr_meta
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.support.exams.view_dependencies import MAX_MC_QUESTIONS, build_omr_meta
 
 
 class GenerateOMRSheetAssetView(APIView):

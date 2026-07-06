@@ -12,7 +12,7 @@ from rest_framework.exceptions import ValidationError, NotFound, PermissionDenie
 from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 
 
 class HomeworkSaveAsTemplateView(APIView):

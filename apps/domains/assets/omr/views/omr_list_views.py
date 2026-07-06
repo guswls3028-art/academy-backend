@@ -4,22 +4,19 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.exams.models import ExamAsset
 from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS, build_omr_meta
+from apps.support.omr.view_dependencies import omr_template_assets_for_tenant
 
 
 class ObjectiveOMRTemplateListView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
-        qs = ExamAsset.objects.filter(
-            asset_type="OMR_TEMPLATE",
-            exam__sessions__lecture__tenant=request.tenant,
-        ).distinct()
-
         exam_id = request.query_params.get("exam_id")
-        if exam_id:
-            qs = qs.filter(exam_id=exam_id)
+        qs = omr_template_assets_for_tenant(
+            tenant=request.tenant,
+            exam_id=int(exam_id) if exam_id else None,
+        )
 
         items = []
         for asset in qs.order_by("-id"):

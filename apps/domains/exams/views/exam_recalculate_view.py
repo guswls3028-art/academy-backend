@@ -8,7 +8,7 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Exam
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 from apps.support.submissions.dependencies import regrade_exam_submissions
 
 

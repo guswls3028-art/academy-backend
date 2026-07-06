@@ -11,7 +11,7 @@ from rest_framework.response import Response
 from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Exam
 from apps.domains.exams.services.template_builder_service import TemplateBuilderService
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 
 
 class TemplateBuilderView(APIView):

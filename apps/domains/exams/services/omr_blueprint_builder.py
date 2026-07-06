@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from apps.domains.assets.omr.services.meta_generator import build_omr_meta
 from apps.domains.exams.dto.omr_blueprint import OMRBlueprint
+from apps.support.exams.view_dependencies import build_omr_meta
 
 
 class OMRBlueprintBuilder:

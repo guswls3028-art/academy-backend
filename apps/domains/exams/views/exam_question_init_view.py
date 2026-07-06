@@ -17,7 +17,7 @@ from apps.domains.exams.services.template_resolver import (
     resolve_structure_exam,
 )
 from apps.domains.exams.services.structure_copy_service import ensure_regular_exam_owns_structure
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 
 
 class ExamQuestionInitView(APIView):

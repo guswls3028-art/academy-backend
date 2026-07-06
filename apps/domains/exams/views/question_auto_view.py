@@ -14,7 +14,7 @@ from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.serializers.question_auto import QuestionAutoCreateSerializer
 from apps.domains.exams.services.question_factory import create_questions_from_boxes
 
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 
 
 class SheetAutoQuestionsView(APIView):

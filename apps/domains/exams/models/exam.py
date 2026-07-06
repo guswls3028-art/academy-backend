@@ -6,7 +6,6 @@ from django.db import models
 from django.db.models import Q
 from apps.api.common.models import BaseModel
 from apps.core.models.tenant import Tenant
-from apps.domains.lectures.models import Session
 
 
 class Exam(BaseModel):
@@ -67,7 +66,7 @@ class Exam(BaseModel):
     # 🔥 Session : Exam = N:M
     # ===============================
     sessions = models.ManyToManyField(
-        Session,
+        "lectures.Session",
         related_name="exams",
         blank=True,
         help_text="이 시험이 속한 차시들",

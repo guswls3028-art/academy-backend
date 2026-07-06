@@ -8,7 +8,7 @@ from apps.domains.exams.models import ExamQuestion
 from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.services.template_resolver import assert_template_editable
 
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin
 
 
 class QuestionViewSet(ModelViewSet):
