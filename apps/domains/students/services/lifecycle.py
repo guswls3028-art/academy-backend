@@ -9,9 +9,13 @@ from django.db import connection, transaction
 from django.utils import timezone
 
 from apps.core.models import TenantMembership
-from apps.domains.parents.services import ensure_parent_for_student
 from apps.domains.students.models import Student
 from apps.domains.students.services.school import is_valid_grade, normalize_school_from_name
+from apps.support.students.lifecycle_dependencies import (
+    cancel_active_participants_for_student,
+    deactivate_enrollments_for_student,
+    ensure_parent_for_student,
+)
 
 
 class StudentLifecycleError(ValueError):
@@ -218,9 +222,6 @@ def soft_delete_student(
                         user_update.append("phone")
                     student.user.save(update_fields=user_update)
                     user_deactivated = True
-
-        from apps.domains.clinic.services.lifecycle import cancel_active_participants_for_student
-        from apps.domains.enrollment.services.lifecycle import deactivate_enrollments_for_student
 
         enrollment_count = deactivate_enrollments_for_student(tenant=tenant, student=student)
         clinic_participant_count = cancel_active_participants_for_student(

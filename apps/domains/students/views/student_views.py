@@ -28,9 +28,14 @@ from apps.api.common.upload_validation import (
 from apps.core.permissions import IsStudent, TenantResolvedAndStaff
 from apps.core.models.user import user_display_username
 
-from apps.domains.messaging.services import send_welcome_messages, get_tenant_site_url, send_event_notification
-from apps.domains.ai.gateway import dispatch_job
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
+from apps.support.students.view_dependencies import (
+    dispatch_job,
+    get_excel_parsing_job_status_response,
+    get_tenant_site_url,
+    send_event_notification,
+    send_welcome_messages,
+)
 
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student
@@ -406,14 +411,13 @@ class StudentViewSet(ModelViewSet):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "tenant가 필요합니다."}, status=400)
-        from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
-        from apps.domains.ai.services.job_status_response import build_job_status_response
-
-        repo = DjangoAIJobRepository()
-        job = repo.get_job_model_for_status(job_id, str(tenant.id), job_type="excel_parsing")
-        if not job:
+        payload = get_excel_parsing_job_status_response(
+            job_id=job_id,
+            tenant_id=str(tenant.id),
+        )
+        if payload is None:
             raise NotFound("해당 job을 찾을 수 없습니다.")
-        return Response(build_job_status_response(job))
+        return Response(payload)
 
     # --------------------------------------------------
     # Anchor API: /students/me/ (원본 100% 유지)
