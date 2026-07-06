@@ -41,7 +41,6 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 
 from apps.domains.homework_results.models import HomeworkScore, Homework
-from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.serializers import (
     HomeworkScoreSerializer,
     HomeworkQuickPatchSerializer,
@@ -49,24 +48,14 @@ from apps.domains.homework_results.serializers import (
 from apps.domains.homework_results.filters import HomeworkScoreFilter
 
 from apps.core.permissions import TenantResolvedAndStaff
-
-# enrollment tenant guard
-from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
-
-# submissions 기준 보정
-from apps.domains.submissions.models import Submission
-
-# progress pipeline 단일 진실
-from apps.domains.progress.dispatcher import dispatch_progress_pipeline
-
-# homework policy 계산 유틸 (HomeworkPolicy 단일 진실 — homework 도메인 함수 재사용)
-from apps.domains.homework.utils.homework_policy import (
+from apps.support.homework_results.score_dependencies import (
     calc_homework_passed_and_clinic,
+    dispatch_progress_pipeline,
+    homework_assignment_exists,
+    latest_homework_submission,
+    sync_homework_clinic_link,
+    validate_enrollment_belongs_to_tenant,
 )
-
-# ClinicLink 관리 (과제 합불 → 클리닉 대상 생성/해소)
-from apps.domains.progress.models import ClinicLink
-from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
 
 
 logger = logging.getLogger(__name__)
@@ -74,70 +63,6 @@ logger = logging.getLogger(__name__)
 
 def _safe_user_id(request) -> int | None:
     return getattr(getattr(request, "user", None), "id", None)
-
-
-def _sync_homework_clinic_link(
-    *,
-    enrollment_id: int,
-    session,
-    homework_id: int,
-    passed: bool,
-    score: float | None,
-    max_score: float | None,
-) -> None:
-    """
-    과제 합불 결과에 따라 ClinicLink를 생성하거나 해소한다.
-    - 불합격(passed=False): 미해소 ClinicLink가 없으면 생성
-    - 합격(passed=True): 미해소 ClinicLink가 있으면 해소
-    """
-    if passed:
-        ClinicResolutionService.resolve_by_homework_pass(
-            enrollment_id=enrollment_id,
-            session_id=session.id,
-            homework_id=homework_id,
-            score=score,
-            max_score=max_score,
-        )
-    else:
-        existing_unresolved = ClinicLink.objects.filter(
-            enrollment_id=enrollment_id,
-            session=session,
-            source_type="homework",
-            source_id=homework_id,
-            resolved_at__isnull=True,
-        ).exists()
-        if not existing_unresolved:
-            from django.db.models import Max
-            max_cycle = ClinicLink.objects.filter(
-                enrollment_id=enrollment_id,
-                session=session,
-                source_type="homework",
-                source_id=homework_id,
-            ).aggregate(Max("cycle_no"))["cycle_no__max"] or 0
-
-            from django.db import IntegrityError as DjangoIntegrityError
-            from apps.domains.enrollment.models import Enrollment as _Enrollment
-            _tenant_id = _Enrollment.objects.filter(id=enrollment_id).values_list("tenant_id", flat=True).first()
-            try:
-                ClinicLink.objects.create(
-                    enrollment_id=enrollment_id,
-                    session=session,
-                    source_type="homework",
-                    source_id=homework_id,
-                    reason=ClinicLink.Reason.AUTO_FAILED,
-                    is_auto=True,
-                    approved=False,
-                    cycle_no=max(max_cycle + 1, 1),
-                    tenant_id=_tenant_id,
-                    meta={
-                        "kind": "HOMEWORK_FAILED",
-                        "homework_id": homework_id,
-                        "score": score,
-                        "max_score": max_score,
-                    },
-                )
-            except DjangoIntegrityError:
-                pass
 
 
 def _locked_response(obj: HomeworkScore) -> Response:
@@ -180,7 +105,7 @@ def _apply_score_and_policy(
 
 
 def _maybe_fix_submission(
-    submission: Submission,
+    submission,
     *,
     score_obj: HomeworkScore,
     teacher_approved: bool | None,
@@ -327,14 +252,9 @@ class HomeworkScoreViewSet(ModelViewSet):
                 ],
             )
 
-            submission = (
-                Submission.objects.filter(
-                    enrollment_id=score_obj.enrollment_id,
-                    target_type="homework",
-                    target_id=score_obj.homework_id,
-                )
-                .order_by("-id")
-                .first()
+            submission = latest_homework_submission(
+                enrollment_id=score_obj.enrollment_id,
+                homework_id=score_obj.homework_id,
             )
 
             if submission:
@@ -359,7 +279,7 @@ class HomeworkScoreViewSet(ModelViewSet):
 
             try:
                 with transaction.atomic():
-                    _sync_homework_clinic_link(
+                    sync_homework_clinic_link(
                         enrollment_id=score_obj.enrollment_id,
                         session=score_obj.session,
                         homework_id=score_obj.homework_id,
@@ -418,12 +338,12 @@ class HomeworkScoreViewSet(ModelViewSet):
                     {"session_id": "과제의 차시와 요청 차시가 일치하지 않습니다."},
                     status=drf_status.HTTP_400_BAD_REQUEST,
                 )
-            if not HomeworkAssignment.objects.filter(
+            if not homework_assignment_exists(
                 tenant=request.tenant,
                 homework=homework,
                 session=session,
                 enrollment_id=enrollment_id,
-            ).exists():
+            ):
                 return Response(
                     {"enrollment_id": "이 과제의 배정 대상 수강생만 점수를 입력할 수 있습니다."},
                     status=drf_status.HTTP_400_BAD_REQUEST,
@@ -507,7 +427,7 @@ class HomeworkScoreViewSet(ModelViewSet):
 
                 try:
                     with transaction.atomic():
-                        _sync_homework_clinic_link(
+                        sync_homework_clinic_link(
                             enrollment_id=enrollment_id,
                             session=session,
                             homework_id=homework_id,
