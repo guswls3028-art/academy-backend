@@ -17,8 +17,10 @@ from rest_framework import status, views
 from rest_framework.response import Response
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.enrollment.selectors import build_student_enrollment_matrix
-from apps.domains.enrollment.services.lifecycle import toggle_student_learning_access
+from apps.support.students.enrollment_matrix_dependencies import (
+    build_student_enrollment_matrix,
+    toggle_student_learning_access,
+)
 
 
 class StudentEnrollmentMatrixView(views.APIView):

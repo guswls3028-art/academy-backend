@@ -2,7 +2,6 @@
 
 from rest_framework import serializers
 
-from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student, Tag, StudentRegistrationRequest
 from apps.domains.students.services.identity import (
     StudentIdentityError,
@@ -11,6 +10,12 @@ from apps.domains.students.services.identity import (
     resolve_student_login_id,
     student_login_id_taken,
 )
+from apps.support.students.serializer_dependencies import (
+    clinic_highlight_map_for_enrollments,
+    get_enrollment_model,
+)
+
+Enrollment = get_enrollment_model()
 
 
 class TagSerializer(serializers.ModelSerializer):
@@ -101,8 +106,7 @@ class StudentListSerializer(serializers.ModelSerializer):
             ctx["_clinic_highlight_map"] = {}
             return {}
 
-        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
-        highlight_map = compute_clinic_highlight_map(
+        highlight_map = clinic_highlight_map_for_enrollments(
             tenant=tenant,
             enrollment_ids=enrollment_ids,
         )

@@ -9,13 +9,15 @@ from rest_framework.permissions import IsAuthenticated
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.serializers.session_exams_summary import SessionExamsSummarySerializer
 
-from apps.domains.lectures.models import Session
-from apps.domains.progress.models import SessionProgress, ProgressPolicy
-
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.support.results.progress_read_dependencies import (
+    progress_policy_meta_for_lecture,
+    session_for_tenant,
+    session_progress_queryset_for_session,
+)
 
 
 class AdminSessionExamsSummaryView(APIView):
@@ -34,7 +36,7 @@ class AdminSessionExamsSummaryView(APIView):
 
     def get(self, request, session_id: int):
         # ✅ tenant isolation: verify session belongs to tenant
-        session = Session.objects.filter(id=int(session_id), lecture__tenant=request.tenant).select_related("lecture").first()
+        session = session_for_tenant(session_id=int(session_id), tenant=request.tenant)
         if not session:
             return Response(
                 SessionExamsSummarySerializer({
@@ -49,9 +51,9 @@ class AdminSessionExamsSummaryView(APIView):
             )
 
         # 정책(표시용)
-        policy = ProgressPolicy.objects.filter(lecture=session.lecture).first()
-        strategy = str(getattr(policy, "exam_aggregate_strategy", "MAX"))
-        pass_source = str(getattr(policy, "exam_pass_source", "EXAM"))
+        policy_meta = progress_policy_meta_for_lecture(session.lecture)
+        strategy = policy_meta["strategy"]
+        pass_source = policy_meta["pass_source"]
 
         # ✅ 세션에 연결된 exams (단일 진실)
         exams = list(get_exams_for_session(session))
@@ -60,7 +62,7 @@ class AdminSessionExamsSummaryView(APIView):
         # -----------------------------
         # session-level participant/pass/clinic
         # -----------------------------
-        sp_qs = SessionProgress.objects.filter(session=session)
+        sp_qs = session_progress_queryset_for_session(session)
         participant_count = sp_qs.count()
 
         # 세션 단위 시험 통과율(집계 결과)

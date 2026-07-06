@@ -55,6 +55,10 @@ from rest_framework.exceptions import ValidationError
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import ExamAttempt
+from apps.support.results.admin_exam_dependencies import (
+    get_enrollment_for_tenant,
+    regular_active_exam_with_session_exists,
+)
 
 
 class AdminExamAttemptsView(APIView):
@@ -69,19 +73,17 @@ class AdminExamAttemptsView(APIView):
         enrollment_id = int(enrollment_id)
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        from apps.domains.exams.models import Exam
-        if not Exam.objects.filter(
-            id=exam_id,
+        if not regular_active_exam_with_session_exists(
+            exam_id=exam_id,
             tenant=request.tenant,
-            exam_type=Exam.ExamType.REGULAR,
-            is_active=True,
-            sessions__lecture__tenant=request.tenant,
-        ).exists():
+        ):
             raise ValidationError("Exam not found for this tenant.")
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
-        from apps.domains.enrollment.models import Enrollment
-        if not Enrollment.objects.filter(id=enrollment_id, tenant=request.tenant).exists():
+        if not get_enrollment_for_tenant(
+            enrollment_id=enrollment_id,
+            tenant=request.tenant,
+        ):
             raise ValidationError("Enrollment not found for this tenant.")
 
         # -------------------------------------------------

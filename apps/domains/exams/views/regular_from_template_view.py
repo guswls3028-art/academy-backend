@@ -12,8 +12,7 @@ from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.exams.models import Exam
 from apps.domains.exams.serializers.exam import ExamSerializer
 from apps.domains.exams.services.regular_exam_factory import RegularExamFactory
-from apps.domains.lectures.models import Session
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import IsTeacherOrAdmin, get_session_for_tenant_or_404
 
 
 class RegularExamFromTemplateView(APIView):
@@ -49,7 +48,7 @@ class RegularExamFromTemplateView(APIView):
             return Response({"detail": "session_id must be integer"}, status=status.HTTP_400_BAD_REQUEST)
 
         # ✅ Tenant isolation: validate session belongs to same tenant
-        get_object_or_404(Session, id=session_id, lecture__tenant=tenant)
+        get_session_for_tenant_or_404(session_id=session_id, tenant=tenant)
 
         factory = RegularExamFactory()
         regular = factory.create_regular_from_template(

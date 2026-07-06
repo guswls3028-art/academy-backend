@@ -113,6 +113,17 @@ def session_by_id(session_id: int) -> Any | None:
     return Session.objects.filter(id=int(session_id)).select_related("lecture").first()
 
 
+def session_for_tenant(*, session_id: int, tenant: Any) -> Any | None:
+    from apps.domains.lectures.models import Session
+
+    return (
+        Session.objects
+        .filter(id=int(session_id), lecture__tenant=tenant)
+        .select_related("lecture")
+        .first()
+    )
+
+
 def progress_policy_meta_for_lecture(lecture: Any) -> dict[str, str]:
     from apps.domains.progress.models import ProgressPolicy
 

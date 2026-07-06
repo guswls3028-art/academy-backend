@@ -30,6 +30,7 @@ from .identity import (
 )
 from .lifecycle import permanently_delete_students, restore_student
 from .school import get_valid_school_types, is_valid_grade, normalize_school_from_name
+from apps.support.students.import_dependencies import get_tenant_site_url, send_welcome_messages
 
 logger = logging.getLogger(__name__)
 
@@ -431,8 +432,6 @@ def import_students_from_rows(
 
     if send_welcome_message and created_students:
         try:
-            from apps.domains.messaging.services import get_tenant_site_url, send_welcome_messages
-
             send_welcome_messages(
                 created_students=created_students,
                 student_password=initial_password,
@@ -589,8 +588,6 @@ def resolve_student_import_conflicts(
 
     if send_welcome_message and created_students:
         try:
-            from apps.domains.messaging.services import get_tenant_site_url, send_welcome_messages
-
             send_welcome_messages(
                 created_students=created_students,
                 student_password=initial_password,

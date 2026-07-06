@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from django.shortcuts import get_object_or_404
+
 from apps.domains.results.permissions import IsTeacherOrAdmin
 
 
@@ -9,6 +11,12 @@ def get_session_model():
     from apps.domains.lectures.models import Session
 
     return Session
+
+
+def get_session_for_tenant_or_404(*, session_id: int, tenant):
+    from apps.domains.lectures.models import Session
+
+    return get_object_or_404(Session, id=int(session_id), lecture__tenant=tenant)
 
 
 def get_homework_template_for_bundle_item(*, homework_template_id: int, tenant):
