@@ -141,6 +141,42 @@ def target_belongs_to_tenant(target_type, target_id, tenant) -> bool:
     return False
 
 
+def homework_submission_target_exists(*, homework_id: int, tenant) -> bool:
+    from apps.domains.homework_results.models import Homework
+
+    return Homework.objects.filter(
+        id=int(homework_id),
+        session__lecture__tenant=tenant,
+    ).exists()
+
+
+def clinic_highlight_map_for_enrollments(*, tenant, enrollment_ids: set[int]) -> dict[int, bool]:
+    if not enrollment_ids:
+        return {}
+
+    from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
+
+    return compute_clinic_highlight_map(
+        tenant=tenant,
+        enrollment_ids=enrollment_ids,
+    )
+
+
+def enrollment_map_for_submission_list(*, tenant, enrollment_ids: set[int]) -> dict[int, Any]:
+    if not enrollment_ids:
+        return {}
+
+    from apps.domains.enrollment.models import Enrollment
+
+    return {
+        enrollment.id: enrollment
+        for enrollment in (
+            Enrollment.objects.select_related("student", "lecture")
+            .filter(id__in=enrollment_ids, tenant=tenant)
+        )
+    }
+
+
 def enrollment_belongs_to_tenant(*, enrollment_id, tenant) -> bool:
     from apps.domains.enrollment.models import Enrollment
 
