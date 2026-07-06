@@ -10,9 +10,11 @@ from rest_framework.exceptions import NotFound, ValidationError
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from apps.domains.attendance.models import Attendance
-from apps.domains.enrollment.selectors import require_tenant
-from apps.domains.fees.services import auto_assign_fees_on_enrollment
-from apps.domains.students.selectors import students_for_tenant
+from apps.support.attendance.roster_dependencies import (
+    active_student_ids_for_tenant,
+    auto_assign_roster_fees,
+    require_attendance_tenant,
+)
 
 
 @dataclass(frozen=True)
@@ -47,7 +49,7 @@ def ensure_session_roster_membership(*, tenant, session, enrollment) -> SessionR
     session-enrollment bulk endpoint, so fee reactivation and attendance
     idempotency cannot drift between the two public APIs.
     """
-    tenant = require_tenant(tenant)
+    tenant = require_attendance_tenant(tenant)
 
     if getattr(session.lecture, "tenant_id", None) != tenant.id:
         raise ValidationError({"detail": "다른 학원의 세션입니다."})
@@ -60,11 +62,11 @@ def ensure_session_roster_membership(*, tenant, session, enrollment) -> SessionR
         enrollment.status = "ACTIVE"
         enrollment.save(update_fields=["status"])
 
-    auto_assign_fees_on_enrollment(
-        tenant,
-        enrollment.student,
-        session.lecture,
-        enrollment,
+    auto_assign_roster_fees(
+        tenant=tenant,
+        student=enrollment.student,
+        lecture=session.lecture,
+        enrollment=enrollment,
     )
 
     session_enrollment, _ = enroll_repo.session_enrollment_get_or_create_tenant(
@@ -86,7 +88,7 @@ def ensure_session_roster_membership(*, tenant, session, enrollment) -> SessionR
 
 @transaction.atomic
 def create_attendance_roster(*, tenant, session_id, student_ids) -> list[Attendance]:
-    tenant = require_tenant(tenant)
+    tenant = require_attendance_tenant(tenant)
     normalized_session_id = _normalize_session_id(session_id)
     normalized_student_ids = _normalize_student_ids(student_ids)
 
@@ -94,10 +96,9 @@ def create_attendance_roster(*, tenant, session_id, student_ids) -> list[Attenda
     if not session or session.lecture.tenant_id != tenant.id:
         raise NotFound("세션을 찾을 수 없습니다.")
 
-    valid_student_ids = set(
-        students_for_tenant(tenant, deleted="active")
-        .filter(id__in=normalized_student_ids)
-        .values_list("id", flat=True)
+    valid_student_ids = active_student_ids_for_tenant(
+        tenant=tenant,
+        student_ids=normalized_student_ids,
     )
     invalid_student_ids = [
         sid for sid in normalized_student_ids if sid not in valid_student_ids
