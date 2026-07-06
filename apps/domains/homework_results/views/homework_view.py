@@ -26,16 +26,21 @@ from django.utils import timezone
 
 from apps.core.permissions import TenantResolvedAndMember
 
-from apps.domains.results.permissions import IsTeacherOrAdmin
-
-from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework
 from apps.domains.homework_results.serializers.homework import HomeworkSerializer
-from apps.domains.lectures.models import Session
+from apps.support.homework_results.homework_view_dependencies import (
+    delete_homework_assignments,
+    get_session_for_homework,
+    get_teacher_or_admin_permission,
+)
 
 
 class HomeworkViewSet(ModelViewSet):
-    permission_classes = [IsAuthenticated, TenantResolvedAndMember, IsTeacherOrAdmin]
+    permission_classes = [
+        IsAuthenticated,
+        TenantResolvedAndMember,
+        get_teacher_or_admin_permission(),
+    ]
     serializer_class = HomeworkSerializer
 
     filter_backends = [OrderingFilter]
@@ -121,7 +126,7 @@ class HomeworkViewSet(ModelViewSet):
                 {"session_id": "정수여야 합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        session = Session.objects.filter(id=session_id, lecture__tenant=tenant).first()
+        session = get_session_for_homework(session_id=session_id, tenant=tenant)
         if session is None:
             return Response(
                 {"detail": "해당 차시를 찾을 수 없습니다."},
@@ -140,7 +145,16 @@ class HomeworkViewSet(ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             with transaction.atomic():
-                session = Session.objects.select_for_update().get(id=session.id)
+                session = get_session_for_homework(
+                    session_id=int(session.id),
+                    tenant=tenant,
+                    for_update=True,
+                )
+                if session is None:
+                    return Response(
+                        {"detail": "해당 차시를 찾을 수 없습니다."},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
                 title = (data.get("title") or "").strip() or template.title
                 instance = Homework.objects.create(
                     tenant=tenant,
@@ -170,11 +184,10 @@ class HomeworkViewSet(ModelViewSet):
         except (TypeError, ValueError):
             raise ValidationError({"session_id": "정수여야 합니다."})
         with transaction.atomic():
-            session = (
-                Session.objects
-                .select_for_update()
-                .filter(id=session_id, lecture__tenant=tenant)
-                .first()
+            session = get_session_for_homework(
+                session_id=session_id,
+                tenant=tenant,
+                for_update=True,
             )
             if session is None:
                 raise ValidationError({"detail": "해당 차시를 찾을 수 없습니다."})
@@ -204,10 +217,10 @@ class HomeworkViewSet(ModelViewSet):
             request=request,
             homework=homework,
         )
-        assignment_count, _ = HomeworkAssignment.objects.filter(
+        assignment_count = delete_homework_assignments(
             tenant=tenant,
             homework=homework,
-        ).delete()
+        )
 
         meta = dict(homework.meta or {})
         meta["removed_from_session_at"] = timezone.now().isoformat()
