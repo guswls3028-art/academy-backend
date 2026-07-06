@@ -145,6 +145,16 @@ def video_progress_get(video, enrollment):
     return VideoProgress.objects.filter(video=video, enrollment=enrollment).first()
 
 
+def video_like_exists(*, video_id: int, student, tenant_id: int) -> bool:
+    from apps.domains.video.models import VideoLike
+
+    return VideoLike.objects.filter(
+        video_id=int(video_id),
+        student=student,
+        tenant_id=int(tenant_id),
+    ).exists()
+
+
 def session_all_queryset():
     from apps.domains.lectures.models import Session
     return Session.objects.select_related("lecture").all()

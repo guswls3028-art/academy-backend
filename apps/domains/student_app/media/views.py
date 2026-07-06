@@ -1,5 +1,4 @@
-from datetime import timezone as datetime_timezone
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 
 from django.db.models import Prefetch
 from django.http import Http404
@@ -11,6 +10,11 @@ from rest_framework import status
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.domains.enrollment.selectors import active_enrollments_for_student
+from apps.support.student_app.video_media import (
+    build_thumbnail_url,
+    issue_proctored_playback_session,
+    pick_video_urls,
+)
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
     ensure_student_video_watch_allowed,
@@ -95,144 +99,6 @@ def _safe_video_completed(value: Any) -> bool:
     if text in {"", "0", "false", "f", "no", "n", "off", "none", "null"}:
         return False
     return True
-
-
-def _build_thumbnail_url(video) -> Optional[str]:
-    """
-    VideoSerializer.get_thumbnail_url 과 동일 로직.
-    CDN_HLS_BASE_URL 기반 썸네일 URL 구성 + 서명 시크릿 있으면 HMAC 부착.
-    """
-    from django.conf import settings
-
-    cdn = getattr(settings, "CDN_HLS_BASE_URL", None)
-    if not cdn:
-        return None
-    cdn = cdn.rstrip("/")
-
-    def _norm(path: str) -> str:
-        path = path.lstrip("/")
-        if path.startswith("storage/media/"):
-            return path[len("storage/"):]
-        return path
-
-    def _ver() -> int:
-        try:
-            return int(video.updated_at.timestamp())
-        except Exception:
-            return 0
-
-    def _build(rel_path: str) -> str:
-        path = "/" + rel_path.lstrip("/")
-        version = _ver()
-        secret = getattr(settings, "CDN_HLS_SIGNING_SECRET", "") or ""
-        if not secret:
-            return f"{cdn}{path}?v={version}"
-        from apps.domains.video.cdn.cloudflare_signing import CloudflareSignedURL
-        from django.utils import timezone
-        ttl = int(getattr(settings, "CDN_HLS_LIST_URL_TTL_SECONDS", 6 * 3600))
-        expires_at = int(timezone.now().timestamp()) + ttl
-        signer = CloudflareSignedURL(
-            secret=str(secret),
-            key_id=str(getattr(settings, "CDN_HLS_SIGNING_KEY_ID", "v1")),
-        )
-        return signer.build_url(
-            cdn_base=cdn,
-            path=path,
-            expires_at=expires_at,
-            user_id=None,
-            extra_query={"v": str(version)},
-        )
-
-    # 1) explicit thumbnail field
-    if video.thumbnail:
-        return _build(_norm(video.thumbnail.name))
-
-    # 2) READY → convention-based path
-    if getattr(video, "status", None) == video.Status.READY:
-        try:
-            session = getattr(video, "session", None)
-            lecture = getattr(session, "lecture", None) if session else None
-            tenant = getattr(lecture, "tenant", None) if lecture else None
-            if tenant is None:
-                return None
-            tenant_id = getattr(tenant, "id", None) or getattr(tenant, "pk", None)
-            from apps.core.r2_paths import video_hls_prefix
-            return _build(_norm(f"{video_hls_prefix(tenant_id=tenant_id, video_id=video.id)}/thumbnail.jpg"))
-        except Exception:
-            return None
-
-    return None
-
-
-def _pick_urls(video, request=None) -> Tuple[Optional[str], Optional[str]]:
-    """
-    비디오 재생 URL 생성
-    - hls_url: CDN 기반 HLS URL (VideoPlaybackMixin._public_play_url 로직 사용)
-    - mp4_url: MP4 URL (현재는 미지원)
-    """
-    from django.utils import timezone
-    from apps.domains.video.views.playback_mixin import VideoPlaybackMixin
-    
-    # 비디오 상태 확인
-    if not hasattr(video, "status") or video.status != video.Status.READY:
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.warning(f"[_pick_urls] Video {video.id} is not READY (status: {getattr(video, 'status', 'UNKNOWN')})")
-        return None, None
-    
-    # VideoPlaybackMixin의 _public_play_url 로직 사용
-    mixin = VideoPlaybackMixin()
-    
-    # expires_at은 24시간 후로 설정 (학생 앱은 세션 관리가 단순하므로 충분히 긴 시간)
-    expires_at = int(timezone.now().timestamp()) + (24 * 3600)
-    
-    # user_id는 request에서 가져오거나 기본값 사용
-    user_id = getattr(request.user, "id", 0) if request and hasattr(request, "user") and request.user.is_authenticated else 0
-    
-    try:
-        # 비디오 정보 로깅
-        import logging
-        logger = logging.getLogger(__name__)
-        hls_path = getattr(video, "hls_path", None)
-        file_key = getattr(video, "file_key", None)
-        tenant_id = None
-        try:
-            if hasattr(video, "session") and video.session:
-                if hasattr(video.session, "lecture") and video.session.lecture:
-                    tenant_id = getattr(video.session.lecture, "tenant_id", None)
-        except Exception:
-            pass
-        
-        logger.info(
-            f"[_pick_urls] Generating URL for video {video.id}: "
-            f"hls_path={hls_path}, file_key={file_key}, tenant_id={tenant_id}, "
-            f"expires_at={expires_at}, user_id={user_id}"
-        )
-        
-        hls_url = mixin._public_play_url(
-            video=video,
-            expires_at=expires_at,
-            user_id=user_id,
-        )
-        
-        logger.info(f"[_pick_urls] Generated URL for video {video.id}: {hls_url[:200] if hls_url else None}...")
-        
-        # URL이 생성되었는지 확인
-        if not hls_url:
-            logger.warning(f"[_pick_urls] _public_play_url returned None for video {video.id}")
-            return None, None
-            
-    except Exception as e:
-        # 에러 발생 시 로그만 남기고 None 반환
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"[_pick_urls] Failed to generate HLS URL for video {video.id}: {e}", exc_info=True)
-        hls_url = None
-    
-    # MP4 URL은 현재 미지원
-    mp4_url = None
-    
-    return hls_url, mp4_url
 
 
 def _effective_rule(video_permission_obj) -> str:
@@ -401,9 +267,9 @@ class StudentVideoMeView(APIView):
                     lec_video_count += info["video_count"]
                     lec_total_duration += info["total_duration"]
 
-            # 썸네일 URL (기존 _build_thumbnail_url 헬퍼 재사용)
+            # 썸네일 URL (student-app support helper 재사용)
             first_vid = first_video_by_lecture.get(lec.id)
-            thumb_url = _build_thumbnail_url(first_vid) if first_vid else None
+            thumb_url = build_thumbnail_url(first_vid) if first_vid else None
 
             lectures_data.append({
                 "id": lec.id,
@@ -420,7 +286,7 @@ class StudentVideoMeView(APIView):
         pub_video_count = pub_summary["video_count"] if pub_summary else 0
         pub_total_duration = pub_summary["total_duration"] if pub_summary else 0
         pub_first_vid = first_video_by_lecture.get(public_lecture.id)
-        pub_thumb_url = _build_thumbnail_url(pub_first_vid) if pub_first_vid else None
+        pub_thumb_url = build_thumbnail_url(pub_first_vid) if pub_first_vid else None
 
         public_data = {
             "session_id": public_session.id,
@@ -688,7 +554,7 @@ class StudentSessionVideoListView(APIView):
         for v in videos:
             perm_obj = perm_map.get(v.id)
 
-            thumb = _build_thumbnail_url(v)
+            thumb = build_thumbnail_url(v)
 
             access_mode_value = None
             if enrollment_obj:
@@ -812,7 +678,7 @@ class StudentVideoPlaybackView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         
-        hls_url, mp4_url = _pick_urls(video, request)
+        hls_url, mp4_url = pick_video_urls(video, request)
         
         # 재생 URL이 없으면 에러 반환
         if not hls_url and not mp4_url:
@@ -830,7 +696,7 @@ class StudentVideoPlaybackView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
         
-        thumb = _build_thumbnail_url(video)
+        thumb = build_thumbnail_url(video)
 
         # 조회수 증가 — 동일 사용자 5분 내 중복 카운트 방지
         from django.db.models import F as _F
@@ -864,52 +730,15 @@ class StudentVideoPlaybackView(APIView):
         playback_expires_at = None
         if is_proctored and enrollment_obj:
             try:
-                from apps.domains.video.services.playback_session import issue_session, init_session_redis
-                from apps.domains.video.drm import create_playback_token
-                from apps.domains.video.models import VideoPlaybackSession as _PS
-                from django.conf import settings as _settings
-                from django.utils import timezone as _tz
-                ttl = int(getattr(_settings, "VIDEO_PLAYBACK_TTL_SECONDS", 600))
-                ok_s, sess, _err = issue_session(
-                    student_id=enrollment_obj.student_id,
+                proctored_session = issue_proctored_playback_session(
+                    video=video,
+                    enrollment=enrollment_obj,
+                    user=request.user,
                     device_id=str(request.headers.get("X-Device-Id") or request.user.id),
-                    ttl_seconds=ttl,
-                    max_sessions=int(getattr(_settings, "VIDEO_MAX_SESSIONS", 9999)),
-                    max_devices=int(getattr(_settings, "VIDEO_MAX_DEVICES", 9999)),
                 )
-                if ok_s and sess:
-                    playback_session_id = sess["session_id"]
-                    expires_ts = int(sess["expires_at"])
-                    playback_expires_at = expires_ts
-                    expires_at_dt = _tz.datetime.fromtimestamp(expires_ts, tz=datetime_timezone.utc)
-                    from academy.adapters.db.django import repositories_video as _vr
-                    _vr.playback_session_create(
-                        video=video,
-                        enrollment=enrollment_obj,
-                        session_id=playback_session_id,
-                        device_id=str(request.headers.get("X-Device-Id") or request.user.id),
-                        status=_PS.Status.ACTIVE,
-                        started_at=_tz.now(),
-                        expires_at=expires_at_dt,
-                        last_seen=_tz.now(),
-                        violated_count=0,
-                        total_count=0,
-                        is_revoked=False,
-                    )
-                    init_session_redis(session_id=playback_session_id, ttl_seconds=ttl)
-                    playback_token = create_playback_token(
-                        payload={
-                            "video_id": video.id,
-                            "enrollment_id": enrollment_obj.id,
-                            "session_id": playback_session_id,
-                            "user_id": request.user.id,
-                            "student_id": enrollment_obj.student_id,
-                            "access_mode": "PROCTORED_CLASS",
-                            "monitoring_enabled": True,
-                            "pv": int(getattr(video, "policy_version", 1) or 1),
-                        },
-                        ttl_seconds=ttl,
-                    )
+                playback_token = proctored_session.token
+                playback_session_id = proctored_session.session_id
+                playback_expires_at = proctored_session.expires_at
             except Exception as _e:
                 logger.exception("[StudentVideoPlaybackView] proctored session issue failed: %s", _e)
                 # 세션 발급 실패 시 PROCTORED 영상 시청 차단(데이터 무결성 우선)
@@ -922,7 +751,6 @@ class StudentVideoPlaybackView(APIView):
         is_liked = False
         student = get_request_student(request)
         if student:
-            from apps.domains.video.models import VideoLike
             video_tenant_id = getattr(video, "tenant_id", None)
             if video_tenant_id is None:
                 video_tenant_id = (
@@ -930,15 +758,19 @@ class StudentVideoPlaybackView(APIView):
                     if video.session and video.session.lecture else None
                 )
             if video_tenant_id:
-                is_liked = VideoLike.objects.filter(video_id=video_id, student=student, tenant_id=video_tenant_id).exists()
+                from academy.adapters.db.django import repositories_video as video_repo
+
+                is_liked = video_repo.video_like_exists(
+                    video_id=video_id,
+                    student=student,
+                    tenant_id=video_tenant_id,
+                )
 
         progress_obj = None
         if enrollment_obj:
-            from apps.domains.video.models import VideoProgress as _VideoProgress
-            progress_obj = _VideoProgress.objects.filter(
-                video=video,
-                enrollment=enrollment_obj,
-            ).first()
+            from academy.adapters.db.django import repositories_video as video_repo
+
+            progress_obj = video_repo.video_progress_get(video, enrollment_obj)
         progress_percent = (
             round(normalize_video_progress(getattr(progress_obj, "progress", 0)) * 100, 1)
             if progress_obj
