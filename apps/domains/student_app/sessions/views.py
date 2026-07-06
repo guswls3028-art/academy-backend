@@ -2,7 +2,6 @@
 import re
 from datetime import date as dt_date, time as dt_time
 
-from django.db.models import Count, Q
 from django.utils import timezone
 
 from rest_framework.views import APIView
@@ -10,10 +9,17 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
-from apps.domains.enrollment.models import SessionEnrollment
-from apps.domains.lectures.models import Session as LectureSession
-from apps.domains.clinic.models import SessionParticipant
-from apps.domains.attendance.models import Attendance
+from apps.support.student_app.session_dependencies import (
+    get_active_student_session_ids,
+    get_future_hidden_clinic_participant_ids,
+    get_future_hidden_session_ids,
+    get_student_attendance_payload,
+    get_student_clinic_participants,
+    get_student_detail_session,
+    get_student_lecture_sessions,
+    student_owns_clinic_participant,
+    student_owns_session,
+)
 from .serializers import StudentSessionSerializer
 
 
@@ -51,25 +57,12 @@ class StudentSessionListView(APIView):
         hidden_clinic_participant_ids = {-int(x) for x in raw_hidden_ids if isinstance(x, int) and x < 0}
 
         # 1) 강의 차시
-        session_ids = (
-            SessionEnrollment.objects.filter(
-                enrollment__student=student,
-                enrollment__tenant=tenant,
-                enrollment__status="ACTIVE",
-            )
-            .values_list("session_id", flat=True)
-            .distinct()
+        sessions = get_student_lecture_sessions(
+            session_ids=get_active_student_session_ids(student=student, tenant=tenant),
+            tenant=tenant,
+            hidden_before=hidden_before,
+            hidden_session_ids=hidden_session_ids,
         )
-        sessions_qs = (
-            LectureSession.objects.filter(id__in=session_ids, lecture__tenant=tenant)
-            .select_related("lecture")
-            .order_by("date", "order", "id")
-        )
-        if hidden_before is not None:
-            sessions_qs = sessions_qs.exclude(date__lte=hidden_before)
-        if hidden_session_ids:
-            sessions_qs = sessions_qs.exclude(id__in=hidden_session_ids)
-        sessions = sessions_qs
         data = [
             {
                 "id": s.id,
@@ -90,15 +83,9 @@ class StudentSessionListView(APIView):
         ]
 
         # 2) 클리닉 예약 (PENDING/BOOKED만, session 있는 것만)
-        clinic_participants = (
-            SessionParticipant.objects
-            .filter(
-                student=student,
-                tenant=tenant,
-                status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
-                session__isnull=False,
-            )
-            .select_related("session")
+        clinic_participants = get_student_clinic_participants(
+            student=student,
+            tenant=tenant,
         )
         for cp in clinic_participants:
             sess = cp.session
@@ -161,19 +148,23 @@ class StudentSessionClearPastView(APIView):
         }
         keep: list[int] = []
         if future_hidden_session_ids:
-            future_sessions = LectureSession.objects.filter(
-                id__in=future_hidden_session_ids,
-                lecture__tenant=tenant,
-            ).exclude(date__lte=cutoff).values_list("id", flat=True)
-            keep.extend(int(i) for i in future_sessions)
-        if future_hidden_clinic_participant_ids:
-            future_clinic = (
-                SessionParticipant.objects
-                .filter(id__in=future_hidden_clinic_participant_ids)
-                .exclude(session__date__lte=cutoff)
-                .values_list("id", flat=True)
+            keep.extend(
+                get_future_hidden_session_ids(
+                    session_ids=future_hidden_session_ids,
+                    tenant=tenant,
+                    cutoff=cutoff,
+                )
             )
-            keep.extend(-int(i) for i in future_clinic)
+        if future_hidden_clinic_participant_ids:
+            keep.extend(
+                -int(participant_id)
+                for participant_id in get_future_hidden_clinic_participant_ids(
+                    participant_ids=future_hidden_clinic_participant_ids,
+                    student=student,
+                    tenant=tenant,
+                    cutoff=cutoff,
+                )
+            )
 
         student.schedule_hidden_before = cutoff
         student.schedule_hidden_ids = keep
@@ -208,19 +199,17 @@ class StudentSessionHideView(APIView):
 
         # 본인 소유 일정만 숨길 수 있도록 검증
         if target_id > 0:
-            owns = SessionEnrollment.objects.filter(
-                enrollment__student=student,
-                enrollment__tenant=tenant,
-                enrollment__status="ACTIVE",
-                session__lecture__tenant=tenant,
+            owns = student_owns_session(
+                student=student,
+                tenant=tenant,
                 session_id=target_id,
-            ).exists()
+            )
         else:
-            owns = SessionParticipant.objects.filter(
+            owns = student_owns_clinic_participant(
                 tenant=tenant,
                 student=student,
-                id=-target_id,
-            ).exists()
+                participant_id=-target_id,
+            )
         if not owns:
             return Response({"detail": "Not found."}, status=404)
 
@@ -279,48 +268,13 @@ class StudentAttendanceSummaryView(APIView):
         if not tenant:
             return Response({"detail": "Not found."}, status=404)
 
-        qs = Attendance.objects.filter(
+        summary, recent = get_student_attendance_payload(
+            student=student,
             tenant=tenant,
-            enrollment__student=student,
-            enrollment__status="ACTIVE",
-            enrollment__student__deleted_at__isnull=True,
         )
-
-        # 누적 카운트
-        agg = qs.aggregate(
-            total=Count("id"),
-            present=Count("id", filter=Q(status__in=["PRESENT", "ONLINE", "SUPPLEMENT"])),
-            absent=Count("id", filter=Q(status="ABSENT")),
-            late=Count("id", filter=Q(status="LATE")),
-            early=Count("id", filter=Q(status="EARLY_LEAVE")),
-            runaway=Count("id", filter=Q(status="RUNAWAY")),
-        )
-
-        # 최근 20개 차시 출결
-        recent_qs = (
-            qs.select_related("session", "session__lecture")
-            .order_by("-session__date", "-id")[:20]
-        )
-        recent = []
-        for att in recent_qs:
-            sess = att.session
-            recent.append({
-                "session_id": sess.id,
-                "lecture_title": getattr(sess.lecture, "title", "") if sess.lecture_id else "",
-                "session_title": sess.title or sess.display_label,
-                "date": sess.date.isoformat() if sess.date else None,
-                "status": att.status,
-            })
 
         return Response({
-            "summary": {
-                "total": agg["total"] or 0,
-                "present": agg["present"] or 0,
-                "absent": agg["absent"] or 0,
-                "late": agg["late"] or 0,
-                "early_leave": agg["early"] or 0,
-                "runaway": agg["runaway"] or 0,
-            },
+            "summary": summary,
             "recent": recent,
         })
 
@@ -339,19 +293,11 @@ class StudentSessionDetailView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Not found."}, status=404)
-        has_access = SessionEnrollment.objects.filter(
-            enrollment__student=student,
-            enrollment__tenant=tenant,
-            enrollment__status="ACTIVE",  # ✅ 퇴원 학생 제외
-            session__lecture__tenant=tenant,
+        session = get_student_detail_session(
+            student=student,
+            tenant=tenant,
             session_id=pk,
-        ).exists()
-        if not has_access:
-            return Response({"detail": "Not found."}, status=404)
-        session = LectureSession.objects.filter(
-            id=pk,
-            lecture__tenant=tenant,
-        ).select_related("lecture").first()
+        )
         if not session:
             return Response({"detail": "Not found."}, status=404)
         # 차시에 연결된 운영 시험(regular) 중 활성 — 학생 측 시험 진입 분기용.
