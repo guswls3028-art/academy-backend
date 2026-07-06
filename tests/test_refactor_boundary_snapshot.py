@@ -66,6 +66,26 @@ def test_strict_touched_allows_public_cross_domain_selector_import(tmp_path, mon
     assert strict_findings == []
 
 
+def test_split_runtime_test_findings(tmp_path, monkeypatch):
+    snapshot = load_snapshot_module()
+    _, apps_domains = configure_snapshot_roots(snapshot, tmp_path, monkeypatch)
+
+    runtime_file = apps_domains / "results" / "views.py"
+    test_file = apps_domains / "results" / "tests" / "test_views.py"
+    runtime_file.parent.mkdir()
+    test_file.parent.mkdir(parents=True)
+    runtime_file.write_text("from apps.domains.exams.models import Exam\n", encoding="utf-8")
+    test_file.write_text("from apps.domains.exams.models import Exam\n", encoding="utf-8")
+
+    findings = snapshot.scan_file(runtime_file) + snapshot.scan_file(test_file)
+    runtime_findings, test_findings = snapshot.split_runtime_test_findings(findings)
+
+    assert len(runtime_findings) == 1
+    assert len(test_findings) == 1
+    assert runtime_findings[0].path == "apps/domains/results/views.py"
+    assert test_findings[0].path == "apps/domains/results/tests/test_views.py"
+
+
 def test_collect_touched_files_keeps_only_scanned_python_paths(tmp_path, monkeypatch):
     snapshot = load_snapshot_module()
     _, apps_domains = configure_snapshot_roots(snapshot, tmp_path, monkeypatch)

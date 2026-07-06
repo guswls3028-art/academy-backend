@@ -232,6 +232,26 @@ def summarize(findings: list[Finding]) -> dict[str, int]:
     return dict(sorted(summary.items()))
 
 
+def is_test_path(path: str) -> bool:
+    parts = Path(path).parts
+    return (
+        "tests" in parts
+        or any(part.startswith("test_") for part in parts)
+        or Path(path).name == "tests.py"
+    )
+
+
+def split_runtime_test_findings(findings: list[Finding]) -> tuple[list[Finding], list[Finding]]:
+    runtime_findings: list[Finding] = []
+    test_findings: list[Finding] = []
+    for finding in findings:
+        if is_test_path(finding.path):
+            test_findings.append(finding)
+        else:
+            runtime_findings.append(finding)
+    return runtime_findings, test_findings
+
+
 def finding_identity(finding: Finding) -> tuple[str, str, str]:
     """Stable identity for baseline comparison. Line numbers may shift during safe edits."""
     return (finding.kind, finding.path, finding.detail)
@@ -301,6 +321,9 @@ def main() -> int:
         findings.extend(scan_file(path))
 
     summary = summarize(findings)
+    runtime_findings, test_findings = split_runtime_test_findings(findings)
+    runtime_summary = summarize(runtime_findings)
+    test_summary = summarize(test_findings)
     touched_files: set[str] = set()
     strict_findings: list[Finding] = []
     strict_touched = args.strict_touched
@@ -328,6 +351,10 @@ def main() -> int:
         "backend": str(BACKEND_DIR),
         "files_scanned": len(files),
         "summary": summary,
+        "runtime_summary": runtime_summary,
+        "test_summary": test_summary,
+        "runtime_findings_count": len(runtime_findings),
+        "test_findings_count": len(test_findings),
         "findings": [asdict(item) for item in findings],
         "strict_touched": strict_touched,
         "touched_files": sorted(touched_files),
@@ -346,6 +373,16 @@ def main() -> int:
         else:
             print("summary:")
             for kind, count in summary.items():
+                print(f"  {kind}: {count}")
+        print(f"runtime findings: {len(runtime_findings)}")
+        if runtime_summary:
+            print("runtime summary:")
+            for kind, count in runtime_summary.items():
+                print(f"  {kind}: {count}")
+        print(f"test findings: {len(test_findings)}")
+        if test_summary:
+            print("test summary:")
+            for kind, count in test_summary.items():
                 print(f"  {kind}: {count}")
         if findings:
             print("sample findings:")
