@@ -14,6 +14,7 @@ from rest_framework.exceptions import PermissionDenied
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.video.models import Video, VideoComment
+from apps.support.video.view_dependencies import get_staff_for_video_social
 
 
 def _get_video_with_tenant_check(video_id, request):
@@ -41,13 +42,11 @@ def _get_video_with_tenant_check(video_id, request):
 
 def _get_staff(request):
     """Get the Staff record for the current user."""
-    from apps.domains.staffs.models import Staff
-
     user = request.user
     tenant = getattr(request, "tenant", None)
     if not user or not tenant:
         return None
-    return Staff.objects.filter(tenant=tenant, user=user).first()
+    return get_staff_for_video_social(user=user, tenant=tenant)
 
 
 def _serialize_comment(c, request, staff=None):

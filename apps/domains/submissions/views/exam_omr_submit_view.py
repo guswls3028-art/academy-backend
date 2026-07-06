@@ -16,6 +16,7 @@ from apps.domains.submissions.services.dispatcher import (
     dispatch_submission,
     resolve_omr_sheet_for_exam,
 )
+from apps.support.submissions.dependencies import exam_belongs_to_tenant
 from apps.domains.submissions.services.omr_submission_guards import (
     allow_duplicate_requested,
     duplicate_conflict_payload,
@@ -63,8 +64,7 @@ class ExamOMRSubmitView(APIView):
                 return Response(e.detail, status=400)
 
         # exam 테넌트 검증 — 크로스 테넌트 시험 제출 방지 (tenant FK 직접 검증)
-        from apps.domains.exams.models import Exam
-        if not Exam.objects.filter(id=exam_id, tenant=tenant).exists():
+        if not exam_belongs_to_tenant(exam_id=int(exam_id), tenant=tenant):
             return Response({"detail": "해당 시험을 찾을 수 없습니다."}, status=400)
 
         if not ensure_exam_enrollment_candidate(

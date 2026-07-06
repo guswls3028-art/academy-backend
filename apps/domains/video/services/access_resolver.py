@@ -13,7 +13,6 @@ Business Logic (SSOT):
 
 from typing import Iterable, Mapping, Optional
 
-from apps.domains.enrollment.models import Enrollment
 from apps.domains.video.models import Video, AccessMode
 from apps.domains.video.policy import is_video_progress_complete
 from academy.adapters.db.django import repositories_video as video_repo
@@ -46,7 +45,7 @@ def _resolve_access_mode_loaded(
 def resolve_access_mode(
     *,
     video: Video,
-    enrollment: Enrollment,
+    enrollment,
     session_id: Optional[int] = None,
 ) -> AccessMode:
     """
@@ -83,7 +82,7 @@ def resolve_access_mode(
 def resolve_access_modes_prefetched(
     *,
     video: Video,
-    enrollments: Iterable[Enrollment],
+    enrollments: Iterable,
     progresses_by_enrollment_id: Mapping[int, object],
     access_by_enrollment_id: Mapping[int, object],
     attendance_status_by_enrollment_id: Mapping[int, Optional[str]],
@@ -108,7 +107,7 @@ def resolve_access_modes_prefetched(
 def resolve_access_modes_for_videos_prefetched(
     *,
     videos: Iterable[Video],
-    enrollment: Enrollment,
+    enrollment,
     progresses_by_video_id: Mapping[int, object],
     access_by_video_id: Mapping[int, object],
     attendance_status: Optional[str],
@@ -134,7 +133,7 @@ def resolve_access_modes_for_videos_prefetched(
 def get_effective_access_mode(
     *,
     video: Video,
-    enrollment: Enrollment,
+    enrollment,
     session_id: Optional[int] = None,
 ) -> AccessMode:
     """

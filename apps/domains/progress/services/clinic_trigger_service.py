@@ -18,9 +18,9 @@ import logging
 from django.db import IntegrityError, transaction
 from django.db.models import Max
 
-from apps.domains.enrollment.public_queries import get_enrollment_tenant_id
 from apps.domains.progress.models import ClinicLink, SessionProgress
 from apps.domains.progress.services.clinic_exam_rule_service import ClinicExamRuleService
+from apps.support.progress.clinic_trigger_dependencies import get_enrollment_tenant_id
 
 logger = logging.getLogger(__name__)
 

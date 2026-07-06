@@ -18,6 +18,7 @@ import logging
 from django.utils import timezone
 
 from apps.domains.homework_results.models import HomeworkScore
+from apps.support.homework_results.score_dependencies import resolve_homework_clinic_pass
 
 logger = logging.getLogger(__name__)
 
@@ -116,12 +117,9 @@ def recalc_scores_for_policy_change(*, policy) -> int:
     # 정책 하향으로 신규 합격된 row 의 미해소 ClinicLink 자동 해소.
     # ClinicResolutionService.resolve_by_homework_pass 호출 (per-source).
     if newly_passed:
-        from apps.domains.progress.services.clinic_resolution_service import (
-            ClinicResolutionService,
-        )
         for hs in newly_passed:
             try:
-                ClinicResolutionService.resolve_by_homework_pass(
+                resolve_homework_clinic_pass(
                     enrollment_id=int(hs.enrollment_id),
                     session_id=int(hs.session_id),
                     homework_id=int(hs.homework_id),

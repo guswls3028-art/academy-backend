@@ -45,6 +45,12 @@ def dispatch_submission_ai_job(**kwargs: Any) -> Any:
     return dispatch_job(**kwargs)
 
 
+def exam_belongs_to_tenant(*, exam_id: int, tenant: Any) -> bool:
+    from apps.domains.exams.models import Exam
+
+    return Exam.objects.filter(id=int(exam_id), tenant=tenant).exists()
+
+
 def complete_submission_after_auto_grade(submission, *, actor: str) -> None:
     from django.core.exceptions import ValidationError
 

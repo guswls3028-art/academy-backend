@@ -19,7 +19,12 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from apps.domains.matchup.models import MatchupDocument
-from apps.domains.inventory.models import InventoryFolder, InventoryFile
+from apps.support.matchup.service_dependencies import (
+    create_inventory_file_for_matchup_document,
+    create_inventory_folder_for_matchup_backfill,
+    inventory_file_for_r2_key,
+    inventory_folder_for_matchup_backfill,
+)
 
 
 ROOT_FOLDER_NAME = "매치업-자동등록"
@@ -62,7 +67,7 @@ class Command(BaseCommand):
 
             # 루트 폴더 확보
             root_folder = self._ensure_root_folder(tenant, dry_run)
-            ym_cache: dict[str, InventoryFolder] = {}
+            ym_cache = {}
 
             for doc in docs:
                 ym_key = doc.created_at.strftime("%Y-%m") if doc.created_at else "unknown"
@@ -73,9 +78,7 @@ class Command(BaseCommand):
 
                 try:
                     # 이미 동일 r2_key의 InventoryFile이 있는지 확인 (재실행 안전)
-                    existing = InventoryFile.objects.filter(
-                        tenant=tenant, r2_key=doc.r2_key,
-                    ).first()
+                    existing = inventory_file_for_r2_key(tenant=tenant, r2_key=doc.r2_key)
                     if existing:
                         if not dry_run:
                             doc.inventory_file_id = existing.id
@@ -94,18 +97,10 @@ class Command(BaseCommand):
                         continue
 
                     with transaction.atomic():
-                        inv_file = InventoryFile.objects.create(
+                        inv_file = create_inventory_file_for_matchup_document(
                             tenant=tenant,
-                            scope="admin",
-                            student_ps="",
                             folder=ym_folder,
-                            display_name=doc.title or doc.original_name,
-                            description="",
-                            icon="file-text",
-                            r2_key=doc.r2_key,
-                            original_name=doc.original_name,
-                            size_bytes=doc.size_bytes,
-                            content_type=doc.content_type,
+                            document=doc,
                         )
                         doc.inventory_file_id = inv_file.id
                         doc.save(update_fields=["inventory_file", "updated_at"])
@@ -127,31 +122,35 @@ class Command(BaseCommand):
                 self.stdout.write(f"  doc {doc_id}: {msg}")
 
     def _ensure_root_folder(self, tenant, dry_run):
-        existing = InventoryFolder.objects.filter(
-            tenant=tenant, scope="admin", student_ps="",
-            parent=None, name=ROOT_FOLDER_NAME,
-        ).first()
+        existing = inventory_folder_for_matchup_backfill(
+            tenant=tenant,
+            parent=None,
+            name=ROOT_FOLDER_NAME,
+        )
         if existing:
             return existing
         if dry_run:
             self.stdout.write(f"  [dry] root folder '{ROOT_FOLDER_NAME}' 생성 예정")
             return None
-        return InventoryFolder.objects.create(
-            tenant=tenant, scope="admin", student_ps="",
-            parent=None, name=ROOT_FOLDER_NAME,
+        return create_inventory_folder_for_matchup_backfill(
+            tenant=tenant,
+            parent=None,
+            name=ROOT_FOLDER_NAME,
         )
 
     def _ensure_ym_folder(self, tenant, root_folder, ym_key, dry_run):
-        existing = InventoryFolder.objects.filter(
-            tenant=tenant, scope="admin", student_ps="",
-            parent=root_folder, name=ym_key,
-        ).first()
+        existing = inventory_folder_for_matchup_backfill(
+            tenant=tenant,
+            parent=root_folder,
+            name=ym_key,
+        )
         if existing:
             return existing
         if dry_run:
             self.stdout.write(f"  [dry] folder '{ROOT_FOLDER_NAME}/{ym_key}' 생성 예정")
             return None
-        return InventoryFolder.objects.create(
-            tenant=tenant, scope="admin", student_ps="",
-            parent=root_folder, name=ym_key,
+        return create_inventory_folder_for_matchup_backfill(
+            tenant=tenant,
+            parent=root_folder,
+            name=ym_key,
         )

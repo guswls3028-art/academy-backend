@@ -29,6 +29,10 @@ def get_staff_for_video_upload(*, user: Any, tenant: Any) -> Any | None:
     return Staff.objects.filter(user=user, tenant=tenant).first()
 
 
+def get_staff_for_video_social(*, user: Any, tenant: Any) -> Any | None:
+    return get_staff_for_video_upload(user=user, tenant=tenant)
+
+
 def clinic_highlight_map_for_video_stats(*, tenant: Any, enrollment_ids: set[int]) -> dict[int, bool]:
     from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 

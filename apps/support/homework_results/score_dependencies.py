@@ -42,6 +42,27 @@ def dispatch_progress_pipeline(*, submission_id: int) -> None:
     dispatch(submission_id=submission_id)
 
 
+def resolve_homework_clinic_pass(
+    *,
+    enrollment_id: int,
+    session_id: int,
+    homework_id: int,
+    score: float | None,
+    max_score: float | None,
+) -> None:
+    from apps.domains.progress.services.clinic_resolution_service import (
+        ClinicResolutionService,
+    )
+
+    ClinicResolutionService.resolve_by_homework_pass(
+        enrollment_id=int(enrollment_id),
+        session_id=int(session_id),
+        homework_id=int(homework_id),
+        score=score,
+        max_score=max_score,
+    )
+
+
 def homework_assignment_exists(
     *,
     tenant: Any,
