@@ -9,7 +9,16 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework import status
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
-from apps.domains.enrollment.selectors import active_enrollments_for_student
+from apps.support.student_app.video_dependencies import (
+    active_enrollments_for_student,
+    get_lecture_models,
+    get_media_models,
+    get_video_comment_models,
+    get_video_like_models,
+    get_video_model,
+    get_video_progress_model,
+    resolve_access_modes_for_videos_prefetched,
+)
 from apps.support.student_app.video_media import (
     build_thumbnail_url,
     issue_proctored_playback_session,
@@ -35,13 +44,7 @@ from .serializers import (
 # ======================================================
 
 def _import_media_models():
-    try:
-        from apps.domains.video.models import Video, VideoAccess
-    except Exception as e:
-        raise RuntimeError(
-            "[CRITICAL] apps.domains.video.models.Video import 실패"
-        ) from e
-    return Video, VideoAccess
+    return get_media_models()
 
 
 def _coerce_int(value: Any) -> Optional[int]:
@@ -133,7 +136,7 @@ class StudentPublicSessionView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request):
-        from apps.domains.lectures.models import Lecture, Session
+        Lecture, Session = get_lecture_models()
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -169,7 +172,7 @@ class StudentVideoMeView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request):
-        from apps.domains.lectures.models import Lecture, Session
+        Lecture, Session = get_lecture_models()
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -200,8 +203,8 @@ class StudentVideoMeView(APIView):
         )
 
         # 강의별 영상 요약을 한 번의 쿼리로 가져오기 (N+1 방지)
-        from apps.domains.video.models import Video
         from django.db.models import Count, Sum
+        Video = get_video_model()
 
         # 수강 강의 세션 + 전체공개영상 세션 모두 포함
         all_lecture_ids = lecture_ids + [public_lecture.id]
@@ -312,7 +315,8 @@ class StudentVideoStatsView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request):
-        from apps.domains.video.models import Video, VideoProgress
+        Video = get_video_model()
+        VideoProgress = get_video_progress_model()
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -473,7 +477,7 @@ class StudentSessionVideoListView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request, session_id: int):
-        from apps.domains.lectures.models import Session as SessionModel
+        _Lecture, SessionModel = get_lecture_models()
 
         Video, VideoPermission = _import_media_models()
         explicit_enrollment_id = _get_explicit_enrollment_id(request)
@@ -538,10 +542,6 @@ class StudentSessionVideoListView(APIView):
 
         access_mode_map = {}
         if enrollment_obj and videos:
-            from apps.domains.video.services.access_resolver import (
-                resolve_access_modes_for_videos_prefetched,
-            )
-
             access_mode_map = resolve_access_modes_for_videos_prefetched(
                 videos=videos,
                 enrollment=enrollment_obj,
@@ -846,7 +846,7 @@ class StudentVideoProgressView(APIView):
 
     def post(self, request, video_id: int):
         Video, _VideoPermission = _import_media_models()
-        from apps.domains.video.models import VideoProgress
+        VideoProgress = get_video_progress_model()
 
         explicit_enrollment_id = _get_explicit_enrollment_id(request, include_body=True)
 
@@ -923,8 +923,8 @@ class StudentVideoLikeView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def post(self, request, video_id: int):
-        from apps.domains.video.models import Video, VideoLike
         from django.db.models import F
+        Video, VideoLike = get_video_like_models()
 
         student = get_request_student(request)
         if not student:
@@ -981,7 +981,7 @@ class StudentVideoCommentListView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def get(self, request, video_id: int):
-        from apps.domains.video.models import Video, VideoComment
+        Video, VideoComment = get_video_comment_models()
 
         tenant = getattr(request, "tenant", None)
         if not tenant:
@@ -1063,8 +1063,8 @@ class StudentVideoCommentListView(APIView):
         return Response({"comments": data, "total": len(data)})
 
     def post(self, request, video_id: int):
-        from apps.domains.video.models import Video, VideoComment
         from django.db.models import F
+        Video, VideoComment = get_video_comment_models()
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -1138,7 +1138,7 @@ class StudentVideoCommentDetailView(APIView):
     permission_classes = [IsAuthenticated, IsStudentOrParent]
 
     def patch(self, request, comment_id: int):
-        from apps.domains.video.models import VideoComment
+        _Video, VideoComment = get_video_comment_models()
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
@@ -1166,8 +1166,8 @@ class StudentVideoCommentDetailView(APIView):
         return Response({"id": comment.id, "content": comment.content, "is_edited": True})
 
     def delete(self, request, comment_id: int):
-        from apps.domains.video.models import Video, VideoComment
         from django.db.models import F
+        Video, VideoComment = get_video_comment_models()
 
         tenant = getattr(request, "tenant", None)
         student = get_request_student(request)
