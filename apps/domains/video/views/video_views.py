@@ -4,6 +4,7 @@ from uuid import uuid4
 from datetime import timedelta
 
 from django.conf import settings
+from django.core.exceptions import ObjectDoesNotExist
 from django.db import models, transaction
 from django.db.utils import IntegrityError
 from django.utils import timezone
@@ -40,9 +41,13 @@ from apps.core.r2_paths import video_raw_key
 from apps.core.permissions import IsStudent, TenantResolvedAndStaff
 from apps.core.authentication import CsrfExemptSessionAuthentication
 
-from apps.domains.lectures.models import Lecture, Session
-
 from academy.adapters.db.django import repositories_video as video_repo
+from apps.support.video.view_dependencies import (
+    clinic_highlight_map_for_video_stats,
+    get_or_create_public_video_session,
+    get_staff_for_video_upload,
+    lock_session_for_video_upload,
+)
 from ..models import (
     Video,
     VideoFolder,
@@ -292,7 +297,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         try:
             session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
-        except Session.DoesNotExist:
+        except ObjectDoesNotExist:
             return Response(
                 {"detail": "해당 차시를 찾을 수 없습니다. 페이지를 새로고침한 뒤 다시 시도하세요."},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -307,7 +312,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             )
         tenant_id = tenant.id
         # same session 내 동시 업로드 시 order max+1 충돌 방지
-        session = Session.objects.select_for_update().select_related("lecture__tenant").get(pk=session.pk)
+        session = lock_session_for_video_upload(session)
         order = (
             session.videos.aggregate(max_order=models.Max("order")).get("max_order") or 0
         ) + 1
@@ -346,8 +351,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         # uploaded_by: 업로드한 스태프 (인코딩 완료 알림 대상)
         uploaded_by_staff = None
         try:
-            from apps.domains.staffs.models import Staff
-            uploaded_by_staff = Staff.objects.filter(user=request.user, tenant=tenant).first()
+            uploaded_by_staff = get_staff_for_video_upload(user=request.user, tenant=tenant)
         except Exception:
             pass
 
@@ -402,11 +406,8 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 {"detail": "테넌트를 확인할 수 없습니다. X-Tenant-Code 헤더가 필요합니다. 같은 도메인(예: tchul.com)으로 접속했는지 확인하세요."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        lecture = Lecture.get_or_create_system_lecture(tenant)
-        session, _ = Session.objects.get_or_create(
-            lecture=lecture,
-            order=1,
-            defaults={"title": "전체공개영상", "date": None},
+        lecture, session = get_or_create_public_video_session(
+            tenant=tenant,
         )
         return Response(
             {"session_id": session.id, "lecture_id": lecture.id},
@@ -1055,12 +1056,11 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         )
 
         # ✅ 클리닉 하이라이트 일괄 계산
-        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
         tenant = getattr(request, "tenant", None)
-        highlight_map = compute_clinic_highlight_map(
+        highlight_map = clinic_highlight_map_for_video_stats(
             tenant=tenant,
             enrollment_ids=set(e.id for e in enrollments),
-        ) if tenant else {}
+        )
 
         students = []
         for e in enrollments:
@@ -1245,7 +1245,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             # 레거시 호환: session_id가 전달되면 해당 세션의 폴더 조회
             try:
                 session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
-            except Session.DoesNotExist:
+            except ObjectDoesNotExist:
                 return Response(
                     {"detail": "Session not found"},
                     status=status.HTTP_404_NOT_FOUND,
@@ -1285,7 +1285,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         if session_id:
             try:
                 session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
-            except Session.DoesNotExist:
+            except ObjectDoesNotExist:
                 return Response(
                     {"detail": "Session not found"},
                     status=status.HTTP_404_NOT_FOUND,

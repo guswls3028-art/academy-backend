@@ -7,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.support.teacher_app.view_dependencies import notification_summary_counts
 
 
 class NotificationSummaryView(APIView):
@@ -22,45 +23,11 @@ class NotificationSummaryView(APIView):
     def get(self, request):
         tenant = request.tenant
 
-        # Q&A/상담 미답변. 선생님 내부 상담 메모는 학생 요청 카운트에서 제외한다.
-        from apps.domains.community.models import PostEntity
-        qna_pending = (
-            PostEntity.objects.filter(
-                tenant=tenant,
-                post_type="qna",
-                status="published",
-            )
-            .exclude(author_role="staff")
-            .annotate(reply_count=_count_replies())
-            .filter(reply_count=0)
-            .count()
-        )
-        counsel_pending = (
-            PostEntity.objects.filter(
-                tenant=tenant,
-                post_type="counsel",
-                status="published",
-            )
-            .exclude(author_role="staff")
-            .exclude(category_label="teacher_internal_memo")
-            .annotate(reply_count=_count_replies())
-            .filter(reply_count=0)
-            .count()
-        )
-
-        # 등록요청 대기
-        from apps.domains.students.models import StudentRegistrationRequest
-        registration_pending = StudentRegistrationRequest.objects.filter(
-            tenant=tenant,
-            status="pending",
-        ).count()
-
-        # 클리닉 예약 대기
-        from apps.domains.clinic.models import SessionParticipant
-        clinic_pending = SessionParticipant.objects.filter(
-            tenant=tenant,
-            status="pending",
-        ).count()
+        counts = notification_summary_counts(tenant=tenant)
+        qna_pending = counts["qna_pending"]
+        counsel_pending = counts["counsel_pending"]
+        registration_pending = counts["registration_pending"]
+        clinic_pending = counts["clinic_pending"]
 
         total = qna_pending + counsel_pending + registration_pending + clinic_pending
 
@@ -71,9 +38,3 @@ class NotificationSummaryView(APIView):
             "registration_pending": registration_pending,
             "clinic_pending": clinic_pending,
         })
-
-
-def _count_replies():
-    """PostEntity에 대한 reply 수 서브쿼리"""
-    from django.db.models import Count
-    return Count("replies")
