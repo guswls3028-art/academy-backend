@@ -9,6 +9,11 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.submissions.models import Submission
+from apps.support.submissions.dependencies import (
+    enrollment_map_for_submission_list,
+    exam_submission_list_allowed,
+    score_map_for_exam_submission_list,
+)
 
 
 def _extract_name_from_enrollment(enrollment) -> str:
@@ -38,18 +43,8 @@ class ExamSubmissionsListView(APIView):
         # 최소 1건 있으면 노출. 세션 연결만으로 필터링할 경우 session에서 떼어진(고아)
         # exam은 submission이 있어도 리스트가 비어 운영자가 존재 자체를 모름.
         # 아래 queryset에서 tenant=tenant로 최종 스코프를 거므로 격리는 유지된다.
-        from apps.domains.exams.models import Exam
-        exam_q = Exam.objects.filter(id=int(exam_id))
-        exam_allowed = exam_q.filter(sessions__lecture__tenant=tenant).exists()
-        if not exam_allowed and hasattr(Exam, "tenant"):
-            exam_allowed = exam_q.filter(tenant=tenant).exists()
-        if not exam_allowed:
-            if not Submission.objects.filter(
-                tenant=tenant,
-                target_type=Submission.TargetType.EXAM,
-                target_id=int(exam_id),
-            ).exists():
-                return Response([], status=200)
+        if not exam_submission_list_allowed(tenant=tenant, exam_id=int(exam_id)):
+            return Response([], status=200)
 
         qs = list(
             Submission.objects
@@ -66,37 +61,18 @@ class ExamSubmissionsListView(APIView):
         # 200행 기준 최대 400 쿼리. 현재는 최대 2쿼리로 고정.
         # 🔐 tenant 필터: Submission이 tenant 스코프여도 enrollment_id 참조는 강제 제약이
         # 없으므로 오염 시 다른 tenant 학생 메타가 노출될 수 있다. 명시적으로 tenant 강제.
-        enrollment_map: Dict[int, Any] = {}
         enrollment_ids = {int(s.enrollment_id) for s in qs if getattr(s, "enrollment_id", None)}
-        if enrollment_ids:
-            from apps.domains.enrollment.models import Enrollment
-            for e in Enrollment.objects.select_related("student").filter(id__in=enrollment_ids, tenant=tenant):
-                enrollment_map[int(e.id)] = e
+        enrollment_map: Dict[int, Any] = enrollment_map_for_submission_list(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+        )
 
-        score_map: Dict[int, float] = {}
         submission_ids = [int(s.id) for s in qs]
-        if submission_ids:
-            from apps.domains.results.models import Result, ExamAttempt
-            # Result는 submission FK가 없고 attempt(ExamAttempt) 경유. submission 당 최신 Result 1건만
-            # 필요해서 attempt.submission_id 기준 첫 등장만 채택.
-            attempt_ids = list(
-                ExamAttempt.objects.filter(submission_id__in=submission_ids)
-                .values_list("id", flat=True)
-            )
-            if attempt_ids:
-                results_qs = (
-                    Result.objects.filter(attempt_id__in=attempt_ids)
-                    .select_related("attempt")
-                    .only("id", "attempt_id", "attempt__submission_id", "total_score")
-                    .order_by("-id")
-                )
-                for r in results_qs:
-                    a = r.attempt
-                    if not a or not a.submission_id:
-                        continue
-                    sid = int(a.submission_id)
-                    if sid not in score_map and r.total_score is not None:
-                        score_map[sid] = float(r.total_score)
+        # Result는 submission FK가 없고 attempt(ExamAttempt) 경유. submission 당 최신 Result 1건만
+        # 필요해서 attempt.submission_id 기준 첫 등장만 채택.
+        score_map: Dict[int, float] = score_map_for_exam_submission_list(
+            submission_ids=submission_ids,
+        )
 
         items: list[Dict[str, Any]] = []
         for s in qs:

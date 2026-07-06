@@ -20,6 +20,19 @@ class ExamEnrollmentCandidate:
     should_create: bool = False
 
 
+@dataclass(frozen=True)
+class ExamQuestionIdMap:
+    question_number_to_pk: dict[int, int]
+
+    @property
+    def pk_set(self) -> set[int]:
+        return set(self.question_number_to_pk.values())
+
+    @property
+    def question_number_set(self) -> set[int]:
+        return set(self.question_number_to_pk.keys())
+
+
 def grade_submission_objective(submission_id: int):
     from apps.domains.results.services.grading_service import grade_submission
 
@@ -175,6 +188,53 @@ def enrollment_map_for_submission_list(*, tenant, enrollment_ids: set[int]) -> d
             .filter(id__in=enrollment_ids, tenant=tenant)
         )
     }
+
+
+def exam_submission_list_allowed(*, tenant, exam_id: int) -> bool:
+    from apps.domains.exams.models import Exam
+    from apps.domains.submissions.models import Submission
+
+    exam_id_i = int(exam_id)
+    exam_qs = Exam.objects.filter(id=exam_id_i)
+    if exam_qs.filter(sessions__lecture__tenant=tenant).exists():
+        return True
+    if hasattr(Exam, "tenant") and exam_qs.filter(tenant=tenant).exists():
+        return True
+    return Submission.objects.filter(
+        tenant=tenant,
+        target_type=Submission.TargetType.EXAM,
+        target_id=exam_id_i,
+    ).exists()
+
+
+def score_map_for_exam_submission_list(*, submission_ids: list[int]) -> dict[int, float]:
+    if not submission_ids:
+        return {}
+
+    from apps.domains.results.models import ExamAttempt, Result
+
+    attempt_ids = list(
+        ExamAttempt.objects.filter(submission_id__in=submission_ids)
+        .values_list("id", flat=True)
+    )
+    if not attempt_ids:
+        return {}
+
+    score_map: dict[int, float] = {}
+    results_qs = (
+        Result.objects.filter(attempt_id__in=attempt_ids)
+        .select_related("attempt")
+        .only("id", "attempt_id", "attempt__submission_id", "total_score")
+        .order_by("-id")
+    )
+    for result in results_qs:
+        attempt = result.attempt
+        if not attempt or not attempt.submission_id:
+            continue
+        submission_id = int(attempt.submission_id)
+        if submission_id not in score_map and result.total_score is not None:
+            score_map[submission_id] = float(result.total_score)
+    return score_map
 
 
 def enrollment_belongs_to_tenant(*, enrollment_id, tenant) -> bool:
@@ -356,6 +416,69 @@ def allowed_manual_exam_question_ids(*, tenant, exam_id: int) -> set[int] | None
             sheet__exam_id__in=sheet_exam_ids,
             sheet__exam__tenant=tenant,
         ).values_list("id", flat=True)
+    )
+
+
+def question_id_map_for_exam(*, exam_id: int) -> ExamQuestionIdMap | None:
+    from apps.domains.exams.models import Exam, ExamQuestion, Sheet
+    from apps.domains.exams.services.template_resolver import resolve_template_exam
+
+    exam = Exam.objects.filter(id=int(exam_id)).first()
+    if not exam:
+        return None
+
+    template_exam = resolve_template_exam(exam)
+    sheet = Sheet.objects.filter(exam=template_exam).first()
+    if not sheet:
+        return None
+
+    questions = list(ExamQuestion.objects.filter(sheet=sheet).only("id", "number"))
+    if not questions:
+        return None
+
+    return ExamQuestionIdMap(
+        question_number_to_pk={int(question.number): int(question.id) for question in questions},
+    )
+
+
+def latest_ai_job_for_submission(*, submission_id: int) -> Any | None:
+    from apps.domains.ai.models import AIJobModel
+
+    return (
+        AIJobModel.objects
+        .filter(source_domain="submissions", source_id=str(submission_id))
+        .order_by("-created_at")
+        .first()
+    )
+
+
+def ai_result_payload_for_job(ai_job: Any) -> dict:
+    from apps.domains.ai.models import AIResultModel
+
+    ai_result = AIResultModel.objects.filter(job=ai_job).first()
+    payload = ai_result.payload if ai_result else {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def dispatch_ai_result_to_submissions_domain(
+    *,
+    job_id: str,
+    status: str,
+    result_payload: dict,
+    error: str | None,
+    source_id: str,
+    tier: str,
+) -> None:
+    from apps.domains.ai.callbacks import dispatch_ai_result_to_domain
+
+    dispatch_ai_result_to_domain(
+        job_id=job_id,
+        status=status,
+        result_payload=result_payload,
+        error=error,
+        source_domain="submissions",
+        source_id=source_id,
+        tier=tier,
     )
 
 

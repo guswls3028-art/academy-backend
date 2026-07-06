@@ -55,7 +55,11 @@ class Command(BaseCommand):
         limit = options["limit"]
 
         from apps.domains.submissions.models import Submission
-        from apps.domains.ai.models import AIJobModel
+        from apps.support.submissions.dependencies import (
+            ai_result_payload_for_job,
+            dispatch_ai_result_to_submissions_domain,
+            latest_ai_job_for_submission,
+        )
 
         cutoff = timezone.now() - timedelta(minutes=threshold_minutes)
 
@@ -76,12 +80,7 @@ class Command(BaseCommand):
         # 각 submission에 대한 AI job 상태 수집
         entries = []
         for sub in stuck:
-            ai_job = (
-                AIJobModel.objects
-                .filter(source_domain="submissions", source_id=str(sub.id))
-                .order_by("-created_at")
-                .first()
-            )
+            ai_job = latest_ai_job_for_submission(submission_id=int(sub.id))
             entries.append({
                 "submission": sub,
                 "ai_job": ai_job,
@@ -133,17 +132,11 @@ class Command(BaseCommand):
                 continue
 
             try:
-                from apps.domains.ai.models import AIResultModel
-                ai_result = AIResultModel.objects.filter(job=aj).first()
-                result_payload = ai_result.payload if ai_result else {}
-
-                from apps.domains.ai.callbacks import dispatch_ai_result_to_domain
-                dispatch_ai_result_to_domain(
+                dispatch_ai_result_to_submissions_domain(
                     job_id=aj.job_id,
                     status=aj.status,
-                    result_payload=result_payload if isinstance(result_payload, dict) else {},
+                    result_payload=ai_result_payload_for_job(aj),
                     error=aj.error_message or None,
-                    source_domain="submissions",
                     source_id=str(sub.id),
                     tier=aj.tier or "basic",
                 )

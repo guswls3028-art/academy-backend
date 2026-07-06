@@ -29,8 +29,10 @@ class Command(BaseCommand):
         limit = options["limit"]
 
         from apps.domains.submissions.models import Submission, SubmissionAnswer
-        from apps.domains.exams.models import Exam, Sheet, ExamQuestion
-        from apps.domains.exams.services.template_resolver import resolve_template_exam
+        from apps.support.submissions.dependencies import (
+            grade_submission_objective,
+            question_id_map_for_exam,
+        )
 
         # OMR_SCAN 소스의 모든 submission (ANSWERS_READY, GRADING, DONE 포함)
         omr_subs = (
@@ -53,22 +55,12 @@ class Command(BaseCommand):
                 if not answers:
                     continue
 
-                # Sheet/ExamQuestion 조회
-                exam = Exam.objects.filter(id=int(sub.target_id)).first()
-                if not exam:
+                question_id_map = question_id_map_for_exam(exam_id=int(sub.target_id))
+                if not question_id_map:
                     continue
 
-                template_exam = resolve_template_exam(exam)
-                sheet = Sheet.objects.filter(exam=template_exam).first()
-                if not sheet:
-                    continue
-
-                questions = list(ExamQuestion.objects.filter(sheet=sheet).only("id", "number"))
-                if not questions:
-                    continue
-
-                qnum_to_pk = {int(q.number): int(q.id) for q in questions}
-                pk_set = set(qnum_to_pk.values())
+                qnum_to_pk = question_id_map.question_number_to_pk
+                pk_set = question_id_map.pk_set
 
                 # 이미 PK인지 번호인지 판단:
                 # answer의 exam_question_id가 전부 pk_set에 있으면 이미 정상
@@ -77,7 +69,7 @@ class Command(BaseCommand):
                     continue  # 이미 정상
 
                 # question_number 범위인지 확인 (1~N)
-                qnum_set = set(qnum_to_pk.keys())
+                qnum_set = question_id_map.question_number_set
                 if not current_ids.issubset(qnum_set):
                     # 번호도 PK도 아닌 이상한 상태 — 스킵
                     self.stdout.write(
@@ -117,8 +109,7 @@ class Command(BaseCommand):
                 # 재채점 (ANSWERS_READY 이후 상태만)
                 if sub.status in ("answers_ready", "grading", "done"):
                     try:
-                        from apps.domains.results.services.grading_service import grade_submission
-                        grade_submission(int(sub.id))
+                        grade_submission_objective(int(sub.id))
                         regraded += 1
                         self.stdout.write(f"    [REGRADE] sub={sub.id} OK")
                     except Exception as e:
