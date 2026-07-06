@@ -23,6 +23,9 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.domains.progress.models import ClinicLink
+from apps.support.progress.clinic_resolution_notification_dependencies import (
+    send_clinic_resolution_notification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -146,55 +149,11 @@ def _dispatch_progress_for_enrollment_session(*, enrollment_id: int, session_id:
 def _send_resolution_notification(enrollment_id: int, session_id: int, resolution_type: str):
     """클리닉 해소 완료 알림 (best-effort, on_commit에서 호출)."""
     try:
-        from apps.domains.enrollment.models import Enrollment
-        from apps.domains.messaging.services import send_event_notification
-
-        enr = Enrollment.objects.select_related("student", "tenant", "lecture").filter(
-            id=enrollment_id,
-        ).first()
-        if not enr or not enr.student or not enr.tenant:
-            return
-
-        # 해소 결과 라벨 매핑
-        result_label = {
-            "EXAM_PASS": "시험 통과",
-            "HOMEWORK_PASS": "과제 통과",
-            "MANUAL_OVERRIDE": "수동 해소",
-            "WAIVED": "면제",
-            "SOURCE_REMOVED": "원본 삭제",
-        }.get(resolution_type, "해소")
-
-        # 세션 정보 (장소/날짜/시간) — 통합 알림톡 템플릿에 필요
-        session_location = ""
-        session_date = ""
-        session_time = ""
-        if session_id:
-            try:
-                from apps.domains.clinic.models import Session as ClinicSession
-                cs = ClinicSession.objects.filter(pk=session_id).first()
-                if cs:
-                    session_location = getattr(cs, "location", "") or ""
-                    session_date = str(cs.date) if cs.date else ""
-                    session_time = str(cs.start_time)[:5] if getattr(cs, "start_time", None) else ""
-            except Exception:
-                pass
-
-        context = {
-            "클리닉명": str(getattr(enr.lecture, "title", "") or ""),
-            "클리닉합불": result_label,
-            "장소": session_location,
-            "날짜": session_date,
-            "시간": session_time,
-            "_domain_object_id": f"{enrollment_id}:{session_id}",
-        }
-        for send_to in ("parent", "student"):
-            send_event_notification(
-                tenant=enr.tenant,
-                trigger="clinic_result_notification",
-                student=enr.student,
-                send_to=send_to,
-                context=context,
-            )
+        send_clinic_resolution_notification(
+            enrollment_id=enrollment_id,
+            session_id=session_id,
+            resolution_type=resolution_type,
+        )
     except Exception:
         logger.debug("clinic_result_notification failed (enrollment=%s)", enrollment_id, exc_info=True)
 
