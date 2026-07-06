@@ -18,6 +18,11 @@ from django.db.models import Q
 from apps.core.models.user import user_display_username
 from apps.core.services.password import generate_temp_password
 from apps.domains.students.models import Student
+from apps.support.students.account_recovery_dependencies import (
+    account_recovery_delivery_disabled,
+    ensure_parent_recovery_account,
+    send_account_recovery_alimtalk,
+)
 
 
 RECOVERY_MODES = ("username", "password")
@@ -111,15 +116,11 @@ def resolve_recovery_account(*, tenant, target: str, name: str, phone: str) -> R
 
     # Existing production behavior: if a legacy student has no Parent account yet,
     # create/link it after the caller proves student name + parent phone.
-    from apps.domains.parents.models import Parent
-    from apps.domains.parents.services import ensure_parent_for_student
-
-    ensure_parent_for_student(
+    parent = ensure_parent_recovery_account(
         tenant=tenant,
         parent_phone=phone,
         student_name=student.name,
     )
-    parent = Parent.objects.filter(tenant=tenant, phone=phone).select_related("user").first()
     if not parent or not getattr(parent, "user_id", None):
         return None
 
@@ -138,12 +139,7 @@ def _site_url() -> str:
 
 
 def _account_recovery_delivery_disabled(source_tenant_id: int) -> bool:
-    from apps.domains.messaging.policy import is_messaging_disabled
-
-    owner_tenant_id = getattr(settings, "OWNER_TENANT_ID", None)
-    return is_messaging_disabled(source_tenant_id) or (
-        bool(owner_tenant_id) and is_messaging_disabled(owner_tenant_id)
-    )
+    return account_recovery_delivery_disabled(source_tenant_id)
 
 
 def _send_owner_alimtalk(
@@ -155,11 +151,9 @@ def _send_owner_alimtalk(
     log_target_id: str,
     log_target_name: str,
 ) -> bool:
-    from apps.domains.messaging.policy import send_alimtalk_via_owner
-
     if _account_recovery_delivery_disabled(source_tenant_id):
         return True
-    return send_alimtalk_via_owner(
+    return send_account_recovery_alimtalk(
         trigger=trigger,
         to=to,
         replacements=replacements,
