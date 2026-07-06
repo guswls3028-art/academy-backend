@@ -6,12 +6,14 @@ from typing import Any, Dict, Optional
 
 from django.utils import timezone
 
-from apps.domains.lectures.models import Session
-from apps.domains.progress.models import SessionProgress
-
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.support.results.progress_read_dependencies import (
+    session_progress_count_for_session_ids,
+    sessions_by_ids,
+    sessions_for_global_snapshot,
+)
 
 
 def _safe_int(v: Any, default: int = 0) -> int:
@@ -66,25 +68,12 @@ def build_global_results_snapshot(
     fdt = _safe_dt(from_dt)
     tdt = _safe_dt(to_dt)
 
-    sessions = Session.objects.filter(lecture__tenant_id=int(tenant_id))
-
-    if l_id:
-        sessions = sessions.filter(lecture_id=int(l_id))
-
-    # 시간 범위는 session.open_at/close_at 같은 필드가 프로젝트마다 다를 수 있어
-    # 여기서는 "id 기반 전체"를 기본으로 하되, created_at/updated_at이 있으면 제한한다.
-    if fdt or tdt:
-        # best-effort: updated_at → created_at 순으로 시도
-        if hasattr(Session, "updated_at"):
-            if fdt:
-                sessions = sessions.filter(updated_at__gte=fdt)
-            if tdt:
-                sessions = sessions.filter(updated_at__lt=tdt)
-        elif hasattr(Session, "created_at"):
-            if fdt:
-                sessions = sessions.filter(created_at__gte=fdt)
-            if tdt:
-                sessions = sessions.filter(created_at__lt=tdt)
+    sessions = sessions_for_global_snapshot(
+        tenant_id=int(tenant_id),
+        lecture_id=l_id,
+        from_dt=fdt,
+        to_dt=tdt,
+    )
 
     session_ids = list(sessions.values_list("id", flat=True))
     session_count = len(session_ids)
@@ -103,7 +92,7 @@ def build_global_results_snapshot(
             "generated_at": timezone.now().isoformat(),
         }
 
-    participant_count = SessionProgress.objects.filter(session_id__in=session_ids).count()
+    participant_count = session_progress_count_for_session_ids(session_ids)
 
     # clinic enrollment distinct (세션 합계 기준, live source만)
     clinic_pairs: set[tuple[int, int]] = set()
@@ -121,11 +110,8 @@ def build_global_results_snapshot(
         # Session -> Exams 스캔
         # (많은 세션에서 N+1이 될 수 있으나 글로벌 요약은 운영에서 호출 빈도 낮다고 가정)
         exam_ids = set()
-        for sid in session_ids:
-            s = Session.objects.filter(id=int(sid)).first()
-            if not s:
-                continue
-            for ex in get_exams_for_session(s):
+        for session in sessions_by_ids(session_ids):
+            for ex in get_exams_for_session(session):
                 exid = getattr(ex, "id", None)
                 if exid:
                     exam_ids.add(int(exid))

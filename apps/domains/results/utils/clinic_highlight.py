@@ -16,9 +16,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, Set
 
-from apps.domains.progress.models import ClinicLink, SessionProgress
-from apps.domains.clinic.models import SessionParticipant
 from apps.domains.results.utils.clinic import filter_live_source_links
+from apps.support.results.progress_read_dependencies import (
+    attended_clinic_enrollment_ids,
+    completed_session_progress_pairs,
+    unresolved_auto_clinic_links_for_enrollments,
+)
 
 
 def compute_clinic_highlight_map(
@@ -43,15 +46,11 @@ def compute_clinic_highlight_map(
 
     # 1) 클리닉 대상 enrollment (미해결 자동 ClinicLink)
     # tenant 격리: ClinicLink.tenant FK로 직접 필터 (cross-tenant 누출 방어)
-    clinic_qs = ClinicLink.objects.filter(
-        is_auto=True,
-        resolved_at__isnull=True,
-        enrollment_id__in=enrollment_ids,
+    clinic_qs = unresolved_auto_clinic_links_for_enrollments(
         tenant=tenant,
+        enrollment_ids=enrollment_ids,
+        session=session,
     )
-    if session is not None:
-        clinic_qs = clinic_qs.filter(session=session)
-
     clinic_links = filter_live_source_links(
         clinic_qs.order_by("id"),
         tenant=tenant,
@@ -61,12 +60,9 @@ def compute_clinic_highlight_map(
 
     session_ids = list({int(link.session_id or 0) for link in clinic_links} - {0})
     clinic_enrollment_ids = list({int(link.enrollment_id or 0) for link in clinic_links} - {0})
-    completed_pairs = set(
-        SessionProgress.objects.filter(
-            session_id__in=session_ids,
-            enrollment_id__in=clinic_enrollment_ids,
-            completed=True,
-        ).values_list("enrollment_id", "session_id")
+    completed_pairs = completed_session_progress_pairs(
+        session_ids=session_ids,
+        enrollment_ids=clinic_enrollment_ids,
     )
     clinic_ids = {
         int(link.enrollment_id)
@@ -78,14 +74,9 @@ def compute_clinic_highlight_map(
         return {eid: False for eid in enrollment_ids}
 
     # 2) 클리닉 출석 완료 enrollment
-    attended_ids = set(
-        SessionParticipant.objects.filter(
-            tenant=tenant,
-            enrollment_id__in=clinic_ids,
-            status=SessionParticipant.Status.ATTENDED,
-        )
-        .values_list("enrollment_id", flat=True)
-        .distinct()
+    attended_ids = attended_clinic_enrollment_ids(
+        tenant=tenant,
+        enrollment_ids=clinic_ids,
     )
 
     # 3) 결과: 대상이면서 미출석 → True

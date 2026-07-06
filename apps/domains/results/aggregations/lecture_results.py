@@ -6,12 +6,15 @@ from typing import Any, Dict, List
 from django.db.models import Avg, Min, Max, Count
 from django.utils import timezone
 
-from apps.domains.lectures.models import Lecture, Session
-from apps.domains.progress.models import SessionProgress, ProgressPolicy
-
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.support.results.progress_read_dependencies import (
+    lecture_by_id,
+    progress_policy_meta_for_lecture,
+    session_progress_queryset_for_session,
+    sessions_for_lecture,
+)
 
 
 def _safe_int(v: Any, default: int = 0) -> int:
@@ -35,20 +38,8 @@ def _safe_str(v: Any) -> str:
         return ""
 
 
-def _policy_meta_for_lecture(lecture: Lecture) -> Dict[str, str]:
-    try:
-        policy = ProgressPolicy.objects.filter(lecture=lecture).first()
-        strategy = _safe_str(getattr(policy, "exam_aggregate_strategy", "MAX") or "MAX")
-        pass_source = _safe_str(getattr(policy, "exam_pass_source", "EXAM") or "EXAM")
-        return {
-            "strategy": strategy,
-            "pass_source": pass_source,
-        }
-    except Exception:
-        return {
-            "strategy": "MAX",
-            "pass_source": "EXAM",
-        }
+def _policy_meta_for_lecture(lecture: Any) -> Dict[str, str]:
+    return progress_policy_meta_for_lecture(lecture)
 
 
 def build_lecture_results_snapshot(
@@ -83,7 +74,7 @@ def build_lecture_results_snapshot(
       "generated_at": "iso"
     }
     """
-    lecture = Lecture.objects.filter(id=_safe_int(lecture_id)).first()
+    lecture = lecture_by_id(_safe_int(lecture_id))
     if not lecture:
         return {
             "lecture_id": _safe_int(lecture_id),
@@ -96,16 +87,11 @@ def build_lecture_results_snapshot(
 
     meta = _policy_meta_for_lecture(lecture)
 
-    sessions_qs = Session.objects.filter(lecture=lecture).order_by("id")
-    if hasattr(Session, "order"):
-        try:
-            sessions_qs = sessions_qs.order_by("order", "id")
-        except Exception:
-            sessions_qs = sessions_qs.order_by("id")
+    sessions_qs = sessions_for_lecture(lecture)
 
     rows: List[Dict[str, Any]] = []
     for s in sessions_qs:
-        sp_qs = SessionProgress.objects.filter(session=s)
+        sp_qs = session_progress_queryset_for_session(s)
         participant_count = sp_qs.count()
 
         pass_count = sp_qs.filter(exam_passed=True).count()

@@ -1,28 +1,26 @@
 # apps/domains/results/utils/session_exam.py
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from django.db.models import QuerySet
-
-from apps.domains.lectures.models import Session
-from apps.domains.exams.models import Exam
-
-
-EXAM_SESSION_ORDERING = ("display_order", "created_at", "id")
+from apps.support.results.progress_read_dependencies import (
+    all_exams_for_session,
+    live_exams_for_session,
+    live_exams_for_session_id,
+    live_sessions_for_exam,
+)
 
 
 # ---------------------------------------------------------------------
 # Canonical API: Session -> live regular Exams
 # ---------------------------------------------------------------------
 def _live_regular_exam_filter() -> dict:
-    return {
-        "exam_type": Exam.ExamType.REGULAR,
-        "is_active": True,
-    }
+    from apps.support.results.progress_read_dependencies import live_regular_exam_filter
+
+    return live_regular_exam_filter()
 
 
-def get_exams_for_session(session: Session) -> QuerySet[Exam]:
+def get_exams_for_session(session: Any):
     """
     단일 진실: Session에 연결된 live regular Exam queryset 반환.
 
@@ -31,36 +29,26 @@ def get_exams_for_session(session: Session) -> QuerySet[Exam]:
     - Exam.status(OPEN/CLOSED)는 legacy compatibility 필드다.
     - 차시 시험 노출 여부는 regular + is_active + Session M2M 연결로만 판단한다.
     """
-    return (
-        session.exams
-        .filter(**_live_regular_exam_filter())
-        .distinct()
-        .order_by(*EXAM_SESSION_ORDERING)
-    )
+    return live_exams_for_session(session)
 
 
-def get_all_exams_for_session(session: Session) -> QuerySet[Exam]:
+def get_all_exams_for_session(session: Any):
     """
     Audit/repair 전용: archived/template 포함 원시 Session -> Exam 연결.
 
     운영 화면/성적/클리닉 판단에서는 get_exams_for_session()을 사용한다.
     """
-    return session.exams.all().distinct().order_by(*EXAM_SESSION_ORDERING)
+    return all_exams_for_session(session)
 
 
-def get_session_exams_for_session_id(session_id: int) -> QuerySet[Exam]:
+def get_session_exams_for_session_id(session_id: int):
     """
     Session 인스턴스가 없을 때 쓰는 동일 SSOT queryset.
     """
-    return (
-        Exam.objects
-        .filter(sessions__id=int(session_id), **_live_regular_exam_filter())
-        .distinct()
-        .order_by(*EXAM_SESSION_ORDERING)
-    )
+    return live_exams_for_session_id(int(session_id))
 
 
-def get_exam_ids_for_session(session: Session) -> List[int]:
+def get_exam_ids_for_session(session: Any) -> List[int]:
     """
     ✅ Session -> exam_id list
     """
@@ -70,23 +58,14 @@ def get_exam_ids_for_session(session: Session) -> List[int]:
 # ---------------------------------------------------------------------
 # ✅ Canonical API: Exam -> Sessions
 # ---------------------------------------------------------------------
-def get_sessions_for_exam(exam_id: int) -> QuerySet[Session]:
+def get_sessions_for_exam(exam_id: int):
     """
     단일 진실: live regular exam이 속한 Session queryset 반환.
     """
-    return (
-        Session.objects
-        .filter(
-            exams__id=int(exam_id),
-            exams__exam_type=Exam.ExamType.REGULAR,
-            exams__is_active=True,
-        )
-        .distinct()
-        .order_by("order", "id")
-    )
+    return live_sessions_for_exam(int(exam_id))
 
 
-def get_primary_session_for_exam(exam_id: int) -> Optional[Session]:
+def get_primary_session_for_exam(exam_id: int) -> Optional[Any]:
     """
     ✅ 대표 session 반환
     """

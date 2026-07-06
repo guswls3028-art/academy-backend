@@ -7,12 +7,14 @@ from typing import Any, Dict, List
 from django.db.models import Avg, Min, Max, Count
 from django.utils import timezone
 
-from apps.domains.lectures.models import Session
-from apps.domains.progress.models import SessionProgress, ProgressPolicy
-
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.support.results.progress_read_dependencies import (
+    progress_policy_meta_for_lecture,
+    session_by_id,
+    session_progress_queryset_for_session,
+)
 
 
 @dataclass(frozen=True)
@@ -52,24 +54,12 @@ def _safe_str(v: Any) -> str:
         return ""
 
 
-def _policy_meta_for_session(session: Session) -> Dict[str, str]:
+def _policy_meta_for_session(session: Any) -> Dict[str, str]:
     """
     ProgressPolicy는 progress 도메인의 단일 진실.
     단, results 집계는 "표시용 메타"만 가져온다.
     """
-    try:
-        policy = ProgressPolicy.objects.filter(lecture=session.lecture).first()
-        strategy = _safe_str(getattr(policy, "exam_aggregate_strategy", "MAX") or "MAX")
-        pass_source = _safe_str(getattr(policy, "exam_pass_source", "EXAM") or "EXAM")
-        return {
-            "strategy": strategy,
-            "pass_source": pass_source,
-        }
-    except Exception:
-        return {
-            "strategy": "MAX",
-            "pass_source": "EXAM",
-        }
+    return progress_policy_meta_for_lecture(session.lecture)
 
 
 def build_session_results_snapshot(*, session_id: int) -> Dict[str, Any]:
@@ -93,7 +83,7 @@ def build_session_results_snapshot(*, session_id: int) -> Dict[str, Any]:
       "generated_at": "iso"
     }
     """
-    session = Session.objects.filter(id=_safe_int(session_id)).select_related("lecture").first()
+    session = session_by_id(_safe_int(session_id))
     if not session:
         return {
             "session_id": _safe_int(session_id),
@@ -112,7 +102,7 @@ def build_session_results_snapshot(*, session_id: int) -> Dict[str, Any]:
     pass_source = meta["pass_source"]
 
     # 세션 모수/통과율(집계 단일 진실)
-    sp_qs = SessionProgress.objects.filter(session=session)
+    sp_qs = session_progress_queryset_for_session(session)
     participant_count = sp_qs.count()
 
     pass_count = sp_qs.filter(exam_passed=True).count()
@@ -206,7 +196,7 @@ def build_session_scores_matrix_snapshot(*, session_id: int) -> Dict[str, Any]:
 
     (실제 테이블 rows는 SessionScoresView가 이미 제공하므로 여기서는 메타만 제공)
     """
-    session = Session.objects.filter(id=_safe_int(session_id)).select_related("lecture").first()
+    session = session_by_id(_safe_int(session_id))
     if not session:
         return {
             "session_id": _safe_int(session_id),
@@ -218,7 +208,7 @@ def build_session_scores_matrix_snapshot(*, session_id: int) -> Dict[str, Any]:
     exams = list(get_exams_for_session(session))
     exam_ids = [int(getattr(e, "id", 0) or 0) for e in exams if int(getattr(e, "id", 0) or 0)]
 
-    participant_count = SessionProgress.objects.filter(session=session).count()
+    participant_count = session_progress_queryset_for_session(session).count()
 
     return {
         "session_id": int(session.id),

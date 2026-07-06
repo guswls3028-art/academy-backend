@@ -5,8 +5,10 @@ from typing import Any, Iterable, Set
 
 from django.apps import apps
 
-from apps.domains.lectures.models import Session
-from apps.domains.progress.models import ClinicLink, SessionProgress
+from apps.support.results.progress_read_dependencies import (
+    clinic_link_queryset_for_session,
+    completed_enrollment_ids_for_session,
+)
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -18,7 +20,7 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
-def _link_source_id(link: ClinicLink, source_type: str) -> int | None:
+def _link_source_id(link: Any, source_type: str) -> int | None:
     meta = link.meta if isinstance(getattr(link, "meta", None), dict) else {}
     if getattr(link, "source_type", None) == source_type:
         return _int_or_none(
@@ -30,10 +32,10 @@ def _link_source_id(link: ClinicLink, source_type: str) -> int | None:
 
 
 def filter_live_source_links(
-    links: Iterable[ClinicLink],
+    links: Iterable[Any],
     *,
     tenant: Any,
-) -> list[ClinicLink]:
+) -> list[Any]:
     """
     ClinicLink read-side guard.
 
@@ -101,7 +103,7 @@ def filter_live_source_links(
             ).values_list("homework_id", "session_id", "enrollment_id")
         }
 
-    live_links: list[ClinicLink] = []
+    live_links: list[Any] = []
     for link in links_list:
         source_type = getattr(link, "source_type", None)
         session_id = int(getattr(link, "session_id", 0) or 0)
@@ -132,7 +134,7 @@ def filter_live_source_links(
 
 def get_clinic_enrollment_ids_for_session(
     *,
-    session: Session,
+    session: Any,
     include_manual: bool = False,
     exclude_completed: bool = True,
 ) -> Set[int]:
@@ -155,16 +157,11 @@ def get_clinic_enrollment_ids_for_session(
     """
     # tenant 격리: session.lecture.tenant로 명시 필터
     tenant_id = getattr(getattr(session, "lecture", None), "tenant_id", None)
-    qs = ClinicLink.objects.filter(session=session)
-    if tenant_id is not None:
-        qs = qs.filter(tenant_id=tenant_id)
-
-    qs = qs.filter(resolved_at__isnull=True)
-
-    if not include_manual:
-        qs = qs.filter(is_auto=True)
-
-    qs = qs.filter(enrollment__status="ACTIVE")
+    qs = clinic_link_queryset_for_session(
+        session=session,
+        tenant_id=tenant_id,
+        include_manual=include_manual,
+    )
 
     links = filter_live_source_links(
         qs.order_by("id"),
@@ -178,19 +175,16 @@ def get_clinic_enrollment_ids_for_session(
     if not exclude_completed or not ids:
         return ids
 
-    completed_ids = set(
-        SessionProgress.objects.filter(
-            session=session,
-            enrollment_id__in=ids,
-            completed=True,
-        ).values_list("enrollment_id", flat=True)
+    completed_ids = completed_enrollment_ids_for_session(
+        session=session,
+        enrollment_ids=ids,
     )
     return ids - {int(enrollment_id) for enrollment_id in completed_ids}
 
 
 def is_clinic_required(
     *,
-    session: Session,
+    session: Any,
     enrollment_id: int,
     include_manual: bool = False,
 ) -> bool:
