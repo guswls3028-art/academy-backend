@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from django.core.exceptions import ValidationError
 
+from apps.support.results.grading_dependencies import (
+    get_active_submission_enrollment,
+    submission_enrollment_assigned_to_exam,
+)
+
 
 def validate_exam_submission_scope(*, submission, exam):
     """Validate the async grading boundary before any score/result writes."""
@@ -12,31 +17,18 @@ def validate_exam_submission_scope(*, submission, exam):
     if not enrollment_id:
         raise ValidationError("submission enrollment is required")
 
-    from apps.domains.enrollment.models import Enrollment
-    from apps.domains.exams.models import ExamEnrollment
-
-    enrollment = (
-        Enrollment.objects
-        .filter(
-            id=int(enrollment_id),
-            tenant_id=int(submission.tenant_id),
-            status="ACTIVE",
-            student__deleted_at__isnull=True,
-        )
-        .select_related("student", "lecture")
-        .first()
-    )
+    enrollment = get_active_submission_enrollment(submission=submission)
     if not enrollment:
         raise ValidationError("submission enrollment is not active in tenant")
 
     if int(exam.tenant_id) != int(submission.tenant_id) or int(enrollment.tenant_id) != int(submission.tenant_id):
         raise ValidationError("submission, exam, and enrollment tenant mismatch")
 
-    in_exam = ExamEnrollment.objects.filter(
+    in_exam = submission_enrollment_assigned_to_exam(
         exam_id=int(exam.id),
         enrollment_id=int(enrollment.id),
-        enrollment__tenant_id=int(submission.tenant_id),
-    ).exists()
+        tenant_id=int(submission.tenant_id),
+    )
     if in_exam:
         return enrollment
 

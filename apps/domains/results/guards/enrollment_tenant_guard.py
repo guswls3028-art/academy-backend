@@ -7,15 +7,15 @@ from __future__ import annotations
 
 from rest_framework.exceptions import NotFound
 
-from apps.domains.enrollment.models import Enrollment
+from apps.support.results.grading_dependencies import get_enrollment_for_tenant
 
 
-def validate_enrollment_belongs_to_tenant(enrollment_id: int, tenant) -> Enrollment:
+def validate_enrollment_belongs_to_tenant(enrollment_id: int, tenant):
     """
     enrollment_id가 tenant에 속하는지 검증.
     속하지 않으면 NotFound (정보 유출 방지를 위해 404 사용).
     """
-    try:
-        return Enrollment.objects.get(id=enrollment_id, tenant=tenant)
-    except Enrollment.DoesNotExist:
+    enrollment = get_enrollment_for_tenant(enrollment_id=enrollment_id, tenant=tenant)
+    if not enrollment:
         raise NotFound("해당 수강 등록 정보를 찾을 수 없습니다.")
+    return enrollment

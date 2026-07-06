@@ -7,10 +7,8 @@ ExamResult만 있으면 404가 나는 문제를 해결하기 위해 호출.
 from __future__ import annotations
 
 from django.db import transaction
-from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
-from apps.domains.submissions.models import Submission
 from apps.domains.results.models import ExamResult, Result, ResultItem
 from apps.domains.results.guards.grading_contract import GradingContractGuard
 from apps.domains.results.services.attempt_service import ExamAttemptService
@@ -28,11 +26,15 @@ from apps.domains.results.services.submission_answer_map import (
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 from apps.support.omr.score_adjustment import get_score_adjustment_from_answers
 from apps.support.omr.score_shape import get_exam_score_shape
+from apps.support.results.grading_dependencies import (
+    get_exam_for_result_sync,
+    get_submission_for_result_sync,
+)
 
 
 def _sync_legacy_exam_result_snapshot(
     *,
-    submission: Submission,
+    submission,
     exam,
     items_payload: list[dict],
     objective_score: float,
@@ -89,7 +91,7 @@ def _sync_legacy_exam_result_snapshot(
 def _repair_attempt_initial_snapshot_for_submission(
     *,
     attempt,
-    submission: Submission,
+    submission,
     total_score: float,
     max_score: float,
 ) -> None:
@@ -138,16 +140,11 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     Submission(ONLINE) 채점 완료 후 Result/ResultItem 생성·갱신.
     enrollment_id는 Submission에서 가져옴.
     """
-    submission = get_object_or_404(
-        Submission.objects.select_related("user"),
-        id=int(submission_id),
-    )
+    submission = get_submission_for_result_sync(submission_id=int(submission_id))
     if submission.target_type != "exam":
         return None
 
-    from apps.domains.exams.models import Exam
-
-    exam = get_object_or_404(Exam, id=int(submission.target_id))
+    exam = get_exam_for_result_sync(exam_id=int(submission.target_id))
     enrollment_id = getattr(submission, "enrollment_id", None)
     if not enrollment_id:
         return None
