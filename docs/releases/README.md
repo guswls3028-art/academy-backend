@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.6.0.md](v1.6.0.md) | **CURRENT** | 2026-06-29 KST | Idle Batch cost cleanup + runtime env netprobe closure |
+| [v1.6.1.md](v1.6.1.md) | **CURRENT** | 2026-07-06 KST | Whole-project refactor closure + stale AI recovery + post-deploy operations/cost seal |
+| [v1.6.0.md](v1.6.0.md) | production-deployed / v1.6.1로 승계 | 2026-06-29 KST | Idle Batch cost cleanup + runtime env netprobe closure |
 | [v1.5.5.md](v1.5.5.md) | production-deployed / v1.6.0로 승계 | 2026-06-29 KST | Batched matchup hit-report candidate loading |
 | [v1.5.4.md](v1.5.4.md) | production-deployed / v1.5.5로 승계 | 2026-06-28 KST | Clean-PDF matchup reading-flow segmentation seal |
 | [v1.5.3.md](v1.5.3.md) | production-deployed / v1.5.4로 승계 | 2026-06-28 KST | Tenant 2 matchup question-crop incident closure |
