@@ -22,13 +22,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from django.db import models
-
-from apps.domains.lectures.models import Session
-from apps.domains.progress.models import ClinicLink, SessionProgress
-from apps.domains.exams.models import Exam
+from academy.adapters.db.django.repositories_clinic_targets import (
+    active_enrollment_ids_by_lecture,
+    clinic_links_for_admin_targets,
+    completed_progress_pairs,
+    enrollment_map_for_ids,
+    existing_clinic_link_pairs_for_sessions,
+    filter_links_by_section,
+    first_homework_score,
+    homework_policy_cutline_for_session,
+    homework_scores_for_target,
+    recent_sessions_for_tenant,
+    regular_exam_for_source,
+    regular_homework_for_clinic_target,
+    student_name_by_enrollment_id,
+)
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
-from apps.domains.homework_results.models import HomeworkScore, Homework
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.clinic import filter_live_source_links
@@ -126,58 +135,10 @@ def _get_student_name_by_enrollment_id(enrollment_id: int) -> str:
     2) enrollment.Enrollment 모델이 있으면 student/user 조인 시도
     3) 실패 시 "-"
     """
-    enrollment_id = int(enrollment_id)
-
-    # 1) SessionEnrollment (있으면 가장 확실)
-    try:
-        # 프로젝트에 따라 앱 경로가 다를 수 있음
-        # - apps.domains.enrollments.models.SessionEnrollment (가장 흔함)
-        # - apps.domains.enrollments.models.session_enrollment.SessionEnrollment 등
-        from apps.domains.enrollments.models import SessionEnrollment  # type: ignore
-
-        se = (
-            SessionEnrollment.objects.filter(enrollment_id=enrollment_id)
-            .order_by("-id")
-            .first()
-        )
-        if se:
-            # serializer 응답에 student_name이 있다고 했던 스펙과 정합성
-            v = getattr(se, "student_name", None)
-            if v:
-                return _safe_str(v, "-")
-
-            # 조인이 가능하면 student.name
-            st = getattr(se, "student", None)
-            if st and hasattr(st, "name"):
-                return _safe_str(getattr(st, "name", None), "-")
-    except Exception:
-        pass
-
-    # 2) Enrollment (기존 results 코드에서 사용 중)
-    try:
-        from apps.domains.enrollment.models import Enrollment  # type: ignore
-
-        e = Enrollment.objects.filter(id=enrollment_id).select_related().first()
-        if not e:
-            return "-"
-
-        # student FK가 있으면 우선
-        st = getattr(e, "student", None)
-        if st and hasattr(st, "name"):
-            return _safe_str(getattr(st, "name", None), "-")
-
-        # user가 학생 프로필을 들고 있을 수도
-        u = getattr(e, "user", None)
-        if u:
-            nm = getattr(u, "name", None) or getattr(u, "username", None)
-            return _safe_str(nm, "-")
-    except Exception:
-        pass
-
-    return "-"
+    return _safe_str(student_name_by_enrollment_id(int(enrollment_id)), "-")
 
 
-def _get_session_title(session: Session) -> str:
+def _get_session_title(session: Any) -> str:
     """
     세션 타이틀은 프로젝트마다 표현이 달라서:
     - __str__ 우선
@@ -224,30 +185,18 @@ class ClinicTargetService:
         # tenant 격리: tenant가 None이면 빈 결과 반환 (cross-tenant 누출 방지)
         if tenant is None:
             return []
-        links = (
-            ClinicLink.objects.filter(
-                is_auto=True,
-                tenant=tenant,
-            )
-            .select_related("session", "session__lecture")
-            .order_by("-created_at")
+        links = clinic_links_for_admin_targets(
+            tenant=tenant,
+            include_resolved=include_resolved,
         )
-        if not include_resolved:
-            links = links.filter(resolved_at__isnull=True)
-
-        # ✅ 퇴원(INACTIVE) 수강생의 ClinicLink 제외
-        links = links.filter(enrollment__status="ACTIVE")
 
         # section 필터: SectionAssignment 기반으로 해당 반 학생만 필터
         if section_id:
-            from apps.domains.lectures.models import SectionAssignment
-            assigned_enrollment_ids = set(
-                SectionAssignment.objects.filter(
-                    models.Q(class_section_id=section_id) | models.Q(clinic_section_id=section_id),
-                    tenant=tenant,
-                ).values_list("enrollment_id", flat=True)
+            links = filter_links_by_section(
+                links,
+                tenant=tenant,
+                section_id=int(section_id),
             )
-            links = links.filter(enrollment_id__in=assigned_enrollment_ids)
 
         links_list = list(links)
         if not include_resolved and links_list:
@@ -256,12 +205,9 @@ class ClinicTargetService:
         if not include_resolved and links_list:
             session_ids = list({int(getattr(lk, "session_id", 0) or 0) for lk in links_list} - {0})
             enrollment_ids_for_progress = list({int(getattr(lk, "enrollment_id", 0) or 0) for lk in links_list} - {0})
-            completed_pairs = set(
-                SessionProgress.objects.filter(
-                    session_id__in=session_ids,
-                    enrollment_id__in=enrollment_ids_for_progress,
-                    completed=True,
-                ).values_list("session_id", "enrollment_id")
+            completed_pairs = completed_progress_pairs(
+                session_ids=session_ids,
+                enrollment_ids=enrollment_ids_for_progress,
             )
             # 최종 진행 상태가 완료면 현재 대상자 목록에서 제외한다.
             # 남아 있는 미해소 ClinicLink는 데이터 잔상일 수 있으므로 운영 노출 SSOT는 completed를 우선한다.
@@ -276,11 +222,10 @@ class ClinicTargetService:
         # ✅ enrollment 일괄 조회 (N+1 방지 + 학생 SSOT 표시 필드)
         # 🔐 tenant 강제 — links는 tenant 스코프이지만 enrollment_id 참조는 강제 제약 없음.
         all_enrollment_ids = list({int(getattr(lk, "enrollment_id", 0) or 0) for lk in links_list} - {0})
-        from apps.domains.enrollment.models import Enrollment as _Enrollment
-        enrollment_map: Dict[int, Any] = {
-            int(e.id): e
-            for e in _Enrollment.objects.filter(id__in=all_enrollment_ids, tenant=tenant).select_related("student", "lecture")
-        }
+        enrollment_map = enrollment_map_for_ids(
+            tenant=tenant,
+            enrollment_ids=all_enrollment_ids,
+        )
 
         # ✅ 클리닉 하이라이트 (미출석 대상자 노란 형광펜)
         from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
@@ -292,7 +237,7 @@ class ClinicTargetService:
         out: List[Dict[str, Any]] = []
 
         # 세션별 exam 후보 캐시 (쿼리 절약)
-        exams_cache: Dict[int, Optional[Exam]] = {}
+        exams_cache: Dict[int, Optional[Any]] = {}
 
         for link in links_list:
             session = getattr(link, "session", None)
@@ -366,45 +311,41 @@ class ClinicTargetService:
             if source_type == "homework":
                 source_id = getattr(link, "source_id", None)
                 hw = (
-                    Homework.objects
-                    .filter(
-                        id=int(source_id),
+                    regular_homework_for_clinic_target(
+                        homework_id=int(source_id),
                         tenant=tenant,
-                        homework_type=Homework.HomeworkType.REGULAR,
                         session_id=session_id,
                     )
-                    .exclude(meta__removed_from_session_at__isnull=False)
-                    .first()
                     if source_id else None
                 )
                 hw_title = _safe_str(getattr(hw, "title", None), "-") if hw else "-"
 
                 # 1차 점수 (성적 산출 대상)
-                first_hw_score = HomeworkScore.objects.filter(
+                first_hw_score = first_homework_score(
                     enrollment_id=enrollment_id,
                     session_id=session_id,
                     homework_id=int(source_id) if source_id else 0,
-                    attempt_index=1,
-                ).first()
+                )
 
                 original_score = float(first_hw_score.score or 0) if first_hw_score and first_hw_score.score is not None else None
                 hw_max_score = float(first_hw_score.max_score or 100) if first_hw_score and first_hw_score.max_score else 100.0
 
                 # 과제 cutline은 HomeworkPolicy 기반
-                from apps.domains.homework.models import HomeworkPolicy
                 hw_tenant = getattr(lecture, "tenant", None) if lecture else None
                 cutline = 80.0
                 if hw_tenant:
-                    hp = HomeworkPolicy.objects.filter(tenant=hw_tenant, session=session).first()
-                    if hp:
-                        cutline = float(getattr(hp, "cutline_value", 80) or 80)
+                    cutline = homework_policy_cutline_for_session(
+                        tenant=hw_tenant,
+                        session=session,
+                        default=80.0,
+                    )
 
                 # 재시도 이력
-                all_hw_scores = HomeworkScore.objects.filter(
+                all_hw_scores = homework_scores_for_target(
                     enrollment_id=enrollment_id,
                     session_id=session_id,
                     homework_id=int(source_id) if source_id else 0,
-                ).order_by("attempt_index")
+                )
 
                 attempt_history = []
                 latest_attempt_index = 1
@@ -435,13 +376,11 @@ class ClinicTargetService:
             # ── Exam source (기존 로직 + 확장) ──
             source_id = getattr(link, "source_id", None)
             if source_type == "exam" and source_id:
-                exam = Exam.objects.filter(
-                    id=int(source_id),
+                exam = regular_exam_for_source(
+                    exam_id=int(source_id),
                     tenant=tenant,
-                    exam_type=Exam.ExamType.REGULAR,
-                    is_active=True,
-                    sessions__id=session_id,
-                ).first()
+                    session_id=session_id,
+                )
             else:
                 # Legacy fallback: 세션의 대표 exam
                 if session_id not in exams_cache:
@@ -540,7 +479,7 @@ class ClinicTargetService:
     def _find_missing_students(
         *,
         tenant: Any,
-        exams_cache: Dict[int, Optional[Exam]],
+        exams_cache: Dict[int, Optional[Any]],
         existing_enrollment_session_pairs: set,
     ) -> List[Dict[str, Any]]:
         """
@@ -550,8 +489,6 @@ class ClinicTargetService:
         """
         import datetime
         from django.utils import timezone
-        from apps.domains.enrollment.models import Enrollment
-
         if tenant is None:
             return []
 
@@ -562,11 +499,7 @@ class ClinicTargetService:
 
         # 시험이 있는 세션 수집
         sessions_with_exams: Dict[int, tuple] = {}  # session_id → (session, exam)
-        for session in (
-            Session.objects
-            .filter(lecture__tenant=tenant, date__gte=cutoff)
-            .select_related("lecture")
-        ):
+        for session in recent_sessions_for_tenant(tenant=tenant, cutoff=cutoff):
             sid = session.id
             if sid in exams_cache:
                 exam = exams_cache[sid]
@@ -600,11 +533,10 @@ class ClinicTargetService:
 
         # 강의별 ACTIVE 수강생 일괄 조회
         lecture_ids = list({session.lecture_id for session, _ in active_sessions.values()})
-        enrollments_by_lecture: Dict[int, set] = {}
-        for e in Enrollment.objects.filter(
-            lecture_id__in=lecture_ids, tenant=tenant, status="ACTIVE"
-        ).values("id", "lecture_id"):
-            enrollments_by_lecture.setdefault(e["lecture_id"], set()).add(e["id"])
+        enrollments_by_lecture = active_enrollment_ids_by_lecture(
+            tenant=tenant,
+            lecture_ids=lecture_ids,
+        )
 
         # 시험별 결과가 있는 수강생 일괄 조회
         results_by_exam: Dict[int, set] = {}
@@ -617,10 +549,8 @@ class ClinicTargetService:
             results_by_exam.setdefault(exam_id_val, set()).add(eid)
 
         # 기존 ClinicLink가 있는 (session, enrollment) 쌍 일괄 조회
-        existing_links = set(
-            ClinicLink.objects.filter(
-                session_id__in=active_sessions.keys(),
-            ).values_list("session_id", "enrollment_id")
+        existing_links = existing_clinic_link_pairs_for_sessions(
+            active_sessions.keys()
         )
 
         # 누락자 수집
