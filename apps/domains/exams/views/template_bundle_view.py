@@ -18,7 +18,6 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
 from apps.core.permissions import TenantResolvedAndMember
-from apps.domains.enrollment.models import SessionEnrollment
 from apps.domains.exams.models import Exam
 from apps.domains.exams.models.exam_enrollment import ExamEnrollment
 from apps.domains.exams.models.template_bundle import TemplateBundle, TemplateBundleItem
@@ -28,10 +27,14 @@ from apps.domains.exams.serializers.template_bundle import (
     TemplateBundleSerializer,
 )
 from apps.domains.exams.services.structure_copy_service import copy_exam_structure
-from apps.domains.homework.models.homework_assignment import HomeworkAssignment
-from apps.domains.homework_results.models.homework import Homework
-from apps.domains.lectures.models import Session
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import (
+    IsTeacherOrAdmin,
+    active_session_enrollment_ids,
+    bulk_create_homework_assignments,
+    create_regular_homework_from_template,
+    find_session_for_bundle_apply,
+    get_homework_template_for_bundle_item,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,11 +122,10 @@ class TemplateBundleViewSet(ModelViewSet):
                     )
 
             elif item_type == "homework":
-                homework_template = Homework.objects.filter(
-                    pk=item_data["homework_template_id"],
+                homework_template = get_homework_template_for_bundle_item(
+                    homework_template_id=item_data["homework_template_id"],
                     tenant=tenant,
-                    homework_type=Homework.HomeworkType.TEMPLATE,
-                ).first()
+                )
                 if not homework_template:
                     raise ValidationError(
                         f"과제 템플릿(ID={item_data['homework_template_id']})을 찾을 수 없거나 권한이 없습니다."
@@ -170,12 +172,11 @@ class ApplyBundleView(GenericAPIView):
             return Response({"detail": "묶음을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         # Validate session
-        try:
-            session = Session.objects.select_related("lecture").get(
-                pk=session_id,
-                lecture__tenant=tenant,
-            )
-        except Session.DoesNotExist:
+        session = find_session_for_bundle_apply(
+            session_id=session_id,
+            tenant=tenant,
+        )
+        if not session:
             return Response({"detail": "차시를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         created_exams = []
@@ -219,23 +220,17 @@ class ApplyBundleView(GenericAPIView):
                     title = item.title_override or item.homework_template.title
                     config = item.config or {}
 
-                    hw = Homework.objects.create(
+                    hw = create_regular_homework_from_template(
                         tenant=tenant,
                         title=title,
-                        homework_type=Homework.HomeworkType.REGULAR,
-                        template_homework=item.homework_template,
+                        homework_template=item.homework_template,
                         session=session,
-                        meta={"default_max_score": config.get("max_score", 100)},
+                        config=config,
                     )
                     created_homeworks.append({"id": hw.id, "title": hw.title})
 
             # ── 학생 자동 등록 (세션 수강생 전원) ──
-            enrollment_ids = list(
-                SessionEnrollment.objects.filter(
-                    session=session,
-                    enrollment__status="ACTIVE",
-                ).values_list("enrollment_id", flat=True)
-            )
+            enrollment_ids = active_session_enrollment_ids(session)
 
             if enrollment_ids:
                 for exam_data in created_exams:
@@ -248,17 +243,11 @@ class ApplyBundleView(GenericAPIView):
                     )
 
                 for hw_data in created_homeworks:
-                    HomeworkAssignment.objects.bulk_create(
-                        [
-                            HomeworkAssignment(
-                                tenant=tenant,
-                                homework_id=hw_data["id"],
-                                session=session,
-                                enrollment_id=eid,
-                            )
-                            for eid in enrollment_ids
-                        ],
-                        ignore_conflicts=True,
+                    bulk_create_homework_assignments(
+                        tenant=tenant,
+                        homework_id=hw_data["id"],
+                        session=session,
+                        enrollment_ids=enrollment_ids,
                     )
 
         return Response({

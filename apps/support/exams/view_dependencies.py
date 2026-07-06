@@ -11,6 +11,69 @@ def get_session_model():
     return Session
 
 
+def get_homework_template_for_bundle_item(*, homework_template_id: int, tenant):
+    from apps.domains.homework_results.models.homework import Homework
+
+    return Homework.objects.filter(
+        pk=homework_template_id,
+        tenant=tenant,
+        homework_type=Homework.HomeworkType.TEMPLATE,
+    ).first()
+
+
+def find_session_for_bundle_apply(*, session_id: int, tenant):
+    from apps.domains.lectures.models import Session
+
+    try:
+        return Session.objects.select_related("lecture").get(
+            pk=session_id,
+            lecture__tenant=tenant,
+        )
+    except Session.DoesNotExist:
+        return None
+
+
+def create_regular_homework_from_template(*, tenant, title: str, homework_template, session, config: dict):
+    from apps.domains.homework_results.models.homework import Homework
+
+    return Homework.objects.create(
+        tenant=tenant,
+        title=title,
+        homework_type=Homework.HomeworkType.REGULAR,
+        template_homework=homework_template,
+        session=session,
+        meta={"default_max_score": config.get("max_score", 100)},
+    )
+
+
+def active_session_enrollment_ids(session) -> list[int]:
+    from apps.domains.enrollment.models import SessionEnrollment
+
+    return list(
+        SessionEnrollment.objects.filter(
+            session=session,
+            enrollment__status="ACTIVE",
+        ).values_list("enrollment_id", flat=True)
+    )
+
+
+def bulk_create_homework_assignments(*, tenant, homework_id: int, session, enrollment_ids: list[int]) -> None:
+    from apps.domains.homework.models.homework_assignment import HomeworkAssignment
+
+    HomeworkAssignment.objects.bulk_create(
+        [
+            HomeworkAssignment(
+                tenant=tenant,
+                homework_id=homework_id,
+                session=session,
+                enrollment_id=enrollment_id,
+            )
+            for enrollment_id in enrollment_ids
+        ],
+        ignore_conflicts=True,
+    )
+
+
 def dispatch_progress_for_exam(*, exam_id: int) -> None:
     from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
