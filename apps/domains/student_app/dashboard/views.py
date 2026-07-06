@@ -7,10 +7,11 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
-from apps.domains.community.selectors import get_notice_posts_for_tenant
-from apps.domains.enrollment.selectors import active_enrollments_for_student
-from apps.domains.lectures.models import Session as LectureSession
-from apps.domains.clinic.models import SessionParticipant
+from apps.support.student_app.dashboard_dependencies import (
+    notice_posts_for_dashboard,
+    today_clinic_participants_for_dashboard,
+    today_lecture_sessions_for_dashboard,
+)
 from .serializers import StudentDashboardSerializer
 
 
@@ -73,30 +74,11 @@ class StudentDashboardView(APIView):
                 "academies": academies,
             }
             # 공지: 학생 수강 기반 스코프 필터링 (전체글 + 수강 강의/세션 글만)
-            notice_qs = get_notice_posts_for_tenant(tenant)
             student = get_request_student(request)
-            if student:
-                from apps.domains.community.models import ScopeNode as _ScopeNode, PostMapping as _PostMapping
-                from django.db.models import Q as _Q
-                _enrolled_lids = set(
-                    active_enrollments_for_student(
-                        tenant=tenant,
-                        student=student,
-                    ).values_list("lecture_id", flat=True)
-                )
-                _visible_nids = set(
-                    _ScopeNode.objects.filter(
-                        tenant=tenant, lecture_id__in=_enrolled_lids
-                    ).values_list("id", flat=True)
-                )
-                _scoped_pids = set(
-                    _PostMapping.objects.filter(
-                        node_id__in=_visible_nids
-                    ).values_list("post_id", flat=True)
-                )
-                notice_qs = notice_qs.filter(
-                    _Q(mappings__isnull=True) | _Q(id__in=_scoped_pids)
-                ).distinct()
+            notice_qs = notice_posts_for_dashboard(
+                tenant=tenant,
+                student=student,
+            )
             notice_list = notice_qs[:5]
             data["notices"] = [
                 {"id": p.id, "title": getattr(p, "title", "") or "", "created_at": getattr(p, "created_at", None), "is_urgent": getattr(p, "is_urgent", False)}
@@ -107,16 +89,10 @@ class StudentDashboardView(APIView):
                 student = get_request_student(request)
             if student:
                 today = timezone.localdate()
-                sessions = (
-                    LectureSession.objects.filter(
-                        session_enrollments__enrollment__student=student,
-                        session_enrollments__enrollment__tenant=tenant,
-                        session_enrollments__enrollment__status="ACTIVE",
-                        date=today,
-                    )
-                    .select_related("lecture")
-                    .distinct()
-                    .order_by("order", "id")
+                sessions = today_lecture_sessions_for_dashboard(
+                    tenant=tenant,
+                    student=student,
+                    today=today,
                 )
                 data["today_sessions"] = [
                     {
@@ -136,15 +112,10 @@ class StudentDashboardView(APIView):
                     for s in sessions
                 ]
                 # 오늘 클리닉 예약 (PENDING/BOOKED)
-                clinic_today = (
-                    SessionParticipant.objects.filter(
-                        student=student,
-                        tenant=tenant,
-                        status__in=[SessionParticipant.Status.PENDING, SessionParticipant.Status.BOOKED],
-                        session__isnull=False,
-                        session__date=today,
-                    )
-                    .select_related("session")
+                clinic_today = today_clinic_participants_for_dashboard(
+                    tenant=tenant,
+                    student=student,
+                    today=today,
                 )
                 for cp in clinic_today:
                     sess = cp.session
