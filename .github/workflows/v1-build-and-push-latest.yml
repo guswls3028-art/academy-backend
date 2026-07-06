@@ -702,12 +702,14 @@ jobs:
           if [ "$TARGET_DESIRED" -lt 2 ]; then
             TARGET_DESIRED=2
           fi
-          if [ "$CURRENT_MIN" -ne 1 ] || [ "$CURRENT_DESIRED" -lt 2 ] || [ "$CURRENT_MAX" -ne 3 ]; then
-            echo "Reconciling API ASG for deploy headroom min=1 desired=$TARGET_DESIRED max=3 (was min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
+          # Keep min=2 only during refresh so target-tracking scale-in cannot
+          # remove the spare ALB target while the replacement is still warming.
+          if [ "$CURRENT_MIN" -ne 2 ] || [ "$CURRENT_DESIRED" -lt 2 ] || [ "$CURRENT_MAX" -ne 3 ]; then
+            echo "Reconciling API ASG for deploy headroom min=2 desired=$TARGET_DESIRED max=3 (was min=$CURRENT_MIN desired=$CURRENT_DESIRED max=$CURRENT_MAX)..."
             aws autoscaling update-auto-scaling-group \
               --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
               --region ${{ env.AWS_REGION }} \
-              --min-size 1 \
+              --min-size 2 \
               --max-size 3 \
               --desired-capacity "$TARGET_DESIRED"
 
@@ -760,7 +762,7 @@ jobs:
               echo "::warning::Only $ALB_HEALTHY ALB-healthy target(s) after 5 min, proceeding with caution"
             fi
           else
-            echo "API ASG already has deploy headroom min=1 desired=$CURRENT_DESIRED max=3"
+            echo "API ASG already has deploy headroom min=2 desired=$CURRENT_DESIRED max=3"
           fi
 
       - name: Start API ASG instance refresh
@@ -769,7 +771,7 @@ jobs:
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.API_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --preferences "{\"MinHealthyPercentage\":100,\"InstanceWarmup\":${API_INSTANCE_WARMUP},\"SkipMatching\":false}" \
+            --preferences "{\"MinHealthyPercentage\":100,\"MaxHealthyPercentage\":200,\"InstanceWarmup\":${API_INSTANCE_WARMUP},\"SkipMatching\":false}" \
             --query 'InstanceRefreshId' \
             --output text)
           echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
