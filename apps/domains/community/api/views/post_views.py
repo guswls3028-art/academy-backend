@@ -24,9 +24,15 @@ from apps.domains.community.selectors import (
 )
 from apps.domains.community.services import CommunityService
 from apps.domains.community.models import PostEntity, PostReply, PostAttachment, PostLike, PostReplyLike, CommunityReport, CommunityUserBlock, CommunityNotification
-from apps.domains.student_app.permissions import get_request_student
 from apps.core.permissions import TenantResolvedAndMember
 from apps.core.parsing import parse_bool
+from apps.support.community.post_dependencies import (
+    dispatch_qna_matchup_search,
+    get_reply_event_notifier,
+    get_request_student,
+    student_activity_rank,
+    visible_scope_node_ids_for_students,
+)
 
 from ._common import (
     _get_tenant_from_request,
@@ -103,19 +109,9 @@ class PostViewSet(viewsets.ModelViewSet):
         if not tenant or not student_ids:
             return set()
 
-        from apps.domains.enrollment.models import Enrollment
-        from apps.domains.community.models import ScopeNode
-
-        lecture_ids = Enrollment.objects.filter(
+        return visible_scope_node_ids_for_students(
             tenant=tenant,
-            student_id__in=student_ids,
-            status="ACTIVE",
-        ).values_list("lecture_id", flat=True)
-        return set(
-            ScopeNode.objects.filter(
-                tenant=tenant,
-                lecture_id__in=lecture_ids,
-            ).values_list("id", flat=True)
+            student_ids=student_ids,
         )
 
     def _own_student_post_filter(self, request) -> Q:
@@ -354,7 +350,6 @@ class PostViewSet(viewsets.ModelViewSet):
         SSOT: AdminCommunityStatsView의 top_students 알고리즘 재사용.
         """
         from datetime import timedelta
-        from django.db.models import Count, F, Q
         from django.utils import timezone
         from apps.domains.community.models import PostLike, PostReplyLike
         tenant = getattr(request, "tenant", None)
@@ -397,22 +392,12 @@ class PostViewSet(viewsets.ModelViewSet):
         if lifetime_received_likes >= 50: badges.append({"key": "popular", "label": "🌟 인기 (♥ 50+)"})
 
         # ranking — 본인 score + 본인보다 높은 점수 학생 수
-        from apps.domains.students.models import Student
-        ranking_qs = (
-            Student.objects.filter(tenant=tenant, deleted_at__isnull=True)
-            .annotate(
-                pc=Count("post_entities", filter=Q(post_entities__created_at__gte=since), distinct=True),
-                rc=Count("post_replies", filter=Q(post_replies__created_at__gte=since), distinct=True),
-            )
-            .annotate(activity_score=F("pc") + F("rc"))
-            .filter(activity_score__gt=0)
-        )
         my_score = post_count + reply_count
-        rank = None
-        total_active = ranking_qs.count()
-        if my_score > 0:
-            higher = ranking_qs.filter(activity_score__gt=my_score).count()
-            rank = higher + 1
+        rank, total_active = student_activity_rank(
+            tenant=tenant,
+            since=since,
+            my_score=my_score,
+        )
         return Response({
             "is_student": True,
             "days": days,
@@ -773,7 +758,7 @@ class PostViewSet(viewsets.ModelViewSet):
                 send_targets = ("student",)
 
             try:
-                from apps.domains.messaging.services import send_event_notification
+                send_event_notification = get_reply_event_notifier()
             except Exception as e:
                 logger.warning("community reply primary notification unavailable: post_id=%s err=%s", post.id, e)
                 send_event_notification = None
@@ -1174,22 +1159,10 @@ def _dispatch_qna_matchup(post, attachments, tenant):
     att = image_atts[0]  # 첫 번째 이미지만 검색
 
     try:
-        from apps.domains.ai.gateway import dispatch_job
-        from apps.domains.community.services.attachment_urls import build_attachment_download_url
-
-        download_url = build_attachment_download_url(att, expires_in=3600, force_download=False)
-        result = dispatch_job(
-            job_type="matchup_search_qna",
-            payload={
-                "download_url": download_url,
-                "post_id": str(post.id),
-                "attachment_id": str(att.id),
-                "r2_key": att.r2_key,
-                "tenant_id": str(tenant.id),
-            },
-            tenant_id=str(tenant.id),
-            source_domain="community_qna",
-            source_id=str(post.id),
+        result = dispatch_qna_matchup_search(
+            post=post,
+            attachment=att,
+            tenant=tenant,
         )
         logger.info(
             "QNA_MATCHUP_DISPATCHED | post_id=%s | att_id=%s | ok=%s",
