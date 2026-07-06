@@ -64,6 +64,7 @@ _POL = "apps.domains.messaging.policy"
 _SVC = "apps.domains.messaging.services"
 _QSV = "apps.domains.messaging.services.queue_service"
 _SQS = "apps.domains.messaging.sqs_queue"
+_ATT_VIEWS = "apps.domains.attendance.views"
 
 
 # ──────────────────────────────────────────
@@ -976,7 +977,7 @@ class TestEnrollmentAndWithdrawalNotifications(TestCase):
 class TestTimeGuard(TestCase):
     """출결 알림톡 time guard: 오늘 세션만 발송."""
 
-    @patch(f"{_SVC}.send_event_notification")
+    @patch(f"{_ATT_VIEWS}.send_event_notification")
     def test_past_date_session_skipped(self, mock_send):
         """과거 날짜 세션 출결 변경 시 알림톡 발송하지 않음."""
         from datetime import date, timedelta
@@ -993,7 +994,7 @@ class TestTimeGuard(TestCase):
 
         mock_send.assert_not_called()
 
-    @patch(f"{_SVC}.send_event_notification")
+    @patch(f"{_ATT_VIEWS}.send_event_notification")
     def test_today_session_sends(self, mock_send):
         """오늘 날짜 세션 출결 변경 시 알림톡 정상 발송."""
         from datetime import date
@@ -1227,7 +1228,7 @@ class TestDryRunMode(TestCase):
 class TestAttendanceNotificationHook(TestCase):
     """일반 출결 상태 변경 시 현재 알림톡 훅이 유지되는지 확인."""
 
-    @patch(f"{_SVC}.send_event_notification")
+    @patch(f"{_ATT_VIEWS}.send_event_notification")
     def test_partial_update_keeps_notification_hook(self, mock_send):
         """partial_update는 PRESENT/ABSENT 전환 시 알림 훅을 유지한다."""
         from apps.domains.attendance import views as att_views

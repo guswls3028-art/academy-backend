@@ -20,6 +20,13 @@ from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
+from apps.support.messaging.assignment_not_submitted_dependencies import (
+    assignments_for_homework_session,
+    first_attempt_homework_is_not_submitted,
+    homeworks_for_session,
+    sessions_for_assignment_not_submitted,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,9 +54,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from apps.core.models import Tenant
-        from apps.domains.lectures.models import Session
-        from apps.domains.homework.models import HomeworkAssignment
-        from apps.domains.homework_results.models import HomeworkScore, Homework
         from apps.domains.messaging.selectors import get_auto_send_config
         from apps.domains.messaging.services import send_event_notification
         from apps.domains.messaging.policy import get_owner_tenant_id
@@ -67,11 +71,10 @@ class Command(BaseCommand):
         self.stdout.write(f"Target date: {target_date} (dry_run={dry_run})")
 
         # 대상 세션 조회
-        sessions_qs = Session.objects.filter(date=target_date).select_related("lecture")
-        if tenant_id_filter:
-            sessions_qs = sessions_qs.filter(lecture__tenant_id=tenant_id_filter)
-
-        sessions = list(sessions_qs)
+        sessions = sessions_for_assignment_not_submitted(
+            target_date=target_date,
+            tenant_id=tenant_id_filter,
+        )
         if not sessions:
             self.stdout.write("No sessions found for target date.")
             return
@@ -99,16 +102,16 @@ class Command(BaseCommand):
                 continue
 
             # 해당 세션의 과제 목록
-            homeworks = list(Homework.objects.filter(session=session))
+            homeworks = homeworks_for_session(session)
             if not homeworks:
                 continue
 
             for homework in homeworks:
                 # 과제 대상자
-                assignments = HomeworkAssignment.objects.filter(
+                assignments = assignments_for_homework_session(
                     homework=homework,
                     session=session,
-                ).select_related("enrollment__student")
+                )
 
                 for assignment in assignments:
                     enrollment = assignment.enrollment
@@ -120,23 +123,10 @@ class Command(BaseCommand):
                     if enrollment.status != "ACTIVE":
                         continue
 
-                    # HomeworkScore 존재 확인 (1차 시도)
-                    hw_score = HomeworkScore.objects.filter(
+                    is_not_submitted = first_attempt_homework_is_not_submitted(
                         homework=homework,
                         enrollment=enrollment,
-                        attempt_index=1,
-                    ).first()
-
-                    # 미제출 조건: HomeworkScore 없음 OR score=None & meta.status 미설정
-                    is_not_submitted = False
-                    if not hw_score:
-                        is_not_submitted = True
-                    elif hw_score.score is None:
-                        meta = hw_score.meta if isinstance(hw_score.meta, dict) else {}
-                        if meta.get("status") != HomeworkScore.MetaStatus.NOT_SUBMITTED:
-                            # 아직 미입력 상태 → 미제출로 간주
-                            is_not_submitted = True
-
+                    )
                     if not is_not_submitted:
                         skip_count += 1
                         continue
