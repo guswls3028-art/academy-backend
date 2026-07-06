@@ -22,7 +22,7 @@ from .results.views import (
     MyGradesSummaryView,
 )
 from .profile.views import StudentProfileView
-from apps.domains.fees.views import (
+from apps.support.student_app.fee_route_dependencies import (
     StudentFeeInvoiceListView,
     StudentFeeInvoiceDetailView,
     StudentFeePaymentListView,

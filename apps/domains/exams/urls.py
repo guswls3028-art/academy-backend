@@ -9,7 +9,7 @@ from apps.domains.exams.views.answer_key_view import AnswerKeyViewSet
 
 from apps.domains.exams.views.exam_asset_view import ExamAssetView
 from apps.domains.exams.views.omr_generate_view import GenerateOMRSheetAssetView
-from apps.domains.assets.omr.views.omr_document_views import (
+from apps.support.omr.route_dependencies import (
     ExamOMRDefaultsView,
     ExamOMRPreviewView,
     ExamOMRPdfView,

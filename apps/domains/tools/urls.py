@@ -10,7 +10,7 @@ from .problem_studio.views import (
     ProblemStudioTransferJobCreateView,
 )
 from .timer_download_view import TimerDownloadView
-from apps.domains.assets.omr.views.omr_document_views import (
+from apps.support.omr.route_dependencies import (
     ToolsOMRPreviewView,
     ToolsOMRPdfView,
 )

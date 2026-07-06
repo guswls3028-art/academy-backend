@@ -8,13 +8,13 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
 from academy.adapters.db.django import repositories_ai as ai_repo
-from apps.domains.ai.gateway import dispatch_job
 from apps.domains.tools.problem_studio.services import extract_sources, parse_payload, source_extraction_to_payload
 from apps.domains.tools.problem_studio.async_transfer import build_source_archive
 from apps.domains.tools.problem_studio.transfer_documents import (
     build_transfer_package,
     package_to_response,
 )
+from apps.support.tools.ai_dependencies import dispatch_tools_ai_job
 
 
 class ProblemStudioTransferDocumentView(APIView):
@@ -78,7 +78,7 @@ class ProblemStudioTransferJobCreateView(APIView):
                 content_type="application/zip",
             )
 
-            result = dispatch_job(
+            result = dispatch_tools_ai_job(
                 job_type="problem_studio_transfer",
                 payload={
                     "problem_studio_payload": payload,
@@ -148,7 +148,7 @@ class ProblemStudioJobCreateView(APIView):
                 payload = dict(request.data)
             sources = extract_sources(request.FILES.getlist("source_files"))
             source_payloads = [source_extraction_to_payload(source) for source in sources]
-            result = dispatch_job(
+            result = dispatch_tools_ai_job(
                 job_type="problem_studio_package",
                 payload={
                     "problem_studio_payload": payload,

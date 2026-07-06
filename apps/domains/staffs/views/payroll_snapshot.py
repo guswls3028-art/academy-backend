@@ -18,6 +18,7 @@ from reportlab.lib.styles import getSampleStyleSheet
 from ..serializers import PayrollSnapshotSerializer
 from academy.adapters.db.django import repositories_staffs as staff_repo
 from .helpers import IsPayrollManager
+from apps.support.staffs.ai_dependencies import dispatch_staffs_ai_job
 
 # ===========================
 # PayrollSnapshot (ReadOnly + Export)
@@ -46,9 +47,7 @@ class PayrollSnapshotViewSet(ReadOnlyModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from apps.domains.ai.gateway import dispatch_job
-
-        out = dispatch_job(
+        out = dispatch_staffs_ai_job(
             job_type="staff_excel_export",
             payload={
                 "tenant_id": str(tenant.id),

@@ -13,6 +13,7 @@ from __future__ import annotations
 from django.core.management.base import BaseCommand
 
 from apps.domains.matchup.models import MatchupProblem
+from apps.support.matchup.service_dependencies import dispatch_ai_job
 
 
 class Command(BaseCommand):
@@ -25,8 +26,6 @@ class Command(BaseCommand):
         parser.add_argument("--limit", type=int, default=500)
 
     def handle(self, *args, **opts):
-        from apps.domains.ai.gateway import dispatch_job
-
         qs = MatchupProblem.objects.filter(
             embedding__isnull=True,
             meta__manual=True,
@@ -52,7 +51,7 @@ class Command(BaseCommand):
         failed = 0
         for p in problems:
             try:
-                result = dispatch_job(
+                result = dispatch_ai_job(
                     job_type="matchup_manual_index",
                     payload={
                         "problem_id": p.id,

@@ -39,6 +39,12 @@ def grade_submission_objective(submission_id: int):
     return grade_submission(int(submission_id))
 
 
+def dispatch_submission_ai_job(**kwargs: Any) -> Any:
+    from apps.domains.ai.gateway import dispatch_job
+
+    return dispatch_job(**kwargs)
+
+
 def complete_submission_after_auto_grade(submission, *, actor: str) -> None:
     from django.core.exceptions import ValidationError
 

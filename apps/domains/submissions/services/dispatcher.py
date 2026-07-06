@@ -14,8 +14,12 @@ from apps.domains.submissions.services.lifecycle import (
     mark_grading,
 )
 
-from apps.domains.ai.gateway import dispatch_job
-from apps.support.submissions.dependencies import grade_submission_objective
+from apps.support.submissions.dependencies import (
+    dispatch_submission_ai_job,
+    grade_submission_objective,
+)
+
+dispatch_job = dispatch_submission_ai_job
 
 # AI 워커 EC2 제어 (2026-05-12: apps/domains/ai/services -> academy/adapters/compute 이관)
 from academy.adapters.compute.ec2_control import start_ai_worker_instance
