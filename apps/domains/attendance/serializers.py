@@ -2,18 +2,20 @@
 
 from rest_framework import serializers
 from .models import Attendance
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.enrollment.selectors import enrollments_for_tenant
-from apps.domains.lectures.models import Session
+from apps.support.attendance.serializer_dependencies import (
+    clinic_highlight_map_for_attendance,
+    enrollment_queryset_for_attendance_serializer,
+    session_queryset_for_attendance_serializer,
+)
 
 
 class AttendanceSerializer(serializers.ModelSerializer):
     session = serializers.PrimaryKeyRelatedField(
-        queryset=Session.objects.select_related("lecture").all(),
+        queryset=session_queryset_for_attendance_serializer(),
     )
     enrollment_id = serializers.PrimaryKeyRelatedField(
         source="enrollment",
-        queryset=Enrollment.objects.select_related("lecture", "student").all(),
+        queryset=enrollment_queryset_for_attendance_serializer(),
     )
     student_id = serializers.IntegerField(
         source="enrollment.student_id",
@@ -49,12 +51,8 @@ class AttendanceSerializer(serializers.ModelSerializer):
         request = self.context.get("request")
         tenant = getattr(request, "tenant", None) if request else None
         if tenant:
-            self.fields["session"].queryset = (
-                Session.objects
-                .filter(lecture__tenant=tenant)
-                .select_related("lecture")
-            )
-            self.fields["enrollment_id"].queryset = enrollments_for_tenant(tenant)
+            self.fields["session"].queryset = session_queryset_for_attendance_serializer(tenant)
+            self.fields["enrollment_id"].queryset = enrollment_queryset_for_attendance_serializer(tenant)
 
     class Meta:
         model = Attendance
@@ -147,8 +145,10 @@ class AttendanceSerializer(serializers.ModelSerializer):
             ctx["_clinic_highlight_map"] = {}
             return {}
 
-        from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
-        highlight_map = compute_clinic_highlight_map(tenant=tenant, enrollment_ids=enrollment_ids)
+        highlight_map = clinic_highlight_map_for_attendance(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+        )
         ctx["_clinic_highlight_map"] = highlight_map
         return highlight_map
 
