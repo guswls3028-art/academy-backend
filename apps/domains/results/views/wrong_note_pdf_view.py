@@ -1,6 +1,8 @@
 # PATH: apps/domains/results/views/wrong_note_pdf_view.py
 from __future__ import annotations
 
+from typing import Any
+
 from django.urls import reverse
 
 from rest_framework.views import APIView
@@ -9,10 +11,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
 from apps.core.permissions import TenantResolvedAndMember, is_effective_staff
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.exams.models import Exam
-from apps.domains.lectures.models import Lecture
 from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
+from apps.support.results.wrong_note_pdf_dependencies import (
+    exam_exists_for_tenant,
+    exam_is_attached_to_lecture,
+    get_wrong_note_pdf_enrollment,
+    lecture_exists_for_tenant,
+)
 
 
 class WrongNotePDFCreateView(APIView):
@@ -32,12 +37,14 @@ class WrongNotePDFCreateView(APIView):
 
     permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
-    def _get_allowed_enrollment(self, request, enrollment_id: int) -> Enrollment:
+    def _get_allowed_enrollment(self, request, enrollment_id: int) -> Any:
         user = request.user
 
         # ✅ tenant isolation: always verify enrollment belongs to tenant
-        qs = Enrollment.objects.filter(id=int(enrollment_id), tenant=request.tenant)
-        enrollment = qs.select_related("student", "lecture").first()
+        enrollment = get_wrong_note_pdf_enrollment(
+            enrollment_id=int(enrollment_id),
+            tenant=request.tenant,
+        )
         if not enrollment:
             raise PermissionDenied("You cannot create PDF for this enrollment_id.")
 
@@ -56,7 +63,7 @@ class WrongNotePDFCreateView(APIView):
             raise PermissionDenied("You cannot create PDF for this enrollment_id.")
         return enrollment
 
-    def _validate_scope_ids(self, request, enrollment: Enrollment) -> tuple[int | None, int | None]:
+    def _validate_scope_ids(self, request, enrollment: Any) -> tuple[int | None, int | None]:
         lecture_id = request.data.get("lecture_id")
         exam_id = request.data.get("exam_id")
 
@@ -64,15 +71,20 @@ class WrongNotePDFCreateView(APIView):
         if lecture_id_i is not None:
             if lecture_id_i != enrollment.lecture_id:
                 raise ValidationError({"lecture_id": "수강 등록의 강의와 일치하지 않습니다."})
-            if not Lecture.objects.filter(id=lecture_id_i, tenant=request.tenant).exists():
+            if not lecture_exists_for_tenant(lecture_id=lecture_id_i, tenant=request.tenant):
                 raise ValidationError({"lecture_id": "해당 강의를 찾을 수 없습니다."})
 
         exam_id_i = int(exam_id) if exam_id else None
         if exam_id_i is not None:
-            exam = Exam.objects.filter(id=exam_id_i, tenant=request.tenant).first()
-            if not exam:
+            if not exam_exists_for_tenant(
+                exam_id=exam_id_i,
+                tenant=request.tenant,
+            ):
                 raise ValidationError({"exam_id": "해당 시험을 찾을 수 없습니다."})
-            if not exam.sessions.filter(lecture_id=enrollment.lecture_id).exists():
+            if not exam_is_attached_to_lecture(
+                exam_id=exam_id_i,
+                lecture_id=enrollment.lecture_id,
+            ):
                 raise ValidationError({"exam_id": "수강 등록의 강의에 연결된 시험만 선택할 수 있습니다."})
 
         return lecture_id_i, exam_id_i

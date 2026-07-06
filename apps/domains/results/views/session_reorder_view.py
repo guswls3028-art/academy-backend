@@ -12,15 +12,16 @@ Payload:
 """
 from __future__ import annotations
 
-from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.lectures.models import Session
-from apps.domains.exams.models import Exam
-from apps.domains.homework_results.models import Homework
+from apps.support.results.session_reorder_dependencies import (
+    get_session_for_tenant,
+    reorder_session_exams,
+    reorder_session_homeworks,
+)
 
 
 class SessionReorderView(APIView):
@@ -31,39 +32,21 @@ class SessionReorderView(APIView):
         if not tenant:
             return Response({"detail": "Tenant required"}, status=403)
 
-        session = get_object_or_404(
-            Session, id=int(session_id), lecture__tenant=tenant
-        )
+        session = get_session_for_tenant(session_id=int(session_id), tenant=tenant)
 
         exam_order = request.data.get("exams", [])
         hw_order = request.data.get("homeworks", [])
 
         if exam_order:
-            exams = list(
-                Exam.objects.filter(
-                    id__in=[int(x) for x in exam_order],
-                    sessions=session,
-                )
+            reorder_session_exams(
+                session=session,
+                ordered_ids=[int(exam_id) for exam_id in exam_order],
             )
-            exam_map = {int(e.id): e for e in exams}
-            for idx, eid in enumerate(exam_order):
-                exam = exam_map.get(int(eid))
-                if exam and exam.display_order != idx:
-                    exam.display_order = idx
-                    exam.save(update_fields=["display_order"])
 
         if hw_order:
-            homeworks = list(
-                Homework.objects.filter(
-                    id__in=[int(x) for x in hw_order],
-                    session=session,
-                )
+            reorder_session_homeworks(
+                session=session,
+                ordered_ids=[int(homework_id) for homework_id in hw_order],
             )
-            hw_map = {int(h.id): h for h in homeworks}
-            for idx, hid in enumerate(hw_order):
-                hw = hw_map.get(int(hid))
-                if hw and hw.display_order != idx:
-                    hw.display_order = idx
-                    hw.save(update_fields=["display_order"])
 
         return Response({"ok": True})
