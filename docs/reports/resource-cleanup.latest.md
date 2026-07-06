@@ -1,6 +1,6 @@
 # V1 리소스 정리·재검증 결과
 
-**리전:** ap-northeast-2 **갱신:** 2026-06-29T05:59:09.9217006+09:00 **모드:** DryRun
+**리전:** ap-northeast-2 **갱신:** 2026-07-06T17:45:46.4097229+09:00 **모드:** DryRun
 **SSOT:** docs/ssot/params.yaml
 
 ## 요약
@@ -15,8 +15,8 @@
 ## Running instances (VPC)
 | InstanceId | Name | Type | ASG |
 |------------|------|------|-----|
-| i-04f24828b1631da9d | academy-v1-messaging-worker | t4g.medium | academy-v1-messaging-worker-asg |
-| i-098d6cc8aae98e732 | academy-v1-api | t4g.medium | academy-v1-api-asg |
+| i-0e77e903787b2d638 | academy-v1-api | t4g.medium | academy-v1-api-asg |
+| i-0f63c1190fbb1bb80 | academy-v1-messaging-worker | t4g.medium | academy-v1-messaging-worker-asg |
 
 ## Security Groups (VPC)
 | GroupId | GroupName |
@@ -30,8 +30,8 @@
 ## Elastic IP
 | AllocationId | PublicIp | Associated | VpcId |
 |--------------|----------|------------|-------|
-| eipalloc-0eba69c4c7d97e209 | 3.34.175.213 | True | vpc-0831a2484f9b114c2 |
-| eipalloc-0825e192fdd2d19a0 | 43.201.90.129 | True | vpc-0831a2484f9b114c2 |
+| eipalloc-042542895df5cef09 | 13.125.8.19 | True | vpc-0831a2484f9b114c2 |
+| eipalloc-058fcc33fc7f2cdca | 15.164.79.63 | True | vpc-0831a2484f9b114c2 |
 | eipalloc-08adac5f5914cbac1 | 43.202.246.97 | True | vpc-0b89e02241aae4b0e |
 
 ## ASG (academy/v1 + Batch-managed)

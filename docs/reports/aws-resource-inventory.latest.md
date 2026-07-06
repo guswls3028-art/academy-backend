@@ -1,12 +1,12 @@
 # AWS 리소스 인벤토리 (V1 SSOT 기준)
 
-**리전:** ap-northeast-2 **VPC:** vpc-0831a2484f9b114c2 **생성:** 2026-06-29T05:59:43.7580177+09:00
+**리전:** ap-northeast-2 **VPC:** vpc-0831a2484f9b114c2 **생성:** 2026-07-06T17:31:05.0416023+09:00
 
 ## EC2 인스턴스
 | InstanceId | State | Name | SSOT |
 |------------|-------|------|------|
-| i-04f24828b1631da9d | running | academy-v1-messaging-worker | KEEP |
-| i-098d6cc8aae98e732 | running | academy-v1-api | KEEP |
+| i-0e77e903787b2d638 | running | academy-v1-api | KEEP |
+| i-0f63c1190fbb1bb80 | running | academy-v1-messaging-worker | KEEP |
 
 ## Auto Scaling Groups
 | Name | Desired | Min | Max | SSOT |
@@ -21,8 +21,8 @@
 ## Elastic IPs
 | AllocationId | PublicIp | AssociationId | NetworkInterfaceId | VpcId | SSOT |
 |--------------|----------|---------------|--------------------|-------|------|
-| eipalloc-0eba69c4c7d97e209 | 3.34.175.213 | eipassoc-0ea8504e0ac06b0d2 | eni-0cc8626ffc2207f8e | vpc-0831a2484f9b114c2 | KEEP |
-| eipalloc-0825e192fdd2d19a0 | 43.201.90.129 | eipassoc-0b80b5a8c72c7acf2 | eni-049cd7d40bc6f219f | vpc-0831a2484f9b114c2 | KEEP |
+| eipalloc-042542895df5cef09 | 13.125.8.19 | eipassoc-05b1d36f6f446c9fc | eni-0033153054cd07090 | vpc-0831a2484f9b114c2 | KEEP |
+| eipalloc-058fcc33fc7f2cdca | 15.164.79.63 | eipassoc-0cdaffe3c103fe4a8 | eni-03ecb9aa6bc83687d | vpc-0831a2484f9b114c2 | KEEP |
 | eipalloc-08adac5f5914cbac1 | 43.202.246.97 | eipassoc-083ab37ccaf139a89 | eni-062aaa3574f3b4e29 | vpc-0b89e02241aae4b0e | OUT_OF_SCOPE |
 
 ## Security Groups (VPC)

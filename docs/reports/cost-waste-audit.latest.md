@@ -1,97 +1,77 @@
 # Cost/Waste Audit - Current Runtime
 
-**Generated:** 2026-06-29T05:08:00+09:00
+**Generated:** 2026-07-06T17:46:30.9988750+09:00
 **Scope:** academy V1 production resources in `ap-northeast-2`.
-**Truth sources:** AWS actual state, `docs/ssot/params.yaml`, `docs/reports/aws-resource-inventory.latest.md`, `docs/reports/resource-cleanup.latest.md`, Cost Explorer, ECR/Batch cleanup dry-runs, production canary, and deploy verification.
+**Mode:** read-only AWS describe/get/list + cleanup dry-runs.
+**Truth sources:** AWS actual state, `docs/ssot/params.yaml`, Cost Explorer, AWS Budget, ECR/Batch cleanup dry-runs, and resource cleanup checks.
 
 ## Confirmed Facts
 
 | Check | Result | Disposition |
 |-------|--------|-------------|
-| Deploy plan | NoOp | SSOT resources exist and Batch CE type now matches SSOT |
-| Production canary | PASS=30 WARN=0 FAIL=0 | public HTTP, AWS infra, and remote Django invariants healthy |
-| Deploy verification | PASS / GO | drift/evidence/runtime/front reports regenerated |
-| Cleanup dry-run | no delete target | no destructive cleanup executed |
-| ECR cleanup dry-run | 0 images / 0.0 GB reclaimable | no ECR deletion needed |
-| Batch jobdef cleanup dry-run | keep=42, drop=0 | no deregistration needed |
-| RDS downsize | `db.t4g.medium`, pending `{}` | previous `db.t4g.large -> db.t4g.medium` optimization is applied |
-| Video Batch CE | `EC2 -> SPOT` applied in-place | standard encoding jobs now use Spot capacity; CE is `VALID/ENABLED` |
+| AWS Budget | actual=45.88 USD, limit=380, forecast=303.31, used=12.1% | ok |
+| Cost Explorer | ok; period 2026-07-01 through 2026-07-06 | monthly-to-date |
+| ECR cleanup dry-run | 0 image(s), 0 GB reclaimable, status=ok | no ECR deletion needed |
+| Batch jobdef cleanup dry-run | keep=42, drop=0, status=ok | no deregistration needed |
+| RDS class | db.t4g.medium, status=available, pending={} | matches SSOT |
+| Redis node | cache.t4g.small, status=available | matches SSOT |
+| Running EC2 in academy VPC | 2 | API/Messaging warm baseline plus active worker/batch bursts |
+| NAT Gateway | 0 available | matches NAT-off posture |
 
 ## Capacity SSOT vs Actual
 
 | Component | SSOT | Actual | Disposition |
 |-----------|------|--------|-------------|
-| API ASG | min=1 desired=1 max=3 | min=1 desired=1 max=3, 1 healthy | confirmed |
-| Messaging worker ASG | min=1 desired=1 max=3 | min=1 desired=1 max=3, 1 healthy | confirmed warm baseline |
-| AI worker ASG | min=0 desired=0 max=5 | min=0 desired=0 max=5 | confirmed scale-to-zero |
-| Tools worker ASG | min=0 desired=0 max=2 | min=0 desired=0 max=2 | confirmed scale-to-zero |
-| Video Batch CE | min=0 max=40 vCPU, Spot | `SPOT`, `VALID/ENABLED`, desired=0 | cost drift fixed |
-| Video Ops CE | min=0 max=1 vCPU, EC2 | `EC2`, `VALID/ENABLED`, max=1 | one-instance ops burst cap retained |
-
-## Optimizations Applied
-
-| Item | Before | After | Result |
-|------|--------|-------|--------|
-| RDS class | `db.t4g.large` | `db.t4g.medium` | fixed non-burst baseline cost |
-| Standard Video Batch CE type | `EC2` on-demand | `SPOT` | lowers future video encoding compute cost |
-| Video ops enqueue cadence | `rate(10 minutes)` | `rate(1 hour)` | prevents lightweight recovery jobs from keeping an `m6g.medium` ops Batch instance warm |
-| Batch CE drift guard | existence-only plan | type/allocation/max/types comparison | future EC2/Spot drift is visible in `deploy -Plan` |
-| Video CE rebuild safety | drift skipped | active-job guard before rebuild | prevents queue/CE rebuild while video jobs are active |
-| Resource inventory | CE state/status only | CE type/max/instance types included | cost posture visible in reports |
+| API ASG | min=1 desired=1 max=3 | min=1 desired=1 max=3, healthy=1 | confirmed |
+| Messaging worker ASG | min=1 desired=1 max=3 | min=1 desired=1 max=3, healthy=1 | confirmed |
+| AI worker ASG | min=0 desired=0 max=5 | min=0 desired=0 max=5, healthy=0 | confirmed |
+| Tools worker ASG | min=0 desired=0 max=2 | min=0 desired=0 max=2, healthy=0 | confirmed |
+| Video Batch CE | min=0 max=40 type=SPOT, types=c6g.4xlarge,c6g.2xlarge,c6g.xlarge | SPOT, state=ENABLED/VALID, min=0 desired=0 max=40, types=c6g.4xlarge,c6g.2xlarge,c6g.xlarge | confirmed |
+| Video Ops CE | min=0 max=1 type=EC2, types=m6g.medium | EC2, state=ENABLED/VALID, min=0 desired=0 max=1, types=m6g.medium | confirmed |
 
 ## Waste Checks
 
 | Check | Result | Disposition |
 |-------|--------|-------------|
-| Running EC2 in academy VPC | 2 (`academy-v1-api`, `academy-v1-messaging-worker`) | clean; matches API + Messaging warm baselines |
 | Unassociated Elastic IP | 0 | clean |
-| NAT Gateway | 0 available in academy VPC | clean |
-| Unattached EBS volume | 0 in cleanup scope | clean |
-| Worker queues | Messaging/AI/Tools visible=0, in-flight=0, DLQ=0 | clean |
-| EventBridge Batch targets | 1 target per managed video ops rule | clean |
-| Cleanup dry-run | no delete/release target | clean |
-| Batch compute | standard Batch idle at desired=0; ops Batch capped at max=1 and fallback enqueue is hourly | clean |
+| Unused Security Group | 0 / total SG 5 | clean |
+| Available EBS volume | 0, 0 GiB | clean |
+| Orphan EC2 in academy VPC | 0 | clean |
+| Batch compute | standard=SPOT, state=ENABLED/VALID, min=0 desired=0 max=40, types=c6g.4xlarge,c6g.2xlarge,c6g.xlarge; ops=EC2, state=ENABLED/VALID, min=0 desired=0 max=1, types=m6g.medium | idle desired should remain 0 outside jobs |
+| SQS academy-v1-messaging-queue | visible=0, in-flight=0, DLQ=0 | clean |
+| SQS academy-v1-ai-queue | visible=0, in-flight=0, DLQ=0 | clean |
+| SQS academy-v1-tools-queue | visible=0, in-flight=0, DLQ=0 | clean |
 
 ## Cost Explorer Snapshot
 
-Time period: 2026-06-01 through 2026-06-29, unblended cost, estimated.
+Time period: 2026-07-01 through 2026-07-06, unblended cost, estimated.
 
 | Service | Cost |
 |---------|------|
-| Amazon RDS | 154.36 USD |
-| EC2 Compute | 99.59 USD |
-| Tax | 33.31 USD |
-| ElastiCache | 30.41 USD |
-| VPC | 22.41 USD |
-| Elastic Load Balancing | 16.35 USD |
-| EC2 - Other | 7.35 USD |
-| Amazon ECR | 0.84 USD |
-| AWS Secrets Manager | 0.75 USD |
-| CloudWatch | 0.68 USD |
-| AWS Systems Manager | 0.13 USD |
-| AWS Cost Explorer | 0.12 USD |
-| Amazon S3 | 0.11 USD |
+| Amazon Relational Database Service | 16.89 USD |
+| Amazon Elastic Compute Cloud - Compute | 13.07 USD |
+| Amazon ElastiCache | 4.61 USD |
+| Tax | 4.16 USD |
+| Amazon Virtual Private Cloud | 3.38 USD |
+| Amazon Elastic Load Balancing | 2.70 USD |
+| EC2 - Other | 0.76 USD |
+| Amazon EC2 Container Registry (ECR) | 0.14 USD |
+| AWS Secrets Manager | 0.13 USD |
+| Amazon Simple Storage Service | 0.02 USD |
+| AWS Systems Manager | 0.02 USD |
 
-## Projection
+## Recommended Actions
 
-| Projection | Basis |
-|------------|-------|
-| RDS medium saves about 0.101 USD/hour before storage/backup/tax versus the previous large class | prior measured ap-northeast-2 Single-AZ PostgreSQL hourly prices in this report lineage |
-| Future standard video encoding jobs should be cheaper than the June month-to-date EC2 BoxUsage snapshot | Batch CE now reports `computeResources.type=SPOT`; Cost Explorer still contains earlier on-demand usage |
-| Video ops fallback should stop behaving like a warm instance | `enqueue_uploaded_videos` was lengthened from 10 minutes to 1 hour after observing an idle `m6g.medium` ops Batch instance with desired vCPU 1 |
-| No immediate ECR/jobdef savings remain | cleanup dry-runs found 0 deletable images and 0 deregistrations |
+| Action |
+|--------|
+| No immediate deletion or downsize target found in this audit. |
 
-## Unverified
+## Policy Decisions Retained
 
 | Item | Status |
 |------|--------|
-| Exact realized Spot discount for future video encodes | not visible until new jobs accrue Cost Explorer line items |
-| End-to-end real video encode on Spot | not submitted in this audit to avoid creating a paid test encode; queue/CE/jobdef/SSM references are verified |
-| User-visible fallback latency for concurrency-limited video uploads | can now be up to 1 hour instead of 10 minutes; normal immediate enqueue path is unchanged |
-
-## Policy Conflicts
-
-| Item | Status |
-|------|--------|
-| Messaging worker scale-to-zero | not applied; policy requires one warm baseline for account recovery and Alimtalk latency |
-| API downsize below `t4g.medium` | not applied; current cost floor keeps one warm API instance with target tracking headroom |
+| API warm baseline | kept at one `t4g.medium`; target tracking keeps headroom for public API latency. |
+| Messaging worker warm baseline | kept at one `t4g.medium`; account recovery and Alimtalk wait paths should not cold-start. |
+| AI/Tools workers | scale-to-zero policy retained; queue alarms/API wake-up own burst scale-out. |
+| Standard video encoding | Spot Batch CE retained; paid encode tests are not submitted by this audit. |
+| RDS/Redis | current small baseline retained until metric evidence supports a safer right-size move. |
