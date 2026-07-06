@@ -1,12 +1,9 @@
 # PATH: apps/domains/results/guards/grading_contract.py
 from __future__ import annotations
 
+from typing import Any
 
-from django.core.exceptions import ValidationError
-
-from apps.domains.exams.models import Exam
-from apps.domains.exams.models.sheet import Sheet
-from apps.domains.exams.models.answer_key import AnswerKey
+from apps.support.results.grading_contract_dependencies import validate_exam_grading_contract
 
 
 class GradingContractGuard:
@@ -20,47 +17,5 @@ class GradingContractGuard:
     """
 
     @staticmethod
-    def validate_exam_for_grading(exam: Exam) -> tuple[Sheet, AnswerKey]:
-        # REGULAR exam만 채점 가능
-        if exam.exam_type != Exam.ExamType.REGULAR:
-            raise ValidationError("only REGULAR exams are gradable")
-
-        # template_exam이 있으면 사용, 없으면 자기 자신이 구조 SSOT
-        from apps.domains.exams.services.template_resolver import resolve_template_exam
-        template_exam = resolve_template_exam(exam)
-
-        # Sheet 검증
-        sheet = getattr(template_exam, "sheet", None)
-        if not isinstance(sheet, Sheet):
-            raise ValidationError("template exam must have a valid sheet")
-
-        # AnswerKey 검증
-        answer_key = getattr(template_exam, "answer_key", None)
-        if not isinstance(answer_key, AnswerKey):
-            raise ValidationError("template exam must have an answer_key")
-
-        if not isinstance(answer_key.answers, dict):
-            raise ValidationError("answer_key.answers must be a dict")
-
-        # Question–AnswerKey 정합성 (존재 여부만)
-        question_ids = {int(q.id) for q in sheet.questions.all()}
-        def has_answer_value(value) -> bool:
-            if isinstance(value, list):
-                return any(str(v).strip() for v in value)
-            return bool(str(value or "").strip())
-
-        unknown_key_ids = {
-            int(k)
-            for k, value in answer_key.answers.items()
-            if (
-                isinstance(k, (int, str))
-                and str(k).isdigit()
-                and int(k) not in question_ids
-                and has_answer_value(value)
-            )
-        }
-
-        if unknown_key_ids:
-            raise ValidationError("answer_key contains unknown question ids")
-
-        return sheet, answer_key
+    def validate_exam_for_grading(exam: Any) -> tuple[Any, Any]:
+        return validate_exam_grading_contract(exam)
