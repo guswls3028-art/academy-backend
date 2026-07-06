@@ -6,7 +6,6 @@ from django.db import transaction
 from rest_framework.exceptions import NotFound, ValidationError
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
-from apps.domains.attendance.services import ensure_session_roster_membership
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.enrollment.selectors import (
     get_active_enrollment_for_student_lecture,
@@ -15,11 +14,14 @@ from apps.domains.enrollment.selectors import (
     get_student_for_tenant_or_404,
     require_tenant,
 )
-from apps.domains.fees.services import (
+from apps.support.enrollment.lifecycle_dependencies import (
     auto_assign_fees_on_enrollment,
     deactivate_fees_for_enrollment,
+    ensure_session_roster_membership,
+    get_exam_learning_access_models,
+    get_homework_learning_access_models,
+    send_event_notification,
 )
-from apps.domains.messaging.services import send_event_notification
 
 
 def _validate_id_list(value, *, field_name: str, allow_empty: bool = False) -> list[int]:
@@ -138,9 +140,8 @@ def toggle_student_learning_access(
     target_id: int,
     action: str,
 ) -> dict:
-    from apps.domains.exams.models import Exam, ExamEnrollment
-    from apps.domains.homework.models import HomeworkAssignment
-    from apps.domains.homework_results.models import Homework
+    Exam, ExamEnrollment = get_exam_learning_access_models()
+    HomeworkAssignment, Homework = get_homework_learning_access_models()
 
     tenant = require_tenant(tenant)
     student = get_student_for_tenant_or_404(tenant=tenant, student_id=student_id)
