@@ -3,8 +3,6 @@
 from django.db import models
 
 from apps.api.common.models import TimestampModel
-from apps.domains.students.models import Student
-from apps.domains.lectures.models import Lecture, Session
 from apps.core.models import Tenant
 
 
@@ -31,12 +29,12 @@ class Enrollment(TimestampModel):
     )
 
     student = models.ForeignKey(
-        Student,
+        "students.Student",
         on_delete=models.CASCADE,
         related_name="enrollments",
     )
     lecture = models.ForeignKey(
-        Lecture,
+        "lectures.Lecture",
         on_delete=models.CASCADE,
         related_name="enrollments",
     )
@@ -88,7 +86,7 @@ class SessionEnrollment(models.Model):
     )
 
     session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.CASCADE,
         related_name="session_enrollments",
     )

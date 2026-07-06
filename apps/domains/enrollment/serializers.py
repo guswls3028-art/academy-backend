@@ -1,37 +1,34 @@
 from rest_framework import serializers
 
 from .models import Enrollment, SessionEnrollment
-from apps.domains.students.models import Student
-from apps.domains.lectures.models import Lecture, Session
+from apps.support.enrollment.serializer_dependencies import (
+    lecture_queryset,
+    session_queryset,
+)
 
 
-class StudentShortSerializer(serializers.ModelSerializer):
+class StudentShortSerializer(serializers.Serializer):
     """강의/수강 맥락에서 노출하는 학생 최소 정보. Student 모델 스펙과 정합성 유지."""
 
-    class Meta:
-        model = Student
-        fields = [
-            "id",
-            "name",
-            "grade",
-            "school_type",
-            "elementary_school",
-            "high_school",
-            "middle_school",
-            "high_school_class",
-            "major",
-            "origin_middle_school",
-            "phone",
-            "parent_phone",
-        ]
-        extra_kwargs = {"phone": {"allow_null": True}}
+    id = serializers.IntegerField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    grade = serializers.IntegerField(read_only=True, allow_null=True)
+    school_type = serializers.CharField(read_only=True, allow_null=True)
+    elementary_school = serializers.CharField(read_only=True, allow_null=True)
+    high_school = serializers.CharField(read_only=True, allow_null=True)
+    middle_school = serializers.CharField(read_only=True, allow_null=True)
+    high_school_class = serializers.CharField(read_only=True, allow_null=True)
+    major = serializers.CharField(read_only=True, allow_null=True)
+    origin_middle_school = serializers.CharField(read_only=True, allow_null=True)
+    phone = serializers.CharField(read_only=True, allow_null=True)
+    parent_phone = serializers.CharField(read_only=True, allow_null=True)
 
 
 class EnrollmentSerializer(serializers.ModelSerializer):
     student = StudentShortSerializer(read_only=True)
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     lecture = serializers.PrimaryKeyRelatedField(
-        queryset=Lecture.objects.all(),
+        queryset=lecture_queryset(),
     )
 
     class Meta:
@@ -63,7 +60,7 @@ class EnrollmentSerializer(serializers.ModelSerializer):
 class SessionEnrollmentSerializer(serializers.ModelSerializer):
     tenant = serializers.PrimaryKeyRelatedField(read_only=True)
     session = serializers.PrimaryKeyRelatedField(
-        queryset=Session.objects.select_related("lecture").all(),
+        queryset=session_queryset(),
     )
     enrollment = serializers.PrimaryKeyRelatedField(
         queryset=Enrollment.objects.select_related("lecture", "student").all(),

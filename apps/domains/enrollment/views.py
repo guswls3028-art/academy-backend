@@ -21,11 +21,14 @@ from apps.api.common.upload_validation import (
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from .serializers import EnrollmentSerializer, SessionEnrollmentSerializer
 from .filters import EnrollmentFilter
-from apps.domains.ai.gateway import dispatch_job
 from django.conf import settings
 from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_excel
 from rest_framework.permissions import IsAuthenticated
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.support.enrollment.view_dependencies import (
+    dispatch_job,
+    get_excel_parsing_job_status_response,
+)
 from .selectors import enrollments_for_tenant, session_enrollments_for_tenant
 from .services.lifecycle import (
     bulk_create_enrollments,
@@ -201,14 +204,13 @@ class EnrollmentViewSet(ModelViewSet):
                 {"detail": "tenant가 필요합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
-        from apps.domains.ai.services.job_status_response import build_job_status_response
-
-        repo = DjangoAIJobRepository()
-        job = repo.get_job_model_for_status(job_id, str(tenant.id), job_type="excel_parsing")
-        if not job:
+        payload = get_excel_parsing_job_status_response(
+            job_id=job_id,
+            tenant_id=str(tenant.id),
+        )
+        if payload is None:
             raise NotFound("해당 job을 찾을 수 없습니다.")
-        return Response(build_job_status_response(job))
+        return Response(payload)
 
 
 class SessionEnrollmentViewSet(ModelViewSet):

@@ -8,9 +8,8 @@ import logging
 from django.db import transaction
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
-from apps.domains.lectures.models import Session, Lecture
-from apps.domains.students.services import (
-    StudentImportRowError,
+from apps.support.enrollment.import_dependencies import (
+    StudentImportDependencyError,
     resolve_student_import_row,
     student_import_valid_school_types,
 )
@@ -115,7 +114,7 @@ def lecture_enroll_from_excel_rows(
                     identity_policy="phone_if_available",
                     valid_school_types=valid_school_types,
                 )
-            except StudentImportRowError as e:
+            except StudentImportDependencyError as e:
                 skipped_reasons.append(f"row{row_index}:{e.detail}")
                 logger.debug(
                     "[lecture_enroll_excel] row=%s name=%r parent=%s skip=%s",
