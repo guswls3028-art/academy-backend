@@ -17,9 +17,13 @@ from apps.domains.exams.services.structure_copy_service import (
     copy_exam_structure,
     ensure_regular_exam_owns_structure,
 )
-from apps.domains.lectures.models import Session
-
-from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.exams.view_dependencies import (
+    IsTeacherOrAdmin,
+    dispatch_progress_for_exam,
+    get_session_model,
+    regular_exam_delete_blocker,
+    resolve_removed_exam_clinic_links,
+)
 
 
 class ExamViewSet(ModelViewSet):
@@ -152,6 +156,7 @@ class ExamViewSet(ModelViewSet):
             raise ValidationError({"session_id": "must be integer"})
 
         with transaction.atomic():
+            Session = get_session_model()
             try:
                 session = (
                     Session.objects
@@ -218,10 +223,9 @@ class ExamViewSet(ModelViewSet):
         try:
             new_pass = response.data.get("pass_score") if hasattr(response, "data") else None
             if prev_pass is not None and new_pass is not None and float(new_pass) != prev_pass:
-                from apps.domains.progress.dispatcher import dispatch_progress_pipeline
                 exam_id_for_pipeline = int(response.data.get("id") or kwargs.get("pk") or 0)
                 if exam_id_for_pipeline:
-                    dispatch_progress_pipeline(exam_id=exam_id_for_pipeline)
+                    dispatch_progress_for_exam(exam_id=exam_id_for_pipeline)
         except Exception:
             # progress pipeline 실패해도 update 자체는 유지 (응답 반영됨)
             import logging
@@ -235,24 +239,7 @@ class ExamViewSet(ModelViewSet):
     # DELETE 봉인
     # ================================
     def _regular_delete_blocker(self, obj: Exam) -> str | None:
-        from apps.domains.results.models import Result, ResultFact
-        from apps.domains.submissions.models import Submission
-
-        if obj.attempts.exists():
-            return "exam attempts"
-        if Submission.objects.filter(
-            tenant=obj.tenant,
-            target_type=Submission.TargetType.EXAM,
-            target_id=obj.id,
-        ).exists():
-            return "submissions"
-        if obj.results.exists():
-            return "exam results"
-        if Result.objects.filter(target_type="exam", target_id=obj.id).exists():
-            return "results"
-        if ResultFact.objects.filter(target_type="exam", target_id=obj.id).exists():
-            return "result facts"
-        return None
+        return regular_exam_delete_blocker(obj)
 
     def _delete_session_id(self, request) -> int | None:
         raw = request.query_params.get("session_id")
@@ -263,7 +250,8 @@ class ExamViewSet(ModelViewSet):
         except (TypeError, ValueError):
             raise ValidationError({"session_id": "must be integer"})
 
-    def _session_for_delete(self, request, obj: Exam, session_id: int) -> Session:
+    def _session_for_delete(self, request, obj: Exam, session_id: int):
+        Session = get_session_model()
         session = Session.objects.filter(
             id=session_id,
             lecture__tenant=request.tenant,
@@ -277,15 +265,11 @@ class ExamViewSet(ModelViewSet):
         return session
 
     def _resolve_removed_exam_clinic_links(self, request, obj: Exam, session_id: int) -> int:
-        from apps.domains.progress.dispatcher import resolve_removed_source_clinic_links
-
-        return resolve_removed_source_clinic_links(
+        return resolve_removed_exam_clinic_links(
             tenant_id=int(request.tenant.id),
             session_id=int(session_id),
-            source_type="exam",
-            source_id=int(obj.id),
+            exam_id=int(obj.id),
             user_id=getattr(request.user, "id", None),
-            reason="exam_removed_from_session",
         )
 
     def _unlink_from_session(
