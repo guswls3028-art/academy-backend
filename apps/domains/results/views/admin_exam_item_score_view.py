@@ -16,31 +16,34 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
-from apps.domains.exams.models import AnswerKey, ExamQuestion
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
+from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
 from apps.domains.results.services.answer_matching import answer_matches, correct_answer_sets
 from apps.domains.results.services.manual_subjective_score import (
     explicit_manual_subjective_score_for_result,
 )
 from apps.support.omr.score_shape import get_exam_score_shape
+from apps.support.results.admin_exam_item_score_dependencies import (
+    dispatch_progress_pipeline,
+    get_answer_key_value,
+    get_enrollment_for_tenant,
+    get_exam_question_for_item_score,
+    get_latest_exam_submission_id,
+    get_regular_active_exam_for_tenant,
+)
 
 # ✅ 단일 진실: session 매핑 + progress 트리거
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
-from apps.domains.submissions.models import Submission
-from apps.domains.progress.dispatcher import dispatch_progress_pipeline
 
 
 _OBJECTIVE_CHOICE_LABELS = {"1", "2", "3", "4", "5"}
 
 
 def _objective_correct_answer_for_question(*, exam, question_id: int):
-    answer_key = AnswerKey.objects.filter(
-        exam_id=int(exam.effective_template_exam_id),
-    ).first()
-    if not answer_key or not isinstance(answer_key.answers, dict):
-        return None
-
-    value = answer_key.answers.get(str(question_id))
+    value = get_answer_key_value(
+        template_exam_id=int(exam.effective_template_exam_id),
+        question_id=question_id,
+    )
     if value is None:
         return None
 
@@ -108,20 +111,13 @@ class AdminExamItemScoreView(APIView):
         question_id = int(question_id)
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        from apps.domains.exams.models import Exam
-        from django.shortcuts import get_object_or_404
-        exam = get_object_or_404(
-            Exam,
-            id=exam_id,
+        exam = get_regular_active_exam_for_tenant(
+            exam_id=exam_id,
             tenant=request.tenant,
-            exam_type=Exam.ExamType.REGULAR,
-            is_active=True,
-            sessions__lecture__tenant=request.tenant,
         )
         score_shape = get_exam_score_shape(exam)
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
-        from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
         validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
         validate_exam_enrollment_assigned(exam, enrollment_id)
 
@@ -150,15 +146,12 @@ class AdminExamItemScoreView(APIView):
             .first()
         )
         if not result:
-            from apps.domains.enrollment.models import Enrollment
-            enrollment_obj = Enrollment.objects.filter(
-                id=enrollment_id, tenant=request.tenant
-            ).first()
+            enrollment_obj = get_enrollment_for_tenant(
+                enrollment_id=enrollment_id,
+                tenant=request.tenant,
+            )
             if not enrollment_obj:
                 raise NotFound({"detail": "enrollment not found", "code": "NOT_FOUND"})
-
-            from apps.domains.exams.models import Exam
-            exam_obj = Exam.objects.filter(id=exam_id).first()
 
             attempt, _ = ExamAttempt.objects.get_or_create(
                 exam_id=exam_id,
@@ -180,7 +173,7 @@ class AdminExamItemScoreView(APIView):
                 defaults={
                     "attempt": attempt,
                     "total_score": 0,
-                    "max_score": float(exam_obj.max_score or 0) if exam_obj else 0,
+                    "max_score": float(exam.max_score or 0),
                     "objective_score": 0,
                 },
             )
@@ -221,11 +214,11 @@ class AdminExamItemScoreView(APIView):
         )
         if not item:
             allowed_exam_ids = {int(exam.id), int(exam.effective_template_exam_id)}
-            exam_question = ExamQuestion.objects.filter(
-                id=question_id,
-                sheet__exam_id__in=allowed_exam_ids,
-                sheet__exam__tenant=request.tenant,
-            ).first()
+            exam_question = get_exam_question_for_item_score(
+                question_id=question_id,
+                exam_ids=allowed_exam_ids,
+                tenant=request.tenant,
+            )
             if not exam_question:
                 raise NotFound({"detail": "question not found", "code": "NOT_FOUND"})
             max_score = score_shape.question_max_score(
@@ -396,18 +389,12 @@ class AdminExamItemScoreView(APIView):
             )
 
         # Submission에는 session_id 없음 → exam+enrollment 기준 최신 제출 조회
-        submission = (
-            Submission.objects
-            .filter(
-                enrollment_id=enrollment_id,
-                target_type=Submission.TargetType.EXAM,
-                target_id=exam_id,
-            )
-            .order_by("-id")
-            .first()
+        submission_id = get_latest_exam_submission_id(
+            enrollment_id=enrollment_id,
+            exam_id=exam_id,
         )
-        if submission:
-            dispatch_progress_pipeline(submission_id=int(submission.id))
+        if submission_id:
+            dispatch_progress_pipeline(submission_id=submission_id)
         else:
             dispatch_progress_pipeline(exam_id=int(exam_id))
 
