@@ -3,7 +3,13 @@ Data integrity check for P0/P1 bug fixes.
 Usage: python manage.py check_integrity
 """
 from django.core.management.base import BaseCommand
-from django.db.models import Count, Q, F
+from django.db.models import Count, Q
+
+from apps.support.results.integrity_dependencies import (
+    exam_integrity_counts,
+    homework_score_over_max_count,
+    legacy_clinic_link_unresolved_dupes,
+)
 
 
 class Command(BaseCommand):
@@ -52,38 +58,24 @@ class Command(BaseCommand):
             self.stdout.write(f"    submission_id={d['submission_id']} count={d['cnt']}")
 
         # 4. Exam max_attempts=0
-        from apps.domains.exams.models import Exam
-        bad_attempts = Exam.objects.filter(max_attempts=0).count()
+        exam_counts = exam_integrity_counts()
+        bad_attempts = exam_counts["bad_attempts"]
         self.stdout.write(f"\n[4] Exam max_attempts=0: {bad_attempts}")
 
         # 5. Exam pass_score > max_score
-        bad_pass = Exam.objects.filter(pass_score__gt=F("max_score")).count()
+        bad_pass = exam_counts["bad_pass"]
         self.stdout.write(f"\n[5] Exam pass_score > max_score: {bad_pass}")
 
         # 6. Exam open_at >= close_at
-        bad_dates = Exam.objects.filter(
-            open_at__isnull=False, close_at__isnull=False,
-            open_at__gte=F("close_at"),
-        ).count()
+        bad_dates = exam_counts["bad_dates"]
         self.stdout.write(f"\n[6] Exam open_at >= close_at: {bad_dates}")
 
         # 7. HomeworkScore score > max_score
-        from apps.domains.homework_results.models import HomeworkScore
-        bad_hw = HomeworkScore.objects.filter(
-            score__isnull=False, max_score__isnull=False,
-            score__gt=F("max_score"), max_score__gt=0,
-        ).count()
+        bad_hw = homework_score_over_max_count()
         self.stdout.write(f"\n[7] HomeworkScore score > max_score: {bad_hw}")
 
         # 8. ClinicLink legacy NULL source unresolved dupes
-        from apps.domains.progress.models import ClinicLink
-        legacy_dupes = list(
-            ClinicLink.objects
-            .filter(source_type__isnull=True, source_id__isnull=True, resolved_at__isnull=True)
-            .values("enrollment_id", "session_id")
-            .annotate(cnt=Count("id"))
-            .filter(cnt__gt=1)
-        )
+        legacy_dupes = legacy_clinic_link_unresolved_dupes()
         self.stdout.write(f"\n[8] ClinicLink legacy NULL source unresolved DUPE: {len(legacy_dupes)}")
         for d in legacy_dupes[:10]:
             self.stdout.write(f"    enrollment={d['enrollment_id']} session={d['session_id']} count={d['cnt']}")
