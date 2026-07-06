@@ -8,6 +8,7 @@
 블랙리스트 (PublicUserBlock):
 - GET/POST/DELETE /api/v1/landing-public/blocks/ — staff only.
 """
+from django.db import transaction
 from django.utils import timezone
 from rest_framework import status as drf_status, viewsets
 from rest_framework.decorators import action
@@ -50,14 +51,14 @@ def _get_client_ip(request) -> str | None:
     return (request.META.get("REMOTE_ADDR") or "")[:45] or None
 
 
-def _target_exists(tenant, kind: str, target_id: int) -> bool:
+def _target_queryset(tenant, kind: str, target_id: int):
     if kind == PublicReport.TargetKind.BOARD:
-        return PublicBoardPost.objects.filter(tenant=tenant, pk=target_id).exists()
+        return PublicBoardPost.objects.filter(tenant=tenant, pk=target_id)
     if kind == PublicReport.TargetKind.REVIEW:
-        return PublicReview.objects.filter(tenant=tenant, pk=target_id).exists()
+        return PublicReview.objects.filter(tenant=tenant, pk=target_id)
     if kind == PublicReport.TargetKind.REPLY:
-        return PublicPostReply.objects.filter(tenant=tenant, pk=target_id).exists()
-    return False
+        return PublicPostReply.objects.filter(tenant=tenant, pk=target_id)
+    return None
 
 
 class PublicReportViewSet(viewsets.GenericViewSet):
@@ -102,37 +103,39 @@ class PublicReportViewSet(viewsets.GenericViewSet):
             return Response({"detail": "target_id 잘못됨"}, status=drf_status.HTTP_400_BAD_REQUEST)
         if reason not in {c[0] for c in PublicReport.Reason.choices}:
             return Response({"detail": "reason 잘못됨"}, status=drf_status.HTTP_400_BAD_REQUEST)
-        if not _target_exists(tenant, kind, target_id):
-            return Response({"detail": "대상이 존재하지 않습니다"}, status=drf_status.HTTP_404_NOT_FOUND)
-
         ip = _get_client_ip(request)
         user = request.user if request.user.is_authenticated else None
 
-        # 스팸 방지: 동일 IP + 동일 target에 최근 1시간 내 신고 1건 제한
-        from datetime import timedelta
-        recent_cut = timezone.now() - timedelta(hours=1)
-        dup_q = PublicReport.objects.filter(
-            tenant=tenant, target_kind=kind, target_id=target_id, created_at__gte=recent_cut,
-        )
-        if user is not None:
-            dup_q = dup_q.filter(reporter=user)
-        elif ip:
-            dup_q = dup_q.filter(reporter_ip=ip)
-        if dup_q.exists():
-            return Response({"detail": "이미 신고된 글입니다. 학원장이 곧 검토합니다."}, status=drf_status.HTTP_409_CONFLICT)
+        with transaction.atomic():
+            target_qs = _target_queryset(tenant, kind, target_id)
+            if target_qs is None or target_qs.select_for_update().first() is None:
+                return Response({"detail": "대상이 존재하지 않습니다"}, status=drf_status.HTTP_404_NOT_FOUND)
 
-        # P2 audit (2026-05-14): 로그인 유저도 reporter_ip 저장 — 사후 spam 패턴 분석
-        # (단일 user가 동일 IP로 다수 신고 등) 시 admin UI 노출은 별도 정책 (현재 모두 노출).
-        # 익명/로그인 모두 ip 보존 → reporter+ip dedup 일관성.
-        obj = PublicReport.objects.create(
-            tenant=tenant,
-            target_kind=kind,
-            target_id=target_id,
-            reporter=user,
-            reporter_ip=ip,
-            reason=reason,
-            description=description[:2000],
-        )
+            # 스팸 방지: 동일 IP + 동일 target에 최근 1시간 내 신고 1건 제한
+            from datetime import timedelta
+            recent_cut = timezone.now() - timedelta(hours=1)
+            dup_q = PublicReport.objects.filter(
+                tenant=tenant, target_kind=kind, target_id=target_id, created_at__gte=recent_cut,
+            )
+            if user is not None:
+                dup_q = dup_q.filter(reporter=user)
+            elif ip:
+                dup_q = dup_q.filter(reporter_ip=ip)
+            if dup_q.exists():
+                return Response({"detail": "이미 신고된 글입니다. 학원장이 곧 검토합니다."}, status=drf_status.HTTP_409_CONFLICT)
+
+            # P2 audit (2026-05-14): 로그인 유저도 reporter_ip 저장 — 사후 spam 패턴 분석
+            # (단일 user가 동일 IP로 다수 신고 등) 시 admin UI 노출은 별도 정책 (현재 모두 노출).
+            # 익명/로그인 모두 ip 보존 → reporter+ip dedup 일관성.
+            obj = PublicReport.objects.create(
+                tenant=tenant,
+                target_kind=kind,
+                target_id=target_id,
+                reporter=user,
+                reporter_ip=ip,
+                reason=reason,
+                description=description[:2000],
+            )
         return Response({"id": obj.id, "status": obj.status}, status=drf_status.HTTP_201_CREATED)
 
     def list(self, request, *args, **kwargs):

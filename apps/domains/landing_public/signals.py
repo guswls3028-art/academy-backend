@@ -3,8 +3,9 @@
 PublicPostLike / PublicPostReply 변경 시 부모 모델의 `like_count` /
 `reply_count` 를 동기 업데이트한다. atomic 안전성을 위해 F() expression 사용.
 """
-from django.db import models, transaction
-from django.db.models import F
+from django.db import transaction
+from django.db.models import F, Value
+from django.db.models.functions import Greatest
 from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
@@ -47,13 +48,10 @@ def _on_like_delete(sender, instance: PublicPostLike, **kwargs):
     Model = _target_model(instance.target_kind)
     if Model is None:
         return
-    # like_count 가 음수가 되지 않도록 max(0, ...) 가드
     with transaction.atomic():
-        obj = Model.objects.filter(pk=instance.target_id).only("like_count").first()
-        if not obj:
-            return
-        new_count = max(0, (obj.like_count or 0) - 1)
-        Model.objects.filter(pk=instance.target_id).update(like_count=new_count)
+        Model.objects.filter(pk=instance.target_id).update(
+            like_count=Greatest(F("like_count") - 1, Value(0))
+        )
 
 
 @receiver(post_save, sender=PublicPostReply)
@@ -74,11 +72,9 @@ def _on_reply_delete(sender, instance: PublicPostReply, **kwargs):
     if Model is None or Model is PublicPostReply:
         return
     with transaction.atomic():
-        obj = Model.objects.filter(pk=instance.target_id).only("reply_count").first()
-        if not obj:
-            return
-        new_count = max(0, (obj.reply_count or 0) - 1)
-        Model.objects.filter(pk=instance.target_id).update(reply_count=new_count)
+        Model.objects.filter(pk=instance.target_id).update(
+            reply_count=Greatest(F("reply_count") - 1, Value(0))
+        )
 
 
 # Phase 5-B: 신고 누적 자동 hide threshold.

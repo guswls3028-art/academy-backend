@@ -129,7 +129,7 @@ class AttendanceViewSet(ModelViewSet):
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)
-        return (
+        qs = (
             Attendance.objects
             .filter(tenant=tenant)
             .filter(enrollment__student__deleted_at__isnull=True)
@@ -140,6 +140,9 @@ class AttendanceViewSet(ModelViewSet):
                 "enrollment__student",
             )
         )
+        if getattr(self, "action", None) in {"destroy", "partial_update", "update"}:
+            qs = qs.select_for_update()
+        return qs
 
     def perform_create(self, serializer):
         tenant = getattr(self.request, "tenant", None)
@@ -153,6 +156,10 @@ class AttendanceViewSet(ModelViewSet):
             {"detail": "출결 등록은 bulk_create 엔드포인트를 사용해야 합니다."},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
+
+    @transaction.atomic
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
 
     @transaction.atomic
     def destroy(self, request, *args, **kwargs):
@@ -311,9 +318,9 @@ class AttendanceViewSet(ModelViewSet):
         ).exclude(
             enrollment__status="INACTIVE",
         )
-        target_ids = list(target_qs.values_list("id", flat=True))
+        target_ids = list(target_qs.select_for_update().values_list("id", flat=True))
 
-        updated = target_qs.update(status="PRESENT")
+        updated = Attendance.objects.filter(id__in=target_ids).update(status="PRESENT")
 
         # 일반 강의 전체 출석은 행정 작업 — 알림톡 발송하지 않음.
         # 입실/결석 알림은 클리닉 전용 기능.

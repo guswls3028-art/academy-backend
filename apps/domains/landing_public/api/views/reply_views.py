@@ -12,6 +12,7 @@ from ..serializers import (
     _resolve_role,
 )
 from ...models import PublicBoardPost, PublicPostLike, PublicPostReply, PublicReview, PublicUserBlock
+from .like_toggle import toggle_public_like
 
 
 def _target_visible_to_request(request, kind: str, target_id: int):
@@ -158,23 +159,14 @@ class PublicPostReplyViewSet(viewsets.GenericViewSet):
     def like_toggle(self, request, pk=None):
         obj = self.get_object()
         user = request.user
-        # tenant 필터 — cross-tenant 누수 차단(core.md §1)
-        existing = PublicPostLike.objects.filter(
-            tenant=request.tenant,
-            user=user, target_kind=PublicPostLike.TargetKind.REPLY, target_id=obj.pk,
-        ).first()
-        if existing:
-            existing.delete()
-            obj.refresh_from_db(fields=["like_count"])
-            return Response({"liked": False, "like_count": obj.like_count})
-        PublicPostLike.objects.create(
+        liked = toggle_public_like(
             tenant=request.tenant,
             user=user,
             target_kind=PublicPostLike.TargetKind.REPLY,
             target_id=obj.pk,
         )
         obj.refresh_from_db(fields=["like_count"])
-        return Response({"liked": True, "like_count": obj.like_count})
+        return Response({"liked": liked, "like_count": obj.like_count})
 
     @action(detail=True, methods=["post"], url_path="hide")
     def hide(self, request, pk=None):

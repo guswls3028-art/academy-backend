@@ -24,6 +24,7 @@ from rest_framework.parsers import (
 from django_filters.rest_framework import DjangoFilterBackend
 
 from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
+from apps.core.models import Tenant
 from apps.core.parsing import parse_bool
 
 from academy.adapters.storage.r2_presign import (
@@ -1296,30 +1297,39 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     status=status.HTTP_404_NOT_FOUND,
                 )
 
-        parent = None
-        if parent_id:
-            try:
-                parent = VideoFolder.objects.get(id=parent_id, tenant=tenant)
-            except VideoFolder.DoesNotExist:
-                return Response(
-                    {"detail": "Parent folder not found"},
-                    status=status.HTTP_404_NOT_FOUND,
-                )
+        try:
+            with transaction.atomic():
+                parent = None
+                if parent_id:
+                    try:
+                        parent = VideoFolder.objects.select_for_update().get(id=parent_id, tenant=tenant)
+                    except VideoFolder.DoesNotExist:
+                        return Response(
+                            {"detail": "Parent folder not found"},
+                            status=status.HTTP_404_NOT_FOUND,
+                        )
+                else:
+                    Tenant.objects.select_for_update().get(pk=tenant.pk)
 
-        # 같은 이름의 폴더가 이미 있는지 확인
-        if VideoFolder.objects.filter(tenant=tenant, parent=parent, name=name).exists():
+                # 같은 이름의 폴더가 이미 있는지 확인
+                if VideoFolder.objects.filter(tenant=tenant, parent=parent, name=name).exists():
+                    return Response(
+                        {"detail": "Folder with this name already exists"},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+
+                folder = VideoFolder.objects.create(
+                    tenant=tenant,
+                    session=session,
+                    parent=parent,
+                    name=name,
+                    order=VideoFolder.objects.filter(tenant=tenant, parent=parent).count(),
+                )
+        except IntegrityError:
             return Response(
                 {"detail": "Folder with this name already exists"},
                 status=status.HTTP_409_CONFLICT,
             )
-
-        folder = VideoFolder.objects.create(
-            tenant=tenant,
-            session=session,
-            parent=parent,
-            name=name,
-            order=VideoFolder.objects.filter(tenant=tenant, parent=parent).count(),
-        )
 
         return Response(VideoFolderSerializer(folder).data, status=status.HTTP_201_CREATED)
 

@@ -174,7 +174,7 @@ class AutoSendConfigView(APIView):
                 if minutes_before is not None and minutes_before < 0:
                     return reject({"minutes_before": "발송 시점 값은 0 이상이어야 합니다."})
 
-            config, _ = AutoSendConfig.objects.get_or_create(
+            config, _ = AutoSendConfig.objects.select_for_update().get_or_create(
                 tenant=tenant,
                 trigger=trigger,
                 defaults={"enabled": False, "message_mode": "alimtalk"},

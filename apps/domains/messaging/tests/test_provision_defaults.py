@@ -115,6 +115,46 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertEqual(config.template_id, template.id)
         self.assertEqual(config.minutes_before, 30)
 
+    def test_autosend_patch_template_only_preserves_enabled_and_timing(self):
+        old_template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="기존 안내",
+            category="attendance",
+            subject="",
+            body="기존 본문",
+            is_system=True,
+        )
+        new_template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="새 안내",
+            category="attendance",
+            subject="",
+            body="새 본문",
+            is_system=True,
+        )
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="check_in_complete",
+            template=old_template,
+            enabled=True,
+            message_mode="alimtalk",
+            minutes_before=30,
+        )
+
+        response = AutoSendConfigView.as_view()(
+            self._request(
+                "patch",
+                "/api/v1/messaging/auto-send/",
+                {"configs": [{"trigger": "check_in_complete", "template_id": new_template.id}]},
+            )
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        config.refresh_from_db()
+        self.assertTrue(config.enabled)
+        self.assertEqual(config.template_id, new_template.id)
+        self.assertEqual(config.minutes_before, 30)
+
     def test_teacher_membership_cannot_patch_auto_send_settings(self):
         teacher = User.objects.create_user(
             username="msg-provision-teacher",
