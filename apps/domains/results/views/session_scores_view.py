@@ -46,21 +46,23 @@ from apps.domains.results.utils.result_queries import latest_results_per_enrollm
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.support.omr.score_shape import get_exam_score_shape
 from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
-
-from apps.domains.lectures.models import Session
-from apps.domains.progress.models import ClinicLink, SessionProgress
-from apps.domains.clinic.models import SessionParticipant
-
-from apps.domains.homework_results.models import HomeworkScore
-from apps.domains.homework_results.models import Homework
-from apps.domains.homework.models import HomeworkAssignment
-from apps.domains.attendance.models import Attendance
-from apps.domains.submissions.models import Submission
-
-from apps.domains.enrollment.models import Enrollment, SessionEnrollment
-from apps.domains.exams.models import ExamEnrollment, ExamQuestion
-from apps.domains.exams.models.sheet import Sheet
-from apps.domains.exams.services.template_resolver import resolve_template_exam
+from apps.support.results.session_scores_dependencies import (
+    Attendance,
+    ClinicLink,
+    Enrollment,
+    ExamEnrollment,
+    ExamQuestion,
+    Homework,
+    HomeworkAssignment,
+    HomeworkScore,
+    Session,
+    SessionEnrollment,
+    SessionParticipant,
+    SessionProgress,
+    Sheet,
+    Submission,
+    resolve_template_exam,
+)
 
 
 def _get_profile_photo_url(student) -> Optional[str]:
