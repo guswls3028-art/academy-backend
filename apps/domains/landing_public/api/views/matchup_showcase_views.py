@@ -18,7 +18,6 @@ URL:
 """
 from __future__ import annotations
 
-import io
 import logging
 from typing import Any
 
@@ -34,6 +33,11 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.core.permissions import TenantResolved, TenantResolvedAndStaff, is_effective_staff
+from apps.support.landing_public.matchup_showcase_dependencies import (
+    build_matchup_snapshot_for_hit_report,
+    get_matchup_hit_report_for_showcase,
+    matchup_showcase_upload_meta_from_report,
+)
 
 from ...models import PublicMatchupShowcase
 
@@ -47,57 +51,6 @@ def _viewer_is_staff(request) -> bool:
         return False
     tenant = getattr(request, "tenant", None)
     return is_effective_staff(user, tenant)
-
-
-def _build_snapshot_for_hit_report(tenant, hit_report_id: int) -> tuple[str, int, dict]:
-    """적중보고서 PDF를 R2 storage에 별도 key로 박는다. (snapshot_pdf_key, bytes, meta) 반환.
-
-    원본 MatchupHitReport는 read-only. PDF generate → R2 put.
-    """
-    from apps.domains.matchup.models import MatchupHitReport
-    from apps.domains.matchup.pdf_report import generate_curated_hit_report_pdf
-    from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
-
-    report = MatchupHitReport.objects.select_related("document", "author").get(
-        id=hit_report_id, tenant=tenant,
-    )
-    pdf_bytes = generate_curated_hit_report_pdf(report)
-
-    now = timezone.now()
-    # key: matchup-showcase-snapshots/tenant_{id}/hit_report_{id}/{epoch}.pdf
-    key = (
-        f"matchup-showcase-snapshots/tenant_{tenant.id}/"
-        f"hit_report_{report.id}/{int(now.timestamp())}.pdf"
-    )
-    upload_fileobj_to_r2_storage(
-        fileobj=io.BytesIO(pdf_bytes),
-        key=key,
-        content_type="application/pdf",
-    )
-
-    # snapshot meta — entries 카운트 + 적중률.
-    entries_qs = report.entries.all()
-    total_entries = entries_qs.count()
-    excluded = entries_qs.filter(excluded=True).count()
-    counted = total_entries - excluded
-    hit = 0
-    for e in entries_qs:
-        if not e.excluded and isinstance(e.selected_problem_ids, list) and len(e.selected_problem_ids) > 0:
-            hit += 1
-    meta: dict[str, Any] = {
-        "document_title": (report.document.title or "") if report.document_id else "",
-        "document_id": report.document_id,
-        "author_name": (report.author.name if report.author and getattr(report.author, "name", None)
-                        else (report.submitted_by_name or "")),
-        "report_title": report.title or "",
-        "report_status": report.status,
-        "total_entries": total_entries,
-        "counted_entries": counted,
-        "hit_count": hit,
-        "hit_rate": round(hit / counted, 3) if counted else 0.0,
-        "snapshot_at_iso": now.isoformat(),
-    }
-    return key, len(pdf_bytes), meta
 
 
 def _parse_dt_strict(raw: Any, field_name: str):
@@ -260,12 +213,11 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
         except (TypeError, ValueError):
             return Response({"detail": "hit_report_id 잘못됨."}, status=status.HTTP_400_BAD_REQUEST)
 
-        from apps.domains.matchup.models import MatchupHitReport
-        try:
-            report = MatchupHitReport.objects.select_related("document").get(
-                id=hit_report_id, tenant=tenant,
-            )
-        except MatchupHitReport.DoesNotExist:
+        report = get_matchup_hit_report_for_showcase(
+            tenant=tenant,
+            hit_report_id=hit_report_id,
+        )
+        if not report:
             return Response({"detail": "적중보고서 없음."}, status=status.HTTP_404_NOT_FOUND)
 
         title = (request.data.get("title") or "").strip() or (
@@ -282,7 +234,7 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
 
         # snapshot 생성 (PDF generate → R2 upload)
         try:
-            snapshot_key, snapshot_bytes, snapshot_meta = _build_snapshot_for_hit_report(tenant, hit_report_id)
+            snapshot_key, snapshot_bytes, snapshot_meta = build_matchup_snapshot_for_hit_report(tenant, hit_report_id)
         except Exception:
             logger.exception("matchup_showcase_snapshot_build_failed report=%s", hit_report_id)
             return Response({"detail": "스냅샷 생성 실패"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
@@ -373,34 +325,10 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
         # 원본 보고서 참조 시 메타 일부 자동 채움 (학원장이 source_hit_report_id만 던지면 자동 enrich)
         if source_hit_report_id and not meta:
             try:
-                from apps.domains.matchup.models import MatchupHitReport
-                report = MatchupHitReport.objects.select_related("document", "author").filter(
-                    id=source_hit_report_id, tenant=tenant,
-                ).first()
-                if report:
-                    entries_qs = report.entries.all()
-                    total_entries = entries_qs.count()
-                    excluded = entries_qs.filter(excluded=True).count()
-                    counted = total_entries - excluded
-                    hit = sum(
-                        1 for e in entries_qs
-                        if not e.excluded and isinstance(e.selected_problem_ids, list)
-                        and len(e.selected_problem_ids) > 0
-                    )
-                    meta = {
-                        "document_title": (report.document.title or "") if report.document_id else "",
-                        "document_id": report.document_id,
-                        "author_name": (
-                            report.author.name if report.author and getattr(report.author, "name", None)
-                            else (report.submitted_by_name or "")
-                        ),
-                        "report_title": report.title or "",
-                        "total_entries": total_entries,
-                        "counted_entries": counted,
-                        "hit_count": hit,
-                        "hit_rate": round(hit / counted, 3) if counted else 0.0,
-                        "source": "user_upload_with_ref",
-                    }
+                meta = matchup_showcase_upload_meta_from_report(
+                    tenant=tenant,
+                    hit_report_id=source_hit_report_id,
+                )
             except Exception:
                 logger.exception("matchup_showcase_meta_enrich_failed source=%s", source_hit_report_id)
         meta.setdefault("source", "user_upload")
