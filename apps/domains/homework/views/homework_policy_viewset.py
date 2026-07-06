@@ -13,8 +13,10 @@ from apps.domains.homework.serializers import (
     HomeworkPolicySerializer,
     HomeworkPolicyPatchSerializer,
 )
-from apps.domains.lectures.models import Session
-from apps.domains.homework_results.services.policy_recalc import recalc_scores_for_policy_change
+from apps.support.homework.view_dependencies import (
+    recalc_scores_for_policy_change,
+    session_exists_for_tenant,
+)
 
 
 class HomeworkPolicyViewSet(viewsets.ModelViewSet):
@@ -43,7 +45,7 @@ class HomeworkPolicyViewSet(viewsets.ModelViewSet):
             return qs_base.none()
 
         # session 존재 및 해당 tenant 소유 여부 검증 (500/잘못된 정책 생성 방지)
-        if not Session.objects.filter(id=sid, lecture__tenant=tenant).exists():
+        if not session_exists_for_tenant(session_id=sid, tenant=tenant):
             return qs_base.none()
 
         try:

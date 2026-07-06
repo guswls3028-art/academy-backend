@@ -12,15 +12,15 @@ from rest_framework import status
 
 from apps.core.permissions import TenantResolvedAndStaff
 
-from apps.domains.enrollment.selectors import (
-    active_enrollment_ids_for_session,
-    active_session_enrollments_for_session,
-)
 from apps.domains.homework.models import HomeworkEnrollment
-from apps.domains.lectures.models import Session
 from apps.domains.homework.serializers.homework_enrollment_serializer import (
     HomeworkEnrollmentRowSerializer,
     HomeworkEnrollmentUpdateSerializer,
+)
+from apps.support.homework.view_dependencies import (
+    active_enrollment_ids_for_session,
+    active_session_enrollments_for_session,
+    session_exists_for_tenant,
 )
 
 
@@ -41,7 +41,7 @@ class HomeworkEnrollmentManageView(APIView):
 
         tenant = getattr(request, "tenant", None)
 
-        if not Session.objects.filter(id=session_id, lecture__tenant=tenant).exists():
+        if not session_exists_for_tenant(session_id=session_id, tenant=tenant):
             return Response({"detail": "해당 차시를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         # ✅ 퇴원(INACTIVE) 수강생 제외
@@ -133,7 +133,7 @@ class HomeworkEnrollmentManageView(APIView):
 
         tenant = getattr(request, "tenant", None)
 
-        if not Session.objects.filter(id=session_id, lecture__tenant=tenant).exists():
+        if not session_exists_for_tenant(session_id=session_id, tenant=tenant):
             return Response({"detail": "해당 차시를 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         ser = HomeworkEnrollmentUpdateSerializer(data=request.data)

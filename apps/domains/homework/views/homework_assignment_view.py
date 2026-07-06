@@ -13,36 +13,31 @@ from rest_framework import status
 
 from apps.core.permissions import TenantResolvedAndStaff
 
-from apps.domains.enrollment.selectors import (
-    active_enrollment_ids_for_session,
-    active_session_enrollments_for_session,
-)
 from apps.domains.homework.models import HomeworkAssignment
-from apps.domains.homework_results.models import Homework
 from apps.domains.homework.serializers.homework_assignment_serializer import (
     HomeworkAssignmentRowSerializer,
     HomeworkAssignmentUpdateSerializer,
+)
+from apps.support.homework.view_dependencies import (
+    active_enrollment_ids_for_session,
+    active_session_enrollments_for_session,
+    get_homework_for_assignment,
 )
 
 
 class HomeworkAssignmentManageView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
-    def _get_homework(self, request) -> Homework:
+    def _get_homework(self, request):
         hid = request.query_params.get("homework_id")
         if not hid:
             raise ValueError("homework_id is required")
 
         tenant = getattr(request, "tenant", None)
 
-        return Homework.objects.select_related(
-            "session",
-            "session__lecture",
-        ).exclude(
-            meta__removed_from_session_at__isnull=False,
-        ).get(
-            id=int(hid),
-            session__lecture__tenant=tenant,  # ✅ tenant 안전장치
+        return get_homework_for_assignment(
+            homework_id=int(hid),
+            tenant=tenant,
         )
 
     def get(self, request):

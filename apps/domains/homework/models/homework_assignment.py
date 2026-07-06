@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from django.db import models
 
-from apps.domains.homework_results.models import Homework
-from apps.domains.lectures.models import Session
 from apps.core.models import Tenant
 
 
@@ -21,13 +19,13 @@ class HomeworkAssignment(models.Model):
     )
 
     homework = models.ForeignKey(
-        Homework,
+        "homework_results.Homework",
         on_delete=models.CASCADE,
         related_name="assignments",
     )
 
     session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.CASCADE,
         db_index=True,
     )
