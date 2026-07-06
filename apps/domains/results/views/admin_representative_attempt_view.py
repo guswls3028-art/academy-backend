@@ -19,8 +19,11 @@ from apps.domains.results.models import ExamAttempt, Result, ResultItem, ResultF
 
 # ✅ 단일 진실: session 매핑 + progress 트리거
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
-from apps.domains.submissions.models import Submission
-from apps.domains.progress.dispatcher import dispatch_progress_pipeline
+from apps.support.results.admin_exam_dependencies import (
+    dispatch_progress_pipeline,
+    get_latest_session_submission_id,
+    get_regular_active_exam_for_tenant,
+)
 
 
 class AdminRepresentativeAttemptView(APIView):
@@ -106,15 +109,9 @@ class AdminRepresentativeAttemptView(APIView):
         exam_id = int(exam_id)
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        from apps.domains.exams.models import Exam
-        from django.shortcuts import get_object_or_404
-        get_object_or_404(
-            Exam,
-            id=exam_id,
+        get_regular_active_exam_for_tenant(
+            exam_id=exam_id,
             tenant=request.tenant,
-            exam_type=Exam.ExamType.REGULAR,
-            is_active=True,
-            sessions__lecture__tenant=request.tenant,
         )
 
         enrollment_id = request.data.get("enrollment_id")
@@ -163,19 +160,17 @@ class AdminRepresentativeAttemptView(APIView):
                 status=drf_status.HTTP_409_CONFLICT,
             )
 
-        submission = (
-            Submission.objects
-            .filter(enrollment_id=enrollment_id, session_id=int(session.id))
-            .order_by("-id")
-            .first()
+        submission_id = get_latest_session_submission_id(
+            enrollment_id=enrollment_id,
+            session_id=int(session.id),
         )
-        if not submission:
+        if not submission_id:
             return Response(
                 {"detail": "no submission found; cannot recalculate progress", "code": "NO_SUBMISSION"},
                 status=drf_status.HTTP_409_CONFLICT,
             )
 
-        dispatch_progress_pipeline(submission_id=int(submission.id))
+        dispatch_progress_pipeline(submission_id=int(submission_id))
 
         return Response(
             {

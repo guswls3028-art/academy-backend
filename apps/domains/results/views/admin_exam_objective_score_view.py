@@ -22,11 +22,13 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultFact, ExamAttempt
-from apps.domains.exams.models import Exam
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
 from apps.support.omr.score_shape import get_exam_score_shape
-from apps.domains.submissions.models import Submission
-from apps.domains.progress.dispatcher import dispatch_progress_pipeline
+from apps.support.results.admin_exam_dependencies import (
+    dispatch_progress_pipeline,
+    get_latest_exam_submission_id,
+    get_regular_active_exam_for_tenant,
+)
 from django.db.models import Max
 
 
@@ -39,14 +41,9 @@ class AdminExamObjectiveScoreView(APIView):
         enrollment_id = int(enrollment_id)
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        from django.shortcuts import get_object_or_404 as _get_or_404
-        exam = _get_or_404(
-            Exam,
-            id=exam_id,
+        exam = get_regular_active_exam_for_tenant(
+            exam_id=exam_id,
             tenant=request.tenant,
-            exam_type=Exam.ExamType.REGULAR,
-            is_active=True,
-            sessions__lecture__tenant=request.tenant,
         )
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
@@ -153,19 +150,10 @@ class AdminExamObjectiveScoreView(APIView):
             )
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
-        submission_id = 0
-        submission = (
-            Submission.objects
-            .filter(
-                enrollment_id=enrollment_id,
-                target_type=Submission.TargetType.EXAM,
-                target_id=exam_id,
-            )
-            .order_by("-id")
-            .first()
-        )
-        if submission:
-            submission_id = int(submission.id)
+        submission_id = get_latest_exam_submission_id(
+            enrollment_id=enrollment_id,
+            exam_id=exam_id,
+        ) or 0
 
         ResultFact.objects.create(
             target_type="exam",

@@ -5,7 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from apps.support.results.admin_exam_dependencies import (
+    dispatch_progress_pipeline,
     get_enrollment_for_tenant,
+    get_latest_exam_submission_id,
     get_regular_active_exam_for_tenant,
 )
 
@@ -32,24 +34,3 @@ def get_exam_question_for_item_score(
         sheet__exam_id__in=exam_ids,
         sheet__exam__tenant=tenant,
     ).first()
-
-
-def get_latest_exam_submission_id(*, enrollment_id: int, exam_id: int) -> int | None:
-    from apps.domains.submissions.models import Submission
-
-    submission = (
-        Submission.objects.filter(
-            enrollment_id=enrollment_id,
-            target_type=Submission.TargetType.EXAM,
-            target_id=exam_id,
-        )
-        .order_by("-id")
-        .first()
-    )
-    return int(submission.id) if submission else None
-
-
-def dispatch_progress_pipeline(**kwargs: Any) -> Any:
-    from apps.domains.progress.dispatcher import dispatch_progress_pipeline as _dispatch
-
-    return _dispatch(**kwargs)

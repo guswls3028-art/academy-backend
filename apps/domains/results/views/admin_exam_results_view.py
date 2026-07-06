@@ -11,9 +11,12 @@ from apps.domains.results.serializers.admin_exam_result_row import (
     AdminExamResultRowSerializer,
 )
 
-from apps.domains.submissions.models import Submission
-from apps.domains.exams.models import Exam
-from apps.domains.enrollment.models import Enrollment
+from apps.support.results.admin_exam_dependencies import (
+    get_enrollments_for_tenant_by_id,
+    get_regular_active_exam_for_tenant_or_none,
+    get_submission_status_by_id_for_tenant,
+    regular_active_exam_with_session_exists,
+)
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
@@ -55,13 +58,10 @@ class AdminExamResultsView(ListAPIView):
             return Result.objects.none()
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        if not Exam.objects.filter(
-            id=int(exam_id),
+        if not regular_active_exam_with_session_exists(
+            exam_id=int(exam_id),
             tenant=self.request.tenant,
-            exam_type=Exam.ExamType.REGULAR,
-            is_active=True,
-            sessions__lecture__tenant=self.request.tenant,
-        ).exists():
+        ):
             return Result.objects.none()
 
         return (
@@ -77,12 +77,10 @@ class AdminExamResultsView(ListAPIView):
     def list(self, request, *args, **kwargs):
         exam_id = int(self.kwargs["exam_id"])
 
-        exam = Exam.objects.filter(
-            id=exam_id,
+        exam = get_regular_active_exam_for_tenant_or_none(
+            exam_id=exam_id,
             tenant=request.tenant,
-            exam_type=Exam.ExamType.REGULAR,
-            is_active=True,
-        ).first()
+        )
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
         queryset = self.get_queryset()
@@ -94,10 +92,10 @@ class AdminExamResultsView(ListAPIView):
         # enrollment_id 참조 자체에는 제약이 없으므로 명시적으로 차단.
         # -------------------------------------------------
         enrollment_ids_page = [int(r.enrollment_id) for r in results]
-        enrollment_map = {
-            int(e.id): e
-            for e in Enrollment.objects.filter(id__in=enrollment_ids_page, tenant=request.tenant).select_related("student", "lecture")
-        }
+        enrollment_map = get_enrollments_for_tenant_by_id(
+            enrollment_ids=enrollment_ids_page,
+            tenant=request.tenant,
+        )
         student_name_map = {
             eid: _safe_student_name(enrollment_map.get(eid))
             for eid in enrollment_ids_page
@@ -155,10 +153,9 @@ class AdminExamResultsView(ListAPIView):
             for v in latest_map.values()
             if v.get("submission_id")
         ]
-        submission_status_map = (
-            {s.id: s.status for s in Submission.objects.filter(id__in=submission_ids, tenant=request.tenant)}
-            if submission_ids
-            else {}
+        submission_status_map = get_submission_status_by_id_for_tenant(
+            submission_ids=submission_ids,
+            tenant=request.tenant,
         )
 
         # -------------------------------------------------
