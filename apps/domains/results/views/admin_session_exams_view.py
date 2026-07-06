@@ -29,8 +29,8 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.lectures.models import Session
 from apps.domains.results.utils.session_exam import get_exams_for_session
+from apps.support.results.progress_read_dependencies import session_for_tenant
 
 
 def _dt(v):
@@ -43,7 +43,7 @@ class AdminSessionExamsView(APIView):
 
     def get(self, request, session_id: int):
         # ✅ tenant isolation: verify session belongs to tenant
-        session = Session.objects.filter(id=int(session_id), lecture__tenant=request.tenant).first()
+        session = session_for_tenant(session_id=int(session_id), tenant=request.tenant)
         if not session:
             return Response([])
 

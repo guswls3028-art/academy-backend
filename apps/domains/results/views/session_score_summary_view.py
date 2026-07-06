@@ -11,6 +11,7 @@ from apps.domains.results.services.session_score_summary_service import (
 from apps.domains.results.serializers.session_score_summary import (
     SessionScoreSummarySerializer,
 )
+from apps.support.results.progress_read_dependencies import get_session_for_tenant_or_404
 
 
 class SessionScoreSummaryView(APIView):
@@ -26,9 +27,7 @@ class SessionScoreSummaryView(APIView):
 
     def get(self, request, session_id: int):
         # ✅ tenant isolation: verify session belongs to tenant
-        from apps.domains.lectures.models import Session
-        from django.shortcuts import get_object_or_404
-        get_object_or_404(Session, id=int(session_id), lecture__tenant=request.tenant)
+        get_session_for_tenant_or_404(session_id=int(session_id), tenant=request.tenant)
 
         data = SessionScoreSummaryService.build(
             session_id=int(session_id)

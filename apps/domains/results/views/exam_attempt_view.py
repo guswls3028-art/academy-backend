@@ -16,6 +16,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.domains.results.models import ExamAttempt
 from apps.domains.results.serializers.exam_attempt import ExamAttemptSerializer
 from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.results.admin_exam_dependencies import regular_active_exam_ids_for_tenant
 
 
 class ExamAttemptViewSet(ModelViewSet):
@@ -30,14 +31,8 @@ class ExamAttemptViewSet(ModelViewSet):
 
     def get_queryset(self):
         # exam_id는 PositiveIntegerField(FK 아님)이므로 서브쿼리 사용
-        from apps.domains.exams.models import Exam
         tenant = self.request.tenant
-        tenant_exam_ids = Exam.objects.filter(
-            tenant=tenant,
-            exam_type=Exam.ExamType.REGULAR,
-            is_active=True,
-            sessions__lecture__tenant=tenant,
-        ).values_list("id", flat=True).distinct()
+        tenant_exam_ids = regular_active_exam_ids_for_tenant(tenant=tenant)
         return (
             ExamAttempt.objects
             .filter(exam_id__in=tenant_exam_ids)

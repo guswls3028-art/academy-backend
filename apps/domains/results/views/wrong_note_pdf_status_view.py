@@ -9,10 +9,13 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, NotFound
 
 from apps.core.permissions import TenantResolvedAndMember, is_effective_staff
-from apps.domains.enrollment.models import Enrollment
 from apps.domains.results.models import WrongNotePDF
 from apps.domains.results.serializers.wrong_note_pdf_serializers import (
     WrongNotePDFStatusSerializer,
+)
+from apps.support.results.admin_exam_dependencies import (
+    active_enrollment_exists_for_student,
+    enrollment_exists_for_tenant,
 )
 
 
@@ -33,8 +36,7 @@ class WrongNotePDFStatusView(APIView):
         user = request.user
 
         # ✅ tenant isolation: always verify enrollment belongs to tenant
-        qs = Enrollment.objects.filter(id=int(enrollment_id), tenant=request.tenant)
-        if not qs.exists():
+        if not enrollment_exists_for_tenant(enrollment_id=int(enrollment_id), tenant=request.tenant):
             raise PermissionDenied("You cannot access this PDF job.")
 
         if is_effective_staff(user, request.tenant):
@@ -44,11 +46,11 @@ class WrongNotePDFStatusView(APIView):
         student = getattr(user, "student_profile", None)
         if not student:
             raise PermissionDenied("You cannot access this PDF job.")
-        if not qs.filter(
-            student_id=student.id,
-            status="ACTIVE",
-            student__deleted_at__isnull=True,
-        ).exists():
+        if not active_enrollment_exists_for_student(
+            enrollment_id=int(enrollment_id),
+            tenant=request.tenant,
+            student_id=int(student.id),
+        ):
             raise PermissionDenied("You cannot access this PDF job.")
 
     def get(self, request, job_id: int):

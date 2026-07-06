@@ -9,12 +9,12 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.serializers.admin_exam_summary import AdminExamSummarySerializer
-from apps.domains.exams.models import Exam
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.support.results.admin_exam_dependencies import get_regular_active_exam_for_tenant
 
 
 class AdminExamSummaryView(APIView):
@@ -48,15 +48,9 @@ class AdminExamSummaryView(APIView):
         }
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        from django.shortcuts import get_object_or_404
-        exam = get_object_or_404(
-            Exam.objects.filter(
-                tenant=request.tenant,
-                exam_type=Exam.ExamType.REGULAR,
-                is_active=True,
-                sessions__lecture__tenant=request.tenant,
-            ).distinct(),
-            id=exam_id,
+        exam = get_regular_active_exam_for_tenant(
+            exam_id=exam_id,
+            tenant=request.tenant,
         )
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 

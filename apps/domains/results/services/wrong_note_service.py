@@ -4,9 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from apps.domains.exams.models import AnswerKey, Exam, ExamQuestion
 from apps.domains.results.models import ResultFact
 from apps.domains.results.services.answer_matching import format_answer_for_display
+from apps.support.results.wrong_note_dependencies import (
+    answer_key_map_for_effective_exam,
+    exam_questions_by_id,
+    regular_exam_ids_by_lecture_and_order,
+)
 
 
 # ======================================================
@@ -49,15 +53,9 @@ def _get_exam_ids_by_lecture_and_order(*, lecture_id: int, from_order: int) -> L
     - Exam ↔ Session 관계는 Exam.sessions M2M이 단일 진실
     - 강의/차시 필터는 세션의 lecture/order를 통해 계산
     """
-    return list(
-        Exam.objects
-        .filter(
-            exam_type=Exam.ExamType.REGULAR,
-            sessions__lecture_id=int(lecture_id),
-            sessions__order__gte=int(from_order),
-        )
-        .values_list("id", flat=True)
-        .distinct()
+    return regular_exam_ids_by_lecture_and_order(
+        lecture_id=int(lecture_id),
+        from_order=int(from_order),
     )
 
 
@@ -66,12 +64,7 @@ def _get_answer_key_map(exam_id: int) -> Dict[str, Any]:
     AnswerKey v2 (고정):
       answers = { "123": "B", ... }  # key = ExamQuestion.id(str)
     """
-    exam = Exam.objects.only("id", "exam_type", "template_exam_id").filter(id=int(exam_id)).first()
-    if exam is None:
-        return {}
-    ak = AnswerKey.objects.filter(exam_id=exam.effective_template_exam_id).first()
-    answers = getattr(ak, "answers", None) if ak else None
-    return answers if isinstance(answers, dict) else {}
+    return answer_key_map_for_effective_exam(exam_id=int(exam_id))
 
 
 # ======================================================
@@ -126,12 +119,7 @@ def list_wrong_notes_for_enrollment(
     question_ids = [int(f.question_id) for f in facts]
     exam_ids = list({int(f.target_id) for f in facts})
 
-    questions_map = (
-        ExamQuestion.objects
-        .filter(id__in=question_ids)
-        .select_related("sheet")
-        .in_bulk(field_name="id")
-    )
+    questions_map = exam_questions_by_id(question_ids=question_ids)
 
     answer_key_cache: Dict[int, Dict[str, Any]] = {
         exid: _get_answer_key_map(exid) for exid in exam_ids

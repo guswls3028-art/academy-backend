@@ -124,6 +124,14 @@ def session_for_tenant(*, session_id: int, tenant: Any) -> Any | None:
     )
 
 
+def get_session_for_tenant_or_404(*, session_id: int, tenant: Any) -> Any:
+    from django.shortcuts import get_object_or_404
+
+    from apps.domains.lectures.models import Session
+
+    return get_object_or_404(Session, id=int(session_id), lecture__tenant=tenant)
+
+
 def progress_policy_meta_for_lecture(lecture: Any) -> dict[str, str]:
     from apps.domains.progress.models import ProgressPolicy
 

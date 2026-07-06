@@ -41,7 +41,7 @@ from apps.domains.results.views.exam_attempt_view import ExamAttemptViewSet
 from apps.domains.results.views.admin_clinic_targets_view import AdminClinicTargetsView
 from apps.domains.results.views.admin_attempt_history_view import AdminAttemptHistoryView
 
-from apps.domains.clinic.views import ParticipantViewSet as AdminClinicBookingViewSet
+from apps.support.results.clinic_route_dependencies import AdminClinicBookingViewSet
 
 urlpatterns = [
     path("me/exams/<int:exam_id>/", MyExamResultView.as_view(), name="my-exam-result"),

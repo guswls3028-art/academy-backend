@@ -39,6 +39,7 @@ from __future__ import annotations
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
+from apps.support.results.admin_exam_dependencies import enrollment_ids_for_tenant
 
 
 class Command(BaseCommand):
@@ -58,7 +59,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from apps.domains.results.models import ExamAttempt, Result
-        from apps.domains.enrollment.models import Enrollment
 
         dry_run = bool(options.get("dry_run"))
         tenant_id = options.get("tenant")
@@ -70,9 +70,7 @@ class Command(BaseCommand):
 
         # tenant scope via Enrollment.tenant_id
         if tenant_id is not None:
-            tenant_enrollment_ids = set(
-                Enrollment.objects.filter(tenant_id=tenant_id).values_list("id", flat=True)
-            )
+            tenant_enrollment_ids = enrollment_ids_for_tenant(tenant_id=int(tenant_id))
             base_qs = base_qs.filter(enrollment_id__in=tenant_enrollment_ids)
             self.stdout.write(f"[scope] tenant_id={tenant_id} → {len(tenant_enrollment_ids)} enrollments")
 

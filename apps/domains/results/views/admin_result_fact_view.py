@@ -15,6 +15,7 @@ from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import ResultFact
+from apps.support.results.admin_exam_dependencies import regular_active_exam_ids_for_tenant
 
 
 class AdminResultFactView(APIView):
@@ -26,16 +27,7 @@ class AdminResultFactView(APIView):
         limit = int(request.query_params.get("limit", 100))
 
         # ✅ tenant isolation: scope ResultFact to exams belonging to tenant
-        from apps.domains.exams.models import Exam
-        tenant_exam_ids = list(
-            Exam.objects.filter(
-                tenant=request.tenant,
-                exam_type=Exam.ExamType.REGULAR,
-                is_active=True,
-                sessions__lecture__tenant=request.tenant,
-            )
-            .values_list("id", flat=True).distinct()
-        )
+        tenant_exam_ids = regular_active_exam_ids_for_tenant(tenant=request.tenant)
         qs = ResultFact.objects.filter(
             target_type="exam", target_id__in=tenant_exam_ids
         ).order_by("-id")

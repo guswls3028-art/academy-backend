@@ -15,14 +15,13 @@ POST /results/admin/sessions/<session_id>/score-draft/commit/
 
 from __future__ import annotations
 
-from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models import ScoreEditDraft
-from apps.domains.lectures.models import Session
+from apps.support.results.progress_read_dependencies import get_session_for_tenant_or_404
 
 
 class ScoreDraftView(APIView):
@@ -32,11 +31,7 @@ class ScoreDraftView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Tenant required"}, status=403)
-        get_object_or_404(
-            Session,
-            id=int(session_id),
-            lecture__tenant=tenant,
-        )
+        get_session_for_tenant_or_404(session_id=int(session_id), tenant=tenant)
         draft = ScoreEditDraft.objects.filter(
             session_id=int(session_id),
             tenant_id=tenant.id,
@@ -50,11 +45,7 @@ class ScoreDraftView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Tenant required"}, status=403)
-        get_object_or_404(
-            Session,
-            id=int(session_id),
-            lecture__tenant=tenant,
-        )
+        get_session_for_tenant_or_404(session_id=int(session_id), tenant=tenant)
         changes = request.data.get("changes")
         if not isinstance(changes, list):
             return Response({"detail": "changes must be a list"}, status=400)
@@ -75,11 +66,7 @@ class ScoreDraftCommitView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "Tenant required"}, status=403)
-        get_object_or_404(
-            Session,
-            id=int(session_id),
-            lecture__tenant=tenant,
-        )
+        get_session_for_tenant_or_404(session_id=int(session_id), tenant=tenant)
         deleted, _ = ScoreEditDraft.objects.filter(
             session_id=int(session_id),
             tenant_id=tenant.id,

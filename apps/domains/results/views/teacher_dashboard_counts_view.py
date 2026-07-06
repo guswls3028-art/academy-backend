@@ -22,7 +22,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.video.models import Video
+from apps.support.results.dashboard_dependencies import failed_video_count_since
 
 
 VIDEO_FAILED_WINDOW_DAYS = 30
@@ -46,11 +46,6 @@ class TeacherDashboardCountsView(APIView):
             return Response({"video_failed": 0}, status=200)
 
         cutoff = timezone.now() - timedelta(days=VIDEO_FAILED_WINDOW_DAYS)
-        video_failed = Video.objects.filter(
-            tenant=tenant,
-            status=Video.Status.FAILED,
-            deleted_at__isnull=True,
-            updated_at__gte=cutoff,
-        ).count()
+        video_failed = failed_video_count_since(tenant=tenant, cutoff=cutoff)
 
         return Response({"video_failed": int(video_failed)}, status=200)

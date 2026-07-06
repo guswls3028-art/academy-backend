@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
@@ -9,7 +10,7 @@ from django.db.models import Max
 from django.utils import timezone
 
 from apps.domains.results.models import ExamAttempt
-from apps.domains.exams.models import Exam
+from apps.support.results.attempt_dependencies import exam_for_attempt_policy
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class ExamAttemptService:
         # -------------------------------------------------
         # 1️⃣ Exam 정책 로딩
         # -------------------------------------------------
-        exam = Exam.objects.filter(id=int(exam_id)).first()
+        exam = exam_for_attempt_policy(exam_id=int(exam_id))
         allow_retake = bool(getattr(exam, "allow_retake", False)) if exam else False
         max_attempts = int(getattr(exam, "max_attempts", 1) or 1) if exam else 1
 
@@ -205,7 +206,7 @@ class ExamAttemptService:
         return placeholder
 
 
-def _is_attachable_manual_essay_result(*, exam: Exam, result) -> bool:
+def _is_attachable_manual_essay_result(*, exam: Any, result) -> bool:
     if _safe_float(result.objective_score) != 0.0:
         return False
 

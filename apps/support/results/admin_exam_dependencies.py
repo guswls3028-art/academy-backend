@@ -19,6 +19,21 @@ def regular_active_exam_with_session_exists(*, exam_id: int, tenant: Any) -> boo
     ).exists()
 
 
+def regular_active_exam_ids_for_tenant(*, tenant: Any) -> list[int]:
+    from apps.domains.exams.models import Exam
+
+    return list(
+        Exam.objects.filter(
+            tenant=tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+            sessions__lecture__tenant=tenant,
+        )
+        .values_list("id", flat=True)
+        .distinct()
+    )
+
+
 def get_regular_active_exam_for_tenant_or_none(*, exam_id: int, tenant: Any) -> Any | None:
     from apps.domains.exams.models import Exam
 
@@ -34,12 +49,13 @@ def get_regular_active_exam_for_tenant(*, exam_id: int, tenant: Any) -> Any:
     from apps.domains.exams.models import Exam
 
     return get_object_or_404(
-        Exam,
+        Exam.objects.filter(
+            tenant=tenant,
+            exam_type=Exam.ExamType.REGULAR,
+            is_active=True,
+            sessions__lecture__tenant=tenant,
+        ).distinct(),
         id=exam_id,
-        tenant=tenant,
-        exam_type=Exam.ExamType.REGULAR,
-        is_active=True,
-        sessions__lecture__tenant=tenant,
     )
 
 
@@ -47,6 +63,37 @@ def get_enrollment_for_tenant(*, enrollment_id: int, tenant: Any) -> Any | None:
     from apps.domains.enrollment.models import Enrollment
 
     return Enrollment.objects.filter(id=enrollment_id, tenant=tenant).first()
+
+
+def enrollment_exists_for_tenant(*, enrollment_id: int, tenant: Any) -> bool:
+    from apps.domains.enrollment.models import Enrollment
+
+    return Enrollment.objects.filter(id=int(enrollment_id), tenant=tenant).exists()
+
+
+def active_enrollment_exists_for_student(
+    *,
+    enrollment_id: int,
+    tenant: Any,
+    student_id: int,
+) -> bool:
+    from apps.domains.enrollment.models import Enrollment
+
+    return Enrollment.objects.filter(
+        id=int(enrollment_id),
+        tenant=tenant,
+        student_id=int(student_id),
+        status="ACTIVE",
+        student__deleted_at__isnull=True,
+    ).exists()
+
+
+def enrollment_ids_for_tenant(*, tenant_id: int) -> set[int]:
+    from apps.domains.enrollment.models import Enrollment
+
+    return set(
+        Enrollment.objects.filter(tenant_id=int(tenant_id)).values_list("id", flat=True)
+    )
 
 
 def get_enrollments_for_tenant_by_id(*, enrollment_ids: list[int], tenant: Any) -> dict[int, Any]:
