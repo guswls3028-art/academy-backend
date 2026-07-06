@@ -5,12 +5,12 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-07-06T17:40:32.4643888+09:00 |
-| 최종 상태 | FAIL |
+| 검증 시각 | 2026-07-06T18:29:26.8364972+09:00 |
+| 최종 상태 | PASS |
 | SSOT↔Actual 정합성 | **PASS** |
-| GO/NO-GO | **NO-GO** |
+| GO/NO-GO | **GO** |
 
-FAIL 항목 해결 후 재검증 필요.
+
 
 ## 합의사항 체크
 | 항목 | 결과 |
@@ -33,7 +33,7 @@ FAIL 항목 해결 후 재검증 필요.
 
 ## 남은 WARNING 및 후속 작업
 - Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.
-- [FAIL] RuntimeImage: API 런타임 image digest가 ci-build.latest.md academy-api digest와 불일치합니다. docs/reports/runtime-images.latest.md 확인 필요.
+- (현재 리스크 없음)
 
 ## 상세 보고서
 - [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트/R2/CDN·SQS·Video·관측·GO/NO-GO 상세

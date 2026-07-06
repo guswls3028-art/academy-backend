@@ -1,6 +1,6 @@
 # Cost/Waste Audit - Current Runtime
 
-**Generated:** 2026-07-06T17:46:30.9988750+09:00
+**Generated:** 2026-07-06T18:29:17.9303822+09:00
 **Scope:** academy V1 production resources in `ap-northeast-2`.
 **Mode:** read-only AWS describe/get/list + cleanup dry-runs.
 **Truth sources:** AWS actual state, `docs/ssot/params.yaml`, Cost Explorer, AWS Budget, ECR/Batch cleanup dry-runs, and resource cleanup checks.

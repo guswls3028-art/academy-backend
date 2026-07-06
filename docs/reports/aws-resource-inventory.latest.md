@@ -1,12 +1,12 @@
 # AWS 리소스 인벤토리 (V1 SSOT 기준)
 
-**리전:** ap-northeast-2 **VPC:** vpc-0831a2484f9b114c2 **생성:** 2026-07-06T17:31:05.0416023+09:00
+**리전:** ap-northeast-2 **VPC:** vpc-0831a2484f9b114c2 **생성:** 2026-07-06T18:26:34.4877083+09:00
 
 ## EC2 인스턴스
 | InstanceId | State | Name | SSOT |
 |------------|-------|------|------|
-| i-0e77e903787b2d638 | running | academy-v1-api | KEEP |
-| i-0f63c1190fbb1bb80 | running | academy-v1-messaging-worker | KEEP |
+| i-01e2e0d06102bebe8 | running | academy-v1-messaging-worker | KEEP |
+| i-0feaa8b771741f961 | running | academy-v1-api | KEEP |
 
 ## Auto Scaling Groups
 | Name | Desired | Min | Max | SSOT |
