@@ -7,13 +7,12 @@ from django.utils import timezone
 from django.db.models import Count
 
 from apps.domains.progress.models import SessionProgress, ProgressPolicy
-from apps.domains.lectures.models import Session
-
-from apps.domains.results.models import Result, ExamAttempt
-from apps.domains.exams.models import Exam
-
-# ✅ 단일 진실: Session↔Exam 매핑
-from apps.domains.results.utils.session_exam import get_exam_ids_for_session
+from apps.support.progress.session_calculator_dependencies import (
+    get_exam_ids_for_session,
+    get_exam_model,
+    get_result_attempt_models,
+    homework_score_exists,
+)
 
 
 class SessionProgressCalculator:
@@ -27,7 +26,7 @@ class SessionProgressCalculator:
     """
 
     @staticmethod
-    def _get_or_create_policy(session: Session) -> ProgressPolicy:
+    def _get_or_create_policy(session) -> ProgressPolicy:
         policy, _ = ProgressPolicy.objects.get_or_create(
             lecture=session.lecture,
             defaults={
@@ -45,7 +44,7 @@ class SessionProgressCalculator:
         return policy
 
     @staticmethod
-    def _pick_latest(results: List[Result]) -> Optional[Result]:
+    def _pick_latest(results: List[Any]) -> Optional[Any]:
         if not results:
             return None
         return sorted(
@@ -65,8 +64,8 @@ class SessionProgressCalculator:
             return default
 
     @staticmethod
-    def _regular_order_for_policy(session: Session) -> int | None:
-        if session.session_type == Session.SessionType.SUPPLEMENT:
+    def _regular_order_for_policy(session) -> int | None:
+        if getattr(session, "session_type", None) == "SUPPLEMENT":
             return None
         return session.regular_order or session.order
 
@@ -75,9 +74,11 @@ class SessionProgressCalculator:
         cls,
         *,
         enrollment_id: int,
-        session: Session,
+        session,
         policy: ProgressPolicy,
     ) -> Tuple[bool, Optional[float], bool, Dict[str, Any]]:
+        Result, ExamAttempt = get_result_attempt_models()
+        Exam = get_exam_model()
         exam_ids = get_exam_ids_for_session(session)
 
         if not exam_ids:
@@ -276,7 +277,7 @@ class SessionProgressCalculator:
     def calculate(
         *,
         enrollment_id: int,
-        session: Session,
+        session,
         attendance_type: str,
         video_progress_rate: int = 0,
         homework_submitted: bool = False,
@@ -333,23 +334,20 @@ class SessionProgressCalculator:
                 obj.homework_passed = bool(homework_submitted)
 
             elif policy.homework_pass_type == ProgressPolicy.HomeworkPassType.SCORE:
-                # HomeworkScore를 직접 쿼리 (exam과 동일 패턴)
-                from apps.domains.homework_results.models import HomeworkScore
-                obj.homework_passed = HomeworkScore.objects.filter(
+                obj.homework_passed = homework_score_exists(
                     enrollment_id=enrollment_id,
                     session_id=session.id,
                     attempt_index=1,
                     passed=True,
-                ).exists()
+                )
 
             elif policy.homework_pass_type == ProgressPolicy.HomeworkPassType.TEACHER_APPROVAL:
-                from apps.domains.homework_results.models import HomeworkScore
-                obj.homework_passed = HomeworkScore.objects.filter(
+                obj.homework_passed = homework_score_exists(
                     enrollment_id=enrollment_id,
                     session_id=session.id,
                     attempt_index=1,
                     teacher_approved=True,
-                ).exists()
+                )
         else:
             obj.homework_passed = True
 
