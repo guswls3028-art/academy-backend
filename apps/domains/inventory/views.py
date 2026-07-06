@@ -17,6 +17,14 @@ from .services import (
     move_folder as do_move_folder,
     delete_folder_recursive as do_delete_folder_recursive,
 )
+from apps.support.inventory.matchup_dependencies import (
+    cleanup_matchup_problem_images,
+    document_has_protected_matchup_problems,
+    get_matchup_document_for_inventory_file,
+    promote_inventory_file_to_matchup,
+    promoted_matchup_document_map,
+    protected_matchup_document_delete_detail,
+)
 
 # R2 Storage 버킷 (인벤토리 전용)
 try:
@@ -203,13 +211,11 @@ class InventoryListView(View):
             # 매치업 승격된 파일 ID set (admin scope에만 의미 있음)
             promoted_map: dict[int, dict] = {}
             if scope == "admin":
-                from apps.domains.matchup.models import MatchupDocument
                 file_ids = [f.id for f in qs_files]
-                if file_ids:
-                    docs = MatchupDocument.objects.filter(
-                        tenant=tenant, inventory_file_id__in=file_ids,
-                    ).values("id", "inventory_file_id", "status", "problem_count")
-                    promoted_map = {d["inventory_file_id"]: d for d in docs}
+                promoted_map = promoted_matchup_document_map(
+                    tenant=tenant,
+                    inventory_file_ids=file_ids,
+                )
 
             folders = [
                 {"id": str(f.id), "name": f.name, "parentId": str(f.parent_id) if f.parent_id else None}
@@ -451,8 +457,7 @@ class FileUploadView(View):
         matchup_error = ""
         if promote:
             try:
-                from apps.domains.matchup.services import promote_inventory_to_matchup
-                doc = promote_inventory_to_matchup(
+                doc = promote_inventory_file_to_matchup(
                     inv_file,
                     title=inv_file.display_name,
                     subject=(request.POST.get("subject") or ""),
@@ -602,21 +607,13 @@ class FileDeleteView(View):
         # 🔐 매치업 problem 이미지 R2 cleanup (cascade로 doc/problem 삭제 전)
         # InventoryFile cascade → MatchupDocument → MatchupProblem만 일어남.
         # MatchupProblem.image_key R2 객체는 누가 안 지움 → orphan 방지.
-        try:
-            matchup_doc = getattr(inv_file, "matchup_document", None)
-        except Exception:
-            matchup_doc = None
+        matchup_doc = get_matchup_document_for_inventory_file(inv_file)
         if matchup_doc is not None:
             try:
-                from apps.domains.matchup.services import (
-                    cleanup_matchup_problem_images,
-                    document_has_protected_matchup_problems,
-                    PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL,
-                )
                 if document_has_protected_matchup_problems(matchup_doc):
                     return JsonResponse(
                         {
-                            "detail": PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL,
+                            "detail": protected_matchup_document_delete_detail(),
                             "code": "protected_matchup_document",
                         },
                         status=409,

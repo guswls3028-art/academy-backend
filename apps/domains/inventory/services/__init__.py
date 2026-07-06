@@ -11,6 +11,11 @@ from ..models import InventoryFolder, InventoryFile
 from ..r2_path import build_r2_key, folder_path_string, safe_filename
 from apps.core.models import Tenant
 from academy.adapters.db.django import repositories_inventory as inv_repo
+from apps.support.inventory.matchup_dependencies import (
+    cleanup_matchup_problem_images,
+    get_matchup_document_for_inventory_file,
+    matchup_delete_protection_result,
+)
 
 try:
     from apps.infrastructure.storage.r2 import (
@@ -83,31 +88,7 @@ def _check_duplicate_file(target_folder_id: int | None, tenant: Tenant, scope: s
 
 
 def _matchup_delete_protection_result(files: list[InventoryFile]) -> dict | None:
-    protected_file_ids: list[int] = []
-    for inv_file in files:
-        try:
-            matchup_doc = getattr(inv_file, "matchup_document", None)
-        except Exception:
-            matchup_doc = None
-        if matchup_doc is None:
-            continue
-        from apps.domains.matchup.services import document_has_protected_matchup_problems
-
-        if document_has_protected_matchup_problems(matchup_doc):
-            protected_file_ids.append(inv_file.id)
-
-    if not protected_file_ids:
-        return None
-
-    from apps.domains.matchup.services import PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL
-
-    return {
-        "ok": False,
-        "detail": PROTECTED_MATCHUP_DOCUMENT_DELETE_DETAIL,
-        "code": "protected_matchup_document",
-        "protected_file_ids": protected_file_ids,
-        "status": 409,
-    }
+    return matchup_delete_protection_result(files)
 
 
 def move_file(
@@ -285,14 +266,10 @@ def delete_folder_recursive(
     # 매치업 problem 이미지 cleanup (cascade 전 — InventoryFile cascade는 problem
     # 이미지 R2 객체를 알지 못함)
     for inv_file in files:
-        try:
-            matchup_doc = getattr(inv_file, "matchup_document", None)
-        except Exception:
-            matchup_doc = None
+        matchup_doc = get_matchup_document_for_inventory_file(inv_file)
         if matchup_doc is not None:
             matchup_doc_count += 1
             try:
-                from apps.domains.matchup.services import cleanup_matchup_problem_images
                 cleanup_matchup_problem_images(matchup_doc)
             except Exception:
                 log.warning(
