@@ -10,14 +10,18 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.enrollment.models import Enrollment
 from apps.domains.results.models import Result
-from apps.domains.exams.models import Exam
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
-from apps.domains.homework_results.models import HomeworkScore
-from apps.domains.progress.models import ClinicLink
-from apps.domains.students.selectors import active_student_by_id
+from apps.support.results.admin_student_grades_dependencies import (
+    active_student_for_grades,
+    enrollment_ids_for_student,
+    enrollment_lecture_metadata_by_id,
+    exam_metadata_by_id,
+    homework_retake_counts_by_key,
+    homework_scores_for_grades,
+    resolved_homework_link_types,
+)
 
 
 class AdminStudentGradesView(APIView):
@@ -41,16 +45,11 @@ class AdminStudentGradesView(APIView):
             return Response({"exams": [], "homeworks": []})
 
         # tenant/deleted-state isolation: 해당 테넌트의 활성 학생인지 확인
-        student = active_student_by_id(tenant, parsed_student_id)
+        student = active_student_for_grades(tenant=tenant, student_id=parsed_student_id)
         if not student:
             return Response({"detail": "student not found"}, status=404)
 
-        enrollment_ids = list(
-            Enrollment.objects.filter(
-                student_id=student.id,
-                tenant=tenant,
-            ).values_list("id", flat=True)
-        )
+        enrollment_ids = enrollment_ids_for_student(tenant=tenant, student_id=student.id)
         if not enrollment_ids:
             return Response({"exams": [], "homeworks": []})
 
@@ -68,8 +67,7 @@ class AdminStudentGradesView(APIView):
         exams_map = {}
         if exam_ids:
             # 🔐 tenant 강제 — Exam.tenant FK 존재.
-            for e in Exam.objects.filter(id__in=exam_ids, tenant=tenant).only("id", "title", "pass_score"):
-                exams_map[e.id] = {"title": e.title, "pass_score": float(e.pass_score or 0)}
+            exams_map = exam_metadata_by_id(tenant=tenant, exam_ids=exam_ids)
 
         # 재시도 횟수 (bulk)
         retake_counts = {}
@@ -86,13 +84,10 @@ class AdminStudentGradesView(APIView):
         # 🔐 enrollment_ids는 line 44에서 이미 tenant 필터됨. 명시적으로 한 번 더.
         enrollment_lecture_map = {}
         if enrollment_ids:
-            for en in Enrollment.objects.filter(id__in=enrollment_ids, tenant=tenant).select_related("lecture").only("id", "lecture__id", "lecture__title", "lecture__color", "lecture__chip_label"):
-                enrollment_lecture_map[en.id] = {
-                    "lecture_id": en.lecture_id,
-                    "lecture_title": en.lecture.title if en.lecture else None,
-                    "lecture_color": getattr(en.lecture, "color", None),
-                    "lecture_chip_label": getattr(en.lecture, "chip_label", None),
-                }
+            enrollment_lecture_map = enrollment_lecture_metadata_by_id(
+                tenant=tenant,
+                enrollment_ids=enrollment_ids,
+            )
 
         # ── Stage 1: exam 단위 dedup + session lookup + 시스템 강의 스킵
         exam_rows = []  # [(r, eid, info, session, lecture_meta)]
@@ -186,33 +181,21 @@ class AdminStudentGradesView(APIView):
             })
 
         # ── 과제 성적 ──
-        hw_scores = (
-            HomeworkScore.objects.filter(enrollment_id__in=enrollment_ids, attempt_index=1)
-            .exclude(score__isnull=True)
-            .exclude(session__lecture__is_system=True)
-            .select_related("homework", "session", "session__lecture")
-            .order_by("-updated_at")
-        )
+        hw_scores = homework_scores_for_grades(enrollment_ids)
         hw_ids = list({hs.homework_id for hs in hw_scores})
         resolved_hw_links = {}
         if hw_ids and enrollment_ids:
-            for cl in ClinicLink.objects.filter(
-                enrollment_id__in=enrollment_ids,
-                source_type="homework",
-                source_id__in=hw_ids,
-                resolved_at__isnull=False,
-                resolution_type__in=["EXAM_PASS", "HOMEWORK_PASS", "MANUAL_OVERRIDE"],
-            ).values("enrollment_id", "source_id", "resolution_type"):
-                resolved_hw_links[(cl["enrollment_id"], cl["source_id"])] = cl["resolution_type"]
+            resolved_hw_links = resolved_homework_link_types(
+                enrollment_ids=enrollment_ids,
+                homework_ids=hw_ids,
+            )
 
         hw_retake_counts = {}
         if hw_ids and enrollment_ids:
-            from django.db.models import Max as HwMax
-            for row in HomeworkScore.objects.filter(
-                homework_id__in=hw_ids,
-                enrollment_id__in=enrollment_ids,
-            ).values("homework_id", "enrollment_id").annotate(max_attempt=HwMax("attempt_index")):
-                hw_retake_counts[(row["enrollment_id"], row["homework_id"])] = row["max_attempt"]
+            hw_retake_counts = homework_retake_counts_by_key(
+                enrollment_ids=enrollment_ids,
+                homework_ids=hw_ids,
+            )
 
         homework_list = []
         seen_hw_key = set()
