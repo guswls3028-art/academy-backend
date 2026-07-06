@@ -27,6 +27,11 @@ from apps.domains.progress.services.clinic_resolution_service import (
     ClinicResolutionService,
     _dispatch_progress_for_link,
 )
+from apps.support.progress.clinic_remediation_dependencies import (
+    calc_homework_passed_and_clinic,
+    get_exam_retake_models,
+    get_homework_retake_models,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +74,7 @@ class ClinicRemediationService:
         4. ExamResult 생성 (total_score=score, is_passed 계산)
         5. is_passed=True → ClinicLink 자동 해소
         """
-        from apps.domains.results.models import ExamAttempt
-        from apps.domains.exams.models import Exam
+        ExamAttempt, Exam = get_exam_retake_models()
 
         # 1. ClinicLink 조회 — resolved 여부를 분리 검사하여 운영 메시지 명확화
         link = ClinicLink.objects.select_for_update().filter(id=clinic_link_id).first()
@@ -199,8 +203,7 @@ class ClinicRemediationService:
         4. 합격 판정
         5. 합격 시 ClinicLink 해소
         """
-        from apps.domains.homework_results.models import HomeworkScore, Homework
-        from apps.domains.homework.utils.homework_policy import calc_homework_passed_and_clinic
+        HomeworkScore, Homework = get_homework_retake_models()
 
         # 1. ClinicLink 조회 (session→lecture→tenant 프리로드) — resolved 분리 검사
         link = (
@@ -335,8 +338,7 @@ class ClinicRemediationService:
         attempt_index >= 2인 ExamAttempt만 수정 가능 (1차는 성적표 편집으로 수정).
         수정 후 합격 여부를 재판정하고, 합격 시 ClinicLink를 통과 처리한다.
         """
-        from apps.domains.results.models import ExamAttempt
-        from apps.domains.exams.models import Exam
+        ExamAttempt, Exam = get_exam_retake_models()
 
         if attempt_index < 2:
             raise ValueError("1차 시도는 이 API로 수정할 수 없습니다. 성적표 편집을 사용하세요.")
@@ -440,8 +442,7 @@ class ClinicRemediationService:
         기존 과제 재시도의 점수를 수정한다.
         attempt_index >= 2인 HomeworkScore만 수정 가능.
         """
-        from apps.domains.homework_results.models import HomeworkScore, Homework
-        from apps.domains.homework.utils.homework_policy import calc_homework_passed_and_clinic
+        HomeworkScore, Homework = get_homework_retake_models()
 
         if attempt_index < 2:
             raise ValueError("1차 시도는 이 API로 수정할 수 없습니다. 성적표 편집을 사용하세요.")
