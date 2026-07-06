@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from django.core.exceptions import ValidationError
+from apps.support.results.submission_answer_dependencies import (
+    build_answer_text_by_question_id_from_submission,
+    is_omr_scan_submission,
+)
 
 
 def build_submission_answers_map(
@@ -15,8 +19,6 @@ def build_submission_answers_map(
     only have durable OMRDetectedAnswer facts, so re-sync must be able to read
     those facts without treating every objective answer as blank.
     """
-    from apps.domains.submissions.selectors import build_answer_text_by_question_id_from_submission
-
     return build_answer_text_by_question_id_from_submission(
         submission=submission,
         question_number_to_id=question_number_to_id,
@@ -31,8 +33,6 @@ def require_complete_omr_answers(
     context: str,
     protect_existing_score: bool,
 ) -> None:
-    from apps.domains.submissions.selectors import is_omr_scan_submission
-
     if not is_omr_scan_submission(submission):
         return
     if not expected_question_ids:

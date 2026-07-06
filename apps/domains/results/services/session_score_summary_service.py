@@ -4,13 +4,15 @@ from __future__ import annotations
 from django.db.models import Count
 
 from apps.domains.results.models import ExamAttempt
-from apps.domains.progress.models import SessionProgress
-from apps.domains.lectures.models import Session
 
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.clinic import get_clinic_enrollment_ids_for_session
 from apps.domains.results.utils.session_exam import get_exam_ids_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
+from apps.support.results.progress_read_dependencies import (
+    session_by_id,
+    session_progress_queryset_for_session,
+)
 
 
 class SessionScoreSummaryService:
@@ -46,14 +48,14 @@ class SessionScoreSummaryService:
             },
         }
 
-        session = Session.objects.filter(id=int(session_id)).first()
+        session = session_by_id(int(session_id))
         if not session:
             return EMPTY_SUMMARY
 
         exam_ids = get_exam_ids_for_session(session)
         if not exam_ids:
             # 세션에 시험이 없으면 점수 통계는 0, pass/clinic은 progress로만 판단 가능
-            progresses = SessionProgress.objects.filter(session=session)
+            progresses = session_progress_queryset_for_session(session)
             participant_count = progresses.count()
             pass_count = progresses.filter(completed=True).count()
             clinic_count = len(
@@ -72,7 +74,7 @@ class SessionScoreSummaryService:
         # -------------------------------------------------
         # participant 모수: SessionProgress 기준(원본 존중)
         # -------------------------------------------------
-        progresses = SessionProgress.objects.filter(session=session)
+        progresses = session_progress_queryset_for_session(session)
         participant_count = progresses.count()
 
         # -------------------------------------------------

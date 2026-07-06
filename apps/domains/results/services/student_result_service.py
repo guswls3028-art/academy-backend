@@ -18,8 +18,10 @@ from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 from apps.domains.results.services.answer_matching import format_answer_for_display
 from apps.domains.results.aggregations.exam_report import summarize_result_items
-from apps.domains.student_app.permissions import get_request_student
-from apps.domains.enrollment.selectors import active_enrollments_for_student
+from apps.support.results.student_result_dependencies import (
+    active_enrollments_for_student,
+    get_request_student,
+)
 
 
 def active_exam_enrollment_ids_for_student(*, tenant, student, exam_id: int) -> list[int]:

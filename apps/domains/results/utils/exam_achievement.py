@@ -21,8 +21,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from apps.domains.progress.models import ClinicLink
 from apps.domains.results.models import ExamResult, ExamAttempt
+from apps.support.results.progress_read_dependencies import (
+    exam_remediation_link_values,
+    latest_exam_remediation_link,
+)
 
 
 def compute_first_pass(
@@ -51,20 +54,10 @@ def compute_remediation(
     """
     if session is None:
         return False, None
-    link = (
-        ClinicLink.objects.filter(
-            enrollment_id=int(enrollment_id),
-            session=session,
-            source_type="exam",
-            source_id=int(exam_id),
-            resolved_at__isnull=False,
-            resolution_type__in=[
-                ClinicLink.ResolutionType.EXAM_PASS,
-                ClinicLink.ResolutionType.MANUAL_OVERRIDE,
-            ],
-        )
-        .order_by("-resolved_at")
-        .first()
+    link = latest_exam_remediation_link(
+        enrollment_id=enrollment_id,
+        exam_id=exam_id,
+        session=session,
     )
     if not link:
         return False, None
@@ -259,8 +252,6 @@ def compute_exam_achievement_bulk(
     if not items:
         return {}
 
-    from apps.domains.progress.models import ClinicLink
-
     enrollment_ids = {int(i["enrollment_id"]) for i in items}
     exam_ids = {int(i["exam_id"]) for i in items}
     attempt_ids = {int(i["attempt_id"]) for i in items if i.get("attempt_id")}
@@ -270,27 +261,16 @@ def compute_exam_achievement_bulk(
     }
 
     # 1) ClinicLink bulk fetch (remediated 판정)
-    link_filter: dict[str, Any] = dict(
-        enrollment_id__in=enrollment_ids,
-        source_type="exam",
-        source_id__in=exam_ids,
-        resolved_at__isnull=False,
-        resolution_type__in=[
-            ClinicLink.ResolutionType.EXAM_PASS,
-            ClinicLink.ResolutionType.MANUAL_OVERRIDE,
-        ],
-    )
-    if use_session_filter and session_ids:
-        link_filter["session_id__in"] = session_ids
-
     # key 구조:
     #   use_session_filter=True  → (enrollment_id, exam_id, session_id or None)
     #   use_session_filter=False → (enrollment_id, exam_id, None) — session 무관
     # 동일 key 에 link 가 여러 개면 resolved_at 최신만 보관.
     link_map: dict[tuple[int, int, int | None], dict[str, Any]] = {}
-    for cl in ClinicLink.objects.filter(**link_filter).values(
-        "enrollment_id", "source_id", "session_id",
-        "resolution_type", "resolution_evidence", "resolved_at",
+    for cl in exam_remediation_link_values(
+        enrollment_ids=enrollment_ids,
+        exam_ids=exam_ids,
+        session_ids=session_ids,
+        use_session_filter=use_session_filter,
     ):
         if use_session_filter:
             sid = int(cl["session_id"]) if cl.get("session_id") is not None else None
