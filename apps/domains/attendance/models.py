@@ -2,7 +2,6 @@
 
 from django.db import models
 from apps.core.models import Tenant
-from apps.domains.lectures.models import Section
 
 
 # ========================================================
@@ -48,7 +47,7 @@ class Attendance(models.Model):
     )
 
     attended_section = models.ForeignKey(
-        Section,
+        "lectures.Section",
         on_delete=models.SET_NULL,
         related_name="attendances",
         null=True,

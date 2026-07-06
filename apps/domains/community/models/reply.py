@@ -1,6 +1,5 @@
 from django.db import models
 from apps.core.models import Tenant
-from apps.domains.students.models import Student
 from .post import PostEntity
 
 
@@ -20,7 +19,7 @@ class PostReply(models.Model):
     )
     content = models.TextField()
     created_by = models.ForeignKey(
-        Student,
+        "students.Student",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

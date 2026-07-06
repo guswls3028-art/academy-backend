@@ -15,9 +15,8 @@ Homework policy calculation utilities
 """
 
 from __future__ import annotations
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
-from apps.domains.lectures.models import Session
 from apps.domains.homework.models import HomeworkPolicy
 
 
@@ -66,7 +65,7 @@ def calc_homework_percent(
 
 def calc_homework_passed_and_clinic(
     *,
-    session: Session,
+    session: Any,
     score: Optional[float],
     max_score: Optional[float],
 ) -> Tuple[bool, bool, Optional[int]]:

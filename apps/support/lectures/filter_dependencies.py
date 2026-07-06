@@ -13,3 +13,12 @@ def get_attendance_model():
     from apps.domains.attendance.models import Attendance
 
     return Attendance
+
+
+def active_enrollment_count_for_lecture(*, lecture_id: int) -> int:
+    from apps.domains.enrollment.models import Enrollment
+
+    return Enrollment.objects.filter(
+        lecture_id=lecture_id,
+        status="ACTIVE",
+    ).count()

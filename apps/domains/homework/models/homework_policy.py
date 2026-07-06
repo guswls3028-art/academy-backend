@@ -5,7 +5,6 @@ from __future__ import annotations
 from django.db import models
 
 from apps.api.common.models import TimestampModel
-from apps.domains.lectures.models import Session
 from apps.core.models import Tenant
 
 
@@ -22,7 +21,7 @@ class HomeworkPolicy(TimestampModel):
     )
 
     session = models.OneToOneField(
-        Session,
+        "lectures.Session",
         on_delete=models.CASCADE,
         related_name="homework_policy",
     )

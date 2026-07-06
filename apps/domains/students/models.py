@@ -6,6 +6,7 @@ from django.conf import settings
 from apps.api.common.models import TimestampModel
 from apps.core.models import Tenant
 from apps.core.db import TenantQuerySet  # ✅ 추가
+from apps.support.students.lifecycle_dependencies import update_inventory_student_ps
 
 
 class Student(TimestampModel):
@@ -187,13 +188,11 @@ class Student(TimestampModel):
                     old_ps = old.ps_number
                     new_ps = self.ps_number
                     if old_ps and new_ps and not new_ps.startswith("_del_"):
-                        from apps.domains.inventory.models import InventoryFolder, InventoryFile
-                        InventoryFolder.objects.filter(
-                            tenant=self.tenant, student_ps=old_ps
-                        ).update(student_ps=new_ps)
-                        InventoryFile.objects.filter(
-                            tenant=self.tenant, student_ps=old_ps
-                        ).update(student_ps=new_ps)
+                        update_inventory_student_ps(
+                            tenant=self.tenant,
+                            old_ps=old_ps,
+                            new_ps=new_ps,
+                        )
             except Student.DoesNotExist:
                 pass
         super().save(*args, **kwargs)

@@ -16,10 +16,11 @@ Homework Entity (Runtime / Operational)
 
 from __future__ import annotations
 
+from typing import Any
+
 from django.db import models
 
 from apps.api.common.models import TimestampModel
-from apps.domains.lectures.models import Session
 
 
 class Homework(TimestampModel):
@@ -51,7 +52,7 @@ class Homework(TimestampModel):
     )
 
     session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.CASCADE,
         related_name="homeworks",
         db_index=True,
@@ -100,7 +101,7 @@ class Homework(TimestampModel):
     def get_representative_title_for_session(
         cls,
         *,
-        session: Session,
+        session: Any,
         fallback: str = "과제",
     ) -> str:
         """

@@ -1,6 +1,5 @@
 from django.db import models
 from apps.core.models import Tenant
-from apps.domains.students.models import Student
 
 
 POST_TYPE_CHOICES = [
@@ -46,7 +45,7 @@ class PostEntity(models.Model):
         help_text="학생이 선택한 카테고리 (수강 중인 강의명 등)",
     )
     created_by = models.ForeignKey(
-        Student,
+        "students.Student",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

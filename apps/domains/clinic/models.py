@@ -4,7 +4,6 @@ from django.db import models
 from django.conf import settings
 
 from apps.api.common.models import TimestampModel
-from apps.domains.students.models import Student
 from apps.core.models import Tenant
 
 
@@ -145,7 +144,7 @@ class SessionParticipant(TimestampModel):
     requested_start_time = models.TimeField(null=True, blank=True)
     
     student = models.ForeignKey(
-        Student,
+        "students.Student",
         on_delete=models.CASCADE,
         related_name="clinic_participations",
     )
@@ -278,7 +277,7 @@ class Submission(TimestampModel):
         related_name="submissions",
     )
     student = models.ForeignKey(
-        Student,
+        "students.Student",
         on_delete=models.CASCADE,
         related_name="clinic_submissions",
     )

@@ -26,8 +26,6 @@ logger = logging.getLogger(__name__)
 
 
 _CLOSED_SOURCE_RESOLUTION_TYPES = {
-    ClinicLink.ResolutionType.EXAM_PASS,
-    ClinicLink.ResolutionType.HOMEWORK_PASS,
     ClinicLink.ResolutionType.MANUAL_OVERRIDE,
     ClinicLink.ResolutionType.WAIVED,
     ClinicLink.ResolutionType.SOURCE_REMOVED,
@@ -37,6 +35,27 @@ _CLOSED_SOURCE_RESOLUTION_TYPES = {
 def _resolve_tenant_id(enrollment_id: int) -> int | None:
     """enrollment_id에서 tenant_id를 조회한다."""
     return get_enrollment_tenant_id(enrollment_id)
+
+
+def _latest_source_resolution_type(
+    *,
+    enrollment_id: int,
+    session,
+    source_type: str,
+    source_id: int,
+) -> str | None:
+    return (
+        ClinicLink.objects.filter(
+            enrollment_id=enrollment_id,
+            session=session,
+            source_type=source_type,
+            source_id=source_id,
+            resolved_at__isnull=False,
+        )
+        .order_by("-resolved_at", "-id")
+        .values_list("resolution_type", flat=True)
+        .first()
+    )
 
 
 def _idempotent_create_clinic_link(
@@ -67,17 +86,11 @@ def _idempotent_create_clinic_link(
         if existing:
             return None
 
-        latest_resolution_type = (
-            ClinicLink.objects.filter(
-                enrollment_id=enrollment_id,
-                session=session,
-                source_type=source_type,
-                source_id=source_id,
-                resolved_at__isnull=False,
-            )
-            .order_by("-resolved_at", "-id")
-            .values_list("resolution_type", flat=True)
-            .first()
+        latest_resolution_type = _latest_source_resolution_type(
+            enrollment_id=enrollment_id,
+            session=session,
+            source_type=source_type,
+            source_id=source_id,
         )
         if latest_resolution_type in _CLOSED_SOURCE_RESOLUTION_TYPES:
             return None
@@ -143,6 +156,15 @@ class ClinicTriggerService:
             passed = exam_row.get("passed", True)
             if passed:
                 continue  # 이 시험은 합격 → ClinicLink 불필요
+
+            latest_resolution_type = _latest_source_resolution_type(
+                enrollment_id=session_progress.enrollment_id,
+                session=session_progress.session,
+                source_type="exam",
+                source_id=exam_id,
+            )
+            if latest_resolution_type == ClinicLink.ResolutionType.EXAM_PASS:
+                continue
 
             _idempotent_create_clinic_link(
                 enrollment_id=session_progress.enrollment_id,
@@ -240,6 +262,15 @@ class ClinicTriggerService:
 
             # 같은 atomic 안에서 새로 생성. unique constraint 위반 시 helper 가
             # IntegrityError 를 catch 해 None 반환 (idempotent).
+            latest_resolution_type = _latest_source_resolution_type(
+                enrollment_id=int(enrollment_id),
+                session=session,
+                source_type="exam",
+                source_id=int(exam_id),
+            )
+            if latest_resolution_type == ClinicLink.ResolutionType.EXAM_PASS:
+                return
+
             _idempotent_create_clinic_link(
                 enrollment_id=int(enrollment_id),
                 session=session,

@@ -35,3 +35,10 @@ def cancel_active_participants_for_student(
     from apps.domains.clinic.services.lifecycle import cancel_active_participants_for_student as _cancel
 
     return _cancel(tenant=tenant, student=student, changed_at=changed_at)
+
+
+def update_inventory_student_ps(*, tenant: Any, old_ps: str, new_ps: str) -> None:
+    from apps.domains.inventory.models import InventoryFile, InventoryFolder
+
+    InventoryFolder.objects.filter(tenant=tenant, student_ps=old_ps).update(student_ps=new_ps)
+    InventoryFile.objects.filter(tenant=tenant, student_ps=old_ps).update(student_ps=new_ps)

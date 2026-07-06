@@ -4,7 +4,6 @@ from __future__ import annotations
 from django.utils import timezone
 
 from apps.domains.progress.models import LectureProgress, SessionProgress
-from apps.domains.lectures.models import Lecture
 
 
 class LectureProgressCalculator:
@@ -13,7 +12,7 @@ class LectureProgressCalculator:
     """
 
     @staticmethod
-    def calculate(*, enrollment_id: int, lecture: Lecture) -> LectureProgress:
+    def calculate(*, enrollment_id: int, lecture) -> LectureProgress:
         sessions = lecture.sessions.all()
         total_sessions = sessions.count()
 

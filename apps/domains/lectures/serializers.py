@@ -2,6 +2,7 @@
 
 from rest_framework import serializers
 from .models import Lecture, Session, Section, SectionAssignment
+from apps.support.lectures.filter_dependencies import active_enrollment_count_for_lecture
 
 
 class LectureSerializer(serializers.ModelSerializer):
@@ -88,11 +89,9 @@ class SessionSerializer(serializers.ModelSerializer):
                 class_section=section,
                 enrollment__status="ACTIVE",
             ).count()
-        from apps.domains.enrollment.models import Enrollment
-        return Enrollment.objects.filter(
+        return active_enrollment_count_for_lecture(
             lecture_id=obj.lecture_id,
-            status="ACTIVE",
-        ).count()
+        )
 
     def to_representation(self, instance):
         data = super().to_representation(instance)

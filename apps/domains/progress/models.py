@@ -4,7 +4,6 @@ from __future__ import annotations
 from django.db import models
 
 from apps.api.common.models import TimestampModel
-from apps.domains.lectures.models import Lecture, Session
 
 
 class ProgressPolicy(TimestampModel):
@@ -33,7 +32,7 @@ class ProgressPolicy(TimestampModel):
         EXAM = "EXAM", "시험 기준"
 
     lecture = models.OneToOneField(
-        Lecture,
+        "lectures.Lecture",
         on_delete=models.CASCADE,
         related_name="progress_policy",
     )
@@ -107,7 +106,7 @@ class SessionProgress(TimestampModel):
         related_name="session_progress_rows",
     )
     session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.CASCADE,
         related_name="progress_rows",
     )
@@ -168,7 +167,7 @@ class LectureProgress(TimestampModel):
         related_name="lecture_progress_rows",
     )
     lecture = models.ForeignKey(
-        Lecture,
+        "lectures.Lecture",
         on_delete=models.CASCADE,
         related_name="lecture_progress_rows",
     )
@@ -185,7 +184,7 @@ class LectureProgress(TimestampModel):
     )
 
     last_session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -240,7 +239,7 @@ class ClinicLink(TimestampModel):
         db_index=True,
     )
     session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.CASCADE,
         related_name="clinic_links",
     )
@@ -335,7 +334,7 @@ class RiskLog(TimestampModel):
         db_index=True,
     )
     session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,

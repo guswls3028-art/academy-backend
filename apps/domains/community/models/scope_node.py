@@ -1,6 +1,5 @@
 from django.db import models
 from apps.core.models import Tenant
-from apps.domains.lectures.models import Lecture, Session
 
 
 class ScopeNode(models.Model):
@@ -18,12 +17,12 @@ class ScopeNode(models.Model):
     )
     level = models.CharField(max_length=16, choices=Level.choices)
     lecture = models.ForeignKey(
-        Lecture,
+        "lectures.Lecture",
         on_delete=models.CASCADE,
         related_name="scope_nodes",
     )
     session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.CASCADE,
         related_name="scope_nodes",
         null=True,
