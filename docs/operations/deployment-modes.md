@@ -1,7 +1,7 @@
 # 배포 방식 개요
 
 **기준:** 실제 스크립트·워크플로우. 문서는 실행 방식과 일치하도록 유지한다.
-**최종 갱신:** 2026-06-23
+**최종 갱신:** 2026-07-07
 
 ---
 
@@ -24,7 +24,7 @@
 
 | 경로 | 트리거 | 서버 반영 방식 | 속도 |
 |------|--------|----------------|------|
-| **CI 자동 배포** | main push → GitHub Actions | build-and-push → run-migrations(필요 시) → deploy-api/messaging/ai/video → verify-deployment | ~10~25분 |
+| **CI 자동 배포** | main push → GitHub Actions | build-and-push → run-migrations(필요 시) → deploy-api/messaging/ai/tools/video → verify-deployment | ~10~25분 |
 | **수동 정식 배포** | `pwsh scripts/v1/deploy.ps1 -AwsProfile default` | 전체 인프라 Ensure + API LT 갱신 + ASG instance refresh | 20~25분 |
 
 - **env·이미지 소스:** SSM `/academy/api/env` → `/opt/api.env`, ECR `academy-api:latest`.
@@ -40,7 +40,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 3. `run-migrations` job → 새 SHA 이미지로 one-shot `manage.py migrate`
 4. `deploy-api`, `deploy-messaging`, `deploy-ai`, `deploy-tools`, `deploy-video` job → 각 ASG/Batch 리소스 refresh
 5. 새 인스턴스 기동 → UserData로 ECR pull + SSM env + docker run
-6. `verify-deployment` job → API health, ASG 상태, tenant maintenance flag 확인
+6. `verify-deployment` job → API health, ASG 상태, tenant maintenance flag 확인 + API 변경 시 학생 영상 playback chain smoke
 
 **IAM:** `academy-gha-ecr-build` 역할에 ECR 권한 + `autoscaling:StartInstanceRefresh` + 배포 헬스 계측용 ELB target group read 권한 적용 완료 (2026-05-20).
 
@@ -73,6 +73,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 | 목적 | 방법 |
 |------|------|
 | 배포 후 API·인프라 상태 | `run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` 후 `run-deploy-verification.ps1 -AwsProfile default`. |
+| 학생 영상 재생 경로 좁은 회귀 | `python scripts/post_deploy_smoke/video_playback_chain.py` |
 | CI 빌드 digest와 서버 이미지 일치 | `run-deploy-verification.ps1`가 갱신하는 `docs/reports/runtime-images.latest.md`에서 `ci-build.latest.md`의 academy-api digest와 운영 인스턴스별 런타임 image digest 일치 여부 확인. |
 | API health | API 공개 URL로 `/healthz`, `/health` 200 확인. |
 

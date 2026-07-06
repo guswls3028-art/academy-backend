@@ -19,8 +19,8 @@
 - **전체 인프라 + API 반영:**
   `pwsh scripts/v1/deploy.ps1 -AwsProfile default`
 - **main push만으로 이미지 반영 (CI 자동):**
-  main에 push → GitHub Actions `v1-build-and-push-latest.yml` 실행 → **build-and-push** → 필요한 경우 **run-migrations** → **deploy-api / deploy-messaging / deploy-ai / deploy-video** → **verify-deployment**.
-  즉, **push만 해도** CI가 ECR 푸시, 마이그레이션, 각 서비스 배포, 헬스 검증까지 수행한다.
+  main에 push → GitHub Actions `v1-build-and-push-latest.yml` 실행 → **build-and-push** → 필요한 경우 **run-migrations** → **deploy-api / deploy-messaging / deploy-ai / deploy-tools / deploy-video** → **verify-deployment**.
+  즉, **push만 해도** CI가 ECR 푸시, 마이그레이션, 각 서비스 배포, health/ASG/tenant maintenance/video-chain 검증까지 수행한다.
 
 ### 2.2 deploy.ps1 동작 순서 (요약)
 
@@ -63,8 +63,10 @@
 
 - **deploy.ps1 내장:** After-Deploy Verification에서 ASG desired/inService, ALB target health, Batch Video CE/Queue 상태 출력. 실패 시 경고.
 - **수동 검증:** 배포 후 tenant/API/워커 동작을 넓게 확인하려면
+  `pwsh scripts/v1/run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` 후
   `pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default`
   특정 QnA 회귀만 좁게 재확인할 때는 `pwsh scripts/v1/run-qna-e2e-verify.ps1 -AwsProfile default`
+  학생 영상 재생 경로만 좁게 재확인할 때는 `python scripts/post_deploy_smoke/video_playback_chain.py`
 - **이미지 digest:** `run-deploy-verification.ps1`가 갱신하는 `docs/reports/runtime-images.latest.md`에서 `docs/reports/ci-build.latest.md`의 academy-api digest와 운영 인스턴스별 런타임 image digest 일치 여부를 확인한다. 수동 확인 시에는 컨테이너의 `.Image` 값을 먼저 읽고 해당 image 객체를 `docker image inspect`로 확인한다.
 
 ---

@@ -1,7 +1,7 @@
 # V1.1.0 Deployment Architecture
 
 **Version:** V1.1.0
-**Date:** 2026-03-14 (checked 2026-06-23)
+**Date:** 2026-03-14 (checked 2026-07-07)
 **SSOT Status:** Active
 
 ## 1. Service Decomposition
@@ -35,7 +35,7 @@ git push main
     |                                               build_messaging, build_ai,
     |                                               build_tools, force_full
     v
-[run-lint] ─── ruff deploy gate
+[run-lint] ─── ruff + submission lifecycle + refactor boundary deploy gates
     |
     v
 [run-tests] ─── smoke tests deploy gate
@@ -58,7 +58,8 @@ git push main
     |
     v
 [verify-deployment] ─── healthz 200 + health 200 + ASG healthy instances
-    |                    + tenant maintenance flag guard ──> PASS/FAIL
+    |                    + tenant maintenance flag guard
+    |                    + API-change student video playback chain smoke ──> PASS/FAIL
     |
     v
 [notify-on-failure] ─── failure-only notification
