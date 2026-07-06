@@ -16,6 +16,18 @@ from typing import Any, Dict, Optional
 
 from django.db import close_old_connections
 
+from apps.support.ai.callback_dependencies import (
+    get_auto_segmentation_snapshot_model,
+    get_exam_segmentation_models,
+    get_matchup_document_models,
+    get_matchup_page_state_model,
+    get_matchup_problem_model,
+    get_post_entity_model,
+    get_submission_ai_result_applier,
+    handle_matchup_proposal_path,
+    invalidate_matchup_tenant_similar_cache,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -181,10 +193,10 @@ def _handle_submission_ai_result(
     1. AI 결과를 Submission에 반영 (상태 전이: DISPATCHED → ANSWERS_READY/NEEDS_ID/FAILED)
     2. ANSWERS_READY가 되면 채점 파이프라인 실행
     """
-    from apps.domains.submissions.services.ai_omr_result_mapper import apply_ai_result
     from academy.application.use_cases.omr.grading_readiness import (
         grade_omr_submission_if_ready,
     )
+    apply_ai_result = get_submission_ai_result_applier()
 
     # 🔐 tenant 교차검증: AI job의 tenant_id와 submission의 tenant_id 일치 확인
     ai_job = None
@@ -295,7 +307,7 @@ def _handle_exam_ai_result(
 
     try:
         from django.db import transaction
-        from apps.domains.exams.models import Exam, Sheet, ExamQuestion, QuestionExplanation
+        Exam, Sheet, ExamQuestion, QuestionExplanation = get_exam_segmentation_models()
 
         with transaction.atomic():
             exam = Exam.objects.select_for_update().get(id=int(exam_id))
@@ -457,7 +469,7 @@ def _handle_matchup_ai_result(
     결과에서 추출된 문제 목록을 MatchupProblem으로 생성하고
     MatchupDocument 상태를 업데이트한다.
     """
-    from apps.domains.matchup.models import MatchupDocument, MatchupProblem
+    MatchupDocument, MatchupProblem = get_matchup_document_models()
 
     close_old_connections()
 
@@ -515,7 +527,7 @@ def _handle_matchup_ai_result(
     # default on (ENV flag X). PageState row 없는 doc 은 manual_pages 빈 → no-op.
     # safe 변경 — 기존 자료 영향 0 (PageState 도입 전 자료 모두 row 0).
     try:
-        from apps.domains.matchup.models import MatchupPageState
+        MatchupPageState = get_matchup_page_state_model()
         manual_pages = set(
             MatchupPageState.objects.filter(
                 document=doc, state="manual",
@@ -575,7 +587,6 @@ def _handle_matchup_ai_result(
     }
     if doc.tenant_id in proposal_first_tenants:
         try:
-            from apps.domains.matchup.services_proposal import handle_matchup_proposal_path
             handle_matchup_proposal_path(
                 job_id=job_id,
                 doc=doc,
@@ -640,7 +651,7 @@ def _handle_matchup_ai_result(
     # original_bbox/iou_with_ai/proposal_fk 자동 채우는 base. fine-tune loop 가동.
     # try/except fail-soft — 본 callback path 영향 0 (instrument only).
     try:
-        from apps.domains.matchup.models import AutoSegmentationSnapshot
+        AutoSegmentationSnapshot = get_auto_segmentation_snapshot_model()
 
         engine_used = (result_payload.get("segmentation_method") or "").lower()
         if engine_used and "yolo" in engine_used:
@@ -821,8 +832,7 @@ def _handle_matchup_ai_result(
     # 기존 캐시는 dead pid + stale embedding 보유. manual_crop / merge / delete
     # path 와 일관. fail-soft — invalidate 실패가 callback 본 흐름에 영향 0.
     try:
-        from apps.domains.matchup.cache import invalidate_tenant_similar_cache
-        invalidate_tenant_similar_cache(doc.tenant_id)
+        invalidate_matchup_tenant_similar_cache(doc.tenant_id)
     except Exception:
         logger.exception(
             "AI_CALLBACK_MATCHUP_CACHE_INVALIDATE_FAILED | doc_id=%s | tenant=%s",
@@ -852,7 +862,7 @@ def _handle_qna_matchup_search_result(
     if not post_id:
         return
 
-    from apps.domains.community.models import PostEntity
+    PostEntity = get_post_entity_model()
 
     # 테넌트 교차검증
     tenant_id_from_job = None
@@ -898,7 +908,7 @@ def _handle_matchup_index_result(
     시험 문제 인덱싱 결과 처리 (matchup_index_exam).
     source_id = exam_id. Document 없이 MatchupProblem 직접 생성.
     """
-    from apps.domains.matchup.models import MatchupProblem
+    MatchupProblem = get_matchup_problem_model()
 
     close_old_connections()
 
@@ -980,7 +990,7 @@ def _handle_matchup_manual_result(
     source_id = problem_id. 단일 problem 레코드의 text/embedding/format을 채운다.
     """
     from apps.domains.ai.models import AIJobModel
-    from apps.domains.matchup.models import MatchupProblem
+    MatchupProblem = get_matchup_problem_model()
 
     if status == "FAILED":
         logger.warning(
