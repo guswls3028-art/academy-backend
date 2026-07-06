@@ -15,6 +15,10 @@
 | [runtime-images.latest.md](runtime-images.latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
 | [consistency.latest.md](consistency.latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
 | [front-connection.latest.md](front-connection.latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
+| [aws-resource-inventory.latest.md](aws-resource-inventory.latest.md) | `scripts/v1/run-resource-inventory.ps1` | 인프라 인벤토리 점검 시 |
+| [resource-cleanup-plan.latest.md](resource-cleanup-plan.latest.md) | `scripts/v1/run-resource-inventory.ps1` | 인프라 인벤토리 점검 시 |
+| [resource-cleanup.latest.md](resource-cleanup.latest.md) | `scripts/v1/run-resource-cleanup.ps1` | 리소스 정리 dry-run/execute 시 |
+| [cost-waste-audit.latest.md](cost-waste-audit.latest.md) | `scripts/v1/run-cost-waste-audit.ps1` | 비용/낭비 감사 시 |
 
 ## history
 

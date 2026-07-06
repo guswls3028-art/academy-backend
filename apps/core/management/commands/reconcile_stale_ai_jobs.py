@@ -7,7 +7,7 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
-from apps.domains.ai.models import AIJobModel
+from apps.domains.ai.models import AIJobModel, AIResultModel
 from apps.domains.matchup.models import MatchupDocument
 
 
@@ -66,6 +66,16 @@ def iter_stale_matchup_candidates(
             candidates.append(ReconcileCandidate(job.job_id, source_id, f"superseded_source:{doc.status}"))
             continue
 
+        if current_job_id == str(job.job_id) and str(doc.status).lower() in terminal_statuses:
+            action = "mark_done_from_terminal_source" if str(doc.status).lower() == "done" else "fail_job"
+            candidates.append(ReconcileCandidate(
+                job.job_id,
+                source_id,
+                f"current_source_terminal:{doc.status}",
+                action,
+            ))
+            continue
+
         if (
             include_processing_source
             and current_job_id == str(job.job_id)
@@ -93,12 +103,18 @@ def reconcile_candidates(candidates: Iterable[ReconcileCandidate], *, execute: b
             job = AIJobModel.objects.select_for_update().filter(job_id=candidate.job_id, status="RUNNING").first()
             if not job:
                 continue
-            job.status = "FAILED"
-            job.error_message = error
-            job.last_error = error
+            if candidate.action == "mark_done_from_terminal_source":
+                job.status = "DONE"
+                job.error_message = ""
+                job.last_error = ""
+            else:
+                job.status = "FAILED"
+                job.error_message = error
+                job.last_error = error
             job.locked_by = None
             job.locked_at = None
             job.lease_expires_at = None
+            job.completed_at = now
             job.updated_at = now
             job.save(update_fields=[
                 "status",
@@ -107,8 +123,21 @@ def reconcile_candidates(candidates: Iterable[ReconcileCandidate], *, execute: b
                 "locked_by",
                 "locked_at",
                 "lease_expires_at",
+                "completed_at",
                 "updated_at",
             ])
+            if candidate.action == "mark_done_from_terminal_source":
+                AIResultModel.objects.get_or_create(
+                    job=job,
+                    defaults={
+                        "payload": {
+                            "reconciled_from_source": True,
+                            "source_domain": "matchup",
+                            "source_id": str(candidate.source_id or ""),
+                            "reason": error,
+                        },
+                    },
+                )
             if candidate.action == "retry_processing_source" and str(job.source_id or "").isdigit():
                 doc = MatchupDocument.objects.select_for_update().filter(
                     id=int(str(job.source_id)),

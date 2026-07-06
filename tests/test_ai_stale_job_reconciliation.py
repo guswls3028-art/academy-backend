@@ -7,11 +7,11 @@ from django.utils import timezone
 
 from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
 from apps.core.models import Tenant
-from apps.domains.ai.management.commands.reconcile_stale_ai_jobs import (
+from apps.core.management.commands.reconcile_stale_ai_jobs import (
     iter_stale_matchup_candidates,
     reconcile_candidates,
 )
-from apps.domains.ai.models import AIJobModel
+from apps.domains.ai.models import AIJobModel, AIResultModel
 from apps.domains.inventory.models import InventoryFile
 from apps.domains.matchup.models import MatchupDocument
 
@@ -97,6 +97,35 @@ class AIStaleJobReconciliationTests(TestCase):
         assert superseded.locked_by is None
         assert superseded.lease_expires_at is None
         assert superseded.error_message.startswith("stale_running_reconciled:superseded_source")
+
+    def test_reconciles_current_job_when_source_document_is_already_done(self):
+        doc = MatchupDocument.objects.create(
+            tenant=self.tenant,
+            inventory_file=self.inv,
+            title="done-current",
+            r2_key="tenants/ai-stale/source.pdf",
+            original_name="source.pdf",
+            status="done",
+            ai_job_id="current-done-job",
+            problem_count=24,
+        )
+        job = self._job("current-done-job", str(doc.id))
+
+        candidates = iter_stale_matchup_candidates(older_than_hours=24, limit=10)
+
+        assert len(candidates) == 1
+        assert candidates[0].job_id == job.job_id
+        assert candidates[0].reason == "current_source_terminal:done"
+        assert candidates[0].action == "mark_done_from_terminal_source"
+
+        assert reconcile_candidates(candidates, execute=True) == 1
+        job.refresh_from_db()
+        assert job.status == "DONE"
+        assert job.completed_at is not None
+        assert job.error_message == ""
+        result = AIResultModel.objects.get(job=job)
+        assert result.payload["reconciled_from_source"] is True
+        assert result.payload["source_id"] == str(doc.id)
 
     def test_mark_running_rejects_same_worker_duplicate_before_lease_expiry(self):
         now = timezone.now()
