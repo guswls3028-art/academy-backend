@@ -25,8 +25,6 @@ GET /results/admin/exams/<exam_id>/enrollments/<enrollment_id>/
 
 from __future__ import annotations
 
-from django.shortcuts import get_object_or_404
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -38,8 +36,6 @@ from apps.domains.results.serializers.student_exam_result import (
     StudentExamResultSerializer,
 )
 
-from apps.domains.exams.models import Exam, ExamQuestion
-
 # ✅ 단일 진실 유틸
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.clinic import is_clinic_required
@@ -47,9 +43,19 @@ from apps.domains.results.utils.exam_achievement import compute_exam_achievement
 from apps.support.omr.score_shape import get_exam_score_shape
 
 # ✅ OMR 스캔 이미지 presigned URL
-from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.support.omr.scan_images import build_omr_scan_image_payload
 from apps.domains.results.services.answer_matching import format_answer_for_display
+from apps.support.results.admin_exam_dependencies import (
+    get_enrollment_for_tenant,
+    get_regular_active_exam_for_tenant,
+)
+from apps.support.results.admin_exam_result_detail_dependencies import (
+    get_answer_key_answers,
+    get_exam_questions_for_sheet,
+    get_omr_answer_meta_by_question_id,
+    get_omr_submission_for_tenant,
+    is_omr_scan_submission,
+)
 
 
 class AdminExamResultDetailView(APIView):
@@ -60,13 +66,9 @@ class AdminExamResultDetailView(APIView):
         enrollment_id = int(enrollment_id)
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        exam = get_object_or_404(
-            Exam,
-            id=exam_id,
+        exam = get_regular_active_exam_for_tenant(
+            exam_id=exam_id,
             tenant=request.tenant,
-            exam_type=Exam.ExamType.REGULAR,
-            is_active=True,
-            sessions__lecture__tenant=request.tenant,
         )
 
         # ✅ tenant isolation: verify enrollment belongs to tenant
@@ -91,10 +93,10 @@ class AdminExamResultDetailView(APIView):
         )
         if not result:
             # ── Auto-create for manual scoring (답안지 제출 없이 수동 입력) ──
-            from apps.domains.enrollment.models import Enrollment
-            enrollment_obj = Enrollment.objects.filter(
-                id=enrollment_id, tenant=request.tenant
-            ).first()
+            enrollment_obj = get_enrollment_for_tenant(
+                enrollment_id=enrollment_id,
+                tenant=request.tenant,
+            )
             if not enrollment_obj:
                 raise NotFound("enrollment not found for this tenant")
 
@@ -200,12 +202,7 @@ class AdminExamResultDetailView(APIView):
         # -------------------------------------------------
         correct_answers = {}
         template_id = exam.effective_template_exam_id
-        try:
-            from apps.domains.exams.models import AnswerKey
-            ak = AnswerKey.objects.get(exam_id=template_id)
-            correct_answers = ak.answers or {}
-        except AnswerKey.DoesNotExist:
-            pass
+        correct_answers = get_answer_key_answers(template_exam_id=template_id)
 
         for item in data.get("items", []):
             qid = str(item.get("question_id", ""))
@@ -214,26 +211,20 @@ class AdminExamResultDetailView(APIView):
             )
 
         questions_payload = []
-        if score_shape.sheet_id:
-            for question in (
-                ExamQuestion.objects
-                .filter(sheet_id=score_shape.sheet_id)
-                .only("id", "number", "score")
-                .order_by("number")
-            ):
-                qid = int(question.id)
-                kind = score_shape.question_kind(qid)
-                payload = {
-                    "question_id": qid,
-                    "number": int(question.number),
-                    "max_score": score_shape.question_max_score(
-                        qid,
-                        getattr(question, "score", 0),
-                    ),
-                }
-                if kind:
-                    payload["kind"] = kind
-                questions_payload.append(payload)
+        for question in get_exam_questions_for_sheet(sheet_id=score_shape.sheet_id):
+            qid = int(question.id)
+            kind = score_shape.question_kind(qid)
+            payload = {
+                "question_id": qid,
+                "number": int(question.number),
+                "max_score": score_shape.question_max_score(
+                    qid,
+                    getattr(question, "score", 0),
+                ),
+            }
+            if kind:
+                payload["kind"] = kind
+            questions_payload.append(payload)
 
         # -------------------------------------------------
         # 9️⃣ OMR 스캔 정보 (image_url + per-answer meta)
@@ -256,11 +247,9 @@ class AdminExamResultDetailView(APIView):
                 submission_id_for_omr = int(att.submission_id)
 
         if submission_id_for_omr:
-            sub = (
-                Submission.objects
-                .filter(id=submission_id_for_omr, tenant=request.tenant)
-                .only("id", "file_key", "status", "meta", "source")
-                .first()
+            sub = get_omr_submission_for_tenant(
+                submission_id=submission_id_for_omr,
+                tenant=request.tenant,
             )
             if sub:
                 submission_status = sub.status
@@ -268,22 +257,16 @@ class AdminExamResultDetailView(APIView):
                 manual_review_meta = s_meta.get("manual_review")
                 identifier_status = s_meta.get("identifier_status")
 
-                if sub.file_key and sub.source == Submission.Source.OMR_SCAN:
+                if is_omr_scan_submission(sub):
                     scan_image_payload = build_omr_scan_image_payload(
                         submission=sub,
                         expires_in=21600,
                     )
 
                 # Per-answer OMR meta (confidence/marking/status)
-                ans_qs = SubmissionAnswer.objects.filter(
+                omr_by_qid = get_omr_answer_meta_by_question_id(
                     submission_id=submission_id_for_omr,
-                ).only("exam_question_id", "meta")
-                omr_by_qid: dict[int, dict] = {}
-                for a in ans_qs:
-                    am = a.meta or {}
-                    omr = am.get("omr") if isinstance(am, dict) else None
-                    if isinstance(omr, dict) and omr:
-                        omr_by_qid[int(a.exam_question_id)] = omr
+                )
 
                 if omr_by_qid:
                     for item in data.get("items", []):
