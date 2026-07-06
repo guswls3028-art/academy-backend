@@ -5,8 +5,6 @@ from django.db.models import Q
 from django.utils import timezone
 
 from apps.core.models.base import TimestampModel
-from apps.domains.lectures.models import Session
-from apps.domains.enrollment.models import Enrollment
 
 
 # ========================================================
@@ -89,7 +87,7 @@ class Video(TimestampModel):
     )
 
     session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -370,7 +368,7 @@ class VideoAccess(models.Model):
         related_name="permissions",
     )
     enrollment = models.ForeignKey(
-        Enrollment,
+        "enrollment.Enrollment",
         on_delete=models.CASCADE,
         related_name="video_permissions",
     )
@@ -441,7 +439,7 @@ class VideoProgress(models.Model):
         related_name="progresses",
     )
     enrollment = models.ForeignKey(
-        Enrollment,
+        "enrollment.Enrollment",
         on_delete=models.CASCADE,
         related_name="video_progress",
     )
@@ -484,7 +482,7 @@ class VideoPlaybackSession(TimestampModel):
         related_name="playback_sessions",
     )
     enrollment = models.ForeignKey(
-        Enrollment,
+        "enrollment.Enrollment",
         on_delete=models.CASCADE,
         related_name="playback_sessions",
     )
@@ -549,7 +547,7 @@ class VideoPlaybackEvent(TimestampModel):
         related_name="playback_events",
     )
     enrollment = models.ForeignKey(
-        Enrollment,
+        "enrollment.Enrollment",
         on_delete=models.CASCADE,
         related_name="video_playback_events",
     )
@@ -606,7 +604,7 @@ class VideoFolder(TimestampModel):
         help_text="폴더 소유 테넌트",
     )
     session = models.ForeignKey(
-        Session,
+        "lectures.Session",
         on_delete=models.CASCADE,
         null=True,
         blank=True,

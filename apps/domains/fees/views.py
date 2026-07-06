@@ -14,7 +14,7 @@ from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework.pagination import PageNumberPagination
 
 from apps.core.permissions import TenantResolvedAndMember
-from apps.domains.student_app.permissions import get_request_student
+from apps.support.fees.view_dependencies import active_student_ids_for_tenant, get_request_student
 
 
 class FeesLargePagination(PageNumberPagination):
@@ -24,7 +24,6 @@ class FeesLargePagination(PageNumberPagination):
     max_page_size = 2000
 
 from .models import FeeTemplate, StudentFee, StudentInvoice, FeePayment
-from apps.domains.students.models import Student
 
 
 def _fees_enabled(request) -> bool:
@@ -224,10 +223,9 @@ class StudentFeeViewSet(FeeManagementEnabledMixin, ModelViewSet):
             return Response({"detail": "비목을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
 
         # 학생 ID가 해당 테넌트 소속인지 검증 (크로스 테넌트 방지)
-        valid_student_ids = set(
-            Student.objects.filter(
-                id__in=student_ids, tenant=tenant, deleted_at__isnull=True,
-            ).values_list("id", flat=True)
+        valid_student_ids = active_student_ids_for_tenant(
+            tenant=tenant,
+            student_ids=student_ids,
         )
         invalid_ids = set(student_ids) - valid_student_ids
         if invalid_ids:

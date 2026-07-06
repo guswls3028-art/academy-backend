@@ -22,6 +22,10 @@ from __future__ import annotations
 from collections import Counter
 
 from django.core.management.base import BaseCommand
+from apps.support.progress.clinic_drift_dependencies import (
+    enrollment_ids_for_tenant,
+    exam_attempt_queryset,
+)
 
 
 class Command(BaseCommand):
@@ -37,8 +41,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from apps.domains.progress.models import ClinicLink, SessionProgress
-        from apps.domains.results.models import ExamAttempt
-        from apps.domains.enrollment.models import Enrollment
 
         tenant_id = options.get("tenant")
         verbose = bool(options.get("verbose"))
@@ -53,9 +55,7 @@ class Command(BaseCommand):
         # 공통: tenant scope
         enroll_scope: set[int] | None = None
         if tenant_id is not None:
-            enroll_scope = set(
-                Enrollment.objects.filter(tenant_id=tenant_id).values_list("id", flat=True)
-            )
+            enroll_scope = enrollment_ids_for_tenant(tenant_id)
             self.stdout.write(f"[scope] enrollments in tenant: {len(enroll_scope)}")
 
         # ──────────────────────────────────────────
@@ -80,7 +80,7 @@ class Command(BaseCommand):
         # ──────────────────────────────────────────
         # (2) attempt_index=1 missing initial_snapshot
         # ──────────────────────────────────────────
-        attempt1_qs = ExamAttempt.objects.filter(attempt_index=1)
+        attempt1_qs = exam_attempt_queryset().filter(attempt_index=1)
         if enroll_scope is not None:
             attempt1_qs = attempt1_qs.filter(enrollment_id__in=enroll_scope)
 
@@ -88,7 +88,7 @@ class Command(BaseCommand):
         at_risk = 0
 
         # 재응시 존재 키
-        retake_qs = ExamAttempt.objects.filter(attempt_index__gte=2)
+        retake_qs = exam_attempt_queryset().filter(attempt_index__gte=2)
         if enroll_scope is not None:
             retake_qs = retake_qs.filter(enrollment_id__in=enroll_scope)
         retake_keys = {

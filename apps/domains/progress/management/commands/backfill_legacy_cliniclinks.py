@@ -43,6 +43,11 @@ from collections import Counter
 
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from apps.support.progress.clinic_drift_dependencies import (
+    exam_ids_by_session,
+    valid_exam_ids,
+    valid_homework_ids,
+)
 
 
 class Command(BaseCommand):
@@ -60,8 +65,6 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from apps.domains.progress.models import ClinicLink
-        from apps.domains.exams.models import Exam
-        from apps.domains.homework_results.models import Homework
 
         dry_run = bool(options.get("dry_run"))
         tenant_id = options.get("tenant")
@@ -94,24 +97,11 @@ class Command(BaseCommand):
             if link.session_id is not None:
                 session_ids_hint.add(int(link.session_id))
 
-        valid_exams = set(
-            Exam.objects.filter(id__in=exam_ids_hint).values_list("id", flat=True)
-        ) if exam_ids_hint else set()
-        valid_homeworks = set(
-            Homework.objects.filter(id__in=hw_ids_hint).values_list("id", flat=True)
-        ) if hw_ids_hint else set()
+        valid_exams = valid_exam_ids(exam_ids_hint)
+        valid_homeworks = valid_homework_ids(hw_ids_hint)
 
         # session → 연결된 exam 매핑 (규칙 3: 단일 exam 추론용)
-        session_exam_map: dict[int, list[int]] = {}
-        if session_ids_hint:
-            # Exam.sessions 는 M2M. 각 세션에 매달린 exam 목록을 모은다.
-            # 대량일 수 있어 .values_list("sessions", "id") 로 한 번에 처리.
-            for exam_id, sid in Exam.objects.filter(
-                sessions__id__in=session_ids_hint
-            ).values_list("id", "sessions"):
-                if sid is None:
-                    continue
-                session_exam_map.setdefault(int(sid), []).append(int(exam_id))
+        session_exam_map = exam_ids_by_session(session_ids_hint)
 
         rule_counter: Counter[str] = Counter()
         skipped_reason_counter: Counter[str] = Counter()

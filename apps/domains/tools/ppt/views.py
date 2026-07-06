@@ -27,6 +27,7 @@ from django.views.decorators.http import require_POST
 from django.utils.decorators import method_decorator
 
 from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
+from apps.support.tools.ppt_dependencies import dispatch_ppt_generation_job
 from rest_framework_simplejwt.exceptions import InvalidToken, TokenError
 
 logger = logging.getLogger(__name__)
@@ -328,9 +329,7 @@ class PptGenerateView(View):
             archive_file.close()
 
         # Dispatch job
-        from apps.domains.ai.gateway import dispatch_job
-
-        result = dispatch_job(
+        result = dispatch_ppt_generation_job(
             job_type="ppt_generation",
             payload={
                 "mode": "images",
@@ -428,9 +427,7 @@ class PptGenerateView(View):
         )
 
         # Dispatch job
-        from apps.domains.ai.gateway import dispatch_job
-
-        result = dispatch_job(
+        result = dispatch_ppt_generation_job(
             job_type="ppt_generation",
             payload={
                 "mode": "pdf",

@@ -1,8 +1,11 @@
 from __future__ import annotations
-from django.db.models import Count
 
-from apps.domains.results.models import Result, ResultFact
-from apps.domains.exams.models import Exam
+from apps.support.progress.clinic_exam_rule_dependencies import (
+    exam_pass_score,
+    exam_result_for_rule,
+    low_confidence_fact_count,
+    repeated_wrong_question_ids,
+)
 
 
 class ClinicExamRuleService:
@@ -24,14 +27,12 @@ class ClinicExamRuleService:
         # ----------------------
         # 1️⃣ 점수 미달
         # ----------------------
-        result = Result.objects.filter(
+        result = exam_result_for_rule(
             enrollment_id=enrollment_id,
-            target_type="exam",
-            target_id=exam_id,
-        ).first()
+            exam_id=exam_id,
+        )
 
-        exam = Exam.objects.filter(id=exam_id).first()
-        pass_score = float(getattr(exam, "pass_score", 0) or 0)
+        pass_score = exam_pass_score(exam_id=exam_id)
 
         if result and result.total_score < pass_score:
             reasons["LOW_SCORE"] = {
@@ -43,12 +44,10 @@ class ClinicExamRuleService:
         # 2️⃣ OMR 신뢰도 낮음 (LOW_CONFIDENCE = conf<threshold,
         #     AMBIGUOUS_SINGLE = top-2 gap 작음 — 둘 다 AI 불확실 신호)
         # ----------------------
-        low_conf = ResultFact.objects.filter(
+        low_conf = low_confidence_fact_count(
             enrollment_id=enrollment_id,
-            target_type="exam",
-            target_id=exam_id,
-            meta__grading__invalid_reason__in=["LOW_CONFIDENCE", "AMBIGUOUS_SINGLE"],
-        ).count()
+            exam_id=exam_id,
+        )
 
         if low_conf >= cls.LOW_CONF_THRESHOLD:
             reasons["LOW_CONFIDENCE_OMR"] = {
@@ -59,22 +58,14 @@ class ClinicExamRuleService:
         # ----------------------
         # 3️⃣ 반복 오답
         # ----------------------
-        repeated = (
-            ResultFact.objects
-            .filter(
-                enrollment_id=enrollment_id,
-                target_type="exam",
-                target_id=exam_id,
-                is_correct=False,
-            )
-            .values("question_id")
-            .annotate(cnt=Count("attempt_id", distinct=True))
-            .filter(cnt__gte=2)
+        repeated_question_ids = repeated_wrong_question_ids(
+            enrollment_id=enrollment_id,
+            exam_id=exam_id,
         )
 
-        if repeated.exists():
+        if repeated_question_ids:
             reasons["REPEATED_WRONG"] = {
-                "question_ids": [r["question_id"] for r in repeated]
+                "question_ids": repeated_question_ids
             }
 
         return reasons

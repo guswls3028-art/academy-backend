@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from apps.support.landing_public.exam_showcase_dependencies import exam_showcase_source
+
 
 def _mask_initial(name: str) -> str:
     """성+나머지 동그라미. '박학생' → '박○○', '이김' → '이○'.
@@ -66,43 +68,8 @@ def build_showcase_snapshot(
     Raises:
         ValueError — exam이 tenant에 없거나 result 데이터 없음.
     """
-    from apps.domains.exams.models import Exam
-    from apps.domains.results.models import Result
-
-    # 1. tenant 격리 검증 — Exam 단일 fetch
-    try:
-        exam = Exam.objects.get(tenant=tenant, id=exam_id)
-    except Exam.DoesNotExist:
-        raise ValueError("시험이 없거나 권한이 없습니다.")
-
-    # 2. results fetch (이 시험의 전 수강생 결과)
-    qs = (
-        Result.objects.filter(
-            target_type="exam",
-            target_id=exam.id,
-            enrollment__student__tenant=tenant,
-        )
-        .select_related("enrollment", "enrollment__student")
-    )
-
-    raw: list[dict[str, Any]] = []
-    for r in qs:
-        if not r.enrollment or not r.enrollment.student:
-            continue
-        student = r.enrollment.student
-        # 미응시(score=0 + 0/0)는 제외할지 — 학원장 의도 명확치 않음. 우선 제외 X
-        # max_score=0 인 경우 제외 (시험 정의 안 됨)
-        if (r.max_score or 0) <= 0:
-            continue
-        raw.append({
-            "name": getattr(student, "name", "") or "",
-            "phone": getattr(student, "phone", "") or "",
-            "score": float(r.total_score or 0),
-            "max_score": float(r.max_score or 0),
-        })
-
-    if not raw:
-        raise ValueError("해당 시험의 채점 결과가 없습니다.")
+    source = exam_showcase_source(tenant=tenant, exam_id=exam_id)
+    raw = source.rows
 
     # 2026-05-13 안전망: phone_last4 모드는 학원에 학생 ≥3명일 때만 허용 (k-anonymity).
     # 미만이면 외부 학부모가 마스킹된 후기에서도 학생 식별 가능 → initial 모드로 자동 다운그레이드.
@@ -150,6 +117,6 @@ def build_showcase_snapshot(
         "max": max(scores) if scores else 0,
         "min": min(scores) if scores else 0,
         "max_score_full": max_full,
-        "exam_title": exam.title if hasattr(exam, "title") else "",
+        "exam_title": source.exam_title,
     }
     return rows, summary

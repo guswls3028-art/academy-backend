@@ -6,7 +6,10 @@ from apps.domains.community.selectors import (
     get_empty_scope_node_queryset,
 )
 from apps.core.permissions import TenantResolvedAndMember, is_effective_staff
-from apps.domains.student_app.permissions import get_request_student
+from apps.support.community.scope_node_dependencies import (
+    active_lecture_ids_for_student,
+    get_request_student,
+)
 
 
 class ScopeNodeViewSet(viewsets.ReadOnlyModelViewSet):
@@ -25,11 +28,8 @@ class ScopeNodeViewSet(viewsets.ReadOnlyModelViewSet):
         student = get_request_student(self.request)
         if not student:
             return get_empty_scope_node_queryset()
-        from apps.domains.enrollment.models import Enrollment
-
-        lecture_ids = Enrollment.objects.filter(
+        lecture_ids = active_lecture_ids_for_student(
             tenant=tenant,
             student=student,
-            status="ACTIVE",
-        ).values_list("lecture_id", flat=True)
+        )
         return qs.filter(lecture_id__in=lecture_ids)

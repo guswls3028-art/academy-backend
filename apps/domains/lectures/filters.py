@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 
 import django_filters
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.attendance.models import Attendance
+from apps.support.lectures.filter_dependencies import get_attendance_model, get_enrollment_model
+
+Attendance = get_attendance_model()
+Enrollment = get_enrollment_model()
 
 
 # --------------------------------------------------
