@@ -86,9 +86,13 @@ def _patch_problem_create(captured: dict):
 
     objects = MagicMock()
     objects.create = MagicMock(side_effect=fake_create)
-    # number_conflict pre-check 우회 — filter().only().first() = None
+    # number_conflict pre-check 우회 — filter().only().order_by().first() = None
     _no_conflict = MagicMock()
-    _no_conflict.only = MagicMock(return_value=MagicMock(first=MagicMock(return_value=None)))
+    _no_conflict_ordered = MagicMock()
+    _no_conflict_ordered.first = MagicMock(return_value=None)
+    _no_conflict_selected = MagicMock()
+    _no_conflict_selected.order_by = MagicMock(return_value=_no_conflict_ordered)
+    _no_conflict.only = MagicMock(return_value=_no_conflict_selected)
     objects.filter = MagicMock(return_value=_no_conflict)
     return patch.object(MatchupProblem, "objects", objects), objects
 
