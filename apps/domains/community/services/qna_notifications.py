@@ -7,6 +7,13 @@ from typing import Iterable
 
 from django.utils import timezone
 from django.utils.html import strip_tags
+from apps.support.community.qna_notification_dependencies import (
+    active_staff_profiles_for_qna,
+    build_fallback_qna_replacements,
+    enqueue_qna_sms,
+    qna_tenant_site_url,
+    resolve_qna_freeform_template,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,15 +120,11 @@ def _send_qna_alimtalk_to_recipients(
     if not tenant or not body.strip():
         return 0
 
-    from apps.domains.messaging.selectors import resolve_freeform_template
-    from apps.domains.messaging.services import enqueue_sms
-    from apps.domains.messaging.services.url_helpers import get_tenant_site_url
-
-    template = resolve_freeform_template(tenant.id)
+    template = resolve_qna_freeform_template(tenant.id)
     template_id = (getattr(template, "solapi_template_id", "") or "").strip() if template else ""
 
     academy_name = (getattr(tenant, "name", "") or "").strip()
-    site_url = get_tenant_site_url(tenant) or ""
+    site_url = qna_tenant_site_url(tenant) or ""
     sender = ""
 
     sent = 0
@@ -140,7 +143,7 @@ def _send_qna_alimtalk_to_recipients(
             action_label=action_label,
         )
         try:
-            ok = enqueue_sms(
+            ok = enqueue_qna_sms(
                 tenant_id=tenant.id,
                 to=recipient.phone,
                 text=text,
@@ -209,27 +212,18 @@ def _resolve_qna_alimtalk_payload(
         )
         return template_id, replacements, text
 
-    from apps.domains.messaging.alimtalk_content_builders import (
-        SOLAPI_ATTENDANCE,
-        TYPE_ATTENDANCE,
-        build_manual_replacements,
-    )
-
     now = timezone.localtime()
-    replacements = build_manual_replacements(
-        TYPE_ATTENDANCE,
-        body,
-        {
-            "강의명": _clip(category_label or "QnA", 23),
-            "차시명": _clip(action_label or "QnA", 23),
-            "날짜": now.strftime("%m/%d"),
-            "시간": now.strftime("%H:%M"),
-        },
-        tenant_name=academy_name,
+    template_id, replacements = build_fallback_qna_replacements(
+        body=body,
+        lecture_label=_clip(category_label or "QnA", 23),
+        session_label=_clip(action_label or "QnA", 23),
+        date_label=now.strftime("%m/%d"),
+        time_label=now.strftime("%H:%M"),
+        academy_name=academy_name,
         student_name=student_name or recipient_name,
         site_url=site_url,
     )
-    return SOLAPI_ATTENDANCE, replacements, body
+    return template_id, replacements, body
 
 
 def _iter_staff_recipients(tenant) -> list[_Recipient]:
@@ -237,7 +231,6 @@ def _iter_staff_recipients(tenant) -> list[_Recipient]:
         return []
 
     from apps.core.models import TenantMembership
-    from apps.domains.staffs.models import Staff
 
     recipients: list[_Recipient] = []
     seen_phones: set[str] = set()
@@ -285,8 +278,7 @@ def _iter_staff_recipients(tenant) -> list[_Recipient]:
             )
         )
 
-    staff_qs = Staff.objects.filter(tenant=tenant, is_active=True).only("id", "name", "phone")
-    for staff in staff_qs:
+    for staff in active_staff_profiles_for_qna(tenant):
         phone = _normalize_phone(getattr(staff, "phone", None))
         if not _is_valid_phone(phone) or phone in seen_phones:
             continue
