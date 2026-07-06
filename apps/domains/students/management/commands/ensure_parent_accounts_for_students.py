@@ -14,8 +14,8 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from apps.domains.students.models import Student
-from apps.domains.parents.services import ensure_parent_for_student
 from academy.adapters.db.django import repositories_core as core_repo
+from apps.support.students.lifecycle_dependencies import ensure_parent_for_student
 
 
 def _normalize_phone(raw: str) -> str:

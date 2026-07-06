@@ -9,7 +9,7 @@ import urllib.request
 from django.core.management.base import BaseCommand
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from apps.domains.students.models import Student
+from apps.support.community.post_dependencies import student_user_for_qna_e2e
 
 logger = logging.getLogger(__name__)
 
@@ -65,12 +65,12 @@ class Command(BaseCommand):
 
         self.stdout.write(f"[verify_qna_e2e_safe] tenant_id={tenant_id}, base={base}, student_id={student_id}, dry_run={dry_run}")
 
-        student = Student.objects.filter(id=student_id).select_related("user").first()
-        if not student or not getattr(student, "user_id", None):
+        user = student_user_for_qna_e2e(student_id=student_id)
+        if not user:
             self.stderr.write(self.style.ERROR(f"Student id={student_id} not found or has no user"))
             sys.exit(1)
 
-        token = RefreshToken.for_user(student.user)
+        token = RefreshToken.for_user(user)
         access = str(token.access_token)
         headers = {
             "Authorization": f"Bearer {access}",

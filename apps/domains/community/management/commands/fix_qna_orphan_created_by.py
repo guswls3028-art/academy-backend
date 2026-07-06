@@ -16,7 +16,11 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from apps.domains.community.models import PostEntity
-from apps.domains.students.models import Student
+from apps.support.community.post_dependencies import (
+    active_student_for_assignment,
+    active_student_ids_for_tenant,
+    active_student_summaries_for_tenant,
+)
 
 
 class Command(BaseCommand):
@@ -64,9 +68,7 @@ class Command(BaseCommand):
         updated = 0
         skipped = 0
         for tenant_id, posts in by_tenant.items():
-            students = list(
-                Student.objects.filter(tenant_id=tenant_id, deleted_at__isnull=True).values_list("id", flat=True)
-            )
+            students = active_student_ids_for_tenant(tenant_id=tenant_id)
             if len(students) == 1:
                 with transaction.atomic():
                     for post in posts:
@@ -79,9 +81,7 @@ class Command(BaseCommand):
                 updated += len(posts)
             else:
                 skipped += len(posts)
-                students_objs = list(
-                    Student.objects.filter(tenant_id=tenant_id, deleted_at__isnull=True).values("id", "name")[:20]
-                )
+                students_objs = active_student_summaries_for_tenant(tenant_id=tenant_id, limit=20)
                 self.stdout.write(
                     self.style.WARNING(
                         f"tenant_id={tenant_id}: 활성 학생 수={len(students)}명 → 자동 할당 생략 (post_ids={[p.id for p in posts]})"
@@ -99,7 +99,7 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(f"할당 완료: {updated}건, 자동 할당 생략: {skipped}건"))
 
     def _assign_to_student(self, orphans_queryset, student_id: int, dry_run: bool):
-        student = Student.objects.filter(id=student_id, deleted_at__isnull=True).select_related("tenant").first()
+        student = active_student_for_assignment(student_id=student_id)
         if not student:
             self.stderr.write(self.style.ERROR(f"학생 id={student_id} 없음 또는 삭제됨."))
             return

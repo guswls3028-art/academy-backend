@@ -16,8 +16,6 @@ from apps.core.parsing import parse_bool
 from apps.core.permissions import TenantResolvedAndStaff, TenantResolved
 from apps.api.common.throttles import SmsEndpointThrottle, SignupCheckThrottle
 
-from apps.domains.messaging.services import get_tenant_site_url, send_registration_approved_messages
-
 from academy.adapters.db.django import repositories_students as student_repo
 from ..models import Student, StudentRegistrationRequest
 from ..serializers import (
@@ -27,6 +25,10 @@ from ..serializers import (
 )
 from ..services import RegistrationApprovalError, RegistrationApprovalResult, approve_registration_request
 from .student_views import StudentListPagination
+from apps.support.students.view_dependencies import (
+    get_tenant_site_url,
+    send_registration_approved_messages,
+)
 
 logger = logging.getLogger(__name__)
 

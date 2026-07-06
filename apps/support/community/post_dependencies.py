@@ -57,6 +57,83 @@ def student_activity_rank(*, tenant: Any, since: Any, my_score: int) -> tuple[in
     return higher + 1, total_active
 
 
+def top_active_students_by_community_activity(*, tenant: Any, since: Any, limit: int) -> list[dict[str, Any]]:
+    from django.db.models import Count, F, Q
+
+    from apps.domains.students.models import Student
+
+    students = (
+        Student.objects.filter(tenant=tenant, deleted_at__isnull=True)
+        .annotate(
+            post_count=Count(
+                "post_entities",
+                filter=Q(post_entities__created_at__gte=since),
+                distinct=True,
+            ),
+            reply_count=Count(
+                "post_replies",
+                filter=Q(post_replies__created_at__gte=since),
+                distinct=True,
+            ),
+        )
+        .annotate(activity_score=F("post_count") + F("reply_count"))
+        .filter(activity_score__gt=0)
+        .order_by("-activity_score", "name")[: int(limit)]
+    )
+    return [
+        {
+            "id": student.id,
+            "name": student.name,
+            "post_count": student.post_count,
+            "reply_count": student.reply_count,
+            "score": student.activity_score,
+        }
+        for student in students
+    ]
+
+
+def active_student_ids_for_tenant(*, tenant_id: int) -> list[int]:
+    from apps.domains.students.models import Student
+
+    return list(
+        Student.objects.filter(
+            tenant_id=int(tenant_id),
+            deleted_at__isnull=True,
+        ).values_list("id", flat=True)
+    )
+
+
+def active_student_summaries_for_tenant(*, tenant_id: int, limit: int) -> list[dict[str, Any]]:
+    from apps.domains.students.models import Student
+
+    return list(
+        Student.objects.filter(
+            tenant_id=int(tenant_id),
+            deleted_at__isnull=True,
+        ).values("id", "name")[: int(limit)]
+    )
+
+
+def active_student_for_assignment(*, student_id: int) -> Any | None:
+    from apps.domains.students.models import Student
+
+    return (
+        Student.objects
+        .filter(id=int(student_id), deleted_at__isnull=True)
+        .select_related("tenant")
+        .first()
+    )
+
+
+def student_user_for_qna_e2e(*, student_id: int) -> Any | None:
+    from apps.domains.students.models import Student
+
+    student = Student.objects.filter(id=int(student_id)).select_related("user").first()
+    if not student or not getattr(student, "user_id", None):
+        return None
+    return student.user
+
+
 def get_reply_event_notifier() -> Callable[..., Any]:
     from apps.domains.messaging.services import send_event_notification
 

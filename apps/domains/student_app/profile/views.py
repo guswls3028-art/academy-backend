@@ -8,7 +8,10 @@ from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from apps.core.models.user import user_display_username
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
-from apps.domains.students.services import StudentProfileUpdateError, update_student_profile
+from apps.support.student_app.profile_dependencies import (
+    StudentProfileUpdateError,
+    update_student_profile,
+)
 logger = logging.getLogger(__name__)
 
 

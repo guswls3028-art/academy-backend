@@ -8,7 +8,7 @@ from django.db import transaction
 
 from academy.adapters.db.django import repositories_students as student_repo
 from apps.core.models import TenantMembership
-from apps.domains.parents.services import ensure_parent_account_for_student
+from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
 
 
 @dataclass(frozen=True)

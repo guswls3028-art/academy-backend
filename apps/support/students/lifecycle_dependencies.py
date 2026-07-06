@@ -20,6 +20,27 @@ def ensure_parent_for_student(
     )
 
 
+def ensure_parent_account_for_student(
+    *,
+    tenant: Any,
+    parent_phone: str,
+    student_name: str,
+) -> Any:
+    from apps.domains.parents.services import ensure_parent_account_for_student as _ensure_parent_account
+
+    return _ensure_parent_account(
+        tenant=tenant,
+        parent_phone=parent_phone,
+        student_name=student_name,
+    )
+
+
+def parent_for_password_reset(*, tenant_id: int, phone: str) -> Any | None:
+    from apps.domains.parents.models import Parent
+
+    return Parent.objects.filter(tenant_id=int(tenant_id), phone=phone).first()
+
+
 def deactivate_enrollments_for_student(*, tenant: Any, student: Any) -> int:
     from apps.domains.enrollment.services.lifecycle import deactivate_enrollments_for_student as _deactivate
 

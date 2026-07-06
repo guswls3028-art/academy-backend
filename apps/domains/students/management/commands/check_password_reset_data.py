@@ -18,7 +18,7 @@ from django.core.management.base import BaseCommand
 from django.db.models import Count
 
 from apps.domains.students.models import Student
-from apps.domains.parents.models import Parent
+from apps.support.students.lifecycle_dependencies import parent_for_password_reset
 
 
 def _normalize_phone(value):
@@ -78,7 +78,7 @@ class Command(BaseCommand):
                     f"student_id={s.id} parent_phone={s.parent_phone!r} (010 11자리 아님)",
                 ))
                 continue
-            parent = Parent.objects.filter(tenant_id=s.tenant_id, phone=pnorm).first()
+            parent = parent_for_password_reset(tenant_id=s.tenant_id, phone=pnorm)
             if not parent:
                 errors.append((
                     "parent_missing",

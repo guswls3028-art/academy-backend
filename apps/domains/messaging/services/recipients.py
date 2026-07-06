@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from apps.domains.students.selectors import students_for_tenant
+from apps.support.messaging.student_dependencies import students_for_tenant
 
 RecipientTarget = Literal["student", "parent"]
 

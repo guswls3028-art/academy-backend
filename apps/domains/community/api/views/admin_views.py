@@ -16,6 +16,7 @@ from apps.domains.community.selectors import (
 )
 from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.support.community.post_dependencies import top_active_students_by_community_activity
 
 User = get_user_model()
 
@@ -308,21 +309,11 @@ class CommunityStatsView(APIView):
         )
 
         # top 활동 학생 (이번 기간 글 + 댓글 합산 상위 5명) — 활동 점수 시스템 #15
-        from apps.domains.students.models import Student
-        top_students_qs = (
-            Student.objects.filter(tenant=tenant, deleted_at__isnull=True)
-            .annotate(
-                post_count=Count("post_entities", filter=Q(post_entities__created_at__gte=since), distinct=True),
-                reply_count=Count("post_replies", filter=Q(post_replies__created_at__gte=since), distinct=True),
-            )
-            .annotate(activity_score=F("post_count") + F("reply_count"))
-            .filter(activity_score__gt=0)
-            .order_by("-activity_score", "name")[:5]
+        top_students = top_active_students_by_community_activity(
+            tenant=tenant,
+            since=since,
+            limit=5,
         )
-        top_students = [
-            {"id": s.id, "name": s.name, "post_count": s.post_count, "reply_count": s.reply_count, "score": s.activity_score}
-            for s in top_students_qs
-        ]
 
         # hot keywords (#57) — 글 title+content tokenize → freq top 20
         hot_keywords = self._compute_hot_keywords(tenant, since)

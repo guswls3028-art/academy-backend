@@ -23,6 +23,12 @@ def send_event_notification(**kwargs: Any) -> Any:
     return _send(**kwargs)
 
 
+def send_registration_approved_messages(**kwargs: Any) -> Any:
+    from apps.domains.messaging.services import send_registration_approved_messages as _send
+
+    return _send(**kwargs)
+
+
 def dispatch_job(**kwargs: Any) -> dict:
     from apps.domains.ai.gateway import dispatch_job as _dispatch
 

@@ -16,7 +16,6 @@ from django.contrib.auth import get_user_model
 
 from apps.core.models import Program
 from apps.core.models.user import user_display_username, user_internal_username
-from apps.domains.parents.services import ensure_parent_for_student
 from apps.domains.students.models import Student
 from apps.domains.students.services.identity import (
     StudentIdentityError,
@@ -29,6 +28,7 @@ from apps.domains.students.services.school import (
     get_valid_school_types,
     is_valid_grade,
 )
+from apps.support.students.lifecycle_dependencies import ensure_parent_for_student
 
 
 class StudentProfileUpdateError(ValueError):

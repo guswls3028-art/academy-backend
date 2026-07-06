@@ -2,7 +2,10 @@
 from rest_framework.permissions import BasePermission
 
 from apps.core.models import TenantMembership
-from apps.domains.students.selectors import active_students_for_parent, student_for_tenant_user
+from apps.support.student_app.permission_dependencies import (
+    active_students_for_parent,
+    student_for_tenant_user,
+)
 
 
 class IsStudent(BasePermission):
