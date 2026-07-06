@@ -190,11 +190,14 @@ def _handle_submission_ai_result(
     ai_job = None
     if job_id:
         from apps.domains.ai.models import AIJobModel
-        from apps.domains.submissions.models import Submission as SubModel
+        from academy.adapters.db.django.repositories_submissions import (
+            get_submission_tenant_id,
+        )
+
         ai_job = AIJobModel.objects.filter(job_id=job_id).first()
         if ai_job and ai_job.tenant_id:
             try:
-                sub_tenant_id = SubModel.objects.filter(pk=submission_id).values_list("tenant_id", flat=True).first()
+                sub_tenant_id = get_submission_tenant_id(submission_id)
                 if sub_tenant_id and str(ai_job.tenant_id) != str(sub_tenant_id):
                     logger.error(
                         "TENANT_ISOLATION_VIOLATION | _handle_submission_ai_result | "
@@ -1067,17 +1070,16 @@ def detect_stuck_dispatched() -> list[dict]:
     """
     from datetime import timedelta
     from django.utils import timezone
-    from apps.domains.submissions.models import Submission
     from apps.domains.ai.models import AIJobModel
+    from academy.adapters.db.django.repositories_submissions import (
+        list_stuck_dispatched_submission_ids,
+    )
 
     cutoff = timezone.now() - timedelta(minutes=30)
-    stuck = Submission.objects.filter(
-        status=Submission.Status.DISPATCHED,
-        updated_at__lt=cutoff,
-    ).values_list("id", flat=True)
+    stuck = list_stuck_dispatched_submission_ids(cutoff)
 
     results = []
-    for sub_id in stuck[:100]:
+    for sub_id in stuck:
         ai_job = (
             AIJobModel.objects
             .filter(source_domain="submissions", source_id=str(sub_id))
