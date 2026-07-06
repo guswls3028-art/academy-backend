@@ -11,11 +11,42 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolved
-from apps.domains.enrollment.selectors import enrollments_for_tenant
-from apps.domains.students.selectors import student_for_tenant_user
-from apps.domains.lectures.models import Session as LectureSession
-from apps.domains.progress.models import ClinicLink
 from apps.domains.clinic.color_utils import get_effective_clinic_colors
+from apps.support.clinic.idcard_dependencies import (
+    latest_active_enrollment_for_student,
+    ordered_sessions_for_enrollment,
+    student_for_idcard_user,
+    unresolved_auto_clinic_session_ids,
+)
+
+
+def _profile_photo_url(request, student):
+    if not getattr(student, "profile_photo", None):
+        return None
+    try:
+        return request.build_absolute_uri(student.profile_photo.url)
+    except (ValueError, AttributeError, Exception):
+        return None
+
+
+def _response_payload(
+    *,
+    student_name: str = "",
+    profile_photo_url: str | None = None,
+    colors: list[str],
+    histories: list[dict] | None = None,
+):
+    now = timezone.now()
+    histories = histories or []
+    return {
+        "student_name": student_name,
+        "profile_photo_url": profile_photo_url,
+        "background_colors": colors[:3],
+        "server_date": now.date().isoformat(),
+        "server_datetime": now.isoformat(),
+        "histories": histories,
+        "current_result": "FAIL" if any(h["clinic_required"] for h in histories) else "SUCCESS",
+    }
 
 
 class StudentClinicIdcardView(APIView):
@@ -28,62 +59,33 @@ class StudentClinicIdcardView(APIView):
     def get(self, request):
         user = request.user
         tenant = request.tenant
-        student = student_for_tenant_user(tenant, user, deleted="active")
+        student = student_for_idcard_user(tenant=tenant, user=user)
 
         # 패스카드 배경 색상 (매일 자동 3색 또는 저장값)
         colors = get_effective_clinic_colors(tenant) if tenant else ["#ef4444", "#3b82f6", "#22c55e"]
 
         if not student:
-            return Response({
-                "student_name": "",
-                "profile_photo_url": None,
-                "background_colors": colors[:3],
-                "server_date": timezone.now().date().isoformat(),
-                "server_datetime": timezone.now().isoformat(),
-                "histories": [],
-                "current_result": "SUCCESS",
-            })
+            return Response(_response_payload(colors=colors))
 
         # tenant is guaranteed by TenantResolved permission
-        qs = enrollments_for_tenant(tenant).filter(student=student, status="ACTIVE")
         # enrollment 선택 SSOT: 가장 최근 활성 등록 (booking/ops console과 동일 규칙)
-        enrollment = qs.select_related("lecture").order_by("-enrolled_at", "-id").first()
+        enrollment = latest_active_enrollment_for_student(tenant=tenant, student=student)
 
         if not enrollment:
-            profile_photo_url = None
-            if student.profile_photo:
-                try:
-                    profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
-                except (ValueError, AttributeError, Exception):
-                    profile_photo_url = None
-            return Response({
-                "student_name": getattr(student, "name", "") or "",
-                "profile_photo_url": profile_photo_url,
-                "background_colors": colors[:3],
-                "server_date": timezone.now().date().isoformat(),
-                "server_datetime": timezone.now().isoformat(),
-                "histories": [],
-                "current_result": "SUCCESS",
-            })
+            return Response(
+                _response_payload(
+                    student_name=getattr(student, "name", "") or "",
+                    profile_photo_url=_profile_photo_url(request, student),
+                    colors=colors,
+                )
+            )
 
         # section_mode 대응: 학생이 배정된 반의 세션만 조회
-        session_qs = LectureSession.objects.filter(lecture=enrollment.lecture)
-        try:
-            from apps.domains.lectures.models import SectionAssignment
-            sa = SectionAssignment.objects.filter(enrollment=enrollment).first()
-            if sa and sa.class_section_id:
-                session_qs = session_qs.filter(section_id=sa.class_section_id)
-        except Exception:
-            pass
-        sessions = list(session_qs.order_by("order"))
+        sessions = ordered_sessions_for_enrollment(enrollment)
         enrollment_id = enrollment.id
-        clinic_links = set(
-            ClinicLink.objects.filter(
-                enrollment_id=enrollment_id,
-                is_auto=True,
-                resolved_at__isnull=True,
-                session__lecture__tenant=tenant,
-            ).values_list("session_id", flat=True)
+        clinic_links = unresolved_auto_clinic_session_ids(
+            tenant=tenant,
+            enrollment_id=enrollment_id,
         )
 
         histories = []
@@ -95,24 +97,12 @@ class StudentClinicIdcardView(APIView):
                 "clinic_required": clinic_required,
             })
 
-        any_clinic = any(h["clinic_required"] for h in histories)
-
         # 프로필 사진 URL (신원 확인용) - 기존 방식 사용
-        profile_photo_url = None
-        if student.profile_photo:
-            try:
-                # 기존 방식으로 URL 생성 (Django 기본 storage 사용)
-                profile_photo_url = request.build_absolute_uri(student.profile_photo.url)
-            except (ValueError, AttributeError, Exception):
-                # 파일이 없거나 URL 생성 실패 시 None
-                profile_photo_url = None
-
-        return Response({
-            "student_name": getattr(student, "name", "") or "",
-            "profile_photo_url": profile_photo_url,
-            "background_colors": colors[:3],  # 최대 3개만
-            "server_date": timezone.now().date().isoformat(),
-            "server_datetime": timezone.now().isoformat(),
-            "histories": histories,
-            "current_result": "FAIL" if any_clinic else "SUCCESS",
-        })
+        return Response(
+            _response_payload(
+                student_name=getattr(student, "name", "") or "",
+                profile_photo_url=_profile_photo_url(request, student),
+                colors=colors,
+                histories=histories,
+            )
+        )
