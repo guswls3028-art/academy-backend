@@ -11,9 +11,9 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from unittest import TestCase
 
+from academy.adapters.tools.pymupdf_renderer import create_blank_pdf_file, create_text_pdf_file
 from academy.application.use_cases.ai.segmentation.mock_response_integrator import (
     MockOcrResponse, MockVlmResponse, ProposalPayloadCandidate, SCHEMA_VERSION, UnifiedCandidate,
     VlmDetectedProblem, VlmPageResult,
@@ -26,15 +26,7 @@ from academy.application.use_cases.ai.segmentation.dispatcher_mock import (
 
 
 def _make_pdf_with(text_lines):
-    import fitz
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    for i, t in enumerate(text_lines):
-        page.insert_text((50, 100 + i * 60), t, fontsize=10)
-    tmp = tempfile.NamedTemporaryFile(suffix="_test.pdf", delete=False)
-    tmp.close()
-    doc.save(tmp.name); doc.close()
-    return tmp.name
+    return create_text_pdf_file(text_lines, suffix="_test.pdf")
 
 
 class MockOcrResponseTests(TestCase):
@@ -100,15 +92,12 @@ class IntegrateTier0Tests(TestCase):
 class IntegrateTier1OcrTests(TestCase):
     def test_ocr_response_converted_to_unified(self):
         # empty PDF — TIER1_OCR_REQUIRED
-        import fitz
-        doc = fitz.open(); doc.new_page(width=595, height=842)
-        tmp = tempfile.NamedTemporaryFile(suffix="_empty.pdf", delete=False); tmp.close()
-        doc.save(tmp.name); doc.close()
+        pdf = create_blank_pdf_file(suffix="_empty.pdf")
         try:
-            d = dispatch_mock(tmp.name)
+            d = dispatch_mock(pdf)
             self.assertEqual(d.route, "TIER1_OCR_REQUIRED")
             mock_ocr = make_mock_ocr_response(
-                tmp.name, page_indices=[0], blocks_per_page=3,
+                pdf, page_indices=[0], blocks_per_page=3,
             )
             unified = integrate_responses(
                 d, mock_ocr_response=mock_ocr,
@@ -124,7 +113,7 @@ class IntegrateTier1OcrTests(TestCase):
             for p in unified.proposal_payloads:
                 self.assertEqual(p.engine, "ocr")
         finally:
-            os.unlink(tmp.name)
+            os.unlink(pdf)
 
 
 class IntegrateTier2VlmTests(TestCase):

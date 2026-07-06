@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
+from academy.adapters.tools.pymupdf_renderer import create_pdf_file
 from academy.adapters.ai.detection.tier0_native_pdf import (
     _FILENAME_HINTS_V4,
     _PAPER_TYPE_EXPECTED_MAX,
@@ -160,18 +161,17 @@ class DocLevelDedupTests(TestCase):
 class AnalyzePdfV4IntegrationTests(TestCase):
     def _make_workbook_pdf_with_repeat(self):
         """workbook_main 분류되는 파일명 + 페이지마다 1, 2, 3 반복 (학습자료 시뮬)."""
-        import fitz, tempfile
-        doc = fitz.open()
-        for p in range(5):
-            page = doc.new_page(width=595, height=842)
-            page.insert_text((50, 100), "1. 다음 중 옳은 것 ① ② ③", fontsize=10)
-            page.insert_text((50, 300), "2. 그림에서 ① ② ③", fontsize=10)
-            page.insert_text((50, 500), "3. 보기에서 ① ② ③", fontsize=10)
-        tmp = tempfile.NamedTemporaryFile(suffix="_복습과제_test.pdf", delete=False)
-        tmp.close()
-        doc.save(tmp.name)
-        doc.close()
-        return tmp.name
+        return create_pdf_file(
+            pages=[
+                [
+                    (50, 100, "1. 다음 중 옳은 것 ① ② ③", 10),
+                    (50, 300, "2. 그림에서 ① ② ③", 10),
+                    (50, 500, "3. 보기에서 ① ② ③", 10),
+                ]
+                for _ in range(5)
+            ],
+            suffix="_복습과제_test.pdf",
+        )
 
     def test_v4_classifies_review_homework(self):
         """v4 통합 — review_homework 파일명 분류 + doc_dedup 결과 schema 포함.

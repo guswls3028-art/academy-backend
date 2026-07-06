@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
+from academy.adapters.tools.pymupdf_renderer import create_text_pdf_file
 from academy.adapters.ai.detection.tier0_native_pdf import (
     PAPER_TYPE_EXAM,
     _V55_MAX_LEGIT_QUESTION_NUMBER,
@@ -27,16 +28,7 @@ class V55ConstantsTests(TestCase):
 
 class V55AnchorMaxNumberTests(TestCase):
     def _make_pdf_with_numbers(self, numbers):
-        import fitz, tempfile
-        doc = fitz.open()
-        page = doc.new_page(width=595, height=842)
-        for i, n in enumerate(numbers):
-            page.insert_text((50, 100 + i * 60), f"{n}. 다음 ① ② ③", fontsize=10)
-        tmp = tempfile.NamedTemporaryFile(suffix="_test.pdf", delete=False)
-        tmp.close()
-        doc.save(tmp.name)
-        doc.close()
-        return tmp.name
+        return create_text_pdf_file([f"{n}. 다음 ① ② ③" for n in numbers], suffix="_test.pdf")
 
     def test_v5_5_admits_number_70(self):
         from academy.adapters.ai.detection.tier0_native_pdf import (
@@ -76,17 +68,10 @@ class V55AnchorMaxNumberTests(TestCase):
         from academy.adapters.ai.detection.tier0_native_pdf import (
             extract_page_blocks, detect_columns,
         )
-        import fitz, tempfile, os
-        doc = fitz.open()
-        page = doc.new_page(width=595, height=842)
-        # bare digit "02" — period 없음
-        page.insert_text((50, 100), "02 다음 그림은 ① ② ③", fontsize=10)
-        tmp = tempfile.NamedTemporaryFile(suffix="_test.pdf", delete=False)
-        tmp.close()
-        doc.save(tmp.name)
-        doc.close()
+        import os
+        pdf = create_text_pdf_file(["02 다음 그림은 ① ② ③"], suffix="_test.pdf")
         try:
-            pages = extract_page_blocks(tmp.name)
+            pages = extract_page_blocks(pdf)
             cols = detect_columns(pages[0].word_blocks, pages[0].page_width)
             anchors = detect_problem_anchors_v5_5(
                 pages[0], cols, PAPER_TYPE_EXAM,
@@ -94,21 +79,16 @@ class V55AnchorMaxNumberTests(TestCase):
             # bare_digit 미admit — 0개 anchor
             self.assertEqual(len(anchors), 0)
         finally:
-            os.unlink(tmp.name)
+            os.unlink(pdf)
 
 
 class V55AnalyzePdfTests(TestCase):
     def _make_simple_pdf(self):
-        import fitz, tempfile
-        doc = fitz.open()
-        page = doc.new_page(width=595, height=842)
-        page.insert_text((50, 100), "1. 다음 ① ② ③", fontsize=10)
-        page.insert_text((50, 300), "2. 다음 ① ② ③", fontsize=10)
-        tmp = tempfile.NamedTemporaryFile(suffix="_test.pdf", delete=False)
-        tmp.close()
-        doc.save(tmp.name)
-        doc.close()
-        return tmp.name
+        return create_text_pdf_file(
+            ["1. 다음 ① ② ③", "2. 다음 ① ② ③"],
+            suffix="_test.pdf",
+            y_step=200,
+        )
 
     def test_v5_5_returns_v5_5_version(self):
         from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_5

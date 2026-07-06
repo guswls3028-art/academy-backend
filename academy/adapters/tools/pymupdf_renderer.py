@@ -6,10 +6,14 @@
 
 from __future__ import annotations
 
+import tempfile
 from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import List, Tuple
 
 from PIL import Image
+
+PdfTextLine = tuple[float, float, str, float]
 
 
 @dataclass
@@ -164,6 +168,63 @@ def extract_pdf_text_from_bytes(data: bytes) -> str:
 def get_page_count_from_bytes(data: bytes) -> int:
     with PdfBytesDocument(data) as doc:
         return doc.page_count()
+
+
+def create_pdf_file(
+    *,
+    pages: Sequence[Sequence[PdfTextLine]] | None = None,
+    suffix: str = ".pdf",
+    width: float = 595,
+    height: float = 842,
+) -> str:
+    import fitz  # PyMuPDF
+
+    doc = fitz.open()
+    try:
+        for lines in pages or [[]]:
+            page = doc.new_page(width=width, height=height)
+            for x, y, text, font_size in lines:
+                page.insert_text((x, y), text, fontsize=font_size)
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        tmp.close()
+        doc.save(tmp.name)
+        return tmp.name
+    finally:
+        doc.close()
+
+
+def create_text_pdf_file(
+    text_lines: Sequence[str],
+    *,
+    suffix: str = ".pdf",
+    x: float = 50,
+    y_start: float = 100,
+    y_step: float = 60,
+    font_size: float = 10,
+    width: float = 595,
+    height: float = 842,
+) -> str:
+    lines = [
+        (x, y_start + i * y_step, text, font_size)
+        for i, text in enumerate(text_lines)
+    ]
+    return create_pdf_file(pages=[lines], suffix=suffix, width=width, height=height)
+
+
+def create_blank_pdf_file(*, page_count: int = 1, suffix: str = ".pdf", width: float = 595, height: float = 842) -> str:
+    return create_pdf_file(pages=[[] for _ in range(page_count)], suffix=suffix, width=width, height=height)
+
+
+def create_blank_pdf_bytes(*, page_count: int = 1, width: float = 595, height: float = 842) -> bytes:
+    import fitz  # PyMuPDF
+
+    doc = fitz.open()
+    try:
+        for _ in range(page_count):
+            doc.new_page(width=width, height=height)
+        return doc.tobytes()
+    finally:
+        doc.close()
 
 
 # ---------------------------------------------------------------------------

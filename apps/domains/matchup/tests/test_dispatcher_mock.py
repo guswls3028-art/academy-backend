@@ -15,51 +15,30 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from unittest import TestCase
 
+from academy.adapters.tools.pymupdf_renderer import create_blank_pdf_file, create_text_pdf_file
 from academy.application.use_cases.ai.segmentation.dispatcher_mock import (
     MockDispatcherOutput, SCHEMA_VERSION, dispatch_mock, output_to_dict,
 )
 
 
 def _make_simple_pdf(numbers=(1, 2)):
-    import fitz
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    for i, n in enumerate(numbers):
-        page.insert_text((50, 100 + i * 60), f"{n}. 다음 ① ② ③", fontsize=10)
-    tmp = tempfile.NamedTemporaryFile(suffix="_test.pdf", delete=False)
-    tmp.close()
-    doc.save(tmp.name)
-    doc.close()
-    return tmp.name
+    return create_text_pdf_file([f"{n}. 다음 ① ② ③" for n in numbers], suffix="_test.pdf")
 
 
 def _make_empty_pdf():
     """text layer 0 — TIER1_OCR 분기 trigger 용."""
-    import fitz
-    doc = fitz.open()
-    doc.new_page(width=595, height=842)
-    tmp = tempfile.NamedTemporaryFile(suffix="_empty.pdf", delete=False)
-    tmp.close()
-    doc.save(tmp.name)
-    doc.close()
-    return tmp.name
+    return create_blank_pdf_file(suffix="_empty.pdf")
 
 
 def _make_text_no_anchor_pdf():
     """text layer 있으나 anchor 패턴 없음 — TIER2_VLM 분기."""
-    import fitz
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    page.insert_text((50, 100), "비정형 본문이 그저 흐른다", fontsize=10)
-    page.insert_text((50, 300), "선택지도 없는 텍스트", fontsize=10)
-    tmp = tempfile.NamedTemporaryFile(suffix="_no_anchor.pdf", delete=False)
-    tmp.close()
-    doc.save(tmp.name)
-    doc.close()
-    return tmp.name
+    return create_text_pdf_file(
+        ["비정형 본문이 그저 흐른다", "선택지도 없는 텍스트"],
+        suffix="_no_anchor.pdf",
+        y_step=200,
+    )
 
 
 class DispatchMockSchemaTests(TestCase):

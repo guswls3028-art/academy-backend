@@ -7,6 +7,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
+from academy.adapters.tools.pymupdf_renderer import create_blank_pdf_bytes
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.exams.models import Exam, Sheet
 from apps.domains.submissions.views.exam_omr_batch_upload_view import (
@@ -18,15 +19,7 @@ User = get_user_model()
 
 
 def _pdf_bytes(page_count: int) -> bytes:
-    import fitz
-
-    doc = fitz.open()
-    try:
-        for _ in range(page_count):
-            doc.new_page(width=595, height=842)
-        return doc.tobytes()
-    finally:
-        doc.close()
+    return create_blank_pdf_bytes(page_count=page_count)
 
 
 class ExamOMRBatchUploadPdfGuardTests(TestCase):

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
+from academy.adapters.tools.pymupdf_renderer import create_text_pdf_file
 from academy.adapters.ai.detection.tier0_native_pdf import (
     PageBlocks,
     classify_page_role,
@@ -266,19 +267,15 @@ class AnalyzePdfIntegrationTests(TestCase):
 
     def _make_pdf_with_anchors(self):
         """PyMuPDF 로 in-memory PDF 1페이지 생성. 문항 anchor "1.", "2.", "3." 포함."""
-        import fitz
-        doc = fitz.open()
-        page = doc.new_page(width=595, height=842)  # A4
-        page.insert_text((50, 100), "1. 다음 그림은 어떤 동물인가?", fontsize=12)
-        page.insert_text((50, 300), "2. 다음 그림은 무슨 식물인가?", fontsize=12)
-        page.insert_text((50, 500), "3. 다음 시는 누가 썼는가?", fontsize=12)
-        # tmp file write
-        import tempfile
-        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-        tmp.close()
-        doc.save(tmp.name)
-        doc.close()
-        return tmp.name
+        return create_text_pdf_file(
+            [
+                "1. 다음 그림은 어떤 동물인가?",
+                "2. 다음 그림은 무슨 식물인가?",
+                "3. 다음 시는 누가 썼는가?",
+            ],
+            font_size=12,
+            y_step=200,
+        )
 
     def test_analyze_pdf_extracts_three_anchors(self):
         from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
+from academy.adapters.tools.pymupdf_renderer import create_text_pdf_file
 from academy.adapters.ai.detection.tier0_native_pdf import (
     LAYOUT_FOUR_BLOCK,
     LAYOUT_PAGE_LEVEL,
@@ -127,16 +128,11 @@ class FilterAnchorsV52Tests(TestCase):
 
 class AnalyzePdfV52IntegrationTests(TestCase):
     def _make_simple_pdf(self):
-        import fitz, tempfile
-        doc = fitz.open()
-        page = doc.new_page(width=595, height=842)
-        page.insert_text((50, 100), "1. 다음 그림은? ① ② ③", fontsize=10)
-        page.insert_text((50, 300), "2. 다음 식물? ① ② ③", fontsize=10)
-        tmp = tempfile.NamedTemporaryFile(suffix="_test.pdf", delete=False)
-        tmp.close()
-        doc.save(tmp.name)
-        doc.close()
-        return tmp.name
+        return create_text_pdf_file(
+            ["1. 다음 그림은? ① ② ③", "2. 다음 식물? ① ② ③"],
+            suffix="_test.pdf",
+            y_step=200,
+        )
 
     def test_v52_internal_paper_type(self):
         from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v5_2

@@ -21,10 +21,10 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from unittest import TestCase
 from unittest.mock import patch
 
+from academy.adapters.tools.pymupdf_renderer import create_text_pdf_file
 from academy.application.use_cases.ai.segmentation.shadow_proposal_pipeline import (
     DEFAULT_SANDBOX_TENANT_ID, SCHEMA_VERSION,
     SHADOW_GLOBAL_ENV, SMOKE_TRUNCATION_REASON,
@@ -40,15 +40,11 @@ from academy.application.use_cases.ai.segmentation.mock_response_integrator impo
 
 
 def _make_simple_pdf():
-    import fitz
-    doc = fitz.open()
-    page = doc.new_page(width=595, height=842)
-    page.insert_text((50, 100), "1. 다음 ① ② ③", fontsize=10)
-    page.insert_text((50, 300), "2. 다음 ① ② ③", fontsize=10)
-    tmp = tempfile.NamedTemporaryFile(suffix="_test.pdf", delete=False)
-    tmp.close()
-    doc.save(tmp.name); doc.close()
-    return tmp.name
+    return create_text_pdf_file(
+        ["1. 다음 ① ② ③", "2. 다음 ① ② ③"],
+        suffix="_test.pdf",
+        y_step=200,
+    )
 
 
 # ── GLOBAL feature flag ────────────────────────────────────────

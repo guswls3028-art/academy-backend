@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
+from academy.adapters.tools.pymupdf_renderer import create_blank_pdf_file, create_text_pdf_file
 from academy.adapters.ai.detection.tier0_native_pdf import (
     PageBlocks,
     _MAX_LEGIT_QUESTION_NUMBER_V2,
@@ -297,31 +298,19 @@ class AnalyzePdfV2IntegrationTests(TestCase):
     """analyze_pdf_v2 통합 — in-memory PDF + tier1_required 분류."""
 
     def _make_text_pdf(self):
-        import fitz
-        doc = fitz.open()
-        page = doc.new_page(width=595, height=842)
-        page.insert_text((50, 100), "1. 다음 그림은 어떤 동물인가?", fontsize=12)
-        page.insert_text((50, 300), "2. 다음 식물의 이름은?", fontsize=12)
-        page.insert_text((50, 500), "3. 다음 시는 누가 썼는가?", fontsize=12)
-        import tempfile
-        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-        tmp.close()
-        doc.save(tmp.name)
-        doc.close()
-        return tmp.name
+        return create_text_pdf_file(
+            [
+                "1. 다음 그림은 어떤 동물인가?",
+                "2. 다음 식물의 이름은?",
+                "3. 다음 시는 누가 썼는가?",
+            ],
+            font_size=12,
+            y_step=200,
+        )
 
     def _make_image_only_pdf(self):
         """text 레이어 없는 PDF (image only) — Tier 1 후보."""
-        import fitz
-        doc = fitz.open()
-        page = doc.new_page(width=595, height=842)
-        # 빈 페이지 — text 없음
-        import tempfile
-        tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-        tmp.close()
-        doc.save(tmp.name)
-        doc.close()
-        return tmp.name
+        return create_blank_pdf_file()
 
     def test_text_pdf_not_tier1_required(self):
         from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v2

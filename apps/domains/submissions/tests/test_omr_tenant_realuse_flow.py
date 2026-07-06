@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import cv2
 import numpy as np
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -45,7 +44,10 @@ User = get_user_model()
 class OMRTenantRealUseFlowTests(TestCase):
     def test_contour_fallback_rejects_narrow_internal_panel(self):
         image = np.ones((3507, 2480, 3), dtype=np.uint8) * 255
-        cv2.rectangle(image, (80, 2697), (2380, 3441), (0, 0, 0), 3)
+        image[2697:2700, 80:2381] = 0
+        image[3439:3442, 80:2381] = 0
+        image[2697:3442, 80:83] = 0
+        image[2697:3442, 2378:2381] = 0
 
         result = _try_contour_warp(image, 3508, 2480)
 

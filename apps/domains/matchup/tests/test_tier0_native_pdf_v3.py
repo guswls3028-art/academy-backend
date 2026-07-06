@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from unittest import TestCase
 
+from academy.adapters.tools.pymupdf_renderer import create_text_pdf_file
 from academy.adapters.ai.detection.tier0_native_pdf import (
     PAPER_TYPE_ADVANCED_MATERIAL,
     PAPER_TYPE_ANSWER_EXPLANATION,
@@ -297,30 +298,23 @@ class DetectProblemAnchorsV3Tests(TestCase):
 class AnalyzePdfV3IntegrationTests(TestCase):
     def _make_review_homework_pdf(self):
         """파일명에 '복습과제' — 학습자료 strict 적용."""
-        import fitz, tempfile
-        doc = fitz.open()
-        page = doc.new_page(width=595, height=842)
-        page.insert_text((50, 100), "1. 다음 중 옳은 것을 고르시오 ① 가 ② 나 ③ 다", fontsize=10)
-        page.insert_text((50, 300), "2. 다음 그림에서 옳은 것은 ① ② ③ ④ ⑤", fontsize=10)
-        # 학습자료 chapter sub-section 형식
-        page.insert_text((50, 500), "1. 학습 목표를 확인한다", fontsize=10)
-        tmp = tempfile.NamedTemporaryFile(suffix="_복습과제_test.pdf", delete=False)
-        tmp.close()
-        doc.save(tmp.name)
-        doc.close()
-        return tmp.name
+        return create_text_pdf_file(
+            [
+                "1. 다음 중 옳은 것을 고르시오 ① 가 ② 나 ③ 다",
+                "2. 다음 그림에서 옳은 것은 ① ② ③ ④ ⑤",
+                "1. 학습 목표를 확인한다",
+            ],
+            suffix="_복습과제_test.pdf",
+            y_step=200,
+        )
 
     def _make_exam_pdf(self):
-        import fitz, tempfile
-        doc = fitz.open()
-        page = doc.new_page(width=595, height=842)
-        page.insert_text((50, 100), "1. 다음 그림은 어떤 동물인가?", fontsize=12)
-        page.insert_text((50, 300), "2. 다음 식물의 이름은?", fontsize=12)
-        tmp = tempfile.NamedTemporaryFile(suffix="_중간고사_test.pdf", delete=False)
-        tmp.close()
-        doc.save(tmp.name)
-        doc.close()
-        return tmp.name
+        return create_text_pdf_file(
+            ["1. 다음 그림은 어떤 동물인가?", "2. 다음 식물의 이름은?"],
+            suffix="_중간고사_test.pdf",
+            font_size=12,
+            y_step=200,
+        )
 
     def test_v3_classifies_review_homework_filename(self):
         from academy.adapters.ai.detection.tier0_native_pdf import analyze_pdf_v3
