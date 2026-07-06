@@ -56,6 +56,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import ValidationError
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
+from apps.support.results.admin_attempt_history_dependencies import (
+    enrollment_belongs_to_tenant,
+    get_exam_history_models,
+    get_homework_history_models,
+)
 
 
 class AdminAttemptHistoryView(APIView):
@@ -81,10 +86,10 @@ class AdminAttemptHistoryView(APIView):
 
         enrollment_id = int(enrollment_id)
 
-        # ✅ tenant isolation: verify enrollment belongs to tenant
-        from apps.domains.enrollment.models import Enrollment
-
-        if not Enrollment.objects.filter(id=enrollment_id, tenant=request.tenant).exists():
+        if not enrollment_belongs_to_tenant(
+            enrollment_id=enrollment_id,
+            tenant=request.tenant,
+        ):
             raise ValidationError("Enrollment not found for this tenant.")
 
         if exam_id:
@@ -93,9 +98,7 @@ class AdminAttemptHistoryView(APIView):
             return self._homework_history(request, enrollment_id, int(homework_id))
 
     def _exam_history(self, request, enrollment_id: int, exam_id: int):
-        from apps.domains.exams.models import Exam
-        from apps.domains.results.models import ExamAttempt, Result
-        from apps.domains.progress.models import ClinicLink
+        Exam, ExamAttempt, Result, ClinicLink = get_exam_history_models()
 
         # ✅ tenant isolation: verify exam belongs to tenant
         exam = Exam.objects.filter(
@@ -218,10 +221,7 @@ class AdminAttemptHistoryView(APIView):
         })
 
     def _homework_history(self, request, enrollment_id: int, homework_id: int):
-        from apps.domains.homework_results.models.homework import Homework
-        from apps.domains.homework_results.models.score import HomeworkScore
-        from apps.domains.homework.models.homework_policy import HomeworkPolicy
-        from apps.domains.progress.models import ClinicLink
+        Homework, HomeworkScore, HomeworkPolicy, ClinicLink = get_homework_history_models()
 
         # ✅ tenant isolation: verify homework belongs to tenant
         homework = Homework.objects.filter(
