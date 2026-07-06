@@ -2,20 +2,26 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Optional, List
+from typing import Any, Optional
 
 from django.db import transaction
 
+from academy.adapters.db.django.repositories_progress_inputs import (
+    get_passed_homework_score,
+    get_representative_exam_attempt_id,
+    get_session_with_lecture,
+    get_submission_progress_target_for_update,
+    has_unresolved_clinic_link,
+    list_enrollment_ids_with_exam_result,
+    list_sessions_for_exam,
+    list_sessions_for_homework,
+    list_unresolved_homework_source_ids,
+)
 from apps.domains.progress.services.session_calculator import SessionProgressCalculator
 from apps.domains.progress.services.lecture_calculator import LectureProgressCalculator
 from apps.domains.progress.services.risk_evaluator import RiskEvaluator
 from apps.domains.progress.services.clinic_trigger_service import ClinicTriggerService
 from apps.domains.progress.services.clinic_resolution_service import ClinicResolutionService
-
-if TYPE_CHECKING:
-    # forward-ref only — runtime 에는 _find_sessions_for_exam/_homework 안에서
-    # `from apps.domains.lectures.models import Session` lazy import.
-    from apps.domains.lectures.models import Session  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -72,14 +78,7 @@ class ProgressPipelineService:
     # Internal: enrollment × session point recompute
     # ---------------------------------------------------------
     def _apply_by_enrollment_session(self, *, enrollment_id: int, session_id: int) -> None:
-        from apps.domains.lectures.models import Session  # type: ignore
-
-        session = (
-            Session.objects
-            .filter(id=int(session_id))
-            .select_related("lecture")
-            .first()
-        )
+        session = get_session_with_lecture(int(session_id))
         if not session:
             logger.warning(
                 "progress pipeline: session not found (enroll=%s, session=%s)",
@@ -97,22 +96,19 @@ class ProgressPipelineService:
     # Internal: submission-based
     # ---------------------------------------------------------
     def _apply_by_submission(self, *, submission_id: int) -> None:
-        # imports inside to avoid cycles
-        from apps.domains.submissions.models import Submission  # type: ignore
-
-        sub = Submission.objects.select_for_update().filter(id=int(submission_id)).first()
-        if not sub:
+        target = get_submission_progress_target_for_update(int(submission_id))
+        if not target:
             logger.warning("progress pipeline: submission not found (id=%s)", submission_id)
             return
 
-        enroll_id = getattr(sub, "enrollment_id", None)
+        enroll_id = target.enrollment_id
         if not enroll_id:
             logger.warning("progress pipeline: submission has no enrollment_id (id=%s)", submission_id)
             return
 
         # 현재 시스템에서 시험/숙제 모두 target_id를 가진다고 가정
-        target_type = str(getattr(sub, "target_type", "") or "")
-        target_id = int(getattr(sub, "target_id", 0) or 0)
+        target_type = target.target_type
+        target_id = target.target_id
         if not target_type or not target_id:
             logger.warning(
                 "progress pipeline: invalid target on submission (id=%s, type=%s, target_id=%s)",
@@ -155,15 +151,8 @@ class ProgressPipelineService:
     # Internal: exam-based
     # ---------------------------------------------------------
     def _apply_by_exam(self, *, exam_id: int) -> None:
-        from apps.domains.results.models import Result  # type: ignore
-
         # 누가 봐도 "이 시험을 본 사람들"만 recompute
-        enroll_ids = (
-            Result.objects.filter(target_type="exam", target_id=int(exam_id))
-            .values_list("enrollment_id", flat=True)
-            .distinct()
-        )
-        enroll_ids = [int(x) for x in enroll_ids if x is not None]
+        enroll_ids = list_enrollment_ids_with_exam_result(int(exam_id))
 
         if not enroll_ids:
             logger.info("progress pipeline: no enrollments for exam_id=%s", exam_id)
@@ -181,66 +170,19 @@ class ProgressPipelineService:
     # ---------------------------------------------------------
     # Mapping helpers (defensive)
     # ---------------------------------------------------------
-    def _find_sessions_for_exam(self, *, exam_id: int) -> List["Session"]:
+    def _find_sessions_for_exam(self, *, exam_id: int) -> list[Any]:
         """
         ✅ 단일 진실이 있다면 그 유틸을 사용하고,
         없으면 fallback 시도.
         """
-        from apps.domains.lectures.models import Session  # type: ignore
+        return list_sessions_for_exam(int(exam_id))
 
-        # 1) Single-source utility (recommended if exists)
-        try:
-            from apps.domains.results.utils.session_exam import get_session_ids_for_exam  # type: ignore
-            session_ids = get_session_ids_for_exam(int(exam_id))
-            if session_ids:
-                return list(Session.objects.filter(id__in=[int(x) for x in session_ids]).select_related("lecture"))
-        except Exception:
-            # ignore and fallback
-            pass
-
-        # 2) Fallback: if legacy relation exists (some deployments still have it)
-        try:
-            # e.g., Session.exams M2M (legacy)
-            return list(Session.objects.filter(exams__id=int(exam_id)).select_related("lecture").distinct())
-        except Exception:
-            return []
-
-    def _find_sessions_for_homework(self, *, homework_id: int) -> List["Session"]:
+    def _find_sessions_for_homework(self, *, homework_id: int) -> list[Any]:
         """
         Homework ↔ Session 매핑.
         SSOT: `Homework.session` (FK, 단일). M2M sessions (legacy) 있으면 합집합.
         """
-        from apps.domains.lectures.models import Session  # type: ignore
-        from apps.domains.homework_results.models import Homework  # type: ignore
-
-        hw = (
-            Homework.objects
-            .filter(id=int(homework_id))
-            .only("id", "session_id")
-            .first()
-        )
-        if not hw:
-            return []
-
-        session_ids: set[int] = set()
-        if hw.session_id:
-            session_ids.add(int(hw.session_id))
-
-        # M2M sessions (legacy/optional). related_manager 없으면 skip.
-        try:
-            m2m_mgr = getattr(hw, "sessions", None)
-            if m2m_mgr is not None and hasattr(m2m_mgr, "values_list"):
-                session_ids.update(int(x) for x in m2m_mgr.values_list("id", flat=True))
-        except Exception:
-            logger.debug(
-                "homework m2m sessions lookup failed (homework_id=%s)", homework_id
-            )
-
-        if not session_ids:
-            return []
-        return list(
-            Session.objects.filter(id__in=session_ids).select_related("lecture")
-        )
+        return list_sessions_for_homework(int(homework_id))
 
     # ---------------------------------------------------------
     # Recompute core
@@ -344,16 +286,8 @@ class ProgressPipelineService:
         예약/출석은 해소 트리거가 아님.
         """
         try:
-            from apps.domains.progress.models import ClinicLink
-
             # 미해소 ClinicLink가 없으면 skip
-            has_unresolved = ClinicLink.objects.filter(
-                enrollment_id=enrollment_id,
-                session_id=session.id,
-                resolved_at__isnull=True,
-            ).exists()
-
-            if not has_unresolved:
+            if not has_unresolved_clinic_link(enrollment_id, session.id):
                 return
 
             # V1.1.2: 개별 시험 단위로 해소 (세션 집계와 독립적)
@@ -367,18 +301,10 @@ class ProgressPipelineService:
                     continue  # 불합격 시험은 해소하지 않음
 
                 # 합격한 시험의 ClinicLink 해소
-                attempt_id = None
-                try:
-                    from apps.domains.results.models import ExamAttempt
-                    attempt = ExamAttempt.objects.filter(
-                        exam_id=eid,
-                        enrollment_id=int(enrollment_id),
-                        is_representative=True,
-                    ).order_by("-attempt_index").first()
-                    if attempt:
-                        attempt_id = attempt.id
-                except Exception:
-                    pass
+                attempt_id = get_representative_exam_attempt_id(
+                    exam_id=eid,
+                    enrollment_id=int(enrollment_id),
+                )
 
                 ClinicResolutionService.resolve_by_exam_pass(
                     enrollment_id=enrollment_id,
@@ -392,25 +318,16 @@ class ProgressPipelineService:
 
             # 과제별 해소: 세션의 homework ClinicLink를 순회하며
             # 해당 homework의 1차 HomeworkScore.passed=True 확인 후 해소
-            from apps.domains.homework_results.models import HomeworkScore
-            homework_source_ids = list(
-                ClinicLink.objects.filter(
-                    enrollment_id=enrollment_id,
-                    session_id=session.id,
-                    source_type="homework",
-                    resolved_at__isnull=True,
-                ).values_list("source_id", flat=True).distinct()
+            homework_source_ids = list_unresolved_homework_source_ids(
+                enrollment_id=enrollment_id,
+                session_id=session.id,
             )
             for hw_id in homework_source_ids:
-                if hw_id is None:
-                    continue
-                hw_score = HomeworkScore.objects.filter(
+                hw_score = get_passed_homework_score(
                     enrollment_id=int(enrollment_id),
                     session_id=session.id,
                     homework_id=int(hw_id),
-                    attempt_index=1,
-                    passed=True,
-                ).first()
+                )
                 if not hw_score:
                     continue
                 ClinicResolutionService.resolve_by_homework_pass(
