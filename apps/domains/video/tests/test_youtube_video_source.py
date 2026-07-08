@@ -1,17 +1,15 @@
 from __future__ import annotations
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.lectures.models import Lecture, Session
 from apps.domains.student_app.media.views import (
     StudentSessionVideoListView,
     StudentVideoPlaybackView,
 )
-from apps.domains.students.models import Student
 from apps.domains.video.models import Video
 from apps.domains.video.views.video_views import VideoViewSet
 from apps.domains.video.youtube import extract_youtube_video_id
@@ -23,6 +21,10 @@ User = get_user_model()
 class YouTubeVideoSourceTests(TestCase):
     def setUp(self):
         self.factory = APIRequestFactory()
+        self.Enrollment = apps.get_model("enrollment", "Enrollment")
+        self.Lecture = apps.get_model("lectures", "Lecture")
+        self.Session = apps.get_model("lectures", "Session")
+        self.Student = apps.get_model("students", "Student")
         self.tenant = Tenant.objects.create(
             name="YouTube Video Tenant",
             code="youtube-video",
@@ -36,25 +38,25 @@ class YouTubeVideoSourceTests(TestCase):
         )
         TenantMembership.ensure_active(tenant=self.tenant, user=self.staff_user, role="admin")
 
-        self.lecture = Lecture.objects.create(
+        self.lecture = self.Lecture.objects.create(
             tenant=self.tenant,
             title="YouTube Lecture",
             name="YouTube Lecture",
             subject="MATH",
         )
-        self.session = Session.objects.create(
+        self.session = self.Session.objects.create(
             lecture=self.lecture,
             title="1차시",
             order=1,
         )
 
-    def _create_student(self, index: int = 1) -> tuple[User, Student, Enrollment]:
+    def _create_student(self, index: int = 1):
         student_user = User.objects.create_user(
             username=f"youtube_video_student_{index}",
             password="test1234",
             tenant=self.tenant,
         )
-        student = Student.objects.create(
+        student = self.Student.objects.create(
             tenant=self.tenant,
             user=student_user,
             ps_number=f"YV-{index}",
@@ -62,7 +64,7 @@ class YouTubeVideoSourceTests(TestCase):
             name=f"YouTube Student {index}",
             parent_phone=f"0109876{index:04d}",
         )
-        enrollment = Enrollment.objects.create(
+        enrollment = self.Enrollment.objects.create(
             tenant=self.tenant,
             student=student,
             lecture=self.lecture,
