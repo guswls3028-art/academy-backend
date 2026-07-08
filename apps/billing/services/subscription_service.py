@@ -194,7 +194,7 @@ def revoke_cancel(program_id: int) -> "Program":
 
 @transaction.atomic
 def change_plan(program_id: int, new_plan: str) -> "Program":
-    """플랜 변경. 운영 콘솔 조작은 새 플랜의 정가를 명시적으로 적용한다."""
+    """플랜 변경. 운영 콘솔 조작은 새 플랜의 정가 또는 계약 예외가를 적용한다."""
     from apps.core.models.program import Program
 
     valid_plans = {c[0] for c in Program.Plan.choices}
@@ -203,7 +203,10 @@ def change_plan(program_id: int, new_plan: str) -> "Program":
 
     program = _lock_program(program_id)
     program.plan = new_plan
-    program.monthly_price = Program.PLAN_PRICES[new_plan]
+    program.monthly_price = Program.resolve_monthly_price(
+        plan=new_plan,
+        tenant_code=program.tenant.code,
+    )
     program.save(update_fields=["plan", "monthly_price", "updated_at"])
 
     logger.info(

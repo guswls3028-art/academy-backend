@@ -95,10 +95,10 @@ class Command(BaseCommand):
                 if p.subscription_expires_at is None:
                     self._log(f"  [WARN]   {code:15s} subscription_expires_at=NULL (active/grace should have a date)")
 
-            # 3. price vs PLAN_PRICES (informational)
-            standard_price = Program.PLAN_PRICES.get(p.plan)
-            if standard_price and p.monthly_price != standard_price:
-                self._log(f"  [INFO]   {code:15s} price={p.monthly_price:,} vs standard={standard_price:,} "
+            # 3. price vs plan/contract policy (informational)
+            expected_price = Program.resolve_monthly_price(plan=p.plan, tenant_code=code)
+            if expected_price and p.monthly_price != expected_price:
+                self._log(f"  [INFO]   {code:15s} price={p.monthly_price:,} vs expected={expected_price:,} "
                           f"(promo or manual override)")
 
         # ── Report issues ──

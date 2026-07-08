@@ -190,6 +190,34 @@ class TestChangePlan(SubscriptionServiceTestBase):
         self.assertEqual(result.plan, "max")
         self.assertEqual(result.monthly_price, 330_000)
 
+    def test_program_save_applies_contract_price_override(self):
+        tenant = Tenant.objects.create(
+            name="Ymath", code="ymath", is_active=True
+        )
+        program = Program.objects.get(tenant=tenant)
+        program.plan = "pro"
+        program.monthly_price = 198_000
+        program.save(update_fields=["plan", "monthly_price"])
+
+        program.refresh_from_db()
+
+        self.assertEqual(program.plan, "pro")
+        self.assertEqual(program.monthly_price, 150_000)
+
+    def test_change_plan_applies_contract_price_override(self):
+        tenant = Tenant.objects.create(
+            name="Limglish", code="limglish", is_active=True
+        )
+        program = Program.objects.get(tenant=tenant)
+        program.plan = "pro"
+        program.monthly_price = 198_000
+        program.save(update_fields=["plan", "monthly_price"])
+
+        result = subscription_service.change_plan(program.pk, "max")
+
+        self.assertEqual(result.plan, "max")
+        self.assertEqual(result.monthly_price, 150_000)
+
     def test_invalid_plan_raises(self):
         with self.assertRaises(ValueError):
             subscription_service.change_plan(self.program.pk, "enterprise")

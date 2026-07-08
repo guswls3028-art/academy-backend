@@ -24,6 +24,9 @@
 
 현재 상태: **TOSS_AUTO_BILLING_ENABLED=False** (휴면 상태. 배치가 돌아도 실제 결제 안 함.)
 
+계약가 예외: `limglish`, `ymath`는 플랜 정가가 아니라 월 150,000원으로 청구한다.
+`Program.resolve_monthly_price()`와 billing migration `0041_set_ymath_limglish_contract_price`가 SSOT다.
+
 ---
 
 ## 🔴 사용자 직접 액션 (1~4 순서대로)

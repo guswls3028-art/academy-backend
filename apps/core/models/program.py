@@ -34,6 +34,10 @@ class Program(TimestampModel):
         Plan.PRO: 198_000,
         Plan.MAX: 330_000,
     }
+    CONTRACT_MONTHLY_PRICE_OVERRIDES_BY_TENANT_CODE: dict[str, int] = {
+        "limglish": 150_000,
+        "ymath": 150_000,
+    }
 
     tenant = models.OneToOneField(
         Tenant,
@@ -178,6 +182,16 @@ class Program(TimestampModel):
     def save(self, *args, **kwargs):
         # plan 변경 시 가격 자동 동기화 (프로모션 가격이 설정되어 있으면 유지)
         if self.plan in self.PLAN_PRICES:
+            tenant_code = self._tenant_code_for_price_resolution()
+            contract_price = self.get_contract_monthly_price(tenant_code)
+            if contract_price is not None and self.monthly_price != contract_price:
+                self.monthly_price = contract_price
+                uf = kwargs.get("update_fields")
+                if uf is not None and "monthly_price" not in uf:
+                    kwargs["update_fields"] = list(uf) + ["monthly_price"]
+                super().save(*args, **kwargs)
+                return
+
             # monthly_price가 아직 기본값이거나 다른 플랜의 정가인 경우에만 동기화
             other_plan_prices = {v for k, v in self.PLAN_PRICES.items() if k != self.plan}
             if self.monthly_price in other_plan_prices or self.monthly_price == 0:
@@ -186,6 +200,25 @@ class Program(TimestampModel):
                 if uf is not None and "monthly_price" not in uf:
                     kwargs["update_fields"] = list(uf) + ["monthly_price"]
         super().save(*args, **kwargs)
+
+    @classmethod
+    def get_contract_monthly_price(cls, tenant_code: str | None = None) -> int | None:
+        code = (tenant_code or "").strip().lower()
+        return cls.CONTRACT_MONTHLY_PRICE_OVERRIDES_BY_TENANT_CODE.get(code)
+
+    @classmethod
+    def resolve_monthly_price(cls, *, plan: str, tenant_code: str | None = None) -> int:
+        contract_price = cls.get_contract_monthly_price(tenant_code)
+        if contract_price is not None:
+            return contract_price
+        return cls.PLAN_PRICES[plan]
+
+    def _tenant_code_for_price_resolution(self) -> str | None:
+        if "tenant" in self._state.fields_cache:
+            return self.tenant.code
+        if self.tenant_id:
+            return Tenant.objects.only("code").get(pk=self.tenant_id).code
+        return None
 
     @property
     def is_subscription_active(self) -> bool:
