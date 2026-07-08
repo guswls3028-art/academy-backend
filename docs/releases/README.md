@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.6.5.md](v1.6.5.md) | **CURRENT** | 2026-07-08 KST | YouTube link video upload + student playback parity + playlist numeric ordering |
+| [v1.6.6.md](v1.6.6.md) | **CURRENT** | 2026-07-09 KST | Ymath anonymous billboard mode + enterprise score analytics + admin tree/mobile visual polish |
+| [v1.6.5.md](v1.6.5.md) | production-deployed / v1.6.6로 승계 | 2026-07-08 KST | YouTube link video upload + student playback parity + playlist numeric ordering |
 | [v1.6.4.md](v1.6.4.md) | production-deployed / v1.6.5로 승계 | 2026-07-08 KST | Alimtalk envelope enforcement + Solapi template contract + production send verification |
 | [v1.6.3.md](v1.6.3.md) | production-deployed / v1.6.4로 승계 | 2026-07-08 KST | ymath/limglish billing contract price exception |
 | [v1.6.2.md](v1.6.2.md) | production-deployed / v1.6.3로 승계 | 2026-07-07 KST | Multi-user race-condition hardening + production real-use concurrency verification |
