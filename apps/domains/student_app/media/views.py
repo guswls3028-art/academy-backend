@@ -24,6 +24,8 @@ from apps.support.student_app.video_media import (
     issue_proctored_playback_session,
     pick_video_urls,
 )
+from apps.domains.video.sorting import sort_videos_for_playlist
+from apps.domains.video.youtube import youtube_embed_url
 from academy.application.use_cases.student_video_access_context import (
     StudentVideoAccessError,
     ensure_student_video_watch_allowed,
@@ -119,6 +121,26 @@ def _policy_from_video(video) -> Dict[str, Any]:
         "allow_skip": bool(getattr(video, "allow_skip", False)),
         "max_speed": float(getattr(video, "max_speed", 1.0) or 1.0),
         "show_watermark": bool(getattr(video, "show_watermark", True)),
+    }
+
+
+def _source_type_from_video(video) -> str:
+    source_type = (getattr(video, "source_type", "") or "").strip()
+    return source_type or ("s3" if getattr(video, "file_key", "") else "unknown")
+
+
+def _is_youtube_video(video) -> bool:
+    try:
+        return _source_type_from_video(video) == video.SourceType.YOUTUBE
+    except Exception:
+        return _source_type_from_video(video) == "youtube"
+
+
+def _video_source_payload(video) -> Dict[str, Any]:
+    return {
+        "source_type": _source_type_from_video(video),
+        "youtube_video_id": (getattr(video, "youtube_video_id", "") or "").strip(),
+        "youtube_url": (getattr(video, "youtube_url", "") or "").strip(),
     }
 
 
@@ -511,6 +533,7 @@ class StudentSessionVideoListView(APIView):
             .select_related("tenant", "session__lecture__tenant")
             .order_by("order", "title", "id")
         )
+        videos = sort_videos_for_playlist(videos)
 
         # 진행률 + 권한을 일괄 조회 (N+1 방지)
         from academy.adapters.db.django import repositories_video as video_repo
@@ -584,6 +607,7 @@ class StudentSessionVideoListView(APIView):
                 "enrollment_id": int(enrollment_obj.id) if enrollment_obj else None,
                 "title": str(v.title),
                 "status": str(getattr(v, "status", "READY")),
+                **_video_source_payload(v),
                 "thumbnail_url": thumb,
                 "duration": getattr(v, "duration", None),
                 "progress": progress_percent,  # 0-100
@@ -678,23 +702,44 @@ class StudentVideoPlaybackView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         
-        hls_url, mp4_url = pick_video_urls(video, request)
-        
-        # 재생 URL이 없으면 에러 반환
-        if not hls_url and not mp4_url:
-            logger.error(
-                f"[StudentVideoPlaybackView] Failed to generate playback URL for video {video_id}: "
-                f"hls_path={hls_path}, file_key={file_key}"
-            )
-            return Response(
-                {
-                    "detail": "비디오 재생 URL을 생성할 수 없습니다. 비디오 파일이 처리 중이거나 업로드되지 않았을 수 있습니다.",
-                    "video_status": str(video_status),
-                    "hls_path": hls_path,
-                    "has_file_key": bool(file_key),
-                },
-                status=status.HTTP_503_SERVICE_UNAVAILABLE,
-            )
+        hls_url = None
+        mp4_url = None
+        play_url = None
+        is_youtube = _is_youtube_video(video)
+        if is_youtube:
+            youtube_video_id = (getattr(video, "youtube_video_id", "") or "").strip()
+            if not youtube_video_id:
+                logger.error(
+                    "[StudentVideoPlaybackView] YouTube video %s has no youtube_video_id",
+                    video_id,
+                )
+                return Response(
+                    {
+                        "detail": "YouTube 영상 정보가 올바르지 않습니다. 선생님에게 다시 등록을 요청해 주세요.",
+                        "video_status": str(video_status),
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            play_url = youtube_embed_url(youtube_video_id)
+        else:
+            hls_url, mp4_url = pick_video_urls(video, request)
+            play_url = hls_url or mp4_url
+
+            # 재생 URL이 없으면 에러 반환
+            if not play_url:
+                logger.error(
+                    f"[StudentVideoPlaybackView] Failed to generate playback URL for video {video_id}: "
+                    f"hls_path={hls_path}, file_key={file_key}"
+                )
+                return Response(
+                    {
+                        "detail": "비디오 재생 URL을 생성할 수 없습니다. 비디오 파일이 처리 중이거나 업로드되지 않았을 수 있습니다.",
+                        "video_status": str(video_status),
+                        "hls_path": hls_path,
+                        "has_file_key": bool(file_key),
+                    },
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
         
         thumb = build_thumbnail_url(video)
 
@@ -706,9 +751,6 @@ class StudentVideoPlaybackView(APIView):
             Video.objects.filter(id=video_id).update(view_count=_F("view_count") + 1)
             _cache.set(_view_key, 1, 300)  # 5분 dedup
 
-        # play_url 생성 (hls_url 우선, 없으면 mp4_url)
-        play_url = hls_url or mp4_url
-        
         logger.info(
             f"[StudentVideoPlaybackView] Generated playback URL for video {video_id}: "
             f"play_url={play_url[:100] if play_url else None}..."
@@ -792,6 +834,7 @@ class StudentVideoPlaybackView(APIView):
                 "enrollment_id": int(enrollment_obj.id) if enrollment_obj else None,
                 "title": str(video.title),
                 "status": str(getattr(video, "status", "READY")),
+                **_video_source_payload(video),
                 "thumbnail_url": thumb,
                 "duration": getattr(video, "duration", None),
                 "progress": progress_percent,
@@ -824,6 +867,11 @@ class StudentVideoPlaybackView(APIView):
                 "watermark": {
                     "enabled": is_proctored,
                     "mode": "overlay",
+                },
+                "source": {
+                    "type": _source_type_from_video(video),
+                    "provider": "youtube" if is_youtube else "uploaded",
+                    "youtube_video_id": (getattr(video, "youtube_video_id", "") or "").strip(),
                 },
                 **_policy_from_video(video),
                 "effective_rule": rule,

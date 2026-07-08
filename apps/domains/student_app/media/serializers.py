@@ -8,6 +8,9 @@ class StudentVideoListItemSerializer(serializers.Serializer):
     title = serializers.CharField()
 
     status = serializers.CharField()
+    source_type = serializers.CharField(required=False, default="s3")
+    youtube_video_id = serializers.CharField(required=False, allow_blank=True, default="")
+    youtube_url = serializers.CharField(required=False, allow_blank=True, default="")
     thumbnail_url = serializers.CharField(allow_null=True, required=False)
     duration = serializers.IntegerField(allow_null=True, required=False)
 

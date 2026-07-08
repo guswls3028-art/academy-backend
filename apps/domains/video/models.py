@@ -52,6 +52,10 @@ class Video(TimestampModel):
         READY = "READY", "사용 가능"
         FAILED = "FAILED", "실패"
 
+    class SourceType(models.TextChoices):
+        UPLOADED = "s3", "직접 업로드"
+        YOUTUBE = "youtube", "YouTube 링크"
+
     class Visibility(models.TextChoices):
         ENROLLED = "ENROLLED", "수강생 전용"
         PUBLIC = "PUBLIC", "전체 공개"
@@ -109,10 +113,33 @@ class Video(TimestampModel):
     # ===============================
     # SaaS upload (Source of Truth)
     # ===============================
+    source_type = models.CharField(
+        max_length=20,
+        choices=SourceType.choices,
+        default=SourceType.UPLOADED,
+        db_index=True,
+        help_text="영상 소스: s3(직접 업로드) / youtube(YouTube 링크)",
+    )
+
     file_key = models.CharField(
         max_length=500,
         blank=True,
         help_text="S3 object key (presigned upload)",
+    )
+
+    youtube_video_id = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text="YouTube video id. source_type=youtube일 때만 사용.",
+    )
+
+    youtube_url = models.URLField(
+        max_length=500,
+        blank=True,
+        default="",
+        help_text="Canonical YouTube watch URL. source_type=youtube일 때만 사용.",
     )
 
     duration = models.PositiveIntegerField(null=True, blank=True)
@@ -233,10 +260,8 @@ class Video(TimestampModel):
         return self.deleted_at is not None
 
     @property
-    def source_type(self) -> str:
-        if self.file_key:
-            return "s3"
-        return "unknown"
+    def is_youtube_source(self) -> bool:
+        return self.source_type == self.SourceType.YOUTUBE
 
 
 # ========================================================

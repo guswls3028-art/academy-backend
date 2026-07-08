@@ -14,6 +14,7 @@ from .encoding_progress import (
 )
 from academy.adapters.db.django import repositories_video as video_repo
 from .policy import normalize_video_max_speed
+from .youtube import youtube_thumbnail_url
 
 # ========================================================
 # Video
@@ -42,8 +43,6 @@ class VideoSerializer(serializers.ModelSerializer):
     )
     folder = serializers.IntegerField(source="folder_id", read_only=True)
 
-    source_type = serializers.SerializerMethodField()
-
     # CDN derived
     thumbnail_url = serializers.SerializerMethodField()
     hls_url = serializers.SerializerMethodField()
@@ -65,7 +64,10 @@ class VideoSerializer(serializers.ModelSerializer):
             "session_id",
             "folder",
             "title",
+            "source_type",
             "file_key",
+            "youtube_video_id",
+            "youtube_url",
             "duration",
             "order",
             "status",
@@ -87,11 +89,13 @@ class VideoSerializer(serializers.ModelSerializer):
             "visibility",
             "created_at",
             "updated_at",
-            "source_type",
         ]
         read_only_fields = [
             "id",
             "session_id",
+            "source_type",
+            "youtube_video_id",
+            "youtube_url",
             "created_at",
             "updated_at",
             "thumbnail",
@@ -189,9 +193,6 @@ class VideoSerializer(serializers.ModelSerializer):
             cache[key] = get_video_encoding_snapshot(int(obj.id), tenant_id=tenant_id)
         return cache[key]
 
-    def get_source_type(self, obj):
-        return "s3" if obj.file_key else "unknown"
-
     def _cdn_base(self) -> str | None:
         base = getattr(settings, "CDN_HLS_BASE_URL", None)
         return base.rstrip("/") if base else None
@@ -244,6 +245,11 @@ class VideoSerializer(serializers.ModelSerializer):
     # ---------------------------
 
     def get_thumbnail_url(self, obj):
+        if getattr(obj, "source_type", None) == Video.SourceType.YOUTUBE:
+            video_id = (getattr(obj, "youtube_video_id", "") or "").strip()
+            if video_id:
+                return youtube_thumbnail_url(video_id)
+
         cdn = self._cdn_base()
         if not cdn:
             return None
@@ -273,6 +279,9 @@ class VideoSerializer(serializers.ModelSerializer):
         return None
 
     def get_hls_url(self, obj):
+        if getattr(obj, "source_type", None) == Video.SourceType.YOUTUBE:
+            return None
+
         if not obj.hls_path:
             return None
 
@@ -302,6 +311,9 @@ class VideoDetailSerializer(VideoSerializer):
         - PROCESSING/READY + current_job RUNNING(not cancel_requested) → False
         - PROCESSING/READY + no active job or stale job → True
         """
+        if getattr(obj, "source_type", None) == Video.SourceType.YOUTUBE:
+            return False
+
         RETRY_ALLOWED = {
             Video.Status.PENDING,
             Video.Status.FAILED,

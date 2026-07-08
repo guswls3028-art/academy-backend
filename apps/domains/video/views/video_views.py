@@ -57,6 +57,7 @@ from ..serializers import VideoSerializer, VideoDetailSerializer, VideoFolderSer
 from ..policy import is_video_progress_complete, normalize_video_max_speed
 from ..services.access_resolver import resolve_access_modes_prefetched
 from ..services.video_encoding import REASON_SUBMIT_FAILED, create_job_and_submit_batch
+from ..youtube import extract_youtube_video_id, youtube_watch_url
 from .playback_mixin import VideoPlaybackMixin
 
 # 로거 설정
@@ -191,6 +192,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "upload_multipart_complete",
         "upload_multipart_abort",
         "retry",
+        "create_youtube",
         "create",
         "update",
         "partial_update",
@@ -381,6 +383,122 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 "file_key": key,
                 "content_type": content_type,
             },
+            status=status.HTTP_201_CREATED,
+        )
+
+    # ==================================================
+    # youtube — YouTube 링크 영상 생성 (인코딩 없음)
+    # ==================================================
+    @transaction.atomic
+    @action(
+        detail=False,
+        methods=["post"],
+        url_path="youtube",
+        parser_classes=[JSONParser],
+    )
+    def create_youtube(self, request):
+        session_id = request.data.get("session")
+        title = (request.data.get("title") or "").strip()
+        raw_url = request.data.get("url") or request.data.get("youtube_url") or request.data.get("link")
+
+        if not session_id or not title or not raw_url:
+            return Response(
+                {"detail": "session, title, url required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            youtube_video_id = extract_youtube_video_id(str(raw_url))
+        except ValueError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        allow_skip = parse_bool(request.data.get("allow_skip", False), field_name="allow_skip")
+        try:
+            max_speed = normalize_video_max_speed(request.data.get("max_speed", 1.0))
+        except ValueError as exc:
+            raise ValidationError({"max_speed": str(exc)}) from exc
+        show_watermark = parse_bool(
+            request.data.get("show_watermark", True),
+            field_name="show_watermark",
+        )
+
+        try:
+            session = video_repo.get_session_by_id_with_lecture_tenant(session_id)
+        except ObjectDoesNotExist:
+            return Response(
+                {"detail": "해당 차시를 찾을 수 없습니다. 페이지를 새로고침한 뒤 다시 시도하세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        tenant = session.lecture.tenant
+        request_tenant = getattr(request, "tenant", None)
+        if request_tenant and tenant.id != request_tenant.id:
+            return Response(
+                {"detail": "다른 프로그램의 차시에는 업로드할 수 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        session = lock_session_for_video_upload(session)
+        order = (
+            session.videos.aggregate(max_order=models.Max("order")).get("max_order") or 0
+        ) + 1
+
+        is_public = getattr(session.lecture, "is_system", False)
+        folder = None
+        folder_id = request.data.get("folder")
+        if folder_id not in (None, ""):
+            if not is_public:
+                return Response(
+                    {"detail": "공개 영상 폴더는 전체공개영상에만 사용할 수 있습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                folder = VideoFolder.objects.get(pk=folder_id, tenant=tenant)
+            except (TypeError, ValueError, VideoFolder.DoesNotExist):
+                return Response(
+                    {"detail": "폴더를 찾을 수 없습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if folder.session_id and folder.session_id != session.id:
+                return Response(
+                    {"detail": "선택한 폴더가 이 공개 영상 영역에 속하지 않습니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        uploaded_by_staff = None
+        try:
+            uploaded_by_staff = get_staff_for_video_upload(user=request.user, tenant=tenant)
+        except Exception:
+            pass
+
+        video = video_repo.create_video(
+            session=session,
+            title=title,
+            file_key="",
+            order=order,
+            status=Video.Status.READY,
+            allow_skip=allow_skip,
+            max_speed=max_speed,
+            show_watermark=show_watermark,
+            visibility=Video.Visibility.PUBLIC if is_public else Video.Visibility.ENROLLED,
+            tenant=tenant,
+            uploaded_by=uploaded_by_staff,
+            folder=folder,
+            source_type=Video.SourceType.YOUTUBE,
+            youtube_video_id=youtube_video_id,
+            youtube_url=youtube_watch_url(youtube_video_id),
+        )
+
+        logger.info(
+            "VIDEO_YOUTUBE_CREATED | video_id=%s | tenant_id=%s | session_id=%s | youtube_video_id=%s",
+            video.id,
+            tenant.id,
+            session.id,
+            youtube_video_id,
+        )
+
+        return Response(
+            {"video": VideoSerializer(video, context={"request": request}).data},
             status=status.HTTP_201_CREATED,
         )
 
@@ -700,6 +818,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        if getattr(video, "source_type", None) == Video.SourceType.YOUTUBE:
+            return Response(
+                {"detail": "YouTube 링크 영상은 파일 업로드 완료 처리 대상이 아닙니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         if not getattr(video, "session", None) or not getattr(video.session, "lecture", None):
             return Response(
                 {"detail": "영상이 차시/강의에 연결되어 있지 않아 업로드 완료할 수 없습니다."},
@@ -868,6 +992,9 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
             raise ValidationError("영상이 차시/강의에 연결되어 있지 않아 재처리할 수 없습니다.")
         if not getattr(video.session.lecture, "tenant", None):
             raise ValidationError("강의의 프로그램(테넌트) 정보가 없어 재처리할 수 없습니다.")
+
+        if getattr(video, "source_type", None) == Video.SourceType.YOUTUBE:
+            raise ValidationError("YouTube 링크 영상은 인코딩 재시도 대상이 아닙니다.")
 
         # PENDING + file_key: upload-complete may have failed (network/timeout); retry = re-run upload-complete
         if video.status == Video.Status.PENDING:

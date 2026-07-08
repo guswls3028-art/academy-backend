@@ -25,6 +25,16 @@ def build_thumbnail_url(video) -> str | None:
     if not video:
         return None
 
+    try:
+        from apps.domains.video.models import Video
+        from apps.domains.video.youtube import youtube_thumbnail_url
+
+        if getattr(video, "source_type", None) == Video.SourceType.YOUTUBE:
+            video_id = (getattr(video, "youtube_video_id", "") or "").strip()
+            return youtube_thumbnail_url(video_id) if video_id else None
+    except Exception:
+        pass
+
     cdn = getattr(settings, "CDN_HLS_BASE_URL", None)
     if not cdn:
         return None

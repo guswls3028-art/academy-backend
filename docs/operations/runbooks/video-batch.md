@@ -7,6 +7,7 @@
 ## 1. Current Architecture
 
 - Video encoding runs only through AWS Batch. Daemon/long-path worker mode is retired.
+- Only uploaded `source_type=s3` videos enter the Batch/R2/HLS pipeline. `source_type=youtube` videos are metadata-only links: they are created as `READY`, use YouTube thumbnail/embed URLs, and must not be retried, reconciled, or scanned as Batch jobs.
 - Main compute environment: `academy-v1-video-batch-ce-200gb` (`SPOT`, desired=0 max=40 vCPU)
 - Main queue: `academy-v1-video-batch-queue`
 - Main job definition: `academy-v1-video-batch-jobdef`
@@ -64,6 +65,7 @@ After a release touching video, verify:
 - Batch CE and queue are enabled.
 - A netprobe or small test job reaches `SUCCEEDED` when video runtime changed.
 - `reconcile_batch_video_jobs` and `scan_stuck_video_jobs` remain runnable with `apps.api.config.settings.worker`.
+- YouTube link upload still bypasses Batch and is immediately playable in the student app through the embedded YouTube player.
 
 General post-deploy verification entrypoint:
 

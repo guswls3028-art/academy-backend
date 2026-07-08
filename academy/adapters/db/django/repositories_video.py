@@ -48,7 +48,23 @@ def get_session_by_id_with_lecture_tenant(session_id):
     return Session.objects.select_related("lecture", "lecture__tenant").get(id=session_id)
 
 
-def create_video(session, title, file_key, order, status, allow_skip=False, max_speed=1.0, show_watermark=True, visibility=None, tenant=None, uploaded_by=None, folder=None):
+def create_video(
+    session,
+    title,
+    file_key,
+    order,
+    status,
+    allow_skip=False,
+    max_speed=1.0,
+    show_watermark=True,
+    visibility=None,
+    tenant=None,
+    uploaded_by=None,
+    folder=None,
+    source_type=None,
+    youtube_video_id="",
+    youtube_url="",
+):
     from apps.domains.video.models import Video
     kwargs = dict(
         session=session,
@@ -59,7 +75,11 @@ def create_video(session, title, file_key, order, status, allow_skip=False, max_
         allow_skip=allow_skip,
         max_speed=max_speed,
         show_watermark=show_watermark,
+        youtube_video_id=youtube_video_id or "",
+        youtube_url=youtube_url or "",
     )
+    if source_type is not None:
+        kwargs["source_type"] = source_type
     if uploaded_by is not None:
         kwargs["uploaded_by"] = uploaded_by
     if folder is not None:
@@ -120,15 +140,21 @@ def get_playback_events_queryset_for_video(video, since=None):
 
 def video_filter_by_lecture(lecture):
     from apps.domains.video.models import Video
-    return Video.objects.filter(session__lecture=lecture).order_by("order", "title", "id").distinct()
+    from apps.domains.video.sorting import sort_videos_for_playlist
+    return sort_videos_for_playlist(
+        Video.objects.filter(session__lecture=lecture).order_by("order", "title", "id").distinct()
+    )
 
 
 def video_filter_by_session_ready(session_id):
     from apps.domains.video.models import Video
-    return Video.objects.filter(
-        session_id=session_id,
-        status=Video.Status.READY,
-    ).select_related("session__lecture").order_by("order", "title", "id")
+    from apps.domains.video.sorting import sort_videos_for_playlist
+    return sort_videos_for_playlist(
+        Video.objects.filter(
+            session_id=session_id,
+            status=Video.Status.READY,
+        ).select_related("session__lecture").order_by("order", "title", "id")
+    )
 
 
 def enrollment_get_by_student_lecture_active(student, lecture):
