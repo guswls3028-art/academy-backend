@@ -161,19 +161,12 @@ class TestRegisteredSolapiVariables(TestCase):
         keys = [item["key"] for item in replacements]
         self.assertEqual(
             keys,
-            [
-                "학원이름", "학생이름", "학생이름3", "강의명", "차시명", "날짜",
-                "시험1명", "시험1", "시험1만점",
-                "시험2명", "시험2", "시험2만점",
-                "시험3명", "시험3", "시험3만점",
-                "시험4명", "시험4", "시험4만점",
-                "시험총점", "시험총만점", "숙제완성도",
-                "선생님메모", "사이트링크",
-            ],
+            ["학원이름", "학생이름", "강의명", "차시명", "선생님메모", "사이트링크"],
         )
         reps = {item["key"]: item["value"] for item in replacements}
-        self.assertEqual(reps["시험1명"], "단원평가")
-        self.assertEqual(reps["시험1"], "92")
-        self.assertEqual(reps["시험1만점"], "100")
-        self.assertEqual(reps["숙제완성도"], "1/1 완료")
+        self.assertIn("단원평가: 92/100", reps["선생님메모"])
+        self.assertNotIn("시험1명", reps)
+        self.assertNotIn("시험1", reps)
+        self.assertNotIn("시험1만점", reps)
+        self.assertNotIn("숙제완성도", reps)
         self.assertNotIn("선생님메모1", reps)
