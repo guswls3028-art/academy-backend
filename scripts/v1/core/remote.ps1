@@ -25,7 +25,8 @@ function Invoke-ApiSsmShellCommand {
 
     $results = [System.Collections.ArrayList]::new()
     foreach ($instanceId in $ids) {
-        $paramsJson = @{ commands = @($Command) } | ConvertTo-Json -Compress
+        $normalizedCommand = $Command -replace "`r`n", "`n" -replace "`r", "`n"
+        $paramsJson = @{ commands = @($normalizedCommand) } | ConvertTo-Json -Compress
         $paramsArg = $paramsJson
         if (Get-Command Convert-JsonArgToFileRef -ErrorAction SilentlyContinue) {
             $paramsArg = Convert-JsonArgToFileRef $paramsJson
