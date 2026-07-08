@@ -39,10 +39,12 @@ class EffectiveTemplateStatusTests(TestCase):
 
         self.assertTrue(effective.is_approved)
         self.assertEqual(effective.source, "unified")
+        self.assertEqual(effective.template_type, "clinic_info")
         self.assertEqual(data["template_solapi_status"], "PENDING")
         self.assertEqual(data["effective_template_solapi_status"], "APPROVED")
         self.assertEqual(data["effective_template_source"], "unified")
         self.assertTrue(data["effective_template_is_approved"])
+        self.assertEqual(data["effective_template_type"], "clinic_info")
 
     def test_non_unified_trigger_uses_linked_template_status(self):
         template = MessageTemplate.objects.create(
@@ -66,5 +68,6 @@ class EffectiveTemplateStatusTests(TestCase):
 
         self.assertFalse(effective.is_approved)
         self.assertEqual(effective.source, "tenant_template")
+        self.assertEqual(effective.template_type, "")
         self.assertEqual(effective.solapi_template_id, "tenant-pending")
         self.assertEqual(effective.solapi_status, "PENDING")

@@ -111,8 +111,8 @@ class SendMessageView(APIView):
         t = None
         solapi_template_id = ""
         user_custom_content = ""
-        use_unified = False       # 통합 4종 템플릿 사용 여부
-        unified_template_type = None  # score / attendance / clinic_info / clinic_change
+        use_unified = False       # 통합 승인 봉투 사용 여부
+        unified_template_type = None  # score / attendance / clinic_info / clinic_change / notice_*
 
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
@@ -137,7 +137,7 @@ class SendMessageView(APIView):
             if not subject_base:
                 subject_base = (t.subject or "").strip()
 
-        # ── 알림톡: 통합 4종 템플릿 우선 사용 ──
+        # ── 알림톡: 통합 승인 봉투 우선 사용 ──
         # 시스템 기본양식(signup: 가입승인/비번찾기)만 자체 Solapi 템플릿 유지
         alimtalk_extra_vars = data.get("alimtalk_extra_vars") or {}
         raw_per_student = data.get("alimtalk_extra_vars_per_student") or {}
@@ -159,7 +159,7 @@ class SendMessageView(APIView):
             unified_tt, unified_sid = get_unified_for_category(category, tpl_name, alimtalk_extra_vars)
 
             if unified_tt and unified_sid:
-                # 통합 4종 사용
+                # 통합 승인 봉투 사용
                 use_unified = True
                 unified_template_type = unified_tt
                 solapi_template_id = unified_sid
@@ -263,7 +263,7 @@ class SendMessageView(APIView):
                 template_id_solapi = solapi_template_id
 
                 if use_unified and unified_template_type:
-                    # ── 통합 4종: build_manual_replacements로 정확한 변수 세트 빌드 ──
+                    # ── 통합 승인 봉투: build_manual_replacements로 정확한 변수 세트 빌드 ──
                     # SSOT (2026-05-13): student_body (학생별 치환된 본문) 사용 → 봉투의 #{선생님메모} 변수에
                     # 정확한 학생별 점수가 들어감.
                     alimtalk_replacements = build_manual_replacements(

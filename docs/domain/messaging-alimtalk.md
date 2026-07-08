@@ -1,6 +1,6 @@
 # 메시징 도메인 SSOT (알림톡/SMS 발송 시스템)
 
-> 최종 갱신: 2026-06-06 (공용 owner 알림톡 only, provider id 검증 반영)
+> 최종 갱신: 2026-07-08 (메시지 UI명 유지 + 알림톡 승인 봉투 매핑 정합성 반영)
 > 근거: 코드 직접 확인. 추측 없음.
 
 ---
@@ -27,12 +27,12 @@
 | NONE notice_withdrawal | `[HakwonPlus] 퇴원 처리 완료` | 학원명/학생이름2 | **없음** (시스템 안내) |
 | NONE notice_payment | `[HakwonPlus] 결제 완료 안내` | 학원명/학생이름2/사이트링크 | **없음** (시스템 안내) |
 
-성적 관련 안내 → score 봉투. 클리닉 관련 → clinic_info 봉투. 출석 → attendance 봉투. 클리닉 일정 변경/취소 → clinic_change 봉투. **봉투 안 편지(`#{선생님메모}`)는 무제한 자유.**
+성적 관련 안내 → score 봉투. 클리닉 관련 → clinic_info 봉투. 출석·시험 일정·과제 안내 → attendance 봉투. 클리닉 일정 변경/취소 → clinic_change 봉투. **ITEM_LIST 봉투 안 편지(`#{선생님메모}`)는 무제한 자유.** NONE 봉투는 카카오 승인 본문 고정이라 편지 영역이 없다.
 
 ### 영구 금지 패턴 (응답/제안/백로그에 떠오르면 즉시 멈춤)
 
 - ❌ "이 트리거는 양식이 없다 → 카카오 검수 신청하자"
-- ❌ "exam/assignment/notice/community/staff 카테고리에 매핑이 없으니 추가하자"
+- ❌ "notice/community/staff 카테고리에 매핑이 없으니 추가하자"
 - ❌ "새로운 양식이 필요하니 Solapi에 등록하자 / 봉투 새로 만들자"
 - ❌ "신규 알림톡 템플릿 만들자"
 - ❌ "fallback 양식이 필요할 수도 있다" 추론
@@ -82,9 +82,9 @@
 
 ```
 관리자 UI (SendMessageModal)
-  -> SendMessageView.post()             [views.py:439]
-    -> 통합 4종 템플릿 매핑 (CATEGORY_TO_TEMPLATE_TYPE)
-    -> build_manual_replacements()       [alimtalk_content_builders.py:171]
+  -> SendMessageView.post()             [views/send_views.py]
+    -> 통합 승인 봉투 매핑 (CATEGORY_TO_TEMPLATE_TYPE)
+    -> build_manual_replacements()       [alimtalk_content_builders.py]
     -> enqueue_sms()                     [services.py:111]
       -> (이하 동일, tenant별 PFID/provider fallback 없음)
 ```
@@ -168,7 +168,7 @@
 
 ## 3. 트리거 -> 템플릿 매핑 (TRIGGER_TO_TEMPLATE_TYPE)
 
-출처: `alimtalk_content_builders.py:68-104` (2026-05-13 기준)
+출처: `alimtalk_content_builders.py:86-126` (2026-07-08 기준)
 
 | 트리거 | 템플릿 타입 | 자동 발화 | 비고 |
 |--------|------------|---|------|
@@ -184,20 +184,25 @@
 | `check_in_complete` | attendance | ✅ | |
 | `absent_occurred` | attendance | ✅ | |
 | `lecture_session_reminder` | attendance | manual | minutes_before 스케줄러 미구현 |
+| `exam_scheduled_days_before` | attendance | manual | 시험 예정 안내를 강의/차시 컨텍스트 봉투에 담음 |
+| `exam_start_minutes_before` | attendance | manual | 시험 시작 안내를 강의/차시 컨텍스트 봉투에 담음 |
+| `exam_not_taken` | attendance | manual | 미응시 안내를 강의/차시 컨텍스트 봉투에 담음 |
+| `assignment_registered` | attendance | manual | 과제 등록 안내를 강의/차시 컨텍스트 봉투에 담음 |
+| `assignment_due_hours_before` | attendance | manual | 과제 마감 안내를 강의/차시 컨텍스트 봉투에 담음 |
+| `assignment_not_submitted` | attendance | manual | 과제 미제출 안내를 강의/차시 컨텍스트 봉투에 담음 |
+| `retake_assigned` | clinic_info | manual | 재시험 안내를 보강/클리닉 컨텍스트 봉투에 담음 |
 | `exam_score_published` | score | manual (정책: 저장≠발송) | "[성적표 안내]" prefix 의미 일치 |
 | `monthly_report_generated` | score | manual | ⚠️ 월간 집계를 강의명/차시명 단일 변수에 매핑 — 의미 약함 |
 | `withdrawal_complete` | notice_withdrawal | manual | NONE 고정 본문 시스템 안내 |
 | `payment_complete` | notice_payment | manual | NONE 고정 본문 시스템 안내 |
 | `payment_due_days_before` | notice_payment | manual | NONE 고정 본문 시스템 안내 |
 
-### 의도적으로 매핑 제외된 트리거 (`alimtalk_content_builders.py:92-104` 주석)
+### 의도적으로 매핑 제외된 트리거 (`alimtalk_content_builders.py` 주석)
 
-다음 트리거들은 코드 자동 발화 (`IMPLEMENTED_AUTO_TRIGGERS`) 또는 수동 발송 진입(`ALLOWED_TRIGGERS`) 대상이지만 통합 4종 매핑은 의도적으로 제외:
+다음 트리거들은 코드 자동 발화 (`IMPLEMENTED_AUTO_TRIGGERS`) 대상이지만 현재 4종 ITEM_LIST + 2종 NONE 봉투 중 의미상 적절한 매칭이 없어 통합 매핑을 의도적으로 제외:
 
 | 트리거 | 매핑 제외 사유 |
 |---|---|
-| `exam_scheduled_days_before` / `exam_start_minutes_before` / `exam_not_taken` / `retake_assigned` | score 매핑 한때 있었으나 자동 발화 결함 회피 위해 제거 (`ff2a3f93` / `2cfaea34`) |
-| `assignment_registered` / `assignment_due_hours_before` / `assignment_not_submitted` | 동일. `assignment_not_submitted`는 배치 명령은 있으나 운영 스케줄 미등록이라 자동발화 상태는 `manual_only` |
 | `video_encoding_complete` / `matchup_report_submitted` | "[성적표 안내]" prefix 의미 불일치 (강사 본인/owner/admin 알림) |
 | `qna_answered` / `counsel_answered` | 한 때 TYPE_SCORE 재사용([v1.2.0 release](../releases/v1.2.0.md) §6) 이었으나 prefix 의미 불일치로 매핑 제거. test_alimtalk_content_builders.py:55-60 None assert 적용 |
 
@@ -307,24 +312,27 @@
 
 ### SendMessageView 알림톡 라우팅
 
-출처: `views.py:537-577`
+출처: `views/send_views.py`, `services/preflight.py`
 
 1. `message_mode == "alimtalk"`이면:
 2. 템플릿의 `category`와 `name`으로 `get_unified_for_category()` 호출
-3. 통합 4종 매핑이 있으면 해당 Solapi 템플릿 사용
+3. 통합 ITEM_LIST 4종 또는 NONE 2종 매핑이 있으면 해당 Solapi 템플릿 사용
 4. `signup` 카테고리면 자체 Solapi 템플릿 유지 (`SYSTEM_TEMPLATE_CATEGORIES`)
-5. 매핑 없으면 `score`로 fallback (line 567-571)
-6. `build_manual_replacements()`로 replacements 빌드 (line 636)
+5. 템플릿 카테고리 매핑이 없고 `block_category`가 있으면 진입점 카테고리로 한 번 더 매핑
+6. 그래도 매핑이 없으면 승인 자유양식 봉투를 사용하고, 없으면 fail-closed
+7. 매핑된 봉투는 `build_manual_replacements()`로 정확한 replacements 세트를 빌드
 
 ### CATEGORY_TO_TEMPLATE_TYPE 매핑
 
-출처: `alimtalk_content_builders.py:127-136` (2026-05-13 정정 — 8 카테고리 제거)
+출처: `alimtalk_content_builders.py:167-178` (2026-07-08 기준)
 
 | 카테고리 | 템플릿 타입 | 비고 |
 |----------|------------|---|
 | grades | score | "[성적표 안내]" prefix 의미 일치 |
 | attendance | attendance | |
 | lecture | attendance | |
+| exam | attendance | 시험 일정/미응시 안내를 강의/차시 컨텍스트 봉투에 담음 |
+| assignment | attendance | 과제 등록/마감/미제출 안내를 강의/차시 컨텍스트 봉투에 담음 |
 | clinic | clinic_info (또는 clinic_change*) | |
 | payment | notice_payment | NONE 고정 본문 시스템 안내 |
 
@@ -332,18 +340,17 @@
 
 다음 카테고리는 코드 매핑 없음. `get_unified_for_category` → `(None, None)` 반환:
 
-- **exam / assignment**: score 매핑 한때 있었으나 의미 일치 검토 보류 — 필요 시 §5.5 정책 따라 기존 4종 양식 + 본문 변수 재활용으로 확장
 - **notice / community / staff / default / student**: 카카오 등록 양식 부재
 
 → 위 카테고리로 호출 시 `get_unified_for_category` 가 (None, None) 반환. 다른 카테고리/템플릿으로 fallback하지 않는다.
 
 *clinic 카테고리: template_name에 "변경/취소/change/cancel/reschedule" 키워드가 있거나, extra_vars에 클리닉기존일정/클리닉변동사항/클리닉수정자가 있으면 clinic_change. 그 외 clinic_info. (`get_unified_for_category` line 163-189)
 
-### 시스템 기본양식 (통합 4종 제외)
+### 시스템 기본양식 (통합 승인 봉투 제외)
 
 `SYSTEM_TEMPLATE_CATEGORIES = frozenset({"signup"})` (line 117)
 
-signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지는 모두 통합 4종으로 라우팅.
+signup 카테고리만 자체 Solapi 템플릿을 유지. 나머지 매핑 카테고리는 통합 ITEM_LIST 4종 또는 NONE 2종 승인 봉투로 라우팅.
 
 ### 수동 발송 제약
 

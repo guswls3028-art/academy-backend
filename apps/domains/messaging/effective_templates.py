@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from apps.domains.messaging.alimtalk_content_builders import get_solapi_template_id
+from apps.domains.messaging.alimtalk_content_builders import get_solapi_template_id, get_template_type
 
 
 @dataclass(frozen=True)
@@ -10,6 +10,7 @@ class EffectiveTemplateStatus:
     solapi_template_id: str
     solapi_status: str
     source: str
+    template_type: str = ""
 
     @property
     def is_approved(self) -> bool:
@@ -18,12 +19,14 @@ class EffectiveTemplateStatus:
 
 def resolve_effective_template_status(config) -> EffectiveTemplateStatus:
     """Resolve the Solapi template actually used for an AutoSendConfig."""
+    unified_template_type = get_template_type(config.trigger) or ""
     unified_template_id = (get_solapi_template_id(config.trigger) or "").strip()
     if unified_template_id:
         return EffectiveTemplateStatus(
             solapi_template_id=unified_template_id,
             solapi_status="APPROVED",
             source="unified",
+            template_type=unified_template_type,
         )
 
     template = getattr(config, "template", None)

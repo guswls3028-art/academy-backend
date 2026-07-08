@@ -102,7 +102,7 @@ class TestSendEventNotification(TestCase):
         self.assertEqual(kw["to"], "01087654321")
         self.assertEqual(kw["message_mode"], "alimtalk")
         self.assertEqual(kw["target_type"], "parent")
-        # 통합 4종 우선 라우팅 정책: check_in_complete는 attendance 통합 템플릿 사용
+        # 통합 승인 봉투 우선 라우팅 정책: check_in_complete는 attendance 통합 템플릿 사용
         self.assertEqual(kw["template_id"], "KA01TP260406121126868FGddLmrDFUC")
         # 알림톡 대체/미리보기 text
         self.assertIn("학원플러스", kw["text"])
@@ -174,7 +174,7 @@ class TestSendEventNotification(TestCase):
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     def test_uses_unified_template_when_template_not_approved(self, mock_owner, mock_disabled, mock_config, mock_enqueue):
-        """통합 4종 우선 정책: 개별 템플릿이 미승인이어도 통합 템플릿으로 발송."""
+        """통합 승인 봉투 우선 정책: 개별 템플릿이 미승인이어도 통합 템플릿으로 발송."""
         tenant = _make_tenant()
         student = _make_student()
         config = _make_config("check_in_complete", solapi_status="PENDING")

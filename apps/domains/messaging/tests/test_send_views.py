@@ -98,6 +98,50 @@ class SendMessageViewTests(TestCase):
         self.assertEqual(replacements["내용"], "직접 작성한 안내입니다.")
         self.assertEqual(replacements["선생님메모"], "직접 작성한 안내입니다.")
 
+    def test_exam_category_manual_send_uses_attendance_unified_envelope(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category="exam",
+            name="시험 안내",
+            subject="",
+            body="시험 안내입니다. #{강의명} #{차시명} #{시험명}",
+            solapi_template_id="",
+            solapi_status="",
+        )
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "student",
+                "student_ids": [self.student.id],
+                "template_id": template.id,
+                "raw_body": "시험 안내입니다. #{강의명} #{차시명} #{시험명}",
+                "block_category": "exam",
+                "alimtalk_extra_vars": {
+                    "강의명": "수학A반",
+                    "차시명": "3회차",
+                    "시험명": "중간고사",
+                },
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with (
+            patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
+            patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
+        ):
+            response = SendMessageView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        kwargs = enqueue_sms.call_args.kwargs
+        self.assertEqual(kwargs["template_id"], "KA01TP260406121126868FGddLmrDFUC")
+        replacements = {item["key"]: item["value"] for item in kwargs["alimtalk_replacements"]}
+        self.assertEqual(replacements["강의명"], "수학A반")
+        self.assertEqual(replacements["차시명"], "3회차")
+        self.assertIn("중간고사", replacements["선생님메모"])
+
     def test_parent_direct_alimtalk_uses_parent_phone_and_target_type(self):
         request = self.factory.post(
             "/api/v1/messaging/send/",

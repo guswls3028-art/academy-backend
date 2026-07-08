@@ -302,6 +302,7 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
     effective_template_solapi_status = serializers.SerializerMethodField()
     effective_template_source = serializers.SerializerMethodField()
     effective_template_is_approved = serializers.SerializerMethodField()
+    effective_template_type = serializers.SerializerMethodField()
     # delay_mode/delay_value — 마이그레이션 전에도 안전하게 동작 (컬럼 미존재 시 기본값)
     delay_mode = serializers.SerializerMethodField()
     delay_value = serializers.SerializerMethodField()
@@ -321,6 +322,9 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
 
     def get_effective_template_is_approved(self, obj) -> bool:
         return self._effective_status(obj).is_approved
+
+    def get_effective_template_type(self, obj) -> str:
+        return self._effective_status(obj).template_type
 
     def get_delay_mode(self, obj) -> str:
         try:
@@ -348,6 +352,7 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
             "effective_template_solapi_status",
             "effective_template_source",
             "effective_template_is_approved",
+            "effective_template_type",
             "enabled",
             "message_mode",
             "minutes_before",

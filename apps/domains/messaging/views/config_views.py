@@ -60,6 +60,7 @@ class AutoSendConfigView(APIView):
             self._auto_provision(tenant)
             configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
 
+        from apps.domains.messaging.alimtalk_content_builders import get_template_type
         from apps.domains.messaging.policy import get_trigger_policy, get_trigger_implementation_status
 
         by_trigger = {c.trigger: c for c in configs}
@@ -83,6 +84,11 @@ class AutoSendConfigView(APIView):
                     "template_subject": "",
                     "template_body": "",
                     "template_solapi_status": "",
+                    "effective_solapi_template_id": "",
+                    "effective_template_solapi_status": "",
+                    "effective_template_source": "missing",
+                    "effective_template_is_approved": False,
+                    "effective_template_type": get_template_type(trigger) or "",
                     "enabled": False,
                     "message_mode": "alimtalk",
                     "minutes_before": None,

@@ -6,11 +6,10 @@ from apps.domains.messaging.alimtalk_content_builders import (
     get_solapi_template_id,
     get_template_type,
     get_unified_for_category,
-    SOLAPI_SCORE,
+    TYPE_ATTENDANCE,
     TYPE_CLINIC_INFO,
     TYPE_NOTICE_PAYMENT,
     TYPE_NOTICE_WITHDRAWAL,
-    TYPE_SCORE,
 )
 
 
@@ -95,6 +94,34 @@ class TestSystemNoticeMappings(TestCase):
         tt, sid = get_unified_for_category("payment")
         self.assertEqual(tt, TYPE_NOTICE_PAYMENT)
         self.assertTrue(bool(sid))
+
+
+class TestExamAssignmentEnvelopeMappings(TestCase):
+    """시험/과제 안내는 자동·수동 모두 출석 안내 ITEM_LIST 봉투를 재사용한다."""
+
+    def test_exam_and_assignment_triggers_use_attendance_envelope(self):
+        for trigger in (
+            "exam_scheduled_days_before",
+            "exam_start_minutes_before",
+            "exam_not_taken",
+            "assignment_registered",
+            "assignment_due_hours_before",
+            "assignment_not_submitted",
+        ):
+            with self.subTest(trigger=trigger):
+                self.assertEqual(get_template_type(trigger), TYPE_ATTENDANCE)
+                self.assertTrue(bool(get_solapi_template_id(trigger)))
+
+    def test_exam_and_assignment_categories_use_attendance_envelope(self):
+        for category in ("exam", "assignment"):
+            with self.subTest(category=category):
+                tt, sid = get_unified_for_category(category)
+                self.assertEqual(tt, TYPE_ATTENDANCE)
+                self.assertTrue(bool(sid))
+
+    def test_retake_trigger_uses_clinic_info_envelope(self):
+        self.assertEqual(get_template_type("retake_assigned"), TYPE_CLINIC_INFO)
+        self.assertTrue(bool(get_solapi_template_id("retake_assigned")))
 
 
 class TestTeacherMemoAlias(TestCase):

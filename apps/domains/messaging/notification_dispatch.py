@@ -79,7 +79,7 @@ def build_attendance_preview(
     solapi_template_id = ""
     solapi_approved = False
 
-    # ── 통합 알림톡 템플릿 감지 (통합 4종이 있으면 항상 우선 사용) ──
+    # ── 통합 알림톡 템플릿 감지 (승인 봉투가 있으면 항상 우선 사용) ──
     from apps.domains.messaging.alimtalk_content_builders import (
         get_solapi_template_id as get_unified_tid,
         get_template_type,
@@ -230,7 +230,7 @@ def build_student_list_preview(
     solapi_template_id = ""
     solapi_approved = False
 
-    # ── 통합 알림톡 템플릿 감지 (통합 4종이 있으면 항상 우선 사용) ──
+    # ── 통합 알림톡 템플릿 감지 (승인 봉투가 있으면 항상 우선 사용) ──
     from apps.domains.messaging.alimtalk_content_builders import (
         get_solapi_template_id as get_unified_tid,
         get_template_type,

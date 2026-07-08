@@ -68,7 +68,7 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         ),
         "minutes_before": None,
     },
-    # ───────── 출결 (통합 알림톡: score 템플릿) ─────────
+    # ───────── 출결 (통합 알림톡: attendance 템플릿) ─────────
     # body = #{선생님메모} 변수에만 들어가는 안내 문구.
     # 나머지(학원이름, 학생이름, 강의명, 차시명, 사이트링크)는 솔라피 템플릿 하드코딩.
     # ITEM_LIST(attendance) 템플릿: header(학원이름), highlight(학생이름), item.list(강의명/차시명/날짜/시간)
@@ -94,7 +94,7 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "body": "수업에 결석하였습니다.\n사유가 있으시면 학원으로 연락 부탁드립니다.",
         "minutes_before": None,
     },
-    # ITEM_LIST(score) 템플릿: header(학원이름), highlight(학생이름), item.list(강의명/차시명)
+    # ITEM_LIST(attendance) 템플릿: header(학원이름), highlight(학생이름), item.list(강의명/차시명/날짜/시간)
     "exam_scheduled_days_before": {
         "category": "exam",
         "name": "[{academy_name}] 시험 예정 안내",
@@ -130,7 +130,7 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "body": "재시험 대상으로 지정되었습니다.\n재시험 일정과 범위를 확인해 주세요.",
         "minutes_before": None,
     },
-    # ITEM_LIST(score) 템플릿 — 과제
+    # ITEM_LIST(attendance) 템플릿 — 과제
     "assignment_registered": {
         "category": "assignment",
         "name": "[{academy_name}] 새 과제 등록 안내",
@@ -230,7 +230,7 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "minutes_before": None,
     },
     # ───────── 결제 ─────────
-    # ITEM_LIST(score) 템플릿 — 결제
+    # NONE(payment) 템플릿 — 결제/납부 고정 시스템 안내
     "payment_complete": {
         "category": "payment",
         "name": "[{academy_name}] 결제 완료 안내",
@@ -393,8 +393,9 @@ _TEMPLATE_DEFINITIONS: dict[str, dict] = {
         "body": "강사가 매치업 적중 보고서를 제출했습니다.\n어드민 → 매치업에서 보고서 inbox를 확인해 주세요.",
         "minutes_before": None,
     },
-    # ───────── 커뮤니티 (통합 알림톡: score 템플릿) ─────────
-    # body = #{선생님메모} 영역. 학원이름/학생이름/제목/카테고리는 ITEM_LIST 슬롯 사용.
+    # ───────── 커뮤니티 (통합 알림톡 매핑 보류) ─────────
+    # 현재 4종 ITEM_LIST + 2종 NONE 봉투 중 의미상 1:1 매칭이 없어
+    # 별도 승인 템플릿이 연결된 경우에만 발송한다.
     "qna_answered": {
         "category": "community",
         "name": "[{academy_name}] 질문 답변 완료",
