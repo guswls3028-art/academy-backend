@@ -76,7 +76,7 @@ Aggregation
 모델, serializer, 단순 CRUD view에 새로운 집계 로직을 넣지 않는다.
 
 운영 성적 분석의 canonical BFF는
-`apps/domains/results/services/enterprise_analytics.py`다.
+`apps/support/results/enterprise_analytics.py`다.
 이 서비스는 `Result`, `ResultFact`, `ResultItem`, `Submission`을 함께 읽어
 성적 분포, 기간별 추이, 수동 성적 입력, 자동채점 사용량을 tenant scope 안에서 집계한다.
 `[E2E-*]`, `LOCAL-DEMO`, `테스트/데모`로 식별되는 시험은 기본 분석에서 제외한다.

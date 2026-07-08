@@ -13,7 +13,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
-from apps.domains.results.services.enterprise_analytics import (
+from apps.support.results.enterprise_analytics import (
     build_student_enterprise_analytics,
     normalize_analytics_days,
 )

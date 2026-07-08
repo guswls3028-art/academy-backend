@@ -10,7 +10,7 @@ from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.parents.models import Parent
 from apps.domains.results.models import Result, ResultFact, ResultItem
-from apps.domains.results.services.enterprise_analytics import normalize_analytics_days
+from apps.support.results.enterprise_analytics import normalize_analytics_days
 from apps.domains.results.views.admin_enterprise_analytics_view import AdminEnterpriseAnalyticsView
 from apps.domains.student_app.results.views import MyGradesAnalyticsView
 from apps.domains.students.models import Student

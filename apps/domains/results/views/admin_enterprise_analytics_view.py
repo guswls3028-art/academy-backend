@@ -3,7 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
-from apps.domains.results.services.enterprise_analytics import (
+from apps.support.results.enterprise_analytics import (
     build_teacher_enterprise_analytics,
     normalize_analytics_days,
 )
