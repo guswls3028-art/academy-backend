@@ -10,6 +10,7 @@ from apps.domains.messaging.alimtalk_content_builders import (
     TYPE_CLINIC_INFO,
     TYPE_NOTICE_PAYMENT,
     TYPE_NOTICE_WITHDRAWAL,
+    TYPE_SCORE,
 )
 
 
@@ -88,12 +89,12 @@ class TestSystemNoticeMappings(TestCase):
         for trigger in ("payment_complete", "payment_due_days_before"):
             with self.subTest(trigger=trigger):
                 self.assertEqual(get_template_type(trigger), TYPE_NOTICE_PAYMENT)
-                self.assertTrue(bool(get_solapi_template_id(trigger)))
+                self.assertFalse(bool(get_solapi_template_id(trigger)))
 
     def test_payment_category_uses_payment_notice(self):
         tt, sid = get_unified_for_category("payment")
         self.assertEqual(tt, TYPE_NOTICE_PAYMENT)
-        self.assertTrue(bool(sid))
+        self.assertFalse(bool(sid))
 
 
 class TestExamAssignmentEnvelopeMappings(TestCase):
@@ -124,8 +125,8 @@ class TestExamAssignmentEnvelopeMappings(TestCase):
         self.assertTrue(bool(get_solapi_template_id("retake_assigned")))
 
 
-class TestTeacherMemoAlias(TestCase):
-    def test_manual_replacements_include_teacher_memo_1_alias(self):
+class TestRegisteredSolapiVariables(TestCase):
+    def test_manual_replacements_use_registered_teacher_memo_only(self):
         replacements = build_manual_replacements(
             template_type=TYPE_CLINIC_INFO,
             content_body="내일 클리닉 안내입니다.",
@@ -136,4 +137,43 @@ class TestTeacherMemoAlias(TestCase):
         )
         reps = {item["key"]: item["value"] for item in replacements}
         self.assertEqual(reps["선생님메모"], "내일 클리닉 안내입니다.")
-        self.assertEqual(reps["선생님메모1"], "내일 클리닉 안내입니다.")
+        self.assertNotIn("선생님메모1", reps)
+
+    def test_score_replacements_match_registered_solapi_variables(self):
+        replacements = build_manual_replacements(
+            template_type=TYPE_SCORE,
+            content_body="#{학생이름} 성적 안내입니다.\n#{시험1명}: #{시험1}/#{시험1만점}",
+            context={
+                "강의명": "수학A반",
+                "차시명": "3회차",
+                "날짜": "7월 8일",
+                "시험1명": "단원평가",
+                "시험1": "92",
+                "시험1만점": "100",
+                "시험총점": "92",
+                "시험총만점": "100",
+                "숙제완성도": "1/1 완료",
+            },
+            tenant_name="림글리쉬",
+            student_name="홍길동",
+            site_url="https://limglish.hakwonplus.com",
+        )
+        keys = [item["key"] for item in replacements]
+        self.assertEqual(
+            keys,
+            [
+                "학원이름", "학생이름", "학생이름3", "강의명", "차시명", "날짜",
+                "시험1명", "시험1", "시험1만점",
+                "시험2명", "시험2", "시험2만점",
+                "시험3명", "시험3", "시험3만점",
+                "시험4명", "시험4", "시험4만점",
+                "시험총점", "시험총만점", "숙제완성도",
+                "선생님메모", "사이트링크",
+            ],
+        )
+        reps = {item["key"]: item["value"] for item in replacements}
+        self.assertEqual(reps["시험1명"], "단원평가")
+        self.assertEqual(reps["시험1"], "92")
+        self.assertEqual(reps["시험1만점"], "100")
+        self.assertEqual(reps["숙제완성도"], "1/1 완료")
+        self.assertNotIn("선생님메모1", reps)

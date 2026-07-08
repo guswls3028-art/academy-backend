@@ -5,11 +5,9 @@ import re
 from dataclasses import dataclass
 from typing import Iterable
 
-from django.utils import timezone
 from django.utils.html import strip_tags
 from apps.support.community.qna_notification_dependencies import (
     active_staff_profiles_for_qna,
-    build_fallback_qna_replacements,
     enqueue_qna_sms,
     qna_tenant_site_url,
     resolve_qna_freeform_template,
@@ -122,6 +120,9 @@ def _send_qna_alimtalk_to_recipients(
 
     template = resolve_qna_freeform_template(tenant.id)
     template_id = (getattr(template, "solapi_template_id", "") or "").strip() if template else ""
+    if not template_id:
+        logger.info("qna alimtalk skipped: tenant=%s event=%s no approved Kakao envelope", tenant.id, event_type)
+        return 0
 
     academy_name = (getattr(tenant, "name", "") or "").strip()
     site_url = qna_tenant_site_url(tenant) or ""
@@ -212,18 +213,7 @@ def _resolve_qna_alimtalk_payload(
         )
         return template_id, replacements, text
 
-    now = timezone.localtime()
-    template_id, replacements = build_fallback_qna_replacements(
-        body=body,
-        lecture_label=_clip(category_label or "QnA", 23),
-        session_label=_clip(action_label or "QnA", 23),
-        date_label=now.strftime("%m/%d"),
-        time_label=now.strftime("%H:%M"),
-        academy_name=academy_name,
-        student_name=student_name or recipient_name,
-        site_url=site_url,
-    )
-    return template_id, replacements, body
+    return "", [], body
 
 
 def _iter_staff_recipients(tenant) -> list[_Recipient]:

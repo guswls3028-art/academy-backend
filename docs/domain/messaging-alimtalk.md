@@ -20,7 +20,7 @@
 
 | 봉투 | prefix (장식 고정) | 자동 슬롯 (장식) | 학원장 자유 편지 |
 |---|---|---|---|
-| **score** | `[성적표 안내]` | 학원이름/학생이름/강의명/차시명 | `#{선생님메모}` |
+| **score** | `[성적표 안내]` | 학원이름/학생이름/강의명/차시명/시험1~4/총점/숙제완성도 | `#{선생님메모}` |
 | **attendance** | `[출석 안내]` | 학원이름/학생이름/강의명/차시명/날짜/시간 | `#{선생님메모}` |
 | **clinic_info** | `[클리닉 안내]` | 학원이름/학생이름/장소/날짜/시간 | `#{선생님메모}` |
 | **clinic_change** | `[일정 변경 안내]` | 학원이름/학생이름/기존일정/변동사항/수정자 | `#{선생님메모}` |
@@ -28,6 +28,8 @@
 | NONE notice_payment | `[HakwonPlus] 결제 완료 안내` | 학원명/학생이름2/사이트링크 | **없음** (시스템 안내) |
 
 성적 관련 안내 → score 봉투. 클리닉 관련 → clinic_info 봉투. 출석·시험 일정·과제 안내 → attendance 봉투. 클리닉 일정 변경/취소 → clinic_change 봉투. **ITEM_LIST 봉투 안 편지(`#{선생님메모}`)는 무제한 자유.** NONE 봉투는 카카오 승인 본문 고정이라 편지 영역이 없다.
+
+2026-07-08 Solapi 실등록 감사 기준 `notice_payment` 기존 SID는 provider 목록에 없어 현재 fail-closed다. 논리 매핑은 유지하지만 실제 승인 SID가 복구되기 전까지 결제 알림톡은 발송하지 않는다.
 
 ### 영구 금지 패턴 (응답/제안/백로그에 떠오르면 즉시 멈춤)
 
@@ -129,10 +131,10 @@
 |------|-----------|------|-----------|
 | `SOLAPI_CLINIC_INFO` | `KA01TP2604061058318608Hy40ZnTFZT` | ITEM_LIST (clinic_info) | 학원이름, 학생이름, 클리닉장소, 클리닉날짜, 클리닉시간, 선생님메모, 사이트링크 |
 | `SOLAPI_CLINIC_CHANGE` | `KA01TP260406110706969XS06XRZveEk` | ITEM_LIST (clinic_change) | 학원이름, 학생이름, 클리닉기존일정, 클리닉변동사항, 클리닉수정자, 선생님메모, 사이트링크 |
-| `SOLAPI_SCORE` | `KA01TP260406105458211774JKJ3OU55` | ITEM_LIST (score) | 학원이름, 학생이름, 강의명, 차시명, 선생님메모, 사이트링크 |
+| `SOLAPI_SCORE` | `KA01TP260406105458211774JKJ3OU55` | ITEM_LIST (score) | 학원이름, 학생이름, 학생이름3, 강의명, 차시명, 날짜, 시험1명, 시험1, 시험1만점, 시험2명, 시험2, 시험2만점, 시험3명, 시험3, 시험3만점, 시험4명, 시험4, 시험4만점, 시험총점, 시험총만점, 숙제완성도, 선생님메모, 사이트링크 |
 | `SOLAPI_ATTENDANCE` | `KA01TP260406121126868FGddLmrDFUC` | ITEM_LIST (attendance) | 학원이름, 학생이름, 강의명, 차시명, 강의날짜, 강의시간, 선생님메모, 사이트링크 |
 
-출처: `alimtalk_content_builders.py:23-27`, `TEMPLATE_TYPE_VARIABLES` (line 275-288)
+출처: `alimtalk_content_builders.py`, `TEMPLATE_TYPE_VARIABLES`, Solapi provider 실등록 감사(2026-07-08)
 
 ### 활성화 플래그
 
@@ -194,8 +196,8 @@
 | `exam_score_published` | score | manual (정책: 저장≠발송) | "[성적표 안내]" prefix 의미 일치 |
 | `monthly_report_generated` | score | manual | ⚠️ 월간 집계를 강의명/차시명 단일 변수에 매핑 — 의미 약함 |
 | `withdrawal_complete` | notice_withdrawal | manual | NONE 고정 본문 시스템 안내 |
-| `payment_complete` | notice_payment | manual | NONE 고정 본문 시스템 안내 |
-| `payment_due_days_before` | notice_payment | manual | NONE 고정 본문 시스템 안내 |
+| `payment_complete` | notice_payment | manual | NONE 고정 본문 시스템 안내. 2026-07-08 현재 provider SID 누락으로 fail-closed |
+| `payment_due_days_before` | notice_payment | manual | NONE 고정 본문 시스템 안내. 2026-07-08 현재 provider SID 누락으로 fail-closed |
 
 ### 의도적으로 매핑 제외된 트리거 (`alimtalk_content_builders.py` 주석)
 
@@ -208,12 +210,12 @@
 
 ### 매핑 X 트리거의 실제 발송 path
 
-`build_unified_replacements` (line 333-335) → trigger 매핑 X → `return []` (빈 replacements). 이후 `notification_service.send_event_notification` (line 175-223) "기존 모드" 진입:
-1. 자체 tenant template 의 solapi_template_id + status==APPROVED 사용 (있는 경우)
-2. 없으면 owner tenant (T1 hakwonplus) 의 같은 trigger AutoSendConfig template fallback (line 103-117)
-3. owner 에도 없으면 발송 차단 (`return False`)
+`build_unified_replacements` → trigger 매핑 X → `return []` (빈 replacements). 이후 `notification_service.send_event_notification` 기존 모드 진입:
+1. tenant AutoSendConfig는 enabled/body memo 확인에만 사용
+2. owner tenant (T1 hakwonplus) 의 같은 trigger AutoSendConfig template이 `solapi_status=APPROVED`이고 SID가 있을 때만 발송
+3. owner exact approved template이 없으면 발송 차단 (`return False`)
 
-→ 즉, 위 매핑 제외 trigger 들의 실제 운영 발송 여부 = owner tenant AutoSendConfig 의 별도 승인 template 등록 상태에 의존. **운영 검증 시점에 trigger 별로 owner config 존재 + solapi_status=APPROVED 확인 필요**.
+→ 즉, 위 매핑 제외 trigger 들의 실제 운영 발송 여부 = owner tenant AutoSendConfig 의 별도 승인 template 등록 상태에 의존. **tenant template, 자유양식, 다른 trigger로 fallback하지 않는다.** Community/Q&A 외부 알림톡은 승인 봉투 부재로 fail-closed다.
 
 **참고:** `clinic_reservation_changed`와 `clinic_cancelled`는 `clinic_change` 템플릿을 사용하여 기존일정/변동사항/수정자 변수를 ITEM_LIST에 표시.
 
@@ -319,8 +321,8 @@
 3. 통합 ITEM_LIST 4종 또는 NONE 2종 매핑이 있으면 해당 Solapi 템플릿 사용
 4. `signup` 카테고리면 자체 Solapi 템플릿 유지 (`SYSTEM_TEMPLATE_CATEGORIES`)
 5. 템플릿 카테고리 매핑이 없고 `block_category`가 있으면 진입점 카테고리로 한 번 더 매핑
-6. 그래도 매핑이 없으면 승인 자유양식 봉투를 사용하고, 없으면 fail-closed
-7. 매핑된 봉투는 `build_manual_replacements()`로 정확한 replacements 세트를 빌드
+6. 그래도 매핑이 없으면 fail-closed. 자유양식/공지형 fallback은 사용하지 않는다.
+7. 매핑된 봉투는 `build_manual_replacements()`로 실제 Solapi 등록 변수와 일치하는 replacements 세트를 빌드
 
 ### CATEGORY_TO_TEMPLATE_TYPE 매핑
 
@@ -334,7 +336,7 @@
 | exam | attendance | 시험 일정/미응시 안내를 강의/차시 컨텍스트 봉투에 담음 |
 | assignment | attendance | 과제 등록/마감/미제출 안내를 강의/차시 컨텍스트 봉투에 담음 |
 | clinic | clinic_info (또는 clinic_change*) | |
-| payment | notice_payment | NONE 고정 본문 시스템 안내 |
+| payment | notice_payment | NONE 고정 본문 시스템 안내. 2026-07-08 현재 provider SID 누락으로 fail-closed |
 
 ### 매핑 의도적 제외 카테고리
 

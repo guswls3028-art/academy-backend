@@ -6,9 +6,9 @@ from typing import Any
 
 
 def resolve_qna_freeform_template(tenant_id: int) -> Any | None:
-    from apps.domains.messaging.selectors import resolve_freeform_template
-
-    return resolve_freeform_template(tenant_id)
+    # Community/QnA has no approved Kakao envelope mapping in the common Solapi channel.
+    # Keep external Alimtalk fail-closed instead of falling back to a generic/freeform template.
+    return None
 
 
 def enqueue_qna_sms(**kwargs: Any) -> Any:

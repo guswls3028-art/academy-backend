@@ -66,6 +66,7 @@ def send_event_notification(
     )
     from apps.domains.messaging.alimtalk_content_builders import (
         get_solapi_template_id as get_unified_tid,
+        get_template_type,
         build_unified_replacements,
     )
     from .queue_service import enqueue_sms
@@ -119,8 +120,16 @@ def send_event_notification(
 
     # ── 통합 알림톡 템플릿 감지 ──
     # 트리거에 매핑된 통합 템플릿이 있으면 해당 ID 사용
+    unified_type = get_template_type(trigger)
     unified_tid = get_unified_tid(trigger)
     use_unified = bool(unified_tid)
+    if unified_type and not unified_tid:
+        logger.error(
+            "send_event_notification BLOCKED: trigger=%s mapped_template=%s has no registered Solapi SID",
+            trigger,
+            unified_type,
+        )
+        return False
 
     if not use_unified and not owner_solapi_approved:
         logger.debug(

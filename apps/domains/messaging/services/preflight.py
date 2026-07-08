@@ -15,8 +15,7 @@ from apps.domains.messaging.alimtalk_content_builders import (
 from apps.domains.messaging.effective_templates import resolve_effective_template_status
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, NotificationLog, ScheduledNotification
 from apps.domains.messaging.policy import get_owner_tenant_id, get_trigger_implementation_status
-from apps.domains.messaging.selectors import resolve_freeform_template
-from apps.domains.messaging.services.recipients import normalize_phone, resolve_student_message_recipients
+from apps.domains.messaging.services.recipients import resolve_student_message_recipients
 
 
 MAX_MANUAL_RECIPIENTS = 200
@@ -140,20 +139,17 @@ def _resolve_template_for_manual_send(tenant, data: dict[str, Any]) -> TemplateP
                 detail="선택한 템플릿이 아직 카카오 검수 승인 상태가 아닙니다.",
             )
 
-    freeform = resolve_freeform_template(tenant.id)
-    if freeform and raw_body:
-        return TemplatePlan(
-            ok=True,
-            source="freeform",
-            name=freeform.name,
-            solapi_template_id=(freeform.solapi_template_id or "").strip(),
-            solapi_status=freeform.solapi_status,
-            detail="승인된 자유양식 봉투에 작성한 본문을 담아 발송됩니다.",
-        )
-
     if raw_subject:
-        return TemplatePlan(ok=False, source="missing", detail="알림톡 발송에는 검수 승인된 템플릿이 필요합니다.")
-    return TemplatePlan(ok=False, source="missing", detail="검수 승인된 템플릿이나 자유양식 봉투가 없습니다.")
+        return TemplatePlan(
+            ok=False,
+            source="missing",
+            detail="알림톡 발송에는 카카오 승인 봉투가 필요합니다. 출석/성적/클리닉/일정변경 중 하나를 선택해 주세요.",
+        )
+    return TemplatePlan(
+        ok=False,
+        source="missing",
+        detail="알림톡 발송에는 카카오 승인 봉투가 필요합니다. 출석/성적/클리닉/일정변경 중 하나를 선택해 주세요.",
+    )
 
 
 def _phone_summary(phones: list[str]) -> dict[str, int]:
@@ -347,7 +343,6 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
         if not effective_template.is_approved:
             enabled_unapproved_template += 1
 
-    freeform = resolve_freeform_template(tenant.id)
     approved_count = MessageTemplate.objects.filter(tenant=tenant, solapi_status="APPROVED").count()
     owner_id = get_owner_tenant_id()
     owner_approved_count = 0
@@ -368,8 +363,6 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
         }
     if heartbeat["status"] not in {"ok", "idle"}:
         risks.append({"code": "worker_attention", "title": "워커 확인", "detail": "메시징 워커 heartbeat가 없거나 오래되었습니다."})
-    if not freeform:
-        risks.append({"code": "freeform_missing", "title": "자유양식 없음", "detail": "직접 작성 알림톡에 사용할 승인 자유양식이 없습니다."})
     if enabled_without_template or enabled_unapproved_template or enabled_manual_only:
         risks.append(
             {
@@ -397,8 +390,8 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
         "templates": {
             "approved": approved_count,
             "owner_approved": owner_approved_count,
-            "freeform_available": bool(freeform),
-            "freeform_template_name": freeform.name if freeform else "",
+            "freeform_available": False,
+            "freeform_template_name": "",
         },
         "auto_send": {
             "enabled": len(enabled_configs),

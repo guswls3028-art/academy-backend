@@ -71,3 +71,28 @@ class EffectiveTemplateStatusTests(TestCase):
         self.assertEqual(effective.template_type, "")
         self.assertEqual(effective.solapi_template_id, "tenant-pending")
         self.assertEqual(effective.solapi_status, "PENDING")
+
+    def test_mapped_trigger_without_provider_sid_does_not_fallback_to_linked_template(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="Stale payment notice",
+            category=MessageTemplate.Category.PAYMENT,
+            subject="Payment",
+            body="Payment",
+            solapi_template_id="STALE-PAYMENT-SID",
+            solapi_status="APPROVED",
+        )
+        config = AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="payment_complete",
+            template=template,
+            enabled=True,
+            message_mode="alimtalk",
+        )
+
+        effective = resolve_effective_template_status(config)
+
+        self.assertFalse(effective.is_approved)
+        self.assertEqual(effective.source, "unified_missing")
+        self.assertEqual(effective.template_type, "notice_payment")
+        self.assertEqual(effective.solapi_template_id, "")

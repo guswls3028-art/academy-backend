@@ -89,7 +89,7 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
                     "send_to": "parent",
                     "student_ids": [ok_student.id, no_phone_student.id, deleted_student.id, ok_student.id],
                     "raw_body": "성적표 안내입니다.",
-                    "block_category": "default",
+                    "block_category": "attendance",
                 },
             )
         )
@@ -101,7 +101,7 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
         self.assertEqual(response.data["recipient"]["valid_phone"], 1)
         self.assertEqual(response.data["recipient"]["skipped_no_phone"], 1)
         self.assertEqual(response.data["recipient"]["invalid_or_deleted"], 1)
-        self.assertEqual(response.data["template"]["source"], "freeform")
+        self.assertEqual(response.data["template"]["source"], "unified")
         self.assertEqual(response.data["template"]["solapi_status"], "APPROVED")
         self.assertTrue(any(item["code"] == "missing_phone" for item in response.data["warnings"]))
 
@@ -201,3 +201,19 @@ class MessagingOperationsStatusViewTests(MessagingOperationsBase):
         self.assertEqual(response.data["worker"]["status"], "idle")
         self.assertEqual(response.data["worker"]["idle_reason"], "scale_to_zero_no_backlog")
         self.assertFalse(any(item["code"] == "worker_attention" for item in response.data["risks"]))
+
+    def test_operations_status_flags_mapped_trigger_when_provider_sid_is_missing(self):
+        AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="payment_complete",
+            enabled=True,
+            message_mode="alimtalk",
+        )
+
+        response = MessagingOperationsStatusView.as_view()(
+            self._request("get", "/api/v1/messaging/operations/status/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["auto_send"]["enabled_without_template"], 1)
+        self.assertTrue(any(item["code"] == "auto_send_template_attention" for item in response.data["risks"]))

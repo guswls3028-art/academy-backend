@@ -28,6 +28,13 @@ def resolve_effective_template_status(config) -> EffectiveTemplateStatus:
             source="unified",
             template_type=unified_template_type,
         )
+    if unified_template_type:
+        return EffectiveTemplateStatus(
+            solapi_template_id="",
+            solapi_status="",
+            source="unified_missing",
+            template_type=unified_template_type,
+        )
 
     template = getattr(config, "template", None)
     return EffectiveTemplateStatus(

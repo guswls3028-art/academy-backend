@@ -17,11 +17,10 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import NotificationLog, MessageTemplate
 from apps.domains.messaging.permissions import can_send_messages
 from apps.domains.messaging.serializers import SendMessageRequestSerializer
-from apps.domains.messaging.selectors import resolve_freeform_template
 from apps.domains.messaging.services.recipients import resolve_student_message_recipients
 
 
-CONTENT_PLACEHOLDERS = ("#{공지내용}", "#{내용}", "#{선생님메모}", "#{선생님메모1}")
+CONTENT_PLACEHOLDERS = ("#{공지내용}", "#{내용}", "#{선생님메모}")
 
 
 def _dispatch_or_schedule_message(*, tenant_id: int, trigger: str, payload: dict, scheduled_send_at):
@@ -39,11 +38,6 @@ def _dispatch_or_schedule_message(*, tenant_id: int, trigger: str, payload: dict
     from apps.domains.messaging.services import enqueue_sms
 
     return "enqueued" if enqueue_sms(**payload) else "failed"
-
-
-def _append_teacher_memo_aliases(replacements: list[dict], value: str) -> None:
-    replacements.append({"key": "선생님메모", "value": value})
-    replacements.append({"key": "선생님메모1", "value": value})
 
 
 class SendMessageView(APIView):
@@ -183,26 +177,21 @@ class SendMessageView(APIView):
                     use_unified = False
                     solapi_template_id = (t.solapi_template_id or "").strip() if t else ""
 
-        # 알림톡 직접 작성: 템플릿 미선택 또는 block_category 미매핑이어도 승인된 자유양식 봉투로 발송한다.
-        if message_mode == "alimtalk" and not solapi_template_id:
-            freeform = resolve_freeform_template(tenant.id)
-            if freeform:
-                t = freeform
-                solapi_template_id = (freeform.solapi_template_id or "").strip()
-                user_custom_content = body_base
-                if not subject_base:
-                    subject_base = (freeform.subject or "").strip()
-
         if message_mode == "alimtalk" and solapi_template_id and not use_unified:
             if t and getattr(t, "solapi_status", None) != "APPROVED":
                 return Response(
-                    {"detail": "알림톡 발송에는 검수 승인된 템플릿이 필요합니다. 템플릿 검수를 먼저 신청해 주세요."},
+                    {"detail": "선택한 알림톡 템플릿이 아직 카카오 승인 상태가 아닙니다. 승인된 봉투를 선택해 주세요."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
         if message_mode == "alimtalk" and not solapi_template_id:
             return Response(
-                {"detail": "알림톡 발송에는 검수 승인된 템플릿이 필요합니다. 템플릿 검수를 먼저 신청해 주세요."},
+                {
+                    "detail": (
+                        "알림톡 발송에는 카카오 승인 봉투가 필요합니다. "
+                        "양식 선택에서 출석/성적/클리닉/일정변경 봉투를 선택해 주세요."
+                    )
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -291,7 +280,7 @@ class SendMessageView(APIView):
                     if user_custom_content:
                         alimtalk_replacements.append({"key": "공지내용", "value": user_custom_content})
                         alimtalk_replacements.append({"key": "내용", "value": user_custom_content})
-                        _append_teacher_memo_aliases(alimtalk_replacements, user_custom_content)
+                        alimtalk_replacements.append({"key": "선생님메모", "value": user_custom_content})
 
             try:
                 dispatch_result = _dispatch_or_schedule_message(

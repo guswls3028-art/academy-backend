@@ -64,14 +64,14 @@ class SendMessageViewTests(TestCase):
             is_system=True,
         )
 
-    def test_student_direct_alimtalk_uses_approved_freeform_template(self):
+    def test_student_direct_alimtalk_uses_selected_attendance_envelope(self):
         request = self.factory.post(
             "/api/v1/messaging/send/",
             data={
                 "send_to": "student",
                 "student_ids": [self.student.id],
                 "raw_body": "직접 작성한 안내입니다.",
-                "block_category": "default",
+                "block_category": "attendance",
             },
             format="json",
         )
@@ -92,11 +92,34 @@ class SendMessageViewTests(TestCase):
         self.assertEqual(kwargs["to"], "01011112222")
         self.assertEqual(kwargs["target_type"], "student")
         self.assertEqual(kwargs["target_id"], self.student.id)
-        self.assertEqual(kwargs["template_id"], "FREEFORM-SID")
+        self.assertEqual(kwargs["template_id"], "KA01TP260406121126868FGddLmrDFUC")
         replacements = {item["key"]: item["value"] for item in kwargs["alimtalk_replacements"]}
-        self.assertEqual(replacements["공지내용"], "직접 작성한 안내입니다.")
-        self.assertEqual(replacements["내용"], "직접 작성한 안내입니다.")
         self.assertEqual(replacements["선생님메모"], "직접 작성한 안내입니다.")
+        self.assertNotIn("공지내용", replacements)
+        self.assertNotIn("내용", replacements)
+        self.assertNotIn("선생님메모1", replacements)
+
+    def test_default_direct_alimtalk_requires_selected_envelope(self):
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "student",
+                "student_ids": [self.student.id],
+                "raw_body": "봉투 없이 직접 작성한 안내입니다.",
+                "block_category": "default",
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
+            response = SendMessageView.as_view()(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("카카오 승인 봉투", response.data["detail"])
+        enqueue_sms.assert_not_called()
 
     def test_exam_category_manual_send_uses_attendance_unified_envelope(self):
         template = MessageTemplate.objects.create(
@@ -149,7 +172,7 @@ class SendMessageViewTests(TestCase):
                 "send_to": "parent",
                 "student_ids": [self.student.id],
                 "raw_body": "학부모 안내입니다.",
-                "block_category": "default",
+                "block_category": "attendance",
             },
             format="json",
         )
@@ -178,7 +201,7 @@ class SendMessageViewTests(TestCase):
                 "send_to": "parent",
                 "student_ids": [self.student.id],
                 "raw_body": "예약 안내입니다.",
-                "block_category": "default",
+                "block_category": "attendance",
                 "scheduled_send_at": send_at.isoformat(),
             },
             format="json",
@@ -268,7 +291,7 @@ class SendMessageViewTests(TestCase):
                 "send_to": "parent",
                 "student_ids": [self.student.id, deleted_student.id, other_student.id, self.student.id],
                 "raw_body": "선택 학생 안내입니다.",
-                "block_category": "default",
+                "block_category": "attendance",
             },
             format="json",
         )

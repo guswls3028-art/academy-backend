@@ -85,12 +85,15 @@ def build_attendance_preview(
         get_template_type,
         build_manual_replacements,
     )
+    unified_type = get_template_type(trigger)
     unified_tid = get_unified_tid(trigger)
     use_unified = bool(unified_tid)
     if use_unified:
         # 통합 템플릿 존재 → 개별 APPROVED 여부와 무관하게 항상 통합 사용
         solapi_template_id = unified_tid
         solapi_approved = True
+    elif unified_type:
+        return {"error": "승인된 알림톡 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
     elif owner_template:
         template = owner_template
         solapi_template_id = (owner_template.solapi_template_id or "").strip()
@@ -236,11 +239,14 @@ def build_student_list_preview(
         get_template_type,
         build_manual_replacements,
     )
+    unified_type = get_template_type(trigger)
     unified_tid = get_unified_tid(trigger)
     use_unified = bool(unified_tid)
     if use_unified:
         solapi_template_id = unified_tid
         solapi_approved = True
+    elif unified_type:
+        return {"error": "승인된 알림톡 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
     elif owner_template:
         template = owner_template
         solapi_template_id = (owner_template.solapi_template_id or "").strip()
