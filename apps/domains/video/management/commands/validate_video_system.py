@@ -153,12 +153,17 @@ class Command(BaseCommand):
                     )
                     self.stdout.write(self.style.SUCCESS(f"FIX: video_id={v.id} -> FAILED"))
 
-        # 3. READY video without hls_path
-        ready_no_hls = list(Video.objects.filter(status=Video.Status.READY).filter(hls_path="").values_list("id", flat=True))
+        # 3. READY uploaded video without hls_path
+        ready_no_hls = list(
+            Video.objects.filter(status=Video.Status.READY)
+            .exclude(source_type=Video.SourceType.YOUTUBE)
+            .filter(hls_path="")
+            .values_list("id", flat=True)
+        )
         for vid in ready_no_hls:
             errors.append(f"READY without HLS path: video_id={vid}")
         if ready_no_hls:
-            self.stdout.write(self.style.WARNING(f"READY without hls_path: {len(ready_no_hls)} videos"))
+            self.stdout.write(self.style.WARNING(f"READY uploaded without hls_path: {len(ready_no_hls)} videos"))
 
         # 4. Duplicate active jobs per video
         dupes = list(
