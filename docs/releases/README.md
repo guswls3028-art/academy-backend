@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.6.3.md](v1.6.3.md) | **CURRENT** | 2026-07-08 KST | ymath/limglish billing contract price exception |
+| [v1.6.4.md](v1.6.4.md) | **CURRENT** | 2026-07-08 KST | Alimtalk envelope enforcement + Solapi template contract + production send verification |
+| [v1.6.3.md](v1.6.3.md) | production-deployed / v1.6.4로 승계 | 2026-07-08 KST | ymath/limglish billing contract price exception |
 | [v1.6.2.md](v1.6.2.md) | production-deployed / v1.6.3로 승계 | 2026-07-07 KST | Multi-user race-condition hardening + production real-use concurrency verification |
 | [v1.6.1.md](v1.6.1.md) | production-deployed / v1.6.2로 승계 | 2026-07-06 KST | Whole-project refactor closure + stale AI recovery + post-deploy operations/cost seal |
 | [v1.6.0.md](v1.6.0.md) | production-deployed / v1.6.1로 승계 | 2026-06-29 KST | Idle Batch cost cleanup + runtime env netprobe closure |
