@@ -1,5 +1,5 @@
 # Drift — SSOT vs actual
-**Generated:** 2026-07-07T08:15:30.5179447+09:00
+**Generated:** 2026-07-08T19:02:28.3575826+09:00
 
 | ResourceType | Name | Expected | Actual | Action |
 |--------------|------|----------|--------|--------|
