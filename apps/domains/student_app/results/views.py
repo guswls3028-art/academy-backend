@@ -13,6 +13,10 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
+from apps.domains.results.services.enterprise_analytics import (
+    build_student_enterprise_analytics,
+    normalize_analytics_days,
+)
 from apps.support.student_app.results_summary import (
     build_student_grades_summary,
     get_student_exam_result_data,
@@ -69,3 +73,24 @@ class MyGradesSummaryView(APIView):
         if not tenant:
             return Response({"exams": [], "homeworks": []})
         return Response(build_student_grades_summary(tenant=tenant, student=student))
+
+
+class MyGradesAnalyticsView(APIView):
+    """
+    GET /student/grades/analytics/
+    학생 본인 또는 학부모가 선택한 자녀의 성적 추이/약점/과제 분석 반환.
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentOrParent]
+
+    def get(self, request):
+        student = get_request_student(request)
+        if not student:
+            return Response({"detail": "student not found"}, status=403)
+
+        tenant = getattr(request, "tenant", None)
+        if not tenant:
+            return Response({"detail": "tenant not resolved"}, status=403)
+
+        days = normalize_analytics_days(request.query_params.get("days"), default=365)
+        return Response(build_student_enterprise_analytics(tenant=tenant, student=student, days=days))

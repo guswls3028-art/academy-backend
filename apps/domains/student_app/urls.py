@@ -19,6 +19,7 @@ from .exams.views import (
 from .results.views import (
     MyExamResultView,
     MyExamResultItemsView,
+    MyGradesAnalyticsView,
     MyGradesSummaryView,
 )
 from .profile.views import StudentProfileView
@@ -68,6 +69,7 @@ urlpatterns = [
     path("results/me/exams/<int:exam_id>/", MyExamResultView.as_view()),
     path("results/me/exams/<int:exam_id>/items/", MyExamResultItemsView.as_view()),
     path("grades/", MyGradesSummaryView.as_view()),
+    path("grades/analytics/", MyGradesAnalyticsView.as_view()),
 
     # ✅ Video (Student Consumer)
     path("video/me/", StudentVideoMeView.as_view()),

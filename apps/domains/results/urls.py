@@ -26,6 +26,7 @@ from apps.domains.results.views.admin_result_fact_view import AdminResultFactVie
 from apps.domains.results.views.admin_student_grades_view import AdminStudentGradesView
 from apps.domains.results.views.admin_landing_stats_view import AdminResultsLandingStatsView
 from apps.domains.results.views.teacher_dashboard_counts_view import TeacherDashboardCountsView
+from apps.domains.results.views.admin_enterprise_analytics_view import AdminEnterpriseAnalyticsView
 
 from apps.domains.results.views.question_stats_views import (
     AdminExamQuestionStatsView,
@@ -111,6 +112,7 @@ urlpatterns = [
     ),
     path("admin/facts/", AdminResultFactView.as_view(), name="admin-result-facts"),
     path("admin/student-grades/", AdminStudentGradesView.as_view(), name="admin-student-grades"),
+    path("admin/analytics/", AdminEnterpriseAnalyticsView.as_view(), name="admin-enterprise-analytics"),
     path("admin/landing-stats/", AdminResultsLandingStatsView.as_view(), name="admin-results-landing-stats"),
     path("admin/teacher-dashboard-counts/", TeacherDashboardCountsView.as_view(), name="teacher-dashboard-counts"),
     path("admin/attempt-history/", AdminAttemptHistoryView.as_view(), name="admin-attempt-history"),
