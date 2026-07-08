@@ -15,6 +15,17 @@ from django.core.management.base import BaseCommand
 from academy.adapters.db.django import repositories_core as core_repo
 from apps.core.models import Program
 
+DEFAULT_FEATURE_FLAGS = {
+    "student_app_enabled": True,
+    "admin_enabled": True,
+}
+
+YMATH_FEATURE_FLAGS = {
+    "section_mode": True,
+    "clinic_mode": "regular",
+    "score_output_mode": "anonymous_billboard",
+}
+
 TENANTS_CONFIG = [
     {
         "code": "tchul",
@@ -49,6 +60,13 @@ TENANTS_CONFIG = [
 ]
 
 
+def build_feature_flags(code):
+    flags = dict(DEFAULT_FEATURE_FLAGS)
+    if code == "ymath":
+        flags.update(YMATH_FEATURE_FLAGS)
+    return flags
+
+
 class Command(BaseCommand):
     help = "Setup tenants (tchul, limglish, ymath, sswe) and their domains."
 
@@ -74,15 +92,20 @@ class Command(BaseCommand):
                     "brand_key": code,
                     "login_variant": Program.LoginVariant.HAKWONPLUS,
                     "plan": Program.Plan.MAX,
-                    "feature_flags": {
-                        "student_app_enabled": True,
-                        "admin_enabled": True,
-                    },
+                    "feature_flags": build_feature_flags(code),
                     "ui_config": {"login_title": f"{name} 로그인"},
                     "is_active": True,
                 },
             )
             self.stdout.write(f"  Program: {'created' if prog_created else 'exists'}")
+
+            if code == "ymath":
+                feature_flags = dict(program.feature_flags or {})
+                if any(feature_flags.get(k) != v for k, v in YMATH_FEATURE_FLAGS.items()):
+                    feature_flags.update(YMATH_FEATURE_FLAGS)
+                    program.feature_flags = feature_flags
+                    program.save(update_fields=["feature_flags"])
+                    self.stdout.write(self.style.WARNING("  Program feature_flags: ymath mode updated"))
 
             # Signal이 host=code 로 이미 primary 도메인을 만들었을 수 있음 → primary 해제 후 우리 도메인만 primary 사용
             existing_domains = core_repo.tenant_domain_filter_by_tenant(tenant)
