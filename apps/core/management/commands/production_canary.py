@@ -234,15 +234,15 @@ class Command(BaseCommand):
             VideoTranscodeJob.State.RETRY_WAIT,
         ]
 
-        ready_missing_hls_qs = Video.objects.filter(
+        ready_uploaded_videos_qs = Video.objects.filter(
             tenant=tenant,
             status=Video.Status.READY,
-        ).filter(Q(hls_path="") | Q(hls_path__isnull=True))
+        ).exclude(source_type=Video.SourceType.YOUTUBE)
+
+        ready_missing_hls_qs = ready_uploaded_videos_qs.filter(Q(hls_path="") | Q(hls_path__isnull=True))
         ready_missing_hls = ready_missing_hls_qs.count()
 
-        ready_missing_thumbnail_qs = Video.objects.filter(
-            tenant=tenant,
-            status=Video.Status.READY,
+        ready_missing_thumbnail_qs = ready_uploaded_videos_qs.filter(
             hls_path__gt="",
         ).filter(Q(thumbnail_r2_key="") | Q(thumbnail_r2_key__isnull=True))
         ready_missing_thumbnail = ready_missing_thumbnail_qs.count()

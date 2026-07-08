@@ -151,6 +151,24 @@ class ProductionCanaryTests(TestCase):
         self.assertEqual(check["data"]["ready_missing_hls"], 1)
         self.assertEqual(check["data"]["samples"][0]["title"], "Broken Ready Video")
 
+    def test_ready_youtube_video_without_hls_passes(self):
+        Video.objects.create(
+            tenant=self.tenant,
+            title="YouTube Ready Video",
+            status=Video.Status.READY,
+            source_type=Video.SourceType.YOUTUBE,
+            youtube_video_id="dQw4w9WgXcQ",
+        )
+
+        payload = self._call()
+
+        hls_check = next(item for item in payload["checks"] if item["name"] == "video_ready_has_hls")
+        thumbnail_check = next(item for item in payload["checks"] if item["name"] == "video_ready_has_thumbnail")
+        self.assertTrue(hls_check["ok"])
+        self.assertEqual(hls_check["data"]["ready_missing_hls"], 0)
+        self.assertTrue(thumbnail_check["ok"])
+        self.assertEqual(thumbnail_check["data"]["ready_missing_thumbnail"], 0)
+
     def test_stale_running_video_job_fails(self):
         video = Video.objects.create(
             tenant=self.tenant,
