@@ -1,10 +1,12 @@
 # apps/domains/student_app/profile/views.py
 import logging
 
+from django.db import transaction
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.exceptions import APIException
 
 from apps.core.models.user import user_display_username
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
@@ -16,6 +18,12 @@ from apps.support.student_app.profile_dependencies import (
     update_student_profile,
 )
 logger = logging.getLogger(__name__)
+
+
+class AccountNoticeDeliveryFailed(APIException):
+    status_code = 503
+    default_detail = "계정 안내 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."
+    default_code = "account_notice_delivery_failed"
 
 
 def _get_profile_photo_url(student):
@@ -147,47 +155,50 @@ class StudentProfileView(APIView):
         old_phone = student.phone or ""
         old_parent_phone = student.parent_phone or ""
         try:
-            result = update_student_profile(
-                student=student,
-                tenant=request.tenant,
-                data=dict(data),
-                identity_field="username",
-                ignore_blank_name=True,
-            )
-            student = result.student
+            with transaction.atomic():
+                result = update_student_profile(
+                    student=student,
+                    tenant=request.tenant,
+                    data=dict(data),
+                    identity_field="username",
+                    ignore_blank_name=True,
+                )
+                student = result.student
+
+                new_phone = student.phone or ""
+                username_changed = bool((data.get("username") or "").strip()) and (student.ps_number or "") != old_username
+                phone_changed = bool(new_phone) and new_phone != old_phone
+                parent_phone_changed = (student.parent_phone or "") != old_parent_phone
+
+                if password_changed:
+                    from apps.core.services.password import change_password, rollback_password
+                    previous_password_hash = request.user.password
+                    previous_must_change_password = bool(getattr(request.user, "must_change_password", False))
+                    change_password(request.user, new_password)
+                    if not send_user_password_changed_notice(user=request.user, password=str(new_password)):
+                        rollback_password(
+                            request.user,
+                            previous_password_hash,
+                            must_change_password=previous_must_change_password,
+                        )
+                        raise AccountNoticeDeliveryFailed("비밀번호 변경 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.")
+
+                if not password_changed and (username_changed or phone_changed):
+                    if not send_student_account_credentials_notice(
+                        student=student,
+                        to=new_phone if phone_changed else None,
+                    ):
+                        raise AccountNoticeDeliveryFailed()
+
+                if parent_phone_changed:
+                    if not send_parent_account_credentials_notice(
+                        student=student,
+                        parent=getattr(student, "parent", None),
+                        parent_password=result.parent_password_for_notice,
+                        to=student.parent_phone,
+                    ):
+                        raise AccountNoticeDeliveryFailed()
         except StudentProfileUpdateError as e:
             return Response(e.detail if isinstance(e.detail, dict) else {"detail": str(e.detail)}, status=400)
-
-        new_phone = student.phone or ""
-        username_changed = bool((data.get("username") or "").strip()) and (student.ps_number or "") != old_username
-        phone_changed = bool(new_phone) and new_phone != old_phone
-        parent_phone_changed = (student.parent_phone or "") != old_parent_phone
-
-        if password_changed:
-            from apps.core.services.password import change_password, rollback_password
-            previous_password_hash = request.user.password
-            previous_must_change_password = bool(getattr(request.user, "must_change_password", False))
-            change_password(request.user, new_password)
-            if not send_user_password_changed_notice(user=request.user, password=str(new_password)):
-                rollback_password(
-                    request.user,
-                    previous_password_hash,
-                    must_change_password=previous_must_change_password,
-                )
-                return Response({"detail": "비밀번호 변경 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."}, status=503)
-
-        if not password_changed and (username_changed or phone_changed):
-            send_student_account_credentials_notice(
-                student=student,
-                to=new_phone if phone_changed else None,
-            )
-
-        if parent_phone_changed:
-            send_parent_account_credentials_notice(
-                student=student,
-                parent=getattr(student, "parent", None),
-                parent_password=result.parent_password_for_notice,
-                to=student.parent_phone,
-            )
 
         return _profile_response(request, student)

@@ -13,7 +13,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.exceptions import NotFound, ValidationError
+from rest_framework.exceptions import APIException, NotFound, ValidationError
 
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
@@ -65,6 +65,11 @@ logger = logging.getLogger(__name__)
 # ======================================================
 # Student
 # ======================================================
+
+class AccountNoticeDeliveryFailed(APIException):
+    status_code = 503
+    default_detail = "계정 안내 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."
+    default_code = "account_notice_delivery_failed"
 
 class StudentListPagination(PageNumberPagination):
     """SSOT: 프론트엔드가 총 개수(count)와 results를 기대하므로 응답에 count 포함."""
@@ -256,17 +261,20 @@ class StudentViewSet(ModelViewSet):
 
         new_phone = student.phone or ""
         if (student.ps_number or "") != old_ps_number:
-            send_student_account_credentials_notice(student=student)
+            if not send_student_account_credentials_notice(student=student):
+                raise AccountNoticeDeliveryFailed()
         elif new_phone and new_phone != old_phone:
-            send_student_account_credentials_notice(student=student, to=new_phone)
+            if not send_student_account_credentials_notice(student=student, to=new_phone):
+                raise AccountNoticeDeliveryFailed()
 
         if (student.parent_phone or "") != old_parent_phone:
-            send_parent_account_credentials_notice(
+            if not send_parent_account_credentials_notice(
                 student=student,
                 parent=getattr(student, "parent", None),
                 parent_password=result.parent_password_for_notice,
                 to=student.parent_phone,
-            )
+            ):
+                raise AccountNoticeDeliveryFailed()
 
     # ------------------------------
     # DELETE: 소프트 삭제 (30일 보관)
@@ -781,7 +789,7 @@ class StudentViewSet(ModelViewSet):
                         previous_password_hash,
                         must_change_password=previous_must_change_password,
                     )
-                    return Response({"detail": "비밀번호 변경 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."}, status=503)
+                    raise AccountNoticeDeliveryFailed("비밀번호 변경 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요.")
 
             # 프로필 사진
             if "profile_photo" in request.FILES:
@@ -799,26 +807,28 @@ class StudentViewSet(ModelViewSet):
             except StudentProfileUpdateError as e:
                 raise ValidationError(e.detail)
 
-        from apps.domains.students.services.account_notifications import (
-            send_parent_account_credentials_notice,
-            send_student_account_credentials_notice,
-        )
-
-        new_phone = student.phone or ""
-        phone_changed = bool(new_phone) and new_phone != old_phone
-        if not password_changed and (username_changed or phone_changed):
-            send_student_account_credentials_notice(
-                student=student,
-                to=new_phone if phone_changed else None,
+            from apps.domains.students.services.account_notifications import (
+                send_parent_account_credentials_notice,
+                send_student_account_credentials_notice,
             )
 
-        if (student.parent_phone or "") != old_parent_phone:
-            send_parent_account_credentials_notice(
-                student=student,
-                parent=getattr(student, "parent", None),
-                parent_password=result.parent_password_for_notice,
-                to=student.parent_phone,
-            )
+            new_phone = student.phone or ""
+            phone_changed = bool(new_phone) and new_phone != old_phone
+            if not password_changed and (username_changed or phone_changed):
+                if not send_student_account_credentials_notice(
+                    student=student,
+                    to=new_phone if phone_changed else None,
+                ):
+                    raise AccountNoticeDeliveryFailed()
+
+            if (student.parent_phone or "") != old_parent_phone:
+                if not send_parent_account_credentials_notice(
+                    student=student,
+                    parent=getattr(student, "parent", None),
+                    parent_password=result.parent_password_for_notice,
+                    to=student.parent_phone,
+                ):
+                    raise AccountNoticeDeliveryFailed()
 
         serializer = StudentDetailSerializer(
             student,

@@ -70,7 +70,8 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.admin = make_admin(self.tenant)
         self.student = make_student(self.tenant)
 
-    def test_admin_partial_update_relinks_parent_and_recomputes_parent_omr(self):
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_admin_partial_update_relinks_parent_and_recomputes_parent_omr(self, _send_mock):
         request = self.factory.patch(
             f"/api/v1/students/{self.student.id}/",
             data={"parent_phone": "01033334444"},
@@ -142,7 +143,27 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.assertEqual(send_mock.call_args.kwargs["to"], "01022223333")
         self.assertEqual(send_mock.call_args.kwargs["replacements"]["학부모비밀번호"], "3333")
 
-    def test_student_app_profile_update_uses_same_parent_and_omr_path(self):
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=False)
+    def test_admin_parent_phone_change_rolls_back_when_notice_delivery_fails(self, _send_mock):
+        original_parent_phone = self.student.parent_phone
+        original_omr = self.student.omr_code
+        request = self.factory.patch(
+            f"/api/v1/students/{self.student.id}/",
+            data={"parent_phone": "01022223333"},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"patch": "partial_update"})(request, pk=self.student.id)
+
+        self.assertEqual(response.status_code, 503)
+        self.student.refresh_from_db()
+        self.assertEqual(self.student.parent_phone, original_parent_phone)
+        self.assertEqual(self.student.omr_code, original_omr)
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_student_app_profile_update_uses_same_parent_and_omr_path(self, _send_mock):
         request = self.factory.patch(
             "/api/v1/student/me/",
             data={"parent_phone": "01055556666"},
@@ -178,6 +199,24 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.assertEqual(send_mock.call_args.kwargs["trigger"], "password_reset_student")
         self.assertEqual(send_mock.call_args.kwargs["replacements"]["학생비밀번호"], "newpass1234")
 
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=False)
+    def test_student_app_password_change_rolls_back_when_notice_delivery_fails(self, _send_mock):
+        request = self.factory.patch(
+            "/api/v1/student-app/me/",
+            data={"current_password": "test1234", "new_password": "newpass1234", "address": "새 주소"},
+            format="json",
+        )
+        force_authenticate(request, user=self.student.user)
+        request.tenant = self.tenant
+
+        response = StudentProfileView.as_view()(request)
+
+        self.assertEqual(response.status_code, 503)
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        self.assertTrue(self.student.user.check_password("test1234"))
+        self.assertNotEqual(self.student.address, "새 주소")
+
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     def test_student_app_username_change_sends_student_account_notice(self, send_mock):
         request = self.factory.patch(
@@ -198,6 +237,26 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.assertEqual(send_mock.call_args.kwargs["trigger"], "registration_approved_student")
         self.assertEqual(send_mock.call_args.kwargs["replacements"]["학생아이디"], "S-SELF-APP")
         self.assertEqual(send_mock.call_args.kwargs["replacements"]["학생비밀번호"], "변경되지 않음")
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=False)
+    def test_student_app_username_change_rolls_back_when_notice_delivery_fails(self, _send_mock):
+        original_username = self.student.user.username
+        original_ps_number = self.student.ps_number
+        request = self.factory.patch(
+            "/api/v1/student-app/me/",
+            data={"username": "S-SELF-APP"},
+            format="json",
+        )
+        force_authenticate(request, user=self.student.user)
+        request.tenant = self.tenant
+
+        response = StudentProfileView.as_view()(request)
+
+        self.assertEqual(response.status_code, 503)
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        self.assertEqual(self.student.ps_number, original_ps_number)
+        self.assertEqual(self.student.user.username, original_username)
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     def test_parent_password_change_sends_parent_notice(self, send_mock):
@@ -233,7 +292,8 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.assertEqual(send_mock.call_args.kwargs["to"], "01044445555")
         self.assertEqual(send_mock.call_args.kwargs["replacements"]["학부모비밀번호"], "parent9999")
 
-    def test_students_me_update_uses_same_parent_and_omr_path(self):
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_students_me_update_uses_same_parent_and_omr_path(self, _send_mock):
         request = self.factory.patch(
             "/api/v1/students/me/",
             data={"parent_phone": "01077778888"},
@@ -275,6 +335,29 @@ class StudentProfileCanonicalizationTests(TestCase):
         self.assertEqual(self.student.user.username, user_internal_username(self.tenant, "S-SELF-LEGACY"))
         self.assertEqual(send_mock.call_args.kwargs["trigger"], "registration_approved_student")
         self.assertEqual(send_mock.call_args.kwargs["replacements"]["학생아이디"], "S-SELF-LEGACY")
+
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=False)
+    def test_students_me_username_change_rolls_back_when_notice_delivery_fails(self, _send_mock):
+        original_username = self.student.user.username
+        original_ps_number = self.student.ps_number
+        request = self.factory.patch(
+            "/api/v1/students/me/",
+            data={"username": "S-SELF-LEGACY"},
+            format="json",
+        )
+        force_authenticate(request, user=self.student.user)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view(
+            {"patch": "me"},
+            permission_classes=[IsAuthenticated, IsStudent],
+        )(request)
+
+        self.assertEqual(response.status_code, 503)
+        self.student.refresh_from_db()
+        self.student.user.refresh_from_db()
+        self.assertEqual(self.student.ps_number, original_ps_number)
+        self.assertEqual(self.student.user.username, original_username)
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     def test_students_me_password_change_sends_student_notice(self, send_mock):
