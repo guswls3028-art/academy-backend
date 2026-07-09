@@ -1,4 +1,4 @@
-# 메시징/알림톡 운영 정책 SSOT (2026-07-08 갱신)
+# 메시징/알림톡 운영 정책 SSOT (2026-07-09 갱신)
 
 ## 정책 분류 체계
 
@@ -7,11 +7,11 @@
 ### SYSTEM_AUTO — 시스템 필수 안내 (항상 자동, 사용자가 끌 수 없음)
 | Trigger | 설명 | 수신자 | 발송 순간 |
 |---------|------|--------|----------|
-| registration_approved_student | 가입 안내(학생) | 학생 | 가입/등록 승인 시 |
-| registration_approved_parent | 가입 안내(학부모) | 학부모 | 가입/등록 승인 시 |
+| registration_approved_student | 가입/계정 아이디 안내(학생) | 학생(학생 번호 없으면 학부모) | 가입/등록 승인, 학생 아이디 변경, 학생 전화번호 최초 등록 시 |
+| registration_approved_parent | 가입/계정 안내(학부모) | 학부모 | 가입/등록 승인, 학부모 전화번호 변경/계정 연결 시 |
 | password_find_otp | 비밀번호 찾기 OTP (legacy compatibility) | 요청자 | legacy OTP 요청 시 |
-| password_reset_student | 비밀번호 재설정(학생) | 학생 | 비밀번호 재설정 시 |
-| password_reset_parent | 비밀번호 재설정(학부모) | 학부모 | 비밀번호 재설정 시 |
+| password_reset_student | 비밀번호 변경/재설정(학생) | 학생(학생 번호 없으면 학부모) | 관리자/선생님/본인 비밀번호 변경 또는 재설정 시 |
+| password_reset_parent | 비밀번호 변경/재설정(학부모) | 학부모 | 관리자/선생님/본인 비밀번호 변경 또는 재설정 시 |
 
 ### AUTO_DEFAULT — 학생 행동 즉시 통보 (자동 기본 on, 선생이 설정에서 끌 수 있음)
 | Trigger | 설명 | 수신자 | 발송 순간 |
@@ -80,6 +80,7 @@
 6. **멱등성 키** — business_idempotency_key (trigger + student_id + 날짜)
 7. **Time Guard** — 과거 날짜 출결은 알림 차단
 8. **계정 알림 event metadata** — `registration_approved_*`, `password_*` 발송은 큐 payload에 원 trigger를 `event_type`으로 싣는다. `NotificationLog.message_body` 보안 마스킹과 운영 추적은 이 값에 의존한다.
+   학생/학부모 계정 생성, 아이디 변경, 비밀번호 변경, 학생 전화번호 최초 등록은 SYSTEM_AUTO이며 legacy `send_welcome_message`/`skip_notify` 입력으로 끄지 않는다.
 9. **예약/지연 발송 drain** — `AutoSendConfig.delay_mode`가 만든 `ScheduledNotification`은 EventBridge `academy-v1-process-scheduled-notifications` → `process_scheduled_notifications`가 SQS로 전달한다.
 10. **provider 결과 추적** — 워커는 Solapi 성공 응답의 group/message id를 `NotificationLog.provider_message_id`에 저장한다.
 

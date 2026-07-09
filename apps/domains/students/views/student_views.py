@@ -203,7 +203,7 @@ class StudentViewSet(ModelViewSet):
         serializer.is_valid(raise_exception=True)
 
         data = serializer.validated_data
-        send_welcome = data.pop("send_welcome_message", False)
+        data.pop("send_welcome_message", None)
 
         password = data.pop("initial_password")
 
@@ -214,15 +214,13 @@ class StudentViewSet(ModelViewSet):
         )
         student = result.student
 
-        # 5️⃣ 가입 성공 메시지 발송
-        if send_welcome:
-            site_url = get_tenant_site_url(request.tenant)
-            send_welcome_messages(
-                created_students=[student],
-                student_password=password,
-                parent_password_by_phone=result.parent_password_by_phone,
-                site_url=site_url,
-            )
+        site_url = get_tenant_site_url(request.tenant)
+        send_welcome_messages(
+            created_students=[student],
+            student_password=password,
+            parent_password_by_phone=result.parent_password_by_phone,
+            site_url=site_url,
+        )
 
         output = StudentDetailSerializer(
             student,
@@ -235,6 +233,10 @@ class StudentViewSet(ModelViewSet):
     # ------------------------------
     @transaction.atomic
     def perform_update(self, serializer):
+        student_before = serializer.instance
+        old_phone = student_before.phone or ""
+        old_parent_phone = student_before.parent_phone or ""
+        old_ps_number = student_before.ps_number or ""
         try:
             result = update_student_profile(
                 student=serializer.instance,
@@ -245,6 +247,26 @@ class StudentViewSet(ModelViewSet):
         except StudentProfileUpdateError as e:
             raise ValidationError(e.detail)
         serializer.instance = result.student
+        student = result.student
+
+        from apps.domains.students.services.account_notifications import (
+            send_parent_account_credentials_notice,
+            send_student_account_credentials_notice,
+        )
+
+        new_phone = student.phone or ""
+        if (student.ps_number or "") != old_ps_number:
+            send_student_account_credentials_notice(student=student)
+        elif new_phone and new_phone != old_phone:
+            send_student_account_credentials_notice(student=student, to=new_phone)
+
+        if (student.parent_phone or "") != old_parent_phone:
+            send_parent_account_credentials_notice(
+                student=student,
+                parent=getattr(student, "parent", None),
+                parent_password=result.parent_password_for_notice,
+                to=student.parent_phone,
+            )
 
     # ------------------------------
     # DELETE: 소프트 삭제 (30일 보관)
@@ -446,7 +468,7 @@ class StudentViewSet(ModelViewSet):
                 {"detail": "최대 200건까지 일괄 처리할 수 있습니다."},
                 status=400,
             )
-        send_welcome = serializer.validated_data.get("send_welcome_message", False)
+        send_welcome = True
         tenant = request.tenant
 
         result = import_students_from_rows(
@@ -474,7 +496,7 @@ class StudentViewSet(ModelViewSet):
         password = request.data.get("initial_password") or ""
         if len(str(password)) < 4:
             return Response({"detail": "초기 비밀번호는 4자 이상이어야 합니다."}, status=400)
-        send_welcome = request.data.get("send_welcome_message", False)
+        send_welcome = True
         resolutions = request.data.get("resolutions") or []
         if not isinstance(resolutions, (list, tuple)):
             return Response({"detail": "resolutions는 배열이어야 합니다."}, status=400)
@@ -664,6 +686,8 @@ class StudentViewSet(ModelViewSet):
         data = request.data
         tenant = request.tenant
         user = student.user
+        old_phone = student.phone or ""
+        old_parent_phone = student.parent_phone or ""
 
         # --- 기본 정보 필드 유효성 검증 (setattr 전에 수행) ---
         from ..services.school import ALL_SCHOOL_TYPES, get_valid_grades
@@ -707,6 +731,22 @@ class StudentViewSet(ModelViewSet):
                         status=400,
                     )
 
+        username_changed = False
+        current_pw = (data.get("current_password") or "").strip()
+        new_pw = (data.get("new_password") or "").strip()
+        password_changed = bool(current_pw and new_pw)
+        if password_changed:
+            if not user.check_password(current_pw):
+                return Response(
+                    {"detail": "현재 비밀번호가 일치하지 않습니다."},
+                    status=400,
+                )
+            if len(new_pw) < 4:
+                return Response(
+                    {"detail": "새 비밀번호는 4자 이상이어야 합니다."},
+                    status=400,
+                )
+
         with transaction.atomic():
             # 아이디 변경
             new_username = (data.get("username") or "").strip()
@@ -724,23 +764,24 @@ class StudentViewSet(ModelViewSet):
                 # ps_number도 동기화
                 student.ps_number = new_username
                 student.save(update_fields=["ps_number"])
+                username_changed = True
 
             # 비밀번호 변경
-            current_pw = (data.get("current_password") or "").strip()
-            new_pw = (data.get("new_password") or "").strip()
-            if current_pw and new_pw:
-                if not user.check_password(current_pw):
-                    return Response(
-                        {"detail": "현재 비밀번호가 일치하지 않습니다."},
-                        status=400,
-                    )
-                if len(new_pw) < 4:
-                    return Response(
-                        {"detail": "새 비밀번호는 4자 이상이어야 합니다."},
-                        status=400,
-                    )
-                from apps.core.services.password import change_password
+            if password_changed:
+                from apps.core.services.password import change_password, rollback_password
+                from apps.domains.students.services.account_notifications import (
+                    send_user_password_changed_notice,
+                )
+                previous_password_hash = user.password
+                previous_must_change_password = bool(getattr(user, "must_change_password", False))
                 change_password(user, new_pw)
+                if not send_user_password_changed_notice(user=user, password=new_pw):
+                    rollback_password(
+                        user,
+                        previous_password_hash,
+                        must_change_password=previous_must_change_password,
+                    )
+                    return Response({"detail": "비밀번호 변경 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."}, status=503)
 
             # 프로필 사진
             if "profile_photo" in request.FILES:
@@ -757,6 +798,27 @@ class StudentViewSet(ModelViewSet):
                 student = result.student
             except StudentProfileUpdateError as e:
                 raise ValidationError(e.detail)
+
+        from apps.domains.students.services.account_notifications import (
+            send_parent_account_credentials_notice,
+            send_student_account_credentials_notice,
+        )
+
+        new_phone = student.phone or ""
+        phone_changed = bool(new_phone) and new_phone != old_phone
+        if not password_changed and (username_changed or phone_changed):
+            send_student_account_credentials_notice(
+                student=student,
+                to=new_phone if phone_changed else None,
+            )
+
+        if (student.parent_phone or "") != old_parent_phone:
+            send_parent_account_credentials_notice(
+                student=student,
+                parent=getattr(student, "parent", None),
+                parent_password=result.parent_password_for_notice,
+                to=student.parent_phone,
+            )
 
         serializer = StudentDetailSerializer(
             student,

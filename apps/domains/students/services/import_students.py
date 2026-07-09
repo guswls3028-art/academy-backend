@@ -430,7 +430,7 @@ def import_students_from_rows(
                 "student_id": resolved.student.id,
             })
 
-    if send_welcome_message and created_students:
+    if created_students:
         try:
             send_welcome_messages(
                 created_students=created_students,
@@ -468,7 +468,7 @@ def resolve_student_import_conflicts(
     tenant,
     resolutions: list[dict],
     initial_password: str,
-    send_welcome_message: bool = False,
+    send_welcome_message: bool = True,
 ) -> dict:
     """
     Resolve deleted-student import conflicts through the same row policy.
@@ -586,7 +586,7 @@ def resolve_student_import_conflicts(
                 "conflict_student_id": None,
             })
 
-    if send_welcome_message and created_students:
+    if created_students:
         try:
             send_welcome_messages(
                 created_students=created_students,

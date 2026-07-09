@@ -113,7 +113,7 @@ generate_temp_password() -> 숫자 6자리
 - plaintext 임시 비밀번호는 DB에 저장하지 않는다. pending reset은 Django password hash만 저장한다.
 - `NotificationLog.message_body`는 계정/인증 트리거 본문을 저장하지 않고 보안 placeholder로 마스킹한다.
 - 사용자별 pending reset은 1개만 유지한다. 새 요청은 이전 pending reset을 대체한다.
-- 관리자가 인증된 상태에서 수행하는 학생/학부모 비밀번호 변경은 기존처럼 즉시 reset 경로를 사용할 수 있다.
+- 관리자/선생님 또는 학생/학부모 본인이 인증된 상태에서 수행하는 학생/학부모 비밀번호 변경은 즉시 reset 경로를 사용하고, 알림톡 발송 실패 시 비밀번호를 롤백한다.
 
 ## 6. 알림톡 발송
 
@@ -123,6 +123,7 @@ generate_temp_password() -> 숫자 6자리
 - SMS fallback은 없다.
 - `password_reset_*`, `password_find_otp` 템플릿이 승인되지 않았으면 발송 실패가 정답이다. 가입 승인 템플릿 등 다른 trigger로 fallback하지 않는다.
 - 테스트 테넌트의 메시징 disabled 상태에서는 실제 발송을 건너뛰고 성공으로 간주한다. 비밀번호 복구는 전달되지 않는 임시 비밀번호를 만들지 않기 위해 pending reset도 만들지 않는다.
+- 계정 아이디 변경, 학부모 전화번호 변경/계정 연결, 학생 전화번호 최초 등록은 `account_notifications.py`를 통해 `registration_approved_*` exact trigger로 발송한다. 비밀번호가 바뀌지 않은 경우 비밀번호 변수는 `변경되지 않음`이다.
 
 ## 7. Legacy compatibility
 
@@ -143,7 +144,7 @@ legacy 공개 호환 규칙:
 - 인증된 관리자/선생님 `password_reset_send` 요청은 정본 계정복구 서비스의 staff reset 경로로 위임한다. 비밀번호는 즉시 변경하고, 알림톡 발송 실패 시 비밀번호와 pending reset을 롤백한다.
 - 공개 호환 요청의 발송 대상은 요청자가 증명한 전화번호다. 저장된 다른 학생/학부모 번호로 대체 발송하지 않는다.
 - 조회 실패, 다건 매칭, parent side-effect 차단 케이스는 generic 200으로 응답하고 비밀번호를 변경하지 않는다.
-- `temp_password`, `skip_notify`는 인증된 관리자/선생님 요청에서만 호환 허용한다.
+- `temp_password`, `skip_notify`는 인증된 관리자/선생님 요청에서만 호환 입력으로 허용한다. `skip_notify`는 SYSTEM_AUTO 계정 알림 발송을 억제하지 않는다.
 
 계정 알림톡 로그:
 
@@ -151,7 +152,7 @@ legacy 공개 호환 규칙:
 - 학생 계정 target id는 `student:<student_id>`, 학부모 계정 target id는 `parent:<student_id>:<parent_phone>` 형식이다.
 - 학생 상세 화면은 본문/임시 비밀번호를 표시하지 않고 발송 시각, 종류, 성공/실패, 마스킹 수신자만 표시한다.
 
-이 경로를 수정하는 작업은 정본 서비스(`apps/domains/students/services/account_recovery.py`, `apps/core/services/password.py`)로 위임하거나, 호출처가 사라진 뒤 제거한다. 새 기능은 legacy view에 직접 추가하지 않는다.
+이 경로를 수정하는 작업은 정본 서비스(`apps/domains/students/services/account_recovery.py`, `apps/domains/students/services/account_notifications.py`, `apps/core/services/password.py`)로 위임하거나, 호출처가 사라진 뒤 제거한다. 새 기능은 legacy view에 직접 추가하지 않는다.
 
 ## 8. 상품/파괴 테스트 기준
 

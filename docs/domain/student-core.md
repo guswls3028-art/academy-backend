@@ -110,7 +110,8 @@ Current rules:
 - staff/teacher password reset through `/students/password_reset_send/` is a
   privileged path:
   - authenticated active owner/admin/teacher/staff membership is required for
-    `temp_password` and `skip_notify`;
+    `temp_password`; `skip_notify` is accepted only as legacy input and does
+    not suppress SYSTEM_AUTO account notices;
   - student target may resolve by `student_ps_number` or verified student phone;
   - parent target resolves by student name + parent phone;
   - password changes immediately;
@@ -130,6 +131,10 @@ Student account Alimtalk is system-critical but still fail-closed:
 - account triggers use exact approved owner templates.
 - no SMS fallback.
 - `password_reset_*` must not fall back to `registration_approved_*`.
+- any student/parent account ID or password change sends a SYSTEM_AUTO account
+  notice. ID-only changes, parent phone relinks, and first-time student phone
+  registration use `registration_approved_*` with password phrase
+  `변경되지 않음`.
 - welcome/approval notices use service-returned parent password phrases:
   - new parent account: parent initial password phrase;
   - existing parent account: `변경되지 않음`.

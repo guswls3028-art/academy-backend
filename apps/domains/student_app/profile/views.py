@@ -10,6 +10,9 @@ from apps.core.models.user import user_display_username
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
 from apps.support.student_app.profile_dependencies import (
     StudentProfileUpdateError,
+    send_parent_account_credentials_notice,
+    send_student_account_credentials_notice,
+    send_user_password_changed_notice,
     update_student_profile,
 )
 logger = logging.getLogger(__name__)
@@ -131,6 +134,18 @@ class StudentProfileView(APIView):
             except Exception:
                 pass
 
+        current_password = data.get("current_password")
+        new_password = data.get("new_password")
+        password_changed = current_password is not None and new_password is not None
+        if password_changed:
+            if not request.user.check_password(current_password):
+                return Response({"detail": "현재 비밀번호가 일치하지 않습니다."}, status=400)
+            if not str(new_password).strip() or len(str(new_password)) < 4:
+                return Response({"detail": "새 비밀번호는 4자 이상이어야 합니다."}, status=400)
+
+        old_username = user_display_username(student.user) if student.user_id else ""
+        old_phone = student.phone or ""
+        old_parent_phone = student.parent_phone or ""
         try:
             result = update_student_profile(
                 student=student,
@@ -143,14 +158,36 @@ class StudentProfileView(APIView):
         except StudentProfileUpdateError as e:
             return Response(e.detail if isinstance(e.detail, dict) else {"detail": str(e.detail)}, status=400)
 
-        current_password = data.get("current_password")
-        new_password = data.get("new_password")
-        if current_password is not None and new_password is not None:
-            if not request.user.check_password(current_password):
-                return Response({"detail": "현재 비밀번호가 일치하지 않습니다."}, status=400)
-            if not str(new_password).strip() or len(str(new_password)) < 4:
-                return Response({"detail": "새 비밀번호는 4자 이상이어야 합니다."}, status=400)
-            from apps.core.services.password import change_password
+        new_phone = student.phone or ""
+        username_changed = bool((data.get("username") or "").strip()) and (student.ps_number or "") != old_username
+        phone_changed = bool(new_phone) and new_phone != old_phone
+        parent_phone_changed = (student.parent_phone or "") != old_parent_phone
+
+        if password_changed:
+            from apps.core.services.password import change_password, rollback_password
+            previous_password_hash = request.user.password
+            previous_must_change_password = bool(getattr(request.user, "must_change_password", False))
             change_password(request.user, new_password)
+            if not send_user_password_changed_notice(user=request.user, password=str(new_password)):
+                rollback_password(
+                    request.user,
+                    previous_password_hash,
+                    must_change_password=previous_must_change_password,
+                )
+                return Response({"detail": "비밀번호 변경 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."}, status=503)
+
+        if not password_changed and (username_changed or phone_changed):
+            send_student_account_credentials_notice(
+                student=student,
+                to=new_phone if phone_changed else None,
+            )
+
+        if parent_phone_changed:
+            send_parent_account_credentials_notice(
+                student=student,
+                parent=getattr(student, "parent", None),
+                parent_password=result.parent_password_for_notice,
+                to=student.parent_phone,
+            )
 
         return _profile_response(request, student)

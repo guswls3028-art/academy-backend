@@ -28,7 +28,7 @@ from apps.domains.students.services.school import (
     get_valid_school_types,
     is_valid_grade,
 )
-from apps.support.students.lifecycle_dependencies import ensure_parent_for_student
+from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
 
 
 class StudentProfileUpdateError(ValueError):
@@ -42,6 +42,8 @@ class StudentProfileUpdateResult:
     student: Student
     changed_fields: tuple[str, ...]
     parent_relinked: bool = False
+    parent_password_for_notice: str = ""
+    parent_user_created: bool = False
 
 
 PHONE_FIELDS = {"phone", "parent_phone"}
@@ -245,14 +247,19 @@ def update_student_profile(
         student.save(update_fields=changed)
 
     parent_relinked = False
+    parent_password_for_notice = ""
+    parent_user_created = False
     if "parent_phone" in data:
         new_parent_phone = student.parent_phone or ""
         if new_parent_phone and new_parent_phone != old_parent_phone:
-            parent = ensure_parent_for_student(
+            parent_result = ensure_parent_account_for_student(
                 tenant=tenant,
                 parent_phone=new_parent_phone,
                 student_name=student.name,
             )
+            parent = parent_result.parent
+            parent_password_for_notice = parent_result.password_for_notice
+            parent_user_created = parent_result.user_created
             if parent and student.parent_id != parent.id:
                 student.parent = parent
                 student.save(update_fields=["parent_id", "updated_at"])
@@ -262,4 +269,6 @@ def update_student_profile(
         student=student,
         changed_fields=tuple(changed),
         parent_relinked=parent_relinked,
+        parent_password_for_notice=parent_password_for_notice,
+        parent_user_created=parent_user_created,
     )

@@ -79,7 +79,19 @@ class ProfileViewSet(viewsets.ViewSet):
         if not request.user.check_password(old_pw):
             return Response({"error": "현재 비밀번호가 올바르지 않습니다."}, status=400)
 
-        from apps.core.services.password import change_password
+        from apps.core.services.password import change_password, rollback_password
+        from apps.domains.students.services.account_notifications import (
+            send_user_password_changed_notice,
+        )
+        previous_password_hash = request.user.password
+        previous_must_change_password = bool(getattr(request.user, "must_change_password", False))
         change_password(request.user, new_pw)
+        if not send_user_password_changed_notice(user=request.user, password=str(new_pw)):
+            rollback_password(
+                request.user,
+                previous_password_hash,
+                must_change_password=previous_must_change_password,
+            )
+            return Response({"error": "비밀번호 변경 알림톡 발송에 실패했습니다. 잠시 후 다시 시도해 주세요."}, status=503)
 
         return Response({"message": "비밀번호 변경 완료"})

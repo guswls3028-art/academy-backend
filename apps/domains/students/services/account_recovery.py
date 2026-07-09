@@ -356,7 +356,9 @@ def reset_staff_password(
     clear_pending_password_reset(user)
 
     if skip_notify:
-        return "비밀번호가 변경되었습니다. (알림톡 미발송)"
+        # Student/parent credential notices are system-required. Keep the
+        # argument for API compatibility, but never suppress delivery here.
+        pass
 
     if _account_recovery_delivery_disabled(account.student.tenant_id):
         return "임시 비밀번호가 발송되었습니다. (테스트 환경에서는 실제 발송이 생략됩니다.)"

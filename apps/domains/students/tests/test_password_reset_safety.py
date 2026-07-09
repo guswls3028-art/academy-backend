@@ -73,7 +73,8 @@ class StudentPasswordResetSafetyTests(TestCase):
         ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
         TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
     )
-    def test_teacher_can_reset_student_password_by_ps_number_without_notify(self):
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_teacher_reset_student_password_notifies_even_with_legacy_skip_flag(self, send_mock):
         response = APIClient().post(
             "/api/v1/students/password_reset_send/",
             {
@@ -93,12 +94,14 @@ class StudentPasswordResetSafetyTests(TestCase):
         self.assertTrue(self.user.must_change_password)
         self.assertEqual(self.user.token_version, 1)
         self.assertFalse(PendingPasswordReset.objects.filter(user=self.user).exists())
+        self.assertEqual(send_mock.call_args.kwargs["trigger"], "password_reset_student")
 
     @override_settings(
         ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
         TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
     )
-    def test_staff_password_reset_uses_staff_throttle_not_public_sms_ip_bucket(self):
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_staff_password_reset_uses_staff_throttle_not_public_sms_ip_bucket(self, send_mock):
         User = get_user_model()
         staff = User.objects.create_user(
             username=user_internal_username(self.tenant, "teacher-throttle"),
@@ -123,12 +126,14 @@ class StudentPasswordResetSafetyTests(TestCase):
                 **headers,
             )
             self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(send_mock.call_count, 6)
 
     @override_settings(
         ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
         TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
     )
-    def test_teacher_can_reset_student_password_by_student_phone_without_notify(self):
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_teacher_can_reset_student_password_by_student_phone_with_notice(self, send_mock):
         response = APIClient().post(
             "/api/v1/students/password_reset_send/",
             {
@@ -147,12 +152,14 @@ class StudentPasswordResetSafetyTests(TestCase):
         self.assertTrue(self.user.check_password("5555"))
         self.assertTrue(self.user.must_change_password)
         self.assertEqual(self.user.token_version, 1)
+        self.assertEqual(send_mock.call_args.kwargs["to"], self.student.phone)
 
     @override_settings(
         ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
         TENANT_HEADER_CODE_ALLOWED_HOSTS=("api.hakwonplus.com",),
     )
-    def test_staff_reset_prefers_ps_number_over_phone_when_both_are_sent(self):
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_staff_reset_prefers_ps_number_over_phone_when_both_are_sent(self, send_mock):
         User = get_user_model()
         other_user = User.objects.create_user(
             username=user_internal_username(self.tenant, "S002"),
@@ -191,6 +198,7 @@ class StudentPasswordResetSafetyTests(TestCase):
         self.assertTrue(self.user.check_password("6666"))
         self.assertFalse(other_user.check_password("6666"))
         self.assertTrue(other_user.check_password("otherpw123"))
+        self.assertEqual(send_mock.call_args.kwargs["to"], self.student.phone)
 
     @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
     @override_settings(

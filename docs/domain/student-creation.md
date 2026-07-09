@@ -51,9 +51,12 @@ Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 
 - `tenant`는 반드시 caller가 resolve해서 전달한다. tenant fallback은 만들지 않는다.
 - `student_data.ps_number`는 caller 또는 serializer가 확정한다.
 - `password`와 `password_hash` 중 정확히 하나만 전달한다.
+- 학생 전화번호가 비어 있어도 학생 `User`와 `TenantMembership(student)`는 생성된다. 학부모 계정과 공유 계정이 되는 것이 아니다.
 - 학부모가 새로 생성되면 안내 비밀번호는 `parent_initial_password(parent_phone)`이다.
 - 기존 학부모 계정이면 안내 문구는 `변경되지 않음`이다.
 - welcome/approval 알림톡은 caller가 서비스 결과의 `parent_password_by_phone` 또는 `parent_password_for_notice`를 사용한다.
+- 신규 학생 생성 welcome은 SYSTEM_AUTO다. legacy `send_welcome_message=false` 입력은 호환용으로만 받으며 계정 안내 발송을 끄지 않는다.
+- 학생 전화번호를 나중에 최초 등록하면 기존 학생 계정의 아이디 안내를 새 학생 번호로 발송한다. 비밀번호 변수는 `변경되지 않음`이다.
 - 복원은 생성이 아니므로 비밀번호를 재발급하지 않고 welcome 알림톡도 새 비밀번호처럼 보내지 않는다.
 - 가입 신청 승인 알림톡 실패는 이미 커밋된 승인/학생 생성을 API 500으로 되돌리지 않는다. 발송 장애는 운영 로그/알림 재처리 대상이다.
 
@@ -61,9 +64,8 @@ Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 
 
 - 학생 생성 API 호출은 `src/shared/api/contracts/students.ts`의 `createStudent()`가 canonical mapper다.
 - teacher 모바일 생성 시트는 role-local raw `/students/` POST를 쓰지 않고 shared contract를 호출한다.
-- admin Excel 업로드의 `sendWelcomeMessage` 토글은 multipart `send_welcome_message`로 worker payload까지 전달된다.
-- worker payload boolean은 `academy.application.services.excel_parsing_service._payload_bool()`로 명시 파싱한다. 문자열 `"false"`는 false다.
-- teacher 모바일 Excel 업로드도 파일 선택 직후 즉시 업로드하지 않는다. `StudentListPage`의 Excel import bottom sheet에서 초기 비밀번호와 welcome 알림톡 여부를 명시 확정한 뒤 shared upload contract를 호출한다.
+- admin/teacher Excel 업로드의 `sendWelcomeMessage`/`send_welcome_message` 값은 legacy compatibility 입력이다. 백엔드는 신규 계정 안내를 SYSTEM_AUTO로 발송한다.
+- teacher 모바일 Excel 업로드도 파일 선택 직후 즉시 업로드하지 않는다. `StudentListPage`의 Excel import bottom sheet에서 초기 비밀번호를 명시 확정한 뒤 shared upload contract를 호출한다.
 
 ## 5. 검증 기준
 

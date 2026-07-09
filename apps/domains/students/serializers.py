@@ -224,7 +224,7 @@ class StudentBulkItemSerializer(serializers.Serializer):
 class StudentBulkCreateSerializer(serializers.Serializer):
     initial_password = serializers.CharField(min_length=4, write_only=True)
     students = StudentBulkItemSerializer(many=True)
-    send_welcome_message = serializers.BooleanField(required=False, default=False)
+    send_welcome_message = serializers.BooleanField(required=False, default=True)
 
 
 class StudentCreateSerializer(serializers.ModelSerializer):
@@ -236,7 +236,7 @@ class StudentCreateSerializer(serializers.ModelSerializer):
     send_welcome_message = serializers.BooleanField(
         write_only=True,
         required=False,
-        default=False,
+        default=True,
     )
     no_phone = serializers.BooleanField(
         write_only=True,

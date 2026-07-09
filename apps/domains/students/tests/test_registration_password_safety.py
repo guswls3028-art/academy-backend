@@ -8,13 +8,13 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.parents.services import ensure_parent_account_for_student
-from apps.domains.students.models import StudentRegistrationRequest
+from apps.domains.students.models import Student, StudentRegistrationRequest
 from apps.domains.students.views.registration_views import (
     RegistrationRequestViewSet,
     _approve_registration_request,
 )
 from apps.domains.students.views import StudentViewSet
+from apps.support.students.lifecycle_dependencies import ensure_parent_account_for_student
 
 User = get_user_model()
 
@@ -242,6 +242,39 @@ class RegistrationPasswordSafetyTests(TestCase):
         )
 
     @patch("apps.domains.students.views.student_views.send_welcome_messages")
+    def test_student_create_without_student_phone_creates_separate_student_and_parent_accounts(self, send_mock):
+        request = self.factory.post(
+            "/api/v1/students/",
+            {
+                "name": "번호없는학생",
+                "initial_password": "stud1234",
+                "parent_phone": "01055556669",
+                "phone": "",
+                "school_type": "HIGH",
+                "grade": 1,
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "create"})(request)
+
+        self.assertEqual(response.status_code, 201)
+        student = Student.objects.get(tenant=self.tenant, name="번호없는학생")
+        self.assertIsNotNone(student.user_id)
+        self.assertEqual(student.user.phone, "")
+        self.assertTrue(student.uses_identifier)
+        self.assertIsNotNone(student.parent_id)
+        self.assertIsNotNone(student.parent.user_id)
+        self.assertEqual(send_mock.call_args.kwargs["created_students"], [student])
+        self.assertEqual(send_mock.call_args.kwargs["student_password"], "stud1234")
+        self.assertEqual(
+            send_mock.call_args.kwargs["parent_password_by_phone"],
+            {"01055556669": "6669"},
+        )
+
+    @patch("apps.domains.students.views.student_views.send_welcome_messages")
     def test_student_create_welcome_says_parent_password_unchanged_when_account_exists(self, send_mock):
         ensure_parent_account_for_student(
             tenant=self.tenant,
@@ -301,7 +334,7 @@ class RegistrationPasswordSafetyTests(TestCase):
         )
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
-    def test_excel_worker_respects_send_welcome_message_false(self, send_mock):
+    def test_excel_worker_sends_welcome_even_when_legacy_flag_false(self, send_mock):
         from apps.domains.students.services.bulk_from_excel import (
             bulk_create_students_from_excel_rows,
         )
@@ -322,7 +355,7 @@ class RegistrationPasswordSafetyTests(TestCase):
         )
 
         self.assertEqual(result["created"], 1)
-        send_mock.assert_not_called()
+        send_mock.assert_called_once()
 
     @patch("apps.domains.messaging.services.send_welcome_messages")
     def test_student_import_reports_active_duplicate_without_new_account(self, send_mock):
