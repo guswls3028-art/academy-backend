@@ -8,7 +8,7 @@
 
 | 구성요소 | SSOT 파일 | 역할 |
 |----------|-----------|------|
-| **시험지 계약** | `backend/academy/domain/omr/contract.py` | OMR이 읽을 객관식/서술형 경계, 문제 ID 매핑, 계약 fingerprint |
+| **시험지 계약** | `backend/academy/domain/omr/contract.py` | OMR이 읽을 객관식/단답형 경계, 문제 ID 매핑, 계약 fingerprint |
 | **계약 빌더** | `backend/apps/support/omr/contract_builder.py` | `Sheet`/`ExamQuestion`/`AnswerKey`에서 `OMRSheetContract` 생성 |
 | **답안지 렌더링** | `backend/apps/domains/assets/omr/renderer/pdf_renderer.py` | 인쇄/PDF용 OMR 답안지. 표시용 영역은 채점 계약과 분리 |
 | **좌표 메타** | `backend/apps/domains/assets/omr/services/meta_generator.py` | mm 단위 버블/ROI 좌표 (AI 워커용) |
@@ -38,23 +38,23 @@ flowchart LR
 ### 계약 원칙
 - `total_questions`는 시험 전체 문항 수다.
 - `choice_count`는 AI가 실제로 버블을 읽는 객관식 문항 수다.
-- `essay_count`는 자동 버블 인식 대상이 아닌 서술형 문항 수다.
-- `essay_count=0`인 객관식 전용 시험도 답안지가 비어 보이지 않도록 렌더러는 기본 5줄짜리 `서술형 공간`을 표시할 수 있다. 이 영역은 장식용이며 `OMRSheetContract`, 워커 payload, 정답키, 답안 저장, 채점에는 포함하지 않는다.
+- `essay_count`는 자동 버블 인식 대상이 아닌 단답형 문항 수다. 필드명은 기존 API/워커 계약 호환을 위해 유지하지만, 사용자 출력물과 UI 표시는 `단답형`으로 노출한다.
+- `essay_count=0`인 객관식 전용 시험도 답안지가 비어 보이지 않도록 렌더러는 기본 5줄짜리 `단답형 공간`을 표시할 수 있다. 이 영역은 장식용이며 `OMRSheetContract`, 워커 payload, 정답키, 답안 저장, 채점에는 포함하지 않는다.
 - 객관식 답안 저장은 `question_number <= choice_count`이고 계약에 등록된 문제 ID가 있는 경우에만 허용한다.
-- 워커가 `20문항 객관식 + 5문항 서술형` 시험에서 q21~q25 답안을 보내면 그 값은 fact로는 남기되 `SubmissionAnswer`로 저장하지 않는다.
+- 워커가 `20문항 객관식 + 5문항 단답형` 시험에서 q21~q25 답안을 보내면 그 값은 fact로는 남기되 `SubmissionAnswer`로 저장하지 않는다.
 - 워커 원본 답안 수와 계약상 객관식 수가 다르면 `ANSWER_COUNT_MISMATCH`로 수동 검토가 필요하다.
-- `OMRRecognitionRun.contract_snapshot`은 인식 당시 계약의 fingerprint와 객관식/서술형 경계를 저장한다.
+- `OMRRecognitionRun.contract_snapshot`은 인식 당시 계약의 fingerprint와 객관식/단답형 경계를 저장한다.
 
 ### 레거시 호환
 - `Sheet.choice_count`/`essay_count`가 있으면 그 값을 우선한다.
-- 구형 sheet처럼 경계가 없으면 `AnswerKey`를 기준으로 객관식 답(`1~5`, `2,3`, `2|4`, `①` 등)과 서술형 텍스트를 구분해 경계를 추론한다.
+- 구형 sheet처럼 경계가 없으면 `AnswerKey`를 기준으로 객관식 답(`1~5`, `2,3`, `2|4`, `①` 등)과 단답형 텍스트를 구분해 경계를 추론한다.
 - 추론도 불가능하면 기존 호환을 위해 `total_questions` 전체를 객관식으로 본다.
 
 ### 검증 매트릭스
-- 객관식 전용: `12/0`, `20/0`, `60/0`은 계약상 서술형 0문항이다. PDF/HTML에는 표시용 `서술형 공간`이 보일 수 있지만 채점에는 포함되지 않는다.
-- 혼합형: `20/5`에서 q1~q20만 답안 저장, q21~q25는 서술형으로 보존
-- 서술형 전용: `0/3`에서 객관식 ROI 0개, 자동 객관식 채점 불가
-- 레거시 추론: `①`, `2,3`, `2|4`, 서술형 텍스트 혼합 answer key
+- 객관식 전용: `12/0`, `20/0`, `60/0`은 계약상 단답형 0문항이다. PDF/HTML에는 표시용 `단답형 공간`이 보일 수 있지만 채점에는 포함되지 않는다.
+- 혼합형: `20/5`에서 q1~q20만 답안 저장, q21~q25는 단답형으로 보존
+- 단답형 전용: `0/3`에서 객관식 ROI 0개, 자동 객관식 채점 불가
+- 레거시 추론: `①`, `2,3`, `2|4`, 단답형 텍스트 혼합 answer key
 - 워커 이상 응답: 원본 답안 수와 계약 객관식 수 불일치 시 `ANSWER_COUNT_MISMATCH`
 - 워커 이상 응답: 원본 답안 수가 맞아도 중복 문항 때문에 고유 객관식 번호 수가 부족하면 `ANSWER_COUNT_MISMATCH`
 - 운영 완료 판정: 배포 후 deploy verification, 운영 sheet 분포 read-only audit, Tenant 2 실제 OMR canary 재인식/재채점 또는 rollback 검증
@@ -72,7 +72,7 @@ flowchart LR
 │  │─────────────│       │15  12345 │     │30  12345 │  │
 │  │ 성명        │       └──────────┘     └──────────┘  │
 │  │─────────────│                                       │
-│  │ 전화8자리   │       ┌─서술형(flex)─────────────────┐│
+│  │ 전화8자리   │       ┌─단답형(flex)─────────────────┐│
 │  │ [XXXX-XXXX] │       │ 1  [작성 영역]              ││
 │  │ [0-9 버블]  │       │ 2  [작성 영역]              ││
 │  │─────────────│       │ ...                          ││
@@ -126,7 +126,7 @@ flowchart LR
 2. 학생: 답안지에 마킹 (사인펜)
 3. 선생님: 스캔 파일 업로드 (batch upload)
 4. 시스템:
-   a. `OMRSheetContract` 생성 → 객관식/서술형 경계와 fingerprint 확정
+   a. `OMRSheetContract` 생성 → 객관식/단답형 경계와 fingerprint 확정
    b. `warp.py` → A4 landscape로 보정 (90/180/270도 회전 포함)
    c. `identifier.py` → 전화번호 8자리 추출 → 학생 매칭 fact 기록
    d. `engine.py` → 계약상 객관식 버블만 감지
@@ -144,7 +144,7 @@ flowchart LR
 | 21~40 | 2컬럼 (균등 분할) |
 | 41~60 | 3컬럼 (균등 분할) |
 
-서술형은 별도 작성 영역이며 자동 버블 인식 대상이 아니다. 시험 문항 번호는 전체 문항 기준으로 유지하되, OMR 엔진은 `choice_count`까지만 객관식 ROI를 만든다. 객관식 전용 시험의 표시용 `서술형 공간`은 문항 번호·배점·채점 대상이 아니다.
+단답형은 별도 작성 영역이며 자동 버블 인식 대상이 아니다. 시험 문항 번호는 전체 문항 기준으로 유지하되, OMR 엔진은 `choice_count`까지만 객관식 ROI를 만든다. 객관식 전용 시험의 표시용 `단답형 공간`은 문항 번호·배점·채점 대상이 아니다.
 
 ## 프론트엔드 연동
 
@@ -182,8 +182,9 @@ flowchart LR
 
 | 버전 | 날짜 | 변경 |
 |------|------|------|
-| v16.1 | 2026-06-02 | 객관식 전용 OMR에 표시용 `서술형 공간`을 렌더링하되, 계약/워커 payload/채점은 `essay_count=0`을 유지하도록 명시. |
-| v16 | 2026-06-02 | `OMRSheetContract`를 런타임 SSOT로 승격. payload, 문서 기본값, 답안 저장, recognition fact, grading readiness가 같은 객관식/서술형 계약을 공유. |
+| v16.2 | 2026-07-09 | OMR 사용자 출력물과 UI 표시명을 `단답형`으로 정리. 내부 `essay_count` 계약은 호환을 위해 유지. |
+| v16.1 | 2026-06-02 | 객관식 전용 OMR에 표시용 작성 공간을 렌더링하되, 계약/워커 payload/채점은 `essay_count=0`을 유지하도록 명시. |
+| v16 | 2026-06-02 | `OMRSheetContract`를 런타임 SSOT로 승격. payload, 문서 기본값, 답안 저장, recognition fact, grading readiness가 같은 객관식/단답형 계약을 공유. |
 | v15.1 | 2026-05-26 | 차시 성적 화면 OMR 등록을 주 동선으로 고정. 시험 선택/업로드/보정 UX와 `SessionEnrollment` roster 기준 채점 정책을 SSOT에 명시. |
 | v14 | 2026-04 | reportlab 기반 `pdf_renderer.py`로 재구현. `/omr/defaults/`, `/omr/preview/`, `/omr/pdf/` 3종 엔드포인트 추가. `generate-omr/`은 deprecated. |
 | v7 | 2026-03-19 | HTML SSOT 기반 전면 재설계. 기존 v245_final.py 삭제. |

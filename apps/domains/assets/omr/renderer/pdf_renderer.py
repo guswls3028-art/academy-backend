@@ -106,7 +106,7 @@ CT4 = HexColor("#999999")      # 버블숫자 — 인쇄 시 보이되 마킹하
 
 # 배경 — 극도로 은은
 C_HDR = HexColor("#f4f4f4")         # MC 헤더
-C_HDR_ESSAY = HexColor("#f4f4f4")   # 서술형 헤더 — 동일 톤
+C_HDR_ESSAY = HexColor("#f4f4f4")   # 단답형 헤더 — 동일 톤
 C_ZEBRA = HexColor("#fafafa")       # zebra
 C_BUB_FILL = HexColor("#f8f8f8")    # 버블 내부 — 미세 회색 (순백보다 부드러움)
 C_G10 = HexColor("#666666")         # 10행
