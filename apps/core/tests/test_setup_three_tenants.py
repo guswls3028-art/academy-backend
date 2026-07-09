@@ -16,8 +16,8 @@ class SetupThreeTenantsTests(TestCase):
         self._call_command()
 
         ymath_program = Program.objects.get(tenant__code="ymath")
-        self.assertTrue(ymath_program.feature_flags["section_mode"])
-        self.assertEqual(ymath_program.feature_flags["clinic_mode"], "regular")
+        self.assertFalse(ymath_program.feature_flags["section_mode"])
+        self.assertEqual(ymath_program.feature_flags["clinic_mode"], "remediation")
         self.assertEqual(
             ymath_program.feature_flags["score_output_mode"],
             "anonymous_billboard",
@@ -31,8 +31,8 @@ class SetupThreeTenantsTests(TestCase):
         program = Program.objects.get(tenant=tenant)
         program.feature_flags = {
             "custom_flag": "keep",
-            "section_mode": False,
-            "clinic_mode": "remediation",
+            "section_mode": True,
+            "clinic_mode": "regular",
         }
         program.save(update_fields=["feature_flags"])
 
@@ -40,8 +40,8 @@ class SetupThreeTenantsTests(TestCase):
 
         program.refresh_from_db()
         self.assertEqual(program.feature_flags["custom_flag"], "keep")
-        self.assertTrue(program.feature_flags["section_mode"])
-        self.assertEqual(program.feature_flags["clinic_mode"], "regular")
+        self.assertFalse(program.feature_flags["section_mode"])
+        self.assertEqual(program.feature_flags["clinic_mode"], "remediation")
         self.assertEqual(
             program.feature_flags["score_output_mode"],
             "anonymous_billboard",
