@@ -229,8 +229,8 @@ class PublicOgMetaView(APIView):
 
 class LegalConfigView(APIView):
     """
-    GET  /api/v1/core/legal-config/  — 공개 API, 인증 불필요. 테넌트별 법적 고지 메타데이터.
-    PATCH /api/v1/core/legal-config/ — owner 전용. 법적 고지 정보 수정.
+    GET  /api/v1/core/legal-config/  — 테넌트별 설정 프로필용 사업자 메타데이터.
+    PATCH /api/v1/core/legal-config/ — owner 전용. 설정 프로필용 사업자 정보 수정.
     """
     def get_permissions(self):
         if self.request.method == "PATCH":
@@ -268,7 +268,7 @@ class LegalConfigView(APIView):
             "privacy_version": "1.0",
             "effective_date": "2026-03-14",
         }, headers={
-            "Cache-Control": "public, max-age=3600",
+            "Cache-Control": "private, no-store",
             "Access-Control-Allow-Origin": "*",
         })
 
