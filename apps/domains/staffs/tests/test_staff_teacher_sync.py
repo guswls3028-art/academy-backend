@@ -11,9 +11,10 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
-from apps.domains.staffs.models import Staff, WorkRecord, WorkType
+from apps.domains.staffs.models import Staff, WorkMonthLock, WorkRecord, WorkType
 from apps.domains.staffs.serializers import StaffCreateUpdateSerializer, StaffListSerializer
 from apps.domains.staffs.views.helpers import can_access_staff_management
+from apps.domains.staffs.views.work_month_lock import WorkMonthLockViewSet
 from apps.domains.teachers.models import Teacher
 
 User = get_user_model()
@@ -255,6 +256,68 @@ class TestStaffManagementPermissions(TestCase):
 
         self.assertTrue(can_access_staff_management(self.staff.user, self.tenant))
 
+    def test_non_manager_assistant_cannot_access_staff_management(self):
+        assistant_user = User.objects.create_user(
+            username=f"t{self.tenant.id}_assistant",
+            password="test1234",
+            name="일반조교",
+            tenant=self.tenant,
+        )
+        assistant = Staff.objects.create(
+            tenant=self.tenant,
+            user=assistant_user,
+            name="일반조교",
+            phone="01045454545",
+            is_manager=False,
+        )
+        TenantMembership.objects.create(
+            tenant=self.tenant,
+            user=assistant_user,
+            role="staff",
+            is_active=True,
+        )
+
+        self.assertFalse(can_access_staff_management(assistant.user, self.tenant))
+
+    def test_manager_assistant_can_access_staff_management(self):
+        assistant_user = User.objects.create_user(
+            username=f"t{self.tenant.id}_manager_assistant",
+            password="test1234",
+            name="관리조교",
+            tenant=self.tenant,
+        )
+        assistant = Staff.objects.create(
+            tenant=self.tenant,
+            user=assistant_user,
+            name="관리조교",
+            phone="01056565656",
+            is_manager=True,
+        )
+        TenantMembership.objects.create(
+            tenant=self.tenant,
+            user=assistant_user,
+            role="staff",
+            is_active=True,
+        )
+
+        self.assertTrue(can_access_staff_management(assistant.user, self.tenant))
+
+    def test_admin_membership_can_access_staff_management_without_staff_profile(self):
+        admin_user = User.objects.create_user(
+            username=f"t{self.tenant.id}_admin",
+            password="test1234",
+            name="운영자",
+            tenant=self.tenant,
+        )
+        TenantMembership.objects.create(
+            tenant=self.tenant,
+            user=admin_user,
+            role="admin",
+            is_active=True,
+        )
+
+        self.assertTrue(can_access_staff_management(admin_user, self.tenant))
+
     def test_non_manager_teacher_can_start_own_work_with_tenant_work_type(self):
         response = self._start_work(self.staff, self.staff.user, self.work_type.id)
 
@@ -289,6 +352,62 @@ class TestStaffManagementPermissions(TestCase):
 
         self.assertEqual(response.status_code, 403, response.data)
         self.assertFalse(WorkRecord.objects.filter(staff=other_staff).exists())
+
+
+class TestWorkMonthLockFilters(TestCase):
+    """월마감 조회는 직원/연/월 필터로 정확히 좁혀진다."""
+
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = _make_tenant()
+        self.manager = _create_staff_teacher(self.tenant, name="관리강사", phone="01067676767")
+        self.manager.is_manager = True
+        self.manager.save(update_fields=["is_manager"])
+        self.staff_a = _create_staff_teacher(self.tenant, name="강사A", phone="01078787878")
+        self.staff_b = _create_staff_teacher(self.tenant, name="강사B", phone="01089898989")
+        WorkMonthLock.objects.create(
+            tenant=self.tenant,
+            staff=self.staff_a,
+            year=2026,
+            month=7,
+            is_locked=True,
+            locked_by=self.manager.user,
+        )
+        WorkMonthLock.objects.create(
+            tenant=self.tenant,
+            staff=self.staff_a,
+            year=2026,
+            month=6,
+            is_locked=True,
+            locked_by=self.manager.user,
+        )
+        WorkMonthLock.objects.create(
+            tenant=self.tenant,
+            staff=self.staff_b,
+            year=2026,
+            month=7,
+            is_locked=True,
+            locked_by=self.manager.user,
+        )
+
+    def _list_locks(self, params):
+        request = self.factory.get("/staffs/work-month-locks/", params)
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.manager.user)
+        view = WorkMonthLockViewSet.as_view({"get": "list"})
+        return view(request)
+
+    def test_filters_by_staff_year_and_month(self):
+        response = self._list_locks(
+            {"staff": self.staff_a.id, "year": 2026, "month": 7}
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        rows = response.data.get("results", response.data)
+        ids = [row["staff"] for row in rows]
+        months = [row["month"] for row in rows]
+        self.assertEqual(ids, [self.staff_a.id])
+        self.assertEqual(months, [7])
 
 
 class TestStaffDeletePolicy(TestCase):

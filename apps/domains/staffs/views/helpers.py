@@ -56,8 +56,8 @@ def _owner_display_for_tenant(tenant, request=None):
 def can_access_staff_management(user, tenant=None) -> bool:
     """
     직원관리 페이지 접근 권한(관리자 권한 on).
-    - owner, admin, staff 역할 → True
-    - teacher 역할 → Staff.is_manager 일 때만 True
+    - owner, admin 역할 → True
+    - teacher, staff(조교) 역할 → Staff.is_manager 일 때만 True
     - 비용·시급 등 민감 정보는 이 권한 있는 사람만 접근.
     """
     if not user or not user.is_authenticated:
@@ -69,9 +69,9 @@ def can_access_staff_management(user, tenant=None) -> bool:
         return bool((m and m.is_active) or getattr(user, "tenant_id", None) == tenant.id)
     if not m or not m.is_active:
         return False
-    if m.role in ("owner", "admin", "staff"):
+    if m.role in ("owner", "admin"):
         return True
-    if m.role == "teacher":
+    if m.role in ("teacher", "staff"):
         profile = getattr(user, "staff_profile", None)
         return (
             profile is not None

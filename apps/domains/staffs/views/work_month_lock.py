@@ -1,10 +1,12 @@
 # PATH: apps/domains/staffs/views/work_month_lock.py
 
-from rest_framework import viewsets, status
+from django.db import transaction
+from django_filters.rest_framework import DjangoFilterBackend
+
+from rest_framework import status, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.exceptions import ValidationError
-from django.db import transaction
 
 from ..models import Staff
 from ..serializers import WorkMonthLockSerializer
@@ -18,6 +20,8 @@ from .helpers import IsPayrollManager, generate_payroll_snapshot
 class WorkMonthLockViewSet(viewsets.ModelViewSet):
     serializer_class = WorkMonthLockSerializer
     permission_classes = [IsAuthenticated, IsPayrollManager]
+    filter_backends = [DjangoFilterBackend]
+    filterset_fields = ["staff", "year", "month", "is_locked"]
 
     def get_queryset(self):
         return staff_repo.work_month_lock_queryset_tenant(self.request.tenant)
