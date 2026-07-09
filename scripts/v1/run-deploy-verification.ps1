@@ -1,6 +1,6 @@
 # V1 배포 검증 자동화 — 인프라/기능/Evidence 수집 후 최종 보고서 생성.
 # 리소스 변경 없음. 검증만 수행. 결과: docs/reports/deploy-verification-latest.md, V1-FINAL-REPORT.md, audit.latest.md, drift.latest.md 갱신.
-# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않는다.
+# AWS·Cloudflare 인증은 현재 셸의 승인된 프로필/환경변수만 사용한다. 스크립트는 .env를 읽거나 로드하지 않는다.
 # 사용: pwsh -File scripts/v1/run-deploy-verification.ps1 [-AwsProfile default] (run-with-env 권장)
 param([string]$AwsProfile = "")
 $ErrorActionPreference = "Stop"
@@ -304,22 +304,28 @@ $solapiCleanupCandidateCount = $eipCountUnassociated + $natGatewayActiveCount
 
 # --- 5b. Video E2E 근거 (VIDEO_E2E_TEST_JOB_ID 설정 시 자동 수집) ---
 $videoE2EEvidence = ""
+$videoE2EStatus = ""
 $e2eJobId = $env:VIDEO_E2E_TEST_JOB_ID
 if ($e2eJobId -and $e2eJobId.Trim() -ne "") {
     try {
         $jobDesc = Invoke-AwsJson @("batch", "describe-jobs", "--jobs", $e2eJobId.Trim(), "--region", $R, "--output", "json")
         if ($jobDesc -and $jobDesc.jobs -and $jobDesc.jobs.Count -gt 0) {
             $j = $jobDesc.jobs[0]
+            $videoE2EStatus = [string]$j.status
             $exitCode = ""
             if ($j.container -and $null -ne $j.container.exitCode) { $exitCode = " containerExitCode=$($j.container.exitCode)" }
             $videoE2EEvidence = "jobId=$($j.jobId) status=$($j.status) statusReason=$($j.statusReason) createdAt=$($j.createdAt) stoppedAt=$($j.stoppedAt)$exitCode"
             if ($j.status -eq "SUCCEEDED") { $videoE2EEvidence += " (E2E 완주 근거)" }
             else { Add-Finding -Severity "WARNING" -Area "Video" -Message "VIDEO_E2E_TEST_JOB_ID=$e2eJobId status=$($j.status). SUCCEEDED이면 보고서에 근거로 기록됨." }
         } else {
+            $videoE2EStatus = "UNKNOWN"
             $videoE2EEvidence = "jobId=$e2eJobId (describe-jobs 결과 없음)"
+            Add-Finding -Severity "WARNING" -Area "Video" -Message "VIDEO_E2E_TEST_JOB_ID=$e2eJobId 조회 결과가 없어 비디오 E2E 성공 근거를 확인하지 못했습니다."
         }
     } catch {
+        $videoE2EStatus = "UNKNOWN"
         $videoE2EEvidence = "jobId=$e2eJobId (조회 실패: $($_.Exception.Message))"
+        Add-Finding -Severity "WARNING" -Area "Video" -Message "VIDEO_E2E_TEST_JOB_ID=$e2eJobId 조회 실패로 비디오 E2E 성공 근거를 확인하지 못했습니다."
     }
 }
 
@@ -523,7 +529,7 @@ $frontConnSb = [System.Text.StringBuilder]::new()
 [void]$frontConnSb.AppendLine("**배포 후 purge:** SSOT front.purgeOnDeploy 반영 여부는 배포 파이프라인에서 확인.")
 Save-FrontConnectionReport -MarkdownContent $frontConnSb.ToString()
 
-# --- 9. 보고서 생성 (PASS/WARNING/FAIL + 근거, GO/NO-GO) ---
+# --- 9. 보고서 생성 (PASS/WARNING/FAIL/ADVISORY + 근거, GO/NO-GO) ---
 $s1Infra = "PASS"
 if ($apiHealthStatus -ne "OK") { $s1Infra = "FAIL" }
 elseif ($targetHealthyCount -eq 0 -and $targetTotalCount -gt 0) { $s1Infra = "FAIL" }
@@ -544,8 +550,15 @@ if ($r2Status -ne "OK (wrangler list success)" -and $r2Status -ne "not checked")
 $s4Sqs = "PASS"
 if ([int]$msgDlqDepth -gt 0 -or [int]$aiDlqDepth -gt 0) { $s4Sqs = "WARNING" }
 
-$s5Video = "WARNING"
-$s5VideoNote = "수동 검증 권장: 3시간 샘플 1건 end-to-end, READY 전 미공개, 업로드 재시도·동시 2~3건. 근거: deploy-verification-latest.md 또는 수동 실행 로그."
+$s5Video = "ADVISORY"
+$s5VideoNote = "일반 배포 검증의 장기 비디오 샘플은 후속 권고이며 GO/NO-GO WARNING에 산입하지 않는다. 비디오 파이프라인 변경/릴리즈이면 VIDEO_E2E_TEST_JOB_ID 또는 video_playback_chain smoke 근거를 별도 기록한다."
+if ($videoE2EStatus -eq "SUCCEEDED") {
+    $s5Video = "PASS"
+    $s5VideoNote = "VIDEO_E2E_TEST_JOB_ID가 SUCCEEDED로 확인되어 비디오 E2E 근거가 자동 수집됨."
+} elseif ($videoE2EStatus -and $videoE2EStatus -ne "SUCCEEDED") {
+    $s5Video = "WARNING"
+    $s5VideoNote = "제공된 VIDEO_E2E_TEST_JOB_ID의 SUCCEEDED 근거를 확인하지 못했다. 비디오 변경 범위이면 재검증 필요."
+}
 
 $s6Obs = "PASS"
 if ($alarmSummary -eq "not listed" -or $alarmSummary -match "0 alarms") { $s6Obs = "WARNING" }
@@ -666,6 +679,7 @@ if ($findings.Count -gt 0) {
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("- **FAIL 1건 이상** → **NO-GO**. 재검증 후 재실행.")
 [void]$sb.AppendLine("- **WARNING만** → **CONDITIONAL GO**. 영향도·완화책·추적 계획 확인 후 배포 여부 결정.")
+[void]$sb.AppendLine("- **ADVISORY** → GO/NO-GO에 산입하지 않는 후속 권고. 변경 범위가 해당 도메인이면 별도 E2E 근거 필요.")
 [void]$sb.AppendLine("- **PASS만** → **GO**.")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("---")
