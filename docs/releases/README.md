@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.6.7.md](v1.6.7.md) | **CURRENT** | 2026-07-09 KST | Ymath temporary full messaging shutdown |
+| [v1.6.8.md](v1.6.8.md) | **CURRENT** | 2026-07-09 KST | Mandatory student/parent account Alimtalk notices + Ymath block confirmation |
+| [v1.6.7.md](v1.6.7.md) | production-deployed / v1.6.8로 승계 | 2026-07-09 KST | Ymath temporary full messaging shutdown |
 | [v1.6.6.md](v1.6.6.md) | production-deployed / v1.6.7로 승계 | 2026-07-09 KST | Ymath anonymous billboard mode + enterprise score analytics + admin tree/mobile visual polish |
 | [v1.6.5.md](v1.6.5.md) | production-deployed / v1.6.6로 승계 | 2026-07-08 KST | YouTube link video upload + student playback parity + playlist numeric ordering |
 | [v1.6.4.md](v1.6.4.md) | production-deployed / v1.6.5로 승계 | 2026-07-08 KST | Alimtalk envelope enforcement + Solapi template contract + production send verification |
