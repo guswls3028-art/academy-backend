@@ -697,7 +697,7 @@ class OMRPdfRenderer:
             cnt = se - ss + 1
             rh = bh / cnt if cnt > 0 else bh
 
-            # 헤더: "번호 | 객관식 1번 ~ 20번" 또는 "번호 | 서술형 N문항"
+            # 헤더: "번호 | 객관식 1번 ~ 20번" 또는 "번호 | 단답형 N문항"
             c.setFont(_FB, 5.5); c.setFillColor(CT2)
             c.drawCentredString(sxp + nw / 2, ft - hh + _mm(1.5), "번호")
             if typ == 'mc':

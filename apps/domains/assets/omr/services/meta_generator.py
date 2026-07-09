@@ -147,7 +147,7 @@ def validate_layout(question_count: int, essay_count: int = 0) -> List[str]:
     if question_count < 0:
         errors.append("객관식 문항 수는 0 이상이어야 합니다.")
     if essay_count < 0:
-        errors.append("서술형 문항 수는 0 이상이어야 합니다.")
+        errors.append("단답형 문항 수는 0 이상이어야 합니다.")
     if question_count > MAX_MC_QUESTIONS:
         errors.append(f"객관식 {question_count}문항은 1페이지 최대 {MAX_MC_QUESTIONS}문항을 초과합니다.")
     layout = compute_safe_layout(question_count)
@@ -161,7 +161,7 @@ def validate_layout(question_count: int, essay_count: int = 0) -> List[str]:
     if essay_count > 0:
         min_essay_w = 40.0
         if total_mc_w + MC_COL_GAP + min_essay_w > ans_w:
-            errors.append(f"객관식 {n_cols}컬럼 + 서술형이 페이지 너비를 초과합니다. 문항 수를 줄여주세요.")
+            errors.append(f"객관식 {n_cols}컬럼 + 단답형이 페이지 너비를 초과합니다. 문항 수를 줄여주세요.")
 
     return errors
 

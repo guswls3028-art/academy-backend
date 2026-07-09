@@ -90,15 +90,16 @@ class OMRDocumentRenderingTests(TestCase):
         self.assertEqual(doc.essay_count, 0)
         self.assertEqual(doc.render_essay_count, 5)
         self.assertTrue(doc.has_decorative_essay_area)
-        self.assertEqual(doc.render_essay_label, "서술형 공간")
+        self.assertEqual(doc.render_essay_label, "단답형 공간")
         self.assertEqual(doc.to_defaults_dict()["essay_count"], 0)
         self.assertEqual(doc.to_defaults_dict()["render_essay_count"], 5)
-        self.assertEqual(doc.to_defaults_dict()["render_essay_label"], "서술형 공간")
+        self.assertEqual(doc.to_defaults_dict()["render_essay_label"], "단답형 공간")
 
         html = OMRHtmlRenderer().render(doc).decode("utf-8")
         self.assertIn("객관식 1번 ~ 20번", html)
-        self.assertIn("서술형 공간", html)
-        self.assertNotIn("서술형 5문항", html)
+        self.assertIn("단답형 공간", html)
+        self.assertNotIn("단답형 5문항", html)
+        self.assertNotIn("서술형", html)
 
         pdf = OMRPdfRenderer().render(doc)
         self.assertTrue(pdf.startswith(b"%PDF"))
@@ -108,4 +109,4 @@ class OMRDocumentRenderingTests(TestCase):
 
         self.assertEqual(doc.render_essay_count, 3)
         html = OMRHtmlRenderer().render(doc).decode("utf-8")
-        self.assertIn("서술형 3문항", html)
+        self.assertIn("단답형 3문항", html)
