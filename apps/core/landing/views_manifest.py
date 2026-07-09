@@ -12,6 +12,11 @@ from apps.core.models import LandingPage
 from ._helpers import tenant_required
 
 
+HAKWONPLUS_FRONTEND_ORIGIN = "https://hakwonplus.com"
+HAKWONPLUS_MANIFEST_ICON_192 = f"{HAKWONPLUS_FRONTEND_ORIGIN}/tenants/hakwonplus/pwa-192.png"
+HAKWONPLUS_MANIFEST_ICON_512 = f"{HAKWONPLUS_FRONTEND_ORIGIN}/tenants/hakwonplus/pwa-512.png"
+
+
 @method_decorator([csrf_exempt, tenant_required], name="dispatch")
 class LandingManifestView(View):
     """GET /api/v1/core/landing/manifest.json — tenant별 동적 PWA manifest.
@@ -25,6 +30,18 @@ class LandingManifestView(View):
         theme_color = "#D4A04C"
         icon_192 = "/teacher-icons/icon-192.png"
         icon_512 = "/teacher-icons/icon-512.png"
+        tenant = getattr(request, "tenant", None)
+        is_hakwonplus = bool(
+            tenant
+            and (
+                getattr(tenant, "id", None) == 1
+                or getattr(tenant, "code", "") == "hakwonplus"
+            )
+        )
+        if is_hakwonplus:
+            theme_color = "#37D6F2"
+            icon_192 = HAKWONPLUS_MANIFEST_ICON_192
+            icon_512 = HAKWONPLUS_MANIFEST_ICON_512
         try:
             lp = LandingPage.objects.get(tenant=request.tenant, is_published=True)
             cfg = lp.published_config or {}
@@ -33,7 +50,7 @@ class LandingManifestView(View):
             if tc.startswith("#") and len(tc) in (4, 7):
                 theme_color = tc
             logo = (cfg.get("logo_url") or "").strip()
-            if logo and logo.startswith(("http://", "https://", "/")):
+            if logo and not is_hakwonplus and logo.startswith(("http://", "https://", "/")):
                 icon_192 = logo
                 icon_512 = logo
         except LandingPage.DoesNotExist:
