@@ -336,7 +336,8 @@ class TestB4OmrCodePhoneSync(TestCase):
         self.admin = _make_admin(self.tenant, "admin_omr")
         self.factory = APIRequestFactory()
 
-    def test_phone_change_updates_omr_code(self):
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_phone_change_updates_omr_code(self, _send_mock):
         """admin partial_update로 phone 변경 → omr_code 자동 갱신."""
         student = _make_student(self.tenant, "OMR001", phone="01012345678")
         self.assertEqual(student.omr_code, "12345678")
@@ -355,7 +356,8 @@ class TestB4OmrCodePhoneSync(TestCase):
         self.assertEqual(student.omr_code, "99998888",
                          f"omr_code가 갱신되지 않음: {student.omr_code}")
 
-    def test_parent_phone_change_updates_omr_code_when_no_phone(self):
+    @patch("apps.domains.messaging.policy.send_alimtalk_via_owner", return_value=True)
+    def test_parent_phone_change_updates_omr_code_when_no_phone(self, _send_mock):
         """학생 전화번호 없이 parent_phone만 있을 때 omr_code 갱신."""
         student = _make_student(self.tenant, "OMR002", phone="", parent_phone="01077776666")
         # phone이 비어있으므로 parent_phone에서 omr_code 생성 기대
