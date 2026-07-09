@@ -176,8 +176,28 @@ def get_trigger_implementation_status(trigger: str) -> str:
 
 
 # ──────────────────────────────────────────
-# 테넌트별 메시징 제한 — 계정 관련만 허용
+# 테넌트별 메시징 제한
 # ──────────────────────────────────────────
+# 전체 차단 테넌트: 가입/등록/비번/수동/자동을 포함해 어떤 알림톡도 보내지 않는다.
+# 2026-07-09 KST: ymath(4)는 원장 공지 전까지 알림톡을 임시 중지한다.
+TEMPORARILY_DISABLED_MESSAGING_TENANTS: frozenset[int] = frozenset([4])
+
+
+def get_disabled_messaging_tenant_ids() -> frozenset[int]:
+    """Tenant IDs for full messaging shutdown, including temporary ops holds."""
+    import os
+
+    ids = set(TEMPORARILY_DISABLED_MESSAGING_TENANTS)
+    raw = os.environ.get("MESSAGING_DISABLED_TENANT_IDS", "").strip()
+    if raw:
+        for item in raw.split(","):
+            try:
+                ids.add(int(item.strip()))
+            except (TypeError, ValueError):
+                logger.warning("Ignoring invalid MESSAGING_DISABLED_TENANT_IDS item=%r", item)
+    return frozenset(ids)
+
+
 # 제한된 테넌트: 가입/등록/비번 관련 알림톡만 발송 가능.
 # 이 트리거들은 send_alimtalk_via_owner / send_welcome_messages /
 # send_registration_approved_messages에서 OWNER_TENANT_ID로 발송되므로
@@ -201,8 +221,9 @@ def get_test_tenant_id() -> int:
 
 
 def is_messaging_disabled(tenant_id: int) -> bool:
-    """해당 tenant가 메시징(알림톡·문자) 비활성화(테스트용)인지. True면 발송하지 않고 스킵."""
-    return int(tenant_id) == get_test_tenant_id()
+    """True면 해당 tenant의 모든 알림톡/SMS enqueue·발송을 스킵한다."""
+    tid = int(tenant_id)
+    return tid == get_test_tenant_id() or tid in get_disabled_messaging_tenant_ids()
 
 
 def get_messaging_test_whitelist() -> frozenset[str]:

@@ -65,10 +65,17 @@ def enqueue_sms(
     )
 
     original_tenant_id = int(tenant_id)
+    owner_id = int(get_owner_tenant_id())
+    business_tenant_id = source_tenant_id
+    if business_tenant_id is None and original_tenant_id != owner_id:
+        business_tenant_id = original_tenant_id
+    policy_tenant_id = int(business_tenant_id or original_tenant_id)
 
-    # 로컬 테스트용 tenant(9999): 알림톡·문자 없이 기능만 동작 (발송 스킵)
-    if is_messaging_disabled(original_tenant_id):
-        logger.info("enqueue_sms skipped: tenant_id=%s is test tenant (messaging disabled)", original_tenant_id)
+    if is_messaging_disabled(policy_tenant_id):
+        logger.info(
+            "enqueue_sms skipped: business_tenant_id=%s messaging disabled",
+            policy_tenant_id,
+        )
         return False
 
     # 제한 테넌트: 계정 관련(registration/password) 외 메시징 차단
@@ -93,7 +100,6 @@ def enqueue_sms(
             reason="sms_disabled",
         )
 
-    owner_id = int(get_owner_tenant_id())
     if source_tenant_id is None and original_tenant_id != owner_id:
         source_tenant_id = original_tenant_id
     tenant_id = owner_id

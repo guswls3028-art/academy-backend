@@ -577,6 +577,27 @@ def main() -> int:
                         )
                         _msg_deleted = True
                         continue
+                    try:
+                        from apps.domains.messaging.policy import is_messaging_disabled
+
+                        if is_messaging_disabled(business_tenant_id):
+                            logger.info(
+                                "Message skipped: business_tenant_id=%s messaging disabled",
+                                business_tenant_id,
+                            )
+                            queue_client.delete_message(
+                                queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                                receipt_handle=receipt_handle,
+                            )
+                            _msg_deleted = True
+                            continue
+                    except Exception as exc:
+                        logger.warning(
+                            "Messaging disabled policy check failed for business_tenant_id=%s; keeping message for retry: %s",
+                            business_tenant_id,
+                            exc,
+                        )
+                        continue
                     if int(raw_tenant_id) != int(tenant_id):
                         logger.warning(
                             "Messaging worker normalized tenant_id=%s to owner=%s source_tenant_id=%s",

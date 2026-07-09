@@ -1,6 +1,6 @@
 # 메시징 도메인 SSOT (알림톡/SMS 발송 시스템)
 
-> 최종 갱신: 2026-07-08 (메시지 UI명 유지 + 알림톡 승인 봉투 매핑 정합성 반영)
+> 최종 갱신: 2026-07-09 (ymath 임시 전체 발송 차단 정책 반영)
 > 근거: 코드 직접 확인. 추측 없음.
 
 ---
@@ -488,7 +488,9 @@ SHA-256(canonical) -> 64자 hex
 
 ### 테넌트 레벨 비활성화
 
-- `is_messaging_disabled(tenant_id)`: TEST_TENANT_ID(기본 9999)이면 모든 메시징 스킵 (policy.py:101-103)
+- `is_messaging_disabled(tenant_id)`: TEST_TENANT_ID(기본 9999) 또는 전체 차단 목록에 포함되면 모든 메시징 스킵
+- `TEMPORARILY_DISABLED_MESSAGING_TENANTS`: 2026-07-09 KST 기준 `ymath` tenant id `4`는 원장 공지 전까지 모든 알림톡 발송을 스킵한다. 이 차단은 업무 tenant 기준이므로 owner 공용 대리 발송의 `source_tenant_id=4`도 차단된다.
+- `MESSAGING_DISABLED_TENANT_IDS`: 런타임 env 콤마 구분 목록으로 전체 차단 tenant id를 추가할 수 있다.
 - `is_messaging_restricted(tenant_id)`: RESTRICTED_MESSAGING_TENANTS에 포함되면 비계정 메시징 차단 (현재 비어있음)
 - `AutoSendConfig.enabled`: 트리거별 on/off (models.py:249)
 
