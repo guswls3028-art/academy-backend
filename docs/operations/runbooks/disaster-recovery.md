@@ -113,25 +113,27 @@ aws rds restore-db-instance-from-db-snapshot \
 
 ### 4-C. RDS Proxy 재구성
 
-> 운영은 RDS Proxy(2026-04-29 도입)로 연결. 신규 인스턴스 endpoint를 Proxy target으로 등록 필요.
+> 현재 운영 런타임은 SSM `DB_HOST`가 RDS instance endpoint를 직접 가리킨다.
+> RDS Proxy는 2026-07-10 비용 절감 작업에서 제거했다. Proxy를 다시 도입한
+> 뒤에만 아래 절차로 신규 인스턴스 target을 연결한다.
 
 ```bash
 # Proxy target group의 DB_INSTANCE_IDENTIFIERS 업데이트.
 aws rds modify-db-proxy-target-group \
-  --db-proxy-name academy-db-proxy \
+  --db-proxy-name <DB_PROXY_NAME> \
   --target-group-name default \
   --connection-pool-config-info MaxConnectionsPercent=80 \
   --region ap-northeast-2
 
 # 신규 instance를 target으로 등록 (또는 register-targets).
 aws rds register-db-proxy-targets \
-  --db-proxy-name academy-db-proxy \
+  --db-proxy-name <DB_PROXY_NAME> \
   --db-instance-identifiers academy-db-restore \
   --region ap-northeast-2
 
 # 기존 instance target 해제.
 aws rds deregister-db-proxy-targets \
-  --db-proxy-name academy-db-proxy \
+  --db-proxy-name <DB_PROXY_NAME> \
   --db-instance-identifiers academy-db \
   --region ap-northeast-2
 ```
