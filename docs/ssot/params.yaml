@@ -256,8 +256,10 @@ rds:
   performanceInsightsRetentionDays: 7
   deletionProtection: true
   publiclyAccessible: false
-  proxyName: academy-db-proxy
-  proxyRequireTls: true
+  # Runtime DB_HOST points directly at academy-db. RDS Proxy was retired on
+  # 2026-07-10 after it stayed unused/unhealthy and billed fixed hourly cost.
+  proxyName: ""
+  proxyRequireTls: false
   multiAz: false
 
 observability:

@@ -33,6 +33,7 @@ $ECR_REPOS = @("academy-base", "academy-api", "academy-ai-worker-cpu", "academy-
 
 # RDS
 $RDS_IDENTIFIER = "academy-db"
+$RDS_PROXY_NAME = ""
 
 # Redis (ElastiCache)
 $REDIS_REPLICATION_GROUP = "academy-v1-redis"
@@ -63,6 +64,10 @@ function Write-Check($icon, $msg) {
 
 function Test-ScalingControlAlarm($alarm) {
     $actions = (@($alarm.AlarmActions) -join " ")
+    if ($alarm.ActionsEnabled -and $actions -match "scalingPolicy") {
+        return $true
+    }
+
     $isSqsDepthAlarm = (
         $alarm.Namespace -eq "AWS/SQS" -and
         $alarm.MetricName -eq "ApproximateNumberOfMessagesVisible"
@@ -75,12 +80,7 @@ function Test-ScalingControlAlarm($alarm) {
     ) {
         return $true
     }
-    return (
-        $isSqsDepthAlarm -and
-        $alarm.ComparisonOperator -match "^LessThan" -and
-        $alarm.ActionsEnabled -and
-        $actions -match "scalingPolicy"
-    )
+    return $false
 }
 
 function Test-IgnorableBatchFailure($job, [int64]$cutoffMs) {
@@ -335,20 +335,24 @@ try {
         Add-Warning "RDS Multi-AZ disabled"
     }
 
-    try {
-        $proxyJson = aws rds describe-db-proxies `
-            --db-proxy-name academy-db-proxy `
-            --region $REGION --output json 2>&1
-        $proxy = ($proxyJson | ConvertFrom-Json).DBProxies[0]
-        if ($proxy.RequireTLS) {
-            Write-Check "✅" "RDS Proxy TLS: required"
-        } else {
-            Write-Check "⚠️" "RDS Proxy TLS: not required"
-            Add-Warning "RDS Proxy RequireTLS disabled"
+    if ([string]::IsNullOrWhiteSpace($RDS_PROXY_NAME)) {
+        Write-Check "✅" "RDS Proxy: not configured (direct RDS runtime)"
+    } else {
+        try {
+            $proxyJson = aws rds describe-db-proxies `
+                --db-proxy-name $RDS_PROXY_NAME `
+                --region $REGION --output json 2>&1
+            $proxy = ($proxyJson | ConvertFrom-Json).DBProxies[0]
+            if ($proxy.RequireTLS) {
+                Write-Check "✅" "RDS Proxy TLS: required"
+            } else {
+                Write-Check "⚠️" "RDS Proxy TLS: not required"
+                Add-Warning "RDS Proxy RequireTLS disabled"
+            }
+        } catch {
+            Write-Check "⚠️" "RDS Proxy TLS: 조회 실패"
+            Add-Warning "RDS Proxy TLS status unavailable"
         }
-    } catch {
-        Write-Check "⚠️" "RDS Proxy TLS: 조회 실패"
-        Add-Warning "RDS Proxy TLS status unavailable"
     }
 
     # FreeStorageSpace (CloudWatch, 최근 5분)
