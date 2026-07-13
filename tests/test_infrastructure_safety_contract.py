@@ -72,6 +72,26 @@ def test_shared_mutation_lock_uses_one_ssot_table_and_owner_everywhere() -> None
     assert "action = \"acquire\" if owned_here else \"renew\"" in ECR_CLEANUP.read_text(encoding="utf-8")
 
 
+def test_every_lock_renewing_deploy_job_checks_out_scripts_first() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+
+    for job_name in (
+        "build-and-push",
+        "run-migrations",
+        "deploy-api",
+        "deploy-messaging",
+        "deploy-ai",
+        "deploy-tools",
+        "deploy-video",
+    ):
+        block = _job_block(workflow, job_name)
+        assert "deployment_lock.py renew" in block
+        assert "actions/checkout@v6" in block
+        assert block.index("actions/checkout@v6") < block.index(
+            "deployment_lock.py renew"
+        )
+
+
 def test_release_and_weekly_workflows_share_repository_and_atomic_lock_concurrency() -> None:
     deploy = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
     weekly = WEEKLY_CLEANUP_WORKFLOW.read_text(encoding="utf-8")
