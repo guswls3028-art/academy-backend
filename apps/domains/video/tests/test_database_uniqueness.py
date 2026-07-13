@@ -1,6 +1,10 @@
+import importlib
+from types import SimpleNamespace
+from unittest.mock import MagicMock
+
 from django.apps import apps
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.test import SimpleTestCase, TestCase
 from django.utils import timezone
 
 from apps.core.models import Tenant
@@ -9,6 +13,60 @@ from apps.domains.video.models import Video, VideoFolder
 
 Lecture = apps.get_model("lectures", "Lecture")
 Session = apps.get_model("lectures", "Session")
+
+
+class VideoOrderMigrationDriftTests(SimpleTestCase):
+    def _schema_editor(self, constraints):
+        cursor = MagicMock()
+        connection = MagicMock()
+        connection.cursor.return_value.__enter__.return_value = cursor
+        connection.introspection.get_constraints.return_value = constraints
+        schema_editor = MagicMock()
+        schema_editor.connection = connection
+        return schema_editor
+
+    def _historical_apps(self, name):
+        constraint = SimpleNamespace(name=name)
+        model = SimpleNamespace(
+            _meta=SimpleNamespace(
+                constraints=[constraint],
+                db_table="video_videofolder",
+            )
+        )
+        historical_apps = MagicMock()
+        historical_apps.get_model.return_value = model
+        return historical_apps, model, constraint
+
+    def test_missing_legacy_constraint_is_a_safe_noop(self):
+        migration = importlib.import_module(
+            "apps.domains.video.migrations.0019_video_order_and_folder_uniqueness"
+        )
+        historical_apps, _, _ = self._historical_apps(
+            migration.LEGACY_FOLDER_CONSTRAINT
+        )
+        schema_editor = self._schema_editor({})
+
+        migration.remove_legacy_folder_constraint_if_present(
+            historical_apps,
+            schema_editor,
+        )
+
+        schema_editor.remove_constraint.assert_not_called()
+
+    def test_existing_legacy_constraint_is_removed(self):
+        migration = importlib.import_module(
+            "apps.domains.video.migrations.0019_video_order_and_folder_uniqueness"
+        )
+        name = migration.LEGACY_FOLDER_CONSTRAINT
+        historical_apps, model, constraint = self._historical_apps(name)
+        schema_editor = self._schema_editor({name: {"unique": True}})
+
+        migration.remove_legacy_folder_constraint_if_present(
+            historical_apps,
+            schema_editor,
+        )
+
+        schema_editor.remove_constraint.assert_called_once_with(model, constraint)
 
 
 class VideoDatabaseUniquenessTests(TestCase):

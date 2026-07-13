@@ -2,6 +2,40 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+LEGACY_FOLDER_CONSTRAINT = "unique_video_folder_name_per_tenant"
+
+
+def _legacy_folder_constraint(apps):
+    video_folder = apps.get_model("video", "VideoFolder")
+    return video_folder, next(
+        constraint
+        for constraint in video_folder._meta.constraints
+        if constraint.name == LEGACY_FOLDER_CONSTRAINT
+    )
+
+
+def remove_legacy_folder_constraint_if_present(apps, schema_editor):
+    video_folder, constraint = _legacy_folder_constraint(apps)
+    with schema_editor.connection.cursor() as cursor:
+        constraints = schema_editor.connection.introspection.get_constraints(
+            cursor,
+            video_folder._meta.db_table,
+        )
+    if LEGACY_FOLDER_CONSTRAINT in constraints:
+        schema_editor.remove_constraint(video_folder, constraint)
+
+
+def restore_legacy_folder_constraint_if_missing(apps, schema_editor):
+    video_folder, constraint = _legacy_folder_constraint(apps)
+    with schema_editor.connection.cursor() as cursor:
+        constraints = schema_editor.connection.introspection.get_constraints(
+            cursor,
+            video_folder._meta.db_table,
+        )
+    if LEGACY_FOLDER_CONSTRAINT not in constraints:
+        schema_editor.add_constraint(video_folder, constraint)
+
+
 def assert_video_uniqueness_preconditions(apps, schema_editor):
     video_table = schema_editor.quote_name("video_video")
     folder_table = schema_editor.quote_name("video_videofolder")
@@ -105,9 +139,19 @@ class Migration(migrations.Migration):
                 to="core.tenant",
             ),
         ),
-        migrations.RemoveConstraint(
-            model_name="videofolder",
-            name="unique_video_folder_name_per_tenant",
+        migrations.SeparateDatabaseAndState(
+            database_operations=[
+                migrations.RunPython(
+                    remove_legacy_folder_constraint_if_present,
+                    reverse_code=restore_legacy_folder_constraint_if_missing,
+                ),
+            ],
+            state_operations=[
+                migrations.RemoveConstraint(
+                    model_name="videofolder",
+                    name=LEGACY_FOLDER_CONSTRAINT,
+                ),
+            ],
         ),
         migrations.AddConstraint(
             model_name="videofolder",
