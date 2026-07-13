@@ -4,9 +4,6 @@
 """
 
 import re
-from datetime import timedelta
-
-from django.utils import timezone
 
 from rest_framework import status
 from rest_framework.views import APIView
@@ -14,8 +11,9 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.messaging.models import NotificationLog, MessageTemplate
+from apps.domains.messaging.models import MessageTemplate
 from apps.domains.messaging.permissions import can_send_messages
+from apps.domains.messaging.selectors import HOURLY_SEND_LIMIT, get_hourly_notification_usage
 from apps.domains.messaging.serializers import SendMessageRequestSerializer
 from apps.domains.messaging.services.recipients import resolve_student_message_recipients
 
@@ -35,9 +33,19 @@ def _dispatch_or_schedule_message(*, tenant_id: int, trigger: str, payload: dict
         )
         return "scheduled"
 
-    from apps.domains.messaging.services import enqueue_sms
+    from apps.domains.messaging.models import ScheduledNotification
+    from apps.domains.messaging.scheduled import dispatch_notification_now
 
-    return "enqueued" if enqueue_sms(**payload) else "failed"
+    notification = dispatch_notification_now(
+        tenant_id=tenant_id,
+        trigger=trigger,
+        payload=payload,
+    )
+    if notification.status == ScheduledNotification.Status.SENT:
+        return "enqueued"
+    if notification.status == ScheduledNotification.Status.PENDING:
+        return "scheduled"
+    return "failed"
 
 
 class SendMessageView(APIView):
@@ -71,17 +79,6 @@ class SendMessageView(APIView):
         from apps.domains.messaging.services import get_tenant_site_url
         from apps.domains.messaging.policy import MessagingPolicyError
 
-        # Rate limit: max 500 messages per tenant per hour
-        one_hour_ago = timezone.now() - timedelta(hours=1)
-        recent_count = NotificationLog.objects.filter(
-            tenant=tenant, sent_at__gte=one_hour_ago,
-        ).count()
-        if recent_count >= 500:
-            return Response(
-                {"detail": "시간당 발송 한도(500건)를 초과했습니다. 잠시 후 다시 시도해 주세요."},
-                status=status.HTTP_429_TOO_MANY_REQUESTS,
-            )
-
         # 학생/학부모 수신
         student_ids = data.get("student_ids") or []
         recipients = resolve_student_message_recipients(
@@ -98,6 +95,24 @@ class SendMessageView(APIView):
             return Response(
                 {"detail": f"한 번에 최대 200명까지 발송할 수 있습니다. (선택: {len(recipients)}명)"},
                 status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        expected_dispatches = sum(
+            1 for recipient in recipients if recipient.phone and len(recipient.phone) >= 10
+        )
+        recent_count = get_hourly_notification_usage(tenant)
+        if (
+            not scheduled_send_at
+            and recent_count + expected_dispatches > HOURLY_SEND_LIMIT
+        ):
+            return Response(
+                {
+                    "detail": (
+                        f"시간당 발송 한도({HOURLY_SEND_LIMIT}건)를 초과했습니다. "
+                        "잠시 후 다시 시도해 주세요."
+                    )
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
             )
 
         body_base = (raw_body or "").strip()
@@ -152,6 +167,18 @@ class SendMessageView(APIView):
             tpl_name = (t.name if t else "") or ""
             unified_tt, unified_sid = get_unified_for_category(category, tpl_name, alimtalk_extra_vars)
 
+            if unified_tt and not unified_sid:
+                return Response(
+                    {
+                        "detail": (
+                            "이 발송 유형의 카카오 승인 봉투가 공급사에 등록되어 있지 않아 "
+                            "현재 발송할 수 없습니다. 승인 SID 등록 후 다시 시도해 주세요."
+                        ),
+                        "code": "unified_template_unavailable",
+                        "template_type": unified_tt,
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
             if unified_tt and unified_sid:
                 # 통합 승인 봉투 사용
                 use_unified = True

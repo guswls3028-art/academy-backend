@@ -1,5 +1,6 @@
 from unittest.mock import patch
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.db import connection
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -22,12 +23,11 @@ from apps.domains.community.models import (
     PostReply,
     ScopeNode,
 )
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.lectures.models import Lecture
-from apps.domains.parents.models import Parent
-from apps.domains.students.models import Student
-
 User = get_user_model()
+Enrollment = apps.get_model("enrollment", "Enrollment")
+Lecture = apps.get_model("lectures", "Lecture")
+Parent = apps.get_model("parents", "Parent")
+Student = apps.get_model("students", "Student")
 
 
 class CommunityHardeningFixture(TestCase):
@@ -156,6 +156,37 @@ class CommunityHardeningFixture(TestCase):
 
 
 class TestScopedPostMappingVisibility(CommunityHardeningFixture):
+    @patch("apps.domains.community.api.views.post_views.get_reply_event_notifier")
+    def test_reply_notification_uses_reply_id_as_occurrence_identity(self, get_notifier):
+        notifier = get_notifier.return_value
+        notifier.return_value = True
+        post = PostEntity.objects.create(
+            tenant=self.tenant,
+            post_type="qna",
+            title="중복 방지 질문",
+            content="질문",
+            created_by=self.student,
+            author_role="student",
+            status="published",
+        )
+        PostMapping.objects.create(post=post, node=self.visible_node)
+
+        response = PostViewSet.as_view({"post": "replies"})(
+            self._request(
+                "post",
+                self.teacher,
+                f"/api/v1/community/posts/{post.id}/replies/",
+                {"content": "답변"},
+            ),
+            pk=post.id,
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        notifier.assert_called_once()
+        context = notifier.call_args.kwargs["context"]
+        self.assertEqual(context["_domain_object_id"], f"reply:{response.data['id']}")
+        self.assertEqual(context["_source_domain"], "community")
+
     def test_student_direct_actions_require_visible_post_mapping(self):
         retrieve = PostViewSet.as_view({"get": "retrieve"})
         response = retrieve(

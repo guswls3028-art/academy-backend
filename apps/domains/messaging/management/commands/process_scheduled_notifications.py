@@ -32,10 +32,21 @@ class Command(BaseCommand):
                 self.stdout.write("Skipped: another scheduler is already processing scheduled notifications.")
                 return
             stats = process_due_notifications(batch_size=batch_size)
+            from apps.domains.messaging.retention import purge_expired_preview_tokens
+
+            expired_preview_tokens_deleted = purge_expired_preview_tokens(
+                batch_size=500,
+                max_batches=1,
+            )
 
         if stats["processed"]:
             self.stdout.write(
-                f"Processed {stats['processed']}: sent={stats['sent']}, failed={stats['failed']}"
+                f"Processed {stats['processed']}: sent={stats['sent']}, "
+                f"retried={stats['retried']}, failed={stats['failed']}"
             )
         else:
             self.stdout.write("No pending scheduled notifications.")
+        if expired_preview_tokens_deleted:
+            self.stdout.write(
+                f"Expired preview tokens deleted: {expired_preview_tokens_deleted}"
+            )

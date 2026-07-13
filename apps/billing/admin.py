@@ -28,6 +28,7 @@ class BillingKeyAdmin(admin.ModelAdmin):
     )
     list_filter = ("is_active", "provider", "card_company")
     raw_id_fields = ("tenant", "billing_profile")
+    exclude = ("billing_key",)
 
 
 @admin.register(BusinessProfile)

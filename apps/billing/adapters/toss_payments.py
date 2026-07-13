@@ -5,18 +5,18 @@ Toss Payments API 클라이언트
 - 빌링키 발급: POST /v1/billing/authorizations/issue
 - 빌링키 삭제: DELETE /v1/billing/{billingKey}
 - 빌링키 자동결제: POST /v1/billing/{billingKey}
+- 주문 결제 조회: GET /v1/payments/orders/{orderId}
 - 인증: Basic auth (secret key : 빈 비밀번호)
-- 웹훅 서명: HMAC-SHA256(rawBody, webhook_secret) in base64
+- 자동결제 멱등: Idempotency-Key 헤더 (orderId)
 - 타임아웃: 결제 API는 최소 60초
 """
 
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import logging
 from typing import Any
+from urllib.parse import quote
 
 import requests
 from django.conf import settings
@@ -30,6 +30,15 @@ logger = logging.getLogger(__name__)
 
 TOSS_API_BASE = "https://api.tosspayments.com/v1"
 TOSS_TIMEOUT_SECONDS = 60
+TOSS_AMBIGUOUS_MUTATION_ERROR_CODES = frozenset(
+    {
+        "DUPLICATED_ORDER_ID",
+        "ALREADY_PROCESSED_PAYMENT",
+        "ALREADY_COMPLETED_PAYMENT",
+        "DUPLICATED_REQUEST",
+        "PROVIDER_ERROR",
+    }
+)
 
 
 class _TossUpstreamError(Exception):
@@ -83,6 +92,7 @@ class TossPaymentsClient:
         *,
         json_body: dict | None = None,
         timeout: int = TOSS_TIMEOUT_SECONDS,
+        idempotency_key: str = "",
     ) -> dict[str, Any]:
         """
         Send request to Toss API.
@@ -94,10 +104,13 @@ class TossPaymentsClient:
         """
         url = f"{TOSS_API_BASE}{path}"
         try:
+            headers = self._auth_header()
+            if idempotency_key:
+                headers["Idempotency-Key"] = idempotency_key
             resp = _toss_http_call(
                 method,
                 url,
-                self._auth_header(),
+                headers,
                 json_body,
                 timeout,
             )
@@ -107,6 +120,7 @@ class TossPaymentsClient:
                 "success": False,
                 "error_code": "CIRCUIT_OPEN",
                 "error_message": "결제 서비스 일시 장애 — 잠시 후 다시 시도해 주세요.",
+                "outcome_unknown": True,
             }
         except _TossUpstreamError as exc:
             # 네트워크/5xx — circuit이 카운트했지만 임계 미달이라 통과한 케이스
@@ -117,6 +131,7 @@ class TossPaymentsClient:
                     "success": False,
                     "error_code": "UPSTREAM_5XX",
                     "error_message": msg,
+                    "outcome_unknown": True,
                 }
             cause_type = type(exc.__cause__).__name__ if exc.__cause__ else ""
             if "timed out" in msg.lower() or cause_type == "Timeout":
@@ -125,12 +140,14 @@ class TossPaymentsClient:
                     "success": False,
                     "error_code": "TIMEOUT",
                     "error_message": f"Request timed out after {timeout}s",
+                    "outcome_unknown": True,
                 }
             logger.error("Toss API connection error: %s %s - %s", method, path, msg)
             return {
                 "success": False,
                 "error_code": "CONNECTION_ERROR",
                 "error_message": msg,
+                "outcome_unknown": True,
             }
 
         if resp.status_code < 300:
@@ -147,11 +164,18 @@ class TossPaymentsClient:
             "Toss API error: %s %s -> %s %s",
             method, path, resp.status_code, error_data,
         )
+        error_code = error_data.get("code", "")
+        outcome_unknown = (
+            method.upper() != "GET"
+            and error_code in TOSS_AMBIGUOUS_MUTATION_ERROR_CODES
+        )
         return {
             "success": False,
             "status_code": resp.status_code,
-            "error_code": error_data.get("code", ""),
+            "error_code": error_code,
             "error_message": error_data.get("message", str(error_data)),
+            "outcome_unknown": outcome_unknown,
+            "definitely_rejected": not outcome_unknown,
         }
 
     # ------------------------------------------------------------------
@@ -183,7 +207,7 @@ class TossPaymentsClient:
 
         DELETE /v1/billing/{billingKey}
         """
-        return self._request("DELETE", f"/billing/{billing_key}")
+        return self._request("DELETE", f"/billing/{quote(str(billing_key), safe='')}")
 
     def get_billing_key(self, billing_key: str) -> dict[str, Any]:
         """
@@ -191,7 +215,7 @@ class TossPaymentsClient:
 
         GET /v1/billing/{billingKey}
         """
-        return self._request("GET", f"/billing/{billing_key}")
+        return self._request("GET", f"/billing/{quote(str(billing_key), safe='')}")
 
     def charge_with_billing_key(
         self,
@@ -227,33 +251,16 @@ class TossPaymentsClient:
         if tax_free_amount:
             body["taxFreeAmount"] = tax_free_amount
 
-        return self._request("POST", f"/billing/{billing_key}", json_body=body)
+        return self._request(
+            "POST",
+            f"/billing/{quote(str(billing_key), safe='')}",
+            json_body=body,
+            idempotency_key=order_id,
+        )
 
-
-def verify_webhook_signature(
-    raw_body: bytes,
-    signature_header: str,
-    webhook_secret: str | None = None,
-) -> bool:
-    """
-    Toss 웹훅 서명 검증.
-
-    Toss는 HMAC-SHA256(rawBody, webhook_secret) 결과를 base64로 인코딩해서
-    TossPayments-Signature 헤더에 담는다. "v1=..." 형식일 수 있어 prefix 제거.
-
-    webhook_secret 미설정 시 False (개발 중 실수로 인증 우회 방지).
-    """
-    secret = webhook_secret if webhook_secret is not None else settings.TOSS_WEBHOOK_SECRET
-    if not secret or not signature_header:
-        return False
-
-    # "v1=..." prefix 제거 (Toss 포맷 유연 대응)
-    sig = signature_header.strip()
-    if sig.startswith("v1="):
-        sig = sig[3:]
-
-    expected = base64.b64encode(
-        hmac.new(secret.encode(), raw_body, hashlib.sha256).digest()
-    ).decode()
-
-    return hmac.compare_digest(expected, sig)
+    def get_payment_by_order_id(self, order_id: str) -> dict[str, Any]:
+        """Fetch authoritative payment state for webhook/reconciliation."""
+        return self._request(
+            "GET",
+            f"/payments/orders/{quote(str(order_id), safe='')}",
+        )

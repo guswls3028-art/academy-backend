@@ -20,13 +20,20 @@ ECR Manifest-Aware Cleanup Script
 """
 
 import argparse
+import atexit
+import base64
 import json
+import os
+import re
 import subprocess
 import sys
+import uuid
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 
 REGION = "ap-northeast-2"
+ACCOUNT_ID = "809466760795"
 
 REPOS = [
     "academy-base",
@@ -36,6 +43,20 @@ REPOS = [
     "academy-tools-worker",
     "academy-video-worker",
 ]
+
+ASG_REPOSITORIES = {
+    "academy-v1-api-asg": "academy-api",
+    "academy-v1-messaging-worker-asg": "academy-messaging-worker",
+    "academy-v1-ai-worker-asg": "academy-ai-worker-cpu",
+    "academy-v1-tools-worker-asg": "academy-tools-worker",
+}
+
+ASG_CONTAINERS = {
+    "academy-v1-api-asg": "academy-api",
+    "academy-v1-messaging-worker-asg": "academy-messaging-worker",
+    "academy-v1-ai-worker-asg": "academy-ai-worker-cpu",
+    "academy-v1-tools-worker-asg": "academy-tools-worker",
+}
 
 # OCI manifest types
 TYPE_INDEX = "application/vnd.oci.image.index.v1+json"
@@ -49,8 +70,41 @@ MANIFEST_TYPES = {TYPE_MANIFEST, TYPE_DOCKER_MANIFEST}
 # Tags that must never be deleted
 ALWAYS_KEEP_TAGS = {"latest"}
 
+REQUIRED_VIDEO_JOB_DEFINITIONS = {
+    "academy-v1-video-batch-jobdef",
+    "academy-v1-video-ops-scanstuck",
+    "academy-v1-video-ops-reconcile",
+    "academy-v1-video-ops-netprobe",
+    "academy-v1-video-ops-enqueue-uploaded",
+    "academy-v1-video-ops-purge-raw",
+    "academy-v1-video-ops-detect-stuck",
+    "academy-v1-video-ops-recover-dead",
+}
+RELEASE_MANIFEST = Path(__file__).resolve().parents[2] / "docs/reports/release-manifest.latest.json"
+LOCK_HELPER = Path(__file__).with_name("deployment_lock.py")
+
 
 _NONFATAL_ACTIONS = {"get-lifecycle-policy"}  # missing IAM perm tolerated for verify-only display
+
+
+def require_cleanup_lock() -> None:
+    """Join a workflow lock or acquire/release one for direct execution."""
+    owner = os.environ.get("ACADEMY_DEPLOY_LOCK_OWNER")
+    owned_here = not owner
+    owner = owner or f"ecr-cleanup:{os.getpid()}:{uuid.uuid4().hex}"
+    action = "acquire" if owned_here else "renew"
+    result = subprocess.run(
+        [sys.executable, str(LOCK_HELPER), action, "--owner", owner, "--ttl-seconds", "10800"],
+        check=False,
+    )
+    if result.returncode:
+        sys.exit(result.returncode)
+    if owned_here:
+        atexit.register(
+            subprocess.run,
+            [sys.executable, str(LOCK_HELPER), "release", "--owner", owner],
+            check=False,
+        )
 
 
 def aws_ecr(*args) -> str:
@@ -66,6 +120,294 @@ def aws_ecr(*args) -> str:
         # Hard fail: weekly cron must surface real errors instead of reporting deleted=0 success.
         sys.exit(2)
     return r.stdout
+
+
+def aws_service(service: str, *args) -> dict:
+    """Run a read-only AWS inventory call and hard-fail cleanup on uncertainty."""
+    cmd = ["aws", service, "--region", REGION] + list(args) + ["--output", "json"]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if result.returncode != 0:
+        action = args[0] if args else ""
+        print(f"  [ERROR] aws {service} {action}: {result.stderr.strip()}", file=sys.stderr)
+        sys.exit(2)
+    try:
+        return json.loads(result.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        print(f"  [ERROR] invalid aws {service} JSON: {exc}", file=sys.stderr)
+        sys.exit(2)
+
+
+def wait_for_ssm_command(command_id: str, instance_id: str) -> None:
+    """Wait for an SSM command; final status is validated by the caller."""
+    command = [
+        "aws", "ssm", "wait", "command-executed",
+        "--command-id", command_id,
+        "--instance-id", instance_id,
+        "--region", REGION,
+    ]
+    # The waiter returns nonzero both for terminal command failure and timeout.
+    # Always read the command invocation afterward for the authoritative status.
+    subprocess.run(command, capture_output=True, text=True, check=False)
+
+
+ECR_IMAGE_RE = re.compile(
+    rf"^{ACCOUNT_ID}\.dkr\.ecr\.{re.escape(REGION)}\.amazonaws\.com/"
+    r"(?P<repo>[a-z0-9][a-z0-9._/-]*)(?:(?:@(?P<digest>sha256:[0-9a-f]{64}))|(?::(?P<tag>[^:@]+)))$",
+    re.IGNORECASE,
+)
+
+
+def resolve_image_reference(image: str) -> tuple[str, str] | None:
+    """Return an exact known-repository digest for a runtime image reference."""
+    match = ECR_IMAGE_RE.fullmatch(image.strip())
+    if not match:
+        return None
+    repo = match.group("repo")
+    if repo not in REPOS:
+        return None
+    digest = match.group("digest")
+    if digest:
+        return repo, digest.lower()
+    tag = match.group("tag")
+    raw = aws_ecr(
+        "describe-images", "--repository-name", repo,
+        "--image-ids", f"imageTag={tag}",
+    )
+    details = json.loads(raw).get("imageDetails", [])
+    resolved = details[0].get("imageDigest", "") if details else ""
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", resolved):
+        print(f"  [ERROR] cannot resolve active runtime tag: {image}", file=sys.stderr)
+        sys.exit(2)
+    return repo, resolved
+
+
+def _launch_template_references(group: dict) -> set[tuple[str, str, str]]:
+    refs: set[tuple[str, str, str]] = set()
+
+    def add(ref: dict | None):
+        if not ref:
+            return
+        template_id = str(ref.get("LaunchTemplateId", ""))
+        template_name = str(ref.get("LaunchTemplateName", ""))
+        version = str(ref.get("Version", ""))
+        if template_id or template_name:
+            if not version:
+                print("  [ERROR] ASG launch template reference has no version", file=sys.stderr)
+                sys.exit(2)
+            refs.add((template_id, template_name, version))
+
+    add(group.get("LaunchTemplate"))
+    mixed = group.get("MixedInstancesPolicy", {}).get("LaunchTemplate", {})
+    add(mixed.get("LaunchTemplateSpecification"))
+    for override in mixed.get("Overrides", []):
+        add(override.get("LaunchTemplateSpecification"))
+    # During an instance refresh, running instances may still use older LT
+    # versions. Protect every version currently reported by the ASG.
+    for instance in group.get("Instances", []):
+        add(instance.get("LaunchTemplate"))
+    return refs
+
+
+def collect_actual_instance_runtime_digest(
+    instance_id: str, expected_repo: str, container_name: str
+) -> str:
+    """Read the exact RepoDigest used by one running ASG container via SSM."""
+    remote_command = (
+        "set -e; "
+        f"IMAGE_ID=$(docker inspect --format '{{{{.Image}}}}' '{container_name}'); "
+        "docker image inspect --format "
+        "'{{range .RepoDigests}}{{println .}}{{end}}' \"$IMAGE_ID\""
+    )
+    sent = aws_service(
+        "ssm", "send-command",
+        "--instance-ids", instance_id,
+        "--document-name", "AWS-RunShellScript",
+        "--parameters", json.dumps(
+            {"commands": [remote_command], "executionTimeout": ["120"]}
+        ),
+        "--timeout-seconds", "180",
+    )
+    command_id = str(sent.get("Command", {}).get("CommandId", ""))
+    if not command_id:
+        print(
+            f"  [ERROR] SSM returned no command id for {instance_id}/{container_name}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    wait_for_ssm_command(command_id, instance_id)
+    invocation = aws_service(
+        "ssm", "get-command-invocation",
+        "--command-id", command_id,
+        "--instance-id", instance_id,
+    )
+    if invocation.get("Status") != "Success":
+        print(
+            f"  [ERROR] cannot inventory actual runtime digest on {instance_id}: "
+            f"status={invocation.get('Status')} stderr={invocation.get('StandardErrorContent', '')}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    actual_refs = {
+        resolved
+        for line in str(invocation.get("StandardOutputContent", "")).splitlines()
+        if (resolved := resolve_image_reference(line.strip())) is not None
+        and resolved[0] == expected_repo
+    }
+    if len(actual_refs) != 1:
+        print(
+            f"  [ERROR] {instance_id}/{container_name} must report exactly one "
+            f"{expected_repo} RepoDigest; actual={sorted(actual_refs)}",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return next(iter(actual_refs))[1]
+
+
+def collect_runtime_protected_digests() -> dict[str, set[str]]:
+    """Inventory every digest referenced by ASG LT versions and ACTIVE Batch jobdefs."""
+    protected = {repo: set() for repo in REPOS}
+    groups = aws_service("autoscaling", "describe-auto-scaling-groups").get("AutoScalingGroups", [])
+    groups_by_name = {group.get("AutoScalingGroupName", ""): group for group in groups}
+    missing_groups = sorted(set(ASG_REPOSITORIES) - set(groups_by_name))
+    if missing_groups:
+        print(f"  [ERROR] required runtime ASGs missing: {', '.join(missing_groups)}", file=sys.stderr)
+        sys.exit(2)
+
+    for asg_name, expected_repo in ASG_REPOSITORIES.items():
+        group = groups_by_name[asg_name]
+        refs = _launch_template_references(group)
+        if not refs:
+            print(f"  [ERROR] required ASG has no Launch Template references: {asg_name}", file=sys.stderr)
+            sys.exit(2)
+        for template_id, template_name, version in sorted(refs):
+            args = ["describe-launch-template-versions"]
+            if template_id:
+                args += ["--launch-template-id", template_id]
+            else:
+                args += ["--launch-template-name", template_name]
+            args += ["--versions", version]
+            versions = aws_service("ec2", *args).get("LaunchTemplateVersions", [])
+            if len(versions) != 1:
+                print(
+                    f"  [ERROR] launch template reference did not resolve exactly once: "
+                    f"id={template_id} name={template_name} version={version}",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            encoded = versions[0].get("LaunchTemplateData", {}).get("UserData", "")
+            if not encoded:
+                print(f"  [ERROR] required ASG LT userdata is empty: {asg_name}/{version}", file=sys.stderr)
+                sys.exit(2)
+            try:
+                userdata = base64.b64decode(encoded, validate=True).decode("utf-8")
+            except (ValueError, UnicodeDecodeError) as exc:
+                print(f"  [ERROR] invalid launch template userdata: {exc}", file=sys.stderr)
+                sys.exit(2)
+            # User data legitimately repeats the same immutable URI in pull,
+            # run, and error-log commands.  Count unique runtime references,
+            # not textual occurrences, while still rejecting two distinct
+            # images for the expected repository.
+            resolved_refs: set[tuple[str, str]] = set()
+            for token in re.findall(r"[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[^\s'\"\\]+", userdata):
+                resolved = resolve_image_reference(token.rstrip(");,"))
+                if resolved:
+                    resolved_refs.add(resolved)
+            expected = sorted(
+                (repo, digest) for repo, digest in resolved_refs if repo == expected_repo
+            )
+            if len(expected) != 1:
+                print(
+                    f"  [ERROR] {asg_name} LT version {version} must reference exactly one "
+                    f"{expected_repo} image; actual={sorted(resolved_refs)}",
+                    file=sys.stderr,
+                )
+                sys.exit(2)
+            protected[expected_repo].add(expected[0][1])
+
+        desired = int(group.get("DesiredCapacity", 0))
+        in_service = [
+            instance for instance in group.get("Instances", [])
+            if instance.get("LifecycleState") == "InService"
+        ]
+        if len(in_service) != desired:
+            print(
+                f"  [ERROR] {asg_name} actual runtime inventory requires "
+                f"InService={desired}; found={len(in_service)}",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        for instance in in_service:
+            instance_id = str(instance.get("InstanceId", ""))
+            if not instance_id:
+                print(f"  [ERROR] {asg_name} has an InService instance without an id", file=sys.stderr)
+                sys.exit(2)
+            actual_digest = collect_actual_instance_runtime_digest(
+                instance_id,
+                expected_repo,
+                ASG_CONTAINERS[asg_name],
+            )
+            protected[expected_repo].add(actual_digest)
+
+    definitions = aws_service(
+        "batch", "describe-job-definitions", "--status", "ACTIVE"
+    ).get("jobDefinitions", [])
+    by_name: dict[str, list[dict]] = defaultdict(list)
+    for definition in definitions:
+        by_name[str(definition.get("jobDefinitionName", ""))].append(definition)
+        image = str(definition.get("containerProperties", {}).get("image", ""))
+        resolved = resolve_image_reference(image)
+        if resolved:
+            repo, digest = resolved
+            protected[repo].add(digest)
+
+    missing = sorted(REQUIRED_VIDEO_JOB_DEFINITIONS - set(by_name))
+    if missing:
+        print(f"  [ERROR] required ACTIVE video job definitions missing: {', '.join(missing)}", file=sys.stderr)
+        sys.exit(2)
+    latest_video_digests: set[str] = set()
+    for name in sorted(REQUIRED_VIDEO_JOB_DEFINITIONS):
+        latest = max(by_name[name], key=lambda item: int(item.get("revision", 0)))
+        image = str(latest.get("containerProperties", {}).get("image", ""))
+        exact = ECR_IMAGE_RE.fullmatch(image.strip())
+        resolved = resolve_image_reference(image)
+        if not exact or not exact.group("digest") or not resolved or resolved[0] != "academy-video-worker":
+            print(f"  [ERROR] {name} latest ACTIVE revision is not pinned to academy-video-worker: {image}", file=sys.stderr)
+            sys.exit(2)
+        latest_video_digests.add(resolved[1])
+    if len(latest_video_digests) != 1:
+        print(f"  [ERROR] required Video job definitions disagree on latest digest: {sorted(latest_video_digests)}", file=sys.stderr)
+        sys.exit(2)
+
+    protected_from_manifest = collect_release_manifest_digests()
+    for repo, digest in protected_from_manifest.items():
+        protected[repo].add(digest)
+
+    return protected
+
+
+def collect_release_manifest_digests() -> dict[str, str]:
+    """Fail closed and protect every digest in the last successful complete release."""
+    try:
+        manifest = json.loads(RELEASE_MANIFEST.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"  [ERROR] cannot read successful release manifest {RELEASE_MANIFEST}: {exc}", file=sys.stderr)
+        sys.exit(2)
+    if manifest.get("schemaVersion") != 1 or manifest.get("status") != "successful" or manifest.get("complete") is not True:
+        print("  [ERROR] release manifest must be schemaVersion=1, complete=true, status=successful", file=sys.stderr)
+        sys.exit(2)
+    images = manifest.get("images")
+    if not isinstance(images, dict) or set(images) != set(REPOS):
+        print(f"  [ERROR] release manifest must contain exactly: {', '.join(REPOS)}", file=sys.stderr)
+        sys.exit(2)
+    result: dict[str, str] = {}
+    for repo in REPOS:
+        entry = images.get(repo)
+        digest = entry.get("digest", "") if isinstance(entry, dict) else ""
+        if not re.fullmatch(r"sha256:[0-9a-f]{64}", digest):
+            print(f"  [ERROR] release manifest has invalid digest for {repo}: {digest}", file=sys.stderr)
+            sys.exit(2)
+        result[repo] = digest
+    return result
 
 
 def get_all_images(repo: str) -> list[dict]:
@@ -119,7 +461,7 @@ def resolve_child_digests(repo: str, index_digest: str) -> list[str]:
 
 
 def identify_protected_set(
-    images: list[dict], keep: int, repo: str
+    images: list[dict], keep: int, repo: str, runtime_digests: set[str] | None = None
 ) -> tuple[set[str], list[dict]]:
     """
     Determine which digests to protect.
@@ -127,6 +469,7 @@ def identify_protected_set(
     Protected:
     - 'latest' tag and its children (always)
     - Newest `keep` sha- tagged images and their children
+    - Every digest referenced by an ASG LT/running instance LT or ACTIVE Batch jobdef
 
     Returns: (protected_digests, deletable_tagged_images)
     """
@@ -169,6 +512,16 @@ def identify_protected_set(
             children = resolve_child_digests(repo, digest)
             protected.update(children)
 
+    images_by_digest = {img.get("imageDigest", ""): img for img in images}
+    for digest in sorted(runtime_digests or set()):
+        image = images_by_digest.get(digest)
+        if not image:
+            print(f"  [ERROR] active runtime digest is missing from {repo}: {digest}", file=sys.stderr)
+            sys.exit(2)
+        protected.add(digest)
+        if image.get("imageManifestMediaType", "") in INDEX_TYPES:
+            protected.update(resolve_child_digests(repo, digest))
+
     # Log
     sha_tags_kept = []
     for img in kept_sha:
@@ -180,7 +533,10 @@ def identify_protected_set(
         tags = [t for t in img.get("imageTags", []) if t.startswith("sha-")]
         sha_tags_deleted.extend(tags)
 
-    print(f"  Protected tags: latest + {len(kept_sha)} newest sha- = {len(protected)} digests")
+    print(
+        f"  Protected: latest + {len(kept_sha)} newest sha- + "
+        f"{len(runtime_digests or set())} runtime digest(s) = {len(protected)} digests"
+    )
     if kept_sha:
         oldest_kept = kept_sha[-1]
         oldest_tag = [t for t in oldest_kept.get("imageTags", []) if t.startswith("sha-")]
@@ -211,6 +567,8 @@ def classify_deletable(
     # Old sha- tagged indexes → delete first
     for img in deletable_tagged:
         digest = img["imageDigest"]
+        if digest in protected:
+            continue
         media_type = img.get("imageManifestMediaType", "")
         if media_type in INDEX_TYPES:
             indexes.append(digest)
@@ -271,7 +629,12 @@ def batch_delete(repo: str, digests: list[str], label: str) -> tuple[int, int]:
     return total_deleted, total_failed
 
 
-def cleanup_repo(repo: str, keep: int, execute: bool) -> dict:
+def cleanup_repo(
+    repo: str,
+    keep: int,
+    execute: bool,
+    runtime_digests: set[str] | None = None,
+) -> dict:
     """Clean up a single repository."""
     print(f"\n{'=' * 60}")
     print(f"  Repository: {repo}")
@@ -284,7 +647,9 @@ def cleanup_repo(repo: str, keep: int, execute: bool) -> dict:
     print(f"  Total images: {total} (tagged={tagged_count}, untagged={untagged_count})")
 
     # Identify protected set (resolves child digests for protected indexes)
-    protected, deletable_tagged = identify_protected_set(images, keep, repo)
+    protected, deletable_tagged = identify_protected_set(
+        images, keep, repo, runtime_digests=runtime_digests
+    )
 
     # Classify deletable
     del_indexes, del_manifests = classify_deletable(images, protected, deletable_tagged)
@@ -370,12 +735,21 @@ def verify_repo(repo: str) -> dict:
     if "lastEvaluatedAt" in data:
         last_eval = str(data["lastEvaluatedAt"])
 
-    status = "OK" if untagged <= tagged * 2 else "WARN"
+    repository = aws_service(
+        "ecr", "describe-repositories", "--repository-names", repo
+    ).get("repositories", [{}])[0]
+    exclusions = repository.get("imageTagMutabilityExclusionFilters", [])
+    mutability_ok = (
+        repository.get("imageTagMutability") == "IMMUTABLE_WITH_EXCLUSION"
+        and exclusions == [{"filterType": "WILDCARD", "filter": "latest"}]
+    )
+    status = "OK" if untagged <= tagged * 2 and mutability_ok else "WARN"
     icon = "[OK]" if status == "OK" else "[WARN]"
 
     print(f"    Images: {total} (tagged={tagged}, untagged={untagged})")
     print(f"    Storage: {total_gb:.2f} GB")
     print(f"    Lifecycle lastEvaluatedAt: {last_eval}")
+    print(f"    Tag mutability: {'OK (latest-only mutable)' if mutability_ok else 'INVALID'}")
     print(f"    {icon} {'Ratio acceptable' if status == 'OK' else f'Untagged ({untagged}) high vs tagged ({tagged})'}")
 
     return {"repo": repo, "total": total, "tagged": tagged, "untagged": untagged, "gb": total_gb, "status": status}
@@ -415,6 +789,7 @@ Examples:
         warns = [r for r in results if r["status"] == "WARN"]
         if warns:
             print(f"  {len(warns)} repo(s) need attention.")
+            sys.exit(2)
         else:
             print("  All repos healthy.")
         return
@@ -426,6 +801,7 @@ Examples:
     print(f"{'=' * 60}")
 
     if args.execute:
+        require_cleanup_lock()
         print("\n  [!] EXECUTE mode: images will be permanently deleted.")
         print("     Press Ctrl+C within 5 seconds to abort...")
         import time
@@ -435,9 +811,19 @@ Examples:
             print("\n  Aborted.")
             sys.exit(1)
 
+    print("\n  Inventorying active ASG/Batch runtime digests (fail closed)...")
+    runtime_protected = collect_runtime_protected_digests()
+    for repo in repos:
+        print(f"  {repo}: {len(runtime_protected[repo])} active runtime digest(s)")
+
     results = []
     for repo in repos:
-        r = cleanup_repo(repo, keep=args.keep, execute=args.execute)
+        r = cleanup_repo(
+            repo,
+            keep=args.keep,
+            execute=args.execute,
+            runtime_digests=runtime_protected[repo],
+        )
         results.append(r)
 
     # Summary
@@ -460,7 +846,8 @@ Examples:
         print(f"  Deleted: {total_deleted}, Failed: {total_failed}")
         print(f"  Est. monthly savings: ${total_gb * 0.10:.2f}/mo")
         if total_failed > 0:
-            print("  [WARN] Some deletions failed. Run --verify to check, then --execute again.")
+            print("  [ERROR] Some deletions failed. Run --verify, then --execute again.")
+            sys.exit(2)
         else:
             print("  Run --verify to confirm cleanup.")
     else:

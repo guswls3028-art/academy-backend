@@ -25,7 +25,7 @@ from datetime import date
 from django.contrib.auth import get_user_model
 from rest_framework.test import APITestCase
 
-from apps.billing.models import Invoice
+from apps.billing.models import Invoice, PaymentTransaction
 from apps.core.models import Tenant, TenantMembership
 from apps.core.models.program import Program
 
@@ -158,13 +158,22 @@ class TestAdminTenantSubscriptionList(BillingApiTestBase):
         entry = next(t for t in resp.data if t["tenant_code"] == "api_test_a")
         required_fields = [
             "program_id", "tenant_id", "tenant_code", "tenant_name", "plan", "plan_display",
-            "monthly_price", "subscription_status", "subscription_expires_at",
+            "monthly_price", "monthly_supply_amount", "monthly_tax_amount",
+            "monthly_total_amount", "monthly_price_includes_tax", "vat_rate_percent",
+            "billing_price_policy", "is_contract_price", "billing_price_integrity",
+            "is_billing_price_ready", "subscription_status",
+            "subscription_expires_at", "service_access_expires_at",
+            "grace_period_days", "grace_expires_at",
             "days_remaining", "billing_mode", "cancel_at_period_end",
             "next_billing_at", "is_subscription_active",
         ]
         for f in required_fields:
             self.assertIn(f, entry, f"Missing field: {f}")
         self.assertEqual(entry["program_id"], self.program_a.pk)
+        self.assertEqual(entry["monthly_supply_amount"], 198_000)
+        self.assertEqual(entry["monthly_tax_amount"], 19_800)
+        self.assertEqual(entry["monthly_total_amount"], 217_800)
+        self.assertFalse(entry["monthly_price_includes_tax"])
 
 
 class TestAdminExtendSubscription(BillingApiTestBase):
@@ -295,9 +304,12 @@ class TestAdminMarkPaid(BillingApiTestBase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.data["status"], "PAID")
-        # 구독 갱신 확인
+        transaction = PaymentTransaction.objects.get(invoice=self.invoice_a)
+        self.assertEqual(transaction.provider, "manual")
+        self.assertEqual(transaction.amount, self.invoice_a.total_amount)
+        # 과거 인보이스의 수동 정산은 현재 구독 기간을 되감거나 연장하지 않는다.
         self.program_a.refresh_from_db()
-        self.assertEqual(self.program_a.subscription_expires_at, date(2026, 5, 12))
+        self.assertEqual(self.program_a.subscription_expires_at, date(2026, 4, 12))
 
     def test_already_paid_rejected(self):
         self.invoice_a.status = "PAID"
@@ -328,7 +340,11 @@ class TestAdminDashboard(BillingApiTestBase):
         self.client.force_authenticate(user=self.superuser)
         resp = self.client.get("/api/v1/billing/admin/dashboard/", **self.headers_a)
         self.assertEqual(resp.status_code, 200)
-        required_fields = ["mrr", "status_counts", "expiring_soon", "overdue_invoices", "plan_distribution", "total_tenants"]
+        required_fields = [
+            "mrr", "mrr_supply_amount", "mrr_tax_amount", "mrr_total_amount",
+            "mrr_includes_tax", "vat_rate_percent", "status_counts", "expiring_soon",
+            "overdue_invoices", "plan_distribution", "total_tenants",
+        ]
         for f in required_fields:
             self.assertIn(f, resp.data, f"Missing dashboard field: {f}")
 
@@ -353,6 +369,14 @@ class TestMyInvoiceList(BillingApiTestBase):
         self.assertIn("INV-API-A-001", numbers)
         # 다른 테넌트 인보이스는 보이지 않아야 함
         self.assertNotIn("INV-API-B-001", numbers)
+        invoice = next(
+            item for item in resp.data["results"]
+            if item["invoice_number"] == "INV-API-A-001"
+        )
+        self.assertEqual(invoice["status_display"], "결제 대기")
+        self.assertTrue(invoice["can_mark_paid"])
+        self.assertFalse(invoice["is_terminal"])
+        self.assertEqual(invoice["payment_blocked_reason"], "")
 
     def test_tenant_isolation(self):
         """Owner B가 Tenant A 헤더로 요청 → 403 (멤버십 없음)"""
@@ -473,3 +497,38 @@ class TestRevokeCancelSubscription(BillingApiTestBase):
         self.client.force_authenticate(user=self.staff_a)
         resp = self.client.post("/api/v1/billing/cancel/revoke/", **self.headers_a)
         self.assertEqual(resp.status_code, 403)
+
+    def test_grace_subscription_revoke_returns_validation_error(self):
+        self.program_a.subscription_status = "grace"
+        self.program_a.cancel_at_period_end = True
+        self.program_a.save(
+            update_fields=["subscription_status", "cancel_at_period_end"]
+        )
+        self.client.force_authenticate(user=self.owner_a)
+
+        resp = self.client.post("/api/v1/billing/cancel/revoke/", **self.headers_a)
+
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertIn("active", resp.data["detail"])
+
+    def test_reconciliation_required_revoke_returns_conflict(self):
+        self.program_a.cancel_at_period_end = True
+        self.program_a.save(update_fields=["cancel_at_period_end"])
+        self.invoice_a.status = "VOID"
+        self.invoice_a.memo = "cancel_at_period_end"
+        self.invoice_a.save(update_fields=["status", "memo"])
+        PaymentTransaction.objects.create(
+            tenant=self.tenant_a,
+            invoice=self.invoice_a,
+            provider="tosspayments",
+            provider_order_id=self.invoice_a.provider_order_id,
+            idempotency_key=self.invoice_a.provider_order_id,
+            amount=self.invoice_a.total_amount,
+            status="PROCESSING",
+        )
+        self.client.force_authenticate(user=self.owner_a)
+
+        resp = self.client.post("/api/v1/billing/cancel/revoke/", **self.headers_a)
+
+        self.assertEqual(resp.status_code, 409, resp.data)
+        self.assertIn("reconciliation", resp.data["detail"])

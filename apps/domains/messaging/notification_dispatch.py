@@ -12,6 +12,7 @@ from datetime import timedelta
 from typing import Optional
 
 from academy.adapters.db.django import repositories_enrollment as enroll_repo
+from django.db import transaction
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
@@ -397,22 +398,29 @@ def consume_preview_token(token_str: str, tenant) -> dict:
     if timezone.now() > token.expires_at:
         return {"error": "토큰이 만료되었습니다. 미리보기를 다시 실행해주세요."}
 
-    # Atomic consume (race condition 방지)
+    # Atomic consume (race condition 방지). 발송에 필요한 원문은 호출자에게만
+    # 반환하고, 소비된 토큰에는 수신자/본문을 남기지 않는다.
     from apps.domains.messaging.models import NotificationPreviewToken as NPT
+    from apps.domains.messaging.security import redact_consumed_preview_payload
+
     now = timezone.now()
     batch_id = uuid.uuid4()
+    delivery_payload = token.payload
     updated = NPT.objects.filter(
         token=token_uuid,
         tenant=tenant,
         used_at__isnull=True,
-    ).update(used_at=now, batch_id=batch_id)
+    ).update(
+        used_at=now,
+        batch_id=batch_id,
+        payload=redact_consumed_preview_payload(delivery_payload),
+    )
 
     if updated == 0:
         return {"error": "이미 사용된 토큰입니다. 중복 발송이 방지되었습니다."}
 
-    token.refresh_from_db()
     return {
-        "payload": token.payload,
+        "payload": delivery_payload,
         "batch_id": str(batch_id),
         "staff_id": token.created_by_id,
         "notification_type": token.notification_type,
@@ -424,12 +432,17 @@ def execute_notification_batch(
     payload: dict,
     batch_id: str,
     staff_id: Optional[int],
+    *,
+    process: bool = True,
 ) -> dict:
     """
     payload의 수신자 목록에 대해 알림톡 발송 실행.
     """
-    from apps.domains.messaging.services import enqueue_sms
-    from apps.domains.messaging.policy import check_recipient_allowed, MessagingPolicyError
+    from apps.domains.messaging.policy import check_recipient_allowed
+    from apps.domains.messaging.scheduled import (
+        create_notification_outboxes,
+        process_due_notifications,
+    )
 
     recipients = payload.get("recipients", [])
     solapi_template_id = payload.get("solapi_template_id", "")
@@ -449,14 +462,16 @@ def execute_notification_batch(
         return {
             "batch_id": batch_id,
             "sent_count": 0,
+            "pending_count": 0,
+            "accepted_count": 0,
             "failed_count": len([r for r in recipients if not r.get("excluded")]),
             "blocked_count": 0,
             "error": "발송 가능한 채널이 없습니다.",
         }
 
-    sent = 0
     failed = 0
     blocked = 0
+    outbox_specs = []
 
     for r in recipients:
         phone = r.get("phone_raw", "")
@@ -469,38 +484,157 @@ def execute_notification_batch(
             continue
 
         for mode in modes_to_send:
-            try:
-                ok = enqueue_sms(
-                    tenant_id=tenant.id,
-                    to=phone,
-                    text=r.get("message_body", ""),
-                    message_mode=mode,
-                    template_id=solapi_template_id if mode == "alimtalk" else None,
-                    alimtalk_replacements=r.get("alimtalk_replacements", []) if mode == "alimtalk" else None,
-                    event_type=f"manual_{notification_type}",
-                    target_type=target_type,
-                    target_id=r.get("student_id"),
-                    target_name=r.get("student_name", ""),
-                    occurrence_key=f"batch_{batch_id}",
-                )
-                if ok:
-                    sent += 1
-                else:
-                    failed += 1
-            except MessagingPolicyError:
-                failed += 1
-            except Exception:
-                logger.exception("batch %s: enqueue failed for %s mode=%s", batch_id, phone[:4] + "****", mode)
-                failed += 1
+            outbox_specs.append(
+                {
+                    "trigger": f"manual_{notification_type}",
+                    "send_at": timezone.now(),
+                    "payload": {
+                        "tenant_id": tenant.id,
+                        "to": phone,
+                        "text": r.get("message_body", ""),
+                        "message_mode": mode,
+                        "template_id": solapi_template_id if mode == "alimtalk" else None,
+                        "alimtalk_replacements": r.get("alimtalk_replacements", []) if mode == "alimtalk" else None,
+                        "event_type": f"manual_{notification_type}",
+                        "target_type": target_type,
+                        "target_id": r.get("student_id"),
+                        "target_name": r.get("student_name", ""),
+                        "occurrence_key": f"batch_{batch_id}",
+                    },
+                }
+            )
+
+    outboxes = create_notification_outboxes(
+        tenant_id=tenant.id,
+        notifications=outbox_specs,
+    )
+    outbox_ids = [notification.id for notification in outboxes]
+    if outboxes and process:
+        process_due_notifications(
+            batch_size=len(outboxes),
+            notification_ids=outbox_ids,
+        )
+        from apps.domains.messaging.models import ScheduledNotification
+
+        statuses = list(
+            ScheduledNotification.objects.filter(
+                id__in=outbox_ids
+            ).values_list("status", flat=True)
+        )
+        failed = sum(
+            1 for value in statuses if value == ScheduledNotification.Status.FAILED
+        )
+        sent = sum(
+            1 for value in statuses if value == ScheduledNotification.Status.SENT
+        )
+        pending = sum(
+            1
+            for value in statuses
+            if value in {
+                ScheduledNotification.Status.PENDING,
+                ScheduledNotification.Status.DISPATCHING,
+            }
+        )
+    elif outboxes:
+        sent = 0
+        pending = len(outboxes)
+    else:
+        sent = 0
+        pending = 0
 
     logger.info(
         "notification batch completed: batch_id=%s type=%s sent=%d failed=%d blocked=%d staff=%s",
         batch_id, notification_type, sent, failed, blocked, staff_id,
     )
 
-    return {
+    result = {
         "batch_id": batch_id,
         "sent_count": sent,
+        "pending_count": pending,
+        "accepted_count": sent + pending,
         "failed_count": failed,
         "blocked_count": blocked,
     }
+    if not process:
+        result["_outbox_ids"] = outbox_ids
+    return result
+
+
+def consume_preview_token_and_execute(token_str: str, tenant) -> dict:
+    """Consume a preview token only after its durable outbox batch exists."""
+    from apps.domains.messaging.models import NotificationPreviewToken
+    from apps.domains.messaging.security import redact_consumed_preview_payload
+
+    try:
+        token_uuid = uuid.UUID(token_str)
+    except (ValueError, AttributeError):
+        return {"error": "유효하지 않은 토큰 형식입니다.", "status": 400}
+
+    with transaction.atomic():
+        token = (
+            NotificationPreviewToken.objects.select_for_update()
+            .filter(token=token_uuid, tenant=tenant)
+            .first()
+        )
+        if token is None:
+            return {"error": "토큰을 찾을 수 없습니다.", "status": 400}
+        if token.used_at is not None:
+            return {
+                "error": "이미 사용된 토큰입니다. 중복 발송이 방지되었습니다.",
+                "status": 400,
+            }
+        if timezone.now() > token.expires_at:
+            return {
+                "error": "토큰이 만료되었습니다. 미리보기를 다시 실행해주세요.",
+                "status": 400,
+            }
+
+        batch_id = uuid.uuid4()
+        delivery_payload = token.payload
+        batch_result = execute_notification_batch(
+            tenant=tenant,
+            payload=delivery_payload,
+            batch_id=str(batch_id),
+            staff_id=token.created_by_id,
+            process=False,
+        )
+        if "error" in batch_result:
+            return {"error": batch_result["error"], "status": 400}
+        token.used_at = timezone.now()
+        token.batch_id = batch_id
+        token.payload = redact_consumed_preview_payload(delivery_payload)
+        token.save(update_fields=["used_at", "batch_id", "payload"])
+
+    outbox_ids = batch_result.pop("_outbox_ids", [])
+    if outbox_ids:
+        from apps.domains.messaging.models import ScheduledNotification
+        from apps.domains.messaging.scheduled import process_due_notifications
+
+        process_due_notifications(
+            batch_size=len(outbox_ids),
+            notification_ids=outbox_ids,
+        )
+        statuses = list(
+            ScheduledNotification.objects.filter(id__in=outbox_ids).values_list(
+                "status",
+                flat=True,
+            )
+        )
+        batch_result["failed_count"] = sum(
+            1 for value in statuses if value == ScheduledNotification.Status.FAILED
+        )
+        batch_result["sent_count"] = sum(
+            1 for value in statuses if value == ScheduledNotification.Status.SENT
+        )
+        batch_result["pending_count"] = sum(
+            1
+            for value in statuses
+            if value in {
+                ScheduledNotification.Status.PENDING,
+                ScheduledNotification.Status.DISPATCHING,
+            }
+        )
+        batch_result["accepted_count"] = (
+            batch_result["sent_count"] + batch_result["pending_count"]
+        )
+    return {"batch_result": batch_result}

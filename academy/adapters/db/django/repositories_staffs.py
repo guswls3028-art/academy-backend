@@ -75,6 +75,31 @@ def staff_get(tenant, pk):
     return Staff.objects.get(id=pk, tenant=tenant)
 
 
+def staff_get_for_update(tenant_id, pk):
+    """Canonical Staff mutex for open-work-record writers."""
+    from apps.domains.staffs.models import Staff
+
+    return Staff.objects.select_for_update().get(
+        id=pk,
+        tenant_id=tenant_id,
+    )
+
+
+def staff_map_for_update(tenant_id, staff_ids):
+    """Lock multiple Staff mutexes in deterministic primary-key order."""
+    from apps.domains.staffs.models import Staff
+
+    ids = sorted({int(staff_id) for staff_id in staff_ids})
+    rows = list(
+        Staff.objects.select_for_update()
+        .filter(tenant_id=tenant_id, id__in=ids)
+        .order_by("id")
+    )
+    if len(rows) != len(ids):
+        raise Staff.DoesNotExist
+    return {staff.id: staff for staff in rows}
+
+
 def staff_get_by_name_phone(name, phone, tenant=None):
     from apps.domains.staffs.models import Staff
     qs = Staff.objects.filter(name=name, phone=phone or "")
@@ -90,16 +115,6 @@ def staff_id_by_name_phone_map_tenant(tenant) -> dict[tuple[str, str], int]:
         (name, phone or ""): sid
         for sid, name, phone in Staff.objects.filter(tenant=tenant).values_list("id", "name", "phone")
     }
-
-
-def work_month_lock_update_or_create(staff, year, month, defaults):
-    from apps.domains.staffs.models import WorkMonthLock
-    return WorkMonthLock.objects.update_or_create(
-        staff=staff,
-        year=year,
-        month=month,
-        defaults=defaults,
-    )
 
 
 def payroll_snapshot_filter_tenant(tenant):
@@ -202,6 +217,13 @@ def work_record_filter_open(staff):
     )
 
 
+def work_record_open_exists(staff, exclude_record_id=None):
+    query = work_record_filter_open(staff)
+    if exclude_record_id is not None:
+        query = query.exclude(id=exclude_record_id)
+    return query.exists()
+
+
 def work_record_create_start(staff, work_type_id, date, start_time):
     from apps.domains.staffs.models import WorkRecord
     return WorkRecord.objects.create(
@@ -228,15 +250,63 @@ def work_month_lock_queryset_tenant(tenant):
     return WorkMonthLock.objects.filter(tenant=tenant).select_related("staff", "locked_by")
 
 
-def work_month_lock_update_or_create_defaults(tenant, staff, year, month, defaults):
+def work_month_lock_get_or_create_defaults(tenant, staff, year, month, defaults):
     from apps.domains.staffs.models import WorkMonthLock
-    return WorkMonthLock.objects.update_or_create(
+
+    return WorkMonthLock.objects.get_or_create(
         tenant=tenant,
         staff=staff,
         year=year,
         month=month,
         defaults=defaults,
     )
+
+
+def payroll_close_blockers(staff, year, month, *, sample_limit=20):
+    """Return bounded identifiers for rows that make a snapshot incomplete."""
+    from django.db.models import Q
+
+    from apps.domains.staffs.models import ExpenseRecord, WorkRecord
+
+    work_records = WorkRecord.objects.filter(
+        tenant=staff.tenant,
+        staff=staff,
+        date__year=year,
+        date__month=month,
+    )
+    open_ids = list(
+        work_records.filter(end_time__isnull=True)
+        .order_by("id")
+        .values_list("id", flat=True)[:sample_limit]
+    )
+    incomplete_ids = list(
+        work_records.filter(end_time__isnull=False)
+        .filter(
+            Q(work_hours__isnull=True)
+            | Q(amount__isnull=True)
+            | Q(resolved_hourly_wage__isnull=True)
+            | Q(current_break_started_at__isnull=False)
+        )
+        .order_by("id")
+        .values_list("id", flat=True)[:sample_limit]
+    )
+    pending_expense_ids = list(
+        ExpenseRecord.objects.filter(
+            tenant=staff.tenant,
+            staff=staff,
+            date__year=year,
+            date__month=month,
+            status="PENDING",
+        )
+        .order_by("id")
+        .values_list("id", flat=True)[:sample_limit]
+    )
+    return {
+        "open_work_record_ids": open_ids,
+        "incomplete_work_record_ids": incomplete_ids,
+        "pending_expense_ids": pending_expense_ids,
+        "sample_limit": sample_limit,
+    }
 
 
 def payroll_snapshot_queryset_tenant(tenant):

@@ -26,7 +26,7 @@ $prefs = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;InstanceWa
 Write-Host "Starting API ASG instance refresh: $($script:ApiASGName) (MinHealthy=$minHealthy%, Warmup=${warmup}s)" -ForegroundColor Cyan
 try {
     Invoke-Aws @("autoscaling", "start-instance-refresh", "--auto-scaling-group-name", $script:ApiASGName, "--preferences", $prefs, "--region", $script:Region) -ErrorMessage "start-instance-refresh failed"
-    Write-Host "API ASG instance refresh started. New instances will pull academy-api:latest." -ForegroundColor Green
+    Write-Host "API ASG instance refresh started. New instances will use the digest pinned in the Launch Template." -ForegroundColor Green
 } catch {
     if ($_.Exception.Message -match "InstanceRefreshInProgress") {
         Write-Host "Instance refresh already in progress (idempotent). No new refresh started." -ForegroundColor Green

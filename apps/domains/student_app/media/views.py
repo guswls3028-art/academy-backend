@@ -5,7 +5,7 @@ from django.http import Http404
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 from rest_framework import status
 
 from apps.domains.student_app.permissions import IsStudentOrParent, get_request_student
@@ -50,7 +50,9 @@ def _import_media_models():
 
 
 def _coerce_int(value: Any) -> Optional[int]:
-    if value in (None, ""):
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    if isinstance(value, float) and not value.is_integer():
         return None
     try:
         parsed = int(value)
@@ -64,12 +66,15 @@ def _get_explicit_enrollment_id(request, *, include_body: bool = False) -> Optio
     if include_body:
         sources.append(getattr(request, "data", None))
     for source in sources:
-        if not source:
+        if source is None:
             continue
         for key in ("enrollment", "enrollment_id"):
+            if key not in source:
+                continue
             value = _coerce_int(source.get(key))
-            if value is not None:
-                return value
+            if value is None:
+                raise ValidationError({key: "양의 정수 수강 ID가 필요합니다."})
+            return value
     return None
 
 

@@ -4,14 +4,19 @@ billing_key_service 단위 테스트
 TossPaymentsClient를 mock하여 서비스 로직만 검증한다.
 """
 
+from io import StringIO
 from unittest.mock import MagicMock, patch
 
-from django.test import TestCase
+from django.core.management import call_command
+from django.db import IntegrityError
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
-from apps.billing.models import BillingKey, BillingProfile
+from apps.billing.models import BillingKey, BillingProfile, Invoice, PaymentTransaction
 from apps.billing.services import billing_key_service
-from apps.core.models import Tenant
+from apps.core.models import OpsAuditLog, Tenant
+
+TEST_BILLING_KEK = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 
 class BillingKeyServiceTestCase(TestCase):
@@ -50,18 +55,71 @@ class BillingKeyServiceTestCase(TestCase):
 
         self.assertEqual(customer_key, existing_key)
 
+    @override_settings(
+        BILLING_KEY_ENCRYPTION_WRITE_ENABLED=True,
+        BILLING_KEY_ENCRYPTION_PRIMARY_KEY=TEST_BILLING_KEK,
+        BILLING_KEY_ENCRYPTION_FALLBACK_KEYS=(),
+    )
+    def test_audit_reports_plaintext_key_after_encrypted_writes_enabled(self):
+        profile = BillingProfile.objects.create(
+            tenant=self.tenant,
+            provider="tosspayments",
+        )
+        with override_settings(BILLING_KEY_ENCRYPTION_WRITE_ENABLED=False):
+            billing_key = BillingKey.objects.create(
+                tenant=self.tenant,
+                billing_profile=profile,
+                billing_key="legacy-plaintext-provider-token",
+            )
+        output = StringIO()
+
+        call_command(
+            "audit_billing_fields",
+            tenant=self.tenant.code,
+            stdout=output,
+        )
+
+        audit = output.getvalue()
+        self.assertIn(f"plaintext_billing_key id={billing_key.id}", audit)
+        self.assertNotIn("legacy-plaintext-provider-token", audit)
+
     # ------------------------------------------------------------------
     # issue_billing_key
     # ------------------------------------------------------------------
+
+    def _processing_payment(self) -> PaymentTransaction:
+        invoice = Invoice.objects.create(
+            tenant=self.tenant,
+            invoice_number=f"INV-CARD-MUTATION-{PaymentTransaction.objects.count() + 1}",
+            plan="pro",
+            billing_mode="AUTO_CARD",
+            supply_amount=100_000,
+            tax_amount=10_000,
+            total_amount=110_000,
+            period_start=timezone.localdate(),
+            period_end=timezone.localdate(),
+            due_date=timezone.localdate(),
+            status="PENDING",
+        )
+        return PaymentTransaction.objects.create(
+            tenant=self.tenant,
+            invoice=invoice,
+            provider="tosspayments",
+            provider_order_id=invoice.provider_order_id,
+            idempotency_key=invoice.provider_order_id,
+            amount=invoice.total_amount,
+            status="PROCESSING",
+            processing_started_at=timezone.now(),
+        )
 
     @patch("apps.billing.services.billing_key_service._get_client")
     def test_issue_billing_key_success(self, mock_get_client):
         """빌링키 발급 성공 시 BillingKey가 생성된다."""
         mock_client = MagicMock()
-        mock_client.issue_billing_key.return_value = {
+        mock_client.issue_billing_key.side_effect = lambda *, auth_key, customer_key: {
             "success": True,
             "billingKey": "bk_test_abc123",
-            "customerKey": "cus_xxx",
+            "customerKey": customer_key,
             "card": {
                 "company": "삼성",
                 "number": "**** **** **** 1234",
@@ -81,6 +139,41 @@ class BillingKeyServiceTestCase(TestCase):
         # BillingProfile도 생성되었는지 확인
         self.assertTrue(
             BillingProfile.objects.filter(tenant=self.tenant).exists()
+        )
+
+    @override_settings(
+        BILLING_KEY_ENCRYPTION_PRIMARY_KEY=TEST_BILLING_KEK,
+        BILLING_KEY_ENCRYPTION_FALLBACK_KEYS=(),
+        BILLING_KEY_ENCRYPTION_WRITE_ENABLED=True,
+    )
+    @patch("apps.billing.services.billing_key_service._get_client")
+    def test_issue_encrypts_at_rest_and_delete_decrypts_for_provider(
+        self,
+        mock_get_client,
+    ):
+        mock_client = MagicMock()
+        mock_client.issue_billing_key.side_effect = (
+            lambda *, auth_key, customer_key: {
+                "success": True,
+                "billingKey": "bk_sensitive_provider_token",
+                "customerKey": customer_key,
+                "card": {"company": "삼성", "number": "**** 1234"},
+            }
+        )
+        mock_client.delete_billing_key.return_value = {"success": True}
+        mock_get_client.return_value = mock_client
+
+        billing_key = billing_key_service.issue_billing_key(
+            self.tenant.id,
+            "auth_key_test",
+        )
+        billing_key.refresh_from_db()
+
+        self.assertTrue(billing_key.billing_key.startswith("enc:v1:"))
+        self.assertNotIn("bk_sensitive_provider_token", billing_key.billing_key)
+        self.assertTrue(billing_key_service.delete_billing_key(billing_key.id))
+        mock_client.delete_billing_key.assert_called_once_with(
+            "bk_sensitive_provider_token"
         )
 
     @patch("apps.billing.services.billing_key_service._get_client")
@@ -143,6 +236,87 @@ class BillingKeyServiceTestCase(TestCase):
             BillingKey.objects.filter(tenant=self.tenant).count(), 0
         )
 
+    @patch("apps.billing.services.billing_key_service._get_client")
+    def test_issue_blocks_before_provider_call_during_processing_payment(self, mock_get_client):
+        self._processing_payment()
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        with self.assertRaisesRegex(ValueError, "결제 결과를 확인 중"):
+            billing_key_service.issue_billing_key(self.tenant.id, "auth_key")
+
+        mock_client.issue_billing_key.assert_not_called()
+
+    @patch("apps.billing.services.billing_key_service._get_client")
+    def test_issue_transport_unknown_preserves_local_key_state(self, mock_get_client):
+        mock_get_client.return_value.issue_billing_key.return_value = {
+            "success": False,
+            "error_code": "TIMEOUT",
+            "outcome_unknown": True,
+        }
+
+        with self.assertRaises(billing_key_service.BillingProviderOutcomeUnknown):
+            billing_key_service.issue_billing_key(self.tenant.id, "auth_unknown")
+
+        self.assertFalse(BillingKey.objects.filter(tenant=self.tenant).exists())
+
+    @patch("apps.billing.services.billing_key_service._get_client")
+    def test_issue_provider_success_then_db_failure_requires_reconciliation(
+        self,
+        mock_get_client,
+    ):
+        profile = BillingProfile.objects.create(
+            tenant=self.tenant,
+            provider="tosspayments",
+        )
+        mock_get_client.return_value.issue_billing_key.return_value = {
+            "success": True,
+            "billingKey": "bk_provider_applied",
+            "customerKey": profile.provider_customer_key,
+            "card": {"company": "삼성", "number": "**** 4321"},
+        }
+
+        with patch.object(
+            BillingKey.objects,
+            "create",
+            side_effect=IntegrityError("local write failed"),
+        ):
+            with self.assertRaises(
+                billing_key_service.BillingProviderOutcomeUnknown
+            ):
+                billing_key_service.issue_billing_key(
+                    self.tenant.id,
+                    "auth_provider_applied",
+                )
+
+        self.assertFalse(BillingKey.objects.filter(tenant=self.tenant).exists())
+        audit = OpsAuditLog.objects.get(
+            action="billing.card_reconciliation_required"
+        )
+        self.assertEqual(audit.target_tenant_id, self.tenant.id)
+        self.assertEqual(audit.payload["operation"], "issue")
+        self.assertNotIn("billingKey", audit.payload)
+
+    @patch("apps.billing.services.billing_key_service._get_client")
+    def test_issue_rejects_mismatched_customer_key_before_local_mutation(
+        self,
+        mock_get_client,
+    ):
+        mock_get_client.return_value.issue_billing_key.return_value = {
+            "success": True,
+            "billingKey": "bk_wrong_customer",
+            "customerKey": "cus_other_tenant",
+            "card": {"company": "삼성", "number": "**** 4321"},
+        }
+
+        with self.assertRaises(billing_key_service.BillingProviderOutcomeUnknown):
+            billing_key_service.issue_billing_key(
+                self.tenant.id,
+                "auth_wrong_customer",
+            )
+
+        self.assertFalse(BillingKey.objects.filter(tenant=self.tenant).exists())
+
     # ------------------------------------------------------------------
     # delete_billing_key
     # ------------------------------------------------------------------
@@ -203,6 +377,135 @@ class BillingKeyServiceTestCase(TestCase):
         """존재하지 않는 빌링키 삭제 시 False를 반환한다."""
         result = billing_key_service.delete_billing_key(99999)
         self.assertFalse(result)
+
+    @patch("apps.billing.services.billing_key_service._get_client")
+    def test_delete_blocks_before_provider_call_during_processing_payment(self, mock_get_client):
+        profile = BillingProfile.objects.create(
+            tenant=self.tenant,
+            provider="tosspayments",
+        )
+        bk = BillingKey.objects.create(
+            tenant=self.tenant,
+            billing_profile=profile,
+            billing_key="bk_processing_guard",
+            is_active=True,
+        )
+        self._processing_payment()
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        with self.assertRaisesRegex(ValueError, "결제 결과를 확인 중"):
+            billing_key_service.delete_billing_key(bk.id)
+
+        mock_client.delete_billing_key.assert_not_called()
+        bk.refresh_from_db()
+        self.assertTrue(bk.is_active)
+
+    @patch("apps.billing.services.billing_key_service._get_client")
+    def test_delete_transport_unknown_keeps_local_key_active(self, mock_get_client):
+        profile = BillingProfile.objects.create(
+            tenant=self.tenant,
+            provider="tosspayments",
+        )
+        bk = BillingKey.objects.create(
+            tenant=self.tenant,
+            billing_profile=profile,
+            billing_key="bk_delete_unknown",
+            is_active=True,
+        )
+        mock_get_client.return_value.delete_billing_key.return_value = {
+            "success": False,
+            "error_code": "CONNECTION_ERROR",
+            "outcome_unknown": True,
+        }
+
+        with self.assertRaises(billing_key_service.BillingProviderOutcomeUnknown):
+            billing_key_service.delete_billing_key(bk.id)
+
+        bk.refresh_from_db()
+        self.assertTrue(bk.is_active)
+
+    @override_settings(
+        BILLING_KEY_ENCRYPTION_PRIMARY_KEY=TEST_BILLING_KEK,
+        BILLING_KEY_ENCRYPTION_FALLBACK_KEYS=(),
+        BILLING_KEY_ENCRYPTION_WRITE_ENABLED=True,
+    )
+    @patch("apps.billing.services.billing_key_service._get_client")
+    def test_delete_undecryptable_key_is_local_security_failure(
+        self,
+        mock_get_client,
+    ):
+        profile = BillingProfile.objects.create(
+            tenant=self.tenant,
+            provider="tosspayments",
+        )
+        bk = BillingKey.objects.create(
+            tenant=self.tenant,
+            billing_profile=profile,
+            billing_key="provider-key-before-corruption",
+            is_active=True,
+        )
+        BillingKey.objects.filter(pk=bk.pk).update(
+            billing_key="enc:v1:corrupt-ciphertext"
+        )
+        mock_client = MagicMock()
+        mock_get_client.return_value = mock_client
+
+        with self.assertRaises(billing_key_service.BillingCredentialUnavailable):
+            billing_key_service.delete_billing_key(bk.id)
+
+        mock_client.delete_billing_key.assert_not_called()
+        bk.refresh_from_db()
+        self.assertTrue(bk.is_active)
+        self.assertFalse(
+            OpsAuditLog.objects.filter(
+                action="billing.card_reconciliation_required",
+                target_tenant=self.tenant,
+            ).exists()
+        )
+        security_audit = OpsAuditLog.objects.get(
+            action="billing.card_configuration_failed",
+            target_tenant=self.tenant,
+        )
+        self.assertEqual(security_audit.payload["stage"], "decrypt")
+
+    @patch("apps.billing.services.billing_key_service._get_client")
+    def test_delete_provider_success_then_db_failure_requires_reconciliation(
+        self,
+        mock_get_client,
+    ):
+        profile = BillingProfile.objects.create(
+            tenant=self.tenant,
+            provider="tosspayments",
+        )
+        bk = BillingKey.objects.create(
+            tenant=self.tenant,
+            billing_profile=profile,
+            billing_key="bk_delete_provider_applied",
+            is_active=True,
+        )
+        mock_get_client.return_value.delete_billing_key.return_value = {
+            "success": True,
+        }
+
+        with patch.object(
+            BillingKey,
+            "save",
+            side_effect=RuntimeError("local deactivate failed"),
+        ):
+            with self.assertRaises(
+                billing_key_service.BillingProviderOutcomeUnknown
+            ):
+                billing_key_service.delete_billing_key(bk.id)
+
+        bk.refresh_from_db()
+        self.assertTrue(bk.is_active)
+        audit = OpsAuditLog.objects.get(
+            action="billing.card_reconciliation_required"
+        )
+        self.assertEqual(audit.payload["operation"], "delete")
+        self.assertEqual(audit.payload["billing_key_id"], bk.id)
+        self.assertNotIn("billing_key", audit.payload)
 
     # ------------------------------------------------------------------
     # get_active_billing_key / list_billing_keys

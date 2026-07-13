@@ -4,6 +4,7 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.domains.clinic.tests import ClinicTestMixin
+from apps.core.models import TenantMembership
 from apps.domains.results.views.admin_student_grades_view import AdminStudentGradesView
 
 
@@ -25,6 +26,11 @@ class AdminStudentGradesScopeTest(TestCase, ClinicTestMixin):
         if hasattr(self.admin_user, "tenant_id"):
             self.admin_user.tenant_id = self.tenant.id
             self.admin_user.save(update_fields=["tenant_id"])
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=self.admin_user,
+            role="admin",
+        )
 
     def _get(self, student_id):
         request = self.factory.get(

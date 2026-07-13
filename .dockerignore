@@ -17,12 +17,10 @@ ENV/
 *.egg-info/
 *.egg
 
-# Environment — 로컬 설정 (빌드 시 포함 금지)
-.env
-.env.local
-.env.*.local
-.env.development
-.env.production
+# Environment — 모든 실제 로컬 설정 차단, 배포 예시 파일만 허용
+.env*
+!.env.example
+!.env.*.example
 
 # Django / Local
 *.log

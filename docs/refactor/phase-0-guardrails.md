@@ -33,8 +33,9 @@ Current:
 - `scripts/lint/refactor_boundary_snapshot.py` exists in baseline mode.
 - `scripts/lint/refactor_boundary_snapshot.py --strict-touched` exists for
   touched-file strict mode. With no extra options it inspects the current
-  working tree; with `--base-ref <ref>` it inspects `ref...HEAD`; with
-  `--touched-file <path>` it inspects explicit paths.
+  working tree against `HEAD` and fails only on newly introduced finding
+  identities; with `--base-ref <ref>` it inspects `ref...HEAD`; with
+  `--touched-file <path>` it inspects explicit paths strictly.
 - Strict touched mode fails on direct internal cross-domain imports,
   domain infrastructure imports, kernel Django imports, adapter reverse imports,
   and parse/decode errors. Public cross-domain selector imports are reported and
@@ -42,9 +43,9 @@ Current:
 - `scripts/lint/refactor_boundary_snapshot.py --enforce-baseline` fails when
   any current boundary finding count exceeds the committed baseline.
 - Backend deploy workflow `run-lint` runs the touched-file guard against the push
-  range, so new main pushes cannot touch scanned boundary-risk files without
-  clearing their boundary findings. It also runs the baseline guard so total
-  boundary debt cannot increase silently in untouched files.
+  range, so new main pushes cannot introduce new boundary identities in scanned
+  files. Existing debt in a safely edited file remains visible but is not
+  reclassified as new; the baseline guard separately prevents aggregate drift.
 - adapter -> application boundary scan allows application port/cancellation
   contracts and reports concrete use-case imports as violations.
 

@@ -7,6 +7,7 @@
 | 파일 | 생성 주체 | 갱신 |
 |------|-----------|------|
 | [ci-build.latest.md](ci-build.latest.md) | `.github/workflows/v1-build-and-push-latest.yml` | main push 시 |
+| `release-manifest.latest.json` | 같은 workflow의 `verify-deployment` | 6개 이미지 배포·실런타임 검증 성공 후에만 |
 | [production-canary.latest.md](production-canary.latest.md) | `scripts/v1/run-production-canary.ps1` | post-deploy canary 시 |
 | [deploy-verification-latest.md](deploy-verification-latest.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |
 | [V1-FINAL-REPORT.md](V1-FINAL-REPORT.md) | `scripts/v1/run-deploy-verification.ps1` | 배포 검증 시 |

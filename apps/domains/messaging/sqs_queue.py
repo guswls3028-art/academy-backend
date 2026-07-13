@@ -21,7 +21,7 @@ from libs.queue import get_queue_client
 logger = logging.getLogger(__name__)
 
 
-def _build_business_key(
+def build_business_idempotency_key(
     tenant_id: int,
     source_tenant_id: int | None,
     channel: str,
@@ -173,7 +173,7 @@ class MessagingSQSQueue:
         if et:
             message["event_type"] = et[:30]
         resolved_occurrence_key = occurrence_key or f"manual-{uuid4().hex}"
-        message["business_idempotency_key"] = _build_business_key(
+        message["business_idempotency_key"] = build_business_idempotency_key(
             tenant_id=int(tenant_id),
             source_tenant_id=int(source_tenant_id) if source_tenant_id is not None else None,
             channel=mode,
@@ -205,7 +205,8 @@ class MessagingSQSQueue:
         SQS에서 메시지 수신 (Long Polling)
 
         Returns:
-            dict: { to, text, sender, receipt_handle, message_id, created_at } 또는 None
+            dict: enqueue payload 전체와 receipt_handle/message_id 또는 None.
+            business_idempotency_key와 source/target 메타데이터를 유실하지 않는다.
         """
         try:
             raw = self.queue_client.receive_message(
@@ -227,21 +228,32 @@ class MessagingSQSQueue:
             else:
                 data = body
             if not isinstance(data, dict) or "to" not in data or "text" not in data:
-                logger.error("Invalid message format: %s", data)
+                logger.error(
+                    "Invalid message format: message_id=%s payload_type=%s keys=%s",
+                    raw.get("MessageId"),
+                    type(data).__name__,
+                    sorted(str(key) for key in data.keys())[:30]
+                    if isinstance(data, dict)
+                    else [],
+                )
                 return None
-            return {
-                "tenant_id": data.get("tenant_id"),
-                "to": str(data.get("to", "")),
-                "text": str(data.get("text", "")),
-                "sender": (data.get("sender") or "").strip() or None,
-                "receipt_handle": receipt_handle,
-                "message_id": raw.get("MessageId"),
-                "created_at": data.get("created_at"),
-                "reservation_id": data.get("reservation_id"),
-                "message_mode": (data.get("message_mode") or "").strip().lower() or "alimtalk",
-                "template_id": data.get("template_id"),
-                "alimtalk_replacements": data.get("alimtalk_replacements") or [],
-            }
+            message = dict(data)
+            message.update(
+                {
+                    "tenant_id": data.get("tenant_id"),
+                    "to": str(data.get("to", "")),
+                    "text": str(data.get("text", "")),
+                    "sender": (data.get("sender") or "").strip() or None,
+                    "receipt_handle": receipt_handle,
+                    "message_id": raw.get("MessageId"),
+                    "created_at": data.get("created_at"),
+                    "reservation_id": data.get("reservation_id"),
+                    "message_mode": (data.get("message_mode") or "").strip().lower() or "alimtalk",
+                    "template_id": data.get("template_id"),
+                    "alimtalk_replacements": data.get("alimtalk_replacements") or [],
+                }
+            )
+            return message
         except Exception as e:
             logger.exception("Error receiving messaging message: %s", e)
             return None

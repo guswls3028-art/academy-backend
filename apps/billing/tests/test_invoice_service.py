@@ -9,13 +9,19 @@ InvoiceService 단위 테스트.
 - exempt 테넌트 제외
 """
 
-from datetime import date
+from datetime import date, timedelta
+from io import StringIO
+from unittest.mock import patch
 
+from django.core.management import call_command
 from django.test import TestCase, override_settings
 
-from apps.billing.models import Invoice
+from apps.billing.models import Invoice, PaymentTransaction
 from apps.billing.services import invoice_service
-from apps.billing.services.invoice_service import InvoiceTransitionError
+from apps.billing.services.invoice_service import (
+    BillingPriceIntegrityError,
+    InvoiceTransitionError,
+)
 from apps.core.models.program import Program
 from apps.core.models.tenant import Tenant
 
@@ -55,6 +61,15 @@ class TestCreateInvoice(InvoiceServiceTestBase):
         self.assertTrue(inv.invoice_number.startswith("INV-202604-test_inv-"))
         self.assertTrue(inv.provider_order_id.startswith("ord_"))
 
+    def test_manual_invoice_is_payable_immediately_and_due_date_is_deadline(self):
+        self.program.billing_mode = "INVOICE_REQUEST"
+        self.program.save(update_fields=["billing_mode"])
+
+        inv = invoice_service.create_for_next_period(self.program)
+
+        self.assertEqual(inv.status, "PENDING")
+        self.assertEqual(inv.due_date, inv.period_start + timedelta(days=15))
+
     def test_duplicate_invoice_prevented(self):
         """동일 기간 중복 인보이스 방지"""
         inv1 = invoice_service.create_for_next_period(self.program)
@@ -68,16 +83,70 @@ class TestCreateInvoice(InvoiceServiceTestBase):
         inv = invoice_service.create_for_next_period(self.program)
         self.assertIsNone(inv)
 
+    def test_create_rechecks_cancelled_program_under_lock(self):
+        self.program.cancel_at_period_end = True
+        self.program.save(update_fields=["cancel_at_period_end"])
+
+        inv = invoice_service.create_for_next_period(self.program)
+
+        self.assertIsNone(inv)
+        self.assertFalse(Invoice.objects.filter(tenant=self.tenant).exists())
+
+    def test_create_rechecks_inactive_program_under_lock(self):
+        self.program.is_active = False
+        self.program.save(update_fields=["is_active"])
+
+        inv = invoice_service.create_for_next_period(self.program)
+
+        self.assertIsNone(inv)
+
     def test_exempt_tenant_returns_none(self):
         """exempt 테넌트는 인보이스 생성 안 됨"""
         with self.settings(BILLING_EXEMPT_TENANT_IDS={self.tenant.id}):
             inv = invoice_service.create_for_next_period(self.program)
             self.assertIsNone(inv)
 
+    def test_contract_tenant_invoice_uses_explicit_vat_breakdown(self):
+        self.tenant.code = "ymath"
+        self.tenant.save(update_fields=["code"])
+        self.program.monthly_price = 150_000
+        self.program.save(update_fields=["monthly_price"])
+
+        inv = invoice_service.create_for_next_period(self.program)
+
+        self.assertEqual(inv.supply_amount, 150_000)
+        self.assertEqual(inv.tax_amount, 15_000)
+        self.assertEqual(inv.total_amount, 165_000)
+
+    def test_contract_price_drift_fails_closed_without_invoice(self):
+        self.tenant.code = "ymath"
+        self.tenant.save(update_fields=["code"])
+        Program.objects.filter(pk=self.program.pk).update(monthly_price=198_000)
+        self.program.refresh_from_db()
+
+        with self.assertRaises(BillingPriceIntegrityError):
+            invoice_service.create_for_next_period(self.program)
+
+        self.assertFalse(Invoice.objects.filter(tenant=self.tenant).exists())
+
+    def test_contract_price_drift_is_blocking_in_read_only_audit(self):
+        self.tenant.code = "ymath"
+        self.tenant.save(update_fields=["code"])
+        Program.objects.filter(pk=self.program.pk).update(monthly_price=198_000)
+        output = StringIO()
+
+        call_command("audit_billing_fields", tenant="ymath", stdout=output)
+
+        audit = output.getvalue()
+        self.assertIn("contract_price_mismatch", audit)
+        self.assertIn("new invoice creation is blocked", audit)
+
 
 class TestInvoiceTransitions(InvoiceServiceTestBase):
 
     def _create_invoice(self, status="SCHEDULED"):
+        period_start = date.today() + timedelta(days=1)
+        period_end = period_start + timedelta(days=29)
         return Invoice.objects.create(
             tenant=self.tenant,
             invoice_number=f"INV-TEST-{Invoice.objects.count():03d}",
@@ -86,9 +155,9 @@ class TestInvoiceTransitions(InvoiceServiceTestBase):
             supply_amount=198_000,
             tax_amount=19_800,
             total_amount=217_800,
-            period_start=date(2026, 4, 13),
-            period_end=date(2026, 5, 12),
-            due_date=date(2026, 4, 13),
+            period_start=period_start,
+            period_end=period_end,
+            due_date=period_start,
             status=status,
         )
 
@@ -104,7 +173,69 @@ class TestInvoiceTransitions(InvoiceServiceTestBase):
         self.assertIsNotNone(result.paid_at)
         # 구독 갱신 확인
         self.program.refresh_from_db()
-        self.assertEqual(self.program.subscription_expires_at, date(2026, 5, 12))
+        self.assertEqual(self.program.subscription_expires_at, inv.period_end)
+
+    def test_historical_receivable_payment_does_not_reactivate_subscription(self):
+        self.program.subscription_status = "expired"
+        original_expiry = date.today() - timedelta(days=60)
+        self.program.subscription_expires_at = original_expiry
+        self.program.save(
+            update_fields=["subscription_status", "subscription_expires_at"]
+        )
+        inv = Invoice.objects.create(
+            tenant=self.tenant,
+            invoice_number="INV-HISTORICAL-001",
+            plan="pro",
+            billing_mode="INVOICE_REQUEST",
+            supply_amount=198_000,
+            tax_amount=19_800,
+            total_amount=217_800,
+            period_start=date.today() - timedelta(days=45),
+            period_end=date.today() - timedelta(days=15),
+            due_date=date.today() - timedelta(days=30),
+            status="PENDING",
+        )
+
+        invoice_service.mark_paid(inv.pk)
+
+        inv.refresh_from_db()
+        self.program.refresh_from_db()
+        self.assertEqual(inv.status, "PAID")
+        self.assertEqual(self.program.subscription_status, "expired")
+        self.assertEqual(self.program.subscription_expires_at, original_expiry)
+
+    def test_late_payment_does_not_regress_later_subscription_expiry(self):
+        later_expiry = date.today() + timedelta(days=90)
+        self.program.subscription_status = "active"
+        self.program.subscription_expires_at = later_expiry
+        self.program.next_billing_at = later_expiry
+        self.program.save(
+            update_fields=[
+                "subscription_status",
+                "subscription_expires_at",
+                "next_billing_at",
+            ]
+        )
+        invoice_end = date.today() + timedelta(days=30)
+        inv = Invoice.objects.create(
+            tenant=self.tenant,
+            invoice_number="INV-LATE-NO-REGRESS",
+            plan="pro",
+            billing_mode="INVOICE_REQUEST",
+            supply_amount=198_000,
+            tax_amount=19_800,
+            total_amount=217_800,
+            period_start=date.today(),
+            period_end=invoice_end,
+            due_date=date.today(),
+            status="PENDING",
+        )
+
+        invoice_service.mark_paid(inv.pk)
+
+        self.program.refresh_from_db()
+        self.assertEqual(self.program.subscription_expires_at, later_expiry)
+        self.assertEqual(self.program.next_billing_at, later_expiry)
 
     def test_pending_to_failed(self):
         inv = self._create_invoice("PENDING")
@@ -148,11 +279,10 @@ class TestInvoiceTransitions(InvoiceServiceTestBase):
 
 class TestMarkPaidRenewsSubscription(InvoiceServiceTestBase):
 
-    def test_mark_paid_renews_subscription(self):
-        """입금 확인 시 구독이 자동 갱신된다"""
+    def test_manual_confirmation_persists_reconciliation_transaction(self):
         inv = Invoice.objects.create(
             tenant=self.tenant,
-            invoice_number="INV-RENEW-001",
+            invoice_number="INV-MANUAL-001",
             plan="pro",
             billing_mode="INVOICE_REQUEST",
             supply_amount=198_000,
@@ -164,17 +294,77 @@ class TestMarkPaidRenewsSubscription(InvoiceServiceTestBase):
             status="PENDING",
         )
 
+        paid = invoice_service.confirm_manual_payment(inv.pk)
+
+        transaction = PaymentTransaction.objects.get(invoice=inv)
+        self.assertEqual(paid.status, "PAID")
+        self.assertEqual(transaction.status, "SUCCESS")
+        self.assertEqual(transaction.provider, "manual")
+        self.assertEqual(transaction.payment_method, "manual")
+        self.assertEqual(transaction.amount, inv.total_amount)
+        self.assertEqual(transaction.provider_order_id, inv.provider_order_id)
+
+    def test_manual_confirmation_rolls_back_when_reconciliation_write_fails(self):
+        inv = Invoice.objects.create(
+            tenant=self.tenant,
+            invoice_number="INV-MANUAL-ROLLBACK-001",
+            plan="pro",
+            billing_mode="INVOICE_REQUEST",
+            supply_amount=198_000,
+            tax_amount=19_800,
+            total_amount=217_800,
+            period_start=date(2026, 4, 13),
+            period_end=date(2026, 5, 12),
+            due_date=date(2026, 4, 28),
+            status="PENDING",
+        )
+        original_expiry = self.program.subscription_expires_at
+
+        with patch(
+            "apps.billing.services.invoice_service.PaymentTransaction.objects.create",
+            side_effect=RuntimeError("reconciliation unavailable"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "reconciliation unavailable"):
+                invoice_service.confirm_manual_payment(inv.pk)
+
+        inv.refresh_from_db()
+        self.program.refresh_from_db()
+        self.assertEqual(inv.status, "PENDING")
+        self.assertIsNone(inv.paid_at)
+        self.assertEqual(self.program.subscription_expires_at, original_expiry)
+        self.assertFalse(PaymentTransaction.objects.filter(invoice=inv).exists())
+
+    def test_mark_paid_renews_subscription(self):
+        """입금 확인 시 구독이 자동 갱신된다"""
+        period_start = date.today() + timedelta(days=1)
+        period_end = period_start + timedelta(days=29)
+        inv = Invoice.objects.create(
+            tenant=self.tenant,
+            invoice_number="INV-RENEW-001",
+            plan="pro",
+            billing_mode="INVOICE_REQUEST",
+            supply_amount=198_000,
+            tax_amount=19_800,
+            total_amount=217_800,
+            period_start=period_start,
+            period_end=period_end,
+            due_date=period_start,
+            status="PENDING",
+        )
+
         invoice_service.mark_paid(inv.pk)
 
         self.program.refresh_from_db()
         self.assertEqual(self.program.subscription_status, "active")
-        self.assertEqual(self.program.subscription_expires_at, date(2026, 5, 12))
+        self.assertEqual(self.program.subscription_expires_at, period_end)
 
     def test_mark_paid_from_grace_restores_active(self):
         """grace 상태에서 입금 확인 시 active 복원"""
         self.program.subscription_status = "grace"
         self.program.save(update_fields=["subscription_status"])
 
+        period_start = date.today() + timedelta(days=1)
+        period_end = period_start + timedelta(days=29)
         inv = Invoice.objects.create(
             tenant=self.tenant,
             invoice_number="INV-GRACE-001",
@@ -183,9 +373,9 @@ class TestMarkPaidRenewsSubscription(InvoiceServiceTestBase):
             supply_amount=198_000,
             tax_amount=19_800,
             total_amount=217_800,
-            period_start=date(2026, 4, 13),
-            period_end=date(2026, 5, 12),
-            due_date=date(2026, 4, 13),
+            period_start=period_start,
+            period_end=period_end,
+            due_date=period_start,
             status="PENDING",
         )
 

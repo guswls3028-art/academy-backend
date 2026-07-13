@@ -59,8 +59,15 @@ def ensure_session_roster_membership(*, tenant, session, enrollment) -> SessionR
         raise ValidationError({"detail": "다른 강의 수강자는 이 세션에 추가할 수 없습니다."})
 
     if enrollment.status != "ACTIVE":
-        enrollment.status = "ACTIVE"
-        enrollment.save(update_fields=["status"])
+        raise ValidationError(
+            {
+                "detail": (
+                    "비활성 또는 대기 중인 수강 등록은 출결 명단에서 자동으로 "
+                    "재활성화할 수 없습니다. 먼저 수강 등록 화면에서 명시적으로 "
+                    "재등록해 주세요."
+                )
+            }
+        )
 
     auto_assign_roster_fees(
         tenant=tenant,

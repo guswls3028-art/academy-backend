@@ -14,13 +14,15 @@ from datetime import date, timedelta
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from apps.billing.models import BillingKey, BillingProfile
-from apps.core.models import Tenant, TenantMembership
+from apps.core.models import OpsAuditLog, Tenant, TenantMembership
 from apps.core.models.program import Program
 
 User = get_user_model()
+TEST_BILLING_KEK = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
 MOCK_ISSUE_RESPONSE = {
     "success": True,
@@ -90,10 +92,14 @@ class TestCardRegisterPrepare(CardApiTestBase):
 
 
 class TestCardRegisterCallback(CardApiTestBase):
+    @override_settings(BILLING_KEY_ENCRYPTION_WRITE_ENABLED=False)
     @patch("apps.billing.services.billing_key_service._get_client")
     def test_callback_issues_billing_key(self, mock_client_fn):
         mock_client = mock_client_fn.return_value
-        mock_client.issue_billing_key.return_value = MOCK_ISSUE_RESPONSE
+        mock_client.issue_billing_key.side_effect = lambda *, auth_key, customer_key: {
+            **MOCK_ISSUE_RESPONSE,
+            "customerKey": customer_key,
+        }
 
         self.client.force_authenticate(user=self.owner)
         resp = self.client.post(
@@ -134,6 +140,29 @@ class TestCardRegisterCallback(CardApiTestBase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("INVALID_AUTH_KEY", resp.data["detail"])
 
+    @patch(
+        "apps.billing.services.billing_key_service._get_client",
+        side_effect=RuntimeError("local client configuration unavailable"),
+    )
+    def test_callback_local_configuration_failure_is_503(self, _mock_client_fn):
+        self.client.force_authenticate(user=self.owner)
+
+        resp = self.client.post(
+            "/api/v1/billing/card/register/callback/",
+            {"authKey": "validly-shaped-auth-key"},
+            format="json",
+            **self.headers,
+        )
+
+        self.assertEqual(resp.status_code, 503, resp.data)
+        self.assertNotIn("reconciliation_required", resp.data)
+        audit = OpsAuditLog.objects.get(
+            action="billing.card_configuration_failed",
+            target_tenant=self.tenant,
+        )
+        self.assertEqual(audit.payload["operation"], "issue")
+        self.assertEqual(audit.payload["stage"], "client_init")
+
 
 class TestCardDelete(CardApiTestBase):
     def _create_billing_key(self):
@@ -170,6 +199,50 @@ class TestCardDelete(CardApiTestBase):
 
         bk.refresh_from_db()
         self.assertTrue(bk.is_active)  # 로컬 보호!
+
+    @patch(
+        "apps.billing.services.billing_key_service._get_client",
+        side_effect=RuntimeError("local client configuration unavailable"),
+    )
+    def test_delete_local_configuration_failure_is_503(self, _mock_client_fn):
+        bk = self._create_billing_key()
+        self.client.force_authenticate(user=self.owner)
+
+        resp = self.client.delete(f"/api/v1/billing/cards/{bk.pk}/", **self.headers)
+
+        self.assertEqual(resp.status_code, 503, resp.data)
+        self.assertNotIn("reconciliation_required", resp.data)
+        bk.refresh_from_db()
+        self.assertTrue(bk.is_active)
+        audit = OpsAuditLog.objects.get(
+            action="billing.card_configuration_failed",
+            target_tenant=self.tenant,
+        )
+        self.assertEqual(audit.payload["stage"], "client_init")
+
+    @override_settings(
+        BILLING_KEY_ENCRYPTION_PRIMARY_KEY=TEST_BILLING_KEK,
+        BILLING_KEY_ENCRYPTION_FALLBACK_KEYS=(),
+        BILLING_KEY_ENCRYPTION_WRITE_ENABLED=True,
+    )
+    @patch("apps.billing.services.billing_key_service._get_client")
+    def test_delete_undecryptable_credential_is_503(self, mock_client_fn):
+        bk = self._create_billing_key()
+        BillingKey.objects.filter(pk=bk.pk).update(
+            billing_key="enc:v1:corrupt-ciphertext"
+        )
+        self.client.force_authenticate(user=self.owner)
+
+        resp = self.client.delete(f"/api/v1/billing/cards/{bk.pk}/", **self.headers)
+
+        self.assertEqual(resp.status_code, 503, resp.data)
+        self.assertNotIn("reconciliation_required", resp.data)
+        mock_client_fn.return_value.delete_billing_key.assert_not_called()
+        audit = OpsAuditLog.objects.get(
+            action="billing.card_configuration_failed",
+            target_tenant=self.tenant,
+        )
+        self.assertEqual(audit.payload["stage"], "decrypt")
 
     def test_staff_cannot_delete(self):
         bk = self._create_billing_key()

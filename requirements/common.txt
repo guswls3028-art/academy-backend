@@ -4,6 +4,7 @@
 
 # HTTP / Utils
 requests
+cryptography
 urllib3
 charset-normalizer
 idna

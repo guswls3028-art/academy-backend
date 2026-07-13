@@ -1,10 +1,15 @@
+import json
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
+from django.http import JsonResponse
 from django.test import TestCase, override_settings
-from rest_framework.test import APIClient
+from rest_framework.test import APIClient, APIRequestFactory
 
 from apps.api.common.auth_jwt import TenantAwareTokenObtainPairSerializer
-from apps.core.models import Tenant, TenantDomain
+from apps.core.models import Tenant, TenantDomain, TenantMembership
 from apps.core.models.user import user_internal_username
+from apps.core.middleware.tenant import TenantMiddleware
 
 
 class TenantMiddlewareBypassTests(TestCase):
@@ -19,13 +24,14 @@ class TenantMiddlewareBypassTests(TestCase):
         )
 
         user_model = get_user_model()
-        user_model.objects.create_user(
+        user = user_model.objects.create_user(
             username=user_internal_username(self.tenant, "admin"),
             password="pw123456",
             tenant=self.tenant,
             must_change_password=False,
             token_version=0,
         )
+        TenantMembership.ensure_active(tenant=self.tenant, user=user, role="admin")
 
     @override_settings(
         ALLOWED_HOSTS=["api.hakwonplus.com", "testserver"],
@@ -74,3 +80,19 @@ class TenantMiddlewareBypassTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["code"], "tenant_inactive")
+
+    @patch(
+        "apps.core.middleware.tenant.resolve_tenant_from_request",
+        side_effect=RuntimeError("SECRET_DATABASE_DSN_MARKER"),
+    )
+    def test_unexpected_resolver_error_never_leaks_exception_text(self, _resolve):
+        request = APIRequestFactory().get("/api/v1/core/program/")
+        request.META["HTTP_HOST"] = "testserver"
+        middleware = TenantMiddleware(lambda _request: JsonResponse({"ok": True}))
+
+        response = middleware(request)
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(payload["code"], "server_error")
+        self.assertNotIn("SECRET_DATABASE_DSN_MARKER", response.content.decode())

@@ -48,11 +48,12 @@
    ```
    → 결과를 AI에게 보여주고 판단 요청
 
-2. **AI가 "롤백 필요"라고 하면:**
-   ```
-   powershell -File scripts/v1/run-with-env.ps1 -- pwsh -File scripts/v1/rollback-api.ps1
-   ```
-   → 스크립트가 안내하는 대로 Y/N만 입력
+2. **AI가 복구가 필요하다고 판단하면:**
+   - API/Messaging 장애는 image rollback이 fail-closed이므로 운영자에게 즉시 연락하고
+     새 immutable image roll-forward를 요청
+   - AI/Tools처럼 runtime-isolated 서비스만 AI가 지정한 SHA와 스크립트를 그대로 실행
+   - API/Messaging wrapper를 실행해도 `STATEFUL_IMAGE_ROLLBACK_BLOCKED` 이후 AWS
+     변경 없이 종료되며 우회하지 않음
 
 3. **절대 하지 말 것:**
    - 코드 수정 (git commit/push)
@@ -62,7 +63,7 @@
 
 4. **할 수 있는 것:**
    - 상태 점검 스크립트 실행 (읽기 전용)
-   - 롤백 스크립트 실행 (Y/N 확인 포함)
+   - AI가 명시한 runtime-isolated rollback 스크립트만 실행
    - AI에게 결과 보여주고 다음 행동 질문
    - 운영자에게 연락 시도
 
@@ -83,8 +84,8 @@
 ## 비상모드 대리자를 위한 3줄 요약
 
 1. **상태 확인** → `run-ops-healthcheck.ps1` 실행 → 결과를 AI에게 보여줌
-2. **AI 지시 따름** → AI가 알려주는 스크립트 실행 → Y/N만 선택
-3. **코드/DB/삭제는 절대 하지 않음** → 상태 확인 + 롤백만 가능
+2. **AI 지시 따름** → API/Messaging이면 운영자에게 roll-forward 요청
+3. **코드/DB/삭제는 절대 하지 않음** → 읽기 점검 + 허용된 runtime rollback만 가능
 
 ---
 
@@ -93,8 +94,8 @@
 | 스크립트 | 용도 | 위험도 |
 |---------|------|--------|
 | `run-ops-healthcheck.ps1` | 전체 상태 점검 | 없음 (읽기 전용) |
-| `rollback-api.ps1` | API 서버 롤백 | 낮음 (확인 프롬프트 있음) |
-| `rollback-messaging.ps1` | 메시징 워커 롤백 | 낮음 |
+| `rollback-api.ps1` | Stateful rollback 정책 확인 | mutation 전 fail-closed |
+| `rollback-messaging.ps1` | Stateful rollback 정책 확인 | mutation 전 fail-closed |
 | `rollback-ai.ps1` | AI 워커 롤백 | 낮음 |
 | `ecr-cleanup.py --verify` | ECR 상태 확인 | 없음 (읽기 전용) |
 

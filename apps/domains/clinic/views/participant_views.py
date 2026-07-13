@@ -27,12 +27,27 @@ from ..services import (
 )
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.core.services.tenant_access import STAFF_ROLES, get_active_membership_role
 from apps.support.clinic.session_dependencies import (
     get_student_for_clinic_request,
     send_clinic_event_notification,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _get_request_student_for_clinic(request):
+    tenant = getattr(request, "tenant", None)
+    user = getattr(request, "user", None)
+    role = get_active_membership_role(user, tenant)
+    if role in STAFF_ROLES:
+        return None
+    if role not in ("student", "parent"):
+        raise PermissionDenied("클리닉 이용 권한을 확인할 수 없습니다.")
+    student = get_student_for_clinic_request(request)
+    if student is None:
+        raise PermissionDenied("선택한 학생 정보를 확인할 수 없습니다.")
+    return student
 
 
 def _send_clinic_notification(tenant, student, trigger, context=None):
@@ -88,7 +103,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         )
 
         # 학생이 조회하는 경우: 자신의 예약 신청만 조회
-        student = get_student_for_clinic_request(self.request)
+        student = _get_request_student_for_clinic(self.request)
         if student:
             qs = qs.filter(student=student)
 
@@ -112,13 +127,14 @@ class ParticipantViewSet(viewsets.ModelViewSet):
                 {"tenant": "테넌트 컨텍스트가 필요합니다. (호스트 또는 X-Tenant-Code 확인)"}
             )
 
+        request_student = _get_request_student_for_clinic(request)
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         result = create_participant(
             tenant=tenant,
             validated_data=serializer.validated_data,
-            request_student=get_student_for_clinic_request(request),
+            request_student=request_student,
         )
         obj = result.participant
         if result.notification:
@@ -149,7 +165,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
         next_status = request.data.get("status")
         memo = request.data.get("memo")
 
-        request_student = get_student_for_clinic_request(request)
+        request_student = _get_request_student_for_clinic(request)
         if request_student is None and not TenantResolvedAndStaff().has_permission(request, self):
             raise PermissionDenied("클리닉 상태 변경은 스태프만 가능합니다.")
 
@@ -252,7 +268,7 @@ class ParticipantViewSet(viewsets.ModelViewSet):
             tenant=tenant,
             participant_id=pk,
             new_session_id=new_session_id,
-            request_student=get_student_for_clinic_request(request),
+            request_student=_get_request_student_for_clinic(request),
             actor=request.user,
             memo=memo,
         )

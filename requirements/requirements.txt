@@ -2,6 +2,7 @@
 -c constraints.txt
 # Django / DB / AWS / API
 requests
+cryptography
 urllib3
 charset-normalizer
 idna

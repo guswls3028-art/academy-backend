@@ -33,6 +33,12 @@ class ExamQuestionIdMap:
         return set(self.question_number_to_pk.keys())
 
 
+def request_is_parent(request: Any) -> bool:
+    from apps.domains.student_app.permissions import is_request_parent
+
+    return is_request_parent(request)
+
+
 def grade_submission_objective(submission_id: int):
     from apps.domains.results.services.grading_service import grade_submission
 

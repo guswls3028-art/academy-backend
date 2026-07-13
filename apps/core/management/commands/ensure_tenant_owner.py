@@ -97,13 +97,10 @@ class Command(BaseCommand):
                 )
                 self.stdout.write(self.style.SUCCESS(f"Created User: {user_display_username(user)}"))
 
-            membership = core_repo.membership_ensure_active(tenant=tenant, user=user, role="owner")
-            if membership.role != "owner":
-                membership.role = "owner"
-                membership.save(update_fields=["role"])
-                self.stdout.write(self.style.SUCCESS(f"Updated TenantMembership to role=owner"))
-            else:
-                self.stdout.write(f"TenantMembership already owner: {tenant.code} / {user_display_username(user)}")
+            core_repo.membership_ensure_active(tenant=tenant, user=user, role="owner")
+            self.stdout.write(
+                f"TenantMembership ensured owner: {tenant.code} / {user_display_username(user)}"
+            )
 
             if not (getattr(tenant, "owner_name", None) or "").strip():
                 display = (getattr(user, "name", None) or "").strip() or user_display_username(user) or "원장"

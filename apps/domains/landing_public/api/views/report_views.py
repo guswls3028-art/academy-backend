@@ -45,10 +45,9 @@ def _is_user_in_tenant(tenant, user) -> bool:
 
 
 def _get_client_ip(request) -> str | None:
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
-    if forwarded:
-        return forwarded.split(",")[0].strip()[:45]
-    return (request.META.get("REMOTE_ADDR") or "")[:45] or None
+    from apps.core.services.client_ip import get_client_ip
+
+    return get_client_ip(request)[:45] or None
 
 
 def _target_queryset(tenant, kind: str, target_id: int):

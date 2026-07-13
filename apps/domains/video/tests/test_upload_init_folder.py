@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.lectures.models import Lecture, Session
 from apps.domains.video.models import Video, VideoFolder
 from apps.domains.video.views.video_views import VideoViewSet
 
 
 User = get_user_model()
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
 
 
 class VideoUploadInitFolderTests(TestCase):
@@ -65,6 +67,75 @@ class VideoUploadInitFolderTests(TestCase):
         video = Video.objects.get(pk=response.data["video"]["id"])
         self.assertEqual(video.folder_id, folder.id)
         self.assertEqual(response.data["video"]["folder"], folder.id)
+
+    def test_folder_upload_order_uses_folder_collection_not_session(self):
+        lecture = Lecture.get_or_create_system_lecture(self.tenant)
+        session = Session.objects.create(lecture=lecture, title="전체공개영상", order=1)
+        folder = VideoFolder.objects.create(
+            tenant=self.tenant,
+            session=session,
+            name="순서 폴더",
+        )
+        Video.objects.create(
+            tenant=self.tenant,
+            session=session,
+            folder=folder,
+            title="폴더 기존 영상",
+            order=7,
+        )
+        Video.objects.create(
+            tenant=self.tenant,
+            session=session,
+            title="세션 기존 영상",
+            order=99,
+        )
+
+        response = self._post_upload_init(
+            {
+                "session": session.id,
+                "folder": folder.id,
+                "title": "폴더 신규 영상",
+                "filename": "folder-order.mp4",
+            }
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        video = Video.objects.get(pk=response.data["video"]["id"])
+        self.assertEqual(video.order, 8)
+
+    def test_folderless_upload_order_ignores_folder_videos(self):
+        lecture = Lecture.get_or_create_system_lecture(self.tenant)
+        session = Session.objects.create(lecture=lecture, title="전체공개영상", order=1)
+        folder = VideoFolder.objects.create(
+            tenant=self.tenant,
+            session=session,
+            name="별도 폴더",
+        )
+        Video.objects.create(
+            tenant=self.tenant,
+            session=session,
+            folder=folder,
+            title="폴더 영상",
+            order=99,
+        )
+        Video.objects.create(
+            tenant=self.tenant,
+            session=session,
+            title="세션 영상",
+            order=2,
+        )
+
+        response = self._post_upload_init(
+            {
+                "session": session.id,
+                "title": "세션 신규 영상",
+                "filename": "session-order.mp4",
+            }
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        video = Video.objects.get(pk=response.data["video"]["id"])
+        self.assertEqual(video.order, 3)
 
     def test_upload_init_rejects_folder_for_non_public_session(self):
         lecture = Lecture.objects.create(

@@ -75,9 +75,10 @@ pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default
 
 ## 6. Rollback
 
-- Prefer immutable ECR SHA-tag rollback. Re-tag the last known-good image as `latest`, then run the relevant ASG/Batch refresh path.
-- Do not roll back by editing Batch job definitions manually unless the GitHub Actions path is unavailable.
-- If a Django migration is involved, verify reverse-migration safety separately before rollback.
+- Use `pwsh scripts/v1/rollback-video.ps1 -AwsProfile default`. With no `-Sha`, it derives the current digest from all eight required ACTIVE job definitions and selects the immediately prior immutable image.
+- The script registers all eight revisions with the exact `repo@sha256:...` URI and fails unless every readback matches and both compute environments are `VALID/ENABLED`.
+- Never re-tag `latest` for rollback; digest-pinned Batch runtimes do not observe that alias.
+- If a Django migration is involved, do not reverse it as a generic rollback step; use a corrective migration/roll-forward unless a migration-specific quiesce, snapshot, and tested reverse runbook exists.
 
 ## 7. Obsolete References
 

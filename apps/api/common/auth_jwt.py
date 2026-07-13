@@ -118,7 +118,7 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
                 code="authorization",
             )
 
-        user = core_repo.user_get_by_tenant_username(tenant, username)
+        user = core_repo.user_get_by_tenant_login_identifier(tenant, username)
         # 학부모: ID = 학부모 전화번호. username이 전화번호일 때 Parent로 조회 후 해당 User로 인증
         # 학생 로그인ID와 학부모 전화번호가 동일할 수 있으므로, 첫 매칭 실패 시 학부모도 시도
         parent = core_repo.parent_get_by_tenant_phone(tenant, username)
@@ -133,7 +133,8 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
                 {"detail": "로그인 아이디 또는 비밀번호가 올바르지 않습니다."},
                 code="authorization",
             )
-        if user.tenant_id is None:
+        from apps.core.services.tenant_access import user_has_active_tenant_access
+        if not user_has_active_tenant_access(user, tenant):
             raise serializers.ValidationError(
                 {"detail": "로그인할 수 없는 계정입니다."},
                 code="authorization",
@@ -151,9 +152,8 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         refresh = self.get_token(user)
         # JWT에 tenant_id 클레임 추가 — 크로스테넌트 헤더 조작 방어
-        if user.tenant_id is not None:
-            refresh["tenant_id"] = user.tenant_id
-            refresh.access_token["tenant_id"] = user.tenant_id
+        refresh["tenant_id"] = tenant.id
+        refresh.access_token["tenant_id"] = tenant.id
         # token_version: 비밀번호 변경 시 기존 토큰 무효화용
         tv = getattr(user, "token_version", 0) or 0
         refresh["token_version"] = tv

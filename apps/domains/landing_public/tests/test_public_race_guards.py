@@ -12,6 +12,7 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.landing_public.api.views.board_views import PublicBoardPostViewSet
 from apps.domains.landing_public.api.views.report_views import PublicReportViewSet
 from apps.domains.landing_public.models import PublicBoardPost, PublicPostLike
+from apps.domains.students.test_support import create_student_fixture
 
 
 User = get_user_model()
@@ -31,6 +32,12 @@ class LandingPublicRaceGuardTests(TestCase):
             tenant=self.tenant,
         )
         TenantMembership.ensure_active(tenant=self.tenant, user=self.user, role="student")
+        create_student_fixture(
+            tenant=self.tenant,
+            user=self.user,
+            name="Member",
+            ps_number="LANDING-RACE-1",
+        )
         self.board = PublicBoardPost.objects.create(
             tenant=self.tenant,
             author=self.user,

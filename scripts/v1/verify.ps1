@@ -1,6 +1,6 @@
 # ==============================================================================
-# Academy v1 — 새 PC 5단계 검증 자동화.
-# 1) bootstrap  2) deploy -Plan  3) deploy -PruneLegacy  4) deploy 재실행(No-op)  5) Evidence 위치 안내
+# Academy v1 — 새 PC 6단계 검증 자동화.
+# 1) bootstrap  2) deploy -Plan  3) PruneLegacy 후보 미리보기  4) deploy  5) deploy 재실행(No-op)  6) Evidence 위치 안내
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키를 환경변수로 넣어 배포·검증·인증을 진행한다. 스크립트는 .env를 로드하지 않음.
 # 로그: logs/v1/YYYYMMDD-HHMMSS-verify.log
 # ==============================================================================
@@ -64,19 +64,31 @@ try {
     } "deploy -Plan failed. Check drift/params."
     $results += [PSCustomObject]@{ Step = "2) deploy -Plan"; Result = "OK"; Detail = "Reports: docs/reports/" }
 
-    # 3) deploy -PruneLegacy
-    $null = Run-Step "3) deploy.ps1 -PruneLegacy" {
+    # 3) PruneLegacy preview only. Destructive prune is always a separate,
+    # explicit operator action after reviewing this candidate table.
+    $null = Run-Step "3) deploy.ps1 -Plan -PruneLegacy (preview only)" {
         Push-Location $RepoRoot
-        $deployArgs = @{ Env = "prod"; PruneLegacy = $true }
+        $deployArgs = @{ Env = "prod"; Plan = $true; PruneLegacy = $true }
         if ($AwsProfile) { $deployArgs["AwsProfile"] = $AwsProfile }
         & (Join-Path $ScriptRoot "deploy.ps1") @deployArgs 2>&1 | ForEach-Object { Write-Log $_ }
         if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
         Pop-Location
-    } "PruneLegacy failed. Check log."
-    $results += [PSCustomObject]@{ Step = "3) deploy -PruneLegacy"; Result = "OK"; Detail = "" }
+    } "PruneLegacy preview failed. Check log."
+    $results += [PSCustomObject]@{ Step = "3) PruneLegacy preview"; Result = "OK"; Detail = "No deletes executed" }
 
-    # 4) deploy 재실행 → No-op
-    $step4 = Run-Step "4) deploy.ps1 (rerun, expect No-op)" {
+    # 4) deploy Ensure
+    $null = Run-Step "4) deploy.ps1" {
+        Push-Location $RepoRoot
+        $deployArgs = @{ Env = "prod" }
+        if ($AwsProfile) { $deployArgs["AwsProfile"] = $AwsProfile }
+        & (Join-Path $ScriptRoot "deploy.ps1") @deployArgs 2>&1 | ForEach-Object { Write-Log $_ }
+        if ($LASTEXITCODE -and $LASTEXITCODE -ne 0) { throw "ExitCode $LASTEXITCODE" }
+        Pop-Location
+    } "Deploy failed."
+    $results += [PSCustomObject]@{ Step = "4) deploy"; Result = "OK"; Detail = "" }
+
+    # 5) deploy 재실행 → No-op
+    $step5 = Run-Step "5) deploy.ps1 (rerun, expect No-op)" {
         Push-Location $RepoRoot
         $deployArgs = @{ Env = "prod" }
         if ($AwsProfile) { $deployArgs["AwsProfile"] = $AwsProfile }
@@ -85,15 +97,15 @@ try {
         Pop-Location
         $out
     } "Second deploy failed."
-    $deployOut = if ($step4.Output) { $step4.Output | Out-String } else { "" }
+    $deployOut = if ($step5.Output) { $step5.Output | Out-String } else { "" }
     $noOp = ($deployOut -match "Idempotent|No changes required") -or ($deployOut -match "No changes")
     if (-not $noOp) {
         Write-Log "WARN: No-op phrase not found in output (Idempotent / No changes required). Check log."
     }
-    $results += [PSCustomObject]@{ Step = "4) deploy (No-op)"; Result = if ($noOp) { "OK" } else { "CHECK" }; Detail = if ($noOp) { "No-op confirmed" } else { "See log" } }
+    $results += [PSCustomObject]@{ Step = "5) deploy (No-op)"; Result = if ($noOp) { "OK" } else { "CHECK" }; Detail = if ($noOp) { "No-op confirmed" } else { "See log" } }
 
-    # 5) Evidence 위치
-    $results += [PSCustomObject]@{ Step = "5) Evidence"; Result = "-"; Detail = "docs/reports/, deploy stdout" }
+    # 6) Evidence 위치
+    $results += [PSCustomObject]@{ Step = "6) Evidence"; Result = "-"; Detail = "docs/reports/, deploy stdout" }
 }
 catch {
     Write-Log "`n=== VERIFY STOPPED ==="

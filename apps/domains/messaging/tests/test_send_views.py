@@ -9,7 +9,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
-from apps.domains.messaging.models import MessageTemplate, ScheduledNotification
+from apps.domains.messaging.models import MessageTemplate, NotificationLog, ScheduledNotification
 from apps.domains.messaging.views.send_views import SendMessageView
 from apps.domains.messaging.views.template_views import MessageTemplateListCreateView
 
@@ -64,6 +64,12 @@ class SendMessageViewTests(TestCase):
             is_system=True,
         )
 
+    def _send(self, request):
+        # Immediate dispatch is intentionally registered with transaction.on_commit.
+        # TestCase wraps each test in a transaction, so execute callbacks explicitly.
+        with self.captureOnCommitCallbacks(execute=True):
+            return SendMessageView.as_view()(request)
+
     def test_student_direct_alimtalk_uses_selected_attendance_envelope(self):
         request = self.factory.post(
             "/api/v1/messaging/send/",
@@ -83,11 +89,18 @@ class SendMessageViewTests(TestCase):
             patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
             patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
         ):
-            response = SendMessageView.as_view()(request)
+            response = self._send(request)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["enqueued"], 1)
+        # The response is returned before the outer transaction commits. The
+        # durable outbox is accepted as scheduled, then the callback enqueues it.
+        self.assertEqual(response.data["enqueued"], 0)
+        self.assertEqual(response.data["scheduled"], 1)
         enqueue_sms.assert_called_once()
+        self.assertEqual(
+            ScheduledNotification.objects.get(tenant=self.tenant).status,
+            ScheduledNotification.Status.SENT,
+        )
         kwargs = enqueue_sms.call_args.kwargs
         self.assertEqual(kwargs["to"], "01011112222")
         self.assertEqual(kwargs["target_type"], "student")
@@ -98,6 +111,38 @@ class SendMessageViewTests(TestCase):
         self.assertNotIn("공지내용", replacements)
         self.assertNotIn("내용", replacements)
         self.assertNotIn("선생님메모1", replacements)
+
+    def test_manual_send_blocks_when_source_business_tenant_quota_is_full(self):
+        provider_owner = Tenant.objects.create(code="msg-send-provider", name="Provider", is_active=True)
+        NotificationLog.objects.create(
+            tenant=provider_owner,
+            source_tenant=self.tenant,
+            success=False,
+            status="processing",
+            message_mode="alimtalk",
+        )
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "student",
+                "student_ids": [self.student.id],
+                "raw_body": "한도 확인 안내입니다.",
+                "block_category": "attendance",
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with (
+            patch("apps.domains.messaging.views.send_views.HOURLY_SEND_LIMIT", 1),
+            patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
+        ):
+            response = self._send(request)
+
+        self.assertEqual(response.status_code, 429)
+        enqueue_sms.assert_not_called()
 
     def test_default_direct_alimtalk_requires_selected_envelope(self):
         request = self.factory.post(
@@ -115,7 +160,7 @@ class SendMessageViewTests(TestCase):
         request.tenant = self.tenant
 
         with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
-            response = SendMessageView.as_view()(request)
+            response = self._send(request)
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("카카오 승인 봉투", response.data["detail"])
@@ -155,7 +200,7 @@ class SendMessageViewTests(TestCase):
             patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
             patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
         ):
-            response = SendMessageView.as_view()(request)
+            response = self._send(request)
 
         self.assertEqual(response.status_code, 200, response.data)
         kwargs = enqueue_sms.call_args.kwargs
@@ -184,7 +229,7 @@ class SendMessageViewTests(TestCase):
             patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
             patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
         ):
-            response = SendMessageView.as_view()(request)
+            response = self._send(request)
 
         self.assertEqual(response.status_code, 200)
         enqueue_sms.assert_called_once()
@@ -214,7 +259,7 @@ class SendMessageViewTests(TestCase):
             patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
             patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
         ):
-            response = SendMessageView.as_view()(request)
+            response = self._send(request)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["enqueued"], 0)
@@ -225,6 +270,84 @@ class SendMessageViewTests(TestCase):
         self.assertEqual(scheduled.status, ScheduledNotification.Status.PENDING)
         self.assertEqual(scheduled.payload["to"], "01033334444")
         self.assertEqual(scheduled.payload["target_type"], "parent")
+
+    def test_future_scheduled_send_is_accepted_when_current_hour_is_full(self):
+        provider_owner = Tenant.objects.create(
+            code="msg-send-scheduled-provider",
+            name="Scheduled Provider",
+            is_active=True,
+        )
+        NotificationLog.objects.create(
+            tenant=provider_owner,
+            source_tenant=self.tenant,
+            success=False,
+            status="processing",
+            message_mode="alimtalk",
+        )
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "parent",
+                "student_ids": [self.student.id],
+                "raw_body": "한도 이후 예약 안내입니다.",
+                "block_category": "attendance",
+                "scheduled_send_at": (timezone.now() + timedelta(hours=2)).isoformat(),
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with (
+            patch("apps.domains.messaging.views.send_views.HOURLY_SEND_LIMIT", 1),
+            patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms,
+        ):
+            response = self._send(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["scheduled"], 1)
+        enqueue_sms.assert_not_called()
+        scheduled = ScheduledNotification.objects.get(tenant=self.tenant)
+        self.assertEqual(scheduled.status, ScheduledNotification.Status.PENDING)
+
+    def test_immediate_send_transient_enqueue_failure_is_durably_retried(self):
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "parent",
+                "student_ids": [self.student.id],
+                "raw_body": "즉시 발송 재시도 안내입니다.",
+                "block_category": "attendance",
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with (
+            patch(
+                "apps.domains.messaging.services.get_tenant_site_url",
+                return_value="https://example.test",
+            ),
+            patch(
+                "apps.domains.messaging.services.enqueue_sms",
+                return_value=False,
+            ) as enqueue_sms,
+        ):
+            response = self._send(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["enqueued"], 0)
+        self.assertEqual(response.data["scheduled"], 1)
+        self.assertEqual(response.data["enqueue_failed"], 0)
+        enqueue_sms.assert_called_once()
+        dispatch = ScheduledNotification.objects.get(tenant=self.tenant)
+        self.assertEqual(dispatch.status, ScheduledNotification.Status.PENDING)
+        self.assertEqual(dispatch.attempt_count, 1)
+        self.assertIsNotNone(dispatch.next_attempt_at)
+        self.assertTrue(dispatch.payload["occurrence_key"].startswith("dispatch:"))
 
     def test_manual_send_rejects_past_scheduled_time(self):
         request = self.factory.post(
@@ -243,12 +366,45 @@ class SendMessageViewTests(TestCase):
         request.tenant = self.tenant
 
         with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
-            response = SendMessageView.as_view()(request)
+            response = self._send(request)
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("scheduled_send_at", response.data)
         enqueue_sms.assert_not_called()
         self.assertFalse(ScheduledNotification.objects.exists())
+
+    def test_payment_send_fail_closes_when_provider_sid_is_missing(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category=MessageTemplate.Category.PAYMENT,
+            name="결제 완료 안내",
+            subject="",
+            body="결제 완료 안내입니다.",
+            solapi_template_id="STALE-PAYMENT-SID",
+            solapi_status="APPROVED",
+        )
+        request = self.factory.post(
+            "/api/v1/messaging/send/",
+            data={
+                "send_to": "parent",
+                "student_ids": [self.student.id],
+                "template_id": template.id,
+                "raw_body": "결제 완료 안내입니다.",
+                "block_category": "payment",
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.user = self.admin
+        request.tenant = self.tenant
+
+        with patch("apps.domains.messaging.services.enqueue_sms") as enqueue_sms:
+            response = self._send(request)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.data["code"], "unified_template_unavailable")
+        self.assertEqual(response.data["template_type"], "notice_payment")
+        enqueue_sms.assert_not_called()
 
     def test_student_direct_alimtalk_omits_deleted_and_cross_tenant_students(self):
         deleted_user = User.objects.create_user(
@@ -303,10 +459,11 @@ class SendMessageViewTests(TestCase):
             patch("apps.domains.messaging.services.get_tenant_site_url", return_value="https://example.test"),
             patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms,
         ):
-            response = SendMessageView.as_view()(request)
+            response = self._send(request)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["enqueued"], 1)
+        self.assertEqual(response.data["enqueued"], 0)
+        self.assertEqual(response.data["scheduled"], 1)
         enqueue_sms.assert_called_once()
         kwargs = enqueue_sms.call_args.kwargs
         self.assertEqual(kwargs["target_id"], self.student.id)
@@ -327,7 +484,7 @@ class SendMessageViewTests(TestCase):
         request.tenant = self.tenant
 
         with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
-            response = SendMessageView.as_view()(request)
+            response = self._send(request)
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("block_category", response.data)
@@ -349,7 +506,7 @@ class SendMessageViewTests(TestCase):
         request.tenant = self.tenant
 
         with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
-            response = SendMessageView.as_view()(request)
+            response = self._send(request)
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("send_to", response.data)
@@ -378,7 +535,7 @@ class SendMessageViewTests(TestCase):
         request.tenant = self.tenant
 
         with patch("apps.domains.messaging.services.enqueue_sms", return_value=True) as enqueue_sms:
-            response = SendMessageView.as_view()(request)
+            response = self._send(request)
 
         self.assertEqual(response.status_code, 403)
         enqueue_sms.assert_not_called()

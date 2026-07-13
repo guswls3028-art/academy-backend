@@ -17,7 +17,29 @@ from apps.billing.models import (
 # Invoice
 # ──────────────────────────────────────────────
 
-class InvoiceListSerializer(serializers.ModelSerializer):
+class InvoiceStateContractSerializer(serializers.ModelSerializer):
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    is_terminal = serializers.SerializerMethodField()
+    can_mark_paid = serializers.SerializerMethodField()
+    payment_blocked_reason = serializers.SerializerMethodField()
+
+    def get_is_terminal(self, obj: Invoice) -> bool:
+        return obj.status in {"PAID", "VOID"}
+
+    def get_can_mark_paid(self, obj: Invoice) -> bool:
+        return obj.status in {"PENDING", "FAILED", "OVERDUE"}
+
+    def get_payment_blocked_reason(self, obj: Invoice) -> str:
+        if self.get_can_mark_paid(obj):
+            return ""
+        return {
+            "SCHEDULED": "invoice_not_pending",
+            "PAID": "already_paid",
+            "VOID": "invoice_void",
+        }.get(obj.status, "invoice_state_not_payable")
+
+
+class InvoiceListSerializer(InvoiceStateContractSerializer):
     tenant_code = serializers.CharField(source="tenant.code", read_only=True)
 
     class Meta:
@@ -35,6 +57,10 @@ class InvoiceListSerializer(serializers.ModelSerializer):
             "period_end",
             "due_date",
             "status",
+            "status_display",
+            "is_terminal",
+            "can_mark_paid",
+            "payment_blocked_reason",
             "paid_at",
             "failed_at",
             "attempt_count",
@@ -42,7 +68,7 @@ class InvoiceListSerializer(serializers.ModelSerializer):
         ]
 
 
-class InvoiceDetailSerializer(serializers.ModelSerializer):
+class InvoiceDetailSerializer(InvoiceStateContractSerializer):
     tenant_code = serializers.CharField(source="tenant.code", read_only=True)
     tenant_name = serializers.CharField(source="tenant.name", read_only=True)
 
@@ -63,6 +89,10 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
             "period_end",
             "due_date",
             "status",
+            "status_display",
+            "is_terminal",
+            "can_mark_paid",
+            "payment_blocked_reason",
             "paid_at",
             "failed_at",
             "failure_reason",
@@ -157,9 +187,21 @@ class TenantSubscriptionSummarySerializer(serializers.Serializer):
     plan = serializers.CharField()
     plan_display = serializers.CharField()
     monthly_price = serializers.IntegerField()
+    monthly_supply_amount = serializers.IntegerField()
+    monthly_tax_amount = serializers.IntegerField()
+    monthly_total_amount = serializers.IntegerField()
+    monthly_price_includes_tax = serializers.BooleanField()
+    vat_rate_percent = serializers.IntegerField()
+    billing_price_policy = serializers.CharField()
+    is_contract_price = serializers.BooleanField()
+    billing_price_integrity = serializers.CharField()
+    is_billing_price_ready = serializers.BooleanField()
     subscription_status = serializers.CharField()
     subscription_status_display = serializers.CharField()
     subscription_expires_at = serializers.DateField(allow_null=True)
+    service_access_expires_at = serializers.DateField(allow_null=True)
+    grace_period_days = serializers.IntegerField()
+    grace_expires_at = serializers.DateField(allow_null=True)
     days_remaining = serializers.IntegerField(allow_null=True)
     billing_mode = serializers.CharField()
     cancel_at_period_end = serializers.BooleanField()

@@ -1,8 +1,54 @@
 # apps/support/messaging/selectors.py
 
+from datetime import timedelta
 from typing import Optional
 
-from apps.domains.messaging.models import AutoSendConfig
+from django.db.models import Q
+from django.utils import timezone
+
+from apps.domains.messaging.models import AutoSendConfig, NotificationLog
+from apps.domains.messaging.scheduled import HOURLY_SEND_LIMIT
+
+
+def notification_logs_for_business_tenant(tenant):
+    """Return logs owned by the tenant that caused the business event.
+
+    Provider delivery is normalized to the common owner tenant.  For those
+    proxy sends ``source_tenant`` is the sole business owner; a physical owner
+    tenant must not gain visibility merely because it supplied the channel.
+    """
+    tenant_id = int(getattr(tenant, "id", tenant))
+    return NotificationLog.objects.filter(
+        Q(source_tenant_id=tenant_id)
+        | Q(source_tenant_id__isnull=True, tenant_id=tenant_id)
+    )
+
+
+def get_hourly_notification_usage(tenant, *, now=None) -> int:
+    """Count dispatch attempts plus legacy direct-send logs in the rolling hour."""
+    from apps.domains.messaging.models import ScheduledNotification
+
+    cutoff = (now or timezone.now()) - timedelta(hours=1)
+    tenant_id = int(getattr(tenant, "id", tenant))
+    outbox_count = ScheduledNotification.objects.filter(
+        tenant_id=tenant_id,
+        last_attempt_at__gte=cutoff,
+    ).count()
+    outbox_keys = list(
+        ScheduledNotification.objects.filter(
+            tenant_id=tenant_id,
+            last_attempt_at__gte=cutoff,
+        )
+        .exclude(business_idempotency_key="")
+        .values_list("business_idempotency_key", flat=True)
+    )
+    legacy_log_count = (
+        notification_logs_for_business_tenant(tenant)
+        .filter(sent_at__gte=cutoff)
+        .exclude(business_idempotency_key__in=outbox_keys)
+        .count()
+    )
+    return outbox_count + legacy_log_count
 
 
 def get_auto_send_config(tenant_id: int, trigger: str) -> Optional[AutoSendConfig]:

@@ -1,13 +1,16 @@
 # constraints.txt — pinned versions for reproducible builds
-# Versions from production (2026-03-17, verified via pip show on live API)
+# Reproducible production baseline; security patch releases are advanced after audit and regression verification.
 # AI/ML packages (torch, transformers, etc.) are NOT constrained here.
 
 # Django ecosystem
-Django==5.2.12
+Django==5.2.16
 djangorestframework==3.16.1
 django-filter==25.2
 django-cors-headers==4.9.0
 djangorestframework-simplejwt==5.5.1
+
+# Security
+cryptography==48.0.1
 
 # AWS / Infrastructure
 boto3==1.42.62

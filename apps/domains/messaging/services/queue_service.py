@@ -12,6 +12,18 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def _require_active_business_tenant(tenant_id: int) -> None:
+    """Fail closed when the business tenant is gone/inactive; DB errors retry."""
+    from apps.core.models import Tenant
+    from apps.domains.messaging.policy import MessagingPolicyError
+
+    if not Tenant.objects.filter(pk=tenant_id, is_active=True).exists():
+        raise MessagingPolicyError(
+            "비활성화되었거나 존재하지 않는 학원에는 알림을 발송할 수 없습니다.",
+            reason="business_tenant_inactive",
+        )
+
+
 def enqueue_sms(
     tenant_id: int,
     to: str,
@@ -100,6 +112,8 @@ def enqueue_sms(
             reason="sms_disabled",
         )
 
+    _require_active_business_tenant(policy_tenant_id)
+
     if source_tenant_id is None and original_tenant_id != owner_id:
         source_tenant_id = original_tenant_id
     tenant_id = owner_id
@@ -125,6 +139,34 @@ def enqueue_sms(
         source_use_case=source_use_case,
         domain_object_id=domain_object_id,
         actor_id=actor_id,
+    )
+
+
+def build_enqueued_business_key(*, tenant_id: int, payload: dict) -> str:
+    """Predict the exact worker business key for a durable outbox payload."""
+    from apps.domains.messaging.policy import get_owner_tenant_id
+    from apps.domains.messaging.sqs_queue import build_business_idempotency_key
+
+    original_tenant_id = int(tenant_id)
+    owner_id = int(get_owner_tenant_id())
+    source_tenant_id = payload.get("source_tenant_id")
+    if source_tenant_id is None and original_tenant_id != owner_id:
+        source_tenant_id = original_tenant_id
+    mode = str(payload.get("message_mode") or "alimtalk").strip().lower()
+    if mode not in ("sms", "alimtalk"):
+        mode = "alimtalk"
+    return build_business_idempotency_key(
+        tenant_id=owner_id,
+        source_tenant_id=(
+            int(source_tenant_id) if source_tenant_id is not None else None
+        ),
+        channel=mode,
+        event_type=str(payload.get("event_type") or "manual_send"),
+        target_type=str(payload.get("target_type") or ""),
+        target_id=str(payload.get("target_id") or ""),
+        recipient=str(payload.get("to") or ""),
+        occurrence_key=str(payload.get("occurrence_key") or ""),
+        template_id=str(payload.get("template_id") or ""),
     )
 
 

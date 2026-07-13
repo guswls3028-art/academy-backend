@@ -50,6 +50,10 @@ _PREFIX_ONLY_RE = re.compile(
     r"[\[【]\s*[^\]】]{2,90}\s*[\]】]"
     r")\s*$"
 )
+_STEP_PREFIX_RE = re.compile(
+    r"^\s*Step\s*\d+(?:\.\d+)?\s*[.:]?\s*[가-힣A-Za-z]",
+    re.IGNORECASE,
+)
 _ANSWER_PAGE_RE = re.compile(r"(?:문제\s*해설|정답\s*(?:및\s*)?해설|정답|해설)")
 _VISUAL_RE = re.compile(r"(?:그림|그래프|자료|모형|사진|도표)")
 _SHORT_PROMPT_RE = re.compile(
@@ -131,7 +135,15 @@ def split_clean_pdf_questions_v2(
     if not blocks:
         return CleanPdfSplitResult(handled=False, reason="empty_page")
 
-    if prefer_marginal and _has_marginal_anchor_candidate(blocks, page_width, page_height):
+    if prefer_marginal and (
+        _has_marginal_anchor_candidate(blocks, page_width, page_height)
+        or any(_extract_marginal_number(block.text) is not None for block in blocks)
+        or any(_SHARED_RANGE_RE.match(block.text) for block in blocks)
+    ):
+        # The legacy path owns workbook marginal numbers, split section labels,
+        # and shared-context ranges.  It preserves section offsets and the
+        # body/context/audit bbox contract that the reading-flow splitter does
+        # not model yet.
         return CleanPdfSplitResult(handled=False, reason="prefer_marginal_legacy")
 
     body_anchor_candidates = [
@@ -262,6 +274,8 @@ def _collect_anchors(
             continue
         if not _is_marginal_position(block, page_width):
             continue
+        if _looks_like_exam_header_page_number(block, blocks, page_height):
+            continue
         if not _standalone_has_question_body(block, blocks, page_width, page_height):
             continue
         anchors.append((number, block))
@@ -274,6 +288,31 @@ def _collect_anchors(
         seen.add(number)
         deduped.append((number, block))
     return deduped
+
+
+def _looks_like_exam_header_page_number(
+    block: _Block,
+    blocks: list[_Block],
+    page_height: float,
+) -> bool:
+    """Reject a top-of-page folio beside an exam-paper header."""
+    first_line = block.text.strip().split("\n", 1)[0].strip()
+    if not re.fullmatch(r"\d{1,3}\.?", first_line):
+        return False
+    if page_height <= 0 or block.y1 > page_height * 0.13:
+        return False
+    top_text = " ".join(
+        candidate.text
+        for candidate in blocks
+        if candidate.y1 <= page_height * 0.24
+    )
+    return bool(
+        re.search(
+            r"(?:문제지|제\s*\d+\s*교시|수험\s*번호|성\s*명|문항\s*번호|"
+            r"총\s*면수|학년|고사일|중간\s*고사|배점)",
+            top_text,
+        )
+    )
 
 
 def _has_marginal_anchor_candidate(
@@ -350,8 +389,13 @@ def _assign_flows(
     is_dual_hint: bool,
 ) -> list[_Anchor]:
     mid_x = page_width * 0.5
-    left_count = sum(1 for _, block in raw_anchors if block.center_x < mid_x)
-    right_count = len(raw_anchors) - left_count
+    column_anchors = [
+        block
+        for _, block in raw_anchors
+        if block.x1 - block.x0 < page_width * 0.62
+    ]
+    left_count = sum(1 for block in column_anchors if block.center_x < mid_x)
+    right_count = sum(1 for block in column_anchors if block.center_x >= mid_x)
     effective_dual = is_dual_hint and left_count > 0 and right_count > 0
 
     anchors: list[_Anchor] = []
@@ -376,7 +420,11 @@ def _region_start_y(anchor: _Block, blocks: list[_Block], page_width: float) -> 
             continue
         if not _same_coarse_column(anchor, block, page_width):
             continue
-        if _PREFIX_ONLY_RE.match(block.text) or _SOURCE_PREFIX_ONLY_RE.match(block.text):
+        if (
+            _PREFIX_ONLY_RE.match(block.text)
+            or _SOURCE_PREFIX_ONLY_RE.match(block.text)
+            or _STEP_PREFIX_RE.match(block.text)
+        ):
             candidates.append(block.y0)
     return min(candidates)
 
@@ -439,7 +487,14 @@ def _build_regions(
             content_y1 = max(block.y1 for block in content)
             x0 = max(x0, content_x0 - margin_x)
             x1 = min(x1, content_x1 + margin_x)
-            min_height = page_height * (0.055 if _SHORT_PROMPT_RE.search(text) else 0.08)
+            short_prompt = bool(_SHORT_PROMPT_RE.search(text))
+            wide_single_line = (
+                short_prompt
+                and anchor.block.x1 - anchor.block.x0 >= page_width * 0.78
+                and "\n" not in anchor.block.text
+            )
+            min_height_ratio = 0.045 if wide_single_line else (0.065 if short_prompt else 0.08)
+            min_height = page_height * min_height_ratio
             if _VISUAL_RE.search(text):
                 min_height = max(min_height, page_height * 0.18)
             y1 = min(y1, max(content_y1 + margin_y * 1.5, y0 + min_height))

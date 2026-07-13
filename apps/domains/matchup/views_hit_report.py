@@ -2091,7 +2091,9 @@ class HitReportSharePdfView(View):
         try:
             pdf_bytes, cache_state = _get_or_generate_curated_hit_report_pdf(report)
         except Exception:
-            logger.exception("share_pdf failed (report=%s token=%s)", report.id, token)
+            # The share token is a bearer credential for this public endpoint.
+            # Keep it out of logs even on exceptional paths.
+            logger.exception("share_pdf failed (report=%s)", report.id)
             return JsonResponse({"detail": "PDF 생성 실패"}, status=500)
 
         from urllib.parse import quote

@@ -12,7 +12,6 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - 'docs/**'
       - '*.md'
       - 'README*'
       - '.gitignore'
@@ -20,14 +19,19 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: v1-build-and-push-latest
+  group: academy-production-mutation
   cancel-in-progress: false  # V1.1.0: prevent orphaned ASG refreshes on concurrent pushes
 
 env:
   AWS_REGION: ap-northeast-2
+  ACADEMY_DEPLOY_LOCK_TABLE: academy-v1-video-job-lock
+  ACADEMY_DEPLOY_LOCK_OWNER: ci-deploy:${{ github.run_id }}:${{ github.run_attempt }}
   ECR_REGISTRY: 809466760795.dkr.ecr.ap-northeast-2.amazonaws.com
   ALB_DNS: academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com
   API_PUBLIC_URL: https://api.hakwonplus.com
+  # A tag is never reused, including workflow reruns or a second manual run for
+  # the same commit. ECR permits only `latest` to move.
+  RELEASE_IMAGE_TAG: sha-${{ github.sha }}-run-${{ github.run_id }}-${{ github.run_attempt }}
   # docker/build-push-action@v6 uploads a *.dockerbuild summary artifact per build
   # (separate from provenance/sbom). Disable to stop UI clutter — we already have
   # CloudWatch logs + ci-build-report for build observability.
@@ -95,15 +99,31 @@ jobs:
           fi
 
           CHANGED=$(git diff --name-only "$PREV" HEAD)
+          # Avoid echo|grep -q under GitHub's `bash -o pipefail`: on a large
+          # multi-commit diff, grep can exit early and make echo fail with SIGPIPE.
+          changed_matches() { grep -qE "$1" <<< "$CHANGED"; }
 
-          # 전체 빌드 트리거: base 이미지, 공통 requirements, docker 설정, 공통 코드
+          # 전체 빌드 트리거: base/공통 requirements와 모든 worker가 import하는 코드.
+          # Worker settings가 apps.core/api.common/shared와 각 domain model을 초기화하고,
+          # academy/libs/support/infrastructure는 여러 service entrypoint가 직접 import한다.
           FORCE_ALL=false
-          echo "$CHANGED" | grep -qE "^docker/Dockerfile\.base$" && FORCE_ALL=true
-          echo "$CHANGED" | grep -qE "^requirements/common\.txt$" && FORCE_ALL=true
-          echo "$CHANGED" | grep -qE "^requirements/requirements\.txt$" && FORCE_ALL=true
-          echo "$CHANGED" | grep -qE "^libs/" && FORCE_ALL=true
-          echo "$CHANGED" | grep -qE "^academy/" && FORCE_ALL=true
-          echo "$CHANGED" | grep -qE "^apps/shared/" && FORCE_ALL=true
+          changed_matches "^\.dockerignore$" && FORCE_ALL=true
+          changed_matches "^docs/ssot/params\.yaml$" && FORCE_ALL=true
+          changed_matches "^docker/Dockerfile\.base$" && FORCE_ALL=true
+          changed_matches "^requirements/constraints\.txt$" && FORCE_ALL=true
+          changed_matches "^requirements/common\.txt$" && FORCE_ALL=true
+          changed_matches "^requirements/requirements\.txt$" && FORCE_ALL=true
+          changed_matches "^libs/" && FORCE_ALL=true
+          changed_matches "^academy/" && FORCE_ALL=true
+          changed_matches "^apps/shared/" && FORCE_ALL=true
+          changed_matches "^apps/support/" && FORCE_ALL=true
+          changed_matches "^apps/core/" && FORCE_ALL=true
+          changed_matches "^apps/api/common/" && FORCE_ALL=true
+          changed_matches "^apps/infrastructure/" && FORCE_ALL=true
+          changed_matches "^apps/api/config/settings/worker\.py$" && FORCE_ALL=true
+          changed_matches "^apps/(__init__\.py|(api|domains|worker)/__init__\.py|api/config(/settings)?/__init__\.py)$" && FORCE_ALL=true
+          changed_matches "^apps/domains/[^/]+/(models(/|\.py$)|apps\.py$|signals(/|\.py$)|__init__\.py$)" && FORCE_ALL=true
+          changed_matches "^manage\.py$" && FORCE_ALL=true
 
           if [ "$FORCE_ALL" = "true" ]; then
             echo "Core/shared change detected — full build"
@@ -121,16 +141,17 @@ jobs:
 
           # Base image: only when Dockerfile.base, common requirements, or libs change
           BASE=false
-          echo "$CHANGED" | grep -qE "^docker/Dockerfile\.base$" && BASE=true
-          echo "$CHANGED" | grep -qE "^requirements/common\.txt$" && BASE=true
-          echo "$CHANGED" | grep -qE "^libs/" && BASE=true
+          changed_matches "^docker/Dockerfile\.base$" && BASE=true
+          changed_matches "^requirements/common\.txt$" && BASE=true
+          changed_matches "^libs/" && BASE=true
           echo "build_base=$BASE" >> $GITHUB_OUTPUT
 
           # API: apps/ (대부분), docker/api/, requirements/api.txt
           API=false
-          echo "$CHANGED" | grep -qE "^apps/" && API=true
-          echo "$CHANGED" | grep -qE "^docker/api/" && API=true
-          echo "$CHANGED" | grep -qE "^requirements/api\.txt$" && API=true
+          changed_matches "^apps/" && API=true
+          changed_matches "^scripts/" && API=true
+          changed_matches "^docker/api/" && API=true
+          changed_matches "^requirements/api\.txt$" && API=true
           echo "build_api=$API" >> $GITHUB_OUTPUT
 
           # Video worker
@@ -140,12 +161,15 @@ jobs:
           # rev 갱신이 필요하다. 2026-05-10: recover_dead_video_jobs 신규 시 trigger 누락
           # 사고로 ops jobdef가 옛 image를 가리킨 적 있음.
           VIDEO=false
-          echo "$CHANGED" | grep -qE "^apps/worker/video_worker/" && VIDEO=true
-          echo "$CHANGED" | grep -qE "^apps/support/video/" && VIDEO=true
-          echo "$CHANGED" | grep -qE "^apps/domains/video/" && VIDEO=true
-          echo "$CHANGED" | grep -qE "^apps/api/config/settings/worker\.py$" && VIDEO=true
-          echo "$CHANGED" | grep -qE "^docker/video-worker/" && VIDEO=true
-          echo "$CHANGED" | grep -qE "^requirements/worker-video\.txt$" && VIDEO=true
+          changed_matches "^apps/worker/video_worker/" && VIDEO=true
+          changed_matches "^apps/support/video/" && VIDEO=true
+          changed_matches "^apps/domains/video/" && VIDEO=true
+          # batch_main -> repositories_video -> messaging selectors/builders/scheduler
+          changed_matches "^apps/domains/messaging/(services|selectors|scheduled)(/|\.py$)" && VIDEO=true
+          changed_matches "^apps/domains/messaging/(alimtalk_content_builders|policy)\.py$" && VIDEO=true
+          changed_matches "^apps/api/config/settings/worker\.py$" && VIDEO=true
+          changed_matches "^docker/video-worker/" && VIDEO=true
+          changed_matches "^requirements/worker-video\.txt$" && VIDEO=true
           echo "build_video=$VIDEO" >> $GITHUB_OUTPUT
 
           # Messaging worker
@@ -154,12 +178,14 @@ jobs:
           # 직접 import하므로 도메인 코드 변경도 워커 이미지 재빌드 + ASG refresh 필요.
           # 누락 시 새 매핑/양식이 API에만 들어가고 워커는 옛 매핑으로 enqueue 처리 → 실효 X.
           MSG=false
-          echo "$CHANGED" | grep -qE "^apps/worker/messaging_worker/" && MSG=true
-          echo "$CHANGED" | grep -qE "^apps/support/messaging/" && MSG=true
-          echo "$CHANGED" | grep -qE "^apps/domains/messaging/" && MSG=true
-          echo "$CHANGED" | grep -qE "^apps/api/config/settings/worker\.py$" && MSG=true
-          echo "$CHANGED" | grep -qE "^docker/messaging-worker/" && MSG=true
-          echo "$CHANGED" | grep -qE "^requirements/worker-messaging\.txt$" && MSG=true
+          changed_matches "^apps/worker/messaging_worker/" && MSG=true
+          changed_matches "^apps/support/messaging/" && MSG=true
+          changed_matches "^apps/domains/messaging/" && MSG=true
+          # redis_progress_adapter imports the video worker heartbeat/status cache.
+          changed_matches "^apps/domains/video/redis_status_cache\.py$" && MSG=true
+          changed_matches "^apps/api/config/settings/worker\.py$" && MSG=true
+          changed_matches "^docker/messaging-worker/" && MSG=true
+          changed_matches "^requirements/worker-messaging\.txt$" && MSG=true
           echo "build_messaging=$MSG" >> $GITHUB_OUTPUT
 
           # AI worker
@@ -169,28 +195,36 @@ jobs:
           # 새 모델 정의가 들어가야 한다. 누락 시 운영 콜백 ValueError로 swallow → DB stuck.
           # 경험상(2026-04-27 inventory 누락) 보수적 트리거가 필요해 도메인 패턴을 넓게 잡는다.
           AI=false
-          echo "$CHANGED" | grep -qE "^apps/worker/ai_worker/" && AI=true
-          echo "$CHANGED" | grep -qE "^apps/worker/omr/" && AI=true
-          echo "$CHANGED" | grep -qE "^apps/domains/" && AI=true
-          echo "$CHANGED" | grep -qE "^apps/support/ai/" && AI=true
-          echo "$CHANGED" | grep -qE "^apps/api/config/settings/(worker|base)\.py$" && AI=true
-          echo "$CHANGED" | grep -qE "^academy/" && AI=true
-          echo "$CHANGED" | grep -qE "^libs/queue/" && AI=true
-          echo "$CHANGED" | grep -qE "^docker/ai-worker" && AI=true
-          echo "$CHANGED" | grep -qE "^requirements/worker-ai" && AI=true
+          changed_matches "^apps/worker/ai_worker/" && AI=true
+          changed_matches "^apps/worker/omr/" && AI=true
+          changed_matches "^apps/domains/" && AI=true
+          changed_matches "^apps/support/ai/" && AI=true
+          changed_matches "^models/" && AI=true
+          changed_matches "^scripts/" && AI=true
+          changed_matches "^apps/api/config/settings/(worker|base)\.py$" && AI=true
+          changed_matches "^academy/" && AI=true
+          changed_matches "^libs/queue/" && AI=true
+          changed_matches "^docker/ai-worker" && AI=true
+          changed_matches "^requirements/worker-ai" && AI=true
           echo "build_ai=$AI" >> $GITHUB_OUTPUT
 
           # Tools worker: deterministic document conversion/spreadsheet jobs without AI model caches.
           TOOLS=false
-          echo "$CHANGED" | grep -qE "^apps/worker/tools_worker/" && TOOLS=true
-          echo "$CHANGED" | grep -qE "^apps/domains/tools/" && TOOLS=true
-          echo "$CHANGED" | grep -qE "^apps/domains/ai/queueing/" && TOOLS=true
-          echo "$CHANGED" | grep -qE "^apps/support/ai/services/sqs_queue\.py$" && TOOLS=true
-          echo "$CHANGED" | grep -qE "^academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/" && TOOLS=true
-          echo "$CHANGED" | grep -qE "^academy/application/(services/excel_parsing_service|use_cases/ai/pipelines/(ppt_handler|excel_handler|excel_export_handler))\.py$" && TOOLS=true
-          echo "$CHANGED" | grep -qE "^apps/api/config/settings/(worker|base)\.py$" && TOOLS=true
-          echo "$CHANGED" | grep -qE "^docker/tools-worker/" && TOOLS=true
-          echo "$CHANGED" | grep -qE "^requirements/worker-tools\.txt$" && TOOLS=true
+          changed_matches "^apps/worker/tools_worker/" && TOOLS=true
+          changed_matches "^apps/domains/tools/" && TOOLS=true
+          changed_matches "^apps/domains/ai/queueing/" && TOOLS=true
+          # ai_sqs_worker and worker_job_types import these modules outside queueing/.
+          changed_matches "^apps/domains/ai/(callbacks|job_types)\.py$" && TOOLS=true
+          changed_matches "^apps/domains/ai/gateway\.py$" && TOOLS=true
+          changed_matches "^apps/domains/submissions/services/(ai_omr_result_mapper|lifecycle)\.py$" && TOOLS=true
+          changed_matches "^apps/support/ai/callback_dependencies\.py$" && TOOLS=true
+          changed_matches "^academy/adapters/cache/redis_progress_adapter\.py$" && TOOLS=true
+          changed_matches "^apps/support/ai/services/sqs_queue\.py$" && TOOLS=true
+          changed_matches "^academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/" && TOOLS=true
+          changed_matches "^academy/application/(services/excel_parsing_service|use_cases/ai/pipelines/(ppt_handler|excel_handler|excel_export_handler))\.py$" && TOOLS=true
+          changed_matches "^apps/api/config/settings/(worker|base)\.py$" && TOOLS=true
+          changed_matches "^docker/tools-worker/" && TOOLS=true
+          changed_matches "^requirements/worker-tools\.txt$" && TOOLS=true
           echo "build_tools=$TOOLS" >> $GITHUB_OUTPUT
 
           echo "Detection complete: api=$API video=$VIDEO messaging=$MSG ai=$AI tools=$TOOLS"
@@ -288,9 +322,29 @@ jobs:
   # Revisit if we start publishing images externally or need
   # signed provenance for SOC/supply-chain audits.
   # ============================================================
-  build-and-push:
+  acquire-production-lock:
+    name: Acquire shared production mutation lock
     runs-on: ubuntu-latest
     needs: [detect-changes, run-lint, run-tests]
+    steps:
+      - name: Checkout lock helper
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts/v1/deployment_lock.py
+          sparse-checkout-cone-mode: false
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Acquire lock
+        env:
+          ACADEMY_DEPLOY_LOCK_OWNER: ci-deploy:${{ github.run_id }}:${{ github.run_attempt }}
+        run: python3 scripts/v1/deployment_lock.py acquire --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: [detect-changes, run-lint, run-tests, acquire-production-lock]
     if: |
       needs.detect-changes.outputs.build_base == 'true' ||
       needs.detect-changes.outputs.build_api == 'true' ||
@@ -324,15 +378,40 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Renew shared mutation lock before image writes
+        run: python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Ensure ECR repos
         run: |
+          set -euo pipefail
           for repo in academy-base academy-api academy-video-worker academy-messaging-worker academy-ai-worker-cpu academy-tools-worker; do
-            aws ecr describe-repositories --repository-names "$repo" --region ${{ env.AWS_REGION }} 2>/dev/null || \
-            aws ecr create-repository --repository-name "$repo" --region ${{ env.AWS_REGION }}
+            if ! aws ecr describe-repositories --repository-names "$repo" --region ${{ env.AWS_REGION }} >/dev/null 2>&1; then
+              aws ecr create-repository \
+                --repository-name "$repo" \
+                --image-tag-mutability IMMUTABLE_WITH_EXCLUSION \
+                --image-tag-mutability-exclusion-filters filterType=WILDCARD,filter=latest \
+                --region ${{ env.AWS_REGION }} >/dev/null
+            else
+              aws ecr put-image-tag-mutability \
+                --repository-name "$repo" \
+                --image-tag-mutability IMMUTABLE_WITH_EXCLUSION \
+                --image-tag-mutability-exclusion-filters filterType=WILDCARD,filter=latest \
+                --region ${{ env.AWS_REGION }} >/dev/null
+            fi
+            CONFIG=$(aws ecr describe-repositories --repository-names "$repo" --region ${{ env.AWS_REGION }} --query 'repositories[0]' --output json)
+            if ! jq -e '
+              .imageTagMutability == "IMMUTABLE_WITH_EXCLUSION" and
+              (.imageTagMutabilityExclusionFilters | length == 1) and
+              (.imageTagMutabilityExclusionFilters[0].filterType == "WILDCARD") and
+              (.imageTagMutabilityExclusionFilters[0].filter == "latest")
+            ' <<< "$CONFIG" >/dev/null; then
+              echo "::error::ECR tag mutability is not latest-only mutable for $repo"
+              exit 1
+            fi
           done
 
       # ── Base image (only when base-relevant files change) ──
@@ -348,9 +427,35 @@ jobs:
           sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-base:latest
-            ${{ env.ECR_REGISTRY }}/academy-base:sha-${{ needs.detect-changes.outputs.short_sha }}
+            ${{ env.ECR_REGISTRY }}/academy-base:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=base
           cache-to: type=gha,mode=max,scope=base
+
+      - name: Resolve immutable academy-base build input
+        id: base-image
+        run: |
+          if [ "${{ needs.detect-changes.outputs.build_base }}" = "true" ] || [ "${{ needs.detect-changes.outputs.force_full }}" = "true" ]; then
+            BASE_DIGEST=$(aws ecr describe-images \
+              --repository-name academy-base \
+              --image-ids "imageTag=${{ env.RELEASE_IMAGE_TAG }}" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'imageDetails[0].imageDigest' \
+              --output text)
+          else
+            if [ ! -f docs/reports/release-manifest.latest.json ]; then
+              echo "::error::No successful release manifest exists. Run workflow_dispatch once to build all images."
+              exit 1
+            fi
+            BASE_DIGEST=$(jq -r '.images["academy-base"].digest // empty' docs/reports/release-manifest.latest.json)
+          fi
+          if [[ ! "$BASE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::academy-base digest resolution failed"
+            exit 1
+          fi
+          aws ecr describe-images --repository-name academy-base --image-ids "imageDigest=$BASE_DIGEST" --region ${{ env.AWS_REGION }} >/dev/null
+          BASE_URI="${{ env.ECR_REGISTRY }}/academy-base@${BASE_DIGEST}"
+          echo "uri=$BASE_URI" >> "$GITHUB_OUTPUT"
+          echo "Using immutable base image: $BASE_URI"
 
       # ── API ──
       - name: Build and push academy-api (arm64)
@@ -359,14 +464,14 @@ jobs:
         with:
           context: .
           file: docker/api/Dockerfile
-          build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
+          build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}
           platforms: linux/arm64
           push: true
           provenance: false
           sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-api:latest
-            ${{ env.ECR_REGISTRY }}/academy-api:sha-${{ needs.detect-changes.outputs.short_sha }}
+            ${{ env.ECR_REGISTRY }}/academy-api:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
 
@@ -377,14 +482,14 @@ jobs:
         with:
           context: .
           file: docker/video-worker/Dockerfile
-          build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
+          build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}
           platforms: linux/arm64
           push: true
           provenance: false
           sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-video-worker:latest
-            ${{ env.ECR_REGISTRY }}/academy-video-worker:sha-${{ needs.detect-changes.outputs.short_sha }}
+            ${{ env.ECR_REGISTRY }}/academy-video-worker:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=video
           cache-to: type=gha,mode=max,scope=video
 
@@ -395,14 +500,14 @@ jobs:
         with:
           context: .
           file: docker/messaging-worker/Dockerfile
-          build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
+          build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}
           platforms: linux/arm64
           push: true
           provenance: false
           sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-messaging-worker:latest
-            ${{ env.ECR_REGISTRY }}/academy-messaging-worker:sha-${{ needs.detect-changes.outputs.short_sha }}
+            ${{ env.ECR_REGISTRY }}/academy-messaging-worker:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=messaging
           cache-to: type=gha,mode=max,scope=messaging
 
@@ -413,14 +518,14 @@ jobs:
         with:
           context: .
           file: docker/ai-worker-cpu/Dockerfile
-          build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
+          build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}
           platforms: linux/arm64
           push: true
           provenance: false
           sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:latest
-            ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:sha-${{ needs.detect-changes.outputs.short_sha }}
+            ${{ env.ECR_REGISTRY }}/academy-ai-worker-cpu:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=ai-cpu
           cache-to: type=gha,mode=max,scope=ai-cpu
 
@@ -431,21 +536,22 @@ jobs:
         with:
           context: .
           file: docker/tools-worker/Dockerfile
-          build-args: BASE_IMAGE=${{ env.ECR_REGISTRY }}/academy-base:latest
+          build-args: BASE_IMAGE=${{ steps.base-image.outputs.uri }}
           platforms: linux/arm64
           push: true
           provenance: false
           sbom: false
           tags: |
             ${{ env.ECR_REGISTRY }}/academy-tools-worker:latest
-            ${{ env.ECR_REGISTRY }}/academy-tools-worker:sha-${{ needs.detect-changes.outputs.short_sha }}
+            ${{ env.ECR_REGISTRY }}/academy-tools-worker:${{ env.RELEASE_IMAGE_TAG }}
           cache-from: type=gha,scope=tools
           cache-to: type=gha,mode=max,scope=tools
 
-      # ── Build report ──
-      - name: Collect digests and write ci-build.latest.md
+      # ── Build report + complete release candidate ──
+      - name: Collect exact release digests and write candidate manifest
         id: digests
         run: |
+          set -euo pipefail
           BUILD_TIME=$(date -Iseconds)
           SHA="${{ github.sha }}"
           SHORT_SHA="${SHA:0:8}"
@@ -453,13 +559,14 @@ jobs:
           mkdir -p "$REPORTS_DIR"
 
           cat > "$REPORTS_DIR/ci-build.latest.md" <<HEREDOC
-          ## V1.1.0 CI Build — latest 이미지 digest 스냅샷 (OIDC)
+          ## V1.1.0 CI Build — immutable release candidate (OIDC)
 
           **Generated:** $BUILD_TIME
           **SSOT:** docs/infrastructure/deployment-architecture.md
           **Region:** ${{ env.AWS_REGION }}
           **gitSha:** $SHA
           **shortSha:** $SHORT_SHA
+          **releaseImageTag:** ${{ env.RELEASE_IMAGE_TAG }}
           **Changes:** api=${{ needs.detect-changes.outputs.build_api }} video=${{ needs.detect-changes.outputs.build_video }} messaging=${{ needs.detect-changes.outputs.build_messaging }} ai=${{ needs.detect-changes.outputs.build_ai }} tools=${{ needs.detect-changes.outputs.build_tools }} force_full=${{ needs.detect-changes.outputs.force_full }}
 
           | repo | tags | imageDigest |
@@ -469,13 +576,63 @@ jobs:
           # Remove leading whitespace from heredoc
           sed -i 's/^          //' "$REPORTS_DIR/ci-build.latest.md"
 
+          PRIOR="$REPORTS_DIR/release-manifest.latest.json"
+          CANDIDATE="$REPORTS_DIR/release-manifest.candidate.json"
+          jq -n \
+            --arg generatedAt "$BUILD_TIME" \
+            --arg gitSha "$SHA" \
+            --arg releaseImageTag "${{ env.RELEASE_IMAGE_TAG }}" \
+            '{schemaVersion:1,status:"candidate",complete:false,generatedAt:$generatedAt,gitSha:$gitSha,releaseImageTag:$releaseImageTag,images:{}}' \
+            > "$CANDIDATE"
+
           for repo in academy-base academy-api academy-video-worker academy-messaging-worker academy-ai-worker-cpu academy-tools-worker; do
-            IMAGE_JSON=$(aws ecr describe-images --repository-name "$repo" --image-ids imageTag=latest --region ${{ env.AWS_REGION }} --query 'imageDetails[0]' --output json 2>/dev/null || echo '{}')
-            DIGEST=$(echo "$IMAGE_JSON" | jq -r '.imageDigest // "N/A"')
-            TAGS=$(echo "$IMAGE_JSON" | jq -r '(.imageTags // []) | join(", ")')
-            [ -z "$TAGS" ] && TAGS="N/A"
-            echo "| $repo | $TAGS | $DIGEST |" >> "$REPORTS_DIR/ci-build.latest.md"
+            BUILT=false
+            case "$repo" in
+              academy-base) BUILT="${{ needs.detect-changes.outputs.build_base }}" ;;
+              academy-api) BUILT="${{ needs.detect-changes.outputs.build_api }}" ;;
+              academy-video-worker) BUILT="${{ needs.detect-changes.outputs.build_video }}" ;;
+              academy-messaging-worker) BUILT="${{ needs.detect-changes.outputs.build_messaging }}" ;;
+              academy-ai-worker-cpu) BUILT="${{ needs.detect-changes.outputs.build_ai }}" ;;
+              academy-tools-worker) BUILT="${{ needs.detect-changes.outputs.build_tools }}" ;;
+            esac
+            if [ "${{ needs.detect-changes.outputs.force_full }}" = "true" ]; then BUILT=true; fi
+
+            if [ "$BUILT" = "true" ]; then
+              TAG="${{ env.RELEASE_IMAGE_TAG }}"
+              DIGEST=$(aws ecr describe-images \
+                --repository-name "$repo" \
+                --image-ids "imageTag=$TAG" \
+                --region ${{ env.AWS_REGION }} \
+                --query 'imageDetails[0].imageDigest' \
+                --output text)
+              SOURCE="built"
+            else
+              if [ ! -f "$PRIOR" ] || ! jq -e '.complete == true and .status == "successful"' "$PRIOR" >/dev/null; then
+                echo "::error::A selective build requires a complete successful prior release manifest. Run workflow_dispatch for a full build."
+                exit 1
+              fi
+              DIGEST=$(jq -r --arg repo "$repo" '.images[$repo].digest // empty' "$PRIOR")
+              TAG=$(jq -r --arg repo "$repo" '.images[$repo].tag // "digest-only"' "$PRIOR")
+              SOURCE="prior-success"
+            fi
+
+            if [[ ! "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Invalid release digest for $repo: $DIGEST"
+              exit 1
+            fi
+            aws ecr describe-images --repository-name "$repo" --image-ids "imageDigest=$DIGEST" --region ${{ env.AWS_REGION }} >/dev/null
+            jq \
+              --arg repo "$repo" --arg digest "$DIGEST" --arg tag "$TAG" --arg source "$SOURCE" \
+              '.images[$repo]={digest:$digest,tag:$tag,source:$source}' \
+              "$CANDIDATE" > "$CANDIDATE.tmp"
+            mv "$CANDIDATE.tmp" "$CANDIDATE"
+            echo "| $repo | $TAG ($SOURCE) | $DIGEST |" >> "$REPORTS_DIR/ci-build.latest.md"
           done
+
+          if [ "$(jq '.images | length' "$CANDIDATE")" -ne 6 ]; then
+            echo "::error::Release candidate is incomplete"
+            exit 1
+          fi
 
           echo "buildTime=$BUILD_TIME" >> $GITHUB_OUTPUT
 
@@ -492,7 +649,9 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: ci-build-report
-          path: docs/reports/ci-build.latest.md
+          path: |
+            docs/reports/ci-build.latest.md
+            docs/reports/release-manifest.candidate.json
           retention-days: 7
 
       - name: Commit and push ci-build.latest.md
@@ -543,6 +702,9 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Renew shared mutation lock before migration
+        run: python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+
       - name: Run Django migrate via SSM
         id: migrate
         run: |
@@ -575,12 +737,25 @@ jobs:
           # Account ID 동적 추출 (secrets 추가 없이)
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --region ${{ env.AWS_REGION }})
           ECR_HOST="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
-          ECR_IMAGE="${ECR_HOST}/academy-api:latest"
+          IMAGE_TAG="${{ env.RELEASE_IMAGE_TAG }}"
+          IMAGE_DIGEST=$(aws ecr describe-images \
+            --repository-name academy-api \
+            --image-ids "imageTag=${IMAGE_TAG}" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+          if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Migration image digest resolution failed for academy-api:${IMAGE_TAG}"
+            exit 1
+          fi
+          ECR_IMAGE="${ECR_HOST}/academy-api@${IMAGE_DIGEST}"
+          echo "Migration image pinned: ${ECR_IMAGE}"
 
           # ⚠️ 중요: 기존 `docker exec academy-api`는 ASG refresh 이전의 구 이미지에서
           # migrate를 실행해 새 migration 파일이 포함되지 않는 설계 결함이 있었다.
-          # 이를 해결하기 위해 latest 이미지를 새로 pull한 뒤 --rm 임시 컨테이너에서
-          # migrate를 실행한다. 환경변수는 application 컨테이너가 spawn 시 사용한 동일
+          # 이를 해결하기 위해 이 workflow가 방금 빌드한 sha-* 태그를 digest로
+          # 해석해 pull한 뒤 --rm 임시 컨테이너에서 migrate를 실행한다. digest로
+          # 고정하므로 이후 latest 이동과 무관하다. 환경변수는 application 컨테이너가 spawn 시 사용한 동일
           # /opt/api.env 파일을 직접 마운트(production runtime SSOT).
           # 네트워크는 --network container:academy-api로 공유하여 DB 접근을 보장한다.
           #
@@ -668,6 +843,9 @@ jobs:
       API_ASG_NAME: academy-v1-api-asg
       API_INSTANCE_WARMUP: "300"
     steps:
+      - name: Checkout deployment scripts
+        uses: actions/checkout@v6
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -684,6 +862,16 @@ jobs:
             echo "::error::API is not healthy before deploy (healthz=$STATUS). Aborting refresh."
             exit 1
           fi
+
+      - name: Pin API Launch Template to build digest
+        id: pin
+        run: |
+          python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+          pwsh ./scripts/v1/pin-asg-image.ps1 \
+            -Service api \
+            -ImageTag "${{ env.RELEASE_IMAGE_TAG }}" \
+            -StatePath /tmp/api-pin-state.json \
+            -Ci
 
       - name: Ensure API ASG deploy headroom
         id: scaleup
@@ -794,7 +982,7 @@ jobs:
             if [ "$STATUS" = "Successful" ]; then
               echo "API ASG refresh completed successfully"
               exit 0
-            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "RollbackFailed" ] || [ "$STATUS" = "RollbackSuccessful" ]; then
               echo "::error::API ASG refresh $STATUS"
               exit 1
             fi
@@ -838,19 +1026,43 @@ jobs:
             echo "API ASG capacity already matches cost baseline min=1 desired=$TARGET_DESIRED max=3"
           fi
 
+      - name: Verify API runtime digest
+        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service api -VerifyStatePath /tmp/api-pin-state.json -Ci
+
+      - name: Compensate failed API pin or refresh
+        if: failure() && steps.pin.outcome != 'skipped'
+        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service api -RestoreStatePath /tmp/api-pin-state.json -RefreshAndVerify -Ci
+
   deploy-messaging:
     name: Deploy Messaging Worker (ASG refresh)
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-and-push]
-    if: needs.detect-changes.outputs.build_messaging == 'true' || needs.detect-changes.outputs.force_full == 'true'
+    needs: [detect-changes, build-and-push, run-migrations]
+    if: |
+      always() &&
+      needs.build-and-push.result == 'success' &&
+      (needs.run-migrations.result == 'success' || needs.run-migrations.result == 'skipped') &&
+      (needs.detect-changes.outputs.build_messaging == 'true' || needs.detect-changes.outputs.force_full == 'true')
     env:
       MESSAGING_ASG_NAME: academy-v1-messaging-worker-asg
     steps:
+      - name: Checkout deployment scripts
+        uses: actions/checkout@v6
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Pin Messaging Launch Template to build digest
+        id: pin
+        run: |
+          python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+          pwsh ./scripts/v1/pin-asg-image.ps1 \
+            -Service messaging \
+            -ImageTag "${{ env.RELEASE_IMAGE_TAG }}" \
+            -StatePath /tmp/messaging-pin-state.json \
+            -Ci
 
       - name: Remove scale-in protection before refresh
         run: |
@@ -876,7 +1088,7 @@ jobs:
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.MESSAGING_ASG_NAME }} \
             --region ${{ env.AWS_REGION }} \
-            --preferences '{"MinHealthyPercentage":0,"InstanceWarmup":120}' \
+            --preferences '{"MinHealthyPercentage":100,"MaxHealthyPercentage":200,"InstanceWarmup":120}' \
             --query 'InstanceRefreshId' \
             --output text)
           echo "refresh_id=$REFRESH_ID" >> $GITHUB_OUTPUT
@@ -898,7 +1110,7 @@ jobs:
             if [ "$STATUS" = "Successful" ]; then
               echo "Messaging ASG refresh completed successfully"
               exit 0
-            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "RollbackFailed" ] || [ "$STATUS" = "RollbackSuccessful" ]; then
               echo "::error::Messaging ASG refresh $STATUS"
               exit 1
             fi
@@ -907,19 +1119,43 @@ jobs:
           echo "::error::Messaging ASG refresh timed out after 20 minutes"
           exit 1
 
+      - name: Verify Messaging runtime digest
+        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service messaging -VerifyStatePath /tmp/messaging-pin-state.json -Ci
+
+      - name: Compensate failed Messaging pin or refresh
+        if: failure() && steps.pin.outcome != 'skipped'
+        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service messaging -RestoreStatePath /tmp/messaging-pin-state.json -RefreshAndVerify -Ci
+
   deploy-ai:
     name: Deploy AI Worker (ASG refresh)
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-and-push]
-    if: needs.detect-changes.outputs.build_ai == 'true' || needs.detect-changes.outputs.force_full == 'true'
+    needs: [detect-changes, build-and-push, run-migrations]
+    if: |
+      always() &&
+      needs.build-and-push.result == 'success' &&
+      (needs.run-migrations.result == 'success' || needs.run-migrations.result == 'skipped') &&
+      (needs.detect-changes.outputs.build_ai == 'true' || needs.detect-changes.outputs.force_full == 'true')
     env:
       AI_ASG_NAME: academy-v1-ai-worker-asg
     steps:
+      - name: Checkout deployment scripts
+        uses: actions/checkout@v6
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+
+      - name: Pin AI Launch Template to build digest
+        id: pin
+        run: |
+          python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+          pwsh ./scripts/v1/pin-asg-image.ps1 \
+            -Service ai \
+            -ImageTag "${{ env.RELEASE_IMAGE_TAG }}" \
+            -StatePath /tmp/ai-pin-state.json \
+            -Ci
 
       - name: Remove scale-in protection before refresh
         run: |
@@ -950,7 +1186,7 @@ jobs:
           echo "desired=$DESIRED" >> $GITHUB_OUTPUT
           if [ "$DESIRED" = "0" ]; then
             echo "skip_refresh=true" >> $GITHUB_OUTPUT
-            echo "AI ASG desired=0; new scale-out instances will pull the latest image."
+            echo "AI ASG desired=0; new scale-out instances will use the pinned Launch Template digest."
           else
             echo "skip_refresh=false" >> $GITHUB_OUTPUT
           fi
@@ -985,7 +1221,7 @@ jobs:
             if [ "$STATUS" = "Successful" ]; then
               echo "AI ASG refresh completed successfully"
               exit 0
-            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "RollbackFailed" ] || [ "$STATUS" = "RollbackSuccessful" ]; then
               echo "::error::AI ASG refresh $STATUS"
               exit 1
             fi
@@ -994,14 +1230,28 @@ jobs:
           echo "::error::AI ASG refresh timed out after 20 minutes"
           exit 1
 
+      - name: Verify AI runtime or zero-desired Launch Template digest
+        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service ai -VerifyStatePath /tmp/ai-pin-state.json -Ci
+
+      - name: Compensate failed AI pin or refresh
+        if: failure() && steps.pin.outcome != 'skipped'
+        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service ai -RestoreStatePath /tmp/ai-pin-state.json -RefreshAndVerify -Ci
+
   deploy-tools:
     name: Deploy Tools Worker (ASG refresh)
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-and-push]
-    if: needs.detect-changes.outputs.build_tools == 'true' || needs.detect-changes.outputs.force_full == 'true'
+    needs: [detect-changes, build-and-push, run-migrations]
+    if: |
+      always() &&
+      needs.build-and-push.result == 'success' &&
+      (needs.run-migrations.result == 'success' || needs.run-migrations.result == 'skipped') &&
+      (needs.detect-changes.outputs.build_tools == 'true' || needs.detect-changes.outputs.force_full == 'true')
     env:
       TOOLS_ASG_NAME: academy-v1-tools-worker-asg
     steps:
+      - name: Checkout deployment scripts
+        uses: actions/checkout@v6
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -1018,12 +1268,32 @@ jobs:
             --output text)
           echo "exists=$EXISTS" >> $GITHUB_OUTPUT
           if [ "$EXISTS" = "0" ]; then
-            echo "::warning::Tools ASG not found; run scripts/v1/deploy.ps1 to create SSOT infra. Latest image is pushed."
+            echo "::error::Tools ASG not found; refusing to report a successful deployment without an immutable runtime target."
+            exit 1
           fi
+
+      - name: Pin Tools Launch Template to build digest
+        if: steps.asg.outputs.exists != '0'
+        id: pin
+        run: |
+          python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+          pwsh ./scripts/v1/pin-asg-image.ps1 \
+            -Service tools \
+            -ImageTag "${{ env.RELEASE_IMAGE_TAG }}" \
+            -StatePath /tmp/tools-pin-state.json \
+            -Ci
+
+      - name: Check Tools ASG capacity
+        id: capacity
+        if: steps.asg.outputs.exists != '0'
+        run: |
+          DESIRED=$(aws autoscaling describe-auto-scaling-groups --auto-scaling-group-names "${{ env.TOOLS_ASG_NAME }}" --region "${{ env.AWS_REGION }}" --query 'AutoScalingGroups[0].DesiredCapacity' --output text)
+          echo "desired=$DESIRED" >> "$GITHUB_OUTPUT"
+          if [ "$DESIRED" = "0" ]; then echo "skip_refresh=true" >> "$GITHUB_OUTPUT"; else echo "skip_refresh=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: Start Tools ASG instance refresh
         id: refresh
-        if: steps.asg.outputs.exists != '0'
+        if: steps.asg.outputs.exists != '0' && steps.capacity.outputs.skip_refresh != 'true'
         run: |
           REFRESH_ID=$(aws autoscaling start-instance-refresh \
             --auto-scaling-group-name ${{ env.TOOLS_ASG_NAME }} \
@@ -1035,7 +1305,7 @@ jobs:
           echo "Tools ASG instance refresh started: $REFRESH_ID"
 
       - name: Wait for Tools refresh to complete
-        if: steps.asg.outputs.exists != '0'
+        if: steps.asg.outputs.exists != '0' && steps.capacity.outputs.skip_refresh != 'true'
         run: |
           REFRESH_ID="${{ steps.refresh.outputs.refresh_id }}"
           for i in $(seq 1 40); do
@@ -1051,7 +1321,7 @@ jobs:
             if [ "$STATUS" = "Successful" ]; then
               echo "Tools ASG refresh completed successfully"
               exit 0
-            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ]; then
+            elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "RollbackFailed" ] || [ "$STATUS" = "RollbackSuccessful" ]; then
               echo "::error::Tools ASG refresh $STATUS"
               exit 1
             fi
@@ -1060,14 +1330,26 @@ jobs:
           echo "::error::Tools ASG refresh timed out after 20 minutes"
           exit 1
 
+      - name: Verify Tools runtime or zero-desired Launch Template digest
+        if: steps.asg.outputs.exists != '0'
+        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service tools -VerifyStatePath /tmp/tools-pin-state.json -Ci
+
+      - name: Compensate failed Tools pin or refresh
+        if: failure() && steps.pin.outcome != 'skipped'
+        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service tools -RestoreStatePath /tmp/tools-pin-state.json -RefreshAndVerify -Ci
+
   # ============================================================
   # Phase 4.5: Video worker deploy (Batch job definitions → SHA-pinned image)
   # ============================================================
   deploy-video:
     name: Deploy video worker (Batch job defs)
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-and-push]
-    if: needs.detect-changes.outputs.build_video == 'true' || needs.detect-changes.outputs.force_full == 'true'
+    needs: [detect-changes, build-and-push, run-migrations]
+    if: |
+      always() &&
+      needs.build-and-push.result == 'success' &&
+      (needs.run-migrations.result == 'success' || needs.run-migrations.result == 'skipped') &&
+      (needs.detect-changes.outputs.build_video == 'true' || needs.detect-changes.outputs.force_full == 'true')
     env:
       # 2026-05-10: long path 폐기됨. long-jobdef 제거.
       VIDEO_JOB_DEFS: >-
@@ -1088,64 +1370,174 @@ jobs:
 
       - name: Register new Batch job definition revisions with SHA image
         run: |
-          set +e
-          IMAGE="${{ env.ECR_REGISTRY }}/academy-video-worker:sha-${{ needs.detect-changes.outputs.short_sha }}"
-          echo "Deploying video worker image: $IMAGE"
-          FAIL_COUNT=0
-          SUCCESS_COUNT=0
-          for JOBDEF_NAME in $VIDEO_JOB_DEFS; do
-            echo "=== $JOBDEF_NAME ==="
-            CURRENT=$(aws batch describe-job-definitions \
-              --job-definition-name "$JOBDEF_NAME" --status ACTIVE \
-              --query 'jobDefinitions | sort_by(@, &revision) | [-1]' --output json 2>/dev/null)
-            if [ -z "$CURRENT" ] || [ "$CURRENT" = "null" ]; then
-              echo "::warning::Job definition $JOBDEF_NAME not found, skipping"
-              continue
+          python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
+          set -uo pipefail
+          # Fail before any job-definition mutation when a required runtime CE
+          # is absent or disabled. The post-registration check below remains as
+          # a readback guard against state changing during the rollout.
+          for CE in academy-v1-video-batch-ce-200gb academy-v1-video-ops-ce; do
+            CE_JSON=$(aws batch describe-compute-environments \
+              --compute-environments "$CE" --region ${{ env.AWS_REGION }} --output json 2>/dev/null)
+            STATUS=$(jq -r '.computeEnvironments[0].status // "MISSING"' <<< "$CE_JSON")
+            STATE=$(jq -r '.computeEnvironments[0].state // "MISSING"' <<< "$CE_JSON")
+            if [ "$STATUS" != "VALID" ] || [ "$STATE" != "ENABLED" ]; then
+              echo "::error::Required compute environment $CE is $STATUS/$STATE before Video rollout"
+              exit 1
             fi
-            # Write stripped containerProperties to temp file (avoids shell escaping issues)
-            TMPFILE=$(mktemp /tmp/jobdef-XXXXXX.json)
-            echo "$CURRENT" | jq --arg img "$IMAGE" '
+          done
+
+          IMAGE_DIGEST=$(aws ecr describe-images \
+            --repository-name academy-video-worker \
+            --image-ids "imageTag=${{ env.RELEASE_IMAGE_TAG }}" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'imageDetails[0].imageDigest' \
+            --output text)
+          if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Cannot resolve immutable video digest for ${{ env.RELEASE_IMAGE_TAG }}"
+            exit 1
+          fi
+          IMAGE="${{ env.ECR_REGISTRY }}/academy-video-worker@${IMAGE_DIGEST}"
+          echo "Deploying video worker image: $IMAGE"
+          SNAPSHOT_DIR=$(mktemp -d /tmp/video-jobdefs-XXXXXX)
+          trap 'rm -rf "$SNAPSHOT_DIR"' EXIT
+
+          register_snapshot() {
+            local job_name="$1"
+            local snapshot="$2"
+            local image_uri="$3"
+            local prefix="$SNAPSHOT_DIR/${job_name}"
+            local container_file="${prefix}.container.json"
+            local retry_file="${prefix}.retry.json"
+            local timeout_file="${prefix}.timeout.json"
+            local parameters_file="${prefix}.parameters.json"
+            local tags_file="${prefix}.tags.json"
+            local consumable_file="${prefix}.consumable.json"
+
+            jq --arg img "$image_uri" '
               .containerProperties
               | .image = $img
               | del(.networkInterfaces, .taskArn, .containerInstanceArn,
                     .logStreamName, .assignPublicIp, .networkConfiguration)
               | if .secrets == [] then del(.secrets) else . end
               | if .logConfiguration.secretOptions == [] then .logConfiguration |= del(.secretOptions) else . end
-            ' > "$TMPFILE"
-            # Preserve retryStrategy / timeout from previous revision — register-job-definition
-            # 는 미지정 시 NULL로 떨어진다. 운영 환경에서 spot 회수/timeout 설정이 풀리면 안 됨.
-            RETRY_FILE=$(mktemp /tmp/retry-XXXXXX.json)
-            TIMEOUT_FILE=$(mktemp /tmp/timeout-XXXXXX.json)
-            echo "$CURRENT" | jq -e '.retryStrategy' > "$RETRY_FILE" 2>/dev/null || rm -f "$RETRY_FILE"
-            echo "$CURRENT" | jq -e '.timeout' > "$TIMEOUT_FILE" 2>/dev/null || rm -f "$TIMEOUT_FILE"
-            # Force EC2 — all video batch CEs are EC2. Prevents FARGATE propagation bug.
-            PLATFORM="EC2"
-            REGISTER_ARGS=(
-              --job-definition-name "$JOBDEF_NAME"
+            ' "$snapshot" > "$container_file" || return 20
+
+            mapfile -t PLATFORMS < <(jq -r '.platformCapabilities[]?' "$snapshot")
+            if [ "${#PLATFORMS[@]}" -ne 1 ] || [ "${PLATFORMS[0]}" != "EC2" ]; then
+              echo "Unsupported platformCapabilities for $job_name: ${PLATFORMS[*]:-missing}" >&2
+              return 21
+            fi
+
+            local register_args=(
+              --job-definition-name "$job_name"
               --type container
-              --platform-capabilities "$PLATFORM"
-              --container-properties "file://$TMPFILE"
+              --platform-capabilities EC2
+              --container-properties "file://$container_file"
             )
-            if [ -f "$RETRY_FILE" ]; then
-              REGISTER_ARGS+=(--retry-strategy "file://$RETRY_FILE")
+            if jq -e '.retryStrategy != null' "$snapshot" > "$retry_file"; then
+              jq '.retryStrategy' "$snapshot" > "$retry_file"
+              register_args+=(--retry-strategy "file://$retry_file")
             fi
-            if [ -f "$TIMEOUT_FILE" ]; then
-              REGISTER_ARGS+=(--timeout "file://$TIMEOUT_FILE")
+            if jq -e '.timeout != null' "$snapshot" > "$timeout_file"; then
+              jq '.timeout' "$snapshot" > "$timeout_file"
+              register_args+=(--timeout "file://$timeout_file")
             fi
-            ERR=$(aws batch register-job-definition "${REGISTER_ARGS[@]}" --output text --query 'jobDefinitionArn' 2>&1)
-            RC=$?
-            rm -f "$TMPFILE" "$RETRY_FILE" "$TIMEOUT_FILE" 2>/dev/null || true
-            if [ $RC -eq 0 ]; then
-              echo "  ✅ $ERR"
+            if jq -e '.parameters != null' "$snapshot" > "$parameters_file"; then
+              jq '.parameters' "$snapshot" > "$parameters_file"
+              register_args+=(--parameters "file://$parameters_file")
+            fi
+            if jq -e '.tags != null' "$snapshot" > "$tags_file"; then
+              jq '.tags' "$snapshot" > "$tags_file"
+              register_args+=(--tags "file://$tags_file")
+            fi
+            if jq -e '.consumableResourceProperties != null' "$snapshot" > "$consumable_file"; then
+              jq '.consumableResourceProperties' "$snapshot" > "$consumable_file"
+              register_args+=(--consumable-resource-properties "file://$consumable_file")
+            fi
+            if [ "$(jq -r '.propagateTags // false' "$snapshot")" = "true" ]; then
+              register_args+=(--propagate-tags)
+            fi
+            SCHEDULING_PRIORITY=$(jq -r '.schedulingPriority // empty' "$snapshot")
+            if [ -n "$SCHEDULING_PRIORITY" ]; then
+              register_args+=(--scheduling-priority "$SCHEDULING_PRIORITY")
+            fi
+            aws batch register-job-definition "${register_args[@]}" \
+              --region ${{ env.AWS_REGION }} --output text --query 'jobDefinitionArn'
+          }
+
+          SUCCESSFUL_JOB_DEFS=()
+          compensate_registered() {
+            local compensation_failures=0
+            for job_name in "${SUCCESSFUL_JOB_DEFS[@]}"; do
+              local snapshot="$SNAPSHOT_DIR/${job_name}.json"
+              local original_image
+              original_image=$(jq -r '.containerProperties.image // empty' "$snapshot")
+              if [ -z "$original_image" ]; then
+                echo "::error::Compensation snapshot has no image: $job_name"
+                compensation_failures=$((compensation_failures + 1))
+                continue
+              fi
+              if RESULT=$(register_snapshot "$job_name" "$snapshot" "$original_image" 2>&1); then
+                echo "Compensated $job_name back to $original_image: $RESULT"
+              else
+                echo "::error::Compensation failed for $job_name: $RESULT"
+                compensation_failures=$((compensation_failures + 1))
+              fi
+            done
+            [ "$compensation_failures" -eq 0 ]
+          }
+
+          FAIL_COUNT=0
+          SUCCESS_COUNT=0
+          EXPECTED_COUNT=$(wc -w <<< "$VIDEO_JOB_DEFS" | tr -d ' ')
+          for JOBDEF_NAME in $VIDEO_JOB_DEFS; do
+            echo "=== $JOBDEF_NAME ==="
+            CURRENT=$(aws batch describe-job-definitions \
+              --job-definition-name "$JOBDEF_NAME" --status ACTIVE \
+              --query 'jobDefinitions | sort_by(@, &revision) | [-1]' --output json 2>/dev/null)
+            if [ -z "$CURRENT" ] || [ "$CURRENT" = "null" ]; then
+              echo "::error::Required job definition $JOBDEF_NAME not found"
+              FAIL_COUNT=$((FAIL_COUNT + 1))
+              continue
+            fi
+            SNAPSHOT="$SNAPSHOT_DIR/${JOBDEF_NAME}.json"
+            printf '%s\n' "$CURRENT" > "$SNAPSHOT"
+            if RESULT=$(register_snapshot "$JOBDEF_NAME" "$SNAPSHOT" "$IMAGE" 2>&1); then
+              echo "  ✅ $RESULT"
               SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
+              SUCCESSFUL_JOB_DEFS+=("$JOBDEF_NAME")
             else
-              echo "::error::Failed to register $JOBDEF_NAME (exit $RC): $ERR"
+              echo "::error::Failed to register $JOBDEF_NAME: $RESULT"
               FAIL_COUNT=$((FAIL_COUNT + 1))
             fi
           done
           echo "Summary: $SUCCESS_COUNT success, $FAIL_COUNT failed"
-          if [ "$FAIL_COUNT" -gt 0 ]; then
-            echo "::error::$FAIL_COUNT job definition(s) failed"
+          if [ "$FAIL_COUNT" -gt 0 ] || [ "$SUCCESS_COUNT" -ne "$EXPECTED_COUNT" ] || [ "$SUCCESS_COUNT" -eq 0 ]; then
+            if ! compensate_registered; then
+              echo "::error::Video deploy incomplete and compensation also failed"
+              exit 2
+            fi
+            echo "::error::Video deploy incomplete: expected=$EXPECTED_COUNT success=$SUCCESS_COUNT failed=$FAIL_COUNT"
+            exit 1
+          fi
+
+          READBACK_FAILED=false
+          for JOBDEF_NAME in $VIDEO_JOB_DEFS; do
+            ACTUAL=$(aws batch describe-job-definitions \
+              --job-definition-name "$JOBDEF_NAME" --status ACTIVE \
+              --query 'jobDefinitions | sort_by(@, &revision) | [-1].containerProperties.image' \
+              --output text)
+            if [ "$ACTUAL" != "$IMAGE" ]; then
+              echo "::error::$JOBDEF_NAME runtime image mismatch: actual=$ACTUAL expected=$IMAGE"
+              READBACK_FAILED=true
+            fi
+          done
+          if [ "$READBACK_FAILED" = "true" ]; then
+            if ! compensate_registered; then
+              echo "::error::Video deploy readback failed and compensation also failed"
+              exit 2
+            fi
+            echo "::error::Video deploy readback failed; all successful revisions were compensated"
             exit 1
           fi
 
@@ -1160,7 +1552,8 @@ jobs:
               --query 'computeEnvironments[0].state' --output text 2>/dev/null)
             echo "$CE: status=$STATUS state=$STATE"
             if [ "$STATUS" != "VALID" ] || [ "$STATE" != "ENABLED" ]; then
-              echo "::warning::$CE is $STATUS/$STATE"
+              echo "::error::Required compute environment $CE is $STATUS/$STATE"
+              exit 1
             fi
           done
 
@@ -1175,6 +1568,19 @@ jobs:
       always() && needs.build-and-push.result == 'success' &&
       (needs.deploy-api.result == 'success' || needs.deploy-messaging.result == 'success' || needs.deploy-ai.result == 'success' || needs.deploy-tools.result == 'success' || needs.deploy-video.result == 'success')
     steps:
+      - name: Checkout verification scripts
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download exact release candidate
+        uses: actions/download-artifact@v8
+        with:
+          name: ci-build-report
+          # upload-artifact computes docs/reports as the least-common-ancestor,
+          # so the archive contains the two filenames at its root.
+          path: docs/reports
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -1235,24 +1641,132 @@ jobs:
               --region ${{ env.AWS_REGION }} \
               --query 'AutoScalingGroups[0].MinSize' \
               --output text 2>/dev/null || echo "0")
+            DESIRED=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "$ASG_NAME" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'AutoScalingGroups[0].DesiredCapacity' \
+              --output text 2>/dev/null || echo "INVALID")
+
+            if ! [[ "$DESIRED" =~ ^[0-9]+$ ]]; then
+              echo "::error::$ASG_NAME: desired capacity is not readable: $DESIRED"
+              PASS=false
+              continue
+            fi
 
             if [ -z "$INSTANCES" ] || [ "$INSTANCES" = "None" ]; then
-              echo "::warning::$ASG_NAME: no instances found"
+              if [ "$DESIRED" != "0" ]; then
+                echo "::error::$ASG_NAME: no instances found while desired=$DESIRED"
+                PASS=false
+              else
+                echo "$ASG_NAME: no instances (desired=0, min=$MIN_SIZE)"
+              fi
               continue
             fi
 
             HEALTHY_COUNT=$(echo "$INSTANCES" | grep -c "Healthy.*InService" || true)
             TOTAL_COUNT=$(echo "$INSTANCES" | wc -l | tr -d ' ')
 
-            echo "$ASG_NAME: $HEALTHY_COUNT/$TOTAL_COUNT healthy (min=$MIN_SIZE)"
+            echo "$ASG_NAME: $HEALTHY_COUNT/$TOTAL_COUNT healthy (desired=$DESIRED min=$MIN_SIZE)"
 
-            if [ "$HEALTHY_COUNT" -lt "$MIN_SIZE" ]; then
-              echo "::error::$ASG_NAME: healthy=$HEALTHY_COUNT < min=$MIN_SIZE"
+            if [ "$HEALTHY_COUNT" -ne "$DESIRED" ]; then
+              echo "::error::$ASG_NAME: healthy InService=$HEALTHY_COUNT != desired=$DESIRED"
               PASS=false
             fi
           done
 
           echo "asg_pass=$PASS" >> $GITHUB_OUTPUT
+
+      - name: Verify actual ASG container digests
+        id: runtime_images
+        run: |
+          set -euo pipefail
+          MANIFEST=docs/reports/release-manifest.candidate.json
+          if [ ! -f "$MANIFEST" ] || [ "$(jq '.images | length' "$MANIFEST")" -ne 6 ]; then
+            echo "::error::Complete release candidate artifact is missing"
+            exit 1
+          fi
+
+          while read -r ASG REPO CONTAINER; do
+            EXPECTED=$(jq -r --arg repo "$REPO" '.images[$repo].digest // empty' "$MANIFEST")
+            if [[ ! "$EXPECTED" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Invalid expected digest for $REPO"
+              exit 1
+            fi
+            DESIRED=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "$ASG" --region ${{ env.AWS_REGION }} \
+              --query 'AutoScalingGroups[0].DesiredCapacity' --output text)
+            INSTANCE_IDS=$(aws autoscaling describe-auto-scaling-groups \
+              --auto-scaling-group-names "$ASG" --region ${{ env.AWS_REGION }} \
+              --query 'AutoScalingGroups[0].Instances[?LifecycleState==`InService` && HealthStatus==`Healthy`].InstanceId' --output text)
+            HEALTHY_RUNTIME_COUNT=$(wc -w <<< "${INSTANCE_IDS/None/}" | tr -d ' ')
+            if [ "$HEALTHY_RUNTIME_COUNT" -ne "$DESIRED" ]; then
+              echo "::error::$ASG healthy InService runtimes=$HEALTHY_RUNTIME_COUNT but desired=$DESIRED"
+              exit 1
+            fi
+            if [ "$DESIRED" -eq 0 ]; then
+              echo "$ASG desired=0; no running digest to inspect"
+              continue
+            fi
+
+            for INSTANCE_ID in $INSTANCE_IDS; do
+              REMOTE_CMD=$(printf '%s\n' \
+                'set -e' \
+                "IMAGE_ID=\$(docker inspect --format '{{.Image}}' '$CONTAINER')" \
+                "docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' \"\$IMAGE_ID\"")
+              PARAMS=$(jq -n --arg cmd "$REMOTE_CMD" '{commands:[$cmd],executionTimeout:["120"]}')
+              COMMAND_ID=$(aws ssm send-command \
+                --instance-ids "$INSTANCE_ID" --document-name AWS-RunShellScript \
+                --parameters "$PARAMS" --timeout-seconds 180 --region ${{ env.AWS_REGION }} \
+                --query 'Command.CommandId' --output text)
+              aws ssm wait command-executed --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --region ${{ env.AWS_REGION }} || true
+              RESULT=$(aws ssm get-command-invocation --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID" --region ${{ env.AWS_REGION }} --output json)
+              STATUS=$(jq -r '.Status' <<< "$RESULT")
+              OUTPUT=$(jq -r '.StandardOutputContent // ""' <<< "$RESULT")
+              EXPECTED_URI="${{ env.ECR_REGISTRY }}/${REPO}@${EXPECTED}"
+              if [ "$STATUS" != "Success" ] || ! grep -Fxq "$EXPECTED_URI" <<< "$OUTPUT"; then
+                echo "::error::$ASG/$INSTANCE_ID actual runtime does not contain $EXPECTED_URI (status=$STATUS output=$OUTPUT)"
+                exit 1
+              fi
+              echo "$ASG/$INSTANCE_ID: $EXPECTED_URI"
+            done
+          done <<'TARGETS'
+          academy-v1-api-asg academy-api academy-api
+          academy-v1-messaging-worker-asg academy-messaging-worker academy-messaging-worker
+          academy-v1-ai-worker-asg academy-ai-worker-cpu academy-ai-worker-cpu
+          academy-v1-tools-worker-asg academy-tools-worker academy-tools-worker
+          TARGETS
+          echo "runtime_pass=true" >> "$GITHUB_OUTPUT"
+
+      - name: Verify required Video Batch runtimes
+        id: video_runtime
+        run: |
+          set -euo pipefail
+          MANIFEST=docs/reports/release-manifest.candidate.json
+          EXPECTED=$(jq -r '.images["academy-video-worker"].digest // empty' "$MANIFEST")
+          EXPECTED_URI="${{ env.ECR_REGISTRY }}/academy-video-worker@${EXPECTED}"
+          JOB_DEFS='academy-v1-video-batch-jobdef academy-v1-video-ops-scanstuck academy-v1-video-ops-reconcile academy-v1-video-ops-netprobe academy-v1-video-ops-enqueue-uploaded academy-v1-video-ops-purge-raw academy-v1-video-ops-detect-stuck academy-v1-video-ops-recover-dead'
+          COUNT=0
+          for JOBDEF in $JOB_DEFS; do
+            ACTUAL=$(aws batch describe-job-definitions --job-definition-name "$JOBDEF" --status ACTIVE \
+              --region ${{ env.AWS_REGION }} --query 'jobDefinitions | sort_by(@, &revision) | [-1].containerProperties.image' --output text)
+            if [ "$ACTUAL" != "$EXPECTED_URI" ]; then
+              echo "::error::$JOBDEF image mismatch: actual=$ACTUAL expected=$EXPECTED_URI"
+              exit 1
+            fi
+            COUNT=$((COUNT + 1))
+          done
+          if [ "$COUNT" -ne 8 ]; then
+            echo "::error::Required video job definition count mismatch: $COUNT"
+            exit 1
+          fi
+          for CE in academy-v1-video-batch-ce-200gb academy-v1-video-ops-ce; do
+            CE_STATE=$(aws batch describe-compute-environments --compute-environments "$CE" --region ${{ env.AWS_REGION }} --query 'computeEnvironments[0].[status,state]' --output text)
+            if [ "$CE_STATE" != $'VALID\tENABLED' ]; then
+              echo "::error::$CE must be VALID/ENABLED; actual=$CE_STATE"
+              exit 1
+            fi
+          done
+          echo "video_runtime_pass=true" >> "$GITHUB_OUTPUT"
 
       - name: Verify no tenant maintenance flags
         id: tenant_maintenance
@@ -1381,6 +1895,8 @@ jobs:
           echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
           echo "| Health endpoints | ${{ steps.health.outputs.health_pass }} |" >> $GITHUB_STEP_SUMMARY
           echo "| ASG instances | ${{ steps.asg.outputs.asg_pass }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| ASG runtime digests | ${{ steps.runtime_images.outputs.runtime_pass }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Video Batch runtimes | ${{ steps.video_runtime.outputs.video_runtime_pass }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Tenant maintenance flags | ${{ steps.tenant_maintenance.outputs.tenant_maintenance_pass }} |" >> $GITHUB_STEP_SUMMARY
           echo "| deploy-api | ${{ needs.deploy-api.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| deploy-messaging | ${{ needs.deploy-messaging.result }} |" >> $GITHUB_STEP_SUMMARY
@@ -1398,6 +1914,11 @@ jobs:
             exit 1
           fi
 
+          if [ "${{ steps.runtime_images.outputs.runtime_pass }}" != "true" ] || [ "${{ steps.video_runtime.outputs.video_runtime_pass }}" != "true" ]; then
+            echo "::error::Deploy verification FAILED: immutable runtime evidence failure"
+            exit 1
+          fi
+
           if [ "${{ steps.tenant_maintenance.outputs.tenant_maintenance_pass }}" != "true" ]; then
             echo "::error::Deploy verification FAILED: tenant maintenance flag guard failure"
             exit 1
@@ -1405,24 +1926,61 @@ jobs:
 
           echo "Deploy verification PASS" >> $GITHUB_STEP_SUMMARY
 
+      - name: Promote verified complete release manifest
+        run: |
+          set -euo pipefail
+          CANDIDATE=docs/reports/release-manifest.candidate.json
+          VERIFIED_AT=$(date -Iseconds)
+          PROMOTED=$(mktemp)
+          jq --arg verifiedAt "$VERIFIED_AT" '.status="successful" | .complete=true | .verifiedAt=$verifiedAt' "$CANDIDATE" > "$PROMOTED"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          for attempt in 1 2 3; do
+            git fetch origin main
+            git reset --hard origin/main
+            mkdir -p docs/reports
+            cp "$PROMOTED" docs/reports/release-manifest.latest.json
+            git add docs/reports/release-manifest.latest.json
+            if git diff --staged --quiet; then exit 0; fi
+            git commit -m "chore(release): promote verified image manifest (${{ env.RELEASE_IMAGE_TAG }}) [skip ci]"
+            if git push origin HEAD:main; then exit 0; fi
+            sleep $((attempt * 2))
+          done
+          echo "::error::Failed to promote verified release manifest after 3 attempts"
+          exit 1
+
       # ECR cleanup: manifest-aware, keep latest + newest 10 sha- per repo.
       # Previous inline bash version silently failed (deleted=0 on every run) because
       # `jq`'s pretty-print JSON could not be passed to `aws ecr batch-delete-image --image-ids`
       # as a single string, and OCI image index children returned ImageReferencedByManifestList.
       # `ecr-cleanup.py` resolves both: manifest-aware deletion (index → children) with pagination.
-      - name: Checkout ecr-cleanup.py
-        if: steps.health.outputs.health_pass == 'true' && steps.asg.outputs.asg_pass == 'true'
-        uses: actions/checkout@v6
-        with:
-          sparse-checkout: scripts/v1/ecr-cleanup.py
-          sparse-checkout-cone-mode: false
-
       - name: ECR cleanup (manifest-aware, keep latest + 10 sha-)
         if: steps.health.outputs.health_pass == 'true' && steps.asg.outputs.asg_pass == 'true'
         run: |
           python3 scripts/v1/ecr-cleanup.py --execute --keep 10
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| ECR cleanup | manifest-aware, keep=10 — see step log for per-repo totals |" >> $GITHUB_STEP_SUMMARY
+
+  release-production-lock:
+    name: Release shared production mutation lock
+    runs-on: ubuntu-latest
+    needs: [acquire-production-lock, build-and-push, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment]
+    if: always() && needs.acquire-production-lock.result == 'success'
+    steps:
+      - name: Checkout lock helper
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: scripts/v1/deployment_lock.py
+          sparse-checkout-cone-mode: false
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Release lock only as its owner
+        env:
+          ACADEMY_DEPLOY_LOCK_OWNER: ci-deploy:${{ github.run_id }}:${{ github.run_attempt }}
+        run: python3 scripts/v1/deployment_lock.py release --owner "$ACADEMY_DEPLOY_LOCK_OWNER"
 
   # ============================================================
   # Phase 6: Failure notification (any preceding job failed)
@@ -1432,7 +1990,7 @@ jobs:
   notify-on-failure:
     name: Notify on failure
     runs-on: ubuntu-latest
-    needs: [detect-changes, run-lint, run-tests, build-and-push, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment]
+    needs: [detect-changes, run-lint, run-tests, acquire-production-lock, build-and-push, run-migrations, deploy-api, deploy-messaging, deploy-ai, deploy-tools, deploy-video, verify-deployment, release-production-lock]
     if: always() && contains(needs.*.result, 'failure')
     steps:
       - name: Configure AWS credentials (OIDC)
@@ -1444,7 +2002,7 @@ jobs:
       - name: Publish SNS alert
         run: |
           FAILED_JOBS=""
-          for j in run-lint run-tests build-and-push run-migrations deploy-api deploy-messaging deploy-ai deploy-tools deploy-video verify-deployment; do
+          for j in run-lint run-tests acquire-production-lock build-and-push run-migrations deploy-api deploy-messaging deploy-ai deploy-tools deploy-video verify-deployment release-production-lock; do
             R=$(echo '${{ toJson(needs) }}' | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('$j', {}).get('result',''))")
             if [ "$R" = "failure" ]; then
               FAILED_JOBS="${FAILED_JOBS}${j} "

@@ -132,18 +132,19 @@ def test_flag_merge_suspect_no_inner_anchor():
 # 이 테스트는 인테그레이션 — Django ORM 의존하므로 함수 직접 검증으로 대체.
 
 
-def test_intent_keywords_present_in_pipeline():
-    """run_matchup_pipeline 안의 intent 자동 추정 키워드 sanity check.
+def test_intent_keywords_present_in_source_type_inference():
+    """업로드 이름 기반 source type 자동 추정 키워드 sanity check.
 
     학습자료 키워드(메인자료/복습과제/객서심화 등)는 이전 refactor에서 SKIP_PAGE_PATTERNS
     및 segment_dispatcher 측으로 분리됨 — 이 test는 시험지 source_type fallback 분기만 검증.
     """
-    import inspect
     from academy.application.use_cases.ai.pipelines import matchup_pipeline
-    src = inspect.getsource(matchup_pipeline.run_matchup_pipeline)
-    # source_type=other → school_exam_pdf fallback 분기의 시험지 키워드만 본 함수에 잔존.
-    for kw in ["시험지", "중간고사", "기말고사", "모의고사", "기출 통과"]:
-        assert kw in src, f"시험지 자동 추정 키워드 누락: {kw}"
+    # source_type=other → school_exam_pdf fallback 계약을 동작으로 검증한다.
+    for title in ["시험지", "중간고사", "기말고사", "모의고사", "기출 통과"]:
+        assert (
+            matchup_pipeline._infer_source_type_from_names("other", title)
+            == "school_exam_pdf"
+        ), f"시험지 자동 추정 키워드 누락: {title}"
 
 
 # ── _trim_box_merged_text (B 백로그 — doc#131 q4 잔존 anchor 정제) ──

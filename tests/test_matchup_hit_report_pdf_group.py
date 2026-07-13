@@ -64,7 +64,7 @@ def _page_count(pdf_bytes: bytes) -> int:
 
 
 @patch("apps.domains.matchup.pdf_report._safe_url", return_value="")
-def test_curated_pdf_groups_multiple_selected_problems_on_one_body_page(_safe_url):
+def test_curated_pdf_groups_two_selected_problems_per_body_page(_safe_url):
     tenant = Tenant.objects.create(name="PDF Group", code="pdf-group")
     exam_doc = _document(tenant=tenant, name="exam", problem_count=1)
     source_doc = _document(tenant=tenant, name="source", problem_count=3)
@@ -89,11 +89,12 @@ def test_curated_pdf_groups_multiple_selected_problems_on_one_body_page(_safe_ur
 
     pdf_bytes = generate_curated_hit_report_pdf(report)
 
-    assert _page_count(pdf_bytes) == 2  # cover + one grouped body page
+    # 상담·공유 가독성 계약: 후보는 최대 2개씩 표시한다.
+    assert _page_count(pdf_bytes) == 3  # cover + two grouped body pages (2 + 1)
 
 
 @patch("apps.domains.matchup.pdf_report._safe_url", return_value="")
-def test_curated_pdf_splits_more_than_four_selected_problems(_safe_url):
+def test_curated_pdf_splits_five_selected_problems_two_per_page(_safe_url):
     tenant = Tenant.objects.create(name="PDF Split", code="pdf-split")
     exam_doc = _document(tenant=tenant, name="exam-split", problem_count=1)
     source_doc = _document(tenant=tenant, name="source-split", problem_count=5)
@@ -116,4 +117,4 @@ def test_curated_pdf_splits_more_than_four_selected_problems(_safe_url):
 
     pdf_bytes = generate_curated_hit_report_pdf(report)
 
-    assert _page_count(pdf_bytes) == 3  # cover + two body pages (4 + 1)
+    assert _page_count(pdf_bytes) == 4  # cover + three body pages (2 + 2 + 1)

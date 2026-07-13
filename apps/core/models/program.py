@@ -1,7 +1,9 @@
 # PATH: apps/core/models/program.py
 from __future__ import annotations
 
+from datetime import timedelta
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 
@@ -38,6 +40,7 @@ class Program(TimestampModel):
         "limglish": 150_000,
         "ymath": 150_000,
     }
+    BILLING_VAT_RATE_PERCENT = 10
 
     tenant = models.OneToOneField(
         Tenant,
@@ -220,21 +223,122 @@ class Program(TimestampModel):
             return Tenant.objects.only("code").get(pk=self.tenant_id).code
         return None
 
+    @classmethod
+    def calculate_monthly_amounts(cls, supply_amount: int) -> dict[str, int]:
+        """Return the canonical VAT-exclusive and VAT-inclusive monthly amounts."""
+        if isinstance(supply_amount, bool) or not isinstance(supply_amount, int):
+            raise TypeError("supply_amount must be an integer")
+        if supply_amount <= 0:
+            raise ValueError("supply_amount must be greater than zero")
+        tax_amount = supply_amount * cls.BILLING_VAT_RATE_PERCENT // 100
+        return {
+            "supply_amount": supply_amount,
+            "tax_amount": tax_amount,
+            "total_amount": supply_amount + tax_amount,
+        }
+
+    @property
+    def monthly_amounts(self) -> dict[str, int]:
+        return self.calculate_monthly_amounts(self.monthly_price)
+
+    @property
+    def monthly_tax_amount(self) -> int:
+        return self.monthly_amounts["tax_amount"]
+
+    @property
+    def monthly_total_amount(self) -> int:
+        return self.monthly_amounts["total_amount"]
+
+    @property
+    def list_monthly_price(self) -> int:
+        return self.PLAN_PRICES.get(self.plan, self.monthly_price)
+
+    @property
+    def list_monthly_amounts(self) -> dict[str, int]:
+        return self.calculate_monthly_amounts(self.list_monthly_price)
+
+    @property
+    def is_contract_price(self) -> bool:
+        return self.get_contract_monthly_price(
+            self._tenant_code_for_price_resolution()
+        ) is not None
+
+    @property
+    def billing_price_integrity(self) -> str:
+        contract_price = self.get_contract_monthly_price(
+            self._tenant_code_for_price_resolution()
+        )
+        if contract_price is not None and self.monthly_price != contract_price:
+            return "contract_price_mismatch"
+        return "ok"
+
+    @property
+    def is_billing_price_ready(self) -> bool:
+        return self.billing_price_integrity == "ok"
+
+    @property
+    def billing_price_policy(self) -> str:
+        if self.is_contract_price:
+            return "contract_override"
+        if self.monthly_price < self.list_monthly_price:
+            return "promotion"
+        if self.monthly_price > self.list_monthly_price:
+            return "custom"
+        return "list"
+
+    @property
+    def monthly_discount_rate(self) -> int:
+        if self.billing_price_policy != "promotion" or self.list_monthly_price <= 0:
+            return 0
+        return round((1 - self.monthly_price / self.list_monthly_price) * 100)
+
+    @property
+    def grace_period_days(self) -> int:
+        grace_days = int(settings.BILLING_GRACE_PERIOD_DAYS)
+        if grace_days < 0:
+            raise ValueError("BILLING_GRACE_PERIOD_DAYS must not be negative")
+        return grace_days
+
+    @property
+    def grace_expires_at(self):
+        if (
+            self.subscription_status != self.SubscriptionStatus.GRACE
+            or self.subscription_expires_at is None
+        ):
+            return None
+        return self.subscription_expires_at + timedelta(days=self.grace_period_days)
+
+    @property
+    def service_access_expires_at(self):
+        """Last date on which service access is allowed for the current state."""
+        if self.subscription_status == self.SubscriptionStatus.GRACE:
+            return self.grace_expires_at
+        return self.subscription_expires_at
+
     @property
     def is_subscription_active(self) -> bool:
-        """구독이 유효한지 (활성 or 유예기간 + 만료일 미도래)"""
-        if self.subscription_status in (self.SubscriptionStatus.ACTIVE, self.SubscriptionStatus.GRACE):
-            if self.subscription_expires_at is None:
-                return True  # 만료일 미설정 = 무제한
-            return timezone.localdate() <= self.subscription_expires_at
+        """구독이 유효한지 (활성 기간 또는 설정된 유예기간 이내)."""
+        if self.tenant_id in set(
+            getattr(settings, "BILLING_EXEMPT_TENANT_IDS", set()) or set()
+        ):
+            return True
+        if self.subscription_status in (
+            self.SubscriptionStatus.ACTIVE,
+            self.SubscriptionStatus.GRACE,
+        ):
+            access_expires_at = self.service_access_expires_at
+            if access_expires_at is None:
+                return False
+            return timezone.localdate() <= access_expires_at
         return False
 
     @property
     def days_remaining(self) -> int | None:
-        """남은 이용일수 (만료일 없으면 None)"""
-        if self.subscription_expires_at is None:
+        """남은 실제 이용일수. grace 상태에서는 유예 종료일을 기준으로 한다."""
+        access_expires_at = self.service_access_expires_at
+        if access_expires_at is None:
             return None
-        delta = (self.subscription_expires_at - timezone.localdate()).days
+        delta = (access_expires_at - timezone.localdate()).days
         return max(0, delta)
 
     def __str__(self) -> str:

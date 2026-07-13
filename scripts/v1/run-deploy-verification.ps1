@@ -155,7 +155,7 @@ try {
         $runtimeImagesCiDigest = $runtimeImagesResult.CiDigest
         $runtimeImagesInstanceCount = @($runtimeImagesResult.Rows).Count
         if ($runtimeImagesStatus -eq "MISMATCH") {
-            Add-Finding -Severity "FAIL" -Area "RuntimeImage" -Message "API 런타임 image digest가 ci-build.latest.md academy-api digest와 불일치합니다. docs/reports/runtime-images.latest.md 확인 필요."
+            Add-Finding -Severity "FAIL" -Area "RuntimeImage" -Message "API 런타임 image digest가 성공 release-manifest.latest.json의 academy-api digest와 불일치합니다. docs/reports/runtime-images.latest.md 확인 필요."
         } elseif ($runtimeImagesStatus -eq "UNKNOWN") {
             Add-Finding -Severity "WARNING" -Area "RuntimeImage" -Message "API 런타임 image digest를 완전히 확인하지 못했습니다. docs/reports/runtime-images.latest.md 확인 필요."
         }

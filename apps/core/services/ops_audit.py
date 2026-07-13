@@ -24,10 +24,9 @@ logger = logging.getLogger(__name__)
 def _client_ip(request) -> str:
     if not request:
         return ""
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR") if request.META else None
-    if forwarded:
-        return forwarded.split(",")[0].strip()[:64]
-    return (request.META.get("REMOTE_ADDR") or "")[:64] if request.META else ""
+    from apps.core.services.client_ip import get_client_ip
+
+    return get_client_ip(request)[:64]
 
 
 def _user_agent(request) -> str:

@@ -86,6 +86,35 @@ def test_split_runtime_test_findings(tmp_path, monkeypatch):
     assert test_findings[0].path == "apps/domains/results/tests/test_views.py"
 
 
+def test_strict_touched_grandfathers_unchanged_boundary_identity():
+    snapshot = load_snapshot_module()
+    existing = snapshot.Finding(
+        "cross_domain_internal_import",
+        "apps/domains/clinic/tests.py",
+        20,
+        "apps.domains.enrollment.models",
+    )
+    shifted_same_identity = snapshot.Finding(
+        "cross_domain_internal_import",
+        "apps/domains/clinic/tests.py",
+        24,
+        "apps.domains.enrollment.models",
+    )
+    newly_introduced = snapshot.Finding(
+        "cross_domain_internal_import",
+        "apps/domains/clinic/tests.py",
+        25,
+        "apps.domains.students.models",
+    )
+
+    result = snapshot.exclude_base_findings(
+        [shifted_same_identity, newly_introduced],
+        [existing],
+    )
+
+    assert result == [newly_introduced]
+
+
 def test_collect_touched_files_keeps_only_scanned_python_paths(tmp_path, monkeypatch):
     snapshot = load_snapshot_module()
     _, apps_domains = configure_snapshot_roots(snapshot, tmp_path, monkeypatch)

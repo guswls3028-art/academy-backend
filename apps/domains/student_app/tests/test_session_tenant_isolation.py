@@ -5,7 +5,7 @@ from django.apps import apps as django_apps
 from django.test import TestCase
 from django.utils import timezone
 
-from apps.core.models import Tenant, User
+from apps.core.models import Tenant, TenantMembership, User
 from apps.core.models.user import user_internal_username
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.lectures.models import Lecture, Session
@@ -79,6 +79,11 @@ class StudentSessionTenantIsolationTests(TestCase):
         cls.tenant_b = _create_tenant("student-app-b")
         cls.user_a = _create_user(cls.tenant_a, "student-a")
         cls.student_a = _create_student(cls.tenant_a, cls.user_a, "StudentA")
+        TenantMembership.ensure_active(
+            tenant=cls.tenant_a,
+            user=cls.user_a,
+            role="student",
+        )
         cls.lecture_a = _create_lecture(cls.tenant_a, "Tenant A Lecture")
         cls.lecture_b = _create_lecture(cls.tenant_b, "Tenant B Lecture")
 

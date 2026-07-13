@@ -43,6 +43,10 @@ VALID_TRANSITIONS: dict[str, set[str]] = {
 class SubscriptionTransitionError(Exception):
     """허용되지 않는 상태 전이 시도"""
 
+    def __init__(self, message: str, *, conflict: bool = False):
+        super().__init__(message)
+        self.status_code = 409 if conflict else 400
+
 
 def _validate_transition(current: str, target: str) -> None:
     allowed = VALID_TRANSITIONS.get(current, set())
@@ -81,16 +85,10 @@ def renew(program_id: int, new_expires_at: date, *, next_billing_at: date | None
     program.subscription_expires_at = new_expires_at
     if next_billing_at is not None:
         program.next_billing_at = next_billing_at
-    # 갱신 시 해지 예약 해제
-    program.cancel_at_period_end = False
-    program.canceled_at = None
-
     program.save(update_fields=[
         "subscription_status",
         "subscription_expires_at",
         "next_billing_at",
-        "cancel_at_period_end",
-        "canceled_at",
         "updated_at",
     ])
 
@@ -152,9 +150,8 @@ def expire(program_id: int) -> "Program":
 @transaction.atomic
 def schedule_cancel(program_id: int) -> "Program":
     """
-    해지 예약 — subscription_status를 변경하지 않음.
-    cancel_at_period_end=True, canceled_at=now() 설정.
-    현재 기간 종료 시 expire()에서 실제 만료 처리.
+    해지 예약 — active에서는 현재 기간 종료까지 상태를 유지한다.
+    이미 유료 기간이 끝난 grace에서는 예약할 미래 기간이 없으므로 즉시 만료한다.
     """
     program = _lock_program(program_id)
 
@@ -162,14 +159,50 @@ def schedule_cancel(program_id: int) -> "Program":
         raise SubscriptionTransitionError(
             "Cannot schedule cancel: subscription already expired"
         )
+    if program.subscription_expires_at is None:
+        raise SubscriptionTransitionError(
+            "Cannot schedule cancel: subscription_expires_at is not configured"
+        )
+
+    from apps.billing.models import Invoice, PaymentTransaction
+    from apps.billing.services import invoice_service
+
+    future_invoices = Invoice.objects.select_for_update().filter(
+        tenant_id=program.tenant_id,
+        period_start__gt=program.subscription_expires_at,
+    ).exclude(status__in=["PAID", "VOID"])
+    if PaymentTransaction.objects.filter(
+        invoice__in=future_invoices,
+        status="PROCESSING",
+    ).exists():
+        raise SubscriptionTransitionError(
+            "Cannot schedule cancel while a renewal payment is being processed",
+            conflict=True,
+        )
+    if PaymentTransaction.objects.filter(
+        invoice__in=future_invoices,
+        status="SUCCESS",
+    ).exists():
+        raise SubscriptionTransitionError(
+            "Cannot schedule cancel while a captured renewal payment requires reconciliation",
+            conflict=True,
+        )
 
     program.cancel_at_period_end = True
     program.canceled_at = timezone.now()
-    program.save(update_fields=["cancel_at_period_end", "canceled_at", "updated_at"])
+    update_fields = ["cancel_at_period_end", "canceled_at", "updated_at"]
+    if program.subscription_status == "grace":
+        _validate_transition(program.subscription_status, "expired")
+        program.subscription_status = "expired"
+        update_fields.append("subscription_status")
+    program.save(update_fields=update_fields)
+
+    for invoice in future_invoices:
+        invoice_service.void(invoice.pk, reason="cancel_at_period_end")
 
     logger.info(
-        "Cancel scheduled: tenant=%s program=%s at_period_end=True",
-        program.tenant_id, program.pk,
+        "Cancel applied: tenant=%s program=%s at_period_end=True status=%s",
+        program.tenant_id, program.pk, program.subscription_status,
     )
     return program
 
@@ -177,17 +210,57 @@ def schedule_cancel(program_id: int) -> "Program":
 @transaction.atomic
 def revoke_cancel(program_id: int) -> "Program":
     """
-    해지 예약 철회 — cancel_at_period_end=False, canceled_at=None.
+    active 구독의 해지 예약 철회 — cancel_at_period_end=False, canceled_at=None.
+
+    grace/expired는 유료 기간이 이미 끝났으므로 철회로 접근을 복구하지 않는다.
+    접근 복구는 명시적인 renew/extend 경로만 허용한다.
     """
     program = _lock_program(program_id)
+
+    if program.subscription_status != "active":
+        raise SubscriptionTransitionError(
+            "Cannot revoke cancel unless subscription is active"
+        )
+
+    from apps.billing.models import Invoice, PaymentTransaction
+
+    cancel_voided = list(
+        Invoice.objects.select_for_update()
+        .filter(
+            tenant_id=program.tenant_id,
+            period_start__gt=program.subscription_expires_at,
+            status="VOID",
+            memo="cancel_at_period_end",
+        )
+        .order_by("id")
+    )
+    if PaymentTransaction.objects.filter(
+        invoice__in=cancel_voided,
+        status__in=["PROCESSING", "SUCCESS"],
+    ).exists():
+        raise SubscriptionTransitionError(
+            "Cannot revoke cancel while a renewal payment requires reconciliation",
+            conflict=True,
+        )
+
+    for invoice in cancel_voided:
+        invoice.status = (
+            "SCHEDULED"
+            if invoice.billing_mode == "AUTO_CARD"
+            else "PENDING"
+        )
+        invoice.memo = ""
+        invoice.save(update_fields=["status", "memo", "updated_at"])
 
     program.cancel_at_period_end = False
     program.canceled_at = None
     program.save(update_fields=["cancel_at_period_end", "canceled_at", "updated_at"])
 
     logger.info(
-        "Cancel revoked: tenant=%s program=%s",
-        program.tenant_id, program.pk,
+        "Cancel revoked: tenant=%s program=%s restored_invoices=%s",
+        program.tenant_id,
+        program.pk,
+        len(cancel_voided),
     )
     return program
 
@@ -224,9 +297,10 @@ def extend(program_id: int, days: int) -> "Program":
     """
     program = _lock_program(program_id)
 
-    base_date = program.subscription_expires_at or date.today()
-    if base_date < date.today():
-        base_date = date.today()
+    today = timezone.localdate()
+    base_date = program.subscription_expires_at or today
+    if base_date < today:
+        base_date = today
 
     new_expires = base_date + timedelta(days=days)
 

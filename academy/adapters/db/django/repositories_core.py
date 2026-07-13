@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 def program_get_by_tenant(tenant) -> Optional[Any]:
     from apps.core.models import Program
-    return Program.objects.filter(tenant=tenant).first()
+    return Program.objects.select_related("tenant").filter(tenant=tenant).first()
 
 
 def program_get_by_tenant_only_feature_flags(tenant) -> Optional[Any]:
@@ -126,6 +126,36 @@ def user_get_by_tenant_username(tenant, display_username: str) -> Optional[Any]:
     return get_user_model().objects.filter(tenant=tenant, username=internal).first()
 
 
+def user_get_by_tenant_login_identifier(tenant, display_username: str) -> Optional[Any]:
+    """Resolve a login identity through an active tenant membership.
+
+    ``User.tenant`` is the default tenant pointer, not an authorization source.
+    A user with legitimate memberships in multiple tenants must therefore be
+    discoverable from any authorized tenant while ambiguous identifiers fail
+    closed.
+    """
+    from django.contrib.auth import get_user_model
+    from django.db.models import Q
+    from apps.core.models.user import user_display_username
+
+    raw = (display_username or "").strip()
+    if not tenant or not raw:
+        return None
+
+    candidates = list(
+        get_user_model().objects
+        .filter(
+            tenant_memberships__tenant=tenant,
+            tenant_memberships__is_active=True,
+        )
+        .filter(Q(username=raw) | Q(username__endswith=f"_{raw}"))
+        .select_related("tenant")
+        .distinct()
+    )
+    matches = [user for user in candidates if user_display_username(user) == raw]
+    return matches[0] if len(matches) == 1 else None
+
+
 def user_get_or_create(username: str, defaults: dict) -> tuple[Any, bool]:
     from django.contrib.auth import get_user_model
     return get_user_model().objects.get_or_create(username=username, defaults=defaults)
@@ -175,19 +205,73 @@ def membership_get_full(tenant, user) -> Optional[Any]:
     return TenantMembership.objects.filter(tenant=tenant, user=user).first()
 
 
-def membership_ensure_active(tenant, user, role: str) -> Any:
+def membership_list_active_for_user(user) -> list[Any]:
     from apps.core.models import TenantMembership
+    return list(
+        TenantMembership.objects.select_for_update(of=("self",))
+        .filter(user=user, is_active=True, tenant__is_active=True)
+        .select_related("tenant")
+        .order_by("tenant_id", "id")
+    )
+
+
+def student_profile_exists_active(tenant, user) -> bool:
+    from apps.domains.students.models import Student
+    return Student.objects.filter(
+        tenant=tenant,
+        user=user,
+        deleted_at__isnull=True,
+    ).exists()
+
+
+def parent_profile_exists(tenant, user) -> bool:
+    from apps.domains.parents.models import Parent
+    return Parent.objects.filter(tenant=tenant, user=user).exists()
+
+
+def membership_ensure_active(
+    tenant,
+    user,
+    role: str,
+    *,
+    protected_existing_roles: tuple[str, ...] = (),
+) -> Any:
+    from apps.core.models import TenantMembership
+    from django.contrib.auth import get_user_model
+    from django.db import transaction
+
     role = str(role).strip().lower()
     allowed = {c[0] for c in TenantMembership.ROLE_CHOICES}
     if role not in allowed:
         raise ValueError(f"invalid role: {role}")
-    obj = TenantMembership.objects.select_for_update().filter(tenant=tenant, user=user).first()
-    if obj:
-        if not obj.is_active:
-            obj.is_active = True
-            obj.save(update_fields=["is_active"])
-        return obj
-    return TenantMembership.objects.create(tenant=tenant, user=user, role=role, is_active=True)
+    with transaction.atomic():
+        locked_user = get_user_model().objects.select_for_update().get(pk=user.pk)
+        obj = (
+            TenantMembership.objects.select_for_update()
+            .filter(tenant=tenant, user=locked_user)
+            .first()
+        )
+        if obj:
+            if obj.role in protected_existing_roles and obj.role != role:
+                raise ValueError(
+                    f"protected membership role cannot change: {obj.role}"
+                )
+            changed = []
+            if obj.role != role:
+                obj.role = role
+                changed.append("role")
+            if not obj.is_active:
+                obj.is_active = True
+                changed.append("is_active")
+            if changed:
+                obj.save(update_fields=changed)
+            return obj
+        return TenantMembership.objects.create(
+            tenant=tenant,
+            user=locked_user,
+            role=role,
+            is_active=True,
+        )
 
 
 # ---------------------------------------------------------------------------

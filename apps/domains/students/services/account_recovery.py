@@ -389,6 +389,9 @@ def list_recent_account_notification_logs(student: Student, *, limit: int = 5) -
     target_ids = [f"student:{student.id}"]
     parent_phone = normalize_recovery_phone(student.parent_phone)
     if parent_phone:
+        target_ids.append(f"parent:{student.id}")
+        # Read legacy rows during the retention window; repository responses
+        # sanitize the historical phone suffix before returning it.
         target_ids.append(f"parent:{student.id}:{parent_phone}")
 
     return list_account_notification_logs(

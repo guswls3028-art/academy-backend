@@ -3,32 +3,79 @@
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용.
 $ErrorActionPreference = "Stop"
 
+function Assert-ImmutableEcrImageUri {
+    param([string]$ImageUri)
+    if ($ImageUri -notmatch '@sha256:[0-9a-f]{64}$') {
+        throw "Runtime image must be pinned by ECR digest: $ImageUri"
+    }
+}
+
+function Get-ReleaseManifestImage {
+    param([Parameter(Mandatory = $true)][string]$RepoName)
+    $repoRoot = (Get-Item $PSScriptRoot).Parent.Parent.Parent.FullName
+    $manifestPath = Join-Path $repoRoot "docs\reports\release-manifest.latest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath)) {
+        throw "Verified release manifest not found: $manifestPath. Run a successful full CI deployment first."
+    }
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (
+        [int]$manifest.schemaVersion -ne 1 -or
+        -not [bool]$manifest.complete -or
+        [string]$manifest.status -ne "successful" -or
+        @($manifest.images.PSObject.Properties).Count -ne 6
+    ) {
+        throw "Release manifest is not a complete verified six-image release: $manifestPath"
+    }
+    $property = $manifest.images.PSObject.Properties[$RepoName]
+    if (-not $property) { throw "Release manifest has no image entry for $RepoName" }
+    $digest = [string]$property.Value.digest
+    if ($digest -notmatch '^sha256:[0-9a-f]{64}$') {
+        throw "Release manifest digest is invalid for ${RepoName}: $digest"
+    }
+    return [PSCustomObject]@{
+        Digest = $digest.ToLowerInvariant()
+        Tag = [string]$property.Value.tag
+        GitSha = [string]$manifest.gitSha
+        VerifiedAt = [string]$manifest.verifiedAt
+    }
+}
+
+function Get-ImmutableEcrImageUri {
+    param([string]$RepoName, [string]$ImageTag = "")
+    if (-not $RepoName) { throw "ECR repository name is required." }
+    if (-not $script:AccountId -or -not $script:Region) { throw "AWS account/region SSOT is required to resolve an immutable image." }
+
+    $detail = $null
+    if ($ImageTag) {
+        if ($ImageTag -notmatch '^sha-(?:[0-9a-f]{8,40}|[0-9a-f]{40}-run-[0-9]+-[0-9]+)$') {
+            throw "Only CI sha-* image tags may be resolved for deployment: $ImageTag"
+        }
+        $result = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $RepoName, "--image-ids", "imageTag=$ImageTag", "--region", $script:Region, "--output", "json") 2>$null
+        if ($result -and $result.imageDetails) { $detail = @($result.imageDetails)[0] }
+    } else {
+        $releaseImage = Get-ReleaseManifestImage -RepoName $RepoName
+        $result = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $RepoName, "--image-ids", "imageDigest=$($releaseImage.Digest)", "--region", $script:Region, "--output", "json") 2>$null
+        if ($result -and $result.imageDetails) { $detail = @($result.imageDetails)[0] }
+    }
+
+    $digest = if ($detail) { [string]$detail.imageDigest } else { "" }
+    if ($digest -notmatch '^sha256:[0-9a-f]{64}$') {
+        $label = if ($ImageTag) { "${RepoName}:$ImageTag" } else { "$RepoName from verified release manifest" }
+        throw "Immutable ECR image digest not found: $label"
+    }
+    $uri = "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/${RepoName}@${digest}"
+    Assert-ImmutableEcrImageUri -ImageUri $uri
+    return $uri
+}
+
 function Get-LatestWorkerImageUri {
     param([string]$RepoName)
     if (-not $RepoName) { return $null }
     if ($script:EcrUseLatestTag) {
-        $acc = $script:AccountId
-        $reg = $script:Region
-        return "${acc}.dkr.ecr.${reg}.amazonaws.com/$RepoName" + ":latest"
+        if ($script:EcrImmutableTagRequired) { throw "SSOT conflict: immutableTagRequired cannot be combined with useLatestTag." }
+        return "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/${RepoName}:latest"
     }
-    $list = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $RepoName, "--region", $script:Region, "--output", "json") 2>$null
-    if (-not $list -or -not $list.imageDetails -or $list.imageDetails.Count -eq 0) { return $null }
-    $nonLatest = @($list.imageDetails | Where-Object { $_.imageTags -and ($_.imageTags | Where-Object { $_ -ne "latest" }) } | ForEach-Object {
-        $tag = ($_.imageTags | Where-Object { $_ -ne "latest" } | Select-Object -First 1)
-        if ($tag) { [PSCustomObject]@{ Tag = $tag; Pushed = $_.imagePushedAt } }
-    } | Where-Object { $_ })
-    $tagToUse = $null
-    if ($nonLatest.Count -gt 0) {
-        $latest = $nonLatest | Sort-Object { $_.Pushed } -Descending | Select-Object -First 1
-        $tagToUse = $latest.Tag
-    } else {
-        $withLatest = $list.imageDetails | Where-Object { $_.imageTags -and ($_.imageTags -contains "latest") } | Select-Object -First 1
-        if ($withLatest) { $tagToUse = "latest" }
-    }
-    if (-not $tagToUse) { return $null }
-    $acc = $script:AccountId
-    $reg = $script:Region
-    return "${acc}.dkr.ecr.${reg}.amazonaws.com/$RepoName" + ":" + $tagToUse
+    return Get-ImmutableEcrImageUri -RepoName $RepoName
 }
 
 function Get-WorkerLaunchTemplateUserData {

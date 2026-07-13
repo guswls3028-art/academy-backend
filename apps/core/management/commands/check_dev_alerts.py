@@ -102,6 +102,116 @@ def rule_overdue_invoices():
     }
 
 
+def rule_stale_processing_payments(min_age_minutes: int | None = None):
+    """Provider outcome unknown transactions require manual reconciliation."""
+    from django.db.models import Q
+
+    from apps.billing.models import PaymentTransaction
+
+    threshold = int(
+        min_age_minutes
+        if min_age_minutes is not None
+        else getattr(settings, "BILLING_PROCESSING_ALERT_MINUTES", 15)
+    )
+    cutoff = timezone.now() - timedelta(minutes=threshold)
+    qs = (
+        PaymentTransaction.objects.filter(status="PROCESSING")
+        .exclude(tenant_id__in=_exempt_ids())
+        .filter(
+            Q(processing_started_at__lte=cutoff)
+            | Q(processing_started_at__isnull=True, created_at__lte=cutoff)
+        )
+        .select_related("tenant", "invoice")
+        .order_by("processing_started_at", "id")
+    )
+    total = qs.count()
+    rows = [
+        {
+            "tenant": tx.tenant.code,
+            "transaction_id": tx.id,
+            "invoice": tx.invoice.invoice_number,
+            "started_at": (
+                tx.processing_started_at or tx.created_at
+            ).isoformat(timespec="seconds"),
+        }
+        for tx in qs[:50]
+    ]
+    if not rows:
+        return None
+    return {
+        "title": (
+            f"🚨 결제 공급사 결과 확인 필요 — {total}건 "
+            f"({threshold}분+ PROCESSING)"
+        ),
+        "rows": rows,
+        "total": total,
+    }
+
+
+def rule_card_reconciliation_required(max_age_hours: int = 24):
+    """Alert immediately when provider card state and local state may diverge."""
+    from apps.core.models import OpsAuditLog
+
+    since = timezone.now() - timedelta(hours=max_age_hours)
+    qs = (
+        OpsAuditLog.objects.filter(
+            action="billing.card_reconciliation_required",
+            created_at__gte=since,
+        )
+        .select_related("target_tenant")
+        .order_by("-created_at")
+    )
+    total = qs.count()
+    rows = [
+        {
+            "tenant": log.target_tenant.code if log.target_tenant else "—",
+            "operation": (log.payload or {}).get("operation", "unknown"),
+            "billing_key_id": (log.payload or {}).get("billing_key_id"),
+            "at": log.created_at.isoformat(timespec="seconds"),
+        }
+        for log in qs[:50]
+    ]
+    if not rows:
+        return None
+    return {
+        "title": f"🚨 카드 공급사 상태 대사 필요 — {total}건",
+        "rows": rows,
+        "total": total,
+    }
+
+
+def rule_partial_refund_reconciliation_required(max_age_hours: int = 24):
+    from apps.core.models import OpsAuditLog
+
+    since = timezone.now() - timedelta(hours=max_age_hours)
+    qs = (
+        OpsAuditLog.objects.filter(
+            action="billing.partial_refund_reconciliation_required",
+            created_at__gte=since,
+        )
+        .select_related("target_tenant")
+        .order_by("-created_at")
+    )
+    total = qs.count()
+    rows = [
+        {
+            "tenant": log.target_tenant.code if log.target_tenant else "—",
+            "transaction_id": (log.payload or {}).get("transaction_id"),
+            "invoice_id": (log.payload or {}).get("invoice_id"),
+            "refunded_amount": (log.payload or {}).get("refunded_amount"),
+            "at": log.created_at.isoformat(timespec="seconds"),
+        }
+        for log in qs[:50]
+    ]
+    if not rows:
+        return None
+    return {
+        "title": f"🚨 부분환불 회계·구독 대사 필요 — {total}건",
+        "rows": rows,
+        "total": total,
+    }
+
+
 def rule_audit_failed_24h(threshold: int = 5):
     from apps.core.models import OpsAuditLog
     since = timezone.now() - timedelta(hours=24)
@@ -232,6 +342,24 @@ def rule_circuit_breaker_open():
 RULES: list[Rule] = [
     Rule("expiring_3d", "만료 3일 이내", rule_expiring_3d, "warning"),
     Rule("overdue_invoices", "연체/실패 인보이스", rule_overdue_invoices, "danger"),
+    Rule(
+        "stale_processing_payments",
+        "장기 PROCESSING 결제",
+        rule_stale_processing_payments,
+        "danger",
+    ),
+    Rule(
+        "card_reconciliation_required",
+        "카드 공급사 상태 대사 필요",
+        rule_card_reconciliation_required,
+        "danger",
+    ),
+    Rule(
+        "partial_refund_reconciliation_required",
+        "부분환불 회계·구독 대사 필요",
+        rule_partial_refund_reconciliation_required,
+        "danger",
+    ),
     Rule("audit_failed_24h", "24h 실패 작업 임계 초과", rule_audit_failed_24h, "danger"),
     Rule("unanswered_inbox", "24h+ 미답변 문의", rule_unanswered_inbox, "warning"),
     Rule("stale_workers", "워커 heartbeat 정지", rule_stale_workers, "danger"),

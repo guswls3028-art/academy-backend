@@ -53,13 +53,21 @@ class Command(BaseCommand):
             self.stdout.write(f"User {new_username!r} already exists, updating membership only.")
             new_user = User.objects.get(username=new_username)
             if apply and m1.user_id != new_user.pk:
-                m1.user = new_user
-                m1.save(update_fields=["user_id"])
+                with transaction.atomic():
+                    list(
+                        User.objects.select_for_update()
+                        .filter(pk__in=(m1.user_id, new_user.pk))
+                        .order_by("pk")
+                    )
+                    locked_membership = TenantMembership.objects.select_for_update().get(pk=m1.pk)
+                    locked_membership.user = new_user
+                    locked_membership.save(update_fields=["user_id"])
                 self.stdout.write(self.style.SUCCESS(f"Tenant 1 membership -> user_id={new_user.pk}"))
             return
 
         if apply:
             with transaction.atomic():
+                User.objects.select_for_update().get(pk=source_user.pk)
                 new_user = User(
                     username=new_username,
                     tenant=tenant_1,
@@ -72,8 +80,9 @@ class Command(BaseCommand):
                 )
                 new_user.password = source_user.password  # hash 복사
                 new_user.save()
-                m1.user = new_user
-                m1.save(update_fields=["user_id"])
+                locked_membership = TenantMembership.objects.select_for_update().get(pk=m1.pk)
+                locked_membership.user = new_user
+                locked_membership.save(update_fields=["user_id"])
             self.stdout.write(self.style.SUCCESS(f"Created user id={new_user.pk} {new_username!r}, tenant 1 membership updated."))
         else:
             self.stdout.write(f"  [would] Create {new_username!r}, copy password hash, point tenant 1 membership to new user.")

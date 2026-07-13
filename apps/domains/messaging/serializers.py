@@ -247,6 +247,7 @@ class ScheduledNotificationSerializer(serializers.ModelSerializer):
         model = ScheduledNotification
         fields = [
             "id",
+            "dispatch_key",
             "trigger",
             "send_at",
             "status",
@@ -258,6 +259,9 @@ class ScheduledNotificationSerializer(serializers.ModelSerializer):
             "message_mode",
             "created_at",
             "sent_at",
+            "attempt_count",
+            "next_attempt_at",
+            "last_attempt_at",
             "error_message",
         ]
 
@@ -274,7 +278,14 @@ class ScheduledNotificationSerializer(serializers.ModelSerializer):
         return " / ".join(part for part in [target_name, to] if part)
 
     def get_message_preview(self, obj) -> str:
+        from apps.domains.messaging.security import (
+            SENSITIVE_MESSAGE_PLACEHOLDER,
+            is_sensitive_notification,
+        )
+
         payload = self._payload(obj)
+        if is_sensitive_notification(trigger=obj.trigger, payload=payload):
+            return SENSITIVE_MESSAGE_PLACEHOLDER
         text = (payload.get("text") or "").strip()
         return text[:160]
 
@@ -282,7 +293,9 @@ class ScheduledNotificationSerializer(serializers.ModelSerializer):
         return (self._payload(obj).get("target_type") or "").strip()
 
     def get_target_id(self, obj) -> str:
-        return str(self._payload(obj).get("target_id") or "")
+        from apps.domains.messaging.security import sanitize_notification_target_id
+
+        return sanitize_notification_target_id(self._payload(obj).get("target_id"))
 
     def get_target_name(self, obj) -> str:
         return (self._payload(obj).get("target_name") or "").strip()

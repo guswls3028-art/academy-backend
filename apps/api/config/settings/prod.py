@@ -4,6 +4,11 @@
 from .base import *
 import os
 
+# The public API is reached through the Academy ALB in the canonical VPC.
+# Only this private proxy range may contribute X-Forwarded-For hops.
+if not TRUSTED_PROXY_CIDRS:
+    TRUSTED_PROXY_CIDRS = "172.30.0.0/16"
+
 # ==================================================
 # PROD MODE
 # ==================================================
@@ -210,3 +215,25 @@ if not _secret_env or _secret_env == "dev-secret-key" or len(_secret_env) < 32:
     raise ImproperlyConfigured(
         "SECRET_KEY must be set via SSM/env (>=32 chars, not the dev default) in production."
     )
+if BILLING_KEY_ENCRYPTION_WRITE_ENABLED and not BILLING_KEY_ENCRYPTION_PRIMARY_KEY:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "BILLING_KEY_ENCRYPTION_PRIMARY_KEY is required when encrypted billing-key writes are enabled."
+    )
+_billing_encryption_keys = [
+    BILLING_KEY_ENCRYPTION_PRIMARY_KEY,
+    *BILLING_KEY_ENCRYPTION_FALLBACK_KEYS,
+]
+if any(_billing_encryption_keys):
+    try:
+        from cryptography.fernet import Fernet
+
+        for _billing_encryption_key in _billing_encryption_keys:
+            if _billing_encryption_key:
+                Fernet(_billing_encryption_key.encode("ascii"))
+    except (TypeError, ValueError, UnicodeEncodeError) as exc:
+        from django.core.exceptions import ImproperlyConfigured
+
+        raise ImproperlyConfigured(
+            "Billing-key encryption keyring contains an invalid Fernet key."
+        ) from exc

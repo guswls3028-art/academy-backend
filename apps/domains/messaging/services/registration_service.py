@@ -12,6 +12,44 @@ logger = logging.getLogger(__name__)
 REGISTRATION_APPROVED_NOTICE = "접속해서 ID·비밀번호를 변경할 수 있습니다."
 
 
+def _dispatch_registration_durably(
+    *,
+    business_tenant_id: int,
+    trigger: str,
+    **payload,
+) -> bool:
+    from apps.domains.messaging.models import ScheduledNotification
+    from apps.domains.messaging.scheduled import (
+        MessagingHourlyQuotaExceeded,
+        dispatch_notification_now,
+    )
+
+    try:
+        notification = dispatch_notification_now(
+            tenant_id=business_tenant_id,
+            trigger=trigger,
+            payload=payload,
+        )
+    except MessagingHourlyQuotaExceeded:
+        logger.warning(
+            "registration notification quota exceeded: tenant=%s trigger=%s",
+            business_tenant_id,
+            trigger,
+        )
+        return False
+    except Exception:
+        logger.exception(
+            "registration notification outbox failed: tenant=%s trigger=%s",
+            business_tenant_id,
+            trigger,
+        )
+        return False
+    return notification.status in {
+        ScheduledNotification.Status.SENT,
+        ScheduledNotification.Status.PENDING,
+    }
+
+
 def _student_account_target_id(student) -> str:
     student_pk = getattr(student, "id", None) or getattr(student, "pk", None)
     if student_pk:
@@ -21,17 +59,18 @@ def _student_account_target_id(student) -> str:
 
 def _parent_account_target_id(student, parent_phone: str) -> str:
     student_pk = getattr(student, "id", None) or getattr(student, "pk", None)
-    if student_pk and parent_phone:
-        return f"parent:{int(student_pk)}:{parent_phone}"
-    return parent_phone
+    if student_pk:
+        return f"parent:{int(student_pk)}"
+    fallback = (getattr(student, "ps_number", "") or "").strip()
+    return f"parent:{fallback}" if fallback else "parent"
 
 
 def _account_target_id_from_pk(student_pk: int | None, fallback: str, *, parent_phone: str = "") -> str:
     if student_pk:
         if parent_phone:
-            return f"parent:{int(student_pk)}:{parent_phone}"
+            return f"parent:{int(student_pk)}"
         return f"student:{int(student_pk)}"
-    return fallback
+    return f"parent:{fallback}" if parent_phone else fallback
 
 
 def _same_recipient(left: str, right: str) -> bool:
@@ -54,7 +93,6 @@ def send_welcome_messages(
     - 학생: registration_approved_student (#{학생이름}, #{학생아이디}, #{학생비밀번호}, #{사이트링크}, #{비밀번호안내})
     - 학부모: registration_approved_parent (위 + #{학부모아이디}, #{학부모비밀번호})
     """
-    from .queue_service import enqueue_sms
     from .url_helpers import get_tenant_site_url
 
     parent_password_by_phone = parent_password_by_phone or {}
@@ -124,7 +162,9 @@ def send_welcome_messages(
             for k, v in replacements.items():
                 text = text.replace(f"#{{{k}}}", v)
             try:
-                ok = enqueue_sms(
+                ok = _dispatch_registration_durably(
+                    business_tenant_id=tenant_id,
+                    trigger="registration_approved_student",
                     tenant_id=owner_id,
                     to=phone,
                     text=text,
@@ -168,7 +208,9 @@ def send_welcome_messages(
             for k, v in replacements.items():
                 text = text.replace(f"#{{{k}}}", v)
             try:
-                ok = enqueue_sms(
+                ok = _dispatch_registration_durably(
+                    business_tenant_id=tenant_id,
+                    trigger="registration_approved_parent",
                     tenant_id=owner_id,
                     to=parent_phone,
                     text=text,
@@ -216,7 +258,6 @@ def send_registration_approved_messages(
     """
     from apps.domains.messaging.selectors import get_auto_send_config
     from apps.domains.messaging.policy import MessagingPolicyError
-    from .queue_service import enqueue_sms
 
     sent = 0
     student_phone = (student_phone or "").replace("-", "").strip()
@@ -262,7 +303,9 @@ def send_registration_approved_messages(
                 alimtalk_replacements = [{"key": k, "value": v} for k, v in replacements_base.items()]
             try:
                 from apps.domains.messaging.policy import get_owner_tenant_id as _owner
-                if enqueue_sms(
+                if _dispatch_registration_durably(
+                    business_tenant_id=tenant_id,
+                    trigger="registration_approved_student",
                     tenant_id=_owner(),
                     to=student_phone,
                     text=text,
@@ -309,7 +352,9 @@ def send_registration_approved_messages(
                 alimtalk_replacements = [{"key": k, "value": v} for k, v in parent_replacements.items()]
             try:
                 from apps.domains.messaging.policy import get_owner_tenant_id as _owner
-                if enqueue_sms(
+                if _dispatch_registration_durably(
+                    business_tenant_id=tenant_id,
+                    trigger="registration_approved_parent",
                     tenant_id=_owner(),
                     to=parent_phone,
                     text=text,

@@ -1,10 +1,8 @@
-"""
-회귀 테스트: SessionEnrollmentViewSet.bulk_create에서 INACTIVE enrollment 재활성화 검증.
+"""Session roster bulk-create lifecycle regression tests.
 
-배경:
-- SessionDetailPage 경로의 bulk_create가 INACTIVE enrollment을 재활성화하지 않던 버그
-- attendance/views.py의 bulk_create는 재활성화 로직이 있었지만
-  enrollment/views.py의 bulk_create에는 누락되어 있었음 (2026-03-28 수정)
+Inactive or pending enrollment is a billing and access lifecycle state. Merely
+adding a student to one session must not reactivate it; an operator must first
+reactivate the enrollment through the enrollment workflow.
 """
 
 from django.contrib.auth import get_user_model
@@ -18,7 +16,7 @@ from apps.domains.students.models import Student
 
 
 class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
-    """bulk_create에서 INACTIVE enrollment이 ACTIVE로 복원되는지 검증."""
+    """Roster writes preserve the explicit enrollment lifecycle boundary."""
 
     def setUp(self):
         self.tenant = Tenant.objects.create(name="Test", code="9997", is_active=True)
@@ -64,8 +62,7 @@ class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
         )
         return enrollment
 
-    def test_inactive_enrollment_reactivated_on_bulk_create(self):
-        """INACTIVE enrollment이 bulk_create 시 ACTIVE로 복원되어야 한다."""
+    def test_inactive_enrollment_rejected_on_bulk_create(self):
         enrollment = self._create_student_and_enrollment(0, enrollment_status="INACTIVE")
         self.assertEqual(enrollment.status, "INACTIVE")
 
@@ -75,10 +72,10 @@ class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
             format="json",
             **self._headers(),
         )
-        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.status_code, 400, resp.data)
 
         enrollment.refresh_from_db()
-        self.assertEqual(enrollment.status, "ACTIVE")
+        self.assertEqual(enrollment.status, "INACTIVE")
 
     def test_active_enrollment_stays_active(self):
         """이미 ACTIVE인 enrollment은 그대로 ACTIVE."""
@@ -95,8 +92,7 @@ class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
         enrollment.refresh_from_db()
         self.assertEqual(enrollment.status, "ACTIVE")
 
-    def test_pending_enrollment_reactivated(self):
-        """PENDING enrollment도 bulk_create 시 ACTIVE로 복원."""
+    def test_pending_enrollment_rejected(self):
         enrollment = self._create_student_and_enrollment(2, enrollment_status="PENDING")
 
         resp = self.client.post(
@@ -105,10 +101,10 @@ class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
             format="json",
             **self._headers(),
         )
-        self.assertEqual(resp.status_code, 201)
+        self.assertEqual(resp.status_code, 400, resp.data)
 
         enrollment.refresh_from_db()
-        self.assertEqual(enrollment.status, "ACTIVE")
+        self.assertEqual(enrollment.status, "PENDING")
 
     def test_missing_session_returns_validation_error_not_500(self):
         enrollment = self._create_student_and_enrollment(3)
@@ -132,8 +128,7 @@ class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
 
         self.assertEqual(resp.status_code, 400)
 
-    def test_mixed_active_and_inactive(self):
-        """ACTIVE 2명 + INACTIVE 1명 혼합 시 INACTIVE만 재활성화."""
+    def test_mixed_active_and_inactive_is_rejected_atomically(self):
         e_active1 = self._create_student_and_enrollment(10, "ACTIVE")
         e_active2 = self._create_student_and_enrollment(11, "ACTIVE")
         e_inactive = self._create_student_and_enrollment(12, "INACTIVE")
@@ -144,18 +139,23 @@ class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
             format="json",
             **self._headers(),
         )
-        self.assertEqual(resp.status_code, 201)
-        data = resp.json()
-        self.assertEqual(len(data), 3)
+        self.assertEqual(resp.status_code, 400, resp.data)
 
         e_inactive.refresh_from_db()
-        self.assertEqual(e_inactive.status, "ACTIVE")
+        self.assertEqual(e_inactive.status, "INACTIVE")
         e_active1.refresh_from_db()
         self.assertEqual(e_active1.status, "ACTIVE")
+        e_active2.refresh_from_db()
+        self.assertEqual(e_active2.status, "ACTIVE")
+        self.assertFalse(
+            SessionEnrollment.objects.filter(
+                tenant=self.tenant,
+                session=self.session,
+            ).exists()
+        )
 
-    def test_reactivated_enrollment_creates_session_enrollment_and_attendance(self):
-        """재활성화된 enrollment에 대해 SessionEnrollment + Attendance 모두 생성 확인."""
-        enrollment = self._create_student_and_enrollment(20, enrollment_status="INACTIVE")
+    def test_active_enrollment_creates_session_enrollment_and_attendance(self):
+        enrollment = self._create_student_and_enrollment(20, enrollment_status="ACTIVE")
 
         resp = self.client.post(
             "/api/v1/enrollments/session-enrollments/bulk_create/",
@@ -180,8 +180,8 @@ class SessionEnrollmentBulkCreateReactivateTests(APITestCase):
         self.assertIsNotNone(att)
         self.assertEqual(att.status, "PRESENT")
 
-    def test_reactivated_enrollment_reactivates_auto_assigned_student_fee(self):
-        enrollment = self._create_student_and_enrollment(21, enrollment_status="INACTIVE")
+    def test_active_enrollment_reactivates_auto_assigned_student_fee(self):
+        enrollment = self._create_student_and_enrollment(21, enrollment_status="ACTIVE")
         fee_template = FeeTemplate.objects.create(
             tenant=self.tenant,
             name="월 수강료",

@@ -1,5 +1,6 @@
 # PATH: apps/domains/staffs/views/work_record.py
 
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -10,8 +11,11 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
+from academy.adapters.db.django import repositories_staffs as staff_repo
+
 from ..models import WorkRecord
 from ..serializers import WorkRecordSerializer
+from ..services import OpenWorkRecordConflict, has_open_work_record_conflict
 from ..filters import WorkRecordFilter
 from apps.core.permissions import TenantResolvedAndStaff
 from .helpers import IsPayrollManager, can_manage_payroll, is_month_locked
@@ -56,21 +60,50 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
 
         staff = serializer.validated_data.get("staff")
         date = serializer.validated_data.get("date")
-        if staff and date and is_month_locked(staff, date):
-            raise ValidationError("마감된 월입니다. 근무기록을 추가할 수 없습니다.")
+        if staff is None or date is None:
+            raise ValidationError("staff와 date는 필수입니다.")
 
-        serializer.save(tenant_id=tenant.id)
+        try:
+            with transaction.atomic():
+                locked_staff = staff_repo.staff_get_for_update(
+                    tenant.id,
+                    staff.pk,
+                )
+                if is_month_locked(locked_staff, date):
+                    raise ValidationError(
+                        "마감된 월입니다. 근무기록을 추가할 수 없습니다."
+                    )
+                if (
+                    serializer.validated_data.get("end_time") is None
+                    and has_open_work_record_conflict(staff=locked_staff)
+                ):
+                    raise OpenWorkRecordConflict()
+                serializer.save(tenant_id=tenant.id, staff=locked_staff)
+        except IntegrityError as exc:
+            if (
+                serializer.validated_data.get("end_time") is None
+                and staff is not None
+                and has_open_work_record_conflict(staff=staff)
+            ):
+                raise OpenWorkRecordConflict() from exc
+            raise
 
     def perform_destroy(self, instance):
-        if is_month_locked(instance.staff, instance.date):
-            raise ValidationError("마감된 월입니다. 근무기록을 삭제할 수 없습니다.")
-        instance.delete()
+        with transaction.atomic():
+            locked_staff = staff_repo.staff_get_for_update(
+                instance.tenant_id,
+                instance.staff_id,
+            )
+            instance.refresh_from_db()
+            if is_month_locked(locked_staff, instance.date):
+                raise ValidationError("마감된 월입니다. 근무기록을 삭제할 수 없습니다.")
+            instance.delete()
 
     def perform_update(self, serializer):
         instance = serializer.instance
 
-        if is_month_locked(instance.staff, instance.date):
-            raise ValidationError("마감된 월입니다.")
+        resulting_staff = serializer.validated_data.get("staff", instance.staff)
+        resulting_date = serializer.validated_data.get("date", instance.date)
 
         # Direct override fields: admin explicitly sets the final work_hours or amount
         override_fields = {"work_hours", "amount"}
@@ -82,21 +115,61 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         has_override = bool(override_fields & changed_keys)
         has_input_change = bool(input_fields & changed_keys)
 
-        if has_override:
-            # Admin directly set work_hours or amount → mark as manually edited
-            serializer.save(is_manually_edited=True)
-        elif has_input_change and instance.end_time:
-            # Calculation inputs changed → clear manual flag so save() recalculates
-            serializer.save(is_manually_edited=False)
-        else:
-            serializer.save()
+        try:
+            with transaction.atomic():
+                locked_staff_by_id = staff_repo.staff_map_for_update(
+                    instance.tenant_id,
+                    [instance.staff_id, resulting_staff.pk],
+                )
+                source_staff = locked_staff_by_id[instance.staff_id]
+                locked_staff = locked_staff_by_id[resulting_staff.pk]
+                if is_month_locked(source_staff, instance.date):
+                    raise ValidationError("마감된 월입니다.")
+                if is_month_locked(locked_staff, resulting_date):
+                    raise ValidationError(
+                        "변경하려는 직원의 해당 월은 마감되어 근무기록을 이동할 수 없습니다."
+                    )
+                resulting_end_time = serializer.validated_data.get(
+                    "end_time",
+                    instance.end_time,
+                )
+                if resulting_end_time is None and has_open_work_record_conflict(
+                    staff=locked_staff,
+                    exclude_record_id=instance.id,
+                ):
+                    raise OpenWorkRecordConflict()
+                save_kwargs = {}
+                if "staff" in serializer.validated_data:
+                    save_kwargs["staff"] = locked_staff
+                if has_override:
+                    # Admin directly set work_hours or amount → mark as manually edited
+                    serializer.save(is_manually_edited=True, **save_kwargs)
+                elif has_input_change and instance.end_time:
+                    # Calculation inputs changed → clear manual flag so save() recalculates
+                    serializer.save(is_manually_edited=False, **save_kwargs)
+                else:
+                    serializer.save(**save_kwargs)
+        except IntegrityError as exc:
+            resulting_end_time = serializer.validated_data.get("end_time", instance.end_time)
+            if resulting_end_time is None and has_open_work_record_conflict(
+                staff=resulting_staff,
+                exclude_record_id=instance.id,
+            ):
+                raise OpenWorkRecordConflict() from exc
+            raise
 
     @action(detail=True, methods=["post"], url_path="recalculate")
+    @transaction.atomic
     def recalculate(self, request, pk=None):
         """수동 수정 플래그를 해제하고 자동 재계산. 관리자가 '자동 계산으로 복원' 시 사용."""
         record = self.get_object()
+        locked_staff = staff_repo.staff_get_for_update(
+            record.tenant_id,
+            record.staff_id,
+        )
+        record.refresh_from_db()
 
-        if is_month_locked(record.staff, record.date):
+        if is_month_locked(locked_staff, record.date):
             raise ValidationError("마감된 월입니다.")
 
         if not record.end_time:
@@ -108,11 +181,17 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         return Response(WorkRecordSerializer(record).data)
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def start_break(self, request, pk=None):
         record = self.get_object()
         self._assert_self_service_or_manager(record)
+        locked_staff = staff_repo.staff_get_for_update(
+            record.tenant_id,
+            record.staff_id,
+        )
+        record.refresh_from_db()
 
-        if is_month_locked(record.staff, record.date):
+        if is_month_locked(locked_staff, record.date):
             raise ValidationError("마감된 월입니다.")
 
         if record.current_break_started_at:
@@ -124,11 +203,17 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         return Response({"status": "BREAK_STARTED"})
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def end_break(self, request, pk=None):
         record = self.get_object()
         self._assert_self_service_or_manager(record)
+        locked_staff = staff_repo.staff_get_for_update(
+            record.tenant_id,
+            record.staff_id,
+        )
+        record.refresh_from_db()
 
-        if is_month_locked(record.staff, record.date):
+        if is_month_locked(locked_staff, record.date):
             raise ValidationError("마감된 월입니다.")
 
         if not record.current_break_started_at:
@@ -145,11 +230,17 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         return Response({"status": "BREAK_ENDED"})
 
     @action(detail=True, methods=["post"])
+    @transaction.atomic
     def end_work(self, request, pk=None):
         record = self.get_object()
         self._assert_self_service_or_manager(record)
+        locked_staff = staff_repo.staff_get_for_update(
+            record.tenant_id,
+            record.staff_id,
+        )
+        record.refresh_from_db()
 
-        if is_month_locked(record.staff, record.date):
+        if is_month_locked(locked_staff, record.date):
             raise ValidationError("마감된 월입니다.")
 
         if record.end_time:
@@ -167,16 +258,19 @@ class WorkRecordViewSet(viewsets.ModelViewSet):
         meal_minutes = request.data.get("meal_minutes")
         if meal_minutes is not None:
             try:
-                record.meal_minutes = max(0, int(meal_minutes))
-            except (TypeError, ValueError):
-                pass
+                parsed_meal_minutes = int(meal_minutes)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError("meal_minutes는 0 이상의 정수여야 합니다.") from exc
+            if parsed_meal_minutes < 0:
+                raise ValidationError("meal_minutes는 0 이상의 정수여야 합니다.")
+            record.meal_minutes = parsed_meal_minutes
 
         adjustment_amount = request.data.get("adjustment_amount")
         if adjustment_amount is not None:
             try:
                 record.adjustment_amount = int(adjustment_amount)
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as exc:
+                raise ValidationError("adjustment_amount는 정수여야 합니다.") from exc
 
         record.end_time = timezone.localtime(timezone.now()).time()
         # save() auto-calculates work_hours, amount, resolved_hourly_wage

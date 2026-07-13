@@ -18,9 +18,9 @@ from apps.domains.messaging.notification_dispatch import (
     build_attendance_preview,
     build_student_list_preview,
     create_preview_token,
-    consume_preview_token,
-    execute_notification_batch,
+    consume_preview_token_and_execute,
 )
+from apps.domains.messaging.scheduled import MessagingHourlyQuotaExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -194,20 +194,23 @@ class AttendanceNotificationConfirmView(APIView):
                 status=http_status.HTTP_400_BAD_REQUEST,
             )
 
-        result = consume_preview_token(preview_token, tenant)
+        try:
+            result = consume_preview_token_and_execute(preview_token, tenant)
+        except MessagingHourlyQuotaExceeded as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=http_status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         if "error" in result:
-            return Response({"detail": result["error"]}, status=http_status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": result["error"]}, status=result["status"])
 
-        batch_result = execute_notification_batch(
-            tenant=tenant,
-            payload=result["payload"],
-            batch_id=result["batch_id"],
-            staff_id=result.get("staff_id"),
-        )
+        batch_result = result["batch_result"]
 
         return Response({
             "batch_id": batch_result["batch_id"],
             "sent_count": batch_result["sent_count"],
+            "pending_count": batch_result.get("pending_count", 0),
+            "accepted_count": batch_result.get("accepted_count", 0),
             "failed_count": batch_result.get("failed_count", 0),
             "blocked_count": batch_result.get("blocked_count", 0),
         })
@@ -393,20 +396,23 @@ class ManualNotificationConfirmView(APIView):
                 status=http_status.HTTP_400_BAD_REQUEST,
             )
 
-        result = consume_preview_token(preview_token, tenant)
+        try:
+            result = consume_preview_token_and_execute(preview_token, tenant)
+        except MessagingHourlyQuotaExceeded as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=http_status.HTTP_429_TOO_MANY_REQUESTS,
+            )
         if "error" in result:
-            return Response({"detail": result["error"]}, status=http_status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": result["error"]}, status=result["status"])
 
-        batch_result = execute_notification_batch(
-            tenant=tenant,
-            payload=result["payload"],
-            batch_id=result["batch_id"],
-            staff_id=result.get("staff_id"),
-        )
+        batch_result = result["batch_result"]
 
         return Response({
             "batch_id": batch_result["batch_id"],
             "sent_count": batch_result["sent_count"],
+            "pending_count": batch_result.get("pending_count", 0),
+            "accepted_count": batch_result.get("accepted_count", 0),
             "failed_count": batch_result.get("failed_count", 0),
             "blocked_count": batch_result.get("blocked_count", 0),
         })

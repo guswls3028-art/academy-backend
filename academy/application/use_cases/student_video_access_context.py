@@ -56,8 +56,8 @@ def get_students_for_request(request):
     parent = getattr(request.user, "parent_profile", None)
     if parent:
         active_students = active_students_for_parent(tenant, parent)
-        header_id = request.META.get("HTTP_X_STUDENT_ID")
-        if header_id:
+        if "HTTP_X_STUDENT_ID" in request.META:
+            header_id = request.META.get("HTTP_X_STUDENT_ID")
             try:
                 selected = active_students.filter(id=int(header_id)).first()
             except (TypeError, ValueError):

@@ -529,7 +529,6 @@ class Command(BaseCommand):
         auto_billing_enabled = bool(getattr(settings, "TOSS_AUTO_BILLING_ENABLED", False))
         toss_secret_configured = bool((getattr(settings, "TOSS_PAYMENTS_SECRET_KEY", "") or "").strip())
         toss_client_configured = bool((getattr(settings, "TOSS_PAYMENTS_CLIENT_KEY", "") or "").strip())
-        toss_webhook_configured = bool((getattr(settings, "TOSS_WEBHOOK_SECRET", "") or "").strip())
         exempt_ids = set(getattr(settings, "BILLING_EXEMPT_TENANT_IDS", set()) or set())
 
         program = Program.objects.filter(tenant=tenant).first()
@@ -556,12 +555,11 @@ class Command(BaseCommand):
             CanaryCheck(
                 name="billing_auto_enabled_has_secret",
                 severity="error",
-                ok=(not auto_billing_enabled) or (toss_secret_configured and toss_webhook_configured),
-                detail="Automatic billing must not be enabled without Toss secret and webhook secret.",
+                ok=(not auto_billing_enabled) or toss_secret_configured,
+                detail="Automatic billing must not be enabled without the Toss server secret.",
                 data={
                     "toss_auto_billing_enabled": auto_billing_enabled,
                     "toss_secret_configured": toss_secret_configured,
-                    "toss_webhook_configured": toss_webhook_configured,
                     "toss_client_configured": toss_client_configured,
                 },
             ),

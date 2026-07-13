@@ -37,6 +37,91 @@ from apps.core.models.program import Program
 logger = logging.getLogger(__name__)
 
 
+def _record_partial_refund_reconciliation(
+    *,
+    tenant_id: int,
+    transaction_id: int,
+    invoice_id: int | None,
+    refunded_amount: int,
+) -> None:
+    """Best-effort, metadata-only evidence for an operator policy decision."""
+    try:
+        from apps.core.models import OpsAuditLog
+
+        summary = f"partial refund tx={transaction_id} requires reconciliation"
+        if OpsAuditLog.objects.filter(
+            action="billing.partial_refund_reconciliation_required",
+            summary=summary,
+            created_at__gte=timezone.now() - timedelta(hours=24),
+        ).exists():
+            return
+        OpsAuditLog.objects.create(
+            action="billing.partial_refund_reconciliation_required",
+            summary=summary,
+            target_tenant_id=tenant_id,
+            payload={
+                "transaction_id": transaction_id,
+                "invoice_id": invoice_id,
+                "refunded_amount": refunded_amount,
+            },
+            result=OpsAuditLog.Result.FAILED,
+            error="partial_refund_policy_reconciliation_required",
+        )
+    except Exception:
+        logger.exception(
+            "Could not persist partial refund reconciliation evidence: tenant=%s tx=%s invoice=%s",
+            tenant_id,
+            transaction_id,
+            invoice_id,
+        )
+
+
+def _lock_payment_scope(tx_id: int):
+    """Canonical billing mutation lock order: Program -> Invoice -> Tx."""
+    snapshot = PaymentTransaction.objects.only("tenant_id", "invoice_id").get(pk=tx_id)
+    program = Program.objects.select_for_update().get(tenant_id=snapshot.tenant_id)
+    invoice = None
+    if snapshot.invoice_id:
+        invoice = Invoice.objects.select_for_update().get(pk=snapshot.invoice_id)
+    tx = PaymentTransaction.objects.select_for_update().get(pk=tx_id)
+    return program, invoice, tx
+
+
+def _provider_payload_matches(tx: PaymentTransaction, data: dict[str, Any]) -> bool:
+    """Accept only an authoritative BILLING Payment matching local immutable fields."""
+    total_amount = data.get("totalAmount")
+    payment_key = data.get("paymentKey")
+    valid = (
+        data.get("type") == "BILLING"
+        and data.get("orderId") == tx.provider_order_id
+        and type(total_amount) is int
+        and total_amount == tx.amount
+        and (tx.invoice_id is None or total_amount == tx.invoice.total_amount)
+        and isinstance(payment_key, str)
+        and bool(payment_key.strip())
+        and (
+            not tx.provider_payment_key
+            or tx.provider_payment_key == payment_key
+        )
+    )
+    if not valid:
+        logger.critical(
+            "Toss payment verification mismatch: tenant=%s tx=%s invoice=%s "
+            "order_match=%s amount_match=%s type=%s payment_key_conflict=%s",
+            tx.tenant_id,
+            tx.id,
+            tx.invoice_id,
+            data.get("orderId") == tx.provider_order_id,
+            type(total_amount) is int and total_amount == tx.amount,
+            data.get("type"),
+            bool(
+                tx.provider_payment_key
+                and tx.provider_payment_key != payment_key
+            ),
+        )
+    return valid
+
+
 def _parse_datetime(value: str | None):
     if not value:
         return None
@@ -110,34 +195,39 @@ def _void_paid_invoice_after_full_refund(tx: PaymentTransaction) -> None:
 def _handle_done(tx: PaymentTransaction, data: dict[str, Any]) -> str:
     # 외부 atomic의 SELECT FOR UPDATE는 이미 종료됨. 동시 webhook race 차단을 위해
     # 핸들러 내부에서 다시 row lock + 최신 상태 확인.
-    tx = PaymentTransaction.objects.select_for_update().select_related("invoice").get(pk=tx.pk)
+    _program, invoice, tx = _lock_payment_scope(tx.pk)
+    tx.invoice = invoice
 
-    if tx.status == "SUCCESS":
-        return "already_success"
+    if not _provider_payload_matches(tx, data):
+        return "provider_mismatch"
+
+    already_success = tx.status == "SUCCESS"
     # 상태 역전 방어: 환불(REFUNDED/PARTIALLY_REFUNDED) 후 지연 도착한 DONE이
     # SUCCESS로 덮어쓰면 환불 사실이 사라진다. 종단 상태는 보존.
-    if tx.status in ("REFUNDED", "PARTIALLY_REFUNDED"):
+    if not already_success and tx.status in ("REFUNDED", "PARTIALLY_REFUNDED"):
         logger.warning(
             "Webhook DONE ignored — terminal refund state: tx=%s status=%s",
             tx.id, tx.status,
         )
         return f"terminal_{tx.status.lower()}"
 
-    tx.status = "SUCCESS"
-    tx.provider_payment_key = data.get("paymentKey", tx.provider_payment_key)
-    tx.transaction_key = data.get("paymentKey", tx.transaction_key)
-    tx.response_payload = data
-    tx.raw_response = data
-    tx.processed_at = _parse_datetime(data.get("approvedAt")) or timezone.now()
-    card = data.get("card") or {}
-    if card:
-        tx.card_company = card.get("company", tx.card_company) or tx.card_company
-        tx.card_number_masked = card.get("number", tx.card_number_masked) or tx.card_number_masked
-    tx.save(update_fields=[
-        "status", "provider_payment_key", "transaction_key",
-        "response_payload", "raw_response", "processed_at",
-        "card_company", "card_number_masked", "updated_at",
-    ])
+    if not already_success:
+        tx.status = "SUCCESS"
+        tx.provider_payment_key = data.get("paymentKey", tx.provider_payment_key)
+        tx.transaction_key = data.get("paymentKey", tx.transaction_key)
+        tx.response_payload = data
+        tx.raw_response = data
+        tx.processed_at = _parse_datetime(data.get("approvedAt")) or timezone.now()
+        tx.processing_started_at = None
+        card = data.get("card") or {}
+        if card:
+            tx.card_company = card.get("company", tx.card_company) or tx.card_company
+            tx.card_number_masked = card.get("number", tx.card_number_masked) or tx.card_number_masked
+        tx.save(update_fields=[
+            "status", "provider_payment_key", "transaction_key",
+            "response_payload", "raw_response", "processed_at",
+            "card_company", "card_number_masked", "processing_started_at", "updated_at",
+        ])
 
     if tx.invoice_id and tx.invoice.status != "PAID":
         # FAILED 상태면 PENDING 복귀 후 PAID
@@ -145,18 +235,35 @@ def _handle_done(tx: PaymentTransaction, data: dict[str, Any]) -> str:
             invoice_service.retry_pending(tx.invoice_id)
         elif tx.invoice.status == "SCHEDULED":
             invoice_service.transition_to_pending(tx.invoice_id)
-        invoice_service.mark_paid(tx.invoice_id, paid_at=tx.processed_at)
+        if tx.invoice.status in ("SCHEDULED", "FAILED", "PENDING", "OVERDUE"):
+            invoice_service.mark_paid(tx.invoice_id, paid_at=tx.processed_at)
+        else:
+            logger.critical(
+                "Toss payment captured for terminal invoice; reconciliation/refund required: "
+                "tenant=%s tx=%s invoice=%s invoice_status=%s",
+                tx.tenant_id,
+                tx.id,
+                tx.invoice_id,
+                tx.invoice.status,
+            )
+            return "payment_captured_invoice_terminal"
+
+        if already_success:
+            return "repaired_success_invoice"
 
     logger.info(
-        "Webhook DONE applied: tx=%s invoice=%s paymentKey=%s",
-        tx.id, tx.invoice_id, tx.provider_payment_key,
+        "Toss DONE applied: tx=%s invoice=%s",
+        tx.id, tx.invoice_id,
     )
-    return "applied_done"
+    return "already_success" if already_success else "applied_done"
 
 
 @transaction.atomic
 def _handle_failed(tx: PaymentTransaction, data: dict[str, Any], reason: str) -> str:
-    tx = PaymentTransaction.objects.select_for_update().select_related("invoice").get(pk=tx.pk)
+    _program, invoice, tx = _lock_payment_scope(tx.pk)
+    tx.invoice = invoice
+    if not _provider_payload_matches(tx, data):
+        return "provider_mismatch"
     if tx.status in ("SUCCESS", "REFUNDED", "PARTIALLY_REFUNDED"):
         # 종단 상태 덮어쓰지 않음 — SUCCESS/환불 후 지연된 ABORTED/EXPIRED 무시.
         return f"terminal_{tx.status.lower()}"
@@ -169,9 +276,10 @@ def _handle_failed(tx: PaymentTransaction, data: dict[str, Any], reason: str) ->
     tx.response_payload = data
     tx.raw_response = data
     tx.processed_at = timezone.now()
+    tx.processing_started_at = None
     tx.save(update_fields=[
         "status", "failure_reason", "response_payload", "raw_response",
-        "processed_at", "updated_at",
+        "processed_at", "processing_started_at", "updated_at",
     ])
 
     if tx.invoice_id and tx.invoice.status == "PENDING":
@@ -186,12 +294,16 @@ def _handle_failed(tx: PaymentTransaction, data: dict[str, Any], reason: str) ->
 
 @transaction.atomic
 def _handle_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> str:
-    tx = PaymentTransaction.objects.select_for_update().select_related("invoice").get(pk=tx.pk)
+    _program, invoice, tx = _lock_payment_scope(tx.pk)
+    tx.invoice = invoice
+    if not _provider_payload_matches(tx, data):
+        return "provider_mismatch"
     if tx.status == "REFUNDED":
         return "already_refunded"
-    # 환불은 결제 성공 또는 부분 환불 상태에서만 가능. PENDING/FAILED 결제는
-    # 환불할 게 없으므로 운영 알람용 로그만 남기고 상태 변경 안 함.
-    if tx.status not in ("SUCCESS", "PARTIALLY_REFUNDED"):
+    # A queried CANCELED Payment can be the first authoritative response after
+    # an auto-billing timeout. Preserve the provider's full-refund fact even
+    # when the local transaction was still PROCESSING.
+    if tx.status not in ("SUCCESS", "PARTIALLY_REFUNDED", "PROCESSING"):
         logger.warning(
             "Webhook CANCELED ignored — non-refundable status: tx=%s status=%s",
             tx.id, tx.status,
@@ -199,15 +311,27 @@ def _handle_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> str:
         return f"non_refundable_{tx.status.lower()}"
 
     tx.status = "REFUNDED"
+    tx.provider_payment_key = data["paymentKey"]
+    tx.transaction_key = data["paymentKey"]
     tx.refunded_amount = tx.amount
     tx.refunded_at = timezone.now()
     tx.response_payload = data
     tx.raw_response = data
+    tx.processing_started_at = None
     tx.save(update_fields=[
         "status", "refunded_amount", "refunded_at",
-        "response_payload", "raw_response", "updated_at",
+        "provider_payment_key", "transaction_key", "response_payload", "raw_response",
+        "processing_started_at", "updated_at",
     ])
-    _void_paid_invoice_after_full_refund(tx)
+    if tx.invoice_id and tx.invoice.status in (
+        "SCHEDULED",
+        "PENDING",
+        "FAILED",
+        "OVERDUE",
+    ):
+        invoice_service.void(tx.invoice_id, reason="provider_confirmed_canceled")
+    else:
+        _void_paid_invoice_after_full_refund(tx)
 
     logger.info("Webhook CANCELED applied: tx=%s invoice=%s", tx.id, tx.invoice_id)
     return "applied_canceled"
@@ -215,10 +339,36 @@ def _handle_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> str:
 
 @transaction.atomic
 def _handle_partial_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> str:
-    tx = PaymentTransaction.objects.select_for_update().select_related("invoice").get(pk=tx.pk)
-    total_canceled = data.get("totalAmount", 0) - data.get("balanceAmount", tx.amount)
+    _program, invoice, tx = _lock_payment_scope(tx.pk)
+    tx.invoice = invoice
+    if not _provider_payload_matches(tx, data):
+        return "provider_mismatch"
+    total_amount = data.get("totalAmount")
+    balance_amount = data.get("balanceAmount")
+    if (
+        type(balance_amount) is not int
+        or balance_amount < 0
+        or balance_amount >= total_amount
+    ):
+        logger.critical(
+            "Toss partial cancel amount invalid: tenant=%s tx=%s invoice=%s",
+            tx.tenant_id,
+            tx.id,
+            tx.invoice_id,
+        )
+        return "provider_mismatch"
+    total_canceled = total_amount - balance_amount
     if total_canceled <= 0:
         return "no_cancel_amount"
+    if tx.status == "PROCESSING":
+        logger.critical(
+            "Toss partial cancellation requires manual reconciliation: "
+            "tenant=%s tx=%s invoice=%s",
+            tx.tenant_id,
+            tx.id,
+            tx.invoice_id,
+        )
+        return "partial_cancel_processing_unresolved"
     # 부분 환불도 결제가 성공·부분환불 상태일 때만 의미 있음.
     if tx.status not in ("SUCCESS", "PARTIALLY_REFUNDED"):
         logger.warning(
@@ -238,6 +388,22 @@ def _handle_partial_canceled(tx: PaymentTransaction, data: dict[str, Any]) -> st
     if tx.status == "REFUNDED":
         _void_paid_invoice_after_full_refund(tx)
         return "applied_full_refund"
+    logger.critical(
+        "Toss partial refund applied; accounting/subscription reconciliation required: "
+        "tenant=%s tx=%s invoice=%s refunded_amount=%s",
+        tx.tenant_id,
+        tx.id,
+        tx.invoice_id,
+        tx.refunded_amount,
+    )
+    transaction.on_commit(
+        lambda: _record_partial_refund_reconciliation(
+            tenant_id=tx.tenant_id,
+            transaction_id=tx.id,
+            invoice_id=tx.invoice_id,
+            refunded_amount=tx.refunded_amount,
+        )
+    )
     return "applied_partial_refund"
 
 
@@ -258,44 +424,50 @@ def handle_payment_status(data: dict[str, Any]) -> dict[str, Any]:
 
     반환: {"result": "...", "orderId": "...", "status": "..."}
     """
+    if not isinstance(data, dict):
+        return {"result": "invalid_payload", "orderId": None, "status": None}
+
     order_id = data.get("orderId")
     status = data.get("status")
 
     if not order_id or not status:
-        logger.warning("Webhook ignored: missing orderId/status. data=%s", data)
+        logger.warning(
+            "Toss payment ignored: missing orderId/status keys=%s",
+            sorted(str(key) for key in data.keys()),
+        )
         return {"result": "invalid_payload", "orderId": order_id, "status": status}
 
-    with transaction.atomic():
-        tx = (
-            PaymentTransaction.objects
-            .select_for_update()
-            .select_related("invoice")
-            .filter(provider_order_id=order_id)
-            .order_by("-created_at")
-            .first()
-        )
+    tx = (
+        PaymentTransaction.objects
+        .select_related("invoice")
+        .filter(provider_order_id=order_id)
+        .order_by("-created_at")
+        .first()
+    )
 
-        if not tx:
-            # orderId로 찾지 못하면 invoice 조회 시도 (invoice가 생겼지만 tx가 없는 상태)
-            try:
-                invoice = Invoice.objects.select_for_update().get(provider_order_id=order_id)
-            except Invoice.DoesNotExist:
-                logger.warning("Webhook unmatched: orderId=%s", order_id)
-                return {"result": "unmatched", "orderId": order_id, "status": status}
+    if not tx:
+        invoice_snapshot = Invoice.objects.filter(provider_order_id=order_id).first()
+        if not invoice_snapshot:
+            logger.warning("Toss payment unmatched: orderId=%s", order_id)
+            return {"result": "unmatched", "orderId": order_id, "status": status}
 
+        with transaction.atomic():
+            Program.objects.select_for_update().get(tenant_id=invoice_snapshot.tenant_id)
+            invoice = Invoice.objects.select_for_update().get(pk=invoice_snapshot.pk)
             try:
                 # 최소한의 tx 기록 생성 (비자동결제 경로로 수동 결제된 경우 등)
-                tx = PaymentTransaction.objects.create(
-                    tenant_id=invoice.tenant_id,
-                    invoice=invoice,
-                    provider="tosspayments",
-                    provider_order_id=order_id,
-                    idempotency_key=order_id,
-                    amount=invoice.total_amount,
-                    status="PENDING",
-                    payment_method="card",
-                    request_payload={"source": "webhook_recovery"},
-                )
+                with transaction.atomic():
+                    tx = PaymentTransaction.objects.create(
+                        tenant_id=invoice.tenant_id,
+                        invoice=invoice,
+                        provider="tosspayments",
+                        provider_order_id=order_id,
+                        idempotency_key=order_id,
+                        amount=invoice.total_amount,
+                        status="PENDING",
+                        payment_method="card",
+                        request_payload={"source": "webhook_recovery"},
+                    )
             except IntegrityError:
                 # 동시 웹훅으로 동일 idempotency_key가 먼저 생성된 경우 재조회
                 tx = (

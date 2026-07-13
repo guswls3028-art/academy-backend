@@ -749,7 +749,7 @@ def generate_curated_hit_report_pdf(report) -> bytes:
     페이지 구성:
       1. 표지
       2. 시험지 문항 1개 + 선택 후보 묶음 = 1 페이지.
-         후보 2~4개는 같은 페이지에 표시하고, 5개 이상은 4개씩 다음 페이지로 넘긴다.
+         후보는 이미지 가독성을 위해 2개씩 표시하고 다음 페이지로 넘긴다.
          선택 0건이면 placeholder 1 페이지.
     """
     from reportlab.lib.pagesizes import A4, landscape

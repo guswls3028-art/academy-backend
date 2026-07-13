@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.apps import apps
 from django.contrib.auth import get_user_model
@@ -125,6 +126,81 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
         self.assertFalse(response.data["ok"])
         self.assertTrue(any(item["code"] == "template_not_ready" for item in response.data["blockers"]))
 
+    def test_preflight_fail_closes_payment_when_provider_sid_is_missing(self):
+        student = self._student("006")
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            category=MessageTemplate.Category.PAYMENT,
+            name="결제 완료 안내",
+            subject="",
+            body="결제 완료 안내입니다.",
+            solapi_template_id="STALE-PAYMENT-SID",
+            solapi_status="APPROVED",
+        )
+
+        response = SendMessagePreflightView.as_view()(
+            self._request(
+                "post",
+                "/api/v1/messaging/send/preflight/",
+                {
+                    "send_to": "parent",
+                    "student_ids": [student.id],
+                    "template_id": template.id,
+                    "raw_body": "결제 완료 안내입니다.",
+                    "block_category": "payment",
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.data["ok"])
+        self.assertEqual(response.data["template"]["source"], "unified_missing")
+        self.assertEqual(response.data["template"]["solapi_template_id"], "")
+
+    def test_preflight_quota_uses_source_business_tenant_only(self):
+        student = self._student("005")
+        provider_owner = Tenant.objects.create(code="msg-ops-provider", name="Provider", is_active=True)
+        other_customer = Tenant.objects.create(code="msg-ops-other", name="Other", is_active=True)
+        NotificationLog.objects.create(
+            tenant=provider_owner,
+            source_tenant=self.tenant,
+            success=False,
+            status="processing",
+            message_mode="alimtalk",
+        )
+        NotificationLog.objects.create(
+            tenant=provider_owner,
+            source_tenant=other_customer,
+            success=True,
+            status="sent",
+            message_mode="alimtalk",
+        )
+        NotificationLog.objects.create(
+            tenant=provider_owner,
+            success=True,
+            status="sent",
+            message_mode="alimtalk",
+        )
+
+        with patch("apps.domains.messaging.services.preflight.HOURLY_SEND_LIMIT", 2):
+            response = SendMessagePreflightView.as_view()(
+                self._request(
+                    "post",
+                    "/api/v1/messaging/send/preflight/",
+                    {
+                        "send_to": "parent",
+                        "student_ids": [student.id],
+                        "raw_body": "쿼터 확인 안내입니다.",
+                        "block_category": "attendance",
+                    },
+                )
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.data["ok"])
+        self.assertEqual(response.data["limits"]["sent_last_hour"], 1)
+        self.assertEqual(response.data["limits"]["remaining_this_hour"], 1)
+
 
 class MessagingOperationsStatusViewTests(MessagingOperationsBase):
     def test_operations_status_summarizes_worker_queue_logs_and_auto_send_risks(self):
@@ -202,6 +278,110 @@ class MessagingOperationsStatusViewTests(MessagingOperationsBase):
         self.assertEqual(response.data["worker"]["idle_reason"], "scale_to_zero_no_backlog")
         self.assertFalse(any(item["code"] == "worker_attention" for item in response.data["risks"]))
 
+    def test_operations_status_uses_business_tenant_for_logs_and_hourly_quota(self):
+        provider_owner = Tenant.objects.create(code="msg-status-provider", name="Provider", is_active=True)
+        other_customer = Tenant.objects.create(code="msg-status-other", name="Other", is_active=True)
+        NotificationLog.objects.create(
+            tenant=provider_owner,
+            source_tenant=self.tenant,
+            success=True,
+            status="sent",
+            message_mode="alimtalk",
+        )
+        NotificationLog.objects.create(
+            tenant=provider_owner,
+            source_tenant=other_customer,
+            success=False,
+            status="failed",
+            message_mode="alimtalk",
+        )
+        NotificationLog.objects.create(
+            tenant=provider_owner,
+            success=False,
+            status="failed",
+            message_mode="alimtalk",
+        )
+
+        response = MessagingOperationsStatusView.as_view()(
+            self._request("get", "/api/v1/messaging/operations/status/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["log_24h"], {
+            "sent": 1,
+            "failed": 0,
+            "processing": 0,
+            "sending": 0,
+            "retryable_failed": 0,
+            "ambiguous": 0,
+            "action_required": 0,
+            "total": 1,
+        })
+        self.assertEqual(response.data["rate_limit_hourly"], {
+            "limit": 500,
+            "used": 1,
+            "remaining": 499,
+        })
+
+    def test_operations_status_counts_sending_and_ambiguous_as_action_required(self):
+        NotificationLog.objects.create(
+            tenant=self.tenant,
+            success=False,
+            status="sending",
+            message_mode="alimtalk",
+        )
+        NotificationLog.objects.create(
+            tenant=self.tenant,
+            success=False,
+            status="ambiguous",
+            message_mode="alimtalk",
+        )
+
+        response = MessagingOperationsStatusView.as_view()(
+            self._request("get", "/api/v1/messaging/operations/status/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["log_24h"]["sending"], 1)
+        self.assertEqual(response.data["log_24h"]["ambiguous"], 1)
+        self.assertEqual(response.data["log_24h"]["action_required"], 2)
+        risk = next(
+            item
+            for item in response.data["risks"]
+            if item["code"] == "provider_outcome_ambiguous"
+        )
+        self.assertIn("sending 1, ambiguous 1", risk["detail"])
+
+    def test_operations_status_keeps_old_unresolved_provider_outcome_actionable(self):
+        log = NotificationLog.objects.create(
+            tenant=self.tenant,
+            success=False,
+            status="ambiguous",
+            message_mode="alimtalk",
+        )
+        NotificationLog.objects.filter(pk=log.pk).update(
+            sent_at=timezone.now() - timedelta(days=3)
+        )
+
+        response = MessagingOperationsStatusView.as_view()(
+            self._request("get", "/api/v1/messaging/operations/status/")
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["log_24h"]["action_required"], 0)
+        self.assertEqual(response.data["unresolved"]["action_required"], 1)
+        self.assertEqual(response.data["unresolved"]["ambiguous"], 1)
+        self.assertEqual(
+            response.data["unresolved"]["age_buckets"],
+            {"under_1h": 0, "from_1h_to_24h": 0, "over_24h": 1},
+        )
+        self.assertTrue(
+            any(
+                item["code"] == "provider_outcome_ambiguous"
+                for item in response.data["risks"]
+            )
+        )
+
     def test_operations_status_flags_mapped_trigger_when_provider_sid_is_missing(self):
         AutoSendConfig.objects.create(
             tenant=self.tenant,
@@ -216,4 +396,15 @@ class MessagingOperationsStatusViewTests(MessagingOperationsBase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["auto_send"]["enabled_without_template"], 1)
+        self.assertIn(
+            {
+                "trigger": "payment_complete",
+                "code": "provider_template_missing",
+                "detail": (
+                    "매핑된 카카오 승인 봉투 SID가 공급사에 없습니다. "
+                    "이 트리거는 fail-closed 상태입니다."
+                ),
+            },
+            response.data["auto_send"]["issues"],
+        )
         self.assertTrue(any(item["code"] == "auto_send_template_attention" for item in response.data["risks"]))

@@ -13,7 +13,9 @@ SubscriptionService 단위 테스트.
 from datetime import date, timedelta
 
 from django.test import TestCase
+from django.utils import timezone
 
+from apps.billing.models import Invoice, PaymentTransaction
 from apps.billing.services import subscription_service
 from apps.billing.services.subscription_service import SubscriptionTransitionError
 from apps.core.models.program import Program
@@ -65,14 +67,15 @@ class TestRenew(SubscriptionServiceTestBase):
         result = subscription_service.renew(self.program.pk, new_expires)
         self.assertEqual(result.subscription_status, "active")
 
-    def test_renew_clears_cancel_flag(self):
+    def test_renew_preserves_cancel_flag_until_explicit_revoke(self):
         self.program.cancel_at_period_end = True
-        self.program.save(update_fields=["cancel_at_period_end"])
+        self.program.canceled_at = timezone.now()
+        self.program.save(update_fields=["cancel_at_period_end", "canceled_at"])
 
         new_expires = date.today() + timedelta(days=30)
         result = subscription_service.renew(self.program.pk, new_expires)
-        self.assertFalse(result.cancel_at_period_end)
-        self.assertIsNone(result.canceled_at)
+        self.assertTrue(result.cancel_at_period_end)
+        self.assertIsNotNone(result.canceled_at)
 
 
 class TestGrace(SubscriptionServiceTestBase):
@@ -134,19 +137,182 @@ class TestCancelSchedule(SubscriptionServiceTestBase):
         with self.assertRaises(SubscriptionTransitionError):
             subscription_service.schedule_cancel(self.program.pk)
 
+    def test_cancel_fails_closed_when_expiry_is_missing(self):
+        self.program.subscription_expires_at = None
+        self.program.save(update_fields=["subscription_expires_at"])
+
+        with self.assertRaisesRegex(
+            SubscriptionTransitionError,
+            "subscription_expires_at is not configured",
+        ):
+            subscription_service.schedule_cancel(self.program.pk)
+
+        self.program.refresh_from_db()
+        self.assertFalse(self.program.cancel_at_period_end)
+
     def test_revoke_cancel(self):
         subscription_service.schedule_cancel(self.program.pk)
         result = subscription_service.revoke_cancel(self.program.pk)
         self.assertFalse(result.cancel_at_period_end)
         self.assertIsNone(result.canceled_at)
 
-    def test_cancel_during_grace(self):
-        """grace 상태에서도 해지 예약 가능"""
+    def test_revoke_cancel_restores_only_cancel_voided_future_invoice(self):
+        cancel_invoice = Invoice.objects.create(
+            tenant=self.tenant,
+            invoice_number="INV-REVOKE-CANCEL-VOID",
+            plan="pro",
+            billing_mode="AUTO_CARD",
+            supply_amount=198_000,
+            tax_amount=19_800,
+            total_amount=217_800,
+            period_start=self.program.subscription_expires_at + timedelta(days=1),
+            period_end=self.program.subscription_expires_at + timedelta(days=30),
+            due_date=self.program.subscription_expires_at + timedelta(days=1),
+            status="SCHEDULED",
+        )
+        ordinary_void = Invoice.objects.create(
+            tenant=self.tenant,
+            invoice_number="INV-REVOKE-ORDINARY-VOID",
+            plan="pro",
+            billing_mode="INVOICE_REQUEST",
+            supply_amount=1,
+            tax_amount=0,
+            total_amount=1,
+            period_start=self.program.subscription_expires_at + timedelta(days=31),
+            period_end=self.program.subscription_expires_at + timedelta(days=60),
+            due_date=self.program.subscription_expires_at + timedelta(days=31),
+            status="VOID",
+            memo="manual_admin_void",
+        )
+
+        subscription_service.schedule_cancel(self.program.pk)
+        subscription_service.revoke_cancel(self.program.pk)
+
+        cancel_invoice.refresh_from_db()
+        ordinary_void.refresh_from_db()
+        self.assertEqual(cancel_invoice.status, "SCHEDULED")
+        self.assertEqual(cancel_invoice.memo, "")
+        self.assertEqual(ordinary_void.status, "VOID")
+        self.assertEqual(ordinary_void.memo, "manual_admin_void")
+
+    def test_cancel_during_grace_expires_immediately(self):
+        """유료 기간이 끝난 grace에서는 기간말 해지를 즉시 만료 처리한다."""
         self.program.subscription_status = "grace"
         self.program.save(update_fields=["subscription_status"])
         result = subscription_service.schedule_cancel(self.program.pk)
         self.assertTrue(result.cancel_at_period_end)
-        self.assertEqual(result.subscription_status, "grace")
+        self.assertEqual(result.subscription_status, "expired")
+
+    def test_revoke_cancel_rejects_grace_and_expired(self):
+        for subscription_status in ("grace", "expired"):
+            with self.subTest(subscription_status=subscription_status):
+                self.program.subscription_status = subscription_status
+                self.program.cancel_at_period_end = True
+                self.program.canceled_at = timezone.now()
+                self.program.save(
+                    update_fields=[
+                        "subscription_status",
+                        "cancel_at_period_end",
+                        "canceled_at",
+                    ]
+                )
+
+                with self.assertRaisesRegex(
+                    SubscriptionTransitionError,
+                    "unless subscription is active",
+                ):
+                    subscription_service.revoke_cancel(self.program.pk)
+
+                self.program.refresh_from_db()
+                self.assertTrue(self.program.cancel_at_period_end)
+
+    def test_schedule_cancel_voids_future_unpaid_invoice(self):
+        invoice = Invoice.objects.create(
+            tenant=self.tenant,
+            invoice_number="INV-CANCEL-FUTURE",
+            plan="pro",
+            billing_mode="AUTO_CARD",
+            supply_amount=198_000,
+            tax_amount=19_800,
+            total_amount=217_800,
+            period_start=self.program.subscription_expires_at + timedelta(days=1),
+            period_end=self.program.subscription_expires_at + timedelta(days=30),
+            due_date=self.program.subscription_expires_at + timedelta(days=1),
+            status="SCHEDULED",
+        )
+
+        subscription_service.schedule_cancel(self.program.pk)
+
+        invoice.refresh_from_db()
+        self.assertEqual(invoice.status, "VOID")
+        self.assertEqual(invoice.memo, "cancel_at_period_end")
+
+    def test_schedule_cancel_rejects_inflight_future_payment(self):
+        invoice = Invoice.objects.create(
+            tenant=self.tenant,
+            invoice_number="INV-CANCEL-PROCESSING",
+            plan="pro",
+            billing_mode="AUTO_CARD",
+            supply_amount=198_000,
+            tax_amount=19_800,
+            total_amount=217_800,
+            period_start=self.program.subscription_expires_at + timedelta(days=1),
+            period_end=self.program.subscription_expires_at + timedelta(days=30),
+            due_date=self.program.subscription_expires_at + timedelta(days=1),
+            status="PENDING",
+        )
+        PaymentTransaction.objects.create(
+            tenant=self.tenant,
+            invoice=invoice,
+            provider="tosspayments",
+            provider_order_id=invoice.provider_order_id,
+            idempotency_key=invoice.provider_order_id,
+            amount=invoice.total_amount,
+            status="PROCESSING",
+        )
+
+        with self.assertRaisesRegex(SubscriptionTransitionError, "payment is being processed"):
+            subscription_service.schedule_cancel(self.program.pk)
+
+        self.program.refresh_from_db()
+        invoice.refresh_from_db()
+        self.assertFalse(self.program.cancel_at_period_end)
+        self.assertEqual(invoice.status, "PENDING")
+
+    def test_schedule_cancel_rejects_captured_unapplied_future_payment(self):
+        invoice = Invoice.objects.create(
+            tenant=self.tenant,
+            invoice_number="INV-CANCEL-CAPTURED",
+            plan="pro",
+            billing_mode="AUTO_CARD",
+            supply_amount=198_000,
+            tax_amount=19_800,
+            total_amount=217_800,
+            period_start=self.program.subscription_expires_at + timedelta(days=1),
+            period_end=self.program.subscription_expires_at + timedelta(days=30),
+            due_date=self.program.subscription_expires_at + timedelta(days=1),
+            status="PENDING",
+        )
+        PaymentTransaction.objects.create(
+            tenant=self.tenant,
+            invoice=invoice,
+            provider="tosspayments",
+            provider_order_id=invoice.provider_order_id,
+            idempotency_key=invoice.provider_order_id,
+            amount=invoice.total_amount,
+            status="SUCCESS",
+        )
+
+        with self.assertRaisesRegex(
+            SubscriptionTransitionError,
+            "captured renewal payment requires reconciliation",
+        ):
+            subscription_service.schedule_cancel(self.program.pk)
+
+        self.program.refresh_from_db()
+        invoice.refresh_from_db()
+        self.assertFalse(self.program.cancel_at_period_end)
+        self.assertEqual(invoice.status, "PENDING")
 
 
 class TestExtend(SubscriptionServiceTestBase):

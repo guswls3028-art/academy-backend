@@ -231,6 +231,16 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"user": "직원 계정은 직접 연결할 수 없습니다. 아이디/초기 비밀번호로 생성해 주세요."}
             )
+        initial = getattr(self, "initial_data", {})
+        username = str(initial.get("username") or "").strip()
+        password = str(initial.get("password") or "")
+        if bool(username) != bool(password):
+            raise serializers.ValidationError(
+                {
+                    "username": "로그인 아이디와 초기 비밀번호는 함께 입력하거나 둘 다 비워 주세요.",
+                    "password": "로그인 아이디와 초기 비밀번호는 함께 입력하거나 둘 다 비워 주세요.",
+                }
+            )
         return attrs
 
     # =========================
@@ -263,6 +273,7 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
                         tenant=tenant,
                         user=user,
                         role="teacher" if role == "TEACHER" else "staff",
+                        protected_existing_roles=("owner", "admin"),
                     )
                     validated_data["user"] = user
 
@@ -296,30 +307,46 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             )
 
     # =========================
-    # UPDATE (Teacher 동기화 포함, role 무시)
+    # UPDATE (Teacher + TenantMembership lifecycle synchronization)
     # =========================
     def update(self, instance, validated_data):
-        validated_data.pop("role", None)  # role은 create 전용
+        requested_role = validated_data.pop("role", None)
         validated_data.pop("username", None)
         validated_data.pop("password", None)
-
-        # 🔐 Owner Staff는 is_active=False 변경 차단 (본인 비활성화로 운영 마비 방지)
-        if "is_active" in validated_data and not validated_data["is_active"]:
-            from apps.core.models import TenantMembership as _TM
-            if instance.user_id and _TM.objects.filter(
-                user_id=instance.user_id, tenant=instance.tenant, is_active=True, role="owner",
-            ).exists():
-                raise serializers.ValidationError(
-                    {"is_active": "대표(Owner)는 비활성화할 수 없습니다."}
-                )
 
         # Teacher 동기화를 위해 old 값 보존 (super().update() 전)
         old_name = instance.name
         old_phone = instance.phone or ""
         is_active_before = instance.is_active
+        wants_reactivation = not is_active_before and validated_data.get("is_active") is True
+        wants_deactivation = is_active_before and validated_data.get("is_active") is False
+        membership = (
+            core_repo.membership_get_full(instance.tenant, instance.user)
+            if instance.user_id
+            else None
+        )
+        if membership and membership.role in ("owner", "admin") and (
+            validated_data.get("is_active") is False or wants_reactivation
+        ):
+            raise serializers.ValidationError(
+                {"is_active": "대표/관리자 계정은 직원 화면에서 비활성화하거나 재활성화할 수 없습니다."}
+            )
+        if wants_reactivation and requested_role is None:
+            raise serializers.ValidationError(
+                {"role": "재활성화할 직원 역할(TEACHER 또는 ASSISTANT)을 명시해 주세요."}
+            )
+        if requested_role is not None and wants_deactivation:
+            raise serializers.ValidationError(
+                {"role": "비활성화와 역할 변경을 동시에 요청할 수 없습니다."}
+            )
+        if requested_role is not None and not is_active_before and not wants_reactivation:
+            raise serializers.ValidationError(
+                {"role": "비활성 직원의 역할은 재활성화 요청과 함께 지정해 주세요."}
+            )
 
         try:
             with transaction.atomic():
+                instance = Staff.objects.select_for_update().get(pk=instance.pk)
                 staff = super().update(instance, validated_data)
 
                 new_name = staff.name
@@ -337,12 +364,71 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
                     teacher_repo.teacher_update_is_active_by_name_phone(
                         staff.tenant, new_name, new_phone, False,
                     )
+                    if staff.user_id:
+                        from apps.core.services.tenant_access import (
+                            TenantAccessMutationError,
+                            deactivate_tenant_membership,
+                        )
+                        try:
+                            deactivate_tenant_membership(
+                                user=staff.user,
+                                tenant=staff.tenant,
+                                allowed_roles=("teacher", "staff"),
+                            )
+                        except TenantAccessMutationError as exc:
+                            raise serializers.ValidationError(
+                                {"is_active": str(exc)}
+                            ) from exc
 
                 # 3) 재활성화 → Teacher도 활성화
                 if not is_active_before and staff.is_active is True:
-                    teacher_repo.teacher_update_is_active_by_name_phone(
-                        staff.tenant, new_name, new_phone, True,
+                    role = (
+                        "teacher" if requested_role == "TEACHER" else
+                        "staff"
                     )
+                    if role == "teacher":
+                        teacher_repo.teacher_ensure_active_by_name_phone(
+                            staff.tenant, new_name, new_phone,
+                        )
+                    else:
+                        teacher_repo.teacher_update_is_active_by_name_phone(
+                            staff.tenant, new_name, new_phone, False,
+                        )
+                    if staff.user_id:
+                        core_repo.membership_ensure_active(
+                            tenant=staff.tenant,
+                            user=staff.user,
+                            role=role,
+                            protected_existing_roles=("owner", "admin"),
+                        )
+                        from apps.core.services.tenant_access import reconcile_user_tenant_access
+                        reconcile_user_tenant_access(staff.user)
+
+                # Active role edits are a real lifecycle change, never a silent
+                # no-op. Keep Teacher profile and membership role atomic.
+                if is_active_before and staff.is_active and requested_role is not None:
+                    role = "teacher" if requested_role == "TEACHER" else "staff"
+                    if membership and membership.role in ("owner", "admin"):
+                        raise serializers.ValidationError(
+                            {"role": "대표/관리자 역할은 직원 화면에서 변경할 수 없습니다."}
+                        )
+                    if role == "teacher":
+                        teacher_repo.teacher_ensure_active_by_name_phone(
+                            staff.tenant, new_name, new_phone,
+                        )
+                    else:
+                        teacher_repo.teacher_update_is_active_by_name_phone(
+                            staff.tenant, new_name, new_phone, False,
+                        )
+                    if staff.user_id:
+                        core_repo.membership_ensure_active(
+                            tenant=staff.tenant,
+                            user=staff.user,
+                            role=role,
+                            protected_existing_roles=("owner", "admin"),
+                        )
+                        from apps.core.services.tenant_access import reconcile_user_tenant_access
+                        reconcile_user_tenant_access(staff.user)
 
                 return staff
         except IntegrityError as e:
@@ -354,41 +440,38 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError(
                 {"detail": "정보 수정 중 충돌이 발생했습니다. 입력값을 확인해 주세요."}
             )
+        except ValueError as e:
+            raise serializers.ValidationError({"role": str(e)}) from e
 
     # =========================
     # DELETE (Staff + Teacher + User)
     # =========================
     def delete(self, instance):
-        # 🔐 Owner 삭제 방지
-        from apps.core.models import TenantMembership
-        if instance.user:
-            is_owner = TenantMembership.objects.filter(
-                user=instance.user, tenant=instance.tenant, is_active=True, role="owner"
-            ).exists()
-            if is_owner:
-                raise serializers.ValidationError("대표(Owner)는 삭제할 수 없습니다.")
+        membership = (
+            core_repo.membership_get_full(instance.tenant, instance.user)
+            if instance.user_id
+            else None
+        )
+        if membership and membership.is_active and membership.role in ("owner", "admin"):
+            raise serializers.ValidationError("대표/관리자는 직원 화면에서 삭제할 수 없습니다.")
 
         user = instance.user
+        tenant = instance.tenant
 
         with transaction.atomic():
-            teacher_repo.teacher_delete_by_name_phone(instance.tenant, instance.name, instance.phone or "")
+            teacher_repo.teacher_delete_by_name_phone(tenant, instance.name, instance.phone or "")
             instance.delete()
             if user:
                 # User를 hard-delete하지 않고 비활성화 + 해당 테넌트 멤버십만 제거.
                 # hard-delete는 Student, Attendance 등을 cascade로 파괴할 수 있으므로 절대 금지.
                 # User.is_active/is_staff 는 전역 속성이므로, 다른 테넌트 멤버십이 남아 있거나
                 # User.tenant 가 이 Staff의 tenant가 아니면 절대 변경하지 않는다.
-                TenantMembership.objects.filter(
-                    user=user, tenant=instance.tenant,
-                ).delete()
-                has_other_membership = TenantMembership.objects.filter(
+                from apps.core.services.tenant_access import deactivate_tenant_membership
+                deactivate_tenant_membership(
                     user=user,
-                    is_active=True,
-                ).exclude(tenant=instance.tenant).exists()
-                if getattr(user, "tenant_id", None) == instance.tenant_id and not has_other_membership:
-                    user.is_active = False
-                    user.is_staff = False
-                    user.save(update_fields=["is_active", "is_staff"])
+                    tenant=tenant,
+                    allowed_roles=("teacher", "staff"),
+                )
 
     # =========================
     # Helpers

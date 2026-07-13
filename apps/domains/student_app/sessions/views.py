@@ -255,7 +255,7 @@ class StudentAttendanceSummaryView(APIView):
     """
     GET /student/attendance/summary/
     학생 본인의 출결 누적 요약 + 최근 차시별 상태.
-    학부모는 자녀 단위로 받음 (?student_id 옵션).
+    학부모는 자녀 단위로 받음 (X-Student-Id 헤더).
     """
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]

@@ -41,6 +41,13 @@ class VideoProgressEndpointTests(TestCase):
         force_authenticate(request, user=self.user)
         return VideoProgressView.as_view()(request, pk=video_id)
 
+    def _assert_only_membership_lookup(self, captured):
+        """Redis-first progress must not fetch video rows after authorization."""
+        queries = [query["sql"] for query in captured.captured_queries]
+        self.assertEqual(len(queries), 1, queries)
+        self.assertIn('"core_tenantmembership"', queries[0])
+        self.assertNotIn('"video_video"', queries[0])
+
     @patch("apps.domains.video.views.progress_views.emit_progress_layer_metrics")
     @patch("apps.domains.video.views.progress_views.get_video_status_from_redis", return_value=None)
     def test_redis_miss_returns_unknown_without_db_query(self, mock_redis, mock_metrics):
@@ -53,7 +60,7 @@ class VideoProgressEndpointTests(TestCase):
         self.assertEqual(response["Retry-After"], "3")
         mock_redis.assert_called_once_with(self.tenant.id, 321)
         mock_metrics.assert_called_once_with(progress_requests=1, redis_miss=1, db_hit=0)
-        self.assertEqual(len(captured), 0, [query["sql"] for query in captured.captured_queries])
+        self._assert_only_membership_lookup(captured)
 
     @patch("apps.domains.video.views.progress_views.emit_progress_layer_metrics")
     @patch(
@@ -70,7 +77,7 @@ class VideoProgressEndpointTests(TestCase):
         self.assertEqual(response.data["duration"], 73)
         mock_redis.assert_called_once_with(self.tenant.id, 321)
         mock_metrics.assert_called_once_with(progress_requests=1, redis_miss=0, db_hit=0)
-        self.assertEqual(len(captured), 0, [query["sql"] for query in captured.captured_queries])
+        self._assert_only_membership_lookup(captured)
 
     @patch("apps.domains.video.views.progress_views.emit_progress_layer_metrics")
     @patch("apps.domains.video.encoding_progress._get_progress_payload")
@@ -101,7 +108,7 @@ class VideoProgressEndpointTests(TestCase):
         mock_redis.assert_called_once_with(self.tenant.id, 321)
         mock_payload.assert_called_once_with(321, tenant_id=self.tenant.id)
         mock_metrics.assert_called_once_with(progress_requests=1, redis_miss=0, db_hit=0)
-        self.assertEqual(len(captured), 0, [query["sql"] for query in captured.captured_queries])
+        self._assert_only_membership_lookup(captured)
 
     @patch("apps.domains.video.views.progress_views.get_video_status_from_redis")
     def test_non_member_cannot_read_tenant_progress_payload(self, mock_redis):

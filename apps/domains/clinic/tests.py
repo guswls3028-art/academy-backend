@@ -984,6 +984,14 @@ class ClinicAPITestMixin(ClinicTestMixin):
     def setup_api_tenant(self, code, student_count=1):
         """tenant + admin user + TenantMembership + force_authenticate."""
         data = self.setup_full_tenant(code, student_count=student_count)
+        for student in data["students"]:
+            student.user.tenant = data["tenant"]
+            student.user.save(update_fields=["tenant"])
+            TenantMembership.ensure_active(
+                tenant=data["tenant"],
+                user=student.user,
+                role="student",
+            )
         admin_user = self.make_user(f"admin_{code}")
         admin_user.is_staff = True
         admin_user.tenant = data["tenant"]
@@ -1485,7 +1493,7 @@ class StudentClinicPermissionAPITest(APITestCase, ClinicAPITestMixin):
             **self._headers(self.tenant),
         )
 
-        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertEqual(resp.status_code, 403, resp.data)
         self.assertFalse(
             SessionParticipant.objects.filter(
                 tenant=self.tenant,

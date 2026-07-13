@@ -283,22 +283,23 @@ class StudentViewSet(ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         student = self.get_object()
         try:
-            soft_delete_student(student, tenant=request.tenant)
+            deletion = soft_delete_student(student, tenant=request.tenant)
         except StudentLifecycleError as e:
             if e.code == "already_deleted":
                 return Response({"detail": e.detail}, status=400)
             raise ValidationError(e.detail)
         # 퇴원 알림 발송 (학부모)
-        _student = student  # closure 캡처용
+        _student = deletion.student  # closure 캡처용
         _tenant = request.tenant
         _student_id = student.id
+        _deleted_at = deletion.student.deleted_at.isoformat()
         transaction.on_commit(lambda: send_event_notification(
             tenant=_tenant, trigger="withdrawal_complete",
             student=_student, send_to="parent",
             context={
                 "강의명": "-",
                 "차시명": "-",
-                "_domain_object_id": f"withdrawal_{_student_id}",
+                "_domain_object_id": f"withdrawal:{_student_id}:{_deleted_at}",
             },
         ))
         return Response(status=204)

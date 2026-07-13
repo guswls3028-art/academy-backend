@@ -191,8 +191,13 @@ class TestPermissionClasses(TestCase):
         """TenantResolvedAndMember allows user with active membership."""
         perm = TenantResolvedAndMember()
         request = _mock_request(user=self.student_user, tenant=self.tenant)
-        # Fast path: user.tenant_id matches tenant.id
         self.assertTrue(perm.has_permission(request, None))
+
+    def test_member_permission_rejects_primary_tenant_without_membership(self):
+        user = _create_user(self.tenant, "primary-without-membership")
+        request = _mock_request(user=user, tenant=self.tenant)
+
+        self.assertFalse(TenantResolvedAndMember().has_permission(request, None))
 
     def test_member_permission_rejects_no_membership(self):
         """TenantResolvedAndMember rejects user without membership in tenant."""
@@ -230,14 +235,14 @@ class TestPermissionClasses(TestCase):
         # student_user only has student role, not in STAFF_ROLES
         self.assertFalse(perm.has_permission(request, None))
 
-    def test_staff_permission_allows_superuser_with_matching_tenant(self):
-        """TenantResolvedAndStaff allows superuser whose tenant_id matches request tenant."""
+    def test_staff_permission_rejects_superuser_without_membership(self):
+        """Global superuser flags do not replace an active tenant membership."""
         perm = TenantResolvedAndStaff()
         su = User.objects.create_superuser(
             username="superadmin", password="pass123", tenant=self.tenant
         )
         request = _mock_request(user=su, tenant=self.tenant)
-        self.assertTrue(perm.has_permission(request, None))
+        self.assertFalse(perm.has_permission(request, None))
 
     def test_staff_permission_rejects_superuser_cross_tenant(self):
         """TenantResolvedAndStaff rejects superuser accessing a different tenant (no membership)."""

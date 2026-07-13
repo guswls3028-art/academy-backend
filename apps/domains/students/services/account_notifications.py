@@ -57,8 +57,12 @@ def _student_target_id(student: Student) -> str:
     return f"student:{student.id}" if getattr(student, "id", None) else (student.ps_number or "")
 
 
-def _parent_target_id(student: Student, parent_phone: str) -> str:
-    return f"parent:{student.id}:{parent_phone}" if getattr(student, "id", None) else parent_phone
+def _parent_target_id(student: Student) -> str:
+    student_id = getattr(student, "id", None)
+    if student_id:
+        return f"parent:{student_id}"
+    fallback = str(getattr(student, "ps_number", "") or "").strip()
+    return f"parent:{fallback}" if fallback else "parent"
 
 
 def send_student_account_credentials_notice(
@@ -123,7 +127,7 @@ def send_parent_account_credentials_notice(
         trigger="registration_approved_parent",
         to=parent_phone,
         replacements=replacements,
-        log_target_id=_parent_target_id(student, parent_phone),
+        log_target_id=_parent_target_id(student),
         log_target_name=student.name or "",
     )
 
@@ -171,7 +175,11 @@ def send_parent_password_changed_notice(*, parent: Any, password: str, student: 
         "비밀번호안내": "변경된 비밀번호로 로그인해 주세요.",
         "사이트링크": _site_url(),
     }
-    log_target_id = _parent_target_id(linked_student, parent_phone) if linked_student else f"parent:{parent.id}:{parent_phone}"
+    log_target_id = (
+        _parent_target_id(linked_student)
+        if linked_student
+        else f"parent-account:{parent.id}"
+    )
     return _send_owner_account_notice(
         source_tenant_id=parent.tenant_id,
         trigger="password_reset_parent",

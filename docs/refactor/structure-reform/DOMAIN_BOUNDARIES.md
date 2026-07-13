@@ -123,6 +123,16 @@ Boundary rule for the structure reform:
 | Tenant rule | Results are tenant-scoped through enrollment/exam/session and must prove same tenant |
 | Current risk | Same grade/status values are computed across result views, serializers, and frontend state |
 
+## Staff / Payroll
+
+| Item | Current state |
+|---|---|
+| Owned data | `Staff`, `WorkType`, `StaffWorkType`, `WorkRecord`, work-month locks, payroll snapshots |
+| Public interface | `staffs.services.start_work_record` for clock-in |
+| Forbidden dependency | HTTP views implementing check-then-create clock-in logic without the service and DB constraint |
+| Tenant rule | Staff, work type, and work record must belong to the same request tenant |
+| Invariant | A staff member has at most one open (`end_time IS NULL`) work record; conflicts return HTTP 409 |
+
 ## Messaging
 
 | Item | Current state |

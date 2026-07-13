@@ -1,7 +1,7 @@
 # V1.1.0 Deployment Architecture
 
 **Version:** V1.1.0
-**Date:** 2026-03-14 (checked 2026-07-07)
+**Date:** 2026-03-14 (checked 2026-07-13)
 **SSOT Status:** Active
 
 ## 1. Service Decomposition
@@ -23,6 +23,8 @@
 - Public HTTPS는 ALB 443 listener가 ACM 인증서 `api.hakwonplus.com`으로 종료하고, listener 기본 action은 `academy-v1-api-tg` forward다.
 - ALB 80 listener는 `HTTPS:443`으로 redirect한다. 운영 사용자/테스트 기준 API URL은 `https://api.hakwonplus.com`이며, plain HTTP가 Django까지 도달하면 drift로 본다.
 - Cloudflare zone SSL mode는 Strict로 유지한다. API 레코드를 다시 proxied로 돌릴 때는 ALB HTTPS 443과 origin 검증을 먼저 확인한다.
+- 운영 Django는 `172.30.0.0/16`만 신뢰 프록시로 인정한다. ALB 기본 append 형식의 X-Forwarded-For를 오른쪽부터 검사해 외부 요청이 넣은 선행 값을 무시하며, 감사 로그·공개 폼·내부 API IP 정책·로그인 제한이 같은 resolver를 사용한다.
+- 로그인 제한은 LocMemCache가 아니라 RDS의 HMAC 버킷을 사용한다. 실제 IP는 분당 60회, tenant+로그인 계정은 5분당 10회로 API 인스턴스와 배포 재시작을 가로질러 공유하며 계정/IP 원문은 저장하지 않는다.
 - SSOT 및 재현 스크립트: `docs/ssot/params.yaml`의 `api.acmCertificateArn`/`api.httpsSslPolicy`, `scripts/v1/resources/alb.ps1`의 `Ensure-Listener`/`Ensure-HttpsListener`.
 
 ## 2. CI/CD Pipeline Architecture
@@ -41,18 +43,18 @@ git push main
 [run-tests] ─── smoke tests deploy gate
     |
     v
-[build-and-push] ─── build changed images ──> ECR (:latest + :sha-XXXXXXXX)
+[build-and-push] ─── build changed images ──> ECR (compat :latest + immutable :sha-XXXXXXXX)
     |
-    |── (if API changed) ──> [run-migrations] ─── pull new SHA image ──> docker run manage.py migrate
+    |── (if API changed) ──> [run-migrations] ─── resolve SHA to digest ──> docker run manage.py migrate
     |                              |
     |                              v
-    |── (if API changed) ──> [deploy-api] ─── ASG instance refresh (MinHealthy=100%, Warmup=120s)
+    |── (if API changed) ──> [deploy-api] ─── pin LT to digest ──> ASG instance refresh
     |
-    |── (if messaging changed) ──> [deploy-messaging] ─── ASG instance refresh (MinHealthy=0%, Warmup=120s)
+    |── (if messaging changed) ──> [deploy-messaging] ─── pin LT to digest ──> ASG refresh
     |
-    |── (if AI changed) ──> [deploy-ai] ─── ASG instance refresh (MinHealthy=0%, Warmup=120s)
+    |── (if AI changed) ──> [deploy-ai] ─── pin LT to digest ──> ASG refresh
     |
-    |── (if tools changed) ──> [deploy-tools] ─── ASG instance refresh (MinHealthy=0%, Warmup=120s)
+    |── (if tools changed) ──> [deploy-tools] ─── pin LT to digest ──> ASG refresh
     |
     |── (if video changed) ──> [deploy-video] ─── Batch job definition revisions with SHA image
     |
@@ -71,20 +73,26 @@ git push main
 
 | Trigger Files | Builds |
 |--------------|--------|
-| `docker/Dockerfile.base`, `requirements/common.txt`, `requirements/requirements.txt`, `libs/`, `academy/` | ALL images (force_full) |
-| `apps/`, `docker/api/`, `requirements/api.txt` | API |
+| `.dockerignore`, `docker/Dockerfile.base`, `requirements/{constraints,common,requirements}.txt`, `libs/`, `academy/`, `manage.py` | ALL images (force_full) |
+| Worker 공통 import: `apps/{shared,support,core,infrastructure}/`, `apps/api/common/`, `apps/api/config/settings/worker.py` | ALL images (force_full) |
+| Python package import roots: `apps/__init__.py`, `apps/{api,domains,worker}/__init__.py`, `apps/api/config[/settings]/__init__.py` | ALL images (force_full) |
+| Django startup import: `apps/domains/*/{models.py,models/,apps.py,signals.py,signals/,__init__.py}` | ALL images (force_full) |
+| `apps/`, `scripts/`, `docker/api/`, `requirements/api.txt` | API |
 | `apps/worker/video_worker/`, `apps/support/video/`, `apps/domains/video/`, `apps/api/config/settings/worker.py`, `docker/video-worker/`, `requirements/worker-video.txt` | Video Worker |
 | `apps/worker/messaging_worker/`, `apps/support/messaging/`, `apps/domains/messaging/`, `apps/api/config/settings/worker.py`, `docker/messaging-worker/`, `requirements/worker-messaging.txt` | Messaging Worker |
-| `apps/worker/ai_worker/`, `apps/worker/omr/`, `apps/domains/`, `apps/support/ai/`, `apps/api/config/settings/(worker|base).py`, `academy/`, `libs/queue/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
+| `apps/worker/ai_worker/`, `apps/worker/omr/`, `apps/domains/`, `apps/support/ai/`, `apps/api/config/settings/(worker|base).py`, `models/`, `scripts/`, `academy/`, `libs/queue/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
 | `apps/worker/tools_worker/`, `apps/domains/tools/`, `apps/domains/ai/queueing/`, `apps/support/ai/services/sqs_queue.py`, `academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/`, `docker/tools-worker/`, `requirements/worker-tools.txt` | Tools Worker |
 
-Base image build is CONDITIONAL — triggered only when `docker/Dockerfile.base`, `requirements/common.txt`, or `libs/` files change (or on workflow_dispatch). Conditional builds also apply to service-specific images.
+`force_full` is a correctness boundary for code imported by more than one runtime. It builds all six images, including `academy-base`; service-specific paths retain selective builds. `workflow_dispatch` always performs a full build/deploy.
+Change predicates use the `changed_matches` here-string helper instead of `echo | grep -q`; this avoids a `pipefail`/SIGPIPE false negative on large multi-commit push ranges.
 
 ### Build Output
 
 Each image is tagged with:
-- `:latest` — mutable, always points to most recent build
-- `:sha-XXXXXXXX` — immutable, first 8 chars of git commit SHA
+- `:latest` — compatibility alias only; never deployment evidence
+- `:sha-XXXXXXXX` — immutable source identity, first 8 chars of git commit SHA
+
+Service builds resolve `academy-base` to a digest before `FROM`. Migration, API/Messaging/AI/Tools runtime, and all Video Batch job definitions resolve the run-unique SHA tag to `repo@sha256:...`. `deploy-api-and-verify-workers.ps1` verifies the last complete successful release manifest, waits for terminal refresh success, then compares its digests with Launch Template userdata, actual InService containers, and every active Video Batch job definition.
 
 ## 4. Selective Deploy Logic
 
@@ -100,7 +108,7 @@ deploy-video:     if build_video == 'true' || force_full == 'true'
 
 Dependencies:
 - `deploy-api` waits for `run-migrations` to succeed (or be skipped)
-- `deploy-messaging`, `deploy-ai`, and `deploy-tools` run in parallel, independently
+- `deploy-messaging`, `deploy-ai`, `deploy-tools`, and `deploy-video` also wait for `run-migrations` success or an explicit skip; a failed migration blocks every runtime deploy
 - `verify-deployment` waits for all deploy jobs
 - `deploy-video` is included in the same workflow and runs when the video worker image changes
 
@@ -122,11 +130,11 @@ Dependencies:
 
 ### Deployment Sequence
 
-1. New EC2 instance launches with latest launch template
-2. UserData script runs: install Docker, ECR login, pull `:latest`, fetch SSM env, run container
-3. ALB health check passes on new instance
-4. Old instance is drained (connection draining period)
-5. Old instance is terminated
+1. The deploy job resolves its `sha-*` tag to an ECR digest and creates a new Launch Template version containing that digest.
+2. The ASG, which must track `$Latest`, launches a new EC2 instance from that version.
+3. UserData installs Docker, logs in to ECR, pulls `repo@sha256:...`, fetches SSM env, and starts the container.
+4. ALB health check passes on the new instance.
+5. The old instance is drained and terminated.
 
 ## 6. Worker Deployment Strategy
 
@@ -150,7 +158,7 @@ The worker launch templates contain UserData that executes on each new instance 
 #!/bin/bash
 # 1. Wait for network/IMDS
 # 2. Install Docker (dnf/yum)
-# 3. ECR login + pull image (5 retries, 15s apart)
+# 3. ECR login + pull digest-pinned image (5 retries, 15s apart)
 # 4. Fetch SSM /academy/workers/env (base64 JSON -> KEY=VALUE env file)
 # 5. docker run -d --restart unless-stopped --name <worker> -e DJANGO_SETTINGS_MODULE=... --env-file /opt/workers.env <image>
 ```
@@ -162,7 +170,7 @@ This UserData is already correctly implemented in `scripts/v1/resources/worker_u
 ### Execution
 
 - Migrations run in GitHub Actions before API instance refresh.
-- The workflow pulls the newly built immutable SHA image and runs `python manage.py migrate --no-input` in a one-shot Docker container using production env.
+- The workflow resolves the newly built SHA tag to a digest, pulls that exact image, and runs `python manage.py migrate --no-input` in a one-shot Docker container using production env.
 - Only runs when API or shared code changed
 - Must succeed before API ASG refresh starts
 
@@ -181,7 +189,7 @@ If migration fails:
 - The SSM command returns non-zero exit code
 - `run-migrations` job fails
 - `deploy-api` is skipped (depends on migration success)
-- Worker deploys are NOT affected (independent dependency chain)
+- API and all worker deploy jobs are blocked; no Launch Template, Batch job definition, or instance refresh mutation proceeds
 - Fix the migration and push again
 
 ## 8. Rollback Strategy
@@ -197,31 +205,43 @@ Every build produces immutable SHA-tagged images. To rollback:
      --output table
    ```
 
-2. **Re-tag the good image as :latest:**
-   ```bash
-   MANIFEST=$(aws ecr batch-get-image --repository-name academy-api \
-     --image-ids imageTag=sha-XXXXXXXX \
-     --query 'images[0].imageManifest' --output text)
-   aws ecr put-image --repository-name academy-api \
-     --image-tag latest --image-manifest "$MANIFEST"
+2. **Choose the recovery path:**
+   ```powershell
+   # Stateful services fail closed; rebuild desired source as a new release.
+   pwsh scripts/v1/rollback-api.ps1 -Sha sha-XXXXXXXX
+   pwsh scripts/v1/rollback-messaging.ps1 -Sha sha-XXXXXXXX
+
+   # Runtime-isolated services support digest rollback.
+   pwsh scripts/v1/rollback-ai.ps1 -Sha sha-XXXXXXXX
+   pwsh scripts/v1/rollback-tools.ps1 -Sha sha-XXXXXXXX
    ```
 
-3. **Trigger ASG instance refresh:**
-   ```bash
-   aws autoscaling start-instance-refresh \
-     --auto-scaling-group-name academy-v1-api-asg \
-     --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'
-   ```
+API and Messaging persist state-machine values that an older image may not understand. A point-in-time DB/queue preflight cannot prevent live writers from creating such a value while old and new instances overlap. Until releases publish a machine-verifiable compatibility epoch and deployment can quiesce every writer, their wrappers stop before AWS mutation with `STATEFUL_IMAGE_ROLLBACK_BLOCKED`; recovery is a new immutable roll-forward build from the desired reverted/cherry-picked source.
+
+For supported runtime-isolated services, the rollback scripts resolve the SHA tag to its digest, capture the prior Launch Template/default/actual runtime state, create and verify the `$Latest` Launch Template version, and only then start the ASG instance refresh. A pin, refresh, or digest-verification failure creates a compensating version from the captured prior version and verifies the restored runtime. Re-tagging `:latest` is compatibility-only and does not change a digest-pinned runtime.
+
+With `-Sha` omitted, ASG rollback derives the current digest from the Launch Template rather than the mutable alias, then selects the newest image pushed before that runtime. It waits for terminal `Successful`, treats `RollbackSuccessful` as deployment failure, and reads every healthy InService container `RepoDigests`; desired-zero groups are proven against the candidate Launch Template digest. Tools uses `rollback-tools.ps1`; Batch video uses `rollback-video.ps1`, which updates and reads back all eight required job definitions, preserves durable job-definition options, and requires both compute environments to remain `VALID/ENABLED`.
+
+### Successful release manifest
+
+`docs/reports/ci-build.latest.md` is build evidence only. The build job also produces a six-image candidate from exact run-unique SHA digests plus unchanged digests from the preceding successful release. Only after ASG health, actual container digest, all Video Batch job definitions, and compute environment gates pass does CI promote `docs/reports/release-manifest.latest.json` with `complete=true` and `status=successful`. Manual `deploy.ps1` resolves images exclusively from that manifest, so a partially pushed failed build cannot be mixed into a later manual release.
+
+All production mutation entrypoints share one atomic DynamoDB lock in the SSOT table `academy-v1-video-job-lock`: CI build/deploy, weekly ECR/Batch cleanup, manual deploy, and rollback. The fixed `__deployment_control__` item is acquired conditionally, renewed only by its current unexpired owner, and released only by that owner. ECR cleanup additionally protects every digest in the last complete/successful six-image manifest (including `academy-base`) and fails nonzero on incomplete Video job-definition inventory, partial deletions, or verification warnings.
+
+On a fresh environment, the lock table itself is the sole allowed pre-lock bootstrap mutation. `deploy.ps1` and `converge-release-prerequisites.ps1` idempotently create/read it and validate the exact `videoId` string HASH schema, PAY_PER_REQUEST billing, ACTIVE state, and TTL before normal lock acquisition. Default/strict manual deploy also exits nonzero when post-deploy ASG, ALB, Batch CE, or queue verification fails; only an explicit `-RelaxedValidation` diagnostic run may finish with verification warnings.
+
+On the first immutable-release cutover, manual deploy intentionally fails until that manifest exists. With all four existing runtime Launch Templates present, run `pwsh scripts/v1/converge-release-prerequisites.ps1 -AwsProfile default`; it converges and reads back only GitHub Actions IAM and ECR mutability, without changing LT, ASG, or Batch runtime state. Then run one full `workflow_dispatch`; its verified six-image rollout bootstraps the first complete successful manifest. Selective builds are allowed only after that bootstrap.
+
+All six ECR repositories use `IMMUTABLE_WITH_EXCLUSION` with one `WILDCARD=latest` exclusion. CI and bootstrap both configure and read back that exact policy. Weekly cleanup inventories every ASG-level and running-instance Launch Template version, every desired InService container's actual `RepoDigests` through SSM, and every ACTIVE Batch job definition before deletion. It protects referenced parent and child manifests even when they fall outside the newest-ten retention window, and aborts all deletion if any required runtime cannot be inventoried exactly.
 
 ### Migration Rollback
 
-Django migrations are reversible by default. If a migration needs reverting:
-```bash
-# Via SSM on an API instance
-docker exec academy-api python manage.py migrate <app_name> <previous_migration_number>
-```
-
-**Important:** Always verify that the reverse migration is safe before running.
+Migration reversal is prohibited as a generic incident action. Syntactic Django
+reversibility does not prove that a previous binary understands backfilled data or
+new state-machine values. Use a corrective migration and immutable roll-forward.
+Reverse migration is allowed only when a migration-specific runbook proves the
+reverse contract, all writers are quiesced, an RDS snapshot exists, and restore
+verification has been rehearsed; there is intentionally no generic command here.
 
 ## 9. ECR Lifecycle Policy
 

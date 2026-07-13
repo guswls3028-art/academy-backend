@@ -1,72 +1,127 @@
-﻿# Prune: delete academy-* resources not in SSOT canonical. Order + Wait per state-contract.
+﻿# Prune: delete only explicitly retired resources owned by this stack. Order + Wait per state-contract.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
 $R = $script:Region
 
 function Get-AllAwsResourcesForPrune {
-    $all = [ordered]@{}
-    $r = Invoke-AwsJson @("batch", "describe-compute-environments", "--region", $R, "--output", "json")
-    $all["Batch CE"] = if ($r -and $r.computeEnvironments) { $r.computeEnvironments | ForEach-Object { $_.computeEnvironmentName } } else { @() }
-    $r = Invoke-AwsJson @("batch", "describe-job-queues", "--region", $R, "--output", "json")
-    $all["Batch Queue"] = if ($r -and $r.jobQueues) { $r.jobQueues | ForEach-Object { $_.jobQueueName } } else { @() }
-    $r = Invoke-AwsJson @("batch", "describe-job-definitions", "--status", "ACTIVE", "--region", $R, "--output", "json")
-    $all["Batch JobDef"] = @()
-    $all["Batch JobDefArn"] = @()
-    if ($r -and $r.jobDefinitions) {
-        $all["Batch JobDef"] = $r.jobDefinitions | ForEach-Object { "$($_.jobDefinitionName):$($_.revision)" }
-        $all["Batch JobDefArn"] = $r.jobDefinitions
+    $all = [ordered]@{
+        "Batch CE"         = @()
+        "Batch Queue"      = @()
+        "Batch JobDef"     = @()
+        "Batch JobDefArn"  = @()
+        "EventBridge Rule" = @()
+        "IAM Role"         = @()
+        "ASG"              = @()
+        "ECS Cluster"      = @()
+        "EIP"              = @()
+        "SSM"              = @()
+        "ECR"              = @()
     }
-    $r = Invoke-AwsJson @("events", "list-rules", "--region", $R, "--output", "json")
-    $all["EventBridge Rule"] = if ($r -and $r.Rules) { $r.Rules | ForEach-Object { $_.Name } } else { @() }
-    $r = Invoke-AwsJson @("iam", "list-roles", "--output", "json")
-    $all["IAM Role"] = if ($r -and $r.Roles) { $r.Roles | Where-Object { $_.RoleName -like "academy-*" } | ForEach-Object { $_.RoleName } } else { @() }
-    $r = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--region", $R, "--output", "json")
-    $all["ASG"] = if ($r -and $r.AutoScalingGroups) { $r.AutoScalingGroups | ForEach-Object { $_.AutoScalingGroupName } } else { @() }
-    $r = Invoke-AwsJson @("ecs", "list-clusters", "--region", $R, "--output", "json")
-    $all["ECS Cluster"] = if ($r -and $r.clusterArns) { $r.clusterArns | ForEach-Object { $_ -replace ".*/", "" } } else { @() }
-    $r = Invoke-AwsJson @("ec2", "describe-addresses", "--region", $R, "--output", "json")
-    $all["EIP"] = if ($r -and $r.Addresses) { $r.Addresses | Where-Object { $_.AllocationId -notin $script:SSOT_EIP -and -not $_.AssociationId } | ForEach-Object { $_.AllocationId } } else { @() }
-    try {
-        $r = Invoke-AwsJson @("ssm", "get-parameters-by-path", "--path", "/academy", "--recursive", "--region", $R, "--output", "json")
-        $all["SSM"] = if ($r -and $r.Parameters) { $r.Parameters | ForEach-Object { $_.Name } } else { @() }
+
+    # Every query is constrained by the closed-world allowlist. PruneLegacy must
+    # never enumerate an AWS account and derive candidates by subtraction.
+    $names = @($script:PruneLegacyAllowlist["Batch CE"] | Where-Object { $_ })
+    if ($names.Count -gt 0) {
+        $args = @("batch", "describe-compute-environments", "--compute-environments") + [string[]]$names + @("--region", $R, "--output", "json")
+        $r = Invoke-AwsJson $args
+        $all["Batch CE"] = if ($r -and $r.computeEnvironments) { @($r.computeEnvironments | ForEach-Object { $_.computeEnvironmentName }) } else { @() }
     }
-    catch { $all["SSM"] = @() }
-    $r = Invoke-AwsJson @("ecr", "describe-repositories", "--region", $R, "--output", "json")
-    $all["ECR"] = if ($r -and $r.repositories) { $r.repositories | ForEach-Object { $_.repositoryName } } else { @() }
+
+    $names = @($script:PruneLegacyAllowlist["Batch Queue"] | Where-Object { $_ })
+    if ($names.Count -gt 0) {
+        $args = @("batch", "describe-job-queues", "--job-queues") + [string[]]$names + @("--region", $R, "--output", "json")
+        $r = Invoke-AwsJson $args
+        $all["Batch Queue"] = if ($r -and $r.jobQueues) { @($r.jobQueues | ForEach-Object { $_.jobQueueName }) } else { @() }
+    }
+
+    foreach ($jobDefName in @($script:PruneLegacyAllowlist["Batch JobDef"] | Where-Object { $_ })) {
+        $r = Invoke-AwsJson @("batch", "describe-job-definitions", "--job-definition-name", $jobDefName, "--status", "ACTIVE", "--region", $R, "--output", "json")
+        if ($r -and $r.jobDefinitions) {
+            $all["Batch JobDef"] += @($r.jobDefinitions | ForEach-Object { "$($_.jobDefinitionName):$($_.revision)" })
+            $all["Batch JobDefArn"] += @($r.jobDefinitions)
+        }
+    }
+
+    foreach ($ruleName in @($script:PruneLegacyAllowlist["EventBridge Rule"] | Where-Object { $_ })) {
+        $r = Invoke-AwsJson @("events", "describe-rule", "--name", $ruleName, "--region", $R, "--output", "json")
+        if ($r -and $r.Name -eq $ruleName) {
+            $all["EventBridge Rule"] += $r.Name
+        }
+    }
     return $all
+}
+
+function Get-PruneCandidateName {
+    param([string]$ResourceType, [object]$Identifier)
+    $name = [string]$Identifier
+    if ($ResourceType -eq "Batch JobDef") {
+        if ($name -match 'job-definition/([^:]+):\d+$') { return $matches[1] }
+        if ($name -match '^([^:]+):\d+$') { return $matches[1] }
+    }
+    return $name
+}
+
+function Test-PruneCandidateProtected {
+    param([string]$ResourceType, [string]$Name)
+    switch ($ResourceType) {
+        "Batch CE" { return $Name -in $script:SSOT_CE }
+        "Batch Queue" { return $Name -in $script:SSOT_Queue }
+        "Batch JobDef" { return $Name -in $script:SSOT_JobDef }
+        "EventBridge Rule" { return $Name -in $script:SSOT_ProtectedEventBridgeRule }
+        "IAM Role" { return $Name -in $script:SSOT_IAMRoles }
+        "ASG" { return $Name -in $script:SSOT_ASG }
+        "ECS Cluster" { return @($script:SSOT_ECSClusterPatterns | Where-Object { $Name -like $_ }).Count -gt 0 }
+        "EIP" { return $Name -in $script:SSOT_EIP }
+        "SSM" { return $Name -in $script:SSOT_SSM }
+        "ECR" { return $Name -in $script:SSOT_ECR }
+        default { return $false }
+    }
+}
+
+function Assert-PruneCandidatesAllowlisted {
+    param([hashtable]$Candidates)
+    foreach ($resourceType in $Candidates.Keys) {
+        foreach ($identifier in @($Candidates[$resourceType])) {
+            $name = Get-PruneCandidateName -ResourceType $resourceType -Identifier $identifier
+            $allowed = @($script:PruneLegacyAllowlist[$resourceType])
+            if ($name -notin $allowed) {
+                throw "PruneLegacy safety violation: '$resourceType' '$name' is not explicitly allowlisted."
+            }
+            if (Test-PruneCandidateProtected -ResourceType $resourceType -Name $name) {
+                throw "PruneLegacy safety violation: '$resourceType' '$name' is protected by SSOT."
+            }
+        }
+    }
 }
 
 function Get-DeleteCandidates {
     param([hashtable]$All)
     $cand = [ordered]@{}
-    $cand["Batch CE"] = $All["Batch CE"] | Where-Object { $_ -notin $script:SSOT_CE }
-    $cand["Batch Queue"] = $All["Batch Queue"] | Where-Object { $_ -notin $script:SSOT_Queue }
+    $cand["Batch CE"] = @($All["Batch CE"] | Where-Object { $_ -in $script:PruneLegacyAllowlist["Batch CE"] -and $_ -notin $script:SSOT_CE })
+    $cand["Batch Queue"] = @($All["Batch Queue"] | Where-Object { $_ -in $script:PruneLegacyAllowlist["Batch Queue"] -and $_ -notin $script:SSOT_Queue })
     $cand["Batch JobDef"] = @()
     if ($All["Batch JobDefArn"]) {
-        $namesToDel = $All["Batch JobDefArn"] | Group-Object -Property jobDefinitionName | Where-Object { $_.Name -notin $script:SSOT_JobDef } | ForEach-Object { $_.Name }
+        $namesToDel = $All["Batch JobDefArn"] | Group-Object -Property jobDefinitionName | Where-Object {
+            $_.Name -in $script:PruneLegacyAllowlist["Batch JobDef"] -and $_.Name -notin $script:SSOT_JobDef
+        } | ForEach-Object { $_.Name }
         $cand["Batch JobDef"] = $All["Batch JobDefArn"] | Where-Object { $_.jobDefinitionName -in $namesToDel } | ForEach-Object { $_.jobDefinitionArn }
     }
-    $cand["EventBridge Rule"] = $All["EventBridge Rule"] | Where-Object { $_ -notin $script:SSOT_EventBridgeRule }
-    $cand["IAM Role"] = $All["IAM Role"] | Where-Object { 
-        $_ -notin $script:SSOT_IAMRoles -and 
-        $_ -notin @("academy-ec2-role", "academy-v1-eventbridge-batch-video-role", "academy-gha-ecr-build")
+    $cand["EventBridge Rule"] = @($All["EventBridge Rule"] | Where-Object {
+        $_ -in $script:PruneLegacyAllowlist["EventBridge Rule"] -and $_ -notin $script:SSOT_ProtectedEventBridgeRule
+    })
+    foreach ($resourceType in @("IAM Role", "ASG", "ECS Cluster", "EIP", "SSM", "ECR")) {
+        $cand[$resourceType] = @($All[$resourceType] | Where-Object {
+            $name = [string]$_
+            $name -in $script:PruneLegacyAllowlist[$resourceType] -and -not (Test-PruneCandidateProtected -ResourceType $resourceType -Name $name)
+        })
     }
-    $cand["ASG"] = $All["ASG"] | Where-Object {
-        $_ -notin $script:SSOT_ASG -and $_ -notlike "*academy-video-batch-ce-final*" -and $_ -notlike "*academy-v1-video-ops-ce*" -and $_ -notlike "*academy-v1-video-batch-ce*"
-    }
-    $cand["ECS Cluster"] = $All["ECS Cluster"] | Where-Object {
-        $name = $_
-        ($script:SSOT_ECSClusterPatterns | Where-Object { $name -like $_ }).Count -eq 0
-    }
-    $cand["EIP"] = $All["EIP"]
-    $cand["SSM"] = $All["SSM"] | Where-Object { $_ -notin $script:SSOT_SSM }
-    $cand["ECR"] = $All["ECR"] | Where-Object { $_ -notin $script:SSOT_ECR }
+    Assert-PruneCandidatesAllowlisted -Candidates $cand
     return $cand
 }
 
 function Show-DeleteCandidateTable {
     param([hashtable]$Candidates)
-    Write-Host "`n=== DELETE CANDIDATE (non-SSOT) ===" -ForegroundColor Red
+    Write-Host "`n=== DELETE CANDIDATE (explicit retired-resource allowlist) ===" -ForegroundColor Red
     Write-Host "| ResourceType | Identifier |"
     $total = 0
     foreach ($key in $Candidates.Keys) {
@@ -86,6 +141,8 @@ function Show-DeleteCandidateTable {
 function Invoke-PruneLegacyDeletes {
     param([hashtable]$Candidates)
     $R = $script:Region
+    Assert-PruneCandidatesAllowlisted -Candidates $Candidates
+    $failures = [System.Collections.Generic.List[string]]::new()
     # 1) EventBridge: remove targets then delete rule
     foreach ($ruleName in $Candidates["EventBridge Rule"]) {
         Write-Host "  [Prune] EventBridge rule: $ruleName" -ForegroundColor Yellow
@@ -99,7 +156,11 @@ function Invoke-PruneLegacyDeletes {
             Invoke-Aws @("events", "delete-rule", "--name", $ruleName, "--region", $R) -ErrorMessage "delete-rule $ruleName" | Out-Null
             Wait-EventBridgeRuleDeleted -RuleName $ruleName -Reg $R -TimeoutSec 120
         }
-        catch { Write-Warn "    $_" }
+        catch {
+            $message = "EventBridge Rule '$ruleName': $($_.Exception.Message)"
+            [void]$failures.Add($message)
+            Write-Warn "    $message"
+        }
     }
     # 2) Batch Queue
     foreach ($qName in $Candidates["Batch Queue"]) {
@@ -114,7 +175,11 @@ function Invoke-PruneLegacyDeletes {
             Invoke-Aws @("batch", "delete-job-queue", "--job-queue", $qName, "--region", $R) -ErrorMessage "delete-job-queue $qName" | Out-Null
             Wait-QueueDeleted -QueueName $qName -Reg $R -TimeoutSec 180
         }
-        catch { Write-Warn "    $_" }
+        catch {
+            $message = "Batch Queue '$qName': $($_.Exception.Message)"
+            [void]$failures.Add($message)
+            Write-Warn "    $message"
+        }
     }
     # 3) Batch CE
     foreach ($ceName in $Candidates["Batch CE"]) {
@@ -129,12 +194,21 @@ function Invoke-PruneLegacyDeletes {
             Invoke-Aws @("batch", "delete-compute-environment", "--compute-environment", $ceName, "--region", $R) -ErrorMessage "delete CE $ceName" | Out-Null
             Wait-CEDeleted -CEName $ceName -Reg $R -TimeoutSec 300
         }
-        catch { Write-Warn "    $_" }
+        catch {
+            $message = "Batch CE '$ceName': $($_.Exception.Message)"
+            [void]$failures.Add($message)
+            Write-Warn "    $message"
+        }
     }
     # 4) JobDef deregister
     foreach ($arn in $Candidates["Batch JobDef"]) {
         Write-Host "  [Prune] Batch JobDef: $arn" -ForegroundColor Yellow
-        try { Invoke-Aws @("batch", "deregister-job-definition", "--job-definition", $arn, "--region", $R) -ErrorMessage "deregister $arn" | Out-Null } catch { Write-Warn "    $_" }
+        try { Invoke-Aws @("batch", "deregister-job-definition", "--job-definition", $arn, "--region", $R) -ErrorMessage "deregister $arn" | Out-Null }
+        catch {
+            $message = "Batch JobDef '$arn': $($_.Exception.Message)"
+            [void]$failures.Add($message)
+            Write-Warn "    $message"
+        }
     }
     # 5) ASG
     foreach ($asgName in $Candidates["ASG"]) {
@@ -149,7 +223,11 @@ function Invoke-PruneLegacyDeletes {
             Invoke-Aws @("autoscaling", "delete-auto-scaling-group", "--auto-scaling-group-name", $asgName, "--force-delete", "--region", $R) -ErrorMessage "delete ASG $asgName" | Out-Null
             Wait-ASGDeleted -ASGName $asgName -Reg $R -TimeoutSec 300
         }
-        catch { Write-Warn "    $_" }
+        catch {
+            $message = "ASG '$asgName': $($_.Exception.Message)"
+            [void]$failures.Add($message)
+            Write-Warn "    $message"
+        }
     }
     # 6) ECS cluster
     foreach ($clusterName in $Candidates["ECS Cluster"]) {
@@ -158,7 +236,11 @@ function Invoke-PruneLegacyDeletes {
             Invoke-Aws @("ecs", "delete-cluster", "--cluster", $clusterName, "--region", $R) -ErrorMessage "delete-cluster $clusterName" 2>$null | Out-Null
             Wait-ECSClusterDeleted -ClusterName $clusterName -Reg $R -TimeoutSec 120
         }
-        catch { Write-Warn "    $_" }
+        catch {
+            $message = "ECS Cluster '$clusterName': $($_.Exception.Message)"
+            [void]$failures.Add($message)
+            Write-Warn "    $message"
+        }
     }
     # 7) IAM
     foreach ($roleName in $Candidates["IAM Role"]) {
@@ -185,22 +267,44 @@ function Invoke-PruneLegacyDeletes {
             Invoke-Aws @("iam", "delete-role", "--role-name", $roleName) -ErrorMessage "delete-role $roleName" | Out-Null
             Wait-IAMRoleDeleted -RoleName $roleName -TimeoutSec 60
         }
-        catch { Write-Warn "    $_" }
+        catch {
+            $message = "IAM Role '$roleName': $($_.Exception.Message)"
+            [void]$failures.Add($message)
+            Write-Warn "    $message"
+        }
     }
     # 8) ECR (SSOT external only - already in candidates)
     foreach ($repo in $Candidates["ECR"]) {
         Write-Host "  [Prune] ECR repo: $repo" -ForegroundColor Yellow
-        try { Invoke-Aws @("ecr", "delete-repository", "--repository-name", $repo, "--force", "--region", $R) -ErrorMessage "delete-repository $repo" | Out-Null } catch { Write-Warn "    $_" }
+        try { Invoke-Aws @("ecr", "delete-repository", "--repository-name", $repo, "--force", "--region", $R) -ErrorMessage "delete-repository $repo" | Out-Null }
+        catch {
+            $message = "ECR '$repo': $($_.Exception.Message)"
+            [void]$failures.Add($message)
+            Write-Warn "    $message"
+        }
     }
     # 9) SSM (SSOT external only)
     foreach ($paramName in $Candidates["SSM"]) {
         Write-Host "  [Prune] SSM: $paramName" -ForegroundColor Yellow
-        try { Invoke-Aws @("ssm", "delete-parameter", "--name", $paramName, "--region", $R) -ErrorMessage "delete-parameter $paramName" | Out-Null } catch { Write-Warn "    $_" }
+        try { Invoke-Aws @("ssm", "delete-parameter", "--name", $paramName, "--region", $R) -ErrorMessage "delete-parameter $paramName" | Out-Null }
+        catch {
+            $message = "SSM '$paramName': $($_.Exception.Message)"
+            [void]$failures.Add($message)
+            Write-Warn "    $message"
+        }
     }
     # 10) EIP unassociated only
     foreach ($allocId in $Candidates["EIP"]) {
         Write-Host "  [Prune] EIP: $allocId" -ForegroundColor Yellow
-        try { Invoke-Aws @("ec2", "release-address", "--allocation-id", $allocId, "--region", $R) -ErrorMessage "release-address $allocId" | Out-Null } catch { Write-Warn "    $_" }
+        try { Invoke-Aws @("ec2", "release-address", "--allocation-id", $allocId, "--region", $R) -ErrorMessage "release-address $allocId" | Out-Null }
+        catch {
+            $message = "EIP '$allocId': $($_.Exception.Message)"
+            [void]$failures.Add($message)
+            Write-Warn "    $message"
+        }
+    }
+    if ($failures.Count -gt 0) {
+        throw "PruneLegacy failed to delete $($failures.Count) resource(s): $($failures -join '; ')"
     }
 }
 

@@ -1,9 +1,7 @@
-﻿# Concurrency lock (SSM) + legacy kill-switch. deploy.ps1 only.
-# AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
+# Cross-entrypoint atomic deployment lock (DynamoDB) + legacy kill-switch.
 $ErrorActionPreference = "Stop"
 
-$script:DeployLockParamName = "/academy/deploy-lock"
-$script:DeployLockMaxAgeSec = 7200
+$script:DeployLockMaxAgeSec = 10800
 
 function Get-DeployLockAcquired {
     return $script:DeployLockAcquired -eq $true
@@ -12,22 +10,15 @@ function Get-DeployLockAcquired {
 function Acquire-DeployLock {
     param([string]$Reg)
     if ($script:PlanMode) { return }
-    $existing = $null
-    try {
-        $existing = Invoke-AwsJson @("ssm", "get-parameter", "--name", $script:DeployLockParamName, "--region", $Reg, "--output", "json")
-    } catch { }
-    $now = [int][double]::Parse((Get-Date -UFormat %s))
-    if ($existing -and $existing.Parameter -and $existing.Parameter.Value) {
-        $parts = $existing.Parameter.Value -split '\s+'
-        $lockTime = 0
-        if ($parts.Count -ge 2) { [int]::TryParse($parts[1], [ref]$lockTime) | Out-Null }
-        $age = $now - $lockTime
-        if ($age -lt $script:DeployLockMaxAgeSec) {
-            throw "Deploy lock held (age ${age}s). Another deploy may be in progress. Wait or clear /academy/deploy-lock."
-        }
+    $script:DeployLockOwner = if ($env:ACADEMY_DEPLOY_LOCK_OWNER) {
+        $env:ACADEMY_DEPLOY_LOCK_OWNER
+    } else {
+        "manual:$([Environment]::MachineName):${PID}:$([guid]::NewGuid().ToString('N'))"
     }
-    $val = "$PID $now"
-    Invoke-Aws @("ssm", "put-parameter", "--name", $script:DeployLockParamName, "--value", $val, "--type", "String", "--overwrite", "--region", $Reg) -ErrorMessage "put deploy lock" | Out-Null
+    $table = if ($script:DynamoLockTableName) { $script:DynamoLockTableName } else { "academy-v1-video-job-lock" }
+    $env:AWS_DEFAULT_REGION = $Reg
+    & python (Join-Path $PSScriptRoot "..\deployment_lock.py") acquire --owner $script:DeployLockOwner --table-name $table --ttl-seconds $script:DeployLockMaxAgeSec
+    if ($LASTEXITCODE -ne 0) { throw "Failed to acquire atomic deployment lock." }
     $script:DeployLockAcquired = $true
     Write-Ok "Deploy lock acquired"
 }
@@ -36,7 +27,10 @@ function Release-DeployLock {
     param([string]$Reg)
     if (-not (Get-DeployLockAcquired)) { return }
     try {
-        Invoke-Aws @("ssm", "delete-parameter", "--name", $script:DeployLockParamName, "--region", $Reg) -ErrorMessage "delete deploy lock" 2>$null | Out-Null
+        $table = if ($script:DynamoLockTableName) { $script:DynamoLockTableName } else { "academy-v1-video-job-lock" }
+        $env:AWS_DEFAULT_REGION = $Reg
+        & python (Join-Path $PSScriptRoot "..\deployment_lock.py") release --owner $script:DeployLockOwner --table-name $table
+        if ($LASTEXITCODE -ne 0) { throw "Lock release failed." }
         Write-Ok "Deploy lock released"
     } catch { Write-Warn "Release lock: $_" }
     $script:DeployLockAcquired = $false

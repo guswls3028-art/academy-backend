@@ -11,4 +11,4 @@ def test_upload_source_type_wins_over_legacy_test_intent():
 
 def test_upload_intent_remains_fallback_for_legacy_clients():
     assert resolve_upload_source_type(None, "test") == "school_exam_pdf"
-    assert resolve_upload_source_type("", "reference") == "other"
+    assert resolve_upload_source_type("", "reference") == "academy_workbook"

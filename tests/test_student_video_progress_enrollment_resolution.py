@@ -7,6 +7,9 @@ from apps.domains.enrollment.models import Enrollment
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.parents.models import Parent
 from apps.domains.student_app.media.views import (
+    StudentPublicSessionView,
+    StudentVideoCommentListView,
+    StudentVideoLikeView,
     StudentVideoMeView,
     StudentVideoPlaybackView,
     StudentVideoProgressView,
@@ -14,7 +17,15 @@ from apps.domains.student_app.media.views import (
     StudentVideoStatsView,
 )
 from apps.domains.students.models import Student
-from apps.domains.video.models import AccessMode, Video, VideoAccess, VideoPlaybackSession, VideoProgress
+from apps.domains.video.models import (
+    AccessMode,
+    Video,
+    VideoAccess,
+    VideoComment,
+    VideoLike,
+    VideoPlaybackSession,
+    VideoProgress,
+)
 
 
 class StudentVideoProgressEnrollmentResolutionTests(TestCase):
@@ -30,6 +41,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             password="testpass123",
             tenant=self.tenant,
         )
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.user, role="student")
         self.parent_user = User.objects.create_user(
             username="student-video-progress-parent",
             password="testpass123",
@@ -102,11 +114,13 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         force_authenticate(request, user=user or self.user)
         return StudentVideoProgressView.as_view()(request, video_id=target_video.id)
 
-    def _get_playback(self, *, user=None, enrollment_id=None):
+    def _get_playback(self, *, user=None, enrollment_id=None, selected_student_id=None):
         path = f"/api/v1/student/video/videos/{self.video.id}/playback/"
         if enrollment_id is not None:
             path += f"?enrollment={enrollment_id}"
         request = self.factory.get(path)
+        if selected_student_id is not None:
+            request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
         request.tenant = self.tenant
         force_authenticate(request, user=user or self.user)
         return StudentVideoPlaybackView.as_view()(request, video_id=self.video.id)
@@ -127,14 +141,48 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
         force_authenticate(request, user=user or self.user)
         return StudentVideoMeView.as_view()(request)
 
-    def _get_session_videos(self, *, user=None, enrollment_id=None):
+    def _get_session_videos(self, *, user=None, enrollment_id=None, selected_student_id=None):
         path = f"/api/v1/student/video/sessions/{self.target_session.id}/videos/"
         if enrollment_id is not None:
             path += f"?enrollment={enrollment_id}"
         request = self.factory.get(path)
+        if selected_student_id is not None:
+            request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
         request.tenant = self.tenant
         force_authenticate(request, user=user or self.user)
         return StudentSessionVideoListView.as_view()(request, session_id=self.target_session.id)
+
+    def _get_public_session(self, *, user=None, selected_student_id=None):
+        request = self.factory.get("/api/v1/student/video/public-session/")
+        if selected_student_id is not None:
+            request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
+        request.tenant = self.tenant
+        force_authenticate(request, user=user or self.user)
+        return StudentPublicSessionView.as_view()(request)
+
+    def _post_like(self, *, user=None, selected_student_id=None):
+        request = self.factory.post(
+            f"/api/v1/student/video/videos/{self.video.id}/like/",
+            {},
+            format="json",
+        )
+        if selected_student_id is not None:
+            request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
+        request.tenant = self.tenant
+        force_authenticate(request, user=user or self.user)
+        return StudentVideoLikeView.as_view()(request, video_id=self.video.id)
+
+    def _post_comment(self, *, user=None, selected_student_id=None):
+        request = self.factory.post(
+            f"/api/v1/student/video/videos/{self.video.id}/comments/",
+            {"content": "must not be written"},
+            format="json",
+        )
+        if selected_student_id is not None:
+            request.META["HTTP_X_STUDENT_ID"] = str(selected_student_id)
+        request.tenant = self.tenant
+        force_authenticate(request, user=user or self.user)
+        return StudentVideoCommentListView.as_view()(request, video_id=self.video.id)
 
     def _create_parent_child(self, suffix: str):
         child_user = User.objects.create_user(
@@ -142,6 +190,7 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             password="testpass123",
             tenant=self.tenant,
         )
+        TenantMembership.ensure_active(tenant=self.tenant, user=child_user, role="student")
         return Student.objects.create(
             tenant=self.tenant,
             user=child_user,
@@ -152,6 +201,119 @@ class StudentVideoProgressEnrollmentResolutionTests(TestCase):
             parent_phone="01012345678",
             school_type="HIGH",
         )
+
+    def _create_unowned_student(self):
+        child_user = User.objects.create_user(
+            username="student-video-progress-unowned",
+            password="testpass123",
+            tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=child_user, role="student")
+        return Student.objects.create(
+            tenant=self.tenant,
+            user=child_user,
+            name="Unowned Video Student",
+            ps_number="SVP-UNOWNED",
+            omr_code="SVUNOWND",
+            parent_phone="01012345678",
+            school_type="HIGH",
+        )
+
+    def test_invalid_parent_child_headers_fail_closed_across_media_reads(self):
+        unowned_student = self._create_unowned_student()
+
+        for raw_student_id in ("not-a-student-id", unowned_student.id, ""):
+            with self.subTest(raw_student_id=raw_student_id):
+                responses = [
+                    self._get_public_session(
+                        user=self.parent_user,
+                        selected_student_id=raw_student_id,
+                    ),
+                    self._get_me(
+                        user=self.parent_user,
+                        selected_student_id=raw_student_id,
+                    ),
+                    self._get_me_stats(
+                        user=self.parent_user,
+                        selected_student_id=raw_student_id,
+                    ),
+                    self._get_session_videos(
+                        user=self.parent_user,
+                        selected_student_id=raw_student_id,
+                    ),
+                    self._get_playback(
+                        user=self.parent_user,
+                        enrollment_id=self.target_enrollment.id,
+                        selected_student_id=raw_student_id,
+                    ),
+                ]
+                for response in responses:
+                    self.assertGreaterEqual(response.status_code, 400, response.data)
+                    self.assertLess(response.status_code, 500, response.data)
+
+                self.video.refresh_from_db()
+                self.assertEqual(self.video.view_count, 0)
+                self.assertFalse(
+                    Lecture.objects.filter(tenant=self.tenant, is_system=True).exists()
+                )
+                self.assertFalse(VideoPlaybackSession.objects.exists())
+
+    def test_invalid_parent_child_headers_reject_media_writes_without_mutation(self):
+        unowned_student = self._create_unowned_student()
+
+        for raw_student_id in ("not-a-student-id", unowned_student.id, ""):
+            with self.subTest(raw_student_id=raw_student_id):
+                responses = [
+                    self._post_progress(
+                        {
+                            "enrollment_id": self.target_enrollment.id,
+                            "progress": 50,
+                        },
+                        user=self.parent_user,
+                        selected_student_id=raw_student_id,
+                    ),
+                    self._post_like(
+                        user=self.parent_user,
+                        selected_student_id=raw_student_id,
+                    ),
+                    self._post_comment(
+                        user=self.parent_user,
+                        selected_student_id=raw_student_id,
+                    ),
+                ]
+                for response in responses:
+                    self.assertGreaterEqual(response.status_code, 400, response.data)
+                    self.assertLess(response.status_code, 500, response.data)
+
+                self.assertFalse(VideoProgress.objects.exists())
+                self.assertFalse(VideoLike.objects.exists())
+                self.assertFalse(VideoComment.objects.exists())
+                self.video.refresh_from_db()
+                self.assertEqual(self.video.like_count, 0)
+                self.assertEqual(self.video.comment_count, 0)
+
+    def test_malformed_explicit_enrollment_rejects_without_fallback_or_mutation(self):
+        invalid_values = (
+            "not-an-enrollment",
+            "",
+            self.target_enrollment.id + 0.5,
+        )
+
+        for invalid_value in invalid_values:
+            with self.subTest(invalid_value=invalid_value):
+                session_response = self._get_session_videos(enrollment_id=invalid_value)
+                playback_response = self._get_playback(enrollment_id=invalid_value)
+                progress_response = self._post_progress(
+                    {"enrollment_id": invalid_value, "progress": 50}
+                )
+
+                self.assertEqual(session_response.status_code, 400, session_response.data)
+                self.assertEqual(playback_response.status_code, 400, playback_response.data)
+                self.assertEqual(progress_response.status_code, 400, progress_response.data)
+                self.assertFalse(VideoProgress.objects.exists())
+                self.assertFalse(VideoPlaybackSession.objects.exists())
+                self.video.refresh_from_db()
+                self.assertEqual(self.video.view_count, 0)
 
     def test_progress_without_explicit_enrollment_uses_video_lecture_enrollment(self):
         response = self._post_progress({

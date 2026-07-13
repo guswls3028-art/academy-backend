@@ -28,7 +28,7 @@
 2. Bootstrap(선택): SSM, SQS, RDS engine, ECR 등 Ensure
 3. Ensure-Network, Ensure-ECR, Ensure-API-LaunchTemplate, Ensure-API-ASG, Ensure-API-Instance
 4. **Ensure-API:** API Launch Template 갱신 후, LT drift 시 `start-instance-refresh` 호출
-5. 새 인스턴스 기동 시 **UserData** 실행: ECR 로그인 → `docker pull` academy-api:latest → SSM `/academy/api/env` → `/opt/api.env` → `docker run -d ... --env-file /opt/api.env academy-api:latest`
+5. 새 인스턴스 기동 시 **UserData** 실행: ECR 로그인 → 검증된 release manifest의 `academy-api@sha256:...` pull → SSM `/academy/api/env` → `/opt/api.env` → digest-pinned `docker run`
 6. Netprobe(선택), Evidence 저장, After-Deploy Verification(ASG desired/inService, ALB target health, Batch CE/Queue)
 
 **관련 파일:** `scripts/v1/deploy.ps1`, `scripts/v1/resources/api.ps1` (Get-ApiLaunchTemplateUserData, Ensure-API-ASG, Ensure-API-Instance).
@@ -67,7 +67,7 @@
   `pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default`
   특정 QnA 회귀만 좁게 재확인할 때는 `pwsh scripts/v1/run-qna-e2e-verify.ps1 -AwsProfile default`
   학생 영상 재생 경로만 좁게 재확인할 때는 `python scripts/post_deploy_smoke/video_playback_chain.py`
-- **이미지 digest:** `run-deploy-verification.ps1`가 갱신하는 `docs/reports/runtime-images.latest.md`에서 `docs/reports/ci-build.latest.md`의 academy-api digest와 운영 인스턴스별 런타임 image digest 일치 여부를 확인한다. 수동 확인 시에는 컨테이너의 `.Image` 값을 먼저 읽고 해당 image 객체를 `docker image inspect`로 확인한다.
+- **이미지 digest:** `docs/reports/release-manifest.latest.json`은 배포·런타임 검증까지 성공한 6개 이미지의 유일한 수동 배포 입력이다. `deploy-api-and-verify-workers.ps1`이 LT/Batch 설정뿐 아니라 실제 InService 컨테이너의 `RepoDigests`까지 비교한다.
 
 ---
 

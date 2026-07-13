@@ -27,7 +27,7 @@
 | **CI 자동 배포** | main push → GitHub Actions | build-and-push → run-migrations(필요 시) → deploy-api/messaging/ai/tools/video → verify-deployment | ~10~25분 |
 | **수동 정식 배포** | `pwsh scripts/v1/deploy.ps1 -AwsProfile default` | 전체 인프라 Ensure + API LT 갱신 + ASG instance refresh | 20~25분 |
 
-- **env·이미지 소스:** SSM `/academy/api/env` → `/opt/api.env`, ECR `academy-api:latest`.
+- **env·이미지 소스:** SSM `/academy/api/env` → `/opt/api.env`, 마지막 완전 성공 `docs/reports/release-manifest.latest.json`의 `academy-api@sha256:...`.
 
 ---
 
@@ -74,7 +74,7 @@ main에 push하면 자동으로 서버 반영까지 완료된다:
 |------|------|
 | 배포 후 API·인프라 상태 | `run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` 후 `run-deploy-verification.ps1 -AwsProfile default`. |
 | 학생 영상 재생 경로 좁은 회귀 | `python scripts/post_deploy_smoke/video_playback_chain.py` |
-| CI 빌드 digest와 서버 이미지 일치 | `run-deploy-verification.ps1`가 갱신하는 `docs/reports/runtime-images.latest.md`에서 `ci-build.latest.md`의 academy-api digest와 운영 인스턴스별 런타임 image digest 일치 여부 확인. |
+| 성공 릴리스 digest와 서버 이미지 일치 | `release-manifest.latest.json`의 digest와 Launch Template, 실제 InService 컨테이너, Video Batch job definition을 `deploy-api-and-verify-workers.ps1`로 비교. |
 | API health | API 공개 URL로 `/healthz`, `/health` 200 확인. |
 
 ---

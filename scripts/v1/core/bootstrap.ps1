@@ -208,24 +208,11 @@ function Invoke-BootstrapRdsEngineVersion {
 }
 
 function Get-EcrResolvedTag {
-    if ($env:GITHUB_SHA) { return $env:GITHUB_SHA.Substring(0, [Math]::Min(12, $env:GITHUB_SHA.Length)) }
-    $git = Get-Command git -ErrorAction SilentlyContinue
-    if ($git) {
-        try {
-            $rev = & git rev-parse HEAD 2>$null
-            if ($rev -and $rev.Length -ge 7) { return $rev.Substring(0, 7) }
-        } catch { }
-    }
-    $repo = $script:VideoWorkerRepo
-    $list = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $repo, "--region", $script:Region, "--output", "json")
-    if (-not $list -or -not $list.imageDetails) { return $null }
-    $nonLatest = @($list.imageDetails | Where-Object { $_.imageTags -and ($_.imageTags | Where-Object { $_ -ne "latest" }) } | ForEach-Object {
-        $tag = ($_.imageTags | Where-Object { $_ -ne "latest" } | Select-Object -First 1)
-        if ($tag) { [PSCustomObject]@{ Tag = $tag; Pushed = $_.imagePushedAt } }
-    } | Where-Object { $_ })
-    if (-not $nonLatest) { return $null }
-    $latest = $nonLatest | Sort-Object { $_.Pushed } -Descending | Select-Object -First 1
-    return $latest.Tag
+    # Manual deploys must use the last release that completed deployment and
+    # runtime verification, never merely the newest image pushed to ECR.
+    $releaseImage = Get-ReleaseManifestImage -RepoName $script:VideoWorkerRepo
+    if (-not $releaseImage.Tag) { throw "Verified release manifest has no video image tag." }
+    return $releaseImage.Tag
 }
 
 function Invoke-BuildServerBuild {
@@ -298,14 +285,13 @@ function Invoke-BuildServerBuild {
 function Invoke-BootstrapEcrUri {
     if ($script:SkipBuild) {
         if (-not $script:EcrRepoUri -or $script:EcrRepoUri.Trim() -eq "") {
-            $tag = if ($script:EcrUseLatestTag) { "latest" } else { Get-EcrResolvedTag }
-            if ($tag) {
-                $reg = $script:Region
-                $acc = $script:AccountId
-                $script:EcrRepoUriResolved = "${acc}.dkr.ecr.${reg}.amazonaws.com/${script:VideoWorkerRepo}:${tag}"
-                $script:EcrRepoUri = $script:EcrRepoUriResolved
-                Write-Ok "ECR URI resolved (SkipBuild): $script:EcrRepoUriResolved"
+            $script:EcrRepoUriResolved = if ($script:EcrUseLatestTag) {
+                "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:VideoWorkerRepo):latest"
+            } else {
+                Get-ImmutableEcrImageUri -RepoName $script:VideoWorkerRepo
             }
+            $script:EcrRepoUri = $script:EcrRepoUriResolved
+            Write-Ok "ECR URI resolved from verified release (SkipBuild): $script:EcrRepoUriResolved"
         }
         return
     }
@@ -315,17 +301,19 @@ function Invoke-BootstrapEcrUri {
         Write-Ok "ECR URI from parameter: $script:EcrRepoUriResolved"
         return
     }
-    $tag = if ($script:EcrUseLatestTag) { "latest" } else { Get-EcrResolvedTag }
-    if (-not $tag) { $tag = "bootstrap-" + (Get-Date -Format "yyyyMMdd-HHmmss") }
-    $reg = $script:Region
-    $acc = $script:AccountId
-    $uri = "${acc}.dkr.ecr.${reg}.amazonaws.com/${script:VideoWorkerRepo}:${tag}"
+    $tag = if ($script:EcrUseLatestTag) { "latest" } else { $null }
+    $uri = if ($tag) {
+        "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:VideoWorkerRepo):$tag"
+    } else {
+        Get-ImmutableEcrImageUri -RepoName $script:VideoWorkerRepo
+    }
     $script:EcrRepoUriResolved = $uri
     $script:EcrRepoUri = $uri
 
     $exists = $null
     try {
-        $img = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $script:VideoWorkerRepo, "--image-ids", "imageTag=$tag", "--region", $script:Region, "--output", "json")
+        $imageId = if ($uri -match '@(?<digest>sha256:[0-9a-f]{64})$') { "imageDigest=$($matches['digest'])" } else { "imageTag=$tag" }
+        $img = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $script:VideoWorkerRepo, "--image-ids", $imageId, "--region", $script:Region, "--output", "json")
         if ($img -and $img.imageDetails -and $img.imageDetails.Count -gt 0) { $exists = $true }
     } catch { }
     if ($exists) {

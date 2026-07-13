@@ -117,6 +117,10 @@ if ($DryRun) { Write-Host "MODE: DryRun (no changes)" -ForegroundColor Yellow }
 
 try {
     Assert-NoLegacyScripts -Ci:$Ci
+    # The lock table is the only production mutation allowed before acquiring
+    # the lock itself. Its create is conditional/idempotent and is required to
+    # make a fresh bootstrap reachable; all other mutations stay behind it.
+    Ensure-DynamoLockTable
     Acquire-DeployLock -Reg $script:Region
     Invoke-PreflightCheck
     $driftRows = Get-StructuralDrift
@@ -168,7 +172,6 @@ try {
 
     $script:BatchIam = Ensure-BatchIAM
     Ensure-EC2InstanceProfileSSM
-    Ensure-GitHubActionsDeployIAM
     Ensure-Network
     Ensure-NetworkVpc
     Confirm-SubnetsMatchSSOT
@@ -189,6 +192,10 @@ try {
         { $script:EcrRepoUri -and ($script:EcrRepoUri -match ':latest\s*$') -and -not $script:EcrUseLatestTag } {
             Write-Fail ":latest tag is prohibited. Use an immutable tag or set ecr.useLatestTag in SSOT."
             throw "EcrRepoUri must not contain :latest when useLatestTag is false."
+        }
+        { $strictCheck -and $script:EcrImmutableTagRequired -and $script:EcrRepoUri -notmatch '(:sha-(?:[0-9a-f]{8,40}|[0-9a-f]{40}-run-[0-9]+-[0-9]+)|@sha256:[0-9a-f]{64})$' } {
+            Write-Fail "Strict: EcrRepoUri must use a CI sha-* tag or an ECR digest."
+            throw "EcrRepoUri is not immutable."
         }
         { $strictCheck -and [string]::IsNullOrWhiteSpace($script:MessagingSqsQueueUrl) -and [string]::IsNullOrWhiteSpace($script:MessagingSqsQueueName) } {
             Write-Fail "Strict: messagingWorker SQS not set. Bootstrap could not create/find queue."
@@ -246,6 +253,9 @@ try {
     Ensure-RdsCloudWatchAlarms
     Ensure-ALBStack
     Ensure-API
+    # Converge the CI role only after all four SSOT Launch Templates exist so
+    # its write resources can be exact and read back in the same run.
+    Ensure-GitHubActionsDeployIAM
 
     # SSOT → runtime env: idempotent sync so API and Workers SSM always match params.yaml and Redis discovery.
     Invoke-SyncEnvFromSSOT
@@ -282,6 +292,7 @@ try {
     # After-deploy verification (MinimalDeploy: ALB targets, Workers, Batch CE/Queue)
     if (-not $Plan) {
         $verifyOk = $true
+        if ($netStatus -eq "failed") { $verifyOk = $false }
         $R = $script:Region
         Write-Host "`n=== After-Deploy Verification ===" -ForegroundColor Cyan
         try {
@@ -290,10 +301,10 @@ try {
             foreach ($name in $asgNames) {
                 $a = $asgAll.AutoScalingGroups | Where-Object { $_.AutoScalingGroupName -eq $name } | Select-Object -First 1
                 if ($a) {
-                    $desired = $a.DesiredCapacity; $running = ($a.Instances | Where-Object { $_.LifecycleState -eq "InService" }).Count
+                    $desired = $a.DesiredCapacity; $running = ($a.Instances | Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" }).Count
                     Write-Host "  ASG $name : desired=$desired inService=$running" -ForegroundColor $(if ($running -ge 1) { "Green" } else { "Yellow" })
-                    if ($running -lt 1 -and $desired -ge 1) { $verifyOk = $false }
-                }
+                    if ($running -ne $desired) { $verifyOk = $false }
+                } else { Write-Warn "Required ASG missing: $name"; $verifyOk = $false }
             }
             $tg = Invoke-AwsJson @("elbv2", "describe-target-groups", "--names", $script:ApiTargetGroupName, "--region", $R, "--output", "json") 2>$null
             if ($tg -and $tg.TargetGroups -and $tg.TargetGroups.Count -gt 0) {
@@ -301,28 +312,30 @@ try {
                 $healthy = @($th.TargetHealthDescriptions | Where-Object { $_.TargetHealth.State -eq "healthy" }).Count
                 $total = if ($th.TargetHealthDescriptions) { $th.TargetHealthDescriptions.Count } else { 0 }
                 Write-Host "  ALB target health : $healthy / $total healthy" -ForegroundColor $(if ($healthy -ge 1) { "Green" } else { "Yellow" })
-                if ($healthy -lt 1 -and $total -gt 0) { $verifyOk = $false }
-            }
+                if ($healthy -lt 1) { $verifyOk = $false }
+            } else { Write-Warn "Required API target group missing: $($script:ApiTargetGroupName)"; $verifyOk = $false }
             $ce = Invoke-AwsJson @("batch", "describe-compute-environments", "--compute-environments", $script:VideoCEName, "--region", $R, "--output", "json") 2>$null
             if ($ce -and $ce.computeEnvironments -and $ce.computeEnvironments.Count -gt 0) {
                 $ceStatus = $ce.computeEnvironments[0].status; $ceState = $ce.computeEnvironments[0].state
                 Write-Host "  Batch Video CE : status=$ceStatus state=$ceState" -ForegroundColor $(if ($ceStatus -eq "VALID") { "Green" } else { "Yellow" })
-                if ($ceStatus -ne "VALID") { $verifyOk = $false }
-            }
+                if ($ceStatus -ne "VALID" -or $ceState -ne "ENABLED") { $verifyOk = $false }
+            } else { Write-Warn "Required Video compute environment missing: $($script:VideoCEName)"; $verifyOk = $false }
             $q = Invoke-AwsJson @("batch", "describe-job-queues", "--job-queues", $script:VideoQueueName, "--region", $R, "--output", "json") 2>$null
             if ($q -and $q.jobQueues -and $q.jobQueues.Count -gt 0) {
-                $qState = $q.jobQueues[0].state
-                Write-Host "  Batch Video Queue : state=$qState" -ForegroundColor $(if ($qState -eq "ENABLED") { "Green" } else { "Yellow" })
-                if ($qState -ne "ENABLED") { $verifyOk = $false }
-            }
+                $qState = $q.jobQueues[0].state; $qStatus = $q.jobQueues[0].status
+                Write-Host "  Batch Video Queue : status=$qStatus state=$qState" -ForegroundColor $(if ($qState -eq "ENABLED" -and $qStatus -eq "VALID") { "Green" } else { "Yellow" })
+                if ($qState -ne "ENABLED" -or $qStatus -ne "VALID") { $verifyOk = $false }
+            } else { Write-Warn "Required Video job queue missing: $($script:VideoQueueName)"; $verifyOk = $false }
         } catch {
             Write-Warn "Verification error: $_"
             $verifyOk = $false
         }
         if ($verifyOk) {
             Write-Host "`nDEPLOY_SUCCESS" -ForegroundColor Green
+        } elseif ($RelaxedValidation) {
+            Write-Warn "DEPLOY_COMPLETED_WITH_VERIFICATION_WARNINGS (explicit -RelaxedValidation)"
         } else {
-            Write-Host "`nDEPLOY_SUCCESS (verification warnings - check ASG/ALB/Batch above)" -ForegroundColor Yellow
+            throw "Post-deploy verification failed. Refusing to report deployment success; inspect ASG/ALB/Batch output above."
         }
     }
 }

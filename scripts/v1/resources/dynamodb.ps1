@@ -57,6 +57,17 @@ function Ensure-DynamoLockTable {
     if (-not $table -or $table.TableStatus -ne "ACTIVE") {
         throw "DynamoDB table $tableName did not reach ACTIVE status in ${timeoutSec}s."
     }
+    $keySchema = @($table.KeySchema)
+    $attributes = @($table.AttributeDefinitions)
+    if ($keySchema.Count -ne 1 -or [string]$keySchema[0].AttributeName -ne "videoId" -or [string]$keySchema[0].KeyType -ne "HASH") {
+        throw "DynamoDB lock table $tableName has an incompatible key schema; expected videoId HASH only."
+    }
+    if ($attributes.Count -ne 1 -or [string]$attributes[0].AttributeName -ne "videoId" -or [string]$attributes[0].AttributeType -ne "S") {
+        throw "DynamoDB lock table $tableName has incompatible attribute definitions; expected videoId String only."
+    }
+    if ([string]$table.BillingModeSummary.BillingMode -ne "PAY_PER_REQUEST") {
+        throw "DynamoDB lock table $tableName must use PAY_PER_REQUEST billing."
+    }
 
     $ttl = $null
     try {
@@ -139,4 +150,3 @@ function Ensure-DynamoUploadCheckpointTable {
     }
     Write-Ok "DynamoDB upload checkpoint table $tableName exists"
 }
-

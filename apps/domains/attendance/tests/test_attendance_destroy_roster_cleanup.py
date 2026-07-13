@@ -318,9 +318,7 @@ class AttendanceDestroyRosterCleanupTests(TestCase):
         self.assertTrue(student_fee.is_active)
         self.assertEqual(student_fee.billing_end_month, "")
 
-    def test_bulk_create_reactivates_auto_assigned_student_fee(self):
-        self.enrollment.status = "INACTIVE"
-        self.enrollment.save(update_fields=["status"])
+    def test_bulk_create_reactivates_auto_assigned_fee_for_active_enrollment(self):
         fee_template = FeeTemplate.objects.create(
             tenant=self.tenant,
             name="월 수강료",

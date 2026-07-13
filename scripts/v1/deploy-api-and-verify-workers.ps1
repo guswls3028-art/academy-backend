@@ -21,6 +21,7 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
 . (Join-Path $ScriptRoot "core\ssot.ps1")
 . (Join-Path $ScriptRoot "core\aws.ps1")
 . (Join-Path $ScriptRoot "resources\api.ps1")
+. (Join-Path $ScriptRoot "resources\worker_userdata.ps1")
 $null = Load-SSOT -Env "prod"
 
 $report = @()
@@ -30,6 +31,142 @@ function Add-Result($stage, $item, $status, $detail) {
     Write-Host "  [$status] $item — $detail" -ForegroundColor $color
     $script:report += [PSCustomObject]@{ Stage=$stage; Item=$item; Status=$status; Detail=$detail }
     if ($status -eq "FAIL") { $script:allPass = $false }
+}
+
+function Wait-InstanceRefreshTerminal {
+    param(
+        [Parameter(Mandatory = $true)][string]$AsgName,
+        [Parameter(Mandatory = $true)][string]$RefreshId,
+        [int]$TimeoutSec = 1800
+    )
+    $elapsed = 0
+    while ($elapsed -lt $TimeoutSec) {
+        $result = Invoke-AwsJson @(
+            "autoscaling", "describe-instance-refreshes",
+            "--auto-scaling-group-name", $AsgName,
+            "--instance-refresh-ids", $RefreshId,
+            "--region", $Region,
+            "--output", "json"
+        )
+        $state = @($result.InstanceRefreshes)[0]
+        if (-not $state) { throw "Instance refresh not found: $AsgName/$RefreshId" }
+        Write-Host "    refresh=$RefreshId status=$($state.Status) complete=$($state.PercentageComplete)%" -ForegroundColor DarkGray
+        if ([string]$state.Status -eq "Successful") { return $state }
+        if ([string]$state.Status -in @("Failed", "Cancelled", "RollbackFailed", "RollbackSuccessful")) {
+            throw "Instance refresh terminated as $($state.Status): $($state.StatusReason)"
+        }
+        Start-Sleep -Seconds 15
+        $elapsed += 15
+    }
+    throw "Instance refresh timed out after ${TimeoutSec}s: $AsgName/$RefreshId"
+}
+
+function Assert-AsgRunningContainerDigests {
+    param(
+        [Parameter(Mandatory = $true)][string]$AsgName,
+        [Parameter(Mandatory = $true)][string]$RepoName,
+        [Parameter(Mandatory = $true)][string]$ContainerName,
+        [Parameter(Mandatory = $true)][string]$ExpectedDigest
+    )
+    $asgResult = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $AsgName, "--region", $Region, "--output", "json")
+    $asg = @($asgResult.AutoScalingGroups)[0]
+    if (-not $asg) { throw "ASG not found: $AsgName" }
+    $instanceIds = @($asg.Instances | Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" } | ForEach-Object { $_.InstanceId })
+    if ($instanceIds.Count -ne [int]$asg.DesiredCapacity) {
+        throw "ASG healthy InService count does not equal desired capacity: $AsgName healthy=$($instanceIds.Count) desired=$($asg.DesiredCapacity)"
+    }
+    $expectedUri = "$($script:AccountId).dkr.ecr.$Region.amazonaws.com/${RepoName}@${ExpectedDigest}"
+    foreach ($instanceId in $instanceIds) {
+        $command = "set -e; IMAGE_ID=`$(docker inspect --format '{{.Image}}' '$ContainerName'); docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' `"`$IMAGE_ID`""
+        $parameters = Convert-JsonArgToFileRef (@{ commands = @($command); executionTimeout = @("120") } | ConvertTo-Json -Compress)
+        $parameterFile = $parameters -replace '^file://', ''
+        try {
+            $sent = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instanceId, "--document-name", "AWS-RunShellScript", "--parameters", $parameters, "--timeout-seconds", "180", "--region", $Region, "--output", "json")
+        } finally {
+            Remove-TempFiles @($parameterFile)
+        }
+        $commandId = [string]$sent.Command.CommandId
+        if (-not $commandId) { throw "SSM returned no command id for $AsgName/$instanceId" }
+        $elapsed = 0
+        do {
+            Start-Sleep -Seconds 3
+            $elapsed += 3
+            $result = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $commandId, "--instance-id", $instanceId, "--region", $Region, "--output", "json")
+            if ([string]$result.Status -eq "Success") { break }
+            if ([string]$result.Status -in @("Failed", "Cancelled", "TimedOut", "Cancelling")) {
+                throw "Runtime digest command failed: $AsgName/$instanceId status=$($result.Status) stderr=$($result.StandardErrorContent)"
+            }
+        } while ($elapsed -lt 120)
+        if ([string]$result.Status -ne "Success") { throw "Runtime digest command timed out: $AsgName/$instanceId" }
+        $actual = @(([string]$result.StandardOutputContent -split "`r?`n") | Where-Object { $_.Trim() -ne "" } | Sort-Object -Unique)
+        if ($actual.Count -ne 1 -or $actual[0] -ne $expectedUri) {
+            throw "Running container must report exactly one account/region/repository digest URI: $AsgName/$instanceId expected=$expectedUri actual=$($actual -join ',')"
+        }
+    }
+    return $instanceIds.Count
+}
+
+function Get-AsgRuntimeImageEvidence {
+    param(
+        [Parameter(Mandatory = $true)][string]$AsgName,
+        [Parameter(Mandatory = $true)][string]$RepoName
+    )
+
+    $asgResult = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $AsgName, "--region", $Region, "--output", "json")
+    $asg = @($asgResult.AutoScalingGroups)[0]
+    if (-not $asg) { throw "ASG not found: $AsgName" }
+    $ltRef = $asg.LaunchTemplate
+    if (-not $ltRef -or -not $ltRef.LaunchTemplateId) { throw "ASG does not use a direct Launch Template: $AsgName" }
+    if ([string]$ltRef.Version -ne '$Latest') { throw "ASG must track Launch Template version `$Latest: $AsgName actual=$($ltRef.Version)" }
+
+    $versionResult = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-id", $ltRef.LaunchTemplateId, "--versions", '$Latest', "--region", $Region, "--output", "json")
+    $version = @($versionResult.LaunchTemplateVersions)[0]
+    $encoded = if ($version -and $version.LaunchTemplateData) { [string]$version.LaunchTemplateData.UserData } else { "" }
+    if (-not $encoded) { throw "Launch Template userdata is empty: $AsgName" }
+    try {
+        $raw = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
+    } catch {
+        throw "Launch Template userdata is not valid base64: $AsgName"
+    }
+
+    $pattern = "(?<uri>" + [regex]::Escape("$($script:AccountId).dkr.ecr.$Region.amazonaws.com/$RepoName") + "@(?<digest>sha256:[0-9a-f]{64}))"
+    $matchesExact = @([regex]::Matches($raw, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase))
+    $distinctUris = @($matchesExact | ForEach-Object { $_.Groups["uri"].Value.ToLowerInvariant() } | Sort-Object -Unique)
+    if ($distinctUris.Count -ne 1) {
+        throw "Launch Template must contain exactly one distinct account/region/repository digest URI: $AsgName repo=$RepoName actual=$($distinctUris -join ',')"
+    }
+    $match = $matchesExact[0]
+
+    return [PSCustomObject]@{
+        Image = $match.Groups["uri"].Value
+        Digest = $match.Groups["digest"].Value.ToLowerInvariant()
+        LaunchTemplateId = $ltRef.LaunchTemplateId
+        Version = $version.VersionNumber
+    }
+}
+
+function Get-BatchRuntimeImageEvidence {
+    param(
+        [Parameter(Mandatory = $true)][string]$JobDefinitionName,
+        [Parameter(Mandatory = $true)][string]$RepoName
+    )
+
+    $result = Invoke-AwsJson @("batch", "describe-job-definitions", "--job-definition-name", $JobDefinitionName, "--status", "ACTIVE", "--region", $Region, "--output", "json")
+    $definition = @($result.jobDefinitions | Sort-Object { [int]$_.revision } -Descending)[0]
+    if (-not $definition) { throw "Active Batch job definition not found: $JobDefinitionName" }
+    $image = [string]$definition.containerProperties.image
+    $exactPattern = '^' + [regex]::Escape("$($script:AccountId).dkr.ecr.$Region.amazonaws.com/$RepoName") + '@(?<digest>sha256:[0-9a-f]{64})$'
+    if ($image -notmatch $exactPattern) { throw "Batch job definition must use the exact account/region/repository digest URI: $JobDefinitionName image=$image" }
+    $digest = $matches["digest"].ToLowerInvariant()
+    $tag = ""
+    if ($digest -notmatch '^sha256:[0-9a-f]{64}$') { throw "Cannot resolve Batch runtime digest: $JobDefinitionName image=$image" }
+
+    return [PSCustomObject]@{
+        Image = $image
+        Digest = $digest.ToLowerInvariant()
+        Tag = $tag
+        Revision = $definition.revision
+    }
 }
 
 $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
@@ -47,8 +184,8 @@ $repoRoot = Get-RepoRoot
 $gitHeadSha = $null
 $ciBuildSha = $null
 $ciBuildDigests = @{}
-$ecrDigests = @{}
-$imageRepos = @("academy-api", "academy-video-worker", "academy-messaging-worker", "academy-ai-worker-cpu", "academy-base")
+$immutableTags = @{}
+$imageRepos = @("academy-api", "academy-video-worker", "academy-messaging-worker", "academy-ai-worker-cpu", "academy-tools-worker", "academy-base")
 
 # 0-1. Git HEAD SHA
 try {
@@ -106,7 +243,7 @@ try {
                 }
                 $nonReportFiles = @($deltaFiles | Where-Object { $_ -ne "docs/reports/ci-build.latest.md" })
                 $imageAffectingFiles = @($nonReportFiles | Where-Object {
-                    $_ -match '^(academy/|apps/|libs/|common/|manage\.py$|requirements|pyproject\.toml$|poetry\.lock$|Pipfile|Dockerfile|docker/)'
+                    $_ -match '^(\.dockerignore$|academy/|apps/|libs/|models/|scripts/|common/|manage\.py$|requirements|pyproject\.toml$|poetry\.lock$|Pipfile|Dockerfile|docker/)'
                 })
                 if ($deltaFiles.Count -gt 0 -and $nonReportFiles.Count -eq 0) {
                     $reportOnlyHead = $true
@@ -128,59 +265,89 @@ try {
     Add-Result "0-IMAGE" "ci/status" "WARN" "gh CLI failed: $_"
 }
 
-# 0-3. CI build report digest (from ci-build.latest.md)
-$ciBuildReportPath = Join-Path $repoRoot "docs\reports\ci-build.latest.md"
+# 0-3. Last complete successful release manifest. A build report is only a
+# candidate and must never authorize a manual deploy.
+$ciBuildReportPath = Join-Path $repoRoot "docs\reports\release-manifest.latest.json"
 $ciBuildReportSha = $null
 if (Test-Path $ciBuildReportPath) {
     try {
-        $ciReport = Get-CiBuildImageDigests -Path $ciBuildReportPath
-        $ciBuildReportSha = $ciReport.GitSha
-        $ciBuildDigests = $ciReport.Digests
+        $releaseManifest = Get-Content -LiteralPath $ciBuildReportPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ([int]$releaseManifest.schemaVersion -ne 1 -or -not [bool]$releaseManifest.complete -or [string]$releaseManifest.status -ne "successful") {
+            throw "release manifest is not complete/successful"
+        }
+        if (@($releaseManifest.images.PSObject.Properties).Count -ne $imageRepos.Count) {
+            throw "release manifest must contain exactly $($imageRepos.Count) images"
+        }
+        $ciBuildReportSha = [string]$releaseManifest.gitSha
+        foreach ($repo in $imageRepos) {
+            $ciBuildDigests[$repo] = [string]$releaseManifest.images.PSObject.Properties[$repo].Value.digest
+        }
         $ciReportShort = if ($ciBuildReportSha -and $ciBuildReportSha.Length -ge 7) { $ciBuildReportSha.Substring(0, 7) } elseif ($ciBuildReportSha) { $ciBuildReportSha } else { "unknown" }
-        Add-Result "0-IMAGE" "ci-report/sha" "PASS" "$ciReportShort ($($ciBuildDigests.Count) images)"
+        Add-Result "0-IMAGE" "release-manifest/sha" "PASS" "$ciReportShort ($($ciBuildDigests.Count) verified images)"
     } catch {
-        Add-Result "0-IMAGE" "ci-report" "WARN" "parse failed: $_"
+        Add-Result "0-IMAGE" "release-manifest" "FAIL" "parse failed: $_"
     }
 } else {
-    Add-Result "0-IMAGE" "ci-report" "WARN" "ci-build.latest.md not found"
+    Add-Result "0-IMAGE" "release-manifest" "FAIL" "release-manifest.latest.json not found"
 }
 
-# 0-4. ECR latest digest for each image
+# 0-4. CI digest가 immutable sha-* tag로 ECR에 존재하는지 검증
 foreach ($repo in $imageRepos) {
     try {
-        $ecrJson = Invoke-Aws @("ecr", "describe-images",
-            "--repository-name", $repo,
-            "--image-ids", "imageTag=latest",
-            "--query", "imageDetails[0].{digest:imageDigest,pushed:imagePushedAt}",
-            "--region", $Region) -ErrorMessage "ecr-$repo"
-        $ecrImg = $ecrJson | ConvertFrom-Json
-        $ecrDigests[$repo] = $ecrImg.digest
-
-        # Compare with CI report digest
         $ciDigest = $ciBuildDigests[$repo]
-        if ($ciDigest -and $ciDigest -eq $ecrImg.digest) {
-            Add-Result "0-IMAGE" "ecr/$repo" "PASS" "digest matches CI report (pushed $($ecrImg.pushed))"
-        } elseif ($ciDigest) {
-            # Digest mismatch = ECR was updated after CI report (newer build pushed)
-            Add-Result "0-IMAGE" "ecr/$repo" "WARN" "digest differs from CI report — newer image pushed after report (pushed $($ecrImg.pushed))"
-        } else {
-            Add-Result "0-IMAGE" "ecr/$repo" "PASS" "$($ecrImg.digest.Substring(0, 19))... (pushed $($ecrImg.pushed))"
-        }
+        if ($ciDigest -notmatch '^sha256:[0-9a-f]{64}$') { throw "CI report digest missing or invalid: $repo" }
+        $ecrResult = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $repo, "--image-ids", "imageDigest=$ciDigest", "--region", $Region, "--output", "json")
+        $detail = @($ecrResult.imageDetails)[0]
+        if (-not $detail -or [string]$detail.imageDigest -ne $ciDigest) { throw "CI digest not found in ECR: $repo@$ciDigest" }
+        $shaTags = @($detail.imageTags | Where-Object { $_ -match '^sha-(?:[0-9a-f]{8,40}|[0-9a-f]{40}-run-[0-9]+-[0-9]+)$' } | Sort-Object)
+        if ($shaTags.Count -eq 0) { throw "CI digest has no immutable sha-* tag: $repo@$ciDigest" }
+        $immutableTags[$repo] = $shaTags[0]
+        Add-Result "0-IMAGE" "ecr/$repo" "PASS" "$($shaTags[0]) -> $ciDigest (pushed $($detail.imagePushedAt))"
     } catch {
         Add-Result "0-IMAGE" "ecr/$repo" "FAIL" "$_"
     }
 }
 
-# 0-5. Summary: is the running API using the latest image?
+# 0-5. ASG Launch Template runtime targets: digest-pinned userdata vs CI digest
+foreach ($target in @(
+    @{ Repo="academy-api";              Asg=$script:ApiASGName;       Container="academy-api" },
+    @{ Repo="academy-messaging-worker"; Asg=$script:MessagingASGName; Container="academy-messaging-worker" },
+    @{ Repo="academy-ai-worker-cpu";    Asg=$script:AiASGName;        Container="academy-ai-worker-cpu" },
+    @{ Repo="academy-tools-worker";     Asg=$script:ToolsASGName;     Container="academy-tools-worker" }
+)) {
+    try {
+        $evidence = Get-AsgRuntimeImageEvidence -AsgName $target.Asg -RepoName $target.Repo
+        $ciDigest = $ciBuildDigests[$target.Repo]
+        if ($evidence.Digest -ne $ciDigest) { throw "runtime digest mismatch: actual=$($evidence.Digest) expected=$ciDigest" }
+        Add-Result "0-IMAGE" "runtime/$($target.Repo)" "PASS" "LT=$($evidence.LaunchTemplateId):$($evidence.Version) $($immutableTags[$target.Repo]) -> $($evidence.Digest)"
+    } catch {
+        Add-Result "0-IMAGE" "runtime/$($target.Repo)" "FAIL" "$_"
+    }
+}
+
+# Video Batch runtime targets: each active job definition must use sha-* or digest.
+foreach ($jobDefinitionName in @($script:SSOT_JobDef | Where-Object { $_ })) {
+    try {
+        $evidence = Get-BatchRuntimeImageEvidence -JobDefinitionName $jobDefinitionName -RepoName "academy-video-worker"
+        $ciDigest = $ciBuildDigests["academy-video-worker"]
+        if ($evidence.Digest -ne $ciDigest) { throw "runtime digest mismatch: actual=$($evidence.Digest) expected=$ciDigest" }
+        $immutableRef = if ($evidence.Tag) { $evidence.Tag } else { $evidence.Digest }
+        Add-Result "0-IMAGE" "runtime/$jobDefinitionName" "PASS" "revision=$($evidence.Revision) $immutableRef -> $($evidence.Digest)"
+    } catch {
+        Add-Result "0-IMAGE" "runtime/$jobDefinitionName" "FAIL" "$_"
+    }
+}
+
+# 0-6. Source/build coverage summary. Runtime equality is proven above from LT/jobdefs.
 if ($gitHeadSha -and $ciBuildReportSha) {
     if ($gitHeadSha -eq $ciBuildReportSha) {
-        Add-Result "0-IMAGE" "freshness" "PASS" "Git HEAD = CI build = ECR latest (all in sync)"
+        Add-Result "0-IMAGE" "source/build" "PASS" "Git HEAD = CI image report SHA"
     } elseif ($reportOnlyHead) {
-        Add-Result "0-IMAGE" "freshness" "PASS" "Runtime images match last successful build; HEAD only updates CI build report"
+        Add-Result "0-IMAGE" "source/build" "PASS" "HEAD only contains the generated CI build report"
     } elseif ($runtimeImageUnchangedHead) {
-        Add-Result "0-IMAGE" "freshness" "PASS" "Runtime images match last successful image build; HEAD changes do not affect images"
+        Add-Result "0-IMAGE" "source/build" "PASS" "HEAD has no image-affecting changes after the CI image report"
     } elseif ($ciRunStatus -eq "in_progress") {
-        Add-Result "0-IMAGE" "freshness" "WARN" "New build in progress — ECR will update when CI completes"
+        Add-Result "0-IMAGE" "source/build" "WARN" "New image build is in progress"
     } else {
         $runtimeDeltaFiles = @()
         $runtimeImageFiles = @()
@@ -189,11 +356,11 @@ if ($gitHeadSha -and $ciBuildReportSha) {
             $runtimeDeltaFiles = @(git diff --name-only "$ciBuildReportSha..$gitHeadSha" 2>$null)
             Pop-Location
             $runtimeImageFiles = @($runtimeDeltaFiles | Where-Object {
-                $_ -match '^(academy/|apps/|libs/|common/|manage\.py$|requirements|pyproject\.toml$|poetry\.lock$|Pipfile|Dockerfile|docker/)'
+                $_ -match '^(\.dockerignore$|academy/|apps/|libs/|models/|scripts/|common/|manage\.py$|requirements|pyproject\.toml$|poetry\.lock$|Pipfile|Dockerfile|docker/)'
             })
         } catch { Pop-Location }
         if ($runtimeDeltaFiles.Count -gt 0 -and $runtimeImageFiles.Count -eq 0) {
-            Add-Result "0-IMAGE" "freshness" "PASS" "Runtime images match CI build report; later HEAD changes do not affect images"
+            Add-Result "0-IMAGE" "source/build" "PASS" "Later HEAD changes do not affect runtime images"
         } else {
             $commitsBehind = 0
             try {
@@ -201,9 +368,14 @@ if ($gitHeadSha -and $ciBuildReportSha) {
                 $commitsBehind = [int](git rev-list --count "$ciBuildReportSha..origin/main" 2>&1)
                 Pop-Location
             } catch { Pop-Location }
-            Add-Result "0-IMAGE" "freshness" "WARN" "ECR is $commitsBehind commit(s) behind HEAD"
+            Add-Result "0-IMAGE" "source/build" "WARN" "CI image report is $commitsBehind commit(s) behind HEAD"
         }
     }
+}
+
+if (-not $allPass) {
+    Write-Host "`nStage 0 immutable image evidence failed; refusing to start an API instance refresh." -ForegroundColor Red
+    exit 1
 }
 
 # ==============================================================================
@@ -211,12 +383,12 @@ if ($gitHeadSha -and $ciBuildReportSha) {
 # ==============================================================================
 Write-Host "=== STAGE 1: API ASG Instance Refresh ===" -ForegroundColor Cyan
 
-if ($SkipRefresh) {
-    Write-Host "  -SkipRefresh: refresh 생략, 현재 상태 확인" -ForegroundColor Yellow
-} else {
+$refreshId = ""
+if (-not $SkipRefresh) {
     $minHealthy = if ($script:ApiInstanceRefreshMinHealthyPercentage -gt 0) { $script:ApiInstanceRefreshMinHealthyPercentage } else { 100 }
     $warmup = if ($script:ApiInstanceRefreshInstanceWarmup -gt 0) { $script:ApiInstanceRefreshInstanceWarmup } else { 300 }
-    $prefs = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;InstanceWarmup=$warmup} | ConvertTo-Json -Compress)
+    $prefs = Convert-JsonArgToFileRef (@{MinHealthyPercentage=$minHealthy;MaxHealthyPercentage=200;InstanceWarmup=$warmup} | ConvertTo-Json -Compress)
+    $prefsFile = $prefs -replace '^file://', ''
 
     Write-Host "  Starting instance refresh: $($script:ApiASGName) (MinHealthy=$minHealthy%, Warmup=${warmup}s)" -ForegroundColor White
     try {
@@ -228,23 +400,33 @@ if ($SkipRefresh) {
         Add-Result "1-REFRESH" "instance-refresh-start" "PASS" "RefreshId=$refreshId"
     } catch {
         if ($_.Exception.Message -match "InstanceRefreshInProgress") {
-            Add-Result "1-REFRESH" "instance-refresh-start" "PASS" "Already in progress (idempotent)"
+            $active = Invoke-AwsJson @("autoscaling", "describe-instance-refreshes", "--auto-scaling-group-name", $script:ApiASGName, "--region", $Region, "--output", "json")
+            $current = @($active.InstanceRefreshes | Where-Object { $_.Status -in @("Pending", "InProgress", "Cancelling", "RollbackInProgress") })[0]
+            if (-not $current) { throw "AWS reported InstanceRefreshInProgress but no active refresh could be resolved." }
+            $refreshId = [string]$current.InstanceRefreshId
+            Add-Result "1-REFRESH" "instance-refresh-start" "PASS" "Already in progress: RefreshId=$refreshId"
         } else {
             Add-Result "1-REFRESH" "instance-refresh-start" "FAIL" "$_"
         }
+    } finally {
+        Remove-TempFiles @($prefsFile)
     }
+} else {
+    Write-Host "  -SkipRefresh: no new refresh will be started" -ForegroundColor Yellow
+    $recent = Invoke-AwsJson @("autoscaling", "describe-instance-refreshes", "--auto-scaling-group-name", $script:ApiASGName, "--region", $Region, "--output", "json")
+    $current = @($recent.InstanceRefreshes | Where-Object { $_.Status -in @("Pending", "InProgress", "Cancelling", "RollbackInProgress") })[0]
+    if ($current) { $refreshId = [string]$current.InstanceRefreshId }
 }
 
-# Check current refresh status
-try {
-    $refreshJson = Invoke-Aws @("autoscaling", "describe-instance-refreshes",
-        "--auto-scaling-group-name", $script:ApiASGName,
-        "--query", "InstanceRefreshes[0].{Status:Status,Pct:PercentageComplete}",
-        "--region", $Region) -ErrorMessage "describe-instance-refreshes"
-    $refreshState = ($refreshJson | ConvertFrom-Json)
-    Add-Result "1-REFRESH" "refresh-status" $(if ($refreshState.Status -in @("Successful","InProgress","Pending")) { "PASS" } else { "FAIL" }) "$($refreshState.Status) ($($refreshState.Pct)%)"
-} catch {
-    Add-Result "1-REFRESH" "refresh-status" "WARN" "조회 실패: $_"
+if ($refreshId) {
+    try {
+        $refreshState = Wait-InstanceRefreshTerminal -AsgName $script:ApiASGName -RefreshId $refreshId -TimeoutSec 1800
+        Add-Result "1-REFRESH" "refresh-status" "PASS" "Successful (100%)"
+    } catch {
+        Add-Result "1-REFRESH" "refresh-status" "FAIL" "$_"
+    }
+} else {
+    Add-Result "1-REFRESH" "refresh-status" "PASS" "No active refresh (-SkipRefresh)"
 }
 
 # ==============================================================================
@@ -303,17 +485,36 @@ try {
         "--region", $Region) -ErrorMessage "describe-asg"
     $asg = $asgJson | ConvertFrom-Json
     $inService = @($asg.Instances | Where-Object { $_[2] -eq "InService" -and $_[1] -eq "Healthy" })
-    $minSize = $asg.Min
-    if ($inService.Count -ge $minSize) {
-        Add-Result "3-ASG" "api-asg" "PASS" "InService=$($inService.Count) >= min=$minSize (Desired=$($asg.Desired), Max=$($asg.Max))"
+    $desired = [int]$asg.Desired
+    if ($inService.Count -eq $desired) {
+        Add-Result "3-ASG" "api-asg" "PASS" "Healthy InService=$($inService.Count) = desired=$desired (Min=$($asg.Min), Max=$($asg.Max))"
     } else {
-        Add-Result "3-ASG" "api-asg" "FAIL" "InService=$($inService.Count) < min=$minSize"
+        Add-Result "3-ASG" "api-asg" "FAIL" "Healthy InService=$($inService.Count) != desired=$desired"
     }
     foreach ($inst in $asg.Instances) {
         Add-Result "3-ASG" "  $($inst[0])" $(if ($inst[1] -eq "Healthy" -and $inst[2] -eq "InService") { "PASS" } else { "WARN" }) "$($inst[1])/$($inst[2])"
     }
 } catch {
     Add-Result "3-ASG" "api-asg" "FAIL" "$_"
+}
+
+# ==============================================================================
+# STAGE 3.1: Actual running container digests (after refresh terminal success)
+# ==============================================================================
+Write-Host "`n=== STAGE 3.1: Running Container Digests ===" -ForegroundColor Cyan
+foreach ($target in @(
+    @{ Repo="academy-api";              Asg=$script:ApiASGName;       Container="academy-api" },
+    @{ Repo="academy-messaging-worker"; Asg=$script:MessagingASGName; Container="academy-messaging-worker" },
+    @{ Repo="academy-ai-worker-cpu";    Asg=$script:AiASGName;        Container="academy-ai-worker-cpu" },
+    @{ Repo="academy-tools-worker";     Asg=$script:ToolsASGName;     Container="academy-tools-worker" }
+)) {
+    try {
+        $expectedDigest = $ciBuildDigests[$target.Repo]
+        $runningCount = Assert-AsgRunningContainerDigests -AsgName $target.Asg -RepoName $target.Repo -ContainerName $target.Container -ExpectedDigest $expectedDigest
+        Add-Result "3.1-RUNTIME" $target.Repo "PASS" "$runningCount healthy InService container(s) match $expectedDigest"
+    } catch {
+        Add-Result "3.1-RUNTIME" $target.Repo "FAIL" "$_"
+    }
 }
 
 # ==============================================================================
@@ -367,7 +568,8 @@ Write-Host "`n=== STAGE 4: Worker ASG Status ===" -ForegroundColor Cyan
 
 foreach ($worker in @(
     @{ Name="messaging"; AsgName=$script:MessagingWorkerASGName },
-    @{ Name="ai";        AsgName=$script:AiWorkerASGName }
+    @{ Name="ai";        AsgName=$script:AiWorkerASGName },
+    @{ Name="tools";     AsgName=$script:ToolsASGName }
 )) {
     $asgName = $worker.AsgName
     if (-not $asgName) { $asgName = "academy-v1-$($worker.Name)-worker-asg" }
@@ -378,13 +580,13 @@ foreach ($worker in @(
             "--region", $Region) -ErrorMessage "describe-$($worker.Name)-asg"
         $w = $wJson | ConvertFrom-Json
         if ($null -eq $w -or $null -eq $w.Desired) {
-            Add-Result "4-WORKERS" "$($worker.Name)-asg" "WARN" "ASG not found: $asgName"
+            Add-Result "4-WORKERS" "$($worker.Name)-asg" "FAIL" "ASG not found: $asgName"
         } else {
-            $status = if ($w.InService -eq $w.Desired) { "PASS" } else { "WARN" }
+            $status = if ($w.InService -eq $w.Desired) { "PASS" } else { "FAIL" }
             Add-Result "4-WORKERS" "$($worker.Name)-asg" $status "InService=$($w.InService)/Desired=$($w.Desired) (idle=0 정상)"
         }
     } catch {
-        Add-Result "4-WORKERS" "$($worker.Name)-asg" "WARN" "$_"
+        Add-Result "4-WORKERS" "$($worker.Name)-asg" "FAIL" "$_"
     }
 }
 

@@ -69,7 +69,6 @@ def send_event_notification(
         get_template_type,
         build_unified_replacements,
     )
-    from .queue_service import enqueue_sms
     from .url_helpers import get_tenant_site_url
 
     if is_messaging_disabled(tenant.id):
@@ -320,7 +319,18 @@ def send_event_notification(
             return False
 
     try:
-        return bool(enqueue_sms(**payload))
+        from apps.domains.messaging.models import ScheduledNotification
+        from apps.domains.messaging.scheduled import dispatch_notification_now
+
+        notification = dispatch_notification_now(
+            tenant_id=tenant.id,
+            trigger=trigger,
+            payload=payload,
+        )
+        return notification.status in {
+            ScheduledNotification.Status.SENT,
+            ScheduledNotification.Status.PENDING,
+        }
     except MessagingPolicyError as exc:
         logger.info(
             "send_event_notification policy error: trigger=%s tenant=%s mode=alimtalk reason=%s",

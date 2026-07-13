@@ -13,15 +13,21 @@ on:
 
 env:
   AWS_REGION: ap-northeast-2
+  ACADEMY_DEPLOY_LOCK_TABLE: academy-v1-video-job-lock
+  ACADEMY_DEPLOY_LOCK_OWNER: weekly-cleanup:${{ github.run_id }}:${{ github.run_attempt }}
 
 permissions:
   id-token: write
   contents: read
 
+concurrency:
+  group: academy-production-mutation
+  cancel-in-progress: false
+
 jobs:
   cleanup:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 45
     steps:
       - name: Checkout cleanup scripts
         uses: actions/checkout@v4
@@ -29,6 +35,8 @@ jobs:
           sparse-checkout: |
             scripts/v1/ecr-cleanup.py
             scripts/v1/batch-jobdef-cleanup.py
+            scripts/v1/deployment_lock.py
+            docs/reports/release-manifest.latest.json
           sparse-checkout-cone-mode: false
 
       - name: Configure AWS credentials (OIDC)
@@ -39,6 +47,11 @@ jobs:
 
       - name: Install boto3 (for batch-jobdef-cleanup.py)
         run: pip install --quiet boto3
+
+      - name: Acquire shared production mutation lock
+        env:
+          ACADEMY_DEPLOY_LOCK_OWNER: weekly-cleanup:${{ github.run_id }}:${{ github.run_attempt }}
+        run: python3 scripts/v1/deployment_lock.py acquire --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 3600
 
       - name: ECR dry-run (log what would be deleted)
         run: python3 scripts/v1/ecr-cleanup.py --dry-run --keep 10
@@ -62,3 +75,9 @@ jobs:
           echo "**Trigger:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "**Keep policy:** ECR latest + 10 newest sha- · Batch latest 5 active revs/name" >> $GITHUB_STEP_SUMMARY
           echo "**Region:** ${{ env.AWS_REGION }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Release shared production mutation lock
+        if: always()
+        env:
+          ACADEMY_DEPLOY_LOCK_OWNER: weekly-cleanup:${{ github.run_id }}:${{ github.run_attempt }}
+        run: python3 scripts/v1/deployment_lock.py release --owner "$ACADEMY_DEPLOY_LOCK_OWNER"

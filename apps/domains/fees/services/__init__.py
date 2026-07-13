@@ -268,6 +268,11 @@ def record_payment(
         동일 키로 이미 성공한 납부가 있으면 기존 납부를 반환한다.
         키가 없어도 동일 invoice+금액+수단의 짧은 시간 내 중복을 방지한다.
     """
+    if type(amount) is not int or amount <= 0:
+        raise ValueError("납부 금액은 0보다 큰 정수여야 합니다.")
+    if not isinstance(idempotency_key, str) or len(idempotency_key) > 100:
+        raise ValueError("idempotency_key는 100자 이하 문자열이어야 합니다.")
+
     invoice = (
         StudentInvoice.objects
         .select_for_update()
@@ -287,8 +292,10 @@ def record_payment(
         ).first()
         if existing:
             logger.info(
-                "Duplicate payment blocked by idempotency_key=%s (existing payment %d)",
-                idempotency_key, existing.id,
+                "Duplicate payment blocked: tenant=%s invoice=%s existing_payment=%s",
+                tenant.id,
+                invoice.id,
+                existing.id,
             )
             return existing
         now = timezone.now()
@@ -340,7 +347,13 @@ def record_payment(
     # 완납 시 메시징 트리거
     if invoice.status == "PAID":
         transaction.on_commit(lambda: _send_payment_complete_notification(
-            tenant, invoice.student, billing_month=invoice.billing_month, amount=amount,
+            tenant,
+            invoice.student,
+            billing_year=invoice.billing_year,
+            billing_month=invoice.billing_month,
+            amount=amount,
+            invoice_id=invoice.id,
+            payment_id=payment.id,
         ))
 
     return payment
@@ -582,7 +595,16 @@ def _recalculate_invoice(invoice: StudentInvoice):
     invoice.save(update_fields=["paid_amount", "status", "paid_at", "updated_at"])
 
 
-def _send_payment_complete_notification(tenant, student, billing_month: int, amount: int):
+def _send_payment_complete_notification(
+    tenant,
+    student,
+    *,
+    billing_year: int,
+    billing_month: int,
+    amount: int,
+    invoice_id: int,
+    payment_id: int,
+):
     """수납 완료 알림 발송 (messaging 연동)."""
     try:
         from apps.support.fees.service_dependencies import send_event_notification
@@ -596,8 +618,8 @@ def _send_payment_complete_notification(tenant, student, billing_month: int, amo
                 "강의명": "-",
                 "차시명": "-",
                 "납부금액": f"{amount:,}원",
-                "청구월": f"{billing_month}월",
-                "_domain_object_id": f"payment_{student.id}_{billing_month}",
+                "청구월": f"{billing_year}년 {billing_month}월",
+                "_domain_object_id": f"payment:{invoice_id}:{payment_id}",
             },
         )
     except Exception:

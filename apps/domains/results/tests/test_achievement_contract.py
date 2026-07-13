@@ -19,6 +19,7 @@ from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.domains.clinic.tests import ClinicTestMixin
+from apps.core.models import TenantMembership
 from apps.domains.exams.models import Exam
 from apps.domains.progress.models import ClinicLink
 from apps.domains.results.models import ExamAttempt, Result
@@ -49,6 +50,11 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
         if hasattr(self.admin_user, "tenant_id"):
             self.admin_user.tenant_id = self.tenant.id
             self.admin_user.save(update_fields=["tenant_id"])
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=self.admin_user,
+            role="admin",
+        )
 
     # ──────────────────────────────
     # Helpers

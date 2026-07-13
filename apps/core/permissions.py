@@ -14,17 +14,9 @@ def _get_client_ip(request):
       - 신뢰 범위 밖이면 XFF는 위조 가능하므로 무시하고 REMOTE_ADDR 사용.
     설정이 비어 있으면 후방 호환을 위해 XFF 첫 값을 그대로 사용.
     """
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
-    remote = request.META.get("REMOTE_ADDR", "")
-    trusted = getattr(settings, "TRUSTED_PROXY_CIDRS", "") or ""
-    if not trusted:
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        return remote
-    # 설정이 있으면 REMOTE_ADDR 가 신뢰 프록시 안일 때만 XFF 신뢰
-    if forwarded and _ip_in_allowed_cidrs(remote, trusted):
-        return forwarded.split(",")[0].strip()
-    return remote
+    from apps.core.services.client_ip import get_client_ip
+
+    return get_client_ip(request)
 
 
 def _ip_in_allowed_cidrs(ip_str: str, allow_ips_setting: str) -> bool:
@@ -78,15 +70,8 @@ def is_effective_staff(user, tenant=None):
         return False
     if not tenant:
         return False
-    from academy.adapters.db.django import repositories_core as core_repo
-    if core_repo.membership_exists_staff(
-        tenant=tenant, user=user, staff_roles=("owner", "admin", "staff", "teacher")
-    ):
-        return True
-    # superuser/staff: 멤버십 없어도 자기 테넌트에는 접근 허용
-    if (user.is_superuser or user.is_staff) and getattr(user, "tenant_id", None) == tenant.id:
-        return True
-    return False
+    from apps.core.services.tenant_access import user_has_active_staff_access
+    return user_has_active_staff_access(user, tenant)
 
 
 class IsAdminOrStaff(BasePermission):
@@ -127,12 +112,11 @@ class IsStudent(BasePermission):
     message = "Student account required."
 
     def has_permission(self, request, view):
-        user = request.user
-        return bool(
-            user
-            and user.is_authenticated
-            and hasattr(user, "student_profile")
-        )
+        from apps.core.services.tenant_access import get_authorized_tenant_role
+        return get_authorized_tenant_role(
+            getattr(request, "user", None),
+            getattr(request, "tenant", None),
+        ) == "student"
 
 
 class TenantResolved(BasePermission):
@@ -159,7 +143,7 @@ class TenantResolvedAndMember(BasePermission):
 
     - request.tenant 가 resolve 되어야 함
     - 인증된 사용자
-    - 활성 TenantMembership 존재 OR User.tenant 일치
+    - 활성 TenantMembership 및 role별 유효 프로필 존재
 
     ❗ role 은 여기서 절대 해석하지 않음
     """
@@ -176,12 +160,8 @@ class TenantResolvedAndMember(BasePermission):
         if not user or not user.is_authenticated:
             return False
 
-        # Fast path: User.tenant 일치 (학생/학부모 등 tenant FK 직접 연결)
-        if getattr(user, "tenant_id", None) == tenant.id:
-            return True
-
-        from academy.adapters.db.django import repositories_core as core_repo
-        return core_repo.membership_exists(tenant=tenant, user=user, is_active=True)
+        from apps.core.services.tenant_access import user_has_active_tenant_access
+        return user_has_active_tenant_access(user, tenant)
 
 
 class TenantResolvedAndStaff(BasePermission):
@@ -206,13 +186,8 @@ class TenantResolvedAndStaff(BasePermission):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return False
-        from academy.adapters.db.django import repositories_core as core_repo
-        if core_repo.membership_exists_staff(tenant=tenant, user=user, staff_roles=self.STAFF_ROLES):
-            return True
-        # superuser/staff: 멤버십 없어도 자기 테넌트에는 접근 허용
-        if (user.is_superuser or user.is_staff) and getattr(user, "tenant_id", None) == tenant.id:
-            return True
-        return False
+        from apps.core.services.tenant_access import user_has_active_staff_access
+        return user_has_active_staff_access(user, tenant)
 
 
 class TenantResolvedAndOwner(BasePermission):
@@ -271,7 +246,8 @@ class IsPlatformAdmin(BasePermission):
         if not is_platform_admin_tenant(request):
             return False
         if user.is_superuser:
-            return True
+            from apps.core.services.tenant_access import user_has_active_tenant_access
+            return user_has_active_tenant_access(user, getattr(request, "tenant", None))
         from academy.adapters.db.django import repositories_core as core_repo
         tenant = getattr(request, "tenant", None)
         return core_repo.membership_exists_staff(

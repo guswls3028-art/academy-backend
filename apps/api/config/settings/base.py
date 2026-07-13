@@ -296,7 +296,7 @@ REST_FRAMEWORK = {
     ],
     "DEFAULT_AUTHENTICATION_CLASSES": [
         "apps.core.authentication.TokenVersionJWTAuthentication",
-        "rest_framework.authentication.SessionAuthentication",  # 브라우저 API 로그인용
+        "apps.core.authentication.TenantAwareSessionAuthentication",
     ],
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
@@ -307,7 +307,6 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/minute",
         "user": "300/minute",
-        "login": "10/minute",
         "sms_endpoint": "5/hour",
         "staff_password_reset": "60/hour",
         "signup_check": "30/minute",
@@ -507,9 +506,22 @@ BILLING_EXEMPT_TENANT_IDS: set[int] = {
 # Toss Payments (PG)
 TOSS_PAYMENTS_SECRET_KEY = os.getenv("TOSS_PAYMENTS_SECRET_KEY", "")
 TOSS_PAYMENTS_CLIENT_KEY = os.getenv("TOSS_PAYMENTS_CLIENT_KEY", "")
-TOSS_WEBHOOK_SECRET = os.getenv("TOSS_WEBHOOK_SECRET", "")
 # 자동결제 승인 API 사용 가능 여부 (추가 계약 필요, 계약 전이면 False)
 TOSS_AUTO_BILLING_ENABLED = os.getenv("TOSS_AUTO_BILLING_ENABLED", "").lower() in ("1", "true", "yes")
+BILLING_KEY_ENCRYPTION_WRITE_ENABLED = os.getenv(
+    "BILLING_KEY_ENCRYPTION_WRITE_ENABLED", ""
+).lower() in ("1", "true", "yes")
+# Billing credentials use a dedicated Fernet KEK, not Django SECRET_KEY. This
+# keeps application signing-key rotation independent from payment data and
+# permits a bidirectionally compatible two-refresh KEK rotation.
+BILLING_KEY_ENCRYPTION_PRIMARY_KEY = os.getenv(
+    "BILLING_KEY_ENCRYPTION_PRIMARY_KEY", ""
+).strip()
+BILLING_KEY_ENCRYPTION_FALLBACK_KEYS = tuple(
+    key.strip()
+    for key in os.getenv("BILLING_KEY_ENCRYPTION_FALLBACK_KEYS", "").split(",")
+    if key.strip()
+)
 
 # 유예 기간 (일) — 결제 실패 후 서비스 유지 기간
 BILLING_GRACE_PERIOD_DAYS = int(os.getenv("BILLING_GRACE_PERIOD_DAYS", "7"))

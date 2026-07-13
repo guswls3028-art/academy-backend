@@ -4,6 +4,7 @@
 """
 
 from decimal import Decimal
+from uuid import uuid4
 
 from django.db import models
 
@@ -56,10 +57,17 @@ class NotificationLog(models.Model):
         max_length=20, blank=True, default="sent",
         choices=[
             ("processing", "처리중"),
+            ("sending", "공급사 호출중"),
             ("sent", "발송완료"),
+            ("retryable_failed", "재시도 대기"),
             ("failed", "실패"),
+            ("ambiguous", "결과 확인 필요"),
         ],
-        help_text="발송 상태. processing=선점됨, sent=발송완료, failed=실패",
+        help_text=(
+            "발송 상태. processing=공급사 호출 전 선점, sending=공급사 호출 시작, "
+            "sent=발송 접수 완료, retryable_failed=공급사 호출 전 재시도 가능 실패, "
+            "failed=확정 실패, ambiguous=공급사 호출 결과 수동 확인 필요"
+        ),
     )
     claimed_at = models.DateTimeField(null=True, blank=True, help_text="Worker 선점 시각")
     batch_id = models.UUIDField(null=True, blank=True, db_index=True, help_text="수동 발송 배치 ID")
@@ -318,7 +326,8 @@ class ScheduledNotification(models.Model):
 
     class Status(models.TextChoices):
         PENDING = "pending", "대기"
-        SENT = "sent", "발송완료"
+        DISPATCHING = "dispatching", "큐 등록 중"
+        SENT = "sent", "큐 등록 완료"
         FAILED = "failed", "실패"
         CANCELLED = "cancelled", "취소"
 
@@ -331,6 +340,20 @@ class ScheduledNotification(models.Model):
     trigger = models.CharField(max_length=60, db_index=True)
     send_at = models.DateTimeField(db_index=True)
     payload = models.JSONField(help_text="enqueue_sms kwargs (to, text, message_mode, template_id, etc.)")
+    dispatch_key = models.UUIDField(
+        default=uuid4,
+        null=True,
+        editable=False,
+        help_text="예약/즉시 발송 아웃박스 행의 안정적인 dispatch 식별자",
+    )
+    business_idempotency_key = models.CharField(
+        max_length=64,
+        blank=True,
+        default="",
+        db_default="",
+        db_index=True,
+        help_text="enqueue 시 NotificationLog와 공유하는 SHA-256 business key",
+    )
     status = models.CharField(
         max_length=20,
         choices=Status.choices,
@@ -338,7 +361,14 @@ class ScheduledNotification(models.Model):
         db_index=True,
     )
     created_at = models.DateTimeField(auto_now_add=True)
-    sent_at = models.DateTimeField(null=True, blank=True)
+    sent_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="SQS가 발송 작업을 접수한 시각(공급사 최종 발송 시각이 아님)",
+    )
+    attempt_count = models.PositiveSmallIntegerField(default=0, db_default=0)
+    next_attempt_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
     error_message = models.CharField(max_length=500, blank=True, default="")
 
     class Meta:
@@ -348,4 +378,15 @@ class ScheduledNotification(models.Model):
         verbose_name_plural = "Scheduled notifications"
         indexes = [
             models.Index(fields=["status", "send_at"], name="idx_sched_notif_status_sendat"),
+            models.Index(
+                fields=["status", "next_attempt_at"],
+                name="idx_sched_notif_status_retry",
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["dispatch_key"],
+                condition=models.Q(dispatch_key__isnull=False),
+                name="uniq_sched_dispatch_key_not_null",
+            ),
         ]

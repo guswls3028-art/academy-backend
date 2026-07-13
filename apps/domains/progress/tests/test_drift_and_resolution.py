@@ -19,6 +19,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 
 from apps.domains.clinic.tests import ClinicTestMixin
+from apps.core.models import TenantMembership
 from apps.domains.exams.models import Exam
 from apps.domains.progress.models import (
     ClinicLink,
@@ -618,6 +619,11 @@ class StudentResultRemediatedTest(TestCase, ClinicTestMixin):
         self.enrollment = self.data["enrollments"][0]
         self.lec_session = self.data["lec_session"]
         self.student_user = self.enrollment.student.user
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=self.student_user,
+            role="student",
+        )
 
         self.exam = Exam.objects.create(
             tenant=self.tenant, title="MidTerm",

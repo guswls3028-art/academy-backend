@@ -89,12 +89,15 @@ def bulk_create_enrollments(*, tenant, lecture_id, student_ids) -> list[Enrollme
 
         if created_new and student:
             transaction.on_commit(
-                lambda t=tenant, s=student, title=lecture.title: send_event_notification(
+                lambda t=tenant, s=student, title=lecture.title, enrollment_id=obj.id: send_event_notification(
                     tenant=t,
                     trigger="class_enrollment_complete",
                     student=s,
                     send_to="parent",
-                    context={"강의명": title},
+                    context={
+                        "강의명": title,
+                        "_domain_object_id": f"enrollment:{enrollment_id}",
+                    },
                 )
             )
 

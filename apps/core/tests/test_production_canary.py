@@ -245,7 +245,7 @@ class ProductionCanaryTests(TestCase):
         self.assertEqual(check["data"]["mismatched_current_job"], 1)
         self.assertEqual(check["data"]["samples"][0]["current_job__tenant_id"], other_tenant.id)
 
-    @override_settings(TOSS_AUTO_BILLING_ENABLED=True, TOSS_PAYMENTS_SECRET_KEY="", TOSS_WEBHOOK_SECRET="")
+    @override_settings(TOSS_AUTO_BILLING_ENABLED=True, TOSS_PAYMENTS_SECRET_KEY="")
     def test_auto_billing_enabled_without_secret_fails(self):
         payload = self._call_expect_fail()
 

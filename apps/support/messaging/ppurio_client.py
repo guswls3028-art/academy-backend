@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid
-from typing import Optional
+from typing import Callable, Optional
 
 import requests
 from django.conf import settings
@@ -190,20 +190,33 @@ def send_ppurio_alimtalk(
     *,
     api_key: str = "",
     account: str = "",
+    before_provider_call: Optional[Callable[[], bool]] = None,
 ) -> dict:
     creds = _get_ppurio_credentials(api_key=api_key, account=account)
     if not creds["account"] or not creds["api_key"]:
-        return {"status": "error", "reason": "ppurio_not_configured"}
+        return {
+            "status": "error",
+            "reason": "ppurio_not_configured",
+            "provider_called": False,
+        }
 
     token, token_reason = _get_access_token_result(creds)
     if not token:
-        return {"status": "error", "reason": token_reason}
+        return {
+            "status": "error",
+            "reason": token_reason,
+            "provider_called": False,
+        }
 
     to = (to or "").replace("-", "").strip()
     sender = (sender or "").replace("-", "").strip()
 
     if not to or not pf_id or not template_id:
-        return {"status": "error", "reason": "to_pf_template_required"}
+        return {
+            "status": "error",
+            "reason": "to_pf_template_required",
+            "provider_called": False,
+        }
 
     if pf_id and not pf_id.startswith("@"):
         logger.warning(
@@ -211,7 +224,11 @@ def send_ppurio_alimtalk(
             "Ppurio requires @channelSearchId format. Solapi-format PFID is not compatible.",
             pf_id[:20],
         )
-        return {"status": "error", "reason": "invalid_sender_profile_format"}
+        return {
+            "status": "error",
+            "reason": "invalid_sender_profile_format",
+            "provider_called": False,
+        }
 
     refkey = _generate_refkey()
     target: dict = {"to": to}
@@ -236,7 +253,15 @@ def send_ppurio_alimtalk(
         "targets": [target],
     }
 
+    provider_called = False
     try:
+        if before_provider_call is not None and not before_provider_call():
+            return {
+                "status": "error",
+                "reason": "provider_boundary_claim_failed",
+                "provider_called": False,
+            }
+        provider_called = True
         resp = requests.post(
             f"{creds['api_url']}/v1/kakao",
             headers={
@@ -253,11 +278,38 @@ def send_ppurio_alimtalk(
                 "ppurio alimtalk ok to=%s**** refkey=%s messagekey=%s",
                 to[:4], refkey, messagekey,
             )
-            return {"status": "ok", "refkey": refkey, "messagekey": messagekey}
+            return {
+                "status": "ok",
+                "refkey": refkey,
+                "messagekey": messagekey,
+                "provider_called": True,
+                "provider_outcome": "accepted",
+            }
         code = data.get("code", "")
         reason = data.get("description") or data.get("message") or f"code={code}, http={resp.status_code}"
         logger.warning("ppurio alimtalk failed to=%s****: %s", to[:4], reason)
-        return {"status": "error", "reason": reason[:500]}
+        if resp.status_code >= 500:
+            # A non-idempotent provider may have accepted the message before a
+            # gateway/server error was returned. Never auto-retry this outcome.
+            return {
+                "status": "error",
+                "reason": reason[:500],
+                "provider_called": True,
+                "provider_outcome": "unknown",
+                "definitely_not_accepted": False,
+            }
+        return {
+            "status": "error",
+            "reason": reason[:500],
+            "provider_called": True,
+            "provider_outcome": "rejected",
+            "definitely_not_accepted": True,
+            "provider_retryable": False,
+        }
     except Exception as e:
         logger.exception("ppurio alimtalk exception to=%s****", to[:4])
-        return {"status": "error", "reason": str(e)[:500]}
+        return {
+            "status": "error",
+            "reason": str(e)[:500],
+            "provider_called": provider_called,
+        }

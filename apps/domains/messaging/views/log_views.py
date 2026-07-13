@@ -7,10 +7,10 @@ from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from django.db.models import Q
-
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import NotificationLog
+from apps.domains.messaging.security import sanitize_notification_target_id
+from apps.domains.messaging.selectors import notification_logs_for_business_tenant
 
 
 class NotificationLogListView(APIView):
@@ -23,13 +23,17 @@ class NotificationLogListView(APIView):
         offset = (page - 1) * page_size
         # status 필터: success / failure / all (기본 all)
         status_filter = (request.query_params.get("status") or "").strip().lower()
-        base_qs = NotificationLog.objects.filter(
-            Q(tenant=request.tenant) | Q(source_tenant=request.tenant)
-        )
+        base_qs = notification_logs_for_business_tenant(request.tenant)
         if status_filter == "success":
             base_qs = base_qs.filter(success=True)
         elif status_filter == "failure":
-            base_qs = base_qs.filter(success=False)
+            base_qs = base_qs.filter(success=False).exclude(
+                status__in=["processing", "sending", "retryable_failed", "ambiguous"]
+            )
+        elif status_filter in {
+            choice[0] for choice in NotificationLog._meta.get_field("status").choices
+        }:
+            base_qs = base_qs.filter(status=status_filter)
         qs = base_qs.order_by("-sent_at")[offset : offset + page_size]
         count = base_qs.count()
         items = [
@@ -49,7 +53,7 @@ class NotificationLogListView(APIView):
                 "notification_type": r.notification_type or "",
                 "source_tenant_id": r.source_tenant_id,
                 "target_type": r.target_type or "",
-                "target_id": r.target_id or "",
+                "target_id": sanitize_notification_target_id(r.target_id),
                 "target_name": r.target_name or "",
             }
             for r in qs
@@ -62,10 +66,7 @@ class NotificationLogDetailView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request, pk):
-        log = NotificationLog.objects.filter(
-            Q(tenant=request.tenant) | Q(source_tenant=request.tenant),
-            pk=pk,
-        ).first()
+        log = notification_logs_for_business_tenant(request.tenant).filter(pk=pk).first()
         if not log:
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
         return Response({
@@ -84,6 +85,6 @@ class NotificationLogDetailView(APIView):
             "notification_type": log.notification_type or "",
             "source_tenant_id": log.source_tenant_id,
             "target_type": log.target_type or "",
-            "target_id": log.target_id or "",
+            "target_id": sanitize_notification_target_id(log.target_id),
             "target_name": log.target_name or "",
         })

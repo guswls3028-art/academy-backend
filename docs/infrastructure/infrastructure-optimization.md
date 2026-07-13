@@ -512,7 +512,7 @@ No additional drain work needed.
 - No column renames/drops in single release
 - Two-release process for breaking schema changes
 - Migration runs before API instance refresh using the newly built SHA image in GitHub Actions.
-- **Safe failure state:** If migration succeeds but ASG deploy fails (health check failure), the system is in new-schema + old-code state. Because migrations are additive-only, old code continues to work correctly with the new schema. No manual migration rollback is needed in this case.
+- **Migration-before-runtime failure contract:** additive columns alone do not prove old-code compatibility; historical-ORM tests must prove old INSERT defaults/nullability and the migration itself must not emit states the old binary mutates incorrectly. If runtime deploy fails after a verified rolling-compatible migration, leave the schema in place and roll forward. Generic reverse migration and stateful image rollback remain prohibited.
 - **[COMPLETED] `CONN_HEALTH_CHECKS: True`** added to DATABASES settings in both `base.py` and `worker.py`. Without this, Django reuses stale DB connections after RDS recovery, causing post-recovery errors for up to 60 seconds (CONN_MAX_AGE=60).
 
 ---
@@ -574,31 +574,28 @@ No additional drain work needed.
 
 ### 9.1 SHA Rollback is a 2-Step Process **[COMPLETED]**
 
-**Problem:** SHA-based image rollback (re-tagging a previous `sha-XXXXXXXX` as `:latest` and refreshing ASG) only rolls back application code. It does NOT reverse database migrations. If the rolled-back code is incompatible with the new schema, the rollback will fail silently or cause runtime errors.
+**Problem:** Digest-pinned image rollback only rolls back application code. It does NOT reverse database migrations. If the rolled-back code is incompatible with the new schema, the rollback can still fail or cause runtime errors.
 
 **Mandatory rollback procedure:**
 
 ```
-Step 1: DECIDE — Does the migration need reversal?
-  ├── Migration was additive-only (new nullable column, new table)?
-  │   └── NO reversal needed. Old code ignores new columns. Proceed to Step 2.
-  ├── Migration changed existing column type/constraint?
-  │   └── YES — must reverse migration BEFORE rolling back code.
-  └── Migration dropped column/table?
-      └── CANNOT roll back without data loss. Escalate.
+Step 1: CLASSIFY THE SERVICE
+  ├── API or Messaging (persistent state-machine writer)?
+  │   └── Image rollback is fail-closed. Prepare a new immutable roll-forward build.
+  └── AI / Tools / isolated Video runtime?
+      └── Reviewed immutable-digest rollback is available.
 
-Step 2: REVERSE MIGRATION (if needed)
-  $ ssh into any API instance (or use SSM)
-  $ docker exec <container> python manage.py migrate <app_name> <previous_migration_number>
-  Example: docker exec academy-api python manage.py migrate exams 0008
+Step 2: DO NOT REVERSE MIGRATIONS BY DEFAULT
+  - A previous binary may not understand new persisted states even when columns are additive.
+  - A one-time DB/queue zero check cannot cover writes during an ASG rolling overlap.
+  - Reverse only under a migration-specific runbook with writer quiesce, RDS snapshot,
+    tested reverse contract, and post-restore verification.
 
-Step 3: ROLL BACK CODE (image re-tag + ASG refresh)
-  $ MANIFEST=$(aws ecr batch-get-image --repository-name academy-api \
-      --image-ids imageTag=sha-XXXXXXXX --query 'images[0].imageManifest' --output text)
-  $ aws ecr put-image --repository-name academy-api \
-      --image-tag latest --image-manifest "$MANIFEST"
-  $ aws autoscaling start-instance-refresh --auto-scaling-group-name academy-v1-api-asg \
-      --preferences '{"MinHealthyPercentage":100,"InstanceWarmup":300}'
+Step 3: RECOVER
+  $ git revert/cherry-pick the desired source into a new commit
+  $ push and build a new immutable release image (API/Messaging roll-forward)
+  # Runtime-isolated example only:
+  $ pwsh scripts/v1/rollback-ai.ps1 -Sha sha-XXXXXXXX -AwsProfile default
 
 Step 4: VERIFY
   - /healthz returns 200
@@ -612,10 +609,10 @@ Step 4: VERIFY
 New deployment has a bug. Should I roll back?
 │
 ├── Bug is in application logic only (no migration in this deploy)?
-│   └── Simple rollback: re-tag image + ASG refresh. Done.
+│   └── Run the service rollback script; it pins a prior digest and verifies refresh/runtime. Done.
 │
 ├── Deploy included an additive migration (new nullable column/table)?
-│   └── Simple rollback: re-tag image + ASG refresh.
+│   └── Run the service rollback script.
 │       Old code ignores new columns. No migration reversal needed.
 │
 ├── Deploy included a column rename, type change, or constraint change?

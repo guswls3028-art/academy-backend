@@ -6,7 +6,7 @@ from django.test import TestCase, override_settings
 from rest_framework.test import APIClient, APIRequestFactory
 
 from apps.api.common.auth_jwt import TenantAwareTokenObtainPairView
-from apps.core.models import PendingPasswordReset, Tenant
+from apps.core.models import PendingPasswordReset, Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.core.views.account_recovery import AccountRecoveryDispatchView
 from apps.domains.parents.models import Parent
@@ -35,6 +35,12 @@ class AccountRecoveryDispatchTests(TestCase):
             name="홍길동",
             phone="01011112222",
             parent_phone="01033334444",
+        )
+        TenantMembership.objects.create(
+            tenant=self.tenant,
+            user=self.user,
+            role="student",
+            is_active=True,
         )
 
     def _post(self, data: dict):

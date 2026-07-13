@@ -181,6 +181,17 @@ def soft_delete_student(
     with transaction.atomic():
         if not tenant or student.tenant_id != tenant.id:
             raise StudentLifecycleError("tenant_mismatch", "학생 테넌트가 일치하지 않습니다.")
+
+        original_username = None
+        locked_user = None
+        if student.user_id:
+            locked_user = get_user_model().objects.select_for_update().get(pk=student.user_id)
+            original_username = locked_user.username
+        student = Student.objects.select_for_update().select_related("user").get(pk=student.pk)
+        if locked_user is not None:
+            if student.user_id != locked_user.id:
+                raise StudentLifecycleError("user_changed", "학생 계정 연결이 변경되었습니다.")
+            student.user = locked_user
         if student.deleted_at:
             raise StudentLifecycleError("already_deleted", "이미 삭제된 학생입니다.")
 
@@ -204,23 +215,29 @@ def soft_delete_student(
                 exclude_student_ids=[student.id],
             )
             if student.user_id in cleanup_user_ids:
-                TenantMembership.objects.filter(
-                    user=student.user,
-                    tenant=tenant,
-                    role="student",
-                ).update(is_active=False)
-                has_active_membership = TenantMembership.objects.filter(
+                # Single-tenant deleted identities are mangled so a replacement
+                # student can reuse the identifier. Multi-tenant identities must
+                # remain stable for their surviving memberships.
+                has_other_membership = TenantMembership.objects.filter(
                     user=student.user,
                     is_active=True,
-                ).exists()
-                if not has_active_membership:
-                    student.user.is_active = False
-                    student.user.token_version = (student.user.token_version or 0) + 1
-                    user_update = ["is_active", "token_version"]
+                ).exclude(tenant=tenant).exists()
+                if has_other_membership and student.user.username != original_username:
+                    student.user.username = original_username
+                    student.user.save(update_fields=["username"])
+                from apps.core.services.tenant_access import deactivate_tenant_membership
+                reconciliation = deactivate_tenant_membership(
+                    user=student.user,
+                    tenant=tenant,
+                    allowed_roles=("student",),
+                )
+                if reconciliation and reconciliation.user_deactivated:
+                    user_update = []
                     if student.user.phone:
                         student.user.phone = None
                         user_update.append("phone")
-                    student.user.save(update_fields=user_update)
+                    if user_update:
+                        student.user.save(update_fields=user_update)
                     user_deactivated = True
 
         enrollment_count = deactivate_enrollments_for_student(tenant=tenant, student=student)
@@ -247,6 +264,14 @@ def restore_student(
     with transaction.atomic():
         if not tenant or student.tenant_id != tenant.id:
             raise StudentLifecycleError("tenant_mismatch", "학생 테넌트가 일치하지 않습니다.")
+        locked_user = None
+        if student.user_id:
+            locked_user = get_user_model().objects.select_for_update().get(pk=student.user_id)
+        student = Student.objects.select_for_update().select_related("user").get(pk=student.pk)
+        if locked_user is not None:
+            if student.user_id != locked_user.id:
+                raise StudentLifecycleError("user_changed", "학생 계정 연결이 변경되었습니다.")
+            student.user = locked_user
         if not student.deleted_at:
             raise StudentLifecycleError("not_deleted", "삭제된 학생이 아닙니다.")
 
@@ -273,16 +298,15 @@ def restore_student(
         user_reactivated = False
         if student.user:
             user_update = []
-            if not student.user.is_active:
-                student.user.is_active = True
-                user_update.append("is_active")
-                user_reactivated = True
+            user_reactivated = not student.user.is_active
             if not student.user.phone and student.phone:
                 student.user.phone = student.phone
                 user_update.append("phone")
             if user_update:
                 student.user.save(update_fields=user_update)
             TenantMembership.ensure_active(tenant=tenant, user=student.user, role="student")
+            from apps.core.services.tenant_access import reconcile_user_tenant_access
+            reconcile_user_tenant_access(student.user)
 
         parent_relinked = False
         if student.parent_phone:
@@ -325,6 +349,20 @@ def permanently_delete_students(
         return StudentPermanentDeleteResult(0, tuple(), tuple())
 
     with transaction.atomic():
+        candidate_user_ids = tuple(
+            Student.objects.filter(
+                tenant=tenant,
+                id__in=ids,
+                deleted_at__isnull=False,
+                user__isnull=False,
+            ).values_list("user_id", flat=True)
+        )
+        if candidate_user_ids:
+            list(
+                get_user_model().objects.select_for_update()
+                .filter(id__in=candidate_user_ids)
+                .order_by("id")
+            )
         to_delete = list(
             Student.objects.select_for_update().filter(
                 tenant=tenant,
@@ -408,20 +446,18 @@ def _reactivate_preserved_users_with_active_membership(user_ids: Iterable[int]) 
     if not ids:
         return
 
-    User = get_user_model()
     users = (
-        User.objects.filter(
+        get_user_model().objects.filter(
             id__in=ids,
             is_active=False,
             tenant_memberships__is_active=True,
         )
         .distinct()
-        .only("id", "is_active", "token_version")
+        .only("id")
     )
+    from apps.core.services.tenant_access import reconcile_user_tenant_access
     for user in users:
-        user.is_active = True
-        user.token_version = (user.token_version or 0) + 1
-        user.save(update_fields=["is_active", "token_version"])
+        reconcile_user_tenant_access(user)
 
 
 def _permanently_delete_selected_students(

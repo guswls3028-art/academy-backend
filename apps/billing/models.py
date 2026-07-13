@@ -26,6 +26,7 @@ INVOICE_STATUS_CHOICES = [
 
 PAYMENT_STATUS_CHOICES = [
     ("PENDING", "처리 중"),
+    ("PROCESSING", "공급사 처리 중"),
     ("SUCCESS", "성공"),
     ("FAILED", "실패"),
     ("REFUNDED", "환불"),
@@ -87,7 +88,7 @@ class BillingKey(TimestampModel):
     )
     provider = models.CharField(max_length=30, default="tosspayments")
     billing_key = models.CharField(
-        max_length=200, help_text="PG사 빌링키 (암호화 저장 권장)"
+        max_length=512, help_text="PG사 빌링키 (애플리케이션 암호화 저장)"
     )
     card_company = models.CharField(
         max_length=50, blank=True, help_text="카드사 (예: 삼성, 현대)"
@@ -117,6 +118,19 @@ class BillingKey(TimestampModel):
 
     def __str__(self):
         return f"BillingKey({self.tenant.code}, {self.card_number_masked})"
+
+    def save(self, *args, **kwargs):
+        # Defense in depth for admin or future sanctioned model writers. Bulk
+        # mutation remains intentionally outside this API and is audited.
+        from apps.billing.services.billing_key_crypto import encrypt_billing_key
+
+        encrypted_value = encrypt_billing_key(self.billing_key)
+        if encrypted_value != self.billing_key:
+            self.billing_key = encrypted_value
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = {*update_fields, "billing_key"}
+        super().save(*args, **kwargs)
 
 
 class BusinessProfile(TimestampModel):
@@ -309,6 +323,11 @@ class PaymentTransaction(TimestampModel):
     processed_at = models.DateTimeField(
         null=True, blank=True, help_text="처리 완료 시각"
     )
+    processing_started_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="중복 PG 호출 방지를 위해 공급사 호출권을 선점한 시각",
+    )
     reconciled_at = models.DateTimeField(
         null=True, blank=True, help_text="대사 완료 시각"
     )
@@ -324,6 +343,10 @@ class PaymentTransaction(TimestampModel):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["tenant", "status"]),
+            models.Index(
+                fields=["status", "processing_started_at"],
+                name="billing_tx_status_started_idx",
+            ),
         ]
 
     def __str__(self):

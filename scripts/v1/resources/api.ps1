@@ -29,7 +29,7 @@ else
 fi
 systemctl start docker
 systemctl enable docker
-# 2) ECR 로그인 및 이미지 Pull (재시도로 일시적 타임아웃 완화). 매 배포 최신 latest 강제 pull.
+# 2) ECR 로그인 및 digest-pinned 이미지 Pull (재시도로 일시적 타임아웃 완화).
 ecr_ok=false
 for attempt in 1 2 3 4 5; do
   if aws ecr get-login-password --region $Region 2>>"`$LOG" | docker login --username AWS --password-stdin $ecrHost 2>>"`$LOG"; then
@@ -52,7 +52,7 @@ if [ -n "$SsmApiEnvParam" ]; then
     [ -s /opt/api.env ] && API_ENV_FILE="--env-file /opt/api.env"
   fi
 fi
-# 4) 기존 academy-api 컨테이너 정리 후 최신 이미지로 실행 (강제 갱신)
+# 4) 기존 academy-api 컨테이너 정리 후 고정 digest 이미지로 실행
 docker stop academy-api 2>/dev/null || true
 docker rm academy-api 2>/dev/null || true
 if ! docker run -d --restart unless-stopped --name academy-api -p 8000:8000 `$API_ENV_FILE $ApiImageUri 2>>"`$LOG"; then
@@ -63,33 +63,16 @@ fi
     return $script.Trim()
 }
 
-# ECR academy-api: 당분간 useLatestTag면 latest만 사용, 아니면 non-latest 최신 1개.
+# ECR academy-api: legacy policy에서만 latest 허용. Production SSOT는 최신 sha-*를
+# digest로 해석하여 Launch Template userdata에 고정한다.
 function Get-LatestApiImageUri {
     $repo = $script:EcrApiRepo
     if (-not $repo) { return $null }
     if ($script:EcrUseLatestTag) {
-        $acc = $script:AccountId
-        $reg = $script:Region
-        return "${acc}.dkr.ecr.${reg}.amazonaws.com/${repo}:latest"
+        if ($script:EcrImmutableTagRequired) { throw "SSOT conflict: immutableTagRequired cannot be combined with useLatestTag." }
+        return "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/${repo}:latest"
     }
-    $list = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $repo, "--region", $script:Region, "--output", "json") 2>$null
-    if (-not $list -or -not $list.imageDetails -or $list.imageDetails.Count -eq 0) { return $null }
-    $nonLatest = @($list.imageDetails | Where-Object { $_.imageTags -and ($_.imageTags | Where-Object { $_ -ne "latest" }) } | ForEach-Object {
-        $tag = ($_.imageTags | Where-Object { $_ -ne "latest" } | Select-Object -First 1)
-        if ($tag) { [PSCustomObject]@{ Tag = $tag; Pushed = $_.imagePushedAt } }
-    } | Where-Object { $_ })
-    $tagToUse = $null
-    if ($nonLatest.Count -gt 0) {
-        $latest = $nonLatest | Sort-Object { $_.Pushed } -Descending | Select-Object -First 1
-        $tagToUse = $latest.Tag
-    } else {
-        $withLatest = $list.imageDetails | Where-Object { $_.imageTags -and ($_.imageTags -contains "latest") } | Select-Object -First 1
-        if ($withLatest) { $tagToUse = "latest" }
-    }
-    if (-not $tagToUse) { return $null }
-    $acc = $script:AccountId
-    $reg = $script:Region
-    return "${acc}.dkr.ecr.${reg}.amazonaws.com/${repo}:$tagToUse"
+    return Get-ImmutableEcrImageUri -RepoName $repo
 }
 
 function Get-APIASGInstanceIds {
@@ -150,6 +133,7 @@ function Invoke-RefreshApiEnvOnInstances {
 }
 
 # ci-build.latest.md의 현재 표 형식(| repo | tags | imageDigest |)을 파싱한다.
+# :latest는 호환 alias일 뿐 증거가 아니므로 parser 계약에 포함하지 않는다.
 function Get-CiBuildImageDigests {
     param([string]$Path)
 
@@ -167,12 +151,35 @@ function Get-CiBuildImageDigests {
     }
 
     foreach ($line in ($content -split "`r?`n")) {
-        if ($line -match '^\|\s*(academy-[^|\s]+)\s*\|\s*([^|]*\blatest\b[^|]*)\|\s*(sha256:[a-fA-F0-9]{64})\s*\|') {
+        if ($line -match '^\|\s*(academy-[^|\s]+)\s*\|\s*([^|]*)\|\s*(sha256:[a-fA-F0-9]{64})\s*\|') {
             $digests[$matches[1]] = $matches[3]
         }
     }
 
     return [PSCustomObject]@{ GitSha = $gitSha; Digests = $digests }
+}
+
+function Get-SuccessfulReleaseImageDigests {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
+        throw "Successful release manifest not found: $Path"
+    }
+    $manifest = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    if (
+        [int]$manifest.schemaVersion -ne 1 -or
+        -not [bool]$manifest.complete -or
+        [string]$manifest.status -ne "successful" -or
+        @($manifest.images.PSObject.Properties).Count -ne 6
+    ) {
+        throw "Release manifest is not complete/successful with exactly six images: $Path"
+    }
+    $digests = @{}
+    foreach ($property in $manifest.images.PSObject.Properties) {
+        $digest = [string]$property.Value.digest
+        if ($digest -notmatch '^sha256:[0-9a-f]{64}$') { throw "Invalid release digest: $($property.Name)=$digest" }
+        $digests[$property.Name] = $digest
+    }
+    return [PSCustomObject]@{ GitSha = [string]$manifest.gitSha; Digests = $digests }
 }
 
 function Format-RuntimeImageMarkdownCell {
@@ -184,7 +191,7 @@ function Format-RuntimeImageMarkdownCell {
 }
 
 # 배포 후 API 인스턴스에서 실제 실행 중인 이미지 digest 수집 → runtime-images.latest.md 기록.
-# ci-build.latest.md가 있으면 academy-api digest와 인스턴스별 런타임 RepoDigests를 비교한다.
+# successful release manifest의 academy-api digest와 인스턴스별 RepoDigests를 비교한다.
 function Invoke-CollectRuntimeImagesReport {
     param([switch]$PassThru)
 
@@ -298,8 +305,8 @@ fi
     } else {
         (Resolve-Path (Join-Path $PSScriptRoot "..\..\..")).Path
     }
-    $ciPath = Join-Path $repoRoot "docs\reports\ci-build.latest.md"
-    $ciReport = Get-CiBuildImageDigests -Path $ciPath
+    $ciPath = Join-Path $repoRoot "docs\reports\release-manifest.latest.json"
+    $ciReport = Get-SuccessfulReleaseImageDigests -Path $ciPath
     $ciDigest = $ciReport.Digests["academy-api"]
 
     foreach ($row in $rows) {
@@ -332,15 +339,15 @@ fi
     [void]$sb.AppendLine("**SSOT:** docs/ssot/params.yaml")
     [void]$sb.AppendLine("**Container:** $containerName")
     [void]$sb.AppendLine("")
-    [void]$sb.AppendLine("### CI vs Runtime")
+    [void]$sb.AppendLine("### Successful Release vs Runtime")
     if ($overallStatus -eq "PASS") {
-        [void]$sb.AppendLine("**PASS** — 모든 API 인스턴스가 ci-build.latest.md의 academy-api digest와 일치합니다.")
+        [void]$sb.AppendLine("**PASS** — 모든 API 인스턴스가 release-manifest.latest.json의 academy-api digest와 일치합니다.")
     } elseif ($overallStatus -eq "MISMATCH") {
-        [void]$sb.AppendLine("**MISMATCH** — 하나 이상의 API 인스턴스 런타임 RepoDigests가 CI digest와 다릅니다.")
+        [void]$sb.AppendLine("**MISMATCH** — 하나 이상의 API 인스턴스 런타임 RepoDigests가 성공 release digest와 다릅니다.")
     } else {
-        [void]$sb.AppendLine("**UNKNOWN** — CI digest 또는 런타임 RepoDigests를 완전히 확인하지 못했습니다.")
+        [void]$sb.AppendLine("**UNKNOWN** — 성공 release digest 또는 런타임 RepoDigests를 완전히 확인하지 못했습니다.")
     }
-    [void]$sb.AppendLine("- CI digest (academy-api): $(if ($ciDigest) { $ciDigest } else { 'not found' })")
+    [void]$sb.AppendLine("- Successful release digest (academy-api): $(if ($ciDigest) { $ciDigest } else { 'not found' })")
     [void]$sb.AppendLine("- Instance count: $($rows.Count)")
     [void]$sb.AppendLine("")
     [void]$sb.AppendLine("| InstanceId | Container | State | ConfigImage | ImageId | RepoDigests | CI Match | Error |")

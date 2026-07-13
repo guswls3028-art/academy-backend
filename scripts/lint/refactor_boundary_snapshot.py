@@ -257,6 +257,19 @@ def finding_identity(finding: Finding) -> tuple[str, str, str]:
     return (finding.kind, finding.path, finding.detail)
 
 
+def exclude_base_findings(
+    current_findings: list[Finding],
+    base_findings: list[Finding],
+) -> list[Finding]:
+    """Return only boundary identities introduced after the comparison ref."""
+    base_identities = {finding_identity(item) for item in base_findings}
+    return [
+        item
+        for item in current_findings
+        if finding_identity(item) not in base_identities
+    ]
+
+
 def read_git_file(ref: str, repo_path: str) -> str | None:
     result = subprocess.run(
         ["git", "-C", str(BACKEND_DIR), "show", f"{ref}:{repo_path}"],
@@ -329,6 +342,12 @@ def main() -> int:
     strict_touched = args.strict_touched
     if strict_touched:
         include_working_tree = args.include_working_tree or not args.base_ref and not args.touched_file
+        comparison_ref = args.base_ref
+        if comparison_ref is None and include_working_tree:
+            # The default command audits unstaged/staged/untracked changes. A
+            # safe edit to a legacy file must not inherit its unchanged debt;
+            # only identities newly introduced relative to HEAD are strict.
+            comparison_ref = "HEAD"
         try:
             touched_files = collect_touched_files(
                 base_ref=args.base_ref,
@@ -339,13 +358,12 @@ def main() -> int:
             print(f"error: could not resolve touched files: {exc}", file=sys.stderr)
             return 2
         strict_findings = strict_findings_for_paths(findings, touched_files)
-        if args.base_ref:
-            base_findings = collect_base_findings(args.base_ref, touched_files)
-            base_identities = {finding_identity(item) for item in base_findings}
-            strict_findings = [
-                item for item in strict_findings
-                if finding_identity(item) not in base_identities
-            ]
+        if comparison_ref:
+            base_findings = collect_base_findings(comparison_ref, touched_files)
+            strict_findings = exclude_base_findings(
+                strict_findings,
+                base_findings,
+            )
 
     payload = {
         "backend": str(BACKEND_DIR),

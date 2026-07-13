@@ -1,7 +1,11 @@
 # apps/domains/student_app/permissions.py
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.permissions import BasePermission
 
-from apps.core.models import TenantMembership
+from apps.core.services.tenant_access import (
+    get_active_membership_role,
+    get_authorized_tenant_role,
+)
 from apps.support.student_app.permission_dependencies import (
     active_students_for_parent,
     student_for_tenant_user,
@@ -13,20 +17,10 @@ class IsStudent(BasePermission):
     활성 학생 로그인 전용
     """
     def has_permission(self, request, view):
-        user = request.user
-        tenant = getattr(request, "tenant", None)
-        if tenant:
-            return bool(
-                user
-                and user.is_authenticated
-                and student_for_tenant_user(tenant, user, deleted="active")
-            )
-        return bool(
-            user
-            and user.is_authenticated
-            and hasattr(user, "student_profile")
-            and getattr(user.student_profile, "deleted_at", None) is None
-        )
+        return get_authorized_tenant_role(
+            getattr(request, "user", None),
+            getattr(request, "tenant", None),
+        ) == "student"
 
 
 class IsStudentOrParent(BasePermission):
@@ -42,11 +36,17 @@ class IsStudentOrParent(BasePermission):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return False
-        if student_for_tenant_user(tenant, user, deleted="active"):
-            return True
-        return TenantMembership.objects.filter(
-            tenant=tenant, user=user, is_active=True, role="parent"
-        ).exists()
+        return get_authorized_tenant_role(user, tenant) in ("student", "parent")
+
+
+def is_request_parent(request) -> bool:
+    """request tenant 안에서 학부모 역할인 요청인지 fail-closed 판별한다."""
+    user = getattr(request, "user", None)
+    tenant = getattr(request, "tenant", None)
+    if not user or not user.is_authenticated or not tenant:
+        return False
+
+    return get_authorized_tenant_role(user, tenant) == "parent"
 
 
 def get_request_student(request):
@@ -54,24 +54,32 @@ def get_request_student(request):
     요청자에 해당하는 Student 반환
     - 학생: request.tenant 기준 active Student
     - 학부모: X-Student-Id 헤더가 있으면 해당 자녀(삭제 제외 목록 내), 없으면 연결된 첫 번째 학생
+    - 명시된 자녀 ID가 비정상/미소유면 기본 자녀로 대체하지 않고 PermissionDenied
     """
     user = request.user
     tenant = getattr(request, "tenant", None)
     if not tenant:
         return None
+    role = get_active_membership_role(user, tenant)
     student = student_for_tenant_user(tenant, user, deleted="active")
-    if student:
+    if student and role == "student":
         return student
-    parent = getattr(user, "parent_profile", None)
-    if not parent:
+    has_explicit_child = "HTTP_X_STUDENT_ID" in request.META
+    if role != "parent":
         return None
+    parent = getattr(user, "parent_profile", None)
+    if not parent or getattr(parent, "tenant_id", None) != tenant.id:
+        raise PermissionDenied("선택한 자녀 정보를 확인할 수 없습니다.")
     active_students = active_students_for_parent(tenant, parent)
-    header_id = request.META.get("HTTP_X_STUDENT_ID")
-    if header_id:
+    if has_explicit_child:
+        header_id = request.META.get("HTTP_X_STUDENT_ID")
         try:
             sid = int(header_id)
-            return active_students.filter(id=sid).first()
         except (TypeError, ValueError):
-            pass
+            raise PermissionDenied("선택한 자녀 정보를 확인할 수 없습니다.")
+        selected = active_students.filter(id=sid).first()
+        if selected is None:
+            raise PermissionDenied("선택한 자녀 정보를 확인할 수 없습니다.")
+        return selected
     # Deterministic ordering: latest student ID first (prevents ambiguity when parent has multiple students)
     return active_students.order_by("-id").first()

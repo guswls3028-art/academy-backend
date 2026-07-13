@@ -747,6 +747,10 @@ class PostViewSet(viewsets.ModelViewSet):
             ctx = {
                 "강의명": (post.category_label or category_fallback),
                 "차시명": (post.title or ""),
+                "_domain_object_id": f"reply:{reply.id}",
+                "_source_domain": "community",
+                "_source_use_case": f"community.{post.post_type}_answered",
+                "_actor_id": str(getattr(request.user, "id", "") or ""),
             }
             trigger = "qna_answered" if post.post_type == "qna" else "counsel_answered"
             post_author_role = getattr(post, "author_role", "") or "student"

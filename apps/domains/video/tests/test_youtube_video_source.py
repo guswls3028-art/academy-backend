@@ -70,6 +70,11 @@ class YouTubeVideoSourceTests(TestCase):
             lecture=self.lecture,
             status="ACTIVE",
         )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=student_user,
+            role="student",
+        )
         return student_user, student, enrollment
 
     def _post_youtube(self, payload: dict):

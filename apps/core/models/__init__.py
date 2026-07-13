@@ -9,6 +9,7 @@ from .landing_consult import LandingConsultRequest
 from .landing_testimonial import LandingTestimonialSubmission
 from .ops_audit import OpsAuditLog
 from .worker_heartbeat import WorkerHeartbeatModel
+from .login_throttle import LoginThrottleBucket
 
 __all__ = [
     "Tenant",
@@ -24,4 +25,5 @@ __all__ = [
     "LandingTestimonialSubmission",
     "OpsAuditLog",
     "WorkerHeartbeatModel",
+    "LoginThrottleBucket",
 ]

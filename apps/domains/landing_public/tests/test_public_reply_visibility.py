@@ -6,6 +6,7 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.landing_public.api.views.reply_views import PublicPostReplyViewSet
 from apps.domains.landing_public.api.views.review_views import PublicReviewViewSet
 from apps.domains.landing_public.models import PublicBoardPost, PublicPostReply, PublicReview
+from apps.domains.students.test_support import create_student_fixture
 
 
 User = get_user_model()
@@ -28,6 +29,12 @@ class LandingPublicReplyVisibilityTests(TestCase):
             tenant=self.tenant,
         )
         TenantMembership.ensure_active(tenant=self.tenant, user=self.member, role="student")
+        create_student_fixture(
+            tenant=self.tenant,
+            user=self.member,
+            name="Member",
+            ps_number="LANDING-REPLY-1",
+        )
 
     def _reply_list(self, target: str):
         request = self.factory.get("/landing-public/replies/", {"target": target})

@@ -8,6 +8,7 @@ Billing API Views.
 
 import json
 import logging
+import re
 
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
@@ -16,8 +17,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.billing.adapters.toss_payments import verify_webhook_signature
-from apps.billing.models import Invoice, BillingKey, BillingProfile
+from apps.billing.models import BillingKey, BillingProfile, Invoice, PaymentTransaction
 from apps.billing.serializers import (
     BillingKeySerializer,
     BillingProfileSerializer,
@@ -67,9 +67,21 @@ class AdminTenantSubscriptionListView(APIView):
                 "plan": p.plan,
                 "plan_display": p.get_plan_display(),
                 "monthly_price": p.monthly_price,
+                "monthly_supply_amount": p.monthly_price,
+                "monthly_tax_amount": p.monthly_tax_amount,
+                "monthly_total_amount": p.monthly_total_amount,
+                "monthly_price_includes_tax": False,
+                "vat_rate_percent": p.BILLING_VAT_RATE_PERCENT,
+                "billing_price_policy": p.billing_price_policy,
+                "is_contract_price": p.is_contract_price,
+                "billing_price_integrity": p.billing_price_integrity,
+                "is_billing_price_ready": p.is_billing_price_ready,
                 "subscription_status": p.subscription_status,
                 "subscription_status_display": p.get_subscription_status_display(),
                 "subscription_expires_at": p.subscription_expires_at,
+                "service_access_expires_at": p.service_access_expires_at,
+                "grace_period_days": p.grace_period_days,
+                "grace_expires_at": p.grace_expires_at,
                 "days_remaining": p.days_remaining,
                 "billing_mode": p.billing_mode,
                 "cancel_at_period_end": p.cancel_at_period_end,
@@ -143,6 +155,15 @@ class AdminChangePlanView(APIView):
             "plan": program.plan,
             "plan_display": program.get_plan_display(),
             "monthly_price": program.monthly_price,
+            "monthly_supply_amount": program.monthly_price,
+            "monthly_tax_amount": program.monthly_tax_amount,
+            "monthly_total_amount": program.monthly_total_amount,
+            "monthly_price_includes_tax": False,
+            "vat_rate_percent": program.BILLING_VAT_RATE_PERCENT,
+            "billing_price_policy": program.billing_price_policy,
+            "is_contract_price": program.is_contract_price,
+            "billing_price_integrity": program.billing_price_integrity,
+            "is_billing_price_ready": program.is_billing_price_ready,
         })
 
 
@@ -201,25 +222,13 @@ class AdminMarkInvoicePaidView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # FAILED → PENDING 먼저
-        if inv.status == "FAILED":
-            invoice_service.retry_pending(inv.pk)
-
-        inv = invoice_service.mark_paid(inv.pk)
-        # 회계 대조 무결성: mark-paid 시 PaymentTransaction(SUCCESS, manual) 동시 생성.
-        from apps.billing.models import PaymentTransaction
-        import uuid
         try:
-            PaymentTransaction.objects.create(
-                tenant=getattr(inv, "tenant", None),
-                invoice=inv,
-                amount=inv.total_amount,
-                status="SUCCESS",
-                provider="manual",
-                idempotency_key=f"manual_admin_{inv.pk}_{uuid.uuid4().hex[:12]}",
+            inv = invoice_service.confirm_manual_payment(inv.pk)
+        except invoice_service.InvoiceTransitionError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
             )
-        except Exception as e:
-            logger.warning("PaymentTransaction(manual) create skipped for invoice %s: %s", inv.pk, e)
         record_audit(
             request,
             action="billing.invoice_paid",
@@ -240,17 +249,27 @@ class AdminDashboardView(APIView):
     def get(self, request):
         from datetime import timedelta
         from django.conf import settings
-        from django.db.models import Count, Sum
+        from django.db.models import Count
         from django.utils import timezone
 
         today = timezone.localdate()
         exempt = settings.BILLING_EXEMPT_TENANT_IDS
-        programs = Program.objects.exclude(tenant_id__in=exempt)
+        programs = Program.objects.exclude(tenant_id__in=exempt).filter(
+            tenant__is_active=True,
+            is_active=True,
+        )
 
         # MRR (active 테넌트 기준)
-        mrr = programs.filter(
-            subscription_status="active"
-        ).aggregate(total=Sum("monthly_price"))["total"] or 0
+        active_monthly_prices = list(
+            programs.filter(subscription_status="active").values_list(
+                "monthly_price", flat=True
+            )
+        )
+        mrr = sum(active_monthly_prices)
+        mrr_tax_amount = sum(
+            Program.calculate_monthly_amounts(price)["tax_amount"]
+            for price in active_monthly_prices
+        )
 
         # 상태별 테넌트 수
         status_counts = dict(
@@ -276,6 +295,11 @@ class AdminDashboardView(APIView):
 
         return Response({
             "mrr": mrr,
+            "mrr_supply_amount": mrr,
+            "mrr_tax_amount": mrr_tax_amount,
+            "mrr_total_amount": mrr + mrr_tax_amount,
+            "mrr_includes_tax": False,
+            "vat_rate_percent": Program.BILLING_VAT_RATE_PERCENT,
             "status_counts": status_counts,
             "expiring_soon": expiring_soon,
             "overdue_invoices": overdue_invoices,
@@ -395,6 +419,16 @@ class CardRegisterCallbackView(APIView):
 
         try:
             bk = billing_key_service.issue_billing_key(request.tenant.id, auth_key)
+        except billing_key_service.BillingCredentialUnavailable as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except billing_key_service.BillingProviderOutcomeUnknown as exc:
+            return Response(
+                {"detail": str(exc), "reconciliation_required": True},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -421,7 +455,23 @@ class CardDeleteView(APIView):
         except BillingKey.DoesNotExist:
             return Response({"detail": "Card not found"}, status=status.HTTP_404_NOT_FOUND)
 
-        success = billing_key_service.delete_billing_key(bk.id)
+        try:
+            success = billing_key_service.delete_billing_key(bk.id)
+        except billing_key_service.BillingCredentialUnavailable as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except billing_key_service.BillingProviderOutcomeUnknown as exc:
+            return Response(
+                {"detail": str(exc), "reconciliation_required": True},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except ValueError as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
         if not success:
             return Response(
                 {"detail": "카드 삭제에 실패했습니다. 잠시 후 다시 시도해 주세요."},
@@ -442,7 +492,7 @@ class CancelSubscriptionView(APIView):
         try:
             program = subscription_service.schedule_cancel(program.pk)
         except subscription_service.SubscriptionTransitionError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"detail": str(e)}, status=e.status_code)
 
         return Response({
             "cancel_at_period_end": program.cancel_at_period_end,
@@ -461,7 +511,10 @@ class RevokeCancelView(APIView):
 
     def post(self, request):
         program = request.tenant.program
-        program = subscription_service.revoke_cancel(program.pk)
+        try:
+            program = subscription_service.revoke_cancel(program.pk)
+        except subscription_service.SubscriptionTransitionError as exc:
+            return Response({"detail": str(exc)}, status=exc.status_code)
         return Response({
             "cancel_at_period_end": program.cancel_at_period_end,
             "message": "해지 예약이 철회되었습니다.",
@@ -469,7 +522,7 @@ class RevokeCancelView(APIView):
 
 
 # ══════════════════════════════════════════════
-# 3. Toss 웹훅 (공개 엔드포인트, HMAC 서명으로 검증)
+# 3. Toss 웹훅 (공개 이벤트 힌트, Toss Payment Query로 검증)
 # ══════════════════════════════════════════════
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -478,42 +531,72 @@ class TossWebhookView(APIView):
     POST /api/v1/billing/webhooks/toss/
 
     Toss 결제 상태 변경 웹훅.
-    - 인증: TossPayments-Signature 헤더의 HMAC-SHA256 서명 검증
+    - 신뢰 경계: payload는 orderId 힌트로만 사용하고 Toss API로 재조회
     - 멱등성: orderId 기준 PaymentTransaction 조회 + 종단 상태 보호
-    - 실패해도 2xx 반환 (Toss가 폭주 재시도하지 않도록 — 내부 로깅으로 추적)
+    - 공급사 조회 실패는 503으로 반환해 공식 webhook 재시도를 유도
     """
     permission_classes = [AllowAny]
     authentication_classes: list = []
+    from apps.api.common.throttles import TossWebhookThrottle
+    throttle_classes = [TossWebhookThrottle]
 
     def post(self, request):
         raw_body = request.body or b""
-        signature = (
-            request.META.get("HTTP_TOSSPAYMENTS_SIGNATURE")
-            or request.META.get("HTTP_X_TOSSPAYMENTS_SIGNATURE")
-            or request.META.get("HTTP_X_SIGNATURE")
-            or ""
-        )
-
-        if not verify_webhook_signature(raw_body, signature):
-            logger.warning("Toss webhook signature invalid. sig=%r len_body=%d",
-                           signature[:40], len(raw_body))
-            return Response({"detail": "Invalid signature"}, status=status.HTTP_401_UNAUTHORIZED)
-
         try:
             event = json.loads(raw_body.decode("utf-8") or "{}")
         except (UnicodeDecodeError, json.JSONDecodeError) as e:
             logger.warning("Toss webhook body not JSON: %s", e)
             return Response({"detail": "Invalid JSON"}, status=status.HTTP_400_BAD_REQUEST)
 
+        if not isinstance(event, dict):
+            return Response({"detail": "Invalid event payload"}, status=status.HTTP_400_BAD_REQUEST)
+
         event_type = event.get("eventType") or event.get("type") or ""
         data = event.get("data") or event  # Toss 일부 이벤트는 data 없이 flat 페이로드
+        if not isinstance(data, dict):
+            return Response({"detail": "Invalid payment payload"}, status=status.HTTP_400_BAD_REQUEST)
 
         logger.info("Toss webhook received: event=%s orderId=%s status=%s",
                     event_type, data.get("orderId"), data.get("status"))
 
-        is_flat_payment_status = not event_type and data.get("orderId") and data.get("status")
-        if event_type.upper() in ("PAYMENT.STATUS_CHANGED", "PAYMENT_STATUS_CHANGED", "PAYMENT") or is_flat_payment_status:
-            result = webhook_service.handle_payment_status(data)
+        if event_type.upper() == "PAYMENT_STATUS_CHANGED":
+            order_id = data.get("orderId")
+            if not isinstance(order_id, str):
+                return Response({"detail": "orderId is required"}, status=status.HTTP_400_BAD_REQUEST)
+            order_id = order_id.strip()
+            if not re.fullmatch(r"[A-Za-z0-9_-]{6,64}", order_id):
+                return Response(
+                    {"detail": "Invalid orderId"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # This endpoint is intentionally unauthenticated.  Reject unknown
+            # orders before the provider query so random input cannot consume
+            # Toss API capacity.  The webhook remains only a hint: known local
+            # orders are still verified authoritatively below.
+            local_order_exists = (
+                PaymentTransaction.objects.filter(
+                    provider_order_id=order_id,
+                ).exists()
+                or Invoice.objects.filter(provider_order_id=order_id).exists()
+            )
+            if not local_order_exists:
+                logger.info("Toss webhook unmatched local order")
+                return Response({"ok": True, "result": "unmatched"})
+            from apps.billing.adapters.toss_payments import TossPaymentsClient
+
+            verified = TossPaymentsClient().get_payment_by_order_id(order_id)
+            if not verified.get("success"):
+                logger.error(
+                    "Toss webhook query failed: orderId=%s code=%s",
+                    order_id,
+                    verified.get("error_code", ""),
+                )
+                return Response(
+                    {"detail": "Payment verification unavailable"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            result = webhook_service.handle_payment_status(verified)
             return Response({"ok": True, **result})
 
         # 알 수 없는 이벤트: 200 OK (Toss가 재시도하지 않도록) + 로그만

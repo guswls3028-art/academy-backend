@@ -5,6 +5,18 @@ $ErrorActionPreference = "Stop"
 
 function Get-ExpectedApiImageUriForDrift {
     if (-not $script:EcrApiRepo -or -not $script:AccountId -or -not $script:Region) { return "" }
+
+    if ($script:EcrImmutableTagRequired -and $script:EcrUseLatestTag) {
+        throw "Invalid ECR policy: immutableTagRequired=true cannot use :latest for API drift comparison."
+    }
+
+    if ($script:EcrImmutableTagRequired) {
+        $releaseImage = Get-ReleaseManifestImage -RepoName $script:EcrApiRepo
+        $resolved = Invoke-AwsJson @("ecr", "describe-images", "--repository-name", $script:EcrApiRepo, "--image-ids", "imageDigest=$($releaseImage.Digest)", "--region", $script:Region, "--output", "json") 2>$null
+        if (-not $resolved -or -not $resolved.imageDetails -or [string]@($resolved.imageDetails)[0].imageDigest -ne $releaseImage.Digest) { return "" }
+        return "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:EcrApiRepo)@$($releaseImage.Digest)"
+    }
+
     if ($script:EcrUseLatestTag) {
         return "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:EcrApiRepo):latest"
     }
@@ -19,7 +31,7 @@ function Get-ExpectedApiImageUriForDrift {
         $latest = $nonLatest | Sort-Object { $_.Pushed } -Descending | Select-Object -First 1
         return "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:EcrApiRepo):$($latest.Tag)"
     }
-    return "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($script:EcrApiRepo):latest"
+    return ""
 }
 
 function ConvertFrom-LaunchTemplateUserData {

@@ -13,13 +13,17 @@ from apps.domains.messaging.alimtalk_content_builders import (
     get_unified_for_category,
 )
 from apps.domains.messaging.effective_templates import resolve_effective_template_status
-from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, NotificationLog, ScheduledNotification
+from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, ScheduledNotification
 from apps.domains.messaging.policy import get_owner_tenant_id, get_trigger_implementation_status
+from apps.domains.messaging.selectors import (
+    HOURLY_SEND_LIMIT,
+    get_hourly_notification_usage,
+    notification_logs_for_business_tenant,
+)
 from apps.domains.messaging.services.recipients import resolve_student_message_recipients
 
 
 MAX_MANUAL_RECIPIENTS = 200
-HOURLY_SEND_LIMIT = 500
 WORKER_STALE_AFTER_MINUTES = 5
 
 
@@ -89,6 +93,17 @@ def _resolve_template_for_manual_send(tenant, data: dict[str, Any]) -> TemplateP
     unified_type, unified_sid = get_unified_for_category(category, template_name, extra_vars)
     if not unified_sid and block_category:
         unified_type, unified_sid = get_unified_for_category(block_category, template_name, extra_vars)
+    if unified_type and not unified_sid:
+        return TemplatePlan(
+            ok=False,
+            source="unified_missing",
+            name=template_name or "시스템 통합 알림톡",
+            detail=(
+                "이 발송 유형의 카카오 승인 봉투가 공급사에 등록되어 있지 않아 "
+                "현재 발송할 수 없습니다. 승인 SID 등록 후 다시 시도해 주세요."
+            ),
+            uses_unified_template=True,
+        )
     if unified_type and unified_sid:
         return TemplatePlan(
             ok=True,
@@ -226,8 +241,7 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
     if not template_plan.ok:
         blockers.append(PreflightIssue("template_not_ready", "템플릿 검수 필요", template_plan.detail))
 
-    one_hour_ago = timezone.now() - timedelta(hours=1)
-    recent_count = NotificationLog.objects.filter(tenant=tenant, sent_at__gte=one_hour_ago).count()
+    recent_count = get_hourly_notification_usage(tenant)
     remaining_hourly = max(0, HOURLY_SEND_LIMIT - recent_count)
     expected_dispatches = valid_phone
     if expected_dispatches > remaining_hourly:
@@ -312,20 +326,55 @@ def _latest_worker_heartbeat() -> dict[str, Any]:
 def build_messaging_operations_status(tenant) -> dict[str, Any]:
     now = timezone.now()
     since_24h = now - timedelta(hours=24)
+    since_1h = now - timedelta(hours=1)
     scheduled_qs = ScheduledNotification.objects.filter(tenant=tenant)
-    log_qs = NotificationLog.objects.filter(tenant=tenant, sent_at__gte=since_24h)
+    business_log_qs = notification_logs_for_business_tenant(tenant)
+    log_qs = business_log_qs.filter(sent_at__gte=since_24h)
+    unresolved_qs = business_log_qs.filter(status__in=["sending", "ambiguous"])
+    hourly_used = get_hourly_notification_usage(tenant, now=now)
 
     pending_qs = scheduled_qs.filter(status=ScheduledNotification.Status.PENDING)
+    ready_pending_qs = pending_qs.filter(
+        Q(next_attempt_at__isnull=True) | Q(next_attempt_at__lte=now)
+    )
+    retry_waiting = pending_qs.filter(next_attempt_at__gt=now).count()
+    dispatching_qs = scheduled_qs.filter(
+        status=ScheduledNotification.Status.DISPATCHING
+    )
+    stale_dispatching = dispatching_qs.filter(
+        Q(last_attempt_at__isnull=True)
+        | Q(last_attempt_at__lte=now - timedelta(minutes=5))
+    ).count()
     failed_scheduled_24h = scheduled_qs.filter(
         status=ScheduledNotification.Status.FAILED,
-        created_at__gte=since_24h,
+    ).filter(
+        Q(last_attempt_at__gte=since_24h)
+        | Q(last_attempt_at__isnull=True, created_at__gte=since_24h)
     ).count()
     pending = pending_qs.count()
-    overdue = pending_qs.filter(send_at__lte=now - timedelta(minutes=2)).count()
-    due_now = pending_qs.filter(send_at__lte=now).count()
+    overdue = ready_pending_qs.filter(
+        send_at__lte=now - timedelta(minutes=2)
+    ).count()
+    due_now = ready_pending_qs.filter(send_at__lte=now).count()
 
     processing = log_qs.filter(status="processing").count()
-    failed = log_qs.filter(Q(success=False) | Q(status="failed")).exclude(status="processing").count()
+    recent_sending = log_qs.filter(status="sending").count()
+    retryable_failed = log_qs.filter(status="retryable_failed").count()
+    recent_ambiguous = log_qs.filter(status="ambiguous").count()
+    sending = unresolved_qs.filter(status="sending").count()
+    ambiguous = unresolved_qs.filter(status="ambiguous").count()
+    action_required = sending + ambiguous
+    unresolved_under_1h = unresolved_qs.filter(sent_at__gte=since_1h).count()
+    unresolved_1h_to_24h = unresolved_qs.filter(
+        sent_at__gte=since_24h,
+        sent_at__lt=since_1h,
+    ).count()
+    unresolved_over_24h = unresolved_qs.filter(
+        Q(sent_at__lt=since_24h) | Q(sent_at__isnull=True)
+    ).count()
+    failed = log_qs.filter(success=False).exclude(
+        status__in=["processing", "sending", "retryable_failed", "ambiguous"]
+    ).count()
     sent = log_qs.filter(success=True).count()
 
     auto_configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template")
@@ -333,15 +382,40 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
     enabled_without_template = 0
     enabled_unapproved_template = 0
     enabled_manual_only = 0
+    enabled_issues: list[dict[str, str]] = []
     for config in enabled_configs:
         if get_trigger_implementation_status(config.trigger) != "implemented":
             enabled_manual_only += 1
+            enabled_issues.append(
+                {
+                    "trigger": config.trigger,
+                    "code": "trigger_not_implemented",
+                    "detail": "자동발송 실행 경로가 구현 상태가 아닙니다.",
+                }
+            )
         effective_template = resolve_effective_template_status(config)
         if not effective_template.solapi_template_id:
             enabled_without_template += 1
+            enabled_issues.append(
+                {
+                    "trigger": config.trigger,
+                    "code": "provider_template_missing",
+                    "detail": (
+                        "매핑된 카카오 승인 봉투 SID가 공급사에 없습니다. "
+                        "이 트리거는 fail-closed 상태입니다."
+                    ),
+                }
+            )
             continue
         if not effective_template.is_approved:
             enabled_unapproved_template += 1
+            enabled_issues.append(
+                {
+                    "trigger": config.trigger,
+                    "code": "provider_template_unapproved",
+                    "detail": "연결된 카카오 봉투가 승인 상태가 아닙니다.",
+                }
+            )
 
     approved_count = MessageTemplate.objects.filter(tenant=tenant, solapi_status="APPROVED").count()
     owner_id = get_owner_tenant_id()
@@ -352,10 +426,37 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
     risks: list[dict[str, str]] = []
     if overdue:
         risks.append({"code": "scheduled_overdue", "title": "예약 지연", "detail": f"예약 {overdue}건이 예정 시각을 지났습니다."})
+    if stale_dispatching:
+        risks.append(
+            {
+                "code": "scheduled_dispatch_stale",
+                "title": "큐 등록 상태 확인",
+                "detail": f"큐 등록 중 상태가 5분을 넘긴 예약이 {stale_dispatching}건입니다.",
+            }
+        )
     if failed or failed_scheduled_24h:
         risks.append({"code": "recent_failures", "title": "최근 실패", "detail": f"최근 24시간 실패 로그 {failed}건, 예약 실패 {failed_scheduled_24h}건입니다."})
+    if action_required:
+        risks.append(
+            {
+                "code": "provider_outcome_ambiguous",
+                "title": "공급사 결과 확인 필요",
+                "detail": (
+                    "공급사 호출 경계에 있거나 결과를 확정하지 못한 발송이 "
+                    f"{action_required}건(sending {sending}, ambiguous {ambiguous})입니다. "
+                    "중복 방지를 위해 자동 재발송하지 않았습니다."
+                ),
+            }
+        )
     heartbeat = _latest_worker_heartbeat()
-    if heartbeat["status"] in {"unknown", "stale"} and not pending and not due_now and not processing:
+    if (
+        heartbeat["status"] in {"unknown", "stale"}
+        and not pending
+        and not due_now
+        and not dispatching_qs.exists()
+        and not processing
+        and not sending
+    ):
         heartbeat = {
             **heartbeat,
             "status": "idle",
@@ -379,13 +480,35 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
             "pending": pending,
             "due_now": due_now,
             "overdue": overdue,
+            "retry_waiting": retry_waiting,
+            "dispatching": dispatching_qs.count(),
+            "stale_dispatching": stale_dispatching,
             "failed_24h": failed_scheduled_24h,
         },
         "log_24h": {
             "sent": sent,
             "failed": failed,
             "processing": processing,
+            "sending": recent_sending,
+            "retryable_failed": retryable_failed,
+            "ambiguous": recent_ambiguous,
+            "action_required": recent_sending + recent_ambiguous,
             "total": log_qs.count(),
+        },
+        "unresolved": {
+            "sending": sending,
+            "ambiguous": ambiguous,
+            "action_required": action_required,
+            "age_buckets": {
+                "under_1h": unresolved_under_1h,
+                "from_1h_to_24h": unresolved_1h_to_24h,
+                "over_24h": unresolved_over_24h,
+            },
+        },
+        "rate_limit_hourly": {
+            "limit": HOURLY_SEND_LIMIT,
+            "used": hourly_used,
+            "remaining": max(0, HOURLY_SEND_LIMIT - hourly_used),
         },
         "templates": {
             "approved": approved_count,
@@ -398,6 +521,7 @@ def build_messaging_operations_status(tenant) -> dict[str, Any]:
             "enabled_without_template": enabled_without_template,
             "enabled_unapproved_template": enabled_unapproved_template,
             "enabled_manual_only": enabled_manual_only,
+            "issues": enabled_issues,
         },
         "risks": risks,
     }

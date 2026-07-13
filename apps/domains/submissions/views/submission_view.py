@@ -46,6 +46,7 @@ from apps.support.submissions.dependencies import (
     enrollment_belongs_to_tenant,
     exam_question_number_by_id,
     get_synced_exam_score,
+    request_is_parent,
     student_owns_enrollment,
     target_belongs_to_tenant,
     target_enrollment_assignment_exists,
@@ -190,7 +191,7 @@ class SubmissionViewSet(ModelViewSet):
         # parent_profile 존재 = 학부모 토큰. student_profile이 없는 부모 계정은 제출 차단.
         # (학부모-학생 겸용 계정은 student_profile이 있으므로 학생 흐름으로 통과)
         from rest_framework.exceptions import PermissionDenied
-        is_parent = getattr(self.request.user, "parent_profile", None) is not None
+        is_parent = request_is_parent(self.request)
         is_student = getattr(self.request.user, "student_profile", None) is not None
         if is_parent and not is_student:
             raise PermissionDenied("학부모 계정은 시험/과제 제출 권한이 없습니다.")

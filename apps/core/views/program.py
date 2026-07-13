@@ -10,6 +10,7 @@ from drf_yasg.utils import swagger_auto_schema
 
 from apps.core.permissions import (
     TenantResolved,
+    TenantResolvedAndMember,
     TenantResolvedAndStaff,
     is_effective_staff,
 )
@@ -123,19 +124,11 @@ class ProgramView(APIView):
 class SubscriptionView(APIView):
     """
     GET /api/v1/core/subscription/
-    현재 tenant의 구독 정보 반환. 로그인 전에도 접근 가능 (AllowAny + TenantResolved).
-    프론트에서 구독 상태 UI, 결제 탭, 만료 알림에 사용.
+    현재 tenant의 구독 정보 반환.
+    인증된 활성 tenant member만 접근 가능하며 가격·청구·일정은 staff에게만 공개한다.
     """
 
-    permission_classes = [AllowAny, TenantResolved]
-
-    _BILLING_FIELDS = (
-        "billing_email",
-        "billing_mode",
-        "next_billing_at",
-        "cancel_at_period_end",
-        "canceled_at",
-    )
+    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
 
     @swagger_auto_schema(auto_schema=None)
     def get(self, request):
@@ -150,42 +143,57 @@ class SubscriptionView(APIView):
                 status=404,
             )
 
-        # Promo/discount calculation
-        from apps.core.models.program import Program as ProgramModel
-        original_price = ProgramModel.PLAN_PRICES.get(program.plan, program.monthly_price)
-        is_promo = program.monthly_price < original_price
-        discount_rate = round((1 - program.monthly_price / original_price) * 100) if is_promo and original_price > 0 else 0
+        payload = {
+            "is_subscription_active": program.is_subscription_active,
+            "tenant_code": tenant.code,
+            "tenant_name": tenant.name or "",
+        }
 
-        # 해지 예약 상태 표시
+        if not is_effective_staff(getattr(request, "user", None), tenant):
+            return Response(payload)
+
+        # monthly_price is a VAT-exclusive compatibility field.  The explicit
+        # breakdown below is the canonical staff UI/consumer contract.
+        monthly_amounts = program.monthly_amounts
+        list_amounts = program.list_monthly_amounts
+        is_promo = program.billing_price_policy == "promotion"
         if program.cancel_at_period_end:
             status_display = f"{program.get_subscription_status_display()} (해지 예약)"
         else:
             status_display = program.get_subscription_status_display()
 
-        payload = {
+        payload.update({
             "plan": program.plan,
             "plan_display": program.get_plan_display(),
             "monthly_price": program.monthly_price,
-            "original_price": original_price,
+            "monthly_supply_amount": monthly_amounts["supply_amount"],
+            "monthly_tax_amount": monthly_amounts["tax_amount"],
+            "monthly_total_amount": monthly_amounts["total_amount"],
+            "monthly_price_includes_tax": False,
+            "vat_rate_percent": program.BILLING_VAT_RATE_PERCENT,
+            "original_price": program.list_monthly_price,
+            "list_monthly_supply_amount": list_amounts["supply_amount"],
+            "list_monthly_tax_amount": list_amounts["tax_amount"],
+            "list_monthly_total_amount": list_amounts["total_amount"],
             "is_promo": is_promo,
-            "discount_rate": discount_rate,
+            "discount_rate": program.monthly_discount_rate,
             "subscription_status": program.subscription_status,
             "subscription_status_display": status_display,
             "subscription_started_at": str(program.subscription_started_at) if program.subscription_started_at else None,
             "subscription_expires_at": str(program.subscription_expires_at) if program.subscription_expires_at else None,
-            "is_subscription_active": program.is_subscription_active,
+            "service_access_expires_at": str(program.service_access_expires_at) if program.service_access_expires_at else None,
+            "grace_period_days": program.grace_period_days,
+            "grace_expires_at": str(program.grace_expires_at) if program.grace_expires_at else None,
             "days_remaining": program.days_remaining,
-            "tenant_code": tenant.code,
-            "tenant_name": tenant.name or "",
-        }
-
-        if is_effective_staff(getattr(request, "user", None), tenant):
-            payload.update({
-                "billing_email": program.billing_email,
-                "billing_mode": program.billing_mode,
-                "next_billing_at": str(program.next_billing_at) if program.next_billing_at else None,
-                "cancel_at_period_end": program.cancel_at_period_end,
-                "canceled_at": str(program.canceled_at) if program.canceled_at else None,
-            })
+            "billing_email": program.billing_email,
+            "billing_mode": program.billing_mode,
+            "billing_price_policy": program.billing_price_policy,
+            "is_contract_price": program.is_contract_price,
+            "billing_price_integrity": program.billing_price_integrity,
+            "is_billing_price_ready": program.is_billing_price_ready,
+            "next_billing_at": str(program.next_billing_at) if program.next_billing_at else None,
+            "cancel_at_period_end": program.cancel_at_period_end,
+            "canceled_at": str(program.canceled_at) if program.canceled_at else None,
+        })
 
         return Response(payload)

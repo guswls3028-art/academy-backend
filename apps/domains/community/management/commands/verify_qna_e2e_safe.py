@@ -71,6 +71,8 @@ class Command(BaseCommand):
             sys.exit(1)
 
         token = RefreshToken.for_user(user)
+        token["tenant_id"] = tenant_id
+        token["token_version"] = getattr(user, "token_version", 0) or 0
         access = str(token.access_token)
         headers = {
             "Authorization": f"Bearer {access}",

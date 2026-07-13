@@ -52,10 +52,20 @@ class DevDashboardSummaryView(APIView):
         )
 
         # ── Billing ──
-        program_qs = Program.objects.exclude(tenant_id__in=exempt_ids)
-        mrr = program_qs.filter(subscription_status="active").aggregate(
-            total=Sum("monthly_price"),
-        )["total"] or 0
+        program_qs = Program.objects.exclude(tenant_id__in=exempt_ids).filter(
+            tenant__is_active=True,
+            is_active=True,
+        )
+        active_monthly_prices = list(
+            program_qs.filter(subscription_status="active").values_list(
+                "monthly_price", flat=True
+            )
+        )
+        mrr = sum(active_monthly_prices)
+        mrr_tax_amount = sum(
+            Program.calculate_monthly_amounts(price)["tax_amount"]
+            for price in active_monthly_prices
+        )
         expiring_7d = program_qs.filter(
             subscription_status="active",
             subscription_expires_at__lte=today + timedelta(days=7),
@@ -143,6 +153,11 @@ class DevDashboardSummaryView(APIView):
             },
             "billing": {
                 "mrr": mrr,
+                "mrr_supply_amount": mrr,
+                "mrr_tax_amount": mrr_tax_amount,
+                "mrr_total_amount": mrr + mrr_tax_amount,
+                "mrr_includes_tax": False,
+                "vat_rate_percent": Program.BILLING_VAT_RATE_PERCENT,
                 "expiring_7d": expiring_7d,
                 "overdue_invoices": overdue_invoices,
                 "paid_30d": paid_30d,

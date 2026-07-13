@@ -2,8 +2,8 @@
 IsLambdaInternal 권한의 X-Forwarded-For 신뢰 경계 회귀 테스트.
 
 검증 항목:
-- TRUSTED_PROXY_CIDRS 미설정: 후방 호환 — XFF 첫 값 사용.
-- TRUSTED_PROXY_CIDRS 설정 + REMOTE_ADDR 가 신뢰 범위: XFF 첫 값 사용.
+- TRUSTED_PROXY_CIDRS 미설정: XFF를 무시하고 직접 peer 사용.
+- TRUSTED_PROXY_CIDRS 설정 + REMOTE_ADDR 가 신뢰 범위: 오른쪽부터 첫 비신뢰 hop 사용.
 - TRUSTED_PROXY_CIDRS 설정 + REMOTE_ADDR 가 신뢰 범위 밖: REMOTE_ADDR 사용 (XFF 무시).
 """
 
@@ -24,10 +24,10 @@ def _req(remote_addr: str, xff: str | None = None) -> HttpRequest:
 class TestGetClientIp(TestCase):
 
     @override_settings(TRUSTED_PROXY_CIDRS="")
-    def test_xff_used_when_no_trusted_proxy_setting(self):
-        # 후방 호환: 설정 없으면 XFF 첫 값 그대로 사용.
+    def test_xff_ignored_when_no_trusted_proxy_setting(self):
+        # 신뢰 프록시가 명시되지 않으면 caller-supplied XFF를 신뢰하지 않는다.
         ip = _get_client_ip(_req("203.0.113.1", "10.0.0.5, 8.8.8.8"))
-        self.assertEqual(ip, "10.0.0.5")
+        self.assertEqual(ip, "203.0.113.1")
 
     @override_settings(TRUSTED_PROXY_CIDRS="172.30.0.0/16")
     def test_xff_used_when_remote_in_trusted_range(self):

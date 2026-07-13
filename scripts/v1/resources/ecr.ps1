@@ -38,9 +38,46 @@ function Ensure-ECRRepos {
         if (-not $r -or -not $r.repositories) {
             Write-Host "  Creating $repo" -ForegroundColor Yellow
             $script:ChangesMade = $true
-            Invoke-Aws @("ecr", "create-repository", "--repository-name", $repo, "--region", $script:Region) -ErrorMessage "create-repository $repo" | Out-Null
+            Invoke-Aws @(
+                "ecr", "create-repository",
+                "--repository-name", $repo,
+                "--image-tag-mutability", "IMMUTABLE_WITH_EXCLUSION",
+                "--image-tag-mutability-exclusion-filters", "filterType=WILDCARD,filter=latest",
+                "--region", $script:Region
+            ) -ErrorMessage "create-repository $repo" | Out-Null
+        } else {
+            $current = @($r.repositories)[0]
+            $filters = @($current.imageTagMutabilityExclusionFilters)
+            $isExact = (
+                [string]$current.imageTagMutability -eq "IMMUTABLE_WITH_EXCLUSION" -and
+                $filters.Count -eq 1 -and
+                [string]$filters[0].filterType -eq "WILDCARD" -and
+                [string]$filters[0].filter -eq "latest"
+            )
+            if (-not $isExact) {
+                Invoke-Aws @(
+                    "ecr", "put-image-tag-mutability",
+                    "--repository-name", $repo,
+                    "--image-tag-mutability", "IMMUTABLE_WITH_EXCLUSION",
+                    "--image-tag-mutability-exclusion-filters", "filterType=WILDCARD,filter=latest",
+                    "--region", $script:Region
+                ) -ErrorMessage "put-image-tag-mutability $repo" | Out-Null
+                $script:ChangesMade = $true
+            }
         }
-        Write-Ok $repo
+        $verified = Invoke-AwsJson @("ecr", "describe-repositories", "--repository-names", $repo, "--region", $script:Region, "--output", "json")
+        $verifiedRepo = @($verified.repositories)[0]
+        $verifiedFilters = @($verifiedRepo.imageTagMutabilityExclusionFilters)
+        if (
+            -not $verifiedRepo -or
+            [string]$verifiedRepo.imageTagMutability -ne "IMMUTABLE_WITH_EXCLUSION" -or
+            $verifiedFilters.Count -ne 1 -or
+            [string]$verifiedFilters[0].filterType -ne "WILDCARD" -or
+            [string]$verifiedFilters[0].filter -ne "latest"
+        ) {
+            throw "ECR repository $repo must be immutable with a single latest-only exclusion."
+        }
+        Write-Ok "$repo (sha-* immutable; latest mutable compatibility alias)"
     }
     foreach ($repo in $script:SSOT_ECR) {
         Set-ECRLifecyclePolicy -RepositoryName $repo

@@ -18,6 +18,7 @@ from ..serializers import (
     StaffCreateUpdateSerializer,
     WorkRecordSerializer,
 )
+from ..services import start_work_record
 from academy.adapters.db.django import repositories_staffs as staff_repo
 from academy.adapters.db.django import repositories_core as core_repo
 from academy.adapters.db.django import repositories_teachers as teacher_repo
@@ -325,9 +326,6 @@ class StaffViewSet(viewsets.ModelViewSet):
         if is_month_locked(staff, now.date()):
             raise ValidationError("마감된 월입니다.")
 
-        if staff_repo.work_record_filter_open(staff).exists():
-            raise ValidationError("이미 근무 중입니다.")
-
         work_type_id = request.data.get("work_type")
         if not work_type_id:
             raise ValidationError("work_type은 필수입니다.")
@@ -338,7 +336,7 @@ class StaffViewSet(viewsets.ModelViewSet):
         ).exists():
             raise ValidationError({"work_type": "선택한 근무 유형이 유효하지 않습니다."})
 
-        record = staff_repo.work_record_create_start(
+        record = start_work_record(
             staff=staff,
             work_type_id=work_type_id,
             date=now.date(),

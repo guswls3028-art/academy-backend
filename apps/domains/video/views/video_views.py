@@ -23,7 +23,6 @@ from rest_framework.parsers import (
 )
 from django_filters.rest_framework import DjangoFilterBackend
 
-from apps.core.authentication import TokenVersionJWTAuthentication as JWTAuthentication
 from apps.core.models import Tenant
 from apps.core.parsing import parse_bool
 
@@ -40,8 +39,6 @@ from academy.adapters.storage.r2_objects import head_object
 
 from apps.core.r2_paths import video_raw_key
 from apps.core.permissions import IsStudent, TenantResolvedAndStaff
-from apps.core.authentication import CsrfExemptSessionAuthentication
-
 from academy.adapters.db.django import repositories_video as video_repo
 from apps.support.video.view_dependencies import (
     clinic_highlight_map_for_video_stats,
@@ -167,10 +164,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
     parser_classes = [JSONParser]
 
-    authentication_classes = [
-        JWTAuthentication,
-        CsrfExemptSessionAuthentication,
-    ]
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
@@ -196,6 +189,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         "create",
         "update",
         "partial_update",
+        "reorder",
         "destroy",
         "public_session",
         "delete_folder",
@@ -267,6 +261,162 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
         instance.delete()
         logger.info("Video soft-deleted: video_id=%s", video_id)
 
+    @transaction.atomic
+    @action(detail=False, methods=["post"], url_path="reorder")
+    def reorder(self, request):
+        """Atomically update video ordering within the current tenant."""
+        from apps.domains.video.models import Video
+
+        items = request.data.get("items")
+        if not isinstance(items, list) or not items:
+            return Response(
+                {"detail": "items에 한 개 이상의 영상 순서를 보내 주세요."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(items) > 500:
+            return Response(
+                {"detail": "한 번에 최대 500개 영상의 순서를 변경할 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        normalized = []
+        for item in items:
+            if not isinstance(item, dict):
+                return Response(
+                    {"detail": "각 순서 항목은 id와 order를 포함해야 합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            video_id = item.get("id")
+            order = item.get("order")
+            if type(video_id) is not int or type(order) is not int or video_id <= 0 or order <= 0:
+                return Response(
+                    {"detail": "id와 order는 1 이상의 정수여야 합니다."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            normalized.append((video_id, order))
+
+        video_ids = [video_id for video_id, _ in normalized]
+        orders = [order for _, order in normalized]
+        if len(set(video_ids)) != len(video_ids):
+            return Response(
+                {"detail": "같은 영상이 순서 요청에 두 번 포함되었습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(set(orders)) != len(orders):
+            return Response(
+                {"detail": "영상 순서는 중복될 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        requested_videos = list(
+            Video.objects
+            .filter(tenant=request.tenant, id__in=video_ids)
+            .only("id", "session_id", "folder_id")
+            .order_by("id")
+        )
+        if len(requested_videos) != len(video_ids):
+            return Response(
+                {"detail": "존재하지 않거나 다른 학원 소속인 영상이 포함되어 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        collection_keys = {
+            (
+                ("folder", video.folder_id)
+                if video.folder_id is not None
+                else ("session", video.session_id)
+                if video.session_id is not None
+                else ("orphan", None)
+            )
+            for video in requested_videos
+        }
+        if len(collection_keys) != 1:
+            return Response(
+                {"detail": "서로 다른 차시 또는 폴더의 영상 순서를 한 번에 변경할 수 없습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        collection_type, collection_id = next(iter(collection_keys))
+        if collection_type == "orphan":
+            return Response(
+                {"detail": "영상은 차시 또는 폴더에 속해야 합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # All reorder requests for a collection lock the same parent first. This
+        # prevents disjoint subsets of one collection from acquiring Video rows
+        # in opposite order and deadlocking each other.
+        if collection_type == "session":
+            locked_parents = video_repo.lock_sessions_by_ids([collection_id])
+            collection_filter = {
+                "session_id": collection_id,
+                "folder_id__isnull": True,
+            }
+        else:
+            locked_parents = video_repo.lock_video_folders_by_ids([collection_id])
+            # Public-folder uploads intentionally retain session for legacy
+            # access resolution. Folder is the ordering SSOT when present.
+            collection_filter = {"folder_id": collection_id}
+        if len(locked_parents) != 1:
+            return Response(
+                {"detail": "영상이 속한 차시 또는 폴더를 찾을 수 없습니다."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        collection_qs = Video.objects.select_for_update().filter(
+            tenant=request.tenant,
+            **collection_filter,
+        )
+        collection = list(
+            collection_qs.only("id", "order", "session_id", "folder_id").order_by("id")
+        )
+        collection_by_id = {video.id: video for video in collection}
+        if any(video_id not in collection_by_id for video_id in video_ids):
+            return Response(
+                {"detail": "영상 소속이 변경되어 순서를 저장하지 못했습니다. 다시 시도해 주세요."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        order_by_id = dict(normalized)
+        resulting_orders = [
+            order_by_id.get(video.id, video.order)
+            for video in collection
+        ]
+        if len(set(resulting_orders)) != len(resulting_orders):
+            return Response(
+                {
+                    "detail": (
+                        "변경하지 않은 영상을 포함하면 순서가 중복됩니다. "
+                        "같은 차시 또는 폴더의 충돌하는 영상 순서를 함께 보내 주세요."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        # A direct 1↔2 bulk_update violates an immediate PostgreSQL unique
+        # constraint row-by-row.  Move the whole locked collection to a
+        # collision-free range first, then write the validated final mapping.
+        final_order_by_id = {
+            video.id: order_by_id.get(video.id, video.order)
+            for video in collection
+        }
+        temporary_base = (
+            max(
+                [video.order for video in collection]
+                + list(final_order_by_id.values())
+            )
+            + len(collection)
+            + 1
+        )
+        for index, video in enumerate(collection, start=1):
+            video.order = temporary_base + index
+        Video.objects.bulk_update(collection, ["order"], batch_size=500)
+        for video in collection:
+            video.order = final_order_by_id[video.id]
+        Video.objects.bulk_update(collection, ["order"], batch_size=500)
+
+        return Response({"updated": len(video_ids)}, status=status.HTTP_200_OK)
+
     # ==================================================
     # upload/init
     # ==================================================
@@ -314,11 +464,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         tenant_id = tenant.id
-        # same session 내 동시 업로드 시 order max+1 충돌 방지
-        session = lock_session_for_video_upload(session)
-        order = (
-            session.videos.aggregate(max_order=models.Max("order")).get("max_order") or 0
-        ) + 1
 
         ext = filename.split(".")[-1].lower() if "." in filename else "mp4"
         key = video_raw_key(
@@ -330,7 +475,6 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         # 시스템 강의(공개 영상 컨테이너)인 경우 visibility=PUBLIC 자동 설정
         is_public = getattr(session.lecture, "is_system", False)
-        folder = None
         folder_id = request.data.get("folder")
         if folder_id not in (None, ""):
             if not is_public:
@@ -339,7 +483,12 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             try:
-                folder = VideoFolder.objects.get(pk=folder_id, tenant=tenant)
+                # Folder is the ordering SSOT.  Resolve and lock it before any
+                # session lock so upload and reorder serialize on one parent.
+                folder = VideoFolder.objects.select_for_update().get(
+                    pk=folder_id,
+                    tenant=tenant,
+                )
             except (TypeError, ValueError, VideoFolder.DoesNotExist):
                 return Response(
                     {"detail": "폴더를 찾을 수 없습니다."},
@@ -350,6 +499,25 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     {"detail": "선택한 폴더가 이 공개 영상 영역에 속하지 않습니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            order = (
+                Video.objects.filter(tenant=tenant, folder=folder)
+                .aggregate(max_order=models.Max("order"))
+                .get("max_order")
+                or 0
+            ) + 1
+        else:
+            folder = None
+            session = lock_session_for_video_upload(session)
+            order = (
+                Video.objects.filter(
+                    tenant=tenant,
+                    session=session,
+                    folder__isnull=True,
+                )
+                .aggregate(max_order=models.Max("order"))
+                .get("max_order")
+                or 0
+            ) + 1
 
         # uploaded_by: 업로드한 스태프 (인코딩 완료 알림 대상)
         uploaded_by_staff = None
@@ -438,13 +606,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        session = lock_session_for_video_upload(session)
-        order = (
-            session.videos.aggregate(max_order=models.Max("order")).get("max_order") or 0
-        ) + 1
-
         is_public = getattr(session.lecture, "is_system", False)
-        folder = None
         folder_id = request.data.get("folder")
         if folder_id not in (None, ""):
             if not is_public:
@@ -453,7 +615,10 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
             try:
-                folder = VideoFolder.objects.get(pk=folder_id, tenant=tenant)
+                folder = VideoFolder.objects.select_for_update().get(
+                    pk=folder_id,
+                    tenant=tenant,
+                )
             except (TypeError, ValueError, VideoFolder.DoesNotExist):
                 return Response(
                     {"detail": "폴더를 찾을 수 없습니다."},
@@ -464,6 +629,25 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                     {"detail": "선택한 폴더가 이 공개 영상 영역에 속하지 않습니다."},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
+            order = (
+                Video.objects.filter(tenant=tenant, folder=folder)
+                .aggregate(max_order=models.Max("order"))
+                .get("max_order")
+                or 0
+            ) + 1
+        else:
+            folder = None
+            session = lock_session_for_video_upload(session)
+            order = (
+                Video.objects.filter(
+                    tenant=tenant,
+                    session=session,
+                    folder__isnull=True,
+                )
+                .aggregate(max_order=models.Max("order"))
+                .get("max_order")
+                or 0
+            ) + 1
 
         uploaded_by_staff = None
         try:
@@ -1460,6 +1644,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
 
         return Response(VideoFolderSerializer(folder).data, status=status.HTTP_201_CREATED)
 
+    @transaction.atomic
     @action(
         detail=False,
         methods=["delete"],
@@ -1474,7 +1659,7 @@ class VideoViewSet(VideoPlaybackMixin, ModelViewSet):
                 status=status.HTTP_403_FORBIDDEN,
             )
         try:
-            folder = VideoFolder.objects.get(
+            folder = VideoFolder.objects.select_for_update().get(
                 id=folder_id,
                 tenant=tenant,
             )

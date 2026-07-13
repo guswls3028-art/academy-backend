@@ -86,9 +86,21 @@ class DevTenantUsageView(APIView):
                 "plan": program.plan,
                 "plan_display": program.get_plan_display(),
                 "monthly_price": program.monthly_price,
+                "monthly_supply_amount": program.monthly_price,
+                "monthly_tax_amount": program.monthly_tax_amount,
+                "monthly_total_amount": program.monthly_total_amount,
+                "monthly_price_includes_tax": False,
+                "vat_rate_percent": program.BILLING_VAT_RATE_PERCENT,
+                "billing_price_policy": program.billing_price_policy,
+                "is_contract_price": program.is_contract_price,
+                "billing_price_integrity": program.billing_price_integrity,
+                "is_billing_price_ready": program.is_billing_price_ready,
                 "subscription_status": program.subscription_status,
                 "subscription_status_display": program.get_subscription_status_display(),
                 "subscription_expires_at": str(program.subscription_expires_at) if program.subscription_expires_at else None,
+                "service_access_expires_at": str(program.service_access_expires_at) if program.service_access_expires_at else None,
+                "grace_period_days": program.grace_period_days,
+                "grace_expires_at": str(program.grace_expires_at) if program.grace_expires_at else None,
                 "next_billing_at": str(program.next_billing_at) if program.next_billing_at else None,
                 "days_remaining": program.days_remaining,
                 "cancel_at_period_end": program.cancel_at_period_end,
@@ -228,10 +240,9 @@ class DevImpersonateView(APIView):
             return Response({"detail": "사용자 비활성 상태."}, status=403)
 
         refresh = RefreshToken.for_user(target)
-        # 학원 격리: tenant_id 클레임 필수
-        if target.tenant_id is not None:
-            refresh["tenant_id"] = target.tenant_id
-            refresh.access_token["tenant_id"] = target.tenant_id
+        # 학원 격리: 검증한 요청 테넌트에 토큰을 직접 바인딩한다.
+        refresh["tenant_id"] = tenant.id
+        refresh.access_token["tenant_id"] = tenant.id
         # token_version
         tv = getattr(target, "token_version", 0) or 0
         refresh["token_version"] = tv

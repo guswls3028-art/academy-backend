@@ -49,6 +49,21 @@ def teacher_create(tenant, name, phone, is_active: bool = True):
     )
 
 
+def teacher_ensure_active_by_name_phone(tenant, name, phone):
+    from apps.domains.teachers.models import Teacher
+
+    teacher, _ = Teacher.objects.get_or_create(
+        tenant=tenant,
+        name=name,
+        phone=phone or "",
+        defaults={"is_active": True},
+    )
+    if not teacher.is_active:
+        teacher.is_active = True
+        teacher.save(update_fields=["is_active"])
+    return teacher
+
+
 def teacher_update_name_phone(tenant, old_name, old_phone, new_name, new_phone):
     """Staff 이름/전화 변경 시 대응하는 Teacher 레코드도 동기화."""
     from apps.domains.teachers.models import Teacher

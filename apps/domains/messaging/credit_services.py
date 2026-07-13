@@ -60,17 +60,80 @@ def rollback_credits(tenant_id: int, amount: str | Decimal) -> Decimal:
         return tenant.credit_balance
 
 
+def reserve_notification_credits(
+    *,
+    notification_log_id: int,
+    tenant_id: int,
+    amount: str | Decimal,
+) -> Decimal:
+    """
+    Idempotently reserve credits for a claimed notification.
+
+    The balance mutation and NotificationLog marker share one transaction, so
+    a worker restart before the provider call cannot charge the same business
+    dispatch twice.
+    """
+    from apps.domains.messaging.models import NotificationLog
+
+    amt = Decimal(str(amount))
+    if amt <= 0:
+        return Tenant.objects.get(pk=tenant_id).credit_balance
+    with transaction.atomic():
+        notification = NotificationLog.objects.select_for_update().get(
+            pk=notification_log_id,
+            tenant_id=tenant_id,
+        )
+        if notification.amount_deducted == amt:
+            return Tenant.objects.get(pk=tenant_id).credit_balance
+        if notification.amount_deducted != Decimal("0"):
+            raise ValueError("notification_credit_reservation_mismatch")
+
+        tenant = Tenant.objects.select_for_update().get(pk=tenant_id)
+        if tenant.credit_balance < amt:
+            raise ValueError("insufficient_balance")
+        tenant.credit_balance -= amt
+        tenant.save(update_fields=["credit_balance"])
+        notification.amount_deducted = amt
+        notification.save(update_fields=["amount_deducted"])
+        return tenant.credit_balance
+
+
+def rollback_notification_credits(
+    *,
+    notification_log_id: int,
+    tenant_id: int,
+) -> Decimal:
+    """Idempotently release credits reserved on a claimed notification."""
+    from apps.domains.messaging.models import NotificationLog
+
+    with transaction.atomic():
+        notification = NotificationLog.objects.select_for_update().get(
+            pk=notification_log_id,
+            tenant_id=tenant_id,
+        )
+        amount = notification.amount_deducted
+        tenant = Tenant.objects.select_for_update().get(pk=tenant_id)
+        if amount <= 0:
+            return tenant.credit_balance
+        tenant.credit_balance += amount
+        tenant.save(update_fields=["credit_balance"])
+        notification.amount_deducted = Decimal("0")
+        notification.save(update_fields=["amount_deducted"])
+        return tenant.credit_balance
+
+
 def get_tenant_messaging_info(tenant_id: int) -> Optional[dict]:
     """워커/API용: 테넌트 메시징 정보 (잔액, PFID, 발신번호, 단가).
     messaging_is_active는 표시용 반환만 하며, 발송 차단 정책에는 미사용(policy.can_send_sms 등 기준)."""
     t = Tenant.objects.filter(pk=tenant_id).values(
-        "kakao_pfid", "credit_balance", "messaging_is_active", "messaging_base_price",
+        "is_active", "kakao_pfid", "credit_balance", "messaging_is_active", "messaging_base_price",
         "messaging_sender", "messaging_provider",
     ).first()
     if not t:
         return None
     sender = (t.get("messaging_sender") or "").strip()
     return {
+        "tenant_is_active": bool(t["is_active"]),
         "kakao_pfid": t["kakao_pfid"] or None,
         "credit_balance": str(t["credit_balance"]),
         "is_active": t["messaging_is_active"],

@@ -436,8 +436,8 @@ DLQ: `academy-v1-messaging-queue-dlq` (line 54)
 | Layer | 위치 | 메커니즘 |
 |-------|------|----------|
 | Layer 1: Redis Lock | sqs_main.py:373 | `acquire_job_lock(f"messaging:{message_id}")` - SQS MessageId 기준. Redis 장애 시 fail-closed (메시지 SQS에 남겨 재시도) |
-| Layer 2: DB Claim | sqs_main.py:517-541 | `claim_notification_slot()` - business_idempotency_key 기준 UniqueConstraint. 이미 claimed면 삭제 후 스킵 |
-| Layer 3: Legacy DB Dedup | sqs_main.py:547-562 | `sqs_message_id` + `success=True` 존재 확인 (Layer 2 미사용 시 폴백) |
+| Layer 2: DB Claim | `repositories_messaging.py` | `claim_notification_slot()` - business_idempotency_key 기준 UniqueConstraint. 공급사 호출 전 `processing`, 호출 경계부터 `sending`으로 분리 |
+| Layer 3: Legacy Key Guard | `sqs_main.py` | producer key가 없는 legacy payload도 SQS MessageId+canonical payload SHA-256 키를 만들어 DB claim을 반드시 거침 |
 
 ### business_idempotency_key 구조
 
@@ -452,8 +452,35 @@ SHA-256(canonical) -> 64자 hex
 - `source_tenant_id`: 원 업무 tenant. owner 직접 발송이면 빈 문자열
 - `channel`: "alimtalk"만 신규 발송 가능
 - `event_type`: 트리거명 또는 "manual_send"
-- `occurrence_key`: 호출자 지정 또는 현재 시각(초 단위)
+- `occurrence_key`: 도메인 호출자 지정 키. 수동 즉시/예약 발송은 DB dispatch UUID에서 만든 안정 키
 - DB UniqueConstraint: `(tenant, message_mode, business_idempotency_key)` where `business_idempotency_key > ""` (models.py:64-68)
+
+### DB dispatch(outbox) 상태와 SQS 재시도
+
+- 수동 즉시 발송과 예약/지연 발송은 모두 `ScheduledNotification` 행을 먼저 만든다.
+- 상태는 `pending → dispatching → sent` 순서다. 여기서 `sent`/`sent_at`은 **SQS 접수 완료**이며 공급사 최종 발송 성공이 아니다.
+- `dispatch_key`는 행마다 고유한 UUID이고 payload의 `occurrence_key=dispatch:<uuid>`로 고정된다. 폴러/프로세스가 재시작되어 같은 행을 다시 enqueue해도 business key는 바뀌지 않는다.
+- SQS enqueue가 실패하면 영구 실패로 닫지 않는다. 30초부터 지수 백오프하며 최대 8회 시도 후 `failed`가 된다. 입력 누락, SMS 차단, `MessagingPolicyError`는 즉시 terminal `failed`다.
+- `dispatching`이 5분 이상이면 죽은 폴러 claim으로 보고 회수한다. 외부 SQS 호출은 DB transaction과 row lock 밖에서 실행한다.
+- `operations/status`는 `retry_waiting`, `dispatching`, `stale_dispatching`을 별도로 노출한다.
+
+### 워커 provider 상태와 exactly-once 경계
+
+`NotificationLog.status` 상태 전이는 아래가 정본이다.
+
+| 상태 | 의미 | 자동 재시도 |
+|---|---|---|
+| `processing` | business key 선점, 공급사 호출 전 | stale 또는 명시적 `retryable_failed`만 가능 |
+| `sending` | 비멱등 공급사 호출 경계를 DB에 먼저 기록 | 금지 |
+| `sent` | 공급사가 접수를 성공 응답하고 DB 확정 | 금지 |
+| `retryable_failed` | 공급사 호출 전 확정된 일시 실패 | 가능 |
+| `failed` | 설정/템플릿/권한 등 확정 실패 | 금지 |
+| `ambiguous` | 공급사 호출 후 timeout/통신 오류로 접수 여부 불명 | 금지, 운영자 확인 |
+
+- DB, SQS, 외부 공급사 사이에는 공통 transaction이 없고 공급사가 공식 idempotency 계약을 제공하지 않으므로 수학적인 exactly-once는 불가능하다.
+- 중복 발송 방지를 우선해 `sending` 이후에는 워커 재시작, 같은 SQS 재전달, 다른 SQS MessageId의 중복 전달 모두 공급사를 다시 호출하지 않는다. 같은 SQS 메시지가 재전달되면 provider 응답 저장 실패/worker 중단으로 간주해 `sending→ambiguous`를 원자 반영하고 기존 차감액을 유지한다.
+- 대가는 at-most-once 모호 구간이다. 현재 `sending` DB 기록부터 실제 발송 endpoint 호출 전까지 Solapi는 보통 짧은 client 준비 구간이고, Ppurio는 token preflight timeout 최대 10초를 포함한다. 호출 후 응답 모호 구간은 Ppurio request timeout 최대 15초다. 이 구간 crash/timeout은 `ambiguous`이며 자동 재발송하지 않는다.
+- 크레딧 예약은 `NotificationLog.amount_deducted`와 tenant 잔액을 한 transaction에서 기록하고, 재선점/롤백도 멱등 처리한다. `ambiguous`는 실제 접수 가능성이 있어 자동 환불하지 않는다.
 
 ### _domain_object_id
 
@@ -499,6 +526,8 @@ SHA-256(canonical) -> 64자 hex
 - 예약 취소 Double Check: `reservation_id` 있으면 발송 직전 DB 확인 (sqs_main.py:441-457)
 - 잔액 검증: 발송 전 잔액 < 단가이면 스킵 (sqs_main.py:564-596)
 - 테넌트 ID 필수: `tenant_id` 없으면 메시지 삭제 (sqs_main.py:414-425)
+- `sending`/`ambiguous` 결과는 자동 재발송 금지. `operations/status.log_24h.action_required`(`sending + ambiguous`)와 `provider_outcome_ambiguous` risk로 확인
+- 결제 `notice_payment`처럼 논리 매핑은 있으나 provider SID가 없는 유형은 preflight와 실제 send 모두 `unified_template_unavailable`로 fail-close. 과거 tenant template SID로 fallback 금지
 
 ### 금지 패턴
 

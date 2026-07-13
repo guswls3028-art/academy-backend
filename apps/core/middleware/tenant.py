@@ -93,7 +93,7 @@ class TenantMiddleware:
             payload = {
                 "detail": "tenant resolution failed",
                 "code": "server_error",
-                "message": str(e),
+                "message": "일시적인 서비스 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.",
             }
             if host:
                 payload["host"] = host.split(":")[0].strip().lower()
@@ -150,13 +150,28 @@ def _is_subscription_exempt_path(path: str) -> bool:
 def _check_subscription(tenant, request) -> JsonResponse | None:
     """
     구독 만료 검사.
-    - Program이 없으면 통과 (하위 호환)
+    - 비면제 tenant에 Program이 없으면 구성 오류로 503 fail-closed
     - 만료 시 402 Payment Required 반환
     """
     try:
+        if tenant.id in set(
+            getattr(settings, "BILLING_EXEMPT_TENANT_IDS", set()) or set()
+        ):
+            return None
         program = getattr(tenant, "program", None)
         if program is None:
-            return None  # Program 없으면 통과
+            logger.critical(
+                "Subscription Program missing for non-exempt tenant id=%s code=%s",
+                tenant.id,
+                tenant.code,
+            )
+            return JsonResponse(
+                {
+                    "detail": "구독 정보를 확인할 수 없습니다. 관리자에게 문의해 주세요.",
+                    "code": "subscription_configuration_error",
+                },
+                status=503,
+            )
 
         if program.is_subscription_active:
             return None  # 구독 유효
@@ -167,7 +182,9 @@ def _check_subscription(tenant, request) -> JsonResponse | None:
                 "detail": "구독이 만료되었습니다. 관리자에게 문의하거나 구독을 갱신해 주세요.",
                 "code": "subscription_expired",
                 "plan": program.plan,
-                "expires_at": str(program.subscription_expires_at) if program.subscription_expires_at else None,
+                "expires_at": str(program.service_access_expires_at) if program.service_access_expires_at else None,
+                "subscription_expires_at": str(program.subscription_expires_at) if program.subscription_expires_at else None,
+                "grace_expires_at": str(program.grace_expires_at) if program.grace_expires_at else None,
             },
             status=402,
         )

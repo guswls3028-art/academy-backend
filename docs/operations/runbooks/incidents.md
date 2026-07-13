@@ -328,41 +328,33 @@ curl -s https://api.hakwonplus.com/health
 
 **경우 C: 배포 후 서비스 장애 → 롤백 필요**
 
-```bash
-# 1단계: 마지막 정상 SHA 이미지 확인
-RUN_ENV aws ecr describe-images --repository-name academy-api \
-  --query 'sort_by(imageDetails,&imagePushedAt)[-5:].{Tags:imageTags,Pushed:imagePushedAt}' \
-  --output table
+API와 Messaging은 신규 결제·메시징 상태를 구버전 바이너리가 오해할 수 있고
+ASG 교체 중 writer를 완전히 멈출 수 없어 image-only rollback을 실행 전에
+`STATEFUL_IMAGE_ROLLBACK_BLOCKED`로 차단한다. 원하는 소스를
+revert/cherry-pick한 새 커밋으로 빌드·배포하는 roll-forward가 복구 절차다.
+AI/Tools/Video처럼 state-machine 호환성 경계가 분리된 서비스만 아래 digest
+rollback 절차를 사용한다.
 
-# 2단계: 정상 SHA 이미지를 :latest로 재태깅
-MANIFEST=$(RUN_ENV aws ecr batch-get-image \
-  --repository-name academy-api \
-  --image-ids imageTag=sha-XXXXXXXX \
-  --query 'images[0].imageManifest' --output text)
+```powershell
+# API 예시는 정책을 출력하고 mutation 없이 차단된다.
+pwsh scripts/v1/rollback-api.ps1 -AwsProfile default
 
-RUN_ENV aws ecr put-image \
-  --repository-name academy-api \
-  --image-tag latest \
-  --image-manifest "$MANIFEST"
-
-# 3단계: ASG 인스턴스 새로고침 (롤백 배포)
-RUN_ENV aws autoscaling start-instance-refresh \
-  --auto-scaling-group-name academy-v1-api-asg \
-  --preferences '{"MinHealthyPercentage":50,"InstanceWarmup":300}'
+# 지원 서비스는 -Sha 생략 시 바로 이전 digest, 명시 시 tag -> digest를 검증한다.
+pwsh scripts/v1/rollback-ai.ps1 -Sha sha-XXXXXXXX -AwsProfile default
 ```
 
-> **워커 롤백도 동일 패턴.** repository-name과 ASG 이름만 변경:
-> - Messaging: `academy-messaging-worker` / `academy-v1-messaging-worker-asg` (Warmup=120)
-> - AI: `academy-ai-worker-cpu` / `academy-v1-ai-worker-asg` (Warmup=120)
+롤백 스크립트는 `:latest`를 읽거나 재태깅하지 않는다. 실제 LT/Batch digest에서 출발해 이전 digest를 선택하고, ASG refresh의 `Successful` 종결과 모든 InService 컨테이너 digest를 검증하지 못하면 실패한다.
 
-**Migration 롤백 (필요 시):**
-```bash
-RUN_ENV aws ssm send-command \
-  --document-name "AWS-RunShellScript" \
-  --targets "Key=tag:Name,Values=academy-v1-api" \
-  --parameters 'commands=["docker exec academy-api python manage.py migrate {APP_NAME} {이전_MIGRATION_번호}"]' \
-  --output text
-```
+- API/Messaging: image rollback 차단, 새 immutable image roll-forward
+- AI: `rollback-ai.ps1`
+- Tools: `rollback-tools.ps1`
+- Video Batch: `rollback-video.ps1` (8개 필수 job definition과 CE를 함께 검증)
+
+**Migration rollback:** 기본 금지. 신규 상태값이나 데이터 backfill을 구버전 schema로
+되돌리면 데이터 손실과 old/new binary 혼재가 발생할 수 있다. migration별로 검증된
+reverse contract, writer quiesce, RDS snapshot, dry-run 결과가 모두 있는 별도 runbook이
+없는 경우 schema도 수정 migration을 새로 배포하는 roll-forward로 복구한다. 일반
+incident 대응에서 임의의 `manage.py migrate {이전 번호}`를 실행하지 않는다.
 
 ### 복구 확인
 ```bash

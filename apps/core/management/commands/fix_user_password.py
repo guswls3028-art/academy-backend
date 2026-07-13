@@ -18,8 +18,9 @@ class Command(BaseCommand):
                             help="Delete bare username (without t{id}_ prefix) if it exists")
 
     def handle(self, *args, **options):
-        from apps.core.models import Tenant, TenantMembership
+        from apps.core.models import Tenant
         from apps.core.models.user import user_internal_username
+        from academy.adapters.db.django import repositories_core as core_repo
 
         User = get_user_model()
         tc = options["tenant_code"].strip()
@@ -56,10 +57,7 @@ class Command(BaseCommand):
                 user.name = name
             user.set_password(pw)
             user.save()
-            TenantMembership.objects.get_or_create(
-                tenant=tenant, user=user,
-                defaults={"role": role, "is_active": True},
-            )
+            core_repo.membership_ensure_active(tenant=tenant, user=user, role=role)
             self.stdout.write(self.style.SUCCESS(
                 f"CREATED user '{internal_uname}' on tenant '{tc}' (id={user.id})"
             ))
@@ -72,13 +70,11 @@ class Command(BaseCommand):
                 user.name = name
                 fields.append("name")
             user.save(update_fields=fields)
-            mem, _ = TenantMembership.objects.get_or_create(
-                tenant=tenant, user=user,
-                defaults={"role": role, "is_active": True},
+            mem = core_repo.membership_ensure_active(
+                tenant=tenant,
+                user=user,
+                role=role,
             )
-            if not mem.is_active:
-                mem.is_active = True
-                mem.save(update_fields=["is_active"])
             self.stdout.write(self.style.SUCCESS(
                 f"RESET password for '{internal_uname}' on tenant '{tc}' (id={user.id}, role={mem.role})"
             ))

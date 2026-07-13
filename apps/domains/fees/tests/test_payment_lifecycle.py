@@ -10,7 +10,9 @@
 - 테넌트 격리 (cross-tenant payment 시도 차단)
 """
 from datetime import timedelta
+from unittest.mock import patch
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.test import TestCase
@@ -31,10 +33,11 @@ from apps.domains.fees.services import (
     record_payment,
 )
 from apps.domains.fees.views import StudentFeeInvoiceDetailView, StudentFeeInvoiceListView, StudentFeePaymentListView
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.lectures.models import Lecture
-from apps.domains.parents.models import Parent
-from apps.domains.students.models import Student
+
+Enrollment = apps.get_model("enrollment", "Enrollment")
+Lecture = apps.get_model("lectures", "Lecture")
+Parent = apps.get_model("parents", "Parent")
+Student = apps.get_model("students", "Student")
 
 User = get_user_model()
 
@@ -123,6 +126,58 @@ class PaymentLifecycleTest(FeesTestMixin, TestCase):
         self.assertEqual(self.invoice.status, "PAID")
         self.assertIsNotNone(self.invoice.paid_at)
 
+    @patch("apps.support.fees.service_dependencies.send_event_notification")
+    def test_payment_occurrence_binds_invoice_and_payment_across_years(
+        self,
+        send_notification,
+    ):
+        with self.captureOnCommitCallbacks(execute=True):
+            first_payment = record_payment(
+                self.tenant,
+                self.invoice.id,
+                100_000,
+                "CASH",
+                idempotency_key="annual-payment-2026",
+            )
+        with self.captureOnCommitCallbacks(execute=True):
+            retry = record_payment(
+                self.tenant,
+                self.invoice.id,
+                100_000,
+                "CASH",
+                idempotency_key="annual-payment-2026",
+            )
+
+        next_invoice = self.make_invoice(
+            self.tenant,
+            self.student,
+            total=100_000,
+            year=2027,
+            month=self.invoice.billing_month,
+        )
+        with self.captureOnCommitCallbacks(execute=True):
+            second_payment = record_payment(
+                self.tenant,
+                next_invoice.id,
+                100_000,
+                "CASH",
+                idempotency_key="annual-payment-2027",
+            )
+
+        self.assertEqual(retry.id, first_payment.id)
+        self.assertEqual(send_notification.call_count, 2)
+        occurrence_keys = [
+            call.kwargs["context"]["_domain_object_id"]
+            for call in send_notification.call_args_list
+        ]
+        self.assertEqual(
+            occurrence_keys,
+            [
+                f"payment:{self.invoice.id}:{first_payment.id}",
+                f"payment:{next_invoice.id}:{second_payment.id}",
+            ],
+        )
+
     def test_overpayment_blocked(self):
         record_payment(
             self.tenant, self.invoice.id, 60_000, "CASH",
@@ -135,6 +190,28 @@ class PaymentLifecycleTest(FeesTestMixin, TestCase):
                 idempotency_key="part-2",
             )
         self.assertIn("미납 잔액", str(ctx.exception))
+
+    def test_payment_rejects_non_positive_non_integer_and_oversized_key(self):
+        invalid_cases = [
+            {"amount": 0, "idempotency_key": "zero"},
+            {"amount": -1, "idempotency_key": "negative"},
+            {"amount": True, "idempotency_key": "boolean"},
+            {"amount": "1000", "idempotency_key": "string"},
+            {"amount": 1_000, "idempotency_key": "x" * 101},
+        ]
+
+        for values in invalid_cases:
+            with self.subTest(values=values):
+                with self.assertRaises(ValueError):
+                    record_payment(
+                        self.tenant,
+                        self.invoice.id,
+                        values["amount"],
+                        "CASH",
+                        idempotency_key=values["idempotency_key"],
+                    )
+
+        self.assertFalse(FeePayment.objects.filter(invoice=self.invoice).exists())
 
     def test_cancel_payment_restores_status(self):
         # 완납 후 환불(취소) → PARTIAL or PENDING으로 되돌림

@@ -17,13 +17,38 @@ Usage:
 Hard-fails on any AWS error (matches ecr-cleanup.py pattern).
 """
 import argparse
+import atexit
+import os
+from pathlib import Path
+import subprocess
 import sys
+import uuid
 from collections import defaultdict
 
 import boto3
 from botocore.exceptions import ClientError
 
 REGION = "ap-northeast-2"
+LOCK_HELPER = Path(__file__).with_name("deployment_lock.py")
+
+
+def require_cleanup_lock():
+    owner = os.environ.get("ACADEMY_DEPLOY_LOCK_OWNER")
+    owned_here = not owner
+    owner = owner or f"batch-cleanup:{os.getpid()}:{uuid.uuid4().hex}"
+    action = "acquire" if owned_here else "renew"
+    result = subprocess.run(
+        [sys.executable, str(LOCK_HELPER), action, "--owner", owner, "--ttl-seconds", "10800"],
+        check=False,
+    )
+    if result.returncode:
+        sys.exit(result.returncode)
+    if owned_here:
+        atexit.register(
+            subprocess.run,
+            [sys.executable, str(LOCK_HELPER), "release", "--owner", owner],
+            check=False,
+        )
 
 
 def list_active_defs(batch):
@@ -44,6 +69,9 @@ def main():
     ap.add_argument("--keep", type=int, default=5,
                     help="Number of latest ACTIVE revisions to keep per name (default: 5)")
     args = ap.parse_args()
+
+    if args.execute:
+        require_cleanup_lock()
 
     batch = boto3.client("batch", region_name=REGION)
     defs = list_active_defs(batch)

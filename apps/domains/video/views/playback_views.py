@@ -12,6 +12,10 @@ from rest_framework.response import Response
 from rest_framework import status
 
 from apps.core.permissions import IsStudent
+from academy.application.use_cases.student_video_access_context import (
+    StudentVideoAccessError,
+    resolve_student_video_access_context,
+)
 
 from ..models import (
     Video,
@@ -108,6 +112,44 @@ def _deny(detail: str, *, code=status.HTTP_403_FORBIDDEN):
     return Response({"detail": detail}, status=code)
 
 
+def _playback_token_request_error(payload: dict, request) -> str | None:
+    try:
+        if int(payload.get("user_id")) != int(request.user.id):
+            return "token_user_mismatch"
+    except (AttributeError, TypeError, ValueError):
+        return "token_user_mismatch"
+
+    tenant = getattr(request, "tenant", None)
+    if not tenant:
+        return "token_tenant_mismatch"
+    token_tenant_id = payload.get("tenant_id")
+    if token_tenant_id is not None:
+        try:
+            return None if int(token_tenant_id) == int(tenant.id) else "token_tenant_mismatch"
+        except (TypeError, ValueError):
+            return "token_tenant_mismatch"
+
+    # Rolling compatibility for already-issued tokens: bind them to the video's
+    # authoritative tenant. New tokens always carry tenant_id.
+    try:
+        video = video_repo.video_get_by_id_with_relations(int(payload.get("video_id")))
+    except (TypeError, ValueError, Video.DoesNotExist):
+        return "token_tenant_mismatch"
+    if not video:
+        return "token_tenant_mismatch"
+    video_tenant_id = getattr(video, "tenant_id", None)
+    if video_tenant_id is None:
+        video_tenant_id = getattr(
+            getattr(getattr(video, "session", None), "lecture", None),
+            "tenant_id",
+            None,
+        )
+    try:
+        return None if int(video_tenant_id) == int(tenant.id) else "token_tenant_mismatch"
+    except (TypeError, ValueError):
+        return "token_tenant_mismatch"
+
+
 def _session_db_status(session_id: str):
     return (
         VideoPlaybackSession.objects
@@ -137,12 +179,35 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
         enrollment_id = serializer.validated_data["enrollment_id"]
         device_id = serializer.validated_data["device_id"]
 
-        video_id = request.data.get("video_id")
-        if not video_id:
+        raw_video_id = request.data.get("video_id")
+        if raw_video_id in (None, ""):
             return Response({"detail": "video_id_required"}, status=400)
+        try:
+            video_id = int(raw_video_id)
+            if video_id <= 0:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({"detail": "video_id_invalid"}, status=400)
 
-        enrollment = video_repo.enrollment_get_by_id_active_with_student_lecture(enrollment_id)
-        video = video_repo.video_get_by_id_with_relations(int(video_id))
+        try:
+            video = video_repo.video_get_by_id_with_relations(video_id)
+        except Video.DoesNotExist:
+            video = None
+        if not video:
+            return Response({"detail": "video_not_found"}, status=404)
+
+        try:
+            access_context = resolve_student_video_access_context(
+                request,
+                video,
+                explicit_enrollment_id=enrollment_id,
+            )
+        except StudentVideoAccessError as exc:
+            return _deny(exc.detail, code=exc.status_code)
+
+        enrollment = access_context.enrollment
+        if enrollment is None:
+            return _deny("enrollment_required", code=403)
 
         # Tenant isolation: enrollment and video must belong to request.tenant
         if enrollment.lecture.tenant_id != request.tenant.id:
@@ -232,6 +297,7 @@ class PlaybackStartView(VideoPlaybackMixin, APIView):
                 "enrollment_id": enrollment.id,
                 "session_id": session_id,  # None for FREE_REVIEW
                 "user_id": request.user.id,
+                "tenant_id": request.tenant.id,
                 "student_id": student_id,
                 "access_mode": access_mode.value,
                 "monitoring_enabled": monitoring_enabled,
@@ -280,6 +346,9 @@ class PlaybackRefreshView(APIView):
         ok, payload, err = verify_playback_token(serializer.validated_data["token"])
         if not ok:
             return _deny(err, code=403)
+        binding_error = _playback_token_request_error(payload, request)
+        if binding_error:
+            return _deny(binding_error, code=403)
 
         if not _is_policy_token_valid(payload):
             return _deny("policy_changed", code=403)
@@ -321,6 +390,9 @@ class PlaybackHeartbeatView(APIView):
         ok, payload, err = verify_playback_token(serializer.validated_data["token"])
         if not ok:
             return _deny(err, code=403)
+        binding_error = _playback_token_request_error(payload, request)
+        if binding_error:
+            return _deny(binding_error, code=403)
 
         if not _is_policy_token_valid(payload):
             return _deny("policy_changed", code=403)
@@ -364,6 +436,9 @@ class PlaybackEndView(APIView):
         ok, payload, err = verify_playback_token(serializer.validated_data["token"])
         if not ok:
             return _deny(err, code=403)
+        binding_error = _playback_token_request_error(payload, request)
+        if binding_error:
+            return _deny(binding_error, code=403)
 
         # FREE_REVIEW: Skip DB operations
         monitoring_enabled = payload.get("monitoring_enabled")
@@ -397,6 +472,9 @@ class PlaybackEventBatchView(APIView):
         ok, payload, err = verify_playback_token(serializer.validated_data["token"])
         if not ok:
             return _deny(err, code=403)
+        binding_error = _playback_token_request_error(payload, request)
+        if binding_error:
+            return _deny(binding_error, code=403)
 
         if not _is_policy_token_valid(payload):
             return _deny("policy_changed", code=403)

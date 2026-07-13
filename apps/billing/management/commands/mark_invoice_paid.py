@@ -85,12 +85,7 @@ class Command(BaseCommand):
             self._log("  [DRY RUN] No changes applied.")
             return
 
-        # FAILED -> PENDING first
-        if inv.status == "FAILED":
-            invoice_service.retry_pending(inv.pk)
-
-        old_status = inv.status
-        inv = invoice_service.mark_paid(inv.pk)
+        inv = invoice_service.confirm_manual_payment(inv.pk)
 
         # Reload program
         if program:

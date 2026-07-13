@@ -3,6 +3,9 @@
 Regression tests for student identity SSOT, lifecycle, and ghost-data elimination.
 Covers: ps_number/username sync, deletion semantics, restore flow, ghost data filters.
 """
+from importlib import import_module
+
+from django.apps import apps
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from django.utils import timezone
@@ -15,12 +18,17 @@ from apps.core.models.user import user_internal_username, user_display_username
 from apps.domains.students.models import Student
 from apps.domains.students.services import StudentLifecycleError, restore_student, soft_delete_student
 from apps.domains.students.views import StudentViewSet
-from apps.domains.parents.models import Parent
-from apps.domains.inventory.models import InventoryFolder, InventoryFile
-from apps.domains.enrollment.models import Enrollment
-from apps.domains.lectures.models import Lecture
-from apps.domains.clinic.models import Session as ClinicSession, SessionParticipant
-from apps.domains.clinic.services.lifecycle import cancel_active_participants_for_student
+
+Parent = apps.get_model("parents", "Parent")
+InventoryFolder = apps.get_model("inventory", "InventoryFolder")
+InventoryFile = apps.get_model("inventory", "InventoryFile")
+Enrollment = apps.get_model("enrollment", "Enrollment")
+Lecture = apps.get_model("lectures", "Lecture")
+ClinicSession = apps.get_model("clinic", "Session")
+SessionParticipant = apps.get_model("clinic", "SessionParticipant")
+cancel_active_participants_for_student = import_module(
+    "apps.domains.clinic.services.lifecycle"
+).cancel_active_participants_for_student
 
 User = get_user_model()
 
@@ -301,6 +309,43 @@ class TestSoftDeleteViewRouting(TestCase):
         self.assertIsNone(student.user.phone)
         self.assertEqual(enrollment.status, "INACTIVE")
         self.assertEqual(participant.status, SessionParticipant.Status.CANCELLED)
+
+    @patch("apps.domains.students.views.student_views.send_event_notification")
+    def test_withdrawal_occurrence_changes_only_after_restore_and_rewithdraw(
+        self,
+        send_notification,
+    ):
+        student, _enrollment, _participant = self._student_with_edges("0011")
+
+        def destroy_once():
+            request = self.factory.delete(f"/api/v1/students/{student.id}/")
+            force_authenticate(request, user=self.admin)
+            request.tenant = self.tenant
+            with self.captureOnCommitCallbacks(execute=True):
+                return StudentViewSet.as_view({"delete": "destroy"})(
+                    request,
+                    pk=student.id,
+                )
+
+        first = destroy_once()
+        duplicate = destroy_once()
+        student.refresh_from_db()
+        restore_student(student, tenant=self.tenant)
+        student.refresh_from_db()
+        second = destroy_once()
+
+        self.assertEqual(first.status_code, 204)
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(second.status_code, 204)
+        self.assertEqual(send_notification.call_count, 2)
+        occurrence_keys = [
+            call.kwargs["context"]["_domain_object_id"]
+            for call in send_notification.call_args_list
+        ]
+        self.assertNotEqual(occurrence_keys[0], occurrence_keys[1])
+        self.assertTrue(
+            all(key.startswith(f"withdrawal:{student.id}:") for key in occurrence_keys)
+        )
 
     def test_bulk_delete_routes_through_soft_delete_lifecycle(self):
         student1, enrollment1, participant1 = self._student_with_edges("0002")

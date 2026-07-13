@@ -14,6 +14,7 @@ DB 의존 없이 mock 기반으로 핵심 로직을 검증.
 8. 반 등록 완료 / 퇴원 알림
 """
 
+from importlib import import_module
 from types import SimpleNamespace
 from unittest import TestCase
 from unittest.mock import MagicMock, patch
@@ -63,15 +64,50 @@ _SEL = "apps.domains.messaging.selectors"
 _POL = "apps.domains.messaging.policy"
 _SVC = "apps.domains.messaging.services"
 _QSV = "apps.domains.messaging.services.queue_service"
+_REG = "apps.domains.messaging.services.registration_service"
 _SQS = "apps.domains.messaging.sqs_queue"
 _ATT_VIEWS = "apps.domains.attendance.views"
+
+
+class _DispatchThroughQueueMixin:
+    """Keep pure notification-format tests independent of the outbox database.
+
+    Durable outbox behavior is covered by ``test_scheduled_notifications``.  These
+    tests intentionally exercise the payload handed to the queue boundary, so the
+    adapter below makes the mocked dispatch boundary forward that payload to the
+    already-mocked ``enqueue_sms`` function.
+    """
+
+    def setUp(self):
+        super().setUp()
+        patcher = patch(
+            "apps.domains.messaging.scheduled.dispatch_notification_now",
+            side_effect=self._dispatch_through_queue,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    @staticmethod
+    def _dispatch_through_queue(*, tenant_id, trigger, payload):
+        from apps.domains.messaging.models import ScheduledNotification
+        from apps.domains.messaging.services.queue_service import enqueue_sms
+
+        del tenant_id, trigger
+        enqueued = enqueue_sms(**payload)
+        return SimpleNamespace(
+            status=(
+                ScheduledNotification.Status.SENT
+                if enqueued
+                else ScheduledNotification.Status.FAILED
+            )
+        )
 
 
 # ──────────────────────────────────────────
 # 1. send_event_notification 테스트
 # ──────────────────────────────────────────
 
-class TestSendEventNotification(TestCase):
+class TestSendEventNotification(_DispatchThroughQueueMixin, TestCase):
     """send_event_notification 핵심 경로 테스트."""
 
     @patch(f"{_QSV}.enqueue_sms")
@@ -389,7 +425,7 @@ class TestSendEventNotification(TestCase):
 # 2. tenant isolation 테스트
 # ──────────────────────────────────────────
 
-class TestTenantIsolation(TestCase):
+class TestTenantIsolation(_DispatchThroughQueueMixin, TestCase):
     """멀티테넌트 격리 검증."""
 
     def test_is_reservation_cancelled_requires_tenant_id(self):
@@ -476,7 +512,13 @@ class TestEnqueueSmsPolicy(TestCase):
 
     @patch(f"{_SQS}.MessagingSQSQueue")
     @patch(f"{_POL}.is_messaging_disabled", return_value=False)
-    def test_alimtalk_mode_skips_sms_check(self, mock_disabled, mock_queue_cls):
+    @patch(f"{_QSV}._require_active_business_tenant")
+    def test_alimtalk_mode_skips_sms_check(
+        self,
+        mock_active_tenant,
+        mock_disabled,
+        mock_queue_cls,
+    ):
         """알림톡 전용 모드에서는 SMS 정책 검사 불필요."""
         mock_queue = MagicMock()
         mock_queue.enqueue.return_value = True
@@ -493,6 +535,52 @@ class TestEnqueueSmsPolicy(TestCase):
         self.assertEqual(kwargs["tenant_id"], 1)
         self.assertEqual(kwargs["source_tenant_id"], 5)
         self.assertIsNone(kwargs["sender"])
+
+    @patch("apps.core.models.Tenant.objects.filter")
+    @patch(f"{_SQS}.MessagingSQSQueue")
+    @patch(f"{_POL}.check_recipient_allowed", return_value=True)
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    def test_inactive_business_tenant_is_terminally_blocked(
+        self,
+        mock_disabled,
+        mock_recipient,
+        mock_queue_cls,
+        mock_tenant_filter,
+    ):
+        from apps.domains.messaging.policy import MessagingPolicyError
+        from apps.domains.messaging.services import enqueue_sms
+
+        mock_tenant_filter.return_value.exists.return_value = False
+
+        with self.assertRaisesRegex(MessagingPolicyError, "비활성화") as raised:
+            enqueue_sms(
+                tenant_id=77,
+                to="01012345678",
+                text="test",
+                message_mode="alimtalk",
+            )
+
+        self.assertEqual(raised.exception.reason, "business_tenant_inactive")
+        mock_queue_cls.assert_not_called()
+
+    @patch(f"{_QSV}._require_active_business_tenant", side_effect=RuntimeError("db down"))
+    @patch(f"{_POL}.check_recipient_allowed", return_value=True)
+    @patch(f"{_POL}.is_messaging_disabled", return_value=False)
+    def test_business_tenant_lookup_error_is_raised_for_retry(
+        self,
+        mock_disabled,
+        mock_recipient,
+        mock_active_tenant,
+    ):
+        from apps.domains.messaging.services import enqueue_sms
+
+        with self.assertRaisesRegex(RuntimeError, "db down"):
+            enqueue_sms(
+                tenant_id=5,
+                to="01012345678",
+                text="test",
+                message_mode="alimtalk",
+            )
 
     @patch(f"{_POL}.is_messaging_disabled", return_value=True)
     def test_test_tenant_skipped(self, mock_disabled):
@@ -528,7 +616,7 @@ class TestMessagingProviderResolution(TestCase):
 # 4. 템플릿 변수 치환 테스트
 # ──────────────────────────────────────────
 
-class TestTemplateVariableSubstitution(TestCase):
+class TestTemplateVariableSubstitution(_DispatchThroughQueueMixin, TestCase):
     """알림톡 템플릿 변수 치환 검증."""
 
     @patch(f"{_QSV}.enqueue_sms")
@@ -742,7 +830,7 @@ class TestWorkerTenantIdEnforcement(TestCase):
 class TestRegistrationMessages(TestCase):
     """가입 승인 알림톡 회귀 테스트."""
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_REG}._dispatch_registration_durably")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     @patch(f"{_SEL}.get_auto_send_config")
     def test_send_registration_approved_student(self, mock_config, mock_owner, mock_enqueue):
@@ -777,10 +865,10 @@ class TestRegistrationMessages(TestCase):
         self.assertEqual(student_kwargs["source_tenant_id"], 2)
         self.assertEqual(parent_kwargs["event_type"], "registration_approved_parent")
         self.assertEqual(parent_kwargs["target_type"], "account")
-        self.assertEqual(parent_kwargs["target_id"], "parent:10:01087654321")
+        self.assertEqual(parent_kwargs["target_id"], "parent:10")
         self.assertEqual(parent_kwargs["source_tenant_id"], 2)
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_REG}._dispatch_registration_durably")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     @patch(f"{_SEL}.get_auto_send_config")
     def test_send_registration_approved_dedupes_same_student_parent_phone(self, mock_config, mock_owner, mock_enqueue):
@@ -809,11 +897,11 @@ class TestRegistrationMessages(TestCase):
         kwargs = mock_enqueue.call_args.kwargs
         self.assertEqual(kwargs["event_type"], "registration_approved_parent")
         self.assertEqual(kwargs["to"], "01012345678")
-        self.assertEqual(kwargs["target_id"], "parent:10:01012345678")
+        self.assertEqual(kwargs["target_id"], "parent:10")
         self.assertIn("PS001", kwargs["text"])
         self.assertIn("parent123", kwargs["text"])
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_REG}._dispatch_registration_durably")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     @patch(f"{_SEL}.get_auto_send_config")
     def test_send_welcome_passes_account_event_metadata(self, mock_config, mock_owner, mock_enqueue):
@@ -855,10 +943,10 @@ class TestRegistrationMessages(TestCase):
         self.assertEqual(student_kwargs["source_tenant_id"], 1)
         self.assertEqual(parent_kwargs["event_type"], "registration_approved_parent")
         self.assertEqual(parent_kwargs["target_type"], "account")
-        self.assertEqual(parent_kwargs["target_id"], "parent:10:01087654321")
+        self.assertEqual(parent_kwargs["target_id"], "parent:10")
         self.assertEqual(parent_kwargs["source_tenant_id"], 1)
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_REG}._dispatch_registration_durably")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     @patch(f"{_SEL}.get_auto_send_config")
     def test_send_welcome_dedupes_same_student_parent_phone(self, mock_config, mock_owner, mock_enqueue):
@@ -896,9 +984,9 @@ class TestRegistrationMessages(TestCase):
         kwargs = mock_enqueue.call_args.kwargs
         self.assertEqual(kwargs["event_type"], "registration_approved_parent")
         self.assertEqual(kwargs["to"], "01012345678")
-        self.assertEqual(kwargs["target_id"], "parent:10:01012345678")
+        self.assertEqual(kwargs["target_id"], "parent:10")
 
-    @patch(f"{_QSV}.enqueue_sms")
+    @patch(f"{_REG}._dispatch_registration_durably")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
     @patch(f"{_SEL}.get_auto_send_config")
     def test_send_welcome_no_students(self, mock_config, mock_owner, mock_enqueue):
@@ -912,7 +1000,7 @@ class TestRegistrationMessages(TestCase):
 # 8. 반 등록 완료 / 퇴원 알림
 # ──────────────────────────────────────────
 
-class TestEnrollmentAndWithdrawalNotifications(TestCase):
+class TestEnrollmentAndWithdrawalNotifications(_DispatchThroughQueueMixin, TestCase):
     """반 등록 완료, 퇴원 알림 테스트."""
 
     @patch(f"{_QSV}.enqueue_sms")
@@ -989,8 +1077,12 @@ class TestTimeGuard(TestCase):
         att = SimpleNamespace(id=1, enrollment=enrollment, session=session)
         tenant = _make_tenant()
 
-        from apps.domains.attendance.views import _send_attendance_notification
-        _send_attendance_notification(tenant, att, "check_in_complete")
+        attendance_views = import_module(_ATT_VIEWS)
+        attendance_views._send_attendance_notification(
+            tenant,
+            att,
+            "check_in_complete",
+        )
 
         mock_send.assert_not_called()
 
@@ -1006,13 +1098,17 @@ class TestTimeGuard(TestCase):
         att = SimpleNamespace(id=1, enrollment=enrollment, session=session)
         tenant = _make_tenant()
 
-        from apps.domains.attendance.views import _send_attendance_notification
-        _send_attendance_notification(tenant, att, "check_in_complete")
+        attendance_views = import_module(_ATT_VIEWS)
+        attendance_views._send_attendance_notification(
+            tenant,
+            att,
+            "check_in_complete",
+        )
 
         mock_send.assert_called_once()
 
 
-class TestIdempotencyMetadata(TestCase):
+class TestIdempotencyMetadata(_DispatchThroughQueueMixin, TestCase):
     """send_event_notification이 멱등성 메타데이터를 enqueue_sms에 전달."""
 
     @patch(f"{_QSV}.enqueue_sms")

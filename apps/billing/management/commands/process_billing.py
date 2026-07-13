@@ -5,10 +5,10 @@ Runs at 00:05 KST via EventBridge.
 
 Steps:
 1. Create invoices (next_billing_at within 7 days)
-2. AUTO_CARD payment attempts (due_date reached)
+2. Due INVOICE_REQUEST activation + AUTO_CARD payment attempts
 3. Failed payment retries (next_retry_at reached)
 4. Exhausted retries -> OVERDUE
-5. Grace period expired -> expired
+5. Active period ended -> grace; grace period expired -> expired
 6. cancel_at_period_end period ended -> expired
 
 Usage:
@@ -20,6 +20,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.db.models import F, Q
 from django.utils import timezone
 
 from apps.billing.models import Invoice
@@ -48,6 +49,9 @@ class Command(BaseCommand):
         # ──── Summary of all non-exempt tenants ────
         all_live = Program.objects.select_related("tenant").exclude(
             tenant_id__in=exempt
+        ).filter(
+            tenant__is_active=True,
+            is_active=True,
         ).order_by("tenant__code")
 
         self._log(f"\n  Live tenants: {all_live.count()}")
@@ -82,6 +86,7 @@ class Command(BaseCommand):
         created = 0
         skipped_cancel = 0
         skipped_existing = 0
+        blocked_price = 0
         for program in upcoming:
             if program.cancel_at_period_end:
                 skipped_cancel += 1
@@ -97,27 +102,65 @@ class Command(BaseCommand):
                 self._log(f"    [SKIP] {program.tenant.code}: invoice already exists for next period")
                 continue
 
-            if not dry_run:
-                inv = invoice_service.create_for_next_period(program)
-                if inv:
-                    created += 1
-                    self._log(f"    [CREATED] {program.tenant.code}: {inv.invoice_number} "
-                              f"period={inv.period_start}~{inv.period_end} amount={inv.total_amount:,}")
-            else:
+            try:
+                invoice_service.resolve_monthly_amounts(program)
+            except invoice_service.BillingPriceIntegrityError as exc:
+                blocked_price += 1
+                self._log(f"    [BLOCK] {program.tenant.code}: {exc}")
+                continue
+
+            if dry_run:
                 created += 1
                 self._log(f"    [DRY] Would create for {program.tenant.code}")
+                continue
+
+            inv = invoice_service.create_for_next_period(program)
+            if inv:
+                created += 1
+                self._log(f"    [CREATED] {program.tenant.code}: {inv.invoice_number} "
+                          f"period={inv.period_start}~{inv.period_end} amount={inv.total_amount:,}")
 
         self._log(f"    Result: created={created} skipped_cancel={skipped_cancel} "
-                  f"skipped_existing={skipped_existing}")
+                  f"skipped_existing={skipped_existing} blocked_price={blocked_price}")
 
-        # ──── 2. AUTO_CARD payment attempts ────
-        self._log(f"\n  --- Step 2: AUTO_CARD payment ---")
+        # ──── 2. Due invoice activation + AUTO_CARD payment attempts ────
+        self._log(f"\n  --- Step 2: Due invoice activation / AUTO_CARD payment ---")
+        due_invoice_requests = Invoice.objects.filter(
+            status="SCHEDULED",
+            due_date__lte=today,
+            billing_mode="INVOICE_REQUEST",
+            tenant__is_active=True,
+            tenant__program__is_active=True,
+        ).exclude(
+            tenant_id__in=exempt,
+        ).filter(
+            Q(tenant__program__cancel_at_period_end=False)
+            | Q(period_start__lte=F("tenant__program__subscription_expires_at")),
+        ).select_related("tenant")
+        activated_manual = 0
+        for inv in due_invoice_requests:
+            if not dry_run:
+                invoice_service.transition_to_pending(inv.pk)
+            activated_manual += 1
+            self._log(
+                f"    {'[DRY] ' if dry_run else ''}PENDING: "
+                f"{inv.tenant.code} {inv.invoice_number} (manual invoice due)"
+            )
+        self._log(f"    Manual invoice requests activated: {activated_manual}")
+
         # SCHEDULED + PENDING 모두 대상 (PENDING은 이전 배치에서 상태 전이만 된 건)
         due_invoices = Invoice.objects.filter(
             status__in=["SCHEDULED", "PENDING"],
             due_date__lte=today,
             billing_mode="AUTO_CARD",
-        ).exclude(tenant_id__in=exempt).select_related("tenant")
+            tenant__is_active=True,
+            tenant__program__is_active=True,
+        ).exclude(
+            tenant_id__in=exempt,
+        ).filter(
+            Q(tenant__program__cancel_at_period_end=False)
+            | Q(period_start__lte=F("tenant__program__subscription_expires_at")),
+        ).select_related("tenant")
 
         if not due_invoices.exists():
             self._log(f"    No due AUTO_CARD invoices.")
@@ -152,7 +195,14 @@ class Command(BaseCommand):
             status="FAILED",
             next_retry_at__lte=today,
             billing_mode="AUTO_CARD",
-        ).exclude(tenant_id__in=exempt).select_related("tenant")
+            tenant__is_active=True,
+            tenant__program__is_active=True,
+        ).exclude(
+            tenant_id__in=exempt,
+        ).filter(
+            Q(tenant__program__cancel_at_period_end=False)
+            | Q(period_start__lte=F("tenant__program__subscription_expires_at")),
+        ).select_related("tenant")
         self._log(f"    Retry candidates: {retry_invoices.count()}")
 
         if retry_invoices.exists() and settings.TOSS_AUTO_BILLING_ENABLED:
@@ -180,6 +230,8 @@ class Command(BaseCommand):
         max_attempts = settings.BILLING_RETRY_MAX_ATTEMPTS
         exhausted = Invoice.objects.filter(
             status="FAILED", attempt_count__gte=max_attempts, next_retry_at__isnull=True,
+            tenant__is_active=True,
+            tenant__program__is_active=True,
         ).exclude(tenant_id__in=exempt)
 
         overdue_count = 0
@@ -190,11 +242,37 @@ class Command(BaseCommand):
             self._log(f"    {'[DRY] ' if dry_run else ''}OVERDUE: {inv.invoice_number}")
         self._log(f"    Result: {overdue_count} transitions")
 
-        # ──── 5. Grace expired ────
-        self._log(f"\n  --- Step 5: Grace -> Expired ---")
+        # ──── 5. Subscription expiry / grace lifecycle ────
+        self._log(f"\n  --- Step 5: Active -> Grace -> Expired ---")
+        active_past_period = all_live.filter(
+            subscription_status="active",
+            cancel_at_period_end=False,
+            subscription_expires_at__lt=today,
+        )
+        grace_entered = 0
+        for program in active_past_period:
+            if not dry_run:
+                subscription_service.enter_grace(program.pk)
+            grace_entered += 1
+            grace_end = program.subscription_expires_at + timedelta(days=grace_days)
+            self._log(
+                f"    {'[DRY] ' if dry_run else ''}{program.tenant.code}: "
+                f"period_end={program.subscription_expires_at} -> grace until {grace_end}"
+            )
+        self._log(f"    Grace entries: {grace_entered}")
+
         grace_programs = all_live.filter(subscription_status="grace")
         expired_count = 0
         for program in grace_programs:
+            if program.cancel_at_period_end:
+                if not dry_run:
+                    subscription_service.expire(program.pk)
+                expired_count += 1
+                self._log(
+                    f"    {'[DRY] ' if dry_run else ''}{program.tenant.code}: "
+                    "legacy grace+cancel -> expired"
+                )
+                continue
             if program.subscription_expires_at:
                 grace_end = program.subscription_expires_at + timedelta(days=grace_days)
                 if today > grace_end:
@@ -254,12 +332,7 @@ class Command(BaseCommand):
                 f"    [ERROR] {invoice.tenant.code}: {invoice.invoice_number} "
                 f"{exc.__class__.__name__}: {str(exc)[:120]}"
             )
-            return {
-                "success": False,
-                "invoice_id": invoice.pk,
-                "tx_id": None,
-                "reason": str(exc)[:500],
-            }
+            raise
 
     def _log(self, msg):
         try:

@@ -40,6 +40,19 @@ from apps.support.attendance.view_dependencies import (
 logger = logging.getLogger(__name__)
 
 
+def _secession_status_conflict(instance, requested_status):
+    if (
+        instance.status == "SECESSION"
+        and requested_status is not None
+        and requested_status != "SECESSION"
+    ):
+        return Response(
+            {"detail": "퇴원 처리된 출결 상태는 일반 수정으로 되돌릴 수 없습니다."},
+            status=status.HTTP_409_CONFLICT,
+        )
+    return None
+
+
 def _send_attendance_notification(tenant, attendance, trigger, actor_id=None):
     """
     출결 알림톡 발송 (best-effort, 실패해도 출결 처리는 유지).
@@ -159,6 +172,10 @@ class AttendanceViewSet(ModelViewSet):
 
     @transaction.atomic
     def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        conflict = _secession_status_conflict(instance, request.data.get("status"))
+        if conflict is not None:
+            return conflict
         return super().update(request, *args, **kwargs)
 
     @transaction.atomic
@@ -221,6 +238,10 @@ class AttendanceViewSet(ModelViewSet):
     def partial_update(self, request, *args, **kwargs):
         instance = self.get_object()
         new_status = request.data.get("status")
+
+        conflict = _secession_status_conflict(instance, new_status)
+        if conflict is not None:
+            return conflict
 
         if new_status == "SECESSION" and instance.status != "SECESSION":
             if not parse_bool(request.data.get("confirm_secession", False), field_name="confirm_secession"):

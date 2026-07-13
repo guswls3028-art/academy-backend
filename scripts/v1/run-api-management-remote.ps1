@@ -13,8 +13,7 @@ $ids = @(Get-APIASGInstanceIds)
 if (-not $ids -or $ids.Count -eq 0) { Write-Host "No API instance"; exit 1 }
 if (-not $Command -or $Command.Trim() -eq "") { Write-Host "Usage: -Command 'fix_qna_orphan_created_by --dry-run'"; exit 1 }
 $envFile = "/opt/api.env"
-$ecrImg = "809466760795.dkr.ecr.ap-northeast-2.amazonaws.com/academy-api:latest"
-$bashCmd = "/usr/bin/docker run --rm --env-file $envFile $ecrImg python manage.py $($Command.Trim()) 2>&1"
+$bashCmd = "ecr_img=`$(/usr/bin/docker inspect --format '{{.Config.Image}}' academy-api); echo `"`$ecr_img`" | grep -Eq '@sha256:[0-9a-f]{64}$' || { echo 'Running API image is not digest-pinned'; exit 1; }; /usr/bin/docker run --rm --env-file $envFile `"`$ecr_img`" python manage.py $($Command.Trim()) 2>&1"
 $params = @{ commands = @($bashCmd) } | ConvertTo-Json -Compress
 $send = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $ids[0], "--document-name", "AWS-RunShellScript", "--parameters", $params, "--region", $script:Region, "--output", "json")
 $cid = $send.Command.CommandId

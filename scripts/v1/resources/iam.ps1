@@ -17,7 +17,7 @@ function Get-ASGInstanceRefreshResourceArn {
     return "arn:aws:autoscaling:$($script:Region):$($script:AccountId):autoScalingGroup:*:autoScalingGroupName/$AutoScalingGroupName"
 }
 
-function Ensure-GitHubActionsDeployIAM {
+function Legacy-GitHubActionsDeployIAM {
     if ($script:PlanMode) { return }
     $roleName = if ($script:GitHubActionsDeployRoleName) { $script:GitHubActionsDeployRoleName } else { "academy-gha-ecr-build" }
     $policyName = if ($script:GitHubActionsDeployPolicyName) { $script:GitHubActionsDeployPolicyName } else { "EcrBuildPush" }
@@ -26,48 +26,276 @@ function Ensure-GitHubActionsDeployIAM {
     Write-Step "Ensure GitHub Actions deploy IAM"
     $role = Invoke-AwsJson @("iam", "get-role", "--role-name", $roleName, "--output", "json")
     if (-not $role) {
-        Write-Warn "GitHub Actions role $roleName not found or not readable; deploy IAM drift guard skipped."
-        return
+        throw "GitHub Actions role $roleName not found or not readable. Refusing to skip deploy IAM convergence."
     }
 
     $policy = Invoke-AwsJson @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--output", "json")
     if (-not $policy -or -not $policy.PolicyDocument) {
-        Write-Warn "Inline policy $policyName on $roleName not found or not readable; deploy IAM drift guard skipped."
-        return
+        throw "Inline policy $policyName on $roleName not found or not readable. Refusing to skip deploy IAM convergence."
     }
 
     $doc = $policy.PolicyDocument
-    $statement = @($doc.Statement) | Where-Object { $_.Sid -eq "AsgInstanceRefresh" } | Select-Object -First 1
-    if (-not $statement) {
-        Write-Warn "Inline policy $policyName has no AsgInstanceRefresh statement; deploy IAM drift guard skipped."
-        return
+    $statements = [System.Collections.ArrayList]::new()
+    foreach ($item in @($doc.Statement)) { [void]$statements.Add($item) }
+    $changed = $false
+
+    # A previously hand-edited policy can contain duplicate managed Sids. If
+    # duplicates are left in place, updating the first match only makes the
+    # readback fail without actually converging the policy. Collapse each
+    # managed Sid to one statement before assigning its exact contract below.
+    $managedSids = @(
+        "AsgInstanceRefresh",
+        "AsgDescribe",
+        "LaunchTemplateImagePinRead",
+        "LaunchTemplateImagePinWrite",
+        "EcrPushPull",
+        "EcrRepoManage"
+    )
+    foreach ($sid in $managedSids) {
+        $duplicates = @($statements | Where-Object { $_.Sid -eq $sid })
+        if ($duplicates.Count -gt 1) {
+            foreach ($duplicate in @($duplicates | Select-Object -Skip 1)) {
+                [void]$statements.Remove($duplicate)
+            }
+            $changed = $true
+        }
     }
 
-    $required = @(
+    $requiredAsgArns = @(
         $script:ApiASGName,
         $script:MessagingASGName,
         $script:AiASGName,
         $script:ToolsASGName
     ) | Where-Object { $_ -and $_.Trim() -ne "" } | Sort-Object -Unique | ForEach-Object { Get-ASGInstanceRefreshResourceArn $_ }
-
-    $current = @($statement.Resource) | Where-Object { $_ -and $_.Trim() -ne "" }
-    $missing = @($required | Where-Object { $current -notcontains $_ })
-    if ($missing.Count -eq 0) {
-        Write-Ok "GitHub Actions deploy IAM covers SSOT ASGs"
-        return
+    if ($requiredAsgArns.Count -ne 4) { throw "Expected exactly four SSOT ASGs for deploy IAM; actual=$($requiredAsgArns.Count)" }
+    $asgActions = @("autoscaling:SetInstanceProtection", "autoscaling:StartInstanceRefresh", "autoscaling:UpdateAutoScalingGroup")
+    $asgStatement = @($statements) | Where-Object { $_.Sid -eq "AsgInstanceRefresh" } | Select-Object -First 1
+    if (-not $asgStatement) {
+        $asgStatement = [PSCustomObject]@{ Sid="AsgInstanceRefresh"; Effect="Allow"; Action=$asgActions; Resource=$requiredAsgArns }
+        [void]$statements.Add($asgStatement)
+        $changed = $true
+    } elseif (
+        (@($asgStatement.Action | Sort-Object) -join "`n") -ne (@($asgActions | Sort-Object) -join "`n") -or
+        (@($asgStatement.Resource | Sort-Object) -join "`n") -ne (@($requiredAsgArns | Sort-Object) -join "`n") -or
+        [string]$asgStatement.Effect -ne "Allow"
+    ) {
+        $asgStatement.Action = $asgActions
+        $asgStatement.Resource = $requiredAsgArns
+        $asgStatement.Effect = "Allow"
+        $changed = $true
     }
 
-    $statement.Resource = @($current + $missing | Sort-Object -Unique)
-    $json = $doc | ConvertTo-Json -Depth 20
-    $policyFileRef = Convert-JsonArgToFileRef $json
-    $policyFile = $policyFileRef -replace '^file://', ''
-    try {
-        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--policy-document", $policyFileRef) -ErrorMessage "put GitHub Actions deploy IAM policy" | Out-Null
-    } finally {
-        Remove-TempFiles @($policyFile)
+    # CI creates only a new version of the four existing SSOT Launch Templates.
+    # It does not modify the default version or repoint an ASG; pin-asg-image.ps1
+    # requires each ASG to already track $Latest and fails closed otherwise.
+    $ltNames = @(
+        $script:ApiLaunchTemplateName,
+        $script:MessagingLaunchTemplateName,
+        $script:AiLaunchTemplateName,
+        $script:ToolsLaunchTemplateName
+    ) | Where-Object { $_ -and $_.Trim() -ne "" } | Sort-Object -Unique
+    $ltArns = @()
+    if ($ltNames.Count -gt 0) {
+        $ltArgs = @("ec2", "describe-launch-templates", "--launch-template-names") + [string[]]$ltNames + @("--region", $script:Region, "--output", "json")
+        $ltResult = Invoke-AwsJson $ltArgs
+        $ltArns = @($ltResult.LaunchTemplates | Where-Object { $_.LaunchTemplateId } | ForEach-Object {
+            "arn:aws:ec2:$($script:Region):$($script:AccountId):launch-template/$($_.LaunchTemplateId)"
+        } | Sort-Object -Unique)
     }
-    $script:ChangesMade = $true
-    Write-Ok "Updated $roleName/$policyName ASG refresh resources: $($missing -join ', ')"
+
+    $asgReadActions = @("autoscaling:DescribeAutoScalingGroups", "autoscaling:DescribeInstanceRefreshes")
+    $asgReadStatement = @($statements) | Where-Object { $_.Sid -eq "AsgDescribe" } | Select-Object -First 1
+    if (-not $asgReadStatement) {
+        [void]$statements.Add([PSCustomObject]@{ Sid="AsgDescribe"; Effect="Allow"; Action=$asgReadActions; Resource="*" })
+        $changed = $true
+    } elseif (
+        (@($asgReadStatement.Action | Sort-Object) -join "`n") -ne (@($asgReadActions | Sort-Object) -join "`n") -or
+        [string]$asgReadStatement.Resource -ne "*" -or
+        [string]$asgReadStatement.Effect -ne "Allow"
+    ) {
+        $asgReadStatement.Action = $asgReadActions
+        $asgReadStatement.Resource = "*"
+        $asgReadStatement.Effect = "Allow"
+        $changed = $true
+    }
+
+    $readStatement = @($statements) | Where-Object { $_.Sid -eq "LaunchTemplateImagePinRead" } | Select-Object -First 1
+    $readActions = @("ec2:DescribeLaunchTemplates", "ec2:DescribeLaunchTemplateVersions")
+    if (-not $readStatement) {
+        [void]$statements.Add([PSCustomObject]@{
+            Sid = "LaunchTemplateImagePinRead"
+            Effect = "Allow"
+            Action = $readActions
+            Resource = "*"
+        })
+        $changed = $true
+    } else {
+        if (
+            (@($readStatement.Action | Sort-Object) -join "`n") -ne (@($readActions | Sort-Object) -join "`n") -or
+            [string]$readStatement.Resource -ne "*" -or
+            [string]$readStatement.Effect -ne "Allow"
+        ) {
+            $readStatement.Action = $readActions
+            $readStatement.Resource = "*"
+            $readStatement.Effect = "Allow"
+            $changed = $true
+        }
+    }
+
+    $writeStatement = @($statements) | Where-Object { $_.Sid -eq "LaunchTemplateImagePinWrite" } | Select-Object -First 1
+    if ($ltArns.Count -eq $ltNames.Count -and $ltArns.Count -gt 0) {
+        if (-not $writeStatement) {
+            [void]$statements.Add([PSCustomObject]@{
+                Sid = "LaunchTemplateImagePinWrite"
+                Effect = "Allow"
+                Action = "ec2:CreateLaunchTemplateVersion"
+                Resource = $ltArns
+            })
+            $changed = $true
+        } else {
+            if (
+                (@($writeStatement.Action | Sort-Object) -join "`n") -ne "ec2:CreateLaunchTemplateVersion" -or
+                (@($writeStatement.Resource | Sort-Object) -join "`n") -ne (@($ltArns | Sort-Object) -join "`n") -or
+                [string]$writeStatement.Effect -ne "Allow"
+            ) {
+                $writeStatement.Action = "ec2:CreateLaunchTemplateVersion"
+                $writeStatement.Resource = $ltArns
+                $writeStatement.Effect = "Allow"
+                $changed = $true
+            }
+        }
+    } else {
+        throw "Launch Template image-pin IAM cannot converge until all SSOT Launch Templates exist ($($ltArns.Count)/$($ltNames.Count))."
+    }
+
+    $ecrRepoArns = @($script:SSOT_ECR | Where-Object { $_ } | Sort-Object -Unique | ForEach-Object {
+        "arn:aws:ecr:$($script:Region):$($script:AccountId):repository/$_"
+    })
+    if ($ecrRepoArns.Count -ne 6) { throw "Expected exactly six SSOT ECR repositories; actual=$($ecrRepoArns.Count)" }
+    $ecrManaged = @(
+        @{
+            Sid="EcrPushPull"
+            Action=@("ecr:BatchCheckLayerAvailability", "ecr:BatchDeleteImage", "ecr:BatchGetImage", "ecr:CompleteLayerUpload", "ecr:GetDownloadUrlForLayer", "ecr:InitiateLayerUpload", "ecr:PutImage", "ecr:UploadLayerPart")
+        },
+        @{
+            Sid="EcrRepoManage"
+            Action=@("ecr:CreateRepository", "ecr:DescribeImages", "ecr:DescribeRepositories", "ecr:ListImages", "ecr:PutImageTagMutability")
+        }
+    )
+    foreach ($expected in $ecrManaged) {
+        $statement = @($statements) | Where-Object { $_.Sid -eq $expected.Sid } | Select-Object -First 1
+        if (-not $statement) {
+            [void]$statements.Add([PSCustomObject]@{ Sid=$expected.Sid; Effect="Allow"; Action=$expected.Action; Resource=$ecrRepoArns })
+            $changed = $true
+        } elseif (
+            (@($statement.Action | Sort-Object) -join "`n") -ne (@($expected.Action | Sort-Object) -join "`n") -or
+            (@($statement.Resource | Sort-Object) -join "`n") -ne (@($ecrRepoArns | Sort-Object) -join "`n") -or
+            [string]$statement.Effect -ne "Allow"
+        ) {
+            $statement.Action = $expected.Action
+            $statement.Resource = $ecrRepoArns
+            $statement.Effect = "Allow"
+            $changed = $true
+        }
+    }
+
+    if ($changed) {
+        $doc.Statement = @($statements)
+        $json = $doc | ConvertTo-Json -Depth 20
+        $policyFileRef = Convert-JsonArgToFileRef $json
+        $policyFile = $policyFileRef -replace '^file://', ''
+        try {
+            Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--policy-document", $policyFileRef) -ErrorMessage "put GitHub Actions deploy IAM policy" | Out-Null
+        } finally {
+            Remove-TempFiles @($policyFile)
+        }
+        $script:ChangesMade = $true
+    }
+
+    # Read back the live policy and prove that every write-capable managed Sid
+    # is exact. Additive checks can leave stale wildcard resources behind.
+    $verifiedPolicy = Invoke-AwsJson @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--output", "json")
+    $verifiedStatements = @($verifiedPolicy.PolicyDocument.Statement)
+    $expectedManaged = @(
+        @{Sid="AsgInstanceRefresh"; Action=$asgActions; Resource=$requiredAsgArns},
+        @{Sid="AsgDescribe"; Action=$asgReadActions; Resource=@("*")},
+        @{Sid="LaunchTemplateImagePinRead"; Action=$readActions; Resource=@("*")},
+        @{Sid="LaunchTemplateImagePinWrite"; Action=@("ec2:CreateLaunchTemplateVersion"); Resource=$ltArns}
+    ) + @($ecrManaged | ForEach-Object { @{Sid=$_.Sid; Action=$_.Action; Resource=$ecrRepoArns} })
+    foreach ($expected in $expectedManaged) {
+        $matches = @($verifiedStatements | Where-Object { $_.Sid -eq $expected.Sid })
+        if ($matches.Count -ne 1) { throw "IAM readback expected one $($expected.Sid) statement; actual=$($matches.Count)" }
+        $actual = $matches[0]
+        if (
+            [string]$actual.Effect -ne "Allow" -or
+            (@($actual.Action | Sort-Object) -join "`n") -ne (@($expected.Action | Sort-Object) -join "`n") -or
+            (@($actual.Resource | Sort-Object) -join "`n") -ne (@($expected.Resource | Sort-Object) -join "`n")
+        ) {
+            throw "IAM readback mismatch for managed statement $($expected.Sid)"
+        }
+    }
+    Write-Ok "GitHub Actions deploy IAM converged and read back with exact SSOT resources"
+}
+
+function Ensure-GitHubActionsDeployIAM {
+    if ($script:PlanMode) { return }
+    $roleName = if ($script:GitHubActionsDeployRoleName) { $script:GitHubActionsDeployRoleName } else { "academy-gha-ecr-build" }
+    $policyName = if ($script:GitHubActionsDeployPolicyName) { $script:GitHubActionsDeployPolicyName } else { "EcrBuildPush" }
+    Write-Step "Converge exact GitHub Actions least-privilege policy"
+    $role = Invoke-AwsJson @("iam", "get-role", "--role-name", $roleName, "--output", "json")
+    if (-not $role.Role.Arn) { throw "GitHub Actions role not found: $roleName" }
+    $currentPolicy = $null
+    try { $currentPolicy = Invoke-AwsJson @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--output", "json") }
+    catch { if ($_.Exception.Message -notmatch "NoSuchEntity") { throw } }
+
+    $repos = @($script:SSOT_ECR | Where-Object { $_ } | Sort-Object -Unique)
+    if ($repos.Count -ne 6) { throw "Expected exactly six SSOT ECR repositories; actual=$($repos.Count)" }
+    $repoArns = @($repos | ForEach-Object { "arn:aws:ecr:$($script:Region):$($script:AccountId):repository/$_" })
+    $asgNames = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName, $script:ToolsASGName | Where-Object { $_ } | Sort-Object -Unique)
+    if ($asgNames.Count -ne 4) { throw "Expected exactly four SSOT ASGs; actual=$($asgNames.Count)" }
+    $asgArns = @($asgNames | ForEach-Object { Get-ASGInstanceRefreshResourceArn $_ })
+    $ltNames = @($script:ApiLaunchTemplateName, $script:MessagingLaunchTemplateName, $script:AiLaunchTemplateName, $script:ToolsLaunchTemplateName | Where-Object { $_ } | Sort-Object -Unique)
+    $ltArgs = @("ec2", "describe-launch-templates", "--launch-template-names") + [string[]]$ltNames + @("--region", $script:Region, "--output", "json")
+    $ltResult = Invoke-AwsJson $ltArgs
+    $ltArns = @($ltResult.LaunchTemplates | ForEach-Object { "arn:aws:ec2:$($script:Region):$($script:AccountId):launch-template/$($_.LaunchTemplateId)" } | Sort-Object -Unique)
+    if ($ltArns.Count -ne 4) { throw "All four SSOT Launch Templates must exist before IAM convergence." }
+    $jobDefArns = @($script:SSOT_JobDef | Where-Object { $_ } | Sort-Object -Unique | ForEach-Object { "arn:aws:batch:$($script:Region):$($script:AccountId):job-definition/${_}:*" })
+    if ($jobDefArns.Count -ne 8) { throw "Expected exactly eight video job definitions; actual=$($jobDefArns.Count)" }
+    $instanceTags = @($script:ApiInstanceTagValue, $script:MessagingInstanceTagValue, $script:AiInstanceTagValue, $script:ToolsInstanceTagValue | Where-Object { $_ } | Sort-Object -Unique)
+
+    $statements = @(
+        [ordered]@{Sid="EcrAuth";Effect="Allow";Action="ecr:GetAuthorizationToken";Resource="*"},
+        [ordered]@{Sid="EcrPushPull";Effect="Allow";Action=@("ecr:BatchCheckLayerAvailability","ecr:BatchDeleteImage","ecr:BatchGetImage","ecr:CompleteLayerUpload","ecr:GetDownloadUrlForLayer","ecr:InitiateLayerUpload","ecr:PutImage","ecr:UploadLayerPart");Resource=$repoArns},
+        [ordered]@{Sid="EcrRepoManage";Effect="Allow";Action=@("ecr:CreateRepository","ecr:DescribeImages","ecr:DescribeRepositories","ecr:GetLifecyclePolicy","ecr:ListImages","ecr:PutImageTagMutability");Resource=$repoArns},
+        [ordered]@{Sid="AsgInstanceRefresh";Effect="Allow";Action=@("autoscaling:CancelInstanceRefresh","autoscaling:SetInstanceProtection","autoscaling:StartInstanceRefresh","autoscaling:UpdateAutoScalingGroup");Resource=$asgArns},
+        [ordered]@{Sid="AsgDescribe";Effect="Allow";Action=@("autoscaling:DescribeAutoScalingGroups","autoscaling:DescribeInstanceRefreshes");Resource="*"},
+        [ordered]@{Sid="LaunchTemplateImagePinRead";Effect="Allow";Action=@("ec2:DescribeLaunchTemplates","ec2:DescribeLaunchTemplateVersions");Resource="*"},
+        [ordered]@{Sid="LaunchTemplateImagePinWrite";Effect="Allow";Action="ec2:CreateLaunchTemplateVersion";Resource=$ltArns},
+        [ordered]@{Sid="SsmSendDocument";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ssm:$($script:Region)::document/AWS-RunShellScript"},
+        [ordered]@{Sid="SsmSendInstances";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=[ordered]@{"ssm:resourceTag/Name"=$instanceTags}}},
+        [ordered]@{Sid="SsmCommandRead";Effect="Allow";Action="ssm:GetCommandInvocation";Resource="*"},
+        [ordered]@{Sid="BatchRead";Effect="Allow";Action=@("batch:DescribeComputeEnvironments","batch:DescribeJobDefinitions");Resource="*"},
+        [ordered]@{Sid="BatchJobDefinitionWrite";Effect="Allow";Action=@("batch:DeregisterJobDefinition","batch:RegisterJobDefinition","batch:TagResource");Resource=$jobDefArns},
+        [ordered]@{Sid="BatchPassRoles";Effect="Allow";Action="iam:PassRole";Resource=@("arn:aws:iam::$($script:AccountId):role/$JobRoleName","arn:aws:iam::$($script:AccountId):role/$ExecutionRoleName");Condition=[ordered]@{StringEquals=[ordered]@{"iam:PassedToService"="batch.amazonaws.com"}}},
+        [ordered]@{Sid="ElbRead";Effect="Allow";Action=@("elasticloadbalancing:DescribeTargetGroups","elasticloadbalancing:DescribeTargetHealth");Resource="*"},
+        [ordered]@{Sid="SnsFailureNotify";Effect="Allow";Action="sns:Publish";Resource="arn:aws:sns:$($script:Region):$($script:AccountId):academy-ops-alerts"},
+        [ordered]@{Sid="StsIdentity";Effect="Allow";Action="sts:GetCallerIdentity";Resource="*"},
+        [ordered]@{Sid="DeploymentControlLock";Effect="Allow";Action=@("dynamodb:DeleteItem","dynamodb:GetItem","dynamodb:PutItem","dynamodb:UpdateItem");Resource="arn:aws:dynamodb:$($script:Region):$($script:AccountId):table/$($script:DynamoLockTableName)"}
+    )
+    $expected = [ordered]@{Version="2012-10-17";Statement=$statements}
+    $expectedJson = $expected | ConvertTo-Json -Depth 50 -Compress
+    $currentJson = if ($currentPolicy -and $currentPolicy.PolicyDocument) { $currentPolicy.PolicyDocument | ConvertTo-Json -Depth 50 -Compress } else { "" }
+    if ($currentJson -ne $expectedJson) {
+        $policyRef = Convert-JsonArgToFileRef $expectedJson
+        $policyFile = $policyRef -replace '^file://', ''
+        try { Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--policy-document", $policyRef) -ErrorMessage "put exact GitHub Actions policy" | Out-Null }
+        finally { Remove-TempFiles @($policyFile) }
+        $script:ChangesMade = $true
+    }
+    $readback = Invoke-AwsJson @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--output", "json")
+    $actualJson = $readback.PolicyDocument | ConvertTo-Json -Depth 50 -Compress
+    if ($actualJson -ne $expectedJson) { throw "GitHub Actions IAM full-policy readback does not exactly match the managed least-privilege contract." }
+    Write-Ok "GitHub Actions deploy IAM converged and exact readback passed"
 }
 
 function Ensure-BatchIAM {

@@ -32,8 +32,7 @@ def check_landing_admin_role(request) -> bool:
 
 
 def client_ip(request) -> str:
-    """X-Forwarded-For 우선 client IP 추출. unknown fallback."""
-    xff = request.META.get("HTTP_X_FORWARDED_FOR") or ""
-    if xff:
-        return xff.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR") or "unknown"
+    """Return the proxy-validated client IP."""
+    from apps.core.services.client_ip import get_client_ip
+
+    return get_client_ip(request) or "unknown"

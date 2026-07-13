@@ -20,6 +20,7 @@ from datetime import date, timedelta
 
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from django.utils import timezone
 
 from apps.billing.models import Invoice
 from apps.billing.services import subscription_service
@@ -37,7 +38,7 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         dry_run = options["dry_run"]
-        today = date.today()
+        today = timezone.localdate()
         grace_days = settings.BILLING_GRACE_PERIOD_DAYS
         exempt = settings.BILLING_EXEMPT_TENANT_IDS
         fixes = []

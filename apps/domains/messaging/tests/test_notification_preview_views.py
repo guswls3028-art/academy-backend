@@ -1,3 +1,7 @@
+from datetime import timedelta
+from uuid import uuid4
+
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
 from django.utils import timezone
@@ -5,18 +9,23 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.core.models.user import user_internal_username
-from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, NotificationPreviewToken
+from apps.domains.messaging.models import (
+    AutoSendConfig,
+    MessageTemplate,
+    NotificationPreviewToken,
+    ScheduledNotification,
+)
 from unittest.mock import patch
 
 from apps.domains.messaging.notification_dispatch import build_student_list_preview, execute_notification_batch
+from apps.domains.messaging.scheduled import MessagingHourlyQuotaExceeded
 from apps.domains.messaging.views_notification import (
     AttendanceNotificationPreviewView,
+    ManualNotificationConfirmView,
     ManualNotificationPreviewView,
 )
-from apps.domains.students.models import Student
-
-
 User = get_user_model()
+Student = apps.get_model("students", "Student")
 
 
 class NotificationPreviewViewValidationTests(TestCase):
@@ -348,6 +357,8 @@ class NotificationBatchDispatchPolicyTests(TestCase):
         )
 
         self.assertEqual(result["sent_count"], 1)
+        self.assertEqual(result["pending_count"], 0)
+        self.assertEqual(result["accepted_count"], 1)
         mock_enqueue.assert_called_once()
         kwargs = mock_enqueue.call_args.kwargs
         self.assertEqual(kwargs["message_mode"], "alimtalk")
@@ -379,4 +390,107 @@ class NotificationBatchDispatchPolicyTests(TestCase):
         )
 
         self.assertEqual(result["sent_count"], 1)
+        self.assertEqual(result["pending_count"], 0)
+        self.assertEqual(result["accepted_count"], 1)
         self.assertEqual(mock_enqueue.call_args.kwargs["target_type"], "student")
+
+
+class NotificationPreviewConfirmDurabilityTests(TestCase):
+    def setUp(self):
+        self.factory = APIRequestFactory()
+        self.tenant = Tenant.objects.create(
+            code="msg-confirm-durable",
+            name="Msg Confirm Durable",
+            is_active=True,
+        )
+        self.admin = User.objects.create_user(
+            username="msg-confirm-durable-owner",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=self.admin,
+            role="owner",
+        )
+
+    def _token(self) -> NotificationPreviewToken:
+        return NotificationPreviewToken.objects.create(
+            token=uuid4(),
+            tenant=self.tenant,
+            notification_type="clinic_reminder",
+            session_type="manual",
+            session_id=0,
+            send_to="parent",
+            payload={
+                "recipients": [
+                    {
+                        "student_id": 101,
+                        "student_name": "내구성",
+                        "phone_raw": "01012345678",
+                        "message_body": "확정 발송",
+                        "alimtalk_replacements": [],
+                    }
+                ],
+                "solapi_template_id": "KA01TP_DURABLE",
+                "message_mode": "alimtalk",
+                "notification_type": "clinic_reminder",
+                "send_to": "parent",
+            },
+            expires_at=timezone.now() + timedelta(minutes=5),
+        )
+
+    def _confirm(self, token: NotificationPreviewToken):
+        request = self.factory.post(
+            "/api/v1/messaging/manual-notification/confirm/",
+            {"preview_token": str(token.token)},
+            format="json",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+        return ManualNotificationConfirmView.as_view()(request)
+
+    @patch("apps.domains.messaging.policy.check_recipient_allowed", return_value=True)
+    @patch("apps.domains.messaging.services.enqueue_sms", return_value=False)
+    def test_queue_failure_keeps_durable_pending_outbox_and_consumes_token_once(
+        self,
+        mock_enqueue,
+        _mock_allowed,
+    ):
+        token = self._token()
+
+        response = self._confirm(token)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["sent_count"], 0)
+        self.assertEqual(response.data["pending_count"], 1)
+        self.assertEqual(response.data["accepted_count"], 1)
+        token.refresh_from_db()
+        self.assertIsNotNone(token.used_at)
+        self.assertEqual(token.payload["recipients"], [])
+        self.assertEqual(token.payload["redacted"], True)
+        self.assertNotIn("01012345678", str(token.payload))
+        self.assertNotIn("확정 발송", str(token.payload))
+        outbox = ScheduledNotification.objects.get(tenant=self.tenant)
+        self.assertEqual(outbox.status, ScheduledNotification.Status.PENDING)
+        self.assertEqual(outbox.attempt_count, 1)
+        mock_enqueue.assert_called_once()
+
+        duplicate = self._confirm(token)
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertEqual(ScheduledNotification.objects.count(), 1)
+
+    @patch(
+        "apps.domains.messaging.scheduled.create_notification_outboxes",
+        side_effect=MessagingHourlyQuotaExceeded("hourly_notification_limit"),
+    )
+    def test_reservation_failure_rolls_back_token_consumption(self, _mock_create):
+        token = self._token()
+
+        response = self._confirm(token)
+
+        self.assertEqual(response.status_code, 429)
+        token.refresh_from_db()
+        self.assertIsNone(token.used_at)
+        self.assertFalse(ScheduledNotification.objects.exists())

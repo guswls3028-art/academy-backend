@@ -591,7 +591,7 @@ RUNNING → {DONE, FAILED}
 **모델:** `apps/billing/models.py`
 **상태 필드:** `status` (CharField, indexed)
 
-#### 상태 목록 (설계, 미구현)
+#### 상태 목록
 
 | 상태 | 의미 |
 |------|------|
@@ -602,14 +602,36 @@ RUNNING → {DONE, FAILED}
 | `OVERDUE` | 연체 |
 | `VOID` | 무효 |
 
-**현재 상태:** 런타임 코드에서 상태 변이 없음. 모델만 정의됨.
+#### 허용 전이
+
+```
+SCHEDULED → {PENDING, VOID}
+PENDING   → {PAID, FAILED}
+FAILED    → {PENDING, OVERDUE, VOID}
+OVERDUE   → {PAID, VOID}
+PAID      → {} (종단)
+VOID      → {} (종단)
+```
+
+**전이 SSOT:** `apps/billing/services/invoice_service.py`
+
+- `process_billing`은 결제기한에 도달한 `INVOICE_REQUEST`를
+  `SCHEDULED → PENDING`으로 전환한다. 자동카드는 결제 실행 직전에 같은
+  전이를 거친다.
+- 수동 입금 확인은 `PENDING/FAILED/OVERDUE`에서만 허용한다. `FAILED`는
+  `PENDING`을 경유하며, `PAID` 전이와 수동 `PaymentTransaction(SUCCESS)`
+  기록은 한 트랜잭션으로 처리한다.
+- API는 `can_mark_paid`, `payment_blocked_reason`, `is_terminal`을 노출해
+  UI가 상태기계를 추측하지 않게 한다.
 
 ---
 
 ### B13. PaymentTransaction
 
 **모델:** `apps/billing/models.py`
-**현재 상태:** 런타임 코드에서 상태 변이 없음. 모델만 정의됨.
+**현재 상태:** 자동결제와 Toss webhook이 `PENDING → SUCCESS/FAILED`,
+환불 webhook이 `SUCCESS/PARTIALLY_REFUNDED → PARTIALLY_REFUNDED/REFUNDED`를
+처리한다. 수동 입금은 처음부터 `SUCCESS`인 대조 레코드를 원자적으로 만든다.
 
 ---
 
@@ -625,9 +647,25 @@ RUNNING → {DONE, FAILED}
 | `active` | 활성 구독 |
 | `expired` | 만료 |
 | `grace` | 유예 기간 |
-| `cancelled` | 해지 |
 
-**현재 상태:** 마이그레이션에서만 초기값 설정. 런타임 변이 코드 없음. 402 오버레이가 `is_subscription_active` 기반으로 동작.
+해지 예약은 상태가 아니라 `cancel_at_period_end` 플래그다.
+
+#### 허용 전이
+
+```
+active  → {grace, expired}
+grace   → {active, expired}
+expired → {active}
+```
+
+**전이 SSOT:** `apps/billing/services/subscription_service.py`
+
+- `BILLING_GRACE_PERIOD_DAYS`(기본 7일)는 유료 기간 종료일 다음 날부터
+  적용하며, `service_access_expires_at = subscription_expires_at + grace days`다.
+- `process_billing`이 `active → grace → expired`를 수행하고
+  `sync_subscription`은 누락 복구 안전망이다.
+- 402 접근 판정과 구독 API의 `days_remaining`은 유예 상태에서 실제 서비스
+  접근 종료일을 기준으로 한다.
 
 ---
 
@@ -721,7 +759,8 @@ EXPIRED → {} (종단)
 **비고:** 대부분은 상태기계가 아닌 분류 값이다. 단, `SECESSION`은 단순 출결
 분류가 아니라 퇴원 처리 workflow로 동작한다. 전환 시 `confirm_secession:
 true`가 필요하며 수강등록 비활성화, 자동 수납 비활성화, 시험/과제 대상
-제거가 함께 수행된다.
+제거가 함께 수행된다. `SECESSION` 진입 후 일반 PATCH/PUT으로 출석 분류를
+되돌릴 수 없으며, 재등록은 수강등록 lifecycle을 통해 새로 처리한다.
 
 ---
 
@@ -863,16 +902,17 @@ true`가 필요하며 수강등록 비활성화, 자동 수납 비활성화, 시
 - 워커와 동시 실행 시 레이스 컨디션 가능
 - **리스크:** 낮음 (cron 간격이 워커 처리 시간보다 길어 실제 충돌 확률 낮음)
 
-### F4. Billing 도메인 미구현
+### F4. Billing 세금계산서 외부 발행 연동
 
-- Invoice, PaymentTransaction, TaxInvoiceIssue 모델이 정의되어 있지만 런타임 상태 변이 코드 없음
-- 구현 시 상태 전이 가드 필수
+- Invoice/PaymentTransaction 런타임 상태 전이와 Toss 결제는 구현됨.
+- `TaxInvoiceIssue`의 외부 전자세금계산서 발행 provider 연동은 별도 범위다.
 
-### F5. Subscription 라이프사이클 미구현
+### F5. Subscription 배치 운영 의존성
 
-- `Program.subscription_status`가 마이그레이션에서만 설정됨
-- active → expired, active → grace → expired 자동 전이 로직 미구현
-- **리스크:** 구독 만료 자동 처리가 없어 수동 관리 필요
+- `process_billing`이 active → grace → expired 자동 전이를 수행하고,
+  `sync_subscription`이 누락을 복구한다.
+- **잔여 운영 리스크:** EventBridge/SSM 배치가 모두 중단되면 DB 상태 표시는
+  늦어질 수 있다. 접근 판정은 날짜를 함께 검사해 과거 active를 허용하지 않는다.
 
 ### F6. ExamResult DRAFT 노출 가능성
 

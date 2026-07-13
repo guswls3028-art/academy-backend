@@ -11,11 +11,19 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
-from apps.domains.staffs.models import Staff, WorkMonthLock, WorkRecord, WorkType
+from apps.core.models.ops_audit import OpsAuditLog
+from apps.domains.staffs.models import (
+    ExpenseRecord,
+    PayrollSnapshot,
+    Staff,
+    WorkMonthLock,
+    WorkRecord,
+    WorkType,
+)
 from apps.domains.staffs.serializers import StaffCreateUpdateSerializer, StaffListSerializer
 from apps.domains.staffs.views.helpers import can_access_staff_management
 from apps.domains.staffs.views.work_month_lock import WorkMonthLockViewSet
-from apps.domains.teachers.models import Teacher
+from academy.adapters.db.django import repositories_teachers as teacher_repo
 
 User = get_user_model()
 
@@ -51,12 +59,7 @@ def _create_staff_teacher(tenant, name="김강사", phone="01011112222"):
         name=name,
         phone=phone,
     )
-    Teacher.objects.create(
-        tenant=tenant,
-        name=name,
-        phone=phone or "",
-        is_active=True,
-    )
+    teacher_repo.teacher_create(tenant, name, phone or "", is_active=True)
     TenantMembership.objects.create(
         tenant=tenant,
         user=user,
@@ -85,7 +88,7 @@ class TestStaffTeacherNameSync(TestCase):
         serializer.is_valid(raise_exception=True)
         serializer.update(self.staff, serializer.validated_data)
 
-        teacher = Teacher.objects.get(tenant=self.tenant, phone="01011112222")
+        teacher = teacher_repo.teacher_filter_tenant(self.tenant).get(phone="01011112222")
         self.assertEqual(teacher.name, "김선생")
 
     def test_phone_change_syncs_teacher(self):
@@ -100,7 +103,7 @@ class TestStaffTeacherNameSync(TestCase):
         serializer.is_valid(raise_exception=True)
         serializer.update(self.staff, serializer.validated_data)
 
-        teacher = Teacher.objects.get(tenant=self.tenant, name="김강사")
+        teacher = teacher_repo.teacher_filter_tenant(self.tenant).get(name="김강사")
         self.assertEqual(teacher.phone, "01099998888")
 
     def test_name_and_phone_change_together(self):
@@ -115,8 +118,8 @@ class TestStaffTeacherNameSync(TestCase):
         serializer.is_valid(raise_exception=True)
         serializer.update(self.staff, serializer.validated_data)
 
-        self.assertFalse(Teacher.objects.filter(tenant=self.tenant, name="김강사").exists())
-        teacher = Teacher.objects.get(tenant=self.tenant, name="박강사")
+        self.assertFalse(teacher_repo.teacher_filter_tenant(self.tenant).filter(name="김강사").exists())
+        teacher = teacher_repo.teacher_filter_tenant(self.tenant).get(name="박강사")
         self.assertEqual(teacher.phone, "01033334444")
 
 
@@ -139,26 +142,28 @@ class TestStaffTeacherDeactivateSync(TestCase):
         serializer.is_valid(raise_exception=True)
         serializer.update(self.staff, serializer.validated_data)
 
-        teacher = Teacher.objects.get(tenant=self.tenant, name="이강사")
+        teacher = teacher_repo.teacher_filter_tenant(self.tenant).get(name="이강사")
         self.assertFalse(teacher.is_active)
 
     def test_reactivate_syncs_teacher(self):
         """Staff 재활성화 → Teacher.is_active=True."""
         self.staff.is_active = False
         self.staff.save(update_fields=["is_active"])
-        Teacher.objects.filter(tenant=self.tenant, name="이강사").update(is_active=False)
+        teacher_repo.teacher_update_is_active_by_name_phone(
+            self.tenant, "이강사", "01055556666", False,
+        )
 
         request = _make_request(self.tenant, self.staff.user)
         serializer = StaffCreateUpdateSerializer(
             self.staff,
-            data={"is_active": True},
+            data={"is_active": True, "role": "TEACHER"},
             partial=True,
             context={"request": request},
         )
         serializer.is_valid(raise_exception=True)
         serializer.update(self.staff, serializer.validated_data)
 
-        teacher = Teacher.objects.get(tenant=self.tenant, name="이강사")
+        teacher = teacher_repo.teacher_filter_tenant(self.tenant).get(name="이강사")
         self.assertTrue(teacher.is_active)
 
     def test_name_change_and_deactivate_simultaneously(self):
@@ -174,9 +179,9 @@ class TestStaffTeacherDeactivateSync(TestCase):
         serializer.update(self.staff, serializer.validated_data)
 
         # 구 이름 Teacher는 없어야 함
-        self.assertFalse(Teacher.objects.filter(tenant=self.tenant, name="이강사").exists())
+        self.assertFalse(teacher_repo.teacher_filter_tenant(self.tenant).filter(name="이강사").exists())
         # 새 이름 Teacher가 비활성 상태여야 함
-        teacher = Teacher.objects.get(tenant=self.tenant, name="최강사")
+        teacher = teacher_repo.teacher_filter_tenant(self.tenant).get(name="최강사")
         self.assertFalse(teacher.is_active)
 
 
@@ -397,6 +402,18 @@ class TestWorkMonthLockFilters(TestCase):
         view = WorkMonthLockViewSet.as_view({"get": "list"})
         return view(request)
 
+    def _close_month(self, *, month, payload_overrides=None):
+        payload = {"staff": self.staff_a.id, "year": 2026, "month": month}
+        payload.update(payload_overrides or {})
+        request = self.factory.post(
+            "/staffs/work-month-locks/",
+            payload,
+            format="json",
+        )
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.manager.user)
+        return WorkMonthLockViewSet.as_view({"post": "create"})(request)
+
     def test_filters_by_staff_year_and_month(self):
         response = self._list_locks(
             {"staff": self.staff_a.id, "year": 2026, "month": 7}
@@ -408,6 +425,220 @@ class TestWorkMonthLockFilters(TestCase):
         months = [row["month"] for row in rows]
         self.assertEqual(ids, [self.staff_a.id])
         self.assertEqual(months, [7])
+
+    def test_repeated_month_close_is_idempotent(self):
+        first = self._close_month(month=8)
+        second = self._close_month(month=8)
+
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(second.status_code, 200, second.data)
+        self.assertEqual(first.data["id"], second.data["id"])
+        self.assertEqual(
+            PayrollSnapshot.objects.filter(
+                tenant=self.tenant,
+                staff=self.staff_a,
+                year=2026,
+                month=8,
+            ).count(),
+            1,
+        )
+
+    def test_month_close_rejects_boolean_and_non_integer_identifiers(self):
+        for payload in (
+            {"staff": True},
+            {"staff": "abc"},
+            {"year": True},
+            {"month": 8.5},
+        ):
+            with self.subTest(payload=payload):
+                response = self._close_month(month=8, payload_overrides=payload)
+                self.assertEqual(response.status_code, 400, response.data)
+
+        self.assertFalse(
+            WorkMonthLock.objects.filter(
+                tenant=self.tenant,
+                staff=self.staff_a,
+                year=2026,
+                month=8,
+            ).exists()
+        )
+
+    def test_month_close_rejects_year_outside_supported_range(self):
+        for year in (2019, 2101):
+            with self.subTest(year=year):
+                response = self._close_month(
+                    month=8,
+                    payload_overrides={"year": year},
+                )
+                self.assertEqual(response.status_code, 400, response.data)
+
+    def test_month_lock_patch_and_delete_are_method_not_allowed(self):
+        lock = WorkMonthLock.objects.get(
+            tenant=self.tenant,
+            staff=self.staff_a,
+            year=2026,
+            month=7,
+        )
+        view = WorkMonthLockViewSet.as_view({"get": "retrieve"})
+        patch_request = self.factory.patch(
+            f"/staffs/work-month-locks/{lock.id}/",
+            {"is_locked": False},
+            format="json",
+        )
+        patch_request.tenant = self.tenant
+        force_authenticate(patch_request, user=self.manager.user)
+        delete_request = self.factory.delete(
+            f"/staffs/work-month-locks/{lock.id}/"
+        )
+        delete_request.tenant = self.tenant
+        force_authenticate(delete_request, user=self.manager.user)
+
+        patch_response = view(patch_request, pk=lock.id)
+        delete_response = view(delete_request, pk=lock.id)
+
+        self.assertEqual(patch_response.status_code, 405)
+        self.assertEqual(delete_response.status_code, 405)
+        lock.refresh_from_db()
+        self.assertTrue(lock.is_locked)
+
+    def test_close_rejects_open_work_record_without_creating_artifacts(self):
+        work_type = WorkType.objects.create(
+            tenant=self.tenant,
+            name="월마감 근무",
+            base_hourly_wage=10_000,
+        )
+        WorkRecord.objects.create(
+            tenant=self.tenant,
+            staff=self.staff_a,
+            work_type=work_type,
+            date="2026-08-10",
+            start_time="09:00",
+        )
+
+        response = self._close_month(month=8)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertTrue(response.data["open_work_record_ids"])
+        self.assertFalse(
+            WorkMonthLock.objects.filter(
+                staff=self.staff_a,
+                year=2026,
+                month=8,
+            ).exists()
+        )
+        self.assertFalse(
+            PayrollSnapshot.objects.filter(
+                staff=self.staff_a,
+                year=2026,
+                month=8,
+            ).exists()
+        )
+
+    def test_close_rejects_pending_expense(self):
+        ExpenseRecord.objects.create(
+            tenant=self.tenant,
+            staff=self.staff_a,
+            date="2026-08-10",
+            title="미처리 교통비",
+            amount=10_000,
+            status="PENDING",
+        )
+
+        response = self._close_month(month=8)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertTrue(response.data["pending_expense_ids"])
+        self.assertFalse(
+            WorkMonthLock.objects.filter(
+                staff=self.staff_a,
+                year=2026,
+                month=8,
+            ).exists()
+        )
+
+    def test_close_rejects_incomplete_closed_work_record(self):
+        work_type = WorkType.objects.create(
+            tenant=self.tenant,
+            name="불완전 근무",
+            base_hourly_wage=10_000,
+        )
+        record = WorkRecord.objects.create(
+            tenant=self.tenant,
+            staff=self.staff_a,
+            work_type=work_type,
+            date="2026-08-10",
+            start_time="09:00",
+        )
+        WorkRecord.objects.filter(pk=record.pk).update(end_time="18:00")
+
+        response = self._close_month(month=8)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self.assertEqual(
+            [int(value) for value in response.data["incomplete_work_record_ids"]],
+            [record.id],
+        )
+        self.assertFalse(
+            PayrollSnapshot.objects.filter(
+                staff=self.staff_a,
+                year=2026,
+                month=8,
+            ).exists()
+        )
+
+    def test_open_record_in_other_month_does_not_block_close(self):
+        work_type = WorkType.objects.create(
+            tenant=self.tenant,
+            name="다른 달 근무",
+            base_hourly_wage=10_000,
+        )
+        WorkRecord.objects.create(
+            tenant=self.tenant,
+            staff=self.staff_a,
+            work_type=work_type,
+            date="2026-09-01",
+            start_time="09:00",
+        )
+
+        response = self._close_month(month=8)
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertTrue(
+            PayrollSnapshot.objects.filter(
+                staff=self.staff_a,
+                year=2026,
+                month=8,
+            ).exists()
+        )
+
+    def test_legacy_unlocked_row_with_snapshot_requires_reconciliation(self):
+        lock = WorkMonthLock.objects.create(
+            tenant=self.tenant,
+            staff=self.staff_a,
+            year=2026,
+            month=8,
+            is_locked=False,
+            locked_by=self.manager.user,
+        )
+        PayrollSnapshot.objects.create(
+            tenant=self.tenant,
+            staff=self.staff_a,
+            year=2026,
+            month=8,
+            generated_by=self.manager.user,
+        )
+
+        response = self._close_month(month=8)
+
+        self.assertEqual(response.status_code, 400, response.data)
+        lock.refresh_from_db()
+        self.assertFalse(lock.is_locked)
+        self.assertTrue(
+            OpsAuditLog.objects.filter(
+                action="payroll.month_lock_reconciliation_required",
+                target_tenant=self.tenant,
+            ).exists()
+        )
 
 
 class TestStaffDeletePolicy(TestCase):
@@ -426,7 +657,9 @@ class TestStaffDeletePolicy(TestCase):
         serializer.delete(staff)
 
         self.assertFalse(Staff.objects.filter(id=staff.id).exists())
-        self.assertFalse(Teacher.objects.filter(tenant=self.tenant, name="삭제대상").exists())
+        self.assertFalse(
+            teacher_repo.teacher_filter_tenant(self.tenant).filter(name="삭제대상").exists()
+        )
 
     def test_owner_cannot_be_deleted(self):
         """Owner는 삭제 불가."""

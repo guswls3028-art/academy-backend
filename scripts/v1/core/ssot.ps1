@@ -407,16 +407,25 @@ function Load-SSOT {
         $script:EventBridgeEnqueueUploadedRule,
         $script:EventBridgeDetectStuckRule,
         $script:EventBridgeRecoverDeadRule,
-        $script:EventBridgePurgeRawRule,
-        $script:EventBridgeCleanupOrphanRule
+        $script:EventBridgePurgeRawRule
     )
+    # These schedules are owned by their domain-specific Terraform stacks. The v1
+    # deployer must inventory/protect them, but must not recreate or purge them.
+    $script:SSOT_ExternalEventBridgeRule = @(
+        $script:EventBridgeCleanupOrphanRule,
+        "academy-v1-process-billing",
+        "academy-v1-process-scheduled-notifications",
+        "academy-v1-send-clinic-reminders",
+        "academy-v1-purge-soft-deleted"
+    )
+    $script:SSOT_ProtectedEventBridgeRule = @($script:SSOT_EventBridgeRule) + @($script:SSOT_ExternalEventBridgeRule)
     $script:SSOT_ASG = @($script:ApiASGName, $script:MessagingASGName, $script:AiASGName, $script:ToolsASGName)
     $script:SSOT_RDS = @($script:RdsDbIdentifier)
     $script:SSOT_Redis = @($script:RedisReplicationGroupId)
-    $script:SSOT_ECR = @($script:EcrApiRepo, $script:VideoWorkerRepo, $script:EcrMessagingRepo, $script:EcrAiRepo, $script:EcrToolsRepo)
-    $script:SSOT_SSM = @($script:SsmApiEnv, $script:SsmWorkersEnv)
+    $script:SSOT_ECR = @($script:EcrBaseRepo, $script:EcrApiRepo, $script:VideoWorkerRepo, $script:EcrMessagingRepo, $script:EcrAiRepo, $script:EcrToolsRepo)
+    $script:SSOT_SSM = @($script:SsmApiEnv, $script:SsmWorkersEnv, $script:DeployLockParamName)
     if ($script:RdsMasterPasswordSsmParam -and $script:RdsMasterPasswordSsmParam.Trim() -ne "" -and $script:RdsMasterPasswordSsmParam -notin $script:SSOT_SSM) {
-        $script:SSOT_SSM = @($script:SsmApiEnv, $script:SsmWorkersEnv, $script:RdsMasterPasswordSsmParam)
+        $script:SSOT_SSM += $script:RdsMasterPasswordSsmParam
     }
     $script:SSOT_EIP = @()
     if ($script:ApiAllocationId) { $script:SSOT_EIP = @($script:ApiAllocationId) }
@@ -430,4 +439,25 @@ function Load-SSOT {
     )
     $script:SSOT_InstanceProfile = @("academy-batch-ecs-instance-profile")
     $script:SSOT_ECSClusterPatterns = @("*academy-v1-video-batch-ce*", "*academy-v1-video-ops-ce*")
+
+    # PruneLegacy is intentionally closed-world. Only resources explicitly
+    # retired by this stack may be discovered or deleted. Never infer deletion
+    # candidates from an account-wide listing or from the complement of SSOT.
+    $script:PruneLegacyAllowlist = [ordered]@{
+        "Batch CE"        = @("academy-v1-video-batch-long-ce-200gb")
+        "Batch Queue"     = @("academy-v1-video-batch-long-queue")
+        "Batch JobDef"    = @("academy-v1-video-batch-long-jobdef")
+        "EventBridge Rule" = @(
+            "academy-reconcile-video-jobs",
+            "academy-video-scan-stuck-rate",
+            "academy-worker-autoscale-rate",
+            "academy-worker-queue-depth-rate"
+        )
+        "IAM Role"        = @()
+        "ASG"             = @()
+        "ECS Cluster"     = @()
+        "EIP"             = @()
+        "SSM"             = @()
+        "ECR"             = @()
+    }
 }

@@ -178,7 +178,9 @@ class DevCronTriggerView(APIView):
 
         actor_meta = {"actor": getattr(request.user, "username", "")}
         # request 객체는 thread에 안전하게 넘기기 어려움 → IP/UA만 캡처해서 우회.
-        ip = (request.META.get("HTTP_X_FORWARDED_FOR") or request.META.get("REMOTE_ADDR") or "")[:64]
+        from apps.core.services.client_ip import get_client_ip
+
+        ip = get_client_ip(request)[:64]
         ua = (request.META.get("HTTP_USER_AGENT") or "")[:255]
 
         def _run():

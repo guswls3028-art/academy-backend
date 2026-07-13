@@ -48,6 +48,30 @@ def get_session_by_id_with_lecture_tenant(session_id):
     return Session.objects.select_related("lecture", "lecture__tenant").get(id=session_id)
 
 
+def lock_sessions_by_ids(session_ids: list[int]) -> list[int]:
+    """Lock Session rows in deterministic order inside the caller transaction."""
+    from apps.domains.lectures.models import Session
+
+    return list(
+        Session.objects.select_for_update()
+        .filter(id__in=session_ids)
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+
+
+def lock_video_folders_by_ids(folder_ids: list[int]) -> list[int]:
+    """Lock VideoFolder rows in deterministic order inside the caller transaction."""
+    from apps.domains.video.models import VideoFolder
+
+    return list(
+        VideoFolder.objects.select_for_update()
+        .filter(id__in=folder_ids)
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+
+
 def create_video(
     session,
     title,

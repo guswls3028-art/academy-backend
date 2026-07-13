@@ -1,6 +1,8 @@
 # PATH: apps/core/views/tenant_management.py
 import logging
-from django.db import transaction
+import re
+
+from django.db import IntegrityError, transaction
 
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -16,6 +18,44 @@ from apps.core.services.ops_audit import record_audit
 from academy.adapters.db.django import repositories_core as core_repo
 
 logger = logging.getLogger(__name__)
+
+
+class TenantProvisioningConflict(ValueError):
+    pass
+
+
+def _normalize_tenant_code(value) -> str | None:
+    code = str(value or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,48}[a-z0-9])?", code):
+        return None
+    return code
+
+
+def _normalize_tenant_host(value) -> str | None:
+    raw = str(value or "").strip().lower().rstrip(".")
+    if not raw:
+        return ""
+    if "://" in raw or "/" in raw or any(char.isspace() for char in raw):
+        return None
+    if ":" in raw:
+        host, separator, port = raw.rpartition(":")
+        if (
+            not separator
+            or not host
+            or not port.isdigit()
+            or not 1 <= int(port) <= 65535
+        ):
+            return None
+        raw = host
+    if len(raw) > 255 or ".." in raw:
+        return None
+    labels = raw.split(".")
+    if any(
+        not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+        for label in labels
+    ):
+        return None
+    return raw
 
 
 # --------------------------------------------------
@@ -122,57 +162,80 @@ class TenantCreateView(APIView):
     def post(self, request):
         if not is_platform_admin_tenant(request):
             return Response({"detail": "Platform admin tenant required."}, status=403)
-        code = request.data.get("code")
-        name = request.data.get("name")
-        domain = request.data.get("domain")
+        code = _normalize_tenant_code(request.data.get("code"))
+        name = str(request.data.get("name") or "").strip()
+        domain = _normalize_tenant_host(request.data.get("domain"))
 
-        if not code or not name:
-            return Response({"detail": "code and name are required."}, status=400)
+        if not code:
+            return Response({"detail": "code_invalid"}, status=400)
+        if not name or len(name) > 255:
+            return Response({"detail": "name_invalid"}, status=400)
+        if domain is None:
+            return Response({"detail": "domain_invalid"}, status=400)
 
-        # 테넌트 생성
-        tenant, created = core_repo.tenant_get_or_create(
-            code,
-            defaults={"name": name, "is_active": True}
-        )
+        try:
+            with transaction.atomic():
+                if Tenant.objects.select_for_update().filter(code=code).exists():
+                    raise TenantProvisioningConflict("tenant_code_conflict")
+                candidate_hosts = {code}
+                if domain:
+                    candidate_hosts.add(domain)
+                conflict = (
+                    TenantDomain.objects.select_for_update()
+                    .filter(host__in=candidate_hosts)
+                    .first()
+                )
+                if conflict:
+                    raise TenantProvisioningConflict("tenant_domain_conflict")
 
-        if not created:
-            return Response({"detail": f"Tenant with code '{code}' already exists."}, status=400)
+                # The Tenant post-save bootstrap creates Program and a primary
+                # code-host row inside this same outer transaction.
+                tenant = Tenant.objects.create(code=code, name=name, is_active=True)
+                code_domain = TenantDomain.objects.select_for_update().filter(host=code).first()
+                if not code_domain or code_domain.tenant_id != tenant.id:
+                    raise TenantProvisioningConflict("tenant_domain_conflict")
+                if domain and domain != code:
+                    code_domain.is_primary = False
+                    code_domain.save(update_fields=["is_primary"])
+                    TenantDomain.objects.create(
+                        tenant=tenant,
+                        host=domain,
+                        is_primary=True,
+                        is_active=True,
+                    )
 
-        # 도메인 설정
-        if domain:
-            domain_obj, _ = core_repo.tenant_domain_get_or_create_by_defaults(
-                domain,
-                defaults={
-                    "tenant": tenant,
-                    "is_primary": True,
-                    "is_active": True,
-                }
-            )
-
-        # Program 생성
-        program, _ = core_repo.program_get_or_create(
-            tenant,
-            defaults={
-                "display_name": name,
-                "brand_key": code,
-                "login_variant": Program.LoginVariant.HAKWONPLUS,
-                "plan": Program.Plan.MAX,
-                "feature_flags": {
+                program, _ = core_repo.program_get_or_create(tenant, defaults={})
+                program.display_name = name
+                program.brand_key = code
+                program.login_variant = Program.LoginVariant.HAKWONPLUS
+                program.plan = Program.Plan.MAX
+                program.feature_flags = {
                     "student_app_enabled": True,
                     "admin_enabled": True,
-                },
-                "ui_config": {"login_title": name},
-                "is_active": True,
-            }
-        )
+                }
+                program.ui_config = {"login_title": name}
+                program.is_active = True
+                program.save(update_fields=[
+                    "display_name",
+                    "brand_key",
+                    "login_variant",
+                    "plan",
+                    "feature_flags",
+                    "ui_config",
+                    "is_active",
+                ])
 
-        record_audit(
-            request,
-            action="tenant.create",
-            target_tenant=tenant,
-            summary=f"Tenant created: {tenant.code} ({tenant.name})",
-            payload={"code": code, "name": name, "domain": domain},
-        )
+                record_audit(
+                    request,
+                    action="tenant.create",
+                    target_tenant=tenant,
+                    summary=f"Tenant created: {tenant.code} ({tenant.name})",
+                    payload={"code": code, "name": name, "domain": domain},
+                )
+        except TenantProvisioningConflict as exc:
+            return Response({"detail": str(exc)}, status=409)
+        except IntegrityError:
+            return Response({"detail": "tenant_provisioning_conflict"}, status=409)
         return Response({
             "id": tenant.id,
             "code": tenant.code,
@@ -210,6 +273,8 @@ class TenantOwnerView(APIView):
             User = get_user_model()
 
             with transaction.atomic():
+                # Tenant row is the owner-set mutex (add/remove use the same lock).
+                tenant = Tenant.objects.select_for_update().get(pk=tenant.pk)
                 user = core_repo.user_get_by_tenant_username(tenant, username)
 
                 if user:
@@ -243,9 +308,6 @@ class TenantOwnerView(APIView):
                     user=user,
                     role="owner",
                 )
-                if membership.role != "owner":
-                    membership.role = "owner"
-                    membership.save(update_fields=["role"])
 
                 # 테넌트 원장명 동기화: 비어 있으면 이 사용자로 설정 (강의 담당자 등에서 참조)
                 from apps.core.models.user import user_display_username
@@ -377,8 +439,38 @@ class TenantOwnerDetailView(APIView):
         if err:
             msg = "Platform admin tenant required." if err == 403 else "Owner not found."
             return Response({"detail": msg}, status=err)
-        membership.is_active = False
-        membership.save(update_fields=["is_active"])
+        if int(request.user.id) == int(user_id):
+            return Response(
+                {"detail": "owner_self_removal_forbidden"},
+                status=409,
+            )
+        with transaction.atomic():
+            Tenant.objects.select_for_update().get(pk=tenant.pk)
+            from django.contrib.auth import get_user_model
+            target_user = get_user_model().objects.select_for_update().get(pk=user_id)
+            membership = TenantMembership.objects.select_for_update().get(
+                tenant=tenant,
+                user=target_user,
+                role="owner",
+                is_active=True,
+            )
+            active_owner_count = TenantMembership.objects.filter(
+                tenant=tenant,
+                role="owner",
+                is_active=True,
+                user__is_active=True,
+            ).count()
+            if active_owner_count <= 1:
+                return Response(
+                    {"detail": "final_active_owner_required"},
+                    status=409,
+                )
+            from apps.core.services.tenant_access import deactivate_tenant_membership
+            deactivate_tenant_membership(
+                user=target_user,
+                tenant=tenant,
+                allowed_roles=("owner",),
+            )
         record_audit(
             request,
             action="owner.remove",
