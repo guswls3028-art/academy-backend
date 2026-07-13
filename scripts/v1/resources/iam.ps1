@@ -259,8 +259,9 @@ function Ensure-GitHubActionsDeployIAM {
     $ltResult = Invoke-AwsJson $ltArgs
     $ltArns = @($ltResult.LaunchTemplates | ForEach-Object { "arn:aws:ec2:$($script:Region):$($script:AccountId):launch-template/$($_.LaunchTemplateId)" } | Sort-Object -Unique)
     if ($ltArns.Count -ne 4) { throw "All four SSOT Launch Templates must exist before IAM convergence." }
-    $jobDefArns = @($script:SSOT_JobDef | Where-Object { $_ } | Sort-Object -Unique | ForEach-Object { "arn:aws:batch:$($script:Region):$($script:AccountId):job-definition/${_}:*" })
-    if ($jobDefArns.Count -ne 8) { throw "Expected exactly eight video job definitions; actual=$($jobDefArns.Count)" }
+    $jobDefBaseArns = @($script:SSOT_JobDef | Where-Object { $_ } | Sort-Object -Unique | ForEach-Object { "arn:aws:batch:$($script:Region):$($script:AccountId):job-definition/${_}" })
+    $jobDefRevisionArns = @($jobDefBaseArns | ForEach-Object { "${_}:*" })
+    if ($jobDefBaseArns.Count -ne 8 -or $jobDefRevisionArns.Count -ne 8) { throw "Expected exactly eight video job definitions." }
     $instanceTags = @($script:ApiInstanceTagValue, $script:MessagingInstanceTagValue, $script:AiInstanceTagValue, $script:ToolsInstanceTagValue | Where-Object { $_ } | Sort-Object -Unique)
 
     $statements = @(
@@ -275,7 +276,8 @@ function Ensure-GitHubActionsDeployIAM {
         [ordered]@{Sid="SsmSendInstances";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=[ordered]@{"ssm:resourceTag/Name"=$instanceTags}}},
         [ordered]@{Sid="SsmCommandRead";Effect="Allow";Action="ssm:GetCommandInvocation";Resource="*"},
         [ordered]@{Sid="BatchRead";Effect="Allow";Action=@("batch:DescribeComputeEnvironments","batch:DescribeJobDefinitions");Resource="*"},
-        [ordered]@{Sid="BatchJobDefinitionWrite";Effect="Allow";Action=@("batch:DeregisterJobDefinition","batch:RegisterJobDefinition","batch:TagResource");Resource=$jobDefArns},
+        [ordered]@{Sid="BatchJobDefinitionRegister";Effect="Allow";Action="batch:RegisterJobDefinition";Resource=$jobDefBaseArns},
+        [ordered]@{Sid="BatchJobDefinitionRevisionWrite";Effect="Allow";Action=@("batch:DeregisterJobDefinition","batch:TagResource");Resource=$jobDefRevisionArns},
         [ordered]@{Sid="BatchPassRoles";Effect="Allow";Action="iam:PassRole";Resource=@("arn:aws:iam::$($script:AccountId):role/$JobRoleName","arn:aws:iam::$($script:AccountId):role/$ExecutionRoleName");Condition=[ordered]@{StringEquals=[ordered]@{"iam:PassedToService"="batch.amazonaws.com"}}},
         [ordered]@{Sid="ElbRead";Effect="Allow";Action=@("elasticloadbalancing:DescribeTargetGroups","elasticloadbalancing:DescribeTargetHealth");Resource="*"},
         [ordered]@{Sid="SnsFailureNotify";Effect="Allow";Action="sns:Publish";Resource="arn:aws:sns:$($script:Region):$($script:AccountId):academy-ops-alerts"},

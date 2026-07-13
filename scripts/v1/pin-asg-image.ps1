@@ -114,6 +114,13 @@ function Assert-PinState {
     if ($ltDigest -ne [string]$State.TargetDigest) { throw "Latest Launch Template digest mismatch: expected=$($State.TargetDigest) actual=$ltDigest" }
     $asgResult = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $deployment.ASG, "--region", $script:Region, "--output", "json")
     $asg = @($asgResult.AutoScalingGroups)[0]
+    if (
+        -not $asg.LaunchTemplate -or
+        [string]$asg.LaunchTemplate.LaunchTemplateId -ne [string]$State.LaunchTemplateId -or
+        [string]$asg.LaunchTemplate.Version -ne '$Latest'
+    ) {
+        throw "ASG does not track the verified digest-pinned latest Launch Template."
+    }
     $desired = [int]$asg.DesiredCapacity
     if ($desired -eq 0) {
         Write-Output "VERIFIED_ASG_IMAGE service=$Service desired=0 launchTemplateDigest=$ltDigest"
@@ -282,37 +289,103 @@ if (-not $asg) { throw "ASG not found: $($deployment.ASG)" }
 if (-not $asg.LaunchTemplate -or $asg.LaunchTemplate.LaunchTemplateId -ne $lt.LaunchTemplateId) {
     throw "ASG $($deployment.ASG) does not use SSOT Launch Template $($deployment.LaunchTemplate). Refusing to mutate it."
 }
-if ([string]$asg.LaunchTemplate.Version -ne '$Latest') {
-    throw "ASG $($deployment.ASG) must track Launch Template version `$Latest; actual=$($asg.LaunchTemplate.Version)."
+$originalAsgVersionReference = [string]$asg.LaunchTemplate.Version
+if ($originalAsgVersionReference -notin @('$Default', '$Latest') -and $originalAsgVersionReference -notmatch '^\d+$') {
+    throw "ASG $($deployment.ASG) has an unsupported Launch Template version selector: $originalAsgVersionReference."
 }
 
-$latestResult = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-id", $lt.LaunchTemplateId, "--versions", '$Latest', "--region", $script:Region, "--output", "json")
-$latest = @($latestResult.LaunchTemplateVersions)[0]
-if (-not $latest) { throw "Latest Launch Template version not found: $($deployment.LaunchTemplate)" }
-$currentUserData = if ($latest.LaunchTemplateData.UserData) { [string]$latest.LaunchTemplateData.UserData } else { "" }
+$activeResult = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-id", $lt.LaunchTemplateId, "--versions", $originalAsgVersionReference, "--region", $script:Region, "--output", "json")
+$activeVersion = @($activeResult.LaunchTemplateVersions)[0]
+if (-not $activeVersion) { throw "Active Launch Template version not found: $($deployment.LaunchTemplate) selector=$originalAsgVersionReference" }
+$currentUserData = if ($activeVersion.LaunchTemplateData.UserData) { [string]$activeVersion.LaunchTemplateData.UserData } else { "" }
 $defaultResult = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-id", $lt.LaunchTemplateId, "--versions", '$Default', "--region", $script:Region, "--output", "json")
 $defaultVersion = @($defaultResult.LaunchTemplateVersions)[0]
 if (-not $defaultVersion) { throw "Default Launch Template version not found: $($deployment.LaunchTemplate)" }
 $targetDigest = ($imageUri -split '@')[-1].ToLowerInvariant()
-$previousDigest = Get-UserDataRuntimeDigest -Encoded $currentUserData -Repo $deployment.Repo
 $containerName = switch ($Service) { "api" { "academy-api" }; "messaging" { "academy-messaging-worker" }; "ai" { "academy-ai-worker-cpu" }; "tools" { "academy-tools-worker" } }
-$previousRuntimeDigest = Get-AsgActualRuntimeDigest -Asg $asg -Repo $deployment.Repo -Container $containerName -ZeroDesiredDigest $previousDigest
-if ($previousRuntimeDigest -ne $previousDigest) { throw "Refusing to pin over pre-existing LT/runtime drift: lt=$previousDigest runtime=$previousRuntimeDigest" }
+
+$declaredDigest = $null
+try {
+    $declaredDigest = Get-UserDataRuntimeDigest -Encoded $currentUserData -Repo $deployment.Repo
+} catch {
+    if ($_.Exception.Message -notmatch "must contain exactly one distinct") { throw }
+}
+$zeroDesiredDigest = if ($declaredDigest) { $declaredDigest } else { $targetDigest }
+$previousRuntimeDigest = Get-AsgActualRuntimeDigest -Asg $asg -Repo $deployment.Repo -Container $containerName -ZeroDesiredDigest $zeroDesiredDigest
+if ($declaredDigest -and $previousRuntimeDigest -ne $declaredDigest) {
+    throw "Refusing to pin over pre-existing LT/runtime drift: lt=$declaredDigest runtime=$previousRuntimeDigest"
+}
+$previousDigest = $previousRuntimeDigest
+$previousImageUri = "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($deployment.Repo)@$previousDigest"
+$baselineUserDataRaw = & $deployment.UserData $previousImageUri
+if (-not $baselineUserDataRaw) { throw "Failed to render $Service baseline Launch Template userdata." }
+$baselineUserDataB64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($baselineUserDataRaw))
+$previousVersion = [string]$activeVersion.VersionNumber
+$previousUserData = $currentUserData
+
+# One-time safe cutover from legacy :latest/$Default selectors. The baseline
+# points at the exact digest already running, so changing the selector cannot
+# change current or future runtime content before the target pin is created.
+if ($originalAsgVersionReference -ne '$Latest' -or $currentUserData -ne $baselineUserDataB64) {
+    $baselineRef = Convert-JsonArgToFileRef (@{ UserData = $baselineUserDataB64 } | ConvertTo-Json -Compress)
+    $baselineFile = $baselineRef -replace '^file://', ''
+    try {
+        $baselineRaw = Invoke-Aws @(
+            "ec2", "create-launch-template-version",
+            "--launch-template-id", $lt.LaunchTemplateId,
+            "--source-version", [string]$activeVersion.VersionNumber,
+            "--version-description", "digest baseline $Service $previousDigest",
+            "--launch-template-data", $baselineRef,
+            "--region", $script:Region,
+            "--output", "json"
+        ) -ErrorMessage "create digest-pinned $Service baseline Launch Template version"
+    } finally {
+        Remove-TempFiles @($baselineFile)
+    }
+    $baselineCreated = ($baselineRaw | Out-String).Trim() | ConvertFrom-Json
+    $baselineVersion = [string]$baselineCreated.LaunchTemplateVersion.VersionNumber
+    if (-not $baselineVersion) { throw "Baseline Launch Template creation returned no version for $Service." }
+
+    $launchTemplateRef = Convert-JsonArgToFileRef (@{
+        LaunchTemplateId = [string]$lt.LaunchTemplateId
+        Version = '$Latest'
+    } | ConvertTo-Json -Compress)
+    $launchTemplateFile = $launchTemplateRef -replace '^file://', ''
+    try {
+        Invoke-Aws @(
+            "autoscaling", "update-auto-scaling-group",
+            "--auto-scaling-group-name", $deployment.ASG,
+            "--launch-template", $launchTemplateRef,
+            "--region", $script:Region
+        ) -ErrorMessage "move $Service ASG to digest-pinned latest Launch Template" | Out-Null
+    } finally {
+        Remove-TempFiles @($launchTemplateFile)
+    }
+    $baselineAsgResult = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $deployment.ASG, "--region", $script:Region, "--output", "json")
+    $baselineAsg = @($baselineAsgResult.AutoScalingGroups)[0]
+    if ([string]$baselineAsg.LaunchTemplate.LaunchTemplateId -ne [string]$lt.LaunchTemplateId -or [string]$baselineAsg.LaunchTemplate.Version -ne '$Latest') {
+        throw "ASG selector readback failed after $Service digest baseline cutover."
+    }
+    $previousVersion = $baselineVersion
+    $previousUserData = $baselineUserDataB64
+    $currentUserData = $baselineUserDataB64
+}
+
 $state = [PSCustomObject]@{
     SchemaVersion = 1; Service = $Service; Repo = $deployment.Repo; ASG = $deployment.ASG
     LaunchTemplate = $deployment.LaunchTemplate; LaunchTemplateId = $lt.LaunchTemplateId
-    AsgVersionReference = [string]$asg.LaunchTemplate.Version
+    AsgVersionReference = $originalAsgVersionReference
     DefaultVersion = [string]$defaultVersion.VersionNumber
-    PreviousVersion = [string]$latest.VersionNumber
+    PreviousVersion = $previousVersion
     PreviousDigest = $previousDigest; PreviousRuntimeDigest = $previousRuntimeDigest
-    PreviousUserData = $currentUserData; TargetDigest = $targetDigest; TargetImageUri = $imageUri
+    PreviousUserData = $previousUserData; TargetDigest = $targetDigest; TargetImageUri = $imageUri
     PreviousMinSize = [int]$asg.MinSize; PreviousDesiredCapacity = [int]$asg.DesiredCapacity; PreviousMaxSize = [int]$asg.MaxSize
     Changed = ($currentUserData -ne $userDataB64); NewVersion = $null
 }
 Save-PinState -State $state -Path $StatePath
 
 if ($currentUserData -eq $userDataB64) {
-    Write-Output "PINNED_ASG_IMAGE service=$Service image=$imageUri launchTemplateVersion=$($latest.VersionNumber) unchanged=true"
+    Write-Output "PINNED_ASG_IMAGE service=$Service image=$imageUri launchTemplateVersion=$previousVersion unchanged=true"
     return
 }
 

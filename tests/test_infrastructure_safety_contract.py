@@ -256,6 +256,7 @@ def test_asg_pin_state_is_compensated_and_zero_desired_is_verified() -> None:
         assert "-VerifyStatePath" in block
         assert "-RestoreStatePath" in block
         assert "if: failure() && steps.pin.outcome != 'skipped'" in block
+        assert f"if [ ! -f /tmp/{service}-pin-state.json ]" in block
 
 
 def test_selective_build_graph_covers_shared_runtime_and_copied_inputs() -> None:
@@ -383,11 +384,13 @@ def test_ssot_and_deploy_scripts_enforce_digest_runtime_contract() -> None:
     for service in ("api", "messaging", "ai", "tools"):
         assert f'"{service}"' in pin
     assert '"--source-version", \'$Latest\'' in pin
-    assert "must track Launch Template version" in pin
+    assert "digest baseline" in pin
+    assert "originalAsgVersionReference" in pin
+    assert "move $Service ASG to digest-pinned latest Launch Template" in pin
     assert '"ec2", "create-launch-template-version"' in pin
     assert '"ec2", "modify-launch-template"' not in pin
     normal_pin = pin.split('if (-not $ImageTag)', maxsplit=1)[1]
-    assert '"autoscaling", "update-auto-scaling-group"' not in normal_pin
+    assert '"autoscaling", "update-auto-scaling-group"' in normal_pin
     assert '"autoscaling", "update-auto-scaling-group"' in pin.split(
         "if ($RestoreStatePath)", maxsplit=1
     )[1].split('if (-not $ImageTag)', maxsplit=1)[0]
@@ -779,7 +782,8 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         "EcrAuth", "EcrPushPull", "EcrRepoManage", "AsgInstanceRefresh",
         "AsgDescribe", "LaunchTemplateImagePinRead", "SsmSendDocument",
         "SsmSendInstances", "SsmCommandRead", "BatchRead",
-        "BatchJobDefinitionWrite", "BatchPassRoles", "ElbRead",
+        "BatchJobDefinitionRegister", "BatchJobDefinitionRevisionWrite",
+        "BatchPassRoles", "ElbRead",
         "SnsFailureNotify", "StsIdentity", "DeploymentControlLock",
     )
     exact_function = source.split("function Ensure-GitHubActionsDeployIAM {", maxsplit=1)[1].split(
@@ -799,6 +803,16 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
     assert "SsmMigration" not in static
     assert "put-role-policy" in exact_function
     assert "full-policy readback" in exact_function
+
+    policy = json.loads(static)
+    by_sid = {statement["Sid"]: statement for statement in policy["Statement"]}
+    register_resources = by_sid["BatchJobDefinitionRegister"]["Resource"]
+    revision_resources = by_sid["BatchJobDefinitionRevisionWrite"]["Resource"]
+    assert len(register_resources) == 8
+    assert len(revision_resources) == 8
+    assert all(resource.count(":job-definition/") == 1 for resource in register_resources)
+    assert all(not resource.endswith(":*") for resource in register_resources)
+    assert all(resource.endswith(":*") for resource in revision_resources)
 
 
 def test_cleanup_and_rollback_preserve_all_durable_runtime_contracts() -> None:

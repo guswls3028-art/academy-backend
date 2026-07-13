@@ -1034,7 +1034,12 @@ jobs:
 
       - name: Compensate failed API pin or refresh
         if: failure() && steps.pin.outcome != 'skipped'
-        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service api -RestoreStatePath /tmp/api-pin-state.json -RefreshAndVerify -Ci
+        run: |
+          if [ ! -f /tmp/api-pin-state.json ]; then
+            echo "No API pin state was persisted; no runtime mutation requires compensation."
+            exit 0
+          fi
+          pwsh ./scripts/v1/pin-asg-image.ps1 -Service api -RestoreStatePath /tmp/api-pin-state.json -RefreshAndVerify -Ci
 
   deploy-messaging:
     name: Deploy Messaging Worker (ASG refresh)
@@ -1127,7 +1132,12 @@ jobs:
 
       - name: Compensate failed Messaging pin or refresh
         if: failure() && steps.pin.outcome != 'skipped'
-        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service messaging -RestoreStatePath /tmp/messaging-pin-state.json -RefreshAndVerify -Ci
+        run: |
+          if [ ! -f /tmp/messaging-pin-state.json ]; then
+            echo "No Messaging pin state was persisted; no runtime mutation requires compensation."
+            exit 0
+          fi
+          pwsh ./scripts/v1/pin-asg-image.ps1 -Service messaging -RestoreStatePath /tmp/messaging-pin-state.json -RefreshAndVerify -Ci
 
   deploy-ai:
     name: Deploy AI Worker (ASG refresh)
@@ -1238,7 +1248,12 @@ jobs:
 
       - name: Compensate failed AI pin or refresh
         if: failure() && steps.pin.outcome != 'skipped'
-        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service ai -RestoreStatePath /tmp/ai-pin-state.json -RefreshAndVerify -Ci
+        run: |
+          if [ ! -f /tmp/ai-pin-state.json ]; then
+            echo "No AI pin state was persisted; no runtime mutation requires compensation."
+            exit 0
+          fi
+          pwsh ./scripts/v1/pin-asg-image.ps1 -Service ai -RestoreStatePath /tmp/ai-pin-state.json -RefreshAndVerify -Ci
 
   deploy-tools:
     name: Deploy Tools Worker (ASG refresh)
@@ -1339,7 +1354,12 @@ jobs:
 
       - name: Compensate failed Tools pin or refresh
         if: failure() && steps.pin.outcome != 'skipped'
-        run: pwsh ./scripts/v1/pin-asg-image.ps1 -Service tools -RestoreStatePath /tmp/tools-pin-state.json -RefreshAndVerify -Ci
+        run: |
+          if [ ! -f /tmp/tools-pin-state.json ]; then
+            echo "No Tools pin state was persisted; no runtime mutation requires compensation."
+            exit 0
+          fi
+          pwsh ./scripts/v1/pin-asg-image.ps1 -Service tools -RestoreStatePath /tmp/tools-pin-state.json -RefreshAndVerify -Ci
 
   # ============================================================
   # Phase 4.5: Video worker deploy (Batch job definitions → SHA-pinned image)
