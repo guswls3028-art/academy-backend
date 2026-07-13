@@ -780,7 +780,9 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
     static = STATIC_GHA_IAM.read_text(encoding="utf-8")
     required_sids = (
         "EcrAuth", "EcrPushPull", "EcrRepoManage", "AsgInstanceRefresh",
-        "AsgDescribe", "LaunchTemplateImagePinRead", "SsmSendDocument",
+        "AsgDescribe", "LaunchTemplateImagePinRead", "LaunchTemplateImagePinWrite",
+        "LaunchTemplateInstanceUse", "LaunchTemplateInstanceTag",
+        "LaunchTemplatePassRole", "SsmSendDocument",
         "SsmSendInstances", "SsmCommandRead", "BatchRead",
         "BatchJobDefinitionRegister", "BatchJobDefinitionRevisionWrite",
         "BatchPassRoles", "ElbRead",
@@ -793,7 +795,8 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
         assert f'Sid="{sid}"' in exact_function
         assert f'"Sid":"{sid}"' in static
     for action in (
-        "autoscaling:CancelInstanceRefresh", "batch:RegisterJobDefinition",
+        "autoscaling:CancelInstanceRefresh", "ec2:RunInstances", "ec2:CreateTags",
+        "batch:RegisterJobDefinition",
         "batch:DeregisterJobDefinition", "batch:TagResource", "iam:PassRole",
         "elasticloadbalancing:DescribeTargetHealth", "sns:Publish",
         "dynamodb:UpdateItem",
@@ -813,6 +816,15 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
     assert all(resource.count(":job-definition/") == 1 for resource in register_resources)
     assert all(not resource.endswith(":*") for resource in register_resources)
     assert all(resource.endswith(":*") for resource in revision_resources)
+    launch_use = by_sid["LaunchTemplateInstanceUse"]
+    assert launch_use["Action"] == "ec2:RunInstances"
+    assert len([resource for resource in launch_use["Resource"] if ":launch-template/lt-" in resource]) == 4
+    assert "*" not in launch_use["Resource"]
+    assert by_sid["LaunchTemplatePassRole"]["Resource"] == "arn:aws:iam::809466760795:role/academy-ec2-role"
+    assert by_sid["LaunchTemplatePassRole"]["Condition"]["StringEquals"]["iam:PassedToService"] == "ec2.amazonaws.com"
+    assert set(by_sid["BatchPassRoles"]["Condition"]["StringEquals"]["iam:PassedToService"]) == {
+        "batch.amazonaws.com", "ecs-tasks.amazonaws.com",
+    }
 
 
 def test_cleanup_and_rollback_preserve_all_durable_runtime_contracts() -> None:

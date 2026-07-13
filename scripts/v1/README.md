@@ -62,7 +62,7 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
 - **런타임 불변성**: migration과 API/Messaging/AI/Tools Launch Template, Video Batch 8개 job definition은 모두 해당 빌드 tag를 `repo@sha256:...`로 해석해 사용한다. `latest`는 호환성 alias일 뿐 증거가 아니다.
 - **성공 릴리스 manifest**: CI는 이번 빌드 digest와 직전 성공 릴리스의 변경 없는 digest로 candidate를 만들고, 실제 ASG 컨테이너·Batch jobdef·CE 검증 후에만 `docs/reports/release-manifest.latest.json`을 `complete=true,status=successful`로 승격한다. `deploy.ps1`은 ECR의 newest image가 아니라 이 manifest만 사용한다.
 - **ECR cleanup fail-closed**: cleanup은 ASG/LT와 실제 desired InService 컨테이너 `RepoDigests`, 정확히 8개인 Video ACTIVE job definition, 마지막 complete/successful 6-image manifest(공통 base 포함)를 먼저 보호한다. inventory 누락, 부분 삭제 실패, verify 경고가 하나라도 있으면 nonzero로 종료한다.
-- **ASG pin + 보상**: `pin-asg-image.ps1`은 ASG가 SSOT Launch Template의 `$Latest`를 추적할 때만 동작하며 이전 LT/default/실제 runtime digest를 state에 기록한다. pin·refresh·runtime 검증 실패 시 CI와 rollback 스크립트가 이전 version에서 새 보상 version을 만들고 refresh/runtime을 다시 검증한다. desired=0 ASG도 candidate LT digest를 직접 검증한다.
+- **ASG pin + 보상**: `pin-asg-image.ps1`은 `$Default`·`$Latest`·숫자 version을 모두 해석한다. 태그 기반 legacy template은 현재 인스턴스의 실제 `RepoDigest`로 먼저 불변 baseline version을 만들고 ASG를 `$Latest`로 전환한 뒤 candidate digest를 적용한다. 이전 LT/default/실제 runtime digest를 state에 기록하며, pin·refresh·runtime 검증 실패 시 새 보상 version을 만들고 refresh/runtime을 다시 검증한다. desired=0 ASG도 candidate LT digest를 직접 검증한다.
 - **공통 운영 mutation 락**: 정식 CI, 주간 ECR/Batch cleanup, 수동 deploy/rollback은 SSOT DynamoDB table `academy-v1-video-job-lock`의 한 조건부 lock key를 공유한다. acquire/renew/release는 owner와 TTL 조건을 검사하므로 동시 실행·만료 후 잘못된 release를 허용하지 않는다.
 - **런타임 freshness 증거**: `deploy-api-and-verify-workers.ps1`은 성공 release manifest와 API/Messaging/AI/Tools LT 및 실제 InService 컨테이너 `RepoDigests`, 모든 Video Batch active job definition을 비교한다. refresh는 terminal `Successful`까지 기다리며 실패·취소·timeout을 실패 처리한다.
 - **selective-build 안전 경계**: `.dockerignore`, `docs/ssot/params.yaml`, `academy/`, `libs/`, `manage.py`, 공통 requirements, `apps/{shared,support,core,infrastructure}/`, `apps/api/common/`, worker settings 및 Django startup model/app/signal 변경은 모든 이미지를 빌드한다. Video가 import하는 messaging selector/service/scheduler, Messaging이 import하는 video Redis status cache, Tools가 import하는 AI callbacks/job_types도 각각 consumer image를 재빌드한다.
@@ -90,7 +90,7 @@ pwsh scripts/v1/rollback-video.ps1 -AwsProfile default
 
 ### Immutable image 전환 전 IAM bootstrap
 
-GitHub Actions 역할은 정확히 4개 SSOT Launch Template ID에 대해서만 `ec2:CreateLaunchTemplateVersion`을 허용한다. 이 변경을 main에 push하기 전에 기존 운영 권한으로 아래 배포를 한 번 실행한다. 배포 스크립트가 Launch Template을 먼저 보장한 뒤 같은 실행에서 IAM을 canonical policy로 덮어쓰고 readback한다.
+GitHub Actions 역할은 정확히 4개 SSOT Launch Template ID에 대해서만 `ec2:CreateLaunchTemplateVersion`을 허용한다. ASG가 template version을 채택할 때 AWS가 수행하는 권한 dry-run을 위해 `ec2:RunInstances`도 그 4개 template과 실제 AMI·보안그룹·서브넷·인스턴스/볼륨/네트워크 인터페이스에만 한정하며, `iam:PassRole`은 단일 EC2 instance role과 두 Batch task role에만 허용한다. 이 변경을 main에 push하기 전에 기존 운영 권한으로 아래 배포를 한 번 실행한다. 배포 스크립트가 Launch Template을 먼저 보장한 뒤 같은 실행에서 IAM을 canonical policy로 덮어쓰고 readback한다.
 
 ```powershell
 pwsh scripts/v1/deploy.ps1 -AwsProfile default

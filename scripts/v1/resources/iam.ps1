@@ -259,6 +259,66 @@ function Ensure-GitHubActionsDeployIAM {
     $ltResult = Invoke-AwsJson $ltArgs
     $ltArns = @($ltResult.LaunchTemplates | ForEach-Object { "arn:aws:ec2:$($script:Region):$($script:AccountId):launch-template/$($_.LaunchTemplateId)" } | Sort-Object -Unique)
     if ($ltArns.Count -ne 4) { throw "All four SSOT Launch Templates must exist before IAM convergence." }
+
+    # Updating an ASG to a Launch Template version triggers an EC2 RunInstances
+    # dry-run authorization check. Derive the smallest complete resource set
+    # from the four existing SSOT ASGs and their latest template versions rather
+    # than granting RunInstances or PassRole account-wide.
+    $runtimeImageIds = [System.Collections.ArrayList]::new()
+    $runtimeSecurityGroupIds = [System.Collections.ArrayList]::new()
+    $runtimeSubnetIds = [System.Collections.ArrayList]::new()
+    $runtimeInstanceRoleArns = [System.Collections.ArrayList]::new()
+    $templatesRequireInstanceTags = $false
+    foreach ($asgName in $asgNames) {
+        $asgResult = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $asgName, "--region", $script:Region, "--output", "json")
+        $matchingAsgs = @($asgResult.AutoScalingGroups)
+        if ($matchingAsgs.Count -ne 1) { throw "Expected exactly one ASG named $asgName while deriving Launch Template use IAM." }
+        $asg = $matchingAsgs[0]
+        $launchTemplateId = [string]$asg.LaunchTemplate.LaunchTemplateId
+        if (-not $launchTemplateId -or "arn:aws:ec2:$($script:Region):$($script:AccountId):launch-template/$launchTemplateId" -notin $ltArns) {
+            throw "ASG $asgName does not reference one of the four SSOT Launch Templates."
+        }
+        foreach ($subnetId in @(([string]$asg.VPCZoneIdentifier -split ",") | Where-Object { $_ -and $_.Trim() })) {
+            [void]$runtimeSubnetIds.Add($subnetId.Trim())
+        }
+
+        $versionResult = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-id", $launchTemplateId, "--versions", '$Latest', "--region", $script:Region, "--output", "json")
+        $versions = @($versionResult.LaunchTemplateVersions)
+        if ($versions.Count -ne 1) { throw "Launch Template $launchTemplateId must expose exactly one latest version." }
+        $templateData = $versions[0].LaunchTemplateData
+        if (-not $templateData.ImageId) { throw "Launch Template $launchTemplateId has no AMI." }
+        [void]$runtimeImageIds.Add([string]$templateData.ImageId)
+        foreach ($securityGroupId in @($templateData.SecurityGroupIds | Where-Object { $_ })) {
+            [void]$runtimeSecurityGroupIds.Add([string]$securityGroupId)
+        }
+        if (@($templateData.TagSpecifications).Count -gt 0) { $templatesRequireInstanceTags = $true }
+
+        $instanceProfileName = [string]$templateData.IamInstanceProfile.Name
+        if (-not $instanceProfileName -and $templateData.IamInstanceProfile.Arn) {
+            $instanceProfileName = ([string]$templateData.IamInstanceProfile.Arn -split "/")[-1]
+        }
+        if (-not $instanceProfileName) { throw "Launch Template $launchTemplateId has no instance profile." }
+        $profileResult = Invoke-AwsJson @("iam", "get-instance-profile", "--instance-profile-name", $instanceProfileName, "--output", "json")
+        $profileRoles = @($profileResult.InstanceProfile.Roles | Where-Object { $_.Arn })
+        if ($profileRoles.Count -ne 1) { throw "Instance profile $instanceProfileName must contain exactly one role." }
+        [void]$runtimeInstanceRoleArns.Add([string]$profileRoles[0].Arn)
+    }
+    $runtimeImageIds = @($runtimeImageIds | Sort-Object -Unique)
+    $runtimeSecurityGroupIds = @($runtimeSecurityGroupIds | Sort-Object -Unique)
+    $runtimeSubnetIds = @($runtimeSubnetIds | Sort-Object -Unique)
+    $runtimeInstanceRoleArns = @($runtimeInstanceRoleArns | Sort-Object -Unique)
+    if ($runtimeImageIds.Count -eq 0 -or $runtimeSecurityGroupIds.Count -eq 0 -or $runtimeSubnetIds.Count -eq 0 -or $runtimeInstanceRoleArns.Count -eq 0) {
+        throw "Launch Template use IAM derivation produced an incomplete runtime resource set."
+    }
+    $launchInstanceResources = @(
+        $ltArns
+        $runtimeImageIds | ForEach-Object { "arn:aws:ec2:$($script:Region)::image/$_" }
+        "arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*"
+        "arn:aws:ec2:$($script:Region):$($script:AccountId):network-interface/*"
+        "arn:aws:ec2:$($script:Region):$($script:AccountId):volume/*"
+        $runtimeSecurityGroupIds | ForEach-Object { "arn:aws:ec2:$($script:Region):$($script:AccountId):security-group/$_" }
+        $runtimeSubnetIds | ForEach-Object { "arn:aws:ec2:$($script:Region):$($script:AccountId):subnet/$_" }
+    ) | Sort-Object -Unique
     $jobDefBaseArns = @($script:SSOT_JobDef | Where-Object { $_ } | Sort-Object -Unique | ForEach-Object { "arn:aws:batch:$($script:Region):$($script:AccountId):job-definition/${_}" })
     $jobDefRevisionArns = @($jobDefBaseArns | ForEach-Object { "${_}:*" })
     if ($jobDefBaseArns.Count -ne 8 -or $jobDefRevisionArns.Count -ne 8) { throw "Expected exactly eight video job definitions." }
@@ -272,13 +332,16 @@ function Ensure-GitHubActionsDeployIAM {
         [ordered]@{Sid="AsgDescribe";Effect="Allow";Action=@("autoscaling:DescribeAutoScalingGroups","autoscaling:DescribeInstanceRefreshes");Resource="*"},
         [ordered]@{Sid="LaunchTemplateImagePinRead";Effect="Allow";Action=@("ec2:DescribeLaunchTemplates","ec2:DescribeLaunchTemplateVersions");Resource="*"},
         [ordered]@{Sid="LaunchTemplateImagePinWrite";Effect="Allow";Action="ec2:CreateLaunchTemplateVersion";Resource=$ltArns},
+        [ordered]@{Sid="LaunchTemplateInstanceUse";Effect="Allow";Action="ec2:RunInstances";Resource=$launchInstanceResources},
+        $(if ($templatesRequireInstanceTags) { [ordered]@{Sid="LaunchTemplateInstanceTag";Effect="Allow";Action="ec2:CreateTags";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=[ordered]@{"ec2:CreateAction"="RunInstances"}}} }),
+        [ordered]@{Sid="LaunchTemplatePassRole";Effect="Allow";Action="iam:PassRole";Resource=$runtimeInstanceRoleArns;Condition=[ordered]@{StringEquals=[ordered]@{"iam:PassedToService"="ec2.amazonaws.com"}}},
         [ordered]@{Sid="SsmSendDocument";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ssm:$($script:Region)::document/AWS-RunShellScript"},
         [ordered]@{Sid="SsmSendInstances";Effect="Allow";Action="ssm:SendCommand";Resource="arn:aws:ec2:$($script:Region):$($script:AccountId):instance/*";Condition=[ordered]@{StringEquals=[ordered]@{"ssm:resourceTag/Name"=$instanceTags}}},
         [ordered]@{Sid="SsmCommandRead";Effect="Allow";Action="ssm:GetCommandInvocation";Resource="*"},
         [ordered]@{Sid="BatchRead";Effect="Allow";Action=@("batch:DescribeComputeEnvironments","batch:DescribeJobDefinitions");Resource="*"},
         [ordered]@{Sid="BatchJobDefinitionRegister";Effect="Allow";Action="batch:RegisterJobDefinition";Resource=$jobDefBaseArns},
         [ordered]@{Sid="BatchJobDefinitionRevisionWrite";Effect="Allow";Action=@("batch:DeregisterJobDefinition","batch:TagResource");Resource=$jobDefRevisionArns},
-        [ordered]@{Sid="BatchPassRoles";Effect="Allow";Action="iam:PassRole";Resource=@("arn:aws:iam::$($script:AccountId):role/$JobRoleName","arn:aws:iam::$($script:AccountId):role/$ExecutionRoleName");Condition=[ordered]@{StringEquals=[ordered]@{"iam:PassedToService"="batch.amazonaws.com"}}},
+        [ordered]@{Sid="BatchPassRoles";Effect="Allow";Action="iam:PassRole";Resource=@("arn:aws:iam::$($script:AccountId):role/$JobRoleName","arn:aws:iam::$($script:AccountId):role/$ExecutionRoleName");Condition=[ordered]@{StringEquals=[ordered]@{"iam:PassedToService"=@("batch.amazonaws.com","ecs-tasks.amazonaws.com")}}},
         [ordered]@{Sid="ElbRead";Effect="Allow";Action=@("elasticloadbalancing:DescribeTargetGroups","elasticloadbalancing:DescribeTargetHealth");Resource="*"},
         [ordered]@{Sid="SnsFailureNotify";Effect="Allow";Action="sns:Publish";Resource="arn:aws:sns:$($script:Region):$($script:AccountId):academy-ops-alerts"},
         [ordered]@{Sid="StsIdentity";Effect="Allow";Action="sts:GetCallerIdentity";Resource="*"},

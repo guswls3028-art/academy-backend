@@ -130,8 +130,8 @@ Dependencies:
 
 ### Deployment Sequence
 
-1. The deploy job resolves its `sha-*` tag to an ECR digest and creates a new Launch Template version containing that digest.
-2. The ASG, which must track `$Latest`, launches a new EC2 instance from that version.
+1. The deploy job resolves its `sha-*` tag to an ECR digest and creates a new Launch Template version containing that digest. On the one-time legacy cutover, it first snapshots the actual running container digest into an immutable baseline version.
+2. The ASG tracks `$Latest` after that guarded cutover and launches a new EC2 instance from the candidate version.
 3. UserData installs Docker, logs in to ECR, pulls `repo@sha256:...`, fetches SSM env, and starts the container.
 4. ALB health check passes on the new instance.
 5. The old instance is drained and terminated.
@@ -230,7 +230,7 @@ All production mutation entrypoints share one atomic DynamoDB lock in the SSOT t
 
 On a fresh environment, the lock table itself is the sole allowed pre-lock bootstrap mutation. `deploy.ps1` and `converge-release-prerequisites.ps1` idempotently create/read it and validate the exact `videoId` string HASH schema, PAY_PER_REQUEST billing, ACTIVE state, and TTL before normal lock acquisition. Default/strict manual deploy also exits nonzero when post-deploy ASG, ALB, Batch CE, or queue verification fails; only an explicit `-RelaxedValidation` diagnostic run may finish with verification warnings.
 
-On the first immutable-release cutover, manual deploy intentionally fails until that manifest exists. With all four existing runtime Launch Templates present, run `pwsh scripts/v1/converge-release-prerequisites.ps1 -AwsProfile default`; it converges and reads back only GitHub Actions IAM and ECR mutability, without changing LT, ASG, or Batch runtime state. Then run one full `workflow_dispatch`; its verified six-image rollout bootstraps the first complete successful manifest. Selective builds are allowed only after that bootstrap.
+On the first immutable-release cutover, manual deploy intentionally fails until that manifest exists. With all four existing runtime Launch Templates present, run `pwsh scripts/v1/converge-release-prerequisites.ps1 -AwsProfile default`; it converges and reads back only GitHub Actions IAM and ECR mutability, without changing LT, ASG, or Batch runtime state. The role can create versions only on those four templates; its `RunInstances` dry-run resources are derived from their actual AMI, security groups, ASG subnets, and instance profile, while PassRole stays restricted to the exact EC2/Batch roles. Then run one full `workflow_dispatch`; its verified six-image rollout bootstraps the first complete successful manifest. Selective builds are allowed only after that bootstrap.
 
 All six ECR repositories use `IMMUTABLE_WITH_EXCLUSION` with one `WILDCARD=latest` exclusion. CI and bootstrap both configure and read back that exact policy. Weekly cleanup inventories every ASG-level and running-instance Launch Template version, every desired InService container's actual `RepoDigests` through SSM, and every ACTIVE Batch job definition before deletion. It protects referenced parent and child manifests even when they fall outside the newest-ten retention window, and aborts all deletion if any required runtime cannot be inventoried exactly.
 
