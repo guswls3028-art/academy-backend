@@ -234,6 +234,8 @@ On the first immutable-release cutover, manual deploy intentionally fails until 
 
 All six ECR repositories use `IMMUTABLE_WITH_EXCLUSION` with one `WILDCARD=latest` exclusion. CI and bootstrap both configure and read back that exact policy. Weekly cleanup inventories every ASG-level and running-instance Launch Template version, every desired InService container's actual `RepoDigests` through SSM, and every ACTIVE Batch job definition before deletion. It protects referenced parent and child manifests even when they fall outside the newest-ten retention window, and aborts all deletion if any required runtime cannot be inventoried exactly.
 
+Structural drift checks compare the API ASG's effective `$Latest` Launch Template version with the successful release manifest. The legacy `$Default` version is intentionally retained as historical state during the immutable cutover and is not runtime drift when the ASG is correctly pinned to `$Latest`.
+
 ### Migration Rollback
 
 Migration reversal is prohibited as a generic incident action. Syntactic Django

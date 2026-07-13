@@ -18,6 +18,7 @@ BOOTSTRAP = REPO_ROOT / "scripts" / "v1" / "core" / "bootstrap.ps1"
 VERIFY = REPO_ROOT / "scripts" / "v1" / "verify.ps1"
 DEPLOY = REPO_ROOT / "scripts" / "v1" / "deploy.ps1"
 DEPLOY_AND_VERIFY = REPO_ROOT / "scripts" / "v1" / "deploy-api-and-verify-workers.ps1"
+RUN_DEPLOY_VERIFICATION = REPO_ROOT / "scripts" / "v1" / "run-deploy-verification.ps1"
 PIN_ASG_IMAGE = REPO_ROOT / "scripts" / "v1" / "pin-asg-image.ps1"
 DIFF = REPO_ROOT / "scripts" / "v1" / "core" / "diff.ps1"
 WORKER_USERDATA = REPO_ROOT / "scripts" / "v1" / "resources" / "worker_userdata.ps1"
@@ -48,6 +49,15 @@ REMOTE_API_TOOLS = (
     REPO_ROOT / "scripts" / "v1" / "run-qna-e2e-verify.ps1",
     REPO_ROOT / "scripts" / "v1" / "run-api-management-remote.ps1",
 )
+
+
+def test_read_only_deploy_verification_loads_manifest_dependency_before_drift() -> None:
+    source = RUN_DEPLOY_VERIFICATION.read_text(encoding="utf-8-sig")
+
+    manifest_dependency = 'resources\\worker_userdata.ps1'
+    drift_dependency = 'core\\diff.ps1'
+    assert manifest_dependency in source
+    assert source.index(manifest_dependency) < source.index(drift_dependency)
 
 
 def test_shared_mutation_lock_uses_one_ssot_table_and_owner_everywhere() -> None:
@@ -408,6 +418,9 @@ def test_ssot_and_deploy_scripts_enforce_digest_runtime_contract() -> None:
     assert "LaunchTemplateImagePinWrite" in iam
     assert "@$($releaseImage.Digest)" in drift
     assert "immutableTagRequired=true cannot use :latest" in drift
+    assert "$apiVersionSelector = if ($script:EcrImmutableTagRequired) { '$Latest' }" in drift
+    assert '"--versions", $apiVersionSelector' in drift
+    assert "[string]$apiLtReference.Version -ne '$Latest'" in drift
 
 
 def test_rollbacks_pin_the_selected_digest_before_instance_refresh() -> None:

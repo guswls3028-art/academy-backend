@@ -338,8 +338,18 @@ function Get-StructuralDrift {
         [void]$rows.Add([PSCustomObject]@{ ResourceType = "API LT"; Name = $apiLtName; Expected = "exists"; Actual = "missing"; Action = "Create" })
     } else {
         $apiLtId = $apiLtR.LaunchTemplates[0].LaunchTemplateId
-        $apiVerR = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-id", $apiLtId, "--versions", '$Default', "--region", $R, "--output", "json")
         $apiLtDrift = $false
+        $apiAsg = @($asgArr | Where-Object { $_.AutoScalingGroupName -eq $script:ApiASGName })[0]
+        $apiLtReference = if ($apiAsg) { $apiAsg.LaunchTemplate } else { $null }
+        $apiVersionSelector = if ($script:EcrImmutableTagRequired) { '$Latest' } elseif ($apiLtReference -and $apiLtReference.Version) { [string]$apiLtReference.Version } else { '$Default' }
+        if (
+            -not $apiLtReference -or
+            [string]$apiLtReference.LaunchTemplateId -ne [string]$apiLtId -or
+            ($script:EcrImmutableTagRequired -and [string]$apiLtReference.Version -ne '$Latest')
+        ) {
+            $apiLtDrift = $true
+        }
+        $apiVerR = Invoke-AwsJson @("ec2", "describe-launch-template-versions", "--launch-template-id", $apiLtId, "--versions", $apiVersionSelector, "--region", $R, "--output", "json")
         if ($apiVerR -and $apiVerR.LaunchTemplateVersions -and $apiVerR.LaunchTemplateVersions.Count -gt 0) {
             $d = $apiVerR.LaunchTemplateVersions[0].LaunchTemplateData
             $actualAmi = if ($d.PSObject.Properties['ImageId']) { $d.ImageId } else { $null }
@@ -354,7 +364,9 @@ function Get-StructuralDrift {
             } else {
                 $userDataDrift = -not (Test-GeneratedApiUserDataMatchesSSOT -ActualUserData $actualUserData)
             }
-            $apiLtDrift = ($actualAmi -ne $script:ApiAmiId) -or ($actualSg -ne $expectedSg) -or ($actualProfile -ne $script:ApiInstanceProfile) -or $userDataDrift
+            $apiLtDrift = $apiLtDrift -or ($actualAmi -ne $script:ApiAmiId) -or ($actualSg -ne $expectedSg) -or ($actualProfile -ne $script:ApiInstanceProfile) -or $userDataDrift
+        } else {
+            $apiLtDrift = $true
         }
         if ($apiLtDrift) {
             [void]$rows.Add([PSCustomObject]@{ ResourceType = "API LT"; Name = $apiLtName; Expected = "AMI/SG/Profile/UserData SSOT"; Actual = "drift"; Action = "NewVersion" })

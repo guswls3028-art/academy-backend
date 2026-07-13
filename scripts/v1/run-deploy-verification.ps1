@@ -17,6 +17,7 @@ if ($AwsProfile -and $AwsProfile.Trim() -ne "") {
 . (Join-Path $ScriptRoot "core\ssot.ps1")
 . (Join-Path $ScriptRoot "core\logging.ps1")
 . (Join-Path $ScriptRoot "core\aws.ps1")
+. (Join-Path $ScriptRoot "resources\worker_userdata.ps1")
 . (Join-Path $ScriptRoot "core\diff.ps1")
 . (Join-Path $ScriptRoot "core\evidence.ps1")
 . (Join-Path $ScriptRoot "core\reports.ps1")
