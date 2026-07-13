@@ -243,10 +243,19 @@ def test_asg_pin_state_is_compensated_and_zero_desired_is_verified() -> None:
     assert "cancel-instance-refresh" in pin
     assert "create-launch-template-version" in pin
     assert '"--source-version", [string]$state.PreviousVersion' in pin
+    restore_block = pin.split("if ($needsVersionRestore)", maxsplit=1)[1].split(
+        "$defaultResult", maxsplit=1
+    )[0]
+    assert '"--launch-template-data", $restoreDataRef' in restore_block
+    assert "Remove-TempFiles @($restoreDataFile)" in restore_block
     assert "DefaultVersion" in pin and "default version changed" in pin
     assert 'if ($desired -eq 0)' in pin
     assert "launchTemplateDigest=$ltDigest" in pin
     assert '"RollbackSuccessful"' in pin
+    assert "function Wait-AsgRuntimeInventory" in pin
+    assert "healthyInService=$($instances.Count) desired=$desired" in pin
+    assert "Wait-AsgRuntimeInventory -AsgName $deployment.ASG" in pin
+    assert "TimeoutSec = 600" in pin
     for job_name, service in {
         "deploy-api": "api", "deploy-messaging": "messaging",
         "deploy-ai": "ai", "deploy-tools": "tools",

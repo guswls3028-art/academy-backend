@@ -103,6 +103,23 @@ function Get-AsgActualRuntimeDigest {
     return @($digests)[0]
 }
 
+function Wait-AsgRuntimeInventory {
+    param([string]$AsgName, [int]$TimeoutSec = 600)
+    for ($elapsed = 0; $elapsed -le $TimeoutSec; $elapsed += 15) {
+        $result = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $AsgName, "--region", $script:Region, "--output", "json")
+        $asg = @($result.AutoScalingGroups)[0]
+        if (-not $asg) { throw "ASG not found while waiting for runtime inventory: $AsgName" }
+        $desired = [int]$asg.DesiredCapacity
+        $instances = @($asg.Instances | Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" })
+        if ($instances.Count -eq $desired) {
+            return [PSCustomObject]@{ Asg = $asg; Instances = $instances }
+        }
+        Write-Host "Waiting for ASG runtime inventory to converge: $AsgName healthyInService=$($instances.Count) desired=$desired elapsed=${elapsed}s" -ForegroundColor DarkGray
+        if ($elapsed -lt $TimeoutSec) { Start-Sleep -Seconds 15 }
+    }
+    throw "ASG runtime inventory did not converge within ${TimeoutSec}s: $AsgName"
+}
+
 function Assert-PinState {
     param($State)
     if ([string]$State.Service -ne $Service -or [string]$State.Repo -ne $deployment.Repo -or [string]$State.ASG -ne $deployment.ASG -or [string]$State.LaunchTemplate -ne $deployment.LaunchTemplate) {
@@ -112,8 +129,8 @@ function Assert-PinState {
     $latest = @($versions.LaunchTemplateVersions)[0]
     $ltDigest = Get-UserDataRuntimeDigest -Encoded ([string]$latest.LaunchTemplateData.UserData) -Repo $deployment.Repo
     if ($ltDigest -ne [string]$State.TargetDigest) { throw "Latest Launch Template digest mismatch: expected=$($State.TargetDigest) actual=$ltDigest" }
-    $asgResult = Invoke-AwsJson @("autoscaling", "describe-auto-scaling-groups", "--auto-scaling-group-names", $deployment.ASG, "--region", $script:Region, "--output", "json")
-    $asg = @($asgResult.AutoScalingGroups)[0]
+    $inventory = Wait-AsgRuntimeInventory -AsgName $deployment.ASG
+    $asg = $inventory.Asg
     if (
         -not $asg.LaunchTemplate -or
         [string]$asg.LaunchTemplate.LaunchTemplateId -ne [string]$State.LaunchTemplateId -or
@@ -126,8 +143,7 @@ function Assert-PinState {
         Write-Output "VERIFIED_ASG_IMAGE service=$Service desired=0 launchTemplateDigest=$ltDigest"
         return
     }
-    $instances = @($asg.Instances | Where-Object { $_.LifecycleState -eq "InService" -and $_.HealthStatus -eq "Healthy" })
-    if ($instances.Count -ne $desired) { throw "Runtime verification requires exactly desired=$desired healthy InService instances; actual=$($instances.Count)." }
+    $instances = @($inventory.Instances)
     $expectedUri = "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($deployment.Repo)@$($State.TargetDigest)"
     $container = switch ($Service) { "api" { "academy-api" }; "messaging" { "academy-messaging-worker" }; "ai" { "academy-ai-worker-cpu" }; "tools" { "academy-tools-worker" } }
     foreach ($instance in $instances) {
@@ -226,11 +242,20 @@ if ($RestoreStatePath) {
         if ($status -notin @("Cancelled", "Failed", "RollbackFailed", "RollbackSuccessful", "Successful")) { throw "Timed out cancelling failed refresh $($active.InstanceRefreshId)." }
     }
     if ($needsVersionRestore) {
-        $restoredRaw = Invoke-Aws @(
-            "ec2", "create-launch-template-version", "--launch-template-id", $state.LaunchTemplateId,
-            "--source-version", [string]$state.PreviousVersion, "--version-description", "compensate $Service $($state.TargetDigest)",
-            "--region", $script:Region, "--output", "json"
-        ) -ErrorMessage "restore previous $Service Launch Template version"
+        # AWS requires LaunchTemplateData even when SourceVersion supplies the
+        # complete baseline. An empty override clones that immutable version.
+        $restoreDataRef = Convert-JsonArgToFileRef (@{} | ConvertTo-Json -Compress)
+        $restoreDataFile = $restoreDataRef -replace '^file://', ''
+        try {
+            $restoredRaw = Invoke-Aws @(
+                "ec2", "create-launch-template-version", "--launch-template-id", $state.LaunchTemplateId,
+                "--source-version", [string]$state.PreviousVersion, "--version-description", "compensate $Service $($state.TargetDigest)",
+                "--launch-template-data", $restoreDataRef,
+                "--region", $script:Region, "--output", "json"
+            ) -ErrorMessage "restore previous $Service Launch Template version"
+        } finally {
+            Remove-TempFiles @($restoreDataFile)
+        }
         $restored = ($restoredRaw | Out-String).Trim() | ConvertFrom-Json
         if (-not $restored.LaunchTemplateVersion.VersionNumber) { throw "Restore returned no Launch Template version." }
     }
