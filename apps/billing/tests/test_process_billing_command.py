@@ -101,6 +101,56 @@ class ProcessBillingCommandTests(TestCase):
         BILLING_GRACE_PERIOD_DAYS=7,
         TOSS_AUTO_BILLING_ENABLED=False,
     )
+    def test_dry_run_reports_full_transition_for_long_expired_active_program(self):
+        program = self.tenant.program
+        program.subscription_status = "active"
+        program.subscription_expires_at = date.today() - timedelta(days=30)
+        program.next_billing_at = None
+        program.save(
+            update_fields=[
+                "subscription_status",
+                "subscription_expires_at",
+                "next_billing_at",
+            ]
+        )
+        output = StringIO()
+
+        call_command("process_billing", dry_run=True, stdout=output)
+
+        program.refresh_from_db()
+        self.assertEqual(program.subscription_status, "active")
+        self.assertIn("-> grace until", output.getvalue())
+        self.assertIn("-> expired", output.getvalue())
+
+    @override_settings(
+        BILLING_EXEMPT_TENANT_IDS=set(),
+        BILLING_GRACE_PERIOD_DAYS=7,
+        TOSS_AUTO_BILLING_ENABLED=False,
+    )
+    def test_long_expired_active_program_converges_to_expired_in_one_run(self):
+        program = self.tenant.program
+        program.subscription_status = "active"
+        program.subscription_expires_at = date.today() - timedelta(days=30)
+        program.next_billing_at = None
+        program.save(
+            update_fields=[
+                "subscription_status",
+                "subscription_expires_at",
+                "next_billing_at",
+            ]
+        )
+
+        call_command("process_billing", stdout=StringIO())
+
+        program.refresh_from_db()
+        self.assertEqual(program.subscription_status, "expired")
+        self.assertFalse(program.is_subscription_active)
+
+    @override_settings(
+        BILLING_EXEMPT_TENANT_IDS=set(),
+        BILLING_GRACE_PERIOD_DAYS=7,
+        TOSS_AUTO_BILLING_ENABLED=False,
+    )
     def test_legacy_grace_cancel_expires_without_waiting_for_grace_end(self):
         program = self.tenant.program
         program.subscription_status = "grace"

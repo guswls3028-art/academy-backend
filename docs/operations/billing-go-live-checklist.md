@@ -39,6 +39,10 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 구독 유예기간 SSOT는 `BILLING_GRACE_PERIOD_DAYS`(기본 7일)다. 유예 상태의
 실제 접근 종료일은 `service_access_expires_at`/`grace_expires_at`이며,
 `process_billing`이 active → grace → expired 전이를 수행한다.
+장기간 실행이 누락된 테넌트는 한 번의 실제 배치에서 두 전이를 연속 적용해
+`expired`로 수렴한다. `--dry-run`도 DB를 변경하지 않으면서 같은 전체 전이
+체인을 출력해야 한다. `audit_billing_fields --strict`는 만료일이 지난 `active`
+상태와 유예 종료일이 지난 `grace` 상태를 운영 오류로 판정한다.
 
 인보이스는 `SCHEDULED → PENDING → PAID/FAILED` 상태기계를 따른다.
 `INVOICE_REQUEST`는 due date에 `PENDING`으로 전환된 뒤에만 수동 입금 확인할

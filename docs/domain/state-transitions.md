@@ -663,7 +663,11 @@ expired → {active}
 - `BILLING_GRACE_PERIOD_DAYS`(기본 7일)는 유료 기간 종료일 다음 날부터
   적용하며, `service_access_expires_at = subscription_expires_at + grace days`다.
 - `process_billing`이 `active → grace → expired`를 수행하고
-  `sync_subscription`은 누락 복구 안전망이다.
+  `sync_subscription`은 누락 복구 안전망이다. 장기간 배치가 누락돼 유예
+  종료일까지 지난 `active` 레코드는 한 실행에서 두 전이를 연속 수행하며,
+  dry-run도 이 전체 체인을 예고한다.
+- `audit_billing_fields --strict`는 `active`/`grace` 저장 상태가 실효 접근
+  기간보다 뒤처진 경우를 릴리스 차단 오류로 보고한다.
 - 402 접근 판정과 구독 API의 `days_remaining`은 유예 상태에서 실제 서비스
   접근 종료일을 기준으로 한다.
 

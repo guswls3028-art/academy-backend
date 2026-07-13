@@ -244,10 +244,12 @@ class Command(BaseCommand):
 
         # ──── 5. Subscription expiry / grace lifecycle ────
         self._log(f"\n  --- Step 5: Active -> Grace -> Expired ---")
-        active_past_period = all_live.filter(
-            subscription_status="active",
-            cancel_at_period_end=False,
-            subscription_expires_at__lt=today,
+        active_past_period = list(
+            all_live.filter(
+                subscription_status="active",
+                cancel_at_period_end=False,
+                subscription_expires_at__lt=today,
+            )
         )
         grace_entered = 0
         for program in active_past_period:
@@ -261,7 +263,16 @@ class Command(BaseCommand):
             )
         self._log(f"    Grace entries: {grace_entered}")
 
-        grace_programs = all_live.filter(subscription_status="grace")
+        grace_programs = list(all_live.filter(subscription_status="grace"))
+        if dry_run:
+            # Simulate the immediately preceding active -> grace writes so a
+            # long-expired subscription reports the full transition chain.
+            grace_ids = {program.pk for program in grace_programs}
+            grace_programs.extend(
+                program
+                for program in active_past_period
+                if program.pk not in grace_ids
+            )
         expired_count = 0
         for program in grace_programs:
             if program.cancel_at_period_end:

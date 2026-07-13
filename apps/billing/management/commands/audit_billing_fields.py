@@ -4,8 +4,9 @@ Billing fields audit + optional fix.
 Checks:
 1. next_billing_at NULL (active/grace, non-exempt)
 2. subscription_expires_at NULL (active/grace, non-exempt)
-3. contract tenant monthly_price integrity (blocking) + other overrides (informational)
-4. plaintext or undecryptable billing credentials
+3. persisted active/grace status past its effective access period
+4. contract tenant monthly_price integrity (blocking) + other overrides (informational)
+5. plaintext or undecryptable billing credentials
 
 Usage:
   python manage.py audit_billing_fields                            # audit only (read-only)
@@ -20,8 +21,11 @@ Safety:
   - --dry-run shows what would change without writing.
 """
 
+from datetime import timedelta
+
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
 
 from apps.billing.models import BillingKey, PaymentTransaction
 from apps.billing.services.billing_key_crypto import (
@@ -60,6 +64,7 @@ class Command(BaseCommand):
         dry_run = options["dry_run"]
         strict = options["strict"]
         exempt = settings.BILLING_EXEMPT_TENANT_IDS
+        today = timezone.localdate()
 
         # ── Validate fix options ──
         if fix and not tenant_code and not all_live:
@@ -139,7 +144,45 @@ class Command(BaseCommand):
                             "fix_value": None,
                         })
 
-            # 3. price vs plan/contract policy
+            # 3. persisted state must agree with the effective access period.
+            if (
+                not is_ex
+                and p.subscription_status == "active"
+                and p.subscription_expires_at is not None
+                and p.subscription_expires_at < today
+            ):
+                issues.append({
+                    "program": p,
+                    "code": code,
+                    "is_exempt": is_ex,
+                    "msg": (
+                        f"{prefix} active_subscription_past_expiry: "
+                        f"expires={p.subscription_expires_at} "
+                        "(run process_billing; effective access is fail-closed)"
+                    ),
+                    "fix_value": None,
+                })
+            if (
+                not is_ex
+                and p.subscription_status == "grace"
+                and p.subscription_expires_at is not None
+                and today
+                > p.subscription_expires_at
+                + timedelta(days=int(settings.BILLING_GRACE_PERIOD_DAYS))
+            ):
+                issues.append({
+                    "program": p,
+                    "code": code,
+                    "is_exempt": is_ex,
+                    "msg": (
+                        f"{prefix} grace_subscription_past_access: "
+                        f"expires={p.subscription_expires_at} "
+                        "(run process_billing; effective access is fail-closed)"
+                    ),
+                    "fix_value": None,
+                })
+
+            # 4. price vs plan/contract policy
             expected_price = Program.resolve_monthly_price(plan=p.plan, tenant_code=code)
             contract_price = Program.get_contract_monthly_price(code)
             if contract_price is not None and p.monthly_price != contract_price:
