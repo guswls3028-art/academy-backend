@@ -280,6 +280,11 @@ observability:
   redisCpuThresholdPercent: 75
   redisEvictionsThreshold: 100
 
+operations:
+  backupBucket: academy-v1-ops-backups-809466760795
+  backupRetentionDays: 365
+  backupNoncurrentRetentionDays: 30
+
 redis:
   replicationGroupId: academy-v1-redis
   subnetGroupName: academy-v1-redis-subnets

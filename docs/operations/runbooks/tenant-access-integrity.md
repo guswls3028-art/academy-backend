@@ -52,10 +52,15 @@ sudo chmod 600 /opt/academy-backups/tenant-access/tenant-access-<UTC>.json
 sha256sum /opt/academy-backups/tenant-access/tenant-access-<UTC>.json
 ```
 
-Copy the backup off the instance into the approved encrypted operations archive
-before any container refresh. Retain the dry-run JSON, explicit approval,
-container output (including `post-repair-verification` with zero findings), host
-backup path, SHA-256, and RDS snapshot identifier as the release evidence.
+Copy the backup off the instance before any container refresh to the private,
+versioned, default-encrypted operations archive declared by
+`operations.backupBucket` in `docs/ssot/params.yaml`. Store it below a
+date-scoped `tenant-access/` prefix and verify the uploaded object's checksum or
+metadata against the host SHA-256. The bucket blocks all public access, denies
+non-TLS requests, retains current evidence for 365 days, and retains replaced
+versions for 30 days. Retain the dry-run JSON, explicit approval, container
+output (including `post-repair-verification` with zero findings), host backup
+path, object key, SHA-256, and RDS snapshot identifier as the release evidence.
 
 Finally rerun the read-only command independently. A clean result exits zero and
 reports `finding_count: 0`.
@@ -64,3 +69,14 @@ reports `finding_count: 0`.
 pwsh scripts/v1/run-api-management-remote.ps1 `
   -Command 'audit_tenant_access'
 ```
+
+## 2026-07-14 production seal evidence
+
+- Restorable RDS snapshot: `academy-db-enterprise-qa-pre-repair-20260714-0305`
+- Guarded plan: create 1 missing student membership and deactivate 15 orphan
+  student memberships.
+- Encrypted, versioned backup:
+  `2026-07-14/tenant-access/tenant-access-20260714T0315KST.json` in the
+  `operations.backupBucket` archive; host SHA-256
+  `c526234125eec38a1345bb7dab6d346666665df16988a29368da1aebf2e00d28`.
+- Independent post-check: `finding_count=0` for all three access invariants.

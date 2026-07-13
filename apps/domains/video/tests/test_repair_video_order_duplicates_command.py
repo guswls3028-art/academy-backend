@@ -9,7 +9,9 @@ from unittest.mock import patch
 from django.apps import apps
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase
+from django.db import connection
+from django.db.migrations.executor import MigrationExecutor
+from django.test import TransactionTestCase
 
 from apps.core.models import Tenant
 from apps.domains.video.models import Video, VideoFolder
@@ -19,7 +21,25 @@ Lecture = apps.get_model("lectures", "Lecture")
 Session = apps.get_model("lectures", "Session")
 
 
-class RepairVideoOrderDuplicatesCommandTests(TestCase):
+class RepairVideoOrderDuplicatesCommandTests(TransactionTestCase):
+    """Exercise the Phase A repair command against the pre-constraint schema."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.executor = MigrationExecutor(connection)
+        cls.executor.migrate([("video", "0018_video_source_type_youtube")])
+
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.executor.loader.build_graph()
+            cls.executor.migrate(
+                [("video", "0019_video_order_and_folder_uniqueness")]
+            )
+        finally:
+            super().tearDownClass()
+
     def setUp(self):
         self.tenant = Tenant.objects.create(
             name="Repair Video Tenant",

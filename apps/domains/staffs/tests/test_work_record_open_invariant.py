@@ -2,7 +2,7 @@ from datetime import date, time
 from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
-from django.db import IntegrityError
+from django.db import IntegrityError, transaction
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -63,6 +63,31 @@ class WorkRecordOpenInvariantTests(TestCase):
             WorkRecord.objects.filter(staff=self.staff, end_time__isnull=True).count(),
             1,
         )
+
+    def test_database_rejects_second_open_record_for_same_staff(self):
+        self._create_open_record()
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            WorkRecord.objects.create(
+                tenant=self.tenant,
+                staff=self.staff,
+                work_type=self.work_type,
+                date=date(2026, 7, 14),
+                start_time=time(10, 0),
+            )
+
+    def test_database_allows_multiple_closed_records_for_same_staff(self):
+        for day in (12, 13):
+            WorkRecord.objects.create(
+                tenant=self.tenant,
+                staff=self.staff,
+                work_type=self.work_type,
+                date=date(2026, 7, day),
+                start_time=time(9, 0),
+                end_time=time(18, 0),
+            )
+
+        self.assertEqual(WorkRecord.objects.filter(staff=self.staff).count(), 2)
 
     def test_clock_in_api_returns_409_when_open_record_exists(self):
         self._create_open_record()
@@ -199,6 +224,7 @@ class WorkRecordOpenInvariantTests(TestCase):
                 self.assertEqual(response.status_code, 400, response.data)
                 record.refresh_from_db()
                 self.assertIsNone(record.end_time)
+                WorkRecord.objects.filter(pk=record.pk).update(end_time=time(18, 0))
 
     def test_closed_records_do_not_block_new_clock_in(self):
         WorkRecord.objects.create(

@@ -273,6 +273,13 @@ class WorkRecord(TimestampModel):
 
     class Meta:
         ordering = ["-date", "-start_time"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "staff"],
+                condition=models.Q(end_time__isnull=True),
+                name="uniq_open_work_record_per_tenant_staff",
+            ),
+        ]
         indexes = [
             models.Index(fields=["tenant", "date"]),  # ✅ 복합 인덱스 추가
         ]

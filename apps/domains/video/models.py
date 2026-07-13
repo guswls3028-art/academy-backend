@@ -238,6 +238,22 @@ class Video(TimestampModel):
 
     class Meta:
         ordering = ["order", "title", "id"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "folder", "order"],
+                condition=Q(deleted_at__isnull=True, folder__isnull=False),
+                name="uniq_active_video_order_per_folder",
+            ),
+            models.UniqueConstraint(
+                fields=["tenant", "session", "order"],
+                condition=Q(
+                    deleted_at__isnull=True,
+                    folder__isnull=True,
+                    session__isnull=False,
+                ),
+                name="uniq_active_video_order_per_session",
+            ),
+        ]
         indexes = [
             models.Index(fields=["status", "updated_at"]),
             models.Index(fields=["leased_until", "status"]),
@@ -622,8 +638,6 @@ class VideoFolder(TimestampModel):
     tenant = models.ForeignKey(
         "core.Tenant",
         on_delete=models.CASCADE,
-        null=True,
-        blank=True,
         related_name="video_folders",
         db_index=True,
         help_text="폴더 소유 테넌트",
@@ -651,17 +665,22 @@ class VideoFolder(TimestampModel):
         ordering = ["order", "name"]
         constraints = [
             models.UniqueConstraint(
+                fields=["tenant", "name"],
+                condition=Q(parent__isnull=True),
+                name="uniq_root_video_folder_name_per_tenant",
+            ),
+            models.UniqueConstraint(
                 fields=["tenant", "parent", "name"],
-                name="unique_video_folder_name_per_tenant",
-            )
+                condition=Q(parent__isnull=False),
+                name="uniq_child_video_folder_name_per_tenant",
+            ),
         ]
         indexes = [
             models.Index(fields=["tenant", "parent"]),
         ]
 
     def __str__(self):
-        label = self.tenant.code if self.tenant else "?"
-        return f"{label} / {self.name}"
+        return f"{self.tenant.code} / {self.name}"
 
 
 # ========================================================

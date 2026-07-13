@@ -34,6 +34,7 @@
 | [runbooks/problem-studio-source-transfer-uat.md](runbooks/problem-studio-source-transfer-uat.md) | 문제 제작 원본 이관 실사용 검수 |
 | [runbooks/tenant-access-integrity.md](runbooks/tenant-access-integrity.md) | 테넌트 멤버십/학생·학부모 프로필 무결성 감사 및 제한 복구 |
 | [runbooks/video-batch.md](runbooks/video-batch.md) | 영상 Batch 운영 |
+| [runbooks/video-order-integrity.md](runbooks/video-order-integrity.md) | 영상 순서 중복 복구와 DB 제약 Phase A/B 절차 |
 
 ## 테넌트 셋업
 
