@@ -180,6 +180,9 @@ def test_workflow_pins_build_inputs_migration_and_asg_runtime_images() -> None:
     assert 'IMAGE_TAG="${{ env.RELEASE_IMAGE_TAG }}"' in migrations
     assert 'ECR_IMAGE="${ECR_HOST}/academy-api@${IMAGE_DIGEST}"' in migrations
     assert "academy-api:latest" not in migrations
+    assert migrations.index("actions/checkout@v6") < migrations.index(
+        "deployment_lock.py renew"
+    )
 
     service_jobs = {
         "deploy-api": "api",

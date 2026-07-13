@@ -696,6 +696,9 @@ jobs:
     needs: [detect-changes, build-and-push]
     if: needs.detect-changes.outputs.build_api == 'true' || needs.detect-changes.outputs.force_full == 'true'
     steps:
+      - name: Checkout deployment scripts
+        uses: actions/checkout@v6
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v6
         with:
