@@ -768,9 +768,11 @@ jobs:
           # 에서 잘림. application은 docker가 env로 정상 inject한 값을 받지만 dump output은
           # 부정확. 결과적으로 새 임시 컨테이너가 SECRET_KEY 못 받아 prod.py assertion fail.
           #
-          # 근본 fix: scripts/deploy_api_on_server.sh가 사용하는 SSOT 파일(/opt/api.env)을
-          # migration 임시 컨테이너에도 동일하게 --env-file로 inject. 추가 dump 작업 없음.
-          MIGRATE_CMD="set -e; aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_HOST}; docker pull ${ECR_IMAGE}; if [ ! -f /opt/api.env ]; then echo 'ERROR: /opt/api.env not found'; exit 1; fi; docker run --rm --env-file /opt/api.env --network container:academy-api ${ECR_IMAGE} python manage.py migrate --no-input 2>&1; EXIT=\$?; exit \$EXIT"
+          # 근본 fix: migration 직전에 SSM runtime SSOT를 /opt/api.env로 원자적으로
+          # 동기화한다. ASG refresh 전 새 필수 환경변수가 추가되어도 stale env 때문에
+          # migration이 막히지 않으며, 실행 중인 구 API 컨테이너는 재시작하지 않는다.
+          # 동기화된 파일을 migration 임시 컨테이너에 동일하게 --env-file로 inject한다.
+          MIGRATE_CMD="set -e; umask 077; ENV_JSON=\$(aws ssm get-parameter --name /academy/api/env --with-decryption --query Parameter.Value --output text --region ${{ env.AWS_REGION }}); printf '%s' \"\$ENV_JSON\" | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(k+chr(61)+str(v)) for k,v in d.items()]' > /opt/api.env.next; test -s /opt/api.env.next; mv /opt/api.env.next /opt/api.env; aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_HOST}; docker pull ${ECR_IMAGE}; docker run --rm --env-file /opt/api.env --network container:academy-api ${ECR_IMAGE} python manage.py migrate --no-input 2>&1; EXIT=\$?; exit \$EXIT"
 
           # SSM commands 배열에 JSON-safe 형태로 전달
           SSM_PARAMS=$(jq -n --arg cmd "$MIGRATE_CMD" '{commands: [$cmd]}')
