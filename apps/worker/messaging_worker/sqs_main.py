@@ -132,10 +132,45 @@ def _normalize_worker_tenants(
         source_tenant_id = None
 
     if send_tenant_id != int(owner_tenant_id):
-        if source_tenant_id is None:
-            source_tenant_id = send_tenant_id
+        if source_tenant_id is not None and source_tenant_id != send_tenant_id:
+            raise ValueError("legacy_business_tenant_mismatch")
+        source_tenant_id = send_tenant_id
         send_tenant_id = int(owner_tenant_id)
     return send_tenant_id, source_tenant_id
+
+
+def _has_valid_worker_tenant_binding(data: dict) -> bool:
+    """Require every canonical queue payload to authenticate tenant billing."""
+    from apps.domains.messaging.security import verify_tenant_binding_signature
+
+    try:
+        tenant_id = int(data.get("tenant_id"))
+        raw_source = data.get("source_tenant_id")
+        source_tenant_id = int(raw_source) if raw_source is not None else None
+    except (TypeError, ValueError):
+        return False
+    business_key = str(data.get("business_idempotency_key") or "")
+    signature = str(data.get("tenant_binding_signature") or "")
+    if not business_key or not signature:
+        return False
+    return verify_tenant_binding_signature(
+        signature=signature,
+        tenant_id=tenant_id,
+        source_tenant_id=source_tenant_id,
+        business_idempotency_key=business_key,
+    )
+
+
+def _worker_tenant_binding_error(data: dict) -> str:
+    """Return a terminal binding error, honoring the explicit rollout gate."""
+    from django.conf import settings
+
+    signature = str(data.get("tenant_binding_signature") or "")
+    if signature:
+        return "" if _has_valid_worker_tenant_binding(data) else "invalid_tenant_binding_signature"
+    if bool(getattr(settings, "MESSAGING_TENANT_BINDING_ENFORCED", False)):
+        return "missing_tenant_binding_signature"
+    return ""
 
 
 def _is_non_retryable_send_failure(reason: str) -> bool:
@@ -179,40 +214,82 @@ def _resolve_tenant_delivery_context(
     tenant_id: int,
     source_tenant_id: int | None = None,
 ) -> dict:
-    """Resolve provider/channel only from active tenant rows or raise before send."""
+    """Separate the common delivery tenant from the business billing tenant."""
     from apps.domains.messaging.credit_services import get_tenant_messaging_info
-    from apps.domains.messaging.policy import (
-        get_tenant_own_credentials,
-        resolve_kakao_channel,
-    )
+    from apps.domains.messaging.policy import get_owner_tenant_id, resolve_kakao_channel
 
-    info = get_tenant_messaging_info(int(tenant_id))
-    if not info or not info.get("tenant_is_active"):
+    delivery_tenant_id = int(tenant_id)
+    if delivery_tenant_id != int(get_owner_tenant_id()):
+        raise RuntimeError("non_owner_delivery_tenant_blocked")
+    delivery_info = get_tenant_messaging_info(delivery_tenant_id)
+    if not delivery_info or not delivery_info.get("tenant_is_active"):
         raise RuntimeError("provider_tenant_missing_or_inactive")
-    if source_tenant_id is not None and int(source_tenant_id) != int(tenant_id):
-        source_info = get_tenant_messaging_info(int(source_tenant_id))
-        if not source_info or not source_info.get("tenant_is_active"):
-            raise RuntimeError("business_tenant_missing_or_inactive")
+    billing_tenant_id = int(source_tenant_id or delivery_tenant_id)
+    billing_info = (
+        delivery_info
+        if billing_tenant_id == delivery_tenant_id
+        else get_tenant_messaging_info(billing_tenant_id)
+    )
+    if not billing_info or not billing_info.get("tenant_is_active"):
+        raise RuntimeError("business_tenant_missing_or_inactive")
 
-    channel = resolve_kakao_channel(int(tenant_id))
+    channel = resolve_kakao_channel(delivery_tenant_id)
     if not isinstance(channel, dict):
         raise RuntimeError("messaging_channel_resolution_failed")
-    provider = str(info.get("messaging_provider") or "").strip().lower()
-    if provider not in {"solapi", "ppurio"}:
-        raise RuntimeError("messaging_provider_invalid")
-    own_creds = get_tenant_own_credentials(int(tenant_id))
-    if not isinstance(own_creds, dict):
-        raise RuntimeError("messaging_credentials_resolution_failed")
     use_default = bool(channel.get("use_default", True))
-    if not use_default and not own_creds:
-        raise RuntimeError("tenant_channel_credentials_missing")
+    if not use_default:
+        raise RuntimeError("non_common_messaging_channel_blocked")
     return {
-        "info": info,
+        "delivery_info": delivery_info,
+        "billing_info": billing_info,
+        "billing_tenant_id": billing_tenant_id,
         "channel": channel,
-        "provider": provider,
-        "own_credentials": own_creds,
+        "provider": "solapi",
+        "own_credentials": {},
         "use_default_channel": use_default,
     }
+
+
+def _allowed_common_template_ids(event_type: str) -> set[str]:
+    """Return the common-channel envelope IDs allowed for this business event."""
+    from apps.domains.messaging.alimtalk_content_builders import (
+        TEMPLATE_TYPE_TO_SOLAPI_ID,
+        get_solapi_template_id,
+        get_template_type,
+    )
+
+    trigger = (event_type or "").strip()
+    unified_ids = {
+        str(template_id).strip()
+        for template_id in TEMPLATE_TYPE_TO_SOLAPI_ID.values()
+        if str(template_id or "").strip()
+    }
+    if trigger == "manual_send" or trigger.startswith("manual_"):
+        return unified_ids
+
+    unified_type = get_template_type(trigger)
+    if unified_type:
+        template_id = (get_solapi_template_id(trigger) or "").strip()
+        return {template_id} if template_id else set()
+
+    from apps.domains.messaging.models import AutoSendConfig
+    from apps.domains.messaging.policy import get_owner_tenant_id
+
+    owner_id = int(get_owner_tenant_id())
+    config = (
+        AutoSendConfig.objects.select_related("template")
+        .filter(tenant_id=owner_id, trigger=trigger)
+        .first()
+    )
+    template = config.template if config else None
+    if (
+        not template
+        or int(template.tenant_id) != owner_id
+        or template.solapi_status != "APPROVED"
+    ):
+        return set()
+    template_id = (template.solapi_template_id or "").strip()
+    return {template_id} if template_id else set()
 
 
 # 메시지 발송 구간별 진행률 (n/4): 업로드 마법사처럼 단계별 0~100% 제공
@@ -726,11 +803,61 @@ def main() -> int:
 
                     raw_tenant_id = raw_tenant_id_int
                     source_tenant_id_raw = data.get("source_tenant_id")
-                    tenant_id, source_tenant_id_msg = _normalize_worker_tenants(
-                        raw_tenant_id,
-                        source_tenant_id_raw,
-                        owner_tenant_id=cfg.OWNER_TENANT_ID,
-                    )
+                    tenant_binding_error = _worker_tenant_binding_error(data)
+                    if tenant_binding_error:
+                        logger.error(
+                            "Message has invalid or missing tenant binding signature; deleting message_id=%s reason=%s",
+                            message_id,
+                            tenant_binding_error,
+                        )
+                        if os.environ.get("DJANGO_SETTINGS_MODULE"):
+                            try:
+                                from decimal import Decimal
+                                from academy.adapters.db.django.repositories_messaging import create_notification_log
+                                from apps.domains.messaging.policy import get_owner_tenant_id
+
+                                create_notification_log(
+                                    tenant_id=int(get_owner_tenant_id()),
+                                    success=False,
+                                    amount_deducted=Decimal("0"),
+                                    recipient_summary="차단된 큐 페이로드",
+                                    failure_reason=tenant_binding_error,
+                                    message_body="",
+                                    message_mode="alimtalk",
+                                    sqs_message_id=message_id,
+                                    notification_type=str(data.get("event_type") or "queue_security"),
+                                )
+                            except Exception as exc:
+                                logger.warning("tenant binding failure log creation failed: %s", exc)
+                        queue_client.delete_message(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                            receipt_handle=receipt_handle,
+                        )
+                        _msg_deleted = True
+                        continue
+                    if not data.get("tenant_binding_signature"):
+                        logger.warning(
+                            "Unsigned legacy messaging payload accepted during rollout message_id=%s",
+                            message_id,
+                        )
+                    try:
+                        tenant_id, source_tenant_id_msg = _normalize_worker_tenants(
+                            raw_tenant_id,
+                            source_tenant_id_raw,
+                            owner_tenant_id=cfg.OWNER_TENANT_ID,
+                        )
+                    except (TypeError, ValueError) as exc:
+                        logger.error(
+                            "Message has contradictory tenant binding; deleting message_id=%s reason=%s",
+                            message_id,
+                            exc,
+                        )
+                        queue_client.delete_message(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                            receipt_handle=receipt_handle,
+                        )
+                        _msg_deleted = True
+                        continue
                     business_tenant_id = source_tenant_id_msg or tenant_id
                     if source_tenant_id_msg == cfg.TEST_TENANT_ID:
                         logger.info(
@@ -797,7 +924,8 @@ def main() -> int:
 
                     to = str(data.get("to", "")).replace("-", "").strip()
                     text = str(data.get("text", ""))
-                    sender = (data.get("sender") or "").strip()
+                    # 공용 채널 계약: 큐 payload의 발신번호는 신뢰하지 않는다.
+                    sender = ""
                     target_name = (data.get("target_name") or "").strip()
                     target_type_msg = (data.get("target_type") or "").strip()
                     target_id_msg = str(data.get("target_id") or "").strip()
@@ -812,12 +940,21 @@ def main() -> int:
                         message_mode,
                         str(template_id_msg or ""),
                     )
-                    if video_encoding_block_reason:
+                    template_id_normalized = str(template_id_msg or "").strip()
+                    template_policy_block_reason = ""
+                    if os.environ.get("DJANGO_SETTINGS_MODULE"):
+                        allowed_template_ids = _allowed_common_template_ids(event_type_msg)
+                        if template_id_normalized not in allowed_template_ids:
+                            template_policy_block_reason = "common_template_not_allowed"
+                    policy_block_reason = (
+                        video_encoding_block_reason or template_policy_block_reason
+                    )
+                    if policy_block_reason:
                         logger.error(
-                            "Messaging worker blocked video_encoding_complete delivery: tenant=%s mode=%s reason=%s",
+                            "Messaging worker blocked delivery: tenant=%s mode=%s reason=%s",
                             tenant_id,
                             message_mode,
-                            video_encoding_block_reason,
+                            policy_block_reason,
                         )
                         if os.environ.get("DJANGO_SETTINGS_MODULE"):
                             try:
@@ -829,7 +966,7 @@ def main() -> int:
                                     success=False,
                                     amount_deducted=Decimal("0"),
                                     recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
-                                    failure_reason=video_encoding_block_reason,
+                                    failure_reason=policy_block_reason,
                                     message_body=text[:2000],
                                     message_mode=message_mode,
                                     sqs_message_id=message_id,
@@ -865,6 +1002,7 @@ def main() -> int:
 
                     # 테넌트별 잔액·PFID·발신번호·단가·공급자 (Django 있을 때만)
                     info = None
+                    billing_tenant_id = None
                     base_price = "0"
                     pf_id_tenant = ""
                     tenant_provider = "solapi"  # 기본 공급자
@@ -880,16 +1018,13 @@ def main() -> int:
                                 int(tenant_id),
                                 source_tenant_id_msg,
                             )
-                            info = context["info"]
+                            delivery_info = context["delivery_info"]
+                            info = context["billing_info"]
+                            billing_tenant_id = context["billing_tenant_id"]
                             base_price = info["base_price"]
-                            pf_id_tenant = (info["kakao_pfid"] or "").strip()
-                            if not sender and info.get("sender"):
-                                sender = (info["sender"] or "").strip()
                             channel = context["channel"]
                             pf_id_tenant = (channel.get("pf_id") or "").strip()
                             use_default_channel = context["use_default_channel"]
-                            tenant_provider = context["provider"]
-                            own_creds = context["own_credentials"]
                         except Exception:
                             logger.exception(
                                 "Messaging tenant/provider resolution failed before claim; "
@@ -905,12 +1040,12 @@ def main() -> int:
                         )
                         continue
 
-                    # 발신번호: payload > 테넌트 > 전역 env
-                    sender = (sender or "").strip() or cfg.SOLAPI_SENDER
+                    # 공용 발신번호 하나만 사용한다.
+                    sender = (cfg.SOLAPI_SENDER or "").strip()
 
                     # 알림톡 사용 시: resolver 결과 또는 워커 기본 PFID
                     pf_id = pf_id_tenant or cfg.SOLAPI_KAKAO_PF_ID
-                    template_id = (template_id_msg or "").strip() or cfg.SOLAPI_KAKAO_TEMPLATE_ID
+                    template_id = template_id_normalized
 
                     # Business-level atomic claim (Layer 2: DB dedup via unique constraint)
                     business_key = _resolve_worker_business_key(data, message_id)
@@ -977,11 +1112,56 @@ def main() -> int:
                             except Exception as e:
                                 logger.warning("DB dedup check failed (proceeding): %s", e)
 
+                    # 서비스 계약은 알림톡 전용이다. 레거시 SMS/미지원 모드는
+                    # 크레딧을 예약하기 전에 영구 실패로 닫는다.
+                    if message_mode != "alimtalk":
+                        from decimal import Decimal
+                        from academy.adapters.db.django.repositories_messaging import (
+                            create_notification_log,
+                            finalize_notification,
+                        )
+
+                        if claim_log_id is not None:
+                            finalize_notification(
+                                claim_log_id,
+                                success=False,
+                                amount_deducted=Decimal("0"),
+                                failure_reason="sms_disabled",
+                                message_body=text[:2000],
+                                notification_type=event_type_msg,
+                            )
+                        else:
+                            create_notification_log(
+                                tenant_id=int(tenant_id),
+                                success=False,
+                                amount_deducted=Decimal("0"),
+                                recipient_summary=(
+                                    (f"{target_name} " if target_name else "")
+                                    + (to[:4] + "****")
+                                ),
+                                failure_reason="sms_disabled",
+                                message_body=text[:2000],
+                                message_mode=message_mode,
+                                sqs_message_id=message_id,
+                                notification_type=event_type_msg,
+                                source_tenant_id=source_tenant_id_msg,
+                                target_type=target_type_msg,
+                                target_id=target_id_msg,
+                                target_name=target_name,
+                            )
+                        queue_client.delete_message(
+                            queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
+                            receipt_handle=receipt_handle,
+                        )
+                        _msg_deleted = True
+                        _current_receipt_handle = None
+                        continue
+
                     # 잔액 검증 및 차감 (Django + info 있을 때, 단가 > 0)
                     deducted = False
 
                     def _rollback_deducted_credits() -> None:
-                        if not deducted or tenant_id is None:
+                        if not deducted or billing_tenant_id is None:
                             return
                         if claim_log_id is not None:
                             from apps.domains.messaging.credit_services import (
@@ -990,15 +1170,15 @@ def main() -> int:
 
                             rollback_notification_credits(
                                 notification_log_id=claim_log_id,
-                                tenant_id=int(tenant_id),
+                                billing_tenant_id=int(billing_tenant_id),
                             )
                             return
                         from apps.domains.messaging.credit_services import rollback_credits
 
-                        rollback_credits(int(tenant_id), base_price)
+                        rollback_credits(int(billing_tenant_id), base_price)
 
                     try:
-                        if info and float(base_price) > 0 and tenant_id is not None:
+                        if info and float(base_price) > 0 and billing_tenant_id is not None:
                             _record_progress(job_id, "validating", 30, step_index=2, step_percent=0, tenant_id=tenant_id_str)
                             from apps.domains.messaging.credit_services import deduct_credits
                             if claim_log_id is not None:
@@ -1008,11 +1188,11 @@ def main() -> int:
 
                                 reserve_notification_credits(
                                     notification_log_id=claim_log_id,
-                                    tenant_id=int(tenant_id),
+                                    billing_tenant_id=int(billing_tenant_id),
                                     amount=base_price,
                                 )
                             else:
-                                deduct_credits(int(tenant_id), base_price)
+                                deduct_credits(int(billing_tenant_id), base_price)
                             deducted = True
                             _record_progress(job_id, "validating", 50, step_index=2, step_percent=100, tenant_id=tenant_id_str)
                         else:
@@ -1027,8 +1207,8 @@ def main() -> int:
                         )
 
                         logger.warning(
-                            "tenant_id=%s insufficient_balance base_price=%s, skip send",
-                            tenant_id,
+                            "business_tenant_id=%s insufficient_balance base_price=%s, skip send",
+                            billing_tenant_id,
                             base_price,
                         )
                         if claim_log_id is not None:
@@ -1070,27 +1250,6 @@ def main() -> int:
                         consecutive_errors += 1
                         continue
 
-                    # 테넌트 자체 연동 키가 있으면 사용, 없으면 시스템 기본
-                    _own = own_creds
-                    _own_ppurio_key = (_own.get("ppurio_api_key") or "").strip()
-                    _own_ppurio_acct = (_own.get("ppurio_account") or "").strip()
-                    _own_solapi_key = (_own.get("solapi_api_key") or "").strip()
-                    _own_solapi_secret = (_own.get("solapi_api_secret") or "").strip()
-
-                    # 공급자별 발송 함수 선택
-                    def _dispatch_sms(to_, text_, sender_):
-                        if tenant_provider == "ppurio":
-                            return send_one_sms_ppurio(
-                                to=to_, text=text_, sender=sender_,
-                                api_key=_own_ppurio_key, account=_own_ppurio_acct,
-                            )
-                        if _own_solapi_key and _own_solapi_secret:
-                            return send_one_sms_own_solapi(
-                                to=to_, text=text_, sender=sender_,
-                                api_key=_own_solapi_key, api_secret=_own_solapi_secret,
-                            )
-                        return send_one_sms(cfg, to=to_, text=text_, sender=sender_)
-
                     def _dispatch_alimtalk(
                         to_,
                         sender_,
@@ -1100,44 +1259,19 @@ def main() -> int:
                         text_="",
                         before_provider_call=None,
                     ):
-                        # 시스템 기본 채널(Solapi PFID)을 사용하는 경우:
-                        # tenant provider와 무관하게 시스템 Solapi로 발송.
-                        # 뿌리오는 @xxx 형식 PFID만 지원하므로 Solapi 형식 PFID를 넘기면 실패함.
-                        if use_default_channel:
-                            logger.info(
-                                "alimtalk via system solapi (default channel): tenant=%s provider=%s",
-                                tenant_id, tenant_provider,
-                            )
-                            return send_one_alimtalk(
-                                cfg, to=to_, sender=sender_, pf_id=pf_id_,
-                                template_id=template_id_, replacements=replacements_, text=text_,
-                                before_provider_call=before_provider_call,
-                            )
-                        # 테넌트 자체 채널이 있으면 테넌트 공급자로 발송
-                        if tenant_provider == "ppurio":
-                            return send_one_alimtalk_ppurio(
-                                to=to_, sender=sender_, pf_id=pf_id_,
-                                template_id=template_id_, replacements=replacements_,
-                                api_key=_own_ppurio_key, account=_own_ppurio_acct,
-                                before_provider_call=before_provider_call,
-                            )
-                        if _own_solapi_key and _own_solapi_secret:
-                            return send_one_alimtalk_own_solapi(
-                                to=to_, sender=sender_, pf_id=pf_id_,
-                                template_id=template_id_, replacements=replacements_,
-                                api_key=_own_solapi_key, api_secret=_own_solapi_secret, text=text_,
-                                before_provider_call=before_provider_call,
-                            )
+                        if not use_default_channel:
+                            return {
+                                "status": "error",
+                                "reason": "non_common_messaging_channel_blocked",
+                                "provider_called": False,
+                            }
+                        logger.info("alimtalk via common solapi channel: tenant=%s", tenant_id)
                         return send_one_alimtalk(
                             cfg, to=to_, sender=sender_, pf_id=pf_id_,
                             template_id=template_id_, replacements=replacements_, text=text_,
                             before_provider_call=before_provider_call,
                         )
 
-                    # SMS/LMS 실발송 금지. 큐에 남은 legacy payload도 실패 로그로 닫는다.
-                    _sms_allowed = False
-
-                    # message_mode: sms | alimtalk
                     provider_send_started = False
 
                     def _start_provider_send() -> bool:
@@ -1169,78 +1303,18 @@ def main() -> int:
 
                     try:
                         _record_progress(job_id, "sending", 70, step_index=3, step_percent=0, tenant_id=tenant_id_str)
-                        result = None
-                        if message_mode == "sms":
-                            if not _sms_allowed:
-                                logger.warning(
-                                    "SMS blocked by policy: service-wide disabled (tenant_id=%s)",
-                                    tenant_id,
-                                )
-                                if deducted:
-                                    try:
-                                        _rollback_deducted_credits()
-                                    except Exception as e:
-                                        logger.warning("rollback_credits failed: %s", e)
-                                if os.environ.get("DJANGO_SETTINGS_MODULE"):
-                                    try:
-                                        from decimal import Decimal
-                                        from academy.adapters.db.django.repositories_messaging import (
-                                            create_notification_log, finalize_notification,
-                                        )
-                                        if claim_log_id is not None:
-                                            finalize_notification(
-                                                claim_log_id,
-                                                success=False,
-                                                amount_deducted=Decimal("0"),
-                                                failure_reason="sms_disabled",
-                                                message_body=text[:2000],
-                                                notification_type=event_type_msg,
-                                            )
-                                        else:
-                                            create_notification_log(
-                                                tenant_id=int(tenant_id),
-                                                success=False,
-                                                amount_deducted=Decimal("0"),
-                                                recipient_summary=(f"{target_name} " if target_name else "") + (to[:4] + "****"),
-                                                failure_reason="sms_disabled",
-                                                message_body=text[:2000],
-                                                message_mode=message_mode,
-                                                sqs_message_id=message_id,
-                                                notification_type=event_type_msg,
-                                                source_tenant_id=source_tenant_id_msg,
-                                                target_type=target_type_msg,
-                                                target_id=target_id_msg,
-                                                target_name=target_name,
-                                            )
-                                    except Exception as e:
-                                        logger.warning("create_notification_log failed: %s", e)
-                                queue_client.delete_message(
-                                    queue_name=cfg.MESSAGING_SQS_QUEUE_NAME,
-                                    receipt_handle=receipt_handle,
-                                )
-                                _msg_deleted = True
-                                _current_receipt_handle = None
-                                continue
-                            result = _dispatch_sms(to, text, sender)
-                        elif message_mode == "alimtalk":
-                            if pf_id and template_id:
-                                result = _dispatch_alimtalk(
-                                    to, sender, pf_id, template_id,
-                                    alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
-                                    text_=text,
-                                    before_provider_call=_start_provider_send,
-                                )
-                            else:
-                                result = {"status": "error", "reason": "alimtalk_requires_pf_id_and_template_id"}
+                        if pf_id and template_id:
+                            result = _dispatch_alimtalk(
+                                to, sender, pf_id, template_id,
+                                alimtalk_replacements if isinstance(alimtalk_replacements, list) else None,
+                                text_=text,
+                                before_provider_call=_start_provider_send,
+                            )
                         else:
-                            if not _sms_allowed:
-                                logger.warning(
-                                    "SMS blocked by policy: tenant_id=%s (no own credentials, not owner)",
-                                    tenant_id,
-                                )
-                                result = {"status": "error", "reason": "sms_disabled"}
-                            else:
-                                result = _dispatch_sms(to, text, sender)
+                            result = {
+                                "status": "error",
+                                "reason": "alimtalk_requires_pf_id_and_template_id",
+                            }
                         _record_progress(job_id, "sending", 90, step_index=3, step_percent=100, tenant_id=tenant_id_str)
 
                         send_succeeded = result.get("status") == "ok"

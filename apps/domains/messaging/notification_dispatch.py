@@ -6,6 +6,7 @@
 저장과 발송을 완전 분리.
 """
 
+import json
 import logging
 import uuid
 from datetime import timedelta
@@ -18,6 +19,8 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 PREVIEW_TOKEN_TTL_SECONDS = 300  # 5분
+MAX_PREVIEW_TOKEN_PAYLOAD_BYTES = 2_000_000
+MAX_PREVIEW_MESSAGE_BODY_LENGTH = 5_000
 
 
 def _alimtalk_only_mode(raw_mode: str | None) -> str:
@@ -73,8 +76,13 @@ def build_attendance_preview(
     if not config:
         return {"error": "발송 설정이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
     content_template = config.template if config else None
-    owner_config = get_auto_send_config(get_owner_tenant_id(), trigger)
+    owner_tenant_id = get_owner_tenant_id()
+    owner_config = get_auto_send_config(owner_tenant_id, trigger)
     owner_template = owner_config.template if owner_config else None
+    if content_template and content_template.tenant_id != tenant.id:
+        return {"error": "발송 템플릿의 테넌트가 일치하지 않습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    if owner_template and owner_template.tenant_id != owner_tenant_id:
+        return {"error": "공용 승인 템플릿의 테넌트가 일치하지 않습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
     template = content_template
     effective_mode = _alimtalk_only_mode(config.message_mode if config else "alimtalk")
     solapi_template_id = ""
@@ -103,6 +111,8 @@ def build_attendance_preview(
     # Manual notification dispatch is alimtalk-only; approved template required.
     if not template or not (template.body or "").strip():
         return {"error": "발송 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    if len(template.body or "") > MAX_PREVIEW_MESSAGE_BODY_LENGTH:
+        return {"error": "알림톡 문구가 허용 길이를 초과했습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
     if not solapi_approved:
         return {"error": "승인된 알림톡 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
 
@@ -227,8 +237,13 @@ def build_student_list_preview(
     if not config:
         return {"error": "발송 설정이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
     content_template = config.template if config else None
-    owner_config = get_auto_send_config(get_owner_tenant_id(), trigger)
+    owner_tenant_id = get_owner_tenant_id()
+    owner_config = get_auto_send_config(owner_tenant_id, trigger)
     owner_template = owner_config.template if owner_config else None
+    if content_template and content_template.tenant_id != tenant.id:
+        return {"error": "발송 템플릿의 테넌트가 일치하지 않습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    if owner_template and owner_template.tenant_id != owner_tenant_id:
+        return {"error": "공용 승인 템플릿의 테넌트가 일치하지 않습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
     template = content_template
     effective_mode = _alimtalk_only_mode(config.message_mode if config else "alimtalk")
     solapi_template_id = ""
@@ -255,6 +270,8 @@ def build_student_list_preview(
 
     if not template or not (template.body or "").strip():
         return {"error": "발송 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
+    if len(template.body or "") > MAX_PREVIEW_MESSAGE_BODY_LENGTH:
+        return {"error": "알림톡 문구가 허용 길이를 초과했습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
     if not solapi_approved:
         return {"error": "승인된 알림톡 템플릿이 없습니다.", "recipients": [], "total_count": 0, "excluded_count": 0}
 
@@ -293,6 +310,13 @@ def build_student_list_preview(
         body = (template.body or "").strip()
         for k, v in ctx.items():
             body = body.replace(f"#{{{k}}}", str(v))
+        if len(body) > MAX_PREVIEW_MESSAGE_BODY_LENGTH:
+            return {
+                "error": "생성된 알림톡 본문이 허용 길이를 초과했습니다.",
+                "recipients": [],
+                "total_count": 0,
+                "excluded_count": 0,
+            }
 
         # 통합 템플릿 사용 시: Solapi 등록 변수와 정확히 매칭되는 replacements 빌드
         if use_unified:
@@ -356,6 +380,11 @@ def create_preview_token(
         "notification_type": notification_type,
         "send_to": send_to,
     }
+    payload_bytes = len(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    )
+    if payload_bytes > MAX_PREVIEW_TOKEN_PAYLOAD_BYTES:
+        raise ValueError("notification preview payload exceeds storage limit")
 
     NotificationPreviewToken.objects.create(
         token=token_uuid,
@@ -483,10 +512,14 @@ def execute_notification_batch(
             logger.info("batch %s: blocked recipient %s (whitelist)", batch_id, phone[:4] + "****")
             continue
 
+        canonical_event_type = {
+            "check_in": "check_in_complete",
+            "absent": "absent_occurred",
+        }.get(notification_type, notification_type)
         for mode in modes_to_send:
             outbox_specs.append(
                 {
-                    "trigger": f"manual_{notification_type}",
+                    "trigger": canonical_event_type,
                     "send_at": timezone.now(),
                     "payload": {
                         "tenant_id": tenant.id,
@@ -495,7 +528,7 @@ def execute_notification_batch(
                         "message_mode": mode,
                         "template_id": solapi_template_id if mode == "alimtalk" else None,
                         "alimtalk_replacements": r.get("alimtalk_replacements", []) if mode == "alimtalk" else None,
-                        "event_type": f"manual_{notification_type}",
+                        "event_type": canonical_event_type,
                         "target_type": target_type,
                         "target_id": r.get("student_id"),
                         "target_name": r.get("student_name", ""),

@@ -63,7 +63,7 @@ def rollback_credits(tenant_id: int, amount: str | Decimal) -> Decimal:
 def reserve_notification_credits(
     *,
     notification_log_id: int,
-    tenant_id: int,
+    billing_tenant_id: int,
     amount: str | Decimal,
 ) -> Decimal:
     """
@@ -77,18 +77,20 @@ def reserve_notification_credits(
 
     amt = Decimal(str(amount))
     if amt <= 0:
-        return Tenant.objects.get(pk=tenant_id).credit_balance
+        return Tenant.objects.get(pk=billing_tenant_id).credit_balance
     with transaction.atomic():
-        notification = NotificationLog.objects.select_for_update().get(
-            pk=notification_log_id,
-            tenant_id=tenant_id,
+        notification = NotificationLog.objects.select_for_update().get(pk=notification_log_id)
+        expected_billing_tenant_id = int(
+            notification.source_tenant_id or notification.tenant_id
         )
+        if expected_billing_tenant_id != int(billing_tenant_id):
+            raise ValueError("notification_billing_tenant_mismatch")
         if notification.amount_deducted == amt:
-            return Tenant.objects.get(pk=tenant_id).credit_balance
+            return Tenant.objects.get(pk=billing_tenant_id).credit_balance
         if notification.amount_deducted != Decimal("0"):
             raise ValueError("notification_credit_reservation_mismatch")
 
-        tenant = Tenant.objects.select_for_update().get(pk=tenant_id)
+        tenant = Tenant.objects.select_for_update().get(pk=billing_tenant_id)
         if tenant.credit_balance < amt:
             raise ValueError("insufficient_balance")
         tenant.credit_balance -= amt
@@ -101,18 +103,20 @@ def reserve_notification_credits(
 def rollback_notification_credits(
     *,
     notification_log_id: int,
-    tenant_id: int,
+    billing_tenant_id: int,
 ) -> Decimal:
     """Idempotently release credits reserved on a claimed notification."""
     from apps.domains.messaging.models import NotificationLog
 
     with transaction.atomic():
-        notification = NotificationLog.objects.select_for_update().get(
-            pk=notification_log_id,
-            tenant_id=tenant_id,
+        notification = NotificationLog.objects.select_for_update().get(pk=notification_log_id)
+        expected_billing_tenant_id = int(
+            notification.source_tenant_id or notification.tenant_id
         )
+        if expected_billing_tenant_id != int(billing_tenant_id):
+            raise ValueError("notification_billing_tenant_mismatch")
         amount = notification.amount_deducted
-        tenant = Tenant.objects.select_for_update().get(pk=tenant_id)
+        tenant = Tenant.objects.select_for_update().get(pk=billing_tenant_id)
         if amount <= 0:
             return tenant.credit_balance
         tenant.credit_balance += amount

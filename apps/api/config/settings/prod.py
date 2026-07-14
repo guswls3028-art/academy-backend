@@ -215,6 +215,12 @@ if not _secret_env or _secret_env == "dev-secret-key" or len(_secret_env) < 32:
     raise ImproperlyConfigured(
         "SECRET_KEY must be set via SSM/env (>=32 chars, not the dev default) in production."
     )
+_messaging_binding_key = os.getenv("MESSAGING_TENANT_BINDING_KEY", "").strip()
+if len(_messaging_binding_key) < 32:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "MESSAGING_TENANT_BINDING_KEY must be set via SSM/env (>=32 chars) in production."
+    )
 if BILLING_KEY_ENCRYPTION_WRITE_ENABLED and not BILLING_KEY_ENCRYPTION_PRIMARY_KEY:
     from django.core.exceptions import ImproperlyConfigured
     raise ImproperlyConfigured(

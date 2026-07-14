@@ -7,8 +7,6 @@ Usage: ``from apps.domains.messaging import views`` or
 
 from .info_views import (
     MessagingInfoView,
-    ChargeView,
-    VerifySenderView,
     ChannelCheckView,
     TestCredentialsView,
 )
@@ -42,8 +40,6 @@ from .operations_views import (
 
 __all__ = [
     "MessagingInfoView",
-    "ChargeView",
-    "VerifySenderView",
     "ChannelCheckView",
     "TestCredentialsView",
     "NotificationLogListView",

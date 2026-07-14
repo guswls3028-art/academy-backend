@@ -226,6 +226,15 @@ def is_messaging_disabled(tenant_id: int) -> bool:
     return tid == get_test_tenant_id() or tid in get_disabled_messaging_tenant_ids()
 
 
+def get_messaging_disabled_reason(tenant_id: int) -> str:
+    """Return a stable user-facing reason when messaging is operationally paused."""
+    if not is_messaging_disabled(tenant_id):
+        return ""
+    if int(tenant_id) == get_test_tenant_id():
+        return "테스트 학원에서는 실제 알림톡을 발송하지 않습니다."
+    return "현재 이 학원의 알림톡 발송이 운영 정책에 따라 중지되어 있습니다."
+
+
 def get_messaging_test_whitelist() -> frozenset[str]:
     """
     메시징 테스트 모드 수신자 허용 번호.
@@ -396,7 +405,8 @@ def resolve_messaging_provider(tenant_id: int, message_type: str) -> dict:
           {"allowed": True, "pf_id": str, "use_default": bool, "provider": str}
     """
     tenant_id = int(tenant_id)
-    provider = get_tenant_provider(get_owner_tenant_id())
+    # DB의 과거 provider 값과 무관하게 실발송 공급자는 공용 Solapi 하나다.
+    provider = "solapi"
     if message_type == "sms":
         return {
             "allowed": False,
@@ -450,7 +460,12 @@ def send_alimtalk_via_owner(
     t = config.template if config else None
     solapi_id = (t.solapi_template_id or "").strip() if t else ""
 
-    if not t or not solapi_id or t.solapi_status != "APPROVED":
+    if (
+        not t
+        or int(getattr(t, "tenant_id", owner_id)) != int(owner_id)
+        or not solapi_id
+        or t.solapi_status != "APPROVED"
+    ):
         logger.error(
             "send_alimtalk_via_owner: no exact approved owner template trigger=%s owner=%s",
             trigger, owner_id,
@@ -491,6 +506,7 @@ def send_alimtalk_via_owner(
             target_id=log_target_id if log_target_id is not None else target_id,
             target_name=log_target_name or target_name,
             source_tenant_id=source_tenant_id,
+            trusted_business_tenant_id=source_tenant_id or owner_id,
         )
     except Exception as exc:
         logger.error("send_alimtalk_via_owner: enqueue failed trigger=%s error=%s", trigger, exc)

@@ -202,12 +202,19 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertFalse(config.enabled)
 
     def test_autosend_patch_parses_show_actual_time_string_false(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="Clinic check-in content",
+            category=MessageTemplate.Category.CLINIC,
+            body="Clinic check-in",
+        )
         config = AutoSendConfig.objects.create(
             tenant=self.tenant,
             trigger="clinic_check_in",
             enabled=True,
             message_mode="alimtalk",
             show_actual_time=True,
+            template=template,
         )
 
         response = AutoSendConfigView.as_view()(
@@ -224,11 +231,18 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertTrue(config.enabled)
 
     def test_autosend_patch_keeps_auto_send_channel_alimtalk_only(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="Clinic channel content",
+            category=MessageTemplate.Category.CLINIC,
+            body="Clinic channel",
+        )
         config = AutoSendConfig.objects.create(
             tenant=self.tenant,
             trigger="clinic_check_in",
             enabled=True,
             message_mode="alimtalk",
+            template=template,
         )
 
         response = AutoSendConfigView.as_view()(
@@ -276,12 +290,19 @@ class ProvisionDefaultTemplatesTests(TestCase):
         self.assertIsNone(config.delay_value)
 
     def test_autosend_patch_preserves_valid_delay_minutes(self):
+        template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="Clinic delay content",
+            category=MessageTemplate.Category.CLINIC,
+            body="Clinic delay",
+        )
         config = AutoSendConfig.objects.create(
             tenant=self.tenant,
             trigger="clinic_check_in",
             enabled=True,
             message_mode="alimtalk",
             delay_mode="immediate",
+            template=template,
         )
 
         response = AutoSendConfigView.as_view()(

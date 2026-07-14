@@ -314,6 +314,7 @@ class TestSettingsIntegrity(TestCase):
         """Prod defaults must not self-redirect API clients behind Cloudflare/ALB."""
         env = os.environ.copy()
         env["SECRET_KEY"] = "test-production-secret-key-with-safe-length"
+        env["MESSAGING_TENANT_BINDING_KEY"] = "test-production-messaging-binding-key"
         env.pop("DJANGO_SECURE_SSL_REDIRECT", None)
         code = (
             "import apps.api.config.settings.prod as s; "

@@ -7,6 +7,10 @@ from decimal import Decimal
 from uuid import uuid4
 
 from django.db import models
+from django.core.exceptions import ValidationError
+
+
+MAX_MESSAGE_TEMPLATE_BODY_LENGTH = 5_000
 
 
 class NotificationLog(models.Model):
@@ -210,6 +214,13 @@ class MessageTemplate(models.Model):
             ),
         ]
 
+    def clean(self):
+        super().clean()
+        if len(self.body or "") > MAX_MESSAGE_TEMPLATE_BODY_LENGTH:
+            raise ValidationError(
+                {"body": f"알림톡 문구는 최대 {MAX_MESSAGE_TEMPLATE_BODY_LENGTH}자까지 허용합니다."}
+            )
+
 
 class AutoSendConfig(models.Model):
     """
@@ -315,6 +326,15 @@ class AutoSendConfig(models.Model):
         unique_together = [("tenant", "trigger")]
         verbose_name = "Auto-send config"
         verbose_name_plural = "Auto-send configs"
+
+    def clean(self):
+        super().clean()
+        if self.template_id and self.template.tenant_id != self.tenant_id:
+            from django.core.exceptions import ValidationError
+
+            raise ValidationError({
+                "template": "자동발송 문구는 같은 학원에 속해야 합니다.",
+            })
 
 
 class ScheduledNotification(models.Model):

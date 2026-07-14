@@ -20,10 +20,12 @@ from unittest.mock import patch
 from apps.domains.messaging.notification_dispatch import build_student_list_preview, execute_notification_batch
 from apps.domains.messaging.scheduled import MessagingHourlyQuotaExceeded
 from apps.domains.messaging.views_notification import (
+    AttendanceNotificationConfirmView,
     AttendanceNotificationPreviewView,
     ManualNotificationConfirmView,
     ManualNotificationPreviewView,
 )
+from apps.worker.messaging_worker.sqs_main import _allowed_common_template_ids
 User = get_user_model()
 Student = apps.get_model("students", "Student")
 
@@ -40,12 +42,70 @@ class NotificationPreviewViewValidationTests(TestCase):
         )
         TenantMembership.ensure_active(tenant=self.tenant, user=self.admin, role="owner")
 
-    def _post(self, view, path: str, data: dict):
+    def _post(self, view, path: str, data: dict, *, user=None):
         request = self.factory.post(path, data=data, format="json")
-        force_authenticate(request, user=self.admin)
-        request.user = self.admin
+        actor = user or self.admin
+        force_authenticate(request, user=actor)
+        request.user = actor
         request.tenant = self.tenant
         return view.as_view()(request)
+
+    def test_generic_staff_cannot_preview_or_confirm_external_messages(self):
+        staff = User.objects.create_user(
+            username="msg-preview-staff",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=staff, role="staff")
+
+        cases = (
+            (
+                AttendanceNotificationPreviewView,
+                "/api/v1/messaging/attendance-notification/preview/",
+                {"session_id": 1, "notification_type": "check_in"},
+            ),
+            (
+                AttendanceNotificationConfirmView,
+                "/api/v1/messaging/attendance-notification/confirm/",
+                {"preview_token": str(uuid4())},
+            ),
+            (
+                ManualNotificationPreviewView,
+                "/api/v1/messaging/manual-notification/preview/",
+                {"trigger": "exam_score_published", "student_ids": [1]},
+            ),
+            (
+                ManualNotificationConfirmView,
+                "/api/v1/messaging/manual-notification/confirm/",
+                {"preview_token": str(uuid4())},
+            ),
+        )
+        for view, path, data in cases:
+            with self.subTest(path=path):
+                response = self._post(view, path, data, user=staff)
+                self.assertEqual(response.status_code, 403)
+
+    def test_teacher_can_open_manual_message_preview(self):
+        teacher = User.objects.create_user(
+            username="msg-preview-teacher",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=teacher, role="teacher")
+        with patch(
+            "apps.domains.messaging.views_notification.build_student_list_preview",
+            return_value={"recipients": [], "total_count": 0, "excluded_count": 0},
+        ):
+            response = self._post(
+                ManualNotificationPreviewView,
+                "/api/v1/messaging/manual-notification/preview/",
+                {"trigger": "exam_score_published", "student_ids": [1]},
+                user=teacher,
+            )
+
+        self.assertEqual(response.status_code, 200)
 
     def test_attendance_preview_rejects_invalid_session_id(self):
         response = self._post(
@@ -116,6 +176,44 @@ class NotificationPreviewViewValidationTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.data["detail"], "context_per_student는 객체여야 합니다.")
+
+    def test_manual_preview_rejects_oversized_context_before_preview_build(self):
+        with patch(
+            "apps.domains.messaging.views_notification.build_student_list_preview"
+        ) as build_preview:
+            response = self._post(
+                ManualNotificationPreviewView,
+                "/api/v1/messaging/manual-notification/preview/",
+                {
+                    "trigger": "exam_score_published",
+                    "student_ids": [1],
+                    "send_to": "parent",
+                    "context": {"시험명": "x" * 2_000_000},
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("200KB", response.data["detail"])
+        build_preview.assert_not_called()
+
+    def test_manual_preview_rejects_oversized_per_student_value_before_preview_build(self):
+        with patch(
+            "apps.domains.messaging.views_notification.build_student_list_preview"
+        ) as build_preview:
+            response = self._post(
+                ManualNotificationPreviewView,
+                "/api/v1/messaging/manual-notification/preview/",
+                {
+                    "trigger": "exam_score_published",
+                    "student_ids": [1],
+                    "send_to": "parent",
+                    "context_per_student": {"1": {"시험명": "x" * 1_001}},
+                },
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("최대 1000자", response.data["detail"])
+        build_preview.assert_not_called()
 
     def test_manual_preview_zero_sendable_recipients_hides_internal_fields(self):
         student_user = User.objects.create_user(
@@ -327,6 +425,46 @@ class NotificationPreviewViewValidationTests(TestCase):
         self.assertEqual(preview["solapi_template_id"], "OWNER-APPROVED")
         self.assertEqual(preview["message_template_body"], "오너 검수 문구 #{학생이름}")
         self.assertEqual(preview["recipients"][0]["message_body"], "오너 검수 문구 비오너학생")
+
+        with override_settings(OWNER_TENANT_ID=owner.id):
+            batch = execute_notification_batch(
+                tenant,
+                preview,
+                batch_id="owner-exact-contract",
+                staff_id=None,
+                process=False,
+            )
+            scheduled = ScheduledNotification.objects.get(tenant=tenant)
+            self.assertEqual(scheduled.trigger, "owner_exact_manual_notice")
+            self.assertEqual(scheduled.payload["event_type"], "owner_exact_manual_notice")
+            self.assertIn("OWNER-APPROVED", _allowed_common_template_ids("owner_exact_manual_notice"))
+        self.assertEqual(batch["pending_count"], 1)
+
+    def test_manual_preview_rejects_cross_tenant_content_template_drift(self):
+        other = Tenant.objects.create(code="msg-preview-drift", name="Drift", is_active=True)
+        foreign_template = MessageTemplate.objects.create(
+            tenant=other,
+            category="grades",
+            name="Foreign",
+            body="다른 학원 문구",
+            solapi_template_id="FOREIGN-APPROVED",
+            solapi_status="APPROVED",
+        )
+        AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="exam_score_published",
+            template=foreign_template,
+            enabled=False,
+            message_mode="alimtalk",
+        )
+
+        preview = build_student_list_preview(
+            self.tenant,
+            trigger="exam_score_published",
+            student_ids=[1],
+        )
+
+        self.assertEqual(preview["error"], "발송 템플릿의 테넌트가 일치하지 않습니다.")
 
 
 class NotificationBatchDispatchPolicyTests(TestCase):

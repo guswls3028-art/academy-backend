@@ -758,7 +758,7 @@ try {
         "DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_PORT",
         "REDIS_HOST", "REDIS_PORT",
         "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_ENDPOINT",
-        "API_BASE_URL", "INTERNAL_WORKER_TOKEN",
+        "API_BASE_URL", "INTERNAL_WORKER_TOKEN", "MESSAGING_TENANT_BINDING_KEY",
         "DJANGO_SETTINGS_MODULE"
     )
     foreach ($k in $requiredKeys) {

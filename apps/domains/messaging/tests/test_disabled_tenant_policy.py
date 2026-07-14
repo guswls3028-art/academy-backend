@@ -18,6 +18,7 @@ class DisabledTenantMessagingPolicyTests(SimpleTestCase):
         result = enqueue_sms(
             tenant_id=1,
             source_tenant_id=4,
+            trusted_business_tenant_id=4,
             to="01012345678",
             text="test",
             message_mode="alimtalk",

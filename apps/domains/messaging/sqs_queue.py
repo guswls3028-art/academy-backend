@@ -184,6 +184,16 @@ class MessagingSQSQueue:
             occurrence_key=resolved_occurrence_key,
             template_id=str(template_id) if template_id else "",
         )
+        from apps.domains.messaging.security import build_tenant_binding_signature
+
+        message["tenant_binding_signature"] = build_tenant_binding_signature(
+            tenant_id=int(tenant_id),
+            source_tenant_id=(
+                int(source_tenant_id) if source_tenant_id is not None else None
+            ),
+            business_idempotency_key=message["business_idempotency_key"],
+        )
+        message["tenant_binding_signature_version"] = "v1"
         if not message["to"] or not message["text"]:
             logger.warning("enqueue skipped: to or text empty")
             return False

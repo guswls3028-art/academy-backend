@@ -5,8 +5,6 @@ from apps.domains.messaging import views_notification
 
 urlpatterns = [
     path("info/", views.MessagingInfoView.as_view(), name="messaging-info"),
-    path("verify-sender/", views.VerifySenderView.as_view(), name="messaging-verify-sender"),
-    path("charge/", views.ChargeView.as_view(), name="messaging-charge"),
     path("log/", views.NotificationLogListView.as_view(), name="messaging-log"),
     path("log/<int:pk>/", views.NotificationLogDetailView.as_view(), name="messaging-log-detail"),
     path("scheduled/", views.ScheduledNotificationListView.as_view(), name="messaging-scheduled"),

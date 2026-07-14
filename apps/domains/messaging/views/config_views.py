@@ -10,10 +10,13 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.parsing import parse_bool
-from apps.core.models import TenantMembership
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.messaging.effective_templates import resolve_effective_template_status
+from apps.domains.messaging.effective_templates import (
+    prime_effective_owner_templates,
+    resolve_effective_template_status,
+)
 from apps.domains.messaging.models import MessageTemplate, AutoSendConfig
+from apps.domains.messaging.permissions import can_manage_messaging_settings
 from apps.domains.messaging.policy import is_auto_send_enabled_by_default
 from apps.domains.messaging.serializers import AutoSendConfigSerializer
 
@@ -23,17 +26,7 @@ def _default_enabled_for_trigger(trigger: str) -> bool:
 
 
 def _can_manage_auto_send(request, tenant) -> bool:
-    user = request.user
-    if not user or not user.is_authenticated or not tenant:
-        return False
-    if (user.is_superuser or user.is_staff) and getattr(user, "tenant_id", None) == tenant.id:
-        return True
-    return TenantMembership.objects.filter(
-        tenant=tenant,
-        user=user,
-        is_active=True,
-        role__in=("owner", "admin"),
-    ).exists()
+    return can_manage_messaging_settings(request, tenant)
 
 
 def _auto_send_write_forbidden_response():
@@ -63,6 +56,7 @@ class AutoSendConfigView(APIView):
         from apps.domains.messaging.alimtalk_content_builders import get_template_type
         from apps.domains.messaging.policy import get_trigger_policy, get_trigger_implementation_status
 
+        configs = prime_effective_owner_templates(configs)
         by_trigger = {c.trigger: c for c in configs}
 
         result = []
@@ -276,7 +270,11 @@ class AutoSendConfigView(APIView):
                 "AutoSendConfig PATCH rejected enable for unimplemented triggers tenant=%s rejected=%s",
                 tenant.id, rejected_triggers,
             )
-        configs = AutoSendConfig.objects.filter(tenant=tenant).select_related("template").defer("delay_mode", "delay_value")
+        configs = prime_effective_owner_templates(
+            AutoSendConfig.objects.filter(tenant=tenant)
+            .select_related("template")
+            .defer("delay_mode", "delay_value")
+        )
         from apps.domains.messaging.policy import get_trigger_policy, get_trigger_implementation_status
         result = []
         for c in configs:

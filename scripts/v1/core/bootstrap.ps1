@@ -20,7 +20,7 @@ function Invoke-BootstrapWorkersEnv {
         return
     }
 
-    $requiredKeys = @("AWS_DEFAULT_REGION", "DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_PORT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_ENDPOINT", "R2_VIDEO_BUCKET", "API_BASE_URL", "INTERNAL_WORKER_TOKEN", "REDIS_HOST", "REDIS_PORT")
+    $requiredKeys = @("AWS_DEFAULT_REGION", "DB_HOST", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_PORT", "R2_ACCESS_KEY", "R2_SECRET_KEY", "R2_ENDPOINT", "R2_VIDEO_BUCKET", "API_BASE_URL", "INTERNAL_WORKER_TOKEN", "MESSAGING_TENANT_BINDING_KEY", "REDIS_HOST", "REDIS_PORT")
     $envHash = @{}
     $content = [System.IO.File]::ReadAllText($envPath, [System.Text.UTF8Encoding]::new($false))
     if ($content.Length -ge 1 -and $content[0] -eq [char]0xFEFF) { $content = $content.Substring(1) }
@@ -58,7 +58,7 @@ function Invoke-BootstrapWorkersEnv {
     }
 
     $obj = [ordered]@{}
-    $allKeys = @($requiredKeys) + "DJANGO_SETTINGS_MODULE" + @("MESSAGING_SQS_QUEUE_NAME", "AI_SQS_QUEUE_NAME_BASIC", "AI_SQS_QUEUE_NAME_LITE", "AI_SQS_QUEUE_NAME_PREMIUM", "R2_EXCEL_BUCKET")
+    $allKeys = @($requiredKeys) + "DJANGO_SETTINGS_MODULE" + @("MESSAGING_TENANT_BINDING_FALLBACK_KEYS", "MESSAGING_TENANT_BINDING_ENFORCED", "MESSAGING_SQS_QUEUE_NAME", "AI_SQS_QUEUE_NAME_BASIC", "AI_SQS_QUEUE_NAME_LITE", "AI_SQS_QUEUE_NAME_PREMIUM", "R2_EXCEL_BUCKET")
     foreach ($k in $allKeys) {
         if ($envHash[$k] -ne $null -and [string]$envHash[$k] -ne "") { $obj[$k] = $envHash[$k] }
     }

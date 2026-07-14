@@ -41,6 +41,7 @@ class MessagingHourlyQuotaExceeded(Exception):
 @dataclass(frozen=True)
 class _DispatchClaim:
     notification_id: int
+    business_tenant_id: int
     trigger: str
     payload: dict
     attempt_count: int
@@ -500,6 +501,7 @@ def _claim_due_notifications(
             claims.append(
                 _DispatchClaim(
                     notification_id=notification.id,
+                    business_tenant_id=notification.tenant_id,
                     trigger=notification.trigger,
                     payload=payload,
                     attempt_count=notification.attempt_count,
@@ -545,7 +547,10 @@ def process_due_notifications(
         try:
             if terminal_error:
                 raise ValueError(terminal_error)
-            enqueued = enqueue_sms(**claim.payload)
+            enqueued = enqueue_sms(
+                **claim.payload,
+                trusted_business_tenant_id=claim.business_tenant_id,
+            )
             if not enqueued:
                 raise RuntimeError("enqueue_sms returned false")
         except Exception as exc:

@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from django.test import TestCase
+from django.core.exceptions import ValidationError
 
 from apps.core.models import Tenant
-from apps.domains.messaging.effective_templates import resolve_effective_template_status
+from apps.domains.messaging.effective_templates import (
+    prime_effective_owner_templates,
+    resolve_effective_template_status,
+)
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate
 from apps.domains.messaging.serializers import AutoSendConfigSerializer
 
@@ -46,7 +50,7 @@ class EffectiveTemplateStatusTests(TestCase):
         self.assertTrue(data["effective_template_is_approved"])
         self.assertEqual(data["effective_template_type"], "clinic_info")
 
-    def test_non_unified_trigger_uses_linked_template_status(self):
+    def test_non_unified_trigger_uses_owner_exact_template_status(self):
         template = MessageTemplate.objects.create(
             tenant=self.tenant,
             name="Matchup report",
@@ -67,7 +71,7 @@ class EffectiveTemplateStatusTests(TestCase):
         effective = resolve_effective_template_status(config)
 
         self.assertFalse(effective.is_approved)
-        self.assertEqual(effective.source, "tenant_template")
+        self.assertEqual(effective.source, "owner_exact")
         self.assertEqual(effective.template_type, "")
         self.assertEqual(effective.solapi_template_id, "tenant-pending")
         self.assertEqual(effective.solapi_status, "PENDING")
@@ -96,3 +100,67 @@ class EffectiveTemplateStatusTests(TestCase):
         self.assertEqual(effective.source, "unified_missing")
         self.assertEqual(effective.template_type, "notice_payment")
         self.assertEqual(effective.solapi_template_id, "")
+
+    def test_owner_exact_templates_are_batch_loaded_before_serialization(self):
+        owner_template = MessageTemplate.objects.create(
+            tenant=self.tenant,
+            name="Owner exact notice",
+            category=MessageTemplate.Category.DEFAULT,
+            body="Owner exact notice",
+            solapi_template_id="OWNER-EXACT-SID",
+            solapi_status="APPROVED",
+        )
+        AutoSendConfig.objects.create(
+            tenant=self.tenant,
+            trigger="matchup_report_submitted",
+            template=owner_template,
+            enabled=True,
+            message_mode="alimtalk",
+        )
+        child_tenant = Tenant.objects.create(
+            code="effective-msg-child",
+            name="Effective Messaging Child",
+            is_active=True,
+        )
+        child_config = AutoSendConfig.objects.create(
+            tenant=child_tenant,
+            trigger="matchup_report_submitted",
+            enabled=True,
+            message_mode="alimtalk",
+        )
+
+        with self.assertNumQueries(1):
+            primed = prime_effective_owner_templates([child_config])
+        with self.assertNumQueries(0):
+            effective = resolve_effective_template_status(primed[0])
+
+        self.assertFalse(effective.is_approved)
+        self.assertEqual(effective.source, "content_template_missing")
+        self.assertEqual(effective.solapi_template_id, "")
+
+    def test_cross_tenant_content_template_fails_model_and_runtime_contract(self):
+        other_tenant = Tenant.objects.create(
+            code="effective-msg-other",
+            name="Other Messaging",
+            is_active=True,
+        )
+        foreign_template = MessageTemplate.objects.create(
+            tenant=other_tenant,
+            name="Foreign content",
+            category=MessageTemplate.Category.ATTENDANCE,
+            body="Foreign",
+        )
+        config = AutoSendConfig(
+            tenant=self.tenant,
+            trigger="check_in_complete",
+            template=foreign_template,
+            enabled=True,
+            message_mode="alimtalk",
+        )
+
+        with self.assertRaises(ValidationError):
+            config.full_clean()
+        config.save()
+        effective = resolve_effective_template_status(config)
+        self.assertFalse(effective.is_approved)
+        self.assertEqual(effective.source, "content_template_tenant_mismatch")

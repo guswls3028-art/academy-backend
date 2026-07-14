@@ -128,6 +128,14 @@ def send_welcome_messages(
         config = get_auto_send_config(owner_id, trigger)
         if config and config.enabled and config.template:
             t = config.template
+            if t.tenant_id != owner_id:
+                logger.error(
+                    "send_welcome: owner template tenant mismatch trigger=%s owner=%s template_tenant=%s",
+                    trigger,
+                    owner_id,
+                    t.tenant_id,
+                )
+                return None, None
             sid = (t.solapi_template_id or "").strip()
             if sid and t.solapi_status == "APPROVED":
                 return t, sid
@@ -273,6 +281,14 @@ def send_registration_approved_messages(
         config = get_auto_send_config(owner_id, trigger)
         if config and config.enabled and config.template:
             t = config.template
+            if t.tenant_id != owner_id:
+                logger.error(
+                    "registration approval: owner template tenant mismatch trigger=%s owner=%s template_tenant=%s",
+                    trigger,
+                    owner_id,
+                    t.tenant_id,
+                )
+                return None, None, "alimtalk"
             solapi_id = (t.solapi_template_id or "").strip()
             if solapi_id and t.solapi_status == "APPROVED":
                 return t, solapi_id, "alimtalk"

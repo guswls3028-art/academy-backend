@@ -111,7 +111,6 @@ def test_worker_tenant_resolution_missing_fails_before_provider(mock_info: Magic
         raise AssertionError("missing tenant must fail closed")
 
 
-@patch("apps.domains.messaging.policy.get_tenant_own_credentials", return_value={})
 @patch(
     "apps.domains.messaging.policy.resolve_kakao_channel",
     return_value={"pf_id": "PF", "use_default": True},
@@ -129,7 +128,6 @@ def test_worker_tenant_resolution_missing_fails_before_provider(mock_info: Magic
 def test_worker_inactive_business_source_fails_before_provider(
     mock_info: MagicMock,
     mock_channel: MagicMock,
-    mock_creds: MagicMock,
 ) -> None:
     try:
         _resolve_tenant_delivery_context(1, source_tenant_id=2)

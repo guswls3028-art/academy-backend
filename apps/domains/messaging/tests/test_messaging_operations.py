@@ -201,6 +201,61 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
         self.assertEqual(response.data["limits"]["sent_last_hour"], 1)
         self.assertEqual(response.data["limits"]["remaining_this_hour"], 1)
 
+    def test_future_reservation_is_not_blocked_by_current_hour_quota(self):
+        student = self._student("007")
+        with patch("apps.domains.messaging.services.preflight.HOURLY_SEND_LIMIT", 0):
+            response = SendMessagePreflightView.as_view()(
+                self._request(
+                    "post",
+                    "/api/v1/messaging/send/preflight/",
+                    {
+                        "send_to": "parent",
+                        "student_ids": [student.id],
+                        "raw_body": "예약 안내입니다.",
+                        "block_category": "attendance",
+                        "scheduled_send_at": (
+                            timezone.now() + timedelta(hours=2)
+                        ).isoformat(),
+                    },
+                )
+            )
+
+        self.assertTrue(response.data["ok"])
+        self.assertFalse(any(
+            item["code"] == "hourly_limit" for item in response.data["blockers"]
+        ))
+
+    def test_operationally_disabled_tenant_is_a_preflight_blocker(self):
+        student = self._student("008")
+        with (
+            patch(
+                "apps.domains.messaging.services.preflight.is_messaging_disabled",
+                return_value=True,
+            ),
+            patch(
+                "apps.domains.messaging.services.preflight.get_messaging_disabled_reason",
+                return_value="운영 중지",
+            ),
+        ):
+            response = SendMessagePreflightView.as_view()(
+                self._request(
+                    "post",
+                    "/api/v1/messaging/send/preflight/",
+                    {
+                        "send_to": "parent",
+                        "student_ids": [student.id],
+                        "raw_body": "중지 상태 안내",
+                        "block_category": "attendance",
+                    },
+                )
+            )
+
+        self.assertFalse(response.data["ok"])
+        self.assertTrue(any(
+            item["code"] == "messaging_disabled"
+            for item in response.data["blockers"]
+        ))
+
 
 class MessagingOperationsStatusViewTests(MessagingOperationsBase):
     def test_operations_status_summarizes_worker_queue_logs_and_auto_send_risks(self):
@@ -258,7 +313,7 @@ class MessagingOperationsStatusViewTests(MessagingOperationsBase):
         self.assertEqual(response.data["scheduled"]["failed_24h"], 1)
         self.assertEqual(response.data["log_24h"]["sent"], 1)
         self.assertEqual(response.data["log_24h"]["failed"], 1)
-        self.assertEqual(response.data["auto_send"]["enabled_without_template"], 0)
+        self.assertEqual(response.data["auto_send"]["enabled_without_template"], 1)
         self.assertTrue(any(item["code"] == "scheduled_overdue" for item in response.data["risks"]))
 
     def test_operations_status_marks_stale_heartbeat_idle_when_no_backlog(self):

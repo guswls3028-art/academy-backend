@@ -1,12 +1,17 @@
 # apps/support/messaging/serializers.py
-from decimal import Decimal
+import json
 
 from django.utils import timezone
 from rest_framework import serializers
 
 from apps.core.models import Tenant
 from apps.domains.messaging.effective_templates import resolve_effective_template_status
-from apps.domains.messaging.models import MessageTemplate, AutoSendConfig, ScheduledNotification
+from apps.domains.messaging.models import (
+    MAX_MESSAGE_TEMPLATE_BODY_LENGTH,
+    AutoSendConfig,
+    MessageTemplate,
+    ScheduledNotification,
+)
 
 
 class MessagingInfoSerializer(serializers.ModelSerializer):
@@ -52,34 +57,6 @@ class MessagingInfoSerializer(serializers.ModelSerializer):
         return bool(obj.own_solapi_api_key and obj.own_solapi_api_secret)
 
 
-class MessagingInfoUpdateSerializer(serializers.Serializer):
-    """PATCH 요청: PFID, 발신번호, 공급자, 자체 연동 키 수정 가능"""
-    kakao_pfid = serializers.CharField(max_length=100, required=False, allow_blank=True)
-    messaging_sender = serializers.CharField(max_length=20, required=False, allow_blank=True)
-    messaging_provider = serializers.ChoiceField(
-        choices=[("solapi", "솔라피"), ("ppurio", "뿌리오")],
-        required=False,
-    )
-    # 자체 연동 키 (직접 연동 모드)
-    own_solapi_api_key = serializers.CharField(max_length=200, required=False, allow_blank=True)
-    own_solapi_api_secret = serializers.CharField(max_length=200, required=False, allow_blank=True)
-    own_ppurio_api_key = serializers.CharField(max_length=200, required=False, allow_blank=True)
-    own_ppurio_account = serializers.CharField(max_length=100, required=False, allow_blank=True)
-
-
-class VerifySenderRequestSerializer(serializers.Serializer):
-    """발신번호 인증 요청"""
-    phone_number = serializers.CharField(max_length=20, allow_blank=False)
-
-
-class ChargeRequestSerializer(serializers.Serializer):
-    amount = serializers.DecimalField(max_digits=12, decimal_places=0, min_value=Decimal("1"))
-
-
-class ChargeResponseSerializer(serializers.Serializer):
-    credit_balance = serializers.DecimalField(max_digits=12, decimal_places=0)
-
-
 class NotificationLogSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     sent_at = serializers.DateTimeField()
@@ -99,11 +76,14 @@ class NotificationLogSerializer(serializers.Serializer):
 
 
 class MessageTemplateSerializer(serializers.ModelSerializer):
+    body = serializers.CharField(max_length=MAX_MESSAGE_TEMPLATE_BODY_LENGTH)
     category = serializers.ChoiceField(
         choices=[*MessageTemplate.Category.choices, ("student", "학생")],
         required=False,
     )
     has_content_var = serializers.SerializerMethodField()
+    alimtalk_envelope_type = serializers.SerializerMethodField()
+    alimtalk_readiness = serializers.SerializerMethodField()
 
     class Meta:
         model = MessageTemplate
@@ -118,6 +98,8 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             "solapi_template_id",
             "solapi_status",
             "has_content_var",
+            "alimtalk_envelope_type",
+            "alimtalk_readiness",
             "created_at",
             "updated_at",
         ]
@@ -130,6 +112,29 @@ class MessageTemplateSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+    @staticmethod
+    def _alimtalk_envelope(obj) -> tuple[str, str]:
+        from apps.domains.messaging.alimtalk_content_builders import get_unified_for_category
+
+        template_type, template_id = get_unified_for_category(
+            obj.category,
+            obj.name or "",
+        )
+        return template_type or "", (template_id or "").strip()
+
+    def get_alimtalk_envelope_type(self, obj) -> str:
+        return self._alimtalk_envelope(obj)[0]
+
+    def get_alimtalk_readiness(self, obj) -> str:
+        template_type, template_id = self._alimtalk_envelope(obj)
+        if template_type and template_id:
+            return "ready"
+        if template_type:
+            return "provider_template_missing"
+        if obj.is_system:
+            return "system_managed"
+        return "envelope_selection_required"
 
     @staticmethod
     def get_has_content_var(obj) -> bool:
@@ -149,6 +154,7 @@ class SendMessageRequestSerializer(serializers.Serializer):
     """알림톡 발송 요청: 학생/학부모 수신자 + 직접 입력 본문 또는 템플릿 ID."""
     student_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
+        max_length=200,
         allow_empty=True,
         required=False,
         default=list,
@@ -156,6 +162,7 @@ class SendMessageRequestSerializer(serializers.Serializer):
     )
     staff_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
+        max_length=200,
         allow_empty=True,
         required=False,
         default=list,
@@ -173,8 +180,13 @@ class SendMessageRequestSerializer(serializers.Serializer):
         help_text="alimtalk",
     )
     template_id = serializers.IntegerField(required=False, allow_null=True)
-    raw_body = serializers.CharField(required=False, allow_blank=True)
-    raw_subject = serializers.CharField(required=False, allow_blank=True, default="")
+    raw_body = serializers.CharField(required=False, allow_blank=True, max_length=5000)
+    raw_subject = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        max_length=200,
+    )
     scheduled_send_at = serializers.DateTimeField(
         required=False,
         allow_null=True,
@@ -184,6 +196,7 @@ class SendMessageRequestSerializer(serializers.Serializer):
         required=False,
         allow_blank=True,
         default="",
+        max_length=40,
         help_text=(
             "frontend 발송 진입점의 블록 카테고리 (grades/attendance/clinic 등). "
             "template_id 누락 또는 t.category 매핑 안 될 때 unified 봉투 fallback 매칭에 사용. "
@@ -191,7 +204,7 @@ class SendMessageRequestSerializer(serializers.Serializer):
         ),
     )
     alimtalk_extra_vars = serializers.DictField(
-        child=serializers.CharField(allow_blank=True),
+        child=serializers.CharField(allow_blank=True, max_length=1000),
         required=False,
         default=dict,
         help_text="알림톡 추가 치환 변수 (예: {시험명: '수학', 시험성적: '80/100'})",
@@ -213,6 +226,31 @@ class SendMessageRequestSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"student_ids": "학생/학부모 수신 시 최소 1명의 학생을 선택해 주세요."}
             )
+        per_student = attrs.get("alimtalk_extra_vars_per_student") or {}
+        if len(attrs.get("alimtalk_extra_vars") or {}) > 50:
+            raise serializers.ValidationError({
+                "alimtalk_extra_vars": "치환값은 최대 50개까지 보낼 수 있습니다.",
+            })
+        if len(per_student) > 200:
+            raise serializers.ValidationError({
+                "alimtalk_extra_vars_per_student": "학생별 치환값은 최대 200명까지 보낼 수 있습니다.",
+            })
+        for student_key, values in per_student.items():
+            if len(str(student_key)) > 20 or not isinstance(values, dict):
+                raise serializers.ValidationError({
+                    "alimtalk_extra_vars_per_student": "학생별 치환값 형식이 올바르지 않습니다.",
+                })
+            if len(values) > 50 or any(
+                len(str(key)) > 50 or len(str(value)) > 1000
+                for key, value in values.items()
+            ):
+                raise serializers.ValidationError({
+                    "alimtalk_extra_vars_per_student": "학생별 치환값의 항목 또는 길이가 허용 범위를 초과했습니다.",
+                })
+        if len(json.dumps(attrs, ensure_ascii=False, default=str).encode("utf-8")) > 200_000:
+            raise serializers.ValidationError({
+                "detail": "발송 요청 크기가 너무 큽니다. 대상을 나누어 다시 시도해 주세요.",
+            })
         if not attrs.get("template_id") and not (attrs.get("raw_body") or "").strip():
             raise serializers.ValidationError(
                 {"raw_body": "직접 입력 본문을 넣거나 템플릿을 선택해 주세요."}
@@ -311,6 +349,9 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
     template_solapi_status = serializers.CharField(
         source="template.solapi_status", read_only=True, default=""
     )
+    template_is_system = serializers.BooleanField(
+        source="template.is_system", read_only=True, default=False
+    )
     effective_solapi_template_id = serializers.SerializerMethodField()
     effective_template_solapi_status = serializers.SerializerMethodField()
     effective_template_source = serializers.SerializerMethodField()
@@ -322,7 +363,11 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
 
     @staticmethod
     def _effective_status(obj):
-        return resolve_effective_template_status(obj)
+        cached = getattr(obj, "_effective_template_status_cache", None)
+        if cached is None:
+            cached = resolve_effective_template_status(obj)
+            obj._effective_template_status_cache = cached
+        return cached
 
     def get_effective_solapi_template_id(self, obj) -> str:
         return self._effective_status(obj).solapi_template_id
@@ -361,6 +406,7 @@ class AutoSendConfigSerializer(serializers.ModelSerializer):
             "template_subject",
             "template_body",
             "template_solapi_status",
+            "template_is_system",
             "effective_solapi_template_id",
             "effective_template_solapi_status",
             "effective_template_source",

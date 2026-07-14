@@ -168,6 +168,16 @@ SOLAPI_KAKAO_TEMPLATE_ID = os.getenv("SOLAPI_KAKAO_TEMPLATE_ID", "")
 # ==================================================
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "")
+MESSAGING_TENANT_BINDING_KEY = os.getenv("MESSAGING_TENANT_BINDING_KEY", "").strip()
+MESSAGING_TENANT_BINDING_FALLBACK_KEYS = tuple(
+    key.strip()
+    for key in os.getenv("MESSAGING_TENANT_BINDING_FALLBACK_KEYS", "").split(",")
+    if key.strip()
+)
+MESSAGING_TENANT_BINDING_ENFORCED = os.getenv(
+    "MESSAGING_TENANT_BINDING_ENFORCED",
+    "true",
+).lower() in ("1", "true", "yes")
 
 # ==================================================
 # ALLOWED_HOSTS (Django runserver용, Worker는 미사용)

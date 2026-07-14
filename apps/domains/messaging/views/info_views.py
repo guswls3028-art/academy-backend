@@ -4,136 +4,70 @@
 """
 
 from rest_framework import status
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.messaging.models import MessageTemplate
-from apps.domains.messaging.credit_services import (
-    charge_credits as do_charge,
+from apps.domains.messaging.serializers import MessagingInfoSerializer
+from apps.domains.messaging.permissions import can_manage_messaging_settings
+from apps.domains.messaging.policy import (
+    can_send_sms,
+    get_messaging_disabled_reason,
+    get_owner_tenant_id,
+    is_messaging_disabled,
+    resolve_kakao_channel,
 )
-from apps.domains.messaging.serializers import (
-    MessagingInfoSerializer,
-    MessagingInfoUpdateSerializer,
-    ChargeRequestSerializer,
-    VerifySenderRequestSerializer,
-)
-from apps.domains.messaging.solapi_sender_client import verify_sender_number
-from apps.domains.messaging.policy import can_send_sms, get_owner_tenant_id, resolve_kakao_channel
-from apps.domains.messaging.selectors import has_any_approved_template
 
 
 class MessagingInfoView(APIView):
-    """GET: 현재 테넌트 메시징 정보. PATCH: PFID 저장"""
+    """GET: 공용 알림톡 발송 상태. 테넌트별 공급자 설정은 읽기 전용이다."""
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request):
         tenant = request.tenant
         serializer = MessagingInfoSerializer(tenant)
-        data = serializer.data
+        data = dict(serializer.data)
+        # 과거 테넌트별 연동 값은 데이터 보존용일 뿐 제품 발송 계약이 아니다.
+        # API에서도 공용 솔라피 정책만 노출해 오래된 클라이언트가 이를 다시
+        # 실행 가능한 설정으로 오인하지 않게 한다.
+        data.update({
+            "kakao_pfid": "",
+            "messaging_sender": "",
+            "messaging_provider": "solapi",
+            "own_solapi_api_key": "",
+            "own_solapi_api_secret": "",
+            "own_ppurio_api_key": "",
+            "own_ppurio_account": "",
+            "has_own_credentials": False,
+            "delivery_policy": "common_alimtalk_only",
+        })
         # 정책 SSOT 기반: 발송 허용·채널 출처 (API 응답만 사용, 프론트에서 재계산 금지)
         data["sms_allowed"] = can_send_sms(tenant.id)
         channel = resolve_kakao_channel(tenant.id)
         data["channel_source"] = "common_owner"
         resolved_pf_id = (channel.get("pf_id") or "").strip()
         data["resolved_pf_id"] = resolved_pf_id
-        # alimtalk_available: common PFID resolved AND at least one owner APPROVED template exists
-        data["alimtalk_available"] = bool(resolved_pf_id and has_any_approved_template(tenant.id))
+        messaging_disabled = is_messaging_disabled(tenant.id)
+        data["messaging_disabled"] = messaging_disabled
+        data["messaging_disabled_reason"] = get_messaging_disabled_reason(tenant.id)
+        from apps.domains.messaging.alimtalk_content_builders import (
+            TEMPLATE_TYPE_TO_SOLAPI_ID,
+        )
+
+        has_registered_unified_envelope = any(
+            bool((template_id or "").strip())
+            for template_id in TEMPLATE_TYPE_TO_SOLAPI_ID.values()
+        )
+        # 수동 발송이 실제 사용하는 통합 봉투가 하나라도 등록돼야 한다.
+        data["alimtalk_available"] = bool(
+            not messaging_disabled
+            and resolved_pf_id
+            and has_registered_unified_envelope
+        )
         return Response(data)
-
-    def patch(self, request):
-        tenant = request.tenant
-        ser = MessagingInfoUpdateSerializer(data=request.data, partial=True)
-        ser.is_valid(raise_exception=True)
-        update_fields = []
-        if ser.validated_data.get("kakao_pfid") is not None:
-            tenant.kakao_pfid = (ser.validated_data["kakao_pfid"] or "").strip()
-            update_fields.append("kakao_pfid")
-        if ser.validated_data.get("messaging_sender") is not None:
-            tenant.messaging_sender = (
-                ser.validated_data["messaging_sender"] or ""
-            ).strip().replace("-", "")
-            update_fields.append("messaging_sender")
-        if ser.validated_data.get("messaging_provider") is not None:
-            tenant.messaging_provider = ser.validated_data["messaging_provider"]
-            update_fields.append("messaging_provider")
-        # 자체 연동 키
-        for field in ("own_solapi_api_key", "own_solapi_api_secret", "own_ppurio_api_key", "own_ppurio_account"):
-            if field in ser.validated_data:
-                setattr(tenant, field, (ser.validated_data[field] or "").strip())
-                update_fields.append(field)
-        if update_fields:
-            tenant.save(update_fields=update_fields)
-        serializer = MessagingInfoSerializer(tenant)
-        data = serializer.data
-        data["sms_allowed"] = can_send_sms(tenant.id)
-        channel = resolve_kakao_channel(tenant.id)
-        data["channel_source"] = "common_owner"
-        resolved_pf_id = (channel.get("pf_id") or "").strip()
-        data["resolved_pf_id"] = resolved_pf_id
-        data["alimtalk_available"] = bool(resolved_pf_id and has_any_approved_template(tenant.id))
-        return Response(data)
-
-
-class ChargeView(APIView):
-    """POST: 크레딧 충전 (결제 완료 후)"""
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
-
-    def post(self, request):
-        ser = ChargeRequestSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        amount = ser.validated_data["amount"]
-        try:
-            new_balance = do_charge(request.tenant.id, amount)
-            return Response({"credit_balance": str(new_balance)})
-        except ValueError as e:
-            return Response(
-                {"detail": str(e)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-
-class VerifySenderView(APIView):
-    """
-    POST: 입력한 발신번호가 솔라피에 등록·활성화된 번호인지 조회.
-    - Body: { "phone_number": "01031217466" }
-    - Response: { "verified": bool, "message": str }
-    """
-    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
-
-    def post(self, request):
-        from django.conf import settings
-
-        ser = VerifySenderRequestSerializer(data=request.data)
-        ser.is_valid(raise_exception=True)
-        phone = (ser.validated_data["phone_number"] or "").strip()
-
-        api_key = getattr(settings, "SOLAPI_API_KEY", None) or ""
-        api_secret = getattr(settings, "SOLAPI_API_SECRET", None) or ""
-
-        if not api_key or not api_secret:
-            return Response(
-                {"verified": False, "message": "공용 솔라피 API가 설정되지 않았습니다. 운영자에게 문의하세요."},
-                status=status.HTTP_200_OK,
-            )
-
-        try:
-            verified, message = verify_sender_number(api_key, api_secret, phone)
-            return Response({"verified": verified, "message": message})
-        except ValueError as e:
-            return Response(
-                {"verified": False, "message": str(e)},
-                status=status.HTTP_200_OK,
-            )
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).exception("verify_sender unexpected error")
-            return Response(
-                {"verified": False, "message": f"인증 확인 중 오류: {str(e)}"},
-                status=status.HTTP_200_OK,
-            )
-
 
 class ChannelCheckView(APIView):
     """GET: 채널 공유 확인 (파트너 등록 여부) — 4단계, 스텁 가능"""
@@ -148,10 +82,10 @@ class ChannelCheckView(APIView):
 
 
 class TestCredentialsView(APIView):
-    """POST: 현재 저장된 공급자 연동 키가 유효한지 테스트.
-    테넌트 자체 키 또는 시스템 키를 검증하여 결과를 반환한다.
-    """
+    """POST: 공용 솔라피 알림톡 연동 상태를 검증한다."""
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "messaging_diagnostic"
 
     def post(self, request):
         import logging as _logging
@@ -159,9 +93,27 @@ class TestCredentialsView(APIView):
         from django.conf import settings
 
         tenant = request.tenant
+        if not can_manage_messaging_settings(request, tenant):
+            return Response(
+                {"detail": "알림톡 연동 진단은 대표 또는 관리자만 실행할 수 있습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         provider = "solapi"
 
         results = {"provider": provider, "checks": []}
+
+        messaging_disabled = is_messaging_disabled(tenant.id)
+        results["messaging_disabled"] = messaging_disabled
+        results["messaging_disabled_reason"] = get_messaging_disabled_reason(tenant.id)
+        results["checks"].append({
+            "test": "operational_policy",
+            "ok": not messaging_disabled,
+            "message": (
+                results["messaging_disabled_reason"]
+                if messaging_disabled
+                else "이 학원의 알림톡 발송 정책이 활성 상태입니다."
+            ),
+        })
 
         if provider == "solapi":
             # Solapi: 공용 시스템 키만 실발송에 사용
@@ -183,22 +135,20 @@ class TestCredentialsView(APIView):
                     results["checks"].append({
                         "test": "api_credentials",
                         "ok": True,
-                        "message": f"솔라피 API 인증 성공 ({key_source} 키). 등록된 발신번호 {len(numbers)}개.",
-                        "sender_numbers": numbers[:10],
+                        "message": "공용 솔라피 API와 발신번호가 정상 연결되어 있습니다.",
                     })
-                except ValueError as e:
-                    err_msg = str(e)
+                except ValueError:
                     results["checks"].append({
                         "test": "api_credentials",
                         "ok": False,
-                        "message": f"솔라피 API 인증 실패: {err_msg}",
+                        "message": "공용 솔라피 인증을 확인하지 못했습니다. 운영자에게 문의하세요.",
                     })
-                except Exception as e:
+                except Exception:
                     _logger.exception("test_credentials solapi error")
                     results["checks"].append({
                         "test": "api_credentials",
                         "ok": False,
-                        "message": f"솔라피 연결 오류: {str(e)[:200]}",
+                        "message": "공용 솔라피 연결을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.",
                     })
 
             # 발신번호 확인
@@ -207,74 +157,13 @@ class TestCredentialsView(APIView):
                 results["checks"].append({
                     "test": "sender_number",
                     "ok": True,
-                    "message": f"발신번호 등록됨: {sender}",
+                    "message": "공용 발신번호가 등록되어 있습니다.",
                 })
             else:
                 results["checks"].append({
                     "test": "sender_number",
                     "ok": False,
                     "message": "공용 알림톡 발신번호가 등록되지 않았습니다.",
-                })
-
-        elif provider == "ppurio":
-            if tenant.own_ppurio_api_key and tenant.own_ppurio_account:
-                api_key = tenant.own_ppurio_api_key
-                account = tenant.own_ppurio_account
-                key_source = "tenant"
-            else:
-                import os
-                api_key = os.environ.get("PPURIO_API_KEY") or getattr(settings, "PPURIO_API_KEY", "")
-                account = os.environ.get("PPURIO_ACCOUNT") or getattr(settings, "PPURIO_ACCOUNT", "")
-                key_source = "system"
-
-            if not api_key or not account:
-                results["checks"].append({
-                    "test": "api_credentials",
-                    "ok": False,
-                    "message": "뿌리오 API 키 또는 Account ID가 설정되지 않았습니다." + (
-                        " 직접 연동 모드에서 입력해 주세요."
-                        if key_source == "tenant"
-                        else " 운영자에게 문의하세요."
-                    ),
-                })
-            else:
-                # 뿌리오: 토큰 발급 테스트
-                try:
-                    from apps.domains.messaging.ppurio_client import _get_access_token, DEFAULT_API_URL
-                    creds = {"api_key": api_key, "account": account, "api_url": DEFAULT_API_URL}
-                    token = _get_access_token(creds)
-                    if token:
-                        results["checks"].append({
-                            "test": "api_credentials",
-                            "ok": True,
-                            "message": f"뿌리오 API 인증 성공 ({key_source} 키). 토큰 발급 확인됨.",
-                        })
-                    else:
-                        results["checks"].append({
-                            "test": "api_credentials",
-                            "ok": False,
-                            "message": "뿌리오 토큰 발급 실패. API Key 또는 Account ID를 확인해 주세요.",
-                        })
-                except Exception as e:
-                    _logger.exception("test_credentials ppurio error")
-                    results["checks"].append({
-                        "test": "api_credentials",
-                        "ok": False,
-                        "message": f"뿌리오 연결 오류: {str(e)[:200]}",
-                    })
-
-            sender = (tenant.messaging_sender or "").strip()
-            if sender:
-                results["checks"].append({
-                    "test": "sender_number",
-                    "ok": True,
-                    "message": f"발신번호 등록됨: {sender}",
-                })
-            else:
-                results["checks"].append({
-                    "test": "sender_number",
-                    "ok": False,
-                    "message": "발신번호가 등록되지 않았습니다.",
                 })
 
         # 공통: 알림톡 채널 확인
@@ -308,9 +197,13 @@ class TestCredentialsView(APIView):
         all_ok = all(c["ok"] for c in results["checks"])
         results["all_ok"] = all_ok
         results["summary"] = (
-            "모든 설정이 정상입니다. 메시지를 발송할 수 있습니다."
+            "모든 설정이 정상입니다. 알림톡을 발송할 수 있습니다."
             if all_ok
-            else "일부 설정이 필요합니다. 위 항목을 확인해 주세요."
+            else (
+                results["messaging_disabled_reason"]
+                if messaging_disabled
+                else "일부 설정이 필요합니다. 위 항목을 확인해 주세요."
+            )
         )
 
         return Response(results)

@@ -284,7 +284,7 @@ class NotificationClaimReclaimTests(TestCase):
 
         reserve_notification_credits(
             notification_log_id=log_id,
-            tenant_id=self.tenant.id,
+            billing_tenant_id=self.tenant.id,
             amount=Decimal("10"),
         )
         NotificationLog.objects.filter(id=log_id).update(
@@ -300,7 +300,7 @@ class NotificationClaimReclaimTests(TestCase):
         self.assertEqual(reclaimed_log_id, log_id)
         reserve_notification_credits(
             notification_log_id=log_id,
-            tenant_id=self.tenant.id,
+            billing_tenant_id=self.tenant.id,
             amount=Decimal("10"),
         )
         self.tenant.refresh_from_db()
@@ -308,11 +308,11 @@ class NotificationClaimReclaimTests(TestCase):
 
         rollback_notification_credits(
             notification_log_id=log_id,
-            tenant_id=self.tenant.id,
+            billing_tenant_id=self.tenant.id,
         )
         rollback_notification_credits(
             notification_log_id=log_id,
-            tenant_id=self.tenant.id,
+            billing_tenant_id=self.tenant.id,
         )
         self.tenant.refresh_from_db()
         self.assertEqual(self.tenant.credit_balance, Decimal("100"))
@@ -320,3 +320,47 @@ class NotificationClaimReclaimTests(TestCase):
             NotificationLog.objects.get(id=log_id).amount_deducted,
             Decimal("0"),
         )
+
+    def test_common_channel_delivery_bills_and_refunds_source_tenant_only(self):
+        owner = self.tenant
+        customer = Tenant.objects.create(
+            name="Billing Customer",
+            code="billing-customer",
+            is_active=True,
+            credit_balance=Decimal("30"),
+        )
+        owner.credit_balance = Decimal("100")
+        owner.save(update_fields=["credit_balance"])
+        claimed, log_id = claim_notification_slot(
+            tenant_id=owner.id,
+            source_tenant_id=customer.id,
+            message_mode="alimtalk",
+            business_idempotency_key="key-source-credit",
+            sqs_message_id="sqs-source-credit",
+        )
+        self.assertTrue(claimed)
+
+        reserve_notification_credits(
+            notification_log_id=log_id,
+            billing_tenant_id=customer.id,
+            amount=Decimal("10"),
+        )
+        owner.refresh_from_db()
+        customer.refresh_from_db()
+        self.assertEqual(owner.credit_balance, Decimal("100"))
+        self.assertEqual(customer.credit_balance, Decimal("20"))
+
+        with self.assertRaisesMessage(ValueError, "notification_billing_tenant_mismatch"):
+            rollback_notification_credits(
+                notification_log_id=log_id,
+                billing_tenant_id=owner.id,
+            )
+
+        rollback_notification_credits(
+            notification_log_id=log_id,
+            billing_tenant_id=customer.id,
+        )
+        owner.refresh_from_db()
+        customer.refresh_from_db()
+        self.assertEqual(owner.credit_balance, Decimal("100"))
+        self.assertEqual(customer.credit_balance, Decimal("30"))

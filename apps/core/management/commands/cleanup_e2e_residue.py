@@ -45,11 +45,14 @@ RESIDUE_PATTERNS = [
     re.compile(r"^CHAOS-\d{6,}"),
 ]
 
-
 def matches_residue(text: str) -> bool:
     if not text:
         return False
     return any(p.search(text) for p in RESIDUE_PATTERNS)
+
+
+def matches_template_residue(text: str) -> bool:
+    return matches_residue(text)
 
 
 class Command(BaseCommand):
@@ -123,7 +126,7 @@ class Command(BaseCommand):
         # 4. 메시지 템플릿 — name (시스템 템플릿 제외)
         templates = [
             t for t in MessageTemplate.objects.filter(tenant_id=tenant_id, is_system=False)
-            if matches_residue(t.name or "")
+            if matches_template_residue(t.name or "")
         ]
 
         # 5. 시험 — title (template/regular 모두). 2026-05-02 운영 [E2E Test Exam ...] 도배 sweep.

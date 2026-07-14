@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
 from typing import Any
+
+from django.core.exceptions import ImproperlyConfigured
+
+TENANT_BINDING_SIGNATURE_VERSION = "v1"
 
 SENSITIVE_NOTIFICATION_TYPES = frozenset(
     {
@@ -25,6 +31,63 @@ _SENSITIVE_LINE_MARKERS = (
     "password",
     "pw",
 )
+
+
+def build_tenant_binding_signature(
+    *,
+    tenant_id: int,
+    source_tenant_id: int | None,
+    business_idempotency_key: str,
+) -> str:
+    """Authenticate the delivery/billing tenant binding on an SQS payload."""
+    from django.conf import settings
+
+    key = str(getattr(settings, "MESSAGING_TENANT_BINDING_KEY", "") or "").strip()
+    if not key:
+        raise ImproperlyConfigured("MESSAGING_TENANT_BINDING_KEY is required")
+    source_part = "" if source_tenant_id is None else str(int(source_tenant_id))
+    material = (
+        f"messaging-tenant-binding:{TENANT_BINDING_SIGNATURE_VERSION}:"
+        f"{int(tenant_id)}:{source_part}:"
+        f"{business_idempotency_key}"
+    ).encode("utf-8")
+    return hmac.new(
+        key.encode("utf-8"),
+        material,
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_tenant_binding_signature(
+    *,
+    signature: str,
+    tenant_id: int,
+    source_tenant_id: int | None,
+    business_idempotency_key: str,
+) -> bool:
+    from django.conf import settings
+
+    source_part = "" if source_tenant_id is None else str(int(source_tenant_id))
+    material = (
+        f"messaging-tenant-binding:{TENANT_BINDING_SIGNATURE_VERSION}:"
+        f"{int(tenant_id)}:{source_part}:{business_idempotency_key}"
+    ).encode("utf-8")
+    primary = str(getattr(settings, "MESSAGING_TENANT_BINDING_KEY", "") or "").strip()
+    fallbacks = tuple(
+        str(key).strip()
+        for key in getattr(settings, "MESSAGING_TENANT_BINDING_FALLBACK_KEYS", ())
+        if str(key).strip()
+    )
+    if not primary:
+        raise ImproperlyConfigured("MESSAGING_TENANT_BINDING_KEY is required")
+    supplied = str(signature or "")
+    return any(
+        hmac.compare_digest(
+            supplied,
+            hmac.new(key.encode("utf-8"), material, hashlib.sha256).hexdigest(),
+        )
+        for key in (primary, *fallbacks)
+    )
 
 
 def sanitize_message_body_for_log(

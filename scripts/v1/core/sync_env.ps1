@@ -14,6 +14,51 @@ function Get-RuntimeApiBaseUrl {
     return ""
 }
 
+function Convert-RuntimeEnvValueToObject {
+    param([string]$RawValue)
+    if (-not $RawValue) { return [PSCustomObject]@{} }
+    $json = $RawValue
+    if ($RawValue -match '^[A-Za-z0-9+/]+=*$') {
+        try { $json = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($RawValue)) } catch { }
+    }
+    $obj = $json | ConvertFrom-Json
+    if (-not $obj) { return [PSCustomObject]@{} }
+    return $obj
+}
+
+function Resolve-MessagingTenantBindingKey {
+    <# Resolve one dedicated HMAC key shared by API and workers without printing it. #>
+    $keys = @()
+    foreach ($paramName in @($script:SsmApiEnv, $script:SsmWorkersEnv)) {
+        if (-not $paramName) { continue }
+        try {
+            $parameter = Invoke-AwsJson @("ssm", "get-parameter", "--name", $paramName, "--with-decryption", "--region", $script:Region, "--output", "json")
+            if ($parameter -and $parameter.Parameter -and $parameter.Parameter.Value) {
+                $envObj = Convert-RuntimeEnvValueToObject -RawValue $parameter.Parameter.Value
+                $value = [string]$envObj.PSObject.Properties["MESSAGING_TENANT_BINDING_KEY"].Value
+                if ($value -and $value.Trim()) { $keys += $value.Trim() }
+            }
+        } catch {
+            if ($_.Exception.Message -notmatch "ParameterNotFound|InvalidParameter") { throw }
+        }
+    }
+    $uniqueKeys = @($keys | Select-Object -Unique)
+    if ($uniqueKeys.Count -gt 1) {
+        throw "API/workers MESSAGING_TENANT_BINDING_KEY mismatch; refusing unsafe env sync."
+    }
+    if ($uniqueKeys.Count -eq 1) {
+        if ($uniqueKeys[0].Length -lt 32) {
+            throw "MESSAGING_TENANT_BINDING_KEY must be at least 32 characters."
+        }
+        return $uniqueKeys[0]
+    }
+
+    $bytes = New-Object byte[] 32
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    return [Convert]::ToBase64String($bytes)
+}
+
 function Sync-ApiEnvFromSSOT {
     <#
     .SYNOPSIS
@@ -63,6 +108,12 @@ function Sync-ApiEnvFromSSOT {
 
     # SSOT: SQS
     $obj | Add-Member -NotePropertyName "MESSAGING_SQS_QUEUE_NAME" -NotePropertyValue $script:MessagingSqsQueueName -Force
+    $obj | Add-Member -NotePropertyName "MESSAGING_TENANT_BINDING_KEY" -NotePropertyValue $script:ResolvedMessagingTenantBindingKey -Force
+    if (-not $obj.PSObject.Properties["MESSAGING_TENANT_BINDING_ENFORCED"]) {
+        # First installation is an explicit compatibility phase. Seal to true only
+        # after every producer signs and the unsigned backlog has drained.
+        $obj | Add-Member -NotePropertyName "MESSAGING_TENANT_BINDING_ENFORCED" -NotePropertyValue "false" -Force
+    }
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_BASIC" -NotePropertyValue $script:AiSqsQueueName -Force
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_LITE" -NotePropertyValue $script:AiSqsQueueName -Force
     $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_PREMIUM" -NotePropertyValue $script:AiSqsQueueName -Force
@@ -133,6 +184,10 @@ function Sync-WorkersEnvFromSSOT {
     $obj = $jsonStr | ConvertFrom-Json
 
     # SSOT: SQS
+    $obj | Add-Member -NotePropertyName "MESSAGING_TENANT_BINDING_KEY" -NotePropertyValue $script:ResolvedMessagingTenantBindingKey -Force
+    if (-not $obj.PSObject.Properties["MESSAGING_TENANT_BINDING_ENFORCED"]) {
+        $obj | Add-Member -NotePropertyName "MESSAGING_TENANT_BINDING_ENFORCED" -NotePropertyValue "false" -Force
+    }
     if ($script:MessagingSqsQueueName) { $obj | Add-Member -NotePropertyName "MESSAGING_SQS_QUEUE_NAME" -NotePropertyValue $script:MessagingSqsQueueName -Force }
     if ($script:AiSqsQueueName) {
         $obj | Add-Member -NotePropertyName "AI_SQS_QUEUE_NAME_BASIC" -NotePropertyValue $script:AiSqsQueueName -Force
@@ -172,6 +227,7 @@ function Invoke-SyncEnvFromSSOT {
         Runs API and Workers env sync with SSOT. Call after infrastructure (including Redis) is ensured.
     #>
     Write-Step "Sync runtime env with SSOT"
+    $script:ResolvedMessagingTenantBindingKey = Resolve-MessagingTenantBindingKey
     Sync-ApiEnvFromSSOT
     Sync-WorkersEnvFromSSOT
 }

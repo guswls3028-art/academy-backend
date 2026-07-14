@@ -67,6 +67,9 @@ VIDEO_SQS_QUEUE_DELETE_R2 = "test-video-delete-r2"
 LAMBDA_INTERNAL_API_KEY = "test-lambda-key"
 INTERNAL_API_ALLOW_IPS = ""
 INTERNAL_WORKER_TOKEN = "test-worker-token"
+MESSAGING_TENANT_BINDING_KEY = "test-messaging-tenant-binding-key"
+MESSAGING_TENANT_BINDING_FALLBACK_KEYS = ()
+MESSAGING_TENANT_BINDING_ENFORCED = True
 
 # Worker instance IDs — None (no real instances)
 AI_WORKER_INSTANCE_ID = None
@@ -86,7 +89,7 @@ SOLAPI_KAKAO_TEMPLATE_ID = ""
 REST_FRAMEWORK = {
     **REST_FRAMEWORK,  # noqa: F405
     "DEFAULT_THROTTLE_CLASSES": [],
-    "DEFAULT_THROTTLE_RATES": {},
+    "DEFAULT_THROTTLE_RATES": {"messaging_diagnostic": "1000/hour"},
 }
 
 # ==================================================

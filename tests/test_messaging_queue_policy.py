@@ -6,7 +6,14 @@ import pytest
 from apps.domains.messaging.policy import MessagingPolicyError
 from apps.domains.messaging.sqs_queue import MessagingSQSQueue
 from apps.domains.messaging.services import enqueue_sms
-from apps.worker.messaging_worker.sqs_main import _normalize_worker_tenants, _video_encoding_block_reason
+from apps.worker.messaging_worker.sqs_main import (
+    _allowed_common_template_ids,
+    _has_valid_worker_tenant_binding,
+    _normalize_worker_tenants,
+    _video_encoding_block_reason,
+    _worker_tenant_binding_error,
+)
+from apps.domains.messaging.security import verify_tenant_binding_signature
 
 
 class _FakeQueueClient:
@@ -119,6 +126,13 @@ def test_business_key_includes_source_tenant_for_owner_proxy_sends() -> None:
     keys = [m["business_idempotency_key"] for m in fake_client.messages]
     assert len(keys) == 2
     assert keys[0] != keys[1]
+    for message in fake_client.messages:
+        assert verify_tenant_binding_signature(
+            signature=message["tenant_binding_signature"],
+            tenant_id=message["tenant_id"],
+            source_tenant_id=message["source_tenant_id"],
+            business_idempotency_key=message["business_idempotency_key"],
+        )
 
 
 def test_worker_normalizes_raw_tenant_payload_to_common_owner() -> None:
@@ -141,3 +155,54 @@ def test_worker_preserves_existing_source_when_payload_is_already_owner() -> Non
 
     assert tenant_id == 1
     assert source_tenant_id == 3
+
+
+def test_worker_rejects_contradictory_legacy_tenant_binding() -> None:
+    with pytest.raises(ValueError, match="legacy_business_tenant_mismatch"):
+        _normalize_worker_tenants(2, 3, owner_tenant_id=1)
+
+
+def test_enqueue_rejects_cross_tenant_source_spoof() -> None:
+    with pytest.raises(MessagingPolicyError) as exc:
+        enqueue_sms(
+            tenant_id=2,
+            source_tenant_id=3,
+            to="01012345678",
+            text="spoof",
+            message_mode="alimtalk",
+        )
+    assert exc.value.reason == "business_tenant_mismatch"
+
+
+def test_worker_manual_template_allowlist_contains_only_registered_unified_ids() -> None:
+    allowed = _allowed_common_template_ids("manual_send")
+    assert allowed
+    assert "STALE-OR-HOSTILE-TEMPLATE" not in allowed
+
+
+def test_worker_requires_signed_binding_for_owner_and_legacy_payloads() -> None:
+    unsigned_owner = {
+        "tenant_id": 1,
+        "business_idempotency_key": "owner-key",
+    }
+    unsigned_legacy_victim = {
+        "tenant_id": 2,
+        "business_idempotency_key": "victim-key",
+    }
+
+    assert not _has_valid_worker_tenant_binding(unsigned_owner)
+    assert not _has_valid_worker_tenant_binding(unsigned_legacy_victim)
+    assert _worker_tenant_binding_error(unsigned_owner) == "missing_tenant_binding_signature"
+    assert _worker_tenant_binding_error(unsigned_legacy_victim) == "missing_tenant_binding_signature"
+
+
+def test_worker_rollout_gate_allows_only_missing_not_invalid_signatures(settings) -> None:
+    settings.MESSAGING_TENANT_BINDING_ENFORCED = False
+    unsigned = {"tenant_id": 1, "business_idempotency_key": "legacy-key"}
+    invalid = {
+        **unsigned,
+        "tenant_binding_signature": "invalid",
+    }
+
+    assert _worker_tenant_binding_error(unsigned) == ""
+    assert _worker_tenant_binding_error(invalid) == "invalid_tenant_binding_signature"

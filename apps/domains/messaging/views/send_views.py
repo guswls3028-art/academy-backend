@@ -63,6 +63,20 @@ class SendMessageView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        from apps.domains.messaging.policy import (
+            get_messaging_disabled_reason,
+            is_messaging_disabled,
+        )
+
+        if is_messaging_disabled(tenant.id):
+            return Response(
+                {
+                    "detail": get_messaging_disabled_reason(tenant.id),
+                    "code": "messaging_disabled",
+                },
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         ser = SendMessageRequestSerializer(data=request.data)
         ser.is_valid(raise_exception=True)
         data = ser.validated_data
@@ -125,14 +139,6 @@ class SendMessageView(APIView):
 
         if template_id:
             t = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
-            # 오너 테넌트의 승인 시스템 템플릿도 허용 (알림톡 기본 채널 폴백)
-            if not t and message_mode == "alimtalk":
-                from apps.domains.messaging.policy import get_owner_tenant_id
-                owner_id = get_owner_tenant_id()
-                if int(tenant.id) != owner_id:
-                    t = MessageTemplate.objects.filter(
-                        tenant_id=owner_id, pk=template_id, solapi_status="APPROVED",
-                    ).first()
             if not t:
                 return Response(
                     {"detail": "템플릿을 찾을 수 없습니다."},
@@ -161,7 +167,6 @@ class SendMessageView(APIView):
             from apps.domains.messaging.alimtalk_content_builders import (
                 get_unified_for_category,
                 build_manual_replacements,
-                SYSTEM_TEMPLATE_CATEGORIES,
             )
             category = (t.category if t else "") or ""
             tpl_name = (t.name if t else "") or ""
@@ -184,9 +189,6 @@ class SendMessageView(APIView):
                 use_unified = True
                 unified_template_type = unified_tt
                 solapi_template_id = unified_sid
-            elif category in SYSTEM_TEMPLATE_CATEGORIES and t:
-                # 시스템 기본양식: 자체 Solapi 템플릿 유지
-                solapi_template_id = (t.solapi_template_id or "").strip()
             else:
                 # SSOT (2026-05-14, domain-policy §5): 학원장이 본문 어떻게 수정해도 봉투
                 # (검수 양식)는 유지되어 발송. t.category 매핑 없거나 t=None 일 때
@@ -202,7 +204,6 @@ class SendMessageView(APIView):
                         solapi_template_id = fb_sid
                 if not solapi_template_id:
                     use_unified = False
-                    solapi_template_id = (t.solapi_template_id or "").strip() if t else ""
 
         if message_mode == "alimtalk" and solapi_template_id and not use_unified:
             if t and getattr(t, "solapi_status", None) != "APPROVED":

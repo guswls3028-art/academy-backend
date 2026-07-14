@@ -6,6 +6,7 @@
 preview 없이 confirm 직접 호출 불가.
 """
 
+import json
 import logging
 
 from rest_framework.views import APIView
@@ -21,10 +22,16 @@ from apps.domains.messaging.notification_dispatch import (
     consume_preview_token_and_execute,
 )
 from apps.domains.messaging.scheduled import MessagingHourlyQuotaExceeded
+from apps.domains.messaging.permissions import can_send_messages
 
 logger = logging.getLogger(__name__)
 
 MAX_MANUAL_NOTIFICATION_RECIPIENTS = 200
+MAX_MANUAL_NOTIFICATION_REQUEST_BYTES = 200_000
+MAX_MANUAL_CONTEXT_KEYS = 50
+MAX_MANUAL_CONTEXT_KEY_LENGTH = 50
+MAX_MANUAL_CONTEXT_VALUE_LENGTH = 1_000
+MAX_MANUAL_CONTEXT_TOTAL_CHARS = 5_000
 _SENSITIVE_RECIPIENT_KEYS = {"phone_raw", "alimtalk_replacements"}
 
 
@@ -60,6 +67,60 @@ def _normalize_student_ids(raw_ids):
     return list(dict.fromkeys(normalized)), None
 
 
+def _request_exceeds_size_limit(data) -> bool:
+    try:
+        encoded = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    except (TypeError, ValueError):
+        return True
+    return len(encoded) > MAX_MANUAL_NOTIFICATION_REQUEST_BYTES
+
+
+def _normalize_context(raw_context, field_name):
+    if not isinstance(raw_context, dict):
+        return None, f"{field_name}는 객체여야 합니다."
+    if len(raw_context) > MAX_MANUAL_CONTEXT_KEYS:
+        return None, f"{field_name}는 최대 {MAX_MANUAL_CONTEXT_KEYS}개 변수만 허용합니다."
+
+    normalized = {}
+    total_chars = 0
+    for raw_key, raw_value in raw_context.items():
+        if not isinstance(raw_key, str) or not raw_key or len(raw_key) > MAX_MANUAL_CONTEXT_KEY_LENGTH:
+            return None, f"{field_name} 변수명은 1~{MAX_MANUAL_CONTEXT_KEY_LENGTH}자 문자열이어야 합니다."
+        if isinstance(raw_value, (dict, list, tuple, set)) or raw_value is None:
+            return None, f"{field_name} 변수 값은 문자열 또는 숫자여야 합니다."
+        value = str(raw_value)
+        if len(value) > MAX_MANUAL_CONTEXT_VALUE_LENGTH:
+            return None, f"{field_name} 변수 값은 최대 {MAX_MANUAL_CONTEXT_VALUE_LENGTH}자까지 허용합니다."
+        total_chars += len(raw_key) + len(value)
+        if total_chars > MAX_MANUAL_CONTEXT_TOTAL_CHARS:
+            return None, f"{field_name} 전체 변수 길이는 최대 {MAX_MANUAL_CONTEXT_TOTAL_CHARS}자까지 허용합니다."
+        normalized[raw_key] = value
+    return normalized, None
+
+
+def _normalize_context_per_student(raw_context):
+    if not isinstance(raw_context, dict):
+        return None, "context_per_student는 객체여야 합니다."
+    if len(raw_context) > MAX_MANUAL_NOTIFICATION_RECIPIENTS:
+        return None, (
+            f"context_per_student는 최대 {MAX_MANUAL_NOTIFICATION_RECIPIENTS}명의 값만 허용합니다."
+        )
+
+    normalized = {}
+    for raw_student_id, student_context in raw_context.items():
+        student_id = _parse_positive_int(raw_student_id)
+        if student_id is None:
+            return None, "context_per_student의 학생 ID는 양의 정수여야 합니다."
+        parsed_context, error = _normalize_context(
+            student_context,
+            f"context_per_student[{student_id}]",
+        )
+        if error:
+            return None, error
+        normalized[student_id] = parsed_context
+    return normalized, None
+
+
 def _format_context_keys(keys):
     return ", ".join(sorted(str(key) for key in keys))
 
@@ -71,6 +132,28 @@ def _context_source_override_detail(context_conflicts, per_student_conflicts):
     if per_student_conflicts:
         parts.append(f"context_per_student: {_format_context_keys(per_student_conflicts)}")
     return "context_source가 생성한 변수는 요청 값으로 덮어쓸 수 없습니다. " + "; ".join(parts)
+
+
+def _messaging_access_error(request, tenant):
+    if not can_send_messages(request, tenant):
+        return Response(
+            {"detail": "알림톡 발송 권한이 없습니다. 관리자 또는 강사 권한이 필요합니다."},
+            status=http_status.HTTP_403_FORBIDDEN,
+        )
+    from apps.domains.messaging.policy import (
+        get_messaging_disabled_reason,
+        is_messaging_disabled,
+    )
+
+    if is_messaging_disabled(tenant.id):
+        return Response(
+            {
+                "detail": get_messaging_disabled_reason(tenant.id),
+                "code": "messaging_disabled",
+            },
+            status=http_status.HTTP_403_FORBIDDEN,
+        )
+    return None
 
 
 class AttendanceNotificationPreviewView(APIView):
@@ -101,6 +184,15 @@ class AttendanceNotificationPreviewView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "테넌트 정보가 없습니다."}, status=http_status.HTTP_400_BAD_REQUEST)
+        access_error = _messaging_access_error(request, tenant)
+        if access_error:
+            return access_error
+
+        if _request_exceeds_size_limit(request.data):
+            return Response(
+                {"detail": "미리보기 요청은 최대 200KB까지 허용합니다."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
 
         session_id = request.data.get("session_id")
         notification_type = request.data.get("notification_type")  # "check_in" | "absent"
@@ -147,15 +239,27 @@ class AttendanceNotificationPreviewView(APIView):
             })
 
         staff_id = getattr(getattr(request, "user", None), "staff_profile_id", None)
-        token = create_preview_token(
-            tenant=tenant,
-            preview_data=preview,
-            staff_id=staff_id,
-            session_type="attendance",
-            session_id=parsed_session_id,
-            notification_type=notification_type,
-            send_to=send_to,
-        )
+        try:
+            token = create_preview_token(
+                tenant=tenant,
+                preview_data=preview,
+                staff_id=staff_id,
+                session_type="attendance",
+                session_id=parsed_session_id,
+                notification_type=notification_type,
+                send_to=send_to,
+            )
+        except ValueError:
+            logger.warning(
+                "attendance preview token exceeded storage limit tenant=%s session=%s recipients=%s",
+                tenant.id,
+                parsed_session_id,
+                preview["total_count"],
+            )
+            return Response(
+                {"detail": "생성된 미리보기 크기가 너무 큽니다. 대상을 나누어 다시 시도해주세요."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response({
             "preview_token": token,
@@ -186,6 +290,9 @@ class AttendanceNotificationConfirmView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "테넌트 정보가 없습니다."}, status=http_status.HTTP_400_BAD_REQUEST)
+        access_error = _messaging_access_error(request, tenant)
+        if access_error:
+            return access_error
 
         preview_token = request.data.get("preview_token")
         if not preview_token:
@@ -257,24 +364,32 @@ class ManualNotificationPreviewView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "테넌트 정보가 없습니다."}, status=http_status.HTTP_400_BAD_REQUEST)
+        access_error = _messaging_access_error(request, tenant)
+        if access_error:
+            return access_error
+
+        if _request_exceeds_size_limit(request.data):
+            return Response(
+                {"detail": "미리보기 요청은 최대 200KB까지 허용합니다."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
 
         trigger = request.data.get("trigger")
         student_ids = request.data.get("student_ids", [])
         send_to = request.data.get("send_to", "parent")
-        context = request.data.get("context") or {}
+        context, context_error = _normalize_context(request.data.get("context") or {}, "context")
         context_source = request.data.get("context_source", None)
-        if not isinstance(context, dict):
-            return Response({"detail": "context는 객체여야 합니다."}, status=http_status.HTTP_400_BAD_REQUEST)
+        if context_error:
+            return Response({"detail": context_error}, status=http_status.HTTP_400_BAD_REQUEST)
         # 학생별 개별 변수 (성적 등) — key: student_id(int)
-        raw_ctx_per_student = request.data.get("context_per_student") or {}
-        if not isinstance(raw_ctx_per_student, dict):
-            return Response({"detail": "context_per_student는 객체여야 합니다."}, status=http_status.HTTP_400_BAD_REQUEST)
-        context_per_student = {}
-        for k, v in raw_ctx_per_student.items():
-            try:
-                context_per_student[int(k)] = v if isinstance(v, dict) else {}
-            except (ValueError, TypeError):
-                pass
+        context_per_student, context_per_student_error = _normalize_context_per_student(
+            request.data.get("context_per_student") or {}
+        )
+        if context_per_student_error:
+            return Response(
+                {"detail": context_per_student_error},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
 
         if not trigger:
             return Response({"detail": "trigger는 필수입니다."}, status=http_status.HTTP_400_BAD_REQUEST)
@@ -324,9 +439,28 @@ class ManualNotificationPreviewView(APIView):
                     },
                     status=http_status.HTTP_400_BAD_REQUEST,
                 )
-            source_context = dict(resolved_source.context)
+            source_context, source_context_error = _normalize_context(
+                resolved_source.context,
+                "context_source",
+            )
+            if source_context_error:
+                logger.error(
+                    "manual context source exceeded safety bounds tenant=%s trigger=%s error=%s",
+                    tenant.id,
+                    trigger,
+                    source_context_error,
+                )
+                return Response(
+                    {"detail": "연결된 데이터가 알림톡 미리보기 허용 범위를 초과했습니다."},
+                    status=http_status.HTTP_400_BAD_REQUEST,
+                )
             source_context.update(context)
-            context = source_context
+            context, combined_context_error = _normalize_context(source_context, "context")
+            if combined_context_error:
+                return Response(
+                    {"detail": combined_context_error},
+                    status=http_status.HTTP_400_BAD_REQUEST,
+                )
             student_ids = resolved_source.student_ids
         else:
             student_ids, ids_error = _normalize_student_ids(student_ids)
@@ -355,15 +489,27 @@ class ManualNotificationPreviewView(APIView):
             })
 
         staff_id = getattr(getattr(request, "user", None), "staff_profile_id", None)
-        token = create_preview_token(
-            tenant=tenant,
-            preview_data=preview,
-            staff_id=staff_id,
-            session_type="manual",
-            session_id=0,
-            notification_type=trigger,
-            send_to=send_to,
-        )
+        try:
+            token = create_preview_token(
+                tenant=tenant,
+                preview_data=preview,
+                staff_id=staff_id,
+                session_type="manual",
+                session_id=0,
+                notification_type=trigger,
+                send_to=send_to,
+            )
+        except ValueError:
+            logger.warning(
+                "manual preview token exceeded storage limit tenant=%s trigger=%s recipients=%s",
+                tenant.id,
+                trigger,
+                preview["total_count"],
+            )
+            return Response(
+                {"detail": "생성된 미리보기 크기가 너무 큽니다. 대상을 나누어 다시 시도해주세요."},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response({
             "preview_token": token,
@@ -388,6 +534,9 @@ class ManualNotificationConfirmView(APIView):
         tenant = getattr(request, "tenant", None)
         if not tenant:
             return Response({"detail": "테넌트 정보가 없습니다."}, status=http_status.HTTP_400_BAD_REQUEST)
+        access_error = _messaging_access_error(request, tenant)
+        if access_error:
+            return access_error
 
         preview_token = request.data.get("preview_token")
         if not preview_token:

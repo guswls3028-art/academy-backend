@@ -46,9 +46,10 @@ def _make_student(name="홍길동", phone="01012345678", parent_phone="010876543
 def _make_config(trigger, enabled=True, message_mode="alimtalk",
                  template_name="Test", solapi_template_id="KA01TP_TEST",
                  solapi_status="APPROVED", body="#{학원명} #{학생이름2} 안내",
-                 delay_mode="immediate", delay_value=None):
+                 delay_mode="immediate", delay_value=None, template_tenant_id=1):
     tmpl = SimpleNamespace(
         name=template_name, body=body,
+        tenant_id=template_tenant_id,
         solapi_template_id=solapi_template_id,
         solapi_status=solapi_status,
         subject="테스트 제목",
@@ -444,8 +445,9 @@ class TestTenantIsolation(_DispatchThroughQueueMixin, TestCase):
         """send_event_notification이 owner tenant로 enqueue하고 source tenant를 메타데이터로 남김."""
         tenant_a = _make_tenant(tid=2, name="테넌트A")
         student = _make_student()
-        config = _make_config("check_in_complete")
-        mock_config.return_value = config
+        config = _make_config("check_in_complete", template_tenant_id=2)
+        owner_config = _make_config("check_in_complete", template_tenant_id=1)
+        mock_config.side_effect = [config, owner_config]
         mock_enqueue.return_value = True
 
         from apps.domains.messaging.services import send_event_notification
@@ -464,8 +466,9 @@ class TestTenantIsolation(_DispatchThroughQueueMixin, TestCase):
         """테넌트 A 이벤트도 공용 owner 채널로만 enqueue."""
         tenant_a = _make_tenant(tid=3, name="테넌트A")
         student = _make_student()
-        config = _make_config("withdrawal_complete")
-        mock_config.return_value = config
+        config = _make_config("withdrawal_complete", template_tenant_id=3)
+        owner_config = _make_config("withdrawal_complete", template_tenant_id=1)
+        mock_config.side_effect = [config, owner_config]
         mock_enqueue.return_value = True
 
         from apps.domains.messaging.services import send_event_notification
@@ -593,13 +596,12 @@ class TestEnqueueSmsPolicy(TestCase):
 class TestMessagingProviderResolution(TestCase):
     """정책 분기: provider/pf_id/use_default/sms 허용 여부."""
 
-    @patch(f"{_POL}.get_tenant_provider", return_value="ppurio")
     @patch(f"{_POL}.resolve_kakao_channel", return_value={"pf_id": "", "use_default": True})
-    def test_resolve_alimtalk_provider_with_default_channel(self, mock_channel, mock_provider):
+    def test_resolve_alimtalk_provider_with_default_channel(self, mock_channel):
         from apps.domains.messaging.policy import resolve_messaging_provider
         result = resolve_messaging_provider(tenant_id=2, message_type="alimtalk")
         self.assertTrue(result["allowed"])
-        self.assertEqual(result["provider"], "ppurio")
+        self.assertEqual(result["provider"], "solapi")
         self.assertEqual(result["pf_id"], "")
         self.assertTrue(result["use_default"])
 
@@ -837,6 +839,7 @@ class TestRegistrationMessages(TestCase):
         """학생 가입 승인 메시지가 올바른 변수로 발송."""
         tmpl = SimpleNamespace(
             body="#{학생이름}님 승인. ID: #{학생아이디} PW: #{학생비밀번호} #{사이트링크} #{비밀번호안내}",
+            tenant_id=1,
             solapi_template_id="KA01TP_REG", solapi_status="APPROVED",
             subject="가입 승인", name="가입승인학생",
         )
@@ -875,6 +878,7 @@ class TestRegistrationMessages(TestCase):
         """학생/학부모 수신번호가 같으면 종합 parent 템플릿 1건만 발송."""
         parent_tmpl = SimpleNamespace(
             body="#{학생이름} #{학생아이디} #{학생비밀번호} #{학부모아이디} #{학부모비밀번호}",
+            tenant_id=1,
             solapi_template_id="KA01TP_PARENT", solapi_status="APPROVED",
             subject="가입 승인", name="가입승인학부모",
         )
@@ -900,6 +904,39 @@ class TestRegistrationMessages(TestCase):
         self.assertEqual(kwargs["target_id"], "parent:10")
         self.assertIn("PS001", kwargs["text"])
         self.assertIn("parent123", kwargs["text"])
+
+    @patch(f"{_REG}._dispatch_registration_durably")
+    @patch(f"{_POL}.get_owner_tenant_id", return_value=1)
+    @patch(f"{_SEL}.get_auto_send_config")
+    def test_registration_approved_rejects_cross_tenant_owner_template(
+        self,
+        mock_config,
+        mock_owner,
+        mock_enqueue,
+    ):
+        foreign_template = SimpleNamespace(
+            tenant_id=99,
+            body="다른 학원 가입 문구",
+            solapi_template_id="FOREIGN-APPROVED",
+            solapi_status="APPROVED",
+        )
+        mock_config.return_value = SimpleNamespace(enabled=True, template=foreign_template)
+
+        from apps.domains.messaging.services import send_registration_approved_messages
+
+        result = send_registration_approved_messages(
+            tenant_id=2,
+            site_url="https://example.test",
+            student_name="격리검증",
+            student_phone="01012345678",
+            student_id="PS999",
+            student_password="test1234",
+            parent_phone="01087654321",
+            parent_password="parent123",
+        )
+
+        self.assertEqual(result["enqueued"], 0)
+        mock_enqueue.assert_not_called()
 
     @patch(f"{_REG}._dispatch_registration_durably")
     @patch(f"{_POL}.get_owner_tenant_id", return_value=1)

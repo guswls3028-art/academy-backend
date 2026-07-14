@@ -308,6 +308,7 @@ REST_FRAMEWORK = {
         "anon": "60/minute",
         "user": "300/minute",
         "sms_endpoint": "5/hour",
+        "messaging_diagnostic": "10/hour",
         "staff_password_reset": "60/hour",
         "signup_check": "30/minute",
     },
@@ -542,6 +543,16 @@ AI_QUOTA_ENFORCEMENT_ENABLED = os.getenv("AI_QUOTA_ENFORCEMENT_ENABLED", "").low
 # ==================================================
 
 INTERNAL_WORKER_TOKEN = os.getenv("INTERNAL_WORKER_TOKEN", "")
+MESSAGING_TENANT_BINDING_KEY = os.getenv("MESSAGING_TENANT_BINDING_KEY", "").strip()
+MESSAGING_TENANT_BINDING_FALLBACK_KEYS = tuple(
+    key.strip()
+    for key in os.getenv("MESSAGING_TENANT_BINDING_FALLBACK_KEYS", "").split(",")
+    if key.strip()
+)
+MESSAGING_TENANT_BINDING_ENFORCED = os.getenv(
+    "MESSAGING_TENANT_BINDING_ENFORCED",
+    "true",
+).lower() in ("1", "true", "yes")
 
 # ==================================================
 # SENTRY (에러 모니터링) — DSN 미설정 시 비활성화

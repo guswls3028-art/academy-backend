@@ -44,6 +44,7 @@ def enqueue_sms(
     source_use_case: Optional[str] = None,
     domain_object_id: Optional[str] = None,
     actor_id: Optional[int | str] = None,
+    trusted_business_tenant_id: Optional[int] = None,
 ) -> bool:
     """
     알림톡을 SQS에 넣어 워커가 비동기로 발송하도록 함.
@@ -78,10 +79,34 @@ def enqueue_sms(
 
     original_tenant_id = int(tenant_id)
     owner_id = int(get_owner_tenant_id())
-    business_tenant_id = source_tenant_id
-    if business_tenant_id is None and original_tenant_id != owner_id:
+    declared_source_tenant_id = (
+        int(source_tenant_id) if source_tenant_id is not None else None
+    )
+    if original_tenant_id != owner_id:
+        if (
+            declared_source_tenant_id is not None
+            and declared_source_tenant_id != original_tenant_id
+        ):
+            raise MessagingPolicyError(
+                "발송 학원과 비용 부담 학원이 일치하지 않습니다.",
+                reason="business_tenant_mismatch",
+            )
         business_tenant_id = original_tenant_id
-    policy_tenant_id = int(business_tenant_id or original_tenant_id)
+    else:
+        business_tenant_id = declared_source_tenant_id or owner_id
+
+    if trusted_business_tenant_id is not None:
+        if int(trusted_business_tenant_id) != int(business_tenant_id):
+            raise MessagingPolicyError(
+                "검증된 발송 학원과 비용 부담 학원이 일치하지 않습니다.",
+                reason="trusted_business_tenant_mismatch",
+            )
+    elif original_tenant_id == owner_id and business_tenant_id != owner_id:
+        raise MessagingPolicyError(
+            "공용 채널 대리발송에는 검증된 업무 학원 정보가 필요합니다.",
+            reason="untrusted_owner_proxy",
+        )
+    policy_tenant_id = int(business_tenant_id)
 
     if is_messaging_disabled(policy_tenant_id):
         logger.info(

@@ -98,10 +98,22 @@ def send_event_notification(
     if not content_template:
         logger.debug("send_event_notification skipped: trigger=%s no template linked", trigger)
         return False
+    if int(getattr(content_template, "tenant_id", tenant.id)) != int(tenant.id):
+        logger.error(
+            "send_event_notification blocked: trigger=%s template tenant mismatch",
+            trigger,
+        )
+        return False
 
     owner_id = get_owner_tenant_id()
     owner_config = get_auto_send_config(owner_id, trigger)
     owner_template = owner_config.template if owner_config else None
+    if owner_template and int(getattr(owner_template, "tenant_id", owner_id)) != int(owner_id):
+        logger.error(
+            "send_event_notification blocked: trigger=%s owner template tenant mismatch",
+            trigger,
+        )
+        return False
     owner_solapi_template_id = (owner_template.solapi_template_id or "").strip() if owner_template else ""
     owner_solapi_approved = bool(
         owner_template

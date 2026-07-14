@@ -9,12 +9,16 @@ from django.utils import timezone
 
 from apps.core.models import WorkerHeartbeatModel
 from apps.domains.messaging.alimtalk_content_builders import (
-    SYSTEM_TEMPLATE_CATEGORIES,
     get_unified_for_category,
 )
 from apps.domains.messaging.effective_templates import resolve_effective_template_status
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, ScheduledNotification
-from apps.domains.messaging.policy import get_owner_tenant_id, get_trigger_implementation_status
+from apps.domains.messaging.policy import (
+    get_messaging_disabled_reason,
+    get_owner_tenant_id,
+    get_trigger_implementation_status,
+    is_messaging_disabled,
+)
 from apps.domains.messaging.selectors import (
     HOURLY_SEND_LIMIT,
     get_hourly_notification_usage,
@@ -74,14 +78,6 @@ def _resolve_template_for_manual_send(tenant, data: dict[str, Any]) -> TemplateP
     if template_id:
         template = MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
         if not template:
-            owner_id = get_owner_tenant_id()
-            if int(tenant.id) != owner_id:
-                template = MessageTemplate.objects.filter(
-                    tenant_id=owner_id,
-                    pk=template_id,
-                    solapi_status="APPROVED",
-                ).first()
-        if not template:
             return TemplatePlan(ok=False, source="missing", detail="선택한 템플릿을 찾을 수 없습니다.")
 
     body_base = raw_body or ((template.body or "").strip() if template else "")
@@ -91,7 +87,9 @@ def _resolve_template_for_manual_send(tenant, data: dict[str, Any]) -> TemplateP
     category = (template.category if template else "") or ""
     template_name = (template.name if template else "") or ""
     unified_type, unified_sid = get_unified_for_category(category, template_name, extra_vars)
-    if not unified_sid and block_category:
+    # 매핑 자체가 없는 자유 문구만 사용자가 명시한 봉투를 적용한다.
+    # payment처럼 매핑은 있으나 SID가 빠진 경우 다른 봉투로 fallback하면 안 된다.
+    if not unified_type and block_category:
         unified_type, unified_sid = get_unified_for_category(block_category, template_name, extra_vars)
     if unified_type and not unified_sid:
         return TemplatePlan(
@@ -114,45 +112,6 @@ def _resolve_template_for_manual_send(tenant, data: dict[str, Any]) -> TemplateP
             detail="카카오 검수 완료된 시스템 봉투로 발송됩니다.",
             uses_unified_template=True,
         )
-
-    if template:
-        solapi_id = (template.solapi_template_id or "").strip()
-        if category in SYSTEM_TEMPLATE_CATEGORIES:
-            if solapi_id and template.solapi_status == "APPROVED":
-                return TemplatePlan(
-                    ok=True,
-                    source="selected",
-                    name=template.name,
-                    solapi_template_id=solapi_id,
-                    solapi_status=template.solapi_status,
-                    detail="선택한 승인 템플릿으로 발송됩니다.",
-                )
-            return TemplatePlan(
-                ok=False,
-                source="selected_unapproved",
-                name=template.name,
-                solapi_template_id=solapi_id,
-                solapi_status=template.solapi_status,
-                detail="선택한 시스템 템플릿이 아직 카카오 검수 승인 상태가 아닙니다.",
-            )
-        if solapi_id and template.solapi_status == "APPROVED":
-            return TemplatePlan(
-                ok=True,
-                source="selected",
-                name=template.name,
-                solapi_template_id=solapi_id,
-                solapi_status=template.solapi_status,
-                detail="선택한 승인 템플릿으로 발송됩니다.",
-            )
-        if solapi_id:
-            return TemplatePlan(
-                ok=False,
-                source="selected_unapproved",
-                name=template.name,
-                solapi_template_id=solapi_id,
-                solapi_status=template.solapi_status,
-                detail="선택한 템플릿이 아직 카카오 검수 승인 상태가 아닙니다.",
-            )
 
     if raw_subject:
         return TemplatePlan(
@@ -183,6 +142,15 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
     scheduled_send_at = data.get("scheduled_send_at")
     blockers: list[PreflightIssue] = []
     warnings: list[PreflightIssue] = []
+
+    if is_messaging_disabled(tenant.id):
+        blockers.append(
+            PreflightIssue(
+                "messaging_disabled",
+                "알림톡 발송 중지",
+                get_messaging_disabled_reason(tenant.id),
+            )
+        )
 
     selected_count = 0
     resolved_count = 0
@@ -239,27 +207,28 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
 
     template_plan = _resolve_template_for_manual_send(tenant, data)
     if not template_plan.ok:
-        blockers.append(PreflightIssue("template_not_ready", "템플릿 검수 필요", template_plan.detail))
+        blockers.append(PreflightIssue("template_not_ready", "알림톡 봉투 확인 필요", template_plan.detail))
 
     recent_count = get_hourly_notification_usage(tenant)
     remaining_hourly = max(0, HOURLY_SEND_LIMIT - recent_count)
     expected_dispatches = valid_phone
-    if expected_dispatches > remaining_hourly:
-        blockers.append(
-            PreflightIssue(
-                "hourly_limit",
-                "시간당 발송 한도 초과",
-                f"최근 1시간 발송 {recent_count}건 기준으로 {remaining_hourly}건만 추가 발송할 수 있습니다.",
+    if not scheduled_send_at:
+        if expected_dispatches > remaining_hourly:
+            blockers.append(
+                PreflightIssue(
+                    "hourly_limit",
+                    "시간당 발송 한도 초과",
+                    f"최근 1시간 발송 {recent_count}건 기준으로 {remaining_hourly}건만 추가 발송할 수 있습니다.",
+                )
             )
-        )
-    elif remaining_hourly <= 50:
-        warnings.append(
-            PreflightIssue(
-                "hourly_limit_near",
-                "발송 한도 임박",
-                f"최근 1시간 내 {recent_count}건을 발송했습니다.",
+        elif remaining_hourly <= 50:
+            warnings.append(
+                PreflightIssue(
+                    "hourly_limit_near",
+                    "발송 한도 임박",
+                    f"최근 1시간 내 {recent_count}건을 발송했습니다.",
+                )
             )
-        )
 
     if scheduled_send_at:
         if scheduled_send_at <= timezone.now():
