@@ -21,6 +21,7 @@
 - **main push만으로 이미지 반영 (CI 자동):**
   main에 push → GitHub Actions `v1-build-and-push-latest.yml` 실행 → **build-and-push** → 필요한 경우 **run-migrations** → **deploy-api / deploy-messaging / deploy-ai / deploy-tools / deploy-video** → **verify-deployment**.
   즉, **push만 해도** CI가 ECR 푸시, 마이그레이션, 각 서비스 배포, health/ASG/tenant maintenance/video-chain 검증까지 수행한다.
+  `run-migrations`는 실행 직전에 SSM `/academy/api/env`를 `/opt/api.env`로 원자적으로 갱신한 뒤 새 digest 이미지로 실행한다. 인스턴스에 남은 이전 env 파일을 재사용하지 않는다.
 
 ### 2.2 deploy.ps1 동작 순서 (요약)
 

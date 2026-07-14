@@ -170,7 +170,8 @@ This UserData is already correctly implemented in `scripts/v1/resources/worker_u
 ### Execution
 
 - Migrations run in GitHub Actions before API instance refresh.
-- The workflow resolves the newly built SHA tag to a digest, pulls that exact image, and runs `python manage.py migrate --no-input` in a one-shot Docker container using production env.
+- Immediately before migration, the workflow atomically refreshes `/opt/api.env` from SSM `/academy/api/env`; it does not reuse a stale instance env file.
+- The workflow resolves the newly built SHA tag to a digest, pulls that exact image, and runs `python manage.py migrate --no-input` in a one-shot Docker container using that refreshed production env.
 - Only runs when API or shared code changed
 - Must succeed before API ASG refresh starts
 
