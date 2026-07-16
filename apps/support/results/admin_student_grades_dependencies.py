@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from django.db.models import Max
+from django.db.models import Max, Prefetch
 
 
 def active_student_for_grades(*, tenant: Any, student_id: int) -> Any | None:
@@ -28,12 +28,87 @@ def exam_metadata_by_id(*, tenant: Any, exam_ids: list[int]) -> dict[int, dict[s
     from apps.domains.exams.models import Exam
 
     exams_map = {}
-    for exam in Exam.objects.filter(id__in=exam_ids, tenant=tenant).only("id", "title", "pass_score"):
+    for exam in Exam.objects.filter(
+        id__in=exam_ids,
+        tenant=tenant,
+        exam_type=Exam.ExamType.REGULAR,
+    ).only("id", "title", "pass_score", "is_active"):
         exams_map[exam.id] = {
             "title": exam.title,
             "pass_score": float(exam.pass_score or 0),
+            "is_active": bool(exam.is_active),
         }
     return exams_map
+
+
+def primary_session_metadata_by_exam_and_lecture(
+    *,
+    tenant: Any,
+    exam_lecture_pairs: set[tuple[int, int]],
+) -> dict[tuple[int, int], dict[str, Any]]:
+    """Return the first matching session for each ``(exam, lecture)`` pair.
+
+    Archived exams remain part of a student's score history, so this read does
+    not require ``is_active=True``.  Scoping by the result enrollment's lecture
+    prevents a multi-lecture exam from borrowing another lecture's metadata or
+    system visibility policy.  The two-query prefetch replaces the old per-exam
+    ``exists()`` + ``first()`` + lazy lecture lookup chain.
+    """
+    if not exam_lecture_pairs:
+        return {}
+
+    from apps.domains.exams.models import Exam
+    from apps.domains.lectures.models import Session
+
+    exam_ids = {exam_id for exam_id, _lecture_id in exam_lecture_pairs}
+    lecture_ids = {lecture_id for _exam_id, lecture_id in exam_lecture_pairs}
+    tenant_exams = Exam.objects.filter(
+        id__in=exam_ids,
+        tenant=tenant,
+        exam_type=Exam.ExamType.REGULAR,
+    ).only("id")
+    sessions = (
+        Session.objects.filter(
+            lecture__tenant=tenant,
+            lecture_id__in=lecture_ids,
+            exams__in=tenant_exams,
+        )
+        .select_related("lecture")
+        .prefetch_related(
+            Prefetch(
+                "exams",
+                queryset=tenant_exams,
+                to_attr="_student_grade_exams",
+            )
+        )
+        .distinct()
+        .order_by("lecture_id", "order", "id")
+    )
+
+    metadata: dict[tuple[int, int], dict[str, Any]] = {}
+    for session in sessions:
+        lecture = session.lecture
+        row = {
+            "session_id": session.id,
+            "session_title": session.title or session.display_label,
+            "session_order": int(session.order),
+            "session_regular_order": (
+                int(session.regular_order)
+                if session.regular_order is not None
+                else None
+            ),
+            "session_date": session.date,
+            "lecture_id": session.lecture_id,
+            "lecture_title": lecture.title if lecture else None,
+            "lecture_color": getattr(lecture, "color", None),
+            "lecture_chip_label": getattr(lecture, "chip_label", None),
+            "lecture_is_system": bool(getattr(lecture, "is_system", False)),
+        }
+        for exam in session._student_grade_exams:
+            key = (int(exam.id), int(session.lecture_id))
+            if key in exam_lecture_pairs:
+                metadata.setdefault(key, row)
+    return metadata
 
 
 def enrollment_lecture_metadata_by_id(*, tenant: Any, enrollment_ids: list[int]) -> dict[int, dict[str, Any]]:
@@ -41,7 +116,11 @@ def enrollment_lecture_metadata_by_id(*, tenant: Any, enrollment_ids: list[int])
 
     enrollment_lecture_map = {}
     enrollments = (
-        Enrollment.objects.filter(id__in=enrollment_ids, tenant=tenant)
+        Enrollment.objects.filter(
+            id__in=enrollment_ids,
+            tenant=tenant,
+            lecture__tenant=tenant,
+        )
         .select_related("lecture")
         .only(
             "id",
@@ -49,6 +128,7 @@ def enrollment_lecture_metadata_by_id(*, tenant: Any, enrollment_ids: list[int])
             "lecture__title",
             "lecture__color",
             "lecture__chip_label",
+            "lecture__is_system",
         )
     )
     for enrollment in enrollments:
@@ -57,15 +137,22 @@ def enrollment_lecture_metadata_by_id(*, tenant: Any, enrollment_ids: list[int])
             "lecture_title": enrollment.lecture.title if enrollment.lecture else None,
             "lecture_color": getattr(enrollment.lecture, "color", None),
             "lecture_chip_label": getattr(enrollment.lecture, "chip_label", None),
+            "lecture_is_system": bool(getattr(enrollment.lecture, "is_system", False)),
         }
     return enrollment_lecture_map
 
 
-def homework_scores_for_grades(enrollment_ids: list[int]):
+def homework_scores_for_grades(*, tenant: Any, enrollment_ids: list[int]):
     from apps.domains.homework_results.models import HomeworkScore
 
     return (
-        HomeworkScore.objects.filter(enrollment_id__in=enrollment_ids, attempt_index=1)
+        HomeworkScore.objects.filter(
+            enrollment_id__in=enrollment_ids,
+            enrollment__tenant=tenant,
+            homework__tenant=tenant,
+            session__lecture__tenant=tenant,
+            attempt_index=1,
+        )
         .exclude(score__isnull=True)
         .exclude(session__lecture__is_system=True)
         .select_related("homework", "session", "session__lecture")
@@ -75,6 +162,7 @@ def homework_scores_for_grades(enrollment_ids: list[int]):
 
 def resolved_homework_link_types(
     *,
+    tenant: Any,
     enrollment_ids: list[int],
     homework_ids: list[int],
 ) -> dict[tuple[int, int], str]:
@@ -82,6 +170,7 @@ def resolved_homework_link_types(
 
     links = {}
     for link in ClinicLink.objects.filter(
+        tenant=tenant,
         enrollment_id__in=enrollment_ids,
         source_type="homework",
         source_id__in=homework_ids,
@@ -94,6 +183,7 @@ def resolved_homework_link_types(
 
 def homework_retake_counts_by_key(
     *,
+    tenant: Any,
     enrollment_ids: list[int],
     homework_ids: list[int],
 ) -> dict[tuple[int, int], int]:
@@ -104,7 +194,11 @@ def homework_retake_counts_by_key(
         HomeworkScore.objects.filter(
             homework_id__in=homework_ids,
             enrollment_id__in=enrollment_ids,
+            enrollment__tenant=tenant,
+            homework__tenant=tenant,
+            session__lecture__tenant=tenant,
         )
+        .exclude(session__lecture__is_system=True)
         .values("homework_id", "enrollment_id")
         .annotate(max_attempt=Max("attempt_index"))
     ):

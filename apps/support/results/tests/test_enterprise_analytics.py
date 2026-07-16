@@ -214,3 +214,33 @@ class EnterpriseAnalyticsTests(TestCase):
         self.assertEqual(response.data["summary"]["scored_exam_count"], 1)
         self.assertEqual(response.data["summary"]["avg_score_pct"], 90.0)
         self.assertEqual([row["title"] for row in response.data["trends"]], ["Child A Exam"])
+
+    def test_legitimate_test_title_is_not_filtered_as_synthetic_data(self):
+        student = self._student(self.tenant, "legitimate-test")
+        self._exam_result_for_student(
+            tenant=self.tenant,
+            student=student,
+            title="Ymath 주간 테스트 1회",
+            score=84,
+        )
+        self._exam_result_for_student(
+            tenant=self.tenant,
+            student=student,
+            title="[E2E-456] synthetic fixture",
+            score=10,
+        )
+
+        request = self.factory.get("/api/v1/results/admin/analytics/")
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = AdminEnterpriseAnalyticsView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["summary"]["exam_result_count"], 1)
+        self.assertEqual(response.data["summary"]["avg_score_pct"], 84.0)
+        self.assertEqual(
+            [row["title"] for row in response.data["top_exams"]],
+            ["Ymath 주간 테스트 1회"],
+        )
+        self.assertEqual(response.data["data_quality"]["filtered_test_exam_count"], 1)

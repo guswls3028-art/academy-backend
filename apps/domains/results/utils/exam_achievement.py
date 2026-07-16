@@ -290,12 +290,14 @@ def compute_exam_achievement_bulk(
     # 2) ExamAttempt.meta.status + submission_id bulk
     meta_status_by_attempt: dict[int, str | None] = {}
     submission_by_attempt: dict[int, int] = {}
+    pair_by_attempt: dict[int, tuple[int, int]] = {}
     if attempt_ids:
         for a in ExamAttempt.objects.filter(id__in=attempt_ids).only(
-            "id", "meta", "submission_id",
+            "id", "meta", "submission_id", "exam_id", "enrollment_id",
         ):
             m = a.meta if isinstance(a.meta, dict) else {}
             meta_status_by_attempt[int(a.id)] = m.get("status")
+            pair_by_attempt[int(a.id)] = (int(a.enrollment_id), int(a.exam_id))
             if a.submission_id:
                 submission_by_attempt[int(a.id)] = int(a.submission_id)
 
@@ -313,7 +315,13 @@ def compute_exam_achievement_bulk(
     for i in items:
         e_id = int(i["enrollment_id"])
         x_id = int(i["exam_id"])
-        a_id = int(i["attempt_id"]) if i.get("attempt_id") else None
+        supplied_attempt_id = int(i["attempt_id"]) if i.get("attempt_id") else None
+        # Result.attempt is a nullable generic projection link.  Treat it as
+        # untrusted and fail closed unless it belongs to this exact pair.
+        a_id = supplied_attempt_id if (
+            supplied_attempt_id is not None
+            and pair_by_attempt.get(supplied_attempt_id) == (e_id, x_id)
+        ) else None
         session = i.get("session")
         sid = int(session.id) if (use_session_filter and session is not None) else None
 

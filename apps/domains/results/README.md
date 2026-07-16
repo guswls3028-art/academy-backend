@@ -79,9 +79,20 @@ Aggregation
 `apps/support/results/enterprise_analytics.py`다.
 이 서비스는 `Result`, `ResultFact`, `ResultItem`, `Submission`을 함께 읽어
 성적 분포, 기간별 추이, 수동 성적 입력, 자동채점 사용량을 tenant scope 안에서 집계한다.
-`[E2E-*]`, `LOCAL-DEMO`, `테스트/데모`로 식별되는 시험은 기본 분석에서 제외한다.
+`[E2E-*]`, `LOCAL-DEMO`, `DEMO-*` 구조화 prefix로 식별되는 합성 시험은 기본 분석에서 제외한다.
+`주간 테스트`, `Level Test`처럼 실제 운영에서 쓰는 일반 시험명은 분석에 포함한다.
 노출 엔드포인트는 교사용 `GET /results/admin/analytics/`,
 학생/학부모용 `GET /student/grades/analytics/`이며, 학생/학부모는 선택된 학생 1명만 조회한다.
+
+학생별 전체 기간 시험 추이는 관리자·선생 공용 BFF인
+`GET /results/admin/student-grades/?student_id=<id>`의 `exam_trend`와
+`exam_summary`를 사용한다. 한 점은 동일 시험의 재응시가 아니라 서로 다른 정규
+시험의 대표 `Result` 한 건이다. 점수가 확정된 시험만 정규 차시 날짜·순서 기준으로
+`1회차..N회차`가 자동 부여되며, 만점이 다른 시험은 `score_pct`로 정규화한다.
+`NOT_SUBMITTED`는 목록에는 남지만 0점으로 바꾸지 않고 추이·평균 분모에서 제외한다.
+보관된 정규 시험 결과는 이력에 유지하고 `archived=true`로 구분한다.
+여러 강의에 연결된 시험은 해당 `Result.enrollment`의 강의 차시만 사용하고 시스템 강의는
+제외한다. 음수·비유한 점수나 0 이하 만점은 추이에서 제외하며 가산점에 따른 100% 초과는 유지한다.
 
 주의할 예외:
 

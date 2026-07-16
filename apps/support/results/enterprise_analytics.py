@@ -29,7 +29,10 @@ MANUAL_FACT_SOURCES = (
     "manual_subjective",
     "manual_not_submitted",
 )
-_TEST_TOKEN_RE = re.compile(r"(^|[\s_\-\[\(])test($|[\s_\-\]\)])", re.IGNORECASE)
+_SYNTHETIC_EXAM_PREFIX_RE = re.compile(
+    r"^(?:\[?e2e(?:[-_\]\s]|$)|\[?local-demo(?:[-_\]\s]|$)|\[?demo(?:[-_\]\s]|$))",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -137,9 +140,9 @@ def _month_keys_between(start_at: Any, end_at: Any) -> list[str]:
 
 def _is_test_exam_title(title: str | None) -> bool:
     value = (title or "").strip()
-    lower = value.lower()
-    markers = ("[e2e", "e2e-", "[local-demo", "local-demo", "[demo", "demo-", "테스트", "데모")
-    return any(marker in lower for marker in markers) or bool(_TEST_TOKEN_RE.search(value))
+    # Synthetic fixtures are required to carry a structured prefix.  Ordinary
+    # academy titles such as "주간 테스트" or "Level Test" are real results.
+    return bool(_SYNTHETIC_EXAM_PREFIX_RE.search(value))
 
 
 def _is_not_submitted(row: dict[str, Any]) -> bool:

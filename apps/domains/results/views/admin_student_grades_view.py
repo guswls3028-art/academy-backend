@@ -2,16 +2,19 @@
 """
 GET /results/admin/student-grades/?student_id=<int>
 
-Admin/Teacher용 학생 개인 성적 요약 — 학생 상세 오버레이에서 사용.
-student_app.results.MyGradesSummaryView와 동일 로직, admin 컨텍스트.
+Admin/Teacher용 학생 개인 성적 요약과 전체 기간 시험 추이.
+시험 결과가 추가될 때마다 별도 집계 작업 없이 회차가 자동 누적된다.
 """
+from math import isfinite
+from statistics import fmean
+
+from django.db.models.functions import Coalesce
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result
-from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
 from apps.support.results.admin_student_grades_dependencies import (
     active_student_for_grades,
@@ -20,13 +23,115 @@ from apps.support.results.admin_student_grades_dependencies import (
     exam_metadata_by_id,
     homework_retake_counts_by_key,
     homework_scores_for_grades,
+    primary_session_metadata_by_exam_and_lecture,
     resolved_homework_link_types,
 )
 
 
+def _empty_exam_summary() -> dict:
+    return {
+        "scored_count": 0,
+        "average_score_pct": None,
+        "latest_score_pct": None,
+        "change_pct_points": None,
+        "best_score_pct": None,
+    }
+
+
+def _empty_payload() -> dict:
+    return {
+        "exams": [],
+        "homeworks": [],
+        "exam_trend": [],
+        "exam_summary": _empty_exam_summary(),
+    }
+
+
+def _is_json_safe_number(value) -> bool:
+    if value is None:
+        return True
+    try:
+        return isfinite(float(value))
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
+def _trend_sort_key(row: dict) -> tuple:
+    recorded_at = str(row.get("recorded_at") or "")
+    session_date = str(row.get("session_date") or "")
+    return (
+        session_date or recorded_at[:10] or "9999-12-31",
+        int(row.get("session_regular_order") or row.get("session_order") or 10**9),
+        recorded_at,
+        int(row.get("lecture_id") or 0),
+        int(row.get("exam_id") or 0),
+    )
+
+
+def _build_exam_progression(exams: list[dict]) -> tuple[list[dict], dict]:
+    scored = []
+    for exam in exams:
+        score = exam.get("total_score")
+        max_score = exam.get("max_score")
+        if score is None or max_score is None:
+            continue
+        try:
+            score_value = float(score)
+            max_score_value = float(max_score)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if (
+            not isfinite(score_value)
+            or not isfinite(max_score_value)
+            or score_value < 0
+            or max_score_value <= 0
+        ):
+            continue
+        score_pct = (score_value / max_score_value) * 100
+        if not isfinite(score_pct):
+            continue
+        scored.append({
+            "exam_id": exam["exam_id"],
+            "enrollment_id": exam["enrollment_id"],
+            "title": exam["title"],
+            "score": score_value,
+            "max_score": max_score_value,
+            # 100% 초과는 가산점 시험의 유효한 원점수로 보존한다.
+            "score_pct": round(score_pct, 1),
+            "recorded_at": exam.get("recorded_at"),
+            "session_id": exam.get("session_id"),
+            "session_title": exam.get("session_title"),
+            "session_order": exam.get("session_order"),
+            "session_regular_order": exam.get("session_regular_order"),
+            "session_date": exam.get("session_date"),
+            "lecture_id": exam.get("lecture_id"),
+            "lecture_title": exam.get("lecture_title"),
+            "lecture_color": exam.get("lecture_color"),
+            "lecture_chip_label": exam.get("lecture_chip_label"),
+            "retake_count": exam.get("retake_count", 1),
+            "archived": bool(exam.get("archived")),
+        })
+
+    scored.sort(key=_trend_sort_key)
+    trend = [{**row, "round_index": index} for index, row in enumerate(scored, start=1)]
+    if not trend:
+        return [], _empty_exam_summary()
+
+    percentages = [float(row["score_pct"]) for row in trend]
+    latest = percentages[-1]
+    previous = percentages[-2] if len(percentages) > 1 else None
+    return trend, {
+        "scored_count": len(percentages),
+        "average_score_pct": round(fmean(percentages), 1),
+        "latest_score_pct": latest,
+        "change_pct_points": round(latest - previous, 1) if previous is not None else None,
+        "best_score_pct": max(percentages),
+    }
+
+
 class AdminStudentGradesView(APIView):
     """
-    학생 개인 시험 + 과제 성적 요약 (admin 전용).
+    학생 개인 시험 + 과제 성적 요약 (admin/teacher 공용).
     Query params: student_id (required)
     """
     permission_classes = [IsAuthenticated, IsTeacherOrAdmin]
@@ -42,7 +147,7 @@ class AdminStudentGradesView(APIView):
 
         tenant = getattr(request, "tenant", None)
         if not tenant:
-            return Response({"exams": [], "homeworks": []})
+            return Response(_empty_payload())
 
         # tenant/deleted-state isolation: 해당 테넌트의 활성 학생인지 확인
         student = active_student_for_grades(tenant=tenant, student_id=parsed_student_id)
@@ -51,7 +156,7 @@ class AdminStudentGradesView(APIView):
 
         enrollment_ids = enrollment_ids_for_student(tenant=tenant, student_id=student.id)
         if not enrollment_ids:
-            return Response({"exams": [], "homeworks": []})
+            return Response(_empty_payload())
 
         # ── 시험 결과 ──
         results = list(
@@ -59,8 +164,18 @@ class AdminStudentGradesView(APIView):
                 enrollment_id__in=enrollment_ids,
                 target_type="exam",
             )
-            .order_by("-submitted_at")
-            .values("target_id", "enrollment_id", "total_score", "max_score", "submitted_at", "attempt_id")
+            .annotate(recorded_at=Coalesce("submitted_at", "created_at"))
+            .order_by("-recorded_at", "-id")
+            .values(
+                "id",
+                "target_id",
+                "enrollment_id",
+                "total_score",
+                "max_score",
+                "submitted_at",
+                "recorded_at",
+                "attempt_id",
+            )
         )
         exam_ids = list({r["target_id"] for r in results})
 
@@ -68,7 +183,6 @@ class AdminStudentGradesView(APIView):
         if exam_ids:
             # 🔐 tenant 강제 — Exam.tenant FK 존재.
             exams_map = exam_metadata_by_id(tenant=tenant, exam_ids=exam_ids)
-
         # 재시도 횟수 (bulk)
         retake_counts = {}
         if exam_ids and enrollment_ids:
@@ -88,6 +202,17 @@ class AdminStudentGradesView(APIView):
                 tenant=tenant,
                 enrollment_ids=enrollment_ids,
             )
+        exam_lecture_pairs = {
+            (int(r["target_id"]), int(enrollment_lecture_map[r["enrollment_id"]]["lecture_id"]))
+            for r in results
+            if r["target_id"] in exams_map
+            and r["enrollment_id"] in enrollment_lecture_map
+            and enrollment_lecture_map[r["enrollment_id"]].get("lecture_id") is not None
+        }
+        primary_session_map = primary_session_metadata_by_exam_and_lecture(
+            tenant=tenant,
+            exam_lecture_pairs=exam_lecture_pairs,
+        )
 
         # ── Stage 1: exam 단위 dedup + session lookup + 시스템 강의 스킵
         exam_rows = []  # [(r, eid, info, session, lecture_meta)]
@@ -96,36 +221,48 @@ class AdminStudentGradesView(APIView):
             eid = r["target_id"]
             if eid in seen_exam_ids:
                 continue
-            seen_exam_ids.add(eid)
-            info = exams_map.get(eid) or {"title": f"시험 #{eid}", "pass_score": 0}
-            session = get_primary_session_for_exam(eid)
+            # Generic Result.target_id가 손상되어 다른 tenant 시험을 가리켜도
+            # 제목/차시/강의 metadata를 절대 fallback 노출하지 않는다.
+            info = exams_map.get(eid)
+            if not info:
+                continue
+            enroll_info = enrollment_lecture_map.get(r["enrollment_id"])
+            if not enroll_info or enroll_info.get("lecture_is_system"):
+                continue
+            enrollment_lecture_id = enroll_info.get("lecture_id")
+            session_meta = primary_session_map.get(
+                (int(eid), int(enrollment_lecture_id)),
+            ) if enrollment_lecture_id is not None else None
+            session_meta = session_meta or {}
 
             # 시스템 강의(공개 영상 컨테이너)는 성적에서 제외
-            if session and hasattr(session, "lecture") and session.lecture \
-               and getattr(session.lecture, "is_system", False):
+            if session_meta.get("lecture_is_system"):
+                continue
+            if not _is_json_safe_number(r.get("total_score")) or not _is_json_safe_number(r.get("max_score")):
                 continue
 
-            session_id = session.id if session else None
-            session_title = (
-                getattr(session, "title", None) or f"{getattr(session, 'order', '')}차시"
-            ) if session else None
-            lecture_id = getattr(session, "lecture_id", None) if session else None
-            lecture_title = getattr(getattr(session, "lecture", None), "title", None) if session else None
-            lecture_color = getattr(getattr(session, "lecture", None), "color", None) if session else None
-            lecture_chip_label = getattr(getattr(session, "lecture", None), "chip_label", None) if session else None
+            session_id = session_meta.get("session_id")
+            session_title = session_meta.get("session_title")
+            lecture_id = session_meta.get("lecture_id")
+            lecture_title = session_meta.get("lecture_title")
+            lecture_color = session_meta.get("lecture_color")
+            lecture_chip_label = session_meta.get("lecture_chip_label")
 
-            # enrollment → lecture fallback
+            # session은 반드시 Result enrollment의 강의와 일치한다. 연결된
+            # session이 없으면 같은 enrollment 강의 metadata로만 fallback한다.
             if not lecture_title:
-                enroll_info = enrollment_lecture_map.get(r["enrollment_id"])
-                if enroll_info:
-                    lecture_id = lecture_id or enroll_info["lecture_id"]
-                    lecture_title = lecture_title or enroll_info["lecture_title"]
-                    lecture_color = lecture_color or enroll_info["lecture_color"]
-                    lecture_chip_label = lecture_chip_label or enroll_info["lecture_chip_label"]
+                lecture_id = lecture_id or enroll_info["lecture_id"]
+                lecture_title = lecture_title or enroll_info["lecture_title"]
+                lecture_color = lecture_color or enroll_info["lecture_color"]
+                lecture_chip_label = lecture_chip_label or enroll_info["lecture_chip_label"]
 
+            seen_exam_ids.add(eid)
             exam_rows.append({
-                "r": r, "eid": eid, "info": info, "session": session,
+                "r": r, "eid": eid, "info": info, "session": None,
                 "session_id": session_id, "session_title": session_title,
+                "session_order": session_meta.get("session_order"),
+                "session_regular_order": session_meta.get("session_regular_order"),
+                "session_date": session_meta.get("session_date"),
                 "lecture_id": lecture_id, "lecture_title": lecture_title,
                 "lecture_color": lecture_color, "lecture_chip_label": lecture_chip_label,
             })
@@ -173,19 +310,30 @@ class AdminStudentGradesView(APIView):
                 "retake_count": max_attempt,
                 "session_id": row["session_id"],
                 "session_title": row["session_title"],
+                "session_order": row["session_order"],
+                "session_regular_order": row["session_regular_order"],
+                "session_date": row["session_date"].isoformat() if row["session_date"] else None,
                 "lecture_id": row["lecture_id"],
                 "lecture_title": row["lecture_title"],
                 "lecture_color": row["lecture_color"],
                 "lecture_chip_label": row["lecture_chip_label"],
                 "submitted_at": r["submitted_at"].isoformat() if r.get("submitted_at") else None,
+                "recorded_at": r["recorded_at"].isoformat(),
+                "archived": not info["is_active"],
             })
 
+        exam_trend, exam_summary = _build_exam_progression(exam_list)
+
         # ── 과제 성적 ──
-        hw_scores = homework_scores_for_grades(enrollment_ids)
+        hw_scores = homework_scores_for_grades(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+        )
         hw_ids = list({hs.homework_id for hs in hw_scores})
         resolved_hw_links = {}
         if hw_ids and enrollment_ids:
             resolved_hw_links = resolved_homework_link_types(
+                tenant=tenant,
                 enrollment_ids=enrollment_ids,
                 homework_ids=hw_ids,
             )
@@ -193,6 +341,7 @@ class AdminStudentGradesView(APIView):
         hw_retake_counts = {}
         if hw_ids and enrollment_ids:
             hw_retake_counts = homework_retake_counts_by_key(
+                tenant=tenant,
                 enrollment_ids=enrollment_ids,
                 homework_ids=hw_ids,
             )
@@ -204,6 +353,8 @@ class AdminStudentGradesView(APIView):
             if key in seen_hw_key:
                 continue
             seen_hw_key.add(key)
+            if not _is_json_safe_number(hs.score) or not _is_json_safe_number(hs.max_score):
+                continue
             session = hs.session
             session_id_hw = None
             session_title = None
@@ -251,4 +402,6 @@ class AdminStudentGradesView(APIView):
         return Response({
             "exams": exam_list,
             "homeworks": homework_list,
+            "exam_trend": exam_trend,
+            "exam_summary": exam_summary,
         })
