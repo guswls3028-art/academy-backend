@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.8.1.md](v1.8.1.md) | **CURRENT** | 2026-07-14 KST | Alimtalk-only business-contract seal, tenant-bound billing, and production UX/deploy closure |
+| [v1.8.2.md](v1.8.2.md) | **CURRENT** | 2026-07-17 KST | Ymath student cumulative score trends, tenant-safe analytics, and admin/teacher responsive visualization |
+| [v1.8.1.md](v1.8.1.md) | production-deployed / v1.8.2로 승계 | 2026-07-14 KST | Alimtalk-only business-contract seal, tenant-bound billing, and production UX/deploy closure |
 | [v1.8.0.md](v1.8.0.md) | production-deployed / v1.8.1로 승계 | 2026-07-14 KST | Enterprise stabilization: tenant isolation, state-machine integrity, immutable deploys, and safe production QA |
 | [v1.7.0.md](v1.7.0.md) | production-deployed / v1.8.0로 승계 | 2026-07-10 KST | Production cost cleanup: DNFM right-sizing + unused RDS Proxy retirement |
 | [v1.6.8.md](v1.6.8.md) | production-deployed / v1.7.0로 승계 | 2026-07-09 KST | Mandatory student/parent account Alimtalk notices + Ymath block confirmation |
