@@ -15,15 +15,19 @@ compute_exam_achievement 는 유틸 SSOT 이다. 두 로직이 정책상 동등�
   6) NOT_SUBMITTED   : attempt.meta.status=NOT_SUBMITTED
 """
 from django.contrib.auth import get_user_model
+from django.apps import apps as django_apps
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.domains.clinic.tests import ClinicTestMixin
-from apps.core.models import TenantMembership
+from apps.core.models import Tenant, TenantMembership
 from apps.domains.exams.models import Exam
 from apps.domains.progress.models import ClinicLink
-from apps.domains.results.models import ExamAttempt, Result
-from apps.domains.results.utils.exam_achievement import compute_exam_achievement
+from apps.domains.results.models import ExamAttempt, ExamResult, Result
+from apps.domains.results.utils.exam_achievement import (
+    compute_exam_achievement,
+    compute_exam_achievement_bulk,
+)
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
 from apps.domains.results.views.admin_student_grades_view import AdminStudentGradesView
 
@@ -122,6 +126,7 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
             total_score=float(result.total_score or 0.0),
             pass_score=float(exam.pass_score or 0.0),
             attempt_id=result.attempt_id,
+            tenant=self.tenant,
         )
         return data["achievement"]
 
@@ -173,3 +178,78 @@ class AchievementContractTest(TestCase, ClinicTestMixin):
             exam, score=0, meta_status="NOT_SUBMITTED",
         )
         self._assert_consistent(exam, result, expected="NOT_SUBMITTED")
+
+    def test_bulk_achievement_ignores_corrupt_foreign_tenant_clinic_link(self):
+        exam = self._make_exam("foreign_link", pass_score=60.0)
+        attempt, result = self._make_attempt_and_result(exam, score=30)
+        foreign_tenant = Tenant.objects.create(
+            code="achievement-foreign",
+            name="Achievement Foreign",
+            is_active=True,
+        )
+        link = ClinicLink.objects.create(
+            tenant=foreign_tenant,
+            enrollment=self.enrollment,
+            session=self.lec_session,
+            reason="AUTO_FAILED",
+            source_type="exam",
+            source_id=exam.id,
+            meta={"kind": "EXAM_FAILED", "exam_id": exam.id},
+        )
+        link.resolved_at = link.created_at
+        link.resolution_type = ClinicLink.ResolutionType.EXAM_PASS
+        link.save(update_fields=["resolved_at", "resolution_type"])
+
+        achievement = compute_exam_achievement_bulk(
+            items=[{
+                "enrollment_id": self.enrollment.id,
+                "exam_id": exam.id,
+                "total_score": result.total_score,
+                "pass_score": exam.pass_score,
+                "attempt_id": attempt.id,
+                "session": None,
+            }],
+            use_session_filter=False,
+            tenant=self.tenant,
+        )[(self.enrollment.id, exam.id)]
+
+        self.assertEqual(achievement["achievement"], "FAIL")
+        self.assertFalse(achievement["remediated"])
+
+    def test_provisional_status_ignores_corrupt_foreign_tenant_submission(self):
+        Submission = django_apps.get_model("submissions", "Submission")
+        exam = self._make_exam("foreign_submission", pass_score=60.0)
+        attempt, result = self._make_attempt_and_result(exam, score=80)
+        foreign = self.setup_full_tenant("achievement-foreign-submission", student_count=1)
+        foreign_student = foreign["students"][0]
+        foreign_enrollment = foreign["enrollments"][0]
+        submission = Submission.objects.create(
+            tenant=foreign["tenant"],
+            user=foreign_student.user,
+            enrollment=foreign_enrollment,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.DONE,
+        )
+        ExamResult.objects.create(
+            submission=submission,
+            exam=exam,
+            status=ExamResult.Status.DRAFT,
+        )
+        attempt.submission_id = submission.id
+        attempt.save(update_fields=["submission_id"])
+
+        achievement = compute_exam_achievement_bulk(
+            items=[{
+                "enrollment_id": self.enrollment.id,
+                "exam_id": exam.id,
+                "total_score": result.total_score,
+                "pass_score": exam.pass_score,
+                "attempt_id": attempt.id,
+                "session": self.lec_session,
+            }],
+            tenant=self.tenant,
+        )[(self.enrollment.id, exam.id)]
+
+        self.assertFalse(achievement["is_provisional"])

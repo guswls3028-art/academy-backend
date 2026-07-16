@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -10,9 +15,13 @@ from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.parents.models import Parent
 from apps.domains.results.models import Result, ResultFact, ResultItem
-from apps.support.results.enterprise_analytics import normalize_analytics_days
+from apps.support.results.enterprise_analytics import (
+    build_student_enterprise_analytics,
+    normalize_analytics_days,
+)
 from apps.domains.results.views.admin_enterprise_analytics_view import AdminEnterpriseAnalyticsView
-from apps.domains.student_app.results.views import MyGradesAnalyticsView
+from apps.domains.results.views.admin_student_grades_view import AdminStudentGradesView
+from apps.domains.student_app.results.views import MyGradesAnalyticsView, MyGradesSummaryView
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
 
@@ -214,6 +223,121 @@ class EnterpriseAnalyticsTests(TestCase):
         self.assertEqual(response.data["summary"]["scored_exam_count"], 1)
         self.assertEqual(response.data["summary"]["avg_score_pct"], 90.0)
         self.assertEqual([row["title"] for row in response.data["trends"]], ["Child A Exam"])
+
+        summary_request = self.factory.get(
+            "/api/v1/student/grades/",
+            HTTP_X_STUDENT_ID=str(child_b.id),
+        )
+        force_authenticate(summary_request, user=parent_user)
+        summary_request.tenant = self.tenant
+
+        summary_response = MyGradesSummaryView.as_view()(summary_request)
+
+        self.assertEqual(summary_response.status_code, 200, summary_response.data)
+        self.assertEqual(
+            [row["title"] for row in summary_response.data["exam_trend"]],
+            ["Child B Exam"],
+        )
+        self.assertEqual(summary_response.data["exam_summary"]["latest_score_pct"], 40.0)
+
+        admin_request = self.factory.get(
+            "/api/v1/results/admin/student-grades/",
+            {"student_id": child_b.id},
+        )
+        force_authenticate(admin_request, user=self.admin)
+        admin_request.tenant = self.tenant
+        admin_response = AdminStudentGradesView.as_view()(admin_request)
+
+        self.assertEqual(admin_response.status_code, 200, admin_response.data)
+        self.assertEqual(admin_response.data["exam_trend"], summary_response.data["exam_trend"])
+        self.assertEqual(admin_response.data["exam_summary"], summary_response.data["exam_summary"])
+
+        unlinked_child = self._student(self.tenant, "unlinked")
+        for invalid_header in ("not-a-number", str(unlinked_child.id)):
+            invalid_request = self.factory.get(
+                "/api/v1/student/grades/analytics/",
+                HTTP_X_STUDENT_ID=invalid_header,
+            )
+            force_authenticate(invalid_request, user=parent_user)
+            invalid_request.tenant = self.tenant
+            invalid_response = MyGradesAnalyticsView.as_view()(invalid_request)
+            self.assertEqual(invalid_response.status_code, 403)
+
+    def test_student_analytics_applies_date_window_to_all_metrics(self):
+        now = timezone.now()
+        recent = (now - timedelta(days=5)).isoformat()
+        old = (now - timedelta(days=90)).isoformat()
+        summary = {
+            "exams": [
+                {
+                    "exam_id": 1,
+                    "title": "최근 합격",
+                    "total_score": 90,
+                    "max_score": 100,
+                    "achievement": "PASS",
+                    "is_pass": True,
+                    "recorded_at": recent,
+                    "submitted_at": None,
+                    "wrong_question_numbers": [1],
+                },
+                {
+                    "exam_id": 2,
+                    "title": "오래된 불합격",
+                    "total_score": 10,
+                    "max_score": 100,
+                    "achievement": "FAIL",
+                    "is_pass": False,
+                    "recorded_at": old,
+                    "submitted_at": None,
+                    "wrong_question_numbers": [9],
+                },
+                {
+                    "exam_id": 3,
+                    "title": "오래된 미응시",
+                    "total_score": None,
+                    "max_score": 100,
+                    "achievement": "NOT_SUBMITTED",
+                    "meta_status": "NOT_SUBMITTED",
+                    "recorded_at": old,
+                    "submitted_at": None,
+                    "wrong_question_numbers": [],
+                },
+            ],
+            "homeworks": [
+                {
+                    "score": 5,
+                    "max_score": 10,
+                    "achievement": "FAIL",
+                    "passed": False,
+                    "recorded_at": recent,
+                },
+                {
+                    "score": 10,
+                    "max_score": 10,
+                    "achievement": "PASS",
+                    "passed": True,
+                    "recorded_at": old,
+                },
+            ],
+        }
+        with patch(
+            "apps.support.results.enterprise_analytics.build_student_grades_summary",
+            return_value=summary,
+        ):
+            analytics = build_student_enterprise_analytics(
+                tenant=self.tenant,
+                student=SimpleNamespace(id=99, name="기간 학생"),
+                days=30,
+            )
+
+        self.assertEqual(analytics["summary"]["exam_count"], 1)
+        self.assertEqual(analytics["summary"]["pass_rate_pct"], 100.0)
+        self.assertEqual(analytics["summary"]["not_submitted_count"], 0)
+        self.assertEqual(analytics["weak_questions"], [{"question_number": 1, "wrong_count": 1}])
+        self.assertEqual(analytics["homework"]["assigned_count"], 1)
+        self.assertEqual(analytics["homework"]["graded_count"], 1)
+        self.assertEqual(analytics["homework"]["avg_score_pct"], 50.0)
+        self.assertEqual(analytics["data_quality"]["filtered_test_exam_count"], 0)
 
     def test_legitimate_test_title_is_not_filtered_as_synthetic_data(self):
         student = self._student(self.tenant, "legitimate-test")

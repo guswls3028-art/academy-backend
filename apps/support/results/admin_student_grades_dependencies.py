@@ -28,15 +28,39 @@ def exam_metadata_by_id(*, tenant: Any, exam_ids: list[int]) -> dict[int, dict[s
     from apps.domains.exams.models import Exam
 
     exams_map = {}
-    for exam in Exam.objects.filter(
-        id__in=exam_ids,
-        tenant=tenant,
-        exam_type=Exam.ExamType.REGULAR,
-    ).only("id", "title", "pass_score", "is_active"):
+    exams = (
+        Exam.objects.filter(
+            id__in=exam_ids,
+            tenant=tenant,
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        .select_related("sheet", "template_exam")
+        .only(
+            "id",
+            "title",
+            "pass_score",
+            "is_active",
+            "exam_type",
+            "template_exam_id",
+            "template_exam__tenant_id",
+            "sheet__id",
+        )
+    )
+    for exam in exams:
+        structure_exam_id = exam.effective_structure_exam_id
+        if (
+            structure_exam_id != int(exam.id)
+            and getattr(exam.template_exam, "tenant_id", None) != tenant.id
+        ):
+            # A corrupt cross-tenant template FK must never authorize reading
+            # that template's questions. Falling back to the local exam id is
+            # fail-closed for legacy regular exams without their own sheet.
+            structure_exam_id = int(exam.id)
         exams_map[exam.id] = {
             "title": exam.title,
             "pass_score": float(exam.pass_score or 0),
             "is_active": bool(exam.is_active),
+            "effective_structure_exam_id": structure_exam_id,
         }
     return exams_map
 

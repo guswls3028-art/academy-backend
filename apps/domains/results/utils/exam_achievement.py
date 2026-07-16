@@ -24,7 +24,6 @@ from typing import Any
 from apps.domains.results.models import ExamResult, ExamAttempt
 from apps.support.results.progress_read_dependencies import (
     exam_remediation_link_values,
-    latest_exam_remediation_link,
 )
 
 
@@ -40,36 +39,6 @@ def compute_first_pass(
     if pass_score is None or float(pass_score) <= 0:
         return None
     return float(total_score or 0.0) >= float(pass_score)
-
-
-def compute_remediation(
-    *,
-    enrollment_id: int,
-    exam_id: int,
-    session,
-) -> tuple[bool, dict | None]:
-    """
-    1차 불합격 후 클리닉 해소 여부 + 재시험 정보.
-    EXAM_PASS / MANUAL_OVERRIDE 두 타입을 remediated=True로 인정 (WAIVED 제외).
-    """
-    if session is None:
-        return False, None
-    link = latest_exam_remediation_link(
-        enrollment_id=enrollment_id,
-        exam_id=exam_id,
-        session=session,
-    )
-    if not link:
-        return False, None
-    evidence = link.resolution_evidence or {}
-    info = {
-        "score": evidence.get("score"),
-        "pass_score": evidence.get("pass_score"),
-        "attempt_id": evidence.get("attempt_id"),
-        "resolution_type": link.resolution_type,
-        "resolved_at": link.resolved_at.isoformat() if link.resolved_at else None,
-    }
-    return True, info
 
 
 def compute_final_pass(
@@ -111,31 +80,6 @@ def compute_achievement(
     return None
 
 
-def compute_is_provisional(*, attempt_id: int | None) -> bool:
-    """연결된 ExamResult가 FINAL 상태가 아니면 provisional(임시점수)."""
-    if not attempt_id:
-        return False
-    att = ExamAttempt.objects.filter(id=int(attempt_id)).only("submission_id").first()
-    if not att or not att.submission_id:
-        return False
-    er_status = (
-        ExamResult.objects.filter(submission_id=att.submission_id)
-        .values_list("status", flat=True)
-        .first()
-    )
-    return bool(er_status and er_status != ExamResult.Status.FINAL)
-
-
-def compute_attempt_meta_status(*, attempt_id: int | None) -> str | None:
-    """ExamAttempt.meta.status 조회 (예: NOT_SUBMITTED)."""
-    if not attempt_id:
-        return None
-    att = ExamAttempt.objects.filter(id=int(attempt_id)).only("meta").first()
-    if not att:
-        return None
-    return (att.meta or {}).get("status")
-
-
 def compute_exam_achievement(
     *,
     enrollment_id: int,
@@ -145,6 +89,7 @@ def compute_exam_achievement(
     pass_score: float | None,
     attempt_id: int | None = None,
     meta_status: str | None = None,
+    tenant: Any,
 ) -> dict[str, Any]:
     """
     시험 하나에 대해 학생의 성취 상태를 통합 계산.
@@ -155,48 +100,46 @@ def compute_exam_achievement(
       - session: 해당 시험의 대표 session (없으면 None — 클리닉 판정 스킵)
       - total_score, pass_score: Result / Exam 기반 점수
       - attempt_id: 대표 attempt (is_provisional / meta_status 판정용)
-      - meta_status: 미리 계산된 meta.status (있으면 재조회 스킵)
+      - meta_status: 정확한 attempt에 상태가 없을 때만 쓰는 명시적 fallback
+      - tenant: attempt/submission/clinic 관계를 검증할 필수 tenant
 
     반환: {
         is_pass, remediated, final_pass, clinic_retake, achievement,
         is_provisional, meta_status
     }
     """
-    if meta_status is None:
-        meta_status = compute_attempt_meta_status(attempt_id=attempt_id)
-    is_not_submitted = meta_status == "NOT_SUBMITTED"
-
-    is_pass = compute_first_pass(
-        total_score=total_score,
-        pass_score=pass_score,
-        is_not_submitted=is_not_submitted,
-    )
-    remediated, clinic_retake = compute_remediation(
-        enrollment_id=enrollment_id,
-        exam_id=exam_id,
-        session=session,
-    )
-    final_pass = compute_final_pass(
-        is_pass=is_pass,
-        remediated=remediated,
-        is_not_submitted=is_not_submitted,
-    )
-    achievement = compute_achievement(
-        is_pass=is_pass,
-        remediated=remediated,
-        is_not_submitted=is_not_submitted,
-    )
-    is_provisional = compute_is_provisional(attempt_id=attempt_id)
-
-    return {
-        "is_pass": is_pass,
-        "remediated": remediated,
-        "final_pass": final_pass,
-        "clinic_retake": clinic_retake,
-        "achievement": achievement,
-        "is_provisional": is_provisional,
-        "meta_status": meta_status,
+    item = {
+        "enrollment_id": enrollment_id,
+        "exam_id": exam_id,
+        "total_score": total_score,
+        "pass_score": pass_score,
+        "attempt_id": attempt_id,
+        "session": session,
     }
+    data = compute_exam_achievement_bulk(
+        items=[item],
+        use_session_filter=True,
+        tenant=tenant,
+    )[(int(enrollment_id), int(exam_id))]
+    if meta_status is not None and data["meta_status"] is None:
+        is_not_submitted = meta_status == "NOT_SUBMITTED"
+        data["meta_status"] = meta_status
+        data["is_pass"] = compute_first_pass(
+            total_score=total_score,
+            pass_score=pass_score,
+            is_not_submitted=is_not_submitted,
+        )
+        data["final_pass"] = compute_final_pass(
+            is_pass=data["is_pass"],
+            remediated=data["remediated"],
+            is_not_submitted=is_not_submitted,
+        )
+        data["achievement"] = compute_achievement(
+            is_pass=data["is_pass"],
+            remediated=data["remediated"],
+            is_not_submitted=is_not_submitted,
+        )
+    return data
 
 
 def _build_clinic_retake_info(link_or_dict) -> dict[str, Any]:
@@ -222,6 +165,7 @@ def compute_exam_achievement_bulk(
     *,
     items: list[dict[str, Any]],
     use_session_filter: bool = True,
+    tenant: Any,
 ) -> dict[tuple[int, int], dict[str, Any]]:
     """
     여러 (enrollment, exam) 쌍의 성취를 한 번에 계산 (N+1 방지).
@@ -271,6 +215,7 @@ def compute_exam_achievement_bulk(
         exam_ids=exam_ids,
         session_ids=session_ids,
         use_session_filter=use_session_filter,
+        tenant=tenant,
     ):
         if use_session_filter:
             sid = int(cl["session_id"]) if cl.get("session_id") is not None else None
@@ -302,13 +247,32 @@ def compute_exam_achievement_bulk(
                 submission_by_attempt[int(a.id)] = int(a.submission_id)
 
     # 3) ExamResult.status bulk (is_provisional 판정)
-    er_status_by_submission: dict[int, str] = {}
+    er_status_by_pair: dict[tuple[int, int, int], str] = {}
     if submission_by_attempt:
         sub_ids = set(submission_by_attempt.values())
-        for er in ExamResult.objects.filter(submission_id__in=sub_ids).values(
-            "submission_id", "status",
+        for er in ExamResult.objects.filter(
+            submission_id__in=sub_ids,
+            exam_id__in=exam_ids,
+            submission__tenant=tenant,
+            submission__enrollment__tenant=tenant,
+            submission__target_type="exam",
+        ).values(
+            "submission_id",
+            "submission__enrollment_id",
+            "submission__target_id",
+            "exam_id",
+            "status",
         ):
-            er_status_by_submission[int(er["submission_id"])] = er["status"]
+            enrollment_id = er["submission__enrollment_id"]
+            target_exam_id = er["submission__target_id"]
+            exam_id = er["exam_id"]
+            if enrollment_id is None or int(target_exam_id) != int(exam_id):
+                continue
+            er_status_by_pair[(
+                int(er["submission_id"]),
+                int(enrollment_id),
+                int(exam_id),
+            )] = er["status"]
 
     # 4) per-item 계산 (쿼리 없음)
     out: dict[tuple[int, int], dict[str, Any]] = {}
@@ -359,7 +323,11 @@ def compute_exam_achievement_bulk(
 
         is_provisional = False
         if a_id and a_id in submission_by_attempt:
-            er_status = er_status_by_submission.get(submission_by_attempt[a_id])
+            er_status = er_status_by_pair.get((
+                submission_by_attempt[a_id],
+                e_id,
+                x_id,
+            ))
             is_provisional = bool(er_status and er_status != ExamResult.Status.FINAL)
 
         out[(e_id, x_id)] = {

@@ -58,8 +58,8 @@ class MyExamResultItemsView(APIView):
 class MyGradesSummaryView(APIView):
     """
     GET /student/grades/
-    학생 본인에 대해 기입된 시험 결과 목록 + 과제 성적 목록 반환.
-    학생앱 성적 탭에서 시험 결과/과제 이력 카드에 사용.
+    학생 본인 또는 학부모가 선택한 자녀의 시험/과제 목록과 회차별 누적 추이를 반환.
+    회차는 활성 수강 안의 확정 시험 결과가 추가될 때마다 자동으로 이어진다.
     """
 
     permission_classes = [IsAuthenticated, IsStudentOrParent]

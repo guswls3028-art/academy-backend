@@ -5,9 +5,6 @@ GET /results/admin/student-grades/?student_id=<int>
 Admin/Teacher용 학생 개인 성적 요약과 전체 기간 시험 추이.
 시험 결과가 추가될 때마다 별도 집계 작업 없이 회차가 자동 누적된다.
 """
-from math import isfinite
-from statistics import fmean
-
 from django.db.models.functions import Coalesce
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -26,16 +23,11 @@ from apps.support.results.admin_student_grades_dependencies import (
     primary_session_metadata_by_exam_and_lecture,
     resolved_homework_link_types,
 )
-
-
-def _empty_exam_summary() -> dict:
-    return {
-        "scored_count": 0,
-        "average_score_pct": None,
-        "latest_score_pct": None,
-        "change_pct_points": None,
-        "best_score_pct": None,
-    }
+from apps.support.results.student_grade_history import (
+    build_exam_progression as _build_exam_progression,
+    empty_exam_summary as _empty_exam_summary,
+    is_json_safe_number as _is_json_safe_number,
+)
 
 
 def _empty_payload() -> dict:
@@ -44,88 +36,6 @@ def _empty_payload() -> dict:
         "homeworks": [],
         "exam_trend": [],
         "exam_summary": _empty_exam_summary(),
-    }
-
-
-def _is_json_safe_number(value) -> bool:
-    if value is None:
-        return True
-    try:
-        return isfinite(float(value))
-    except (TypeError, ValueError, OverflowError):
-        return False
-
-
-def _trend_sort_key(row: dict) -> tuple:
-    recorded_at = str(row.get("recorded_at") or "")
-    session_date = str(row.get("session_date") or "")
-    return (
-        session_date or recorded_at[:10] or "9999-12-31",
-        int(row.get("session_regular_order") or row.get("session_order") or 10**9),
-        recorded_at,
-        int(row.get("lecture_id") or 0),
-        int(row.get("exam_id") or 0),
-    )
-
-
-def _build_exam_progression(exams: list[dict]) -> tuple[list[dict], dict]:
-    scored = []
-    for exam in exams:
-        score = exam.get("total_score")
-        max_score = exam.get("max_score")
-        if score is None or max_score is None:
-            continue
-        try:
-            score_value = float(score)
-            max_score_value = float(max_score)
-        except (TypeError, ValueError, OverflowError):
-            continue
-        if (
-            not isfinite(score_value)
-            or not isfinite(max_score_value)
-            or score_value < 0
-            or max_score_value <= 0
-        ):
-            continue
-        score_pct = (score_value / max_score_value) * 100
-        if not isfinite(score_pct):
-            continue
-        scored.append({
-            "exam_id": exam["exam_id"],
-            "enrollment_id": exam["enrollment_id"],
-            "title": exam["title"],
-            "score": score_value,
-            "max_score": max_score_value,
-            # 100% 초과는 가산점 시험의 유효한 원점수로 보존한다.
-            "score_pct": round(score_pct, 1),
-            "recorded_at": exam.get("recorded_at"),
-            "session_id": exam.get("session_id"),
-            "session_title": exam.get("session_title"),
-            "session_order": exam.get("session_order"),
-            "session_regular_order": exam.get("session_regular_order"),
-            "session_date": exam.get("session_date"),
-            "lecture_id": exam.get("lecture_id"),
-            "lecture_title": exam.get("lecture_title"),
-            "lecture_color": exam.get("lecture_color"),
-            "lecture_chip_label": exam.get("lecture_chip_label"),
-            "retake_count": exam.get("retake_count", 1),
-            "archived": bool(exam.get("archived")),
-        })
-
-    scored.sort(key=_trend_sort_key)
-    trend = [{**row, "round_index": index} for index, row in enumerate(scored, start=1)]
-    if not trend:
-        return [], _empty_exam_summary()
-
-    percentages = [float(row["score_pct"]) for row in trend]
-    latest = percentages[-1]
-    previous = percentages[-2] if len(percentages) > 1 else None
-    return trend, {
-        "scored_count": len(percentages),
-        "average_score_pct": round(fmean(percentages), 1),
-        "latest_score_pct": latest,
-        "change_pct_points": round(latest - previous, 1) if previous is not None else None,
-        "best_score_pct": max(percentages),
     }
 
 
@@ -283,7 +193,7 @@ class AdminStudentGradesView(APIView):
         # (동일 exam 이 여러 session 에 걸려도 primary 만 사용), session-agnostic 매칭.
         # 정책 동등성(HOMEWORK_PASS 케이스)은 test_achievement_contract.py 가 보장.
         bulk_ach = compute_exam_achievement_bulk(
-            items=bulk_items, use_session_filter=False,
+            items=bulk_items, use_session_filter=False, tenant=tenant,
         )
 
         # ── Stage 3: 응답 row 조립

@@ -288,6 +288,7 @@ class AdminExamResultDetailView(APIView):
             total_score=float(result.total_score or 0.0),
             pass_score=pass_score,
             attempt_id=result.attempt_id,
+            tenant=request.tenant,
         )
 
         data.update({

@@ -685,6 +685,7 @@ class SessionScoresView(APIView):
         achievement_map = compute_exam_achievement_bulk(
             items=achievement_items,
             use_session_filter=True,
+            tenant=tenant,
         )
 
         # Homework: 차수(attempt) 수

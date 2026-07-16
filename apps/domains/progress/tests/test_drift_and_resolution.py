@@ -771,7 +771,7 @@ class RankingFirstAttemptTest(TestCase, ClinicTestMixin):
     def test_ranking_uses_first_attempt_snapshot(self):
         """Alice의 Result=50점이어도 석차는 1차 90점 기준이어야 한다."""
         from apps.domains.results.utils.ranking import compute_exam_rankings
-        ranks = compute_exam_rankings(exam_id=self.exam.id)
+        ranks = compute_exam_rankings(exam_id=self.exam.id, tenant=self.tenant)
         self.assertEqual(
             ranks[self.e_alice.id]["rank"], 1,
             "Alice 1차 90점 > Bob 70점 → 1등",
@@ -783,7 +783,10 @@ class RankingFirstAttemptTest(TestCase, ClinicTestMixin):
     def test_ranking_batch_uses_first_attempt_snapshot(self):
         """batch 버전도 1차 점수 기준이어야 한다."""
         from apps.domains.results.utils.ranking import compute_exam_rankings_batch
-        batch = compute_exam_rankings_batch(exam_ids=[self.exam.id])
+        batch = compute_exam_rankings_batch(
+            exam_ids=[self.exam.id],
+            tenant=self.tenant,
+        )
         ranks = batch[self.exam.id]
         self.assertEqual(ranks[self.e_alice.id]["rank"], 1)
         self.assertEqual(ranks[self.e_bob.id]["rank"], 2)
@@ -794,10 +797,133 @@ class RankingFirstAttemptTest(TestCase, ClinicTestMixin):
         # Alice 1차 attempt의 initial_snapshot 제거 → legacy 상태 시뮬레이션
         self.a_alice_1st.meta = {}
         self.a_alice_1st.save(update_fields=["meta"])
-        ranks = compute_exam_rankings(exam_id=self.exam.id)
+        ranks = compute_exam_rankings(exam_id=self.exam.id, tenant=self.tenant)
         # Alice Result=50, Bob Result=70 → Bob 1등
         self.assertEqual(ranks[self.e_bob.id]["rank"], 1)
         self.assertEqual(ranks[self.e_alice.id]["rank"], 2)
+
+    def test_batch_not_submitted_requires_exact_exam_enrollment_pair(self):
+        """다른 시험의 미응시 attempt가 현재 시험 석차를 제거하면 안 된다."""
+        from apps.domains.results.models import ExamAttempt
+        from apps.domains.results.utils.ranking import compute_exam_rankings_batch
+
+        other_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="OtherRankTest",
+            max_score=100.0,
+            pass_score=60.0,
+        )
+        foreign_pair_attempt = ExamAttempt.objects.create(
+            exam=other_exam,
+            enrollment=self.e_alice,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"status": "NOT_SUBMITTED"},
+        )
+        self.r_alice.attempt = foreign_pair_attempt
+        self.r_alice.save(update_fields=["attempt"])
+
+        ranks = compute_exam_rankings_batch(
+            exam_ids=[self.exam.id],
+            tenant=self.tenant,
+        )[self.exam.id]
+
+        self.assertEqual(ranks[self.e_alice.id]["rank"], 1)
+        self.assertEqual(ranks[self.e_bob.id]["rank"], 2)
+
+    def test_first_attempt_not_submitted_excludes_later_retake_from_rankings(self):
+        """1차 미응시는 2차 대표 Result 점수가 있어도 석차에서 제외한다."""
+        from apps.domains.results.utils.ranking import (
+            compute_exam_rankings,
+            compute_exam_rankings_batch,
+        )
+
+        self.a_alice_1st.meta = {"status": "NOT_SUBMITTED"}
+        self.a_alice_1st.save(update_fields=["meta"])
+
+        single = compute_exam_rankings(exam_id=self.exam.id, tenant=self.tenant)
+        batch = compute_exam_rankings_batch(
+            exam_ids=[self.exam.id],
+            tenant=self.tenant,
+        )[self.exam.id]
+
+        for ranks in (single, batch):
+            self.assertNotIn(self.e_alice.id, ranks)
+            self.assertEqual(ranks[self.e_bob.id]["rank"], 1)
+            self.assertEqual(ranks[self.e_bob.id]["cohort_size"], 1)
+
+    def test_rankings_filter_invalid_values_and_fallback_from_invalid_snapshot(self):
+        """NaN/Infinity/negative values never enter rank output or averages."""
+        from apps.domains.results.utils.ranking import (
+            compute_exam_rankings,
+            compute_exam_rankings_batch,
+        )
+
+        self.a_bob_1st.meta = {}
+        self.a_bob_1st.save(update_fields=["meta"])
+        self.r_bob.total_score = float("inf")
+        self.r_bob.save(update_fields=["total_score"])
+
+        single = compute_exam_rankings(exam_id=self.exam.id, tenant=self.tenant)
+        batch = compute_exam_rankings_batch(
+            exam_ids=[self.exam.id],
+            tenant=self.tenant,
+        )[self.exam.id]
+        for ranks in (single, batch):
+            self.assertEqual(ranks[self.e_alice.id]["cohort_size"], 1)
+            self.assertEqual(ranks[self.e_alice.id]["cohort_avg"], 90.0)
+            self.assertNotIn(self.e_bob.id, ranks)
+
+        self.r_bob.total_score = 70
+        self.r_bob.save(update_fields=["total_score"])
+        self.a_bob_1st.meta = {
+            "initial_snapshot": {"total_score": "NaN"},
+        }
+        self.a_bob_1st.save(update_fields=["meta"])
+
+        fallback = compute_exam_rankings(
+            exam_id=self.exam.id,
+            tenant=self.tenant,
+        )
+        self.assertEqual(fallback[self.e_bob.id]["rank"], 2)
+        self.assertEqual(fallback[self.e_bob.id]["cohort_avg"], 80.0)
+
+        self.a_bob_1st.meta = {}
+        self.a_bob_1st.save(update_fields=["meta"])
+        self.r_bob.total_score = -1
+        self.r_bob.save(update_fields=["total_score"])
+        negative = compute_exam_rankings(
+            exam_id=self.exam.id,
+            tenant=self.tenant,
+        )
+        self.assertNotIn(self.e_bob.id, negative)
+
+    def test_single_and_batch_rankings_exclude_foreign_tenant_enrollment(self):
+        from apps.domains.results.models import Result
+        from apps.domains.results.utils.ranking import (
+            compute_exam_rankings,
+            compute_exam_rankings_batch,
+        )
+
+        other = self.setup_full_tenant("rank-first-foreign", student_count=1)
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=other["enrollments"][0],
+            total_score=1000,
+            max_score=100,
+        )
+
+        single = compute_exam_rankings(exam_id=self.exam.id, tenant=self.tenant)
+        batch = compute_exam_rankings_batch(
+            exam_ids=[self.exam.id],
+            tenant=self.tenant,
+        )[self.exam.id]
+        for ranks in (single, batch):
+            self.assertEqual(ranks[self.e_alice.id]["rank"], 1)
+            self.assertEqual(ranks[self.e_alice.id]["cohort_size"], 2)
+            self.assertNotIn(other["enrollments"][0].id, ranks)
 
 
 class LegacyFallbackTest(TestCase, ClinicTestMixin):

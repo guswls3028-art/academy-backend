@@ -53,9 +53,12 @@ class UserSerializer(serializers.ModelSerializer):
             if not membership or membership.role != "parent":
                 return None
             parent = core_repo.parent_get_by_user(user)
-            if not parent:
+            if not parent or parent.tenant_id != tenant.id:
                 return None
-            first_student = parent.students.filter(deleted_at__isnull=True).first()
+            first_student = parent.students.filter(
+                tenant=tenant,
+                deleted_at__isnull=True,
+            ).first()
             return first_student.id if first_student else None
         except Exception:
             return None
@@ -71,9 +74,12 @@ class UserSerializer(serializers.ModelSerializer):
             if not membership or membership.role != "parent":
                 return None
             parent = core_repo.parent_get_by_user(user)
-            if not parent:
+            if not parent or parent.tenant_id != tenant.id:
                 return None
-            first_student = parent.students.filter(deleted_at__isnull=True).first()
+            first_student = parent.students.filter(
+                tenant=tenant,
+                deleted_at__isnull=True,
+            ).first()
             return (first_student.name or "").strip() if first_student else None
         except Exception:
             return None
@@ -89,10 +95,13 @@ class UserSerializer(serializers.ModelSerializer):
             if not membership or membership.role != "parent":
                 return None
             parent = core_repo.parent_get_by_user(user)
-            if not parent:
+            if not parent or parent.tenant_id != tenant.id:
                 return None
             students = list(
-                parent.students.filter(deleted_at__isnull=True).values_list("id", "name")
+                parent.students.filter(
+                    tenant=tenant,
+                    deleted_at__isnull=True,
+                ).values_list("id", "name")
             )
             return [{"id": sid, "name": (name or "").strip() or "학생"} for sid, name in students]
         except Exception:

@@ -83,11 +83,16 @@ Aggregation
 `주간 테스트`, `Level Test`처럼 실제 운영에서 쓰는 일반 시험명은 분석에 포함한다.
 노출 엔드포인트는 교사용 `GET /results/admin/analytics/`,
 학생/학부모용 `GET /student/grades/analytics/`이며, 학생/학부모는 선택된 학생 1명만 조회한다.
+학생/학부모 분석의 `date_range.days`는 시험 수·득점률·합격률·미응시·오답·과제
+지표 전체에 동일하게 적용되며, 기간을 판정할 기록 시각이 없는 행은 기간 분석에서 제외한다.
 
-학생별 전체 기간 시험 추이는 관리자·선생 공용 BFF인
-`GET /results/admin/student-grades/?student_id=<id>`의 `exam_trend`와
-`exam_summary`를 사용한다. 한 점은 동일 시험의 재응시가 아니라 서로 다른 정규
-시험의 대표 `Result` 한 건이다. 점수가 확정된 시험만 정규 차시 날짜·순서 기준으로
+학생별 누적 시험 추이는 관리자·선생 공용 BFF
+`GET /results/admin/student-grades/?student_id=<id>`와 학생·학부모 공용 BFF
+`GET /student/grades/`의 동일한 `exam_trend`, `exam_summary` 계약을 사용한다.
+학생·학부모 응답은 `get_request_student`가 확정한 본인/선택 자녀의 활성 수강만
+대상으로 하며, 잘못된 자녀 헤더는 다른 자녀로 fallback하지 않는다. 한 점은 동일
+시험의 재응시가 아니라 서로 다른 정규
+시험의 대표 `Result` 한 건이다. 유효한 점수가 입력된 시험만 정규 차시 날짜·순서 기준으로
 `1회차..N회차`가 자동 부여되며, 만점이 다른 시험은 `score_pct`로 정규화한다.
 `NOT_SUBMITTED`는 목록에는 남지만 0점으로 바꾸지 않고 추이·평균 분모에서 제외한다.
 보관된 정규 시험 결과는 이력에 유지하고 `archived=true`로 구분한다.

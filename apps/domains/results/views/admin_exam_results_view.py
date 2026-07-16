@@ -170,7 +170,10 @@ class AdminExamResultsView(ListAPIView):
         # -------------------------------------------------
         # 석차 계산 (전체 응시자 대상, 페이지와 무관)
         # -------------------------------------------------
-        rank_map = compute_exam_rankings(exam_id=exam_id)
+        rank_map = compute_exam_rankings(
+            exam_id=exam_id,
+            tenant=request.tenant,
+        )
 
         # -------------------------------------------------
         # 성취/클리닉 상태 일괄 계산 (N+1 방지)
@@ -185,7 +188,10 @@ class AdminExamResultsView(ListAPIView):
                 "attempt_id": getattr(r, "attempt_id", None),
                 "session": session,
             })
-        achievement_map = compute_exam_achievement_bulk(items=achievement_items)
+        achievement_map = compute_exam_achievement_bulk(
+            items=achievement_items,
+            tenant=request.tenant,
+        )
         clinic_required_ids = (
             get_clinic_enrollment_ids_for_session(session=session, include_manual=False)
             if session

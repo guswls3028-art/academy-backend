@@ -551,7 +551,20 @@ def build_teacher_enterprise_analytics(*, tenant: Any, days: int = 180) -> dict[
 
 
 def _student_trend_key(exam: dict[str, Any]) -> str:
-    return str(exam.get("submitted_at") or "")
+    return str(exam.get("submitted_at") or exam.get("recorded_at") or "")
+
+
+def _student_row_in_window(row: dict[str, Any], *, start_at: datetime, now: datetime) -> bool:
+    raw = row.get("submitted_at") or row.get("recorded_at")
+    if not raw:
+        return False
+    try:
+        parsed = datetime.fromisoformat(str(raw))
+    except (TypeError, ValueError):
+        return False
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed)
+    return start_at <= parsed <= now
 
 
 def build_student_enterprise_analytics(*, tenant: Any, student: Any, days: int = 365) -> dict[str, Any]:
@@ -559,8 +572,19 @@ def build_student_enterprise_analytics(*, tenant: Any, student: Any, days: int =
     now = timezone.now()
     start_at = now - timedelta(days=days)
     summary = build_student_grades_summary(tenant=tenant, student=student)
-    exams = [exam for exam in summary.get("exams", []) if not _is_test_exam_title(exam.get("title"))]
-    homeworks = summary.get("homeworks", [])
+    all_exams = summary.get("exams", [])
+    non_test_exams = [
+        exam for exam in all_exams
+        if not _is_test_exam_title(exam.get("title"))
+    ]
+    exams = [
+        exam for exam in non_test_exams
+        if _student_row_in_window(exam, start_at=start_at, now=now)
+    ]
+    homeworks = [
+        homework for homework in summary.get("homeworks", [])
+        if _student_row_in_window(homework, start_at=start_at, now=now)
+    ]
 
     scored_exams = []
     for exam in exams:
@@ -569,16 +593,6 @@ def build_student_enterprise_analytics(*, tenant: Any, student: Any, days: int =
         pct = _score_pct(exam.get("total_score"), exam.get("max_score"))
         if pct is None:
             continue
-        submitted_at = exam.get("submitted_at")
-        if submitted_at:
-            try:
-                parsed = datetime.fromisoformat(str(submitted_at))
-                if timezone.is_naive(parsed):
-                    parsed = timezone.make_aware(parsed)
-                if parsed < start_at:
-                    continue
-            except ValueError:
-                pass
         scored_exams.append({**exam, "score_pct": pct})
 
     score_pcts = [float(exam["score_pct"]) for exam in scored_exams]
@@ -708,6 +722,6 @@ def build_student_enterprise_analytics(*, tenant: Any, student: Any, days: int =
         },
         "insights": insights,
         "data_quality": {
-            "filtered_test_exam_count": len(summary.get("exams", [])) - len(exams),
+            "filtered_test_exam_count": len(all_exams) - len(non_test_exams),
         },
     }

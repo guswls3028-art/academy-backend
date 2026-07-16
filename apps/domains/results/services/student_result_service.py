@@ -114,6 +114,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         total_score=float(result.total_score or 0.0),
         pass_score=pass_score,
         attempt_id=result.attempt_id,
+        tenant=tenant,
     )
     data["exam_id"] = exam_id
     data["meta_status"] = achievement_data["meta_status"]
@@ -144,13 +145,24 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
         item.get("question_id") for item in (data.get("items") or [])
         if item.get("question_id")
     ]
-    question_number_map = exams_repo.exam_question_number_map(item_question_ids)
+    template_exam_id = exam.effective_template_exam_id
+    question_number_map = exams_repo.exam_question_number_map(
+        item_question_ids,
+        exam_id=template_exam_id,
+        tenant=tenant,
+    )
+    data["items"] = [
+        item for item in (data.get("items") or [])
+        if item.get("question_id") in question_number_map
+    ]
 
     # 정답 공개 시 answer key에서 correct_answer 주입
     correct_answer_map = {}
     if show_answers:
-        template_exam_id = exam.effective_template_exam_id
-        correct_answer_map = exams_repo.answer_key_answers_for_exam(template_exam_id)
+        correct_answer_map = exams_repo.answer_key_answers_for_exam(
+            template_exam_id,
+            tenant=tenant,
+        )
 
     for item in data.get("items") or []:
         q_id = item.get("question_id")
@@ -165,7 +177,7 @@ def get_my_exam_result_data(request, exam_id: int, tenant=None) -> dict:
     data["analysis"] = summarize_result_items(data.get("items") or [])
 
     # 석차 정보 추가
-    rank_map = compute_exam_rankings(exam_id=exam_id)
+    rank_map = compute_exam_rankings(exam_id=exam_id, tenant=tenant)
     rank_info = rank_map.get(enrollment_id, {})
     data["rank"] = rank_info.get("rank")
     data["percentile"] = rank_info.get("percentile")

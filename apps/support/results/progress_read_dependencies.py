@@ -234,32 +234,13 @@ def attended_clinic_enrollment_ids(*, tenant: Any, enrollment_ids: set[int]) -> 
     )
 
 
-def latest_exam_remediation_link(*, enrollment_id: int, exam_id: int, session: Any) -> Any | None:
-    from apps.domains.progress.models import ClinicLink
-
-    return (
-        ClinicLink.objects.filter(
-            enrollment_id=int(enrollment_id),
-            session=session,
-            source_type="exam",
-            source_id=int(exam_id),
-            resolved_at__isnull=False,
-            resolution_type__in=[
-                ClinicLink.ResolutionType.EXAM_PASS,
-                ClinicLink.ResolutionType.MANUAL_OVERRIDE,
-            ],
-        )
-        .order_by("-resolved_at")
-        .first()
-    )
-
-
 def exam_remediation_link_values(
     *,
     enrollment_ids: set[int],
     exam_ids: set[int],
     session_ids: set[int],
     use_session_filter: bool,
+    tenant: Any,
 ) -> list[dict[str, Any]]:
     from apps.domains.progress.models import ClinicLink
 
@@ -275,6 +256,11 @@ def exam_remediation_link_values(
     )
     if use_session_filter and session_ids:
         link_filter["session_id__in"] = session_ids
+    link_filter.update({
+        "tenant": tenant,
+        "enrollment__tenant": tenant,
+        "session__lecture__tenant": tenant,
+    })
 
     return list(
         ClinicLink.objects.filter(**link_filter).values(
