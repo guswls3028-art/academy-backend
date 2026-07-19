@@ -78,6 +78,7 @@ class AIConfig:
 
     # Problem generation
     PROBLEM_GEN_MODEL: str = "gpt-4.1-mini"  # default
+    PROBLEM_TRANSCRIPTION_MODEL: str = "gpt-5.6-luna"
 
     @staticmethod
     def load() -> "AIConfig":
@@ -102,4 +103,7 @@ class AIConfig:
             OPENAI_API_KEY=_env("OPENAI_API_KEY") or _env("EMBEDDING_OPENAI_API_KEY"),
 
             PROBLEM_GEN_MODEL=_env("PROBLEM_GEN_MODEL", "gpt-4.1-mini") or "gpt-4.1-mini",
+            PROBLEM_TRANSCRIPTION_MODEL=(
+                _env("PROBLEM_TRANSCRIPTION_MODEL", "gpt-5.6-luna") or "gpt-5.6-luna"
+            ),
         )

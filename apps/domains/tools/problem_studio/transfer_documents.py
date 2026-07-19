@@ -10,7 +10,7 @@ import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from urllib.parse import quote
 
 from django.http import HttpResponse
@@ -89,6 +89,7 @@ class TransferPackage:
     structured_item_count: int = 0
     ocr_candidate_count: int = 0
     quality_level: str = ""
+    structure_limit_reached: bool = False
 
 
 @dataclass
@@ -97,6 +98,7 @@ class TransferOcrContext:
     max_units: int = field(default_factory=problem_studio_ocr_max_units)
     used_units: int = 0
     disabled_reason: str = ""
+    extractor: Callable[[bytes, str], OcrResult] | None = field(default=None, repr=False)
 
     @property
     def remaining_units(self) -> int:
@@ -112,7 +114,7 @@ class TransferOcrContext:
         if self.used_units >= self.max_units:
             return OcrResult(text="", status="skipped_limit", warning="자동 OCR 처리 한도 초과")
         self.used_units += 1
-        result = extract_ocr_text_from_image(data, mime=mime)
+        result = self.extractor(data, mime) if self.extractor else extract_ocr_text_from_image(data, mime=mime)
         if result.status in {"unavailable", "disabled"}:
             self.disabled_reason = result.warning or "OCR 엔진을 사용할 수 없음"
         return result
@@ -989,13 +991,18 @@ def _build_structured_workbook_hwpx(meta: dict[str, str], structure: TransferStr
     )
 
 
-def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[Any]) -> TransferPackage:
+def build_transfer_package(
+    *,
+    payload: dict[str, Any],
+    source_files: Iterable[Any],
+    ocr_context: TransferOcrContext | None = None,
+) -> TransferPackage:
     meta = _payload_meta(payload)
     title = meta["title"]
     documents: list[TransferDocument] = []
     warnings: list[str] = []
     input_files: list[dict[str, Any]] = []
-    ocr_context = TransferOcrContext()
+    ocr_context = ocr_context or TransferOcrContext()
 
     for uploaded in source_files:
         name, data = _read_upload(uploaded)
@@ -1060,6 +1067,7 @@ def build_transfer_package(*, payload: dict[str, Any], source_files: Iterable[An
         structured_item_count=structure.structured_item_count,
         ocr_candidate_count=structure.ocr_candidate_count,
         quality_level=structure.quality_level,
+        structure_limit_reached=structure.structure_limit_reached,
     )
 
 

@@ -267,7 +267,10 @@ def _dispatch_terminal_callback_from_message(job_id: str, message: dict, tier_fr
 
 def _cleanup_terminal_artifacts(prepared: PreparedJob) -> None:
     """Best-effort cleanup for artifacts no longer needed after DB terminal state."""
-    if (prepared.job_type or "").strip().lower() != "problem_studio_transfer":
+    if (prepared.job_type or "").strip().lower() not in {
+        "problem_studio_transfer",
+        "problem_studio_transcription",
+    }:
         return
     payload = prepared.payload if isinstance(prepared.payload, dict) else {}
     source_archive_key = str(payload.get("source_archive_key") or "").strip()

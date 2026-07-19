@@ -8,6 +8,7 @@ from apps.core.permissions import TenantResolvedAndMember
 from apps.domains.ai.redis_status_cache import get_job_status_from_redis
 from academy.adapters.db.django.repositories_ai import get_job_model_for_status
 from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
+from apps.domains.ai.services.job_access import user_can_read_job
 
 
 class JobProgressView(APIView):
@@ -35,6 +36,11 @@ class JobProgressView(APIView):
             # PENDING까지 폴백해야 워커 cold start 동안 UI가 UNKNOWN/0%로 멈춰 보이지 않는다.
             job_model = get_job_model_for_status(job_id, tenant_id)
             if job_model:
+                if not user_can_read_job(user=request.user, tenant=tenant, job_type=job_model.job_type):
+                    return Response(
+                        {"detail": "해당 job을 찾을 수 없습니다."},
+                        status=status.HTTP_404_NOT_FOUND,
+                    )
                 from apps.domains.ai.services.job_status_response import build_job_status_response
                 response_data = build_job_status_response(job_model)
                 # progress API 형식에 맞게 status만 상위로 (프론트가 status로 완료 판단)
@@ -53,6 +59,15 @@ class JobProgressView(APIView):
             )
 
         job_status = cached_status.get("status")
+        if not user_can_read_job(
+            user=request.user,
+            tenant=tenant,
+            job_type=cached_status.get("job_type"),
+        ):
+            return Response(
+                {"detail": "해당 job을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
         # ✅ 진행률은 Redis에서 조회 (tenant_id 전달 필수)
         progress = None

@@ -8,6 +8,9 @@ from .problem_studio.views import (
     ProblemStudioJobStatusView,
     ProblemStudioTransferDocumentView,
     ProblemStudioTransferJobCreateView,
+    ProblemStudioTransferJobStatusView,
+    ProblemStudioHangulHandoffCreateView,
+    ProblemStudioHangulHandoffConsumeView,
 )
 from .timer_download_view import TimerDownloadView
 from apps.support.omr.route_dependencies import (
@@ -19,6 +22,9 @@ urlpatterns = [
     path("ppt/generate/", PptGenerateView.as_view(), name="tools-ppt-generate"),
     path("problem-studio/transfer-document/", ProblemStudioTransferDocumentView.as_view(), name="tools-problem-studio-transfer-document"),
     path("problem-studio/transfer-jobs/", ProblemStudioTransferJobCreateView.as_view(), name="tools-problem-studio-transfer-job-create"),
+    path("problem-studio/transfer-jobs/<str:job_id>/", ProblemStudioTransferJobStatusView.as_view(), name="tools-problem-studio-transfer-job-status"),
+    path("problem-studio/transfer-jobs/<str:job_id>/hangul-handoff/", ProblemStudioHangulHandoffCreateView.as_view(), name="tools-problem-studio-hangul-handoff-create"),
+    path("problem-studio/hangul-handoffs/<str:token>/", ProblemStudioHangulHandoffConsumeView.as_view(), name="tools-problem-studio-hangul-handoff-consume"),
     path("problem-studio/jobs/", ProblemStudioJobCreateView.as_view(), name="tools-problem-studio-job-create"),
     path("problem-studio/jobs/<str:job_id>/", ProblemStudioJobStatusView.as_view(), name="tools-problem-studio-job-status"),
     path("omr/preview/", ToolsOMRPreviewView.as_view(), name="tools-omr-preview"),

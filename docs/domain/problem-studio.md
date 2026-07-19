@@ -1,6 +1,6 @@
 # Problem Studio Domain Note
 
-Last verified: 2026-06-24
+Last verified: 2026-07-19
 
 ## Product Philosophy
 
@@ -19,11 +19,11 @@ Do not describe the current product as "rewriting other textbooks" or "automatic
 ## Current User-Facing Shape
 
 - Route: frontend `/admin/tools/problem-studio`
-- Tool tab label: `문제 제작`
+- Tool tab label: `AI 시험지 타이핑`
 - Main screen is intentionally simple:
-  - upload source
-  - set title/class/subject
-  - save original as Hangul-compatible file
+  - upload source (`원본 업로드`)
+  - run faithful AI transcription (`AI 타이핑`)
+  - explicitly download or open the Hangul review result (`한글 검수`)
 - Secondary functions are collapsed as options:
   - beta rewrite candidates for teacher review
   - text correction and question editor
@@ -43,14 +43,15 @@ Frontend:
 - Current primary action sends:
   - `variant_mode: "copy"`
   - `variant_count: 1`
-  - `use_ai: false`
+  - `use_ai: true`
   - `transfer_only: true`
+  - `ai_transcription: true`
 - Beta rewrite action is intentionally secondary/collapsed and sends:
   - `variant_mode: "same-type" | "trap" | "concept"`
   - `variant_count: 1..10`
   - `use_ai: true`
   - `transfer_only: false`
-- The primary downloaded file is `.doc` HTML compatible with Word/Hangul. The transfer ZIP also includes a text-focused `.hwpx` companion review workbook. Binary native `.hwp` writing is still not promised.
+- The primary result is not auto-downloaded. A completed job exposes an explicit ZIP download button and a Windows Beta Hangul-companion handoff. The ZIP includes `.doc` visual/reference documents and a text-focused editable `.hwpx` review workbook. Binary native `.hwp` writing is still not promised.
 - Answers and explanations are placed in an endnote-like section using Office/Hangul-compatible HTML markers.
 
 Backend:
@@ -59,17 +60,24 @@ Backend:
   - `POST /api/v1/tools/problem-studio/jobs/`
   - `GET /api/v1/tools/problem-studio/jobs/<job_id>/`
   - `POST /api/v1/tools/problem-studio/transfer-document/`
+  - `POST /api/v1/tools/problem-studio/transfer-jobs/`
+  - `GET /api/v1/tools/problem-studio/transfer-jobs/<job_id>/`
+  - `POST /api/v1/tools/problem-studio/transfer-jobs/<job_id>/hangul-handoff/`
+  - `GET /api/v1/tools/problem-studio/hangul-handoffs/<token>/`
 - Views: `backend/apps/domains/tools/problem_studio/views.py`
 - Service: `backend/apps/domains/tools/problem_studio/services.py`
 - Transfer package builder: `backend/apps/domains/tools/problem_studio/transfer_documents.py`
 - Source text extraction SSOT: `backend/apps/domains/tools/problem_studio/extractors.py`
 - Source/question structure analyzer: `backend/apps/domains/tools/problem_studio/structure.py`
 - Worker entry: `backend/apps/domains/tools/problem_studio/worker.py`
-- AI job type: `problem_studio_package`
+- AI job types:
+  - `problem_studio_package`: collapsed Beta rewrite/package path
+  - `problem_studio_transfer`: deterministic source transfer fallback
+  - `problem_studio_transcription`: AI-worker source transcription path
 - Worker payload stores extracted source text and source metadata, so the async worker does not depend on request file lifetime.
 - Transfer-only output uses `generation_engine: "source_transfer"` when extracted text exists.
 - Beta rewrite uses the async job path only. If the AI adapter or quota fails, the service returns a rule-based teacher-review candidate and warning instead of blocking the base transfer feature.
-- Large source-transfer downloads bypass the AI worker and JSON result payload. The transfer-document endpoint returns a ZIP package containing Hangul/Word-compatible `.doc` HTML drafts plus:
+- The primary large source path uploads a tenant-prefixed temporary archive and dispatches `problem_studio_transcription` to the AI CPU worker. The worker uses `PROBLEM_TRANSCRIPTION_MODEL` (default `gpt-5.6-luna`) for up to `PROBLEM_STUDIO_AI_MAX_UNITS` image-only units (default 24, hard bounded to 40). OpenAI failure falls back per unit to local OCR and reports the fallback count. The synchronous transfer endpoint remains a non-AI fallback. Both produce a ZIP containing Hangul/Word-compatible `.doc` HTML drafts plus:
   - `00_먼저열기_검수체크리스트.doc`
   - `00_변환리포트.html`
   - `00_manifest.json`
@@ -94,6 +102,8 @@ Source extraction and structure support:
 - PDF: server attempts text extraction with PyMuPDF and records per-part text-layer results for structure analysis.
 - Transfer package PDF: server renders every source page to embedded page images, split into 60-page `.doc` parts. If the PDF has no text layer, the part is marked as an OCR candidate rather than treated as editable text.
 - Bounded OCR: scanned image/PDF pages without a text layer are attempted through local Tesseract OCR up to `PROBLEM_STUDIO_OCR_MAX_UNITS` per transfer package (default 8). Successful OCR text feeds the same structure analyzer; failed, skipped, or over-limit units remain in `02_OCR_연결후보.csv`.
+- Primary AI transcription: image-only units are sent without a persisted external URL and are instructed to transcribe visible text only, never solve/correct/infer. Page text feeds the same structure analyzer. Formulas, tables, figures, and `[판독불가]` remain mandatory teacher-review points.
+- Privacy contract: before the user starts, source files remain local to the browser. Starting the job uploads a tenant-scoped temporary archive; image-only units within the bounded AI budget are sent to the configured external AI provider. The worker deletes the temporary archive in its terminal cleanup path. The UI discloses this boundary before the CTA.
 - HWPX: server reads `Preview/PrvText.txt` first, then XML content files.
 - DOCX: server reads `word/document.xml`.
 - HWP binary: transfer package extracts BodyText paragraph text and every image-like `BinData` stream into a Hangul/Word-compatible `.doc`; compressed BinData image bytes are inflated and normalized to browser/Office-safe PNG/JPEG data URLs. The editable text and image gallery are preserved, but exact original HWP layout is not yet guaranteed.
@@ -101,14 +111,14 @@ Source extraction and structure support:
 - DOC binary: metadata/warning only.
 - ZIP: transfer package expands supported nested sources (`.pdf`, `.hwp`, `.hwpx`, `.docx`, `.doc`, image files) within safety limits and writes one or more `.doc` drafts per nested file. Beta rewrite also reads supported nested text documents within the same safety posture.
 - Image files: embedded as visual pages in the transfer package, then passed through bounded local OCR. Remaining unreadable/over-limit images are marked as OCR candidates for later text editability.
-- Structure analyzer: extracted PDF/HWP/HWPX/DOCX text is split into teacher-review problem/concept candidates. The result is a review aid, not an authoritative segmentation engine.
+- Structure analyzer: extracted PDF/HWP/HWPX/DOCX/AI-transcribed text is split into teacher-review problem/concept candidates. A workbook is capped at 80 structured items; `structure_limit_reached` and the review action explicitly direct the teacher to continue in the visual source documents when the cap is reached.
 - Fixture verification script: `backend/scripts/problem_studio_transfer_fixtures.py` converts a local source folder into the same transfer ZIP and JSON summary for regression checks.
 - UAT runbook: `backend/docs/operations/runbooks/problem-studio-source-transfer-uat.md`
 
 ## Product Review
 
 - Commercial default: sell this as "source transfer to editable teacher-review drafts", not as fully autonomous problem generation.
-- Value moment: teacher uploads the files they already receive and gets a Hangul/Word-compatible package without retyping. The first visible CTA must stay `원본 한글로 저장`.
+- Value moment: teacher uploads the files they already receive and gets a Hangul/Word-compatible package without retyping. The first visible CTA is `AI 타이핑 시작`; saving remains a separate user click after completion.
 - The downloaded ZIP is itself part of the product. The teacher should open `00_먼저열기_검수체크리스트.doc` first, then use `01_자체양식_문제검수본.doc`, `03_자체양식_문제검수본.hwpx`, `02_OCR_연결후보.csv`, `00_변환리포트.html`, and `00_파일목록.csv` to inspect structure candidates, OCR work queue, warnings, missing files, and source-to-output mapping.
 - Beta positioning: rewrite candidates are optional, visibly marked Beta, and output to a review draft. A teacher should never need to touch beta controls to complete the base workflow.
 - Business risk: OCR now improves editable text for bounded scanned/image-only units, but teacher review is still required for Korean, formulas, tables, and dense diagrams. The product should preserve source images and avoid promising exact native HWP layout.
@@ -116,12 +126,13 @@ Source extraction and structure support:
 
 ## Known Limitations
 
-- OCR in the transfer endpoint is bounded, local, and best-effort. Large scanned PDFs can still leave pages in `02_OCR_연결후보.csv` when they exceed `PROBLEM_STUDIO_OCR_MAX_UNITS`, the engine is unavailable, or OCR returns no text.
+- AI transcription is bounded and best-effort. Large scanned PDFs can still leave pages in `02_OCR_연결후보.csv` after `PROBLEM_STUDIO_AI_MAX_UNITS`, when AI/local OCR is unavailable, or when no text is returned.
 - No binary native `.hwp` writer yet. The current `.doc` is intentionally a compatibility draft, and `03_자체양식_문제검수본.hwpx` is a text-focused companion workbook rather than exact source layout reconstruction.
 - HWP transfer preserves extracted text and embedded images, not exact object ordering or native HWP layout. It is a teacher review draft, not a final typeset workbook.
 - Problem/concept structure is heuristic. The system now produces a `01_자체양식_문제검수본.doc`, but teachers must still verify split boundaries, choices, answers, and explanations.
 - Automatic rewrite is available only as a collapsed Beta workflow. It is not the primary CTA and every result remains a teacher-review draft.
 - Template understanding is shallow. "매치업 기존 양식" and uploaded template names are recorded, but the system does not yet learn precise spacing/style rules from a template file.
+- The Windows companion source lives at `frontend/desktop/hangul-companion`. It consumes a five-minute, one-time opaque handoff, verifies result size/SHA-256, and only inserts into a visible normal-edit-mode HWP document. Otherwise it opens the HWPX as a new document. Commercial distribution still requires Hancom Automation approval/security-module registration and code signing; direct insert can fall back until those are complete.
 - The generated answer/explanation fields are review aids, not authoritative. Teacher verification remains required.
 
 ## Future Direction
@@ -151,6 +162,7 @@ Before changing this feature:
 
 - Re-measure current code first. Do not assume this note is fresher than code.
 - Preserve the current MVP promise: upload source -> editable Hangul-compatible review file.
+- Preserve the source-image/reference documents and the explicit teacher-review warning for math, tables, figures, and unreadable text.
 - Do not move Beta rewrite into the primary CTA without a product/policy decision.
 - Keep advanced controls collapsed unless teachers ask for them in the default workflow.
 - Run at least:
