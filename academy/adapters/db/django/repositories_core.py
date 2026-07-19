@@ -126,13 +126,13 @@ def user_get_by_tenant_username(tenant, display_username: str) -> Optional[Any]:
     return get_user_model().objects.filter(tenant=tenant, username=internal).first()
 
 
-def user_get_by_tenant_login_identifier(tenant, display_username: str) -> Optional[Any]:
-    """Resolve a login identity through an active tenant membership.
+def user_list_by_tenant_login_identifier(tenant, display_username: str) -> list[Any]:
+    """List login identities with an active membership in the requested tenant.
 
     ``User.tenant`` is the default tenant pointer, not an authorization source.
     A user with legitimate memberships in multiple tenants must therefore be
-    discoverable from any authorized tenant while ambiguous identifiers fail
-    closed.
+    discoverable from any authorized tenant. Password validation at the auth
+    boundary disambiguates legacy display-identifier collisions.
     """
     from django.contrib.auth import get_user_model
     from django.db.models import Q
@@ -140,7 +140,7 @@ def user_get_by_tenant_login_identifier(tenant, display_username: str) -> Option
 
     raw = (display_username or "").strip()
     if not tenant or not raw:
-        return None
+        return []
 
     candidates = list(
         get_user_model().objects
@@ -152,8 +152,7 @@ def user_get_by_tenant_login_identifier(tenant, display_username: str) -> Option
         .select_related("tenant")
         .distinct()
     )
-    matches = [user for user in candidates if user_display_username(user) == raw]
-    return matches[0] if len(matches) == 1 else None
+    return [user for user in candidates if user_display_username(user) == raw]
 
 
 def user_get_or_create(username: str, defaults: dict) -> tuple[Any, bool]:

@@ -118,17 +118,19 @@ class TenantAwareTokenObtainPairSerializer(TokenObtainPairSerializer):
                 code="authorization",
             )
 
-        user = core_repo.user_get_by_tenant_login_identifier(tenant, username)
-        # 학부모: ID = 학부모 전화번호. username이 전화번호일 때 Parent로 조회 후 해당 User로 인증
-        # 학생 로그인ID와 학부모 전화번호가 동일할 수 있으므로, 첫 매칭 실패 시 학부모도 시도
+        candidates = core_repo.user_list_by_tenant_login_identifier(tenant, username)
+        # 학부모: ID = 학부모 전화번호. 레거시 Parent 계정에 활성 membership이
+        # 없어도 아래 권한 검사에서 명시적으로 차단되도록 후보에는 포함한다.
         parent = core_repo.parent_get_by_tenant_phone(tenant, username)
+        if parent and parent.user_id and all(candidate.id != parent.user_id for candidate in candidates):
+            candidates.append(parent.user)
+        password_matches = [
+            candidate
+            for candidate in candidates
+            if self._password_matches(candidate, password, consume_pending=False)
+        ]
+        user = password_matches[0] if len(password_matches) == 1 else None
         if not user:
-            if parent and parent.user_id:
-                user = parent.user
-        elif not self._password_matches(user, password, consume_pending=False):
-            if parent and parent.user_id and self._password_matches(parent.user, password, consume_pending=False):
-                user = parent.user
-        if not user or not self._password_matches(user, password, consume_pending=False):
             raise serializers.ValidationError(
                 {"detail": "로그인 아이디 또는 비밀번호가 올바르지 않습니다."},
                 code="authorization",

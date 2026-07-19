@@ -17,9 +17,10 @@ from rest_framework_simplejwt.tokens import AccessToken
 from apps.api.common.auth_jwt import TenantAwareTokenObtainPairSerializer
 from apps.core.authentication import TokenVersionJWTAuthentication
 from apps.core.management.commands.audit_tenant_access import _confirmation_token
-from apps.core.models import Program, Tenant, TenantDomain, TenantMembership
+from apps.core.models import PendingPasswordReset, Program, Tenant, TenantDomain, TenantMembership
 from apps.core.models.user import user_internal_username
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.core.services.password import create_pending_password_reset
 from apps.core.services.tenant_access import reconcile_user_tenant_access
 from apps.core.tenant.context import clear_current_tenant
 from apps.core.views.dev_tenant_ops import DevImpersonateView
@@ -157,6 +158,103 @@ class TenantMembershipAuthorizationRegressionTests(TestCase):
         self.assertEqual(token["tenant_id"], tenant_b.id)
         user.refresh_from_db()
         self.assertEqual(user.tenant_id, tenant_a.id)
+
+    def test_duplicate_login_identifier_is_disambiguated_by_password(self):
+        tenant = _tenant("auth-duplicate-identifier")
+        owner = _user(
+            tenant,
+            "01012345678",
+            password="owner-password",
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=owner, role="owner")
+        parent_user = User.objects.create_user(
+            username=f"p_{tenant.id}_01012345678",
+            password="parent-password",
+            tenant=tenant,
+            is_active=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=parent_user, role="parent")
+        Parent.objects.create(
+            tenant=tenant,
+            user=parent_user,
+            name="Duplicate Identifier Parent",
+            phone="01012345678",
+        )
+
+        owner_login = _login_serializer(
+            tenant=tenant,
+            identifier="01012345678",
+            password="owner-password",
+        )
+        parent_login = _login_serializer(
+            tenant=tenant,
+            identifier="01012345678",
+            password="parent-password",
+        )
+
+        self.assertTrue(owner_login.is_valid(), owner_login.errors)
+        self.assertTrue(parent_login.is_valid(), parent_login.errors)
+        self.assertEqual(
+            AccessToken(owner_login.validated_data["access"])["user_id"],
+            str(owner.id),
+        )
+        self.assertEqual(
+            AccessToken(parent_login.validated_data["access"])["user_id"],
+            str(parent_user.id),
+        )
+
+    def test_duplicate_login_identifier_with_shared_password_fails_closed(self):
+        tenant = _tenant("auth-duplicate-shared-password")
+        first = _user(tenant, "shared-login", password="same-password", is_staff=True)
+        TenantMembership.ensure_active(tenant=tenant, user=first, role="owner")
+        second = User.objects.create_user(
+            username="shared-login",
+            password="same-password",
+            tenant=tenant,
+            is_active=True,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=second, role="admin")
+
+        serializer = _login_serializer(
+            tenant=tenant,
+            identifier="shared-login",
+            password="same-password",
+        )
+
+        self.assertFalse(serializer.is_valid())
+        self.assertEqual(
+            serializer.errors["detail"][0],
+            "로그인 아이디 또는 비밀번호가 올바르지 않습니다.",
+        )
+
+    def test_duplicate_login_identifier_consumes_only_matching_pending_reset(self):
+        tenant = _tenant("auth-duplicate-pending-reset")
+        first = _user(tenant, "pending-login", password="first-password", is_staff=True)
+        TenantMembership.ensure_active(tenant=tenant, user=first, role="owner")
+        second = User.objects.create_user(
+            username="pending-login",
+            password="second-password",
+            tenant=tenant,
+            is_active=True,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=tenant, user=second, role="admin")
+        create_pending_password_reset(second, "5678")
+
+        serializer = _login_serializer(
+            tenant=tenant,
+            identifier="pending-login",
+            password="5678",
+        )
+
+        self.assertTrue(serializer.is_valid(), serializer.errors)
+        second.refresh_from_db()
+        self.assertTrue(second.check_password("5678"))
+        self.assertTrue(second.must_change_password)
+        self.assertFalse(PendingPasswordReset.objects.filter(user=second).exists())
+        self.assertTrue(first.check_password("first-password"))
 
     def test_primary_tenant_pointer_without_membership_cannot_login_or_authorize(self):
         tenant = _tenant("auth-no-membership")
