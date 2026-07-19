@@ -51,8 +51,10 @@ if ($Ci) {
     Write-Host "Using AWS_PROFILE: $($env:AWS_PROFILE) (region: $($env:AWS_DEFAULT_REGION))" -ForegroundColor Cyan
 }
 
-$script:PlanMode = $Plan
-$script:AllowRebuild = -not $Plan -and (-not $ForceRecreateAll -or $true)
+# -DryRun is a read-only preview mode, not merely a label.  Reuse the same
+# guard that every resource/AWS wrapper already enforces for -Plan.
+$script:PlanMode = $Plan -or $DryRun
+$script:AllowRebuild = -not $script:PlanMode -and (-not $ForceRecreateAll -or $true)
 $script:ChangesMade = $false
 $script:DeployLockAcquired = $false
 $script:SqsScalingNotEnforced = $false
@@ -110,18 +112,20 @@ if ($Plan) { Write-Host "MODE: Plan (no AWS changes)" -ForegroundColor Yellow }
 if ($Bootstrap) { Write-Host "MODE: Bootstrap ON (one-take)" -ForegroundColor Cyan }
 if ($StrictValidation) { Write-Host "MODE: StrictValidation ON" -ForegroundColor Cyan }
 if ($RelaxedValidation) { Write-Host "MODE: RelaxedValidation (SQS scaling failure non-fatal)" -ForegroundColor Yellow }
-if ($PruneLegacy -and -not $Plan) { Write-Host "MODE: PruneLegacy" -ForegroundColor Yellow }
+if ($PruneLegacy -and -not $script:PlanMode) { Write-Host "MODE: PruneLegacy" -ForegroundColor Yellow }
 if ($PurgeAndRecreate) { Write-Host "MODE: PurgeAndRecreate" -ForegroundColor Yellow }
 if ($MinimalDeploy) { Write-Host "MODE: MinimalDeploy (Video Long, Ops, EventBridge skipped)" -ForegroundColor Cyan }
 if ($DryRun) { Write-Host "MODE: DryRun (no changes)" -ForegroundColor Yellow }
 
 try {
     Assert-NoLegacyScripts -Ci:$Ci
-    # The lock table is the only production mutation allowed before acquiring
-    # the lock itself. Its create is conditional/idempotent and is required to
-    # make a fresh bootstrap reachable; all other mutations stay behind it.
-    Ensure-DynamoLockTable
-    Acquire-DeployLock -Reg $script:Region
+    if (-not $script:PlanMode) {
+        # The lock table is the only production mutation allowed before acquiring
+        # the lock itself. Its create is conditional/idempotent and is required to
+        # make a fresh bootstrap reachable; all other mutations stay behind it.
+        Ensure-DynamoLockTable
+        Acquire-DeployLock -Reg $script:Region
+    }
     Invoke-PreflightCheck
     $driftRows = Get-StructuralDrift
     Show-DriftTable -Rows $driftRows
@@ -148,21 +152,21 @@ try {
         $all = Get-AllAwsResourcesForPrune
         $candidates = Get-DeleteCandidates -All $all
         $count = Show-DeleteCandidateTable -Candidates $candidates
-        if (-not $Plan -and $count -gt 0) {
+        if (-not $script:PlanMode -and $count -gt 0) {
             Write-Host "PruneLegacy: running deletes..." -ForegroundColor Yellow
             Invoke-PruneLegacyDeletes -Candidates $candidates
         }
-        if ($Plan) {
+        if ($script:PlanMode) {
             Write-Host "`n=== PLAN COMPLETE (no changes) ===`n" -ForegroundColor Green
             exit 0
         }
     }
 
-    if ($PurgeAndRecreate -and -not $Plan) {
+    if ($PurgeAndRecreate -and -not $script:PlanMode) {
         Invoke-PurgeAndRecreate -IncludePruneLegacy:$false
     }
 
-    if ($Plan) {
+    if ($script:PlanMode) {
         $ev = Show-Evidence -NetprobeJobId "" -NetprobeStatus "skipped"
         if ($ev) { Save-EvidenceReport -MarkdownContent (Convert-EvidenceToMarkdown -Ev $ev) }
         Write-Host "`n=== PLAN COMPLETE ===`n" -ForegroundColor Green
@@ -177,13 +181,13 @@ try {
     Confirm-SubnetsMatchSSOT
 
     # Bootstrap (원테이크): Ensure-Network 이후 실행하여 빌드 서버 Ensure 시 서브넷 사용 가능.
-    if ($Bootstrap -and -not $Plan) {
+    if ($Bootstrap -and -not $script:PlanMode) {
         Invoke-Bootstrap -Bootstrap:$true -SkipSqs:$SkipSqs -SkipRds:$SkipRds -SkipRedis:$SkipRedis -SkipBuild:$SkipBuild
     }
     if ($script:EcrRepoUriResolved) { $script:EcrRepoUri = $script:EcrRepoUriResolved }
 
     # Strict Gate (Bootstrap 이후 평가)
-    $strictCheck = -not $Plan -and $StrictValidation -and -not $script:RelaxedValidation
+    $strictCheck = -not $script:PlanMode -and $StrictValidation -and -not $script:RelaxedValidation
     switch ($true) {
         { $strictCheck -and $script:EcrImmutableTagRequired -and (-not $script:EcrRepoUri -or $script:EcrRepoUri.Trim() -eq "") } {
             Write-Fail "Strict: EcrRepoUri not set. Bootstrap could not resolve image. Pass -EcrRepoUri or ensure build/ECR available."
@@ -290,7 +294,7 @@ try {
     if ($ev) { Save-EvidenceReport -MarkdownContent (Convert-EvidenceToMarkdown -Ev $ev) }
 
     # After-deploy verification (MinimalDeploy: ALB targets, Workers, Batch CE/Queue)
-    if (-not $Plan) {
+    if (-not $script:PlanMode) {
         $verifyOk = $true
         if ($netStatus -eq "failed") { $verifyOk = $false }
         $R = $script:Region

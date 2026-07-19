@@ -78,7 +78,7 @@ git push main
 | Python package import roots: `apps/__init__.py`, `apps/{api,domains,worker}/__init__.py`, `apps/api/config[/settings]/__init__.py` | ALL images (force_full) |
 | Django startup import: `apps/domains/*/{models.py,models/,apps.py,signals.py,signals/,__init__.py}` | ALL images (force_full) |
 | `apps/`, `scripts/`, `docker/api/`, `requirements/api.txt` | API |
-| `apps/worker/video_worker/`, `apps/support/video/`, `apps/domains/video/`, `apps/api/config/settings/worker.py`, `docker/video-worker/`, `requirements/worker-video.txt` | Video Worker |
+| `apps/worker/video_worker/`, `apps/support/video/`, `apps/domains/video/`, `apps/api/config/settings/worker.py`, `docker/video-worker/`, `requirements/{api,worker-video}.txt` | Video Worker |
 | `apps/worker/messaging_worker/`, `apps/support/messaging/`, `apps/domains/messaging/`, `apps/api/config/settings/worker.py`, `docker/messaging-worker/`, `requirements/worker-messaging.txt` | Messaging Worker |
 | `apps/worker/ai_worker/`, `apps/worker/omr/`, `apps/domains/`, `apps/support/ai/`, `apps/api/config/settings/(worker|base).py`, `models/`, `scripts/`, `academy/`, `libs/queue/`, `docker/ai-worker*`, `requirements/worker-ai*` | AI Worker |
 | `apps/worker/tools_worker/`, `apps/domains/tools/`, `apps/domains/ai/queueing/`, `apps/support/ai/services/sqs_queue.py`, `academy/(application/use_cases/tools|domain/tools|adapters/tools|framework/workers|adapters/queue/sqs)/`, `docker/tools-worker/`, `requirements/worker-tools.txt` | Tools Worker |
@@ -92,7 +92,7 @@ Each image is tagged with:
 - `:latest` — compatibility alias only; never deployment evidence
 - `:sha-XXXXXXXX` — immutable source identity, first 8 chars of git commit SHA
 
-Service builds resolve `academy-base` to a digest before `FROM`. Migration, API/Messaging/AI/Tools runtime, and all Video Batch job definitions resolve the run-unique SHA tag to `repo@sha256:...`. `deploy-api-and-verify-workers.ps1` verifies the last complete successful release manifest, waits for terminal refresh success, then compares its digests with Launch Template userdata, actual InService containers, and every active Video Batch job definition.
+Service builds resolve `academy-base` to a digest before `FROM`. Migration, API/Messaging/AI/Tools runtime, and all Video Batch job definitions resolve the run-unique SHA tag to `repo@sha256:...`. The deploy gate runs Django system checks and rejects migration-model drift before acquiring the production mutation lock. The Video image installs `requirements/worker-video.txt` and its API/common include chain rather than the legacy shared manifest. `deploy-api-and-verify-workers.ps1` verifies the last complete successful release manifest, waits for terminal refresh success, then compares its digests with Launch Template userdata, actual InService containers, and every active Video Batch job definition.
 
 ## 4. Selective Deploy Logic
 
@@ -226,6 +226,8 @@ With `-Sha` omitted, ASG rollback derives the current digest from the Launch Tem
 ### Successful release manifest
 
 `docs/reports/ci-build.latest.md` is build evidence only. The build job also produces a six-image candidate from exact run-unique SHA digests plus unchanged digests from the preceding successful release. Only after ASG health, actual container digest, all Video Batch job definitions, and compute environment gates pass does CI promote `docs/reports/release-manifest.latest.json` with `complete=true` and `status=successful`. Manual `deploy.ps1` resolves images exclusively from that manifest, so a partially pushed failed build cannot be mixed into a later manual release.
+
+The hourly dev-alert workflow follows the same boundary: it rejects non-`main` dispatch refs before obtaining AWS credentials, checks out `refs/heads/main` without persisted Git credentials, reads its complete/successful manifest, runs the exact `academy-api` digest, and mounts the instance's `/opt/api.env` runtime SSOT. It fails closed when either input is missing and never derives env from `docker inspect` or executes the mutable `latest` alias. The deploy role's OIDC trust is independently converged and read back with the exact `repo:guswls3028-art/academy-backend:ref:refs/heads/main` subject; workflow code from another branch therefore cannot obtain the production role even if it removes its local guard.
 
 All production mutation entrypoints share one atomic DynamoDB lock in the SSOT table `academy-v1-video-job-lock`: CI build/deploy, weekly ECR/Batch cleanup, manual deploy, and rollback. The fixed `__deployment_control__` item is acquired conditionally, renewed only by its current unexpired owner, and released only by that owner. ECR cleanup additionally protects every digest in the last complete/successful six-image manifest (including `academy-base`) and fails nonzero on incomplete Video job-definition inventory, partial deletions, or verification warnings.
 

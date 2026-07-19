@@ -14,7 +14,7 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-from django.db import close_old_connections
+from django.db import close_old_connections, transaction
 
 from apps.support.ai.callback_dependencies import (
     get_auto_segmentation_snapshot_model,
@@ -22,6 +22,7 @@ from apps.support.ai.callback_dependencies import (
     get_matchup_document_models,
     get_matchup_page_state_model,
     get_matchup_problem_model,
+    get_matchup_proposal_model,
     get_post_entity_model,
     get_submission_ai_result_applier,
     handle_matchup_proposal_path,
@@ -985,12 +986,13 @@ def _handle_matchup_manual_result(
     error: Optional[str],
     source_id: Optional[str],
 ) -> None:
-    """수동 크롭 problem OCR/임베딩 결과 반영.
+    """수동 크롭 OCR/임베딩 결과를 승인 대기 proposal로 보관한다.
 
-    source_id = problem_id. 단일 problem 레코드의 text/embedding/format을 채운다.
+    source_id = problem_id. AI callback은 manual=true 원본을 수정하지 않는다.
     """
     from apps.domains.ai.models import AIJobModel
     MatchupProblem = get_matchup_problem_model()
+    ProblemSegmentationProposal = get_matchup_proposal_model()
 
     if status == "FAILED":
         logger.warning(
@@ -999,11 +1001,25 @@ def _handle_matchup_manual_result(
         )
         return
 
-    ai_job = AIJobModel.objects.filter(job_id=job_id).only("tenant_id", "source_id").first()
-    if not ai_job or not ai_job.tenant_id or not ai_job.source_id:
+    ai_job = (
+        AIJobModel.objects
+        .filter(job_id=job_id)
+        .only("tenant_id", "source_domain", "source_id", "job_type")
+        .first()
+    )
+    if (
+        not ai_job
+        or not ai_job.tenant_id
+        or not ai_job.source_id
+        or ai_job.source_domain != "matchup_manual"
+        or ai_job.job_type != "matchup_manual_index"
+    ):
         logger.warning(
-            "AI_CALLBACK_MATCHUP_MANUAL_NO_JOB_SCOPE | job_id=%s | source_id=%s",
-            job_id, source_id,
+            "AI_CALLBACK_MATCHUP_MANUAL_BAD_JOB_SCOPE | job_id=%s | callback_source_id=%s | job_type=%s | source_domain=%s",
+            job_id,
+            source_id,
+            getattr(ai_job, "job_type", None),
+            getattr(ai_job, "source_domain", None),
         )
         return
 
@@ -1022,10 +1038,12 @@ def _handle_matchup_manual_result(
         )
         return
 
-    text = (result_payload.get("text") or "").strip()
+    text = str(result_payload.get("text") or "").strip()
     embedding = result_payload.get("embedding")
     image_embedding = result_payload.get("image_embedding")
-    fmt = result_payload.get("format") or "choice"
+    fmt = str(result_payload.get("format") or "choice").strip()
+    if fmt not in {"choice", "essay"}:
+        fmt = "choice"
 
     try:
         scoped_problem_id = int(problem_id)
@@ -1046,30 +1064,85 @@ def _handle_matchup_manual_result(
         )
         return
 
-    update_fields = []
-    if text and not (problem.text or "").strip():
-        problem.text = text
-        update_fields.append("text")
-    if embedding is not None:
-        problem.embedding = embedding
-        update_fields.append("embedding")
-    if image_embedding is not None:
-        problem.image_embedding = image_embedding
-        update_fields.append("image_embedding")
-
     meta = dict(problem.meta or {})
-    if "format" not in meta or meta.get("format") in (None, "", "choice"):
-        meta["format"] = fmt
-        problem.meta = meta
-        update_fields.append("meta")
+    if meta.get("manual") is not True or not problem.document_id:
+        logger.warning(
+            "AI_CALLBACK_MATCHUP_MANUAL_NOT_ELIGIBLE | job_id=%s | problem_id=%s | manual=%s | document_id=%s",
+            job_id,
+            problem_id,
+            meta.get("manual"),
+            problem.document_id,
+        )
+        return
 
-    if update_fields:
-        update_fields.append("updated_at")
-        problem.save(update_fields=update_fields)
+    try:
+        page_number = max(0, int(meta.get("page_index") or 0))
+    except (TypeError, ValueError):
+        page_number = 0
+    try:
+        confidence = min(1.0, max(0.0, float(result_payload.get("confidence") or 0.0)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+
+    proposal_payload = {
+        "problem_id": problem.id,
+        "text": text,
+        "embedding": embedding,
+        "image_embedding": image_embedding,
+        "format": fmt,
+    }
+    analysis_version_key = f"manual-index:{job_id}"[:128]
+    bbox = meta.get("bbox_norm") or meta.get("bbox") or {}
+
+    with transaction.atomic():
+        proposal, created = ProblemSegmentationProposal.objects.get_or_create(
+            tenant_id=scoped_tenant_id,
+            target_problem_id=problem.id,
+            analysis_version_key=analysis_version_key,
+            proposal_kind="manual_index",
+            defaults={
+                "document_id": problem.document_id,
+                "page_number": page_number,
+                "bbox": bbox,
+                "detected_problem_number": problem.number,
+                "engine": "manual_assist",
+                "model_version": str(result_payload.get("model_version") or "manual-index"),
+                "confidence": confidence,
+                "status": "needs_review",
+                "image_key": problem.image_key or "",
+                "raw_response": proposal_payload,
+            },
+        )
+        if not created:
+            proposal = ProblemSegmentationProposal.objects.select_for_update().get(
+                tenant_id=scoped_tenant_id,
+                target_problem_id=problem.id,
+                analysis_version_key=analysis_version_key,
+                proposal_kind="manual_index",
+            )
+            if proposal.status in {"pending", "needs_review"}:
+                proposal.raw_response = proposal_payload
+                proposal.bbox = bbox
+                proposal.image_key = problem.image_key or ""
+                proposal.model_version = str(result_payload.get("model_version") or proposal.model_version)
+                proposal.confidence = confidence
+                proposal.save(update_fields=[
+                    "raw_response",
+                    "bbox",
+                    "image_key",
+                    "model_version",
+                    "confidence",
+                    "updated_at",
+                ])
+                proposal_action = "updated"
+            else:
+                proposal_action = f"ignored:{proposal.status}"
+        else:
+            proposal_action = "created"
 
     logger.info(
-        "AI_CALLBACK_MATCHUP_MANUAL_SUCCESS | job_id=%s | problem_id=%s | text_len=%d | has_embedding=%s",
-        job_id, problem_id, len(text), embedding is not None,
+        "AI_CALLBACK_MATCHUP_MANUAL_PROPOSAL | job_id=%s | problem_id=%s | proposal_id=%s | action=%s | text_len=%d | has_embedding=%s",
+        job_id, problem_id, proposal.id, proposal_action, len(text), embedding is not None,
     )
 
 

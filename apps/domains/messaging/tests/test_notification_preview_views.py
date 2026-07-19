@@ -28,6 +28,8 @@ from apps.domains.messaging.views_notification import (
 from apps.worker.messaging_worker.sqs_main import _allowed_common_template_ids
 User = get_user_model()
 Student = apps.get_model("students", "Student")
+Lecture = apps.get_model("lectures", "Lecture")
+Enrollment = apps.get_model("enrollment", "Enrollment")
 
 
 class NotificationPreviewViewValidationTests(TestCase):
@@ -280,6 +282,20 @@ class NotificationPreviewViewValidationTests(TestCase):
             parent_phone="01055556666",
             omr_code="10101010",
         )
+        active_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="수학 심화",
+            name="수학 심화",
+            subject="MATH",
+            color="#2563eb",
+            chip_label="수심",
+        )
+        Enrollment.objects.create(
+            tenant=self.tenant,
+            student=active_student,
+            lecture=active_lecture,
+            status="ACTIVE",
+        )
         deleted_user = User.objects.create_user(
             username=user_internal_username(self.tenant, "S011"),
             password="test1234",
@@ -353,6 +369,11 @@ class NotificationPreviewViewValidationTests(TestCase):
         recipient = response.data["recipients"][0]
         self.assertEqual(recipient["student_id"], active_student.id)
         self.assertEqual(recipient["phone"], "010****6666")
+        self.assertEqual(recipient["lectures"], [{
+            "lecture_title": "수학 심화",
+            "lecture_color": "#2563eb",
+            "lecture_chip_label": "수심",
+        }])
         self.assertNotIn("phone_raw", recipient)
         self.assertNotIn("alimtalk_replacements", recipient)
 

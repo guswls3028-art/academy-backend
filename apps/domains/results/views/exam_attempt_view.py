@@ -10,8 +10,11 @@ ExamAttemptViewSet
 - 학생 본인 attempt만 조회하는 별도 View를 /me/* 로 따로 만들 것
 """
 
-from rest_framework.viewsets import ModelViewSet
+from django.apps import apps as django_apps
+from django.db.models import Exists, F, OuterRef, Q
+from rest_framework.mixins import CreateModelMixin
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.viewsets import ReadOnlyModelViewSet
 
 from apps.domains.results.models import ExamAttempt
 from apps.domains.results.serializers.exam_attempt import ExamAttemptSerializer
@@ -19,7 +22,7 @@ from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.support.results.admin_exam_dependencies import regular_active_exam_ids_for_tenant
 
 
-class ExamAttemptViewSet(ModelViewSet):
+class ExamAttemptViewSet(CreateModelMixin, ReadOnlyModelViewSet):
     """
     시험 시도(Attempt) 관리 API (관리자/교사용)
     """
@@ -33,8 +36,35 @@ class ExamAttemptViewSet(ModelViewSet):
         # exam_id는 PositiveIntegerField(FK 아님)이므로 서브쿼리 사용
         tenant = self.request.tenant
         tenant_exam_ids = regular_active_exam_ids_for_tenant(tenant=tenant)
+        Submission = django_apps.get_model("submissions", "Submission")
+        valid_submission = Submission.objects.filter(
+            id=OuterRef("submission_id"),
+            tenant=tenant,
+            target_type="exam",
+            target_id=OuterRef("exam_id"),
+            enrollment_id=OuterRef("enrollment_id"),
+        )
         return (
             ExamAttempt.objects
-            .filter(exam_id__in=tenant_exam_ids)
+            .filter(
+                exam_id__in=tenant_exam_ids,
+                exam__tenant=tenant,
+                enrollment__tenant=tenant,
+            )
+            .filter(
+                Q(clinic_link__isnull=True)
+                | Q(
+                    clinic_link__tenant=tenant,
+                    clinic_link__enrollment_id=F("enrollment_id"),
+                    clinic_link__session__exams=F("exam_id"),
+                )
+            )
+            .annotate(_has_valid_submission=Exists(valid_submission))
+            .filter(
+                Q(submission_id__isnull=True)
+                | Q(submission_id=0)
+                | Q(_has_valid_submission=True)
+            )
+            .select_related("exam", "enrollment", "clinic_link")
             .order_by("-created_at")
         )

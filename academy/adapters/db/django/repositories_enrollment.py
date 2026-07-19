@@ -314,6 +314,39 @@ def enrollment_student_map_by_ids(enrollment_ids, tenant=None):
     }
 
 
+def active_lecture_badges_by_student_ids(tenant, student_ids):
+    """Return tenant-scoped active lecture display metadata grouped by student."""
+    from apps.domains.enrollment.models import Enrollment
+
+    if not student_ids:
+        return {}
+    rows = (
+        Enrollment.objects.filter(
+            tenant=tenant,
+            student_id__in=student_ids,
+            student__deleted_at__isnull=True,
+            status="ACTIVE",
+            lecture__tenant=tenant,
+        )
+        .select_related("lecture")
+        .order_by("student_id", "lecture__title", "lecture_id")
+    )
+    grouped = {}
+    seen = set()
+    for enrollment in rows:
+        key = (enrollment.student_id, enrollment.lecture_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        lecture = enrollment.lecture
+        grouped.setdefault(enrollment.student_id, []).append({
+            "lecture_title": lecture.title or lecture.name or "",
+            "lecture_color": lecture.color or None,
+            "lecture_chip_label": lecture.chip_label or None,
+        })
+    return grouped
+
+
 def get_attendances_for_lecture(tenant, lecture, enrollments):
     from apps.domains.attendance.models import Attendance
     return Attendance.objects.filter(

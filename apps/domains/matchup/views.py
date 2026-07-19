@@ -1032,7 +1032,7 @@ class DocumentManualCropView(View):
     }
 
     동기 응답: 생성/갱신된 problem (image_url 포함).
-    embedding은 워커가 비동기로 채움.
+    AI embedding은 승인 대기 proposal로 생성되며 승인 후 반영됨.
     """
 
     def post(self, request, doc_id):
@@ -1297,7 +1297,7 @@ class DocumentPasteProblemView(View):
       - number: int (1..999) 같은 번호면 덮어쓰기
 
     동기 응답: 생성/갱신된 problem (image_url 포함).
-    embedding은 워커가 비동기로 채움 (matchup_manual_index).
+    AI embedding은 matchup_manual_index proposal 승인 후 반영됨.
     """
 
     def post(self, request, doc_id):

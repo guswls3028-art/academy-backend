@@ -513,6 +513,36 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
         self.assertEqual(self.invoice.status, "PENDING")
         self.assertEqual(self.invoice.student_id, self.student.id)
 
+    def test_invoice_list_exposes_invoice_specific_lecture_chip_metadata(self):
+        lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="결제 수학",
+            name="결제 수학",
+            subject="MATH",
+            color="#7c3aed",
+            chip_label="결수",
+        )
+        fee_template = FeeTemplate.objects.create(
+            tenant=self.tenant,
+            name="결제 수학 수강료",
+            fee_type=FeeTemplate.FeeType.TUITION,
+            amount=100_000,
+            lecture=lecture,
+        )
+        self.invoice.items.update(fee_template=fee_template)
+
+        response = self.client.get("/api/v1/fees/invoices/", **self.headers)
+
+        self.assertEqual(response.status_code, 200, response.content)
+        rows = response.data.get("results", response.data)
+        invoice_row = next(row for row in rows if row["id"] == self.invoice.id)
+        self.assertEqual(invoice_row["lectures"], [{
+            "id": lecture.id,
+            "title": "결제 수학",
+            "color": "#7c3aed",
+            "chip_label": "결수",
+        }])
+
     def test_teacher_role_cannot_access_fee_management_api(self):
         teacher = User.objects.create_user(
             username="fee_api_teacher",

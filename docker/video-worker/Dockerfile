@@ -26,9 +26,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN mkdir -p /tmp/video-worker /tmp/video-worker-locks && chown -R appuser:appuser /tmp/video-worker /tmp/video-worker-locks
 
 USER appuser
-# Shared requirements (API + Worker same file)
-COPY requirements/constraints.txt requirements/requirements.txt ./requirements/
-RUN pip install --user --no-cache-dir -r requirements/requirements.txt
+# Video Worker dependency manifest. worker-video.txt includes api.txt ->
+# common.txt, so copy the complete include chain and install the worker SSOT.
+COPY requirements/constraints.txt requirements/common.txt requirements/api.txt requirements/worker-video.txt ./requirements/
+RUN pip install --user --no-cache-dir -r requirements/worker-video.txt
 # 헬스체크
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD kill -0 1 2>/dev/null || exit 1

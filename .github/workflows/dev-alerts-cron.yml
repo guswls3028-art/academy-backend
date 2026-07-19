@@ -5,8 +5,8 @@
 # Slack 전송: settings.DEV_ALERTS_WEBHOOK_URL (env). 미설정 시 평가만 수행.
 # 모든 호출은 OpsAuditLog `cron.check_dev_alerts` 로 기록.
 #
-# 패턴: API 인스턴스 SSM Run Command로 신선한 latest 컨테이너에서 실행
-#       (env는 /opt/api.env, V1.1.0 migration step과 동일 패턴).
+# 패턴: API 인스턴스 SSM Run Command로 마지막 검증 성공 manifest의
+#       academy-api digest를 실행 (env는 production runtime SSOT /opt/api.env).
 # ==============================================================================
 
 name: Dev Alerts Cron
@@ -34,6 +34,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
+      - name: Require production main ref
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Dev alerts can only run from refs/heads/main"
+            exit 1
+          fi
+
+      - name: Checkout successful release manifest
+        uses: actions/checkout@v6
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -72,13 +85,26 @@ jobs:
             EXTRA_ARGS="--dry-run"
           fi
 
-          # 신선한 latest 이미지에서 신규 명령(check_dev_alerts) 실행 보장.
-          # /opt/api.env (DEV_ALERTS_WEBHOOK_URL 포함) 마운트.
+          # 검증에 실패한 latest alias는 실행하지 않는다. 저장소의 마지막
+          # complete/successful release manifest가 가리키는 digest만 허용한다.
+          MANIFEST="docs/reports/release-manifest.latest.json"
+          if [ ! -f "$MANIFEST" ] || ! jq -e '.complete == true and .status == "successful"' "$MANIFEST" >/dev/null; then
+            echo "::error::Complete successful release manifest is required"
+            exit 1
+          fi
+          API_DIGEST=$(jq -r '.images["academy-api"].digest // empty' "$MANIFEST")
+          if [[ ! "$API_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Successful release manifest has no valid academy-api digest"
+            exit 1
+          fi
+
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --region ${{ env.AWS_REGION }})
           ECR_HOST="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
-          ECR_IMAGE="${ECR_HOST}/academy-api:latest"
+          ECR_IMAGE="${ECR_HOST}/academy-api@${API_DIGEST}"
 
-          CMD="set -e; aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_HOST} >/dev/null 2>&1; docker pull ${ECR_IMAGE} >/dev/null 2>&1; ENV_FILE=\$(mktemp); docker inspect academy-api --format '{{range .Config.Env}}{{println .}}{{end}}' > \$ENV_FILE; docker run --rm --env-file \$ENV_FILE --network container:academy-api ${ECR_IMAGE} python manage.py check_dev_alerts --silent ${EXTRA_ARGS} 2>&1; EXIT=\$?; rm -f \$ENV_FILE; exit \$EXIT"
+          # /opt/api.env is the production runtime SSOT and includes
+          # DEV_ALERTS_WEBHOOK_URL. Missing/empty env must fail closed.
+          CMD="set -eu; test -s /opt/api.env; aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_HOST} >/dev/null 2>&1; docker pull ${ECR_IMAGE} >/dev/null 2>&1; docker run --rm --env-file /opt/api.env --network container:academy-api ${ECR_IMAGE} python manage.py check_dev_alerts --silent ${EXTRA_ARGS} 2>&1"
 
           SSM_PARAMS=$(jq -n --arg cmd "$CMD" '{commands: [$cmd]}')
 

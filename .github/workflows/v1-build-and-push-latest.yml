@@ -170,6 +170,8 @@ jobs:
           changed_matches "^apps/api/config/settings/worker\.py$" && VIDEO=true
           changed_matches "^docker/video-worker/" && VIDEO=true
           changed_matches "^requirements/worker-video\.txt$" && VIDEO=true
+          # worker-video.txt includes api.txt; either file changes the image.
+          changed_matches "^requirements/api\.txt$" && VIDEO=true
           echo "build_video=$VIDEO" >> $GITHUB_OUTPUT
 
           # Messaging worker
@@ -301,6 +303,13 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements/requirements.txt
           pip install pytest pytest-django
+
+      - name: Run Django system and migration drift checks
+        env:
+          DJANGO_SETTINGS_MODULE: apps.api.config.settings.test
+        run: |
+          python manage.py check --settings apps.api.config.settings.test
+          python manage.py makemigrations --check --dry-run --settings apps.api.config.settings.test
 
       - name: Run smoke tests
         env:

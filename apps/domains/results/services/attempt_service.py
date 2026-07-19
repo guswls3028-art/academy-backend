@@ -10,7 +10,14 @@ from django.db.models import Max
 from django.utils import timezone
 
 from apps.domains.results.models import ExamAttempt
-from apps.support.results.attempt_dependencies import exam_for_attempt_policy
+from apps.domains.results.services.submission_scope_guard import (
+    validate_exam_submission_scope,
+)
+from apps.support.results.attempt_dependencies import (
+    clinic_link_for_attempt,
+    exam_for_attempt_policy,
+    submission_for_attempt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +45,50 @@ class ExamAttemptService:
         exam_id: int,
         enrollment_id: int,
         submission_id: int,
+        clinic_link_id: int | None = None,
     ) -> ExamAttempt:
 
         # -------------------------------------------------
-        # 1️⃣ Exam 정책 로딩
+        # 1️⃣ Exam/Submission/Enrollment scope 검증
         # -------------------------------------------------
         exam = exam_for_attempt_policy(exam_id=int(exam_id))
-        allow_retake = bool(getattr(exam, "allow_retake", False)) if exam else False
-        max_attempts = int(getattr(exam, "max_attempts", 1) or 1) if exam else 1
+        if (
+            exam is None
+            or str(getattr(exam, "exam_type", "")) != "regular"
+            or not bool(getattr(exam, "is_active", False))
+        ):
+            raise ValidationError("Active regular exam is required.")
+
+        if int(submission_id) <= 0:
+            raise ValidationError("A positive submission_id is required.")
+        submission = submission_for_attempt(submission_id=int(submission_id))
+        if submission is None:
+            raise ValidationError("Submission not found.")
+        enrollment = validate_exam_submission_scope(submission=submission, exam=exam)
+        if int(enrollment.id) != int(enrollment_id):
+            raise ValidationError("Submission enrollment does not match attempt enrollment.")
+        if not exam.sessions.filter(
+            lecture_id=enrollment.lecture_id,
+            lecture__tenant_id=exam.tenant_id,
+        ).exists():
+            raise ValidationError("Enrollment lecture is not linked to the exam.")
+
+        clinic_link = None
+        if clinic_link_id is not None:
+            clinic_link = clinic_link_for_attempt(clinic_link_id=int(clinic_link_id))
+            if (
+                clinic_link is None
+                or int(clinic_link.tenant_id) != int(exam.tenant_id)
+                or int(clinic_link.enrollment_id) != int(enrollment.id)
+                or clinic_link.resolved_at is not None
+                or str(clinic_link.source_type) != "exam"
+                or int(clinic_link.source_id or 0) != int(exam.id)
+                or not exam.sessions.filter(id=clinic_link.session_id).exists()
+            ):
+                raise ValidationError("Clinic link does not match the attempt scope.")
+
+        allow_retake = bool(getattr(exam, "allow_retake", False))
+        max_attempts = int(getattr(exam, "max_attempts", 1) or 1)
 
         # -------------------------------------------------
         # 2️⃣ open_at / close_at 정책 강제
@@ -97,6 +140,7 @@ class ExamAttemptService:
                 exam_id=exam_id,
                 enrollment_id=enrollment_id,
                 submission_id=submission_id,
+                clinic_link=clinic_link,
                 attempt_index=next_index,
                 is_retake=(last > 0),
                 is_representative=True,

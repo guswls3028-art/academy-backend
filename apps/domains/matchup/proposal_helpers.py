@@ -3,7 +3,8 @@
 manual cut overlap validator + proposal 생성 helper.
 
 원칙 (사용자 directive):
-- manual=true MatchupProblem row는 어떤 호출자도 변경 X (이 모듈은 SELECT만).
+- 자동 분리 경로는 manual=true MatchupProblem row를 변경하지 않는다.
+- manual_index 경로만 명시적 staff 승인 후 지정된 manual=true 문항을 갱신한다.
 - manual=true bbox와 IoU > 0.3 인 proposal 은 status='rejected' + validation_errors
   에 manual_overlap reason 기록.
 - selected_problem_ids / 기존 보고서 / comment 절대 미접근.
@@ -324,7 +325,8 @@ def create_proposal(
 # - select_for_update 로 동시 승인 race 차단.
 # - transaction.atomic — 승격 실패 시 proposal status 변경도 롤백.
 # - selected_problem_ids / 기존 보고서 / comment 절대 미접근.
-# - manual=true MatchupProblem row 는 SELECT 도 안 함 (직접 변경 X — 보존만).
+# - segmentation은 manual=true MatchupProblem을 변경하지 않는다.
+# - manual_index만 target_problem을 잠그고 승인된 필드만 갱신한다.
 
 _APPROVABLE_STATUSES = frozenset({"pending", "needs_review", "auto_passed"})
 _PROMOTED_META_KEY_FROM_PROPOSAL = "approved_from_proposal_id"
@@ -332,6 +334,109 @@ _PROMOTED_META_KEY_FROM_PROPOSAL = "approved_from_proposal_id"
 
 class ProposalApprovalError(Exception):
     """approve_proposal / reject_proposal 검증 실패."""
+
+
+def _approve_manual_index_proposal(proposal, user):
+    """승인된 AI 인덱싱 결과만 기존 manual 문항에 적용한다."""
+    import math
+
+    from django.utils import timezone
+    from apps.domains.matchup.models import MatchupProblem
+
+    def validated_vector(name: str):
+        value = payload.get(name)
+        if value is None:
+            return None
+        if not isinstance(value, list) or not value or len(value) > 4096:
+            raise ProposalApprovalError(
+                f"manual_index {name} must be a non-empty numeric vector (id={proposal.id})"
+            )
+        if any(
+            isinstance(item, bool)
+            or not isinstance(item, (int, float))
+            or not math.isfinite(float(item))
+            for item in value
+        ):
+            raise ProposalApprovalError(
+                f"manual_index {name} contains a non-finite numeric value (id={proposal.id})"
+            )
+        return [float(item) for item in value]
+
+    if not proposal.target_problem_id:
+        raise ProposalApprovalError(
+            f"manual_index proposal has no target problem (id={proposal.id})"
+        )
+
+    try:
+        problem = MatchupProblem.objects.select_for_update().get(
+            id=proposal.target_problem_id,
+            tenant_id=proposal.tenant_id,
+            document_id=proposal.document_id,
+        )
+    except MatchupProblem.DoesNotExist as exc:
+        raise ProposalApprovalError(
+            f"manual_index target problem is missing or out of scope (id={proposal.id})"
+        ) from exc
+
+    meta = dict(problem.meta or {})
+    if meta.get("manual") is not True:
+        raise ProposalApprovalError(
+            f"manual_index target is not manual=true (id={proposal.id})"
+        )
+
+    payload = proposal.raw_response if isinstance(proposal.raw_response, dict) else {}
+    embedding = validated_vector("embedding")
+    image_embedding = validated_vector("image_embedding")
+    update_fields: list[str] = []
+    proposed_text = str(payload.get("text") or "").strip()
+    current_text = (problem.text or "").strip()
+    if embedding is not None and not proposed_text:
+        raise ProposalApprovalError(
+            f"manual_index text embedding has no source text (id={proposal.id})"
+        )
+    if current_text and proposed_text and current_text != proposed_text:
+        raise ProposalApprovalError(
+            f"manual_index target text changed after analysis (id={proposal.id})"
+        )
+    if proposed_text and not current_text:
+        problem.text = proposed_text
+        update_fields.append("text")
+
+    if embedding is not None:
+        problem.embedding = embedding
+        update_fields.append("embedding")
+    if image_embedding is not None:
+        problem.image_embedding = image_embedding
+        update_fields.append("image_embedding")
+
+    proposed_format = str(payload.get("format") or "").strip()
+    if proposed_format and proposed_format not in {"choice", "essay"}:
+        raise ProposalApprovalError(
+            f"manual_index format is invalid (id={proposal.id})"
+        )
+    if proposed_format and meta.get("format") in {None, "", "choice"}:
+        meta["format"] = proposed_format
+        problem.meta = meta
+        update_fields.append("meta")
+
+    if update_fields:
+        problem.save(update_fields=[*update_fields, "updated_at"])
+
+    proposal.status = "approved"
+    proposal.reviewed_by = user if user is not None and getattr(user, "id", None) else None
+    proposal.reviewed_at = timezone.now()
+    proposal.promoted_problem = problem
+    proposal.save(update_fields=[
+        "status", "reviewed_by", "reviewed_at", "promoted_problem", "updated_at",
+    ])
+    logger.info(
+        "approve_manual_index_proposal | id=%s target_problem_id=%s by_user=%s fields=%s",
+        proposal.id,
+        problem.id,
+        getattr(user, "id", None) if user else None,
+        update_fields,
+    )
+    return problem
 
 
 def _validation_errors_have_manual_overlap(validation_errors: list[dict]) -> bool:
@@ -374,7 +479,7 @@ def approve_proposal(
     *,
     adjustments: Optional[dict] = None,
 ):
-    """proposal → MatchupProblem 승격.
+    """proposal을 승인해 MatchupProblem을 생성하거나 수동 문항 인덱스를 반영한다.
 
     Args:
         proposal_id: ProblemSegmentationProposal id.
@@ -393,11 +498,12 @@ def approve_proposal(
             - 동시성 race 등
 
     Side effects (transaction.atomic):
-        - 새 MatchupProblem 생성 (manual=False, confirmation_status='confirmed',
-          approved_from_proposal_id=proposal.id, bbox 기록).
+        - segmentation: 새 MatchupProblem 생성 (manual=False,
+          confirmation_status='confirmed', approved_from_proposal_id=proposal.id, bbox 기록).
+        - manual_index: 기존 manual=true 대상의 OCR/임베딩을 명시 승인으로만 갱신.
         - proposal.status='approved', reviewed_by, reviewed_at, promoted_problem 갱신.
         - selected_problem_ids 어떤 곳에도 반영 X.
-        - 기존 manual=true MatchupProblem row 변경 X (read 없음).
+        - segmentation 경로는 기존 manual=true MatchupProblem row 변경 X.
     """
     from django.utils import timezone
     from apps.domains.matchup.models import (
@@ -421,6 +527,13 @@ def approve_proposal(
         raise ProposalApprovalError(
             f"invalid status for approval: {proposal.status} (id={proposal_id})"
         )
+
+    if (proposal.proposal_kind or "segmentation") == "manual_index":
+        if adjustments:
+            raise ProposalApprovalError(
+                f"manual_index proposal does not accept segmentation adjustments (id={proposal_id})"
+            )
+        return _approve_manual_index_proposal(proposal, user)
 
     # validation_errors 에 manual_overlap 있으면 영구 차단 (Phase 3.2 정책 보강).
     if _validation_errors_have_manual_overlap(proposal.validation_errors):

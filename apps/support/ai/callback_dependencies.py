@@ -62,3 +62,21 @@ def get_matchup_problem_model():
     from apps.domains.matchup.models import MatchupProblem
 
     return MatchupProblem
+
+
+def get_matchup_proposal_model():
+    from apps.domains.matchup.models import ProblemSegmentationProposal
+
+    return ProblemSegmentationProposal
+
+
+def approve_matchup_proposal(*args, **kwargs):
+    from apps.domains.matchup.proposal_helpers import approve_proposal
+
+    return approve_proposal(*args, **kwargs)
+
+
+def get_matchup_proposal_approval_error():
+    from apps.domains.matchup.proposal_helpers import ProposalApprovalError
+
+    return ProposalApprovalError

@@ -17,6 +17,52 @@ function Get-ASGInstanceRefreshResourceArn {
     return "arn:aws:autoscaling:$($script:Region):$($script:AccountId):autoScalingGroup:*:autoScalingGroupName/$AutoScalingGroupName"
 }
 
+function Test-ExactObjectProperties {
+    param(
+        [object]$Value,
+        [string[]]$ExpectedNames
+    )
+    if ($null -eq $Value) { return $false }
+    $properties = @($Value.PSObject.Properties)
+    if ($properties.Count -ne $ExpectedNames.Count) { return $false }
+    foreach ($name in $ExpectedNames) {
+        if (@($properties | Where-Object { $_.Name -ceq $name }).Count -ne 1) { return $false }
+    }
+    return $true
+}
+
+function Test-GitHubActionsMainTrustPolicy {
+    param(
+        [object]$Policy,
+        [string]$OidcProviderArn,
+        [string]$GitHubRepository
+    )
+    if (-not (Test-ExactObjectProperties $Policy @("Version", "Statement"))) { return $false }
+    if ([string]$Policy.Version -cne "2012-10-17") { return $false }
+
+    $statements = @($Policy.Statement)
+    if ($statements.Count -ne 1) { return $false }
+    $statement = $statements[0]
+    if (-not (Test-ExactObjectProperties $statement @("Effect", "Principal", "Action", "Condition"))) { return $false }
+    if ([string]$statement.Effect -cne "Allow") { return $false }
+    $actions = @($statement.Action)
+    if ($actions.Count -ne 1 -or [string]$actions[0] -cne "sts:AssumeRoleWithWebIdentity") { return $false }
+
+    if (-not (Test-ExactObjectProperties $statement.Principal @("Federated"))) { return $false }
+    $federated = @($statement.Principal.Federated)
+    if ($federated.Count -ne 1 -or [string]$federated[0] -cne $OidcProviderArn) { return $false }
+
+    if (-not (Test-ExactObjectProperties $statement.Condition @("StringEquals"))) { return $false }
+    $stringEquals = $statement.Condition.StringEquals
+    $audKey = "token.actions.githubusercontent.com:aud"
+    $subKey = "token.actions.githubusercontent.com:sub"
+    if (-not (Test-ExactObjectProperties $stringEquals @($audKey, $subKey))) { return $false }
+    if ([string]$stringEquals.$audKey -cne "sts.amazonaws.com") { return $false }
+    $expectedSubject = "repo:${GitHubRepository}:ref:refs/heads/main"
+    if ([string]$stringEquals.$subKey -cne $expectedSubject) { return $false }
+    return $true
+}
+
 function Legacy-GitHubActionsDeployIAM {
     if ($script:PlanMode) { return }
     $roleName = if ($script:GitHubActionsDeployRoleName) { $script:GitHubActionsDeployRoleName } else { "academy-gha-ecr-build" }
@@ -244,6 +290,32 @@ function Ensure-GitHubActionsDeployIAM {
     Write-Step "Converge exact GitHub Actions least-privilege policy"
     $role = Invoke-AwsJson @("iam", "get-role", "--role-name", $roleName, "--output", "json")
     if (-not $role.Role.Arn) { throw "GitHub Actions role not found: $roleName" }
+    $githubRepository = "guswls3028-art/academy-backend"
+    $oidcProviderArn = "arn:aws:iam::$($script:AccountId):oidc-provider/token.actions.githubusercontent.com"
+    $expectedTrust = [ordered]@{
+        Version = "2012-10-17"
+        Statement = @([ordered]@{
+            Effect = "Allow"
+            Principal = [ordered]@{Federated = $oidcProviderArn}
+            Action = "sts:AssumeRoleWithWebIdentity"
+            Condition = [ordered]@{StringEquals = [ordered]@{
+                "token.actions.githubusercontent.com:aud" = "sts.amazonaws.com"
+                "token.actions.githubusercontent.com:sub" = "repo:${githubRepository}:ref:refs/heads/main"
+            }}
+        })
+    }
+    $expectedTrustJson = $expectedTrust | ConvertTo-Json -Depth 20 -Compress
+    if (-not (Test-GitHubActionsMainTrustPolicy $role.Role.AssumeRolePolicyDocument $oidcProviderArn $githubRepository)) {
+        $trustRef = Convert-JsonArgToFileRef $expectedTrustJson
+        $trustFile = $trustRef -replace '^file://', ''
+        try { Invoke-Aws @("iam", "update-assume-role-policy", "--role-name", $roleName, "--policy-document", $trustRef) -ErrorMessage "update exact GitHub Actions main-only trust policy" | Out-Null }
+        finally { Remove-TempFiles @($trustFile) }
+        $script:ChangesMade = $true
+    }
+    $trustReadback = Invoke-AwsJson @("iam", "get-role", "--role-name", $roleName, "--output", "json")
+    if (-not (Test-GitHubActionsMainTrustPolicy $trustReadback.Role.AssumeRolePolicyDocument $oidcProviderArn $githubRepository)) {
+        throw "GitHub Actions OIDC trust readback does not exactly match the main-only repository contract."
+    }
     $currentPolicy = $null
     try { $currentPolicy = Invoke-AwsJson @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--output", "json") }
     catch { if ($_.Exception.Message -notmatch "NoSuchEntity") { throw } }
@@ -360,7 +432,7 @@ function Ensure-GitHubActionsDeployIAM {
     $readback = Invoke-AwsJson @("iam", "get-role-policy", "--role-name", $roleName, "--policy-name", $policyName, "--output", "json")
     $actualJson = $readback.PolicyDocument | ConvertTo-Json -Depth 50 -Compress
     if ($actualJson -ne $expectedJson) { throw "GitHub Actions IAM full-policy readback does not exactly match the managed least-privilege contract." }
-    Write-Ok "GitHub Actions deploy IAM converged and exact readback passed"
+    Write-Ok "GitHub Actions deploy IAM trust and permissions converged with exact readback"
 }
 
 function Ensure-BatchIAM {

@@ -279,6 +279,7 @@ class StudentInvoiceViewSet(FeeManagementEnabledMixin, ModelViewSet):
             StudentInvoice.objects
             .filter(tenant=tenant)
             .select_related("student")
+            .prefetch_related("items__fee_template__lecture")
         )
 
         # 필터
@@ -517,6 +518,7 @@ class StudentFeeInvoiceListView(APIView):
             .filter(tenant=tenant, student__in=students)
             .exclude(status="CANCELLED")
             .select_related("student")
+            .prefetch_related("items__fee_template__lecture")
             .order_by("-billing_year", "-billing_month")
         )
 
@@ -539,7 +541,7 @@ class StudentFeeInvoiceDetailView(APIView):
                 StudentInvoice.objects
                 .filter(tenant=tenant, student__in=students)
                 .exclude(status="CANCELLED")
-                .prefetch_related("items", "payments")
+                .prefetch_related("items__fee_template__lecture", "payments")
                 .get(pk=pk)
             )
         except StudentInvoice.DoesNotExist:

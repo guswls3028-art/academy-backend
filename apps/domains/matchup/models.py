@@ -334,7 +334,8 @@ class ProblemSegmentationProposal(TimestampModel):
     """AI 문항 분리 결과 — 운영 문항(MatchupProblem)과 구조 분리 (Stage 3, 2026-05-06).
 
     AI 결과(VLM/YOLO/OCR)는 ConfirmedProblem이 아니라 proposal이다.
-    승인 후에만 MatchupProblem으로 승격.
+    승인 후에만 segmentation은 새 MatchupProblem으로 승격되고, manual_index는
+    명시된 기존 manual=true 문항에 OCR/임베딩 정보를 반영한다.
 
     원칙:
     - proposal은 추천 풀에 들어가지 않는다 (find_similar 후보 X).
@@ -343,9 +344,10 @@ class ProblemSegmentationProposal(TimestampModel):
     - 학원장 manual=True cut 영역과 겹치는 proposal은 자동 status='rejected'
       (validation_errors에 'manual_overlap' reason 기록).
 
-    승격 path:
+    승인 path:
         ProblemSegmentationProposal(status='approved')
-            → MatchupProblem 생성 (transaction.atomic, audit log)
+            → segmentation: MatchupProblem 생성
+            → manual_index: target_problem 갱신
             → ProblemSegmentationProposal.status='approved' 유지 (audit 보존)
     """
 
@@ -367,6 +369,11 @@ class ProblemSegmentationProposal(TimestampModel):
         ("manual_assist", "사용자 수동 자르기 보조"),
     ]
 
+    PROPOSAL_KIND_CHOICES = [
+        ("segmentation", "문항 분리 제안"),
+        ("manual_index", "수동 문항 AI 인덱싱 제안"),
+    ]
+
     tenant = models.ForeignKey(
         Tenant,
         on_delete=models.CASCADE,
@@ -382,6 +389,20 @@ class ProblemSegmentationProposal(TimestampModel):
     # AI 분석 batch 식별자 — 같은 batch의 proposal 묶음 그룹화 / rerun 비교용.
     # job_id 또는 application 정의 키 (예: "yolo-v11-2026-05-06-doc321") 자유 형식.
     analysis_version_key = models.CharField(max_length=128, blank=True, default="", db_index=True)
+    proposal_kind = models.CharField(
+        max_length=32,
+        choices=PROPOSAL_KIND_CHOICES,
+        default="segmentation",
+        db_index=True,
+    )
+    target_problem = models.ForeignKey(
+        "MatchupProblem",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="index_proposals",
+        help_text="manual_index 제안이 승인 시 갱신할 수동 문항. callback은 이 행을 수정하지 않는다.",
+    )
 
     page_number = models.IntegerField(default=0, db_index=True)
     # bbox JSON: {"x": float, "y": float, "w": float, "h": float, "norm": bool}
@@ -434,6 +455,13 @@ class ProblemSegmentationProposal(TimestampModel):
             models.Index(fields=["tenant", "document", "status"]),
             models.Index(fields=["tenant", "status", "engine"]),
             models.Index(fields=["analysis_version_key"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "target_problem", "analysis_version_key"],
+                condition=models.Q(proposal_kind="manual_index"),
+                name="uniq_manual_index_job_target",
+            ),
         ]
 
     def __str__(self):

@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.filters import SearchFilter, OrderingFilter
+from django.db.models import Q
 from django_filters.rest_framework import DjangoFilterBackend
 
 from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
@@ -53,11 +54,6 @@ class SessionProgressViewSet(ModelViewSet):
     serializer_class = SessionProgressSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
-    def get_permissions(self):
-        if self.action in ("list", "retrieve"):
-            return [IsAuthenticated(), TenantResolvedAndMember()]
-        return [IsAuthenticated(), TenantResolvedAndStaff()]
-
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = SessionProgressFilter
     search_fields = ["enrollment_id", "session__title", "session__lecture__title"]
@@ -68,17 +64,15 @@ class SessionProgressViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return SessionProgress.objects.none()
-        return SessionProgress.objects.filter(session__lecture__tenant=tenant).select_related("session", "session__lecture")
+        return SessionProgress.objects.filter(
+            enrollment__tenant=tenant,
+            session__lecture__tenant=tenant,
+        ).select_related("enrollment", "session", "session__lecture")
 
 
 class LectureProgressViewSet(ModelViewSet):
     serializer_class = LectureProgressSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
-
-    def get_permissions(self):
-        if self.action in ("list", "retrieve"):
-            return [IsAuthenticated(), TenantResolvedAndMember()]
-        return [IsAuthenticated(), TenantResolvedAndStaff()]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = LectureProgressFilter
@@ -90,17 +84,19 @@ class LectureProgressViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return LectureProgress.objects.none()
-        return LectureProgress.objects.filter(lecture__tenant=tenant).select_related("lecture", "last_session")
+        return (
+            LectureProgress.objects.filter(
+                enrollment__tenant=tenant,
+                lecture__tenant=tenant,
+            )
+            .filter(Q(last_session__isnull=True) | Q(last_session__lecture__tenant=tenant))
+            .select_related("enrollment", "lecture", "last_session", "last_session__lecture")
+        )
 
 
 class ClinicLinkViewSet(ModelViewSet):
     serializer_class = ClinicLinkSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
-
-    def get_permissions(self):
-        if self.action in ("list", "retrieve"):
-            return [IsAuthenticated(), TenantResolvedAndMember()]
-        return [IsAuthenticated(), TenantResolvedAndStaff()]
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = ClinicLinkFilter
@@ -114,6 +110,8 @@ class ClinicLinkViewSet(ModelViewSet):
             return ClinicLink.objects.none()
         qs = ClinicLink.objects.filter(
             tenant=tenant,
+            enrollment__tenant=tenant,
+            session__lecture__tenant=tenant,
         ).select_related("session", "session__lecture", "enrollment__student")
 
         # 추가 필터: unresolved_only
@@ -122,6 +120,12 @@ class ClinicLinkViewSet(ModelViewSet):
             qs = qs.filter(resolved_at__isnull=True)
 
         return qs
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.tenant)
+
+    def perform_update(self, serializer):
+        serializer.save(tenant=self.request.tenant)
 
     @action(detail=True, methods=["post"])
     def resolve(self, request, pk=None):
@@ -424,11 +428,6 @@ class RiskLogViewSet(ModelViewSet):
     serializer_class = RiskLogSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
-    def get_permissions(self):
-        if self.action in ("list", "retrieve"):
-            return [IsAuthenticated(), TenantResolvedAndMember()]
-        return [IsAuthenticated(), TenantResolvedAndStaff()]
-
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_class = RiskLogFilter
     search_fields = ["enrollment_id", "reason"]
@@ -439,4 +438,8 @@ class RiskLogViewSet(ModelViewSet):
         tenant = getattr(self.request, "tenant", None)
         if not tenant:
             return RiskLog.objects.none()
-        return RiskLog.objects.filter(session__lecture__tenant=tenant).select_related("session")
+        return (
+            RiskLog.objects.filter(enrollment__tenant=tenant)
+            .filter(Q(session__isnull=True) | Q(session__lecture__tenant=tenant))
+            .select_related("enrollment", "session", "session__lecture")
+        )

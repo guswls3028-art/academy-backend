@@ -15,6 +15,8 @@
 
 2. **deploy -Plan** — `pwsh scripts/v1/deploy.ps1 -Plan -AwsProfile default`
    AWS 변경 없이 표/리포트만 출력. Drift·Evidence 확인.
+   기존 자동화의 `-DryRun`도 동일한 `PlanMode` 안전 경계를 사용해 lock 생성·획득,
+   bootstrap, ensure, refresh를 실행하지 않는다.
 
 3. **PruneLegacy 후보 미리보기** — `pwsh scripts/v1/deploy.ps1 -Plan -PruneLegacy -AwsProfile default`
    이 스택에서 명시적으로 폐기한 allowlist 리소스만 조회해 후보를 표시하며 삭제하지 않는다.
@@ -61,6 +63,7 @@ pwsh scripts/v1/disable-legacy-deploy-crons.ps1 -Action Off -AwsProfile default
 - **ECR 이미지**: 6개 repo는 `IMMUTABLE_WITH_EXCLUSION`이며 단 하나의 `latest` wildcard exclusion만 둔다. CI 태그는 `sha-<full git sha>-run-<run id>-<attempt>`라 재실행도 같은 태그를 덮어쓰지 않는다.
 - **런타임 불변성**: migration과 API/Messaging/AI/Tools Launch Template, Video Batch 8개 job definition은 모두 해당 빌드 tag를 `repo@sha256:...`로 해석해 사용한다. `latest`는 호환성 alias일 뿐 증거가 아니다.
 - **성공 릴리스 manifest**: CI는 이번 빌드 digest와 직전 성공 릴리스의 변경 없는 digest로 candidate를 만들고, 실제 ASG 컨테이너·Batch jobdef·CE 검증 후에만 `docs/reports/release-manifest.latest.json`을 `complete=true,status=successful`로 승격한다. `deploy.ps1`은 ECR의 newest image가 아니라 이 manifest만 사용한다.
+- **운영 알림 cron**: `dev-alerts-cron.yml`도 위 complete/successful manifest의 `academy-api` digest만 실행하고, API 인스턴스의 `/opt/api.env`를 runtime env SSOT로 사용한다. manifest나 env 파일이 없으면 발송 평가를 시작하지 않는다.
 - **ECR cleanup fail-closed**: cleanup은 ASG/LT와 실제 desired InService 컨테이너 `RepoDigests`, 정확히 8개인 Video ACTIVE job definition, 마지막 complete/successful 6-image manifest(공통 base 포함)를 먼저 보호한다. inventory 누락, 부분 삭제 실패, verify 경고가 하나라도 있으면 nonzero로 종료한다.
 - **ASG pin + 보상**: `pin-asg-image.ps1`은 `$Default`·`$Latest`·숫자 version을 모두 해석한다. 태그 기반 legacy template은 현재 인스턴스의 실제 `RepoDigest`로 먼저 불변 baseline version을 만들고 ASG를 `$Latest`로 전환한 뒤 candidate digest를 적용한다. 이전 LT/default/실제 runtime digest를 state에 기록하며, pin·refresh·runtime 검증 실패 시 이전 version을 빈 override로 정확히 복제한 새 보상 version을 만들고 refresh/runtime을 다시 검증한다. 비용 baseline 복귀나 autoscaling 직후에는 healthy InService 수와 현재 desired가 수렴할 때까지 기다려 scale-in race를 실패로 오판하지 않으며, desired=0 ASG도 candidate LT digest를 직접 검증한다.
 - **공통 운영 mutation 락**: 정식 CI, 주간 ECR/Batch cleanup, 수동 deploy/rollback은 SSOT DynamoDB table `academy-v1-video-job-lock`의 한 조건부 lock key를 공유한다. acquire/renew/release는 owner와 TTL 조건을 검사하므로 동시 실행·만료 후 잘못된 release를 허용하지 않는다.

@@ -1845,10 +1845,9 @@ def _download_inventory_to_temp(inventory_file) -> str:
 def _enqueue_manual_problem_index(problem: MatchupProblem) -> None:
     """수동 크롭 problem에 OCR + 임베딩 인덱싱 워커 잡을 큐잉.
 
-    워커가 image_key를 다운로드해 OCR + 정제 + 임베딩 후 callback이 problem
-    레코드의 text/embedding을 채운다. 인덱싱이 끝나야 매치업 검색 풀에 노출.
-
-    잡 디스패치 결과(ai_job_id 또는 error)를 problem.meta에 기록 — 디버깅 용이.
+    워커가 image_key를 다운로드해 OCR + 정제 + 임베딩 후 callback이 검수용
+    ProblemSegmentationProposal만 만든다. 사용자가 승인하기 전에는 수동 문항을
+    자동 변경하지 않는다.
     """
     if not problem.image_key:
         return
@@ -1868,15 +1867,13 @@ def _enqueue_manual_problem_index(problem: MatchupProblem) -> None:
         source_id=str(problem.id),
     )
 
-    # meta에 dispatch 결과 기록 (응답으로 즉시 노출 + 운영 진단)
-    meta = dict(problem.meta or {})
-    if isinstance(result, dict):
-        meta["ai_job_id"] = result.get("job_id") or ""
-        if not result.get("ok", True):
-            meta["ai_dispatch_error"] = result.get("error", "dispatch failed")
-            meta["ai_rejection_code"] = result.get("rejection_code") or ""
-    problem.meta = meta
-    problem.save(update_fields=["meta", "updated_at"])
+    if isinstance(result, dict) and not result.get("ok", True):
+        logger.warning(
+            "MATCHUP_MANUAL_INDEX_DISPATCH_REJECTED | problem=%s | error=%s | code=%s",
+            problem.id,
+            result.get("error", "dispatch failed"),
+            result.get("rejection_code") or "",
+        )
 
     if isinstance(result, dict) and not result.get("ok", True):
         raise RuntimeError(result.get("error", "dispatch failed"))
@@ -2193,7 +2190,7 @@ def manually_crop_problem(
       2. PDF면 PyMuPDF로 페이지 렌더, 이미지면 그대로 PIL 로드
       3. bbox_norm을 픽셀 좌표로 변환 → PIL crop → PNG bytes
       4. R2 업로드 (matchup problem key)
-      5. MatchupProblem upsert (embedding은 비어둠 — 워커가 채움)
+      5. MatchupProblem upsert (AI 결과는 승인 대기 proposal로 분리)
 
     Returns: 생성/갱신된 MatchupProblem.
     """
@@ -2310,8 +2307,8 @@ def manually_crop_problem(
         document.status = "done"
         document.save(update_fields=["problem_count", "status", "updated_at"])
 
-        # 임베딩은 비동기 워커가 채움 — OCR + sentence-transformer (matchup_manual_index).
-        # 동기 처리: 레코드 + 이미지만. 즉시 그리드/캔버스/탐색에 노출.
+        # OCR + 임베딩은 비동기 proposal로 생성하고 사용자 승인 뒤 반영한다.
+        # 동기 처리: 사용자가 만든 레코드 + 이미지만.
         try:
             _enqueue_manual_problem_index(problem)
         except Exception:
@@ -2388,8 +2385,8 @@ def paste_image_as_problem(
     흐름:
       1. content_type 검증 + Pillow 디코드 → PNG 정규화
       2. R2 업로드 (matchup problem key, page_index=0 가상)
-      3. MatchupProblem upsert (embedding은 워커가 채움)
-      4. matchup_manual_index 잡 dispatch — OCR + 임베딩 비동기
+      3. MatchupProblem upsert
+      4. matchup_manual_index 잡 dispatch — 승인 대기 OCR + 임베딩 proposal 생성
 
     paste 모드 problem은 meta.paste=True로 표시 → 매뉴얼 크롭 보드와 분리.
     """
@@ -2606,7 +2603,7 @@ def merge_problems(
          - meta = 기존 meta + {merged_from: [other_ids], merged_count: N}
          - number = target_number (지정 안 하면 min)
       5. 나머지 problem들은 R2 이미지 삭제 + row 삭제.
-      6. 워커에 manual_index 잡 dispatch (OCR + 임베딩 재계산).
+      6. 워커에 manual_index 잡 dispatch (승인 대기 OCR + 임베딩 proposal 생성).
 
     Returns: 갱신된 primary MatchupProblem.
 
@@ -2816,7 +2813,7 @@ def merge_problems(
                     exc_info=True,
                 )
 
-    # OCR + 임베딩 재계산 (비동기)
+    # OCR + 임베딩 재계산 proposal 생성 (비동기, 승인 전 원본 불변)
     try:
         _enqueue_manual_problem_index(primary)
     except Exception:

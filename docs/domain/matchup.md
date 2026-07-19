@@ -35,6 +35,13 @@
 - 수동 보정: 강사가 페이지별 상태를 지정하거나 직접 박스를 자르는 UI가 있다.
 - Proposal/검수 흐름: 자동 후보를 사람이 승인/거절하는 구조가 일부 구현되어 있으나 운영 게이트가 필요하다.
 
+수동 자르기·붙여넣기로 만든 `MatchupProblem(meta.manual=true)`의 OCR/embedding도
+원본에 자동 반영하지 않는다. `matchup_manual_index` callback은
+`ProblemSegmentationProposal(proposal_kind=manual_index)`만 만들고, 검수 화면에서
+학원장이 승인한 뒤에만 대상 수동 문항에 반영한다. callback·재색인 management
+command가 수동 문항의 `text`, `embedding`, `image_embedding`, `meta`를 직접
+UPDATE하는 경로는 금지한다.
+
 페이지 전체를 하나의 문항으로 넣는 fallback은 품질을 숨기는 방식이므로 정답 경로가 아니다. 문항 경계가 틀리면 이후 유사도, 적중률, 리포트 신뢰도가 모두 무너진다.
 
 [CURRENT 2026-06-20] Tenant 2 과거 실사용 자료 중 손촬영 사진을 제외한 PDF/스캔본/텍스트 PDF는 v55 full-display 감사에서 운영 baseline을 닫았다. 수동 GT가 있는 61개 문서의 물리 문항 기준 `physical_missed_count=0`, `physical_recall=1.0`이며, raw miss 11건은 중복 GT row로 설명된다. 재현 절차와 합격 기준은 `docs/operations/runbooks/matchup-segmentation-qa.md`를 정본으로 본다. 새 자료 유형이나 손촬영 사진은 이 baseline에 자동 포함하지 않고 별도 감사로 편입한다. 숨은 버그 후보와 다음 실행 단위는 `docs/refactor/matchup-segmentation-risk-backlog.md`에 [PROPOSED]로 둔다.

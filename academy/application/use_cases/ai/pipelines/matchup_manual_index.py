@@ -4,14 +4,14 @@
 payload: {problem_id, tenant_id, image_key}
 
 수동 크롭은 동기적으로 problem 레코드 + R2 이미지를 만들지만 임베딩이 비어
-있어 매치업 검색에 노출되지 않는다. 이 잡이 비동기로 OCR + 임베딩을 채워
-검색 풀에 합류시킨다.
+있어 매치업 검색에 노출되지 않는다. 이 잡은 비동기로 OCR + 임베딩 제안을
+만들며, 학원장 승인 후에만 원본 문제에 반영되어 검색 풀에 합류한다.
 
 흐름:
   1. R2에서 problem 이미지 다운로드 (presigned URL)
   2. Google Vision OCR 호출 → 텍스트 추출
   3. text_for_embedding 정제 → 임베딩 생성
-  4. 결과 dict 반환 → callback이 DB 업데이트
+  4. 결과 dict 반환 → callback이 승인 대기 proposal 생성
 """
 from __future__ import annotations
 

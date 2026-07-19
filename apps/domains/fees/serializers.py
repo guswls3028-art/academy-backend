@@ -94,12 +94,30 @@ class StudentInvoiceListSerializer(serializers.ModelSerializer):
     student_name = serializers.CharField(source="student.name", read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     outstanding_amount = serializers.IntegerField(read_only=True)
+    lectures = serializers.SerializerMethodField()
+
+    def get_lectures(self, obj):
+        seen = set()
+        rows = []
+        for item in obj.items.all():
+            lecture = getattr(getattr(item, "fee_template", None), "lecture", None)
+            if lecture is None or lecture.id in seen:
+                continue
+            seen.add(lecture.id)
+            rows.append({
+                "id": lecture.id,
+                "title": lecture.title or lecture.name or "",
+                "color": lecture.color or None,
+                "chip_label": lecture.chip_label or None,
+            })
+        return rows
 
     class Meta:
         model = StudentInvoice
         fields = [
             "id", "invoice_number",
             "student", "student_name",
+            "lectures",
             "billing_year", "billing_month",
             "total_amount", "paid_amount", "outstanding_amount",
             "status", "status_display",
@@ -116,12 +134,14 @@ class StudentInvoiceDetailSerializer(serializers.ModelSerializer):
     outstanding_amount = serializers.IntegerField(read_only=True)
     items = InvoiceItemSerializer(many=True, read_only=True)
     payments = serializers.SerializerMethodField()
+    lectures = serializers.SerializerMethodField()
 
     class Meta:
         model = StudentInvoice
         fields = [
             "id", "invoice_number",
             "student", "student_name", "student_phone", "student_parent_phone",
+            "lectures",
             "billing_year", "billing_month",
             "total_amount", "paid_amount", "outstanding_amount",
             "status", "status_display",
@@ -134,6 +154,9 @@ class StudentInvoiceDetailSerializer(serializers.ModelSerializer):
     def get_payments(self, obj):
         payments = obj.payments.filter(status="SUCCESS").order_by("-paid_at")
         return FeePaymentSerializer(payments, many=True).data
+
+    def get_lectures(self, obj):
+        return StudentInvoiceListSerializer(context=self.context).get_lectures(obj)
 
 
 class StudentInvoiceUpdateSerializer(serializers.ModelSerializer):

@@ -32,6 +32,16 @@ from .views import _is_tenant_admin, _jwt_required, _tenant_required
 logger = logging.getLogger(__name__)
 
 
+def _proposal_kind_value(p: ProblemSegmentationProposal) -> str:
+    value = getattr(p, "proposal_kind", None)
+    return value if value in {"segmentation", "manual_index"} else "segmentation"
+
+
+def _target_problem_id_value(p: ProblemSegmentationProposal) -> Optional[int]:
+    value = getattr(p, "target_problem_id", None)
+    return value if isinstance(value, int) else None
+
+
 def _serialize_proposal(p: ProblemSegmentationProposal) -> dict:
     """[Phase 3.4 internal] raw 모든 필드 응답 — admin/debug 용. 외부 endpoint 응답에는
     `_serialize_proposal_user_v1` (Stage 6.3A) 사용. 본 함수는 backward compat 보존.
@@ -41,6 +51,8 @@ def _serialize_proposal(p: ProblemSegmentationProposal) -> dict:
         "tenant_id": p.tenant_id,
         "document_id": p.document_id,
         "analysis_version_key": p.analysis_version_key,
+        "proposal_kind": _proposal_kind_value(p),
+        "target_problem_id": _target_problem_id_value(p),
         "page_number": p.page_number,
         "detected_problem_number": p.detected_problem_number,
         "engine": p.engine,
@@ -210,8 +222,12 @@ def _serialize_proposal_user_v1(p: ProblemSegmentationProposal) -> dict:
     - reviewed_at / created_at
     """
     actions = _detect_conflict_and_actions(p)
+    proposal_kind = _proposal_kind_value(p)
+    raw_response = p.raw_response if isinstance(p.raw_response, dict) else {}
     return {
         "id": p.id,
+        "proposal_kind": proposal_kind,
+        "target_problem_id": _target_problem_id_value(p),
         "document_id": p.document_id,
         "page_number": p.page_number,
         "detected_problem_number": p.detected_problem_number,
@@ -225,6 +241,8 @@ def _serialize_proposal_user_v1(p: ProblemSegmentationProposal) -> dict:
         "can_approve": actions["can_approve"],
         "can_reject": actions["can_reject"],
         "promoted_problem_id": p.promoted_problem_id,
+        "proposed_text": str(raw_response.get("text") or "") if proposal_kind == "manual_index" else "",
+        "proposed_format": str(raw_response.get("format") or "") if proposal_kind == "manual_index" else "",
         "reviewed_at": p.reviewed_at.isoformat() if p.reviewed_at else None,
         "created_at": p.created_at.isoformat(),
     }

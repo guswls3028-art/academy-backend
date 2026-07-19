@@ -39,6 +39,8 @@ PARAMS = REPO_ROOT / "docs" / "ssot" / "params.yaml"
 DEPLOY_ARCH_DOC = REPO_ROOT / "docs" / "infrastructure" / "deployment-architecture.md"
 V1_README = REPO_ROOT / "scripts" / "v1" / "README.md"
 DEPLOY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "v1-build-and-push-latest.yml"
+DEV_ALERTS_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "dev-alerts-cron.yml"
+VIDEO_DOCKERFILE = REPO_ROOT / "docker" / "video-worker" / "Dockerfile"
 ROLLBACK_SCRIPTS = {
     "api": REPO_ROOT / "scripts" / "v1" / "rollback-api.ps1",
     "messaging": REPO_ROOT / "scripts" / "v1" / "rollback-messaging.ps1",
@@ -197,6 +199,67 @@ def test_worker_deploy_jobs_require_migration_gate() -> None:
         assert "needs.build-and-push.result == 'success'" in block
         assert "needs.run-migrations.result == 'success'" in block
         assert "needs.run-migrations.result == 'skipped'" in block
+
+
+def test_deploy_dry_run_uses_the_plan_mode_mutation_guard() -> None:
+    deploy = DEPLOY.read_text(encoding="utf-8-sig")
+    preflight = deploy.split("Assert-NoLegacyScripts", maxsplit=1)[1].split(
+        "Invoke-PreflightCheck", maxsplit=1
+    )[0]
+
+    assert "$script:PlanMode = $Plan -or $DryRun" in deploy
+    assert "$script:AllowRebuild = -not $script:PlanMode" in deploy
+    assert "if (-not $script:PlanMode)" in preflight
+    assert "Ensure-DynamoLockTable" in preflight
+    assert "Acquire-DeployLock" in preflight
+    assert "if ($PruneLegacy -and -not $script:PlanMode)" in deploy
+    assert "if ($PurgeAndRecreate -and -not $script:PlanMode)" in deploy
+    assert "if ($Bootstrap -and -not $script:PlanMode)" in deploy
+    assert "$strictCheck = -not $script:PlanMode" in deploy
+
+
+def test_dev_alerts_uses_verified_digest_and_runtime_env_ssot() -> None:
+    workflow = DEV_ALERTS_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "actions/checkout@v6" in workflow
+    assert 'if [ "$GITHUB_REF" != "refs/heads/main" ]' in workflow
+    assert "ref: refs/heads/main" in workflow
+    assert "persist-credentials: false" in workflow
+    assert workflow.index("Require production main ref") < workflow.index(
+        "Configure AWS credentials"
+    )
+    assert ".complete == true and .status == \"successful\"" in workflow
+    assert ".images[\"academy-api\"].digest" in workflow
+    assert "academy-api@${API_DIGEST}" in workflow
+    assert "academy-api:latest" not in workflow
+    assert "test -s /opt/api.env" in workflow
+    assert "--env-file /opt/api.env" in workflow
+    assert "docker inspect academy-api" not in workflow
+
+
+def test_release_gate_checks_django_schema_before_build_and_deploy() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    tests = _job_block(workflow, "run-tests")
+    acquire = _job_block(workflow, "acquire-production-lock")
+
+    assert "python manage.py check --settings apps.api.config.settings.test" in tests
+    assert (
+        "python manage.py makemigrations --check --dry-run "
+        "--settings apps.api.config.settings.test"
+    ) in tests
+    assert "needs: [detect-changes, run-lint, run-tests]" in acquire
+
+
+def test_video_image_installs_worker_manifest_and_rebuilds_for_its_includes() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    detect = _job_block(workflow, "detect-changes")
+    dockerfile = VIDEO_DOCKERFILE.read_text(encoding="utf-8")
+
+    assert "requirements/worker-video.txt" in dockerfile
+    assert "-r requirements/worker-video.txt" in dockerfile
+    assert "-r requirements/requirements.txt" not in dockerfile
+    assert 'changed_matches "^requirements/worker-video\\.txt$" && VIDEO=true' in detect
+    assert 'changed_matches "^requirements/api\\.txt$" && VIDEO=true' in detect
 
 
 def test_workflow_pins_build_inputs_migration_and_asg_runtime_images() -> None:
@@ -828,6 +891,16 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
     assert "SsmMigration" not in static
     assert "put-role-policy" in exact_function
     assert "full-policy readback" in exact_function
+    assert (
+        "repo:${githubRepository}:ref:refs/heads/main" in exact_function
+    )
+    assert "update-assume-role-policy" in exact_function
+    assert "main-only repository contract" in exact_function
+    assert exact_function.count("Test-GitHubActionsMainTrustPolicy") == 2
+    assert "$currentTrustJson" not in exact_function
+    assert "$actualTrustJson" not in exact_function
+    assert '"token.actions.githubusercontent.com:sub"' in exact_function
+    assert "StringLike" not in exact_function
 
     policy = json.loads(static)
     by_sid = {statement["Sid"]: statement for statement in policy["Statement"]}
@@ -847,6 +920,62 @@ def test_exact_workflow_iam_covers_full_contract_without_broad_ssm() -> None:
     assert set(by_sid["BatchPassRoles"]["Condition"]["StringEquals"]["iam:PassedToService"]) == {
         "batch.amazonaws.com", "ecs-tasks.amazonaws.com",
     }
+
+
+def test_github_actions_trust_predicate_is_order_independent_and_exact() -> None:
+    iam_path = str(IAM_RESOURCE).replace("'", "''")
+    script = rf'''
+. '{iam_path}'
+$provider = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+$repository = "guswls3028-art/academy-backend"
+$validJson = @'
+{{"Statement":[{{"Condition":{{"StringEquals":{{"token.actions.githubusercontent.com:sub":"repo:guswls3028-art/academy-backend:ref:refs/heads/main","token.actions.githubusercontent.com:aud":"sts.amazonaws.com"}}}},"Action":"sts:AssumeRoleWithWebIdentity","Principal":{{"Federated":"arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"}},"Effect":"Allow"}}],"Version":"2012-10-17"}}
+'@
+$valid = $validJson | ConvertFrom-Json
+if (-not (Test-GitHubActionsMainTrustPolicy $valid $provider $repository)) {{ exit 61 }}
+
+$stringLike = $validJson | ConvertFrom-Json
+$stringLike.Statement[0].Condition | Add-Member -NotePropertyName StringLike -NotePropertyValue ([PSCustomObject]@{{"token.actions.githubusercontent.com:sub"="repo:guswls3028-art/academy-backend:*"}})
+if (Test-GitHubActionsMainTrustPolicy $stringLike $provider $repository) {{ exit 62 }}
+
+$extraStatement = $validJson | ConvertFrom-Json
+$extraStatement.Statement = @($extraStatement.Statement, $extraStatement.Statement)
+if (Test-GitHubActionsMainTrustPolicy $extraStatement $provider $repository) {{ exit 63 }}
+
+$extraCondition = $validJson | ConvertFrom-Json
+$extraCondition.Statement[0].Condition.StringEquals | Add-Member -NotePropertyName "token.actions.githubusercontent.com:repository" -NotePropertyValue $repository
+if (Test-GitHubActionsMainTrustPolicy $extraCondition $provider $repository) {{ exit 64 }}
+
+$extraPrincipal = $validJson | ConvertFrom-Json
+$extraPrincipal.Statement[0].Principal | Add-Member -NotePropertyName AWS -NotePropertyValue "*"
+if (Test-GitHubActionsMainTrustPolicy $extraPrincipal $provider $repository) {{ exit 65 }}
+
+$wrongAction = $validJson | ConvertFrom-Json
+$wrongAction.Statement[0].Action = "sts:AssumeRole"
+if (Test-GitHubActionsMainTrustPolicy $wrongAction $provider $repository) {{ exit 66 }}
+
+$wrongEffect = $validJson | ConvertFrom-Json
+$wrongEffect.Statement[0].Effect = "Deny"
+if (Test-GitHubActionsMainTrustPolicy $wrongEffect $provider $repository) {{ exit 67 }}
+
+$wrongProvider = $validJson | ConvertFrom-Json
+$wrongProvider.Statement[0].Principal.Federated = "arn:aws:iam::999999999999:oidc-provider/token.actions.githubusercontent.com"
+if (Test-GitHubActionsMainTrustPolicy $wrongProvider $provider $repository) {{ exit 68 }}
+
+$wrongSubject = $validJson | ConvertFrom-Json
+$wrongSubject.Statement[0].Condition.StringEquals."token.actions.githubusercontent.com:sub" = "repo:guswls3028-art/academy-backend:*"
+if (Test-GitHubActionsMainTrustPolicy $wrongSubject $provider $repository) {{ exit 69 }}
+exit 0
+'''
+    completed = subprocess.run(
+        ["pwsh", "-NoProfile", "-NonInteractive", "-Command", "-"],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_cleanup_and_rollback_preserve_all_durable_runtime_contracts() -> None:

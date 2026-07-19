@@ -47,7 +47,7 @@ def build_attendance_preview(
 
     Returns:
         {
-            "recipients": [{"student_id", "student_name", "phone", "status", "message_body", "excluded", "exclude_reason"}],
+            "recipients": [{"student_id", "student_name", "phone", "status", "message_body", "excluded", "exclude_reason", "lectures"}],
             "total_count": int,
             "excluded_count": int,
             "message_template_body": str,
@@ -198,6 +198,11 @@ def build_attendance_preview(
             "message_body": body,
             "excluded": excluded,
             "exclude_reason": exclude_reason,
+            "lectures": [{
+                "lecture_title": _lecture_title,
+                "lecture_color": getattr(_lecture, "color", None) if _lecture else None,
+                "lecture_chip_label": getattr(_lecture, "chip_label", None) if _lecture else None,
+            }],
             "alimtalk_replacements": alimtalk_reps,
         })
 
@@ -280,6 +285,10 @@ def build_student_list_preview(
         student_ids,
         send_to=send_to,
     )
+    lecture_badges = enroll_repo.active_lecture_badges_by_student_ids(
+        tenant,
+        [recipient.student_id for recipient in resolved_recipients],
+    )
 
     academy_name = (tenant.name or "").strip()
     site_url = get_tenant_site_url(tenant) or ""
@@ -340,6 +349,7 @@ def build_student_list_preview(
             "message_body": body,
             "excluded": excluded,
             "exclude_reason": exclude_reason,
+            "lectures": lecture_badges.get(resolved.student_id, []),
             "alimtalk_replacements": alimtalk_reps,
         })
 
