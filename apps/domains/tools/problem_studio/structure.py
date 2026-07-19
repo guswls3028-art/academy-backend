@@ -50,6 +50,7 @@ class TransferStructure:
     text_chars: int
     image_count: int
     page_count: int
+    structure_limit_reached: bool
     items: list[StructuredItem]
     ocr_candidates: list[dict[str, Any]]
     review_actions: list[str]
@@ -129,9 +130,15 @@ def extract_problem_fields(block: str) -> dict[str, Any]:
     }
 
 
-def structure_text(*, source_name: str, text: str, start_number: int = 1) -> list[StructuredItem]:
+def structure_text(
+    *,
+    source_name: str,
+    text: str,
+    start_number: int = 1,
+    max_blocks: int = MAX_STRUCTURED_ITEMS,
+) -> list[StructuredItem]:
     items: list[StructuredItem] = []
-    for index, block in enumerate(split_source_blocks(text), start=start_number):
+    for index, block in enumerate(split_source_blocks(text, max_blocks=max_blocks), start=start_number):
         fields = extract_problem_fields(block)
         number = int(fields["number"] or index)
         items.append(StructuredItem(
@@ -153,15 +160,21 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
     warning_list = [str(w) for w in warnings if w]
     items: list[StructuredItem] = []
     ocr_candidates: list[dict[str, Any]] = []
+    structure_limit_reached = False
 
     for doc in docs:
         plain_text = normalize_space(getattr(doc, "plain_text", "") or "")
         if plain_text:
-            items.extend(structure_text(
+            remaining = max(0, MAX_STRUCTURED_ITEMS - len(items))
+            document_items = structure_text(
                 source_name=str(getattr(doc, "source_name", "") or getattr(doc, "filename", "") or "source"),
                 text=plain_text,
                 start_number=len(items) + 1,
-            ))
+                max_blocks=remaining + 1,
+            )
+            if len(document_items) > remaining:
+                structure_limit_reached = True
+            items.extend(document_items[:remaining])
         kind = str(getattr(doc, "kind", "") or "")
         pending_units = int(getattr(doc, "ocr_pending_units", 0) or 0)
         completed_units = int(getattr(doc, "ocr_completed_units", 0) or 0)
@@ -194,7 +207,6 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
                 "recommended_action": recommended_action,
             })
 
-    items = items[:MAX_STRUCTURED_ITEMS]
     structured_problem_count = sum(1 for item in items if item.item_type == "problem")
     concept_block_count = sum(1 for item in items if item.item_type == "concept")
     text_chars = sum(int(getattr(doc, "text_chars", 0) or 0) for doc in docs)
@@ -203,7 +215,7 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
     ocr_completed_unit_count = sum(int(getattr(doc, "ocr_completed_units", 0) or 0) for doc in docs)
     ocr_pending_unit_count = sum(int(getattr(doc, "ocr_pending_units", 0) or 0) for doc in docs)
 
-    if warning_list:
+    if warning_list or structure_limit_reached:
         quality_level = "needs_attention"
     elif ocr_candidates and not items:
         quality_level = "visual_only_ocr_required"
@@ -223,6 +235,10 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
         review_actions.append("남은 스캔/이미지 전용 자료는 OCR 연결 후 텍스트 수정성을 높일 수 있습니다.")
     if warning_list:
         review_actions.append("경고가 있는 원본은 변환리포트와 원본 파일을 먼저 대조하세요.")
+    if structure_limit_reached:
+        review_actions.append(
+            f"한 검수본에는 최대 {MAX_STRUCTURED_ITEMS}개 항목만 구조화됩니다. 나머지는 원본 보존 문서에서 계속 검수하세요."
+        )
     review_actions.append("정답과 해설은 수업 배포 전 선생님이 직접 확정하세요.")
 
     return TransferStructure(
@@ -238,6 +254,7 @@ def analyze_transfer_documents(documents: Iterable[Any], warnings: Iterable[str]
         text_chars=text_chars,
         image_count=image_count,
         page_count=page_count,
+        structure_limit_reached=structure_limit_reached,
         items=items,
         ocr_candidates=ocr_candidates,
         review_actions=review_actions,

@@ -186,6 +186,11 @@ def handle_ai_job(job: AIJob) -> AIResult:
         if job_type_lower == "problem_studio_package":
             from apps.domains.tools.problem_studio.worker import handle_problem_studio_package_job
             return handle_problem_studio_package_job(job)
+        if job_type_lower == "problem_studio_transcription":
+            from academy.application.use_cases.ai.pipelines.problem_studio_transfer_handler import (
+                handle_problem_studio_transfer_job,
+            )
+            return handle_problem_studio_transfer_job(job)
 
         # Matchup index exam (download 불필요 — DB에서 직접 읽음)
         if job.type == "matchup_index_exam":

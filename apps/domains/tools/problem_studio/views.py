@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import secrets
+from urllib.parse import quote
+
+from django.core.cache import cache
 from rest_framework import status
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -78,8 +82,9 @@ class ProblemStudioTransferJobCreateView(APIView):
                 content_type="application/zip",
             )
 
+            ai_transcription = bool(payload.get("ai_transcription", True))
             result = dispatch_tools_ai_job(
-                job_type="problem_studio_transfer",
+                job_type=("problem_studio_transcription" if ai_transcription else "problem_studio_transfer"),
                 payload={
                     "problem_studio_payload": payload,
                     "source_archive_key": archive_key,
@@ -211,3 +216,135 @@ class ProblemStudioJobStatusView(APIView):
             "error": job.error_message or job.last_error or "",
             "result": result_payload,
         })
+
+
+class ProblemStudioTransferJobStatusView(APIView):
+    """Staff-only transfer status with a freshly issued result URL."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    _JOB_TYPES = {"problem_studio_transfer", "problem_studio_transcription"}
+
+    def get(self, request, job_id: str):
+        job = ai_repo.get_job_model_for_status(str(job_id), str(request.tenant.id))
+        if not job or job.job_type not in self._JOB_TYPES:
+            return Response({"detail": "작업을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+
+        progress = None
+        try:
+            from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter
+
+            progress = RedisProgressAdapter().get_progress(str(job.job_id), tenant_id=str(request.tenant.id))
+        except Exception:
+            pass
+
+        result_payload = None
+        if job.status == "DONE":
+            raw_result = ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job) or {}
+            result_key = str(raw_result.get("r2_key") or "")
+            expected_prefix = f"tenants/{request.tenant.id}/tools/problem-studio/"
+            if result_key.startswith(expected_prefix):
+                from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+                result_payload = {
+                    key: value
+                    for key, value in raw_result.items()
+                    if key not in {"r2_key", "download_url"}
+                }
+                result_payload["download_url"] = generate_presigned_get_url_storage(
+                    key=result_key,
+                    expires_in=900,
+                    filename=str(raw_result.get("filename") or "problem-studio.zip"),
+                    content_type="application/zip",
+                )
+
+        return Response({
+            "job_id": job.job_id,
+            "job_type": job.job_type,
+            "status": job.status,
+            "progress": progress,
+            "result": result_payload,
+            "error_message": job.error_message or job.last_error or None,
+        })
+
+
+class ProblemStudioHangulHandoffCreateView(APIView):
+    """Create a short-lived one-time handoff for the Windows companion."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def post(self, request, job_id: str):
+        job = ai_repo.get_job_model_for_status(str(job_id), str(request.tenant.id))
+        if not job or job.job_type not in ProblemStudioTransferJobStatusView._JOB_TYPES or job.status != "DONE":
+            return Response({"detail": "완료된 검수본을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+        result_payload = ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job) or {}
+        result_key = str(result_payload.get("r2_key") or "")
+        expected_prefix = f"tenants/{request.tenant.id}/tools/problem-studio/"
+        if not result_key.startswith(expected_prefix):
+            return Response({"detail": "검수본 저장 경로가 올바르지 않습니다."}, status=status.HTTP_409_CONFLICT)
+
+        token = secrets.token_urlsafe(32)
+        cache.set(
+            f"problem-studio:hangul-handoff:{token}",
+            {
+                "job_id": str(job.job_id),
+                "tenant_id": str(request.tenant.id),
+                "user_id": str(request.user.id),
+            },
+            timeout=300,
+        )
+        handoff_url = request.build_absolute_uri(
+            f"/api/v1/tools/problem-studio/hangul-handoffs/{token}/"
+        )
+        response = Response({
+            "protocol_url": f"academy-hangul://insert?handoff={quote(handoff_url, safe='')}",
+            "expires_in": 300,
+        })
+        response["Cache-Control"] = "no-store"
+        return response
+
+
+class ProblemStudioHangulHandoffConsumeView(APIView):
+    """Consume a handoff once and return a fresh, tenant-scoped download URL."""
+
+    authentication_classes: list = []
+    permission_classes = [AllowAny]
+
+    def get(self, request, token: str):
+        if len(token) < 32 or len(token) > 80:
+            return Response({"detail": "연결 코드가 올바르지 않습니다."}, status=status.HTTP_404_NOT_FOUND)
+        key = f"problem-studio:hangul-handoff:{token}"
+        lock_key = f"{key}:lock"
+        if not cache.add(lock_key, "1", timeout=30):
+            return Response({"detail": "이미 사용 중인 연결 코드입니다."}, status=status.HTTP_409_CONFLICT)
+        try:
+            handoff = cache.get(key)
+            cache.delete(key)
+            if not isinstance(handoff, dict):
+                return Response({"detail": "만료되었거나 사용된 연결 코드입니다."}, status=status.HTTP_404_NOT_FOUND)
+            tenant_id = str(handoff.get("tenant_id") or "")
+            job = ai_repo.get_job_model_for_status(str(handoff.get("job_id") or ""), tenant_id)
+            if not job or job.status != "DONE" or job.job_type not in ProblemStudioTransferJobStatusView._JOB_TYPES:
+                return Response({"detail": "검수본을 찾을 수 없습니다."}, status=status.HTTP_404_NOT_FOUND)
+            result_payload = ai_repo.DjangoAIJobRepository().get_result_payload_for_job(job) or {}
+            result_key = str(result_payload.get("r2_key") or "")
+            if not result_key.startswith(f"tenants/{tenant_id}/tools/problem-studio/"):
+                return Response({"detail": "검수본 저장 경로가 올바르지 않습니다."}, status=status.HTTP_409_CONFLICT)
+
+            from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
+
+            filename = str(result_payload.get("filename") or "problem-studio.zip")
+            response = Response({
+                "download_url": generate_presigned_get_url_storage(
+                    key=result_key,
+                    expires_in=300,
+                    filename=filename,
+                    content_type="application/zip",
+                ),
+                "filename": filename,
+                "sha256": str(result_payload.get("sha256") or ""),
+                "size_bytes": int(result_payload.get("size_bytes") or 0),
+            })
+            response["Cache-Control"] = "no-store"
+            return response
+        finally:
+            cache.delete(lock_key)

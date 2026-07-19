@@ -14,6 +14,7 @@ from rest_framework.views import APIView
 from apps.core.permissions import TenantResolvedAndMember
 from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
 from apps.domains.ai.services.job_status_response import build_job_status_response
+from apps.domains.ai.services.job_access import user_can_read_job
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,11 @@ class JobStatusView(APIView):
             repo = _ai_repo()
             job = repo.get_job_model_for_status(job_id, str(tenant.id))
             if not job:
+                return Response(
+                    {"detail": "해당 job을 찾을 수 없습니다."},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            if not user_can_read_job(user=request.user, tenant=tenant, job_type=job.job_type):
                 return Response(
                     {"detail": "해당 job을 찾을 수 없습니다."},
                     status=status.HTTP_404_NOT_FOUND,

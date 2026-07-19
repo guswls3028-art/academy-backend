@@ -7,8 +7,9 @@ import zlib
 from io import BytesIO
 from unittest.mock import patch
 
+from django.apps import apps as django_apps
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import SimpleTestCase
+from django.test import SimpleTestCase, TestCase
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.domains.tools.problem_studio.services import (
@@ -24,6 +25,7 @@ from apps.domains.tools.problem_studio.transfer_documents import (
     build_transfer_package,
     package_to_response,
     _normalize_hwp_image_data,
+    TransferOcrContext,
 )
 from apps.domains.tools.problem_studio.extractors import extract_hwpx_text
 from apps.domains.tools.problem_studio.ocr import OcrResult
@@ -56,6 +58,30 @@ _TINY_PNG = base64.b64decode(
 
 
 class ProblemStudioServiceTests(SimpleTestCase):
+    def test_ai_ocr_context_injects_transcribed_text_into_hwpx(self):
+        calls: list[tuple[int, str]] = []
+
+        def transcribe(data: bytes, mime: str) -> OcrResult:
+            calls.append((len(data), mime))
+            return OcrResult(
+                text="1. 다음 중 산화 환원 반응을 고르시오.\n① 반응 A\n정답 ①",
+                status="extracted",
+                engine="openai:test-model",
+            )
+
+        package = build_transfer_package(
+            payload={"title": "AI 타이핑"},
+            source_files=[SimpleUploadedFile("scan.png", _TINY_PNG)],
+            ocr_context=TransferOcrContext(max_units=1, extractor=transcribe),
+        )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1], "image/png")
+        self.assertEqual(package.structured_item_count, 1)
+        with zipfile.ZipFile(BytesIO(package.data)) as zf:
+            preview = zf.read("03_자체양식_문제검수본.hwpx")
+        self.assertIn("산화 환원 반응", extract_hwpx_text(preview))
+
     def test_extracts_hwpx_preview_text(self):
         uploaded = _zip_file(
             "source.hwpx",
@@ -419,6 +445,47 @@ class ProblemStudioServiceTests(SimpleTestCase):
             workbook = zf.read("01_자체양식_문제검수본.doc").decode("utf-8-sig")
         self.assertIn("암모니아 합성 평형", workbook)
 
+    def test_async_transfer_archive_rejects_manifest_size_tampering(self):
+        archive_file, _ = build_source_archive([SimpleUploadedFile("scan.png", _TINY_PNG)])
+        try:
+            with zipfile.ZipFile(archive_file) as source_zip:
+                manifest = json.loads(source_zip.read(SOURCE_ARCHIVE_MANIFEST).decode("utf-8"))
+                manifest["files"][0]["size"] += 1
+                tampered = BytesIO()
+                with zipfile.ZipFile(tampered, "w") as target_zip:
+                    for info in source_zip.infolist():
+                        content = source_zip.read(info.filename)
+                        if info.filename == SOURCE_ARCHIVE_MANIFEST:
+                            content = json.dumps(manifest).encode("utf-8")
+                        target_zip.writestr(info, content)
+                tampered.seek(0)
+        finally:
+            archive_file.close()
+
+        with self.assertRaisesRegex(ValueError, "manifest와 다릅니다"):
+            with source_files_from_archive(tampered):
+                pass
+
+    def test_transfer_worker_rejects_payload_tenant_mismatch(self):
+        from academy.application.use_cases.ai.pipelines.problem_studio_transfer_handler import (
+            handle_problem_studio_transfer_job,
+        )
+
+        job = AIJob.new(
+            type="problem_studio_transcription",
+            tenant_id="7",
+            source_domain="tools_problem_studio",
+            payload={
+                "tenant_id": "8",
+                "source_archive_key": "tenants/8/tools/problem-studio/tmp/test/sources.zip",
+            },
+        )
+
+        result = handle_problem_studio_transfer_job(job)
+
+        self.assertEqual(result.status, "FAILED")
+        self.assertEqual(result.error, "tenant_id mismatch")
+
     def test_transfer_package_reports_zip_with_too_many_members(self):
         uploaded = SimpleUploadedFile(
             "many.zip",
@@ -430,6 +497,29 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertEqual(len(package.documents), 1)
         self.assertEqual(len(package.warnings), 1)
         self.assertIn("ZIP 해제 중 오류", package.warnings[0])
+
+    def test_transfer_package_reports_structure_limit_in_review_document(self):
+        paragraphs = "".join(
+            f"<w:p><w:r><w:t>1. 반응 {index}을 고르시오.</w:t></w:r></w:p>"
+            for index in range(1, 82)
+        )
+        uploaded = _zip_file(
+            "many-questions.docx",
+            {
+                "word/document.xml": (
+                    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                    f"<w:body>{paragraphs}</w:body></w:document>"
+                )
+            },
+        )
+
+        package = build_transfer_package(payload={"title": "구조화 한도"}, source_files=[uploaded])
+
+        self.assertTrue(package.structure_limit_reached)
+        self.assertEqual(package.structured_item_count, 80)
+        with zipfile.ZipFile(BytesIO(package.data)) as zf:
+            hwpx = zf.read("03_자체양식_문제검수본.hwpx")
+        self.assertIn("최대 80개", extract_hwpx_text(hwpx))
 
     def test_parse_payload_rejects_broken_json(self):
         with self.assertRaises(ValueError):
@@ -458,3 +548,103 @@ class ProblemStudioServiceTests(SimpleTestCase):
 
         self.assertEqual(mime, "image/jpeg")
         self.assertTrue(data.startswith(b"\xff\xd8\xff"))
+
+
+class ProblemStudioTransferViewTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth import get_user_model
+        from django.core.cache import cache
+        from apps.core.models import Tenant, TenantMembership
+
+        cache.clear()
+        self.tenant = Tenant.objects.create(name="Problem Studio", code="problem_studio", is_active=True)
+        self.user = get_user_model().objects.create_user(
+            username="problem_studio_owner",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=self.user, role="owner")
+
+    def _request(self, method: str, path: str):
+        from rest_framework.test import APIRequestFactory, force_authenticate
+
+        factory = APIRequestFactory()
+        request = getattr(factory, method)(path)
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.user)
+        return request
+
+    @patch("apps.infrastructure.storage.r2.generate_presigned_get_url_storage", return_value="https://download.example/review.zip")
+    def test_transfer_status_reissues_url_without_exposing_r2_key(self, mock_presign):
+        from apps.domains.tools.problem_studio.views import ProblemStudioTransferJobStatusView
+
+        AIJobModel = django_apps.get_model("ai_domain", "AIJobModel")
+        AIResultModel = django_apps.get_model("ai_domain", "AIResultModel")
+        job = AIJobModel.objects.create(
+            job_id="problem-status-job",
+            job_type="problem_studio_transcription",
+            status="DONE",
+            tenant_id=str(self.tenant.id),
+            source_domain="tools_problem_studio",
+            tier="basic",
+        )
+        AIResultModel.objects.create(job=job, payload={
+            "r2_key": f"tenants/{self.tenant.id}/tools/problem-studio/result/review.zip",
+            "download_url": "https://expired.example/review.zip",
+            "filename": "검수본.zip",
+            "size_bytes": 12,
+        })
+
+        response = ProblemStudioTransferJobStatusView.as_view()(
+            self._request("get", f"/api/v1/tools/problem-studio/transfer-jobs/{job.job_id}/"),
+            job_id=job.job_id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["result"]["download_url"], "https://download.example/review.zip")
+        self.assertNotIn("r2_key", response.data["result"])
+        mock_presign.assert_called_once()
+
+    @patch("apps.infrastructure.storage.r2.generate_presigned_get_url_storage", return_value="https://download.example/review.zip")
+    def test_hangul_handoff_is_one_time(self, mock_presign):
+        from urllib.parse import parse_qs, unquote, urlparse
+        from apps.domains.tools.problem_studio.views import (
+            ProblemStudioHangulHandoffConsumeView,
+            ProblemStudioHangulHandoffCreateView,
+        )
+
+        AIJobModel = django_apps.get_model("ai_domain", "AIJobModel")
+        AIResultModel = django_apps.get_model("ai_domain", "AIResultModel")
+        job = AIJobModel.objects.create(
+            job_id="problem-handoff-job",
+            job_type="problem_studio_transcription",
+            status="DONE",
+            tenant_id=str(self.tenant.id),
+            source_domain="tools_problem_studio",
+            tier="basic",
+        )
+        AIResultModel.objects.create(job=job, payload={
+            "r2_key": f"tenants/{self.tenant.id}/tools/problem-studio/result/review.zip",
+            "filename": "검수본.zip",
+            "size_bytes": 12,
+            "sha256": "a" * 64,
+        })
+
+        create_response = ProblemStudioHangulHandoffCreateView.as_view()(
+            self._request("post", f"/api/v1/tools/problem-studio/transfer-jobs/{job.job_id}/hangul-handoff/"),
+            job_id=job.job_id,
+        )
+        self.assertEqual(create_response.status_code, 200, create_response.data)
+        protocol = urlparse(create_response.data["protocol_url"])
+        handoff_url = unquote(parse_qs(protocol.query)["handoff"][0])
+        token = urlparse(handoff_url).path.rstrip("/").rsplit("/", 1)[-1]
+
+        consume_view = ProblemStudioHangulHandoffConsumeView.as_view()
+        first = consume_view(self._request("get", f"/api/v1/tools/problem-studio/hangul-handoffs/{token}/"), token=token)
+        second = consume_view(self._request("get", f"/api/v1/tools/problem-studio/hangul-handoffs/{token}/"), token=token)
+
+        self.assertEqual(first.status_code, 200, first.data)
+        self.assertEqual(first.data["sha256"], "a" * 64)
+        self.assertEqual(second.status_code, 404, second.data)
+        mock_presign.assert_called_once()

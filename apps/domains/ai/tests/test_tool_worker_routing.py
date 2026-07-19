@@ -60,6 +60,17 @@ class ToolWorkerRoutingTests(TestCase):
         client.send_message.assert_called_once()
         assert client.send_message.call_args.kwargs["queue_name"] == "test-ai-queue"
 
+    @patch("apps.support.ai.services.sqs_queue.get_queue_client")
+    def test_problem_studio_transcription_stays_on_ai_queue(self, get_queue_client):
+        client = Mock()
+        client.send_message.return_value = True
+        get_queue_client.return_value = client
+
+        publish_ai_job_sqs(self._job("problem_studio_transcription"))
+
+        client.send_message.assert_called_once()
+        assert client.send_message.call_args.kwargs["queue_name"] == "test-ai-queue"
+
     def test_ai_job_execution_timestamps_are_preserved_after_completion(self):
         job = self._job("ppt_generation")
         repo = DjangoAIJobRepository()
@@ -145,3 +156,7 @@ class ToolWorkerRoutingTests(TestCase):
 
                 assert allowed
                 assert error is None
+
+        allowed, error = enforce_tier_limits(tier="basic", job_type="problem_studio_transcription")
+        assert allowed
+        assert error is None

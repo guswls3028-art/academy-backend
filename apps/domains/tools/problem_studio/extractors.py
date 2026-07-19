@@ -34,11 +34,30 @@ def xml_text(xml_bytes: bytes) -> str:
         root = ElementTree.fromstring(xml_bytes)
     except ElementTree.ParseError:
         return ""
+    paragraphs: list[str] = []
+    for paragraph in root.iter():
+        if paragraph.tag.rsplit("}", 1)[-1] != "p":
+            continue
+        parts: list[str] = []
+        for elem in paragraph.iter():
+            tag = elem.tag.rsplit("}", 1)[-1]
+            if tag == "t" and elem.text:
+                parts.append(elem.text)
+            elif tag == "tab":
+                parts.append("\t")
+            elif tag == "lineBreak":
+                parts.append("\n")
+        value = "".join(parts).strip()
+        if value:
+            paragraphs.append(value)
+    if paragraphs:
+        return "\n".join(paragraphs)
+
     texts: list[str] = []
     for elem in root.iter():
         if elem.text and elem.text.strip():
             tag = elem.tag.rsplit("}", 1)[-1]
-            if tag in {"t", "tab", "lineBreak", "p"}:
+            if tag in {"t", "p"}:
                 texts.append(elem.text.strip())
     return " ".join(texts)
 

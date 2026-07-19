@@ -128,11 +128,23 @@ def source_files_from_archive(archive_path: str | Path) -> Iterator[list[Archive
             manifest = json.loads(zf.read(SOURCE_ARCHIVE_MANIFEST).decode("utf-8"))
             if manifest.get("schema") != SOURCE_ARCHIVE_SCHEMA:
                 raise ValueError("지원하지 않는 Problem Studio 소스 아카이브입니다.")
+            manifest_files = manifest.get("files") or []
+            if not isinstance(manifest_files, list) or len(manifest_files) > SOURCE_ARCHIVE_MAX_FILES:
+                raise ValueError("소스 아카이브 파일 수가 올바르지 않습니다.")
+            if int(manifest.get("file_count", -1)) != len(manifest_files):
+                raise ValueError("소스 아카이브 파일 수가 manifest와 다릅니다.")
             names = set(zf.namelist())
-            for index, entry in enumerate(manifest.get("files") or []):
+            seen_archive_names: set[str] = set()
+            total_size = 0
+            for index, entry in enumerate(manifest_files):
+                if not isinstance(entry, dict):
+                    raise ValueError("소스 아카이브 manifest가 올바르지 않습니다.")
                 archive_name = str(entry.get("archive_name") or "")
                 if archive_name not in names or not archive_name.startswith("files/"):
                     raise ValueError("소스 아카이브 파일 목록이 올바르지 않습니다.")
+                if archive_name in seen_archive_names:
+                    raise ValueError("소스 아카이브에 중복 파일이 있습니다.")
+                seen_archive_names.add(archive_name)
                 original_name = _safe_filename(str(entry.get("name") or f"source-{index + 1}"))
                 target = root / f"{index:03d}_{original_name}"
                 with zf.open(archive_name) as source, target.open("wb") as dest:
@@ -140,12 +152,19 @@ def source_files_from_archive(archive_path: str | Path) -> Iterator[list[Archive
                 size = target.stat().st_size
                 if size > TRANSFER_MAX_UPLOAD_BYTES:
                     raise ValueError(f"{original_name} 파일 크기가 너무 큽니다.")
+                if size != int(entry.get("size", -1)):
+                    raise ValueError(f"{original_name} 파일 크기가 manifest와 다릅니다.")
+                total_size += size
+                if total_size > SOURCE_ARCHIVE_MAX_TOTAL_BYTES:
+                    raise ValueError("전체 업로드 크기가 너무 큽니다.")
                 files.append(ArchivedSourceFile(
                     name=original_name,
                     path=target,
                     size=size,
                     content_type=str(entry.get("content_type") or "application/octet-stream"),
                 ))
+            if total_size != int(manifest.get("total_size", -1)):
+                raise ValueError("소스 아카이브 전체 크기가 manifest와 다릅니다.")
         yield files
     finally:
         for item in files:
