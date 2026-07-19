@@ -26,11 +26,11 @@ from apps.support.inventory.matchup_dependencies import (
     protected_matchup_document_delete_detail,
 )
 from apps.support.results.student_reported_scores import (
-    create_student_score_submission,
+    create_student_score_submissions,
     inventory_file_has_reported_score,
     score_submission_map_for_inventory_files,
     serialize_reported_score,
-    validate_student_score_submission,
+    validate_student_score_submissions,
 )
 
 # R2 Storage 버킷 (인벤토리 전용)
@@ -268,9 +268,10 @@ class InventoryListView(View):
                         "status": doc_info["status"],
                         "problemCount": doc_info["problem_count"],
                     }
-                reported_score = reported_score_map.get(f.id)
-                if reported_score:
-                    row["scoreSubmission"] = reported_score
+                reported_scores = reported_score_map.get(f.id, [])
+                if reported_scores:
+                    row["scoreSubmissions"] = reported_scores
+                    row["scoreSubmission"] = reported_scores[0]
                 files.append(row)
             return JsonResponse({"folders": folders, "files": files})
         except Exception as e:
@@ -401,7 +402,7 @@ class FileUploadView(View):
 
         score_submission_flag = (request.POST.get("score_submission") or "").strip().lower()
         is_score_submission = score_submission_flag in ("1", "true", "yes")
-        validated_score = None
+        validated_scores = None
         if is_score_submission:
             if scope != "student":
                 return JsonResponse({"detail": "학생 성적표는 학생 저장소로만 제출할 수 있습니다."}, status=400)
@@ -412,7 +413,7 @@ class FileUploadView(View):
             if not _score_evidence_signature_matches(file_obj, ct):
                 return JsonResponse({"detail": "파일 내용과 성적표 파일 형식이 일치하지 않습니다."}, status=400)
             try:
-                validated_score = validate_student_score_submission(
+                validated_scores = validate_student_score_submissions(
                     tenant=request.tenant,
                     user=request.user,
                     student_ps=student_ps,
@@ -479,15 +480,19 @@ class FileUploadView(View):
                     status=400,
                 )
 
-        if upload_fileobj_to_r2_storage:
-            try:
-                upload_fileobj_to_r2_storage(
-                    fileobj=file_obj,
-                    key=r2_key,
-                    content_type=file_obj.content_type or "application/octet-stream",
-                )
-            except Exception as e:
-                return JsonResponse({"detail": f"R2 upload failed: {e}"}, status=502)
+        if upload_fileobj_to_r2_storage is None:
+            return JsonResponse(
+                {"detail": "파일 저장소를 사용할 수 없습니다.", "code": "storage_unavailable"},
+                status=503,
+            )
+        try:
+            upload_fileobj_to_r2_storage(
+                fileobj=file_obj,
+                key=r2_key,
+                content_type=file_obj.content_type or "application/octet-stream",
+            )
+        except Exception as e:
+            return JsonResponse({"detail": f"R2 upload failed: {e}"}, status=502)
 
         inv_file = inv_repo.inventory_file_create(
             tenant=tenant,
@@ -503,12 +508,12 @@ class FileUploadView(View):
             content_type=file_obj.content_type or "application/octet-stream",
         )
 
-        reported_score = None
-        if validated_score is not None:
+        reported_scores = []
+        if validated_scores is not None:
             try:
-                reported_score = create_student_score_submission(
+                reported_scores = create_student_score_submissions(
                     evidence_file=inv_file,
-                    validated=validated_score,
+                    validated_rows=validated_scores,
                 )
             except Exception:
                 import logging
@@ -516,16 +521,21 @@ class FileUploadView(View):
                     "Student score submission creation failed for inventory_file %s",
                     inv_file.id,
                 )
+                try:
+                    delete_object_r2_storage(key=r2_key)
+                except Exception:
+                    logging.getLogger(__name__).exception(
+                        "Failed to roll back student score R2 upload: %s",
+                        r2_key,
+                    )
+                    return JsonResponse(
+                        {
+                            "detail": "성적 정보 저장과 원본 정리에 실패했습니다. 관리자에게 문의해 주세요.",
+                            "code": "score_storage_cleanup_failed",
+                        },
+                        status=502,
+                    )
                 inv_file.delete()
-                if delete_object_r2_storage:
-                    try:
-                        delete_object_r2_storage(key=r2_key)
-                    except Exception:
-                        logging.getLogger(__name__).warning(
-                            "Failed to roll back student score R2 upload: %s",
-                            r2_key,
-                            exc_info=True,
-                        )
                 return JsonResponse({"detail": "성적표 제출 정보를 저장하지 못했습니다."}, status=500)
 
         matchup_doc_id = None
@@ -573,8 +583,10 @@ class FileUploadView(View):
         if matchup_promote_failed:
             payload["matchupPromoteFailed"] = True
             payload["matchupError"] = matchup_error
-        if reported_score is not None:
-            payload["scoreSubmission"] = serialize_reported_score(reported_score)
+        if reported_scores:
+            serialized_scores = [serialize_reported_score(row) for row in reported_scores]
+            payload["scoreSubmissions"] = serialized_scores
+            payload["scoreSubmission"] = serialized_scores[0]
         return JsonResponse(payload)
 
 
@@ -726,17 +738,30 @@ class FileDeleteView(View):
                     exc_info=True,
                 )
 
-        inv_file.delete()  # CASCADE: MatchupDocument → MatchupProblem 함께 삭제
-
-        # 🔐 원본 R2 객체 삭제 (스토리지 누수 방지)
-        if r2_key and delete_object_r2_storage:
+        # 원본을 먼저 지우고 성공했을 때만 DB 연결을 해제한다. 실패를 삼키고
+        # 204를 반환하면 개인정보가 R2에 남은 채 마지막 key 참조가 사라진다.
+        if r2_key and delete_object_r2_storage is None:
+            return JsonResponse(
+                {"detail": "파일 저장소를 사용할 수 없습니다.", "code": "storage_unavailable"},
+                status=503,
+            )
+        if r2_key:
             try:
                 delete_object_r2_storage(key=r2_key)
             except Exception:
                 import logging
-                logging.getLogger(__name__).warning(
+                logging.getLogger(__name__).exception(
                     "Failed to delete R2 object: %s", r2_key, exc_info=True
                 )
+                return JsonResponse(
+                    {
+                        "detail": "원본 파일 삭제에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+                        "code": "storage_delete_failed",
+                    },
+                    status=502,
+                )
+
+        inv_file.delete()  # CASCADE: MatchupDocument → MatchupProblem 함께 삭제
 
         return JsonResponse({}, status=204)
 

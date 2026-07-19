@@ -1,17 +1,21 @@
 """Integration coverage for student-reported scores across inventory and results."""
 
 import json
+from io import StringIO
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import TenantMembership
 from apps.domains.clinic.tests import ClinicTestMixin
 from apps.domains.inventory.models import InventoryFile, InventoryFolder
+from apps.domains.inventory.services import move_file, move_folder
 from apps.domains.inventory.views import (
     FileDeleteView,
     FileUploadView,
@@ -52,6 +56,7 @@ class StudentReportedScoreTest(TestCase, ClinicTestMixin):
         extra=None,
         filename="score.jpg",
         content=b"\xff\xd8\xff\xe0score-image",
+        r2_available=True,
     ):
         data = {
             "scope": "student",
@@ -83,6 +88,11 @@ class StudentReportedScoreTest(TestCase, ClinicTestMixin):
             data.update(extra)
         request = self.factory.post("/storage/inventory/upload/", data=data, format="multipart")
         request.tenant = self.tenant
+        upload_patch = (
+            patch("apps.domains.inventory.views.upload_fileobj_to_r2_storage")
+            if r2_available
+            else patch("apps.domains.inventory.views.upload_fileobj_to_r2_storage", new=None)
+        )
         with (
             patch(
                 "apps.domains.inventory.views.JWTAuthentication.authenticate",
@@ -92,15 +102,18 @@ class StudentReportedScoreTest(TestCase, ClinicTestMixin):
                 "apps.domains.inventory.views.Program.ensure_for_tenant",
                 return_value=SimpleNamespace(plan="pro"),
             ),
-            patch("apps.domains.inventory.views.upload_fileobj_to_r2_storage") as upload_r2,
+            upload_patch as upload_r2,
         ):
             response = FileUploadView.as_view()(request)
         return response, upload_r2
 
-    def _review(self, score_id, action="verify", *, tenant=None, user=None):
+    def _review(self, score_id, action="verify", *, tenant=None, user=None, extra=None):
+        data = {"action": action}
+        if extra:
+            data.update(extra)
         request = self.factory.patch(
             f"/results/admin/reported-scores/{score_id}/review/",
-            data={"action": action},
+            data=data,
             format="json",
         )
         request.tenant = tenant or self.tenant
@@ -310,9 +323,12 @@ class StudentReportedScoreTest(TestCase, ClinicTestMixin):
         )
         self.assertEqual(foreign_review.status_code, 404)
 
-    def test_recursive_folder_delete_cannot_remove_linked_evidence_or_r2_object(self):
+    def test_recursive_folder_delete_routes_terminal_score_evidence_to_single_file_delete(self):
         upload, _ = self._student_upload()
-        inv_file = InventoryFile.objects.get(id=int(json.loads(upload.content)["id"]))
+        upload_payload = json.loads(upload.content)
+        inv_file = InventoryFile.objects.get(id=int(upload_payload["id"]))
+        score_id = upload_payload["scoreSubmission"]["id"]
+        self.assertEqual(self._review(score_id, action="reject").status_code, 200)
         folder = InventoryFolder.objects.create(
             tenant=self.tenant,
             scope="student",
@@ -343,3 +359,335 @@ class StudentReportedScoreTest(TestCase, ClinicTestMixin):
         delete_r2.assert_not_called()
         self.assertTrue(InventoryFile.objects.filter(id=inv_file.id).exists())
         self.assertTrue(InventoryFolder.objects.filter(id=folder.id).exists())
+
+    def test_score_evidence_cannot_move_without_a_durable_old_key_cleanup_record(self):
+        upload, _ = self._student_upload()
+        inv_file = InventoryFile.objects.get(id=int(json.loads(upload.content)["id"]))
+        source_folder = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            scope="student",
+            student_ps=self.student.ps_number,
+            name="원본 성적표",
+        )
+        target_folder = InventoryFolder.objects.create(
+            tenant=self.tenant,
+            scope="student",
+            student_ps=self.student.ps_number,
+            name="이동 대상",
+        )
+        inv_file.folder = source_folder
+        inv_file.save(update_fields=["folder", "updated_at"])
+
+        with (
+            patch("apps.domains.inventory.services.copy_object_r2_storage") as copy_r2,
+            patch("apps.domains.inventory.services.delete_object_r2_storage") as delete_r2,
+        ):
+            file_result = move_file(
+                tenant=self.tenant,
+                scope="student",
+                student_ps=self.student.ps_number,
+                source_file_id=inv_file.id,
+                target_folder_id=target_folder.id,
+            )
+            folder_result = move_folder(
+                tenant=self.tenant,
+                scope="student",
+                student_ps=self.student.ps_number,
+                source_folder_id=source_folder.id,
+                target_folder_id=target_folder.id,
+            )
+
+        self.assertEqual(file_result["status"], 409)
+        self.assertEqual(folder_result["status"], 409)
+        self.assertEqual(file_result["code"], "reported_score_evidence_protected")
+        self.assertEqual(folder_result["code"], "reported_score_evidence_protected")
+        copy_r2.assert_not_called()
+        delete_r2.assert_not_called()
+        inv_file.refresh_from_db()
+        source_folder.refresh_from_db()
+        self.assertEqual(inv_file.folder_id, source_folder.id)
+        self.assertIsNone(source_folder.parent_id)
+
+    def test_one_evidence_upload_creates_and_reviews_multiple_subjects_atomically(self):
+        score_items = json.dumps([
+            {"subject": "수학", "score": 88, "max_score": 100},
+            {"subject": "영어", "score": 92, "max_score": 100},
+        ])
+        response, upload_r2 = self._student_upload(extra={"score_items": score_items})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        payload = json.loads(response.content)
+        self.assertEqual(len(payload["scoreSubmissions"]), 2)
+        self.assertEqual(StudentReportedScore.objects.count(), 2)
+        self.assertEqual(StudentReportedScore.objects.values("evidence_file_id").distinct().count(), 1)
+        upload_r2.assert_called_once()
+
+        score_id = payload["scoreSubmissions"][0]["id"]
+        reviewed = self._review(score_id, extra={"review_all_evidence": True})
+        self.assertEqual(reviewed.status_code, 200, reviewed.data)
+        self.assertEqual(len(reviewed.data["score_submissions"]), 2)
+        self.assertEqual(StudentReportedScore.objects.filter(status="verified").count(), 2)
+
+        list_request = self.factory.get(
+            "/storage/inventory/",
+            {"scope": "student", "student_ps": self.student.ps_number},
+        )
+        list_request.tenant = self.tenant
+        with patch(
+            "apps.domains.inventory.views.JWTAuthentication.authenticate",
+            return_value=(self.student_user, None),
+        ):
+            listed = InventoryListView.as_view()(list_request)
+        listed_file = json.loads(listed.content)["files"][0]
+        self.assertEqual(len(listed_file["scoreSubmissions"]), 2)
+        self.assertEqual(listed_file["scoreSubmission"]["subject"], "수학")
+
+    def test_invalid_multi_subject_row_rejects_whole_report_before_storage_write(self):
+        score_items = json.dumps([
+            {"subject": "수학", "score": 88, "max_score": 100},
+            {"subject": "영어", "score": 120, "max_score": 100},
+        ])
+        response, upload_r2 = self._student_upload(extra={"score_items": score_items})
+
+        self.assertEqual(response.status_code, 400)
+        upload_r2.assert_not_called()
+        self.assertFalse(InventoryFile.objects.exists())
+        self.assertFalse(StudentReportedScore.objects.exists())
+
+    def test_score_upload_fails_closed_when_storage_adapter_is_unavailable(self):
+        response, upload_r2 = self._student_upload(r2_available=False)
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIsNone(upload_r2)
+        self.assertFalse(InventoryFile.objects.exists())
+        self.assertFalse(StudentReportedScore.objects.exists())
+
+    def test_multi_subject_items_cannot_override_shared_exam_metadata(self):
+        score_items = json.dumps([
+            {"subject": "수학", "score": 88, "max_score": 100},
+            {
+                "subject": "영어",
+                "score": 92,
+                "max_score": 100,
+                "academic_year": 2025,
+            },
+        ])
+
+        response, upload_r2 = self._student_upload(extra={"score_items": score_items})
+
+        self.assertEqual(response.status_code, 400)
+        upload_r2.assert_not_called()
+        self.assertFalse(InventoryFile.objects.exists())
+        self.assertFalse(StudentReportedScore.objects.exists())
+
+    def test_group_review_only_processes_remaining_pending_subjects(self):
+        score_items = json.dumps([
+            {"subject": "수학", "score": 88, "max_score": 100},
+            {"subject": "영어", "score": 92, "max_score": 100},
+        ])
+        response, _ = self._student_upload(extra={"score_items": score_items})
+        submissions = json.loads(response.content)["scoreSubmissions"]
+
+        first_review = self._review(submissions[0]["id"])
+        self.assertEqual(first_review.status_code, 200, first_review.data)
+
+        remaining_review = self._review(
+            submissions[1]["id"],
+            extra={"review_all_evidence": True},
+        )
+        self.assertEqual(remaining_review.status_code, 200, remaining_review.data)
+        self.assertEqual(len(remaining_review.data["score_submissions"]), 1)
+        self.assertEqual(
+            StudentReportedScore.objects.filter(status="verified").count(),
+            2,
+        )
+
+    def test_flexible_school_assessment_requires_name_and_date_and_preserves_label(self):
+        missing_date, upload_r2 = self._student_upload(extra={
+            "exam_round": "performance",
+            "exam_name": "수학 주제탐구 수행평가",
+            "exam_date": "",
+        })
+        self.assertEqual(missing_date.status_code, 400)
+        upload_r2.assert_not_called()
+
+        response, _ = self._student_upload(extra={
+            "exam_round": "performance",
+            "exam_name": "수학 주제탐구 수행평가",
+            "exam_date": "2026-05-14",
+        })
+        self.assertEqual(response.status_code, 200, response.content)
+        score = json.loads(response.content)["scoreSubmission"]
+        self.assertEqual(score["exam_name"], "수학 주제탐구 수행평가")
+        self.assertEqual(score["label"], "2026년 1학기 수학 주제탐구 수행평가")
+
+    def test_same_named_performance_assessments_on_different_dates_both_accumulate(self):
+        first, _ = self._student_upload(
+            filename="performance-first.jpg",
+            extra={
+                "exam_round": "performance",
+                "exam_name": "수학 주제탐구 수행평가",
+                "exam_date": "2026-05-14",
+            },
+        )
+        second, _ = self._student_upload(
+            filename="performance-second.jpg",
+            extra={
+                "exam_round": "performance",
+                "exam_name": "수학 주제탐구 수행평가",
+                "exam_date": "2026-06-18",
+            },
+        )
+
+        first_id = json.loads(first.content)["scoreSubmission"]["id"]
+        second_id = json.loads(second.content)["scoreSubmission"]["id"]
+        self.assertEqual(self._review(first_id).status_code, 200)
+        self.assertEqual(self._review(second_id).status_code, 200)
+        self.assertEqual(
+            StudentReportedScore.objects.filter(
+                status=StudentReportedScore.Status.VERIFIED,
+                exam_round=StudentReportedScore.ExamRound.PERFORMANCE,
+            ).count(),
+            2,
+        )
+
+    def test_grade_rank_cannot_be_verified_without_staff_scale_confirmation(self):
+        upload, _ = self._student_upload(extra={"grade_scale": "five", "grade_rank": "3"})
+        score_id = json.loads(upload.content)["scoreSubmission"]["id"]
+
+        blocked = self._review(score_id)
+        self.assertEqual(blocked.status_code, 400)
+        self.assertIn("등급 체계", blocked.data["detail"])
+        self.assertEqual(StudentReportedScore.objects.get(id=score_id).status, "pending")
+
+        verified = self._review(score_id, extra={"grade_scale_confirmed": True})
+        self.assertEqual(verified.status_code, 200, verified.data)
+        self.assertEqual(verified.data["status"], "verified")
+
+        stale_reject = self._review(score_id, action="reject")
+        self.assertEqual(stale_reject.status_code, 409)
+        self.assertEqual(StudentReportedScore.objects.get(id=score_id).status, "verified")
+
+    def test_verified_score_can_be_voided_then_evidence_deleted_without_losing_audit_row(self):
+        marker = "[E2E-20260719183000-a1b2c3d4]"
+        upload, _ = self._student_upload(extra={
+            "subject": marker,
+            "exam_round": "other",
+            "exam_name": marker,
+        })
+        payload = json.loads(upload.content)
+        score_id = payload["scoreSubmission"]["id"]
+        file_id = int(payload["id"])
+        self.assertEqual(self._review(score_id).status_code, 200)
+
+        missing_reason = self._review(score_id, action="void")
+        self.assertEqual(missing_reason.status_code, 400)
+        self.assertEqual(StudentReportedScore.objects.get(id=score_id).status, "verified")
+
+        voided = self._review(
+            score_id,
+            action="void",
+            extra={"review_note": "다른 학생 성적표를 잘못 승인함"},
+        )
+        self.assertEqual(voided.status_code, 200, voided.data)
+        self.assertEqual(voided.data["status"], "voided")
+        self.assertEqual(self._console().data["students"][0]["source_summaries"]["school"]["scored_count"], 0)
+
+        unavailable_delete_request = self.factory.delete(
+            f"/storage/inventory/files/{file_id}/?scope=student&student_ps={self.student.ps_number}"
+        )
+        unavailable_delete_request.tenant = self.tenant
+        with (
+            patch(
+                "apps.domains.inventory.views.JWTAuthentication.authenticate",
+                return_value=(self.student_user, None),
+            ),
+            patch("apps.domains.inventory.views.delete_object_r2_storage", new=None),
+        ):
+            unavailable_delete = FileDeleteView.as_view()(unavailable_delete_request, file_id=file_id)
+        self.assertEqual(unavailable_delete.status_code, 503)
+        self.assertTrue(InventoryFile.objects.filter(id=file_id).exists())
+        self.assertEqual(StudentReportedScore.objects.get(id=score_id).evidence_file_id, file_id)
+
+        failed_delete_request = self.factory.delete(
+            f"/storage/inventory/files/{file_id}/?scope=student&student_ps={self.student.ps_number}"
+        )
+        failed_delete_request.tenant = self.tenant
+        with (
+            patch(
+                "apps.domains.inventory.views.JWTAuthentication.authenticate",
+                return_value=(self.student_user, None),
+            ),
+            patch(
+                "apps.domains.inventory.views.delete_object_r2_storage",
+                side_effect=RuntimeError("provider unavailable"),
+            ),
+        ):
+            failed_delete = FileDeleteView.as_view()(failed_delete_request, file_id=file_id)
+        self.assertEqual(failed_delete.status_code, 502)
+        self.assertTrue(InventoryFile.objects.filter(id=file_id).exists())
+        self.assertEqual(StudentReportedScore.objects.get(id=score_id).evidence_file_id, file_id)
+
+        delete_request = self.factory.delete(
+            f"/storage/inventory/files/{file_id}/?scope=student&student_ps={self.student.ps_number}"
+        )
+        delete_request.tenant = self.tenant
+        with (
+            patch(
+                "apps.domains.inventory.views.JWTAuthentication.authenticate",
+                return_value=(self.student_user, None),
+            ),
+            patch("apps.domains.inventory.views.delete_object_r2_storage") as delete_r2,
+        ):
+            deleted = FileDeleteView.as_view()(delete_request, file_id=file_id)
+        self.assertEqual(deleted.status_code, 204)
+        delete_r2.assert_called_once()
+        audit_row = StudentReportedScore.objects.get(id=score_id)
+        self.assertEqual(audit_row.status, "voided")
+        self.assertIsNone(audit_row.evidence_file_id)
+        self.assertEqual(audit_row.review_note, "다른 학생 성적표를 잘못 승인함")
+
+        with self.assertRaises(CommandError):
+            call_command(
+                "cleanup_reported_score_canary",
+                tenant_code=self.tenant.code,
+                marker=marker,
+                confirm="wrong",
+            )
+        output = StringIO()
+        call_command(
+            "cleanup_reported_score_canary",
+            tenant_code=self.tenant.code,
+            marker=marker,
+            confirm=marker,
+            stdout=output,
+        )
+        self.assertIn("rows=1", output.getvalue())
+        self.assertFalse(StudentReportedScore.objects.filter(id=score_id).exists())
+
+    def test_canary_recovery_terminalizes_pending_rows_and_deletes_evidence(self):
+        marker = "[E2E-20260719183100-b1c2d3e4]"
+        upload, _ = self._student_upload(extra={
+            "subject": marker,
+            "exam_round": "other",
+            "exam_name": marker,
+        })
+        payload = json.loads(upload.content)
+        score_id = payload["scoreSubmission"]["id"]
+        file_id = int(payload["id"])
+
+        with patch(
+            "apps.domains.inventory.services.delete_object_r2_storage"
+        ) as delete_r2:
+            call_command(
+                "cleanup_reported_score_canary",
+                tenant_code=self.tenant.code,
+                marker=marker,
+                confirm=marker,
+                recover_active=True,
+                wait_seconds=0,
+            )
+
+        delete_r2.assert_called_once()
+        self.assertFalse(InventoryFile.objects.filter(id=file_id).exists())
+        self.assertFalse(StudentReportedScore.objects.filter(id=score_id).exists())

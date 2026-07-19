@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections import Counter, defaultdict
 from datetime import date, timedelta
 from math import isfinite
 from statistics import fmean
 from typing import Any
 
+from django.core.cache import cache
+from django.db.models import Count, Max, Q
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
@@ -143,19 +146,52 @@ def _display_names(student_rows: list[dict[str, Any]]) -> dict[int, str]:
     return output
 
 
-def build_student_performance_console(
+def _build_student_performance_console_uncached(
     *,
     tenant: Any,
     days: int | None = 180,
     lecture_id: int | None = None,
+    student_id: int | None = None,
+    search: str = "",
+    grade: int | None = None,
+    source: str = "overall",
+    subject: str = "",
+    score_band: str = "all",
+    trend: str = "all",
+    sort: str = "attention",
+    page: int = 1,
+    page_size: int = 30,
+    review_page: int = 1,
+    review_page_size: int = 20,
 ) -> dict[str, Any]:
-    """Build all roster summaries in a fixed number of tenant-scoped queries."""
+    """Build filtered summaries and return one bounded roster page."""
+    base_student_query = Student.objects.filter(
+        tenant=tenant,
+        deleted_at__isnull=True,
+        is_managed=True,
+    )
+    grade_options = sorted(
+        int(value)
+        for value in base_student_query.exclude(grade__isnull=True)
+        .values_list("grade", flat=True)
+        .distinct()
+    )
+    student_query = base_student_query
+    if student_id is not None:
+        student_query = student_query.filter(id=student_id)
+    if grade is not None:
+        student_query = student_query.filter(grade=grade)
+    normalized_search = search.strip()
+    if normalized_search:
+        student_query = student_query.filter(
+            Q(name__icontains=normalized_search)
+            | Q(elementary_school__icontains=normalized_search)
+            | Q(middle_school__icontains=normalized_search)
+            | Q(high_school__icontains=normalized_search)
+            | Q(enrollments__tenant=tenant, enrollments__lecture__title__icontains=normalized_search)
+        ).distinct()
     student_rows = list(
-        Student.objects.filter(
-            tenant=tenant,
-            deleted_at__isnull=True,
-            is_managed=True,
-        ).values(
+        student_query.values(
             "id",
             "name",
             "grade",
@@ -282,7 +318,15 @@ def build_student_performance_console(
             tenant=tenant,
             student_id__in=selected_student_ids,
             student__tenant=tenant,
-            evidence_file__tenant=tenant,
+        ).filter(
+            Q(evidence_file__tenant=tenant)
+            | Q(
+                evidence_file__isnull=True,
+                status__in=(
+                    StudentReportedScore.Status.REJECTED,
+                    StudentReportedScore.Status.VOIDED,
+                ),
+            )
         ).select_related("evidence_file")
     )
     reported_by_student: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
@@ -304,7 +348,6 @@ def build_student_performance_console(
                 })
 
     output_students = []
-    all_score_values = []
     for student in student_rows:
         student_id = int(student["id"])
         points = sorted(
@@ -312,7 +355,6 @@ def build_student_performance_console(
             key=lambda item: (item["recorded_at"], item["exam_id"]),
         )
         academy_summary = _summarize_points(points)
-        all_score_values.extend(float(point["score_pct"]) for point in points)
         student_reported = sorted(
             reported_by_student.get(student_id, []),
             key=lambda item: (_reported_effective_date(item) or date.min, item["id"]),
@@ -381,15 +423,89 @@ def build_student_performance_console(
             ),
         })
 
-    score_band_order = {"under_60": 0, "60_to_79": 1, "80_plus": 2, "unscored": 3}
-    output_students.sort(
-        key=lambda row: (
-            score_band_order[row["score_band"]],
-            row["latest_score_pct"] if row["latest_score_pct"] is not None else 10**9,
-            row["display_name"],
+    def selected_summary(row: dict[str, Any]) -> dict[str, Any]:
+        if source in ("school", "mock") and subject:
+            return row["subject_summaries"][source].get(subject, _summarize_points([]))
+        return row["source_summaries"].get(source, row["source_summaries"]["overall"])
+
+    filtered_students = [
+        row
+        for row in output_students
+        if (score_band == "all" or selected_summary(row)["score_band"] == score_band)
+        and (trend == "all" or selected_summary(row)["trend_direction"] == trend)
+    ]
+    if source == "overall":
+        filtered_students.sort(
+            key=lambda row: (-row["pending_reported_score_count"], row["display_name"])
         )
+    elif sort == "name":
+        filtered_students.sort(key=lambda row: row["display_name"])
+    elif sort == "latest_desc":
+        filtered_students.sort(
+            key=lambda row: (
+                -selected_summary(row)["latest_score_pct"]
+                if selected_summary(row)["latest_score_pct"] is not None
+                else float("inf"),
+                row["display_name"],
+            )
+        )
+    elif sort == "change_desc":
+        filtered_students.sort(
+            key=lambda row: (
+                -selected_summary(row)["change_pct_points"]
+                if selected_summary(row)["change_pct_points"] is not None
+                else float("inf"),
+                row["display_name"],
+            )
+        )
+    else:
+        filtered_students.sort(
+            key=lambda row: (
+                selected_summary(row)["latest_score_pct"]
+                if selected_summary(row)["latest_score_pct"] is not None
+                else float("inf"),
+                row["display_name"],
+            )
+        )
+
+    total_count = len(filtered_students)
+    filtered_student_ids = {row["student_id"] for row in filtered_students}
+    pending_reported_scores = [
+        row for row in pending_reported_scores if row["student_id"] in filtered_student_ids
+    ]
+    pending_reported_scores.sort(
+        key=lambda item: item.get("created_at") or "",
+        reverse=True,
     )
-    scored_students = [row for row in output_students if row["scored_count"] > 0]
+    pending_groups: dict[str, list[dict[str, Any]]] = {}
+    for row in pending_reported_scores:
+        group_key = (
+            f"evidence:{row['evidence_file_id']}"
+            if row.get("evidence_file_id")
+            else f"score:{row['id']}"
+        )
+        pending_groups.setdefault(group_key, []).append(row)
+    pending_group_rows = list(pending_groups.values())
+    pending_total_rows = len(pending_reported_scores)
+    pending_total_groups = len(pending_group_rows)
+    review_total_pages = max(1, (pending_total_groups + review_page_size - 1) // review_page_size)
+    review_page = min(review_page, review_total_pages)
+    review_page_start = (review_page - 1) * review_page_size
+    paged_pending_reported_scores = [
+        row
+        for group in pending_group_rows[review_page_start:review_page_start + review_page_size]
+        for row in group
+    ]
+    total_pages = max(1, (total_count + page_size - 1) // page_size)
+    page = min(page, total_pages)
+    page_start = (page - 1) * page_size
+    paged_students = filtered_students[page_start:page_start + page_size]
+    scored_students = [row for row in filtered_students if selected_summary(row)["scored_count"] > 0]
+    selected_averages = [
+        selected_summary(row)["average_score_pct"]
+        for row in scored_students
+        if selected_summary(row)["average_score_pct"] is not None
+    ]
     return {
         "period": {
             "days": days,
@@ -397,25 +513,34 @@ def build_student_performance_console(
             "to": timezone.now().date().isoformat(),
         },
         "summary": {
-            "student_count": len(output_students),
+            "student_count": total_count,
             "scored_student_count": len(scored_students),
-            "result_count": len(all_score_values),
-            "average_score_pct": round(fmean(all_score_values), 1) if all_score_values else None,
-            "under_60_student_count": sum(1 for row in output_students if row["score_band"] == "under_60"),
-            "improving_student_count": sum(1 for row in output_students if row["trend_direction"] == "up"),
-            "declining_student_count": sum(1 for row in output_students if row["trend_direction"] == "down"),
-            "pending_reported_score_count": len(pending_reported_scores),
+            "result_count": sum(selected_summary(row)["scored_count"] for row in filtered_students),
+            "average_score_pct": round(fmean(selected_averages), 1) if selected_averages else None,
+            "under_60_student_count": sum(
+                1 for row in filtered_students if selected_summary(row)["score_band"] == "under_60"
+            ),
+            "improving_student_count": sum(
+                1 for row in filtered_students if selected_summary(row)["trend_direction"] == "up"
+            ),
+            "declining_student_count": sum(
+                1 for row in filtered_students if selected_summary(row)["trend_direction"] == "down"
+            ),
+            "pending_reported_score_count": pending_total_rows,
+            "academy_student_count": sum(
+                1 for row in filtered_students if row["source_summaries"]["academy"]["scored_count"] > 0
+            ),
+            "school_student_count": sum(
+                1 for row in filtered_students if row["source_summaries"]["school"]["scored_count"] > 0
+            ),
+            "mock_student_count": sum(
+                1 for row in filtered_students if row["source_summaries"]["mock"]["scored_count"] > 0
+            ),
             "verified_school_score_count": sum(
-                1
-                for row in output_students
-                for item in row["reported_scores"]
-                if item["status"] == StudentReportedScore.Status.VERIFIED and item["source_group"] == "school"
+                row["source_summaries"]["school"]["scored_count"] for row in filtered_students
             ),
             "verified_mock_score_count": sum(
-                1
-                for row in output_students
-                for item in row["reported_scores"]
-                if item["status"] == StudentReportedScore.Status.VERIFIED and item["source_group"] == "mock"
+                row["source_summaries"]["mock"]["scored_count"] for row in filtered_students
             ),
         },
         "filter_options": {
@@ -423,13 +548,102 @@ def build_student_performance_console(
                 lecture_options_by_id.values(),
                 key=lambda item: (not item["is_active"], item["title"], item["id"]),
             ),
-            "grades": sorted({int(row["grade"]) for row in student_rows if row.get("grade") is not None}),
+            "grades": grade_options,
             "reported_subjects": sorted(reported_subjects),
         },
-        "pending_reported_scores": sorted(
-            pending_reported_scores,
-            key=lambda item: item.get("created_at") or "",
-            reverse=True,
-        ),
-        "students": output_students,
+        "pending_reported_scores": paged_pending_reported_scores,
+        "review_pagination": {
+            "page": review_page,
+            "page_size": review_page_size,
+            "total_count": pending_total_groups,
+            "total_rows": pending_total_rows,
+            "total_pages": review_total_pages,
+        },
+        "pagination": {
+            "page": page,
+            "page_size": page_size,
+            "total_count": total_count,
+            "total_pages": total_pages,
+        },
+        "students": paged_students,
     }
+
+
+def _performance_data_version(*, tenant: Any) -> tuple[tuple[int, str], ...]:
+    """Cheap tenant stamp so cached console pages invalidate on relevant writes."""
+
+    def stamp(queryset) -> tuple[int, str]:
+        values = queryset.aggregate(row_count=Count("pk"), latest_update=Max("updated_at"))
+        return int(values["row_count"] or 0), str(values["latest_update"] or "")
+
+    return (
+        stamp(Student.objects.filter(tenant=tenant)),
+        stamp(Enrollment.objects.filter(tenant=tenant)),
+        stamp(Exam.objects.filter(tenant=tenant, exam_type=Exam.ExamType.REGULAR)),
+        stamp(Result.objects.filter(enrollment__tenant=tenant, target_type="exam")),
+        stamp(StudentReportedScore.objects.filter(tenant=tenant)),
+    )
+
+
+def build_student_performance_console(
+    *,
+    tenant: Any,
+    days: int | None = 180,
+    lecture_id: int | None = None,
+    student_id: int | None = None,
+    search: str = "",
+    grade: int | None = None,
+    source: str = "overall",
+    subject: str = "",
+    score_band: str = "all",
+    trend: str = "all",
+    sort: str = "attention",
+    page: int = 1,
+    page_size: int = 30,
+    review_page: int = 1,
+    review_page_size: int = 20,
+) -> dict[str, Any]:
+    """Return a versioned five-minute cache page for repeated polling/filter reads."""
+    data_version = _performance_data_version(tenant=tenant)
+    key_parts = (
+        tenant.id,
+        data_version,
+        days,
+        lecture_id,
+        student_id,
+        search,
+        grade,
+        source,
+        subject,
+        score_band,
+        trend,
+        sort,
+        page,
+        page_size,
+        review_page,
+        review_page_size,
+    )
+    digest = hashlib.sha256(repr(key_parts).encode("utf-8")).hexdigest()
+    cache_key = f"student-performance-console:v2:{tenant.id}:{digest}"
+    cached = cache.get(cache_key)
+    if isinstance(cached, dict):
+        return cached
+    response = _build_student_performance_console_uncached(
+        tenant=tenant,
+        days=days,
+        lecture_id=lecture_id,
+        student_id=student_id,
+        search=search,
+        grade=grade,
+        source=source,
+        subject=subject,
+        score_band=score_band,
+        trend=trend,
+        sort=sort,
+        page=page,
+        page_size=page_size,
+        review_page=review_page,
+        review_page_size=review_page_size,
+    )
+    cache.set(cache_key, response, timeout=300)
+    return response

@@ -16,11 +16,14 @@ class StudentReportedScore(TimestampModel):
     class ExamRound(models.TextChoices):
         FIRST = "first", "1차 지필평가(중간고사)"
         SECOND = "second", "2차 지필평가(기말고사)"
+        PERFORMANCE = "performance", "수행평가"
+        OTHER = "other", "기타 학교 평가"
 
     class Status(models.TextChoices):
         PENDING = "pending", "검토 대기"
         VERIFIED = "verified", "확인 완료"
         REJECTED = "rejected", "반려"
+        VOIDED = "voided", "통계 제외"
 
     class GradeScale(models.TextChoices):
         FIVE = "five", "5등급제"
@@ -40,10 +43,12 @@ class StudentReportedScore(TimestampModel):
         related_name="reported_scores",
         db_index=True,
     )
-    evidence_file = models.OneToOneField(
+    evidence_file = models.ForeignKey(
         "inventory.InventoryFile",
-        on_delete=models.PROTECT,
-        related_name="student_reported_score",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="student_reported_scores",
     )
     submitted_by = models.ForeignKey(
         "core.User",
@@ -65,6 +70,12 @@ class StudentReportedScore(TimestampModel):
         choices=ExamRound.choices,
         blank=True,
         default="",
+    )
+    exam_name = models.CharField(
+        max_length=80,
+        blank=True,
+        default="",
+        help_text="기타 학교 평가일 때 성적표에 기재된 시험명",
     )
     exam_month = models.PositiveSmallIntegerField(
         null=True,
@@ -128,6 +139,15 @@ class StudentReportedScore(TimestampModel):
         indexes = [
             models.Index(fields=["tenant", "status", "-created_at"]),
             models.Index(fields=["tenant", "student", "source", "-academic_year"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    models.Q(evidence_file__isnull=False)
+                    | models.Q(status__in=["rejected", "voided"])
+                ),
+                name="reported_score_active_requires_evidence",
+            ),
         ]
 
     def __str__(self):

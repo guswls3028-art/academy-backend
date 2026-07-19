@@ -16,7 +16,7 @@ from apps.support.inventory.matchup_dependencies import (
     get_matchup_document_for_inventory_file,
     matchup_delete_protection_result,
 )
-from apps.support.results.student_reported_scores import inventory_files_have_reported_score
+from apps.support.results.student_reported_scores import inventory_files_have_any_reported_score
 
 try:
     from apps.infrastructure.storage.r2 import (
@@ -111,6 +111,13 @@ def move_file(
     source = inv_repo.inventory_file_get_by_id(tenant, source_file_id)
     if not source or source.scope != scope or (scope == "student" and source.student_ps != student_ps):
         return {"ok": False, "detail": "Source file not found", "status": 404}
+    if inventory_files_have_any_reported_score(tenant=tenant, file_ids=[source.id]):
+        return {
+            "ok": False,
+            "detail": "검수 기록과 연결된 성적표 원본은 이동할 수 없습니다.",
+            "code": "reported_score_evidence_protected",
+            "status": 409,
+        }
 
     target_folder = None
     if target_folder_id:
@@ -146,7 +153,7 @@ def move_file(
         protection_result = _matchup_delete_protection_result([overwrite_existing])
         if protection_result:
             return protection_result
-        if inventory_files_have_reported_score(
+        if inventory_files_have_any_reported_score(
             tenant=tenant,
             file_ids=[overwrite_existing.id],
         ):
@@ -257,7 +264,7 @@ def delete_folder_recursive(
     순서:
       1. 트리 수집 (folder + 모든 자식 폴더·파일)
       2. 각 파일의 매치업 problem 이미지 R2 cleanup (먼저 — orphan 방지)
-      3. 각 파일의 원본 R2 객체 삭제 (best effort, 실패는 로그만)
+      3. 각 파일의 원본 R2 객체 삭제 (하나라도 실패하면 DB cascade 중단)
       4. 루트 폴더 .delete() — Django CASCADE로 자식 폴더 + InventoryFile +
          매치업 doc/problem 모두 정리
 
@@ -273,7 +280,7 @@ def delete_folder_recursive(
     protection_result = _matchup_delete_protection_result(files)
     if protection_result:
         return protection_result
-    if inventory_files_have_reported_score(
+    if inventory_files_have_any_reported_score(
         tenant=tenant,
         file_ids=[inventory_file.id for inventory_file in files],
     ):
@@ -298,19 +305,26 @@ def delete_folder_recursive(
                     inv_file.id, exc_info=True,
                 )
 
-    # 원본 R2 객체 삭제 (best effort)
-    if delete_object_r2_storage:
-        for inv_file in files:
-            if not inv_file.r2_key:
-                continue
-            try:
-                delete_object_r2_storage(key=inv_file.r2_key)
-                r2_deleted += 1
-            except Exception:
-                log.warning(
-                    "Failed to delete R2 object: %s", inv_file.r2_key,
-                    exc_info=True,
-                )
+    r2_files = [inv_file for inv_file in files if inv_file.r2_key]
+    if r2_files and delete_object_r2_storage is None:
+        return {
+            "ok": False,
+            "detail": "파일 저장소를 사용할 수 없습니다.",
+            "code": "storage_unavailable",
+            "status": 503,
+        }
+    for inv_file in r2_files:
+        try:
+            delete_object_r2_storage(key=inv_file.r2_key)
+            r2_deleted += 1
+        except Exception:
+            log.exception("Failed to delete R2 object: %s", inv_file.r2_key)
+            return {
+                "ok": False,
+                "detail": "원본 파일 삭제에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+                "code": "storage_delete_failed",
+                "status": 502,
+            }
 
     # DB cascade 삭제 — 루트 .delete()로 자식 폴더/파일 + 매치업 doc/problem 한 번에 정리.
     folder.delete()
@@ -357,6 +371,18 @@ def move_folder(
                 return {"ok": False, "detail": "Cannot move folder into itself or descendant", "status": 400}
             f = f.parent
 
+    folders, files = _collect_folder_tree(source_folder, tenant, scope, student_ps)
+    if inventory_files_have_any_reported_score(
+        tenant=tenant,
+        file_ids=[inventory_file.id for inventory_file in files],
+    ):
+        return {
+            "ok": False,
+            "detail": "검수 기록과 연결된 성적표 원본이 포함되어 폴더를 이동할 수 없습니다.",
+            "code": "reported_score_evidence_protected",
+            "status": 409,
+        }
+
     if source_folder.parent_id == target_folder_id:
         return {"ok": True, "detail": "Already in target"}
 
@@ -380,7 +406,7 @@ def move_folder(
         protection_result = _matchup_delete_protection_result(overwrite_files)
         if protection_result:
             return protection_result
-        if inventory_files_have_reported_score(
+        if inventory_files_have_any_reported_score(
             tenant=tenant,
             file_ids=[inventory_file.id for inventory_file in overwrite_files],
         ):
@@ -391,7 +417,6 @@ def move_folder(
                 "status": 409,
             }
 
-    folders, files = _collect_folder_tree(source_folder, tenant, scope, student_ps)
     source_folder_path = _get_folder_path_str(source_folder, tenant, scope, student_ps)
     target_path_str = _get_folder_path_str(target_folder, tenant, scope, student_ps)
 
