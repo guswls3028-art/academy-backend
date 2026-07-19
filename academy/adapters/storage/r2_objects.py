@@ -34,6 +34,42 @@ def head_object(key: str) -> tuple[bool, int]:
     return _head_object(key)
 
 
+def head_storage_object_integrity(*, key: str) -> tuple[int, str] | None:
+    """Return an immutable Storage object size/SHA metadata, or None when absent."""
+    from botocore.exceptions import ClientError
+
+    try:
+        response = _r2_client().head_object(Bucket=settings.R2_STORAGE_BUCKET, Key=key)
+        metadata = response.get("Metadata") or {}
+        return int(response.get("ContentLength") or 0), str(metadata.get("sha256") or "").lower()
+    except ClientError as exc:
+        code = str((exc.response.get("Error") or {}).get("Code") or "")
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        raise
+
+
+def create_storage_download_url(
+    *,
+    key: str,
+    filename: str,
+    content_type: str,
+    expires_in: int = 600,
+) -> str:
+    """Create a download-only URL for an object in the shared Storage bucket."""
+    safe_filename = filename.replace('"', "")
+    return _r2_client().generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": settings.R2_STORAGE_BUCKET,
+            "Key": key,
+            "ResponseContentDisposition": f'attachment; filename="{safe_filename}"',
+            "ResponseContentType": content_type,
+        },
+        ExpiresIn=expires_in,
+    )
+
+
 def upload_fileobj(
     fileobj: Any,
     key: str,

@@ -575,6 +575,77 @@ class ProblemStudioTransferViewTests(TestCase):
         force_authenticate(request, user=self.user)
         return request
 
+    @patch(
+        "academy.adapters.storage.r2_objects.create_storage_download_url",
+        return_value="https://download.example/Academy-Hangul-Companion-Windows-1.0.0.zip",
+    )
+    @patch(
+        "academy.adapters.storage.r2_objects.head_storage_object_integrity",
+        return_value=(67644035, "83ed43fed33a4eedb8aa92321bf672de9ce135a3429325d978ae96559b0fdda6"),
+    )
+    def test_hangul_companion_download_is_staff_only_and_manifest_bound(self, mock_head, mock_presign):
+        from apps.domains.tools.problem_studio.views import ProblemStudioHangulCompanionDownloadView
+
+        response = ProblemStudioHangulCompanionDownloadView.as_view()(
+            self._request("get", "/api/v1/tools/problem-studio/hangul-companion/"),
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["version"], "1.0.0")
+        self.assertEqual(response.data["size_bytes"], 67644035)
+        self.assertEqual(response.data["sha256"], "83ed43fed33a4eedb8aa92321bf672de9ce135a3429325d978ae96559b0fdda6")
+        self.assertNotIn("r2_key", response.data)
+        self.assertEqual(response["Cache-Control"], "no-store")
+        mock_head.assert_called_once()
+        mock_presign.assert_called_once()
+
+    @patch("academy.adapters.storage.r2_objects.create_storage_download_url")
+    @patch("academy.adapters.storage.r2_objects.head_storage_object_integrity", return_value=(67644035, "b" * 64))
+    def test_hangul_companion_download_fails_closed_on_object_mismatch(self, _mock_head, mock_presign):
+        from apps.domains.tools.problem_studio.views import ProblemStudioHangulCompanionDownloadView
+
+        response = ProblemStudioHangulCompanionDownloadView.as_view()(
+            self._request("get", "/api/v1/tools/problem-studio/hangul-companion/"),
+        )
+
+        self.assertEqual(response.status_code, 503, response.data)
+        mock_presign.assert_not_called()
+
+    def test_hangul_companion_download_rejects_student_membership(self):
+        from django.contrib.auth import get_user_model
+        from rest_framework.test import APIRequestFactory, force_authenticate
+        from apps.core.models import TenantMembership
+        from apps.domains.tools.problem_studio.views import ProblemStudioHangulCompanionDownloadView
+
+        student = get_user_model().objects.create_user(
+            username="problem_studio_student",
+            password="test1234",
+            tenant=self.tenant,
+        )
+        TenantMembership.ensure_active(tenant=self.tenant, user=student, role="student")
+        request = APIRequestFactory().get("/api/v1/tools/problem-studio/hangul-companion/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=student)
+
+        response = ProblemStudioHangulCompanionDownloadView.as_view()(request)
+
+        self.assertEqual(response.status_code, 403, response.data)
+
+    @patch("academy.adapters.storage.r2_objects.create_storage_download_url")
+    @patch(
+        "academy.adapters.storage.r2_objects.head_storage_object_integrity",
+        side_effect=RuntimeError("R2 unavailable"),
+    )
+    def test_hangul_companion_download_fails_closed_when_r2_is_unavailable(self, _mock_head, mock_presign):
+        from apps.domains.tools.problem_studio.views import ProblemStudioHangulCompanionDownloadView
+
+        response = ProblemStudioHangulCompanionDownloadView.as_view()(
+            self._request("get", "/api/v1/tools/problem-studio/hangul-companion/"),
+        )
+
+        self.assertEqual(response.status_code, 503, response.data)
+        mock_presign.assert_not_called()
+
     @patch("apps.infrastructure.storage.r2.generate_presigned_get_url_storage", return_value="https://download.example/review.zip")
     def test_transfer_status_reissues_url_without_exposing_r2_key(self, mock_presign):
         from apps.domains.tools.problem_studio.views import ProblemStudioTransferJobStatusView

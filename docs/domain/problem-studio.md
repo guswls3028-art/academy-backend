@@ -1,6 +1,6 @@
 # Problem Studio Domain Note
 
-Last verified: 2026-07-19
+Last verified: 2026-07-20
 
 ## Product Philosophy
 
@@ -51,7 +51,7 @@ Frontend:
   - `variant_count: 1..10`
   - `use_ai: true`
   - `transfer_only: false`
-- The primary result is not auto-downloaded. A completed job exposes an explicit ZIP download button and a Windows Beta Hangul-companion handoff. The ZIP includes `.doc` visual/reference documents and a text-focused editable `.hwpx` review workbook. Binary native `.hwp` writing is still not promised.
+- The primary result is not auto-downloaded. A completed job exposes an explicit ZIP download button and a Windows Hangul-companion handoff. The page also exposes the sealed companion installer ZIP before a job is created. The ZIP includes `.doc` visual/reference documents and a text-focused editable `.hwpx` review workbook. Binary native `.hwp` writing is still not promised.
 - Answers and explanations are placed in an endnote-like section using Office/Hangul-compatible HTML markers.
 
 Backend:
@@ -64,6 +64,7 @@ Backend:
   - `GET /api/v1/tools/problem-studio/transfer-jobs/<job_id>/`
   - `POST /api/v1/tools/problem-studio/transfer-jobs/<job_id>/hangul-handoff/`
   - `GET /api/v1/tools/problem-studio/hangul-handoffs/<token>/`
+  - `GET /api/v1/tools/problem-studio/hangul-companion/`
 - Views: `backend/apps/domains/tools/problem_studio/views.py`
 - Service: `backend/apps/domains/tools/problem_studio/services.py`
 - Transfer package builder: `backend/apps/domains/tools/problem_studio/transfer_documents.py`
@@ -132,7 +133,7 @@ Source extraction and structure support:
 - Problem/concept structure is heuristic. The system now produces a `01_자체양식_문제검수본.doc`, but teachers must still verify split boundaries, choices, answers, and explanations.
 - Automatic rewrite is available only as a collapsed Beta workflow. It is not the primary CTA and every result remains a teacher-review draft.
 - Template understanding is shallow. "매치업 기존 양식" and uploaded template names are recorded, but the system does not yet learn precise spacing/style rules from a template file.
-- The Windows companion source lives at `frontend/desktop/hangul-companion`. It consumes a five-minute, one-time opaque handoff, verifies result size/SHA-256, and only inserts into a visible normal-edit-mode HWP document. Otherwise it opens the HWPX as a new document. Commercial distribution still requires Hancom Automation approval/security-module registration and code signing; direct insert can fall back until those are complete.
+- The Windows companion source lives at `frontend/desktop/hangul-companion`. Its self-contained single-file build copies itself to `%LOCALAPPDATA%/Academy/HangulCompanion` and registers `academy-hangul://` for the current user without administrator permission. The staff-only download endpoint reads the sealed version/key/size/SHA-256 manifest and only issues an R2 URL when the uploaded object's HEAD size and SHA-256 metadata both match. The companion consumes a five-minute, one-time opaque handoff from `https://api.hakwonplus.com` only, bounds download size, verifies result size/SHA-256, requires exactly one bounded review HWPX, and only inserts into a visible normal-edit-mode HWP document. Otherwise it opens the HWPX as a new document. `--diagnose-handoff` exercises the production handoff/download/integrity/extraction chain without launching Hangul. External commercial distribution still requires Hancom Automation approval/security-module registration and trusted code signing; direct insert can fall back until those are complete.
 - The generated answer/explanation fields are review aids, not authoritative. Teacher verification remains required.
 
 ## Future Direction

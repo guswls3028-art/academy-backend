@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import json
+import logging
+import os
 import secrets
+from functools import lru_cache
 from urllib.parse import quote
 
 from django.core.cache import cache
@@ -19,6 +23,30 @@ from apps.domains.tools.problem_studio.transfer_documents import (
     package_to_response,
 )
 from apps.support.tools.ai_dependencies import dispatch_tools_ai_job
+
+
+_HANGUL_COMPANION_MANIFEST_PATH = os.path.join(
+    os.path.dirname(__file__),
+    "hangul_companion_manifest.json",
+)
+logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _load_hangul_companion_manifest() -> dict[str, str | int]:
+    with open(_HANGUL_COMPANION_MANIFEST_PATH, encoding="utf-8") as manifest_file:
+        manifest = json.load(manifest_file)
+    required = {"version", "r2_key", "filename", "sha256", "size_bytes"}
+    if not isinstance(manifest, dict) or not required.issubset(manifest):
+        raise RuntimeError("Problem Studio 한글 연결 프로그램 배포 정보가 올바르지 않습니다.")
+    sha256 = str(manifest["sha256"]).lower()
+    if (
+        len(sha256) != 64
+        or any(character not in "0123456789abcdef" for character in sha256)
+        or int(manifest["size_bytes"]) <= 0
+    ):
+        raise RuntimeError("Problem Studio 한글 연결 프로그램 무결성 정보가 올바르지 않습니다.")
+    return manifest
 
 
 class ProblemStudioTransferDocumentView(APIView):
@@ -265,6 +293,44 @@ class ProblemStudioTransferJobStatusView(APIView):
             "result": result_payload,
             "error_message": job.error_message or job.last_error or None,
         })
+
+
+class ProblemStudioHangulCompanionDownloadView(APIView):
+    """Return a staff-only URL for the sealed Windows companion package."""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+
+    def get(self, request):
+        from academy.adapters.storage import r2_objects
+
+        manifest = _load_hangul_companion_manifest()
+        expected_size = int(manifest["size_bytes"])
+        expected_sha256 = str(manifest["sha256"]).lower()
+        try:
+            integrity = r2_objects.head_storage_object_integrity(key=str(manifest["r2_key"]))
+        except Exception:
+            logger.exception("Problem Studio Hangul companion object HEAD failed")
+            integrity = None
+        if integrity != (expected_size, expected_sha256):
+            return Response(
+                {"detail": "한글 연결 프로그램 배포본을 확인하는 중입니다. 잠시 뒤 다시 시도해 주세요."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        response = Response({
+            "download_url": r2_objects.create_storage_download_url(
+                key=str(manifest["r2_key"]),
+                filename=str(manifest["filename"]),
+                content_type="application/zip",
+                expires_in=600,
+            ),
+            "filename": str(manifest["filename"]),
+            "version": str(manifest["version"]),
+            "sha256": expected_sha256,
+            "size_bytes": expected_size,
+        })
+        response["Cache-Control"] = "no-store"
+        return response
 
 
 class ProblemStudioHangulHandoffCreateView(APIView):
