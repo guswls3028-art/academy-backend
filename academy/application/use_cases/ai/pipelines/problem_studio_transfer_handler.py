@@ -108,19 +108,27 @@ def handle_problem_studio_transfer_job(job: AIJob) -> AIResult:
                         mime=mime,
                         api_key=cfg.OPENAI_API_KEY or "",
                         model=cfg.PROBLEM_TRANSCRIPTION_MODEL,
+                        bedrock_model=cfg.PROBLEM_TRANSCRIPTION_BEDROCK_MODEL,
+                        bedrock_region=cfg.BEDROCK_REGION,
                     )
                     ai_calls += 1
-                    transcription_engine = f"openai:{cfg.PROBLEM_TRANSCRIPTION_MODEL}"
+                    transcription_engine = (
+                        f"openai:{cfg.PROBLEM_TRANSCRIPTION_MODEL}"
+                        if cfg.OPENAI_API_KEY
+                        else f"bedrock:{cfg.PROBLEM_TRANSCRIPTION_BEDROCK_MODEL}"
+                    )
                     return OcrResult(
                         text=text,
                         status="extracted" if text else "empty",
                         engine=transcription_engine,
                     )
                 except Exception as exc:
+                    reason_lines = str(exc).splitlines()
                     logger.warning(
-                        "PROBLEM_STUDIO_AI_TRANSCRIPTION_FALLBACK job_id=%s error=%s",
+                        "PROBLEM_STUDIO_AI_TRANSCRIPTION_FALLBACK job_id=%s error=%s reason=%s",
                         job.id,
                         type(exc).__name__,
+                        reason_lines[0][:240] if reason_lines else "<empty>",
                     )
                     fallback_calls += 1
                     local_result = extract_ocr_text_from_image(data, mime=mime)

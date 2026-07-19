@@ -24,6 +24,10 @@ DIFF = REPO_ROOT / "scripts" / "v1" / "core" / "diff.ps1"
 WORKER_USERDATA = REPO_ROOT / "scripts" / "v1" / "resources" / "worker_userdata.ps1"
 API_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "api.ps1"
 IAM_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
+WORKER_BEDROCK_POLICY = (
+    REPO_ROOT / "scripts" / "v1" / "templates" / "iam"
+    / "policy_workers_bedrock_problem_transcription.json"
+)
 ECR_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "ecr.ps1"
 DYNAMODB_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "dynamodb.ps1"
 ECR_CLEANUP = REPO_ROOT / "scripts" / "v1" / "ecr-cleanup.py"
@@ -49,6 +53,22 @@ REMOTE_API_TOOLS = (
     REPO_ROOT / "scripts" / "v1" / "run-qna-e2e-verify.ps1",
     REPO_ROOT / "scripts" / "v1" / "run-api-management-remote.ps1",
 )
+
+
+def test_problem_studio_bedrock_policy_is_model_scoped_and_converged() -> None:
+    policy = json.loads(WORKER_BEDROCK_POLICY.read_text(encoding="utf-8"))
+    statements = policy["Statement"]
+    assert len(statements) == 1
+    statement = statements[0]
+    assert statement["Action"] == "bedrock:InvokeModel"
+    assert statement["Resource"] == [
+        "arn:aws:bedrock:ap-northeast-2:809466760795:inference-profile/global.amazon.nova-2-lite-v1:0",
+        "arn:aws:bedrock:*::foundation-model/amazon.nova-2-lite-v1:0",
+    ]
+
+    iam = IAM_RESOURCE.read_text(encoding="utf-8-sig")
+    assert "policy_workers_bedrock_problem_transcription.json" in iam
+    assert "academy-workers-bedrock-problem-transcription" in iam
 
 
 def test_read_only_deploy_verification_loads_manifest_dependency_before_drift() -> None:

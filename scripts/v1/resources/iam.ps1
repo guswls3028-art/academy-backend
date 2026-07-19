@@ -499,6 +499,14 @@ function Ensure-EC2InstanceProfileSSM {
         Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyWorkersSqs -replace '\\','/')") -ErrorMessage "put workers SQS policy" | Out-Null
         Write-Ok "Ensured inline policy $inlineName on $roleName (Messaging/AI SQS consume)"
     }
+    # Problem Studio AI transcription: no static provider secret is required.
+    # The shared EC2 role may invoke only the sealed Nova 2 Lite inference profile/model.
+    $policyWorkersBedrock = Join-Path $TemplatesPath "policy_workers_bedrock_problem_transcription.json"
+    if (Test-Path $policyWorkersBedrock) {
+        $inlineName = "academy-workers-bedrock-problem-transcription"
+        Invoke-Aws @("iam", "put-role-policy", "--role-name", $roleName, "--policy-name", $inlineName, "--policy-document", "file://$($policyWorkersBedrock -replace '\\','/')") -ErrorMessage "put worker Bedrock transcription policy" | Out-Null
+        Write-Ok "Ensured inline policy $inlineName on $roleName (Problem Studio Nova 2 Lite only)"
+    }
     # OMR/AI and messaging worker scaling: API wakes worker ASGs after enqueue; AI worker scales itself in after live idle checks.
     $policyApiAiWorkerScale = Join-Path $TemplatesPath "policy_api_ai_worker_scale.json"
     if (Test-Path $policyApiAiWorkerScale) {

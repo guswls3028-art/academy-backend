@@ -78,7 +78,7 @@ Backend:
 - Worker payload stores extracted source text and source metadata, so the async worker does not depend on request file lifetime.
 - Transfer-only output uses `generation_engine: "source_transfer"` when extracted text exists.
 - Beta rewrite uses the async job path only. If the AI adapter or quota fails, the service returns a rule-based teacher-review candidate and warning instead of blocking the base transfer feature.
-- The primary large source path uploads a tenant-prefixed temporary archive and dispatches `problem_studio_transcription` to the AI CPU worker. The worker uses `PROBLEM_TRANSCRIPTION_MODEL` (default `gpt-5.6-luna`) for up to `PROBLEM_STUDIO_AI_MAX_UNITS` image-only units (default 24, hard bounded to 40). OpenAI failure falls back per unit to local OCR and reports the fallback count. The synchronous transfer endpoint remains a non-AI fallback. Both produce a ZIP containing Hangul/Word-compatible `.doc` HTML drafts plus:
+- The primary large source path uploads a tenant-prefixed temporary archive and dispatches `problem_studio_transcription` to the AI CPU worker. When `OPENAI_API_KEY` is configured the worker uses `PROBLEM_TRANSCRIPTION_MODEL`; otherwise it uses AWS Bedrock `PROBLEM_TRANSCRIPTION_BEDROCK_MODEL` (default `global.amazon.nova-2-lite-v1:0`) through the instance role, so production does not depend on a static provider secret. Up to `PROBLEM_STUDIO_AI_MAX_UNITS` image-only units are processed (default 24, hard bounded to 40). Provider failure falls back per unit to local OCR and reports the fallback count. The synchronous transfer endpoint remains a non-AI fallback. Both produce a ZIP containing Hangul/Word-compatible `.doc` HTML drafts plus:
   - `00_먼저열기_검수체크리스트.doc`
   - `00_변환리포트.html`
   - `00_manifest.json`
@@ -127,7 +127,7 @@ Source extraction and structure support:
 
 ## Known Limitations
 
-- AI transcription is bounded and best-effort. Large scanned PDFs can still leave pages in `02_OCR_연결후보.csv` after `PROBLEM_STUDIO_AI_MAX_UNITS`, when AI/local OCR is unavailable, or when no text is returned.
+- AI transcription is bounded and best-effort. Large scanned PDFs can still leave pages in `02_OCR_연결후보.csv` after `PROBLEM_STUDIO_AI_MAX_UNITS`, when Bedrock/OpenAI and local OCR are unavailable, or when no text is returned. The EC2 worker role is limited to `bedrock:InvokeModel` on the sealed Nova 2 Lite inference profile and foundation model.
 - No binary native `.hwp` writer yet. The current `.doc` is intentionally a compatibility draft, and `03_자체양식_문제검수본.hwpx` is a text-focused companion workbook rather than exact source layout reconstruction.
 - HWP transfer preserves extracted text and embedded images, not exact object ordering or native HWP layout. It is a teacher review draft, not a final typeset workbook.
 - Problem/concept structure is heuristic. The system now produces a `01_자체양식_문제검수본.doc`, but teachers must still verify split boundaries, choices, answers, and explanations.
