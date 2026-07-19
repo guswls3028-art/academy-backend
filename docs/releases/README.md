@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.8.5.md](v1.8.5.md) | **CURRENT** | 2026-07-19 KST | Verified school/mock score submissions, cumulative operations console, and production UX closure |
+| [v1.8.6.md](v1.8.6.md) | **CURRENT** | 2026-07-20 KST | Multi-subject score-report intake, bounded review operations, evidence integrity, and production risk closure |
+| [v1.8.5.md](v1.8.5.md) | production-deployed / v1.8.6로 승계 | 2026-07-19 KST | Verified school/mock score submissions, cumulative operations console, and production UX closure |
 | [v1.8.4.md](v1.8.4.md) | production-deployed / v1.8.5로 승계 | 2026-07-19 KST | Tenant-safe duplicate login identifier recovery and production auth incident closure |
 | [v1.8.3.md](v1.8.3.md) | production-deployed / v1.8.4로 승계 | 2026-07-17 KST | Ymath student/parent cumulative score viewer, automatic progression analytics, and production delivery hardening |
 | [v1.8.2.md](v1.8.2.md) | production-deployed / v1.8.3로 승계 | 2026-07-17 KST | Ymath student cumulative score trends, tenant-safe analytics, and admin/teacher responsive visualization |
