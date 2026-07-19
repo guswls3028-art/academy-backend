@@ -183,8 +183,6 @@ def validate_student_score_submission(
             raise ValueError("표준점수와 백분위는 모의고사에만 입력할 수 있습니다.")
     else:
         exam_month = _integer(payload, "exam_month", minimum=1, maximum=12)
-        if source == StudentReportedScore.Source.KICE_MOCK and exam_month not in (6, 9):
-            raise ValueError("평가원 수능 모의평가는 6월 또는 9월이어야 합니다.")
         if achievement_level or subject_average is not None or standard_deviation is not None or cohort_size is not None:
             raise ValueError("학교 성적 지표는 학교 내신에만 입력할 수 있습니다.")
 

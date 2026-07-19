@@ -167,15 +167,15 @@ class StudentReportedScoreTest(TestCase, ClinicTestMixin):
         self.assertIn("파일 내용", json.loads(response.content)["detail"])
         upload_r2.assert_not_called()
 
-    def test_kice_mock_month_is_limited_to_official_sixth_and_ninth_months(self):
+    def test_kice_mock_accepts_the_schedule_month_printed_on_the_report(self):
         response, upload_r2 = self._student_upload(
             source="kice_mock",
-            extra={"exam_month": "7"},
+            extra={"exam_month": "8"},
         )
 
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("6월 또는 9월", json.loads(response.content)["detail"])
-        upload_r2.assert_not_called()
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(json.loads(response.content)["scoreSubmission"]["exam_month"], 8)
+        upload_r2.assert_called_once()
 
     def test_pending_score_enters_review_queue_and_verified_score_enters_statistics(self):
         upload, _upload_r2 = self._student_upload()
