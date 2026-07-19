@@ -1,6 +1,6 @@
 # Front V1 인프라 기준 연결 검증
 
-**Generated:** 2026-07-17T04:33:19.4885552+09:00
+**Generated:** 2026-07-19T14:00:44.1498328+09:00
 
 ## SSOT front.* / r2.* 확인
 | 항목 | 값 | 비고 |
@@ -19,6 +19,6 @@
 | index.html Cache-Control | no-cache 계열 | |
 | 해시 자산 Cache-Control | 1년 | 샘플: https://hakwonplus.com/assets/index-Xim3wskY.js |
 | CORS 정적 검사 | OK | app 도메인 포함됨 |
-| R2 버킷 | OK (wrangler list success) | wrangler r2 bucket list |
+| R2 버킷 | wrangler failed | wrangler r2 bucket list |
 
 **배포 후 purge:** SSOT front.purgeOnDeploy 반영 여부는 배포 파이프라인에서 확인.
