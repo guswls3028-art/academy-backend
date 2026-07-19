@@ -16,6 +16,7 @@ from apps.support.inventory.matchup_dependencies import (
     get_matchup_document_for_inventory_file,
     matchup_delete_protection_result,
 )
+from apps.support.results.student_reported_scores import inventory_files_have_reported_score
 
 try:
     from apps.infrastructure.storage.r2 import (
@@ -145,6 +146,16 @@ def move_file(
         protection_result = _matchup_delete_protection_result([overwrite_existing])
         if protection_result:
             return protection_result
+        if inventory_files_have_reported_score(
+            tenant=tenant,
+            file_ids=[overwrite_existing.id],
+        ):
+            return {
+                "ok": False,
+                "detail": "검수 기록과 연결된 성적표 원본은 덮어쓸 수 없습니다.",
+                "code": "reported_score_evidence_protected",
+                "status": 409,
+            }
 
     new_key = build_r2_key(
         tenant_id=tenant.id,
@@ -262,6 +273,16 @@ def delete_folder_recursive(
     protection_result = _matchup_delete_protection_result(files)
     if protection_result:
         return protection_result
+    if inventory_files_have_reported_score(
+        tenant=tenant,
+        file_ids=[inventory_file.id for inventory_file in files],
+    ):
+        return {
+            "ok": False,
+            "detail": "검수 기록과 연결된 성적표 원본이 포함되어 폴더를 삭제할 수 없습니다.",
+            "code": "reported_score_evidence_protected",
+            "status": 409,
+        }
 
     # 매치업 problem 이미지 cleanup (cascade 전 — InventoryFile cascade는 problem
     # 이미지 R2 객체를 알지 못함)
@@ -359,6 +380,16 @@ def move_folder(
         protection_result = _matchup_delete_protection_result(overwrite_files)
         if protection_result:
             return protection_result
+        if inventory_files_have_reported_score(
+            tenant=tenant,
+            file_ids=[inventory_file.id for inventory_file in overwrite_files],
+        ):
+            return {
+                "ok": False,
+                "detail": "검수 기록과 연결된 성적표 원본이 포함되어 폴더를 덮어쓸 수 없습니다.",
+                "code": "reported_score_evidence_protected",
+                "status": 409,
+            }
 
     folders, files = _collect_folder_tree(source_folder, tenant, scope, student_ps)
     source_folder_path = _get_folder_path_str(source_folder, tenant, scope, student_ps)

@@ -28,6 +28,9 @@ from apps.domains.results.views.admin_landing_stats_view import AdminResultsLand
 from apps.domains.results.views.teacher_dashboard_counts_view import TeacherDashboardCountsView
 from apps.domains.results.views.admin_enterprise_analytics_view import AdminEnterpriseAnalyticsView
 from apps.domains.results.views.admin_student_performance_view import AdminStudentPerformanceView
+from apps.domains.results.views.admin_student_reported_score_view import (
+    AdminStudentReportedScoreReviewView,
+)
 
 from apps.domains.results.views.question_stats_views import (
     AdminExamQuestionStatsView,
@@ -117,6 +120,11 @@ urlpatterns = [
         "admin/student-performance/",
         AdminStudentPerformanceView.as_view(),
         name="admin-student-performance",
+    ),
+    path(
+        "admin/reported-scores/<int:score_id>/review/",
+        AdminStudentReportedScoreReviewView.as_view(),
+        name="admin-student-reported-score-review",
     ),
     path("admin/analytics/", AdminEnterpriseAnalyticsView.as_view(), name="admin-enterprise-analytics"),
     path("admin/landing-stats/", AdminResultsLandingStatsView.as_view(), name="admin-results-landing-stats"),
