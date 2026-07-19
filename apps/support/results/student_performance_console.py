@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from datetime import timedelta
+from datetime import date, timedelta
 from math import isfinite
 from statistics import fmean
 from typing import Any
@@ -14,8 +14,9 @@ from django.utils import timezone
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import Exam
 from apps.domains.lectures.models import Lecture
-from apps.domains.results.models import Result
+from apps.domains.results.models import Result, StudentReportedScore
 from apps.domains.students.models import Student
+from apps.support.results.student_reported_scores import serialize_reported_score
 
 
 PERFORMANCE_DAY_OPTIONS = (30, 90, 180, 365)
@@ -86,6 +87,48 @@ def _trend_direction(change: float | None) -> str:
     return "flat"
 
 
+def _summarize_points(points: list[dict[str, Any]]) -> dict[str, Any]:
+    values = [float(point["score_pct"]) for point in points if point.get("score_pct") is not None]
+    latest = values[-1] if values else None
+    previous = values[-2] if len(values) > 1 else None
+    change = round(latest - previous, 1) if latest is not None and previous is not None else None
+    first_to_latest = round(latest - values[0], 1) if latest is not None and len(values) > 1 else None
+    return {
+        "scored_count": len(values),
+        "average_score_pct": round(fmean(values), 1) if values else None,
+        "latest_score_pct": latest,
+        "change_pct_points": change,
+        "first_to_latest_pct_points": first_to_latest,
+        "best_score_pct": max(values) if values else None,
+        "score_band": _score_band(latest),
+        "trend_direction": _trend_direction(change),
+    }
+
+
+def _reported_effective_date(row: dict[str, Any]) -> date | None:
+    if row.get("exam_date"):
+        try:
+            return date.fromisoformat(str(row["exam_date"])[:10])
+        except ValueError:
+            return None
+    year = row.get("academic_year")
+    try:
+        if row.get("source_group") == "mock" and row.get("exam_month"):
+            return date(int(year), int(row["exam_month"]), 1)
+        if row.get("source_group") == "school":
+            school_month = {
+                (1, "first"): 4,
+                (1, "second"): 7,
+                (2, "first"): 10,
+                (2, "second"): 12,
+            }.get((row.get("semester"), row.get("exam_round")))
+            if school_month:
+                return date(int(year), school_month, 1)
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
 def _display_names(student_rows: list[dict[str, Any]]) -> dict[int, str]:
     name_counts = Counter(str(row.get("name") or "") for row in student_rows)
     name_indexes: defaultdict[str, int] = defaultdict(int)
@@ -123,6 +166,7 @@ def build_student_performance_console(
         )
     )
     all_student_ids = {int(row["id"]) for row in student_rows}
+    student_meta_by_id = {int(row["id"]): row for row in student_rows}
     display_names = _display_names(student_rows)
 
     enrollment_rows = list(
@@ -233,6 +277,32 @@ def build_student_performance_console(
     for (student_id, _exam_id), result in latest_result_by_exam.items():
         results_by_student[student_id].append(result)
 
+    reported_rows = list(
+        StudentReportedScore.objects.filter(
+            tenant=tenant,
+            student_id__in=selected_student_ids,
+            student__tenant=tenant,
+            evidence_file__tenant=tenant,
+        ).select_related("evidence_file")
+    )
+    reported_by_student: defaultdict[int, list[dict[str, Any]]] = defaultdict(list)
+    reported_subjects: set[str] = set()
+    pending_reported_scores = []
+    period_start = (timezone.now() - timedelta(days=days)).date() if days is not None else None
+    for reported_row in reported_rows:
+        serialized = serialize_reported_score(reported_row)
+        reported_subjects.add(serialized["subject"])
+        reported_by_student[reported_row.student_id].append(serialized)
+        if reported_row.status == StudentReportedScore.Status.PENDING:
+            student_meta = student_meta_by_id.get(reported_row.student_id)
+            if student_meta:
+                pending_reported_scores.append({
+                    **serialized,
+                    "student_name": display_names[reported_row.student_id],
+                    "school": _school_name(student_meta),
+                    "grade": student_meta.get("grade"),
+                })
+
     output_students = []
     all_score_values = []
     for student in student_rows:
@@ -241,16 +311,38 @@ def build_student_performance_console(
             results_by_student.get(student_id, []),
             key=lambda item: (item["recorded_at"], item["exam_id"]),
         )
-        values = [float(point["score_pct"]) for point in points]
-        all_score_values.extend(values)
-        latest = values[-1] if values else None
-        previous = values[-2] if len(values) > 1 else None
-        change = round(latest - previous, 1) if latest is not None and previous is not None else None
-        first_to_latest = (
-            round(latest - values[0], 1)
-            if latest is not None and len(values) > 1
-            else None
+        academy_summary = _summarize_points(points)
+        all_score_values.extend(float(point["score_pct"]) for point in points)
+        student_reported = sorted(
+            reported_by_student.get(student_id, []),
+            key=lambda item: (_reported_effective_date(item) or date.min, item["id"]),
         )
+        verified_reported = [
+            item
+            for item in student_reported
+            if item["status"] == StudentReportedScore.Status.VERIFIED
+            and (period_start is None or (_reported_effective_date(item) or date.min) >= period_start)
+        ]
+        school_points = [item for item in verified_reported if item["source_group"] == "school"]
+        mock_points = [item for item in verified_reported if item["source_group"] == "mock"]
+        school_summary = _summarize_points(school_points)
+        mock_summary = _summarize_points(mock_points)
+        school_subject_summaries = {
+            subject: _summarize_points([item for item in school_points if item["subject"] == subject])
+            for subject in sorted({item["subject"] for item in school_points})
+        }
+        mock_subject_summaries = {
+            subject: _summarize_points([item for item in mock_points if item["subject"] == subject])
+            for subject in sorted({item["subject"] for item in mock_points})
+        }
+        combined_points = sorted(
+            [
+                *({**point, "effective_date": point["recorded_at"].date()} for point in points),
+                *({**item, "effective_date": _reported_effective_date(item) or date.min} for item in verified_reported),
+            ],
+            key=lambda item: (item["effective_date"], item.get("exam_id") or item.get("id") or 0),
+        )
+        overall_summary = _summarize_points(combined_points)
         student_lectures = sorted(
             lectures_by_student.get(student_id, []),
             key=lambda item: (not item["is_active"], item["title"], item["id"]),
@@ -263,16 +355,30 @@ def build_student_performance_console(
             "school_type": student["school_type"],
             "school": _school_name(student),
             "lectures": student_lectures,
-            "scored_count": len(values),
-            "average_score_pct": round(fmean(values), 1) if values else None,
-            "latest_score_pct": latest,
-            "change_pct_points": change,
-            "first_to_latest_pct_points": first_to_latest,
-            "best_score_pct": max(values) if values else None,
+            "scored_count": academy_summary["scored_count"],
+            "average_score_pct": academy_summary["average_score_pct"],
+            "latest_score_pct": academy_summary["latest_score_pct"],
+            "change_pct_points": academy_summary["change_pct_points"],
+            "first_to_latest_pct_points": academy_summary["first_to_latest_pct_points"],
+            "best_score_pct": academy_summary["best_score_pct"],
             "latest_exam_title": points[-1]["title"] if points else None,
             "last_recorded_at": points[-1]["recorded_at"].isoformat() if points else None,
-            "score_band": _score_band(latest),
-            "trend_direction": _trend_direction(change),
+            "score_band": academy_summary["score_band"],
+            "trend_direction": academy_summary["trend_direction"],
+            "source_summaries": {
+                "overall": overall_summary,
+                "academy": academy_summary,
+                "school": school_summary,
+                "mock": mock_summary,
+            },
+            "subject_summaries": {
+                "school": school_subject_summaries,
+                "mock": mock_subject_summaries,
+            },
+            "reported_scores": student_reported,
+            "pending_reported_score_count": sum(
+                1 for item in student_reported if item["status"] == StudentReportedScore.Status.PENDING
+            ),
         })
 
     score_band_order = {"under_60": 0, "60_to_79": 1, "80_plus": 2, "unscored": 3}
@@ -298,6 +404,19 @@ def build_student_performance_console(
             "under_60_student_count": sum(1 for row in output_students if row["score_band"] == "under_60"),
             "improving_student_count": sum(1 for row in output_students if row["trend_direction"] == "up"),
             "declining_student_count": sum(1 for row in output_students if row["trend_direction"] == "down"),
+            "pending_reported_score_count": len(pending_reported_scores),
+            "verified_school_score_count": sum(
+                1
+                for row in output_students
+                for item in row["reported_scores"]
+                if item["status"] == StudentReportedScore.Status.VERIFIED and item["source_group"] == "school"
+            ),
+            "verified_mock_score_count": sum(
+                1
+                for row in output_students
+                for item in row["reported_scores"]
+                if item["status"] == StudentReportedScore.Status.VERIFIED and item["source_group"] == "mock"
+            ),
         },
         "filter_options": {
             "lectures": sorted(
@@ -305,6 +424,12 @@ def build_student_performance_console(
                 key=lambda item: (not item["is_active"], item["title"], item["id"]),
             ),
             "grades": sorted({int(row["grade"]) for row in student_rows if row.get("grade") is not None}),
+            "reported_subjects": sorted(reported_subjects),
         },
+        "pending_reported_scores": sorted(
+            pending_reported_scores,
+            key=lambda item: item.get("created_at") or "",
+            reverse=True,
+        ),
         "students": output_students,
     }

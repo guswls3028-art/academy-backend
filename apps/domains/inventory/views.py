@@ -25,6 +25,13 @@ from apps.support.inventory.matchup_dependencies import (
     promoted_matchup_document_map,
     protected_matchup_document_delete_detail,
 )
+from apps.support.results.student_reported_scores import (
+    create_student_score_submission,
+    inventory_file_has_reported_score,
+    score_submission_map_for_inventory_files,
+    serialize_reported_score,
+    validate_student_score_submission,
+)
 
 # R2 Storage 버킷 (인벤토리 전용)
 try:
@@ -41,6 +48,19 @@ except ImportError:
     delete_object_r2_storage = None
 
 QUOTA_BYTES = {"standard": 10 * 1024**3, "pro": 50 * 1024**3, "max": 200 * 1024**3}
+SCORE_EVIDENCE_MAX_BYTES = 20 * 1024**2
+
+
+def _score_evidence_signature_matches(file_obj, content_type: str) -> bool:
+    head = file_obj.read(12)
+    file_obj.seek(0)
+    if content_type == "application/pdf":
+        return head.startswith(b"%PDF-")
+    if content_type in {"image/jpeg", "image/jpg"}:
+        return head.startswith(b"\xff\xd8\xff")
+    if content_type == "image/png":
+        return head.startswith(b"\x89PNG\r\n\x1a\n")
+    return False
 
 
 def _tenant_required(view_func):
@@ -210,11 +230,17 @@ class InventoryListView(View):
 
             # 매치업 승격된 파일 ID set (admin scope에만 의미 있음)
             promoted_map: dict[int, dict] = {}
+            reported_score_map: dict[int, dict] = {}
+            file_ids = [f.id for f in qs_files]
             if scope == "admin":
-                file_ids = [f.id for f in qs_files]
                 promoted_map = promoted_matchup_document_map(
                     tenant=tenant,
                     inventory_file_ids=file_ids,
+                )
+            else:
+                reported_score_map = score_submission_map_for_inventory_files(
+                    tenant=tenant,
+                    file_ids=file_ids,
                 )
 
             folders = [
@@ -242,6 +268,9 @@ class InventoryListView(View):
                         "status": doc_info["status"],
                         "problemCount": doc_info["problem_count"],
                     }
+                reported_score = reported_score_map.get(f.id)
+                if reported_score:
+                    row["scoreSubmission"] = reported_score
                 files.append(row)
             return JsonResponse({"folders": folders, "files": files})
         except Exception as e:
@@ -370,6 +399,28 @@ class FileUploadView(View):
         if scope == "student" and not student_ps:
             return JsonResponse({"detail": "student_ps required for student scope"}, status=400)
 
+        score_submission_flag = (request.POST.get("score_submission") or "").strip().lower()
+        is_score_submission = score_submission_flag in ("1", "true", "yes")
+        validated_score = None
+        if is_score_submission:
+            if scope != "student":
+                return JsonResponse({"detail": "학생 성적표는 학생 저장소로만 제출할 수 있습니다."}, status=400)
+            if ct not in {"application/pdf", "image/png", "image/jpeg", "image/jpg"}:
+                return JsonResponse({"detail": "성적표는 PDF, PNG, JPG 파일만 제출할 수 있습니다."}, status=400)
+            if file_obj.size > SCORE_EVIDENCE_MAX_BYTES:
+                return JsonResponse({"detail": "성적표 파일은 20MB 이하여야 합니다."}, status=400)
+            if not _score_evidence_signature_matches(file_obj, ct):
+                return JsonResponse({"detail": "파일 내용과 성적표 파일 형식이 일치하지 않습니다."}, status=400)
+            try:
+                validated_score = validate_student_score_submission(
+                    tenant=request.tenant,
+                    user=request.user,
+                    student_ps=student_ps,
+                    payload=request.POST,
+                )
+            except ValueError as exc:
+                return JsonResponse({"detail": str(exc)}, status=400)
+
         tenant = request.tenant
         # Quota
         try:
@@ -452,6 +503,31 @@ class FileUploadView(View):
             content_type=file_obj.content_type or "application/octet-stream",
         )
 
+        reported_score = None
+        if validated_score is not None:
+            try:
+                reported_score = create_student_score_submission(
+                    evidence_file=inv_file,
+                    validated=validated_score,
+                )
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Student score submission creation failed for inventory_file %s",
+                    inv_file.id,
+                )
+                inv_file.delete()
+                if delete_object_r2_storage:
+                    try:
+                        delete_object_r2_storage(key=r2_key)
+                    except Exception:
+                        logging.getLogger(__name__).warning(
+                            "Failed to roll back student score R2 upload: %s",
+                            r2_key,
+                            exc_info=True,
+                        )
+                return JsonResponse({"detail": "성적표 제출 정보를 저장하지 못했습니다."}, status=500)
+
         matchup_doc_id = None
         matchup_promote_failed = False
         matchup_error = ""
@@ -497,6 +573,8 @@ class FileUploadView(View):
         if matchup_promote_failed:
             payload["matchupPromoteFailed"] = True
             payload["matchupError"] = matchup_error
+        if reported_score is not None:
+            payload["scoreSubmission"] = serialize_reported_score(reported_score)
         return JsonResponse(payload)
 
 
@@ -601,6 +679,15 @@ class FileDeleteView(View):
             return JsonResponse({"detail": "Not found"}, status=404)
         if inv_file.scope != scope or (scope == "student" and inv_file.student_ps != student_ps):
             return JsonResponse({"detail": "Forbidden"}, status=403)
+
+        if inventory_file_has_reported_score(tenant=tenant, file_id=inv_file.id):
+            return JsonResponse(
+                {
+                    "detail": "검수 기록과 연결된 성적표 원본은 삭제할 수 없습니다.",
+                    "code": "reported_score_evidence_protected",
+                },
+                status=409,
+            )
 
         r2_key = inv_file.r2_key
 

@@ -8,7 +8,7 @@ Results Domain SSOT
 Scope
 -----
 
-`results` 도메인은 시험(Exam) 결과만 소유한다.
+`results` 도메인은 학원 시험(Exam) 결과와, 증빙 확인이 필요한 학생 제출 외부 성적을 소유한다.
 
 - `Enrollment`가 결과의 주체다. `Result`는 `student_id`가 아니라 `enrollment_id`를 키로 사용한다.
 - 숙제 결과는 `apps/domains/homework_results/`가 소유한다.
@@ -29,6 +29,30 @@ Canonical Records
 `ExamResult`는 SSOT가 아니다. 이 모델은 과거 `Submission` OneToOne 채점 계약,
 임시 점수 상태 확인, 오래된 API 호환을 위해 유지하는 legacy compatibility
 snapshot이다. 신규 기능은 `Result` 계열 모델을 기준으로 작성한다.
+
+Student-submitted School / Mock Scores
+--------------------------------------
+
+`StudentReportedScore`는 학생이 성적표 원본과 함께 자발적으로 제출한 학교 내신·모의고사
+성적의 검수 상태를 소유한다. 학원 시험 `Result`와는 별도 기록이며 서로 대체하지 않는다.
+
+- 학교 내신의 canonical 분류는 학년도, 1·2학기, 1·2차 지필평가다. 화면에서만
+  1차=중간고사, 2차=기말고사 별칭을 함께 안내한다.
+- 한 `StudentReportedScore`는 한 과목의 성적이다. 서로 다른 과목은 같은 상승선으로
+  섞지 않고 `subject_summaries`와 관리자 과목 필터로 각각 비교한다. 학생 제출 화면도
+  원본에서 확인할 한 과목씩 간단히 제출하는 단위를 사용한다.
+- 학교 성적은 기존 9등급과 2025학년도 고1부터 적용되는 5등급을 구분하며,
+  성취도(A~E), 과목 평균, 표준편차, 수강자 수도 원본에 표시된 경우 보존한다.
+- 모의고사는 교육청 전국연합학력평가와 평가원 수능 모의평가를 구분한다. 평가원
+  모의평가는 6월·9월만 허용한다.
+- 학생 입력값은 `pending`으로 생성되며, 교직원이 원본을 확인해 `verified`로 바꾼
+  값만 누적 통계에 포함한다. `rejected`는 통계에서 제외한다.
+- 동일 학생·시험 분류·과목의 정정 제출을 승인하면 기존 승인값은 대체 상태로 반려한다.
+- `evidence_file`은 학생 인벤토리 원본과 OneToOne으로 연결하고, 단건·재귀 폴더 삭제
+  모두 차단해 검수 근거를 보존한다.
+- 업로드·검수·성적 콘솔 조합은 cross-domain support인
+  `apps/support/results/student_reported_scores.py`와
+  `apps/support/results/student_performance_console.py`가 담당한다.
 
 Scoring Flow
 ------------
