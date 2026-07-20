@@ -45,6 +45,7 @@ class OMRDocumentService:
         mc_count: Optional[int] = None,
         essay_count: Optional[int] = None,
         n_choices: int = 5,
+        include_optional_essay_area: bool = True,
         exam_title: Optional[str] = None,
         lecture_name: Optional[str] = None,
         session_name: Optional[str] = None,
@@ -102,6 +103,7 @@ class OMRDocumentService:
             mc_count=_mc_count,
             essay_count=_essay_count,
             n_choices=n_choices,
+            include_optional_essay_area=include_optional_essay_area,
             logo_url=logo_url,
             brand_color=brand_color,
         )
@@ -116,6 +118,7 @@ class OMRDocumentService:
         mc_count: int = 30,
         essay_count: int = 0,
         n_choices: int = 5,
+        include_optional_essay_area: bool = True,
     ) -> OMRDocument:
         """도구 페이지용. 시험 없이 직접 파라미터로 OMRDocument 생성."""
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
@@ -130,6 +133,7 @@ class OMRDocumentService:
             mc_count=mc_count,
             essay_count=essay_count,
             n_choices=n_choices,
+            include_optional_essay_area=include_optional_essay_area,
             logo_url=logo_url,
             brand_color=brand_color,
         )

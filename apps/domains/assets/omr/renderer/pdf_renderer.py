@@ -393,7 +393,7 @@ class OMRPdfRenderer:
         # 4) 안내
         c.setStrokeColor(C1); c.setLineWidth(S1)
         c.line(x, _y(t_note), x + w, _y(t_note))
-        self._note(c, x, w, t_note)
+        self._note(c, doc, x, w, t_note)
 
         # 외곽 프레임 — 맨 마지막 (fill에 덮이지 않음)
         c.setStrokeColor(C1); c.setLineWidth(S1)
@@ -516,7 +516,7 @@ class OMRPdfRenderer:
         c.rect(_mm(a_br_cx - a_half), _y(a_br_cy + a_half),
                _mm(ID_ANCHOR_SZ), _mm(ID_ANCHOR_SZ), fill=1, stroke=0)
 
-    def _note(self, c, x, w, top):
+    def _note(self, c, doc: OMRDocument, x, w, top):
         """답안지 작성 안내 — 일관된 들여쓰기."""
         pad = 3.0                     # 좌측 패딩 mm
         ix = x + _mm(pad)             # 텍스트 시작 x
@@ -540,22 +540,32 @@ class OMRPdfRenderer:
         line += 1
         c.drawString(nix, _line_y(line), "휴대폰이 없으면 부모님 번호 뒤 8자리를 적어주세요.")
         line += 1
+        instruction_number = 2
 
-        # 2. 사인펜
-        y = _line_y(line)
-        prefix = "2. 객관식은 "
-        c.drawString(ix, y, prefix)
-        x2 = ix + c.stringWidth(prefix, _FN, 5.5)
-        c.setFont(_FB, 5.5)
-        c.drawString(x2, y, "컴퓨터용 사인펜")
-        x3 = x2 + c.stringWidth("컴퓨터용 사인펜", _FB, 5.5)
-        c.setFont(_FN, 5.5)
-        c.drawString(x3, y, "으로 칠해주세요.")
-        line += 1
+        if doc.mc_count > 0:
+            y = _line_y(line)
+            prefix = f"{instruction_number}. 객관식은 "
+            c.drawString(ix, y, prefix)
+            x2 = ix + c.stringWidth(prefix, _FN, 5.5)
+            c.setFont(_FB, 5.5)
+            c.drawString(x2, y, "컴퓨터용 사인펜")
+            x3 = x2 + c.stringWidth("컴퓨터용 사인펜", _FB, 5.5)
+            c.setFont(_FN, 5.5)
+            c.drawString(x3, y, "으로 칠해주세요.")
+            line += 1
+            instruction_number += 1
 
-        # 3. 수정테이프
+        if doc.render_essay_count > 0:
+            c.drawString(
+                ix,
+                _line_y(line),
+                f"{instruction_number}. 단답형은 답을 정자로 깔끔하게 적어주세요.",
+            )
+            line += 1
+            instruction_number += 1
+
         y = _line_y(line)
-        prefix = "3. "
+        prefix = f"{instruction_number}. "
         c.drawString(ix, y, prefix)
         x2 = ix + c.stringWidth(prefix, _FN, 5.5)
         c.setFont(_FB, 5.5)
@@ -564,9 +574,12 @@ class OMRPdfRenderer:
         c.setFont(_FN, 5.5)
         c.drawString(x3, y, "를 사용해주세요. (수정액 금지)")
         line += 1
+        instruction_number += 1
 
-        # 4. 마킹 예시
-        c.drawString(ix, _line_y(line), "4. 올바른 마킹:  ")
+        if doc.mc_count <= 0:
+            return
+
+        c.drawString(ix, _line_y(line), f"{instruction_number}. 올바른 마킹:  ")
         mark_x = ix + _mm(17)
         mark_y = _line_y(line) + _mm(0.5)
         c.setFillColor(HexColor("#333333"))

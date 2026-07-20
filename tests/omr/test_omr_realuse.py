@@ -38,12 +38,14 @@ from tests.omr.test_omr_full_pipeline import distort
 
 def render_marked_pdf(meta, marks: dict, id_digits: dict, logo_bytes=None,
                       mark_intensity: int = 0, flip_180: bool = False,
-                      jpeg_quality: int = 0, dpi: int = 300) -> np.ndarray:
+                      jpeg_quality: int = 0, dpi: int = 300,
+                      include_optional_essay_area: bool = True) -> np.ndarray:
     """OMRPdfRenderer 출력 → PNG → 마킹 overlay → (선택적) 180° 뒤집음/JPEG 압축."""
     doc = OMRDocument(
         exam_title="REAL USE", lecture_name="수학", session_name="테스트",
         mc_count=meta["mc_count"], essay_count=meta.get("essay_count", 0),
         n_choices=meta["n_choices"], logo_bytes=logo_bytes,
+        include_optional_essay_area=include_optional_essay_area,
     )
     base_pdf = OMRPdfRenderer().render(doc)
     pages = convert_from_bytes(base_pdf, dpi=dpi)

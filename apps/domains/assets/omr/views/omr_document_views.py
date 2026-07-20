@@ -15,9 +15,10 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework import serializers
 
 from apps.core.permissions import TenantResolvedAndStaff
-from apps.domains.assets.omr.dto.omr_document import OMRDocument
+from apps.domains.assets.omr.dto.omr_document import MAX_ESSAY_QUESTIONS, OMRDocument
 from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS
 from apps.domains.assets.omr.services.omr_document_service import OMRDocumentService
 from apps.domains.assets.omr.renderer.html_renderer import OMRHtmlRenderer
@@ -40,11 +41,23 @@ def _parse_omr_params(data: dict) -> dict:
     if "session_name" in data:
         params["session_name"] = str(data.get("session_name", ""))[:100]
     if "mc_count" in data:
-        params["mc_count"] = max(0, min(MAX_MC_QUESTIONS, int(data["mc_count"] or 0)))
+        params["mc_count"] = serializers.IntegerField(
+            min_value=0,
+            max_value=MAX_MC_QUESTIONS,
+        ).run_validation(data["mc_count"])
     if "essay_count" in data:
-        params["essay_count"] = max(0, min(10, int(data["essay_count"] or 0)))
+        params["essay_count"] = serializers.IntegerField(
+            min_value=0,
+            max_value=MAX_ESSAY_QUESTIONS,
+        ).run_validation(data["essay_count"])
     if "n_choices" in data:
-        params["n_choices"] = 5  # 5지선다 고정
+        params["n_choices"] = serializers.ChoiceField(
+            choices=[5],
+        ).run_validation(data["n_choices"])
+    if "include_optional_essay_area" in data:
+        params["include_optional_essay_area"] = serializers.BooleanField().run_validation(
+            data["include_optional_essay_area"]
+        )
     return params
 
 

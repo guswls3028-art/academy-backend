@@ -30,6 +30,17 @@ class OMRHtmlRenderer:
         mc_columns = self._build_mc_columns(doc)
         essay_rows = self._build_essay_rows(doc)
         render_essay_count = doc.render_essay_count
+        instructions = [
+            "전화번호는 본인 휴대폰 번호 뒤 8자리를 적어주세요. "
+            "휴대폰이 없는 학생은 부모님 번호 뒤 8자리를 적어주세요."
+        ]
+        if doc.mc_count > 0:
+            instructions.append(
+                "객관식은 컴퓨터용 사인펜으로 버블을 빈틈없이 칠해주세요."
+            )
+        if render_essay_count > 0:
+            instructions.append("단답형은 답을 정자로 깔끔하게 적어주세요.")
+        instructions.append("수정테이프를 사용해주세요. (수정액 사용 금지)")
 
         sub_parts = []
         if doc.lecture_name:
@@ -61,6 +72,8 @@ class OMRHtmlRenderer:
             "title_font_pt": title_font_pt,
             "mc_columns": mc_columns,
             "essay_rows": essay_rows,
+            "instructions": instructions,
+            "marking_instruction_number": len(instructions) + 1,
             "choices_labels": [str(i + 1) for i in range(doc.n_choices)],
             "phone_digits": list(range(8)),
             "phone_values": list(range(10)),

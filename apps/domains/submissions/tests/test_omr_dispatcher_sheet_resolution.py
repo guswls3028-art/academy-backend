@@ -261,9 +261,9 @@ class OMRDispatcherSheetResolutionTests(TestCase):
             },
             {
                 "name": "essay_only",
-                "total": 5,
+                "total": 20,
                 "choice": 0,
-                "essay": 5,
+                "essay": 20,
                 "expected_cols": 0,
             },
             {
@@ -298,6 +298,11 @@ class OMRDispatcherSheetResolutionTests(TestCase):
                 self.assertEqual(payload["omr_contract"]["choice_count"], case["choice"])
                 self.assertEqual(payload["omr_contract"]["essay_count"], case["essay"])
                 self.assertNotIn("render_essay_count", payload)
+                self.assertNotIn("include_optional_essay_area", payload)
+                self.assertNotIn("render_essay_count", payload["template_meta"])
+                self.assertNotIn("include_optional_essay_area", payload["template_meta"])
+                self.assertNotIn("render_essay_count", payload["omr_contract"])
+                self.assertNotIn("include_optional_essay_area", payload["omr_contract"])
                 self.assertEqual(payload["template_meta"]["mc_count"], case["choice"])
                 self.assertEqual(payload["template_meta"]["essay_count"], case["essay"])
                 self.assertEqual(
@@ -306,7 +311,9 @@ class OMRDispatcherSheetResolutionTests(TestCase):
                 )
                 self.assertEqual(doc.mc_count, case["choice"])
                 self.assertEqual(doc.essay_count, case["essay"])
-                expected_render_essay = case["essay"] or (5 if case["choice"] > 0 else 0)
+                expected_render_essay = case["essay"] or (
+                    5 if 0 < case["choice"] <= 40 else 0
+                )
                 self.assertEqual(doc.render_essay_count, expected_render_essay)
 
     def test_legacy_sheet_shape_infers_choice_count_from_answer_key(self):

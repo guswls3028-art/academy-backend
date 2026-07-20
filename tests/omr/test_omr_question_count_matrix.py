@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import cv2
 import pytest
 
 from academy.adapters.ai.omr.engine import AnswerDetectConfig, detect_omr_answers_v7
@@ -66,6 +67,39 @@ def _all_single_marks(question_count: int) -> dict[str, str]:
         str(qn): str(((qn - 1) % 5) + 1)
         for qn in range(1, question_count + 1)
     }
+
+
+def _assert_printed_bubble_outline_matches_meta(image, meta: dict, question_number: int):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    height, width = gray.shape
+    scale_x = width / float(meta["page"]["width"])
+    scale_y = height / float(meta["page"]["height"])
+    question = meta["questions"][question_number - 1]
+
+    for choice in question["choices"]:
+        center_x = int(round(float(choice["center"]["x"]) * scale_x))
+        center_y = int(round(float(choice["center"]["y"]) * scale_y))
+        radius_x = int(round(float(choice["radius_x"]) * scale_x))
+        radius_y = int(round(float(choice["radius_y"]) * scale_y))
+        outline_points = (
+            (center_x - radius_x, center_y),
+            (center_x + radius_x, center_y),
+            (center_x, center_y - radius_y),
+            (center_x, center_y + radius_y),
+        )
+        for sample_x, sample_y in outline_points:
+            patch = gray[
+                max(0, sample_y - 2):min(height, sample_y + 3),
+                max(0, sample_x - 2):min(width, sample_x + 3),
+            ]
+            assert patch.size > 0
+            assert int(patch.min()) < 160, (
+                question_number,
+                choice["label"],
+                sample_x,
+                sample_y,
+                int(patch.min()),
+            )
 
 
 def test_all_supported_question_counts_have_safe_layout_geometry():
@@ -267,3 +301,109 @@ def test_pdf_renderer_to_detector_pipeline_at_layout_edges(
     assert aligned.success, (question_count, case_name, aligned)
     assert answer_ok == answer_total, (question_count, case_name, wrong[:5])
     assert identifier_ok == identifier_total, (question_count, case_name, identifier)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "distort_kwargs", "render_kwargs"),
+    [
+        ("clean", {}, {}),
+        (
+            "real_scanner",
+            {"rotation_deg": 1.0, "noise_sigma": 5.0},
+            {"jpeg_quality": 70, "dpi": 200},
+        ),
+        ("dpi_150", {}, {"dpi": 150}),
+    ],
+)
+def test_hidden_optional_essay_area_keeps_objective_recognition_contract(
+    case_name: str,
+    distort_kwargs: dict,
+    render_kwargs: dict,
+):
+    question_count = 30
+    meta = build_omr_meta(question_count=question_count, n_choices=5)
+    marks = _all_single_marks(question_count)
+    id_digits = {index: int(value) for index, value in enumerate("12345678")}
+
+    image = render_marked_pdf(
+        meta,
+        marks,
+        id_digits,
+        include_optional_essay_area=False,
+        **render_kwargs,
+    )
+    dpi = int(render_kwargs.get("dpi", 300))
+    scanned = distort(image, dpi=dpi, **distort_kwargs)
+    aligned = align_to_a4_landscape(image_bgr=scanned, meta=meta)
+    answers = detect_omr_answers_v7(
+        image_bgr=aligned.image,
+        meta=meta,
+        config=AnswerDetectConfig(),
+    )
+    identifier = detect_identifier_v1(
+        image_bgr=aligned.image,
+        meta=meta,
+        cfg=IdentifierConfigV1(),
+    )
+    answer_ok, answer_total, wrong = score(answers, marks)
+    identifier_ok, identifier_total = id_score(identifier, id_digits)
+
+    assert aligned.success, (case_name, aligned)
+    assert answer_ok == answer_total == question_count, (case_name, wrong[:5])
+    assert identifier_ok == identifier_total == 8, (case_name, identifier)
+
+
+def test_hidden_optional_area_printed_bubbles_match_recognition_meta():
+    question_count = 30
+    meta = build_omr_meta(question_count=question_count, n_choices=5)
+    image = render_marked_pdf(
+        meta,
+        {},
+        {},
+        include_optional_essay_area=False,
+        dpi=300,
+    )
+
+    for question_number in _layout_probe_question_numbers(meta):
+        _assert_printed_bubble_outline_matches_meta(image, meta, question_number)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "distort_kwargs", "render_kwargs"),
+    [
+        ("clean", {}, {}),
+        (
+            "real_scanner",
+            {"rotation_deg": 1.0, "noise_sigma": 5.0},
+            {"jpeg_quality": 70, "dpi": 200},
+        ),
+        ("dpi_150", {}, {"dpi": 150}),
+    ],
+)
+def test_twenty_short_answer_only_sheet_aligns_without_objective_rois(
+    case_name: str,
+    distort_kwargs: dict,
+    render_kwargs: dict,
+):
+    meta = build_omr_meta(question_count=0, essay_count=20, n_choices=5)
+    id_digits = {index: int(value) for index, value in enumerate("12345678")}
+
+    image = render_marked_pdf(meta, {}, id_digits, **render_kwargs)
+    dpi = int(render_kwargs.get("dpi", 300))
+    scanned = distort(image, dpi=dpi, **distort_kwargs)
+    aligned = align_to_a4_landscape(image_bgr=scanned, meta=meta)
+    answers = detect_omr_answers_v7(
+        image_bgr=aligned.image,
+        meta=meta,
+        config=AnswerDetectConfig(),
+    )
+    identifier = detect_identifier_v1(
+        image_bgr=aligned.image,
+        meta=meta,
+        cfg=IdentifierConfigV1(),
+    )
+    identifier_ok, identifier_total = id_score(identifier, id_digits)
+
+    assert aligned.success, (case_name, aligned)
+    assert answers == []
+    assert identifier_ok == identifier_total == 8, (case_name, identifier)

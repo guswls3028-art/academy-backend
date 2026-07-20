@@ -14,6 +14,8 @@ from apps.domains.assets.omr.services.meta_generator import MAX_MC_QUESTIONS, va
 
 
 DECORATIVE_ESSAY_COUNT = 5
+MAX_ESSAY_QUESTIONS = 20
+MAX_MC_WITH_OPTIONAL_ESSAY_AREA = 40
 
 
 @dataclass(frozen=True)
@@ -27,8 +29,9 @@ class OMRDocument:
 
     # -- 문항 구성 --
     mc_count: int = 20  # 0~MAX_MC_QUESTIONS
-    essay_count: int = 0  # 0~10
+    essay_count: int = 0  # 0~MAX_ESSAY_QUESTIONS
     n_choices: int = 5  # 4 or 5
+    include_optional_essay_area: bool = True
     decorative_essay_count: int = DECORATIVE_ESSAY_COUNT
 
     # -- 테넌트 브랜딩 --
@@ -47,9 +50,16 @@ class OMRDocument:
     def render_essay_count(self) -> int:
         if self.essay_count > 0:
             return self.essay_count
-        if self.mc_count > 0:
+        if self.can_include_optional_essay_area and self.include_optional_essay_area:
             return self.decorative_essay_count
         return 0
+
+    @property
+    def can_include_optional_essay_area(self) -> bool:
+        return (
+            self.essay_count <= 0
+            and 0 < self.mc_count <= MAX_MC_WITH_OPTIONAL_ESSAY_AREA
+        )
 
     @property
     def has_decorative_essay_area(self) -> bool:
@@ -72,15 +82,20 @@ class OMRDocument:
             errors.append("시험명은 필수입니다.")
         if self.mc_count < 0 or self.mc_count > MAX_MC_QUESTIONS:
             errors.append(f"객관식 문항 수는 0~{MAX_MC_QUESTIONS} 사이여야 합니다.")
-        if self.essay_count < 0 or self.essay_count > 10:
-            errors.append("단답형 문항 수는 0~10 사이여야 합니다.")
-        if self.decorative_essay_count < 0 or self.decorative_essay_count > 10:
-            errors.append("표시용 단답형 문항 수는 0~10 사이여야 합니다.")
+        if self.essay_count < 0 or self.essay_count > MAX_ESSAY_QUESTIONS:
+            errors.append(f"단답형 문항 수는 0~{MAX_ESSAY_QUESTIONS} 사이여야 합니다.")
+        if self.decorative_essay_count < 0 or self.decorative_essay_count > MAX_ESSAY_QUESTIONS:
+            errors.append(
+                f"표시용 단답형 문항 수는 0~{MAX_ESSAY_QUESTIONS} 사이여야 합니다."
+            )
         if self.mc_count + self.essay_count < 1:
             errors.append("문항이 최소 1개 이상이어야 합니다.")
         if self.n_choices != 5:
             errors.append("보기 수는 5여야 합니다.")
-        if 0 <= self.mc_count <= MAX_MC_QUESTIONS and 0 <= self.render_essay_count <= 10:
+        if (
+            0 <= self.mc_count <= MAX_MC_QUESTIONS
+            and 0 <= self.render_essay_count <= MAX_ESSAY_QUESTIONS
+        ):
             errors.extend(validate_layout(self.mc_count, self.render_essay_count))
         return errors
 
@@ -92,6 +107,8 @@ class OMRDocument:
             "session_name": self.session_name,
             "mc_count": self.mc_count,
             "essay_count": self.essay_count,
+            "include_optional_essay_area": self.include_optional_essay_area,
+            "can_include_optional_essay_area": self.can_include_optional_essay_area,
             "render_essay_count": self.render_essay_count,
             "render_essay_label": self.render_essay_label,
             "n_choices": self.n_choices,
