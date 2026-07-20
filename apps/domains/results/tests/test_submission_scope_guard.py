@@ -133,6 +133,40 @@ class SubmissionScopeGuardTests(TestCase):
         )
         return exam, choice, essay
 
+    def test_numeric_essay_answer_is_auto_graded_as_short_answer(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="Numeric Short Answer Exam",
+            subject="수학",
+            exam_type=Exam.ExamType.REGULAR,
+            pass_score=0,
+            max_score=30,
+        )
+        exam.sessions.add(self.session)
+        ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
+        sheet = Sheet.objects.create(
+            exam=exam,
+            name="NUMERIC-SHORT",
+            total_questions=1,
+            choice_count=0,
+            essay_count=1,
+        )
+        question = ExamQuestion.objects.create(sheet=sheet, number=1, score=30)
+        AnswerKey.objects.create(exam=exam, answers={str(question.id): "007"})
+        submission = self._submission_for_exam(exam, question, answer="7")
+
+        exam_result = ExamGradingService().auto_grade_objective(
+            submission_id=submission.id,
+        )
+        result = sync_result_from_exam_submission(submission.id)
+
+        self.assertEqual(float(exam_result.total_score), 30.0)
+        self.assertEqual(float(exam_result.max_score), 30.0)
+        self.assertEqual(float(result.objective_score), 30.0)
+        item = ResultItem.objects.get(result=result, question=question)
+        self.assertTrue(item.is_correct)
+        self.assertEqual(float(item.score), 30.0)
+
     def test_auto_grade_rejects_unassigned_submission_without_side_effects(self):
         submission = self._unassigned_submission()
 

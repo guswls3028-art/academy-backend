@@ -10,11 +10,15 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment
-from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
+from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.parents.models import Parent
 from apps.domains.results.models import Result, ResultItem
-from apps.domains.student_app.exams.views import StudentExamListView, StudentExamSubmitView
+from apps.domains.student_app.exams.views import (
+    StudentExamListView,
+    StudentExamQuestionsView,
+    StudentExamSubmitView,
+)
 from apps.domains.student_app.results.views import MyExamResultView
 from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission
@@ -165,6 +169,61 @@ class ParentExamChildSelectionTests(TestCase):
         self.assertEqual(response_a.status_code, 200, response_a.data)
         self.assertEqual(response_a.data["total_score"], 10)
         self.assertEqual(response_b.status_code, 404)
+
+    @patch("apps.domains.submissions.services.dispatcher.dispatch_submission")
+    def test_numeric_short_answer_contract_rejects_invalid_and_normalizes_leading_zeroes(
+        self,
+        mock_dispatch,
+    ):
+        sheet = self.question_a.sheet
+        sheet.choice_count = 0
+        sheet.essay_count = 1
+        sheet.save(update_fields=["choice_count", "essay_count", "updated_at"])
+        AnswerKey.objects.create(
+            exam=self.exam_a,
+            answers={str(self.question_a.id): "7"},
+        )
+
+        questions_response = StudentExamQuestionsView.as_view()(
+            self._request(
+                f"/student/exams/{self.exam_a.id}/questions/",
+                student=self.student_a,
+            ),
+            pk=self.exam_a.id,
+        )
+        invalid_response = StudentExamSubmitView.as_view()(
+            self._post_request(
+                f"/student/exams/{self.exam_a.id}/submit/",
+                student=self.student_a,
+                data={
+                    "answers": [
+                        {"exam_question_id": self.question_a.id, "answer": "1000"}
+                    ]
+                },
+            ),
+            pk=self.exam_a.id,
+        )
+        valid_response = StudentExamSubmitView.as_view()(
+            self._post_request(
+                f"/student/exams/{self.exam_a.id}/submit/",
+                student=self.student_a,
+                data={
+                    "answers": [
+                        {"exam_question_id": self.question_a.id, "answer": "007"}
+                    ]
+                },
+            ),
+            pk=self.exam_a.id,
+        )
+
+        self.assertEqual(questions_response.status_code, 200, questions_response.data)
+        self.assertEqual(questions_response.data[0]["answer_format"], "integer_0_999")
+        self.assertEqual(invalid_response.status_code, 400, invalid_response.data)
+        self.assertIn("0~999", invalid_response.data["detail"])
+        self.assertEqual(valid_response.status_code, 201, valid_response.data)
+        submission = Submission.objects.get(id=valid_response.data["submission_id"])
+        self.assertEqual(submission.payload["answers"][0]["answer"], "7")
+        mock_dispatch.assert_called_once()
 
     @patch("apps.domains.submissions.services.dispatcher.dispatch_submission")
     def test_parent_can_submit_same_exam_for_each_selected_child(self, mock_dispatch):

@@ -147,6 +147,29 @@ def detect_omr_answers_v7(
 
     for q in meta.get("questions", []):
         q_num = int(q.get("question_number", 0))
+        if q.get("type") == "numeric_short_answer":
+            try:
+                results.append(_detect_numeric_short_question(
+                    gray=gray,
+                    gray_raw=gray_raw,
+                    binary=binary,
+                    scale=scale,
+                    question=q,
+                    config=config,
+                    img_shape=image_bgr.shape,
+                    meta_version=meta_version,
+                ))
+            except Exception:
+                logger.exception("OMR numeric short-answer detect error q=%d", q_num)
+                results.append(OMRAnswerV1(
+                    version=meta_version,
+                    question_id=q_num,
+                    detected=[],
+                    marking="blank",
+                    confidence=0.0,
+                    status="error",
+                ))
+            continue
         choices = q.get("choices", [])
         if not choices:
             continue
@@ -180,6 +203,101 @@ def detect_omr_answers_v7(
             ))
 
     return results
+
+
+def _detect_numeric_short_question(
+    *,
+    gray: np.ndarray,
+    gray_raw: np.ndarray,
+    binary: np.ndarray,
+    scale: PageScale,
+    question: Dict[str, Any],
+    config: AnswerDetectConfig,
+    img_shape: Tuple[int, ...],
+    meta_version: str,
+) -> OMRAnswerV1:
+    question_number = int(question.get("question_number", 0))
+    digit_results: List[OMRAnswerV1] = []
+    for group in question.get("digit_groups", []):
+        choices = [
+            {
+                "label": str(bubble.get("value", "")),
+                "center": bubble.get("center", {}),
+                "radius_x": bubble.get("radius_x", 1.8),
+                "radius_y": bubble.get("radius_y", 2.6),
+            }
+            for bubble in group.get("bubbles", [])
+        ]
+        digit_results.append(_detect_single_question(
+            gray=gray,
+            gray_raw=gray_raw,
+            binary=binary,
+            scale=scale,
+            q_num=question_number,
+            choices=choices,
+            config=config,
+            img_shape=img_shape,
+            col_transform=None,
+            meta_version=meta_version,
+        ))
+
+    raw_digits = []
+    bubble_rects = []
+    for index, result in enumerate(digit_results):
+        raw_digits.append({
+            "digit_index": index,
+            "detected": result.detected,
+            "status": result.status,
+            "confidence": result.confidence,
+            "raw": result.raw,
+        })
+        if result.raw and isinstance(result.raw.get("bubble_rects"), list):
+            for rect in result.raw["bubble_rects"]:
+                bubble_rects.append({**rect, "digit_index": index})
+
+    if not digit_results or all(result.status == "blank" for result in digit_results):
+        return OMRAnswerV1(
+            version=meta_version,
+            question_id=question_number,
+            detected=[],
+            marking="blank",
+            confidence=0.0,
+            status="blank",
+            raw={"digits": raw_digits, "bubble_rects": bubble_rects},
+        )
+
+    first_marked = next(
+        (index for index, result in enumerate(digit_results) if result.status != "blank"),
+        len(digit_results),
+    )
+    invalid_group = any(
+        result.status != "ok" or len(result.detected) != 1
+        for result in digit_results[first_marked:]
+    )
+    if invalid_group:
+        status = "error" if any(result.status == "error" for result in digit_results) else "ambiguous"
+        return OMRAnswerV1(
+            version=meta_version,
+            question_id=question_number,
+            detected=[],
+            marking="multi",
+            confidence=0.0,
+            status=status,
+            raw={"digits": raw_digits, "bubble_rects": bubble_rects},
+        )
+
+    digits = "".join(result.detected[0] for result in digit_results[first_marked:])
+    answer = str(int(digits))
+    confidence = min(result.confidence for result in digit_results[first_marked:])
+    return OMRAnswerV1(
+        version=meta_version,
+        question_id=question_number,
+        detected=[answer],
+        marking="single",
+        confidence=round(float(confidence), 4),
+        status="ok",
+        raw={"digits": raw_digits, "bubble_rects": bubble_rects},
+    )
 
 
 def _compute_column_transforms(

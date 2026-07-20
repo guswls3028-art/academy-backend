@@ -20,6 +20,10 @@ from apps.domains.results.services.submission_answer_map import (
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.omr.score_adjustment import get_score_adjustment_from_answers
+from apps.support.exams.numeric_short_answer import (
+    math_numeric_short_answer_question_ids,
+    numeric_short_answer_matches,
+)
 from apps.support.submissions.dependencies import complete_submission_after_auto_grade
 
 
@@ -82,10 +86,17 @@ class ExamGradingService:
         }
 
         score_shape = get_exam_score_shape(exam)
+        numeric_short_answer_ids = math_numeric_short_answer_question_ids(
+            exam=exam,
+            question_ids=(int(q.id) for q in sheet.questions.all()),
+            question_kind=score_shape.question_kind,
+            answers=answer_key.answers,
+        )
         questions = [
             q
             for q in sheet.questions.all().order_by("number")
             if score_shape.question_kind(int(q.id)) != "essay"
+            or int(q.id) in numeric_short_answer_ids
         ]
 
         if not questions:
@@ -104,7 +115,11 @@ class ExamGradingService:
             max_score += q_score
             correct_answer = key_map.get(qid)
             student_answer = answers_map.get(qid, "")
-            is_correct = answer_matches(student_answer, correct_answer)
+            is_correct = (
+                numeric_short_answer_matches(student_answer, correct_answer)
+                if qid in numeric_short_answer_ids
+                else answer_matches(student_answer, correct_answer)
+            )
             earned = q_score if is_correct else 0
 
             if is_correct:
@@ -118,12 +133,13 @@ class ExamGradingService:
                 "correct_answer": format_answer_for_display(correct_answer),
             }
 
-        objective_adjustment = get_score_adjustment_from_answers(
-            answer_key.answers,
-        ).objective
-        if objective_adjustment > 0:
-            total_score += objective_adjustment
-            max_score += objective_adjustment
+        score_adjustment = get_score_adjustment_from_answers(answer_key.answers)
+        auto_adjustment = score_adjustment.objective
+        if numeric_short_answer_ids:
+            auto_adjustment += score_adjustment.subjective
+        if auto_adjustment > 0:
+            total_score += auto_adjustment
+            max_score += auto_adjustment
 
         return round(float(total_score), 2), round(max_score, 2), breakdown
 
@@ -150,10 +166,17 @@ class ExamGradingService:
 
         questions = list(sheet.questions.all().only("id", "number"))
         score_shape = get_exam_score_shape(exam)
+        numeric_short_answer_ids = math_numeric_short_answer_question_ids(
+            exam=exam,
+            question_ids=(int(q.id) for q in questions),
+            question_kind=score_shape.question_kind,
+            answers=answer_key.answers,
+        )
         auto_score_question_ids = {
             int(q.id)
             for q in questions
             if score_shape.question_kind(int(q.id)) != "essay"
+            or int(q.id) in numeric_short_answer_ids
         }
         answers_map = build_submission_answers_map(
             submission=submission,

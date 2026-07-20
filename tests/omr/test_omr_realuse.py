@@ -63,6 +63,20 @@ def render_marked_pdf(meta, marks: dict, id_digits: dict, logo_bytes=None,
         if str(qn) not in marks:
             continue
         raw_mark = marks[str(qn)]
+        if q.get("type") == "numeric_short_answer":
+            digits = str(int(str(raw_mark))).rjust(3)
+            for digit, group in zip(digits, q["digit_groups"]):
+                if digit == " ":
+                    continue
+                bubble = next(
+                    item for item in group["bubbles"] if item["value"] == digit
+                )
+                cx = int(round(bubble["center"]["x"] * sx))
+                cy = int(round(bubble["center"]["y"] * sy))
+                rx = int(round(bubble["radius_x"] * sx))
+                ry = int(round(bubble["radius_y"] * sy))
+                cv2.ellipse(img, (cx, cy), (rx, ry), 0, 0, 360, color, -1)
+            continue
         if isinstance(raw_mark, (list, tuple, set)):
             selected = {str(v) for v in raw_mark}
         else:

@@ -21,6 +21,7 @@ from apps.support.student_app.exam_dependencies import (
     create_online_exam_submission,
     dispatch_student_exam_submission,
     get_enrollment_for_student_exam,
+    normalize_student_exam_answers,
     student_exam_queryset,
     student_exam_questions,
     submission_status_map_for_student_exams,
@@ -197,24 +198,13 @@ class StudentExamSubmitView(APIView):
                 {"detail": "응시 대상이 아닙니다."},
                 status=status.HTTP_403_FORBIDDEN,
             )
-        answers = request.data.get("answers")
-        if not isinstance(answers, (list, dict)):
-            return Response(
-                {"detail": "answers 필드가 필요합니다 (리스트 또는 객체)."},
-                status=status.HTTP_400_BAD_REQUEST,
+        try:
+            answers = normalize_student_exam_answers(
+                exam=exam,
+                answers=request.data.get("answers"),
             )
-        if isinstance(answers, dict):
-            answers = [{"exam_question_id": int(k), "answer": str(v)} for k, v in answers.items()]
-        else:
-            answers = [
-                {"exam_question_id": int(a.get("exam_question_id")), "answer": str(a.get("answer", ""))}
-                for a in answers if a.get("exam_question_id") is not None
-            ]
-        if not answers:
-            return Response(
-                {"detail": "최소 1개 문항의 답을 입력하세요."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        except StudentExamSubmitError as exc:
+            return Response({"detail": exc.detail}, status=exc.status_code)
         try:
             submission = create_online_exam_submission(
                 request_user=request.user,

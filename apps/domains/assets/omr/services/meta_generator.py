@@ -75,6 +75,8 @@ MIN_VERTICAL_GAP_MM = 2.0       # 버블 간 최소 수직 간격
 MAX_MC_QUESTIONS = 60           # 1페이지 최대 객관식 수
 MAX_QUESTIONS_PER_COL = 20      # 컬럼당 최대 문항 수
 MAX_COLS = 3                    # 최대 컬럼 수
+SHORT_ANSWER_DIGITS = 3        # 백/십/일
+SHORT_ANSWER_VALUES = 10       # 0~9
 
 
 def compute_safe_layout(question_count: int) -> Dict[str, Any]:
@@ -159,7 +161,9 @@ def validate_layout(question_count: int, essay_count: int = 0) -> List[str]:
     total_mc_w = n_cols * MC_COL_W + max(0, n_cols - 1) * MC_COL_GAP
     ans_w = PAGE_W - MARGIN_R - ANS_X  # 사용 가능 너비
     if essay_count > 0:
-        min_essay_w = 40.0
+        # 숫자 단답은 백/십/일 × 0~9 버블 30개를 한 행에 배치한다.
+        # 3열 객관식과 병행하면 버블 폭이 판독 안전선 아래로 내려간다.
+        min_essay_w = 100.0
         if total_mc_w + MC_COL_GAP + min_essay_w > ans_w:
             errors.append(f"객관식 {n_cols}컬럼 + 단답형이 페이지 너비를 초과합니다. 문항 수를 줄여주세요.")
 
@@ -176,6 +180,64 @@ def _calc_bubble_centers_x(col_x: float, n_choices: int) -> List[float]:
         round(area_x + gap * (i + 1) + BUB_W * i + BUB_W / 2, 2)
         for i in range(n_choices)
     ]
+
+
+def _build_numeric_short_answer_meta(
+    *,
+    question_count: int,
+    essay_count: int,
+    n_mc_columns: int,
+) -> List[Dict[str, Any]]:
+    if essay_count <= 0:
+        return []
+
+    body_y = CONTENT_Y + MC_HEADER_H
+    body_h = CONTENT_H - MC_HEADER_H
+    essay_x = ANS_X + n_mc_columns * (MC_COL_W + MC_COL_GAP)
+    essay_w = PAGE_W - MARGIN_R - essay_x
+    answer_x = essay_x + MC_NUM_W
+    answer_w = essay_w - MC_NUM_W
+    group_w = answer_w / SHORT_ANSWER_DIGITS
+    slot_w = group_w / SHORT_ANSWER_VALUES
+    bubble_radius_x = min(BUB_W / 2, slot_w * 0.35)
+
+    questions: List[Dict[str, Any]] = []
+    for index in range(essay_count):
+        question_number = question_count + index + 1
+        row_h = body_h / essay_count
+        row_cy = body_y + (index + 0.5) * row_h
+        digit_groups = []
+        for digit_index in range(SHORT_ANSWER_DIGITS):
+            group_x = answer_x + digit_index * group_w
+            bubbles = [
+                {
+                    "value": str(value),
+                    "center": {
+                        "x": round(group_x + (value + 0.5) * slot_w, 2),
+                        "y": round(row_cy, 2),
+                    },
+                    "radius_x": round(bubble_radius_x, 2),
+                    "radius_y": round(BUB_H / 2, 2),
+                }
+                for value in range(SHORT_ANSWER_VALUES)
+            ]
+            digit_groups.append({
+                "digit_index": digit_index,
+                "place": ("hundreds", "tens", "ones")[digit_index],
+                "bubbles": bubbles,
+            })
+        questions.append({
+            "question_number": question_number,
+            "type": "numeric_short_answer",
+            "roi": {
+                "x": round(essay_x, 2),
+                "y": round(row_cy - row_h / 2, 2),
+                "w": round(essay_w, 2),
+                "h": round(row_h, 2),
+            },
+            "digit_groups": digit_groups,
+        })
+    return questions
 
 
 # ══════════════════════════════════════════
@@ -353,6 +415,13 @@ def build_omr_meta(
             "questions": col_questions,
         })
 
+    numeric_short_answers = _build_numeric_short_answer_meta(
+        question_count=question_count,
+        essay_count=essay_count,
+        n_mc_columns=n_cols,
+    )
+    questions.extend(numeric_short_answers)
+
     return {
         "version": "v15",
         "units": "mm",
@@ -360,6 +429,7 @@ def build_omr_meta(
         "markers": _build_marker_meta(),
         "mc_count": question_count,
         "essay_count": essay_count,
+        "numeric_short_answer_count": len(numeric_short_answers),
         "n_choices": n_choices,
         "layout": {
             "n_cols": n_cols,
@@ -368,6 +438,7 @@ def build_omr_meta(
             "safe": layout["safe"],
         },
         "questions": questions,           # flat list (backward compatible)
+        "numeric_short_answers": numeric_short_answers,
         "columns": columns,               # grouped by column (v15: 앵커 제거, col_x만)
         "identifier": _build_identifier_meta(),
     }

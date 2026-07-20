@@ -388,7 +388,11 @@ def test_twenty_short_answer_only_sheet_aligns_without_objective_rois(
     meta = build_omr_meta(question_count=0, essay_count=20, n_choices=5)
     id_digits = {index: int(value) for index, value in enumerate("12345678")}
 
-    image = render_marked_pdf(meta, {}, id_digits, **render_kwargs)
+    marks = {
+        str(question_number): str((question_number * 53) % 1000)
+        for question_number in range(1, 21)
+    }
+    image = render_marked_pdf(meta, marks, id_digits, **render_kwargs)
     dpi = int(render_kwargs.get("dpi", 300))
     scanned = distort(image, dpi=dpi, **distort_kwargs)
     aligned = align_to_a4_landscape(image_bgr=scanned, meta=meta)
@@ -405,5 +409,42 @@ def test_twenty_short_answer_only_sheet_aligns_without_objective_rois(
     identifier_ok, identifier_total = id_score(identifier, id_digits)
 
     assert aligned.success, (case_name, aligned)
-    assert answers == []
+    answer_ok, answer_total, wrong = score(answers, marks)
+
+    assert answer_ok == answer_total == 20, (case_name, wrong[:5])
     assert identifier_ok == identifier_total == 8, (case_name, identifier)
+
+
+@pytest.mark.parametrize(
+    ("case_name", "distort_kwargs", "render_kwargs"),
+    [
+        ("clean", {}, {}),
+        ("real_scanner", {"rotation_deg": 1.0, "noise_sigma": 5.0}, {"jpeg_quality": 70, "dpi": 200}),
+        ("dpi_150", {}, {"dpi": 150}),
+    ],
+)
+@pytest.mark.parametrize("question_count", [20, 40])
+def test_mixed_sheet_detects_objective_and_numeric_short_answers(
+    question_count: int,
+    case_name: str,
+    distort_kwargs: dict,
+    render_kwargs: dict,
+):
+    meta = build_omr_meta(question_count=question_count, essay_count=5, n_choices=5)
+    marks = _all_single_marks(question_count) | {
+        str(question_count + offset): answer
+        for offset, answer in enumerate(("0", "7", "42", "105", "999"), start=1)
+    }
+    image = render_marked_pdf(meta, marks, {}, **render_kwargs)
+    dpi = int(render_kwargs.get("dpi", 300))
+    scanned = distort(image, dpi=dpi, **distort_kwargs)
+    aligned = align_to_a4_landscape(image_bgr=scanned, meta=meta)
+    answers = detect_omr_answers_v7(
+        image_bgr=aligned.image,
+        meta=meta,
+        config=AnswerDetectConfig(),
+    )
+    answer_ok, answer_total, wrong = score(answers, marks)
+
+    assert aligned.success, (case_name, aligned)
+    assert answer_ok == answer_total == question_count + 5, (case_name, wrong[:5])

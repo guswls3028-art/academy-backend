@@ -147,7 +147,9 @@ class OMRDocumentRenderingTests(TestCase):
         self.assertEqual(doc.validate(), [])
         html = OMRHtmlRenderer().render(doc).decode("utf-8")
         self.assertNotIn("객관식 1번", html)
-        self.assertIn("단답형 20문항", html)
+        self.assertIn("단답형 0~999 (백·십·일)", html)
+        self.assertEqual(html.count('class="dr-place"'), 60)
+        self.assertEqual(html.count('class="dr-bu"'), 600)
         self.assertTrue(OMRPdfRenderer().render(doc).startswith(b"%PDF"))
 
     def test_real_essay_count_overrides_decorative_essay_area(self):
@@ -155,7 +157,9 @@ class OMRDocumentRenderingTests(TestCase):
 
         self.assertEqual(doc.render_essay_count, 3)
         html = OMRHtmlRenderer().render(doc).decode("utf-8")
-        self.assertIn("단답형 3문항", html)
+        self.assertIn("단답형 0~999 (백·십·일)", html)
+        self.assertIn('<div class="dr-n">21</div>', html)
+        self.assertIn('<div class="dr-n">23</div>', html)
 
 
 class OMRDocumentApiContractTests(TestCase):
@@ -207,7 +211,7 @@ class OMRDocumentApiContractTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         html = response.content.decode("utf-8")
-        self.assertIn("단답형 20문항", html)
+        self.assertIn("단답형 0~999 (백·십·일)", html)
         self.assertNotIn("객관식 1번", html)
 
     def test_preview_contract_rejects_invalid_counts_instead_of_clamping(self):

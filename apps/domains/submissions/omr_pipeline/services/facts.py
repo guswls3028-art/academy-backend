@@ -269,7 +269,10 @@ def _latest_expected_answer_count(submission: Submission) -> int | None:
     )
     if not run or not isinstance(run.contract_snapshot, dict):
         return None
-    value = run.contract_snapshot.get("choice_count")
+    value = run.contract_snapshot.get(
+        "auto_detect_count",
+        run.contract_snapshot.get("choice_count"),
+    )
     try:
         return int(value)
     except (TypeError, ValueError):

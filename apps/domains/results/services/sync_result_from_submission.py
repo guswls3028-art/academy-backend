@@ -26,6 +26,10 @@ from apps.domains.results.services.submission_answer_map import (
 from apps.domains.results.services.submission_scope_guard import validate_exam_submission_scope
 from apps.support.omr.score_adjustment import get_score_adjustment_from_answers
 from apps.support.omr.score_shape import get_exam_score_shape
+from apps.support.exams.numeric_short_answer import (
+    math_numeric_short_answer_question_ids,
+    numeric_short_answer_matches,
+)
 from apps.support.results.grading_dependencies import (
     get_exam_for_result_sync,
     get_submission_for_result_sync,
@@ -164,10 +168,17 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
     }
     score_adjustment = get_score_adjustment_from_answers(answer_key.answers or {})
     questions = list(sheet.questions.all().order_by("number"))
+    numeric_short_answer_ids = math_numeric_short_answer_question_ids(
+        exam=exam,
+        question_ids=(int(q.id) for q in questions),
+        question_kind=score_shape.question_kind,
+        answers=answer_key.answers,
+    )
     auto_score_questions = [
         q
         for q in questions
         if score_shape.question_kind(int(q.id)) != "essay"
+        or int(q.id) in numeric_short_answer_ids
     ]
     essay_question_ids = {
         int(q.id)
@@ -192,31 +203,18 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         context="sync_result_from_exam_submission",
         protect_existing_score=existing_result_prev is not None,
     )
-    exam_max_score = float(getattr(exam, "max_score", 0) or 0)
-    raw_total_score = sum(float(getattr(q, "score", 0) or 0) for q in auto_score_questions)
-    objective_max_score = float(score_shape.objective_max_score or 0.0)
-    if objective_max_score <= 0 and score_shape.essay_count == 0:
-        objective_max_score = exam_max_score
-    use_equal_score_fallback = (
-        bool(auto_score_questions)
-        and raw_total_score <= 0
-        and objective_max_score > 0
-    )
-    equal_question_score = (
-        objective_max_score / len(auto_score_questions)
-        if use_equal_score_fallback
-        else 0.0
-    )
     items_payload = []
     for q in auto_score_questions:
         qid = int(q.id)
         ans = answers_map.get(qid, "")
         correct_key = key_map.get(qid, "")
-        is_correct = answer_matches(ans, correct_key)
-        max_score = (
-            equal_question_score
-            if use_equal_score_fallback
-            else float(getattr(q, "score", 0) or 0)
+        is_correct = (
+            numeric_short_answer_matches(ans, correct_key)
+            if qid in numeric_short_answer_ids
+            else answer_matches(ans, correct_key)
+        )
+        max_score = float(
+            score_shape.question_max_score(qid, getattr(q, "score", 0))
         )
         score = max_score if is_correct else 0.0
         items_payload.append({
@@ -236,14 +234,12 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         total += item["score"]
         max_total += item["max_score"]
 
-    objective_adjustment = (
-        score_adjustment.objective
-        if auto_score_questions
-        else 0.0
-    )
-    if objective_adjustment > 0:
-        total += objective_adjustment
-        max_total += objective_adjustment
+    auto_adjustment = score_adjustment.objective if auto_score_questions else 0.0
+    if numeric_short_answer_ids:
+        auto_adjustment += score_adjustment.subjective
+    if auto_adjustment > 0:
+        total += auto_adjustment
+        max_total += auto_adjustment
     total = round(float(total), 2)
     max_total = round(float(max_total), 2)
 

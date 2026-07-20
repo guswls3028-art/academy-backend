@@ -39,7 +39,13 @@ class OMRHtmlRenderer:
                 "객관식은 컴퓨터용 사인펜으로 버블을 빈틈없이 칠해주세요."
             )
         if render_essay_count > 0:
-            instructions.append("단답형은 답을 정자로 깔끔하게 적어주세요.")
+            if doc.essay_count > 0:
+                instructions.append(
+                    "단답형은 백·십·일 자리의 숫자를 마킹하세요. "
+                    "빈 앞자리는 두고 일의 자리는 반드시 마킹합니다."
+                )
+            else:
+                instructions.append("단답형은 답을 정자로 깔끔하게 적어주세요.")
         instructions.append("수정테이프를 사용해주세요. (수정액 사용 금지)")
 
         sub_parts = []
@@ -66,6 +72,7 @@ class OMRHtmlRenderer:
             "essay_count": render_essay_count,
             "essay_label": doc.render_essay_label,
             "logical_essay_count": doc.essay_count,
+            "numeric_short_answer": doc.essay_count > 0,
             "n_choices": doc.n_choices,
             "logo_url": doc.logo_url,
             "brand_color": doc.brand_color,
@@ -124,7 +131,8 @@ class OMRHtmlRenderer:
         for i in range(1, render_essay_count + 1):
             group_idx = (i - 1) // 5
             rows.append({
-                "number": i,
+                "number": doc.mc_count + i if doc.essay_count > 0 else i,
+                "digit_values": list(range(10)),
                 "is_g5": (i % 5 == 0 and i != render_essay_count),
                 "is_g10": (i % 10 == 0 and i != render_essay_count),
                 "is_zebra": (group_idx % 2 == 1),

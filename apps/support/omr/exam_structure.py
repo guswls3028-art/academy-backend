@@ -19,7 +19,7 @@ class OmrExamStructure:
 
     @property
     def expected_objective_count(self) -> int:
-        return int(self.contract.choice_count if self.contract else 0)
+        return len(self.qnum_to_pk) if self.qnum_map_built else 0
 
 
 def empty_exam_structure() -> OmrExamStructure:
@@ -50,7 +50,6 @@ def load_submission_exam_structure(submission) -> OmrExamStructure:
         sheet = Sheet.objects.filter(exam=template_exam).order_by("id").first()
         if sheet:
             contract = build_omr_sheet_contract(sheet=sheet, exam=template_exam)
-            qnum_to_pk = contract.objective_question_ids_by_number
             contract_snapshot = contract.to_dict(include_template_meta=False)
             qnum_map_built = True
 
@@ -58,6 +57,34 @@ def load_submission_exam_structure(submission) -> OmrExamStructure:
         answer_key = AnswerKey.objects.filter(exam=template_exam).order_by("id").first()
         if answer_key and isinstance(answer_key.answers, dict):
             correct_answers_by_pk = answer_key.answers
+
+        if contract:
+            from apps.support.exams.numeric_short_answer import (
+                math_numeric_short_answer_question_ids,
+            )
+
+            question_kind_by_id = {
+                int(question.exam_question_id): question.kind
+                for question in contract.questions
+                if question.exam_question_id is not None
+            }
+            numeric_question_ids = math_numeric_short_answer_question_ids(
+                subject=getattr(template_exam, "subject", None),
+                exam=exam,
+                question_ids=question_kind_by_id,
+                question_kind=question_kind_by_id.get,
+                answers=correct_answers_by_pk,
+            )
+            qnum_to_pk = {
+                int(question.number): int(question.exam_question_id)
+                for question in contract.questions
+                if question.exam_question_id is not None
+                and (
+                    question.kind == "choice"
+                    or int(question.exam_question_id) in numeric_question_ids
+                )
+            }
+            contract_snapshot["auto_detect_count"] = len(qnum_to_pk)
 
         return OmrExamStructure(
             qnum_to_pk=qnum_to_pk,

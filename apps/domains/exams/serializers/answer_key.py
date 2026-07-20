@@ -36,7 +36,7 @@ class AnswerKeySerializer(serializers.ModelSerializer):
                     {"answers": "answer values must be strings or arrays"}
                 )
 
-            normalized[key] = str(v or "").strip()
+            normalized[key] = "" if v is None else str(v).strip()
 
         return normalized
 

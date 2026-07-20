@@ -162,6 +162,34 @@ class OMRDispatcherSheetResolutionTests(TestCase):
         self.assertEqual(payload["template_meta"]["essay_count"], 5)
         self.assertEqual(payload["template_meta"]["layout"]["n_cols"], 1)
 
+    def test_numeric_short_answer_is_added_to_detection_and_persistence_contract(self):
+        self.template_exam.subject = "수학"
+        self.template_exam.save(update_fields=["subject", "updated_at"])
+        questions = self._reset_sheet_shape(
+            total_questions=22,
+            choice_count=20,
+            essay_count=2,
+        )
+        AnswerKey.objects.create(
+            exam=self.template_exam,
+            answers={str(questions[20].id): "007", str(questions[21].id): "해설참조"},
+        )
+        submission = self._submission()
+
+        payload = dispatcher._build_ai_payload(submission)
+        exam_structure = load_submission_exam_structure(submission)
+
+        self.assertEqual([q["number"] for q in payload["questions"]], list(range(1, 22)))
+        self.assertEqual(payload["omr_contract"]["auto_detect_count"], 21)
+        self.assertEqual(payload["template_meta"]["numeric_short_answer_count"], 1)
+        self.assertEqual(
+            [q["question_number"] for q in payload["template_meta"]["numeric_short_answers"]],
+            [21],
+        )
+        self.assertEqual(exam_structure.expected_objective_count, 21)
+        self.assertEqual(max(exam_structure.qnum_to_pk), 21)
+        self.assertEqual(exam_structure.contract_snapshot["auto_detect_count"], 21)
+
     def test_mixed_sheet_contract_rejects_essay_numbers_as_objective_answers(self):
         self._reset_sheet_shape(total_questions=25, choice_count=20, essay_count=5)
         submission = self._submission()

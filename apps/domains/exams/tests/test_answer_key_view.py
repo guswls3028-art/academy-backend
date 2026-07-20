@@ -220,6 +220,25 @@ class AnswerKeyViewTenantScopeTests(TestCase):
             {"objective": 0.2, "subjective": 0.1},
         )
 
+    def test_create_preserves_numeric_zero_answer(self):
+        editable_template = Exam.objects.create(
+            tenant=self.tenant_a,
+            title="Numeric Zero Answer Template",
+            exam_type=Exam.ExamType.TEMPLATE,
+        )
+
+        response = self._request(
+            "post",
+            "create",
+            data={"exam": editable_template.id, "answers": {"101": 0}},
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(
+            AnswerKey.objects.get(exam=editable_template).answers["101"],
+            "0",
+        )
+
     def test_update_rejects_cross_tenant_exam_move(self):
         answer_key = AnswerKey.objects.create(exam=self.template_a, answers={"1": "A"})
 

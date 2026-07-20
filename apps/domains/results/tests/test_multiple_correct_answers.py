@@ -8,7 +8,7 @@ from django.test import SimpleTestCase, TestCase
 from apps.core.models import Tenant
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
-from apps.domains.lectures.models import Lecture
+from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ExamResult, Result, ResultItem
 from apps.domains.results.services.answer_matching import (
     answer_matches,
@@ -19,6 +19,10 @@ from apps.domains.students.models import Student
 from apps.domains.submissions.models import Submission, SubmissionAnswer
 from apps.support.omr.score_adjustment import SCORE_ADJUSTMENT_KEY
 from apps.support.omr.score_shape import get_exam_score_shape
+from apps.support.exams.numeric_short_answer import (
+    normalize_numeric_short_answer,
+    numeric_short_answer_matches,
+)
 
 
 User = get_user_model()
@@ -43,6 +47,13 @@ class AnswerMatchingTests(SimpleTestCase):
 
     def test_free_text_with_punctuation_is_not_split_into_partial_matches(self):
         self.assertFalse(answer_matches("서울", "서울, 부산"))
+
+    def test_numeric_short_answer_is_canonicalized_within_zero_to_999(self):
+        self.assertEqual(normalize_numeric_short_answer("007"), "7")
+        self.assertEqual(normalize_numeric_short_answer(0), "0")
+        self.assertTrue(numeric_short_answer_matches("007", "7"))
+        self.assertFalse(numeric_short_answer_matches("1000", "999"))
+        self.assertIsNone(normalize_numeric_short_answer("3.0"))
 
 
 class MultipleCorrectAnswerGradingTests(TestCase):
@@ -80,6 +91,11 @@ class MultipleCorrectAnswerGradingTests(TestCase):
             lecture=self.lecture,
             status="ACTIVE",
         )
+        self.session = Session.objects.create(
+            lecture=self.lecture,
+            order=1,
+            title="Multiple Answer Session",
+        )
         self.exam = Exam.objects.create(
             tenant=self.tenant,
             title="Multiple Answer Exam",
@@ -87,6 +103,7 @@ class MultipleCorrectAnswerGradingTests(TestCase):
             pass_score=0,
             max_score=15,
         )
+        self.exam.sessions.add(self.session)
         ExamEnrollment.objects.create(exam=self.exam, enrollment=self.enrollment)
         self.sheet = Sheet.objects.create(exam=self.exam, name="MAIN", total_questions=3)
         self.q1 = ExamQuestion.objects.create(sheet=self.sheet, number=1, score=5)
@@ -168,6 +185,7 @@ class MultipleCorrectAnswerGradingTests(TestCase):
             pass_score=0,
             max_score=10,
         )
+        exam.sessions.add(self.session)
         ExamEnrollment.objects.create(exam=exam, enrollment=self.enrollment)
         sheet = Sheet.objects.create(
             exam=exam,

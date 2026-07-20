@@ -556,11 +556,12 @@ class OMRPdfRenderer:
             instruction_number += 1
 
         if doc.render_essay_count > 0:
-            c.drawString(
-                ix,
-                _line_y(line),
-                f"{instruction_number}. 단답형은 답을 정자로 깔끔하게 적어주세요.",
+            instruction = (
+                "단답형은 백·십·일 자리 숫자를 마킹하세요."
+                if doc.essay_count > 0
+                else "단답형은 답을 정자로 깔끔하게 적어주세요."
             )
+            c.drawString(ix, _line_y(line), f"{instruction_number}. {instruction}")
             line += 1
             instruction_number += 1
 
@@ -638,7 +639,8 @@ class OMRPdfRenderer:
         if has_essay:
             ex = frame_x + nmc * (MC_COL_W + MC_COL_GAP)
             ew = frame_x + frame_w - ex
-            sections.append(('essay', ex, ew, ew, 1, ec))
+            essay_start = doc.mc_count + 1 if doc.essay_count > 0 else 1
+            sections.append(('essay', ex, ew, ew, essay_start, essay_start + ec - 1))
 
         # ═══ ① 배경 (fill) — 모든 stroke보다 먼저 ═══
         for typ, sx, vw, dw, ss, se in sections:
@@ -720,8 +722,13 @@ class OMRPdfRenderer:
                                     ft - hh + _mm(1.5), lb)
             else:
                 c.setFont(_FB, 6); c.setFillColor(CT2)
+                essay_header = (
+                    "단답형 0~999 (백·십·일)"
+                    if doc.essay_count > 0
+                    else doc.render_essay_label
+                )
                 c.drawCentredString(sxp + nw + (vwp - nw) / 2,
-                                    ft - hh + _mm(1.5), doc.render_essay_label)
+                                    ft - hh + _mm(1.5), essay_header)
 
             for qi in range(cnt):
                 qn = ss + qi
@@ -729,13 +736,40 @@ class OMRPdfRenderer:
                 c.setFont(_FB, 8); c.setFillColor(CT)
                 c.drawCentredString(sxp + nw / 2, _y(rc) - _mm(1.4), str(qn))
 
-        # ═══ ⑤ 버블 (MC만) ═══
+        # ═══ ⑤ 버블 ═══
         nc = doc.n_choices
         for typ, sx, vw, dw, ss, se in sections:
-            if typ != 'mc':
-                continue
             cnt = se - ss + 1
             rh = bh / cnt if cnt > 0 else bh
+            if typ == 'essay':
+                if doc.essay_count <= 0:
+                    continue
+                answer_x = sx + MC_NUM_W
+                answer_w = dw - MC_NUM_W
+                group_w = answer_w / 3
+                slot_w = group_w / 10
+                short_bub_w = min(BUB_W, slot_w * 0.7)
+                for qi in range(cnt):
+                    rc = bt + (qi + 0.5) * rh
+                    for digit_index in range(3):
+                        group_x = answer_x + digit_index * group_w
+                        if digit_index > 0:
+                            c.setStrokeColor(C4); c.setLineWidth(S4)
+                            c.line(_mm(group_x), _y(bt + qi * rh), _mm(group_x), _y(bt + (qi + 1) * rh))
+                        for value in range(10):
+                            bx_mm = group_x + (value + 0.5) * slot_w
+                            bx = _mm(bx_mm); by = _y(rc)
+                            c.setStrokeColor(C5); c.setLineWidth(S5)
+                            c.setFillColor(C_BUB_FILL)
+                            c.ellipse(
+                                bx - _mm(short_bub_w / 2), by - _mm(BUB_H / 2),
+                                bx + _mm(short_bub_w / 2), by + _mm(BUB_H / 2),
+                                stroke=1, fill=1,
+                            )
+                            c.setFont(_FB, 4.8); c.setFillColor(CT4)
+                            c.drawCentredString(bx, by - _mm(0.8), str(value))
+                continue
+
             ax = sx + MC_NUM_W + MC_BUB_PAD
             aw = dw - MC_NUM_W - 2 * MC_BUB_PAD
             bgap = (aw - nc * BUB_W) / (nc + 1)
