@@ -84,6 +84,15 @@ Scoring Flow
 학생/관리자 화면에 노출되는 대표 결과는 `sync_result_from_exam_submission`
 단계에서 `Result` / `ResultItem`으로 동기화된다.
 
+Excel Result Import
+-------------------
+
+- `GET /api/v1/results/admin/exams/{exam_id}/result-import/template/`: 응시 대상 학생과 실제 문항 번호가 채워진 `.xlsx` 양식
+- `POST /api/v1/results/admin/exams/{exam_id}/result-import/`: 업로드 파일 미리검증
+- 같은 POST에 `apply=true`: 미리검증과 동일한 계약으로 원자적 반영
+- 정답은 빈칸/`O`, 오답은 `X`; 학생은 `수강등록ID` 우선, 없으면 같은 시험 roster 안에서 연락처와 이름으로만 확정한다.
+- 저장 결과는 `Result`/`ResultItem` 최신 snapshot과 변경 문항의 append-only `ResultFact(source=excel_import)`에 기록한다.
+
 OMR Score Shape
 ---------------
 

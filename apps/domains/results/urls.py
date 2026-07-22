@@ -14,6 +14,10 @@ from apps.domains.results.views.admin_exam_objective_score_view import AdminExam
 from apps.domains.results.views.admin_exam_subjective_score_view import AdminExamSubjectiveScoreView
 from apps.domains.results.views.admin_representative_attempt_view import AdminRepresentativeAttemptView
 from apps.domains.results.views.admin_exam_attempts_view import AdminExamAttemptsView
+from apps.domains.results.views.admin_exam_result_excel_import_view import (
+    AdminExamResultExcelImportView,
+    AdminExamResultExcelTemplateView,
+)
 
 from apps.domains.results.views.admin_session_exams_view import AdminSessionExamsView
 from apps.domains.results.views.admin_session_exams_summary_view import AdminSessionExamsSummaryView
@@ -53,6 +57,16 @@ urlpatterns = [
     path("me/exams/<int:exam_id>/attempts/", MyExamAttemptsView.as_view(), name="my-exam-attempts"),
     path("admin/exams/<int:exam_id>/summary/", AdminExamSummaryView.as_view(), name="admin-exam-summary"),
     path("admin/exams/<int:exam_id>/results/", AdminExamResultsView.as_view(), name="admin-exam-results"),
+    path(
+        "admin/exams/<int:exam_id>/result-import/template/",
+        AdminExamResultExcelTemplateView.as_view(),
+        name="admin-exam-result-import-template",
+    ),
+    path(
+        "admin/exams/<int:exam_id>/result-import/",
+        AdminExamResultExcelImportView.as_view(),
+        name="admin-exam-result-import",
+    ),
     path(
         "admin/exams/<int:exam_id>/enrollments/<int:enrollment_id>/",
         AdminExamResultDetailView.as_view(),
