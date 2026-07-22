@@ -5,7 +5,7 @@
 ## 배포 정보
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-07-23T03:53:40.6829497+09:00 |
+| 검증 시각 | 2026-07-23T03:15:58.4173597+09:00 |
 | 리전 | ap-northeast-2 |
 | 배포 스크립트 | scripts/v1/deploy.ps1 |
 | 근거·로그 | reports/audit.latest.md, reports/drift.latest.md, reports/runtime-images.latest.md |
@@ -19,7 +19,7 @@
 | API ASG min/desired/max | 1/1/3 | reports/audit.latest.md (apiAsg*) |
 | ALB target health | 1 / 1 healthy | AWS Console EC2 > Target Groups > academy-v1-api-tg |
 | ALB HTTP 80 redirect | HTTP 301 https://academy-v1-api-alb-1244943981.ap-northeast-2.elb.amazonaws.com/healthz | HTTP listener는 HTTPS로 redirect해야 함 |
-| API 공개 URL(도메인) /health | OK 59ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
+| API 공개 URL(도메인) /health | OK 73ms | API_PUBLIC_URL 또는 front.domains.api: https://api.hakwonplus.com |
 | API runtime image digest | PASS | docs/reports/runtime-images.latest.md (instances=1, ci=sha256:58c40856c44bb484c8d4b25e1125293364ee8989ac2b71a3ce42f3b91a03f765) |
 | AI/Messaging ASG | 0/1 | reports/audit.latest.md (asgAi*, asgMessaging*) |
 | SQS queue 연결·DLQ | Messaging depth 0 (in-flight 0) DLQ 0 / AI depth 0 (in-flight 0) DLQ 0 | SQS Console 또는 get-queue-attributes |
@@ -33,7 +33,7 @@
 
 | 항목 | 결과 | 근거 |
 |------|------|------|
-| /health | OK | 응답시간: 59ms (기준 p95 &lt; 2s, 샘플 1회) |
+| /health | OK | 응답시간: 73ms (기준 p95 &lt; 2s, 샘플 1회) |
 | API root | root not a health endpoint | 공개 HTTPS 도메인 기준, root는 필수 서비스 엔드포인트 아님 |
 | 핵심 API 1~2개(인증/CRUD) | 수동 검증 권장 | 샘플 20회 평균/최대 기록 시 reports/ 에 URL 또는 로그 경로 기입 |
 | **섹션 2 종합** | **PASS** | |
@@ -44,7 +44,7 @@
 |------|------|------|
 | 프론트 URL 접속 | OK | URL: https://hakwonplus.com/ 응답코드: 200 |
 | index.html Cache-Control | PASS (no-cache 계열) | public, must-revalidate, max-age=0 |
-| 해시 자산(JS/CSS) Cache-Control | PASS (1년) | 샘플: https://hakwonplus.com/assets/index-JYX6rYxq.js → public, max-age=31536000, immutable |
+| 해시 자산(JS/CSS) Cache-Control | PASS (1년) | 샘플: https://hakwonplus.com/assets/index-CiY6pab8.js → public, max-age=31536000, immutable |
 | 정적 자산(JS/CSS) 로딩 | 자동 검사 완료 | 위 해시 자산 요청 근거 |
 | CDN 캐시 정책 | 근거 위 참조 | Cache-Control 헤더, 배포 시 purge: SSOT front.purgeOnDeploy |
 | 프론트→API(CORS/쿠키/CSRF) | 수동 검증 권장 | 동일 도메인/credentials 요청 |

@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.9.2.md](v1.9.2.md) | **CURRENT** | 2026-07-20 KST | Teacher video-thumbnail incident closure, shared fallback behavior, responsive regression coverage, and production proof |
+| [v1.9.3.md](v1.9.3.md) | **CURRENT** | 2026-07-23 KST | Mixed per-question OMR types, numeric short-answer grading, teacher Excel result import, and production real-use proof |
+| [v1.9.2.md](v1.9.2.md) | production-deployed / v1.9.3로 승계 | 2026-07-20 KST | Teacher video-thumbnail incident closure, shared fallback behavior, responsive regression coverage, and production proof |
 | [v1.9.1.md](v1.9.1.md) | production-deployed / v1.9.2로 승계 | 2026-07-20 KST | Optional OMR answer-area layouts, strict generator contracts, and production 30-question recognition proof |
 | [v1.9.0.md](v1.9.0.md) | production-deployed / v1.9.1로 승계 | 2026-07-20 KST | Problem Studio AI transcription, model-scoped Bedrock infrastructure, sealed Windows Hangul companion, and production real-use closure |
 | [v1.8.6.md](v1.8.6.md) | production-deployed / v1.9.0로 승계 | 2026-07-20 KST | Multi-subject score-report intake, bounded review operations, evidence integrity, and production risk closure |
