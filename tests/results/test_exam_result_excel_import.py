@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import io
+import re
+import zipfile
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -38,6 +40,27 @@ def _workbook_bytes(rows: list[list[object]]) -> bytes:
     stream = io.BytesIO()
     workbook.save(stream)
     return stream.getvalue()
+
+
+def _without_worksheet_dimension(payload: bytes) -> bytes:
+    source_stream = io.BytesIO(payload)
+    output_stream = io.BytesIO()
+    with zipfile.ZipFile(source_stream) as source, zipfile.ZipFile(
+        output_stream,
+        mode="w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as output:
+        for info in source.infolist():
+            content = source.read(info.filename)
+            if info.filename == "xl/worksheets/sheet1.xml":
+                content = re.sub(
+                    rb'<dimension ref="[^"]+"\s*/>',
+                    b"",
+                    content,
+                    count=1,
+                )
+            output.writestr(info, content)
+    return output_stream.getvalue()
 
 
 class ExamResultExcelImportTests(TestCase):
@@ -195,6 +218,27 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(row.wrong_question_numbers, (2,))
         self.assertEqual(row.total_score, 40.0)
         self.assertEqual(row.max_score, 100.0)
+
+    def test_dimensionless_xlsx_is_matched_and_scored(self):
+        payload = _without_worksheet_dimension(
+            _workbook_bytes(
+                [
+                    ["이름", "학생연락처", 1, 2],
+                    ["김학생", "01012345678", "", "X"],
+                ]
+            )
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="dimensionless.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        self.assertEqual(plan.rows[0].wrong_question_numbers, (2,))
+        self.assertEqual(plan.rows[0].total_score, 40.0)
 
     def test_existing_phone_only_spreadsheet_is_matched(self):
         payload = _workbook_bytes(

@@ -653,6 +653,8 @@ def _load_first_worksheet(workbook_bytes: bytes):
     if not workbook.worksheets:
         raise ExamResultWorkbookError("엑셀 시트를 찾을 수 없습니다.")
     worksheet = workbook.worksheets[0]
+    if worksheet.max_row is None or worksheet.max_column is None:
+        worksheet.calculate_dimension(force=True)
     if worksheet.max_row > MAX_ROWS or worksheet.max_column > MAX_COLUMNS:
         raise ExamResultWorkbookError("엑셀은 2,000행·600열 이하로 작성해 주세요.")
     return worksheet
