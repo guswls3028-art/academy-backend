@@ -1,8 +1,16 @@
 # Video Batch Production Runbook
 
 **Status:** Active
-**Last checked:** 2026-06-29
-**Executable truth:** `.github/workflows/v1-build-and-push-latest.yml`, `scripts/v1/resources/batch.ps1`, `apps/worker/video_worker/`
+**Last checked:** 2026-07-23
+
+**Executable truth:**
+
+- `.github/workflows/v1-build-and-push-latest.yml`
+- `scripts/v1/resources/batch.ps1`
+- `apps/worker/video_worker/`
+- `apps/domains/video/serializers.py`
+- `apps/core/management/commands/production_canary.py`
+- `frontend/src/app_teacher/domains/videos/components/CompactVideoThumbnail.tsx`
 
 ## 1. Current Architecture
 
@@ -72,6 +80,49 @@ General post-deploy verification entrypoint:
 ```powershell
 pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default
 ```
+
+### 5.1 Thumbnail Not Visible Triage
+
+Do not infer a worker failure from a play-icon placeholder. Verify the chain in
+order and stop at the first broken boundary:
+
+1. **Database/worker invariant** — the uploaded `READY` video has a non-empty,
+   same-tenant `thumbnail_r2_key`. The production canary warning covers only
+   this layer.
+2. **API contract** — the tenant-scoped media response includes a non-empty
+   `thumbnail_url`. YouTube items use the normalized YouTube URL path; uploaded
+   items use the configured signed CDN path.
+3. **Object delivery** — the R2 object has a non-zero size and a sanitized CDN
+   probe returns `2xx` with an image content type. Do not copy signed query
+   parameters into reports or logs.
+4. **Browser rendering** — the affected product path contains an `<img>` whose
+   `complete` state is true and `naturalWidth`/`naturalHeight` are non-zero.
+   Check both the reported viewport and the sibling teacher video list.
+
+Interpretation:
+
+- Missing DB key: Batch publication/reconciliation incident.
+- DB key present but API URL missing or delivery failing: serializer, signing,
+  CDN, or object-path incident.
+- API URL and CDN object healthy but no decoded DOM image: frontend projection
+  incident.
+- Only one teacher screen fails: split rendering ownership or missing regression
+  coverage.
+
+Current teacher compact-list ownership:
+
+- Session video tab:
+  `frontend/src/app_teacher/domains/lectures/pages/SessionDetailPage.tsx`
+- Teacher-wide video list:
+  `frontend/src/app_teacher/domains/videos/pages/VideoListPage.tsx`
+- Shared compact renderer:
+  `frontend/src/app_teacher/domains/videos/components/CompactVideoThumbnail.tsx`
+- Focused regression:
+  `frontend/e2e/teacher/video-thumbnail-render.mock.spec.ts`
+
+The compact teacher renderer is intentionally separate from the application-wide
+`frontend/src/shared/media/video/VideoThumbnail.tsx`, which owns other video
+layouts and contracts.
 
 ## 6. Rollback
 

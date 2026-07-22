@@ -32,6 +32,13 @@ Warnings are emitted for operational debt that should be reviewed but may be acc
 
 Use `--fail-on-warning` for conservative release sealing.
 
+`READY videos missing thumbnails` checks whether the database
+`thumbnail_r2_key` invariant is present. It does not prove that the serializer
+returns `thumbnail_url`, that the signed CDN object is reachable, or that a
+frontend card decoded and rendered the image. For a reported display failure,
+continue with the layered procedure in
+[video-batch.md](runbooks/video-batch.md#51-thumbnail-not-visible-triage).
+
 ## One-Command Wrapper
 
 From the backend repository:

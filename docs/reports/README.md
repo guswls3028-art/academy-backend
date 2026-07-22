@@ -29,6 +29,8 @@
 
 | 파일 | 사건 |
 |------|------|
+| [incidents/incident-2026-07-20-teacher-video-thumbnails.md](incidents/incident-2026-07-20-teacher-video-thumbnails.md) | 교사 영상 썸네일 프런트 렌더 누락 |
+| [incidents/incident-2026-06-10-global-maintenance-toggle.md](incidents/incident-2026-06-10-global-maintenance-toggle.md) | 전역 점검 모드로 테넌트 화면 잠김 |
 | [incidents/incident-2026-03-23-db-auth-failure.md](incidents/incident-2026-03-23-db-auth-failure.md) | DB 인증 실패/connection exhaustion |
 
 ## one-off reports
