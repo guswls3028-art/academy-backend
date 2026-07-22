@@ -38,6 +38,7 @@
 | 파일 | 용도 |
 |------|------|
 | [structure-refactor-2026-04-13.md](structure-refactor-2026-04-13.md) | 구조 리팩터 보고서 |
+| [hangul-companion-verification-2026-07-22.md](hangul-companion-verification-2026-07-22.md) | Windows 한글 연결 COM/배포/반복 안정성 검증과 실제 한컴 실기 미검증 범위 |
 
 ## 출력 정책
 

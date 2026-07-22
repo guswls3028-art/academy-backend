@@ -1,6 +1,6 @@
 # Problem Studio Domain Note
 
-Last verified: 2026-07-20
+Last verified: 2026-07-23
 
 ## Product Philosophy
 
@@ -136,6 +136,27 @@ Source extraction and structure support:
 - The Windows companion source lives at `frontend/desktop/hangul-companion`. Its self-contained single-file build copies itself to `%LOCALAPPDATA%/Academy/HangulCompanion` and registers `academy-hangul://` for the current user without administrator permission. The staff-only download endpoint reads the sealed version/key/size/SHA-256 manifest and only issues an R2 URL when the uploaded object's HEAD size and SHA-256 metadata both match. The companion consumes a five-minute, one-time opaque handoff from `https://api.hakwonplus.com` only, bounds download size, verifies result size/SHA-256, requires exactly one bounded review HWPX, and only inserts into a visible normal-edit-mode HWP document. Otherwise it opens the HWPX as a new document. `--diagnose-handoff` exercises the production handoff/download/integrity/extraction chain without launching Hangul. External commercial distribution still requires Hancom Automation approval/security-module registration and trusted code signing; direct insert can fall back until those are complete.
 - The generated answer/explanation fields are review aids, not authoritative. Teacher verification remains required.
 
+## Hangul Companion Verification Status
+
+The Academy `한글에서 열기` flow is a Problem Studio tool-tab action backed by the Windows companion. It is not packaged as a native Hancom `한애드온즈` add-on.
+
+| Status | Scope | Evidence or remaining work |
+|--------|-------|----------------------------|
+| `repo-confirmed` | Release build and COM insertion contract | Frontend commit `d3cb4dea` added a blocking `windows-latest` gate. It builds the Release companion and verifies visible normal-edit document selection, one `InsertFile` execution, the approved file-path security-module registration hook, rejection fallback, hidden/read-only exclusion, and zero `Save`/`Close`/`Quit` calls. |
+| `repo-confirmed` | Cross-process and deployment chain | GitHub Actions run `29910478788` passed the separate-process ROT/COM test, frontend quality gate, Cloudflare deployment, production canary, tenant availability, and production round-trip E2E. |
+| `repo-confirmed` | Repeated stability | On 2026-07-22 the sealed Release binary completed 100 consecutive launches and 500 contract scenarios with 0 failures, 0 residual companion processes, and 0 matching Windows Application crash events. The scenarios covered 300 successful inserts, 100 Hangul-side rejections, and 100 hidden/read-only exclusions. |
+| `needs-manual-validation` | Licensed Hancom Hangul editor | A Windows device with a licensed Hancom Hangul 2024 editing application and the approved Automation security module must still verify insertion at the live cursor, security prompt/module behavior, fallback opening, and visual fidelity for formulas, tables, and shapes. Viewer-only or mock-COM results do not close this item. |
+| `intentionally-unchanged` | Native format fidelity | The product promise remains an editable teacher-review draft. It does not claim an exact native `.hwp` writer or lossless source layout reproduction. |
+
+Current durable evidence:
+
+- One-click companion implementation: frontend commit `aa9abeb5`
+- Windows COM blocking gate: frontend commit `d3cb4dea`
+- Passing quality/deploy/E2E run: `https://github.com/guswls3028-art/academy-frontend/actions/runs/29910478788`
+- Production route: `https://hakwonplus.com/admin/tools/problem-studio`
+- Dated verification report: `backend/docs/reports/hangul-companion-verification-2026-07-22.md`
+- Manual licensed-device procedure: `backend/docs/operations/runbooks/problem-studio-source-transfer-uat.md`
+
 ## Future Direction
 
 Keep future work staged in this order unless product policy changes:
@@ -173,9 +194,3 @@ Before changing this feature:
   - backend problem studio service tests if backend extraction/worker code changes
   - real fixture transfer with `backend/scripts/problem_studio_transfer_fixtures.py` when package output changes
   - visual QA over the generated ZIP when HTML/document layout changes
-
-Last deployed simplification:
-
-- Frontend commit: `df19b06d` (`Simplify problem studio workflow UI`)
-- GitHub quality/deploy/E2E run: `26385421989`
-- Production route verified: `https://hakwonplus.com/admin/tools/problem-studio`
