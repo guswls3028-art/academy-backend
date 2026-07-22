@@ -97,21 +97,27 @@ class OMRHtmlRenderer:
             return []
 
         columns = []
+        question_numbers = doc.resolved_choice_question_numbers
         for column_range in build_mc_column_ranges(doc.mc_count):
             start = column_range["start"]
             end = column_range["end"]
 
-            label = f"객관식 {start}번 ~ {end}번"
+            column_numbers = question_numbers[start - 1:end]
+            is_contiguous = column_numbers == tuple(range(column_numbers[0], column_numbers[-1] + 1))
+            label = (
+                f"객관식 {column_numbers[0]}번 ~ {column_numbers[-1]}번"
+                if is_contiguous
+                else f"객관식 {len(column_numbers)}문항"
+            )
 
             rows = []
-            for q in range(start, end + 1):
-                row_in_col = q - start + 1
+            for row_in_col, q in enumerate(column_numbers, start=1):
                 # 5행 그룹 인덱스 (0-based)
                 group_idx = (row_in_col - 1) // 5
                 rows.append({
                     "number": q,
-                    "is_g5": (row_in_col % 5 == 0 and q != end),
-                    "is_g10": (row_in_col % 10 == 0 and q != end),
+                    "is_g5": (row_in_col % 5 == 0 and row_in_col != len(column_numbers)),
+                    "is_g10": (row_in_col % 10 == 0 and row_in_col != len(column_numbers)),
                     "is_zebra": (group_idx % 2 == 1),
                 })
 
@@ -131,7 +137,7 @@ class OMRHtmlRenderer:
         for i in range(1, render_essay_count + 1):
             group_idx = (i - 1) // 5
             rows.append({
-                "number": doc.mc_count + i if doc.essay_count > 0 else i,
+                "number": doc.resolved_essay_question_numbers[i - 1] if doc.essay_count > 0 else i,
                 "digit_values": list(range(10)),
                 "is_g5": (i % 5 == 0 and i != render_essay_count),
                 "is_g10": (i % 10 == 0 and i != render_essay_count),

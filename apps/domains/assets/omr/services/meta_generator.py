@@ -187,6 +187,7 @@ def _build_numeric_short_answer_meta(
     question_count: int,
     essay_count: int,
     n_mc_columns: int,
+    question_numbers: List[int] | None = None,
 ) -> List[Dict[str, Any]]:
     if essay_count <= 0:
         return []
@@ -203,7 +204,11 @@ def _build_numeric_short_answer_meta(
 
     questions: List[Dict[str, Any]] = []
     for index in range(essay_count):
-        question_number = question_count + index + 1
+        question_number = (
+            question_numbers[index]
+            if question_numbers is not None
+            else question_count + index + 1
+        )
         row_h = body_h / essay_count
         row_cy = body_y + (index + 0.5) * row_h
         digit_groups = []
@@ -344,8 +349,22 @@ def build_omr_meta(
     question_count: int,
     n_choices: int = 5,
     essay_count: int = 0,
+    choice_question_numbers: List[int] | None = None,
+    essay_question_numbers: List[int] | None = None,
 ) -> Dict[str, Any]:
     """OMR 메타 생성 (좌표 SSOT). v14: 5mm 비대칭 마커 + 버블 정렬 인식마크."""
+    if choice_question_numbers is not None and len(choice_question_numbers) != question_count:
+        raise ValueError("choice_question_numbers length must equal question_count")
+    if essay_question_numbers is not None and len(essay_question_numbers) != essay_count:
+        raise ValueError("essay_question_numbers length must equal essay_count")
+    choice_numbers = choice_question_numbers or list(range(1, question_count + 1))
+    essay_numbers = essay_question_numbers or list(
+        range(question_count + 1, question_count + essay_count + 1)
+    )
+    all_numbers = choice_numbers + essay_numbers
+    if len(set(all_numbers)) != len(all_numbers) or any(number <= 0 for number in all_numbers):
+        raise ValueError("question numbers must be unique positive integers")
+
     layout = compute_safe_layout(question_count)
     per_col = layout["per_col"]
     n_cols = layout["n_cols"]
@@ -367,7 +386,7 @@ def build_omr_meta(
 
         col_questions: List[Dict[str, Any]] = []
         for q_idx in range(count_in_col):
-            q_num = start + q_idx
+            q_num = choice_numbers[start + q_idx - 1]
             row_cy = body_y + (q_idx + 0.5) * row_h
             choices = [
                 {
@@ -419,6 +438,7 @@ def build_omr_meta(
         question_count=question_count,
         essay_count=essay_count,
         n_mc_columns=n_cols,
+        question_numbers=essay_numbers,
     )
     questions.extend(numeric_short_answers)
 
@@ -431,6 +451,8 @@ def build_omr_meta(
         "essay_count": essay_count,
         "numeric_short_answer_count": len(numeric_short_answers),
         "n_choices": n_choices,
+        "choice_question_numbers": choice_numbers,
+        "essay_question_numbers": essay_numbers,
         "layout": {
             "n_cols": n_cols,
             "per_col": per_col,

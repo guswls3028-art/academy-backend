@@ -8,6 +8,7 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.exams.models import Exam, ExamQuestion, Sheet
 from apps.domains.exams.views.exam_question_init_view import ExamQuestionInitView
+from apps.support.omr.contract_builder import build_omr_sheet_contract
 
 
 User = get_user_model()
@@ -163,3 +164,40 @@ class ExamQuestionInitViewTests(TestCase):
             list(exam.sheet.questions.order_by("number").values_list("number", flat=True)),
             [1, 2, 3],
         )
+
+    def test_question_types_preserve_arbitrary_order_in_omr_contract(self):
+        exam, sheet = self._regular_exam_with_questions()
+
+        response = self._post(
+            exam,
+            {"question_types": ["choice", "essay", "choice"]},
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(
+            [item["question_kind"] for item in response.data],
+            ["choice", "essay", "choice"],
+        )
+        sheet.refresh_from_db()
+        self.assertEqual((sheet.total_questions, sheet.choice_count, sheet.essay_count), (3, 2, 1))
+
+        contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
+        self.assertEqual(contract.shape_source, "question_types")
+        self.assertEqual(contract.objective_question_numbers, (1, 3))
+        self.assertEqual(contract.essay_question_numbers, (2,))
+        self.assertEqual(
+            [q["question_number"] for q in contract.template_meta["questions"]],
+            [1, 3, 2],
+        )
+
+    def test_legacy_count_payload_clears_explicit_types_and_keeps_legacy_order(self):
+        exam, sheet = self._regular_exam_with_questions()
+        ExamQuestion.objects.filter(sheet=sheet).update(question_kind="essay")
+
+        response = self._post(exam, {"choice_count": 2, "essay_count": 1})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual([item["question_kind"] for item in response.data], [None, None, None])
+        contract = build_omr_sheet_contract(sheet=sheet, exam=exam)
+        self.assertEqual(contract.objective_question_numbers, (1, 2))
+        self.assertEqual(contract.essay_question_numbers, (3,))

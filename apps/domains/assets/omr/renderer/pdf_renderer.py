@@ -626,6 +626,7 @@ class OMRPdfRenderer:
         # 섹션 경계 — visual width가 gap을 흡수하여 빈 틈 없음
         # (type, x_mm, vis_w_mm, data_w_mm, start, end)
         sections = []
+        question_numbers_by_section = {}
         for index, column_range in enumerate(mc_ranges):
             ci = column_range["column_index"]
             col_x = frame_x + ci * (MC_COL_W + MC_COL_GAP)
@@ -636,16 +637,22 @@ class OMRPdfRenderer:
             else:
                 vw = frame_x + frame_w - col_x
             sections.append(('mc', col_x, vw, MC_COL_W, s, e))
+            question_numbers_by_section[col_x] = doc.resolved_choice_question_numbers[s - 1:e]
         if has_essay:
             ex = frame_x + nmc * (MC_COL_W + MC_COL_GAP)
             ew = frame_x + frame_w - ex
             essay_start = doc.mc_count + 1 if doc.essay_count > 0 else 1
             sections.append(('essay', ex, ew, ew, essay_start, essay_start + ec - 1))
+            question_numbers_by_section[ex] = (
+                doc.resolved_essay_question_numbers
+                if doc.essay_count > 0
+                else tuple(range(1, ec + 1))
+            )
 
         # ═══ ① 배경 (fill) — 모든 stroke보다 먼저 ═══
         for typ, sx, vw, dw, ss, se in sections:
             sxp = _mm(sx); vwp = _mm(vw)
-            cnt = se - ss + 1
+            cnt = len(question_numbers_by_section[sx])
             rh = bh / cnt if cnt > 0 else bh
 
             # 헤더 배경
@@ -670,7 +677,7 @@ class OMRPdfRenderer:
         # 행 구분선
         for typ, sx, vw, dw, ss, se in sections:
             sxp = _mm(sx); vwp = _mm(vw)
-            cnt = se - ss + 1
+            cnt = len(question_numbers_by_section[sx])
             rh = bh / cnt if cnt > 0 else bh
             for qi in range(1, cnt):
                 rt_mm = bt + qi * rh
@@ -709,14 +716,22 @@ class OMRPdfRenderer:
         nc = doc.n_choices
         for typ, sx, vw, dw, ss, se in sections:
             sxp = _mm(sx); vwp = _mm(vw)
-            cnt = se - ss + 1
+            cnt = len(question_numbers_by_section[sx])
             rh = bh / cnt if cnt > 0 else bh
 
             # 헤더: "번호 | 객관식 1번 ~ 20번" 또는 "번호 | 단답형 N문항"
             c.setFont(_FB, 5.5); c.setFillColor(CT2)
             c.drawCentredString(sxp + nw / 2, ft - hh + _mm(1.5), "번호")
             if typ == 'mc':
-                lb = f"객관식 {ss}번 ~ {se}번"
+                section_numbers = question_numbers_by_section[sx]
+                is_contiguous = section_numbers == tuple(
+                    range(section_numbers[0], section_numbers[-1] + 1)
+                )
+                lb = (
+                    f"객관식 {section_numbers[0]}번 ~ {section_numbers[-1]}번"
+                    if is_contiguous
+                    else f"객관식 {cnt}문항"
+                )
                 c.setFont(_FB, 6); c.setFillColor(CT2)
                 c.drawCentredString(sxp + nw + (vwp - nw) / 2,
                                     ft - hh + _mm(1.5), lb)
@@ -731,7 +746,7 @@ class OMRPdfRenderer:
                                     ft - hh + _mm(1.5), essay_header)
 
             for qi in range(cnt):
-                qn = ss + qi
+                qn = question_numbers_by_section[sx][qi]
                 rc = bt + (qi + 0.5) * rh
                 c.setFont(_FB, 8); c.setFillColor(CT)
                 c.drawCentredString(sxp + nw / 2, _y(rc) - _mm(1.4), str(qn))
@@ -739,7 +754,7 @@ class OMRPdfRenderer:
         # ═══ ⑤ 버블 ═══
         nc = doc.n_choices
         for typ, sx, vw, dw, ss, se in sections:
-            cnt = se - ss + 1
+            cnt = len(question_numbers_by_section[sx])
             rh = bh / cnt if cnt > 0 else bh
             if typ == 'essay':
                 if doc.essay_count <= 0:

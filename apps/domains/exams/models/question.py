@@ -5,6 +5,9 @@ from .sheet import Sheet
 
 
 class ExamQuestion(BaseModel):
+    class QuestionKind(models.TextChoices):
+        CHOICE = "choice", "객관식"
+        ESSAY = "essay", "단답형"
     """
     시험 문항 정의
 
@@ -27,6 +30,14 @@ class ExamQuestion(BaseModel):
 
     number = models.PositiveIntegerField()  # 1번, 2번 ...
     score = models.FloatField(default=1.0)
+    question_kind = models.CharField(
+        max_length=10,
+        choices=QuestionKind.choices,
+        null=True,
+        blank=True,
+        default=None,
+        help_text="문항별 유형. null이면 Sheet의 기존 앞-객관식/뒤-단답형 규칙을 사용",
+    )
 
     # 문항 이미지 (AI로 잘라낸 결과 포함 가능)
     image = models.ImageField(

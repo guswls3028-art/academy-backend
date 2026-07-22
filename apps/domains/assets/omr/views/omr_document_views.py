@@ -58,6 +58,12 @@ def _parse_omr_params(data: dict) -> dict:
         params["include_optional_essay_area"] = serializers.BooleanField().run_validation(
             data["include_optional_essay_area"]
         )
+    for field_name in ("choice_question_numbers", "essay_question_numbers"):
+        if field_name in data:
+            params[field_name] = serializers.ListField(
+                child=serializers.IntegerField(min_value=1),
+                allow_empty=True,
+            ).run_validation(data[field_name])
     return params
 
 

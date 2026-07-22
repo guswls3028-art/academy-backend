@@ -63,7 +63,7 @@ class OMRSheetContract:
         return tuple(
             question.number
             for question in self.questions
-            if question.kind == "choice" and question.number <= self.choice_count
+            if question.kind == "choice"
         )
 
     @property
@@ -72,9 +72,7 @@ class OMRSheetContract:
             question.number: question.exam_question_id
             for question in self.questions
             if (
-                question.kind == "choice"
-                and question.number <= self.choice_count
-                and question.exam_question_id is not None
+                question.kind == "choice" and question.exam_question_id is not None
             )
         }
 

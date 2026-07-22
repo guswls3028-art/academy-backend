@@ -161,6 +161,24 @@ class OMRDocumentRenderingTests(TestCase):
         self.assertIn('<div class="dr-n">21</div>', html)
         self.assertIn('<div class="dr-n">23</div>', html)
 
+    def test_mixed_question_order_renders_actual_numbers(self):
+        doc = OMRDocument(
+            exam_title="Mixed Exam",
+            mc_count=2,
+            essay_count=1,
+            choice_question_numbers=(1, 3),
+            essay_question_numbers=(2,),
+        )
+
+        self.assertEqual(doc.validate(), [])
+        defaults = doc.to_defaults_dict()
+        self.assertEqual(defaults["question_types"], ["choice", "essay", "choice"])
+        html = OMRHtmlRenderer().render(doc).decode("utf-8")
+        self.assertIn('<div class="ar-n">1</div>', html)
+        self.assertIn('<div class="ar-n">3</div>', html)
+        self.assertIn('<div class="dr-n">2</div>', html)
+        self.assertTrue(OMRPdfRenderer().render(doc).startswith(b"%PDF"))
+
 
 class OMRDocumentApiContractTests(TestCase):
     def setUp(self):
@@ -213,6 +231,23 @@ class OMRDocumentApiContractTests(TestCase):
         html = response.content.decode("utf-8")
         self.assertIn("단답형 0~999 (백·십·일)", html)
         self.assertNotIn("객관식 1번", html)
+
+    def test_preview_contract_accepts_mixed_question_number_order(self):
+        response = self._post_preview({
+            "exam_title": "Mixed order",
+            "mc_count": 2,
+            "essay_count": 1,
+            "n_choices": 5,
+            "include_optional_essay_area": False,
+            "choice_question_numbers": [1, 3],
+            "essay_question_numbers": [2],
+        })
+
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode("utf-8")
+        self.assertIn('<div class="ar-n">1</div>', html)
+        self.assertIn('<div class="ar-n">3</div>', html)
+        self.assertIn('<div class="dr-n">2</div>', html)
 
     def test_preview_contract_rejects_invalid_counts_instead_of_clamping(self):
         for payload in (

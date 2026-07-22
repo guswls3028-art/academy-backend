@@ -22,11 +22,16 @@ def build_omr_sheet_contract(*, sheet, exam=None, n_choices: int = 5) -> OMRShee
         questions=questions,
         total_questions=total,
         choice_count=choice_count,
+        use_explicit_kinds=source == "question_types",
     )
+    choice_numbers = [q.number for q in question_contracts if q.kind == "choice"]
+    essay_numbers = [q.number for q in question_contracts if q.kind == "essay"]
     template_meta = build_objective_template_meta(
         question_count=choice_count,
         n_choices=n_choices,
         essay_count=essay_count,
+        choice_question_numbers=choice_numbers,
+        essay_question_numbers=essay_numbers,
     )
     return OMRSheetContract(
         sheet_id=getattr(sheet, "id", None),
@@ -55,7 +60,7 @@ def _load_sheet_questions(sheet) -> list:
 
     return list(
         ExamQuestion.objects.filter(sheet=sheet)
-        .only("id", "number", "score")
+        .only("id", "number", "score", "question_kind")
         .order_by("number")
     )
 
@@ -63,6 +68,15 @@ def _load_sheet_questions(sheet) -> list:
 def _resolve_counts(*, sheet, template_exam, questions: list) -> tuple[int, int, int, str]:
     max_question_number = max((int(getattr(q, "number", 0) or 0) for q in questions), default=0)
     total = max(int(getattr(sheet, "total_questions", 0) or 0), max_question_number)
+    explicit_kinds = {
+        int(question.number): question.question_kind
+        for question in questions
+        if getattr(question, "question_kind", None) in {"choice", "essay"}
+    }
+    if total > 0 and set(explicit_kinds) == set(range(1, total + 1)):
+        choice_count = sum(kind == "choice" for kind in explicit_kinds.values())
+        return total, choice_count, total - choice_count, "question_types"
+
     stored_choice = int(getattr(sheet, "choice_count", 0) or 0)
     stored_essay = int(getattr(sheet, "essay_count", 0) or 0)
 
@@ -175,6 +189,7 @@ def _build_question_contracts(
     questions: list,
     total_questions: int,
     choice_count: int,
+    use_explicit_kinds: bool,
 ) -> list[OMRQuestionContract]:
     by_number = {int(getattr(question, "number", 0) or 0): question for question in questions}
     contracts: list[OMRQuestionContract] = []
@@ -184,7 +199,11 @@ def _build_question_contracts(
             OMRQuestionContract(
                 number=number,
                 exam_question_id=getattr(question, "id", None) if question is not None else None,
-                kind="choice" if number <= choice_count else "essay",
+                kind=(
+                    question.question_kind
+                    if use_explicit_kinds and question is not None
+                    else ("choice" if number <= choice_count else "essay")
+                ),
                 score=_score_to_float(getattr(question, "score", None)),
             )
         )

@@ -80,6 +80,7 @@ def copy_exam_structure(
         copied_question = ExamQuestion.objects.create(
             sheet=target_sheet,
             number=source_question.number,
+            question_kind=source_question.question_kind,
             score=source_question.score,
             image=source_question.image,
             image_key=source_question.image_key,

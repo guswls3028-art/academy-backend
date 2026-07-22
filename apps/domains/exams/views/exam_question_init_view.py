@@ -3,6 +3,7 @@ from __future__ import annotations
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from django.db import transaction
+from django.utils import timezone
 
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
@@ -55,11 +56,18 @@ class ExamQuestionInitView(APIView):
         choice_score_val = s.validated_data.get("choice_score")
         essay_count = s.validated_data.get("essay_count")
         essay_score_val = s.validated_data.get("essay_score")
+        question_types = s.validated_data.get("question_types")
+
+        if question_types is not None:
+            choice_count = question_types.count("choice")
+            essay_count = question_types.count("essay")
 
         use_choice_essay_counts = choice_count is not None and essay_count is not None
         use_choice_essay_scores = choice_score_val is not None and essay_score_val is not None
 
-        if use_choice_essay_counts:
+        if question_types is not None:
+            total = len(question_types)
+        elif use_choice_essay_counts:
             total = choice_count + essay_count
             if total == 0:
                 total = 0
@@ -69,7 +77,10 @@ class ExamQuestionInitView(APIView):
 
         def score_for_number(n: int, existing_score: float | None = None) -> float:
             if use_choice_essay_scores:
-                return float(choice_score_val) if n <= choice_count else float(essay_score_val)
+                kind = question_types[n - 1] if question_types is not None else (
+                    "choice" if n <= choice_count else "essay"
+                )
+                return float(choice_score_val) if kind == "choice" else float(essay_score_val)
             if existing_score is not None:
                 return float(existing_score)
             return default_score
@@ -112,11 +123,28 @@ class ExamQuestionInitView(APIView):
         if to_create:
             ExamQuestion.objects.bulk_create(
                 [
-                    ExamQuestion(sheet=sheet, number=n, score=score_for_number(n))
+                    ExamQuestion(
+                        sheet=sheet,
+                        number=n,
+                        score=score_for_number(n),
+                        question_kind=question_types[n - 1] if question_types is not None else None,
+                    )
                     for n in to_create
                 ],
                 ignore_conflicts=True,
             )
+
+        existing_questions = ExamQuestion.objects.filter(sheet=sheet).order_by("number")
+        kind_updates = []
+        kind_updated_at = timezone.now()
+        for question in existing_questions:
+            next_kind = question_types[question.number - 1] if question_types is not None else None
+            if question.question_kind != next_kind:
+                question.question_kind = next_kind
+                question.updated_at = kind_updated_at
+                kind_updates.append(question)
+        if kind_updates:
+            ExamQuestion.objects.bulk_update(kind_updates, ["question_kind", "updated_at"])
 
         # 객관식/주관식 배점까지 명시된 경우에만 기존 문항 점수를 갱신한다.
         # count-only 적용은 선생님이 입력한 문항별 배점을 보존해야 한다.
@@ -148,4 +176,3 @@ class ExamQuestionInitView(APIView):
             .order_by("number")
         )
         return Response(QuestionSerializer(qs, many=True).data)
-

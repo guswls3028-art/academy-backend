@@ -33,6 +33,8 @@ class OMRDocument:
     n_choices: int = 5  # 4 or 5
     include_optional_essay_area: bool = True
     decorative_essay_count: int = DECORATIVE_ESSAY_COUNT
+    choice_question_numbers: tuple[int, ...] = ()
+    essay_question_numbers: tuple[int, ...] = ()
 
     # -- 테넌트 브랜딩 --
     logo_url: Optional[str] = None  # presigned URL (HTML preview용)
@@ -53,6 +55,18 @@ class OMRDocument:
         if self.can_include_optional_essay_area and self.include_optional_essay_area:
             return self.decorative_essay_count
         return 0
+
+    @property
+    def resolved_choice_question_numbers(self) -> tuple[int, ...]:
+        return self.choice_question_numbers or tuple(range(1, self.mc_count + 1))
+
+    @property
+    def resolved_essay_question_numbers(self) -> tuple[int, ...]:
+        if self.essay_count <= 0:
+            return ()
+        return self.essay_question_numbers or tuple(
+            range(self.mc_count + 1, self.mc_count + self.essay_count + 1)
+        )
 
     @property
     def can_include_optional_essay_area(self) -> bool:
@@ -92,6 +106,15 @@ class OMRDocument:
             errors.append("문항이 최소 1개 이상이어야 합니다.")
         if self.n_choices != 5:
             errors.append("보기 수는 5여야 합니다.")
+        if self.choice_question_numbers and len(self.choice_question_numbers) != self.mc_count:
+            errors.append("객관식 문항 번호 수가 객관식 문항 수와 일치해야 합니다.")
+        if self.essay_question_numbers and len(self.essay_question_numbers) != self.essay_count:
+            errors.append("단답형 문항 번호 수가 단답형 문항 수와 일치해야 합니다.")
+        explicit_numbers = self.resolved_choice_question_numbers + self.resolved_essay_question_numbers
+        if len(explicit_numbers) != len(set(explicit_numbers)) or any(n <= 0 for n in explicit_numbers):
+            errors.append("문항 번호는 중복 없는 양의 정수여야 합니다.")
+        elif set(explicit_numbers) != set(range(1, self.mc_count + self.essay_count + 1)):
+            errors.append("문항 번호는 1번부터 전체 문항 수까지 빠짐없이 있어야 합니다.")
         if (
             0 <= self.mc_count <= MAX_MC_QUESTIONS
             and 0 <= self.render_essay_count <= MAX_ESSAY_QUESTIONS
@@ -112,5 +135,11 @@ class OMRDocument:
             "render_essay_count": self.render_essay_count,
             "render_essay_label": self.render_essay_label,
             "n_choices": self.n_choices,
+            "question_types": [
+                "choice" if number in set(self.resolved_choice_question_numbers) else "essay"
+                for number in range(1, self.mc_count + self.essay_count + 1)
+            ],
+            "choice_question_numbers": list(self.resolved_choice_question_numbers),
+            "essay_question_numbers": list(self.resolved_essay_question_numbers),
             "logo_url": self.logo_url,
         }

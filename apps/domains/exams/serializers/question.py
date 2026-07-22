@@ -19,6 +19,7 @@ class QuestionSerializer(serializers.ModelSerializer):
             "id",
             "sheet",
             "number",
+            "question_kind",
             "score",
             "image",
             "image_key",
@@ -29,7 +30,14 @@ class QuestionSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "image_key", "image_url", "created_at", "updated_at"]
+        read_only_fields = [
+            "id",
+            "question_kind",
+            "image_key",
+            "image_url",
+            "created_at",
+            "updated_at",
+        ]
 
     def get_image_url(self, obj) -> str | None:
         if not obj.image_key:

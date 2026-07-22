@@ -49,6 +49,8 @@ class OMRDocumentService:
         exam_title: Optional[str] = None,
         lecture_name: Optional[str] = None,
         session_name: Optional[str] = None,
+        choice_question_numbers: Optional[list[int]] = None,
+        essay_question_numbers: Optional[list[int]] = None,
     ) -> OMRDocument:
         """
         시험에서 기본값 resolve + 사용자 override 적용.
@@ -75,6 +77,8 @@ class OMRDocumentService:
 
         # 문항 수 resolve
         _mc_count = mc_count
+        resolved_choice_numbers = choice_question_numbers
+        resolved_essay_numbers = essay_question_numbers
         if _mc_count is None:
             sheet_exam = resolve_template_exam_for_tenant(exam, tenant)
             sheet = getattr(sheet_exam, "sheet", None)
@@ -85,6 +89,10 @@ class OMRDocumentService:
                 _mc_count = contract.choice_count if contract.total_questions > 0 else 20
                 if essay_count is None:
                     essay_count = contract.essay_count
+                if resolved_choice_numbers is None:
+                    resolved_choice_numbers = list(contract.objective_question_numbers)
+                if resolved_essay_numbers is None:
+                    resolved_essay_numbers = list(contract.essay_question_numbers)
             else:
                 _mc_count = 20
 
@@ -104,6 +112,8 @@ class OMRDocumentService:
             essay_count=_essay_count,
             n_choices=n_choices,
             include_optional_essay_area=include_optional_essay_area,
+            choice_question_numbers=tuple(resolved_choice_numbers or ()),
+            essay_question_numbers=tuple(resolved_essay_numbers or ()),
             logo_url=logo_url,
             brand_color=brand_color,
         )
@@ -119,6 +129,8 @@ class OMRDocumentService:
         essay_count: int = 0,
         n_choices: int = 5,
         include_optional_essay_area: bool = True,
+        choice_question_numbers: Optional[list[int]] = None,
+        essay_question_numbers: Optional[list[int]] = None,
     ) -> OMRDocument:
         """도구 페이지용. 시험 없이 직접 파라미터로 OMRDocument 생성."""
         logo_url = OMRDocumentService._resolve_logo_url(tenant)
@@ -134,6 +146,8 @@ class OMRDocumentService:
             essay_count=essay_count,
             n_choices=n_choices,
             include_optional_essay_area=include_optional_essay_area,
+            choice_question_numbers=tuple(choice_question_numbers or ()),
+            essay_question_numbers=tuple(essay_question_numbers or ()),
             logo_url=logo_url,
             brand_color=brand_color,
         )
