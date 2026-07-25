@@ -104,17 +104,18 @@ class SubscriptionViewAuthorizationTests(APITestCase):
         )
         self.assertFalse(response.data["is_billing_price_ready"])
 
-    def test_legacy_plan_is_transition_compatible(self):
+    def test_legacy_plan_drift_is_explicitly_not_billing_ready(self):
         Program.objects.filter(pk=self.program.pk).update(plan="pro")
         self._authenticate_owner("plan-drift-owner")
 
         response = self.client.get("/api/v1/core/subscription/", **self.headers)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["plan"], "all")
-        self.assertEqual(response.data["monthly_price"], 145_000)
-        self.assertEqual(response.data["billing_price_integrity"], "ok")
-        self.assertTrue(response.data["is_billing_price_ready"])
+        self.assertEqual(
+            response.data["billing_price_integrity"],
+            "single_plan_mismatch",
+        )
+        self.assertFalse(response.data["is_billing_price_ready"])
 
     @override_settings(BILLING_GRACE_PERIOD_DAYS=7)
     def test_grace_contract_exposes_actual_service_access_end(self):

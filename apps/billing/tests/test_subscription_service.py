@@ -340,7 +340,7 @@ class TestExtend(SubscriptionServiceTestBase):
 
 class TestSinglePlanInvariant(SubscriptionServiceTestBase):
 
-    def test_legacy_storage_reads_as_single_plan_during_transition(self):
+    def test_program_save_restores_single_plan_and_price(self):
         tenant = Tenant.objects.create(
             name="Ymath", code="ymath", is_active=True
         )
@@ -351,9 +351,7 @@ class TestSinglePlanInvariant(SubscriptionServiceTestBase):
 
         program.refresh_from_db()
 
-        self.assertEqual(program.plan, Program.Plan.PRO)
-        self.assertEqual(program.monthly_price, 198_000)
-        self.assertEqual(program.billing_plan, Program.Plan.ALL)
-        self.assertEqual(program.billing_monthly_price, 145_000)
+        self.assertEqual(program.plan, Program.Plan.ALL)
+        self.assertEqual(program.monthly_price, 145_000)
         self.assertEqual(program.monthly_amounts["tax_amount"], 14_000)
         self.assertEqual(program.monthly_amounts["total_amount"], 159_000)

@@ -27,15 +27,9 @@ class Program(TimestampModel):
         CUSTOM = "custom", "Custom"
 
     class Plan(models.TextChoices):
-        STANDARD = "standard", "Standard (전환 호환)"
-        PRO = "pro", "Pro (전환 호환)"
-        MAX = "max", "Max (전환 호환)"
         ALL = "all", "전체 기능"
 
     PLAN_PRICES: dict[str, int] = {
-        Plan.STANDARD: 145_000,
-        Plan.PRO: 145_000,
-        Plan.MAX: 145_000,
         Plan.ALL: 145_000,
     }
     BILLING_MONTHLY_TAX_AMOUNT = 14_000
@@ -62,16 +56,16 @@ class Program(TimestampModel):
         default=LoginVariant.HAKWONPLUS,
     )
 
-    # ✅ 단일 요금제 rolling 전환 호환
+    # ✅ 단일 요금제
     plan = models.CharField(
         max_length=20,
         choices=Plan.choices,
-        default=Plan.PRO,
-        help_text="단일 요금제 전환 호환 필드",
+        default=Plan.ALL,
+        help_text="단일 전체 기능 요금제",
     )
     monthly_price = models.PositiveIntegerField(
-        default=198_000,
-        help_text="단일 요금제 전환 호환 공급가 필드",
+        default=145_000,
+        help_text="월 공급가액(원). 단일 요금제 기준 145,000원.",
     )
 
     # ✅ 구독 관리
@@ -184,18 +178,20 @@ class Program(TimestampModel):
         ]
 
     def save(self, *args, **kwargs):
-        # Phase A keeps legacy rows readable, while every new single-plan
-        # writer converges its explicit ALL row to the canonical supply price.
-        if (
-            self.plan == self.Plan.ALL
-            and self.monthly_price != self.PLAN_PRICES[self.Plan.ALL]
-        ):
-            self.monthly_price = self.PLAN_PRICES[self.Plan.ALL]
-            update_fields = kwargs.get("update_fields")
-            if update_fields is not None:
-                kwargs["update_fields"] = list(
-                    dict.fromkeys([*update_fields, "monthly_price"])
-                )
+        # 모든 신규/수정 Program을 단일 요금 계약으로 정규화한다.
+        normalized_fields: list[str] = []
+        if self.plan != self.Plan.ALL:
+            self.plan = self.Plan.ALL
+            normalized_fields.append("plan")
+        canonical_price = self.PLAN_PRICES[self.Plan.ALL]
+        if self.monthly_price != canonical_price:
+            self.monthly_price = canonical_price
+            normalized_fields.append("monthly_price")
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and normalized_fields:
+            kwargs["update_fields"] = list(
+                dict.fromkeys([*update_fields, *normalized_fields])
+            )
         super().save(*args, **kwargs)
 
     @classmethod
@@ -255,12 +251,9 @@ class Program(TimestampModel):
 
     @property
     def billing_price_integrity(self) -> str:
-        if self.plan not in self.Plan.values:
+        if self.plan != self.Plan.ALL:
             return "single_plan_mismatch"
-        if (
-            self.plan == self.Plan.ALL
-            and self.monthly_price != self.PLAN_PRICES[self.Plan.ALL]
-        ):
+        if self.monthly_price != self.PLAN_PRICES[self.Plan.ALL]:
             return "single_price_mismatch"
         return "ok"
 

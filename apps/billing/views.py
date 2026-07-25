@@ -216,7 +216,11 @@ class AdminDashboardView(APIView):
         )
 
         # MRR (active 테넌트 기준)
-        active_programs = programs.filter(subscription_status="active")
+        active_programs = programs.filter(
+            subscription_status="active",
+            plan=Program.Plan.ALL,
+            monthly_price=Program.PLAN_PRICES[Program.Plan.ALL],
+        )
         active_count = active_programs.count()
         mrr = active_count * Program.PLAN_PRICES[Program.Plan.ALL]
         mrr_tax_amount = active_count * Program.BILLING_MONTHLY_TAX_AMOUNT
