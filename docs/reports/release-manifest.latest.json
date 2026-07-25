@@ -2,40 +2,40 @@
   "schemaVersion": 1,
   "status": "successful",
   "complete": true,
-  "generatedAt": "2026-07-25T20:15:56+00:00",
-  "gitSha": "d0f83e77c14763dc5354b6615a2938f8e07c4ef9",
-  "releaseImageTag": "sha-d0f83e77c14763dc5354b6615a2938f8e07c4ef9-run-30172476358-2",
+  "generatedAt": "2026-07-25T22:20:33+00:00",
+  "gitSha": "ff5a90f4057c0b60dd3937155f19674d4c42d33e",
+  "releaseImageTag": "sha-ff5a90f4057c0b60dd3937155f19674d4c42d33e-run-30176518287-1",
   "images": {
     "academy-base": {
       "digest": "sha256:426ae840a3b4c4bfcf8d00baa1f773dc2fcb44f0f68617be554fa9ec7e66b983",
-      "tag": "sha-d0f83e77c14763dc5354b6615a2938f8e07c4ef9-run-30172476358-2",
+      "tag": "sha-ff5a90f4057c0b60dd3937155f19674d4c42d33e-run-30176518287-1",
       "source": "built"
     },
     "academy-api": {
-      "digest": "sha256:dc823c5035cbce0bf84fa786650a92eae255d0e00ed04c3aa44dda318f085f08",
-      "tag": "sha-d0f83e77c14763dc5354b6615a2938f8e07c4ef9-run-30172476358-2",
+      "digest": "sha256:e8eaddf994128a93068442014ca9ff3da28907a0c088840987ced2eb0c2b7a00",
+      "tag": "sha-ff5a90f4057c0b60dd3937155f19674d4c42d33e-run-30176518287-1",
       "source": "built"
     },
     "academy-video-worker": {
-      "digest": "sha256:b15a47296e2d1d569154c2e4720aa10576177c63d84a10f1a4c7f32fef2cb3af",
-      "tag": "sha-d0f83e77c14763dc5354b6615a2938f8e07c4ef9-run-30172476358-2",
+      "digest": "sha256:0f82c3bf7e651a246fec22603cd731626c0874b2d260228194ab96c1ebcdf9d9",
+      "tag": "sha-ff5a90f4057c0b60dd3937155f19674d4c42d33e-run-30176518287-1",
       "source": "built"
     },
     "academy-messaging-worker": {
-      "digest": "sha256:895e76376785ee167599e4ea7e7c52f1fa98bcd96e9a7d42ba39cf8761f41662",
-      "tag": "sha-d0f83e77c14763dc5354b6615a2938f8e07c4ef9-run-30172476358-2",
+      "digest": "sha256:833677d6e4e746093700586ecdaabcdc6412d15b86536d8b4af9c24ecec36d28",
+      "tag": "sha-ff5a90f4057c0b60dd3937155f19674d4c42d33e-run-30176518287-1",
       "source": "built"
     },
     "academy-ai-worker-cpu": {
-      "digest": "sha256:ab5aa01cb3f684917e40f0673144cafded2050522605e5e9f35a789e5d006762",
-      "tag": "sha-d0f83e77c14763dc5354b6615a2938f8e07c4ef9-run-30172476358-2",
+      "digest": "sha256:98aca15757c8719b40b4c25e55df7647e515213106ceaa40db8b658f25005325",
+      "tag": "sha-ff5a90f4057c0b60dd3937155f19674d4c42d33e-run-30176518287-1",
       "source": "built"
     },
     "academy-tools-worker": {
-      "digest": "sha256:cb5dab5f824fa70fe03cffdacf84529b780f2fc9e775e1be788e6a40f8b106c7",
-      "tag": "sha-d0f83e77c14763dc5354b6615a2938f8e07c4ef9-run-30172476358-2",
+      "digest": "sha256:9474b7b5451d25455006534eef4a9b9e640d0744fbb6ca5e843f9e486b1ef2e5",
+      "tag": "sha-ff5a90f4057c0b60dd3937155f19674d4c42d33e-run-30176518287-1",
       "source": "built"
     }
   },
-  "verifiedAt": "2026-07-25T20:30:28+00:00"
+  "verifiedAt": "2026-07-25T22:34:49+00:00"
 }
