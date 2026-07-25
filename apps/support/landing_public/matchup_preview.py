@@ -130,12 +130,14 @@ def get_or_create_matchup_preview(
     load_pdf_bytes: Callable[[], bytes],
     first_body_page: bool = True,
     require_cache_write: bool = False,
+    force_refresh: bool = False,
 ) -> tuple[bytes, str]:
     """Return cached JPEG bytes and cache state without mutating report rows."""
     preview_key = preview_cache_key_for_pdf(pdf_key)
-    cached = get_cached_matchup_preview(pdf_key=pdf_key)
-    if cached:
-        return cached, "hit"
+    if not force_refresh:
+        cached = get_cached_matchup_preview(pdf_key=pdf_key)
+        if cached:
+            return cached, "hit"
 
     preview_bytes = render_matchup_pdf_preview(
         load_pdf_bytes(),

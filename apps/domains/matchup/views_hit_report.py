@@ -1144,6 +1144,15 @@ def _hit_report_pdf_cache_key(report) -> str:
     )
 
 
+def _hit_report_public_preview_pdf_key(report) -> str:
+    """Stable synthetic source key for the published representative snapshot."""
+    return (
+        "matchup/hit-report-public-preview/"
+        f"tenant-{getattr(report, 'tenant_id', 'unknown')}/"
+        f"report-{getattr(report, 'id', 'unknown')}.pdf"
+    )
+
+
 def _get_or_generate_curated_hit_report_pdf(report) -> tuple[bytes, str]:
     """Return PDF bytes and cache state.
 
@@ -1183,8 +1192,8 @@ def _get_or_generate_curated_hit_report_pdf(report) -> tuple[bytes, str]:
 
 def _hit_report_preview_etag(report) -> str:
     return preview_etag_for_pdf(
-        _hit_report_pdf_cache_key(report),
-        namespace="mhr-preview",
+        _hit_report_public_preview_pdf_key(report),
+        namespace=f"mhr-preview-{_hit_report_pdf_version(report)[:16]}",
     )
 
 
@@ -1192,11 +1201,13 @@ def _get_or_generate_hit_report_preview(
     report,
     *,
     require_cache_write: bool = False,
+    force_refresh: bool = False,
 ) -> tuple[bytes, str]:
     return get_or_create_matchup_preview(
-        pdf_key=_hit_report_pdf_cache_key(report),
+        pdf_key=_hit_report_public_preview_pdf_key(report),
         load_pdf_bytes=lambda: _get_or_generate_curated_hit_report_pdf(report)[0],
         require_cache_write=require_cache_write,
+        force_refresh=force_refresh,
     )
 
 
@@ -1209,11 +1220,14 @@ def _prewarm_hit_report_preview_if_public(report, *, tenant) -> None:
     _get_or_generate_hit_report_preview(
         report,
         require_cache_write=True,
+        force_refresh=True,
     )
 
 
 def _get_cached_hit_report_preview(report) -> bytes | None:
-    return get_cached_matchup_preview(pdf_key=_hit_report_pdf_cache_key(report))
+    return get_cached_matchup_preview(
+        pdf_key=_hit_report_public_preview_pdf_key(report),
+    )
 
 
 def _hit_report_preview_response(request, report, *, etag: str) -> HttpResponse:
@@ -2005,6 +2019,7 @@ class HitReportShareLinkView(View):
             _get_or_generate_hit_report_preview(
                 report,
                 require_cache_write=True,
+                force_refresh=True,
             )
         except Exception:
             logger.exception("share_preview_prepare_failed (report=%s)", report.id)
@@ -2265,8 +2280,8 @@ class HitReportSharePreviewView(View):
             return JsonResponse({"detail": "Not found"}, status=404)
 
         etag = preview_etag_for_pdf(
-            _hit_report_pdf_cache_key(report),
-            namespace="mhr-share-preview",
+            _hit_report_public_preview_pdf_key(report),
+            namespace=f"mhr-share-preview-{_hit_report_pdf_version(report)[:16]}",
         )
         try:
             return _hit_report_preview_response(request, report, etag=etag)

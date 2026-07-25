@@ -8,6 +8,7 @@ from PIL import Image
 
 from apps.domains.matchup.views_hit_report import (
     HitReportLandingPublicPreviewView,
+    _hit_report_public_preview_pdf_key,
     _prewarm_hit_report_preview_if_public,
 )
 from apps.support.landing_public.matchup_preview import (
@@ -92,6 +93,14 @@ class MatchupPreviewRenderingTests(SimpleTestCase):
             second = preview_etag_for_pdf("reports/example.pdf")
 
         self.assertNotEqual(first, second)
+
+    def test_public_preview_key_is_stable_across_report_updates(self):
+        report = SimpleNamespace(id=42, tenant_id=7, updated_at="before")
+        first = _hit_report_public_preview_pdf_key(report)
+        report.updated_at = "after"
+        second = _hit_report_public_preview_pdf_key(report)
+
+        self.assertEqual(first, second)
 
 
 class LandingHitReportPreviewViewTests(SimpleTestCase):
@@ -186,3 +195,4 @@ class LandingHitReportPreviewViewTests(SimpleTestCase):
             )
 
         self.assertTrue(prewarm.call_args.kwargs["require_cache_write"])
+        self.assertTrue(prewarm.call_args.kwargs["force_refresh"])

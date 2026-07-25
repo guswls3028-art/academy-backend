@@ -207,3 +207,51 @@ class LandingPublishBackfillTests(TestCase):
             {item["report_id"] for item in hit_section["items"]},
             {7, 8},
         )
+
+    def test_toggle_does_not_overwrite_concurrent_draft_change(self):
+        draft = _legacy_draft()
+        draft["sections"].append(
+            {
+                "type": "hit_reports",
+                "enabled": True,
+                "order": 3,
+                "items": [{"report_id": 7}],
+            },
+        )
+        LandingPage.objects.create(
+            tenant=self.tenant,
+            template_key="minimal_tutor",
+            draft_config=draft,
+        )
+
+        def mutate_draft(_tenant, prepared_config):
+            changed = deepcopy(prepared_config)
+            changed["tagline"] = "Concurrent owner edit"
+            LandingPage.objects.filter(tenant=self.tenant).update(
+                draft_config=changed,
+            )
+            return 2
+
+        with (
+            patch(
+                "apps.domains.matchup.models.MatchupHitReport.objects.filter",
+            ) as report_filter,
+            patch(
+                "apps.core.landing.views_hit_report."
+                "prewarm_hit_report_previews_for_landing",
+                side_effect=mutate_draft,
+            ),
+            self.assertRaises(LandingHitReportError) as raised,
+        ):
+            report_filter.return_value.exists.return_value = True
+            toggle_hit_report_on_landing(
+                self.tenant,
+                8,
+                action="add",
+                auto_publish=True,
+            )
+
+        self.assertEqual(raised.exception.status_code, 409)
+        landing = LandingPage.objects.get(tenant=self.tenant)
+        self.assertEqual(landing.draft_config["tagline"], "Concurrent owner edit")
+        self.assertFalse(landing.is_published)

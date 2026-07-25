@@ -9,6 +9,9 @@
 """
 from __future__ import annotations
 
+from copy import deepcopy
+
+from django.db import transaction
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -68,6 +71,7 @@ def prewarm_hit_report_previews_for_landing(tenant, config: dict) -> int:
             _get_or_generate_hit_report_preview(
                 reports[report_id],
                 require_cache_write=True,
+                force_refresh=True,
             )
         except Exception as exc:
             raise LandingHitReportError(
@@ -108,6 +112,7 @@ def toggle_hit_report_on_landing(
     )
     # backfill — hit_reports section이 없으면 추가
     landing.draft_config = backfill_missing_sections(landing.draft_config)
+    original_draft_config = deepcopy(landing.draft_config)
     sections = list(landing.draft_config.get("sections") or [])
     hit_idx = None
     for i, s in enumerate(sections):
@@ -163,15 +168,26 @@ def toggle_hit_report_on_landing(
 
     if changed:
         sections[hit_idx] = hit_sec
-        landing.draft_config = {**landing.draft_config, "sections": sections}
+        next_draft_config = {**landing.draft_config, "sections": sections}
         if auto_publish:
             prewarm_hit_report_previews_for_landing(
                 tenant,
-                landing.draft_config,
+                next_draft_config,
             )
-        landing.save(update_fields=["draft_config", "updated_at"])
-        if auto_publish:
-            landing.publish()
+        with transaction.atomic():
+            locked = LandingPage.objects.select_for_update().get(pk=landing.pk)
+            current_draft_config = backfill_missing_sections(locked.draft_config)
+            if current_draft_config != original_draft_config:
+                raise LandingHitReportError(
+                    409,
+                    "홈페이지 초안이 변경되었습니다. 다시 시도해 주세요.",
+                    code="draft_changed",
+                )
+            locked.draft_config = next_draft_config
+            locked.save(update_fields=["draft_config", "updated_at"])
+            if auto_publish:
+                locked.publish()
+            landing = locked
 
     return {
         "ok": True,
