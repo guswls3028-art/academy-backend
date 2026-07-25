@@ -719,7 +719,7 @@ class TenantProvisioningInvariantTests(TestCase):
         program = Program.objects.get(tenant=tenant)
         self.assertEqual(program.display_name, "New Academy")
         self.assertEqual(program.brand_key, "new-academy")
-        self.assertEqual(program.plan, Program.Plan.MAX)
+        self.assertEqual(program.plan, Program.Plan.ALL)
 
     def test_existing_domain_ownership_conflict_does_not_create_partial_tenant(self):
         existing = _tenant("domain-owner")

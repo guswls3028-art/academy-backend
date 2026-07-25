@@ -91,7 +91,7 @@ class Command(BaseCommand):
                     "display_name": name,
                     "brand_key": code,
                     "login_variant": Program.LoginVariant.HAKWONPLUS,
-                    "plan": Program.Plan.MAX,
+                    "plan": Program.Plan.ALL,
                     "feature_flags": build_feature_flags(code),
                     "ui_config": {"login_title": f"{name} 로그인"},
                     "is_active": True,

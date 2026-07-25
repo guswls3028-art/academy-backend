@@ -83,10 +83,10 @@ class DevTenantUsageView(APIView):
         billing = None
         if program is not None:
             billing = {
-                "plan": program.plan,
-                "plan_display": program.get_plan_display(),
-                "monthly_price": program.monthly_price,
-                "monthly_supply_amount": program.monthly_price,
+                "plan": program.billing_plan,
+                "plan_display": program.billing_plan_display,
+                "monthly_price": program.billing_monthly_price,
+                "monthly_supply_amount": program.billing_monthly_price,
                 "monthly_tax_amount": program.monthly_tax_amount,
                 "monthly_total_amount": program.monthly_total_amount,
                 "monthly_price_includes_tax": False,

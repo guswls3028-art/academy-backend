@@ -180,19 +180,20 @@ body: { "detail": "program not initialized for tenant", "code": "program_missing
 
 ### 6.1 현재 운영 상태
 
-- 출시 초기: **Premium 단일 운영**
-- 모든 tenant는 Premium으로 간주
+- `all` 단일 요금제 운영
+- 모든 tenant는 기능 제한 없이 전체 기능 사용
+- 가격 계약은 공급가 145,000원 + 부가가치세 14,000원 = 총 159,000원
 
 ---
 
-### 6.2 Lite / Basic / Premium 확장 원칙
+### 6.2 기능 등급 확장 원칙
 
-- 요금제 개념은 **Core에 존재하지 않는다**
-- 향후 확장은 다음 위치에서만 허용:
-  - Program.feature_flags
-  - 별도 billing / policy / worker 도메인
+- Core의 `Program`은 단일 결제 계약과 구독 상태만 보관한다.
+- 기능을 요금제별로 나누는 분기는 두지 않는다.
+- 운영 모드가 필요한 기능은 `Program.feature_flags` 또는 해당 도메인이 소유하되
+  결제 등급으로 해석하지 않는다.
 
-Core는 요금제 판단을 **절대 수행하지 않는다**.
+Core는 기능 허용 여부를 요금제로 판단하지 않는다.
 
 ---
 

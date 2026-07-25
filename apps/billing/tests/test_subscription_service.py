@@ -5,7 +5,7 @@ SubscriptionService 단위 테스트.
 - 상태 전이 유효성 (active↔grace↔expired)
 - cancel_at_period_end 동작 (해지 예약/철회)
 - 수동 연장
-- 플랜 변경
+- 단일 플랜 불변식
 - 잘못된 전이 차단
 - exempt 테넌트 제외
 """
@@ -37,8 +37,6 @@ class SubscriptionServiceTestBase(TestCase):
         self.program.subscription_status = "active"
         self.program.subscription_started_at = date.today() - timedelta(days=30)
         self.program.subscription_expires_at = date.today() + timedelta(days=30)
-        self.program.plan = "pro"
-        self.program.monthly_price = 198_000
         self.program.save()
 
 
@@ -340,23 +338,9 @@ class TestExtend(SubscriptionServiceTestBase):
         self.assertFalse(result.cancel_at_period_end)
 
 
-class TestChangePlan(SubscriptionServiceTestBase):
+class TestSinglePlanInvariant(SubscriptionServiceTestBase):
 
-    def test_change_plan(self):
-        result = subscription_service.change_plan(self.program.pk, "max")
-        self.assertEqual(result.plan, "max")
-        self.assertEqual(result.monthly_price, 330_000)
-
-    def test_change_plan_overwrites_manual_price_override(self):
-        self.program.monthly_price = 150_000
-        self.program.save(update_fields=["monthly_price"])
-
-        result = subscription_service.change_plan(self.program.pk, "max")
-
-        self.assertEqual(result.plan, "max")
-        self.assertEqual(result.monthly_price, 330_000)
-
-    def test_program_save_applies_contract_price_override(self):
+    def test_legacy_storage_reads_as_single_plan_during_transition(self):
         tenant = Tenant.objects.create(
             name="Ymath", code="ymath", is_active=True
         )
@@ -367,23 +351,9 @@ class TestChangePlan(SubscriptionServiceTestBase):
 
         program.refresh_from_db()
 
-        self.assertEqual(program.plan, "pro")
-        self.assertEqual(program.monthly_price, 150_000)
-
-    def test_change_plan_applies_contract_price_override(self):
-        tenant = Tenant.objects.create(
-            name="Limglish", code="limglish", is_active=True
-        )
-        program = Program.objects.get(tenant=tenant)
-        program.plan = "pro"
-        program.monthly_price = 198_000
-        program.save(update_fields=["plan", "monthly_price"])
-
-        result = subscription_service.change_plan(program.pk, "max")
-
-        self.assertEqual(result.plan, "max")
-        self.assertEqual(result.monthly_price, 150_000)
-
-    def test_invalid_plan_raises(self):
-        with self.assertRaises(ValueError):
-            subscription_service.change_plan(self.program.pk, "enterprise")
+        self.assertEqual(program.plan, Program.Plan.PRO)
+        self.assertEqual(program.monthly_price, 198_000)
+        self.assertEqual(program.billing_plan, Program.Plan.ALL)
+        self.assertEqual(program.billing_monthly_price, 145_000)
+        self.assertEqual(program.monthly_amounts["tax_amount"], 14_000)
+        self.assertEqual(program.monthly_amounts["total_amount"], 159_000)

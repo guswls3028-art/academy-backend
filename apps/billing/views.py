@@ -21,7 +21,6 @@ from apps.billing.models import BillingKey, BillingProfile, Invoice, PaymentTran
 from apps.billing.serializers import (
     BillingKeySerializer,
     BillingProfileSerializer,
-    ChangePlanSerializer,
     ExtendSubscriptionSerializer,
     InvoiceDetailSerializer,
     InvoiceListSerializer,
@@ -64,10 +63,10 @@ class AdminTenantSubscriptionListView(APIView):
                 "tenant_id": p.tenant_id,
                 "tenant_code": p.tenant.code,
                 "tenant_name": p.tenant.name or "",
-                "plan": p.plan,
-                "plan_display": p.get_plan_display(),
-                "monthly_price": p.monthly_price,
-                "monthly_supply_amount": p.monthly_price,
+                "plan": p.billing_plan,
+                "plan_display": p.billing_plan_display,
+                "monthly_price": p.billing_monthly_price,
+                "monthly_supply_amount": p.billing_monthly_price,
                 "monthly_tax_amount": p.monthly_tax_amount,
                 "monthly_total_amount": p.monthly_total_amount,
                 "monthly_price_includes_tax": False,
@@ -121,49 +120,6 @@ class AdminExtendSubscriptionView(APIView):
             "subscription_status": program.subscription_status,
             "subscription_expires_at": str(program.subscription_expires_at),
             "days_remaining": program.days_remaining,
-        })
-
-
-class AdminChangePlanView(APIView):
-    """
-    POST /api/v1/billing/admin/tenants/{program_id}/change-plan/
-    플랜 변경 (플랫폼 관리자 전용).
-    """
-    permission_classes = [IsAuthenticated, IsSuperuserOnly]
-
-    def post(self, request, program_id):
-        serializer = ChangePlanSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-
-        new_plan = serializer.validated_data["plan"]
-        try:
-            program = subscription_service.change_plan(program_id, new_plan)
-        except Program.DoesNotExist:
-            return Response({"detail": "Program not found"}, status=status.HTTP_404_NOT_FOUND)
-        except ValueError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-        record_audit(
-            request,
-            action="billing.change_plan",
-            target_tenant=program.tenant,
-            summary=f"Plan changed: {program.tenant.code} -> {program.plan} ({program.monthly_price}원)",
-            payload={"plan": new_plan, "monthly_price": program.monthly_price},
-        )
-        return Response({
-            "tenant_code": program.tenant.code,
-            "plan": program.plan,
-            "plan_display": program.get_plan_display(),
-            "monthly_price": program.monthly_price,
-            "monthly_supply_amount": program.monthly_price,
-            "monthly_tax_amount": program.monthly_tax_amount,
-            "monthly_total_amount": program.monthly_total_amount,
-            "monthly_price_includes_tax": False,
-            "vat_rate_percent": program.BILLING_VAT_RATE_PERCENT,
-            "billing_price_policy": program.billing_price_policy,
-            "is_contract_price": program.is_contract_price,
-            "billing_price_integrity": program.billing_price_integrity,
-            "is_billing_price_ready": program.is_billing_price_ready,
         })
 
 
@@ -260,16 +216,10 @@ class AdminDashboardView(APIView):
         )
 
         # MRR (active 테넌트 기준)
-        active_monthly_prices = list(
-            programs.filter(subscription_status="active").values_list(
-                "monthly_price", flat=True
-            )
-        )
-        mrr = sum(active_monthly_prices)
-        mrr_tax_amount = sum(
-            Program.calculate_monthly_amounts(price)["tax_amount"]
-            for price in active_monthly_prices
-        )
+        active_programs = programs.filter(subscription_status="active")
+        active_count = active_programs.count()
+        mrr = active_count * Program.PLAN_PRICES[Program.Plan.ALL]
+        mrr_tax_amount = active_count * Program.BILLING_MONTHLY_TAX_AMOUNT
 
         # 상태별 테넌트 수
         status_counts = dict(

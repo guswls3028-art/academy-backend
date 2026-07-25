@@ -181,7 +181,7 @@ def _check_subscription(tenant, request) -> JsonResponse | None:
             {
                 "detail": "구독이 만료되었습니다. 관리자에게 문의하거나 구독을 갱신해 주세요.",
                 "code": "subscription_expired",
-                "plan": program.plan,
+                "plan": program.billing_plan,
                 "expires_at": str(program.service_access_expires_at) if program.service_access_expires_at else None,
                 "subscription_expires_at": str(program.subscription_expires_at) if program.subscription_expires_at else None,
                 "grace_expires_at": str(program.grace_expires_at) if program.grace_expires_at else None,

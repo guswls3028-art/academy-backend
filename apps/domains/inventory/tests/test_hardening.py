@@ -11,7 +11,13 @@ from rest_framework.test import APIRequestFactory
 from apps.core.models import Tenant, TenantMembership
 from apps.domains.inventory.models import InventoryFile, InventoryFolder
 from apps.domains.inventory.services import delete_folder_recursive, move_file, move_folder
-from apps.domains.inventory.views import FileDeleteView, FileUploadView, FolderCreateView, PresignView
+from apps.domains.inventory.views import (
+    FileDeleteView,
+    FileUploadView,
+    FolderCreateView,
+    PresignView,
+    QuotaView,
+)
 from apps.domains.students.models import Student
 
 
@@ -268,6 +274,37 @@ class InventoryHardeningViewTests(TestCase):
         self.assertEqual(response.status_code, 400)
         upload_r2.assert_not_called()
         self.assertFalse(InventoryFile.objects.filter(tenant=self.tenant, original_name="x.pdf").exists())
+
+    def test_all_plan_can_upload_and_reports_200gb_quota(self):
+        upload = SimpleUploadedFile("all-plan.pdf", b"%PDF-1.4", content_type="application/pdf")
+        request = self._multipart_request(
+            "/storage/inventory/upload/",
+            {"scope": "admin", "file": upload},
+        )
+
+        with self._auth(self.staff), patch(
+            "apps.domains.inventory.views.upload_fileobj_to_r2_storage"
+        ) as upload_r2:
+            response = FileUploadView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        upload_r2.assert_called_once()
+        self.assertTrue(
+            InventoryFile.objects.filter(
+                tenant=self.tenant,
+                original_name="all-plan.pdf",
+            ).exists()
+        )
+
+        quota_request = self.factory.get("/storage/quota/")
+        quota_request.tenant = self.tenant
+        with self._auth(self.staff):
+            quota_response = QuotaView.as_view()(quota_request)
+
+        self.assertEqual(quota_response.status_code, 200)
+        quota = json.loads(quota_response.content)
+        self.assertEqual(quota["plan"], "all")
+        self.assertEqual(quota["limitBytes"], 200 * 1024**3)
 
 
 class InventoryHardeningMoveTests(TestCase):

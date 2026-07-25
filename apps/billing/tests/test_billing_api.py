@@ -1,23 +1,22 @@
 """
-Billing API 통합 테스트 — 13개 엔드포인트 권한/응답/테넌트 격리 검증.
+Billing API 통합 테스트 — 12개 엔드포인트 권한/응답/테넌트 격리 검증.
 
 범위:
-A. 플랫폼 관리자 API (7개) — Superuser 전용
+A. 플랫폼 관리자 API (6개) — Superuser 전용
    1. GET  /api/v1/billing/admin/tenants/
    2. POST /api/v1/billing/admin/tenants/{id}/extend/
-   3. POST /api/v1/billing/admin/tenants/{id}/change-plan/
-   4. GET  /api/v1/billing/admin/invoices/
-   5. GET  /api/v1/billing/admin/invoices/{id}/
-   6. POST /api/v1/billing/admin/invoices/{id}/mark-paid/
-   7. GET  /api/v1/billing/admin/dashboard/
+   3. GET  /api/v1/billing/admin/invoices/
+   4. GET  /api/v1/billing/admin/invoices/{id}/
+   5. POST /api/v1/billing/admin/invoices/{id}/mark-paid/
+   6. GET  /api/v1/billing/admin/dashboard/
 
 B. 원장 API (6개) — TenantResolvedAndOwner/Staff
-   8. GET  /api/v1/billing/invoices/
-   9. GET  /api/v1/billing/invoices/{id}/
-   10. GET /api/v1/billing/cards/
-   11. GET/PATCH /api/v1/billing/profile/
-   12. POST /api/v1/billing/cancel/
-   13. POST /api/v1/billing/cancel/revoke/
+   7. GET  /api/v1/billing/invoices/
+   8. GET  /api/v1/billing/invoices/{id}/
+   9. GET /api/v1/billing/cards/
+   10. GET/PATCH /api/v1/billing/profile/
+   11. POST /api/v1/billing/cancel/
+   12. POST /api/v1/billing/cancel/revoke/
 """
 
 from datetime import date
@@ -42,8 +41,6 @@ class BillingApiTestBase(APITestCase):
         self.program_a.subscription_status = "active"
         self.program_a.subscription_started_at = date(2026, 3, 13)
         self.program_a.subscription_expires_at = date(2026, 4, 12)
-        self.program_a.plan = "pro"
-        self.program_a.monthly_price = 198_000
         self.program_a.billing_mode = "AUTO_CARD"
         self.program_a.save()
 
@@ -170,9 +167,11 @@ class TestAdminTenantSubscriptionList(BillingApiTestBase):
         for f in required_fields:
             self.assertIn(f, entry, f"Missing field: {f}")
         self.assertEqual(entry["program_id"], self.program_a.pk)
-        self.assertEqual(entry["monthly_supply_amount"], 198_000)
-        self.assertEqual(entry["monthly_tax_amount"], 19_800)
-        self.assertEqual(entry["monthly_total_amount"], 217_800)
+        self.assertEqual(entry["plan"], "all")
+        self.assertEqual(entry["monthly_supply_amount"], 145_000)
+        self.assertEqual(entry["monthly_tax_amount"], 14_000)
+        self.assertEqual(entry["monthly_total_amount"], 159_000)
+        self.assertIsNone(entry["vat_rate_percent"])
         self.assertFalse(entry["monthly_price_includes_tax"])
 
 
@@ -214,28 +213,6 @@ class TestAdminExtendSubscription(BillingApiTestBase):
             {"days": 30}, format="json", **self.headers_a,
         )
         self.assertEqual(resp.status_code, 404)
-
-
-class TestAdminChangePlan(BillingApiTestBase):
-    """POST /api/v1/billing/admin/tenants/{id}/change-plan/"""
-
-    def test_superuser_can_change_plan(self):
-        self.client.force_authenticate(user=self.superuser)
-        resp = self.client.post(
-            f"/api/v1/billing/admin/tenants/{self.program_a.pk}/change-plan/",
-            {"plan": "max"}, format="json", **self.headers_a,
-        )
-        self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.data["plan"], "max")
-        self.assertEqual(resp.data["monthly_price"], 330_000)
-
-    def test_invalid_plan_rejected(self):
-        self.client.force_authenticate(user=self.superuser)
-        resp = self.client.post(
-            f"/api/v1/billing/admin/tenants/{self.program_a.pk}/change-plan/",
-            {"plan": "enterprise"}, format="json", **self.headers_a,
-        )
-        self.assertEqual(resp.status_code, 400)
 
 
 class TestAdminInvoiceList(BillingApiTestBase):

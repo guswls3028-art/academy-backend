@@ -9,7 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import BasePermission, IsAuthenticated
-from rest_framework.exceptions import PermissionDenied, ValidationError
+from rest_framework.exceptions import ValidationError
 
 from rest_framework.pagination import PageNumberPagination
 
@@ -26,16 +26,6 @@ class FeesLargePagination(PageNumberPagination):
 from .models import FeeTemplate, StudentFee, StudentInvoice, FeePayment
 
 
-def _fees_enabled(request) -> bool:
-    """테넌트의 fee_management feature flag 확인."""
-    tenant = getattr(request, "tenant", None)
-    if not tenant:
-        return False
-    try:
-        flags = tenant.program.feature_flags or {}
-        return bool(flags.get("fee_management"))
-    except Exception:
-        return False
 from .serializers import (
     FeeTemplateSerializer,
     FeeTemplateCreateSerializer,
@@ -74,13 +64,6 @@ class TenantResolvedAndFeeManager(BasePermission):
         return bool(user.is_superuser and getattr(user, "tenant_id", None) == tenant.id)
 
 
-class FeeManagementEnabledMixin:
-    def initial(self, request, *args, **kwargs):
-        super().initial(request, *args, **kwargs)
-        if not _fees_enabled(request):
-            raise PermissionDenied("수납 기능이 활성화되어 있지 않습니다.")
-
-
 def _validate_fee_template_lecture_tenant(*, tenant, lecture):
     if lecture is None:
         return
@@ -109,7 +92,7 @@ def _validate_student_fee_tenant_consistency(*, tenant, student, fee_template, e
 # FeeTemplate (비목 관리)
 # ========================================================
 
-class FeeTemplateViewSet(FeeManagementEnabledMixin, ModelViewSet):
+class FeeTemplateViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
     pagination_class = FeesLargePagination
 
@@ -119,8 +102,6 @@ class FeeTemplateViewSet(FeeManagementEnabledMixin, ModelViewSet):
         return FeeTemplateSerializer
 
     def get_queryset(self):
-        if not _fees_enabled(self.request):
-            return FeeTemplate.objects.none()
         tenant = self.request.tenant
         qs = FeeTemplate.objects.filter(tenant=tenant).select_related("lecture")
 
@@ -159,14 +140,12 @@ class FeeTemplateViewSet(FeeManagementEnabledMixin, ModelViewSet):
 # StudentFee (학생별 비용 할당)
 # ========================================================
 
-class StudentFeeViewSet(FeeManagementEnabledMixin, ModelViewSet):
+class StudentFeeViewSet(ModelViewSet):
     serializer_class = StudentFeeSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
     pagination_class = FeesLargePagination
 
     def get_queryset(self):
-        if not _fees_enabled(self.request):
-            return StudentFee.objects.none()
         tenant = self.request.tenant
         qs = (
             StudentFee.objects
@@ -259,7 +238,7 @@ class StudentFeeViewSet(FeeManagementEnabledMixin, ModelViewSet):
 # StudentInvoice (청구서)
 # ========================================================
 
-class StudentInvoiceViewSet(FeeManagementEnabledMixin, ModelViewSet):
+class StudentInvoiceViewSet(ModelViewSet):
     permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
     pagination_class = FeesLargePagination
     http_method_names = ["get", "patch", "delete", "post"]
@@ -272,8 +251,6 @@ class StudentInvoiceViewSet(FeeManagementEnabledMixin, ModelViewSet):
         return StudentInvoiceListSerializer
 
     def get_queryset(self):
-        if not _fees_enabled(self.request):
-            return StudentInvoice.objects.none()
         tenant = self.request.tenant
         qs = (
             StudentInvoice.objects
@@ -381,15 +358,13 @@ class StudentInvoiceViewSet(FeeManagementEnabledMixin, ModelViewSet):
 # FeePayment (수납 기록)
 # ========================================================
 
-class FeePaymentViewSet(FeeManagementEnabledMixin, ModelViewSet):
+class FeePaymentViewSet(ModelViewSet):
     serializer_class = FeePaymentSerializer
     permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
     pagination_class = FeesLargePagination
     http_method_names = ["get", "post"]
 
     def get_queryset(self):
-        if not _fees_enabled(self.request):
-            return FeePayment.objects.none()
         tenant = self.request.tenant
         qs = (
             FeePayment.objects
@@ -459,7 +434,7 @@ class FeePaymentViewSet(FeeManagementEnabledMixin, ModelViewSet):
 # Dashboard (수납 현황)
 # ========================================================
 
-class FeeDashboardView(FeeManagementEnabledMixin, APIView):
+class FeeDashboardView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
 
     def get(self, request):
@@ -471,7 +446,7 @@ class FeeDashboardView(FeeManagementEnabledMixin, APIView):
         return Response(stats)
 
 
-class FeeOverdueView(FeeManagementEnabledMixin, APIView):
+class FeeOverdueView(APIView):
     permission_classes = [IsAuthenticated, TenantResolvedAndFeeManager]
 
     def get(self, request):

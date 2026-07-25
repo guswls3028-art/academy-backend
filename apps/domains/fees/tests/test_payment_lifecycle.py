@@ -532,14 +532,14 @@ class FeesInvoiceApiHardeningTest(FeesTestMixin, APITestCase):
 
         self.assertEqual(resp.status_code, 403)
 
-    def test_fee_management_feature_flag_blocks_staff_api(self):
+    def test_fee_management_is_available_regardless_of_legacy_flag(self):
         program = self.tenant.program
         program.feature_flags = {"fee_management": False}
         program.save(update_fields=["feature_flags"])
 
         resp = self.client.get("/api/v1/fees/invoices/", **self.headers)
 
-        self.assertEqual(resp.status_code, 403)
+        self.assertEqual(resp.status_code, 200)
 
     def test_student_fee_create_rejects_same_tenant_inconsistent_enrollment(self):
         lecture = Lecture.objects.create(

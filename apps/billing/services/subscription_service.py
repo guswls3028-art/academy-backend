@@ -266,30 +266,6 @@ def revoke_cancel(program_id: int) -> "Program":
 
 
 @transaction.atomic
-def change_plan(program_id: int, new_plan: str) -> "Program":
-    """플랜 변경. 운영 콘솔 조작은 새 플랜의 정가 또는 계약 예외가를 적용한다."""
-    from apps.core.models.program import Program
-
-    valid_plans = {c[0] for c in Program.Plan.choices}
-    if new_plan not in valid_plans:
-        raise ValueError(f"Invalid plan: {new_plan}. Must be one of {valid_plans}")
-
-    program = _lock_program(program_id)
-    program.plan = new_plan
-    program.monthly_price = Program.resolve_monthly_price(
-        plan=new_plan,
-        tenant_code=program.tenant.code,
-    )
-    program.save(update_fields=["plan", "monthly_price", "updated_at"])
-
-    logger.info(
-        "Plan changed: tenant=%s program=%s plan=%s price=%s",
-        program.tenant_id, program.pk, program.plan, program.monthly_price,
-    )
-    return program
-
-
-@transaction.atomic
 def extend(program_id: int, days: int) -> "Program":
     """
     수동 기간 연장. 현재 만료일 기준으로 days만큼 연장.

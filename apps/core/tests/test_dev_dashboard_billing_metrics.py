@@ -44,4 +44,4 @@ class DevDashboardBillingMetricTests(TestCase):
             response = DevDashboardSummaryView.as_view()(request)
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["billing"]["mrr"], 100_000)
+        self.assertEqual(response.data["billing"]["mrr"], 145_000)

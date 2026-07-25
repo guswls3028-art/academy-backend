@@ -163,9 +163,9 @@ class SubscriptionView(APIView):
             status_display = program.get_subscription_status_display()
 
         payload.update({
-            "plan": program.plan,
-            "plan_display": program.get_plan_display(),
-            "monthly_price": program.monthly_price,
+            "plan": program.billing_plan,
+            "plan_display": program.billing_plan_display,
+            "monthly_price": program.billing_monthly_price,
             "monthly_supply_amount": monthly_amounts["supply_amount"],
             "monthly_tax_amount": monthly_amounts["tax_amount"],
             "monthly_total_amount": monthly_amounts["total_amount"],

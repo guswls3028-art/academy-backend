@@ -55,7 +55,7 @@ class Command(BaseCommand):
             type=str,
             choices=[c[0] for c in Program.Plan.choices],
             default=None,
-            help="요금제 설정 (lite/basic/premium). 미지정 시 기존값 유지.",
+            help="단일 요금제 설정(all). 미지정 시 기존값 유지.",
         )
 
     def handle(self, *args, **options):

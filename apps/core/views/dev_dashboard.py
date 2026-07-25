@@ -56,16 +56,10 @@ class DevDashboardSummaryView(APIView):
             tenant__is_active=True,
             is_active=True,
         )
-        active_monthly_prices = list(
-            program_qs.filter(subscription_status="active").values_list(
-                "monthly_price", flat=True
-            )
-        )
-        mrr = sum(active_monthly_prices)
-        mrr_tax_amount = sum(
-            Program.calculate_monthly_amounts(price)["tax_amount"]
-            for price in active_monthly_prices
-        )
+        active_programs = program_qs.filter(subscription_status="active")
+        active_count = active_programs.count()
+        mrr = active_count * Program.PLAN_PRICES[Program.Plan.ALL]
+        mrr_tax_amount = active_count * Program.BILLING_MONTHLY_TAX_AMOUNT
         expiring_7d = program_qs.filter(
             subscription_status="active",
             subscription_expires_at__lte=today + timedelta(days=7),

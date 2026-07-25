@@ -5,7 +5,7 @@ Checks:
 1. next_billing_at NULL (active/grace, non-exempt)
 2. subscription_expires_at NULL (active/grace, non-exempt)
 3. persisted active/grace status past its effective access period
-4. contract tenant monthly_price integrity (blocking) + other overrides (informational)
+4. single-plan and monthly_price integrity (blocking)
 5. plaintext or undecryptable billing credentials
 
 Usage:
@@ -182,24 +182,21 @@ class Command(BaseCommand):
                     "fix_value": None,
                 })
 
-            # 4. price vs plan/contract policy
-            expected_price = Program.resolve_monthly_price(plan=p.plan, tenant_code=code)
-            contract_price = Program.get_contract_monthly_price(code)
-            if contract_price is not None and p.monthly_price != contract_price:
+            # 4. single-plan price contract
+            if p.billing_price_integrity != "ok":
                 issues.append({
                     "program": p,
                     "code": code,
                     "is_exempt": is_ex,
                     "msg": (
-                        f"{prefix} contract_price_mismatch: "
-                        f"price={p.monthly_price:,} expected={contract_price:,} "
+                        f"{prefix} {p.billing_price_integrity}: "
+                        f"plan={p.plan} price={p.monthly_price:,} "
+                        f"expected_plan={Program.Plan.ALL} "
+                        f"expected_price={Program.PLAN_PRICES[Program.Plan.ALL]:,} "
                         "(new invoice creation is blocked)"
                     ),
                     "fix_value": None,
                 })
-            elif expected_price and p.monthly_price != expected_price:
-                self._log(f"  [INFO]   {code:15s} price={p.monthly_price:,} vs expected={expected_price:,} "
-                          f"(promo or manual override)")
 
         processing_transactions = (
             PaymentTransaction.objects.exclude(tenant_id__in=exempt)

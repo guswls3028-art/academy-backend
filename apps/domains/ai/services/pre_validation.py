@@ -1,7 +1,7 @@
 """
 Pre-Validation Layer (설계 2.3 반영)
 
-Lite/Basic에서 "실패 없음"을 위한 거부 정책.
+모든 고객에게 동일하게 적용되는 입력 품질 검증.
 거부 사유(rejection_code)는 프론트에서 사용자 안내 문구로 노출 가능.
 """
 
@@ -20,9 +20,6 @@ REJECTION_CODES = {
     "BLUR_OR_SHAKE": "흔들리거나 흐릿합니다. 고정해서 다시 촬영해 주세요.",
     "TOO_DARK": "너무 어둡습니다. 밝은 곳에서 촬영해 주세요.",
     "INVALID_FORMAT": "지원하지 않는 파일 형식입니다.",
-    "OMR_PHOTO_NOT_ALLOWED": (
-        "Basic 요금제에서는 스캔된 OMR만 가능합니다. 촬영물은 Premium에서 이용해 주세요."
-    ),
 }
 
 # job_type별 파일 크기 상한 (MB)
@@ -50,7 +47,7 @@ def validate_input_for_basic(
     payload: dict,
 ) -> Tuple[bool, Optional[str], Optional[str]]:
     """
-    Lite/Basic 입력 품질 게이트.
+    공통 입력 품질 게이트.
 
     Returns:
         (ok, error_message, rejection_code)
@@ -60,12 +57,6 @@ def validate_input_for_basic(
     """
     tier = (tier or "").lower()
     job_type = (job_type or "").lower()
-
-    # Basic에서 OMR 촬영물 거부 (mode=photo/video)
-    if tier in ("lite", "basic") and job_type == "omr_grading":
-        mode = (payload.get("mode") or "").lower()
-        if mode in ("photo", "video"):
-            return False, REJECTION_CODES["OMR_PHOTO_NOT_ALLOWED"], "OMR_PHOTO_NOT_ALLOWED"
 
     # 파일 크기 (payload에 file_size_bytes 또는 file_size_mb 있으면 검사)
     size_mb = payload.get("file_size_mb")

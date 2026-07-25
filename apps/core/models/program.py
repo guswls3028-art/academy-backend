@@ -27,20 +27,21 @@ class Program(TimestampModel):
         CUSTOM = "custom", "Custom"
 
     class Plan(models.TextChoices):
-        STANDARD = "standard", "Standard"
-        PRO = "pro", "Pro"
-        MAX = "max", "Max"
+        STANDARD = "standard", "Standard (전환 호환)"
+        PRO = "pro", "Pro (전환 호환)"
+        MAX = "max", "Max (전환 호환)"
+        ALL = "all", "전체 기능"
 
     PLAN_PRICES: dict[str, int] = {
-        Plan.STANDARD: 99_000,
-        Plan.PRO: 198_000,
-        Plan.MAX: 330_000,
+        Plan.STANDARD: 145_000,
+        Plan.PRO: 145_000,
+        Plan.MAX: 145_000,
+        Plan.ALL: 145_000,
     }
-    CONTRACT_MONTHLY_PRICE_OVERRIDES_BY_TENANT_CODE: dict[str, int] = {
-        "limglish": 150_000,
-        "ymath": 150_000,
-    }
-    BILLING_VAT_RATE_PERCENT = 10
+    BILLING_MONTHLY_TAX_AMOUNT = 14_000
+    BILLING_MONTHLY_TOTAL_AMOUNT = 159_000
+    BILLING_VAT_RATE_PERCENT = None
+    LEGACY_VAT_RATE_PERCENT = 10
 
     tenant = models.OneToOneField(
         Tenant,
@@ -61,16 +62,16 @@ class Program(TimestampModel):
         default=LoginVariant.HAKWONPLUS,
     )
 
-    # ✅ 요금제 (리소스 계약 선언)
+    # ✅ 단일 요금제 rolling 전환 호환
     plan = models.CharField(
         max_length=20,
         choices=Plan.choices,
         default=Plan.PRO,
-        help_text="요금제 (standard/pro/max)",
+        help_text="단일 요금제 전환 호환 필드",
     )
     monthly_price = models.PositiveIntegerField(
         default=198_000,
-        help_text="월 요금(원). PLAN_PRICES 기준 자동 설정.",
+        help_text="단일 요금제 전환 호환 공급가 필드",
     )
 
     # ✅ 구독 관리
@@ -183,54 +184,43 @@ class Program(TimestampModel):
         ]
 
     def save(self, *args, **kwargs):
-        # plan 변경 시 가격 자동 동기화 (프로모션 가격이 설정되어 있으면 유지)
-        if self.plan in self.PLAN_PRICES:
-            tenant_code = self._tenant_code_for_price_resolution()
-            contract_price = self.get_contract_monthly_price(tenant_code)
-            if contract_price is not None and self.monthly_price != contract_price:
-                self.monthly_price = contract_price
-                uf = kwargs.get("update_fields")
-                if uf is not None and "monthly_price" not in uf:
-                    kwargs["update_fields"] = list(uf) + ["monthly_price"]
-                super().save(*args, **kwargs)
-                return
-
-            # monthly_price가 아직 기본값이거나 다른 플랜의 정가인 경우에만 동기화
-            other_plan_prices = {v for k, v in self.PLAN_PRICES.items() if k != self.plan}
-            if self.monthly_price in other_plan_prices or self.monthly_price == 0:
-                self.monthly_price = self.PLAN_PRICES[self.plan]
-                uf = kwargs.get("update_fields")
-                if uf is not None and "monthly_price" not in uf:
-                    kwargs["update_fields"] = list(uf) + ["monthly_price"]
+        # Phase A keeps legacy rows readable, while every new single-plan
+        # writer converges its explicit ALL row to the canonical supply price.
+        if (
+            self.plan == self.Plan.ALL
+            and self.monthly_price != self.PLAN_PRICES[self.Plan.ALL]
+        ):
+            self.monthly_price = self.PLAN_PRICES[self.Plan.ALL]
+            update_fields = kwargs.get("update_fields")
+            if update_fields is not None:
+                kwargs["update_fields"] = list(
+                    dict.fromkeys([*update_fields, "monthly_price"])
+                )
         super().save(*args, **kwargs)
 
     @classmethod
-    def get_contract_monthly_price(cls, tenant_code: str | None = None) -> int | None:
-        code = (tenant_code or "").strip().lower()
-        return cls.CONTRACT_MONTHLY_PRICE_OVERRIDES_BY_TENANT_CODE.get(code)
-
-    @classmethod
     def resolve_monthly_price(cls, *, plan: str, tenant_code: str | None = None) -> int:
-        contract_price = cls.get_contract_monthly_price(tenant_code)
-        if contract_price is not None:
-            return contract_price
-        return cls.PLAN_PRICES[plan]
-
-    def _tenant_code_for_price_resolution(self) -> str | None:
-        if "tenant" in self._state.fields_cache:
-            return self.tenant.code
-        if self.tenant_id:
-            return Tenant.objects.only("code").get(pk=self.tenant_id).code
-        return None
+        return cls.PLAN_PRICES[cls.Plan.ALL]
 
     @classmethod
     def calculate_monthly_amounts(cls, supply_amount: int) -> dict[str, int]:
-        """Return the canonical VAT-exclusive and VAT-inclusive monthly amounts."""
+        """Return a monthly amount breakdown.
+
+        The active single-plan contract has an explicit 14,000 won tax amount.
+        Other values are legacy invoice snapshots and retain the former 10%
+        calculation for read-only compatibility.
+        """
         if isinstance(supply_amount, bool) or not isinstance(supply_amount, int):
             raise TypeError("supply_amount must be an integer")
         if supply_amount <= 0:
             raise ValueError("supply_amount must be greater than zero")
-        tax_amount = supply_amount * cls.BILLING_VAT_RATE_PERCENT // 100
+        if supply_amount == cls.PLAN_PRICES[cls.Plan.ALL]:
+            return {
+                "supply_amount": supply_amount,
+                "tax_amount": cls.BILLING_MONTHLY_TAX_AMOUNT,
+                "total_amount": cls.BILLING_MONTHLY_TOTAL_AMOUNT,
+            }
+        tax_amount = supply_amount * cls.LEGACY_VAT_RATE_PERCENT // 100
         return {
             "supply_amount": supply_amount,
             "tax_amount": tax_amount,
@@ -239,7 +229,9 @@ class Program(TimestampModel):
 
     @property
     def monthly_amounts(self) -> dict[str, int]:
-        return self.calculate_monthly_amounts(self.monthly_price)
+        return self.calculate_monthly_amounts(
+            self.PLAN_PRICES[self.Plan.ALL]
+        )
 
     @property
     def monthly_tax_amount(self) -> int:
@@ -251,7 +243,7 @@ class Program(TimestampModel):
 
     @property
     def list_monthly_price(self) -> int:
-        return self.PLAN_PRICES.get(self.plan, self.monthly_price)
+        return self.PLAN_PRICES[self.Plan.ALL]
 
     @property
     def list_monthly_amounts(self) -> dict[str, int]:
@@ -259,17 +251,17 @@ class Program(TimestampModel):
 
     @property
     def is_contract_price(self) -> bool:
-        return self.get_contract_monthly_price(
-            self._tenant_code_for_price_resolution()
-        ) is not None
+        return False
 
     @property
     def billing_price_integrity(self) -> str:
-        contract_price = self.get_contract_monthly_price(
-            self._tenant_code_for_price_resolution()
-        )
-        if contract_price is not None and self.monthly_price != contract_price:
-            return "contract_price_mismatch"
+        if self.plan not in self.Plan.values:
+            return "single_plan_mismatch"
+        if (
+            self.plan == self.Plan.ALL
+            and self.monthly_price != self.PLAN_PRICES[self.Plan.ALL]
+        ):
+            return "single_price_mismatch"
         return "ok"
 
     @property
@@ -278,13 +270,19 @@ class Program(TimestampModel):
 
     @property
     def billing_price_policy(self) -> str:
-        if self.is_contract_price:
-            return "contract_override"
-        if self.monthly_price < self.list_monthly_price:
-            return "promotion"
-        if self.monthly_price > self.list_monthly_price:
-            return "custom"
-        return "list"
+        return "single"
+
+    @property
+    def billing_plan(self) -> str:
+        return self.Plan.ALL
+
+    @property
+    def billing_plan_display(self) -> str:
+        return self.Plan.ALL.label
+
+    @property
+    def billing_monthly_price(self) -> int:
+        return self.PLAN_PRICES[self.Plan.ALL]
 
     @property
     def monthly_discount_rate(self) -> int:

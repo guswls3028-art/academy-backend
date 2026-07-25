@@ -93,17 +93,15 @@ def _generate_invoice_number(tenant_code: str, period_start: date) -> str:
 
 
 def resolve_monthly_amounts(program: "Program") -> dict[str, int]:
-    """Resolve a charge snapshot and fail closed on contract-price drift."""
-    from apps.core.models.program import Program
-
-    tenant_code = program.tenant.code
-    contract_price = Program.get_contract_monthly_price(tenant_code)
-    if contract_price is not None and program.monthly_price != contract_price:
+    """Resolve a charge snapshot and fail closed on single-price drift."""
+    if not program.is_billing_price_ready:
         raise BillingPriceIntegrityError(
-            "Contract price mismatch: "
-            f"tenant={tenant_code} stored={program.monthly_price} expected={contract_price}"
+            "Single-plan price mismatch: "
+            f"tenant={program.tenant.code} plan={program.plan} "
+            f"stored={program.monthly_price} "
+            f"expected={program.PLAN_PRICES[program.Plan.ALL]}"
         )
-    return Program.calculate_monthly_amounts(program.monthly_price)
+    return program.monthly_amounts
 
 
 # ──────────────────────────────────────────────
@@ -162,7 +160,7 @@ def create_for_next_period(program: "Program") -> Invoice | None:
         invoice = Invoice.objects.create(
             tenant_id=program.tenant_id,
             invoice_number=_generate_invoice_number(tenant_code, period_start),
-            plan=program.plan,
+            plan=program.billing_plan,
             billing_mode=program.billing_mode,
             supply_amount=amounts["supply_amount"],
             tax_amount=amounts["tax_amount"],

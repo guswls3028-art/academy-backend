@@ -4,7 +4,6 @@ from apps.billing.views import (
     # 플랫폼 관리자
     AdminTenantSubscriptionListView,
     AdminExtendSubscriptionView,
-    AdminChangePlanView,
     AdminInvoiceListView,
     AdminInvoiceDetailView,
     AdminMarkInvoicePaidView,
@@ -28,7 +27,6 @@ urlpatterns = [
     # ── 플랫폼 관리자 (Superuser) ──
     path("admin/tenants/", AdminTenantSubscriptionListView.as_view(), name="billing-admin-tenants"),
     path("admin/tenants/<int:program_id>/extend/", AdminExtendSubscriptionView.as_view(), name="billing-admin-extend"),
-    path("admin/tenants/<int:program_id>/change-plan/", AdminChangePlanView.as_view(), name="billing-admin-change-plan"),
     path("admin/invoices/", AdminInvoiceListView.as_view(), name="billing-admin-invoices"),
     path("admin/invoices/<int:pk>/", AdminInvoiceDetailView.as_view(), name="billing-admin-invoice-detail"),
     path("admin/invoices/<int:pk>/mark-paid/", AdminMarkInvoicePaidView.as_view(), name="billing-admin-mark-paid"),

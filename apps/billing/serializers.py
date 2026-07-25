@@ -191,7 +191,7 @@ class TenantSubscriptionSummarySerializer(serializers.Serializer):
     monthly_tax_amount = serializers.IntegerField()
     monthly_total_amount = serializers.IntegerField()
     monthly_price_includes_tax = serializers.BooleanField()
-    vat_rate_percent = serializers.IntegerField()
+    vat_rate_percent = serializers.IntegerField(allow_null=True)
     billing_price_policy = serializers.CharField()
     is_contract_price = serializers.BooleanField()
     billing_price_integrity = serializers.CharField()
@@ -215,10 +215,6 @@ class TenantSubscriptionSummarySerializer(serializers.Serializer):
 
 class ExtendSubscriptionSerializer(serializers.Serializer):
     days = serializers.IntegerField(min_value=1, max_value=3650)
-
-
-class ChangePlanSerializer(serializers.Serializer):
-    plan = serializers.ChoiceField(choices=["standard", "pro", "max"])
 
 
 class MarkPaidSerializer(serializers.Serializer):

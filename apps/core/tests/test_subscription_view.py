@@ -69,51 +69,52 @@ class SubscriptionViewAuthorizationTests(APITestCase):
         self.assertEqual(response.data["next_billing_at"], "2026-07-01")
         self.assertTrue(response.data["cancel_at_period_end"])
 
-    def test_price_contract_exposes_supply_tax_and_total_without_fake_promo(self):
-        self.tenant.code = "ymath"
-        self.tenant.save(update_fields=["code"])
+    def test_single_plan_exposes_exact_supply_tax_and_total(self):
         self.program.monthly_price = 198_000
         self.program.save(update_fields=["monthly_price"])
-        self._authenticate_owner("contract-owner")
+        self._authenticate_owner("single-plan-owner")
 
-        response = self.client.get(
-            "/api/v1/core/subscription/",
-            HTTP_HOST="localhost",
-            HTTP_X_TENANT_CODE="ymath",
-        )
+        response = self.client.get("/api/v1/core/subscription/", **self.headers)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["monthly_price"], 150_000)
-        self.assertEqual(response.data["monthly_supply_amount"], 150_000)
-        self.assertEqual(response.data["monthly_tax_amount"], 15_000)
-        self.assertEqual(response.data["monthly_total_amount"], 165_000)
+        self.assertEqual(response.data["plan"], "all")
+        self.assertEqual(response.data["monthly_price"], 145_000)
+        self.assertEqual(response.data["monthly_supply_amount"], 145_000)
+        self.assertEqual(response.data["monthly_tax_amount"], 14_000)
+        self.assertEqual(response.data["monthly_total_amount"], 159_000)
         self.assertFalse(response.data["monthly_price_includes_tax"])
-        self.assertEqual(response.data["vat_rate_percent"], 10)
-        self.assertEqual(response.data["billing_price_policy"], "contract_override")
-        self.assertTrue(response.data["is_contract_price"])
+        self.assertIsNone(response.data["vat_rate_percent"])
+        self.assertEqual(response.data["billing_price_policy"], "single")
+        self.assertFalse(response.data["is_contract_price"])
         self.assertEqual(response.data["billing_price_integrity"], "ok")
         self.assertTrue(response.data["is_billing_price_ready"])
         self.assertFalse(response.data["is_promo"])
         self.assertEqual(response.data["discount_rate"], 0)
 
-    def test_contract_price_drift_is_explicitly_not_billing_ready(self):
-        self.tenant.code = "ymath"
-        self.tenant.save(update_fields=["code"])
+    def test_single_plan_price_drift_is_explicitly_not_billing_ready(self):
         Program.objects.filter(pk=self.program.pk).update(monthly_price=198_000)
         self._authenticate_owner("drift-owner")
 
-        response = self.client.get(
-            "/api/v1/core/subscription/",
-            HTTP_HOST="localhost",
-            HTTP_X_TENANT_CODE="ymath",
-        )
+        response = self.client.get("/api/v1/core/subscription/", **self.headers)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(
             response.data["billing_price_integrity"],
-            "contract_price_mismatch",
+            "single_price_mismatch",
         )
         self.assertFalse(response.data["is_billing_price_ready"])
+
+    def test_legacy_plan_is_transition_compatible(self):
+        Program.objects.filter(pk=self.program.pk).update(plan="pro")
+        self._authenticate_owner("plan-drift-owner")
+
+        response = self.client.get("/api/v1/core/subscription/", **self.headers)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["plan"], "all")
+        self.assertEqual(response.data["monthly_price"], 145_000)
+        self.assertEqual(response.data["billing_price_integrity"], "ok")
+        self.assertTrue(response.data["is_billing_price_ready"])
 
     @override_settings(BILLING_GRACE_PERIOD_DAYS=7)
     def test_grace_contract_exposes_actual_service_access_end(self):

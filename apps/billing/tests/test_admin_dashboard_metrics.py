@@ -16,8 +16,7 @@ class AdminDashboardMetricTests(TestCase):
         program_off = Tenant.objects.create(code="billing-mrr-off", name="Off", is_active=True)
         for tenant in (active, closed, program_off):
             tenant.program.subscription_status = "active"
-            tenant.program.monthly_price = 100_000
-            tenant.program.save(update_fields=["subscription_status", "monthly_price"])
+            tenant.program.save(update_fields=["subscription_status"])
         program_off.program.is_active = False
         program_off.program.save(update_fields=["is_active"])
         user = get_user_model().objects.create_superuser(
@@ -31,6 +30,6 @@ class AdminDashboardMetricTests(TestCase):
         response = AdminDashboardView.as_view()(request)
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["mrr"], 100_000)
+        self.assertEqual(response.data["mrr"], 145_000)
         self.assertEqual(response.data["total_tenants"], 1)
         self.assertEqual(response.data["status_counts"], {"active": 1})

@@ -208,7 +208,7 @@ class TenantCreateView(APIView):
                 program.display_name = name
                 program.brand_key = code
                 program.login_variant = Program.LoginVariant.HAKWONPLUS
-                program.plan = Program.Plan.MAX
+                program.plan = Program.Plan.ALL
                 program.feature_flags = {
                     "student_app_enabled": True,
                     "admin_enabled": True,

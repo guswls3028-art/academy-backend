@@ -253,18 +253,15 @@ class ProductionCanaryTests(TestCase):
         self.assertFalse(check["ok"])
         self.assertEqual(check["severity"], "error")
 
-    def test_fee_management_flag_warns_unless_allowlisted(self):
-        self.program.feature_flags = {"fee_management": True}
+    def test_fee_management_is_available_without_allowlist(self):
+        self.program.feature_flags = {"fee_management": False}
         self.program.save(update_fields=["feature_flags", "updated_at"])
 
         payload = self._call()
 
-        check = next(item for item in payload["checks"] if item["name"] == "fee_management_feature_gate")
-        self.assertFalse(check["ok"])
-        self.assertEqual(check["severity"], "warning")
-
-        allowlisted_payload = self._call("--allow-fee-management-tenant-id", str(self.tenant.id))
-        allowlisted_check = next(
-            item for item in allowlisted_payload["checks"] if item["name"] == "fee_management_feature_gate"
+        check = next(
+            item for item in payload["checks"]
+            if item["name"] == "fee_management_availability"
         )
-        self.assertTrue(allowlisted_check["ok"])
+        self.assertTrue(check["ok"])
+        self.assertTrue(check["data"]["available_to_all_tenants"])

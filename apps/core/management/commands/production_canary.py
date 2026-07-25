@@ -69,7 +69,7 @@ class Command(BaseCommand):
             type=int,
             action="append",
             default=[],
-            help="Allowlisted tenant id for fee_management feature flag. May be repeated.",
+            help="Deprecated compatibility option. Fee management is available to every tenant.",
         )
         parser.add_argument(
             "--allow-idle-messaging-worker",
@@ -532,9 +532,6 @@ class Command(BaseCommand):
         exempt_ids = set(getattr(settings, "BILLING_EXEMPT_TENANT_IDS", set()) or set())
 
         program = Program.objects.filter(tenant=tenant).first()
-        feature_flags = getattr(program, "feature_flags", None) or {}
-        fee_management_enabled = bool(feature_flags.get("fee_management"))
-        fee_management_allowed = tenant.id in allow_fee_management_tenant_ids
         live_program_missing_billing_date = False
         if program and tenant.id not in exempt_ids and program.subscription_status in ("active", "grace"):
             live_program_missing_billing_date = not program.subscription_expires_at or not program.next_billing_at
@@ -564,14 +561,13 @@ class Command(BaseCommand):
                 },
             ),
             CanaryCheck(
-                name="fee_management_feature_gate",
-                severity="warning",
-                ok=(not fee_management_enabled) or fee_management_allowed,
-                detail="Fee management is a pre-enable feature and should remain off unless the tenant is explicitly allowlisted.",
+                name="fee_management_availability",
+                severity="info",
+                ok=True,
+                detail="Fee management is included for every tenant; owner/admin permissions still apply.",
                 data={
-                    "fee_management_enabled": fee_management_enabled,
-                    "allowlisted": fee_management_allowed,
-                    "allowlist": sorted(allow_fee_management_tenant_ids),
+                    "available_to_all_tenants": True,
+                    "legacy_allowlist_ignored": sorted(allow_fee_management_tenant_ids),
                 },
             ),
             CanaryCheck(

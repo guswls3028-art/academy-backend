@@ -24,17 +24,27 @@
 
 현재 상태: **TOSS_AUTO_BILLING_ENABLED=False** (휴면 상태. 배치가 돌아도 실제 결제 안 함.)
 
-계약가 예외: `limglish`, `ymath`는 플랜 정가가 아니라 월 공급가액
-150,000원, 부가세 15,000원, 실제 결제 합계 165,000원으로 청구한다.
-`Program.resolve_monthly_price()`와 billing migration `0041_set_ymath_limglish_contract_price`가 SSOT다.
+모든 운영 테넌트는 단일 `all` 요금제로 월 공급가액 145,000원,
+부가가치세 14,000원, 실제 결제 합계 159,000원으로 청구한다.
+`Program.PLAN_PRICES`, `Program.calculate_monthly_amounts()`와 core migrations
+`0045_unify_subscription_plan`(rolling 호환 schema) 및
+`0046_apply_single_subscription_plan`(data 수렴 + 최종 schema)이 SSOT다.
 `monthly_price`는 하위 호환용 공급가액 필드이며 VAT 포함 금액이 아니다.
 UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
-`monthly_total_amount`, `monthly_price_includes_tax`를 사용한다. 계약가는
-프로모션이 아니므로 `billing_price_policy=contract_override`, `is_promo=false`다.
-계약 유형과 `billing_price_integrity`/`is_billing_price_ready`는 인증된 staff 및
+`monthly_total_amount`, `monthly_price_includes_tax`를 사용한다. 세액은
+고정 계약 금액이므로 백분율로 다시 계산하지 않는다.
+`billing_price_policy=single`, `is_promo=false`다.
+`billing_price_integrity`/`is_billing_price_ready`는 인증된 staff 및
 플랫폼 관리자 응답에만 노출하며, 불일치 상태에서는 새 인보이스 생성을 차단한다.
 `python manage.py audit_billing_fields`도 이 상태를
-`contract_price_mismatch` 수동 조치 항목으로 보고한다(자동 금액 변경 없음).
+`single_plan_mismatch` 또는 `single_price_mismatch` 수동 조치 항목으로 보고한다.
+전환 시 아직 발행되지 않은 `SCHEDULED` 인보이스만 145,000/14,000/159,000원으로
+수렴한다. 이미 발행된 `PENDING`/`FAILED`/`OVERDUE` 인보이스는 당시 계약의
+회계 스냅샷이므로 변경하지 않는다.
+
+단일 요금제는 수납 관리, AI 채점, 매치업, 저장공간 200GB를 포함한 전체 기능을
+제공한다. `feature_flags`는 학원별 운영 모드를 위한 설정일 뿐 결제 등급이나
+기능 잠금으로 사용하지 않는다.
 
 구독 유예기간 SSOT는 `BILLING_GRACE_PERIOD_DAYS`(기본 7일)다. 유예 상태의
 실제 접근 종료일은 `service_access_expires_at`/`grace_expires_at`이며,
