@@ -355,11 +355,15 @@ class NotificationPreviewViewValidationTests(TestCase):
         self.assertEqual(recipient["phone"], "010****6666")
         self.assertNotIn("phone_raw", recipient)
         self.assertNotIn("alimtalk_replacements", recipient)
+        self.assertIn("Msg Preview입니다.", recipient["full_message_body"])
+        self.assertIn("활성학생학생님.", recipient["full_message_body"])
+        self.assertIn("성적 안내 활성학생", recipient["full_message_body"])
 
         token = NotificationPreviewToken.objects.get(token=response.data["preview_token"])
         payload_recipient = token.payload["recipients"][0]
         self.assertEqual(payload_recipient["student_id"], active_student.id)
         self.assertEqual(payload_recipient["phone_raw"], "01055556666")
+        self.assertNotIn("full_message_body", payload_recipient)
 
     def test_manual_student_list_preview_uses_owner_exact_template_for_non_owner_tenant(self):
         owner = Tenant.objects.create(code="msg-owner", name="Owner", is_active=True)

@@ -104,6 +104,19 @@ class SendMessagePreflightViewTests(MessagingOperationsBase):
         self.assertEqual(response.data["recipient"]["invalid_or_deleted"], 1)
         self.assertEqual(response.data["template"]["source"], "unified")
         self.assertEqual(response.data["template"]["solapi_status"], "APPROVED")
+        self.assertEqual(response.data["template"]["template_type"], "attendance")
+        preview_rows = response.data["preview_recipients"]
+        self.assertEqual(
+            [row["student_id"] for row in preview_rows],
+            [ok_student.id, no_phone_student.id],
+        )
+        self.assertFalse(preview_rows[0]["excluded"])
+        self.assertTrue(preview_rows[1]["excluded"])
+        self.assertEqual(preview_rows[1]["exclude_reason"], "전화번호 없음")
+        self.assertIn("Msg Ops입니다.", preview_rows[0]["full_message_body"])
+        self.assertIn("학생001학생님.", preview_rows[0]["full_message_body"])
+        self.assertIn("성적표 안내입니다.", preview_rows[0]["full_message_body"])
+        self.assertNotIn("학원플러스", preview_rows[0]["full_message_body"])
         self.assertTrue(any(item["code"] == "missing_phone" for item in response.data["warnings"]))
 
     def test_preflight_blocks_without_approved_template(self):

@@ -6,6 +6,7 @@ from apps.domains.messaging.alimtalk_content_builders import (
     get_solapi_template_id,
     get_template_type,
     get_unified_for_category,
+    render_alimtalk_preview_text,
     TYPE_ATTENDANCE,
     TYPE_CLINIC_INFO,
     TYPE_NOTICE_PAYMENT,
@@ -138,6 +139,29 @@ class TestRegisteredSolapiVariables(TestCase):
         reps = {item["key"]: item["value"] for item in replacements}
         self.assertEqual(reps["선생님메모"], "내일 클리닉 안내입니다.")
         self.assertNotIn("선생님메모1", reps)
+
+    def test_preview_text_uses_the_exact_provider_replacements(self):
+        replacements = build_manual_replacements(
+            template_type=TYPE_SCORE,
+            content_body="#{학생이름} 성적 안내입니다.",
+            context={
+                "강의명": "아주 긴 수학 심화 강의 이름은 카카오 제한에 맞춰야 합니다",
+                "차시명": "3회차",
+            },
+            tenant_name="예담학원",
+            student_name="김민준",
+            site_url="https://yedam.example.com",
+        )
+
+        preview = render_alimtalk_preview_text(TYPE_SCORE, replacements)
+        replacement_map = {item["key"]: item["value"] for item in replacements}
+
+        self.assertIn("예담학원입니다.", preview)
+        self.assertIn("김민준학생님.", preview)
+        self.assertIn(replacement_map["강의명"], preview)
+        self.assertNotIn("아주 긴 수학 심화 강의 이름은 카카오 제한에 맞춰야 합니다", preview)
+        self.assertIn("김민준 성적 안내입니다.", preview)
+        self.assertTrue(preview.endswith("https://yedam.example.com"))
 
     def test_score_replacements_match_registered_solapi_variables(self):
         replacements = build_manual_replacements(

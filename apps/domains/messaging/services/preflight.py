@@ -9,7 +9,9 @@ from django.utils import timezone
 
 from apps.core.models import WorkerHeartbeatModel
 from apps.domains.messaging.alimtalk_content_builders import (
+    build_manual_replacements,
     get_unified_for_category,
+    render_alimtalk_preview_text,
 )
 from apps.domains.messaging.effective_templates import resolve_effective_template_status
 from apps.domains.messaging.models import AutoSendConfig, MessageTemplate, ScheduledNotification
@@ -50,6 +52,7 @@ class TemplatePlan:
     solapi_status: str = ""
     detail: str = ""
     uses_unified_template: bool = False
+    template_type: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -60,6 +63,7 @@ class TemplatePlan:
             "solapi_status": self.solapi_status,
             "detail": self.detail,
             "uses_unified_template": self.uses_unified_template,
+            "template_type": self.template_type,
         }
 
 
@@ -111,6 +115,7 @@ def _resolve_template_for_manual_send(tenant, data: dict[str, Any]) -> TemplateP
             solapi_status="APPROVED",
             detail="카카오 검수 완료된 시스템 봉투로 발송됩니다.",
             uses_unified_template=True,
+            template_type=unified_type,
         )
 
     if raw_subject:
@@ -135,6 +140,77 @@ def _phone_summary(phones: list[str]) -> dict[str, int]:
         "duplicate_phone": max(0, len(valid) - len(unique)),
         "unique_phone": len(unique),
     }
+
+
+def _build_manual_preview_recipients(
+    tenant,
+    data: dict[str, Any],
+    recipients,
+    template_plan: TemplatePlan,
+) -> list[dict[str, Any]]:
+    """Build safe preview rows from the exact values used for Solapi."""
+    if not template_plan.ok or not template_plan.template_type:
+        return []
+
+    from apps.domains.messaging.services import get_tenant_site_url
+
+    template_id = data.get("template_id")
+    template = (
+        MessageTemplate.objects.filter(tenant=tenant, pk=template_id).first()
+        if template_id
+        else None
+    )
+    body_base = (data.get("raw_body") or "").strip()
+    if not body_base and template:
+        body_base = (template.body or "").strip()
+
+    shared_context = data.get("alimtalk_extra_vars") or {}
+    raw_per_student = data.get("alimtalk_extra_vars_per_student") or {}
+    per_student_context: dict[int, dict[str, Any]] = {}
+    for raw_student_id, raw_context in raw_per_student.items():
+        try:
+            student_id = int(raw_student_id)
+        except (TypeError, ValueError):
+            continue
+        per_student_context[student_id] = raw_context if isinstance(raw_context, dict) else {}
+
+    tenant_name = (tenant.name or "").strip()
+    site_url = get_tenant_site_url(tenant) or ""
+    preview_recipients = []
+    for recipient in recipients:
+        phone = recipient.phone or ""
+        excluded = not phone or len(phone) < 10
+        student_context = dict(per_student_context.get(recipient.student_id, {}))
+        student_body = student_context.pop("_body_subst", None) or body_base
+        merged_context = {**shared_context, **student_context}
+        replacements = build_manual_replacements(
+            template_type=template_plan.template_type,
+            content_body=student_body,
+            context=merged_context,
+            tenant_name=tenant_name,
+            student_name=recipient.student_name,
+            site_url=site_url,
+        )
+        preview_recipients.append(
+            {
+                "student_id": recipient.student_id,
+                "student_name": recipient.student_name,
+                "phone": phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else phone,
+                "excluded": excluded,
+                "exclude_reason": (
+                    "전화번호 없음"
+                    if not phone
+                    else "전화번호 형식 오류"
+                    if excluded
+                    else ""
+                ),
+                "full_message_body": render_alimtalk_preview_text(
+                    template_plan.template_type,
+                    replacements,
+                ),
+            }
+        )
+    return preview_recipients
 
 
 def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
@@ -260,6 +336,12 @@ def build_send_preflight(tenant, data: dict[str, Any]) -> dict[str, Any]:
             "limit": MAX_MANUAL_RECIPIENTS,
         },
         "template": template_plan.as_dict(),
+        "preview_recipients": _build_manual_preview_recipients(
+            tenant,
+            data,
+            recipients,
+            template_plan,
+        ),
         "limits": {
             "hourly_limit": HOURLY_SEND_LIMIT,
             "sent_last_hour": recent_count,

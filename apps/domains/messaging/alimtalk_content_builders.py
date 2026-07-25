@@ -345,6 +345,85 @@ TEMPLATE_TYPE_VARIABLES: dict[str, list[str]] = {
 ITEM_LIST_VAR_MAX_LEN = 23
 
 
+def render_alimtalk_preview_text(
+    template_type: str,
+    replacements: list[dict[str, str]],
+) -> str:
+    """Render the approved envelope as staff will see it in KakaoTalk.
+
+    Values must come from the same replacement list passed to Solapi so the
+    preview cannot drift from tenant, student, truncation, or fallback rules.
+    """
+    values = {
+        str(item.get("key") or ""): str(item.get("value") or "")
+        for item in replacements
+        if item.get("key")
+    }
+
+    def value(key: str) -> str:
+        return values.get(key) or "-"
+
+    if template_type == TYPE_CLINIC_INFO:
+        return (
+            f"{value('학원이름')}입니다.\n\n"
+            f"{value('학생이름')}학생님.\n\n"
+            "클리닉 안내 드립니다.\n"
+            f"장소\n{value('클리닉장소')}\n\n"
+            f"날짜\n{value('클리닉날짜')}\n\n"
+            f"시간\n{value('클리닉시간')}\n\n"
+            f"{value('선생님메모')}\n"
+            f"{value('사이트링크')}"
+        ).strip()
+    if template_type == TYPE_CLINIC_CHANGE:
+        return (
+            f"{value('학원이름')}입니다.\n\n"
+            f"{value('학생이름')}학생님. 클리닉 일정이 변경되었습니다.\n\n"
+            "일정 변경 안내 드립니다.\n"
+            f"기존일정\n{value('클리닉기존일정')}\n\n"
+            f"변동사항\n{value('클리닉변동사항')}\n\n"
+            f"수정자\n{value('클리닉수정자')}\n\n"
+            f"{value('선생님메모')}\n"
+            f"{value('사이트링크')}"
+        ).strip()
+    if template_type == TYPE_SCORE:
+        return (
+            f"{value('학원이름')}입니다.\n\n"
+            f"{value('학생이름')}학생님.\n\n"
+            "성적표 안내 드립니다.\n"
+            f"강의\n{value('강의명')}\n\n"
+            f"차시\n{value('차시명')}\n\n"
+            f"{value('선생님메모')}\n"
+            f"{value('사이트링크')}"
+        ).strip()
+    if template_type == TYPE_ATTENDANCE:
+        return (
+            f"{value('학원이름')}입니다.\n\n"
+            f"{value('학생이름')}학생님.\n\n"
+            "출석 안내 드립니다.\n"
+            f"강의\n{value('강의명')}\n\n"
+            f"차시\n{value('차시명')}\n\n"
+            f"날짜\n{value('강의날짜')}\n\n"
+            f"시간\n{value('강의시간')}\n\n"
+            f"{value('선생님메모')}\n"
+            f"{value('사이트링크')}"
+        ).strip()
+    if template_type == TYPE_NOTICE_WITHDRAWAL:
+        return (
+            f"안녕하세요, {value('학원명')}입니다.\n\n"
+            f"{value('학생이름2')}학생님, 퇴원 처리가 완료되었습니다.\n\n"
+            "그동안 학원을 이용해 주셔서 감사합니다.\n"
+            "재등록을 원하시면 언제든 문의해 주세요."
+        )
+    if template_type == TYPE_NOTICE_PAYMENT:
+        return (
+            f"안녕하세요, {value('학원명')}입니다.\n\n"
+            f"{value('학생이름2')}학생님, 결제가 완료되었습니다.\n\n"
+            "수업·결제 내역은 아래 링크에서 확인하실 수 있습니다.\n"
+            f"{value('사이트링크')}"
+        ).strip()
+    return value("선생님메모")
+
+
 def build_unified_replacements(
     trigger: str,
     content_body: str,

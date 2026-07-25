@@ -93,6 +93,7 @@ def build_attendance_preview(
         get_solapi_template_id as get_unified_tid,
         get_template_type,
         build_manual_replacements,
+        render_alimtalk_preview_text,
     )
     unified_type = get_template_type(trigger)
     unified_tid = get_unified_tid(trigger)
@@ -188,6 +189,11 @@ def build_attendance_preview(
             ) if template_type else [{"key": k, "value": v} for k, v in context.items()]
         else:
             alimtalk_reps = [{"key": k, "value": v} for k, v in context.items()]
+        full_message_body = (
+            render_alimtalk_preview_text(unified_type, alimtalk_reps)
+            if use_unified and unified_type
+            else body
+        )
 
         recipients.append({
             "student_id": student.id,
@@ -196,6 +202,7 @@ def build_attendance_preview(
             "phone_raw": phone,
             "status": att.status,
             "message_body": body,
+            "full_message_body": full_message_body,
             "excluded": excluded,
             "exclude_reason": exclude_reason,
             "alimtalk_replacements": alimtalk_reps,
@@ -254,6 +261,7 @@ def build_student_list_preview(
         get_solapi_template_id as get_unified_tid,
         get_template_type,
         build_manual_replacements,
+        render_alimtalk_preview_text,
     )
     unified_type = get_template_type(trigger)
     unified_tid = get_unified_tid(trigger)
@@ -331,6 +339,11 @@ def build_student_list_preview(
             ) if template_type else [{"key": k, "value": str(v)} for k, v in ctx.items()]
         else:
             alimtalk_reps = [{"key": k, "value": str(v)} for k, v in ctx.items()]
+        full_message_body = (
+            render_alimtalk_preview_text(unified_type, alimtalk_reps)
+            if use_unified and unified_type
+            else body
+        )
 
         recipients.append({
             "student_id": resolved.student_id,
@@ -338,6 +351,7 @@ def build_student_list_preview(
             "phone": phone[:3] + "****" + phone[-4:] if len(phone) >= 7 else phone,
             "phone_raw": phone,
             "message_body": body,
+            "full_message_body": full_message_body,
             "excluded": excluded,
             "exclude_reason": exclude_reason,
             "alimtalk_replacements": alimtalk_reps,
@@ -371,7 +385,15 @@ def create_preview_token(
     expires = timezone.now() + timedelta(seconds=PREVIEW_TOKEN_TTL_SECONDS)
 
     # 발송 가능한 수신자만 payload에 저장
-    sendable = [r for r in preview_data.get("recipients", []) if not r.get("excluded")]
+    sendable = [
+        {
+            key: value
+            for key, value in recipient.items()
+            if key != "full_message_body"
+        }
+        for recipient in preview_data.get("recipients", [])
+        if not recipient.get("excluded")
+    ]
     payload = {
         "recipients": sendable,
         "solapi_template_id": preview_data.get("solapi_template_id", ""),
