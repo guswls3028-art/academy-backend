@@ -137,8 +137,7 @@ class ScoreDraftView(APIView):
                 None,
             )
             if draft is not None and score_edit_payload_is_invalidated(draft.payload):
-                stored_client_id, _ = score_edit_payload_parts(draft.payload)
-                if stored_client_id == client_id and not acknowledge_stale:
+                if not acknowledge_stale:
                     return _stale_response()
             payload = score_edit_lease_payload(client_id=client_id, changes=changes)
             if draft is None:

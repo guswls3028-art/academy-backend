@@ -266,6 +266,9 @@ class ScoreDraftEditLeaseTests(TestCase):
         empty_heartbeat = self._put(self.admin_a, "tab-a")
         self.assertEqual(empty_heartbeat.status_code, 409)
         self.assertEqual(empty_heartbeat.data["code"], "SCORE_EDIT_STALE")
+        duplicated_tab = self._put(self.admin_a, "tab-a-2")
+        self.assertEqual(duplicated_tab.status_code, 409)
+        self.assertEqual(duplicated_tab.data["code"], "SCORE_EDIT_STALE")
         stale_commit = self._commit(
             self.admin_a,
             "tab-a",
