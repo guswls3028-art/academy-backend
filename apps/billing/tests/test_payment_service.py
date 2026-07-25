@@ -33,8 +33,6 @@ class PaymentServiceTestBase(TestCase):
         self.program = Program.objects.get(tenant=self.tenant)
         self.program.subscription_status = "active"
         self.program.subscription_expires_at = date.today() + timedelta(days=5)
-        self.program.plan = "pro"
-        self.program.monthly_price = 198_000
         self.program.billing_mode = "AUTO_CARD"
         self.program.save()
 

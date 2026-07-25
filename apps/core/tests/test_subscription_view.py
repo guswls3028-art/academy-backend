@@ -62,6 +62,22 @@ class SubscriptionViewAuthorizationTests(APITestCase):
 
         self.assertIn(response.status_code, (401, 403))
 
+    def test_anonymous_program_bootstrap_excludes_billing_contract(self):
+        response = self.client.get("/api/v1/core/program/", **self.headers)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["tenantCode"], self.tenant.code)
+        self.assertIn("display_name", response.data)
+        self.assertIn("feature_flags", response.data)
+        for private_field in (
+            "plan",
+            "monthly_price",
+            "subscription_status",
+            "subscription_started_at",
+            "subscription_expires_at",
+        ):
+            self.assertNotIn(private_field, response.data)
+
     def test_staff_subscription_keeps_billing_operations_fields(self):
         self._authenticate_owner()
 
@@ -74,8 +90,6 @@ class SubscriptionViewAuthorizationTests(APITestCase):
         self.assertTrue(response.data["cancel_at_period_end"])
 
     def test_single_plan_exposes_exact_supply_tax_and_total(self):
-        self.program.monthly_price = 198_000
-        self.program.save(update_fields=["monthly_price"])
         self._authenticate_owner("single-plan-owner")
 
         response = self.client.get("/api/v1/core/subscription/", **self.headers)

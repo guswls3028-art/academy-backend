@@ -73,7 +73,7 @@ class AugustPriceGuaranteeTests(TestCase):
                 },
             )
 
-    def test_non_august_signup_tracks_future_standard_price(self):
+    def test_existing_non_august_price_changes_only_after_explicit_migration(self):
         self._set_joined_at(datetime(2026, 9, 1, tzinfo=dt_timezone.utc))
 
         with patch.dict(
@@ -81,11 +81,23 @@ class AugustPriceGuaranteeTests(TestCase):
             {Program.Plan.ALL: 198_000},
             clear=True,
         ):
-            self.program.save(update_fields=["monthly_price"])
+            self.program.feature_flags = {"student_app_enabled": True}
+            self.program.save(update_fields=["feature_flags"])
             self.program.refresh_from_db()
 
-            self.assertEqual(self.program.monthly_price, 198_000)
+            self.assertEqual(self.program.monthly_price, 145_000)
             self.assertFalse(self.program.has_lifetime_price_guarantee)
+            self.assertEqual(
+                self.program.billing_price_integrity,
+                "single_price_mismatch",
+            )
+            with self.assertRaises(invoice_service.BillingPriceIntegrityError):
+                invoice_service.resolve_monthly_amounts(self.program)
+
+            Program.objects.filter(pk=self.program.pk).update(monthly_price=198_000)
+            self.program.refresh_from_db()
+
+            self.assertEqual(self.program.billing_price_integrity, "ok")
             self.assertEqual(
                 invoice_service.resolve_monthly_amounts(self.program),
                 {
@@ -94,3 +106,22 @@ class AugustPriceGuaranteeTests(TestCase):
                     "total_amount": 217_800,
                 },
             )
+
+    @patch(
+        "apps.core.models.program.timezone.localdate",
+        return_value=date(2026, 9, 1),
+    )
+    def test_new_non_august_signup_starts_at_future_standard_price(self, _localdate):
+        with patch.dict(
+            Program.PLAN_PRICES,
+            {Program.Plan.ALL: 198_000},
+            clear=True,
+        ):
+            tenant = Tenant.objects.create(
+                name="Future Price Academy",
+                code="future-price-academy",
+                is_active=True,
+            )
+
+        program = Program.objects.get(tenant=tenant)
+        self.assertEqual(program.monthly_price, 198_000)

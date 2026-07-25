@@ -186,13 +186,18 @@ class Program(TimestampModel):
         ]
 
     def save(self, *args, **kwargs):
-        # 단일 플랜과 가입 코호트별 계약 가격을 항상 정규화한다.
+        # 신규 가입가는 생성 시 확정하고, 8월 평생 보장가만 이후 저장에서도
+        # 강제한다. 기존 비보장 계약가는 명시적 rolling migration 전까지
+        # 보존해 비가격 설정 저장이 가격 변경으로 번지지 않게 한다.
         normalized_fields: list[str] = []
         if self.plan != self.Plan.ALL:
             self.plan = self.Plan.ALL
             normalized_fields.append("plan")
+        should_normalize_price = (
+            self._state.adding or self.has_lifetime_price_guarantee
+        )
         canonical_price = self.expected_monthly_price
-        if self.monthly_price != canonical_price:
+        if should_normalize_price and self.monthly_price != canonical_price:
             self.monthly_price = canonical_price
             normalized_fields.append("monthly_price")
         update_fields = kwargs.get("update_fields")

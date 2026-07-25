@@ -42,10 +42,16 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 `price_guarantee_code=august_2026_lifetime`을 반환한다. 그 외 학원은
 `billing_price_policy=single`이다. 향후 기본가 인상은 8월 보장 코호트를
 제외한 행만 명시적 rolling migration으로 수렴해야 하며, 임의 일괄 갱신은
-금지한다. 인보이스와 MRR은 `monthly_price` 스냅샷을 기준으로 계산한다.
+금지한다. 비가격 `Program` 설정 저장도 기존 비보장 계약가를 자동 변경하지
+않는다. 새 기본가와 기존 비보장 계약가가 다른 전환 구간에는
+`billing_price_integrity`가 청구를 차단하며, 검증된 rolling migration이 해당
+행을 새 기본가로 수렴시킨 뒤에만 청구를 재개한다. 인보이스와 MRR은
+`monthly_price` 스냅샷을 기준으로 계산한다.
 
 `billing_price_integrity`/`is_billing_price_ready`는 인증된 staff 및
 플랫폼 관리자 응답에만 노출하며, 불일치 상태에서는 새 인보이스 생성을 차단한다.
+로그인 전 `/api/v1/core/program/` bootstrap은 브랜딩과 기능 설정만 반환하고
+계약가, 구독 상태, 구독 기간을 노출하지 않는다.
 `python manage.py audit_billing_fields`도 이 상태를
 `single_plan_mismatch` 또는 `single_price_mismatch` 수동 조치 항목으로 보고한다.
 전환 시 아직 발행되지 않은 `SCHEDULED` 인보이스만 145,000/14,000/159,000원으로

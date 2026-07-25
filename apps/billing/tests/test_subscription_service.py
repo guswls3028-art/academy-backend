@@ -340,7 +340,7 @@ class TestExtend(SubscriptionServiceTestBase):
 
 class TestSinglePlanInvariant(SubscriptionServiceTestBase):
 
-    def test_program_save_restores_single_plan_and_price(self):
+    def test_program_save_restores_plan_but_preserves_existing_contract_price(self):
         tenant = Tenant.objects.create(
             name="Ymath", code="ymath", is_active=True
         )
@@ -352,6 +352,5 @@ class TestSinglePlanInvariant(SubscriptionServiceTestBase):
         program.refresh_from_db()
 
         self.assertEqual(program.plan, Program.Plan.ALL)
-        self.assertEqual(program.monthly_price, 145_000)
-        self.assertEqual(program.monthly_amounts["tax_amount"], 14_000)
-        self.assertEqual(program.monthly_amounts["total_amount"], 159_000)
+        self.assertEqual(program.monthly_price, 198_000)
+        self.assertEqual(program.billing_price_integrity, "single_price_mismatch")
