@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.6.md](v1.11.6.md) | **CURRENT** | 2026-07-26 KST | August 2026 signup cohort lifetime guarantee for the unrestricted KRW 159,000 monthly plan |
+| [v1.11.7.md](v1.11.7.md) | **CURRENT** | 2026-07-26 KST | First-class promotion consent evidence, layout-stable real-product screenshots, and full production closure |
+| [v1.11.6.md](v1.11.6.md) | production-deployed / v1.11.7로 승계 | 2026-07-26 KST | August 2026 signup cohort lifetime guarantee for the unrestricted KRW 159,000 monthly plan |
 | [v1.11.5.md](v1.11.5.md) | production-deployed / v1.11.6로 승계 | 2026-07-26 KST | Privacy-safe tenant-attributed incident SMS to the single controlled operator number, with provider delivery proof |
 | [v1.11.4.md](v1.11.4.md) | production-deployed / v1.11.5로 승계 | 2026-07-26 KST | Safe score autosave, Excel-style shortcuts, explicit save-and-lock, and concurrent-editor fencing |
 | [v1.11.3.md](v1.11.3.md) | production-deployed / v1.11.4로 승계 | 2026-07-26 KST | Teacher-first public promotion, real matchup-to-PPT proof, explicit lead consent, and production SEO |
