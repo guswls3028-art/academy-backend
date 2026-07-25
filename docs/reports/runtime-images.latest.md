@@ -1,6 +1,6 @@
 # V1 Runtime Images — API 인스턴스 실제 실행 이미지
 
-**Generated:** 2026-07-23T03:54:19.2417298+09:00
+**Generated:** 2026-07-25T22:25:41.6201941+09:00
 **SSOT:** docs/ssot/params.yaml
 **Container:** academy-api
 
