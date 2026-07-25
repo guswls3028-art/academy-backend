@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.2.md](v1.11.2.md) | **CURRENT** | 2026-07-26 KST | One unrestricted plan at KRW 145,000 supply, KRW 14,000 VAT, and KRW 159,000 total |
+| [v1.11.3.md](v1.11.3.md) | **CURRENT** | 2026-07-26 KST | Teacher-first public promotion, real matchup-to-PPT proof, explicit lead consent, and production SEO |
+| [v1.11.2.md](v1.11.2.md) | production-deployed / v1.11.3로 승계 | 2026-07-26 KST | One unrestricted plan at KRW 145,000 supply, KRW 14,000 VAT, and KRW 159,000 total |
 | [v1.11.1.md](v1.11.1.md) | production-deployed / v1.11.2로 승계 | 2026-07-26 KST | Student-specific Kakao Alimtalk final preview, canonical provider-payload parity, and controlled production-send proof |
 | [v1.11.0.md](v1.11.0.md) | production-deployed / v1.11.1로 승계 | 2026-07-26 KST | Privacy-safe user-incident monitoring, fixed-recipient operator SMS, and independent API impact alarms |
 | [v1.10.0.md](v1.10.0.md) | production-deployed / v1.11.0로 승계 | 2026-07-25 KST | 30/90-day capacity accounting, Academy cost allocation, and measured Messaging right-sizing |
