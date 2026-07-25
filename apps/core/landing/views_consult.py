@@ -31,6 +31,8 @@ PERSONAL_MOBILE_PREFIX = ("010", "011", "016", "017", "018", "019")
 NAME_MAX = 50
 INTEREST_MAX = 80
 MESSAGE_MAX = 2000
+PROMO_CONSENT_SOURCES = frozenset({"promo-demo", "promo-contact"})
+PROMO_PRIVACY_POLICY_VERSION = "1.2"
 
 
 def validate_consult(data: dict) -> list[str]:
@@ -39,6 +41,7 @@ def validate_consult(data: dict) -> list[str]:
     phone = str(data.get("phone") or "").strip()
     interest = str(data.get("interest") or "").strip()
     message = str(data.get("message") or "").strip()
+    source = str(data.get("source") or "landing").strip()[:40]
     if not name or len(name) > NAME_MAX:
         errs.append(f"이름은 1~{NAME_MAX}자여야 합니다.")
     digits = _re.sub(r"[^\d]", "", phone)
@@ -56,6 +59,11 @@ def validate_consult(data: dict) -> list[str]:
         errs.append(f"관심 분야는 {INTEREST_MAX}자 이내여야 합니다.")
     if message and len(message) > MESSAGE_MAX:
         errs.append(f"메시지는 {MESSAGE_MAX}자 이내여야 합니다.")
+    if source in PROMO_CONSENT_SOURCES and (
+        data.get("privacy_agreed") is not True
+        or str(data.get("privacy_policy_version") or "").strip() != PROMO_PRIVACY_POLICY_VERSION
+    ):
+        errs.append("개인정보 수집·이용 동의 정보를 다시 확인해주세요.")
     return errs
 
 
@@ -112,13 +120,20 @@ class LandingConsultPublicView(APIView):
             return Response({"detail": errs}, status=400)
 
         from apps.core.models import LandingConsultRequest
+        from django.utils import timezone
+
+        source = str(request.data.get("source") or "landing").strip()[:40]
+        has_promo_consent = source in PROMO_CONSENT_SOURCES
         obj = LandingConsultRequest.objects.create(
             tenant=request.tenant,
             name=str(request.data.get("name") or "").strip()[:NAME_MAX],
             phone=str(request.data.get("phone") or "").strip()[:20],
             interest=str(request.data.get("interest") or "").strip()[:INTEREST_MAX],
             message=str(request.data.get("message") or "").strip()[:MESSAGE_MAX],
-            source=str(request.data.get("source") or "landing").strip()[:40],
+            source=source,
+            privacy_agreed=has_promo_consent,
+            privacy_policy_version=PROMO_PRIVACY_POLICY_VERSION if has_promo_consent else "",
+            privacy_agreed_at=timezone.now() if has_promo_consent else None,
         )
         logger.info("LandingConsultRequest created tenant=%s id=%s ip=%s", request.tenant.id, obj.id, client_ip(request))
         return Response({"id": obj.id, "ok": True}, status=201)
@@ -144,6 +159,9 @@ class LandingConsultAdminListView(APIView):
             "interest": r.interest,
             "message": r.message,
             "source": r.source,
+            "privacy_agreed": r.privacy_agreed,
+            "privacy_policy_version": r.privacy_policy_version,
+            "privacy_agreed_at": r.privacy_agreed_at.isoformat() if r.privacy_agreed_at else None,
             "read_at": r.read_at.isoformat() if r.read_at else None,
             "admin_memo": r.admin_memo,
             "created_at": r.created_at.isoformat(),
