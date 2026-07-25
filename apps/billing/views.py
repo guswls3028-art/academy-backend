@@ -73,6 +73,9 @@ class AdminTenantSubscriptionListView(APIView):
                 "vat_rate_percent": p.BILLING_VAT_RATE_PERCENT,
                 "billing_price_policy": p.billing_price_policy,
                 "is_contract_price": p.is_contract_price,
+                "has_lifetime_price_guarantee": p.has_lifetime_price_guarantee,
+                "price_guarantee_code": p.price_guarantee_code,
+                "price_guarantee_label": p.price_guarantee_label,
                 "billing_price_integrity": p.billing_price_integrity,
                 "is_billing_price_ready": p.is_billing_price_ready,
                 "subscription_status": p.subscription_status,
@@ -216,14 +219,15 @@ class AdminDashboardView(APIView):
         )
 
         # MRR (active 테넌트 기준)
-        active_programs = programs.filter(
-            subscription_status="active",
-            plan=Program.Plan.ALL,
-            monthly_price=Program.PLAN_PRICES[Program.Plan.ALL],
-        )
-        active_count = active_programs.count()
-        mrr = active_count * Program.PLAN_PRICES[Program.Plan.ALL]
-        mrr_tax_amount = active_count * Program.BILLING_MONTHLY_TAX_AMOUNT
+        active_programs = [
+            program
+            for program in programs.filter(
+                subscription_status="active",
+                plan=Program.Plan.ALL,
+            ).only("plan", "monthly_price", "created_at")
+            if program.is_billing_price_ready
+        ]
+        mrr_amounts = Program.aggregate_monthly_amounts(active_programs)
 
         # 상태별 테넌트 수
         status_counts = dict(
@@ -248,10 +252,10 @@ class AdminDashboardView(APIView):
         )
 
         return Response({
-            "mrr": mrr,
-            "mrr_supply_amount": mrr,
-            "mrr_tax_amount": mrr_tax_amount,
-            "mrr_total_amount": mrr + mrr_tax_amount,
+            "mrr": mrr_amounts["supply_amount"],
+            "mrr_supply_amount": mrr_amounts["supply_amount"],
+            "mrr_tax_amount": mrr_amounts["tax_amount"],
+            "mrr_total_amount": mrr_amounts["total_amount"],
             "mrr_includes_tax": False,
             "vat_rate_percent": Program.BILLING_VAT_RATE_PERCENT,
             "status_counts": status_counts,

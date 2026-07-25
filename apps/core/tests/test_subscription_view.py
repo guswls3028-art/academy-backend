@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone as dt_timezone
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
@@ -19,6 +19,10 @@ class SubscriptionViewAuthorizationTests(APITestCase):
             is_active=True,
         )
         self.program = Program.objects.get(tenant=self.tenant)
+        Program.objects.filter(pk=self.program.pk).update(
+            created_at=datetime(2026, 7, 1, tzinfo=dt_timezone.utc)
+        )
+        self.program.refresh_from_db()
         self.program.billing_email = "billing@example.com"
         self.program.billing_mode = "AUTO_CARD"
         self.program.next_billing_at = date(2026, 7, 1)
@@ -86,10 +90,38 @@ class SubscriptionViewAuthorizationTests(APITestCase):
         self.assertIsNone(response.data["vat_rate_percent"])
         self.assertEqual(response.data["billing_price_policy"], "single")
         self.assertFalse(response.data["is_contract_price"])
+        self.assertFalse(response.data["has_lifetime_price_guarantee"])
+        self.assertIsNone(response.data["price_guarantee_code"])
+        self.assertIsNone(response.data["price_guarantee_label"])
         self.assertEqual(response.data["billing_price_integrity"], "ok")
         self.assertTrue(response.data["is_billing_price_ready"])
         self.assertFalse(response.data["is_promo"])
         self.assertEqual(response.data["discount_rate"], 0)
+
+    def test_august_signup_exposes_lifetime_price_guarantee(self):
+        Program.objects.filter(pk=self.program.pk).update(
+            created_at=datetime(2026, 8, 15, tzinfo=dt_timezone.utc),
+            monthly_price=145_000,
+        )
+        self.program.refresh_from_db()
+        self._authenticate_owner("august-price-owner")
+
+        response = self.client.get("/api/v1/core/subscription/", **self.headers)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["billing_price_policy"], "promotion")
+        self.assertTrue(response.data["is_contract_price"])
+        self.assertTrue(response.data["has_lifetime_price_guarantee"])
+        self.assertEqual(
+            response.data["price_guarantee_code"],
+            "august_2026_lifetime",
+        )
+        self.assertEqual(
+            response.data["price_guarantee_label"],
+            "2026년 8월 가입 평생 가격 보장",
+        )
+        self.assertTrue(response.data["is_promo"])
+        self.assertEqual(response.data["monthly_total_amount"], 159_000)
 
     def test_single_plan_price_drift_is_explicitly_not_billing_ready(self):
         Program.objects.filter(pk=self.program.pk).update(monthly_price=198_000)

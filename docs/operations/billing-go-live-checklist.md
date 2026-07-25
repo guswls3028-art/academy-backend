@@ -24,16 +24,26 @@
 
 현재 상태: **TOSS_AUTO_BILLING_ENABLED=False** (휴면 상태. 배치가 돌아도 실제 결제 안 함.)
 
-모든 운영 테넌트는 단일 `all` 요금제로 월 공급가액 145,000원,
-부가가치세 14,000원, 실제 결제 합계 159,000원으로 청구한다.
+모든 운영 테넌트는 단일 `all` 요금제로 전체 기능을 사용한다. 현재 가입가는
+월 공급가액 145,000원, 부가가치세 14,000원, 실제 결제 합계 159,000원이다.
 `Program.PLAN_PRICES`, `Program.calculate_monthly_amounts()`와 core migrations
 `0045_unify_subscription_plan`(rolling 호환 schema) 및
 `0046_apply_single_subscription_plan`(data 수렴 + 최종 schema)이 SSOT다.
-`monthly_price`는 하위 호환용 공급가액 필드이며 VAT 포함 금액이 아니다.
+`monthly_price`는 학원별 월 공급가 계약 스냅샷이며 VAT 포함 금액이 아니다.
 UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 `monthly_total_amount`, `monthly_price_includes_tax`를 사용한다. 세액은
 고정 계약 금액이므로 백분율로 다시 계산하지 않는다.
-`billing_price_policy=single`, `is_promo=false`다.
+
+2026-08-01부터 2026-08-31까지 KST 기준으로 생성된 `Program`은
+`Program.created_at`을 가입 시점 SSOT로 삼아 평생 가격 보장 코호트로 판정한다.
+해당 학원은 향후 기본 가입가가 인상되어도 공급가 145,000원, 부가가치세
+14,000원, 합계 159,000원을 유지한다. API는 이 코호트에
+`billing_price_policy=promotion`, `has_lifetime_price_guarantee=true`,
+`price_guarantee_code=august_2026_lifetime`을 반환한다. 그 외 학원은
+`billing_price_policy=single`이다. 향후 기본가 인상은 8월 보장 코호트를
+제외한 행만 명시적 rolling migration으로 수렴해야 하며, 임의 일괄 갱신은
+금지한다. 인보이스와 MRR은 `monthly_price` 스냅샷을 기준으로 계산한다.
+
 `billing_price_integrity`/`is_billing_price_ready`는 인증된 staff 및
 플랫폼 관리자 응답에만 노출하며, 불일치 상태에서는 새 인보이스 생성을 차단한다.
 `python manage.py audit_billing_fields`도 이 상태를

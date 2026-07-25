@@ -99,7 +99,7 @@ def resolve_monthly_amounts(program: "Program") -> dict[str, int]:
             "Single-plan price mismatch: "
             f"tenant={program.tenant.code} plan={program.plan} "
             f"stored={program.monthly_price} "
-            f"expected={program.PLAN_PRICES[program.Plan.ALL]}"
+            f"expected={program.expected_monthly_price}"
         )
     return program.monthly_amounts
 

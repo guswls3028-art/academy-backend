@@ -1,7 +1,8 @@
 # PATH: apps/core/models/program.py
 from __future__ import annotations
 
-from datetime import timedelta
+from collections.abc import Iterable
+from datetime import date, timedelta
 
 from django.conf import settings
 from django.db import models
@@ -36,6 +37,13 @@ class Program(TimestampModel):
     BILLING_MONTHLY_TOTAL_AMOUNT = 159_000
     BILLING_VAT_RATE_PERCENT = None
     LEGACY_VAT_RATE_PERCENT = 10
+    AUGUST_2026_PROMOTION_START = date(2026, 8, 1)
+    AUGUST_2026_PROMOTION_END = date(2026, 8, 31)
+    AUGUST_2026_PROMOTION_SUPPLY_AMOUNT = 145_000
+    AUGUST_2026_PROMOTION_TAX_AMOUNT = 14_000
+    AUGUST_2026_PROMOTION_TOTAL_AMOUNT = 159_000
+    AUGUST_2026_PRICE_GUARANTEE_CODE = "august_2026_lifetime"
+    AUGUST_2026_PRICE_GUARANTEE_LABEL = "2026년 8월 가입 평생 가격 보장"
 
     tenant = models.OneToOneField(
         Tenant,
@@ -178,12 +186,12 @@ class Program(TimestampModel):
         ]
 
     def save(self, *args, **kwargs):
-        # 모든 신규/수정 Program을 단일 요금 계약으로 정규화한다.
+        # 단일 플랜과 가입 코호트별 계약 가격을 항상 정규화한다.
         normalized_fields: list[str] = []
         if self.plan != self.Plan.ALL:
             self.plan = self.Plan.ALL
             normalized_fields.append("plan")
-        canonical_price = self.PLAN_PRICES[self.Plan.ALL]
+        canonical_price = self.expected_monthly_price
         if self.monthly_price != canonical_price:
             self.monthly_price = canonical_price
             normalized_fields.append("monthly_price")
@@ -195,8 +203,52 @@ class Program(TimestampModel):
         super().save(*args, **kwargs)
 
     @classmethod
-    def resolve_monthly_price(cls, *, plan: str, tenant_code: str | None = None) -> int:
+    def resolve_monthly_price(
+        cls,
+        *,
+        plan: str,
+        tenant_code: str | None = None,
+        joined_on: date | None = None,
+    ) -> int:
+        if joined_on is not None and cls.is_august_2026_promotion_date(joined_on):
+            return cls.AUGUST_2026_PROMOTION_SUPPLY_AMOUNT
         return cls.PLAN_PRICES[cls.Plan.ALL]
+
+    @classmethod
+    def is_august_2026_promotion_date(cls, joined_on: date) -> bool:
+        return cls.AUGUST_2026_PROMOTION_START <= joined_on <= cls.AUGUST_2026_PROMOTION_END
+
+    @property
+    def joined_on(self) -> date:
+        if self.created_at is None:
+            return timezone.localdate()
+        if timezone.is_naive(self.created_at):
+            return self.created_at.date()
+        return timezone.localtime(self.created_at).date()
+
+    @property
+    def has_lifetime_price_guarantee(self) -> bool:
+        return self.is_august_2026_promotion_date(self.joined_on)
+
+    @property
+    def price_guarantee_code(self) -> str | None:
+        if self.has_lifetime_price_guarantee:
+            return self.AUGUST_2026_PRICE_GUARANTEE_CODE
+        return None
+
+    @property
+    def price_guarantee_label(self) -> str | None:
+        if self.has_lifetime_price_guarantee:
+            return self.AUGUST_2026_PRICE_GUARANTEE_LABEL
+        return None
+
+    @property
+    def expected_monthly_price(self) -> int:
+        return self.resolve_monthly_price(
+            plan=self.Plan.ALL,
+            tenant_code=None,
+            joined_on=self.joined_on,
+        )
 
     @classmethod
     def calculate_monthly_amounts(cls, supply_amount: int) -> dict[str, int]:
@@ -210,11 +262,11 @@ class Program(TimestampModel):
             raise TypeError("supply_amount must be an integer")
         if supply_amount <= 0:
             raise ValueError("supply_amount must be greater than zero")
-        if supply_amount == cls.PLAN_PRICES[cls.Plan.ALL]:
+        if supply_amount == cls.AUGUST_2026_PROMOTION_SUPPLY_AMOUNT:
             return {
                 "supply_amount": supply_amount,
-                "tax_amount": cls.BILLING_MONTHLY_TAX_AMOUNT,
-                "total_amount": cls.BILLING_MONTHLY_TOTAL_AMOUNT,
+                "tax_amount": cls.AUGUST_2026_PROMOTION_TAX_AMOUNT,
+                "total_amount": cls.AUGUST_2026_PROMOTION_TOTAL_AMOUNT,
             }
         tax_amount = supply_amount * cls.LEGACY_VAT_RATE_PERCENT // 100
         return {
@@ -223,11 +275,25 @@ class Program(TimestampModel):
             "total_amount": supply_amount + tax_amount,
         }
 
+    @classmethod
+    def aggregate_monthly_amounts(
+        cls,
+        programs: Iterable["Program"],
+    ) -> dict[str, int]:
+        totals = {
+            "supply_amount": 0,
+            "tax_amount": 0,
+            "total_amount": 0,
+        }
+        for program in programs:
+            amounts = program.monthly_amounts
+            for key in totals:
+                totals[key] += amounts[key]
+        return totals
+
     @property
     def monthly_amounts(self) -> dict[str, int]:
-        return self.calculate_monthly_amounts(
-            self.PLAN_PRICES[self.Plan.ALL]
-        )
+        return self.calculate_monthly_amounts(self.monthly_price)
 
     @property
     def monthly_tax_amount(self) -> int:
@@ -247,13 +313,13 @@ class Program(TimestampModel):
 
     @property
     def is_contract_price(self) -> bool:
-        return False
+        return self.has_lifetime_price_guarantee
 
     @property
     def billing_price_integrity(self) -> str:
         if self.plan != self.Plan.ALL:
             return "single_plan_mismatch"
-        if self.monthly_price != self.PLAN_PRICES[self.Plan.ALL]:
+        if self.monthly_price != self.expected_monthly_price:
             return "single_price_mismatch"
         return "ok"
 
@@ -263,6 +329,8 @@ class Program(TimestampModel):
 
     @property
     def billing_price_policy(self) -> str:
+        if self.has_lifetime_price_guarantee:
+            return "promotion"
         return "single"
 
     @property
@@ -275,7 +343,7 @@ class Program(TimestampModel):
 
     @property
     def billing_monthly_price(self) -> int:
-        return self.PLAN_PRICES[self.Plan.ALL]
+        return self.monthly_price
 
     @property
     def monthly_discount_rate(self) -> int:

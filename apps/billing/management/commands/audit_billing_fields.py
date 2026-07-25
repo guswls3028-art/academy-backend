@@ -192,7 +192,8 @@ class Command(BaseCommand):
                         f"{prefix} {p.billing_price_integrity}: "
                         f"plan={p.plan} price={p.monthly_price:,} "
                         f"expected_plan={Program.Plan.ALL} "
-                        f"expected_price={Program.PLAN_PRICES[Program.Plan.ALL]:,} "
+                        f"expected_price={p.expected_monthly_price:,} "
+                        f"price_policy={p.billing_price_policy} "
                         "(new invoice creation is blocked)"
                     ),
                     "fix_value": None,

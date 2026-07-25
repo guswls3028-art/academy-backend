@@ -19,9 +19,11 @@ B. 원장 API (6개) — TenantResolvedAndOwner/Staff
    12. POST /api/v1/billing/cancel/revoke/
 """
 
-from datetime import date
+from datetime import date, datetime, timezone as dt_timezone
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.test import override_settings
 from rest_framework.test import APITestCase
 
 from apps.billing.models import Invoice, PaymentTransaction
@@ -158,6 +160,8 @@ class TestAdminTenantSubscriptionList(BillingApiTestBase):
             "monthly_price", "monthly_supply_amount", "monthly_tax_amount",
             "monthly_total_amount", "monthly_price_includes_tax", "vat_rate_percent",
             "billing_price_policy", "is_contract_price", "billing_price_integrity",
+            "has_lifetime_price_guarantee", "price_guarantee_code",
+            "price_guarantee_label",
             "is_billing_price_ready", "subscription_status",
             "subscription_expires_at", "service_access_expires_at",
             "grace_period_days", "grace_expires_at",
@@ -329,6 +333,33 @@ class TestAdminDashboard(BillingApiTestBase):
         self.client.force_authenticate(user=self.owner_a)
         resp = self.client.get("/api/v1/billing/admin/dashboard/", **self.headers_a)
         self.assertEqual(resp.status_code, 403)
+
+    @override_settings(BILLING_EXEMPT_TENANT_IDS=set())
+    def test_dashboard_sums_standard_and_august_guaranteed_prices(self):
+        Program.objects.filter(pk=self.program_a.pk).update(
+            created_at=datetime(2026, 9, 1, tzinfo=dt_timezone.utc),
+            monthly_price=198_000,
+        )
+        Program.objects.filter(pk=self.program_b.pk).update(
+            created_at=datetime(2026, 8, 15, tzinfo=dt_timezone.utc),
+            monthly_price=145_000,
+        )
+        self.client.force_authenticate(user=self.superuser)
+
+        with patch.dict(
+            Program.PLAN_PRICES,
+            {Program.Plan.ALL: 198_000},
+            clear=True,
+        ):
+            resp = self.client.get(
+                "/api/v1/billing/admin/dashboard/",
+                **self.headers_a,
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.data["mrr_supply_amount"], 343_000)
+        self.assertEqual(resp.data["mrr_tax_amount"], 33_800)
+        self.assertEqual(resp.data["mrr_total_amount"], 376_800)
 
 
 # ══════════════════════════════════════════════

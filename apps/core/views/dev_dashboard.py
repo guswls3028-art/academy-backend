@@ -56,14 +56,15 @@ class DevDashboardSummaryView(APIView):
             tenant__is_active=True,
             is_active=True,
         )
-        active_programs = program_qs.filter(
-            subscription_status="active",
-            plan=Program.Plan.ALL,
-            monthly_price=Program.PLAN_PRICES[Program.Plan.ALL],
-        )
-        active_count = active_programs.count()
-        mrr = active_count * Program.PLAN_PRICES[Program.Plan.ALL]
-        mrr_tax_amount = active_count * Program.BILLING_MONTHLY_TAX_AMOUNT
+        active_programs = [
+            program
+            for program in program_qs.filter(
+                subscription_status="active",
+                plan=Program.Plan.ALL,
+            ).only("plan", "monthly_price", "created_at")
+            if program.is_billing_price_ready
+        ]
+        mrr_amounts = Program.aggregate_monthly_amounts(active_programs)
         expiring_7d = program_qs.filter(
             subscription_status="active",
             subscription_expires_at__lte=today + timedelta(days=7),
@@ -150,10 +151,10 @@ class DevDashboardSummaryView(APIView):
                 "signup_series_30d": series,
             },
             "billing": {
-                "mrr": mrr,
-                "mrr_supply_amount": mrr,
-                "mrr_tax_amount": mrr_tax_amount,
-                "mrr_total_amount": mrr + mrr_tax_amount,
+                "mrr": mrr_amounts["supply_amount"],
+                "mrr_supply_amount": mrr_amounts["supply_amount"],
+                "mrr_tax_amount": mrr_amounts["tax_amount"],
+                "mrr_total_amount": mrr_amounts["total_amount"],
                 "mrr_includes_tax": False,
                 "vat_rate_percent": Program.BILLING_VAT_RATE_PERCENT,
                 "expiring_7d": expiring_7d,
