@@ -3,9 +3,18 @@
 from __future__ import annotations
 
 import io
+import uuid
 from typing import Any
 
 from django.utils import timezone
+
+
+def matchup_generated_snapshot_key(*, tenant_id: int, report_id: int) -> str:
+    """Return a collision-safe immutable key for a generated report snapshot."""
+    return (
+        f"matchup-showcase-snapshots/tenant_{tenant_id}/"
+        f"hit_report_{report_id}/{uuid.uuid4().hex}.pdf"
+    )
 
 
 def _snapshot_meta_from_report(report: Any, *, snapshot_at) -> dict[str, Any]:
@@ -62,15 +71,30 @@ def build_matchup_snapshot_for_hit_report(tenant, hit_report_id: int) -> tuple[s
     pdf_bytes = generate_curated_hit_report_pdf(report)
 
     now = timezone.now()
-    key = (
-        f"matchup-showcase-snapshots/tenant_{tenant.id}/"
-        f"hit_report_{report.id}/{int(now.timestamp())}.pdf"
+    key = matchup_generated_snapshot_key(
+        tenant_id=tenant.id,
+        report_id=report.id,
     )
-    upload_fileobj_to_r2_storage(
-        fileobj=io.BytesIO(pdf_bytes),
-        key=key,
-        content_type="application/pdf",
+    from apps.support.landing_public.matchup_preview import (
+        delete_matchup_preview_assets,
+        get_or_create_matchup_preview,
     )
+
+    try:
+        upload_fileobj_to_r2_storage(
+            fileobj=io.BytesIO(pdf_bytes),
+            key=key,
+            content_type="application/pdf",
+        )
+        get_or_create_matchup_preview(
+            pdf_key=key,
+            load_pdf_bytes=lambda: pdf_bytes,
+            first_body_page=True,
+            require_cache_write=True,
+        )
+    except Exception:
+        delete_matchup_preview_assets(pdf_key=key)
+        raise
     return key, len(pdf_bytes), _snapshot_meta_from_report(report, snapshot_at=now)
 
 

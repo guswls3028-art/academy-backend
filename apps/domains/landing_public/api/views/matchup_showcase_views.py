@@ -20,6 +20,7 @@ URL:
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Any
 
 from django.http import HttpResponse, StreamingHttpResponse
@@ -34,7 +35,13 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.core.permissions import TenantResolved, TenantResolvedAndStaff, is_effective_staff
-from apps.support.landing_public.matchup_preview import get_or_create_matchup_preview
+from apps.support.landing_public.matchup_preview import (
+    delete_matchup_preview_assets,
+    get_cached_matchup_preview,
+    preview_etag_for_pdf,
+    render_matchup_pdf_preview,
+    store_matchup_preview,
+)
 from apps.support.landing_public.matchup_showcase_dependencies import (
     build_matchup_snapshot_for_hit_report,
     get_matchup_hit_report_for_showcase,
@@ -44,6 +51,15 @@ from apps.support.landing_public.matchup_showcase_dependencies import (
 from ...models import PublicMatchupShowcase
 
 logger = logging.getLogger(__name__)
+
+
+def _matchup_upload_snapshot_key(*, tenant_id: int, file_name: str) -> str:
+    """Return a collision-safe immutable snapshot key for a user PDF upload."""
+    safe_name = file_name.rsplit("/", 1)[-1].rsplit("\\", 1)[-1][:60] or "upload.pdf"
+    return (
+        f"matchup-showcase-snapshots/tenant_{tenant_id}/user_upload/"
+        f"{uuid.uuid4().hex}_{safe_name}"
+    )
 
 
 def _viewer_is_staff(request) -> bool:
@@ -198,7 +214,7 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             return Response({"detail": "스냅샷 객체 없음"}, status=status.HTTP_404_NOT_FOUND)
         resp = HttpResponse(pdf_bytes, content_type="application/pdf")
         resp["Content-Disposition"] = f'inline; filename="matchup-showcase-{obj.id}.pdf"'
-        resp["Cache-Control"] = "public, max-age=300"
+        resp["Cache-Control"] = "private, must-revalidate"
         return resp
 
     @action(detail=True, methods=["get"], url_path="preview")
@@ -211,39 +227,31 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
         if not obj.snapshot_pdf_key:
             return Response({"detail": "스냅샷 없음"}, status=status.HTTP_404_NOT_FOUND)
 
-        import hashlib
-
-        etag = f'W/"showcase-preview-{hashlib.sha1(obj.snapshot_pdf_key.encode()).hexdigest()[:16]}"'
+        etag = preview_etag_for_pdf(
+            obj.snapshot_pdf_key,
+            namespace="showcase-preview",
+        )
         if request.META.get("HTTP_IF_NONE_MATCH") == etag:
             response = HttpResponse(status=304)
             response["ETag"] = etag
-            response["Cache-Control"] = "public, max-age=300"
+            response["Cache-Control"] = "private, must-revalidate"
             return response
 
-        def load_pdf_bytes() -> bytes:
-            from apps.infrastructure.storage.r2 import get_object_bytes_r2_storage
-
-            data = get_object_bytes_r2_storage(key=obj.snapshot_pdf_key)
-            if data is None:
-                raise FileNotFoundError(obj.snapshot_pdf_key)
-            return data
-
-        try:
-            preview_bytes, cache_state = get_or_create_matchup_preview(
-                pdf_key=obj.snapshot_pdf_key,
-                load_pdf_bytes=load_pdf_bytes,
+        preview_bytes = get_cached_matchup_preview(pdf_key=obj.snapshot_pdf_key)
+        if not preview_bytes:
+            response = Response(
+                {"detail": "미리보기 준비 중"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-        except FileNotFoundError:
-            return Response({"detail": "스냅샷 객체 없음"}, status=status.HTTP_404_NOT_FOUND)
-        except Exception:
-            logger.exception("matchup_showcase_preview_failed id=%s", obj.id)
-            return Response({"detail": "미리보기 생성 실패"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            response["Cache-Control"] = "no-store"
+            response["Retry-After"] = "30"
+            return response
 
         response = HttpResponse(preview_bytes, content_type="image/jpeg")
         response["Content-Disposition"] = f'inline; filename="matchup-showcase-{obj.id}-preview.jpg"'
-        response["Cache-Control"] = "public, max-age=300"
+        response["Cache-Control"] = "private, must-revalidate"
         response["ETag"] = etag
-        response["X-Matchup-Preview-Cache"] = cache_state
+        response["X-Matchup-Preview-Cache"] = "hit"
         return response
 
     @action(detail=False, methods=["post"], url_path="publish")
@@ -287,20 +295,28 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             return Response({"detail": "스냅샷 생성 실패"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         now = timezone.now()
-        obj = PublicMatchupShowcase.objects.create(
-            tenant=tenant,
-            hit_report_id_ref=hit_report_id,
-            title=title[:200],
-            description=description,
-            status=PublicMatchupShowcase.Status.PUBLISHED,
-            published_at=published_at,
-            published_until=published_until,
-            snapshot_pdf_key=snapshot_key,
-            snapshot_pdf_bytes=snapshot_bytes,
-            snapshot_meta=snapshot_meta,
-            snapshot_at=now,
-            created_by=request.user if request.user.is_authenticated else None,
-        )
+        try:
+            obj = PublicMatchupShowcase.objects.create(
+                tenant=tenant,
+                hit_report_id_ref=hit_report_id,
+                title=title[:200],
+                description=description,
+                status=PublicMatchupShowcase.Status.PUBLISHED,
+                published_at=published_at,
+                published_until=published_until,
+                snapshot_pdf_key=snapshot_key,
+                snapshot_pdf_bytes=snapshot_bytes,
+                snapshot_meta=snapshot_meta,
+                snapshot_at=now,
+                created_by=request.user if request.user.is_authenticated else None,
+            )
+        except Exception:
+            delete_matchup_preview_assets(pdf_key=snapshot_key)
+            logger.exception("matchup_showcase_snapshot_publish_failed report=%s", hit_report_id)
+            return Response(
+                {"detail": "스냅샷 게시 실패"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         return Response(self._serialize_card(obj, viewer_is_staff=True), status=status.HTTP_201_CREATED)
 
     @action(
@@ -378,43 +394,73 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
                 )
             except Exception:
                 logger.exception("matchup_showcase_meta_enrich_failed source=%s", source_hit_report_id)
-        meta.setdefault("source", "user_upload")
+        # The preview-page policy is server-owned. Never let client metadata
+        # turn an uploaded PDF into the generated-report cover-skip path.
+        meta["source"] = "user_upload"
         meta["snapshot_at_iso"] = timezone.now().isoformat()
 
-        # R2 upload — 사용자 PDF 그대로
+        upload.seek(0)
+        pdf_bytes = upload.read()
+        upload.seek(0)
+        try:
+            if b"%PDF-" not in pdf_bytes[:1024]:
+                raise ValueError("missing PDF header")
+            preview_bytes = render_matchup_pdf_preview(
+                pdf_bytes,
+                first_body_page=False,
+            )
+        except Exception:
+            return Response(
+                {"detail": "열 수 있는 PDF 파일을 올려 주세요. 암호화되거나 손상된 파일은 지원하지 않습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # R2 upload — 검증한 사용자 PDF와 대표 JPEG를 함께 저장
+        key = ""
         try:
             from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage
-            now = timezone.now()
-            key = (
-                f"matchup-showcase-snapshots/tenant_{tenant.id}/"
-                f"user_upload/{int(now.timestamp())}_{upload.name[:60]}"
+            key = _matchup_upload_snapshot_key(
+                tenant_id=tenant.id,
+                file_name=upload.name,
             )
-            # InMemory 또는 TemporaryUploaded — read() 후 BytesIO로 재포장 또는 직접 fileobj 사용
-            upload.seek(0)
             upload_fileobj_to_r2_storage(
                 fileobj=upload,
                 key=key,
                 content_type="application/pdf",
             )
-            size = upload.size
+            store_matchup_preview(
+                pdf_key=key,
+                preview_bytes=preview_bytes,
+            )
+            size = len(pdf_bytes)
         except Exception:
+            if key:
+                delete_matchup_preview_assets(pdf_key=key)
             logger.exception("matchup_showcase_user_pdf_upload_failed")
             return Response({"detail": "PDF 업로드 실패"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        obj = PublicMatchupShowcase.objects.create(
-            tenant=tenant,
-            hit_report_id_ref=source_hit_report_id,
-            title=title[:200],
-            description=description,
-            status=PublicMatchupShowcase.Status.PUBLISHED,
-            published_at=published_at,
-            published_until=published_until,
-            snapshot_pdf_key=key,
-            snapshot_pdf_bytes=size,
-            snapshot_meta=meta,
-            snapshot_at=timezone.now(),
-            created_by=request.user if request.user.is_authenticated else None,
-        )
+        try:
+            obj = PublicMatchupShowcase.objects.create(
+                tenant=tenant,
+                hit_report_id_ref=source_hit_report_id,
+                title=title[:200],
+                description=description,
+                status=PublicMatchupShowcase.Status.PUBLISHED,
+                published_at=published_at,
+                published_until=published_until,
+                snapshot_pdf_key=key,
+                snapshot_pdf_bytes=size,
+                snapshot_meta=meta,
+                snapshot_at=timezone.now(),
+                created_by=request.user if request.user.is_authenticated else None,
+            )
+        except Exception:
+            delete_matchup_preview_assets(pdf_key=key)
+            logger.exception("matchup_showcase_user_pdf_publish_failed tenant=%s", tenant.id)
+            return Response(
+                {"detail": "PDF 게시 실패"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
         return Response(self._serialize_card(obj, viewer_is_staff=True), status=status.HTTP_201_CREATED)
 
     def partial_update(self, request, *args, **kwargs):

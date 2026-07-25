@@ -148,6 +148,12 @@ class PdfBytesDocument:
             raise IndexError(f"Page index {page_index} out of range (0-{self.page_count() - 1})")
         return self._doc[page_index].get_text("text") or ""
 
+    def page_size(self, page_index: int) -> tuple[float, float]:
+        if page_index < 0 or page_index >= self.page_count():
+            raise IndexError(f"Page index {page_index} out of range (0-{self.page_count() - 1})")
+        rect = self._doc[page_index].rect
+        return float(rect.width), float(rect.height)
+
     def render_page_bytes(self, page_index: int, *, zoom: float, jpg_quality: int = 82) -> tuple[str, bytes]:
         if page_index < 0 or page_index >= self.page_count():
             raise IndexError(f"Page index {page_index} out of range (0-{self.page_count() - 1})")

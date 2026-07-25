@@ -1,9 +1,12 @@
+from unittest.mock import patch
+
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.landing.config_helpers import SECTION_TYPES_ORDERED
 from apps.core.landing.views_config import LandingAdminView, LandingPublishView
+from apps.core.landing.views_hit_report import LandingHitReportError
 from apps.core.models import LandingPage, Tenant, TenantMembership
 
 User = get_user_model()
@@ -77,3 +80,53 @@ class LandingPublishBackfillTests(TestCase):
         landing = LandingPage.objects.get(tenant=self.tenant)
         published_types = {section["type"] for section in landing.published_config["sections"]}
         self.assertTrue(_required_section_types().issubset(published_types))
+
+    def test_publish_prewarms_hit_reports_before_snapshot(self):
+        draft = _legacy_draft()
+        draft["sections"].append(
+            {
+                "type": "hit_reports",
+                "enabled": True,
+                "order": 3,
+                "items": [{"report_id": 42}],
+            },
+        )
+        LandingPage.objects.create(
+            tenant=self.tenant,
+            template_key="minimal_tutor",
+            draft_config=draft,
+        )
+        request = self._auth_request("post", "/api/v1/core/landing/publish/")
+
+        with patch(
+            "apps.core.landing.views_hit_report."
+            "prewarm_hit_report_previews_for_landing",
+            return_value=1,
+        ) as prewarm:
+            response = LandingPublishView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        prewarm.assert_called_once()
+
+    def test_publish_stays_private_when_hit_report_preview_fails(self):
+        LandingPage.objects.create(
+            tenant=self.tenant,
+            template_key="minimal_tutor",
+            draft_config=_legacy_draft(),
+        )
+        request = self._auth_request("post", "/api/v1/core/landing/publish/")
+
+        with patch(
+            "apps.core.landing.views_hit_report."
+            "prewarm_hit_report_previews_for_landing",
+            side_effect=LandingHitReportError(
+                503,
+                "대표 비교 화면 준비 실패",
+                code="preview_prepare_failed",
+            ),
+        ):
+            response = LandingPublishView.as_view()(request)
+
+        self.assertEqual(response.status_code, 503, response.data)
+        landing = LandingPage.objects.get(tenant=self.tenant)
+        self.assertFalse(landing.is_published)

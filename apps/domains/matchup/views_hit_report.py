@@ -16,7 +16,11 @@ from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
-from apps.support.landing_public.matchup_preview import get_or_create_matchup_preview
+from apps.support.landing_public.matchup_preview import (
+    get_cached_matchup_preview,
+    get_or_create_matchup_preview,
+    preview_etag_for_pdf,
+)
 
 from .models import (
     MatchupDocument,
@@ -1146,14 +1150,26 @@ def _get_or_generate_curated_hit_report_pdf(report) -> tuple[bytes, str]:
 
 
 def _hit_report_preview_etag(report) -> str:
-    return f'W/"mhr-preview-{_hit_report_pdf_version(report)[:16]}"'
+    return preview_etag_for_pdf(
+        _hit_report_pdf_cache_key(report),
+        namespace="mhr-preview",
+    )
 
 
-def _get_or_generate_hit_report_preview(report) -> tuple[bytes, str]:
+def _get_or_generate_hit_report_preview(
+    report,
+    *,
+    require_cache_write: bool = False,
+) -> tuple[bytes, str]:
     return get_or_create_matchup_preview(
         pdf_key=_hit_report_pdf_cache_key(report),
         load_pdf_bytes=lambda: _get_or_generate_curated_hit_report_pdf(report)[0],
+        require_cache_write=require_cache_write,
     )
+
+
+def _get_cached_hit_report_preview(report) -> bytes | None:
+    return get_cached_matchup_preview(pdf_key=_hit_report_pdf_cache_key(report))
 
 
 def _hit_report_preview_response(request, report, *, etag: str) -> HttpResponse:
@@ -1163,12 +1179,17 @@ def _hit_report_preview_response(request, report, *, etag: str) -> HttpResponse:
         response["Cache-Control"] = "private, must-revalidate"
         return response
 
-    preview_bytes, cache_state = _get_or_generate_hit_report_preview(report)
+    preview_bytes = _get_cached_hit_report_preview(report)
+    if not preview_bytes:
+        response = JsonResponse({"detail": "미리보기 준비 중"}, status=503)
+        response["Cache-Control"] = "no-store"
+        response["Retry-After"] = "30"
+        return response
     response = HttpResponse(preview_bytes, content_type="image/jpeg")
     response["Content-Disposition"] = f'inline; filename="hit-report-{report.id}-preview.jpg"'
     response["ETag"] = etag
     response["Cache-Control"] = "private, must-revalidate"
-    response["X-Matchup-Preview-Cache"] = cache_state
+    response["X-Matchup-Preview-Cache"] = "hit"
     return response
 
 
@@ -1927,11 +1948,26 @@ class HitReportShareLinkView(View):
 
     def post(self, request, report_id):
         try:
-            report = MatchupHitReport.objects.get(id=report_id, tenant=request.tenant)
+            report = MatchupHitReport.objects.select_related("document", "author").get(
+                id=report_id,
+                tenant=request.tenant,
+            )
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
         if not _can_manage_share_token(request, report):
             return JsonResponse({"detail": "Forbidden"}, status=403)
+
+        try:
+            _get_or_generate_hit_report_preview(
+                report,
+                require_cache_write=True,
+            )
+        except Exception:
+            logger.exception("share_preview_prepare_failed (report=%s)", report.id)
+            return JsonResponse(
+                {"detail": "대표 비교 화면을 준비하지 못했습니다. 잠시 후 다시 시도해 주세요."},
+                status=503,
+            )
 
         import uuid
         rotate = (request.GET.get("rotate") or "").strip() in {"1", "true", "yes"}
@@ -1940,7 +1976,7 @@ class HitReportShareLinkView(View):
         created = False
         if not report.share_token or rotate:
             report.share_token = uuid.uuid4()
-            report.save(update_fields=["share_token", "updated_at"])
+            report.save(update_fields=["share_token"])
             rotated = bool(rotate) and had_token
             created = not had_token  # 첫 발급 vs 회전 vs 기존
 
@@ -1961,7 +1997,7 @@ class HitReportShareLinkView(View):
 
         if report.share_token:
             report.share_token = None
-            report.save(update_fields=["share_token", "updated_at"])
+            report.save(update_fields=["share_token"])
         return JsonResponse({"share_token": None, "share_url": None})
 
 
@@ -2184,8 +2220,10 @@ class HitReportSharePreviewView(View):
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
 
-        raw = f"{token}:preview:{_hit_report_pdf_version(report)}".encode()
-        etag = f'W/"{hashlib.sha1(raw).hexdigest()[:16]}"'
+        etag = preview_etag_for_pdf(
+            _hit_report_pdf_cache_key(report),
+            namespace="mhr-share-preview",
+        )
         try:
             return _hit_report_preview_response(request, report, etag=etag)
         except Exception:

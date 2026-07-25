@@ -152,20 +152,45 @@ class LandingPublishView(APIView):
 
     def post(self, request):
         tenant = request.tenant
+        try:
+            landing = LandingPage.objects.get(tenant=tenant)
+        except LandingPage.DoesNotExist:
+            return Response({"detail": "랜딩페이지가 아직 생성되지 않았습니다."}, status=404)
+
+        if not landing.draft_config:
+            return Response({"detail": "저장된 초안이 없습니다."}, status=400)
+
+        # Validate and prepare heavyweight static derivatives before taking the
+        # row lock. Public preview GETs are cache-only and never render PDFs.
+        draft_config = backfill_missing_sections(landing.draft_config)
+        errors = validate_config(draft_config)
+        if errors:
+            return Response({"detail": errors}, status=400)
+        try:
+            from .views_hit_report import (
+                LandingHitReportError,
+                prewarm_hit_report_previews_for_landing,
+            )
+
+            prewarm_hit_report_previews_for_landing(tenant, draft_config)
+        except LandingHitReportError as exc:
+            return Response(
+                {"detail": exc.detail, "code": exc.code},
+                status=exc.status_code,
+            )
+
         with transaction.atomic():
             try:
                 landing = LandingPage.objects.select_for_update().get(tenant=tenant)
             except LandingPage.DoesNotExist:
                 return Response({"detail": "랜딩페이지가 아직 생성되지 않았습니다."}, status=404)
 
-            if not landing.draft_config:
-                return Response({"detail": "저장된 초안이 없습니다."}, status=400)
-
-            # 게시 전 재검증. GET에서 보강되는 신규 섹션도 게시 스냅샷에 포함한다.
-            draft_config = backfill_missing_sections(landing.draft_config)
-            errors = validate_config(draft_config)
-            if errors:
-                return Response({"detail": errors}, status=400)
+            current_draft = backfill_missing_sections(landing.draft_config)
+            if current_draft != draft_config:
+                return Response(
+                    {"detail": "초안이 변경되었습니다. 다시 게시해 주세요."},
+                    status=409,
+                )
 
             landing.draft_config = draft_config
             landing.save(update_fields=["draft_config", "updated_at"])

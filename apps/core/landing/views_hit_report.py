@@ -29,6 +29,55 @@ class LandingHitReportError(Exception):
         super().__init__(detail)
 
 
+def prewarm_hit_report_previews_for_landing(tenant, config: dict) -> int:
+    """Prepare every enabled hit-report preview before a landing snapshot is public."""
+    from apps.domains.matchup.models import MatchupHitReport
+    from apps.domains.matchup.views_hit_report import (
+        _get_or_generate_hit_report_preview,
+    )
+
+    report_ids: set[int] = set()
+    for section in (config or {}).get("sections") or []:
+        if section.get("type") != "hit_reports" or not section.get("enabled"):
+            continue
+        for item in section.get("items") or []:
+            try:
+                report_ids.add(int(item.get("report_id")))
+            except (AttributeError, TypeError, ValueError):
+                continue
+    if not report_ids:
+        return 0
+
+    reports = {
+        report.id: report
+        for report in MatchupHitReport.objects.select_related(
+            "document",
+            "author",
+        ).filter(tenant=tenant, id__in=report_ids)
+    }
+    missing_ids = report_ids.difference(reports)
+    if missing_ids:
+        raise LandingHitReportError(
+            400,
+            f"존재하지 않는 적중보고서가 포함되어 있습니다: {min(missing_ids)}",
+            code="hit_report_not_found",
+        )
+
+    for report_id in sorted(report_ids):
+        try:
+            _get_or_generate_hit_report_preview(
+                reports[report_id],
+                require_cache_write=True,
+            )
+        except Exception as exc:
+            raise LandingHitReportError(
+                503,
+                "대표 비교 화면을 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                code="preview_prepare_failed",
+            ) from exc
+    return len(report_ids)
+
+
 def toggle_hit_report_on_landing(
     tenant, report_id: int, action: str,
     *, auto_publish: bool = True,
@@ -48,7 +97,10 @@ def toggle_hit_report_on_landing(
 
     # 보고서 검증 — 본 학원 보고서만
     try:
-        MatchupHitReport.objects.get(id=int(report_id), tenant=tenant)
+        report = MatchupHitReport.objects.select_related("document", "author").get(
+            id=int(report_id),
+            tenant=tenant,
+        )
     except MatchupHitReport.DoesNotExist:
         raise LandingHitReportError(404, "보고서를 찾을 수 없습니다")
 
@@ -78,6 +130,23 @@ def toggle_hit_report_on_landing(
     MAX_REPORTS = 12
     rid = int(report_id)
     if action == "add":
+        # Public preview endpoints are cache-only so visitors never wait for PDF
+        # generation. Prepare the derivative before publishing the landing config.
+        try:
+            from apps.domains.matchup.views_hit_report import (
+                _get_or_generate_hit_report_preview,
+            )
+
+            _get_or_generate_hit_report_preview(
+                report,
+                require_cache_write=True,
+            )
+        except Exception as exc:
+            raise LandingHitReportError(
+                503,
+                "대표 비교 화면을 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.",
+                code="preview_prepare_failed",
+            ) from exc
         if rid in existing_ids:
             return {"ok": True, "noop": True, "registered": True,
                     "total_registered": len(existing_ids),
