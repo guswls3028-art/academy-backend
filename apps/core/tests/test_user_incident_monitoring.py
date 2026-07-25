@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from datetime import timedelta
 from io import StringIO
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.http import HttpRequest, JsonResponse
-from django.test import TestCase, TransactionTestCase, override_settings
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -21,6 +22,7 @@ from apps.core.management.commands.check_dev_alerts import (
     SMS_MAX_RECONCILIATIONS_PER_RUN,
     SMS_RATE_LIMIT_ACTION,
     _build_user_incident_sms,
+    _provider_delivery_state,
     _reconcile_unresolved_sms_attempts,
     _send_ops_sms,
     rule_user_incidents,
@@ -782,7 +784,7 @@ class OperatorSmsSafetyTests(TestCase):
 
     @override_settings(
         DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
-        SOLAPI_SENDER="01011112222",
+        SOLAPI_SENDER=CONTROLLED_OPS_PHONE,
     )
     def test_sender_forces_sms_and_returns_provider_group(self):
         count = SimpleNamespace(registered_success=1, registered_failed=0)
@@ -798,8 +800,24 @@ class OperatorSmsSafetyTests(TestCase):
 
         self.assertEqual(result, {"status": "ok", "group_id": "group-safe"})
         message = client.send.call_args.args[0]
+        self.assertEqual(str(message.from_), CONTROLLED_OPS_PHONE)
         self.assertEqual(str(message.to), CONTROLLED_OPS_PHONE)
         self.assertEqual(str(message.type), "SMS")
+
+    @override_settings(
+        DEV_ALERTS_SMS_RECIPIENT=CONTROLLED_OPS_PHONE,
+        SOLAPI_SENDER="01011112222",
+    )
+    def test_sender_rejects_non_controlled_sender_before_provider_call(self):
+        with patch(
+            "apps.core.management.commands.check_dev_alerts._get_solapi_client"
+        ) as client_mock:
+            result = _send_ops_sms("[학원+] 테스트")
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("sender_not_allowed", result["reason"])
+        self.assertEqual(_provider_delivery_state(result), "registration_failed")
+        client_mock.assert_not_called()
 
     @override_settings(
         DEV_ALERTS_SMS_ENABLED=True,
@@ -868,3 +886,41 @@ class OperatorSmsSafetyTests(TestCase):
         verify_mock.assert_called_once_with("external-safe", 120)
         receipt = OpsAuditLog.objects.get(action="alerts.external_signal_sms")
         self.assertEqual(receipt.result, "success")
+
+
+class DevAlertsWorkflowContractTests(SimpleTestCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.workflow = (
+            Path(__file__).resolve().parents[3]
+            / ".github"
+            / "workflows"
+            / "dev-alerts-cron.yml"
+        ).read_text(encoding="utf-8")
+
+    def test_dry_run_preserves_default_user_incident_scope(self):
+        self.assertIn(
+            'EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }--dry-run"',
+            self.workflow,
+        )
+        self.assertNotIn('EXTRA_ARGS="--dry-run"', self.workflow)
+        self.assertNotIn(
+            'DRY_RUN="${{ github.event.inputs.dry_run }}"',
+            self.workflow,
+        )
+        self.assertIn('DRY_RUN="${DRY_RUN_INPUT:-false}"', self.workflow)
+        self.assertIn(
+            'if [ "$INPUT_VALUE" != "true" ] && [ "$INPUT_VALUE" != "false" ]',
+            self.workflow,
+        )
+
+    def test_external_signal_claim_precedes_dispatch_and_delivery_marker(self):
+        claim = '--value "claimed:${EXTERNAL_SIGNAL_TOKEN}"'
+        dispatch = "COMMAND_ID=$(aws ssm send-command"
+        delivered = '--value "delivered:${EXTERNAL_SIGNAL_TOKEN}"'
+
+        self.assertIn('"claimed:$ALARM_UPDATED"', self.workflow)
+        self.assertIn('"delivered:$ALARM_UPDATED"', self.workflow)
+        self.assertLess(self.workflow.index(claim), self.workflow.index(dispatch))
+        self.assertLess(self.workflow.index(dispatch), self.workflow.index(delivered))

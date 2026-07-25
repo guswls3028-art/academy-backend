@@ -90,21 +90,38 @@ jobs:
 
       - name: Run check_dev_alerts via SSM
         id: run
+        env:
+          DRY_RUN_INPUT: ${{ github.event.inputs.dry_run }}
+          TEST_SMS_INPUT: ${{ github.event.inputs.test_sms }}
+          FULL_RULES_INPUT: ${{ github.event.inputs.full_rules }}
+          SCHEDULE_EXPRESSION: ${{ github.event.schedule }}
         run: |
           INSTANCE_ID="${{ steps.instance.outputs.id }}"
-          DRY_RUN="${{ github.event.inputs.dry_run }}"
-          TEST_SMS="${{ github.event.inputs.test_sms }}"
-          FULL_RULES="${{ github.event.inputs.full_rules }}"
+          DRY_RUN="${DRY_RUN_INPUT:-false}"
+          TEST_SMS="${TEST_SMS_INPUT:-false}"
+          FULL_RULES="${FULL_RULES_INPUT:-false}"
+          for INPUT_VALUE in "$DRY_RUN" "$TEST_SMS" "$FULL_RULES"; do
+            if [ "$INPUT_VALUE" != "true" ] && [ "$INPUT_VALUE" != "false" ]; then
+              echo "::error::Dev alerts inputs must be true or false"
+              exit 1
+            fi
+          done
           EXTERNAL_SIGNAL_TOKEN=""
+          DEDUP_PARAM=""
+          LAST_SIGNAL_TOKEN=""
+          if [ "$DRY_RUN" = "true" ] && [ "$TEST_SMS" = "true" ]; then
+            echo "::error::dry_run and test_sms cannot be enabled together"
+            exit 1
+          fi
           EXTRA_ARGS="--rule user_incidents"
-          if [ "${{ github.event.schedule }}" = "2 * * * *" ] || [ "$FULL_RULES" = "true" ]; then
+          if [ "$SCHEDULE_EXPRESSION" = "2 * * * *" ] || [ "$FULL_RULES" = "true" ]; then
             EXTRA_ARGS=""
           fi
           if [ "$DRY_RUN" = "true" ]; then
-            EXTRA_ARGS="--dry-run"
+            EXTRA_ARGS="${EXTRA_ARGS:+$EXTRA_ARGS }--dry-run"
           fi
           if [ "$TEST_SMS" = "true" ]; then
-            EXTRA_ARGS="${EXTRA_ARGS} --test-sms --wait-seconds=120"
+            EXTRA_ARGS="--test-sms --wait-seconds=120"
           fi
 
           # DB 장애로 OpsAuditLog를 쓸 수 없는 경우에도 ALB 신호로 문자를 보낸다.
@@ -128,10 +145,14 @@ jobs:
               --region ${{ env.AWS_REGION }} \
               --query 'Parameter.Value' \
               --output text 2>/dev/null || true)
-            if [ "$LAST_SIGNAL_TOKEN" != "$ALARM_UPDATED" ]; then
-              EXTRA_ARGS="--external-signal api_user_impact --wait-seconds=120"
-              EXTERNAL_SIGNAL_TOKEN="$ALARM_UPDATED"
-            fi
+            case "$LAST_SIGNAL_TOKEN" in
+              "$ALARM_UPDATED"|"claimed:$ALARM_UPDATED"|"delivered:$ALARM_UPDATED")
+                ;;
+              *)
+                EXTRA_ARGS="--external-signal api_user_impact --wait-seconds=120"
+                EXTERNAL_SIGNAL_TOKEN="$ALARM_UPDATED"
+                ;;
+            esac
           fi
 
           # 검증에 실패한 latest alias는 실행하지 않는다. 저장소의 마지막
@@ -160,6 +181,18 @@ jobs:
           CMD="set -eu; umask 077; ENV_JSON=\$(aws ssm get-parameter --name /academy/api/env --with-decryption --query Parameter.Value --output text --region ${{ env.AWS_REGION }}); printf '%s' \"\$ENV_JSON\" | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(k+chr(61)+str(v)) for k,v in d.items()]' > /opt/api.env.next; test -s /opt/api.env.next; mv /opt/api.env.next /opt/api.env; aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_HOST} >/dev/null 2>&1; docker pull ${ECR_IMAGE} >/dev/null 2>&1; docker run --rm --env-file /opt/api.env ${DOCKER_NETWORK} ${ECR_IMAGE} python manage.py check_dev_alerts --silent ${EXTRA_ARGS} 2>&1"
 
           SSM_PARAMS=$(jq -n --arg cmd "$CMD" '{commands: [$cmd]}')
+
+          # Once a transition is handed to SSM, never retry it automatically:
+          # provider registration may have succeeded even if the remote result is lost.
+          if [ -n "$EXTERNAL_SIGNAL_TOKEN" ]; then
+            aws ssm put-parameter \
+              --name "$DEDUP_PARAM" \
+              --type String \
+              --value "claimed:${EXTERNAL_SIGNAL_TOKEN}" \
+              --overwrite \
+              --region ${{ env.AWS_REGION }} >/dev/null
+            echo "Claimed external signal transition before dispatch."
+          fi
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$INSTANCE_ID" \
@@ -191,9 +224,9 @@ jobs:
               echo "::endgroup::"
               if [ -n "$EXTERNAL_SIGNAL_TOKEN" ]; then
                 aws ssm put-parameter \
-                  --name /academy/ops/dev-alerts-api-user-impact-state \
+                  --name "$DEDUP_PARAM" \
                   --type String \
-                  --value "$EXTERNAL_SIGNAL_TOKEN" \
+                  --value "delivered:${EXTERNAL_SIGNAL_TOKEN}" \
                   --overwrite \
                   --region ${{ env.AWS_REGION }} >/dev/null
               fi
@@ -212,10 +245,16 @@ jobs:
                 --region ${{ env.AWS_REGION }} \
                 --query 'StandardErrorContent' \
                 --output text
+              if [ -n "$EXTERNAL_SIGNAL_TOKEN" ]; then
+                echo "::warning::External signal transition remains claimed; automatic resend is suppressed."
+              fi
               exit 1
             fi
             sleep 10
           done
 
+          if [ -n "$EXTERNAL_SIGNAL_TOKEN" ]; then
+            echo "::warning::External signal transition remains claimed; automatic resend is suppressed."
+          fi
           echo "::error::SSM command timed out"
           exit 1

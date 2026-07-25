@@ -1,6 +1,6 @@
 # 장애 대응 런북
 
-**Version:** V1.11.5 | **최종 수정:** 2026-07-26
+**Version:** V1.11.8 | **최종 수정:** 2026-07-26
 
 > 모든 AWS 명령은 `scripts/v1/run-with-env.ps1 --` 접두사를 사용한다.
 > 아래에서 `RUN_ENV`는 이 접두사의 줄임말이다:
@@ -48,11 +48,12 @@ DB INSERT를 기다리지 않으며 PII 없는 동일 신호를 애플리케이�
 
 DB 장애처럼 감사 로그 자체를 쓸 수 없는 상황은 `academy-api-Target5XX`와
 `academy-api-UnHealthyHosts`를 묶은 `academy-api-UserImpact` composite alarm으로
-독립 감지한다. cron은 alarm transition timestamp를 SSM에 기록해 상태 전환당 한 번만
-같은 통제번호로 짧은 SMS를 보내고 Solapi `sent_success`를 확인한다.
+독립 감지한다. cron은 alarm transition timestamp를 SSM에 발송 전 `claimed:` 상태로
+기록하고, Solapi `sent_success` 확인 뒤 `delivered:` 상태로 바꾼다. 원격 명령 결과가
+유실되거나 timeout이어도 같은 transition을 자동 재발송하지 않는다.
 
-운영자 SMS는 고객 알림톡/SMS 경로와 분리되어 있다. 수신자는 코드와 환경설정
-양쪽에서 `01031217466`으로 고정하며 다른 번호는 provider 호출 전에 차단한다.
+운영자 SMS는 고객 알림톡/SMS 경로와 분리되어 있다. 수신번호와 발신번호 모두 코드와
+환경설정 양쪽에서 `01031217466`으로 고정하며 다른 번호는 provider 호출 전에 차단한다.
 Solapi 문자 발신번호도 운영 계정의 유일한 ACTIVE 등록 번호인 같은 통제번호로
 정규화한다. 미등록 발신번호는 Solapi 상태코드 `1062`로 접수 거절되므로 설정
 스크립트가 수신번호와 발신번호를 함께 갱신한다.
@@ -67,6 +68,9 @@ gh workflow run dev-alerts-cron.yml -f test_sms=true
 Start-Sleep -Seconds 3
 $runId = gh run list --workflow dev-alerts-cron.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId'
 gh run watch $runId --exit-status
+
+# 발송 없이 사용자 오류 룰만 평가. 전체 운영 룰까지 보려면 full_rules=true 추가.
+gh workflow run dev-alerts-cron.yml -f dry_run=true
 
 # 비상 비활성화
 pwsh scripts/v1/set-dev-alerts-sms.ps1 -Disable -AwsProfile default

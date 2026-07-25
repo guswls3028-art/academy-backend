@@ -764,8 +764,14 @@ def _send_ops_sms(text: str) -> dict:
             ),
         }
     sender = _normalize_phone(getattr(settings, "SOLAPI_SENDER", ""))
-    if not sender:
-        return {"status": "error", "reason": "sender_required"}
+    if sender != CONTROLLED_OPS_PHONE:
+        return {
+            "status": "error",
+            "reason": (
+                "sender_not_allowed:"
+                f"{_mask_phone(sender) if sender else 'unset'}"
+            ),
+        }
     if not text or len(text.encode("utf-8")) > 90:
         return {"status": "error", "reason": "sms_text_must_be_1_to_90_bytes"}
 
@@ -850,7 +856,7 @@ def _provider_delivery_state(result: dict) -> str:
         if reason in {
             "sender_required",
             "solapi_client_unavailable",
-        } or reason.startswith("recipient_not_allowed"):
+        } or reason.startswith(("recipient_not_allowed", "sender_not_allowed")):
             return "registration_failed"
         return "ambiguous"
     if (
