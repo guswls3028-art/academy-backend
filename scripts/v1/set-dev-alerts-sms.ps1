@@ -1,5 +1,6 @@
 # Enable or disable fixed-recipient operator incident SMS settings in /academy/api/env.
-# The application rejects every recipient except 01031217466.
+# The application rejects every recipient except 01031217466. The production
+# Solapi account has the same number registered as its active SMS sender.
 # Usage:
 #   pwsh scripts/v1/set-dev-alerts-sms.ps1 -AwsProfile default
 #   pwsh scripts/v1/set-dev-alerts-sms.ps1 -Disable -AwsProfile default
@@ -57,6 +58,7 @@ if ($Disable) {
 } else {
     $config | Add-Member -NotePropertyName "DEV_ALERTS_SMS_ENABLED" -NotePropertyValue "true" -Force
     $config | Add-Member -NotePropertyName "DEV_ALERTS_SMS_RECIPIENT" -NotePropertyValue $ControlledPhone -Force
+    $config | Add-Member -NotePropertyName "SOLAPI_SENDER" -NotePropertyValue $ControlledPhone -Force
 }
 
 $updatedJson = $config | ConvertTo-Json -Compress -Depth 20
@@ -77,6 +79,6 @@ if ($LASTEXITCODE -ne 0) {
     throw "Could not update $SsmApiEnv."
 }
 
-$mode = if ($Disable) { "disabled" } else { "enabled for ***7466" }
+$mode = if ($Disable) { "disabled" } else { "enabled for ***7466 with registered sender ***7466" }
 Write-Host "Operator incident SMS $mode in $SsmApiEnv." -ForegroundColor Green
 Write-Host "Dev Alerts Cron atomically syncs this setting before its next run." -ForegroundColor Cyan
