@@ -90,7 +90,7 @@ class DevTenantUsageView(APIView):
                 "monthly_tax_amount": program.monthly_tax_amount,
                 "monthly_total_amount": program.monthly_total_amount,
                 "monthly_price_includes_tax": False,
-                "vat_rate_percent": program.BILLING_VAT_RATE_PERCENT,
+                "vat_rate_percent": program.monthly_vat_rate_percent,
                 "billing_price_policy": program.billing_price_policy,
                 "is_contract_price": program.is_contract_price,
                 "has_lifetime_price_guarantee": program.has_lifetime_price_guarantee,

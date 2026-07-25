@@ -52,9 +52,9 @@ class TestCreateInvoice(InvoiceServiceTestBase):
         self.assertEqual(inv.plan, "all")
         self.assertEqual(inv.period_start, date(2026, 4, 13))
         self.assertEqual(inv.period_end, date(2026, 5, 12))
-        self.assertEqual(inv.supply_amount, 145_000)
-        self.assertEqual(inv.tax_amount, 14_000)
-        self.assertEqual(inv.total_amount, 159_000)
+        self.assertEqual(inv.supply_amount, 180_000)
+        self.assertEqual(inv.tax_amount, 18_000)
+        self.assertEqual(inv.total_amount, 198_000)
         self.assertEqual(inv.status, "SCHEDULED")
         self.assertTrue(inv.invoice_number.startswith("INV-202604-test_inv-"))
         self.assertTrue(inv.provider_order_id.startswith("ord_"))
@@ -104,13 +104,13 @@ class TestCreateInvoice(InvoiceServiceTestBase):
             inv = invoice_service.create_for_next_period(self.program)
             self.assertIsNone(inv)
 
-    def test_single_plan_invoice_uses_exact_tax_breakdown(self):
+    def test_standard_single_plan_invoice_uses_ten_percent_tax_breakdown(self):
 
         inv = invoice_service.create_for_next_period(self.program)
 
-        self.assertEqual(inv.supply_amount, 145_000)
-        self.assertEqual(inv.tax_amount, 14_000)
-        self.assertEqual(inv.total_amount, 159_000)
+        self.assertEqual(inv.supply_amount, 180_000)
+        self.assertEqual(inv.tax_amount, 18_000)
+        self.assertEqual(inv.total_amount, 198_000)
 
     def test_single_price_drift_fails_closed_without_invoice(self):
         Program.objects.filter(pk=self.program.pk).update(monthly_price=198_000)

@@ -172,10 +172,12 @@ class TestAdminTenantSubscriptionList(BillingApiTestBase):
             self.assertIn(f, entry, f"Missing field: {f}")
         self.assertEqual(entry["program_id"], self.program_a.pk)
         self.assertEqual(entry["plan"], "all")
-        self.assertEqual(entry["monthly_supply_amount"], 145_000)
-        self.assertEqual(entry["monthly_tax_amount"], 14_000)
-        self.assertEqual(entry["monthly_total_amount"], 159_000)
-        self.assertIsNone(entry["vat_rate_percent"])
+        self.assertEqual(entry["monthly_supply_amount"], 180_000)
+        self.assertEqual(entry["monthly_tax_amount"], 18_000)
+        self.assertEqual(entry["monthly_total_amount"], 198_000)
+        self.assertEqual(entry["vat_rate_percent"], 10)
+        self.assertEqual(entry["billing_price_policy"], "single")
+        self.assertFalse(entry["is_contract_price"])
         self.assertFalse(entry["monthly_price_includes_tax"])
 
 
@@ -338,7 +340,7 @@ class TestAdminDashboard(BillingApiTestBase):
     def test_dashboard_sums_standard_and_august_guaranteed_prices(self):
         Program.objects.filter(pk=self.program_a.pk).update(
             created_at=datetime(2026, 9, 1, tzinfo=dt_timezone.utc),
-            monthly_price=198_000,
+            monthly_price=180_000,
         )
         Program.objects.filter(pk=self.program_b.pk).update(
             created_at=datetime(2026, 8, 15, tzinfo=dt_timezone.utc),
@@ -348,7 +350,7 @@ class TestAdminDashboard(BillingApiTestBase):
 
         with patch.dict(
             Program.PLAN_PRICES,
-            {Program.Plan.ALL: 198_000},
+            {Program.Plan.ALL: 180_000},
             clear=True,
         ):
             resp = self.client.get(
@@ -357,9 +359,10 @@ class TestAdminDashboard(BillingApiTestBase):
             )
 
         self.assertEqual(resp.status_code, 200)
-        self.assertEqual(resp.data["mrr_supply_amount"], 343_000)
-        self.assertEqual(resp.data["mrr_tax_amount"], 33_800)
-        self.assertEqual(resp.data["mrr_total_amount"], 376_800)
+        self.assertEqual(resp.data["mrr_supply_amount"], 325_000)
+        self.assertEqual(resp.data["mrr_tax_amount"], 32_000)
+        self.assertEqual(resp.data["mrr_total_amount"], 357_000)
+        self.assertIsNone(resp.data["vat_rate_percent"])
 
 
 # ══════════════════════════════════════════════

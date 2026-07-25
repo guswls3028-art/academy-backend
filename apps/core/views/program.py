@@ -170,7 +170,7 @@ class SubscriptionView(APIView):
             "monthly_tax_amount": monthly_amounts["tax_amount"],
             "monthly_total_amount": monthly_amounts["total_amount"],
             "monthly_price_includes_tax": False,
-            "vat_rate_percent": program.BILLING_VAT_RATE_PERCENT,
+            "vat_rate_percent": program.monthly_vat_rate_percent,
             "original_price": program.list_monthly_price,
             "list_monthly_supply_amount": list_amounts["supply_amount"],
             "list_monthly_tax_amount": list_amounts["tax_amount"],

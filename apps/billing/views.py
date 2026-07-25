@@ -70,7 +70,7 @@ class AdminTenantSubscriptionListView(APIView):
                 "monthly_tax_amount": p.monthly_tax_amount,
                 "monthly_total_amount": p.monthly_total_amount,
                 "monthly_price_includes_tax": False,
-                "vat_rate_percent": p.BILLING_VAT_RATE_PERCENT,
+                "vat_rate_percent": p.monthly_vat_rate_percent,
                 "billing_price_policy": p.billing_price_policy,
                 "is_contract_price": p.is_contract_price,
                 "has_lifetime_price_guarantee": p.has_lifetime_price_guarantee,
@@ -257,7 +257,9 @@ class AdminDashboardView(APIView):
             "mrr_tax_amount": mrr_amounts["tax_amount"],
             "mrr_total_amount": mrr_amounts["total_amount"],
             "mrr_includes_tax": False,
-            "vat_rate_percent": Program.BILLING_VAT_RATE_PERCENT,
+            # The aggregate can mix fixed-tax legacy/August contracts with
+            # 10% VAT standard contracts, so only explicit totals are canonical.
+            "vat_rate_percent": None,
             "status_counts": status_counts,
             "expiring_soon": expiring_soon,
             "overdue_invoices": overdue_invoices,

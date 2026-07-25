@@ -156,7 +156,7 @@ class DevDashboardSummaryView(APIView):
                 "mrr_tax_amount": mrr_amounts["tax_amount"],
                 "mrr_total_amount": mrr_amounts["total_amount"],
                 "mrr_includes_tax": False,
-                "vat_rate_percent": Program.BILLING_VAT_RATE_PERCENT,
+                "vat_rate_percent": None,
                 "expiring_7d": expiring_7d,
                 "overdue_invoices": overdue_invoices,
                 "paid_30d": paid_30d,

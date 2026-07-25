@@ -37,7 +37,7 @@ class DevDashboardBillingMetricTests(TestCase):
         )
         Program.objects.filter(pk=standard.program.pk).update(
             created_at=datetime(2026, 9, 1, tzinfo=dt_timezone.utc),
-            monthly_price=198_000,
+            monthly_price=180_000,
             subscription_status="active",
         )
         Program.objects.filter(pk=august.program.pk).update(
@@ -47,12 +47,12 @@ class DevDashboardBillingMetricTests(TestCase):
         )
         Program.objects.filter(pk=closed.program.pk).update(
             created_at=datetime(2026, 9, 1, tzinfo=dt_timezone.utc),
-            monthly_price=198_000,
+            monthly_price=180_000,
             subscription_status="active",
         )
         Program.objects.filter(pk=inactive_program.program.pk).update(
             created_at=datetime(2026, 9, 1, tzinfo=dt_timezone.utc),
-            monthly_price=198_000,
+            monthly_price=180_000,
             subscription_status="active",
             is_active=False,
         )
@@ -71,14 +71,15 @@ class DevDashboardBillingMetricTests(TestCase):
             override_settings(OWNER_TENANT_ID=platform.id),
             patch.dict(
                 Program.PLAN_PRICES,
-                {Program.Plan.ALL: 198_000},
+                {Program.Plan.ALL: 180_000},
                 clear=True,
             ),
         ):
             response = DevDashboardSummaryView.as_view()(request)
 
         self.assertEqual(response.status_code, 200, response.data)
-        self.assertEqual(response.data["billing"]["mrr"], 343_000)
-        self.assertEqual(response.data["billing"]["mrr_supply_amount"], 343_000)
-        self.assertEqual(response.data["billing"]["mrr_tax_amount"], 33_800)
-        self.assertEqual(response.data["billing"]["mrr_total_amount"], 376_800)
+        self.assertEqual(response.data["billing"]["mrr"], 325_000)
+        self.assertEqual(response.data["billing"]["mrr_supply_amount"], 325_000)
+        self.assertEqual(response.data["billing"]["mrr_tax_amount"], 32_000)
+        self.assertEqual(response.data["billing"]["mrr_total_amount"], 357_000)
+        self.assertIsNone(response.data["billing"]["vat_rate_percent"])

@@ -30,13 +30,15 @@ class Program(TimestampModel):
     class Plan(models.TextChoices):
         ALL = "all", "전체 기능"
 
+    STANDARD_MONTHLY_SUPPLY_AMOUNT = 180_000
+    STANDARD_MONTHLY_TAX_AMOUNT = 18_000
+    STANDARD_MONTHLY_TOTAL_AMOUNT = 198_000
+    STANDARD_PRICE_EFFECTIVE_DATE = date(2026, 7, 26)
+    LEGACY_SINGLE_PLAN_SUPPLY_AMOUNT = 145_000
+    VAT_RATE_PERCENT = 10
     PLAN_PRICES: dict[str, int] = {
-        Plan.ALL: 145_000,
+        Plan.ALL: STANDARD_MONTHLY_SUPPLY_AMOUNT,
     }
-    BILLING_MONTHLY_TAX_AMOUNT = 14_000
-    BILLING_MONTHLY_TOTAL_AMOUNT = 159_000
-    BILLING_VAT_RATE_PERCENT = None
-    LEGACY_VAT_RATE_PERCENT = 10
     AUGUST_2026_PROMOTION_START = date(2026, 8, 1)
     AUGUST_2026_PROMOTION_END = date(2026, 8, 31)
     AUGUST_2026_PROMOTION_SUPPLY_AMOUNT = 145_000
@@ -215,6 +217,8 @@ class Program(TimestampModel):
         tenant_code: str | None = None,
         joined_on: date | None = None,
     ) -> int:
+        if joined_on is not None and joined_on < cls.STANDARD_PRICE_EFFECTIVE_DATE:
+            return cls.LEGACY_SINGLE_PLAN_SUPPLY_AMOUNT
         if joined_on is not None and cls.is_august_2026_promotion_date(joined_on):
             return cls.AUGUST_2026_PROMOTION_SUPPLY_AMOUNT
         return cls.PLAN_PRICES[cls.Plan.ALL]
@@ -259,9 +263,9 @@ class Program(TimestampModel):
     def calculate_monthly_amounts(cls, supply_amount: int) -> dict[str, int]:
         """Return a monthly amount breakdown.
 
-        The active single-plan contract has an explicit 14,000 won tax amount.
-        Other values are legacy invoice snapshots and retain the former 10%
-        calculation for read-only compatibility.
+        The August and pre-price-change 145,000 won contracts have an explicit
+        14,000 won tax amount. The standard 180,000 won price and historical
+        invoice snapshots use the 10% VAT calculation.
         """
         if isinstance(supply_amount, bool) or not isinstance(supply_amount, int):
             raise TypeError("supply_amount must be an integer")
@@ -273,7 +277,7 @@ class Program(TimestampModel):
                 "tax_amount": cls.AUGUST_2026_PROMOTION_TAX_AMOUNT,
                 "total_amount": cls.AUGUST_2026_PROMOTION_TOTAL_AMOUNT,
             }
-        tax_amount = supply_amount * cls.LEGACY_VAT_RATE_PERCENT // 100
+        tax_amount = supply_amount * cls.VAT_RATE_PERCENT // 100
         return {
             "supply_amount": supply_amount,
             "tax_amount": tax_amount,
@@ -309,6 +313,15 @@ class Program(TimestampModel):
         return self.monthly_amounts["total_amount"]
 
     @property
+    def monthly_vat_rate_percent(self) -> int | None:
+        calculated_tax = (
+            self.monthly_price * self.VAT_RATE_PERCENT // 100
+        )
+        if self.monthly_tax_amount == calculated_tax:
+            return self.VAT_RATE_PERCENT
+        return None
+
+    @property
     def list_monthly_price(self) -> int:
         return self.PLAN_PRICES[self.Plan.ALL]
 
@@ -318,7 +331,13 @@ class Program(TimestampModel):
 
     @property
     def is_contract_price(self) -> bool:
-        return self.has_lifetime_price_guarantee
+        return (
+            self.has_lifetime_price_guarantee
+            or (
+                self.joined_on < self.STANDARD_PRICE_EFFECTIVE_DATE
+                and self.monthly_price == self.LEGACY_SINGLE_PLAN_SUPPLY_AMOUNT
+            )
+        )
 
     @property
     def billing_price_integrity(self) -> str:
@@ -336,6 +355,8 @@ class Program(TimestampModel):
     def billing_price_policy(self) -> str:
         if self.has_lifetime_price_guarantee:
             return "promotion"
+        if self.is_contract_price:
+            return "legacy_contract"
         return "single"
 
     @property
