@@ -115,6 +115,8 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
     "X-Client",
     "X-Tenant-Code",
     "X-Student-Id",
+    "X-Score-Editor-Client",
+    "X-Score-Session-Id",
 ]
 
 # ==================================================

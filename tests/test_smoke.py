@@ -252,6 +252,12 @@ class TestCorsPolicy(TestCase):
         origins = getattr(settings, "CORS_ALLOWED_ORIGINS", [])
         self.assertGreater(len(origins), 0, "No CORS allowed origins configured")
 
+    def test_score_edit_headers_are_allowed(self):
+        """Score edit lease headers must survive browser CORS preflight."""
+        headers = {header.lower() for header in settings.CORS_ALLOW_HEADERS}
+        self.assertIn("x-score-editor-client", headers)
+        self.assertIn("x-score-session-id", headers)
+
 
 class TestAuthFailure(TestCase):
     """Authentication failures must return proper error responses."""
@@ -320,7 +326,10 @@ class TestSettingsIntegrity(TestCase):
             "import apps.api.config.settings.prod as s; "
             "assert s.SECURE_SSL_REDIRECT is False; "
             "assert s.SESSION_COOKIE_SECURE is True; "
-            "assert s.CSRF_COOKIE_SECURE is True"
+            "assert s.CSRF_COOKIE_SECURE is True; "
+            "headers = {header.lower() for header in s.CORS_ALLOW_HEADERS}; "
+            "assert 'x-score-editor-client' in headers; "
+            "assert 'x-score-session-id' in headers"
         )
         result = subprocess.run(
             [sys.executable, "-c", code],

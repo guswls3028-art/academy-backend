@@ -8,7 +8,13 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import AnswerKey, Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
+from apps.domains.results.models import (
+    ExamAttempt,
+    Result,
+    ResultFact,
+    ResultItem,
+    ScoreEditDraft,
+)
 from apps.domains.results.views.admin_exam_item_score_view import AdminExamItemScoreView
 from apps.domains.results.views.admin_exam_objective_score_view import AdminExamObjectiveScoreView
 from apps.domains.results.views.admin_exam_result_detail_view import AdminExamResultDetailView
@@ -83,7 +89,19 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         )
 
     def _patch(self, view_cls, data=None, enrollment=None, **kwargs):
-        request = self.factory.patch("/results/admin/exams/manual/", data or {"score": 10}, format="json")
+        ScoreEditDraft.objects.update_or_create(
+            session=self.session,
+            tenant=self.tenant,
+            editor_user=self.admin,
+            defaults={"payload": {"client_id": "test-score-tab", "changes": []}},
+        )
+        request = self.factory.patch(
+            "/results/admin/exams/manual/",
+            data or {"score": 10},
+            format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="test-score-tab",
+            HTTP_X_SCORE_SESSION_ID=str(self.session.id),
+        )
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin)
         return view_cls.as_view()(
@@ -94,7 +112,19 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         )
 
     def _patch_for_exam(self, view_cls, exam, data=None, enrollment=None, **kwargs):
-        request = self.factory.patch("/results/admin/exams/manual/", data or {"score": 10}, format="json")
+        ScoreEditDraft.objects.update_or_create(
+            session=self.session,
+            tenant=self.tenant,
+            editor_user=self.admin,
+            defaults={"payload": {"client_id": "test-score-tab", "changes": []}},
+        )
+        request = self.factory.patch(
+            "/results/admin/exams/manual/",
+            data or {"score": 10},
+            format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="test-score-tab",
+            HTTP_X_SCORE_SESSION_ID=str(self.session.id),
+        )
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin)
         return view_cls.as_view()(

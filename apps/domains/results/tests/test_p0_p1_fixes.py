@@ -24,7 +24,7 @@ from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.students.models import Student
-from apps.domains.results.models import ExamAttempt, Result
+from apps.domains.results.models import ExamAttempt, Result, ScoreEditDraft
 from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.views.admin_exam_objective_score_view import AdminExamObjectiveScoreView
 from apps.domains.results.views.admin_exam_subjective_score_view import AdminExamSubjectiveScoreView
@@ -262,7 +262,19 @@ class TestManualScoreClearsNotSubmitted(TestCase, BaseTestMixin):
         self.factory = APIRequestFactory()
 
     def _patch(self, view_cls, exam, data):
-        request = self.factory.patch("/results/admin/exams/score/", data, format="json")
+        ScoreEditDraft.objects.update_or_create(
+            session=self.session,
+            tenant=self.tenant,
+            editor_user=self.user,
+            defaults={"payload": {"client_id": "test-score-tab", "changes": []}},
+        )
+        request = self.factory.patch(
+            "/results/admin/exams/score/",
+            data,
+            format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="test-score-tab",
+            HTTP_X_SCORE_SESSION_ID=str(self.session.id),
+        )
         request.tenant = self.tenant
         force_authenticate(request, user=self.user)
         response = view_cls.as_view()(
@@ -326,6 +338,8 @@ class TestManualScoreClearsNotSubmitted(TestCase, BaseTestMixin):
             "/results/admin/exams/items/",
             {"score": 4, "answer": "2"},
             format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="test-score-tab",
+            HTTP_X_SCORE_SESSION_ID=str(self.session.id),
         )
         request.tenant = self.tenant
         force_authenticate(request, user=self.user)

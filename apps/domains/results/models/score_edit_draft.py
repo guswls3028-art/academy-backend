@@ -28,7 +28,9 @@ class ScoreEditDraft(models.Model):
         db_column="editor_user_id",
         related_name="score_edit_drafts",
     )
-    payload = models.JSONField(default=list)  # list of { type, examId?, enrollmentId, homeworkId?, score?, metaStatus? }
+    # {"client_id": <tab id>, "changes": [...]}.
+    # Legacy list payloads remain readable during rolling deployment.
+    payload = models.JSONField(default=list)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:

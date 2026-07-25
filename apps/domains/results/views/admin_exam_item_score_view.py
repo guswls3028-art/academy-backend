@@ -17,6 +17,9 @@ from rest_framework.exceptions import ValidationError, NotFound
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ResultItem, ResultFact, ExamAttempt
 from apps.domains.results.guards.exam_enrollment_guard import validate_exam_enrollment_assigned
+from apps.domains.results.guards.score_edit_lease_guard import (
+    require_score_edit_lease_from_headers,
+)
 from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
 from apps.domains.results.services.answer_matching import answer_matches, correct_answer_sets
 from apps.domains.results.services.manual_subjective_score import (
@@ -115,6 +118,7 @@ class AdminExamItemScoreView(APIView):
             exam_id=exam_id,
             tenant=request.tenant,
         )
+        require_score_edit_lease_from_headers(request, exam_id=exam_id)
         score_shape = get_exam_score_shape(exam)
 
         # ✅ tenant isolation: verify enrollment belongs to tenant

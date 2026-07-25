@@ -48,6 +48,9 @@ from apps.domains.homework_results.serializers import (
 from apps.domains.homework_results.filters import HomeworkScoreFilter
 
 from apps.core.permissions import TenantResolvedAndStaff
+from apps.domains.results.guards.score_edit_lease_guard import (
+    require_score_edit_lease,
+)
 from apps.support.homework_results.score_dependencies import (
     calc_homework_passed_and_clinic,
     dispatch_progress_pipeline,
@@ -198,10 +201,12 @@ class HomeworkScoreViewSet(ModelViewSet):
     # =================================================
     # PATCH /homework/scores/{id}/
     # =================================================
+    @transaction.atomic
     def partial_update(self, request, *args, **kwargs):
         obj: HomeworkScore = self.get_object()
 
         validate_enrollment_belongs_to_tenant(obj.enrollment_id, request.tenant)
+        require_score_edit_lease(request, session_id=obj.session_id)
 
         if getattr(obj, "is_locked", False):
             return _locked_response(obj)
@@ -302,6 +307,7 @@ class HomeworkScoreViewSet(ModelViewSet):
     # PATCH /homework/scores/quick/
     # =================================================
     @action(detail=False, methods=["patch"], url_path="quick")
+    @transaction.atomic
     def quick_patch(self, request):
         try:
             serializer = HomeworkQuickPatchSerializer(data=request.data)
@@ -338,6 +344,7 @@ class HomeworkScoreViewSet(ModelViewSet):
                     {"session_id": "과제의 차시와 요청 차시가 일치하지 않습니다."},
                     status=drf_status.HTTP_400_BAD_REQUEST,
                 )
+            require_score_edit_lease(request, session_id=session.id)
             if not homework_assignment_exists(
                 tenant=request.tenant,
                 homework=homework,

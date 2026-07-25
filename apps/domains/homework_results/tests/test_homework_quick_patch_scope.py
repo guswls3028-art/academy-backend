@@ -8,6 +8,7 @@ from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.homework_results.views.homework_score_viewset import HomeworkScoreViewSet
 from apps.domains.lectures.models import Lecture, Session
+from apps.domains.results.models import ScoreEditDraft
 from apps.domains.students.models import Student
 
 
@@ -51,6 +52,18 @@ class HomeworkQuickPatchScopeTests(TestCase):
             session=self.session,
             enrollment=self.assigned_enrollment,
         )
+        ScoreEditDraft.objects.create(
+            session=self.session,
+            tenant=self.tenant,
+            editor_user=self.admin,
+            payload={"client_id": "test-score-tab", "changes": []},
+        )
+        ScoreEditDraft.objects.create(
+            session=self.other_session,
+            tenant=self.tenant,
+            editor_user=self.admin,
+            payload={"client_id": "test-score-tab", "changes": []},
+        )
 
     def _create_enrollment(self, suffix: str) -> Enrollment:
         user = User.objects.create_user(
@@ -73,7 +86,13 @@ class HomeworkQuickPatchScopeTests(TestCase):
         )
 
     def _quick_patch(self, data, *, expected_status=200):
-        request = self.factory.patch("/homework/scores/quick/", data, format="json")
+        request = self.factory.patch(
+            "/homework/scores/quick/",
+            data,
+            format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="test-score-tab",
+            HTTP_X_SCORE_SESSION_ID=str(data.get("session_id") or ""),
+        )
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin)
         response = HomeworkScoreViewSet.as_view({"patch": "quick_patch"})(request)
@@ -85,6 +104,8 @@ class HomeworkQuickPatchScopeTests(TestCase):
             f"/homework/scores/{score.id}/",
             data,
             format="json",
+            HTTP_X_SCORE_EDITOR_CLIENT="test-score-tab",
+            HTTP_X_SCORE_SESSION_ID=str(score.session_id),
         )
         request.tenant = self.tenant
         force_authenticate(request, user=self.admin)
