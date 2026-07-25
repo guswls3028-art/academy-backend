@@ -32,13 +32,7 @@ class LandingHitReportError(Exception):
         super().__init__(detail)
 
 
-def prewarm_hit_report_previews_for_landing(tenant, config: dict) -> int:
-    """Prepare every enabled hit-report preview before a landing snapshot is public."""
-    from apps.domains.matchup.models import MatchupHitReport
-    from apps.domains.matchup.views_hit_report import (
-        _get_or_generate_hit_report_preview,
-    )
-
+def _hit_report_ids_from_landing_config(config: dict) -> set[int]:
     report_ids: set[int] = set()
     for section in (config or {}).get("sections") or []:
         if section.get("type") != "hit_reports" or not section.get("enabled"):
@@ -48,15 +42,27 @@ def prewarm_hit_report_previews_for_landing(tenant, config: dict) -> int:
                 report_ids.add(int(item.get("report_id")))
             except (AttributeError, TypeError, ValueError):
                 continue
+    return report_ids
+
+
+def prewarm_hit_report_previews_for_landing(tenant, config: dict) -> dict[int, str]:
+    """Prepare previews outside row locks and return their content-addressed keys."""
+    from apps.domains.matchup.models import MatchupHitReport
+    from apps.domains.matchup.views_hit_report import (
+        _get_or_generate_hit_report_preview,
+        _hit_report_public_preview_pdf_key,
+    )
+
+    report_ids = _hit_report_ids_from_landing_config(config)
     if not report_ids:
-        return 0
+        return {}
 
     reports = {
         report.id: report
         for report in MatchupHitReport.objects.select_related(
             "document",
             "author",
-        ).filter(tenant=tenant, id__in=report_ids)
+        ).filter(tenant=tenant, id__in=report_ids).order_by("id")
     }
     missing_ids = report_ids.difference(reports)
     if missing_ids:
@@ -66,20 +72,63 @@ def prewarm_hit_report_previews_for_landing(tenant, config: dict) -> int:
             code="hit_report_not_found",
         )
 
+    prepared: dict[int, str] = {}
     for report_id in sorted(report_ids):
         try:
+            report = reports[report_id]
+            preview_pdf_key = _hit_report_public_preview_pdf_key(report)
             _get_or_generate_hit_report_preview(
-                reports[report_id],
+                report,
                 require_cache_write=True,
-                force_refresh=True,
+                preview_pdf_key=preview_pdf_key,
             )
+            prepared[report_id] = preview_pdf_key
         except Exception as exc:
             raise LandingHitReportError(
                 503,
                 "대표 비교 화면을 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.",
                 code="preview_prepare_failed",
             ) from exc
-    return len(report_ids)
+    return prepared
+
+
+def verify_prepared_hit_report_previews(
+    tenant,
+    config: dict,
+    prepared: dict[int, str],
+) -> None:
+    """Lock report rows briefly and reject publication if content changed."""
+    from apps.domains.matchup.models import MatchupHitReport
+    from apps.domains.matchup.views_hit_report import (
+        _hit_report_public_preview_pdf_key,
+    )
+
+    report_ids = _hit_report_ids_from_landing_config(config)
+    if report_ids != set(prepared):
+        raise LandingHitReportError(
+            409,
+            "적중보고서 구성이 변경되었습니다. 다시 시도해 주세요.",
+            code="hit_report_changed",
+        )
+    if not report_ids:
+        return
+
+    reports = list(
+        MatchupHitReport.objects.select_for_update().select_related(
+            "document",
+            "author",
+        ).filter(tenant=tenant, id__in=report_ids).order_by("id"),
+    )
+    current = {
+        report.id: _hit_report_public_preview_pdf_key(report)
+        for report in reports
+    }
+    if current != prepared:
+        raise LandingHitReportError(
+            409,
+            "적중보고서가 변경되었습니다. 다시 게시해 주세요.",
+            code="hit_report_changed",
+        )
 
 
 def toggle_hit_report_on_landing(
@@ -169,11 +218,14 @@ def toggle_hit_report_on_landing(
     if changed:
         sections[hit_idx] = hit_sec
         next_draft_config = {**landing.draft_config, "sections": sections}
-        if auto_publish:
+        prepared_previews = (
             prewarm_hit_report_previews_for_landing(
                 tenant,
                 next_draft_config,
             )
+            if auto_publish
+            else {}
+        )
         with transaction.atomic():
             locked = LandingPage.objects.select_for_update().get(pk=landing.pk)
             current_draft_config = backfill_missing_sections(locked.draft_config)
@@ -182,6 +234,12 @@ def toggle_hit_report_on_landing(
                     409,
                     "홈페이지 초안이 변경되었습니다. 다시 시도해 주세요.",
                     code="draft_changed",
+                )
+            if auto_publish:
+                verify_prepared_hit_report_previews(
+                    tenant,
+                    next_draft_config,
+                    prepared_previews,
                 )
             locked.draft_config = next_draft_config
             locked.save(update_fields=["draft_config", "updated_at"])

@@ -105,12 +105,20 @@ class LandingPublishBackfillTests(TestCase):
         with patch(
             "apps.core.landing.views_hit_report."
             "prewarm_hit_report_previews_for_landing",
-            return_value=1,
-        ) as prewarm:
+            return_value={42: "preview-key-42"},
+        ) as prewarm, patch(
+            "apps.core.landing.views_hit_report."
+            "verify_prepared_hit_report_previews",
+        ) as verify:
             response = LandingPublishView.as_view()(request)
 
         self.assertEqual(response.status_code, 200, response.data)
         prewarm.assert_called_once()
+        verify.assert_called_once_with(
+            self.tenant,
+            prewarm.call_args.args[1],
+            {42: "preview-key-42"},
+        )
 
     def test_publish_stays_private_when_hit_report_preview_fails(self):
         LandingPage.objects.create(
@@ -149,7 +157,7 @@ class LandingPublishBackfillTests(TestCase):
             LandingPage.objects.filter(tenant=self.tenant).update(
                 draft_config=changed,
             )
-            return 0
+            return {}
 
         with patch(
             "apps.core.landing.views_hit_report."
@@ -185,8 +193,12 @@ class LandingPublishBackfillTests(TestCase):
             patch(
                 "apps.core.landing.views_hit_report."
                 "prewarm_hit_report_previews_for_landing",
-                return_value=2,
+                return_value={7: "preview-key-7", 8: "preview-key-8"},
             ) as prewarm,
+            patch(
+                "apps.core.landing.views_hit_report."
+                "verify_prepared_hit_report_previews",
+            ) as verify,
         ):
             report_filter.return_value.exists.return_value = True
             result = toggle_hit_report_on_landing(
@@ -197,6 +209,11 @@ class LandingPublishBackfillTests(TestCase):
             )
 
         self.assertTrue(result["published"])
+        verify.assert_called_once_with(
+            self.tenant,
+            prewarm.call_args.args[1],
+            {7: "preview-key-7", 8: "preview-key-8"},
+        )
         prepared_config = prewarm.call_args.args[1]
         hit_section = next(
             section
@@ -230,7 +247,7 @@ class LandingPublishBackfillTests(TestCase):
             LandingPage.objects.filter(tenant=self.tenant).update(
                 draft_config=changed,
             )
-            return 2
+            return {7: "preview-key-7", 8: "preview-key-8"}
 
         with (
             patch(
@@ -253,5 +270,14 @@ class LandingPublishBackfillTests(TestCase):
 
         self.assertEqual(raised.exception.status_code, 409)
         landing = LandingPage.objects.get(tenant=self.tenant)
-        self.assertEqual(landing.draft_config["tagline"], "Concurrent owner edit")
         self.assertFalse(landing.is_published)
+        hit_section = next(
+            section
+            for section in landing.draft_config["sections"]
+            if section["type"] == "hit_reports"
+        )
+        self.assertEqual(
+            {item["report_id"] for item in hit_section["items"]},
+            {7, 8},
+        )
+        self.assertEqual(landing.draft_config["tagline"], "Concurrent owner edit")

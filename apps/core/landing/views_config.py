@@ -160,19 +160,22 @@ class LandingPublishView(APIView):
         if not landing.draft_config:
             return Response({"detail": "저장된 초안이 없습니다."}, status=400)
 
-        # Validate and prepare heavyweight static derivatives before taking the
-        # row lock. Public preview GETs are cache-only and never render PDFs.
+        # Render heavyweight derivatives before taking database locks. The
+        # transaction below then verifies both the draft and content keys.
         draft_config = backfill_missing_sections(landing.draft_config)
         errors = validate_config(draft_config)
         if errors:
             return Response({"detail": errors}, status=400)
+        from .views_hit_report import (
+            LandingHitReportError,
+            prewarm_hit_report_previews_for_landing,
+            verify_prepared_hit_report_previews,
+        )
         try:
-            from .views_hit_report import (
-                LandingHitReportError,
-                prewarm_hit_report_previews_for_landing,
+            prepared_previews = prewarm_hit_report_previews_for_landing(
+                tenant,
+                draft_config,
             )
-
-            prewarm_hit_report_previews_for_landing(tenant, draft_config)
         except LandingHitReportError as exc:
             return Response(
                 {"detail": exc.detail, "code": exc.code},
@@ -190,6 +193,17 @@ class LandingPublishView(APIView):
                 return Response(
                     {"detail": "초안이 변경되었습니다. 다시 게시해 주세요."},
                     status=409,
+                )
+            try:
+                verify_prepared_hit_report_previews(
+                    tenant,
+                    draft_config,
+                    prepared_previews,
+                )
+            except LandingHitReportError as exc:
+                return Response(
+                    {"detail": exc.detail, "code": exc.code},
+                    status=exc.status_code,
                 )
 
             landing.draft_config = draft_config

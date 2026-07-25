@@ -19,7 +19,6 @@ from django.views.decorators.csrf import csrf_exempt
 from apps.support.landing_public.matchup_preview import (
     get_cached_matchup_preview,
     get_or_create_matchup_preview,
-    preview_etag_for_pdf,
 )
 
 from .models import (
@@ -1145,11 +1144,37 @@ def _hit_report_pdf_cache_key(report) -> str:
 
 
 def _hit_report_public_preview_pdf_key(report) -> str:
-    """Stable synthetic source key for the published representative snapshot."""
+    """Content-addressed snapshot key excluding workflow and document metadata."""
+    import json
+
+    entries = list(
+        report.entries.order_by("id").values(
+            "id",
+            "exam_problem_id",
+            "selected_problem_ids",
+            "comment",
+            "order",
+            "excluded",
+        ),
+    )
+    raw = json.dumps(
+        {
+            "render_version": _HIT_REPORT_PDF_RENDER_VERSION,
+            "tenant_id": getattr(report, "tenant_id", None),
+            "report_id": getattr(report, "id", None),
+            "title": getattr(report, "title", ""),
+            "summary": getattr(report, "summary", ""),
+            "entries": entries,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    version = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
     return (
         "matchup/hit-report-public-preview/"
         f"tenant-{getattr(report, 'tenant_id', 'unknown')}/"
-        f"report-{getattr(report, 'id', 'unknown')}.pdf"
+        f"report-{getattr(report, 'id', 'unknown')}-{version}.pdf"
     )
 
 
@@ -1190,24 +1215,21 @@ def _get_or_generate_curated_hit_report_pdf(report) -> tuple[bytes, str]:
     return pdf_bytes, "miss"
 
 
-def _hit_report_preview_etag(report) -> str:
-    return preview_etag_for_pdf(
-        _hit_report_public_preview_pdf_key(report),
-        namespace=f"mhr-preview-{_hit_report_pdf_version(report)[:16]}",
-    )
+def _hit_report_preview_etag(preview_bytes: bytes) -> str:
+    digest = hashlib.sha256(preview_bytes).hexdigest()[:16]
+    return f'W/"mhr-preview-{digest}"'
 
 
 def _get_or_generate_hit_report_preview(
     report,
     *,
     require_cache_write: bool = False,
-    force_refresh: bool = False,
+    preview_pdf_key: str | None = None,
 ) -> tuple[bytes, str]:
     return get_or_create_matchup_preview(
-        pdf_key=_hit_report_public_preview_pdf_key(report),
+        pdf_key=preview_pdf_key or _hit_report_public_preview_pdf_key(report),
         load_pdf_bytes=lambda: _get_or_generate_curated_hit_report_pdf(report)[0],
         require_cache_write=require_cache_write,
-        force_refresh=force_refresh,
     )
 
 
@@ -1220,7 +1242,6 @@ def _prewarm_hit_report_preview_if_public(report, *, tenant) -> None:
     _get_or_generate_hit_report_preview(
         report,
         require_cache_write=True,
-        force_refresh=True,
     )
 
 
@@ -1230,19 +1251,21 @@ def _get_cached_hit_report_preview(report) -> bytes | None:
     )
 
 
-def _hit_report_preview_response(request, report, *, etag: str) -> HttpResponse:
-    if request.META.get("HTTP_IF_NONE_MATCH") == etag:
-        response = HttpResponse(status=304)
-        response["ETag"] = etag
-        response["Cache-Control"] = "private, must-revalidate"
-        return response
-
+def _hit_report_preview_response(request, report) -> HttpResponse:
     preview_bytes = _get_cached_hit_report_preview(report)
     if not preview_bytes:
         response = JsonResponse({"detail": "미리보기 준비 중"}, status=503)
         response["Cache-Control"] = "no-store"
         response["Retry-After"] = "30"
         return response
+
+    etag = _hit_report_preview_etag(preview_bytes)
+    if request.META.get("HTTP_IF_NONE_MATCH") == etag:
+        response = HttpResponse(status=304)
+        response["ETag"] = etag
+        response["Cache-Control"] = "private, must-revalidate"
+        return response
+
     response = HttpResponse(preview_bytes, content_type="image/jpeg")
     response["Content-Disposition"] = f'inline; filename="hit-report-{report.id}-preview.jpg"'
     response["ETag"] = etag
@@ -1960,7 +1983,6 @@ class HitReportLandingPublicPreviewView(View):
             return _hit_report_preview_response(
                 request,
                 report,
-                etag=_hit_report_preview_etag(report),
             )
         except Exception:
             logger.exception("public_landing_preview failed (report=%s)", report.id)
@@ -2019,7 +2041,6 @@ class HitReportShareLinkView(View):
             _get_or_generate_hit_report_preview(
                 report,
                 require_cache_write=True,
-                force_refresh=True,
             )
         except Exception:
             logger.exception("share_preview_prepare_failed (report=%s)", report.id)
@@ -2279,12 +2300,8 @@ class HitReportSharePreviewView(View):
         except MatchupHitReport.DoesNotExist:
             return JsonResponse({"detail": "Not found"}, status=404)
 
-        etag = preview_etag_for_pdf(
-            _hit_report_public_preview_pdf_key(report),
-            namespace=f"mhr-share-preview-{_hit_report_pdf_version(report)[:16]}",
-        )
         try:
-            return _hit_report_preview_response(request, report, etag=etag)
+            return _hit_report_preview_response(request, report)
         except Exception:
             logger.exception("share_preview failed (report=%s)", report.id)
             return JsonResponse({"detail": "미리보기 생성 실패"}, status=500)

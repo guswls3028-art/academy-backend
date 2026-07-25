@@ -1,4 +1,5 @@
 import io
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -94,13 +95,53 @@ class MatchupPreviewRenderingTests(SimpleTestCase):
 
         self.assertNotEqual(first, second)
 
-    def test_public_preview_key_is_stable_across_report_updates(self):
-        report = SimpleNamespace(id=42, tenant_id=7, updated_at="before")
+    def test_public_preview_key_tracks_content_not_workflow_timestamp(self):
+        entries = Mock()
+        entries.order_by.return_value.values.return_value = []
+        report = SimpleNamespace(
+            id=42,
+            tenant_id=7,
+            title="Original",
+            summary="",
+            entries=entries,
+            updated_at=datetime(2026, 7, 26, 1, tzinfo=timezone.utc),
+            status="draft",
+        )
         first = _hit_report_public_preview_pdf_key(report)
-        report.updated_at = "after"
-        second = _hit_report_public_preview_pdf_key(report)
+        report.status = "submitted"
+        same_content = _hit_report_public_preview_pdf_key(report)
+        report.updated_at = datetime(2026, 7, 26, 2, tzinfo=timezone.utc)
+        same_after_workflow_update = _hit_report_public_preview_pdf_key(report)
+        report.title = "Changed"
+        changed_content = _hit_report_public_preview_pdf_key(report)
 
-        self.assertEqual(first, second)
+        self.assertEqual(first, same_content)
+        self.assertEqual(first, same_after_workflow_update)
+        self.assertNotEqual(first, changed_content)
+
+    def test_public_preview_key_tracks_pdf_render_version(self):
+        entries = Mock()
+        entries.order_by.return_value.values.return_value = []
+        report = SimpleNamespace(
+            id=42,
+            tenant_id=7,
+            title="Original",
+            summary="",
+            entries=entries,
+        )
+
+        with patch(
+            "apps.domains.matchup.views_hit_report._HIT_REPORT_PDF_RENDER_VERSION",
+            "render-v1",
+        ):
+            first = _hit_report_public_preview_pdf_key(report)
+        with patch(
+            "apps.domains.matchup.views_hit_report._HIT_REPORT_PDF_RENDER_VERSION",
+            "render-v2",
+        ):
+            second = _hit_report_public_preview_pdf_key(report)
+
+        self.assertNotEqual(first, second)
 
 
 class LandingHitReportPreviewViewTests(SimpleTestCase):
@@ -195,4 +236,3 @@ class LandingHitReportPreviewViewTests(SimpleTestCase):
             )
 
         self.assertTrue(prewarm.call_args.kwargs["require_cache_write"])
-        self.assertTrue(prewarm.call_args.kwargs["force_refresh"])
