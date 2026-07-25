@@ -268,6 +268,36 @@ class PublicMatchupShowcaseVisibilityTests(TestCase):
         self.assertEqual(response.status_code, 500, response.data)
         cleanup_mock.assert_called_once()
 
+    def test_republish_prewarms_preview_before_status_change(self):
+        obj = PublicMatchupShowcase.objects.create(
+            tenant=self.tenant,
+            title="Hidden",
+            status=PublicMatchupShowcase.Status.HIDDEN,
+            snapshot_pdf_key="matchup-showcase-snapshots/hidden.pdf",
+            snapshot_meta={"source": "user_upload"},
+            snapshot_at=timezone.now(),
+        )
+        request = self._request(
+            "patch",
+            f"/api/v1/landing-public/matchup-showcase/{obj.id}/",
+            {"status": PublicMatchupShowcase.Status.PUBLISHED},
+            staff=True,
+        )
+
+        with patch(
+            "apps.domains.landing_public.api.views.matchup_showcase_views."
+            "get_or_create_matchup_preview",
+            return_value=(b"preview-jpeg", "hit"),
+        ) as prewarm:
+            response = PublicMatchupShowcaseViewSet.as_view(
+                {"patch": "partial_update"},
+            )(request, pk=obj.id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(prewarm.call_args.kwargs["require_cache_write"])
+        obj.refresh_from_db()
+        self.assertEqual(obj.status, PublicMatchupShowcase.Status.PUBLISHED)
+
     def test_user_upload_snapshot_keys_are_unique_for_same_file_name(self):
         first = _matchup_upload_snapshot_key(
             tenant_id=self.tenant.id,

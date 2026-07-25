@@ -38,6 +38,7 @@ from apps.core.permissions import TenantResolved, TenantResolvedAndStaff, is_eff
 from apps.support.landing_public.matchup_preview import (
     delete_matchup_preview_assets,
     get_cached_matchup_preview,
+    get_or_create_matchup_preview,
     preview_etag_for_pdf,
     render_matchup_pdf_preview,
     store_matchup_preview,
@@ -493,6 +494,31 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             if v == PublicMatchupShowcase.Status.PUBLISHED:
                 if not obj.snapshot_pdf_key or not obj.snapshot_at:
                     return Response({"detail": "스냅샷이 없는 게시물은 공개할 수 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
+                try:
+                    from apps.infrastructure.storage.r2 import get_object_bytes_r2_storage
+
+                    def load_pdf_bytes():
+                        data = get_object_bytes_r2_storage(key=obj.snapshot_pdf_key)
+                        if data is None:
+                            raise FileNotFoundError("snapshot PDF missing")
+                        return data
+
+                    source = str((obj.snapshot_meta or {}).get("source") or "")
+                    get_or_create_matchup_preview(
+                        pdf_key=obj.snapshot_pdf_key,
+                        load_pdf_bytes=load_pdf_bytes,
+                        first_body_page=not source.startswith("user_upload"),
+                        require_cache_write=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "matchup_showcase_republish_preview_failed id=%s",
+                        obj.id,
+                    )
+                    return Response(
+                        {"detail": "대표 비교 화면을 준비하지 못했습니다."},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
                 if "published_at" not in request.data and obj.published_at is None:
                     updates["published_at"] = timezone.now()
             updates["status"] = v

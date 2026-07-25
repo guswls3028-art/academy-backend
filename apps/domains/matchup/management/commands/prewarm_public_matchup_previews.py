@@ -31,12 +31,18 @@ def _published_landing_report_ids(tenant) -> set[int]:
 
 class Command(BaseCommand):
     help = (
-        "Prewarm immutable matchup JPEG previews for one tenant without "
+        "Prewarm immutable matchup JPEG previews without "
         "modifying report or landing-page rows."
     )
 
     def add_arguments(self, parser):
-        parser.add_argument("--tenant-code", required=True)
+        scope = parser.add_mutually_exclusive_group(required=True)
+        scope.add_argument("--tenant-code")
+        scope.add_argument(
+            "--all-tenants",
+            action="store_true",
+            help="Prepare every active tenant before a cache-only rollout.",
+        )
         parser.add_argument(
             "--include-share-links",
             action="store_true",
@@ -44,13 +50,34 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        tenant_code = str(options["tenant_code"]).strip()
-        tenant = Tenant.objects.filter(code=tenant_code, is_active=True).first()
-        if tenant is None:
-            raise CommandError(f"Active tenant not found: {tenant_code}")
+        if options["all_tenants"]:
+            tenants = list(Tenant.objects.filter(is_active=True).order_by("id"))
+        else:
+            tenant_code = str(options["tenant_code"]).strip()
+            tenant = Tenant.objects.filter(code=tenant_code, is_active=True).first()
+            if tenant is None:
+                raise CommandError(f"Active tenant not found: {tenant_code}")
+            tenants = [tenant]
 
+        all_errors: list[str] = []
+        for tenant in tenants:
+            prepared_reports, prepared_showcases, errors = self._prewarm_tenant(
+                tenant,
+                include_share_links=options["include_share_links"],
+            )
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"tenant={tenant.code} legacy={prepared_reports} "
+                    f"showcase={prepared_showcases}",
+                ),
+            )
+            all_errors.extend(f"tenant={tenant.code} {error}" for error in errors)
+        if all_errors:
+            raise CommandError("; ".join(all_errors))
+
+    def _prewarm_tenant(self, tenant, *, include_share_links: bool):
         report_ids = _published_landing_report_ids(tenant)
-        if options["include_share_links"]:
+        if include_share_links:
             report_ids.update(
                 MatchupHitReport.objects.filter(
                     tenant=tenant,
@@ -111,11 +138,4 @@ class Command(BaseCommand):
             except Exception as exc:
                 errors.append(f"showcase {showcase.id}: {type(exc).__name__}")
 
-        self.stdout.write(
-            self.style.SUCCESS(
-                f"tenant={tenant.code} legacy={prepared_reports} "
-                f"showcase={prepared_showcases}",
-            ),
-        )
-        if errors:
-            raise CommandError("; ".join(errors))
+        return prepared_reports, prepared_showcases, errors

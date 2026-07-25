@@ -96,12 +96,10 @@ def toggle_hit_report_on_landing(
         raise LandingHitReportError(400, "action은 add 또는 remove")
 
     # 보고서 검증 — 본 학원 보고서만
-    try:
-        report = MatchupHitReport.objects.select_related("document", "author").get(
-            id=int(report_id),
-            tenant=tenant,
-        )
-    except MatchupHitReport.DoesNotExist:
+    if not MatchupHitReport.objects.filter(
+        id=int(report_id),
+        tenant=tenant,
+    ).exists():
         raise LandingHitReportError(404, "보고서를 찾을 수 없습니다")
 
     landing, _ = LandingPage.objects.get_or_create(
@@ -130,24 +128,12 @@ def toggle_hit_report_on_landing(
     MAX_REPORTS = 12
     rid = int(report_id)
     if action == "add":
-        # Public preview endpoints are cache-only so visitors never wait for PDF
-        # generation. Prepare the derivative before publishing the landing config.
-        try:
-            from apps.domains.matchup.views_hit_report import (
-                _get_or_generate_hit_report_preview,
-            )
-
-            _get_or_generate_hit_report_preview(
-                report,
-                require_cache_write=True,
-            )
-        except Exception as exc:
-            raise LandingHitReportError(
-                503,
-                "대표 비교 화면을 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.",
-                code="preview_prepare_failed",
-            ) from exc
         if rid in existing_ids:
+            if auto_publish:
+                prewarm_hit_report_previews_for_landing(
+                    tenant,
+                    landing.draft_config,
+                )
             return {"ok": True, "noop": True, "registered": True,
                     "total_registered": len(existing_ids),
                     "published": landing.is_published}
@@ -163,6 +149,11 @@ def toggle_hit_report_on_landing(
         changed = True
     else:  # remove
         if rid not in existing_ids:
+            if auto_publish:
+                prewarm_hit_report_previews_for_landing(
+                    tenant,
+                    landing.draft_config,
+                )
             return {"ok": True, "noop": True, "registered": False,
                     "total_registered": len(existing_ids),
                     "published": landing.is_published}
@@ -173,6 +164,11 @@ def toggle_hit_report_on_landing(
     if changed:
         sections[hit_idx] = hit_sec
         landing.draft_config = {**landing.draft_config, "sections": sections}
+        if auto_publish:
+            prewarm_hit_report_previews_for_landing(
+                tenant,
+                landing.draft_config,
+            )
         landing.save(update_fields=["draft_config", "updated_at"])
         if auto_publish:
             landing.publish()

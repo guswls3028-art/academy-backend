@@ -1,3 +1,4 @@
+from copy import deepcopy
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -6,7 +7,10 @@ from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.landing.config_helpers import SECTION_TYPES_ORDERED
 from apps.core.landing.views_config import LandingAdminView, LandingPublishView
-from apps.core.landing.views_hit_report import LandingHitReportError
+from apps.core.landing.views_hit_report import (
+    LandingHitReportError,
+    toggle_hit_report_on_landing,
+)
 from apps.core.models import LandingPage, Tenant, TenantMembership
 
 User = get_user_model()
@@ -130,3 +134,76 @@ class LandingPublishBackfillTests(TestCase):
         self.assertEqual(response.status_code, 503, response.data)
         landing = LandingPage.objects.get(tenant=self.tenant)
         self.assertFalse(landing.is_published)
+
+    def test_publish_returns_conflict_when_draft_changes_during_prewarm(self):
+        LandingPage.objects.create(
+            tenant=self.tenant,
+            template_key="minimal_tutor",
+            draft_config=_legacy_draft(),
+        )
+        request = self._auth_request("post", "/api/v1/core/landing/publish/")
+
+        def mutate_draft(_tenant, prepared_config):
+            changed = deepcopy(prepared_config)
+            changed["tagline"] = "Changed while preparing previews"
+            LandingPage.objects.filter(tenant=self.tenant).update(
+                draft_config=changed,
+            )
+            return 0
+
+        with patch(
+            "apps.core.landing.views_hit_report."
+            "prewarm_hit_report_previews_for_landing",
+            side_effect=mutate_draft,
+        ):
+            response = LandingPublishView.as_view()(request)
+
+        self.assertEqual(response.status_code, 409, response.data)
+        landing = LandingPage.objects.get(tenant=self.tenant)
+        self.assertFalse(landing.is_published)
+
+    def test_toggle_prewarms_every_report_in_resulting_landing(self):
+        draft = _legacy_draft()
+        draft["sections"].append(
+            {
+                "type": "hit_reports",
+                "enabled": True,
+                "order": 3,
+                "items": [{"report_id": 7}],
+            },
+        )
+        LandingPage.objects.create(
+            tenant=self.tenant,
+            template_key="minimal_tutor",
+            draft_config=draft,
+        )
+
+        with (
+            patch(
+                "apps.domains.matchup.models.MatchupHitReport.objects.filter",
+            ) as report_filter,
+            patch(
+                "apps.core.landing.views_hit_report."
+                "prewarm_hit_report_previews_for_landing",
+                return_value=2,
+            ) as prewarm,
+        ):
+            report_filter.return_value.exists.return_value = True
+            result = toggle_hit_report_on_landing(
+                self.tenant,
+                8,
+                action="add",
+                auto_publish=True,
+            )
+
+        self.assertTrue(result["published"])
+        prepared_config = prewarm.call_args.args[1]
+        hit_section = next(
+            section
+            for section in prepared_config["sections"]
+            if section["type"] == "hit_reports"
+        )
+        self.assertEqual(
+            {item["report_id"] for item in hit_section["items"]},
+            {7, 8},
+        )

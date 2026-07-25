@@ -6,7 +6,10 @@ import fitz
 from django.test import RequestFactory, SimpleTestCase
 from PIL import Image
 
-from apps.domains.matchup.views_hit_report import HitReportLandingPublicPreviewView
+from apps.domains.matchup.views_hit_report import (
+    HitReportLandingPublicPreviewView,
+    _prewarm_hit_report_preview_if_public,
+)
 from apps.support.landing_public.matchup_preview import (
     get_or_create_matchup_preview,
     preview_etag_for_pdf,
@@ -162,3 +165,24 @@ class LandingHitReportPreviewViewTests(SimpleTestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response["Cache-Control"], "no-store")
         render_mock.assert_not_called()
+
+    def test_public_report_edit_requires_strict_preview_refresh(self):
+        report = SimpleNamespace(id=42, share_token=None)
+
+        with (
+            patch(
+                "apps.domains.matchup.views_hit_report._is_report_in_published_landing",
+                return_value=True,
+            ),
+            patch(
+                "apps.domains.matchup.views_hit_report."
+                "_get_or_generate_hit_report_preview",
+                return_value=(b"jpeg-bytes", "miss"),
+            ) as prewarm,
+        ):
+            _prewarm_hit_report_preview_if_public(
+                report,
+                tenant=SimpleNamespace(id=1),
+            )
+
+        self.assertTrue(prewarm.call_args.kwargs["require_cache_write"])

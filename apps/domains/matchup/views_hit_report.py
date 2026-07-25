@@ -676,7 +676,24 @@ class HitReportDetailView(View):
         if "summary" in body and isinstance(body["summary"], str):
             report.summary = body["summary"]
             update_fields.append("summary")
-        report.save(update_fields=update_fields)
+        from django.db import transaction
+
+        try:
+            with transaction.atomic():
+                report.save(update_fields=update_fields)
+                _prewarm_hit_report_preview_if_public(
+                    report,
+                    tenant=request.tenant,
+                )
+        except Exception:
+            logger.exception(
+                "HIT_REPORT_PUBLIC_PREVIEW_REFRESH_FAILED | report=%s",
+                report.id,
+            )
+            return JsonResponse(
+                {"detail": "공개 대표 화면을 준비하지 못해 변경을 저장하지 않았습니다."},
+                status=503,
+            )
         return JsonResponse(MatchupHitReportSerializer(report).data)
 
     def delete(self, request, report_id):
@@ -864,6 +881,21 @@ class HitReportEntriesUpsertView(View):
 
             # report.updated_at 갱신
             report.save(update_fields=["updated_at"])
+            try:
+                _prewarm_hit_report_preview_if_public(
+                    report,
+                    tenant=request.tenant,
+                )
+            except Exception:
+                transaction.set_rollback(True)
+                logger.exception(
+                    "HIT_REPORT_PUBLIC_PREVIEW_REFRESH_FAILED | report=%s",
+                    report.id,
+                )
+                return JsonResponse(
+                    {"detail": "공개 대표 화면을 준비하지 못해 변경을 저장하지 않았습니다."},
+                    status=503,
+                )
         return JsonResponse({"upserted": upserted, "deleted": deleted})
 
 
@@ -1165,6 +1197,18 @@ def _get_or_generate_hit_report_preview(
         pdf_key=_hit_report_pdf_cache_key(report),
         load_pdf_bytes=lambda: _get_or_generate_curated_hit_report_pdf(report)[0],
         require_cache_write=require_cache_write,
+    )
+
+
+def _prewarm_hit_report_preview_if_public(report, *, tenant) -> None:
+    if not report.share_token and not _is_report_in_published_landing(
+        tenant,
+        report.id,
+    ):
+        return
+    _get_or_generate_hit_report_preview(
+        report,
+        require_cache_write=True,
     )
 
 
