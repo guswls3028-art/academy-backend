@@ -16,7 +16,8 @@ from apps.core.models import Tenant, TenantMembership
 from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import Result, ResultFact, ResultItem
+from apps.domains.results.guards.score_edit_lease_guard import ScoreEditLeaseConflict
+from apps.domains.results.models import Result, ResultFact, ResultItem, ScoreEditDraft
 from apps.domains.results.services.exam_result_excel_import import (
     apply_exam_result_import,
     build_exam_result_template,
@@ -295,6 +296,36 @@ class ExamResultExcelImportTests(TestCase):
                 source="excel_import",
             ).count(),
             2,
+        )
+
+    def test_apply_is_blocked_while_manual_score_editor_holds_lease(self):
+        payload = _workbook_bytes(
+            [
+                ["이름", "학생전화번호", 1, 2],
+                ["김학생", "01012345678", "O", "X"],
+            ]
+        )
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="manual-editor-active.xlsx",
+            workbook_bytes=payload,
+        )
+        ScoreEditDraft.objects.create(
+            session=self.session,
+            tenant=self.tenant,
+            editor_user=self.admin,
+            payload={"client_id": "score-tab", "changes": []},
+        )
+
+        with self.assertRaises(ScoreEditLeaseConflict):
+            apply_exam_result_import(plan=plan)
+
+        self.assertFalse(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=self.exam.id,
+            ).exists()
         )
 
     def test_reimport_identical_values_does_not_duplicate_question_facts(self):

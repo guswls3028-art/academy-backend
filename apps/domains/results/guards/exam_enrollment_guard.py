@@ -4,8 +4,22 @@ from rest_framework.exceptions import ValidationError
 
 from apps.support.results.grading_dependencies import (
     exam_enrollment_exists,
+    linked_session_enrollment_exists,
     materialize_exam_enrollment_from_linked_session,
 )
+
+
+def validate_exam_enrollment_readable(exam, enrollment_id: int) -> None:
+    """Validate score-detail access without materializing assignment rows."""
+    if exam.exam_type == exam.ExamType.TEMPLATE:
+        raise ValidationError({"detail": "템플릿 시험의 성적은 조회할 수 없습니다."})
+    if exam_enrollment_exists(exam_id=exam.id, enrollment_id=enrollment_id):
+        return
+    if linked_session_enrollment_exists(exam=exam, enrollment_id=enrollment_id):
+        return
+    raise ValidationError(
+        {"enrollment_id": "이 시험이 연결된 차시의 수강생만 조회할 수 있습니다."}
+    )
 
 
 def validate_exam_enrollment_assigned(exam, enrollment_id: int) -> None:

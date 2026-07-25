@@ -16,6 +16,9 @@ from rest_framework.exceptions import ValidationError, NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import ExamAttempt, Result, ResultItem, ResultFact
+from apps.domains.results.guards.score_edit_lease_guard import (
+    require_score_edit_scope_available_for_exam,
+)
 
 # ✅ 단일 진실: session 매핑 + progress 트리거
 from apps.domains.results.utils.session_exam import get_primary_session_for_exam
@@ -109,8 +112,12 @@ class AdminRepresentativeAttemptView(APIView):
         exam_id = int(exam_id)
 
         # ✅ tenant isolation: verify exam belongs to tenant
-        get_regular_active_exam_for_tenant(
+        exam = get_regular_active_exam_for_tenant(
             exam_id=exam_id,
+            tenant=request.tenant,
+        )
+        require_score_edit_scope_available_for_exam(
+            exam=exam,
             tenant=request.tenant,
         )
 

@@ -11,6 +11,9 @@ from django.utils import timezone
 
 from apps.domains.results.models import ExamResult, Result, ResultItem
 from apps.domains.results.guards.grading_contract import GradingContractGuard
+from apps.domains.results.guards.score_edit_lease_guard import (
+    invalidate_score_edit_leases_for_exam,
+)
 from apps.domains.results.services.attempt_service import ExamAttemptService
 from apps.domains.results.services.answer_matching import (
     answer_matches,
@@ -159,6 +162,11 @@ def sync_result_from_exam_submission(submission_id: int) -> Result | None:
         sheet, answer_key = GradingContractGuard.validate_exam_for_grading(exam)
     except Exception:
         return None
+    invalidate_score_edit_leases_for_exam(
+        exam=exam,
+        tenant=exam.tenant,
+        reason="AUTOMATIC_GRADING_COMPLETED",
+    )
     score_shape = get_exam_score_shape(exam)
 
     key_map = {

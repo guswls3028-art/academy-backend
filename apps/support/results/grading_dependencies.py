@@ -22,11 +22,10 @@ def exam_enrollment_exists(*, exam_id: int, enrollment_id: int) -> bool:
     ).exists()
 
 
-def materialize_exam_enrollment_from_linked_session(*, exam: Any, enrollment_id: int) -> bool:
+def linked_session_enrollment_exists(*, exam: Any, enrollment_id: int) -> bool:
     from apps.domains.enrollment.models import SessionEnrollment
-    from apps.domains.exams.models import ExamEnrollment
 
-    in_linked_session = SessionEnrollment.objects.filter(
+    return SessionEnrollment.objects.filter(
         tenant=exam.tenant,
         session__exams__id=exam.id,
         session__exams__tenant=exam.tenant,
@@ -36,7 +35,12 @@ def materialize_exam_enrollment_from_linked_session(*, exam: Any, enrollment_id:
         enrollment__status="ACTIVE",
         enrollment__student__deleted_at__isnull=True,
     ).exists()
-    if not in_linked_session:
+
+
+def materialize_exam_enrollment_from_linked_session(*, exam: Any, enrollment_id: int) -> bool:
+    from apps.domains.exams.models import ExamEnrollment
+
+    if not linked_session_enrollment_exists(exam=exam, enrollment_id=enrollment_id):
         return False
 
     ExamEnrollment.objects.get_or_create(

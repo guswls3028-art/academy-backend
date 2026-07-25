@@ -144,6 +144,86 @@ def lock_session_for_tenant_or_404(*, session_id: int, tenant: Any) -> Any:
     )
 
 
+def score_edit_scope_session_ids(*, session_id: int, tenant: Any) -> list[int]:
+    """Return the session plus every sibling session sharing one of its exams."""
+    from django.db.models import Q
+    from django.shortcuts import get_object_or_404
+
+    from apps.domains.lectures.models import Session
+
+    session = get_object_or_404(
+        Session.objects.only("id"),
+        id=int(session_id),
+        lecture__tenant=tenant,
+    )
+    exam_ids = list(session.exams.values_list("id", flat=True))
+    scope_filter = Q(id=int(session.id))
+    if exam_ids:
+        scope_filter |= Q(exams__id__in=exam_ids)
+    return list(
+        Session.objects
+        .filter(scope_filter, lecture__tenant=tenant)
+        .order_by("id")
+        .values_list("id", flat=True)
+        .distinct()
+    )
+
+
+def lock_score_edit_scope_for_session(
+    *,
+    session_id: int,
+    tenant: Any,
+) -> tuple[Any, list[int]]:
+    """Lock a score-edit session graph in deterministic order."""
+    from django.shortcuts import get_object_or_404
+
+    from apps.domains.lectures.models import Session
+
+    scope_ids = score_edit_scope_session_ids(
+        session_id=int(session_id),
+        tenant=tenant,
+    )
+    sessions = list(
+        Session.objects
+        .select_for_update()
+        .filter(id__in=scope_ids, lecture__tenant=tenant)
+        .select_related("lecture")
+        .order_by("id")
+    )
+    current = next(
+        (session for session in sessions if int(session.id) == int(session_id)),
+        None,
+    )
+    if current is None:
+        get_object_or_404(
+            Session,
+            id=int(session_id),
+            lecture__tenant=tenant,
+        )
+    return current, scope_ids
+
+
+def lock_score_edit_scope_for_exam(*, exam_id: int, tenant: Any) -> list[int]:
+    """Lock all sessions that can write the same exam-level Result rows."""
+    from apps.domains.lectures.models import Session
+
+    scope_ids = list(
+        Session.objects
+        .filter(exams__id=int(exam_id), lecture__tenant=tenant)
+        .order_by("id")
+        .values_list("id", flat=True)
+        .distinct()
+    )
+    list(
+        Session.objects
+        .select_for_update()
+        .filter(id__in=scope_ids, lecture__tenant=tenant)
+        .order_by("id")
+        .values_list("id", flat=True)
+    )
+    return scope_ids
+
+
 def progress_policy_meta_for_lecture(lecture: Any) -> dict[str, str]:
     from apps.domains.progress.models import ProgressPolicy
 

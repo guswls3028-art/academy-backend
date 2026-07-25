@@ -32,6 +32,9 @@ from rest_framework.exceptions import NotFound
 
 from apps.domains.results.permissions import IsTeacherOrAdmin
 from apps.domains.results.models import Result, ExamAttempt
+from apps.domains.results.guards.exam_enrollment_guard import (
+    validate_exam_enrollment_readable,
+)
 from apps.domains.results.serializers.student_exam_result import (
     StudentExamResultSerializer,
 )
@@ -74,6 +77,7 @@ class AdminExamResultDetailView(APIView):
         # ✅ tenant isolation: verify enrollment belongs to tenant
         from apps.domains.results.guards.enrollment_tenant_guard import validate_enrollment_belongs_to_tenant
         validate_enrollment_belongs_to_tenant(enrollment_id, request.tenant)
+        validate_exam_enrollment_readable(exam, enrollment_id)
 
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0)
         score_shape = get_exam_score_shape(exam)
@@ -92,44 +96,24 @@ class AdminExamResultDetailView(APIView):
             .first()
         )
         if not result:
-            # ── Auto-create for manual scoring (답안지 제출 없이 수동 입력) ──
             enrollment_obj = get_enrollment_for_tenant(
                 enrollment_id=enrollment_id,
                 tenant=request.tenant,
             )
             if not enrollment_obj:
                 raise NotFound("enrollment not found for this tenant")
-
-            attempt, _ = ExamAttempt.objects.get_or_create(
-                exam_id=exam_id,
-                enrollment_id=enrollment_id,
-                attempt_index=1,
-                defaults={
-                    "submission_id": 0,
-                    "is_retake": False,
-                    "is_representative": True,
-                    "status": "done",
-                    "meta": {"source": "manual_entry"},
-                },
-            )
-
-            result_obj, _ = Result.objects.get_or_create(
-                target_type="exam",
-                target_id=exam_id,
-                enrollment=enrollment_obj,
-                defaults={
-                    "attempt": attempt,
-                    "total_score": 0,
-                    "max_score": float(exam.max_score or 0),
-                    "objective_score": 0,
-                },
-            )
-            result = (
-                Result.objects
-                .filter(id=result_obj.id)
-                .prefetch_related("items")
-                .first()
-            )
+            data = {
+                "target_type": "exam",
+                "target_id": exam_id,
+                "enrollment_id": enrollment_id,
+                "attempt_id": None,
+                "total_score": None,
+                "max_score": float(exam.max_score or 0),
+                "submitted_at": None,
+                "items": [],
+            }
+        else:
+            data = StudentExamResultSerializer(result).data
 
         # -------------------------------------------------
         # 2️⃣ passed — compute_exam_achievement(아래)에서 단일 유틸로 계산.
@@ -172,8 +156,10 @@ class AdminExamResultDetailView(APIView):
             "updated_at": None,
         }
 
-        if result.attempt_id:
-            attempt = ExamAttempt.objects.filter(id=int(result.attempt_id)).first()
+        result_attempt_id = result.attempt_id if result else None
+        result_total_score = float(result.total_score or 0.0) if result else 0.0
+        if result_attempt_id:
+            attempt = ExamAttempt.objects.filter(id=int(result_attempt_id)).first()
             if attempt and attempt.status == "grading":
                 edit_state.update({
                     "can_edit": False,
@@ -184,8 +170,6 @@ class AdminExamResultDetailView(APIView):
         # -------------------------------------------------
         # 6️⃣ Serializer + items[].is_editable
         # -------------------------------------------------
-        data = StudentExamResultSerializer(result).data
-
         for item in data.get("items", []):
             qid = int(item.get("question_id") or 0)
             item["question_number"] = score_shape.question_number_by_id.get(qid)
@@ -241,8 +225,8 @@ class AdminExamResultDetailView(APIView):
         manual_review_meta = None
         identifier_status = None
 
-        if result.attempt_id:
-            att = ExamAttempt.objects.filter(id=int(result.attempt_id)).first()
+        if result_attempt_id:
+            att = ExamAttempt.objects.filter(id=int(result_attempt_id)).first()
             if att and att.submission_id:
                 submission_id_for_omr = int(att.submission_id)
 
@@ -285,9 +269,9 @@ class AdminExamResultDetailView(APIView):
             enrollment_id=enrollment_id,
             exam_id=exam_id,
             session=session,
-            total_score=float(result.total_score or 0.0),
+            total_score=result_total_score,
             pass_score=pass_score,
-            attempt_id=result.attempt_id,
+            attempt_id=result_attempt_id,
             tenant=request.tenant,
         )
 

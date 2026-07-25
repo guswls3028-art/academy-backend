@@ -616,6 +616,81 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
             [(1, "choice", 100.0), (2, "essay", 0.0)],
         )
 
+    def test_detail_for_assigned_student_is_read_only_when_result_is_missing(self):
+        request = self.factory.get("/results/admin/exams/detail/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = AdminExamResultDetailView.as_view()(
+            request,
+            exam_id=self.exam.id,
+            enrollment_id=self.assigned_enrollment.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["total_score"])
+        self.assertIsNone(response.data["attempt_id"])
+        self.assertFalse(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=self.exam.id,
+                enrollment=self.assigned_enrollment,
+            ).exists()
+        )
+        self.assertFalse(
+            ExamAttempt.objects.filter(
+                exam=self.exam,
+                enrollment=self.assigned_enrollment,
+            ).exists()
+        )
+
+    def test_detail_for_session_roster_is_read_only_without_materializing_assignment(self):
+        request = self.factory.get("/results/admin/exams/detail/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = AdminExamResultDetailView.as_view()(
+            request,
+            exam_id=self.exam.id,
+            enrollment_id=self.session_roster_enrollment.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertIsNone(response.data["total_score"])
+        self.assertFalse(
+            ExamEnrollment.objects.filter(
+                exam=self.exam,
+                enrollment=self.session_roster_enrollment,
+            ).exists()
+        )
+        self.assertFalse(
+            Result.objects.filter(
+                target_type="exam",
+                target_id=self.exam.id,
+                enrollment=self.session_roster_enrollment,
+            ).exists()
+        )
+        self.assertFalse(
+            ExamAttempt.objects.filter(
+                exam=self.exam,
+                enrollment=self.session_roster_enrollment,
+            ).exists()
+        )
+
+    def test_detail_rejects_unassigned_student_without_materializing_result(self):
+        request = self.factory.get("/results/admin/exams/detail/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = AdminExamResultDetailView.as_view()(
+            request,
+            exam_id=self.exam.id,
+            enrollment_id=self.unassigned_enrollment.id,
+        )
+
+        self.assertEqual(response.status_code, 400, response.data)
+        self._assert_no_manual_score_side_effects()
+
     def test_detail_exposes_positive_essay_score_without_answer_placeholder(self):
         exam, questions = self._create_structured_exam("Essay no placeholder", [70], [30])
         self._create_result(exam, objective_score=70)

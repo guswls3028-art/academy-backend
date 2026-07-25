@@ -26,14 +26,17 @@ from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.guards.score_edit_lease_guard import (
     EDIT_LEASE_TTL,
     ScoreEditLeaseConflict,
+    ScoreEditLeaseStale,
     score_edit_client_id,
     score_edit_lease_payload,
     score_edit_payload_parts,
+    score_edit_payload_is_invalidated,
 )
 from apps.domains.results.models import ScoreEditDraft
 from apps.support.results.progress_read_dependencies import (
     get_session_for_tenant_or_404,
-    lock_session_for_tenant_or_404,
+    lock_score_edit_scope_for_session,
+    score_edit_scope_session_ids,
 )
 
 
@@ -42,8 +45,13 @@ def _locked_response() -> Response:
     return Response(error.detail, status=drf_status.HTTP_409_CONFLICT)
 
 
+def _stale_response() -> Response:
+    error = ScoreEditLeaseStale()
+    return Response(error.detail, status=drf_status.HTTP_409_CONFLICT)
+
+
 def _lock_session(*, session_id: int, tenant):
-    return lock_session_for_tenant_or_404(
+    return lock_score_edit_scope_for_session(
         session_id=int(session_id),
         tenant=tenant,
     )
@@ -58,13 +66,19 @@ class ScoreDraftView(APIView):
             return Response({"detail": "Tenant required"}, status=403)
         get_session_for_tenant_or_404(session_id=int(session_id), tenant=tenant)
         client_id = score_edit_client_id(request)
+        scope_ids = score_edit_scope_session_ids(
+            session_id=int(session_id),
+            tenant=tenant,
+        )
         active_since = timezone.now() - EDIT_LEASE_TTL
         active_drafts = ScoreEditDraft.objects.filter(
-            session_id=int(session_id),
+            session_id__in=scope_ids,
             tenant_id=tenant.id,
             updated_at__gte=active_since,
         )
         for active in active_drafts:
+            if score_edit_payload_is_invalidated(active.payload):
+                continue
             stored_client_id, _ = score_edit_payload_parts(active.payload)
             if active.editor_user_id != request.user.id:
                 return _locked_response()
@@ -79,7 +93,10 @@ class ScoreDraftView(APIView):
         if not draft:
             return Response({"changes": []})
         _, changes = score_edit_payload_parts(draft.payload)
-        return Response({"changes": changes})
+        return Response({
+            "changes": changes,
+            "stale": score_edit_payload_is_invalidated(draft.payload),
+        })
 
     def put(self, request, session_id: int):
         tenant = getattr(request, "tenant", None)
@@ -88,18 +105,21 @@ class ScoreDraftView(APIView):
         changes = request.data.get("changes")
         if not isinstance(changes, list):
             return Response({"detail": "changes must be a list"}, status=400)
+        acknowledge_stale = bool(request.data.get("acknowledge_stale", False))
         client_id = score_edit_client_id(request)
         with transaction.atomic():
-            _lock_session(session_id=int(session_id), tenant=tenant)
+            _, scope_ids = _lock_session(session_id=int(session_id), tenant=tenant)
             active_since = timezone.now() - EDIT_LEASE_TTL
             drafts = list(
                 ScoreEditDraft.objects.select_for_update().filter(
-                    session_id=int(session_id),
+                    session_id__in=scope_ids,
                     tenant_id=tenant.id,
                 )
             )
             for existing in drafts:
                 if existing.updated_at < active_since:
+                    continue
+                if score_edit_payload_is_invalidated(existing.payload):
                     continue
                 stored_client_id, _ = score_edit_payload_parts(existing.payload)
                 if existing.editor_user_id != request.user.id:
@@ -108,9 +128,18 @@ class ScoreDraftView(APIView):
                     return _locked_response()
 
             draft = next(
-                (item for item in drafts if item.editor_user_id == request.user.id),
+                (
+                    item
+                    for item in drafts
+                    if int(item.session_id) == int(session_id)
+                    and item.editor_user_id == request.user.id
+                ),
                 None,
             )
+            if draft is not None and score_edit_payload_is_invalidated(draft.payload):
+                stored_client_id, _ = score_edit_payload_parts(draft.payload)
+                if stored_client_id == client_id and not acknowledge_stale:
+                    return _stale_response()
             payload = score_edit_lease_payload(client_id=client_id, changes=changes)
             if draft is None:
                 draft = ScoreEditDraft.objects.create(
@@ -156,6 +185,11 @@ class ScoreDraftCommitView(APIView):
                 and stored_client_id != client_id
             ):
                 return _locked_response()
+            if (
+                not release_lease
+                and score_edit_payload_is_invalidated(draft.payload)
+            ):
+                return _stale_response()
             if release_lease:
                 draft.delete()
             else:

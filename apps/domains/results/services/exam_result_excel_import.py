@@ -18,6 +18,9 @@ from openpyxl.worksheet.datavalidation import DataValidation
 from apps.domains.results.guards.exam_enrollment_guard import (
     validate_exam_enrollment_assigned,
 )
+from apps.domains.results.guards.score_edit_lease_guard import (
+    require_score_edit_scope_available_for_exam,
+)
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
 from apps.support.omr.score_adjustment import get_score_adjustment_from_answers
 from apps.support.omr.score_shape import get_exam_score_shape
@@ -439,6 +442,10 @@ def apply_exam_result_import(*, plan: ImportPlan) -> dict[str, Any]:
         raise ExamResultWorkbookError("오류가 있는 엑셀은 반영할 수 없습니다.")
 
     exam = plan.exam
+    require_score_edit_scope_available_for_exam(
+        exam=exam,
+        tenant=exam.tenant,
+    )
     question_by_number = {question.number: question for question in plan.questions}
     now = timezone.now()
 
