@@ -56,8 +56,8 @@
          │                           │                           │
 ┌────────▼─────────┐  ┌─────────────▼──────────┐  ┌─────────────▼──────────┐
 │  API Server       │  │  Messaging Worker      │  │  AI Worker             │
-│  t4g.medium       │  │  t4g.medium            │  │  t4g.medium            │
-│  ASG: min=1 max=3 │  │  ASG: min=0 max=3     │  │  ASG: min=0 max=5     │
+│  t4g.medium       │  │  t4g.small             │  │  t4g.medium            │
+│  ASG: min=1 max=3 │  │  ASG: min=1 max=3     │  │  ASG: min=0 max=5     │
 │  Gunicorn 4w      │  │  SQS long-poll         │  │  SQS long-poll         │
 │  gevent           │  │  SMS/LMS via Solapi    │  │  queue-woken           │
 │  ❌ No ffmpeg     │  │                         │  │                        │
@@ -402,7 +402,7 @@ done
 
 | Worker | Current SSOT | Savings | Justification |
 |--------|--------------|---------|---------------|
-| **Messaging** | t4g.medium min/desired=1/1 max=3 | Warm baseline restored for user-facing sends | Account recovery and Alimtalk delivery stay warm; SQS CloudWatch alarm can still scale above baseline, and scale-in returns to 1. |
+| **Messaging** | t4g.small min/desired=1/1 max=3 | ~$15.18/mo projected compute reduction vs t4g.medium | 90-day CPU avg 0.50%, peak 57.41%; live container ~80 MiB and host available memory 84.3%. Account recovery and Alimtalk delivery stay warm. |
 | **AI** | t4g.medium min/desired=0/0 max=5 | Idle baseline removed | SQS CloudWatch alarms and API wake-up start work; worker-owned live SQS depth check scales back to 0. |
 | **Tools** | t4g.small min/desired=0/0 max=2 | Idle baseline removed | Deterministic conversion jobs can wait for queue-woken cold start; scale-in uses visible+in-flight+delayed backlog. |
 | **API** | t4g.medium min/desired=1/1 max=3 | One always-on instance retained | Target tracking adds capacity during bursts; CI creates temporary deploy headroom before rolling refresh. |
@@ -431,7 +431,7 @@ Messaging idle capacity is min/desired=1/1 because account recovery and Alimtalk
 | API/Messaging baseline | API stays warm for request latency; Messaging stays warm for account-recovery/Alimtalk latency; AI/Tools are intentionally queue-woken from min/desired=0/0. |
 | MinHealthyPercentage: API=100%, Workers=0% | Zero-downtime via scale-up strategy (API) and SQS buffering (workers) |
 
-**What CAN be cut further (after measurement):** worker instance types can be right-sized separately from scale-to-zero if cold-start runtime and memory data prove it safe.
+**Measured right-size (2026-07-25):** Messaging moved from `t4g.medium` to `t4g.small`. API stayed `t4g.medium` after a 99.87% CPU burst; RDS/Redis stayed at current classes because their 30-day memory/credit lows did not prove another safe reduction. Evidence: `docs/reports/cost-waste-audit.latest.md`.
 
 ### 5.3 Cost Guardrails
 
@@ -562,7 +562,7 @@ No additional drain work needed.
 | 8 | ~~Single 720p encoding switch~~ | SUPERSEDED by 2-tier ABR (§3.1). Not applicable. | — | SUPERSEDED |
 | 9 | DAEMON_MAX_DURATION_SECONDS → 5400 | Daemon handles up to 90min videos | 10 min | ✅ [APPLIED 2026-03-17] base.py, daemon_main.py, video_encoding.py |
 | 10 | AI worker min/desired=0/0 | Idle baseline reduction; SQS wakes worker on demand | Completed | ✅ [CURRENT SSOT] `docs/ssot/params.yaml` |
-| 11 | Messaging worker → t4g.small [PROPOSED] | $14.50/mo savings | 30 min | Pending (실측 후 판단) |
+| 11 | Messaging worker → t4g.small | $15.18/mo projected compute savings | 30 min | ✅ [APPLIED 2026-07-25] 30/90-day CloudWatch + live SSM memory evidence |
 | 12 | Video worker ASG separation [PROPOSED] | API stability + encoding throughput | Half day | Pending (infra creation) |
 | 13 | Tablet QA for 720p text | RESOLVED — 2-tier ABR retains original resolution in v2 variant (§3.2). | — | RESOLVED |
 | 14 | Base image conditional build | Skip rebuild when only app code changed | 30 min | ✅ [COMPLETED] Already implemented in workflow (detect-changes job) |

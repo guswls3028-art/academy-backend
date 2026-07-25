@@ -19,11 +19,11 @@
 | [aws-resource-inventory.latest.md](aws-resource-inventory.latest.md) | `scripts/v1/run-resource-inventory.ps1` | 인프라 인벤토리 점검 시 |
 | [resource-cleanup-plan.latest.md](resource-cleanup-plan.latest.md) | `scripts/v1/run-resource-inventory.ps1` | 인프라 인벤토리 점검 시 |
 | [resource-cleanup.latest.md](resource-cleanup.latest.md) | `scripts/v1/run-resource-cleanup.ps1` | 리소스 정리 dry-run/execute 시 |
-| [cost-waste-audit.latest.md](cost-waste-audit.latest.md) | `scripts/v1/run-cost-waste-audit.ps1` | 비용/낭비 감사 시 |
+| [cost-waste-audit.latest.md](cost-waste-audit.latest.md) | `scripts/v1/run-cost-waste-audit.ps1` | 30/90일 사용량·비용·사이징 감사 시 |
 
 ## history
 
-[history/](history/)에는 audit/drift 스냅샷을 보관한다.
+[history/](history/)에는 audit/drift/cost-waste-audit 스냅샷을 보관한다.
 
 ## incidents
 

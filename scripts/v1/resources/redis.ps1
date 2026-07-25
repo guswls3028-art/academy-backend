@@ -165,6 +165,7 @@ function Confirm-RedisState {
             "--security-group-ids", $script:SecurityGroupData,
             "--num-cache-clusters", "1"
         ) + $engineArgs + @(
+            "--tags", "Key=Project,Value=academy", "Key=ManagedBy,Value=ssot-v1",
             "--region", $script:Region, "--output", "json"
         )
         $create = Invoke-AwsJson $createArgs

@@ -98,7 +98,7 @@ messagingWorker:
   launchTemplateName: academy-v1-messaging-worker-lt
   instanceTagValue: academy-v1-messaging-worker
   amiId: ami-0885e191a9bcf28b0
-  instanceType: t4g.medium
+  instanceType: t4g.small
   # 계정복구/알림톡은 로그인 전 사용자 대기 흐름이므로 cold-start 지연을
   # 허용하지 않는다. Messaging worker는 1대 warm baseline을 유지한다.
   minSize: 1

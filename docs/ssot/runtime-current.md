@@ -1,6 +1,6 @@
 # Current Production Runtime SSOT
 
-**Verified:** 2026-06-29T05:59:57+09:00
+**Verified:** 2026-07-25T22:13:25+09:00
 **Scope:** Academy V1 production, AWS account `809466760795`, region `ap-northeast-2`.
 **Truth sources:** AWS `describe-*` reads with profile `default`, `docs/ssot/params.yaml`, `docs/reports/drift.latest.md`, `docs/reports/resource-cleanup.latest.md`, `docs/reports/cost-waste-audit.latest.md`.
 
@@ -11,7 +11,7 @@ This document records the verified current runtime shape. `params.yaml` remains 
 | Component | Current runtime | Cost posture |
 |-----------|-----------------|--------------|
 | API ASG | `academy-v1-api-asg`, `t4g.medium`, min=1 desired=1 max=3, 1 running instance | warm baseline, CPU target tracking |
-| Messaging ASG | `academy-v1-messaging-worker-asg`, `t4g.medium`, min=1 desired=1 max=3, 1 running instance | warm baseline for account recovery and Alimtalk latency |
+| Messaging ASG | `academy-v1-messaging-worker-asg`, `t4g.small`, min=1 desired=1 max=3, 1 running instance | measured right-size; warm baseline retained for account recovery and Alimtalk latency |
 | AI ASG | `academy-v1-ai-worker-asg`, `t4g.medium`, min=0 desired=0 max=5, 0 running instances | scale-to-zero |
 | Tools ASG | `academy-v1-tools-worker-asg`, `t4g.small`, min=0 desired=0 max=2, 0 running instances | scale-to-zero |
 | Standard Video Batch CE | `academy-v1-video-batch-ce-200gb`, `SPOT`, desired=0 max=40 vCPU, `c6g.4xlarge`/`c6g.2xlarge`/`c6g.xlarge` | video encoding burst only |
@@ -54,7 +54,7 @@ Steady-state running EC2 in the academy VPC is only API 1 + Messaging 1. Batch-m
 | Guardrail | Current decision |
 |-----------|------------------|
 | API | Keep 1 warm `t4g.medium`; do not scale to zero. |
-| Messaging | Keep 1 warm `t4g.medium`; account recovery and Alimtalk are user-facing wait paths. |
+| Messaging | Keep 1 warm `t4g.small`; 90-day CPU averaged 0.53% with a 57.41% peak, and post-change live memory had 1.24 GiB available. |
 | AI/Tools | Keep min/desired 0; SQS alarms/API wake-up own burst scale-out. |
 | Standard video encoding | Use AWS Batch Spot and desired 0 when idle. |
 | Video ops | Keep desired 0 when idle; run hourly fallback/recovery jobs as short bursts. |
@@ -65,7 +65,8 @@ Steady-state running EC2 in the academy VPC is only API 1 + Messaging 1. Batch-m
 
 Latest local verification after the cost pass:
 
-- `pwsh scripts/v1/deploy.ps1 -Plan -AwsProfile default` -> NoOp for Batch CE and EventBridge schedule/state.
+- `pwsh scripts/v1/apply-messaging-rightsize.ps1 -AwsProfile default` -> Launch Template v28, instance refresh `Successful`, immutable image preserved.
 - `pwsh scripts/v1/run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` -> PASS=30 WARN=0 FAIL=0.
-- `pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default` -> PASS / GO.
-- `pwsh scripts/v1/run-resource-cleanup.ps1 -AwsProfile default` -> DryRun, no cleanup target, running instances=2.
+- `pwsh scripts/v1/run-cost-waste-audit.ps1 -AwsProfile default` -> 30/90-day usage captured; `Project` cost-allocation tag Active.
+- Messaging runtime -> `t4g.small`, 1.8 GiB total, 1.24 GiB available, container 62.82 MiB, SQS visible/in-flight/DLQ all 0.
+- Full deploy verification is intentionally deferred until the stale local release manifest is reconciled with the ECR-valid `origin/main` manifest; the targeted refresh and production canary are the deployment evidence for this change.

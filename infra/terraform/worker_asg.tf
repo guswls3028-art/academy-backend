@@ -3,7 +3,7 @@
 resource "aws_launch_template" "messaging_worker" {
   name_prefix   = "${var.naming_prefix}-messaging-worker-lt-"
   image_id      = data.aws_ami.amazon_linux_arm.id
-  instance_type = "t4g.medium"
+  instance_type = "t4g.small"
 
   vpc_security_group_ids = [aws_security_group.worker.id]
   iam_instance_profile {

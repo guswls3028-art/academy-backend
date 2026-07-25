@@ -91,6 +91,7 @@ switch ($true) { { $EcrRepoUri } { $script:EcrRepoUri = $EcrRepoUri } default { 
 . (Join-Path $ScriptRoot "resources\dynamodb.ps1")
 . (Join-Path $ScriptRoot "resources\netprobe.ps1")
 . (Join-Path $ScriptRoot "resources\cloudwatch.ps1")
+. (Join-Path $ScriptRoot "resources\cost_tags.ps1")
 
 $null = Load-SSOT -Env $Env
 $script:RelaxedValidation = $RelaxedValidation
@@ -253,6 +254,7 @@ try {
     Ensure-RdsCloudWatchAlarms
     Ensure-ALBStack
     Ensure-API
+    Ensure-ProjectCostAllocationTags
     # Converge the CI role only after all four SSOT Launch Templates exist so
     # its write resources can be exact and read back in the same run.
     Ensure-GitHubActionsDeployIAM
