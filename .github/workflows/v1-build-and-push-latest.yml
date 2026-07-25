@@ -337,6 +337,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
       - name: Acquire lock
         env:
           ACADEMY_DEPLOY_LOCK_OWNER: ci-deploy:${{ github.run_id }}:${{ github.run_attempt }}
@@ -377,6 +378,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
 
       - name: Renew shared mutation lock before image writes
         run: python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
@@ -704,6 +706,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
 
       - name: Renew shared mutation lock before migration
         run: python3 scripts/v1/deployment_lock.py renew --owner "$ACADEMY_DEPLOY_LOCK_OWNER" --ttl-seconds 10800
@@ -856,6 +859,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
 
       - name: Pre-deploy health gate
         run: |
@@ -1063,6 +1067,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
 
       - name: Pin Messaging Launch Template to build digest
         id: pin
@@ -1161,6 +1166,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
 
       - name: Pin AI Launch Template to build digest
         id: pin
@@ -1277,6 +1283,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
 
       - name: Check Tools ASG exists
         id: asg
@@ -1395,6 +1402,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
 
       - name: Register new Batch job definition revisions with SHA image
         run: |
@@ -1614,6 +1622,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
 
       - name: Verify health endpoints (with retry)
         id: health
@@ -2005,6 +2014,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
       - name: Release lock only as its owner
         env:
           ACADEMY_DEPLOY_LOCK_OWNER: ci-deploy:${{ github.run_id }}:${{ github.run_attempt }}
@@ -2026,6 +2036,7 @@ jobs:
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_FOR_ECR_BUILD }}
           aws-region: ${{ env.AWS_REGION }}
+          action-timeout-s: 180
 
       - name: Publish SNS alert
         run: |

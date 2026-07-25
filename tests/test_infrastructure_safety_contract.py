@@ -133,6 +133,17 @@ def test_release_and_weekly_workflows_share_repository_and_atomic_lock_concurren
     assert "docs/reports/release-manifest.latest.json" in weekly
 
 
+def test_every_deploy_oidc_step_has_a_bounded_action_timeout() -> None:
+    workflow = DEPLOY_WORKFLOW.read_text(encoding="utf-8")
+    credential_action = "uses: aws-actions/configure-aws-credentials@v6"
+    credential_steps = workflow.split(credential_action)[1:]
+
+    assert credential_steps
+    for step in credential_steps:
+        step_body = step.split("\n      - name:", maxsplit=1)[0]
+        assert "action-timeout-s: 180" in step_body
+
+
 def _job_block(workflow: str, job_name: str) -> str:
     match = re.search(
         rf"(?ms)^  {re.escape(job_name)}:\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)",

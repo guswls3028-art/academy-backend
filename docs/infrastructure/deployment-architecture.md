@@ -111,6 +111,9 @@ Dependencies:
 - `deploy-messaging`, `deploy-ai`, `deploy-tools`, and `deploy-video` also wait for `run-migrations` success or an explicit skip; a failed migration blocks every runtime deploy
 - `verify-deployment` waits for all deploy jobs
 - `deploy-video` is included in the same workflow and runs when the video worker image changes
+- every AWS OIDC credential step has a 180-second action timeout, so a stalled
+  credential exchange fails into the workflow's compensation and lock-release
+  path instead of holding the production mutation lane indefinitely
 
 ## 5. Zero-Downtime API Strategy
 
