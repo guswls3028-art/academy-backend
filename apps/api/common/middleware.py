@@ -6,6 +6,9 @@
 from __future__ import annotations
 
 import logging
+import queue
+import threading
+import time
 
 from django.conf import settings
 from django.http import JsonResponse
@@ -13,6 +16,18 @@ from django.http import JsonResponse
 logger = logging.getLogger(__name__)
 
 HEALTH_CHECK_PATHS = ("/health", "/health/", "/healthz", "/healthz/", "/readyz", "/readyz/")
+USER_INCIDENT_SKIP_PREFIXES = (
+    "/admin/",
+    "/api/v1/internal/",
+    "/internal/",
+    "/sentry-test/",
+)
+USER_INCIDENT_SAMPLE_SECONDS = 60
+_user_incident_sample_lock = threading.Lock()
+_user_incident_sampled_at: dict[tuple[object, str, str, int, str], float] = {}
+_user_incident_audit_queue: queue.Queue[dict] = queue.Queue(maxsize=1000)
+_user_incident_worker_lock = threading.Lock()
+_user_incident_worker_started = False
 
 
 def _is_health_check_path(path: str) -> bool:
@@ -21,6 +36,124 @@ def _is_health_check_path(path: str) -> bool:
         return False
     norm = path.rstrip("/") or "/"
     return norm in ("/health", "/healthz", "/readyz") or path in HEALTH_CHECK_PATHS
+
+
+def _persist_user_incident_audits() -> None:
+    from django.db import close_old_connections
+
+    while True:
+        item = _user_incident_audit_queue.get()
+        try:
+            close_old_connections()
+            from apps.core.models import OpsAuditLog
+
+            OpsAuditLog.objects.create(**item)
+        except Exception:
+            logger.exception("Async user incident audit persistence failed")
+        finally:
+            close_old_connections()
+            _user_incident_audit_queue.task_done()
+
+
+def _ensure_user_incident_worker() -> None:
+    global _user_incident_worker_started
+    if _user_incident_worker_started:
+        return
+    with _user_incident_worker_lock:
+        if _user_incident_worker_started:
+            return
+        worker = threading.Thread(
+            target=_persist_user_incident_audits,
+            name="user-incident-audit",
+            daemon=True,
+        )
+        worker.start()
+        _user_incident_worker_started = True
+
+
+def _record_user_facing_server_error(request, response) -> None:
+    path = str(getattr(request, "path", "") or "")
+    status_code = int(getattr(response, "status_code", 0) or 0)
+    if status_code < 500 or _is_health_check_path(path):
+        return
+    if any(path.startswith(prefix) for prefix in USER_INCIDENT_SKIP_PREFIXES):
+        return
+
+    resolver_match = getattr(request, "resolver_match", None)
+    route = str(getattr(resolver_match, "route", "") or "/unresolved")[:200]
+    exception_name = str(
+        getattr(request, "_user_incident_exception_name", "") or "Http5xxResponse"
+    )[:100]
+    tenant_id = getattr(getattr(request, "tenant", None), "pk", None)
+    sample_key = (tenant_id, str(request.method), route, status_code, exception_name)
+    now = time.monotonic()
+    with _user_incident_sample_lock:
+        last_sampled_at = _user_incident_sampled_at.get(sample_key, 0.0)
+        if now - last_sampled_at < USER_INCIDENT_SAMPLE_SECONDS:
+            return
+        _user_incident_sampled_at[sample_key] = now
+        if len(_user_incident_sampled_at) > 2048:
+            cutoff = now - USER_INCIDENT_SAMPLE_SECONDS
+            stale_keys = [
+                key
+                for key, sampled_at in _user_incident_sampled_at.items()
+                if sampled_at < cutoff
+            ]
+            for key in stale_keys:
+                _user_incident_sampled_at.pop(key, None)
+    try:
+        from apps.api.common.correlation import get_correlation_id
+
+        correlation_id = get_correlation_id() or ""
+    except Exception:
+        correlation_id = ""
+
+    payload = {
+        "source": "backend_5xx",
+        "route": route,
+        "method": request.method,
+        "status": status_code,
+        "exception_name": exception_name,
+        "correlation_id": correlation_id,
+    }
+    logger.error(
+        "user_incident.backend_5xx tenant_id=%s method=%s route=%s status=%s "
+        "exception=%s correlation_id=%s",
+        tenant_id,
+        request.method,
+        route,
+        status_code,
+        exception_name,
+        correlation_id,
+    )
+    user = getattr(request, "user", None)
+    actor_user_id = (
+        getattr(user, "pk", None)
+        if user is not None and getattr(user, "is_authenticated", False)
+        else None
+    )
+    item = {
+        "actor_user_id": actor_user_id,
+        "actor_username": str(getattr(user, "username", "") or "")[:150],
+        "action": "user_incident.backend_5xx",
+        "summary": f"{request.method} {route} returned {status_code}",
+        "target_tenant_id": tenant_id,
+        "payload": payload,
+        "result": "failed",
+        "error": exception_name,
+        "user_agent": str(request.META.get("HTTP_USER_AGENT") or "")[:255],
+    }
+    try:
+        _ensure_user_incident_worker()
+        _user_incident_audit_queue.put_nowait(item)
+    except queue.Full:
+        with _user_incident_sample_lock:
+            _user_incident_sampled_at.pop(sample_key, None)
+        logger.error(
+            "Async user incident audit queue full tenant_id=%s route=%s",
+            tenant_id,
+            route,
+        )
 
 
 class HealthCheckHostMiddleware:
@@ -200,10 +333,13 @@ class UnhandledExceptionMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
-        return self.get_response(request)
+        response = self.get_response(request)
+        _record_user_facing_server_error(request, response)
+        return response
 
     def process_exception(self, request, exception):
         logger.exception("Unhandled exception: %s", exception)
+        request._user_incident_exception_name = exception.__class__.__name__
         # 운영(DEBUG=False)에서는 내부 예외 메시지를 응답에 노출하지 않는다.
         # correlation_id 는 항상 포함해 운영 디버깅 시 로그와 매칭 가능.
         try:

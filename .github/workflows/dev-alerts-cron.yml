@@ -1,26 +1,39 @@
 # ==============================================================================
-# /dev 콘솔 운영 알림 cron — check_dev_alerts (hourly).
+# /dev 콘솔 운영 알림 cron — check_dev_alerts (5분 주기).
 #
-# 룰: 만료 D-3 / 연체·실패 인보이스 / 24h 실패 작업 ≥5건 / 24h+ 미답변 BUG/FB
+# 룰: 사용자 5xx·화면 오류·문제 신고 / 만료 D-3 / 결제·worker 운영 위험 / 미답변 BUG/FB
 # Slack 전송: settings.DEV_ALERTS_WEBHOOK_URL (env). 미설정 시 평가만 수행.
+# 사용자 오류 SMS: DEV_ALERTS_SMS_ENABLED=true + 통제번호 01031217466만 허용.
 # 모든 호출은 OpsAuditLog `cron.check_dev_alerts` 로 기록.
 #
-# 패턴: API 인스턴스 SSM Run Command로 신선한 latest 컨테이너에서 실행
-#       (env는 /opt/api.env, V1.1.0 migration step과 동일 패턴).
+# 패턴: API 인스턴스 SSM Run Command로 마지막 검증 성공 manifest의
+#       academy-api digest를 실행 (env는 production runtime SSOT /opt/api.env).
 # ==============================================================================
 
 name: Dev Alerts Cron
 
 on:
   schedule:
-    # 매 정시 (UTC). 한국 시간으로 매시 + 9시간.
-    - cron: "5 * * * *"
+    - cron: "*/5 * * * *"
+    - cron: "2 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Slack 전송 생략 (평가만)"
+        description: "Slack/SMS 전송 생략 (평가만)"
         required: false
         default: "false"
+      test_sms:
+        description: "통제번호로 운영 오류 SMS 1건 실발송 + provider 최종 확인"
+        required: false
+        default: "false"
+      full_rules:
+        description: "사용자 오류 외 기존 운영 룰도 함께 평가"
+        required: false
+        default: "false"
+
+concurrency:
+  group: dev-alerts-production
+  cancel-in-progress: false
 
 env:
   AWS_REGION: ap-northeast-2
@@ -34,6 +47,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
+      - name: Require production main ref
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::Dev alerts can only run from refs/heads/main"
+            exit 1
+          fi
+
+      - name: Checkout successful release manifest
+        uses: actions/checkout@v6
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -67,18 +93,71 @@ jobs:
         run: |
           INSTANCE_ID="${{ steps.instance.outputs.id }}"
           DRY_RUN="${{ github.event.inputs.dry_run }}"
-          EXTRA_ARGS=""
+          TEST_SMS="${{ github.event.inputs.test_sms }}"
+          FULL_RULES="${{ github.event.inputs.full_rules }}"
+          EXTERNAL_SIGNAL_TOKEN=""
+          EXTRA_ARGS="--rule user_incidents"
+          if [ "${{ github.event.schedule }}" = "2 * * * *" ] || [ "$FULL_RULES" = "true" ]; then
+            EXTRA_ARGS=""
+          fi
           if [ "$DRY_RUN" = "true" ]; then
             EXTRA_ARGS="--dry-run"
           fi
+          if [ "$TEST_SMS" = "true" ]; then
+            EXTRA_ARGS="${EXTRA_ARGS} --test-sms --wait-seconds=120"
+          fi
 
-          # 신선한 latest 이미지에서 신규 명령(check_dev_alerts) 실행 보장.
-          # /opt/api.env (DEV_ALERTS_WEBHOOK_URL 포함) 마운트.
+          # DB 장애로 OpsAuditLog를 쓸 수 없는 경우에도 ALB 신호로 문자를 보낸다.
+          # composite alarm의 transition timestamp를 SSM에 저장해 상태 전환당 1회만 발송한다.
+          ALARM_ROW=$(aws cloudwatch describe-alarms \
+            --alarm-names academy-api-UserImpact \
+            --alarm-types CompositeAlarm \
+            --region ${{ env.AWS_REGION }} \
+            --query 'CompositeAlarms[0].[StateValue,StateTransitionedTimestamp]' \
+            --output text)
+          ALARM_STATE=$(printf '%s' "$ALARM_ROW" | awk '{print $1}')
+          ALARM_UPDATED=$(printf '%s' "$ALARM_ROW" | awk '{print $2}')
+          if [ -z "$ALARM_STATE" ] || [ "$ALARM_STATE" = "None" ]; then
+            echo "::error::academy-api-UserImpact composite alarm is required"
+            exit 1
+          fi
+          if [ "$ALARM_STATE" = "ALARM" ] && [ -n "$ALARM_UPDATED" ] && [ "$DRY_RUN" != "true" ] && [ "$TEST_SMS" != "true" ]; then
+            DEDUP_PARAM="/academy/ops/dev-alerts-api-user-impact-state"
+            LAST_SIGNAL_TOKEN=$(aws ssm get-parameter \
+              --name "$DEDUP_PARAM" \
+              --region ${{ env.AWS_REGION }} \
+              --query 'Parameter.Value' \
+              --output text 2>/dev/null || true)
+            if [ "$LAST_SIGNAL_TOKEN" != "$ALARM_UPDATED" ]; then
+              EXTRA_ARGS="--external-signal api_user_impact --wait-seconds=120"
+              EXTERNAL_SIGNAL_TOKEN="$ALARM_UPDATED"
+            fi
+          fi
+
+          # 검증에 실패한 latest alias는 실행하지 않는다. 저장소의 마지막
+          # complete/successful release manifest가 가리키는 digest만 허용한다.
+          MANIFEST="docs/reports/release-manifest.latest.json"
+          if [ ! -f "$MANIFEST" ] || ! jq -e '.complete == true and .status == "successful"' "$MANIFEST" >/dev/null; then
+            echo "::error::Complete successful release manifest is required"
+            exit 1
+          fi
+          API_DIGEST=$(jq -r '.images["academy-api"].digest // empty' "$MANIFEST")
+          if [[ ! "$API_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Successful release manifest has no valid academy-api digest"
+            exit 1
+          fi
+
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text --region ${{ env.AWS_REGION }})
           ECR_HOST="${AWS_ACCOUNT_ID}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
-          ECR_IMAGE="${ECR_HOST}/academy-api:latest"
+          ECR_IMAGE="${ECR_HOST}/academy-api@${API_DIGEST}"
+          DOCKER_NETWORK="--network container:academy-api"
+          if [ -n "$EXTERNAL_SIGNAL_TOKEN" ]; then
+            DOCKER_NETWORK="--network host"
+          fi
 
-          CMD="set -e; aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_HOST} >/dev/null 2>&1; docker pull ${ECR_IMAGE} >/dev/null 2>&1; ENV_FILE=\$(mktemp); docker inspect academy-api --format '{{range .Config.Env}}{{println .}}{{end}}' > \$ENV_FILE; docker run --rm --env-file \$ENV_FILE --network container:academy-api ${ECR_IMAGE} python manage.py check_dev_alerts --silent ${EXTRA_ARGS} 2>&1; EXIT=\$?; rm -f \$ENV_FILE; exit \$EXIT"
+          # 매 실행마다 SSM runtime SSOT를 원자적으로 동기화한다. 설정 비활성화도
+          # 위험한 in-place 컨테이너 재시작 없이 다음 5분 실행부터 반영된다.
+          CMD="set -eu; umask 077; ENV_JSON=\$(aws ssm get-parameter --name /academy/api/env --with-decryption --query Parameter.Value --output text --region ${{ env.AWS_REGION }}); printf '%s' \"\$ENV_JSON\" | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(k+chr(61)+str(v)) for k,v in d.items()]' > /opt/api.env.next; test -s /opt/api.env.next; mv /opt/api.env.next /opt/api.env; aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_HOST} >/dev/null 2>&1; docker pull ${ECR_IMAGE} >/dev/null 2>&1; docker run --rm --env-file /opt/api.env ${DOCKER_NETWORK} ${ECR_IMAGE} python manage.py check_dev_alerts --silent ${EXTRA_ARGS} 2>&1"
 
           SSM_PARAMS=$(jq -n --arg cmd "$CMD" '{commands: [$cmd]}')
 
@@ -110,6 +189,14 @@ jobs:
                 --query 'StandardOutputContent' \
                 --output text
               echo "::endgroup::"
+              if [ -n "$EXTERNAL_SIGNAL_TOKEN" ]; then
+                aws ssm put-parameter \
+                  --name /academy/ops/dev-alerts-api-user-impact-state \
+                  --type String \
+                  --value "$EXTERNAL_SIGNAL_TOKEN" \
+                  --overwrite \
+                  --region ${{ env.AWS_REGION }} >/dev/null
+              fi
               exit 0
             elif [ "$STATUS" = "Failed" ] || [ "$STATUS" = "Cancelled" ] || [ "$STATUS" = "TimedOut" ]; then
               echo "::error::check_dev_alerts $STATUS"

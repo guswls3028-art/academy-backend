@@ -22,6 +22,7 @@
 
 - 신규 카카오 알림톡 템플릿 검수/등록을 기본 제안하지 않는다. 기존 4종 ITEM_LIST 봉투 + `#{선생님메모}` 자유 본문 정책을 우선 적용한다.
 - 모든 실발송은 공용 오너 알림톡만 사용한다. SMS/LMS, tenant별 PFID, tenant별 알림톡 provider는 신규 발송 경로에서 사용하지 않는다.
+- 예외는 제품 메시징과 분리된 플랫폼 운영자 장애 SMS뿐이다. `check_dev_alerts`가 사용자 오류 건수 또는 화이트리스트 CloudWatch 장애 신호만 `01031217466`으로 보내며, 다른 수신자·사용자 본문·제품 UI 호출은 코드에서 차단한다. 운영 절차는 `docs/operations/runbooks/incidents.md`가 정본이다.
 - 계정 관련 시스템 알림(가입 승인, 아이디 찾기, 비밀번호 찾기)은 `send_alimtalk_via_owner()`를 통해 오너 테넌트 exact trigger 승인 템플릿으로 발송한다.
 - 알림톡 템플릿 fallback은 금지한다. exact 공용 승인 템플릿 또는 명시 unified category가 없으면 발송하지 않는다.
 - 운영 실발송 검증은 `scripts/v1/run-messaging-verify-send.ps1` → `messaging_verify_common_alimtalk`만 사용한다. 수신번호는 `01031217466` 하나로 고정하고, 성공 판정은 `NotificationLog.provider_message_id` 기록까지 확인한다.

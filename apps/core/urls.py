@@ -32,6 +32,7 @@ from apps.core.views import (
     DevAuditLogListView,
     DevCronListView,
     DevCronTriggerView,
+    UserIncidentReportView,
 )
 from apps.core.views_landing import (
     LandingPublicView,
@@ -63,6 +64,7 @@ urlpatterns = [
     path("change-password/", ChangePasswordView.as_view(), name="core-change-password"),
     path("program/", ProgramView.as_view(), name="core-program"),
     path("subscription/", SubscriptionView.as_view(), name="core-subscription"),
+    path("problem-reports/", UserIncidentReportView.as_view(), name="core-problem-reports"),
     path("job_progress/<str:job_id>/", JobProgressView.as_view(), name="core-job-progress"),
     path("tenant-branding/<int:tenant_id>/", TenantBrandingView.as_view(), name="core-tenant-branding"),
     path("tenant-branding/<int:tenant_id>/upload-logo/", TenantBrandingUploadLogoView.as_view(), name="core-tenant-branding-upload-logo"),

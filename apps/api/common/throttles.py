@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import logging
 import unicodedata
+from collections.abc import Mapping
 from datetime import timedelta
 
 from django.conf import settings
@@ -228,6 +229,46 @@ class SignupCheckThrottle(SimpleRateThrottle):
             "scope": self.scope,
             "ident": self.get_ident(request),
         }
+
+
+class UserIncidentReportThrottle(BaseThrottle):
+    """DB 기반으로 수동/자동 source별 tenant+user 12회/시간을 분산 제한."""
+
+    limit = 12
+    window = timedelta(hours=1)
+
+    def allow_request(self, request, view):
+        user = getattr(request, "user", None)
+        tenant = getattr(request, "tenant", None)
+        if not user or not user.is_authenticated or not tenant:
+            return True
+        data = request.data
+        source = (
+            "manual"
+            if isinstance(data, Mapping) and data.get("source") == "manual"
+            else "frontend_exception"
+        )
+        from apps.core.models import OpsAuditLog
+
+        self.history = list(
+            OpsAuditLog.objects.filter(
+                actor_user=user,
+                target_tenant=tenant,
+                action=f"user_incident.{source}",
+                created_at__gte=timezone.now() - self.window,
+            )
+            .order_by("-created_at")
+            .values_list("created_at", flat=True)[: self.limit]
+        )
+        return len(self.history) < self.limit
+
+    def wait(self):
+        if not getattr(self, "history", None):
+            return None
+        remaining = self.window.total_seconds() - (
+            timezone.now() - self.history[-1]
+        ).total_seconds()
+        return max(0, remaining)
 
 
 class ChangePasswordThrottle(SimpleRateThrottle):

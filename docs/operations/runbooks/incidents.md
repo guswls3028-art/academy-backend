@@ -1,12 +1,64 @@
 # 장애 대응 런북
 
-**Version:** V1.1.0 | **최종 수정:** 2026-03-15
+**Version:** V1.10.1 | **최종 수정:** 2026-07-25
 
 > 모든 AWS 명령은 `scripts/v1/run-with-env.ps1 --` 접두사를 사용한다.
 > 아래에서 `RUN_ENV`는 이 접두사의 줄임말이다:
 > ```
 > powershell -File scripts/v1/run-with-env.ps1 --
 > ```
+
+---
+
+## 0. 사용자 오류 운영자 문자
+
+`Dev Alerts Cron`이 사용자 오류 신호를 5분마다, 기존 결제·worker 등 전체 운영 룰을
+매시 2분에 평가한다.
+
+- API의 사용자 경로에서 반환된 HTTP 5xx
+- 브라우저의 지속적인 React/window/unhandled-rejection 오류
+- 공용 `문제 신고` 모달 접수
+- 관리자·선생님 개발자 메뉴의 `[BUG]` 제보
+
+마지막 성공 receipt에서 30분 overlap을 둔 2일 보존 high-water scan을 사용한다.
+같은 테넌트·경로·오류 유형은 15분 단위로 묶고, 성공한 발송 fingerprint는
+`OpsAuditLog(action=alerts.user_incident_sms)`에 남겨 다시 보내지 않는다. 문자에는
+사용자 입력, 학생명, 전화번호, 예외 메시지를 넣지 않고 유형별 건수와 `/dev 확인`
+안내만 포함한다.
+
+5xx 폭주가 장애 중 DB 부하를 증폭하지 않도록 같은 테넌트·경로·오류 유형은 API
+프로세스별 60초에 1건만 bounded 비동기 큐로 감사 로그에 저장한다. 사용자 응답은
+DB INSERT를 기다리지 않으며 PII 없는 동일 신호를 애플리케이션 로그에도 남긴다.
+문자 건수는 이 샘플 수이며 원시 요청 횟수는 CloudWatch/Sentry에서 확인한다.
+
+DB 장애처럼 감사 로그 자체를 쓸 수 없는 상황은 `academy-api-Target5XX`와
+`academy-api-UnHealthyHosts`를 묶은 `academy-api-UserImpact` composite alarm으로
+독립 감지한다. cron은 alarm transition timestamp를 SSM에 기록해 상태 전환당 한 번만
+같은 통제번호로 짧은 SMS를 보내고 Solapi `sent_success`를 확인한다.
+
+운영자 SMS는 고객 알림톡/SMS 경로와 분리되어 있다. 수신자는 코드와 환경설정
+양쪽에서 `01031217466`으로 고정하며 다른 번호는 provider 호출 전에 차단한다.
+
+```powershell
+# 설정 활성화 (cron이 매 실행 전 SSM에서 runtime env를 원자적으로 동기화)
+pwsh scripts/v1/set-dev-alerts-sms.ps1 -AwsProfile default
+
+# SSM env를 원자적으로 동기화한 pinned image로 통제번호에 1건 발송
+gh workflow run dev-alerts-cron.yml -f test_sms=true
+Start-Sleep -Seconds 3
+$runId = gh run list --workflow dev-alerts-cron.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId'
+gh run watch $runId --exit-status
+
+# 비상 비활성화
+pwsh scripts/v1/set-dev-alerts-sms.ps1 -Disable -AwsProfile default
+```
+
+활성화/비활성화는 다음 5분 cron 실행부터 반영되며 API 컨테이너를 재시작하지 않는다.
+정기 발송도 Solapi `sent_success`를 확인한 뒤에만 성공 fingerprint로 중복 제외한다.
+
+진단 시 `OpsAuditLog`의 `user_incident.*`, `alerts.user_incident_sms`,
+`alerts.user_incident_sms_test`, `alerts.external_signal_sms`,
+`cron.check_dev_alerts` action과 provider group id를 함께 확인한다.
 
 ---
 

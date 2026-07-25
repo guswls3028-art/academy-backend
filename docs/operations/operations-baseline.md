@@ -72,3 +72,4 @@ detect-changes → run-tests (7 smoke tests)
 | JSON logging | 운영 검증 완료 | `apps/api/common/logging_json.py` |
 | Health endpoints | 3개 | `/healthz`, `/health`, `/readyz` |
 | Sentry | 설치됨 | `sentry_sdk` in settings |
+| 사용자 오류 운영자 SMS | 5분 cron + 통제번호 고정 + fingerprint/alarm-transition 중복 억제 | `check_dev_alerts`, `runbooks/incidents.md` |

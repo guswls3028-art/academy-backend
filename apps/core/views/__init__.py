@@ -39,6 +39,7 @@ from apps.core.views.dev_automation import (
     DevCronListView,
     DevCronTriggerView,
 )
+from apps.core.views.user_incidents import UserIncidentReportView
 
 __all__ = [
     "MeView",
@@ -70,4 +71,5 @@ __all__ = [
     "DevAuditLogListView",
     "DevCronListView",
     "DevCronTriggerView",
+    "UserIncidentReportView",
 ]

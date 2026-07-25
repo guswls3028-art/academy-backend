@@ -253,6 +253,7 @@ try {
     Ensure-VideoCloudWatchAlarms
     Ensure-RdsCloudWatchAlarms
     Ensure-ALBStack
+    Ensure-ApiCloudWatchAlarms
     Ensure-API
     Ensure-ProjectCostAllocationTags
     # Converge the CI role only after all four SSOT Launch Templates exist so

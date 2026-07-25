@@ -151,6 +151,104 @@ function Ensure-VideoCloudWatchAlarms {
     }
 }
 
+function Ensure-ApiCloudWatchAlarms {
+    $R = $script:Region
+    if (-not $script:ApiAlbName -or -not $script:ApiTargetGroupName) {
+        throw "API ALB/target group names are required for user-impact alarms."
+    }
+
+    $alb = Invoke-AwsJson @(
+        "elbv2", "describe-load-balancers",
+        "--names", $script:ApiAlbName,
+        "--region", $R,
+        "--output", "json"
+    )
+    $targetGroup = Invoke-AwsJson @(
+        "elbv2", "describe-target-groups",
+        "--names", $script:ApiTargetGroupName,
+        "--region", $R,
+        "--output", "json"
+    )
+    $albArn = [string]$alb.LoadBalancers[0].LoadBalancerArn
+    $targetGroupArn = [string]$targetGroup.TargetGroups[0].TargetGroupArn
+    if (-not $albArn.Contains(":loadbalancer/") -or -not $targetGroupArn.Contains(":targetgroup/")) {
+        throw "Could not resolve API ALB/target group CloudWatch dimensions."
+    }
+    $albDimension = ($albArn -split ":loadbalancer/", 2)[1]
+    $targetGroupDimension = "targetgroup/" + ($targetGroupArn -split ":targetgroup/", 2)[1]
+    $dimensions = @(
+        "Name=LoadBalancer,Value=$albDimension",
+        "Name=TargetGroup,Value=$targetGroupDimension"
+    )
+
+    $period = if ($script:ObservabilityAlarmPeriodSeconds -gt 0) {
+        $script:ObservabilityAlarmPeriodSeconds
+    } else {
+        300
+    }
+    $evalPeriods = if ($script:ObservabilityAlarmEvaluationPeriods -gt 0) {
+        $script:ObservabilityAlarmEvaluationPeriods
+    } else {
+        2
+    }
+    $fiveXxThreshold = if ($script:ObservabilityApiAlb5xxThreshold -gt 0) {
+        $script:ObservabilityApiAlb5xxThreshold
+    } else {
+        10
+    }
+    $unhealthyThreshold = if ($script:ObservabilityApiTargetUnhealthyThreshold -gt 0) {
+        $script:ObservabilityApiTargetUnhealthyThreshold
+    } else {
+        1
+    }
+
+    $fiveXxArgs = @(
+        "cloudwatch", "put-metric-alarm",
+        "--alarm-name", "academy-api-Target5XX",
+        "--alarm-description", "User-impacting API target 5XX burst; polled by Dev Alerts Cron.",
+        "--namespace", "AWS/ApplicationELB",
+        "--metric-name", "HTTPCode_Target_5XX_Count",
+        "--dimensions"
+    ) + $dimensions + @(
+        "--statistic", "Sum",
+        "--period", $period.ToString(),
+        "--evaluation-periods", $evalPeriods.ToString(),
+        "--threshold", $fiveXxThreshold.ToString(),
+        "--comparison-operator", "GreaterThanOrEqualToThreshold",
+        "--treat-missing-data", "notBreaching",
+        "--region", $R
+    )
+    Invoke-Aws $fiveXxArgs -ErrorMessage "put-metric-alarm academy-api-Target5XX" | Out-Null
+
+    $unhealthyArgs = @(
+        "cloudwatch", "put-metric-alarm",
+        "--alarm-name", "academy-api-UnHealthyHosts",
+        "--alarm-description", "API target unavailable; polled by Dev Alerts Cron.",
+        "--namespace", "AWS/ApplicationELB",
+        "--metric-name", "UnHealthyHostCount",
+        "--dimensions"
+    ) + $dimensions + @(
+        "--statistic", "Maximum",
+        "--period", $period.ToString(),
+        "--evaluation-periods", "1",
+        "--threshold", $unhealthyThreshold.ToString(),
+        "--comparison-operator", "GreaterThanOrEqualToThreshold",
+        "--treat-missing-data", "notBreaching",
+        "--region", $R
+    )
+    Invoke-Aws $unhealthyArgs -ErrorMessage "put-metric-alarm academy-api-UnHealthyHosts" | Out-Null
+
+    $compositeArgs = @(
+        "cloudwatch", "put-composite-alarm",
+        "--alarm-name", "academy-api-UserImpact",
+        "--alarm-description", "API 5XX burst or unhealthy target; Dev Alerts Cron sends fixed-recipient SMS.",
+        "--alarm-rule", 'ALARM("academy-api-Target5XX") OR ALARM("academy-api-UnHealthyHosts")',
+        "--region", $R
+    )
+    Invoke-Aws $compositeArgs -ErrorMessage "put-composite-alarm academy-api-UserImpact" | Out-Null
+    Write-Host "  [CloudWatch] API user-impact alarms ensured." -ForegroundColor Gray
+}
+
 function Ensure-RdsCloudWatchAlarms {
     $R = $script:Region
     $dbId = $script:RdsDbIdentifier

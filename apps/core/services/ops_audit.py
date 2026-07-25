@@ -59,7 +59,7 @@ def record_audit(
     payload: Any = None,
     result: str = "success",
     error: str = "",
-) -> None:
+) -> Any | None:
     """감사 로그 1건 기록. 실패해도 호출자 흐름은 끊지 않는다."""
     try:
         from apps.core.models import OpsAuditLog
@@ -70,7 +70,7 @@ def record_audit(
         if actor_user is not None:
             actor_username = (getattr(actor_user, "username", "") or "")[:150]
 
-        OpsAuditLog.objects.create(
+        return OpsAuditLog.objects.create(
             actor_user=actor_user,
             actor_username=actor_username,
             action=action[:64],
@@ -86,3 +86,4 @@ def record_audit(
     except Exception:
         # 감사 기록 실패가 본 작업을 깨뜨리지 않도록.
         logger.exception("record_audit failed: action=%s", action)
+        return None
