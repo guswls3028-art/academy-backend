@@ -58,7 +58,7 @@
 2. **SYSTEM_AUTO 외에는 사용자가 투명하게 보고 통제 가능.**
 3. **일반 강의와 클리닉 정책 절대 분리.**
 4. **숨겨진 자동 발송 금지.** 모든 발송 경로가 설정 콘솔에 노출.
-5. **공용 알림톡 only.** SMS/LMS, tenant별 PFID, tenant별 알림톡 provider는 실발송에 사용하지 않는다.
+5. **공용 알림톡 only.** 제품/고객 SMS/LMS, tenant별 PFID, tenant별 알림톡 provider는 실발송에 사용하지 않는다. 유일한 예외는 `01031217466` 고정 수신 플랫폼 운영자 장애 SMS이며 제품 메시징과 분리한다.
 6. **fallback 금지.** exact trigger의 공용 승인 템플릿 또는 명시 unified category 템플릿이 없으면 발송하지 않는다.
 
 ## 공용 알림톡 정책
@@ -96,6 +96,7 @@
 - 성공 판정은 SQS enqueue가 아니라 워커가 만든 `NotificationLog.status=sent`, `message_mode=alimtalk`, `tenant_id=OWNER_TENANT_ID`, `provider_message_id` 기록까지다.
 
 ## 변경 이력
+- 2026-07-26: 제품 메시징과 분리된 운영자 장애 SMS 단일 예외를 명시. 고정 통제번호에는 플랫폼 발급 테넌트 코드/내부 ID와 통제된 장애 분류/건수만 90-byte 집계로 보내며 owner 수정 테넌트명·사용자 본문·경로·개인정보는 금지. 발송 전 attempt receipt와 접수 직후 group ID를 저장하고, 공급사 미확정은 보존 기간 동안 자동 재발송하지 않는 at-most-once 보류와 실행당 10건 공정 순환 재조회, 확정 실패 5분 cooldown, 시간당 12회 상한으로 중복·폭주를 제한.
 - 2026-07-13: 즉시/예약 수동 발송 DB dispatch, SQS enqueue 지수 백오프, stale dispatch 회수, provider `processing→sending→sent|failed|ambiguous` 경계를 도입. 공급사 exactly-once 미지원 구간은 중복 방지를 우선해 자동 재발송하지 않고 operations risk로 노출. `notice_payment` SID 누락은 preflight/send/operations에서 명시적으로 fail-close. 종단 outbox/사용된 preview payload의 PII를 즉시 제거하고 만료 preview token 자동 purge 및 전화번호 없는 계정 target key를 적용.
 - 2026-07-08: Solapi provider 실등록 상태와 코드 변수표를 재대조. score ITEM_LIST 등록 변수는 학원이름/학생이름/강의명/차시명/선생님메모/사이트링크 6개로 고정하고, 시험1~4/총점/숙제완성도는 선생님메모 내부 치환 값으로만 사용한다. `notice_payment` SID 누락 상태를 fail-closed로 고정. manual default/community 자유양식 fallback과 Q&A 출석 봉투 fallback을 제거.
 - 2026-06-06: SMS/LMS 및 tenant별 알림톡 채널/provider 사용을 금지하고, exact 공용 승인 템플릿 없으면 fail-closed하도록 정책 갱신. 운영 검증 수신번호를 `01031217466`으로 고정하고 provider id 로그를 추가.

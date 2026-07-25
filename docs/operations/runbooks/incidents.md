@@ -1,6 +1,6 @@
 # 장애 대응 런북
 
-**Version:** V1.11.0 | **최종 수정:** 2026-07-26
+**Version:** V1.11.3 | **최종 수정:** 2026-07-26
 
 > 모든 AWS 명령은 `scripts/v1/run-with-env.ps1 --` 접두사를 사용한다.
 > 아래에서 `RUN_ENV`는 이 접두사의 줄임말이다:
@@ -20,11 +20,26 @@
 - 공용 `문제 신고` 모달 접수
 - 관리자·선생님 개발자 메뉴의 `[BUG]` 제보
 
-마지막 성공 receipt에서 30분 overlap을 둔 2일 보존 high-water scan을 사용한다.
-같은 테넌트·경로·오류 유형은 15분 단위로 묶고, 성공한 발송 fingerprint는
+늦게 확정 실패한 공급사 attempt도 놓치지 않도록 매번 2일 보존 범위 전체를 읽는다.
+같은 테넌트·경로·오류 유형은 15분 단위로 묶고, 성공했거나 공급사 결과가 미확정인
+발송 fingerprint는
 `OpsAuditLog(action=alerts.user_incident_sms)`에 남겨 다시 보내지 않는다. 문자에는
-사용자 입력, 학생명, 전화번호, 예외 메시지를 넣지 않고 유형별 건수와 `/dev 확인`
-안내만 포함한다.
+서버가 확인한 플랫폼 발급 테넌트 코드·내부 ID와 통제된 사유(`서버5xx`, `화면오류`, `직접신고`,
+`버그제보`), 유형별 건수, `/dev` 안내만 포함한다. 사용자 입력 본문·경로·학생명·
+전화번호·예외명/메시지와 owner가 수정할 수 있는 테넌트명은 넣지 않는다. 테넌트
+코드는 소문자 ASCII allowlist를 통과한 경우에만 내부 ID와 함께 표시하고, 아니면
+`T{id}`로 대체하며 전체 식별자는 24 UTF-8 byte로 제한한다.
+
+본문은 한 cron 실행당 SMS 1건으로 집계한다. 90 byte 안에 들어오는 테넌트를
+발생 건수 순으로 표시하며, 나머지는 `+N곳`으로 표시한다. `+N곳`의 상세 테넌트와
+경로는 `/dev` 감사 로그에서 확인한다. 성공 receipt에는 전체 fingerprint를 기록하므로
+표시 공간 때문에 생략된 테넌트도 중복 발송하지 않는다.
+
+```text
+[학원+] 오류3건/2곳
+알파#12:서버500(2) 베타#19:화면오류(1)
+/dev
+```
 
 5xx 폭주가 장애 중 DB 부하를 증폭하지 않도록 같은 테넌트·경로·오류 유형은 API
 프로세스별 60초에 1건만 bounded 비동기 큐로 감사 로그에 저장한다. 사용자 응답은
@@ -46,7 +61,8 @@ Solapi 문자 발신번호도 운영 계정의 유일한 ACTIVE 등록 번호인
 # 설정 활성화 (cron이 매 실행 전 SSM에서 runtime env를 원자적으로 동기화)
 pwsh scripts/v1/set-dev-alerts-sms.ps1 -AwsProfile default
 
-# SSM env를 원자적으로 동기화한 pinned image로 통제번호에 1건 발송
+# SSM env를 원자적으로 동기화한 pinned image로 통제번호에 1건 발송.
+# 본문에는 owner 테넌트 식별값과 통제 사유 `서버500`이 테스트 표시와 함께 나온다.
 gh workflow run dev-alerts-cron.yml -f test_sms=true
 Start-Sleep -Seconds 3
 $runId = gh run list --workflow dev-alerts-cron.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId'
@@ -58,6 +74,15 @@ pwsh scripts/v1/set-dev-alerts-sms.ps1 -Disable -AwsProfile default
 
 활성화/비활성화는 다음 5분 cron 실행부터 반영되며 API 컨테이너를 재시작하지 않는다.
 정기 발송도 Solapi `sent_success`를 확인한 뒤에만 성공 fingerprint로 중복 제외한다.
+공급사 등록 전에 실패 상태의 attempt receipt를 먼저 기록하고, 접수 응답의 group ID는
+최종 조회 전에 즉시 저장한다. timeout/pending group은 2일 incident 보존 기간 동안 매
+주기 `updated_at`이 오래된 순서로 최대 10건씩 재조회하고, 조회한 미확정 건은 순번의
+뒤로 보내 공정하게 순환한다. 결과 미확정 또는 group ID 유실 attempt의 fingerprint는 자동
+재발송하지 않고 `/dev` 운영 위험으로 남긴다. 확정 실패만 5분 cooldown 후 재시도하며,
+정기/수동 `user_incidents` 실행을 합쳐 시간당 provider 시도는 12건을 넘지 않는다.
+상한에 걸린 fingerprint는 소비하지 않고 다음 주기에 다시 평가한다. 명시적
+`--test-sms`와 CloudWatch alarm-transition 경로는 별도 검증/비상 신호이며 이 quota에
+포함하지 않는다.
 
 진단 시 `OpsAuditLog`의 `user_incident.*`, `alerts.user_incident_sms`,
 `alerts.user_incident_sms_test`, `alerts.external_signal_sms`,
