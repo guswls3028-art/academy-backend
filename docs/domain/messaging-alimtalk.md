@@ -323,6 +323,15 @@
 5. 템플릿 카테고리 매핑이 없고 `block_category`가 있으면 진입점 카테고리로 한 번 더 매핑
 6. 그래도 매핑이 없으면 fail-closed. 자유양식/공지형 fallback은 사용하지 않는다.
 7. 매핑된 봉투는 `build_manual_replacements()`로 실제 Solapi 등록 변수와 일치하는 replacements 세트를 빌드
+8. preflight 응답의 `preview_recipients[].full_message_body`는 같은 replacements로 승인 봉투 전체 문구를 서버에서 렌더링한다.
+
+### 발송 직전 실제 문구 미리보기 계약
+
+- 최종 미리보기의 학원명, 학생명, 사이트 링크, 빈 값 `"-"`, ITEM_LIST 23자 절단은 실제 Solapi replacements와 동일한 서버 계산값을 사용한다.
+- 클라이언트가 샘플 학원명·강의명·차시·날짜를 임의로 조립하지 않는다. `preview_recipients` 또는 `full_message_body`가 없거나 수신자 수와 맞지 않으면 발송을 fail-close한다.
+- 전화번호는 마스킹해 반환하고, 유효한 학생/학부모 번호가 없는 대상은 `excluded`와 `exclude_reason`으로 구분한다.
+- 여러 학생을 선택한 경우 학생 선택은 표시할 `full_message_body`만 바꾸며, 실제 발송 대상 집합은 바꾸지 않는다.
+- 공용 `preview -> confirm` 경로도 `full_message_body`를 표시한다. 1회용 confirm 토큰에는 발송에 불필요한 이 표시 전용 필드를 저장하지 않는다.
 
 ### CATEGORY_TO_TEMPLATE_TYPE 매핑
 

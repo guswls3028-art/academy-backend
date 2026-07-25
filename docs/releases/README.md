@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.0.md](v1.11.0.md) | **CURRENT** | 2026-07-26 KST | Privacy-safe user-incident monitoring, fixed-recipient operator SMS, and independent API impact alarms |
+| [v1.11.1.md](v1.11.1.md) | **CURRENT** | 2026-07-26 KST | Student-specific Kakao Alimtalk final preview, canonical provider-payload parity, and controlled production-send proof |
+| [v1.11.0.md](v1.11.0.md) | production-deployed / v1.11.1로 승계 | 2026-07-26 KST | Privacy-safe user-incident monitoring, fixed-recipient operator SMS, and independent API impact alarms |
 | [v1.10.0.md](v1.10.0.md) | production-deployed / v1.11.0로 승계 | 2026-07-25 KST | 30/90-day capacity accounting, Academy cost allocation, and measured Messaging right-sizing |
 | [v1.9.3.md](v1.9.3.md) | production-deployed / v1.10.0로 승계 | 2026-07-23 KST | Mixed per-question OMR types, numeric short-answer grading, teacher Excel result import, and production real-use proof |
 | [v1.9.2.md](v1.9.2.md) | production-deployed / v1.9.3로 승계 | 2026-07-20 KST | Teacher video-thumbnail incident closure, shared fallback behavior, responsive regression coverage, and production proof |
