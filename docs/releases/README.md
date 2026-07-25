@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.4.md](v1.11.4.md) | **CURRENT** | 2026-07-26 KST | Safe score autosave, Excel-style shortcuts, explicit save-and-lock, and concurrent-editor fencing |
+| [v1.11.5.md](v1.11.5.md) | **CURRENT** | 2026-07-26 KST | Privacy-safe tenant-attributed incident SMS to the single controlled operator number, with provider delivery proof |
+| [v1.11.4.md](v1.11.4.md) | production-deployed / v1.11.5로 승계 | 2026-07-26 KST | Safe score autosave, Excel-style shortcuts, explicit save-and-lock, and concurrent-editor fencing |
 | [v1.11.3.md](v1.11.3.md) | production-deployed / v1.11.4로 승계 | 2026-07-26 KST | Teacher-first public promotion, real matchup-to-PPT proof, explicit lead consent, and production SEO |
 | [v1.11.2.md](v1.11.2.md) | production-deployed / v1.11.3로 승계 | 2026-07-26 KST | One unrestricted plan at KRW 145,000 supply, KRW 14,000 VAT, and KRW 159,000 total |
 | [v1.11.1.md](v1.11.1.md) | production-deployed / v1.11.2로 승계 | 2026-07-26 KST | Student-specific Kakao Alimtalk final preview, canonical provider-payload parity, and controlled production-send proof |
