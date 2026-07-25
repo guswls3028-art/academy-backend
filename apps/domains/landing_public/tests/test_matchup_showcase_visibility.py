@@ -1,4 +1,5 @@
 from datetime import timedelta
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
@@ -64,6 +65,58 @@ class PublicMatchupShowcaseVisibilityTests(TestCase):
         response = PublicMatchupShowcaseViewSet.as_view({"get": "retrieve"})(request, pk=obj.id)
 
         self.assertEqual(response.status_code, 404, response.data)
+
+    def test_public_list_includes_static_preview_and_pdf_urls(self):
+        obj = PublicMatchupShowcase.objects.create(
+            tenant=self.tenant,
+            title="Published",
+            status=PublicMatchupShowcase.Status.PUBLISHED,
+            published_at=timezone.now(),
+            snapshot_pdf_key="matchup-showcase-snapshots/published.pdf",
+            snapshot_at=timezone.now(),
+        )
+        request = self._request("get", "/api/v1/landing-public/matchup-showcase/")
+
+        response = PublicMatchupShowcaseViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        item = response.data["results"][0]
+        self.assertEqual(
+            item["preview_url"],
+            f"/api/v1/landing-public/matchup-showcase/{obj.id}/preview/?tenant={self.tenant.code}",
+        )
+        self.assertEqual(
+            item["pdf_url"],
+            f"/api/v1/landing-public/matchup-showcase/{obj.id}/pdf/?tenant={self.tenant.code}",
+        )
+
+    def test_public_preview_returns_cached_jpeg(self):
+        obj = PublicMatchupShowcase.objects.create(
+            tenant=self.tenant,
+            title="Published",
+            status=PublicMatchupShowcase.Status.PUBLISHED,
+            published_at=timezone.now(),
+            snapshot_pdf_key="matchup-showcase-snapshots/published.pdf",
+            snapshot_at=timezone.now(),
+        )
+        request = self._request(
+            "get",
+            f"/api/v1/landing-public/matchup-showcase/{obj.id}/preview/",
+        )
+
+        with patch(
+            "apps.domains.landing_public.api.views.matchup_showcase_views."
+            "get_or_create_matchup_preview",
+            return_value=(b"preview-jpeg", "hit"),
+        ):
+            response = PublicMatchupShowcaseViewSet.as_view(
+                {"get": "preview_image"},
+            )(request, pk=obj.id)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "image/jpeg")
+        self.assertEqual(response["X-Matchup-Preview-Cache"], "hit")
+        self.assertEqual(response.content, b"preview-jpeg")
 
     def test_public_list_hides_future_published_exam_showcase(self):
         PublicExamShowcase.objects.create(

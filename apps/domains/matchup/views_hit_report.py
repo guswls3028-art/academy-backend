@@ -16,6 +16,8 @@ from django.views import View
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 
+from apps.support.landing_public.matchup_preview import get_or_create_matchup_preview
+
 from .models import (
     MatchupDocument,
     MatchupHitReport,
@@ -1143,6 +1145,33 @@ def _get_or_generate_curated_hit_report_pdf(report) -> tuple[bytes, str]:
     return pdf_bytes, "miss"
 
 
+def _hit_report_preview_etag(report) -> str:
+    return f'W/"mhr-preview-{_hit_report_pdf_version(report)[:16]}"'
+
+
+def _get_or_generate_hit_report_preview(report) -> tuple[bytes, str]:
+    return get_or_create_matchup_preview(
+        pdf_key=_hit_report_pdf_cache_key(report),
+        load_pdf_bytes=lambda: _get_or_generate_curated_hit_report_pdf(report)[0],
+    )
+
+
+def _hit_report_preview_response(request, report, *, etag: str) -> HttpResponse:
+    if request.META.get("HTTP_IF_NONE_MATCH") == etag:
+        response = HttpResponse(status=304)
+        response["ETag"] = etag
+        response["Cache-Control"] = "private, must-revalidate"
+        return response
+
+    preview_bytes, cache_state = _get_or_generate_hit_report_preview(report)
+    response = HttpResponse(preview_bytes, content_type="image/jpeg")
+    response["Content-Disposition"] = f'inline; filename="hit-report-{report.id}-preview.jpg"'
+    response["ETag"] = etag
+    response["Cache-Control"] = "private, must-revalidate"
+    response["X-Matchup-Preview-Cache"] = cache_state
+    return response
+
+
 @method_decorator([csrf_exempt, _jwt_required, _tenant_required], name="dispatch")
 class HitReportPdfView(View):
     """GET /api/v1/matchup/hit-reports/<id>/curated.pdf
@@ -1830,6 +1859,35 @@ class HitReportLandingPublicPdfView(View):
         return resp
 
 
+@method_decorator([csrf_exempt, _xframe_exempt], name="dispatch")
+class HitReportLandingPublicPreviewView(View):
+    """Static JPEG preview for a report published on a tenant landing page."""
+
+    def get(self, request, report_id):
+        tenant = _resolve_landing_pdf_tenant(request)
+        if tenant is None:
+            return JsonResponse({"detail": "Tenant required"}, status=400)
+        if not _is_report_in_published_landing(tenant, report_id):
+            return JsonResponse({"detail": "Not found"}, status=404)
+        try:
+            report = MatchupHitReport.objects.select_related("document", "author").get(
+                id=report_id,
+                tenant=tenant,
+            )
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        try:
+            return _hit_report_preview_response(
+                request,
+                report,
+                etag=_hit_report_preview_etag(report),
+            )
+        except Exception:
+            logger.exception("public_landing_preview failed (report=%s)", report.id)
+            return JsonResponse({"detail": "미리보기 생성 실패"}, status=500)
+
+
 # ── 1클릭 공유 토큰 (#67, 2026-05-12) ─────────────────────────────────
 #
 # 학원장 spec:
@@ -2040,6 +2098,7 @@ class HitReportShareMetaView(View):
             "tenant_name": getattr(tenant, "display_name", "") or getattr(tenant, "name", "") or "",
             "tenant_code": getattr(tenant, "code", "") or "",
             "pdf_url": f"/api/v1/matchup/share/{token}/curated.pdf",
+            "preview_url": f"/api/v1/matchup/share/{token}/preview.jpg",
             # backward-compat: 기존 frontend가 other_report_ids로 fetch 했음. inline cards 추가로 round-trip 1회 절약.
             "other_report_ids": other_ids,
             "other_reports": other_reports,
@@ -2111,3 +2170,24 @@ class HitReportSharePdfView(View):
         if "X-Frame-Options" in resp:
             del resp["X-Frame-Options"]
         return resp
+
+
+@method_decorator([csrf_exempt, _xframe_exempt], name="dispatch")
+class HitReportSharePreviewView(View):
+    """Static JPEG preview protected by the same bearer token as the share PDF."""
+
+    def get(self, request, token):
+        try:
+            report = MatchupHitReport.objects.select_related("document", "author", "tenant").get(
+                share_token=token,
+            )
+        except MatchupHitReport.DoesNotExist:
+            return JsonResponse({"detail": "Not found"}, status=404)
+
+        raw = f"{token}:preview:{_hit_report_pdf_version(report)}".encode()
+        etag = f'W/"{hashlib.sha1(raw).hexdigest()[:16]}"'
+        try:
+            return _hit_report_preview_response(request, report, etag=etag)
+        except Exception:
+            logger.exception("share_preview failed (report=%s)", report.id)
+            return JsonResponse({"detail": "미리보기 생성 실패"}, status=500)

@@ -8,6 +8,7 @@ URL:
   - GET    /api/v1/landing-public/matchup-showcase/                  (public list, status+window 필터)
   - GET    /api/v1/landing-public/matchup-showcase/{id}/             (public detail, expired 시 카드만)
   - GET    /api/v1/landing-public/matchup-showcase/{id}/pdf/         (public PDF stream, xframe_exempt)
+  - GET    /api/v1/landing-public/matchup-showcase/{id}/preview/     (public cached JPEG)
   - PATCH  /api/v1/landing-public/matchup-showcase/{id}/             (staff: title/desc/visibility)
   - POST   /api/v1/landing-public/matchup-showcase/{id}/unpublish/   (staff hide)
   - DELETE /api/v1/landing-public/matchup-showcase/{id}/             (staff: hide; soft)
@@ -33,6 +34,7 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.response import Response
 
 from apps.core.permissions import TenantResolved, TenantResolvedAndStaff, is_effective_staff
+from apps.support.landing_public.matchup_preview import get_or_create_matchup_preview
 from apps.support.landing_public.matchup_showcase_dependencies import (
     build_matchup_snapshot_for_hit_report,
     get_matchup_hit_report_for_showcase,
@@ -70,7 +72,7 @@ def _parse_dt_strict(raw: Any, field_name: str):
 class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
     """공개 매치업 적중보고서 게시판.
 
-    list/retrieve/pdf_stream: 비로그인 OK (PUBLISHED + window 만 노출 / EXPIRED는 카드만)
+    list/retrieve/pdf_stream/preview_image: 비로그인 OK (PUBLISHED + window 만 노출 / EXPIRED는 카드만)
     publish/unpublish/destroy/partial_update: staff (owner/admin) only
 
     xframe_exempt: pdf_stream 학생 카톡 iframe embed 용. DRF action method-level
@@ -81,7 +83,7 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
     queryset = PublicMatchupShowcase.objects.all()
 
     def get_permissions(self):
-        if self.action in ("list", "retrieve", "pdf_stream"):
+        if self.action in ("list", "retrieve", "pdf_stream", "preview_image"):
             return [TenantResolved()]
         return [TenantResolvedAndStaff()]
 
@@ -131,7 +133,7 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
         now = timezone.now()
         expired = bool(obj.published_until and now > obj.published_until)
         visible = obj.is_publicly_visible() or viewer_is_staff
-        return {
+        payload = {
             "id": obj.id,
             "title": obj.title,
             "description": obj.description,
@@ -145,6 +147,15 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             "visible": visible,
             "hit_report_id_ref": obj.hit_report_id_ref,
         }
+        if visible:
+            tenant_code = self.request.tenant.code
+            base = f"/api/v1/landing-public/matchup-showcase/{obj.id}"
+            payload["pdf_url"] = f"{base}/pdf/?tenant={tenant_code}"
+            payload["preview_url"] = f"{base}/preview/?tenant={tenant_code}"
+        else:
+            payload["pdf_url"] = None
+            payload["preview_url"] = None
+        return payload
 
     def list(self, request, *args, **kwargs):
         viewer_is_staff = _viewer_is_staff(request)
@@ -161,16 +172,7 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
             from django.db.models import F
             PublicMatchupShowcase.objects.filter(pk=obj.pk).update(view_count=F("view_count") + 1)
             obj.refresh_from_db(fields=["view_count"])
-        payload = self._serialize_card(obj, viewer_is_staff=viewer_is_staff)
-        # PDF URL — 일반 외부 visible 시점에만 inclusion. staff는 항상.
-        if payload["visible"]:
-            payload["pdf_url"] = (
-                f"/api/v1/landing-public/matchup-showcase/{obj.id}/pdf/"
-                f"?tenant={request.tenant.code}"
-            )
-        else:
-            payload["pdf_url"] = None
-        return Response(payload)
+        return Response(self._serialize_card(obj, viewer_is_staff=viewer_is_staff))
 
     @action(detail=True, methods=["get"], url_path="pdf")
     def pdf_stream(self, request, pk=None):
@@ -198,6 +200,51 @@ class PublicMatchupShowcaseViewSet(viewsets.GenericViewSet):
         resp["Content-Disposition"] = f'inline; filename="matchup-showcase-{obj.id}.pdf"'
         resp["Cache-Control"] = "public, max-age=300"
         return resp
+
+    @action(detail=True, methods=["get"], url_path="preview")
+    def preview_image(self, request, pk=None):
+        """Return one cached JPEG comparison page instead of browser PDF rendering."""
+        obj = self.get_object()
+        viewer_is_staff = _viewer_is_staff(request)
+        if not (obj.is_publicly_visible() or viewer_is_staff):
+            return Response({"detail": "비공개"}, status=status.HTTP_403_FORBIDDEN)
+        if not obj.snapshot_pdf_key:
+            return Response({"detail": "스냅샷 없음"}, status=status.HTTP_404_NOT_FOUND)
+
+        import hashlib
+
+        etag = f'W/"showcase-preview-{hashlib.sha1(obj.snapshot_pdf_key.encode()).hexdigest()[:16]}"'
+        if request.META.get("HTTP_IF_NONE_MATCH") == etag:
+            response = HttpResponse(status=304)
+            response["ETag"] = etag
+            response["Cache-Control"] = "public, max-age=300"
+            return response
+
+        def load_pdf_bytes() -> bytes:
+            from apps.infrastructure.storage.r2 import get_object_bytes_r2_storage
+
+            data = get_object_bytes_r2_storage(key=obj.snapshot_pdf_key)
+            if data is None:
+                raise FileNotFoundError(obj.snapshot_pdf_key)
+            return data
+
+        try:
+            preview_bytes, cache_state = get_or_create_matchup_preview(
+                pdf_key=obj.snapshot_pdf_key,
+                load_pdf_bytes=load_pdf_bytes,
+            )
+        except FileNotFoundError:
+            return Response({"detail": "스냅샷 객체 없음"}, status=status.HTTP_404_NOT_FOUND)
+        except Exception:
+            logger.exception("matchup_showcase_preview_failed id=%s", obj.id)
+            return Response({"detail": "미리보기 생성 실패"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        response = HttpResponse(preview_bytes, content_type="image/jpeg")
+        response["Content-Disposition"] = f'inline; filename="matchup-showcase-{obj.id}-preview.jpg"'
+        response["Cache-Control"] = "public, max-age=300"
+        response["ETag"] = etag
+        response["X-Matchup-Preview-Cache"] = cache_state
+        return response
 
     @action(detail=False, methods=["post"], url_path="publish")
     def publish(self, request):
