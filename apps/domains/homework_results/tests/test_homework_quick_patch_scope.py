@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.apps import apps
 from django.test import TestCase
 from rest_framework.test import APIRequestFactory, force_authenticate
 
@@ -8,11 +9,11 @@ from apps.domains.homework.models import HomeworkAssignment
 from apps.domains.homework_results.models import Homework, HomeworkScore
 from apps.domains.homework_results.views.homework_score_viewset import HomeworkScoreViewSet
 from apps.domains.lectures.models import Lecture, Session
-from apps.domains.results.models import ScoreEditDraft
 from apps.domains.students.models import Student
 
 
 User = get_user_model()
+ScoreEditDraft = apps.get_model("results", "ScoreEditDraft")
 
 
 class HomeworkQuickPatchScopeTests(TestCase):

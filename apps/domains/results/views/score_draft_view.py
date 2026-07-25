@@ -31,7 +31,10 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     score_edit_payload_parts,
 )
 from apps.domains.results.models import ScoreEditDraft
-from apps.support.results.progress_read_dependencies import get_session_for_tenant_or_404
+from apps.support.results.progress_read_dependencies import (
+    get_session_for_tenant_or_404,
+    lock_session_for_tenant_or_404,
+)
 
 
 def _locked_response() -> Response:
@@ -40,13 +43,9 @@ def _locked_response() -> Response:
 
 
 def _lock_session(*, session_id: int, tenant):
-    from django.shortcuts import get_object_or_404
-    from apps.domains.lectures.models import Session
-
-    return get_object_or_404(
-        Session.objects.select_for_update(),
-        id=int(session_id),
-        lecture__tenant=tenant,
+    return lock_session_for_tenant_or_404(
+        session_id=int(session_id),
+        tenant=tenant,
     )
 
 

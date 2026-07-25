@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.db import transaction
@@ -7,7 +8,6 @@ from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
-from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.models import ScoreEditDraft
 from apps.domains.results.guards.score_edit_lease_guard import (
     ScoreEditLeaseConflict,
@@ -20,6 +20,8 @@ from apps.domains.results.views.score_draft_view import (
 
 
 User = get_user_model()
+Lecture = apps.get_model("lectures", "Lecture")
+Session = apps.get_model("lectures", "Session")
 
 
 class ScoreDraftEditLeaseTests(TestCase):

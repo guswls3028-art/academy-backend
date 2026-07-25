@@ -6,6 +6,9 @@ from django.utils import timezone
 from rest_framework.exceptions import APIException, NotFound
 
 from apps.domains.results.models import ScoreEditDraft
+from apps.support.results.progress_read_dependencies import (
+    lock_session_for_tenant_or_404,
+)
 
 
 EDIT_LEASE_TTL = timedelta(minutes=2)
@@ -46,18 +49,13 @@ def require_score_edit_lease(request, *, session_id: int, exam_id: int | None = 
     if not tenant:
         raise ScoreEditLeaseConflict()
 
-    from apps.domains.lectures.models import Session
-
-    session = (
-        Session.objects.select_for_update().filter(
-            id=int(session_id),
-            lecture__tenant=tenant,
+    try:
+        session = lock_session_for_tenant_or_404(
+            session_id=int(session_id),
+            tenant=tenant,
         )
-        .prefetch_related("exams")
-        .first()
-    )
-    if session is None:
-        raise NotFound({"detail": "session not found", "code": "NOT_FOUND"})
+    except NotFound:
+        raise NotFound({"detail": "session not found", "code": "NOT_FOUND"}) from None
     if exam_id is not None and not session.exams.filter(id=int(exam_id)).exists():
         raise ScoreEditLeaseConflict()
 
