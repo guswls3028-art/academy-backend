@@ -17,23 +17,42 @@ if (-not (Test-Path $FrontRoot)) {
 
 $Host.UI.RawUI.WindowTitle = "Academy Local Dev (Backend + Frontend)"
 
-# 백엔드: venv python 직접 사용 (Job 내에서 Activate 불안정 방지)
-$pythonExe = Join-Path $AcademyRoot "venv\Scripts\python.exe"
-if (-not (Test-Path $pythonExe)) { $pythonExe = "python" }
+# 백엔드: 표준 .venv를 우선 사용하고, 기존 venv는 호환 경로로만 허용한다.
+# Job 안에서 Activate 대신 interpreter를 직접 실행해 shell별 활성화 차이를 없앤다.
+$pythonCandidates = @(
+  (Join-Path $AcademyRoot ".venv\Scripts\python.exe"),
+  (Join-Path $AcademyRoot "venv\Scripts\python.exe")
+)
+$pythonExe = $pythonCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $pythonExe) {
+  $pythonCommand = Get-Command python -ErrorAction SilentlyContinue
+  if (-not $pythonCommand) {
+    throw "Python 3.11 환경이 없습니다. py -3.11 -m venv .venv 후 requirements를 설치하세요."
+  }
+  $pythonExe = $pythonCommand.Source
+}
+
+$pythonVersion = & $pythonExe -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
+if ($LASTEXITCODE -ne 0 -or $pythonVersion.Trim() -ne "3.11") {
+  throw "Academy backend requires Python 3.11; resolved '$pythonExe' as $pythonVersion."
+}
+
+if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
+  throw "pnpm이 없습니다. frontend/package.json의 packageManager 버전을 설치하세요."
+}
 
 # 백엔드 Job
 $backendJob = Start-Job -Name Backend -ScriptBlock {
   param($root, $py)
   Set-Location $root
-  if ($py -ne "python") { & $py manage.py runserver 0.0.0.0:8000 2>&1 }
-  else { python manage.py runserver 0.0.0.0:8000 2>&1 }
+  & $py manage.py runserver 0.0.0.0:8000 2>&1
 } -ArgumentList $AcademyRoot, $pythonExe
 
 # 프론트엔드 Job
 $frontendJob = Start-Job -Name Frontend -ScriptBlock {
   param($root)
   Set-Location $root
-  pnpm dev -- --host 0.0.0.0 --port 5174 2>&1
+  pnpm dev -- --host 127.0.0.1 --port 5174 2>&1
 } -ArgumentList $FrontRoot
 
 # 터널 Job (cloudflared 없으면 스킵)

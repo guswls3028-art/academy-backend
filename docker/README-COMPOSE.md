@@ -2,7 +2,7 @@
 
 ## 사전 요구사항
 
-- 프로젝트 루트(`C:\academy`)에 `.env` 파일이 있어야 합니다.
+- 백엔드 루트(`C:\academy\backend`)에 `.env` 파일이 있어야 합니다.
 - Docker Desktop(또는 Docker Engine + Compose) 설치.
 
 ## 한 번에 빌드하고 실행
@@ -10,14 +10,14 @@
 ### 1) 베이스 이미지 빌드 (최초 1회 또는 Dockerfile.base 변경 시)
 
 ```powershell
-cd C:\academy
+cd C:\academy\backend
 docker build -f docker/Dockerfile.base -t academy-base:latest .
 ```
 
-### 2) 전체 시스템 기동 (postgres, redis, api, video-worker, messaging-worker 등)
+### 2) 기본 로컬 스택 기동 (postgres, redis, api, messaging-worker)
 
 ```powershell
-cd C:\academy
+cd C:\academy\backend
 docker compose up --build
 ```
 
@@ -27,13 +27,17 @@ docker compose up --build
 docker compose up --build -d
 ```
 
-### 3) api / video-worker / messaging-worker만 기동
+### 3) 선택 워커 기동
 
 ```powershell
-docker compose up --build api video-worker messaging-worker
+docker compose --profile video up --build video-worker
+docker compose --profile ai up --build ai-worker-cpu
+docker compose --profile ai-gpu up --build ai-worker-gpu
 ```
 
-(필요 시 postgres, redis도 함께 띄우려면 `docker compose up --build` 그대로 사용.)
+Video는 `VIDEO_JOB_ID`를 명시한 일회성 로컬 검증에만 사용합니다. AI/GPU
+이미지는 기본 `docker compose up`에서 빌드하지 않습니다. Tools worker는 이
+legacy compose 파일의 지원 범위에 포함되지 않습니다.
 
 ## 참고
 

@@ -17,12 +17,14 @@
 
 ## 기술 스택
 
-Django 4.x · DRF · PostgreSQL 15 (RDS Proxy) · Cloudflare R2 · AWS SQS · AWS Batch (video) · Docker (linux/arm64)
+Django 5.2 · DRF · PostgreSQL 15 (private RDS, direct runtime connection) ·
+Cloudflare R2 · AWS SQS · AWS Batch (video) · Docker (linux/arm64)
 
 ## 워커 분리 (절대 혼합 금지)
 
 - **Video** (AWS Batch only; EC2 daemon/SQS path retired 2026-05-10)
 - **Messaging** (SQS + EC2 t4g.small 상시)
 - **AI** (SQS + EC2 ASG, scale-to-zero)
+- **Tools** (SQS + EC2 ASG, scale-to-zero)
 
 상세: [docs/architecture/설계.md](docs/architecture/설계.md)

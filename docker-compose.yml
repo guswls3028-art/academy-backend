@@ -146,6 +146,7 @@ services:
   # 운영은 AWS Batch에서만 실행. 로컬에서 떠 있어도 VIDEO_JOB_ID 없으면 batch_main 즉시 종료.
   # daemon mode + SQS pull 경로는 2026-05-10 폐기 (FAST_ACK / SQS_QUEUE_NAME / EC2_IDLE_STOP_THRESHOLD 모두 무관).
   video-worker:
+    profiles: ["video"]
     build:
       <<: *base-build
       dockerfile: docker/video-worker/Dockerfile
@@ -176,7 +177,7 @@ services:
         condition: service_healthy
     networks:
       - academy-network
-    restart: unless-stopped
+    restart: "no"
     # 로컬용 2GB. 프로덕션은 반드시 4GB(EC2 t4g.medium 또는 Fargate 4GB).
     mem_limit: 2048m
     logging: *default-logging
@@ -185,6 +186,7 @@ services:
   # AI Worker CPU (Lite + Basic 큐 처리)
   # ============================================================================
   ai-worker-cpu:
+    profiles: ["ai"]
     build:
       <<: *base-build
       dockerfile: docker/ai-worker-cpu/Dockerfile
@@ -219,6 +221,7 @@ services:
   # AI Worker GPU (Premium 큐 처리) — TODO: Dockerfile 정비 후 활성화
   # ============================================================================
   ai-worker-gpu:
+    profiles: ["ai-gpu"]
     build:
       <<: *base-build
       dockerfile: docker/ai-worker-gpu/Dockerfile

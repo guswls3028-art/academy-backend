@@ -96,8 +96,8 @@ curl -sI -o NUL -w "%{http_code}" https://www.새도메인.co.kr
 
 **3) 로그인·라우트**
 
-- `frontend/src/features/auth/pages/login/dedicatedLoginComponents.tsx`: 새 TenantId에 `EnhancedCommonLoginPage` 등 매핑.
-- `frontend/src/app/router/AuthRouter.tsx`: `TenantLoginOrRedirect`의 `tenantId` 타입에 새 ID 추가, `LOGIN_ROUTE_TENANTS` 타입에 반영.
+- `frontend/src/auth/pages/LoginPage.tsx`: 새 테넌트의 전용 로그인 요구사항 반영.
+- `frontend/src/core/router/AuthRouter.tsx`: 로그인 라우트와 TenantId 분기 반영.
 
 **4) OG/타이틀 (Pages Function)**
 
@@ -105,8 +105,8 @@ curl -sI -o NUL -w "%{http_code}" https://www.새도메인.co.kr
 
 **5) 학생앱 테마·로고**
 
-- `frontend/src/student/shared/ui/layout/StudentLayout.tsx`: `COMMON_THEME_TENANTS`에 `"새코드"` 추가.
-- `frontend/src/student/shared/tenant/studentTenantBranding.ts`: `COMMON_LOGO_CODES`에 `"새코드"` 추가.
+- `frontend/src/app_student/layout/StudentLayout.tsx`: `COMMON_THEME_TENANTS`에 `"새코드"` 추가.
+- `frontend/src/app_student/shared/tenant/studentTenantBranding.ts`: `COMMON_LOGO_CODES`에 `"새코드"` 추가.
 
 ### 2-4. DB 반영
 
@@ -117,50 +117,16 @@ python manage.py setup_three_tenants
 
 - 배포 서버 또는 로컬에서 실제 DB 기준으로 실행. 새 테넌트·TenantDomain·Program 생성/연결.
 
-### 2-4-2. 카카오 알림톡 PFID 설정 (필수)
+### 2-5. 메시징 경계 확인
 
-새 테넌트 생성 후 **반드시** `kakao_pfid`를 DB에 설정해야 알림톡 템플릿 검수 신청 및 발송이 동작한다.
+테넌트 생성 과정에서 tenant별 PFID/API key를 DB나 UI에 설정하거나, 신규
+알림톡 템플릿 검수·일괄 신청을 수행하지 않는다. 모든 실발송은 공용 owner
+설정과 기존 승인 템플릿만 사용하며, exact trigger 또는 명시된 unified
+category가 없으면 fail-closed가 정답이다.
 
-```powershell
-cd C:\academy\backend
-python manage.py shell -c "
-from apps.core.models import Tenant
-t = Tenant.objects.get(code='새코드')
-t.kakao_pfid = 'KA01PF260213050050151CbZonvKMlh4'
-t.save(update_fields=['kakao_pfid'])
-print(f'{t.code}: kakao_pfid={t.kakao_pfid}')
-"
-```
-
-- **PFID 값**: `KA01PF260213050050151CbZonvKMlh4` (모든 테넌트 공통 — 학원플러스 카카오 비즈 채널)
-- 이 값이 비어 있으면 `submit_all_templates_review` 커맨드에서 해당 테넌트를 건너뜀
-- 프론트엔드 메시지 > 설정 페이지에서도 설정 가능하지만, **테넌트 생성 직후에는 DB 직접 반영이 확실함**
-
-### 2-5. 카카오 알림톡 URL 검수 (도메인 2종)
-
-카카오 알림톡 템플릿에 `#{site_link}` 변수가 포함되어 있으면, 해당 URL 도메인을 **카카오 비즈니스 채널에 등록·검수** 받아야 한다.
-
-**반드시 2종 모두 등록:**
-
-| 도메인 | 예시 |
-|--------|------|
-| 루트 도메인 | `https://새도메인.co.kr` |
-| www 서브도메인 | `https://www.새도메인.co.kr` |
-
-- 카카오 검수 시 **URL이 포함된 템플릿은 해당 도메인이 채널에 등록되어 있어야** 승인됨.
-- www 유무에 따라 별도 도메인으로 취급되므로, **두 가지를 모두 등록**해야 사용자가 어느 쪽으로 접속하든 문제가 없다.
-- 기존 테넌트에 새 도메인을 추가한 경우에도 **알림톡 템플릿 재검수가 필요**할 수 있다.
-
-**등록 방법:**
-1. 카카오비즈니스 → 채널 관리 → 비즈니스 도구 → 알림톡 → 발신프로필 → **URL 등록**
-2. 또는 솔라피 콘솔 → 카카오 채널 → 비즈 도메인에 두 종류 등록
-
-**일괄 검수 신청 (관리 커맨드):**
-```bash
-python manage.py submit_all_templates_review
-```
-- 모든 테넌트의 미신청(`solapi_status=""`) 템플릿을 순차적으로 솔라피에 검수 신청.
-- 테넌트별 PFID·API Key가 설정되어 있어야 동작.
+상세 정책은 `docs/ssot/messaging-policy.md`와
+`docs/domain/messaging-alimtalk.md`를 따른다. 커스텀 도메인 등록이 메시징
+정책을 확장하거나 템플릿 재검수를 자동 승인하지 않는다.
 
 ### 2-6. 배포·확인
 
