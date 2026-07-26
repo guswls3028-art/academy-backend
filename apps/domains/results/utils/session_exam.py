@@ -73,7 +73,7 @@ def get_primary_session_for_exam(exam_id: int) -> Optional[Any]:
     if not qs.exists():
         return None
 
-    return qs.first()
+    return qs.order_by("order", "id").first()
 
 
 # ---------------------------------------------------------------------

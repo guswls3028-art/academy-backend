@@ -101,6 +101,7 @@ def _consume_login_bucket(
         bucket = (
             LoginThrottleBucket.objects.select_for_update()
             .filter(bucket_key=bucket_key)
+            .order_by("pk")
             .first()
         )
         if bucket is None:

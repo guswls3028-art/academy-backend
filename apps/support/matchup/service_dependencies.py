@@ -14,7 +14,12 @@ def dispatch_ai_job(**kwargs: Any) -> Any:
 def inventory_file_for_r2_key(*, tenant: Any, r2_key: str) -> Any | None:
     from apps.domains.inventory.models import InventoryFile
 
-    return InventoryFile.objects.filter(tenant=tenant, r2_key=r2_key).first()
+    return (
+        InventoryFile.objects
+        .filter(tenant=tenant, r2_key=r2_key)
+        .order_by("pk")
+        .first()
+    )
 
 
 def inventory_folder_for_matchup_backfill(
@@ -25,13 +30,18 @@ def inventory_folder_for_matchup_backfill(
 ) -> Any | None:
     from apps.domains.inventory.models import InventoryFolder
 
-    return InventoryFolder.objects.filter(
-        tenant=tenant,
-        scope="admin",
-        student_ps="",
-        parent=parent,
-        name=name,
-    ).first()
+    return (
+        InventoryFolder.objects
+        .filter(
+            tenant=tenant,
+            scope="admin",
+            student_ps="",
+            parent=parent,
+            name=name,
+        )
+        .order_by("pk")
+        .first()
+    )
 
 
 def create_inventory_folder_for_matchup_backfill(

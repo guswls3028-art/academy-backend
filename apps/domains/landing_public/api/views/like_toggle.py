@@ -12,7 +12,7 @@ def toggle_public_like(*, tenant, user, target_kind: str, target_id: int) -> boo
         "target_kind": target_kind,
         "target_id": target_id,
     }
-    existing = PublicPostLike.objects.filter(**lookup).first()
+    existing = PublicPostLike.objects.filter(**lookup).order_by("pk").first()
     if existing:
         existing.delete()
         return False

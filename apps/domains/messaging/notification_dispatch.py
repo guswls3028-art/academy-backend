@@ -629,6 +629,7 @@ def consume_preview_token_and_execute(token_str: str, tenant) -> dict:
         token = (
             NotificationPreviewToken.objects.select_for_update()
             .filter(token=token_uuid, tenant=tenant)
+            .order_by("pk")
             .first()
         )
         if token is None:

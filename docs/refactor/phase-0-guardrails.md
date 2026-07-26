@@ -77,12 +77,13 @@ pytest tests\test_worker_settings_drift.py -v --tb=short -x
 $env:PYTHONPATH='C:\academy\backend'; $env:DJANGO_SETTINGS_MODULE='apps.api.config.settings.worker'; python tests\_worker_boot_check.py
 ```
 
-Current baseline snapshot (latest local run: 2026-06-23 KST):
+Current baseline snapshot (latest local run: 2026-07-27 KST):
 
-- `adapter_application_import`: 0
-- `cross_domain_import`: 117
-- `cross_domain_internal_import`: 590
-- `domain_infra_import`: 81
+- files scanned: 1,078
+- `cross_domain_import`: 31
+- `cross_domain_internal_import`: 230
+- runtime findings: 3
+- test findings: 258
 - `check_id_domain_safety.py`: 20 warning(s), 0 error(s)
   - `UNORDERED_FIRST`: 0
   - `SILENT_FALLBACK`: 0
@@ -90,17 +91,19 @@ Current baseline snapshot (latest local run: 2026-06-23 KST):
     polymorphic target/source ids, deleted-object log references, or structural
     mismatch fields that need domain-specific migration plans.
 
-Current frontend baseline snapshot (latest local run: 2026-06-23 KST):
+Current frontend baseline snapshot (latest local run: 2026-07-27 KST):
 
 - `api_generated_dir_present`: false
-- `same_app_domain_import`: 146
+- `same_app_domain_import`: 147
 - `large_frontend_file`: 34
-- `local_format_defs`: 121
+- `local_format_defs`: 98
 - `status_map_defs`: 35
-- `query_key_literals`: 901
-- `inline_style_objects`: 3806
-- `api_response_type_defs`: 102
-- `e2e_wait_for_timeout`: 34
+- `query_key_literals`: 6
+- `inline_style_objects`: 3767
+- `api_response_type_defs`: 101
+- `session_storage_refs`: 38
+- `ts_expect_error_refs`: 0
+- `e2e_wait_for_timeout`: 33
 - `pnpm refactor:budget`: passed against `scripts/refactor-budget-baseline.json`
 
 Interpretation note:

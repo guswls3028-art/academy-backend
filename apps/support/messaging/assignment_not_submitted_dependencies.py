@@ -43,7 +43,7 @@ def first_attempt_homework_is_not_submitted(*, homework: Any, enrollment: Any) -
         homework=homework,
         enrollment=enrollment,
         attempt_index=1,
-    ).first()
+    ).order_by("pk").first()
 
     if not homework_score:
         return True
