@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.10.md](v1.11.10.md) | **CURRENT** | 2026-07-26 KST | Shared-exam score-edit fencing, stale-draft recovery, teacher-path convergence, and full production closure |
+| [v1.11.11.md](v1.11.11.md) | **CURRENT** | 2026-07-26 KST | KRW 198,000 standard price, August-only KRW 159,000 lifetime discount, single unrestricted plan, and full production closure |
+| [v1.11.10.md](v1.11.10.md) | production-deployed / v1.11.11로 승계 | 2026-07-26 KST | Shared-exam score-edit fencing, stale-draft recovery, teacher-path convergence, and full production closure |
 | [v1.11.9.md](v1.11.9.md) | production-deployed / v1.11.10로 승계 | 2026-07-26 KST | August lifetime-price contract hardening and public subscription-data minimization |
 | [v1.11.8.md](v1.11.8.md) | production-deployed / v1.11.9로 승계 | 2026-07-26 KST | Single-recipient incident SMS hardening, safe tenant/reason context, at-most-once fallback delivery, and bounded deployment authentication |
 | [v1.11.7.md](v1.11.7.md) | production-deployed / v1.11.8로 승계 | 2026-07-26 KST | First-class promotion consent evidence, layout-stable real-product screenshots, and full production closure |
