@@ -2,6 +2,7 @@
 # 사용: .\scripts\pages-add-custom-domain.ps1 -Domain "newdomain.co.kr"
 # 1) zone에서 잘못된 CNAME 제거 2) Pages에 커스텀 도메인 등록 3) zone에 academy-frontend-26b.pages.dev 로 CNAME 추가
 
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
     [Parameter(Mandatory = $true)]
     [string]$Domain
@@ -44,6 +45,12 @@ $recs   = Invoke-RestMethod -Uri $dnsUri -Headers $headers -Method Get
 foreach ($r in $recs.result) {
     if (($r.type -eq 'CNAME') -and (($r.name -eq '@' -or $r.name -eq $Domain -or $r.name -eq 'www'))) {
         $delUri = "$dnsUri/$($r.id)"
+        if (-not $PSCmdlet.ShouldProcess(
+            "$($r.type) $($r.name) -> $($r.content)",
+            "Delete conflicting Cloudflare DNS record"
+        )) {
+            continue
+        }
         try {
             Invoke-RestMethod -Uri $delUri -Headers $headers -Method Delete | Out-Null
             Write-Host "Deleted DNS: $($r.type) $($r.name) -> $($r.content)"
@@ -57,6 +64,9 @@ $base = "https://api.cloudflare.com/client/v4/accounts/$accountId/pages/projects
 $wwwDomain = if ($Domain.StartsWith('www.')) { $Domain } else { "www.$Domain" }
 foreach ($d in @($Domain, $wwwDomain)) {
     $body = @{ name = $d } | ConvertTo-Json
+    if (-not $PSCmdlet.ShouldProcess($d, "Add Cloudflare Pages custom domain")) {
+        continue
+    }
     try {
         $res = Invoke-RestMethod -Uri "$base/domains" -Headers $headers -Method Post -Body $body
         if ($res.success) {
@@ -84,6 +94,12 @@ foreach ($rec in @(
     @{ type = "CNAME"; name = "www"; content = $PagesCnameTarget; ttl = 1; proxied = $true }
 )) {
     $body = $rec | ConvertTo-Json
+    if (-not $PSCmdlet.ShouldProcess(
+        "$($rec.name) -> $($rec.content)",
+        "Create proxied Cloudflare CNAME"
+    )) {
+        continue
+    }
     try {
         $r = Invoke-RestMethod -Uri $dnsUri -Headers $headers -Method Post -Body $body
         if ($r.success) { Write-Host "Created CNAME $($rec.name) -> $($rec.content)" }

@@ -1,4 +1,5 @@
 # Zone에 Pages CNAME 추가 (1016 해결용). 타깃은 기존 테넌트와 동일: academy-frontend-26b.pages.dev
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
 param(
     [Parameter(Mandatory = $true)]
     [string]$Domain,
@@ -26,6 +27,12 @@ foreach ($rec in @(
     @{ type = "CNAME"; name = "www"; content = $PagesTarget; ttl = 1; proxied = $true }
 )) {
     $body = $rec | ConvertTo-Json
+    if (-not $PSCmdlet.ShouldProcess(
+        "$Domain $($rec.name) -> $($rec.content)",
+        "Create proxied Cloudflare CNAME"
+    )) {
+        continue
+    }
     try {
         $r = Invoke-RestMethod -Uri $dnsUri -Headers $headers -Method Post -Body $body
         if ($r.success) { Write-Host "Created $($rec.type) $($rec.name) -> $($rec.content)" }

@@ -53,6 +53,20 @@ REMOTE_API_TOOLS = (
     REPO_ROOT / "scripts" / "v1" / "run-qna-e2e-verify.ps1",
     REPO_ROOT / "scripts" / "v1" / "run-api-management-remote.ps1",
 )
+CLOUDFLARE_MUTATION_SCRIPTS = (
+    REPO_ROOT / "scripts" / "add-cloudflare-zone.ps1",
+    REPO_ROOT / "scripts" / "pages-add-custom-domain.ps1",
+    REPO_ROOT / "scripts" / "zone-dns-add-pages-cname.ps1",
+    REPO_ROOT / "scripts" / "zone-dns-update-record.ps1",
+)
+
+
+def test_cloudflare_mutation_scripts_require_explicit_should_process() -> None:
+    for path in CLOUDFLARE_MUTATION_SCRIPTS:
+        source = path.read_text(encoding="utf-8-sig")
+        assert "SupportsShouldProcess = $true" in source
+        assert "ConfirmImpact = 'High'" in source
+        assert "$PSCmdlet.ShouldProcess" in source
 
 
 def test_problem_studio_bedrock_policy_is_model_scoped_and_converged() -> None:

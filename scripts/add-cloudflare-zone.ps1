@@ -1,10 +1,16 @@
 # Cloudflare API로 zone 추가 후 네임서버 반환
-# 사용: .\scripts\add-cloudflare-zone.ps1 [-Domain "sswe.co.kr"]
+# 사용: .\scripts\add-cloudflare-zone.ps1 -Domain "example.co.kr"
 # .env의 CLOUDFLARE_EMAIL, CLOUDFLARE_API_KEY, CLOUDFLARE_ACCOUNT_ID 사용
 
-param([string]$Domain = "sswe.co.kr")
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$Domain
+)
 
 $ErrorActionPreference = 'Stop'
+$Domain = $Domain.Trim().ToLower()
+if (-not $Domain) { throw "Domain is required." }
 $envFile = Join-Path $PSScriptRoot '..\.env'
 if (-not (Test-Path $envFile)) {
     Write-Host "backend\.env not found."
@@ -36,6 +42,9 @@ $body = @{
 } | ConvertTo-Json
 
 $uri = 'https://api.cloudflare.com/client/v4/zones'
+if (-not $PSCmdlet.ShouldProcess($Domain, "Create Cloudflare zone with jump_start enabled")) {
+    return
+}
 try {
     $r = Invoke-RestMethod -Uri $uri -Headers $headers -Method Post -Body $body
 } catch {

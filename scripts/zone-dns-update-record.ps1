@@ -1,7 +1,16 @@
 # Update one DNS record by name (CNAME content)
-param([string]$ZoneName, [string]$RecordName, [string]$NewContent)
+[CmdletBinding(SupportsShouldProcess = $true, ConfirmImpact = 'High')]
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ZoneName,
+    [Parameter(Mandatory = $true)]
+    [string]$RecordName,
+    [Parameter(Mandatory = $true)]
+    [string]$NewContent
+)
 $ErrorActionPreference = 'Stop'
 $envFile = Join-Path $PSScriptRoot '..\.env'
+if (-not (Test-Path $envFile)) { throw "backend\.env not found." }
 Get-Content $envFile | ForEach-Object {
     if ($_ -match '^CLOUDFLARE_(EMAIL|API_KEY)=(.+)$') {
         [System.Environment]::SetEnvironmentVariable("CLOUDFLARE_$($matches[1])", $matches[2].Trim(), 'Process')
@@ -15,5 +24,11 @@ $recs = Invoke-RestMethod -Uri "https://api.cloudflare.com/client/v4/zones/$zid/
 if (-not $recs.result -or $recs.result.Count -eq 0) { Write-Host "Record not found"; exit 1 }
 $rid = $recs.result[0].id
 $body = @{ type = $recs.result[0].type; name = $RecordName; content = $NewContent; ttl = 1; proxied = $true } | ConvertTo-Json
+if (-not $PSCmdlet.ShouldProcess(
+    "$RecordName -> $NewContent",
+    "Update Cloudflare DNS record in zone $ZoneName"
+)) {
+    return
+}
 $r = Invoke-RestMethod -Uri "https://api.cloudflare.com/client/v4/zones/$zid/dns_records/$rid" -Headers $h -Method Put -Body $body
 if ($r.success) { Write-Host "Updated $RecordName -> $NewContent" } else { Write-Host $r.errors }

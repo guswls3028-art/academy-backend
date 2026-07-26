@@ -20,9 +20,11 @@
 
 ```powershell
 cd C:\academy\backend
+.\scripts\add-cloudflare-zone.ps1 -Domain "새도메인.co.kr" -WhatIf
 .\scripts\add-cloudflare-zone.ps1 -Domain "새도메인.co.kr"
 ```
 
+- `-WhatIf` 출력에서 zone 이름과 생성 작업을 확인한 뒤 실제 실행에 승인한다.
 - 출력된 **1차·2차 네임서버**를 운영자에게 전달.
 - 예시 안내 문구:  
   「가비아 [도메인 관리](https://domain.gabia.com) → 해당 도메인 → 네임서버 설정에 아래 2개를 등록해 주세요.  
@@ -45,9 +47,12 @@ cd C:\academy\backend
 
 ```powershell
 cd C:\academy\backend
+.\scripts\pages-add-custom-domain.ps1 -Domain "새도메인.co.kr" -WhatIf
 .\scripts\pages-add-custom-domain.ps1 -Domain "새도메인.co.kr"
 ```
 
+- `-WhatIf`에서 삭제할 기존 CNAME, Pages 등록, 새 CNAME 대상을 확인한 뒤
+  실제 실행에 승인한다.
 - 잘못된 CNAME 제거 → **Workers & Pages → academy-frontend → Custom domains**에 도메인·www 추가 → **zone에 CNAME @, www → `academy-frontend-26b.pages.dev`** 추가 (실제 Pages 타깃은 `academy-frontend-26b.pages.dev`. `academy-frontend.pages.dev` 사용 시 1016/1014 발생 가능).
 
 ### 2-1-2. 연결 확인 (필수)
