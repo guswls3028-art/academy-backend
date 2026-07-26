@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.15.md](v1.11.15.md) | **CURRENT** | 2026-07-26 KST | Academy-operation-first promotion hierarchy, four-area animated navigator, organized feature guide, and frontend production closure |
+| [v1.11.16.md](v1.11.16.md) | **CURRENT** | 2026-07-26 KST | Visual academy operations dashboard, explicit Alimtalk responsibility boundaries, detailed feature workflows, and frontend production closure |
+| [v1.11.15.md](v1.11.15.md) | production-deployed / v1.11.16로 승계 | 2026-07-26 KST | Academy-operation-first promotion hierarchy, four-area animated navigator, organized feature guide, and frontend production closure |
 | [v1.11.14.md](v1.11.14.md) | production-deployed / v1.11.15로 승계 | 2026-07-26 KST | Teacher-first Korean promotion copy, continuing August signup price, mobile navigation repair, and frontend production closure |
 | [v1.11.13.md](v1.11.13.md) | production-deployed / v1.11.14로 승계 | 2026-07-26 KST | Calm Korean promotion copy, product-accurate evidence, responsive image viewing, and full frontend production closure |
 | [v1.11.12.md](v1.11.12.md) | production-deployed / v1.11.13로 승계 | 2026-07-26 KST | Teacher-accurate promotion, immutable static Matchup previews, narrow-mobile image containment, and full production closure |
