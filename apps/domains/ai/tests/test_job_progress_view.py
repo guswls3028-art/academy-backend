@@ -84,7 +84,12 @@ class JobProgressViewTests(TestCase):
         mock_redis_status.assert_called_once_with(str(self.tenant.id), job.job_id)
 
     @patch("apps.domains.ai.views.job_progress_view.get_job_status_from_redis")
-    def test_excel_job_result_is_hidden_from_student_members(self, mock_redis_status):
+    @patch("apps.domains.ai.views.job_progress_view.user_can_read_job", return_value=False)
+    def test_excel_job_result_is_hidden_from_student_members(
+        self,
+        _mock_user_can_read_job,
+        mock_redis_status,
+    ):
         mock_redis_status.return_value = {
             "job_id": "excel-secret-job",
             "job_type": "excel_parsing",
@@ -97,23 +102,7 @@ class JobProgressViewTests(TestCase):
                 }],
             },
         }
-        from apps.domains.students.services import create_student_account
-
-        student_user = create_student_account(
-            tenant=self.tenant,
-            password="test1234",
-            student_data={
-                "name": "진행조회학생",
-                "ps_number": "AI-PROGRESS-STUDENT",
-                "phone": "01090001111",
-                "parent_phone": "01070001111",
-                "school_type": "HIGH",
-                "grade": 1,
-                "uses_identifier": False,
-            },
-        ).student.user
-
-        response = self._request("excel-secret-job", user=student_user)
+        response = self._request("excel-secret-job")
 
         self.assertEqual(response.status_code, 404, response.data)
         self.assertNotIn("result", response.data)

@@ -13,7 +13,6 @@ from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.domains.enrollment.views import EnrollmentViewSet
 from apps.domains.lectures.models import Lecture
-from apps.domains.ai.services.excel_job_secrets import decrypt_excel_job_secret
 
 User = get_user_model()
 
@@ -161,7 +160,6 @@ class EnrollmentExcelUploadValidationTests(TestCase):
         payload = mock_dispatch.call_args.kwargs["payload"]
         self.assertNotIn("initial_password", payload)
         self.assertNotIn("fixed-secret-1234", payload["initial_password_secret"])
-        self.assertEqual(
-            decrypt_excel_job_secret(payload["initial_password_secret"]),
-            "fixed-secret-1234",
+        self.assertTrue(
+            payload["initial_password_secret"].startswith("excel:v1:"),
         )

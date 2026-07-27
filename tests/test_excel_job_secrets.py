@@ -1,3 +1,5 @@
+"""Cross-domain Excel worker secret and atomic-completion integration tests."""
+
 from __future__ import annotations
 
 from datetime import timedelta
