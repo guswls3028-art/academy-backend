@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.24.md](v1.11.24.md) | **CURRENT** | 2026-07-27 KST | Editor-compatible Problem Studio HWPX packages, closed runtime dependencies, and production validation |
+| [v1.11.25.md](v1.11.25.md) | **CURRENT** | 2026-07-28 KST | Deploy-time lazy-route recovery for the tchul clinic screen, bounded retries, and production verification |
+| [v1.11.24.md](v1.11.24.md) | production-deployed / v1.11.25로 승계 | 2026-07-27 KST | Editor-compatible Problem Studio HWPX packages, closed runtime dependencies, and production validation |
 | [v1.11.23.md](v1.11.23.md) | production-deployed / v1.11.24로 승계 | 2026-07-27 KST | Real-use developer inbox, durable iPhone web-push alerts, tenant-specific installed-app branding, and agent-monitor removal |
 | [v1.11.22.md](v1.11.22.md) ([정정](v1.11.22-errata.md)) | production-deployed / v1.11.23로 승계 | 2026-07-27 KST | Structure-preserving cross-session exam copies, actionable workbook errors, and production incident verification |
 | [v1.11.21.md](v1.11.21.md) | production-deployed / v1.11.22로 승계 | 2026-07-27 KST | Ambiguity-safe Excel result imports, explicit attendance confirmation for fully blank rows, and production closure |
