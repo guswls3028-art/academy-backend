@@ -17,6 +17,7 @@ from apps.domains.exams.services.structure_copy_service import (
     copy_exam_structure,
     ensure_regular_exam_owns_structure,
 )
+from apps.domains.exams.services.template_resolver import resolve_structure_exam
 from apps.support.exams.view_dependencies import (
     IsTeacherOrAdmin,
     dispatch_progress_for_exam,
@@ -129,7 +130,14 @@ class ExamViewSet(ModelViewSet):
         # REGULAR CREATE
         # =========================
         template_exam_id = self.request.data.get("template_exam_id")
+        source_exam_id = self.request.data.get("source_exam_id")
+        if template_exam_id and source_exam_id:
+            raise ValidationError(
+                {"source_exam_id": "template_exam_id와 함께 사용할 수 없습니다."}
+            )
+
         template_exam = None
+        source_exam = None
         subject = ""
 
         if template_exam_id:
@@ -145,6 +153,22 @@ class ExamViewSet(ModelViewSet):
             if template_exam.exam_type != Exam.ExamType.TEMPLATE:
                 raise ValidationError({"template_exam_id": "must be template exam"})
             subject = template_exam.subject
+
+        if source_exam_id:
+            try:
+                source_exam_id = int(source_exam_id)
+            except (TypeError, ValueError):
+                raise ValidationError({"source_exam_id": "must be integer"})
+
+            try:
+                source_exam = Exam.objects.filter(
+                    tenant=tenant,
+                    exam_type=Exam.ExamType.REGULAR,
+                    is_active=True,
+                ).get(id=source_exam_id)
+            except Exam.DoesNotExist:
+                raise ValidationError({"source_exam_id": "invalid"})
+            subject = source_exam.subject
 
         session_id = self.request.data.get("session_id")
         if not session_id:
@@ -188,6 +212,11 @@ class ExamViewSet(ModelViewSet):
             exam.sessions.add(session)
             if template_exam is not None:
                 copy_exam_structure(source_exam=template_exam, target_exam=exam)
+            elif source_exam is not None:
+                structure_source = resolve_structure_exam(source_exam)
+                if int(structure_source.tenant_id) != int(tenant.id):
+                    raise ValidationError({"source_exam_id": "invalid"})
+                copy_exam_structure(source_exam=structure_source, target_exam=exam)
 
     # ================================
     # UPDATE 방어 + pass_score 변경 시 ClinicLink 해소 재계산
