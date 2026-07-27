@@ -1,17 +1,30 @@
 # PATH: apps/domains/results/views/wrong_note_pdf_view.py
 from __future__ import annotations
 
+import logging
+from datetime import timedelta
 from typing import Any
 
+from django.db import transaction
 from django.urls import reverse
+from django.utils import timezone
 
+from rest_framework import status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from apps.core.permissions import TenantResolvedAndMember, is_effective_staff
+from apps.core.models import Tenant
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
+from apps.domains.results.services.wrong_note_pdf_service import (
+    WrongNotePDFEmptyError,
+    WrongNotePDFLimitError,
+    delete_wrong_note_pdf_object,
+    generate_and_store_wrong_note_pdf,
+)
+from apps.domains.results.throttles import WrongNotePDFCreateThrottle
 from apps.support.results.wrong_note_pdf_dependencies import (
     exam_exists_for_tenant,
     exam_is_attached_to_lecture,
@@ -19,13 +32,15 @@ from apps.support.results.wrong_note_pdf_dependencies import (
     lecture_exists_for_tenant,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class WrongNotePDFCreateView(APIView):
     """
-    오답노트 PDF 생성 요청 (Celery 제거 → HTTP worker pull/push)
+    오답노트 PDF 생성 요청.
 
-    ✅ 상태값(모델 enum) 단일화:
-    - PENDING -> RUNNING -> DONE/FAILED
+    과거에는 PENDING job만 만들고 처리 주체가 없어 완료되지 않았다.
+    현재는 요청 안에서 PDF를 생성해 R2에 저장하고 DONE/FAILED를 확정한다.
 
     응답:
     {
@@ -35,31 +50,15 @@ class WrongNotePDFCreateView(APIView):
     }
     """
 
-    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
+    throttle_classes = [WrongNotePDFCreateThrottle]
 
     def _get_allowed_enrollment(self, request, enrollment_id: int) -> Any:
-        user = request.user
-
-        # ✅ tenant isolation: always verify enrollment belongs to tenant
         enrollment = get_wrong_note_pdf_enrollment(
             enrollment_id=int(enrollment_id),
             tenant=request.tenant,
         )
         if not enrollment:
-            raise PermissionDenied("You cannot create PDF for this enrollment_id.")
-
-        if is_effective_staff(user, request.tenant):
-            return enrollment
-
-        # Enrollment.student_id는 Student.pk이므로 user.pk 비교는 오매칭 버그.
-        student = getattr(user, "student_profile", None)
-        if not student:
-            raise PermissionDenied("You cannot create PDF for this enrollment_id.")
-        if (
-            enrollment.student_id != student.id
-            or enrollment.status != "ACTIVE"
-            or getattr(enrollment.student, "deleted_at", None) is not None
-        ):
             raise PermissionDenied("You cannot create PDF for this enrollment_id.")
         return enrollment
 
@@ -108,19 +107,115 @@ class WrongNotePDFCreateView(APIView):
         except ValueError:
             raise ValidationError({"detail": "lecture_id/exam_id must be valid integers."})
 
-        job = WrongNotePDF.objects.create(
-            enrollment_id=enrollment_id_i,
-            lecture_id=lecture_id_i,
-            exam_id=exam_id_i,
-            from_session_order=from_order,
-            status=WrongNotePDF.Status.PENDING,  # ✅ enqueue = PENDING
-        )
+        with transaction.atomic():
+            Tenant.objects.select_for_update().get(pk=request.tenant.pk)
+            locked_enrollment = get_wrong_note_pdf_enrollment(
+                enrollment_id=enrollment_id_i,
+                tenant=request.tenant,
+                for_update=True,
+            )
+            if locked_enrollment is None:
+                raise PermissionDenied(
+                    "You cannot create PDF for this enrollment_id."
+                )
+            stale_before = timezone.now() - timedelta(minutes=5)
+            WrongNotePDF.objects.filter(
+                enrollment__tenant=request.tenant,
+                status__in=[
+                    WrongNotePDF.Status.PENDING,
+                    WrongNotePDF.Status.RUNNING,
+                ],
+                updated_at__lt=stale_before,
+            ).update(
+                status=WrongNotePDF.Status.FAILED,
+                error_message="생성이 중단되어 다시 시도할 수 있습니다.",
+                updated_at=timezone.now(),
+            )
+            if WrongNotePDF.objects.filter(
+                enrollment__tenant=request.tenant,
+                status__in=[
+                    WrongNotePDF.Status.PENDING,
+                    WrongNotePDF.Status.RUNNING,
+                ],
+            ).exists():
+                return Response(
+                    {"detail": "학원에서 다른 오답노트를 만들고 있습니다. 잠시 후 다시 시도해 주세요."},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            job = WrongNotePDF.objects.create(
+                enrollment_id=enrollment_id_i,
+                lecture_id=lecture_id_i or int(enrollment.lecture_id),
+                exam_id=exam_id_i,
+                from_session_order=from_order,
+                status=WrongNotePDF.Status.PENDING,
+            )
 
         status_path = reverse("wrong-note-pdf-status", kwargs={"job_id": job.id})
         status_url = request.build_absolute_uri(status_path)
 
+        job.status = WrongNotePDF.Status.RUNNING
+        job.save(update_fields=["status", "updated_at"])
+        file_key = ""
+        try:
+            job.file_path = generate_and_store_wrong_note_pdf(
+                job=job,
+                enrollment=enrollment,
+                tenant=request.tenant,
+            )
+            file_key = str(job.file_path)
+            job.status = WrongNotePDF.Status.DONE
+            job.error_message = ""
+            job.save(
+                update_fields=["status", "file_path", "error_message", "updated_at"]
+            )
+        except (WrongNotePDFEmptyError, WrongNotePDFLimitError) as exc:
+            job.status = WrongNotePDF.Status.FAILED
+            job.error_message = str(exc)
+            job.save(update_fields=["status", "error_message", "updated_at"])
+            return Response(
+                {
+                    "job_id": int(job.id),
+                    "status": str(job.status),
+                    "status_url": status_url,
+                    "detail": str(exc),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception:
+            cleanup_succeeded = True
+            if file_key:
+                cleanup_succeeded = delete_wrong_note_pdf_object(file_key)
+            logger.exception(
+                "wrong-note PDF generation failed",
+                extra={
+                    "job_id": int(job.id),
+                    "tenant_id": int(request.tenant.id),
+                    "enrollment_id": enrollment_id_i,
+                },
+            )
+            job.status = WrongNotePDF.Status.FAILED
+            job.error_message = "PDF를 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
+            job.file_path = "" if cleanup_succeeded else file_key
+            job.save(
+                update_fields=[
+                    "status",
+                    "file_path",
+                    "error_message",
+                    "updated_at",
+                ]
+            )
+            return Response(
+                {
+                    "job_id": int(job.id),
+                    "status": str(job.status),
+                    "status_url": status_url,
+                    "detail": job.error_message,
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         return Response({
             "job_id": int(job.id),
-            "status": str(getattr(job, "status", WrongNotePDF.Status.PENDING)),
+            "status": str(job.status),
             "status_url": status_url,
-        })
+        }, status=status.HTTP_201_CREATED)

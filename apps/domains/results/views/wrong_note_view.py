@@ -4,9 +4,9 @@ from __future__ import annotations
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.exceptions import PermissionDenied
+from rest_framework.exceptions import PermissionDenied, ValidationError
 
-from apps.core.permissions import TenantResolvedAndMember, is_effective_staff
+from apps.core.permissions import TenantResolvedAndStaff
 
 from apps.domains.results.serializers.wrong_note_serializers import (
     WrongNoteListResponseSerializer,
@@ -16,8 +16,8 @@ from apps.domains.results.services.wrong_note_service import (
     list_wrong_notes_for_enrollment,
 )
 from apps.support.results.admin_exam_dependencies import (
-    active_enrollment_exists_for_student,
     enrollment_exists_for_tenant,
+    get_enrollment_for_tenant,
 )
 
 
@@ -30,27 +30,10 @@ class WrongNoteView(APIView):
     - View는 보안 + query parsing + serializer만 담당
     """
 
-    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def _assert_enrollment_access(self, request, enrollment_id: int) -> None:
-        user = request.user
-
-        # ✅ tenant isolation: always verify enrollment belongs to tenant
         if not enrollment_exists_for_tenant(enrollment_id=int(enrollment_id), tenant=request.tenant):
-            raise PermissionDenied("You cannot access this enrollment_id.")
-
-        if is_effective_staff(user, request.tenant):
-            return
-
-        # Enrollment.student_id는 Student.pk이므로 user.pk 비교는 오매칭 버그.
-        student = getattr(user, "student_profile", None)
-        if not student:
-            raise PermissionDenied("You cannot access this enrollment_id.")
-        if not active_enrollment_exists_for_student(
-            enrollment_id=int(enrollment_id),
-            tenant=request.tenant,
-            student_id=int(student.id),
-        ):
             raise PermissionDenied("You cannot access this enrollment_id.")
 
     def get(self, request):
@@ -67,19 +50,58 @@ class WrongNoteView(APIView):
         if not enrollment_id:
             return Response({"detail": "enrollment_id is required"}, status=400)
 
-        enrollment_id_i = int(enrollment_id)
+        try:
+            enrollment_id_i = int(enrollment_id)
+            exam_id_i = (
+                int(request.query_params.get("exam_id"))
+                if request.query_params.get("exam_id")
+                else None
+            )
+            requested_lecture_id = (
+                int(request.query_params.get("lecture_id"))
+                if request.query_params.get("lecture_id")
+                else None
+            )
+            from_order = int(request.query_params.get("from_session_order", 2))
+            offset = int(request.query_params.get("offset", 0))
+            limit = min(int(request.query_params.get("limit", 50)), 200)
+            if (
+                enrollment_id_i < 1
+                or (exam_id_i is not None and exam_id_i < 1)
+                or (requested_lecture_id is not None and requested_lecture_id < 1)
+                or from_order < 1
+                or offset < 0
+                or limit < 1
+            ):
+                raise ValueError
+        except (TypeError, ValueError):
+            raise ValidationError(
+                {"detail": "조회 범위와 페이지 값을 다시 확인해 주세요."}
+            )
+
         self._assert_enrollment_access(request, enrollment_id_i)
 
-        exam_id = request.query_params.get("exam_id")
-        lecture_id = request.query_params.get("lecture_id")
-        from_order = int(request.query_params.get("from_session_order", 2))
+        enrollment = get_enrollment_for_tenant(
+            enrollment_id=enrollment_id_i,
+            tenant=request.tenant,
+        )
+        if enrollment is None:
+            raise PermissionDenied("You cannot access this enrollment_id.")
+        if (
+            requested_lecture_id is not None
+            and requested_lecture_id != int(enrollment.lecture_id)
+        ):
+            raise ValidationError(
+                {"lecture_id": "수강 중인 강의의 오답만 모을 수 있습니다."}
+            )
 
-        offset = int(request.query_params.get("offset", 0))
-        limit = int(request.query_params.get("limit", 50))
+        # 수강 강의를 메타데이터 범위로 고정한다. 단일 시험 조회에서는
+        # service가 lecture 주차 필터를 적용하지 않아 1주차도 빠지지 않는다.
+        lecture_id_i = int(requested_lecture_id or enrollment.lecture_id)
 
         q = WrongNoteQuery(
-            exam_id=int(exam_id) if exam_id else None,
-            lecture_id=int(lecture_id) if lecture_id else None,
+            exam_id=exam_id_i,
+            lecture_id=lecture_id_i,
             from_session_order=from_order,
             offset=offset,
             limit=limit,

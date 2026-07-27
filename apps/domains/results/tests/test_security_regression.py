@@ -12,6 +12,8 @@ Student.pk와 User.pk 공간 충돌로 타 학생 데이터에 우연히 접근 
 """
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIRequestFactory, force_authenticate
@@ -22,6 +24,10 @@ from apps.core.models.user import user_internal_username
 from apps.domains.students.models import Student
 from apps.domains.lectures.models import Lecture
 from apps.domains.exams.models import Exam, ExamEnrollment
+from apps.domains.exams.views.exam_questions_by_exam_view import (
+    ExamQuestionsByExamView,
+)
+from apps.domains.exams.views.question_view import QuestionViewSet
 from apps.domains.enrollment.models import Enrollment
 from apps.domains.results.models import ExamAttempt
 from apps.domains.results.models.wrong_note_pdf import WrongNotePDF
@@ -92,6 +98,17 @@ class _Mixin:
             tenant=self.tenant, student=self.student_b,
             lecture=self.lecture, status="ACTIVE",
         )
+        self.staff_user = User.objects.create_user(
+            username="results-security-teacher",
+            password="test1234",
+            tenant=self.tenant,
+            is_staff=True,
+        )
+        TenantMembership.ensure_active(
+            tenant=self.tenant,
+            user=self.staff_user,
+            role="teacher",
+        )
 
     def _get(self, view, user, **query):
         from urllib.parse import urlencode
@@ -125,11 +142,34 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
                          "CRITICAL: PK 공간 충돌(student.id == user.id)로 "
                          "타 학생 enrollment 접근 가능!")
 
-    def test_student_can_access_own_enrollment(self):
-        """본인 enrollment 접근은 정상 (200, 빈 결과여도 OK)."""
+    def test_student_cannot_access_staff_wrong_note_builder(self):
+        """오답노트 제작 화면은 교직원 전용이다."""
         view = WrongNoteView.as_view()
         resp = self._get(view, user=self.user_a, enrollment_id=self.enroll_a.id)
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_student_cannot_list_admin_exam_questions(self):
+        request = self.factory.get("/api/v1/exams/questions/")
+        force_authenticate(request, user=self.user_a)
+        request.tenant = self.tenant
+
+        response = QuestionViewSet.as_view({"get": "list"})(request)
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_student_cannot_read_admin_exam_question_shape(self):
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="비공개 시험",
+            exam_type=Exam.ExamType.REGULAR,
+        )
+        request = self.factory.get(f"/api/v1/exams/{exam.id}/questions/")
+        force_authenticate(request, user=self.user_a)
+        request.tenant = self.tenant
+
+        response = ExamQuestionsByExamView.as_view()(request, exam_id=exam.id)
+
+        self.assertEqual(response.status_code, 403)
 
     def test_student_cannot_access_wrong_note_for_inactive_own_enrollment(self):
         """학생 본인 enrollment라도 비활성 수강이면 오답노트 조회 불가."""
@@ -152,6 +192,59 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
         req.tenant = self.tenant
         resp = view(req)
         self.assertEqual(resp.status_code, 403)
+
+    @patch(
+        "apps.domains.results.views.wrong_note_pdf_view.generate_and_store_wrong_note_pdf",
+        return_value="tenants/1/results/wrong-notes/1.pdf",
+    )
+    def test_pdf_create_finishes_job_in_request(self, generate_pdf):
+        view = WrongNotePDFCreateView.as_view()
+        req = self.factory.post(
+            "/api/v1/results/wrong-notes/pdf/",
+            data={
+                "enrollment_id": self.enroll_a.id,
+                "from_session_order": 1,
+            },
+            format="json",
+        )
+        force_authenticate(req, user=self.staff_user)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 201, resp.data)
+        job = WrongNotePDF.objects.get(id=resp.data["job_id"])
+        self.assertEqual(job.status, WrongNotePDF.Status.DONE)
+        self.assertEqual(job.lecture_id, self.lecture.id)
+        self.assertEqual(job.file_path, "tenants/1/results/wrong-notes/1.pdf")
+        generate_pdf.assert_called_once()
+
+    @patch(
+        "apps.domains.results.views.wrong_note_pdf_status_view.generate_presigned_get_url_storage",
+        return_value="https://storage.test/wrong-note.pdf",
+    )
+    def test_pdf_status_returns_downloadable_pdf_url(self, presign):
+        job = WrongNotePDF.objects.create(
+            enrollment_id=self.enroll_a.id,
+            lecture_id=self.lecture.id,
+            status=WrongNotePDF.Status.DONE,
+            file_path="tenants/1/results/wrong-notes/7.pdf",
+        )
+        view = WrongNotePDFStatusView.as_view()
+        req = self.factory.get(f"/api/v1/results/wrong-notes/pdf/{job.id}/")
+        force_authenticate(req, user=self.staff_user)
+        req.tenant = self.tenant
+
+        resp = view(req, job_id=job.id)
+
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.data["file_url"], "https://storage.test/wrong-note.pdf")
+        presign.assert_called_once_with(
+            key=job.file_path,
+            expires_in=3600,
+            filename=f"wrong-note-{job.id}.pdf",
+            content_type="application/pdf",
+        )
 
     def test_student_cannot_create_wrong_note_pdf_for_inactive_own_enrollment(self):
         """학생 본인 enrollment라도 비활성 수강이면 오답노트 PDF 생성 불가."""
@@ -194,7 +287,7 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
             },
             format="json",
         )
-        force_authenticate(req, user=self.user_a)
+        force_authenticate(req, user=self.staff_user)
         req.tenant = self.tenant
 
         resp = view(req)
@@ -224,13 +317,37 @@ class TestC4WrongNotePkCollisionGuard(_Mixin, TestCase):
             },
             format="json",
         )
-        force_authenticate(req, user=self.user_a)
+        force_authenticate(req, user=self.staff_user)
         req.tenant = self.tenant
 
         resp = view(req)
 
         self.assertEqual(resp.status_code, 400)
         self.assertFalse(WrongNotePDF.objects.exists())
+
+    @patch(
+        "apps.domains.results.views.wrong_note_pdf_view.generate_and_store_wrong_note_pdf"
+    )
+    def test_pdf_create_allows_only_one_running_job_per_tenant(self, generate_pdf):
+        WrongNotePDF.objects.create(
+            enrollment_id=self.enroll_b.id,
+            lecture_id=self.lecture.id,
+            status=WrongNotePDF.Status.RUNNING,
+        )
+        view = WrongNotePDFCreateView.as_view()
+        req = self.factory.post(
+            "/api/v1/results/wrong-notes/pdf/",
+            data={"enrollment_id": self.enroll_a.id},
+            format="json",
+        )
+        force_authenticate(req, user=self.staff_user)
+        req.tenant = self.tenant
+
+        resp = view(req)
+
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(WrongNotePDF.objects.count(), 1)
+        generate_pdf.assert_not_called()
 
     def test_pdf_create_staff_without_tenant_membership_rejected(self):
         """전역 is_staff라도 request.tenant 멤버십 없으면 PDF job 생성 불가."""

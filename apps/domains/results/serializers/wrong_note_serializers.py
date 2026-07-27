@@ -14,12 +14,17 @@ class WrongNoteItemSerializer(serializers.Serializer):
     """
 
     exam_id = serializers.IntegerField()
+    exam_title = serializers.CharField(required=False, allow_blank=True)
+    session_order = serializers.IntegerField(required=False, allow_null=True)
+    session_title = serializers.CharField(required=False, allow_blank=True)
     attempt_id = serializers.IntegerField()
     attempt_created_at = serializers.DateTimeField(allow_null=True)
 
     question_id = serializers.IntegerField()
     question_number = serializers.IntegerField(required=False, allow_null=True)
     answer_type = serializers.CharField(required=False, allow_blank=True)
+    question_image_url = serializers.CharField(required=False, allow_blank=True)
+    has_question_image = serializers.BooleanField(required=False)
 
     # 학생 답 / 정답 / 점수
     student_answer = serializers.CharField(required=False, allow_blank=True)

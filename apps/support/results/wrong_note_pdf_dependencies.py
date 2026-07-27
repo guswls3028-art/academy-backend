@@ -5,15 +5,22 @@ from __future__ import annotations
 from typing import Any
 
 
-def get_wrong_note_pdf_enrollment(*, enrollment_id: int, tenant: Any) -> Any | None:
+def get_wrong_note_pdf_enrollment(
+    *,
+    enrollment_id: int,
+    tenant: Any,
+    for_update: bool = False,
+) -> Any | None:
     from apps.domains.enrollment.models import Enrollment
 
-    return (
+    queryset = (
         Enrollment.objects
         .filter(id=enrollment_id, tenant=tenant)
         .select_related("student", "lecture")
-        .first()
     )
+    if for_update:
+        queryset = queryset.select_for_update()
+    return queryset.first()
 
 
 def lecture_exists_for_tenant(*, lecture_id: int, tenant: Any) -> bool:

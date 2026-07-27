@@ -26,6 +26,12 @@ class QuestionExplanationSerializer(serializers.ModelSerializer):
     def get_image_url(self, obj) -> str | None:
         if not obj.image_key:
             return None
+        tenant = self.context.get("tenant")
+        if (
+            tenant is None
+            or not str(obj.image_key).startswith(f"tenants/{tenant.id}/exams/")
+        ):
+            return None
         try:
             return generate_presigned_get_url_storage(
                 key=obj.image_key, expires_in=3600,

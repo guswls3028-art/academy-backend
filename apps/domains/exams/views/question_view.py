@@ -3,21 +3,16 @@ from __future__ import annotations
 from rest_framework.viewsets import ModelViewSet
 from rest_framework.permissions import IsAuthenticated
 
-from apps.core.permissions import TenantResolvedAndMember
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import ExamQuestion
 from apps.domains.exams.serializers.question import QuestionSerializer
 from apps.domains.exams.services.template_resolver import assert_template_editable
-
-from apps.support.exams.view_dependencies import IsTeacherOrAdmin
-
 
 class QuestionViewSet(ModelViewSet):
     serializer_class = QuestionSerializer
 
     def get_permissions(self):
-        if self.action in {"list", "retrieve"}:
-            return [IsAuthenticated(), TenantResolvedAndMember()]
-        return [IsAuthenticated(), TenantResolvedAndMember(), IsTeacherOrAdmin()]
+        return [IsAuthenticated(), TenantResolvedAndStaff()]
 
     def get_queryset(self):
         tenant = getattr(self.request, "tenant", None)

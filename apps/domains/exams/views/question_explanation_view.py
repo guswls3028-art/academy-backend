@@ -14,11 +14,12 @@ from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import Exam, ExamQuestion, QuestionExplanation
 from apps.domains.exams.serializers.question_explanation import (
     QuestionExplanationSerializer,
@@ -34,10 +35,19 @@ from apps.domains.exams.services.structure_copy_service import ensure_regular_ex
 logger = logging.getLogger(__name__)
 
 
+def _validate_exam_image_key(*, tenant, key: str, field_name: str) -> str:
+    value = str(key or "")
+    if value and not value.startswith(f"tenants/{tenant.id}/exams/"):
+        raise ValidationError(
+            {field_name: "이 학원에서 올린 이미지만 저장할 수 있습니다."}
+        )
+    return value
+
+
 class ExamExplanationListView(APIView):
     """GET /exams/<exam_id>/explanations/ — 시험 문항 해설 전체 조회."""
 
-    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def get(self, request, exam_id: int):
         tenant = request.tenant
@@ -58,7 +68,13 @@ class ExamExplanationListView(APIView):
             .order_by("question__number")
         )
 
-        return Response(QuestionExplanationSerializer(explanations, many=True).data)
+        return Response(
+            QuestionExplanationSerializer(
+                explanations,
+                many=True,
+                context={"tenant": tenant},
+            ).data
+        )
 
 
 class ExamExplanationBulkView(APIView):
@@ -79,6 +95,7 @@ class ExamExplanationBulkView(APIView):
         )
         ensure_regular_exam_owns_structure(exam)
         template = resolve_structure_exam(exam)
+        assert_template_editable(template)
 
         serializer = BulkExplanationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -89,12 +106,25 @@ class ExamExplanationBulkView(APIView):
         for item in items:
             question_id = item.get("question_id")
             text = item.get("text", "")
-            image_key = item.get("image_key", "")
+            image_key = _validate_exam_image_key(
+                tenant=tenant,
+                key=item.get("image_key", ""),
+                field_name="image_key",
+            )
 
             question = get_object_or_404(
                 ExamQuestion.objects.filter(sheet__exam=template),
                 id=int(question_id),
             )
+
+            if "problem_image_key" in item:
+                problem_image_key = _validate_exam_image_key(
+                    tenant=tenant,
+                    key=item.get("problem_image_key", ""),
+                    field_name="problem_image_key",
+                )
+                question.image_key = problem_image_key
+                question.save(update_fields=["image_key", "updated_at"])
 
             obj, _ = QuestionExplanation.objects.update_or_create(
                 question=question,
@@ -107,7 +137,11 @@ class ExamExplanationBulkView(APIView):
             results.append(obj)
 
         return Response(
-            QuestionExplanationSerializer(results, many=True).data,
+            QuestionExplanationSerializer(
+                results,
+                many=True,
+                context={"tenant": tenant},
+            ).data,
             status=status.HTTP_200_OK,
         )
 
@@ -119,8 +153,6 @@ class QuestionExplanationDetailView(APIView):
     """
 
     def get_permissions(self):
-        if self.request.method == "GET":
-            return [IsAuthenticated(), TenantResolvedAndMember()]
         return [IsAuthenticated(), TenantResolvedAndStaff()]
 
     def _get_tenant_filtered_question(self, request, question_id: int) -> ExamQuestion:
@@ -144,7 +176,12 @@ class QuestionExplanationDetailView(APIView):
                 {"text": "", "image_key": "", "source": "manual", "match_confidence": None},
                 status=status.HTTP_200_OK,
             )
-        return Response(QuestionExplanationSerializer(explanation).data)
+        return Response(
+            QuestionExplanationSerializer(
+                explanation,
+                context={"tenant": request.tenant},
+            ).data
+        )
 
     @transaction.atomic
     def put(self, request, question_id: int):
@@ -153,14 +190,24 @@ class QuestionExplanationDetailView(APIView):
 
         serializer = QuestionExplanationWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
+        image_key = _validate_exam_image_key(
+            tenant=request.tenant,
+            key=serializer.validated_data.get("image_key", ""),
+            field_name="image_key",
+        )
 
         obj, _ = QuestionExplanation.objects.update_or_create(
             question=question,
             defaults={
                 "text": serializer.validated_data.get("text", ""),
-                "image_key": serializer.validated_data.get("image_key", ""),
+                "image_key": image_key,
                 "source": QuestionExplanation.Source.MANUAL,
             },
         )
 
-        return Response(QuestionExplanationSerializer(obj).data)
+        return Response(
+            QuestionExplanationSerializer(
+                obj,
+                context={"tenant": request.tenant},
+            ).data
+        )

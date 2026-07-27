@@ -84,6 +84,26 @@ Scoring Flow
 학생/관리자 화면에 노출되는 대표 결과는 `sync_result_from_exam_submission`
 단계에서 `Result` / `ResultItem`으로 동기화된다.
 
+Wrong-note PDF
+--------------
+
+- 오답노트의 조회 기준은 append-only `ResultFact`가 아니라 현재 대표 결과의
+  `ResultItem(is_correct=False)`이다. 재채점·대표 시도 변경 뒤 이미 맞힌 문항을
+  과거 오답 이벤트 때문에 다시 노출하지 않는다.
+- 교직원은 성적 상세의 **오답노트 만들기**에서 현재 시험 또는 수강 강의 전체를
+  선택한다. 누적 범위는 차시 순서로 묶이며, 문제 이미지·학생 답·정답을 PDF에 싣는다.
+- 문제 이미지는 시험 설정의 답안 등록 → 이미지 등록에서 `ExamQuestion.image_key`로
+  저장한다. 해설 이미지는 `QuestionExplanation.image_key`로 분리해 유지한다.
+- `POST /results/wrong-notes/pdf/`는 생성 책임이 없는 대기 job을 남기지 않는다.
+  요청 안에서 PDF를 만든 뒤 R2에 저장하고 `DONE` 또는 `FAILED`를 확정한다.
+  상태 API는 local media URL이 아니라 `application/pdf` attachment presigned URL을
+  반환한다.
+- 조회·생성·다운로드는 교직원 전용이다. 한 학원에서 한 번에 한 PDF만 만들고,
+  생성은 최대 100문항·90초로 제한한다. 범위를 넘으면 현재 시험으로 좁혀 다시 만든다.
+- R2 이미지는 10MB·2천만 픽셀 상한과 제한 읽기/타임아웃을 적용하고 한 장씩
+  처리한다. 학생 영구 삭제는 진행 중인 PDF가 있으면 중단하며, 저장된 PDF 객체를
+  먼저 제거한 뒤 삭제를 계속한다.
+
 Excel Result Import
 -------------------
 

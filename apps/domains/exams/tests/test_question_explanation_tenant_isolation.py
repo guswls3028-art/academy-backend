@@ -5,6 +5,9 @@ QuestionExplanationDetailView 테넌트 격리 테스트.
 - 자기 테넌트 문항 해설 조회/수정 → 200
 - 다른 테넌트 문항 해설 조회/수정 → 404 (테넌트 필터 차단)
 """
+from unittest.mock import patch
+
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.contrib.auth import get_user_model
 from rest_framework import status
@@ -15,7 +18,11 @@ from apps.core.models.tenant_membership import TenantMembership
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.exams.models import Exam, ExamQuestion
 from apps.domains.exams.models.sheet import Sheet
-from apps.domains.exams.views.question_explanation_view import QuestionExplanationDetailView
+from apps.domains.exams.views.question_explanation_view import (
+    ExamExplanationBulkView,
+    QuestionExplanationDetailView,
+)
+from apps.domains.exams.views.exam_image_upload_view import ExamImageUploadView
 
 User = get_user_model()
 
@@ -120,7 +127,130 @@ class QuestionExplanationTenantIsolationTest(TestCase):
         )
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_put_rejects_foreign_tenant_explanation_image_key(self):
+        resp = self._make_request(
+            "PUT",
+            self.user_a,
+            self.tenant_a,
+            self.question_a.id,
+            data={
+                "text": "해설",
+                "image_key": (
+                    f"tenants/{self.tenant_b.id}/exams/images/explanation.png"
+                ),
+            },
+        )
+
+        self.assertEqual(resp.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_tenant_b_cannot_access_tenant_a_question(self):
         """역방향도 차단: Tenant B → Tenant A 문항 접근 → 404."""
         resp = self._make_request("GET", self.user_b, self.tenant_b, self.question_a.id)
         self.assertEqual(resp.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_bulk_save_persists_problem_image_for_wrong_note(self):
+        factory = APIRequestFactory()
+        request = factory.post(
+            f"/exams/{self.exam_a.id}/explanations/bulk/",
+            {
+                "explanations": [
+                    {
+                        "question_id": self.question_a.id,
+                        "text": "",
+                        "image_key": "",
+                        "problem_image_key": (
+                            f"tenants/{self.tenant_a.id}/exams/images/question-1.png"
+                        ),
+                    }
+                ]
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.user_a)
+        request.tenant = self.tenant_a
+
+        response = ExamExplanationBulkView.as_view()(request, exam_id=self.exam_a.id)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+        self.question_a.refresh_from_db()
+        self.assertEqual(
+            self.question_a.image_key,
+            f"tenants/{self.tenant_a.id}/exams/images/question-1.png",
+        )
+
+    def test_bulk_save_rejects_foreign_tenant_problem_image_key(self):
+        factory = APIRequestFactory()
+        request = factory.post(
+            f"/exams/{self.exam_a.id}/explanations/bulk/",
+            {
+                "explanations": [
+                    {
+                        "question_id": self.question_a.id,
+                        "text": "",
+                        "problem_image_key": (
+                            f"tenants/{self.tenant_b.id}/exams/images/question-1.png"
+                        ),
+                    }
+                ]
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.user_a)
+        request.tenant = self.tenant_a
+
+        response = ExamExplanationBulkView.as_view()(request, exam_id=self.exam_a.id)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.question_a.refresh_from_db()
+        self.assertEqual(self.question_a.image_key, "")
+
+    def test_bulk_save_rejects_foreign_tenant_explanation_image_key(self):
+        factory = APIRequestFactory()
+        request = factory.post(
+            f"/exams/{self.exam_a.id}/explanations/bulk/",
+            {
+                "explanations": [
+                    {
+                        "question_id": self.question_a.id,
+                        "text": "",
+                        "image_key": (
+                            f"tenants/{self.tenant_b.id}/exams/images/explanation.png"
+                        ),
+                    }
+                ]
+            },
+            format="json",
+        )
+        force_authenticate(request, user=self.user_a)
+        request.tenant = self.tenant_a
+
+        response = ExamExplanationBulkView.as_view()(
+            request,
+            exam_id=self.exam_a.id,
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    @patch(
+        "apps.domains.exams.views.exam_image_upload_view.upload_fileobj_to_r2_storage"
+    )
+    def test_exam_image_upload_rejects_fake_image_bytes(self, upload_file):
+        factory = APIRequestFactory()
+        request = factory.post(
+            f"/exams/{self.exam_a.id}/upload-image/",
+            {
+                "file": SimpleUploadedFile(
+                    "fake.png",
+                    b"not-an-image",
+                    content_type="image/png",
+                )
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.user_a)
+        request.tenant = self.tenant_a
+
+        response = ExamImageUploadView.as_view()(request, exam_id=self.exam_a.id)
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        upload_file.assert_not_called()

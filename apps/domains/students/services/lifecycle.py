@@ -8,13 +8,15 @@ from django.contrib.auth import get_user_model
 from django.db import connection, transaction
 from django.utils import timezone
 
-from apps.core.models import TenantMembership
+from apps.core.models import Tenant, TenantMembership
 from apps.domains.students.models import Student
 from apps.domains.students.services.school import is_valid_grade, normalize_school_from_name
 from apps.support.students.lifecycle_dependencies import (
+    active_wrong_note_pdf_exists_for_students,
     cancel_active_participants_for_student,
     deactivate_enrollments_for_student,
     ensure_parent_for_student,
+    delete_wrong_note_pdf_storage_or_raise,
 )
 
 
@@ -349,6 +351,7 @@ def permanently_delete_students(
         return StudentPermanentDeleteResult(0, tuple(), tuple())
 
     with transaction.atomic():
+        Tenant.objects.select_for_update().get(pk=tenant.pk)
         candidate_user_ids = tuple(
             Student.objects.filter(
                 tenant=tenant,
@@ -375,6 +378,14 @@ def permanently_delete_students(
 
         selected_student_ids = tuple(s.id for s in to_delete)
         selected_user_ids = tuple(s.user_id for s in to_delete if s.user_id)
+        if active_wrong_note_pdf_exists_for_students(
+            tenant=tenant,
+            student_ids=selected_student_ids,
+        ):
+            raise StudentLifecycleError(
+                "wrong_note_pdf_running",
+                "오답노트 PDF 생성이 끝난 뒤 학생을 영구 삭제해 주세요.",
+            )
 
         _permanently_delete_selected_students(
             tenant=tenant,
@@ -564,6 +575,9 @@ def _permanently_delete_selected_students(
         enrollment_ids = [row[0] for row in cursor.fetchall()]
 
         if enrollment_ids:
+            delete_wrong_note_pdf_storage_or_raise(
+                enrollment_ids=enrollment_ids,
+            )
             enrollment_id_clause, enrollment_id_params = _in_clause(enrollment_ids)
             for tbl, where_template in [
                 ("lectures_sectionassignment", "enrollment_id IN {enrollment_ids}"),

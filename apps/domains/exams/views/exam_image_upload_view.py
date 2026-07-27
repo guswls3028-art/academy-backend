@@ -20,7 +20,10 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.exams.models import Exam
-from apps.domains.exams.services.template_resolver import resolve_structure_exam
+from apps.domains.exams.services.template_resolver import (
+    assert_template_editable,
+    resolve_structure_exam,
+)
 from apps.domains.exams.services.structure_copy_service import ensure_regular_exam_owns_structure
 from apps.infrastructure.storage.r2 import (
     upload_fileobj_to_r2_storage,
@@ -29,6 +32,8 @@ from apps.infrastructure.storage.r2 import (
 
 ALLOWED_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp"}
 MAX_SIZE = 10 * 1024 * 1024  # 10MB
+MAX_PIXELS = 20_000_000
+ALLOWED_IMAGE_FORMATS = {"PNG": "png", "JPEG": "jpg", "WEBP": "webp"}
 
 
 class ExamImageUploadView(APIView):
@@ -48,6 +53,7 @@ class ExamImageUploadView(APIView):
         )
         ensure_regular_exam_owns_structure(exam)
         template = resolve_structure_exam(exam)
+        assert_template_editable(template)
 
         upload_file = request.FILES.get("file")
         if not upload_file:
@@ -69,7 +75,26 @@ class ExamImageUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        ext = upload_file.name.rsplit(".", 1)[-1] if "." in (upload_file.name or "") else "png"
+        try:
+            from PIL import Image
+
+            with Image.open(upload_file) as image:
+                image_format = str(image.format or "").upper()
+                width, height = image.size
+                if image_format not in ALLOWED_IMAGE_FORMATS:
+                    raise ValueError("unsupported image format")
+                if width < 1 or height < 1 or width * height > MAX_PIXELS:
+                    raise ValueError("image pixel limit exceeded")
+                image.verify()
+        except Exception:
+            return Response(
+                {"detail": "정상적인 PNG, JPG 또는 WEBP 이미지만 올릴 수 있습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        finally:
+            upload_file.seek(0)
+
+        ext = ALLOWED_IMAGE_FORMATS[image_format]
         unique_id = uuid.uuid4().hex[:12]
         image_key = f"tenants/{tenant.id}/exams/images/{template.id}/{unique_id}.{ext}"
 

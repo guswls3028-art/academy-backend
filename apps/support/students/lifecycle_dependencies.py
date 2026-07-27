@@ -63,3 +63,36 @@ def update_inventory_student_ps(*, tenant: Any, old_ps: str, new_ps: str) -> Non
 
     InventoryFolder.objects.filter(tenant=tenant, student_ps=old_ps).update(student_ps=new_ps)
     InventoryFile.objects.filter(tenant=tenant, student_ps=old_ps).update(student_ps=new_ps)
+
+
+def delete_wrong_note_pdf_storage_or_raise(
+    *,
+    enrollment_ids: list[int],
+) -> None:
+    from apps.domains.results.models import WrongNotePDF
+    from apps.infrastructure.storage.r2 import delete_object_r2_storage
+
+    keys = list(
+        WrongNotePDF.objects.filter(enrollment_id__in=enrollment_ids)
+        .exclude(file_path="")
+        .values_list("file_path", flat=True)
+    )
+    for key in keys:
+        delete_object_r2_storage(key=str(key))
+
+
+def active_wrong_note_pdf_exists_for_students(
+    *,
+    tenant: Any,
+    student_ids: tuple[int, ...],
+) -> bool:
+    from apps.domains.results.models import WrongNotePDF
+
+    return WrongNotePDF.objects.filter(
+        enrollment__tenant=tenant,
+        enrollment__student_id__in=student_ids,
+        status__in=[
+            WrongNotePDF.Status.PENDING,
+            WrongNotePDF.Status.RUNNING,
+        ],
+    ).exists()

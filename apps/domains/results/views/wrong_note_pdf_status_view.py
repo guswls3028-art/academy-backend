@@ -1,20 +1,18 @@
 # apps/domains/results/views/wrong_note_pdf_status_view.py
 from __future__ import annotations
 
-from django.core.files.storage import default_storage
-
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.exceptions import PermissionDenied, NotFound
 
-from apps.core.permissions import TenantResolvedAndMember, is_effective_staff
+from apps.core.permissions import TenantResolvedAndStaff
 from apps.domains.results.models import WrongNotePDF
 from apps.domains.results.serializers.wrong_note_pdf_serializers import (
     WrongNotePDFStatusSerializer,
 )
+from apps.infrastructure.storage.r2 import generate_presigned_get_url_storage
 from apps.support.results.admin_exam_dependencies import (
-    active_enrollment_exists_for_student,
     enrollment_exists_for_tenant,
 )
 
@@ -26,31 +24,13 @@ class WrongNotePDFStatusView(APIView):
     GET /results/wrong-notes/pdf/<job_id>/
 
     🔐 보안:
-    - 학생: 본인 enrollment_id의 job만 조회 가능
-    - 교사/관리자: 전체 조회 가능
+    - 교사/관리자: 현재 테넌트의 job만 조회 가능
     """
 
-    permission_classes = [IsAuthenticated, TenantResolvedAndMember]
+    permission_classes = [IsAuthenticated, TenantResolvedAndStaff]
 
     def _assert_enrollment_access(self, request, enrollment_id: int) -> None:
-        user = request.user
-
-        # ✅ tenant isolation: always verify enrollment belongs to tenant
         if not enrollment_exists_for_tenant(enrollment_id=int(enrollment_id), tenant=request.tenant):
-            raise PermissionDenied("You cannot access this PDF job.")
-
-        if is_effective_staff(user, request.tenant):
-            return
-
-        # Enrollment.student_id는 Student.pk이므로 user.pk 비교는 오매칭 버그.
-        student = getattr(user, "student_profile", None)
-        if not student:
-            raise PermissionDenied("You cannot access this PDF job.")
-        if not active_enrollment_exists_for_student(
-            enrollment_id=int(enrollment_id),
-            tenant=request.tenant,
-            student_id=int(student.id),
-        ):
             raise PermissionDenied("You cannot access this PDF job.")
 
     def get(self, request, job_id: int):
@@ -60,11 +40,17 @@ class WrongNotePDFStatusView(APIView):
 
         self._assert_enrollment_access(request, int(job.enrollment_id))
 
-        # DONE이면 다운로드 URL 제공 (storage에 따라 url()이 실패할 수 있으니 방어)
+        # DONE이면 R2 attachment URL 제공. API 컨테이너의 local default_storage는
+        # 배포 교체 시 사라지므로 다운로드 정본으로 사용할 수 없다.
         file_url = ""
-        if job.file_path:
+        if job.status == WrongNotePDF.Status.DONE and job.file_path:
             try:
-                file_url = default_storage.url(job.file_path)
+                file_url = generate_presigned_get_url_storage(
+                    key=job.file_path,
+                    expires_in=3600,
+                    filename=f"wrong-note-{job.id}.pdf",
+                    content_type="application/pdf",
+                )
             except Exception:
                 file_url = ""
 

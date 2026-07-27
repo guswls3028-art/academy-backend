@@ -4,11 +4,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from apps.domains.results.models import ResultFact
+from apps.domains.results.models import ResultItem
 from apps.domains.results.services.answer_matching import format_answer_for_display
 from apps.support.results.wrong_note_dependencies import (
     answer_key_map_for_effective_exam,
+    exams_with_wrong_note_sessions_by_id,
     exam_questions_by_id,
+    question_image_url,
     regular_exam_ids_by_lecture_and_order,
 )
 
@@ -59,12 +61,24 @@ def _get_exam_ids_by_lecture_and_order(*, lecture_id: int, from_order: int) -> L
     )
 
 
-def _get_answer_key_map(exam_id: int) -> Dict[str, Any]:
+def _get_answer_key_map(exam_id: int, *, tenant_id: int) -> Dict[str, Any]:
     """
     AnswerKey v2 (고정):
       answers = { "123": "B", ... }  # key = ExamQuestion.id(str)
     """
-    return answer_key_map_for_effective_exam(exam_id=int(exam_id))
+    return answer_key_map_for_effective_exam(
+        exam_id=int(exam_id),
+        tenant_id=int(tenant_id),
+    )
+
+
+def _get_explanation_text(question: Any) -> str:
+    if question is None:
+        return ""
+    try:
+        return str(question.explanation.text or "")
+    except Exception:
+        return ""
 
 
 # ======================================================
@@ -76,10 +90,9 @@ def list_wrong_notes_for_enrollment(
     q: WrongNoteQuery,
 ) -> Tuple[int, List[Dict[str, Any]]]:
     """
-    ✅ 현재 프로젝트의 ResultFact 구조에 맞는 “정석” 구현
-
-    ResultFact = 문항 1개 이벤트(append-only)
-      - question_id/answer/is_correct/score/max_score/meta/source 가 Fact에 직접 있음
+    대표 Result의 문항 snapshot을 기준으로 현재 틀린 문항만 반환한다.
+    append-only ResultFact를 읽으면 재채점 전 오답이나 이미 맞힌 재시험 문항이
+    중복 노출되므로 학생에게 전달하는 오답노트의 기준으로 사용할 수 없다.
 
     반환: (total_count, paged_items)
     """
@@ -88,51 +101,74 @@ def list_wrong_notes_for_enrollment(
     offset = max(int(q.offset or 0), 0)
     limit = max(min(int(q.limit or 50), 200), 1)
 
-    base = ResultFact.objects.filter(
-        enrollment_id=enrollment_id,
-        target_type="exam",
-        is_correct=False,          # 오답만
+    base = (
+        ResultItem.objects
+        .filter(
+            result__enrollment_id=enrollment_id,
+            result__target_type="exam",
+            is_correct=False,
+        )
+        .select_related(
+            "result__attempt",
+            "result__enrollment",
+            "question__sheet",
+        )
     )
 
     # 1) exam_id 필터
     if q.exam_id is not None:
-        base = base.filter(target_id=int(q.exam_id))
+        base = base.filter(result__target_id=int(q.exam_id))
 
     # 2) lecture_id + from_session_order 필터 (STEP 3-3 승격)
-    if q.lecture_id is not None:
+    if q.exam_id is None and q.lecture_id is not None:
         exam_ids = _get_exam_ids_by_lecture_and_order(
             lecture_id=int(q.lecture_id),
             from_order=int(q.from_session_order or 2),
         )
         if not exam_ids:
             return 0, []
-        base = base.filter(target_id__in=exam_ids)
+        base = base.filter(result__target_id__in=exam_ids)
 
     # 최신 오답 우선
-    base = base.order_by("-id")
+    base = base.order_by("-result__submitted_at", "-id")
 
     total = base.count()
 
     facts = list(base[offset: offset + limit])
+    if not facts:
+        return total, []
+    tenant_id = int(facts[0].result.enrollment.tenant_id)
 
     # 질문 정보/정답키 붙이기 위해 question_ids, exam_ids 수집
-    question_ids = [int(f.question_id) for f in facts]
-    exam_ids = list({int(f.target_id) for f in facts})
+    question_ids = [int(item.question_id) for item in facts]
+    exam_ids = list({int(item.result.target_id) for item in facts})
 
-    questions_map = exam_questions_by_id(question_ids=question_ids)
+    questions_map = exam_questions_by_id(
+        question_ids=question_ids,
+        tenant_id=tenant_id,
+    )
+    exams_map = exams_with_wrong_note_sessions_by_id(
+        exam_ids=exam_ids,
+        lecture_id=q.lecture_id,
+        tenant_id=tenant_id,
+    )
 
     answer_key_cache: Dict[int, Dict[str, Any]] = {
-        exid: _get_answer_key_map(exid) for exid in exam_ids
+        exid: _get_answer_key_map(exid, tenant_id=tenant_id)
+        for exid in exam_ids
     }
 
     out: List[Dict[str, Any]] = []
 
-    for f in facts:
-        exid = int(f.target_id)
-        qobj = questions_map.get(int(f.question_id))
+    for item in facts:
+        exid = int(item.result.target_id)
+        qobj = questions_map.get(int(item.question_id))
+        exam = exams_map.get(exid)
+        sessions = list(getattr(exam, "wrong_note_sessions", []) or [])
+        session = sessions[0] if sessions else None
 
         question_number = getattr(qobj, "number", None) if qobj else None
-        answer_type = (getattr(qobj, "answer_type", "") or "") if qobj else ""
+        answer_type = (getattr(qobj, "question_kind", "") or "") if qobj else ""
 
         correct_answer = ""
         if qobj:
@@ -142,23 +178,39 @@ def list_wrong_notes_for_enrollment(
 
         out.append({
             "exam_id": exid,
-            "attempt_id": int(getattr(f, "attempt_id", 0) or 0),
-            # attempt_created_at 필드가 따로 없으니 created_at을 사용
-            "attempt_created_at": getattr(f, "created_at", None),
+            "exam_title": str(getattr(exam, "title", "") or ""),
+            "session_order": getattr(session, "order", None),
+            "session_title": str(getattr(session, "title", "") or ""),
+            "attempt_id": int(getattr(item.result, "attempt_id", 0) or 0),
+            "attempt_created_at": (
+                getattr(getattr(item.result, "attempt", None), "created_at", None)
+                or getattr(item.result, "submitted_at", None)
+            ),
 
-            "question_id": int(f.question_id),
+            "question_id": int(item.question_id),
             "question_number": _safe_int(question_number),
             "answer_type": str(answer_type),
+            "question_image_url": question_image_url(question=qobj) if qobj else "",
+            "has_question_image": bool(
+                qobj and (getattr(qobj, "image_key", "") or getattr(qobj, "image", None))
+            ),
 
-            "student_answer": str(f.answer or ""),
+            "student_answer": str(item.answer or ""),
             "correct_answer": str(correct_answer or ""),
 
             "is_correct": False,
-            "score": float(f.score or 0.0),
-            "max_score": float(f.max_score or 0.0),
+            "score": float(item.score or 0.0),
+            "max_score": float(item.max_score or 0.0),
 
-            "meta": f.meta if f.meta is not None else {},
-            "extra": {},
+            "meta": {},
+            "extra": {
+                "explanation_text": _get_explanation_text(qobj),
+            },
+            # PDF 생성 서비스에서만 사용하고 API serializer에서는 노출하지 않는다.
+            "_question_image_key": str(getattr(qobj, "image_key", "") or ""),
+            "_question_image_name": str(
+                getattr(getattr(qobj, "image", None), "name", "") or ""
+            ),
         })
 
     return total, out

@@ -419,6 +419,27 @@ class TestBulkPermanentDeleteTenantIsolation(TestCase):
         self.assertFalse(FeePayment.objects.filter(student_id=self.student_a.id).exists())
         self.assertFalse(Student.objects.filter(id=self.student_a.id).exists())
 
+    def test_permanent_delete_waits_for_running_wrong_note_pdf(self):
+        from django.apps import apps
+
+        wrong_note_pdf = apps.get_model("results", "WrongNotePDF")
+        wrong_note_pdf.objects.create(
+            enrollment_id=self.enrollment_a.id,
+            lecture_id=self.lecture_a.id,
+            status="RUNNING",
+        )
+
+        with self.assertRaisesRegex(StudentLifecycleError, "PDF 생성이 끝난 뒤"):
+            permanently_delete_students(
+                tenant=self.tenant_a,
+                student_ids=[self.student_a.id],
+            )
+
+        self.assertTrue(Student.objects.filter(id=self.student_a.id).exists())
+        self.assertTrue(
+            Enrollment.objects.filter(id=self.enrollment_a.id).exists()
+        )
+
     def test_service_deletes_omr_fact_dependencies_before_submission(self):
         """OMR fact row가 붙은 submission도 학생 영구삭제에서 FK 오류 없이 정리된다."""
         run = OMRRecognitionRun.objects.create(

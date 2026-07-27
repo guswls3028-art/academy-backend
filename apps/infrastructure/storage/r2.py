@@ -15,13 +15,23 @@ import boto3
 from django.conf import settings
 
 
-def _get_s3_client():
+def _get_s3_client(*, timeout_seconds: int | None = None):
+    kwargs = {}
+    if timeout_seconds is not None:
+        from botocore.config import Config
+
+        kwargs["config"] = Config(
+            connect_timeout=min(5, timeout_seconds),
+            read_timeout=timeout_seconds,
+            retries={"max_attempts": 2, "mode": "standard"},
+        )
     return boto3.client(
         "s3",
         endpoint_url=settings.R2_ENDPOINT,
         aws_access_key_id=settings.R2_ACCESS_KEY,
         aws_secret_access_key=settings.R2_SECRET_KEY,
         region_name="auto",
+        **kwargs,
     )
 
 
@@ -130,9 +140,10 @@ def upload_fileobj_to_r2_storage(
     fileobj,
     key: str,
     content_type: str | None = None,
+    timeout_seconds: int | None = None,
 ) -> None:
     """Django UploadedFile -> R2 Storage 버킷 업로드."""
-    s3 = _get_s3_client()
+    s3 = _get_s3_client(timeout_seconds=timeout_seconds)
     resolved_type = content_type or _guess_content_type(key)
     s3.upload_fileobj(
         Fileobj=fileobj,
@@ -195,16 +206,30 @@ def delete_object_r2_storage(*, key: str) -> None:
     s3.delete_object(Bucket=_storage_bucket(), Key=key)
 
 
-def get_object_bytes_r2_storage(*, key: str) -> bytes | None:
+def get_object_bytes_r2_storage(
+    *,
+    key: str,
+    max_bytes: int | None = None,
+    timeout_seconds: int | None = None,
+) -> bytes | None:
     """R2 Storage 버킷에서 객체 바이트 직접 가져오기. 없으면 None.
 
     OCR 영구 캐시 등 짧은 JSON 결과 fetch 용도. 큰 파일은 presign + HTTP 사용.
     """
     from botocore.exceptions import ClientError
-    s3 = _get_s3_client()
+    s3 = _get_s3_client(timeout_seconds=timeout_seconds)
     try:
         resp = s3.get_object(Bucket=_storage_bucket(), Key=key)
-        return resp["Body"].read()
+        body = resp["Body"]
+        try:
+            if max_bytes is not None and int(resp.get("ContentLength") or 0) > max_bytes:
+                return None
+            data = body.read(max_bytes + 1 if max_bytes is not None else None)
+            if max_bytes is not None and len(data) > max_bytes:
+                return None
+            return data
+        finally:
+            body.close()
     except ClientError as err:
         code = (err.response.get("Error") or {}).get("Code", "")
         if code in ("404", "NoSuchKey", "NotFound"):
