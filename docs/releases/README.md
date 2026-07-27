@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.28.md](v1.11.28.md) | **CURRENT** | 2026-07-28 KST | Deploy-safe API user-impact alarms and operator-readable incident SMS |
+| [v1.11.29.md](v1.11.29.md) | **CURRENT** | 2026-07-28 KST | Isolated developer-console origin, canonical iPhone install identity, and production notification readiness |
+| [v1.11.28.md](v1.11.28.md) | production-deployed / v1.11.29로 승계 | 2026-07-28 KST | Deploy-safe API user-impact alarms and operator-readable incident SMS |
 | [v1.11.27.md](v1.11.27.md) | production-deployed / v1.11.28로 승계 | 2026-07-28 KST | Attendance-roster result-detail parity and restored wrong-note entry from session scores |
 | [v1.11.26.md](v1.11.26.md) | production-deployed / v1.11.27로 승계 | 2026-07-28 KST | No-PG bank-transfer collection, tenant-safe deposit review, and evidence-backed tax-invoice operations |
 | [v1.11.25.md](v1.11.25.md) | production-deployed / v1.11.26로 승계 | 2026-07-28 KST | Deploy-time lazy-route recovery for the tchul clinic screen, bounded retries, and production verification |
