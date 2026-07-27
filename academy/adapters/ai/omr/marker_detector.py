@@ -113,8 +113,11 @@ def _count_significant_defects(
     threshold = char_size * depth_ratio
     count = 0
     max_depth = 0.0
-    for d in defects:
-        depth = d[0][3] / 256.0
+    # OpenCV 4 returns (N, 1, 4), while OpenCV 5 returns (N, 4).
+    # Normalize both layouts before reading the fixed-point depth field.
+    defect_rows = np.asarray(defects).reshape(-1, 4)
+    for defect in defect_rows:
+        depth = float(defect[3]) / 256.0
         max_depth = max(max_depth, depth)
         if depth > threshold:
             count += 1
