@@ -72,6 +72,9 @@ _ABSENCE_HEADERS = {
     "결시",
     "미응시",
     "시험미응시",
+    "응시여부",
+    "시험응시여부",
+    "응시상태",
     "absent",
     "absence",
     "nottaken",
@@ -97,7 +100,7 @@ _ABSENCE_MARKERS = {
     "true",
     "1",
 }
-_PRESENT_MARKERS = {"n", "no", "아니오", "false", "0"}
+_PRESENT_MARKERS = {"응시", "응시함", "참석", "n", "no", "아니오", "false", "0"}
 
 
 class ExamResultWorkbookError(ValueError):
@@ -220,7 +223,7 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
 
     guides = [
         "작성 방법: 틀린 문항만 X로 표시하세요. 정답은 빈칸 또는 O로 두면 됩니다.",
-        "시험에 응시하지 않은 학생은 결시 열에서 '결시'를 선택하세요. 문항은 비워 둡니다.",
+        "전 문항이 비어 있으면 응시 여부에서 '응시'(만점) 또는 '결시'를 꼭 선택하세요.",
         "객관식·단답형이 섞여 있어도 문항 번호 기준으로 반영됩니다.",
         "수강등록ID와 학생 정보는 수정하지 마세요. 점수는 업로드 후 자동 계산됩니다.",
         "기존에 쓰던 엑셀도 이름(또는 연락처)과 1, 2, 3… 문항 열이 있으면 업로드할 수 있습니다.",
@@ -243,7 +246,7 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
         "학부모연락처",
         "학생연락처",
         "강의",
-        "결시",
+        "응시 여부",
         *[question.number for question in questions],
         "점수(확인용)",
     ]
@@ -273,13 +276,14 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
     sheet.add_data_validation(data_validation)
     absence_validation = DataValidation(
         type="list",
-        formula1='"결시"',
+        formula1='"응시,결시"',
         allow_blank=True,
-        error="미응시 학생만 '결시'를 선택해 주세요.",
-        errorTitle="결시 표시 확인",
+        error="응시 여부는 비워 두거나 '응시' 또는 '결시'로 선택해 주세요.",
+        errorTitle="응시 여부 확인",
     )
     sheet.add_data_validation(absence_validation)
     absence_fill = PatternFill("solid", fgColor="E5E7EB")
+    confirmation_fill = PatternFill("solid", fgColor="FEF3C7")
 
     for row_index, candidate in enumerate(candidates, start=header_row + 1):
         values = [
@@ -316,7 +320,12 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
         sheet.cell(
             row_index,
             score_column,
-            f'=IF($G{row_index}="결시","결시",ROUND({"+".join(score_terms) or "0"},1))',
+            (
+                f'=IF($G{row_index}="결시","결시",'
+                f'IF(AND($G{row_index}="",'
+                f'COUNTA(H{row_index}:{get_column_letter(7 + len(questions))}{row_index})=0),'
+                f'"확인 필요",ROUND({"+".join(score_terms) or "0"},1)))'
+            ),
         )
 
     if candidates:
@@ -330,6 +339,17 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
                 fill=absence_fill,
             ),
         )
+        sheet.conditional_formatting.add(
+            f"G{header_row + 1}:G{header_row + len(candidates)}",
+            FormulaRule(
+                formula=[
+                    f'AND($G{header_row + 1}="",'
+                    f'COUNTA($H{header_row + 1}:'
+                    f'${get_column_letter(7 + len(questions))}{header_row + 1})=0)'
+                ],
+                fill=confirmation_fill,
+            ),
+        )
         first_question_column = 8
         last_question_column = 7 + len(questions)
         data_validation.add(
@@ -337,7 +357,7 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
             f"{sheet.cell(header_row + len(candidates), last_question_column).coordinate}"
         )
 
-    widths = [16, 16, 12, 18, 18, 18, 10]
+    widths = [16, 16, 12, 18, 18, 18, 12]
     for column, width in enumerate(widths, start=1):
         sheet.column_dimensions[get_column_letter(column)].width = width
     for column in range(8, 8 + len(questions)):
@@ -472,7 +492,26 @@ def plan_exam_result_import(
                 _error(
                     row_number,
                     "absence",
-                    "결시 열은 비워 두거나 '결시'로 입력해 주세요.",
+                    "응시 여부는 비워 두거나 '응시' 또는 '결시'로 입력해 주세요.",
+                )
+            )
+            continue
+
+        questions_are_blank = not any(_has_value(value) for value in question_values)
+        if (
+            not is_not_submitted
+            and questions_are_blank
+            and not _has_value(absence_value)
+        ):
+            plan.errors.append(
+                _error(
+                    row_number,
+                    "attendance_confirmation",
+                    (
+                        "전 문항이 비어 있어 만점과 결시를 구분할 수 없습니다. "
+                        "만점이면 응시 여부에서 '응시'를, 미응시면 '결시'를 "
+                        "선택해 주세요. 기존 엑셀은 정답 문항 하나를 O로 표시해도 됩니다."
+                    ),
                 )
             )
             continue

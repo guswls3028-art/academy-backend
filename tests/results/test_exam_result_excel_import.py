@@ -189,14 +189,15 @@ class ExamResultExcelImportTests(TestCase):
 
         self.assertEqual(sheet.cell(8, 1).value, "수강등록ID")
         self.assertEqual(sheet.cell(8, 3).value, "이름")
-        self.assertEqual(sheet.cell(8, 7).value, "결시")
+        self.assertEqual(sheet.cell(8, 7).value, "응시 여부")
         self.assertEqual(sheet.cell(8, 8).value, 1)
         self.assertEqual(sheet.cell(8, 9).value, 2)
         self.assertEqual(sheet.cell(9, 1).value, self.enrollment.id)
         self.assertEqual(sheet.cell(9, 3).value, "김학생")
         self.assertIn('$G9="결시"', sheet.cell(9, 10).value)
+        self.assertIn('"확인 필요"', sheet.cell(9, 10).value)
         self.assertIn(
-            '"결시"',
+            '"응시,결시"',
             {validation.formula1 for validation in sheet.data_validations.dataValidation},
         )
 
@@ -314,6 +315,48 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(row.wrong_question_numbers, ())
         self.assertEqual(row.total_score, 0.0)
         self.assertEqual(row.exam_not_submitted_count, 1)
+
+    def test_all_blank_questions_require_attendance_confirmation(self):
+        payload = _workbook_bytes(
+            [
+                ["이름", "응시 여부", 1, 2],
+                ["김학생", "", "", ""],
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="전문항공란.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertFalse(plan.can_apply)
+        self.assertEqual(plan.errors[0]["field"], "attendance_confirmation")
+        self.assertIn("만점과 결시를 구분할 수 없습니다", plan.errors[0]["message"])
+        self.assertFalse(Result.objects.filter(target_id=self.exam.id).exists())
+
+    def test_present_marker_confirms_all_blank_questions_as_perfect_score(self):
+        payload = _workbook_bytes(
+            [
+                ["이름", "응시 여부", 1, 2],
+                ["김학생", "응시", "", ""],
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="만점확인.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        row = plan.rows[0]
+        self.assertFalse(row.is_not_submitted)
+        self.assertEqual(row.correct_count, 2)
+        self.assertEqual(row.wrong_question_numbers, ())
+        self.assertEqual(row.total_score, 100.0)
 
     def test_invalid_absence_marker_is_rejected(self):
         payload = _workbook_bytes(
