@@ -18,7 +18,7 @@ from django.db import IntegrityError, transaction
 from django.db.models import QuerySet
 from django.utils import timezone
 
-from apps.billing.adapters.toss_payments import TossPaymentsClient
+from apps.billing.adapters.toss_payments import TossPaymentsClient, resolve_card_company
 from apps.billing.models import BillingKey, BillingProfile
 from apps.billing.services.billing_key_crypto import (
     BillingKeyCryptoError,
@@ -120,7 +120,7 @@ def _validate_issued_billing_key(
     ):
         raise ValueError("invalid_provider_success_payload")
 
-    company = card.get("company", "")
+    company = resolve_card_company(card)
     number = card.get("number", "")
     if (
         not isinstance(company, str)

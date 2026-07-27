@@ -18,7 +18,7 @@ The command fails on critical user-facing risks:
 - `Video.current_job` pointing at a different tenant or video row
 - old UPLOADED or PROCESSING videos without a same-tenant active transcode job
 - explicit E2E, AUDIT, or CHAOS residue in the production tenant
-- auto billing enabled without Toss secret and webhook secret
+- auto billing enabled without the Toss server secret
 
 Warnings are emitted for operational debt that should be reviewed but may be accepted temporarily:
 

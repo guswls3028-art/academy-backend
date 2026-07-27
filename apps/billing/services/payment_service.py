@@ -30,6 +30,7 @@ from django.utils import timezone
 from apps.billing.adapters.toss_payments import (
     TOSS_AMBIGUOUS_MUTATION_ERROR_CODES,
     TossPaymentsClient,
+    resolve_card_company,
 )
 from apps.billing.models import BillingKey, Invoice, PaymentTransaction
 from apps.billing.services import invoice_service
@@ -269,7 +270,7 @@ def _mark_tx_success(tx_id: int, *, toss_payload: dict) -> PaymentTransaction:
     tx.processing_started_at = None
     card = toss_payload.get("card") or {}
     if card:
-        tx.card_company = card.get("company", tx.card_company) or tx.card_company
+        tx.card_company = resolve_card_company(card) or tx.card_company
         tx.card_number_masked = card.get("number", tx.card_number_masked) or tx.card_number_masked
     tx.save(update_fields=[
         "status", "provider_payment_key", "transaction_key",

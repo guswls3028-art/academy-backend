@@ -5,6 +5,7 @@
 여기 남은 항목은 외부 계약/대시보드 로그인/키 주입이 필요해서 AI가 대리할 수 없다.
 
 작성일: 2026-04-20
+최종 운영 확인: 2026-07-27
 관련 커밋: `7d47d176` (`feat(billing): 자동결제(Phase D) + Toss 웹훅 완성`)
 
 ---
@@ -15,7 +16,7 @@
 |------|------|------|
 | Phase D 자동결제 실행 로직 | ✅ 배포 완료 | `payment_service.execute_auto_payment` |
 | Toss 웹훅 엔드포인트 | ✅ 배포 완료 | `POST /api/v1/billing/webhooks/toss/` |
-| HMAC-SHA256 서명 검증 | ✅ 배포 완료 | `verify_webhook_signature` |
+| 웹훅 공급사 재조회 검증 | ✅ 배포 완료 | payload는 힌트로만 사용하고 주문번호로 Toss Payment를 재조회 |
 | 테넌트 미들웨어 bypass | ✅ 배포 완료 | `/api/v1/billing/webhooks/` prefix |
 | 인보이스 생성/상태 전이 | ✅ 기존 구현됨 | `invoice_service` |
 | 일일 배치 스케줄러 | ✅ AWS CLI로 생성 완료 | EventBridge `academy-v1-process-billing` (매일 15:05 UTC = 00:05 KST) |
@@ -23,6 +24,9 @@
 | 테스트 148건 | ✅ 전부 통과 | 22개 신규 + 126 회귀 |
 
 현재 상태: **TOSS_AUTO_BILLING_ENABLED=False** (휴면 상태. 배치가 돌아도 실제 결제 안 함.)
+운영 SSM에는 전용 빌링키 암호화 KEK와 암호문 writer가 준비돼 있지만,
+Toss 서버/클라이언트 키는 아직 없다. 일반 결제 웹훅에는 서명 secret이
+제공되지 않으므로 별도 `TOSS_WEBHOOK_SECRET`을 만들거나 요구하지 않는다.
 
 모든 운영 테넌트는 단일 `all` 요금제로 전체 기능을 사용한다. 일반 신규 가입가는
 월 공급가액 180,000원, 부가가치세 18,000원(10%), 실제 결제 합계
@@ -85,7 +89,7 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 
 ---
 
-## 🔴 사용자 직접 액션 (1~4 순서대로)
+## 🔴 사용자 직접 액션 (1~5 순서대로)
 
 ### 1. Toss Payments 계약 체결
 
@@ -96,10 +100,10 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 2. 상품: **일반결제 + 빌링(자동결제)** 선택 (빌링 별도 심사)
 3. 정산 계좌, 사업자등록증, 대표자 신분증 제출
 4. 심사 승인 후 "내 상점 > 상점 정보" 이동
-5. 3종 키 확보 (테스트/라이브 각각):
+5. 자동결제 MID의 API 개별 연동 키 2종 확보 (테스트/라이브 각각):
    - **Secret Key** (서버용, 백엔드에서만 사용) — 예: `test_sk_...` / `live_sk_...`
    - **Client Key** (프론트 SDK용) — 예: `test_ck_...` / `live_ck_...`
-   - **Webhook Secret** (웹훅 서명 검증용) — "내 상점 > 개발자 센터 > 웹훅" 메뉴
+   - 두 키는 반드시 같은 자동결제 MID에서 발급된 한 세트여야 한다.
 
 **참고:** 테스트 키로 먼저 시작 권장. 라이브 전환 시 SSM만 재주입.
 
@@ -120,16 +124,13 @@ aws ssm get-parameter \
   --query 'Parameter.Value' \
   --output text > /tmp/api_env_current.json
 
-# 2) Phase A: 키는 주입하되 자동결제/암호문 writer는 아직 비활성
+# 2) Phase A: 키는 주입하되 자동결제 승인은 아직 비활성
+#    기존 BILLING_KEY_ENCRYPTION_* 값은 유지한다.
 #    (라이브 전환 시에는 test_ 접두사를 live_로 변경)
 jq '. + {
   "TOSS_PAYMENTS_SECRET_KEY": "test_sk_XXXXXXXXXXXX",
   "TOSS_PAYMENTS_CLIENT_KEY": "test_ck_XXXXXXXXXXXX",
-  "TOSS_WEBHOOK_SECRET":     "whsec_XXXXXXXXXXXX",
-  "TOSS_AUTO_BILLING_ENABLED": "false",
-  "BILLING_KEY_ENCRYPTION_WRITE_ENABLED": "false",
-  "BILLING_KEY_ENCRYPTION_PRIMARY_KEY": "FERNET_URLSAFE_BASE64_32_BYTE_KEY",
-  "BILLING_KEY_ENCRYPTION_FALLBACK_KEYS": ""
+  "TOSS_AUTO_BILLING_ENABLED": "false"
 }' /tmp/api_env_current.json > /tmp/api_env_new.json
 
 # 3) SSM 업데이트
@@ -154,7 +155,7 @@ aws ssm send-command \
   --parameters 'commands=["docker exec academy-api python -c \"from django.conf import settings; print(len(settings.TOSS_PAYMENTS_SECRET_KEY), settings.TOSS_AUTO_BILLING_ENABLED, settings.BILLING_KEY_ENCRYPTION_WRITE_ENABLED, len(settings.BILLING_KEY_ENCRYPTION_PRIMARY_KEY))\""]'
 ```
 
-Phase A 검증 출력이 `N(>0) False False K(>0)` 형태여야 한다. Fernet KEK는
+Phase A 검증 출력이 `N(>0) False True K(>0)` 형태여야 한다. Fernet KEK는
 Toss/Django SECRET_KEY와 별개로 생성하고 비밀 저장소에서 관리한다.
 
 전 API가 호환 코드의 digest-pinned 이미지임을 검증한 뒤에만 Phase B를 실행한다.
@@ -169,7 +170,6 @@ aws ssm get-parameter \
   --output text > /tmp/api_env_phase_a_live.json
 
 jq '. + {
-  "BILLING_KEY_ENCRYPTION_WRITE_ENABLED": "true",
   "TOSS_AUTO_BILLING_ENABLED": "true"
 }' /tmp/api_env_phase_a_live.json > /tmp/api_env_phase_b.json
 
@@ -189,7 +189,12 @@ aws autoscaling start-instance-refresh \
 Phase B refresh 후 같은 검증 명령의 출력이 `N(>0) True True K(>0)`이고
 `python manage.py audit_billing_fields --strict`가 성공해야 한다.
 
-#### 빌링키 저장 암호화의 2단계 전환
+#### 빌링키 저장 암호화 상태와 향후 순환
+
+2026-07-27 운영은 `BILLING_KEY_ENCRYPTION_WRITE_ENABLED=true`이고 전용
+primary KEK가 주입된 상태다. Toss 키를 넣기 위해 이 flag나 KEK를 끄거나
+교체하지 않는다. 아래 2단계 전환 설명은 구버전 fleet에서 암호문 writer를
+처음 켜는 경우에만 적용한다.
 
 `BILLING_KEY_ENCRYPTION_WRITE_ENABLED`는 첫 배포와 동시에 켜면 안 된다. 새
 바이너리는 평문과 암호문을 모두 읽지만, 이전 바이너리는 암호문을 읽지 못하므로
@@ -246,7 +251,6 @@ python manage.py audit_billing_fields --strict
 2. "웹훅 추가" 클릭
 3. URL: `https://api.hakwonplus.com/api/v1/billing/webhooks/toss/` (끝 슬래시 필수)
 4. 이벤트 구독: **Payment.Status.Changed** (결제 상태 변경) 체크
-   - 추가 선택 가능: `Payment.Canceled` (부분/전체 취소 동기화용)
 5. 저장
 6. Toss 화면에서 "테스트 전송" 클릭
 7. 확인:
@@ -256,11 +260,18 @@ python manage.py audit_billing_fields --strict
    ```
    `Toss webhook received: event=PAYMENT_STATUS_CHANGED` 라인이 보이면 성공.
 
+일반 결제 웹훅에는 HMAC 서명 header가 없으므로 서버는 웹훅 body를 직접
+신뢰하지 않고, 로컬에 존재하는 `orderId`만 받아 Toss 결제 조회 API로
+상태·금액·결제키를 다시 검증한다. 또한 자동결제 승인이 완료될 때는
+`PAYMENT_STATUS_CHANGED`가 오지 않으므로 최초 성공 판정은 자동결제 API의
+동기 응답이 정본이고, 타임아웃 등 결과 미확정 건은
+`reconcile_processing_payments`로 조회한다.
+
 ---
 
 ### 4. 실서비스 오픈 테스트
 
-**누적 테스트 시나리오 (limglish 또는 테스트 테넌트)**
+**누적 테스트 시나리오 (Tenant 9999 전용 테스트 데이터만 사용)**
 
 #### 4a. 카드 등록 (테스트 키로)
 1. 원장 계정으로 `https://app.hakwonplus.com/admin/settings` 접속
@@ -288,8 +299,31 @@ aws ssm list-command-invocations --region ap-northeast-2 --command-id <위_명�
 
 #### 4c. 라이브 전환
 - 2번 단계에서 Secret/Client Key를 `live_sk_...`/`live_ck_...`로 교체
-- Webhook Secret은 라이브 전용 값 (Toss 대시보드에서 라이브 모드로 전환 후 재발급)
 - ASG instance refresh 1회 더 실행
+
+라이브 전환 전에는 테스트/라이브 키를 섞지 않는다. 카드 등록 준비 API도
+서버키·클라이언트키가 없거나 환경 prefix가 서로 다르면 503으로 차단한다.
+
+---
+
+### 5. 전자세금계산서 발행사와 정책 확정
+
+Toss Payments는 카드 자동결제를 담당하며 전자세금계산서 국세청 전송은
+별도 발행사 연동 범위다. 현재 `BusinessProfile`과 `TaxInvoiceIssue` 추적
+모델만 있고 외부 발행 API는 연결하지 않았다.
+
+구현 전 오너가 확정할 항목:
+
+1. 발행사: 팝빌/바로빌 등 계약한 전자세금계산서 API 공급사
+2. 발행 기준: `INVOICE_REQUEST`만 발행하고 카드 자동결제에는 발행하지 않을지
+3. 발행 시점: 청구 시점의 `청구` 발행 또는 입금 확인 후 `영수` 발행
+4. 공급자 정보: 사업자등록번호, 상호, 대표자, 주소, 업태, 종목,
+   담당자 이름/이메일/연락처
+5. 공동인증서 등록 및 국세청 전송 설정
+6. 발행사 API 자격증명과 테스트/운영 환경
+
+발급시기와 중복 증빙 정책은 세무대리인 확인값을 정본으로 사용한다. 이 결정
+전에는 `TaxInvoiceIssue`를 실제 국세청 발행 상태로 올리지 않는다.
 
 ---
 
@@ -310,7 +344,7 @@ Terraform 관리 체계로 편입하려면:
 
 - Toss 공식 문서: https://docs.tosspayments.com/
 - 빌링 API: https://docs.tosspayments.com/reference/billing
-- 웹훅: https://docs.tosspayments.com/guides/webhook
+- 웹훅 이벤트: https://docs.tosspayments.com/reference/using-api/webhook-events
 - 로컬 테스트:
   ```bash
   cd backend && source .venv/Scripts/activate

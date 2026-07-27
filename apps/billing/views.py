@@ -352,13 +352,36 @@ class CardRegisterPrepareView(APIView):
     def post(self, request):
         from django.conf import settings as django_settings
         from apps.domains.messaging.services.url_helpers import get_tenant_site_url
+
+        client_key = (django_settings.TOSS_PAYMENTS_CLIENT_KEY or "").strip()
+        secret_key = (django_settings.TOSS_PAYMENTS_SECRET_KEY or "").strip()
+        client_environment = (
+            "test" if client_key.startswith("test_ck_")
+            else "live" if client_key.startswith("live_ck_")
+            else ""
+        )
+        secret_environment = (
+            "test" if secret_key.startswith("test_sk_")
+            else "live" if secret_key.startswith("live_sk_")
+            else ""
+        )
+        if (
+            not client_environment
+            or not secret_environment
+            or client_environment != secret_environment
+        ):
+            return Response(
+                {"detail": "결제 연동 준비 중입니다. 운영자에게 문의해 주세요."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
         tenant = request.tenant
         customer_key = billing_key_service.get_or_create_customer_key(tenant.id)
         # 카드 인증 후 Toss는 SPA 도메인으로 redirect 해야 함 — API 도메인 X.
         base_url = (get_tenant_site_url(tenant) or request.build_absolute_uri("/")).rstrip("/")
 
         return Response({
-            "clientKey": django_settings.TOSS_PAYMENTS_CLIENT_KEY,
+            "clientKey": client_key,
             "customerKey": customer_key,
             "successUrl": f"{base_url}/admin/billing/card/callback?status=success",
             "failUrl": f"{base_url}/admin/billing/card/callback?status=fail",

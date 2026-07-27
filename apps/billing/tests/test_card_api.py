@@ -69,6 +69,10 @@ class CardApiTestBase(APITestCase):
         self.headers = {"HTTP_HOST": "localhost", "HTTP_X_TENANT_CODE": self.tenant.code}
 
 
+@override_settings(
+    TOSS_PAYMENTS_CLIENT_KEY="test_ck_billing_client",
+    TOSS_PAYMENTS_SECRET_KEY="test_sk_billing_secret",
+)
 class TestCardRegisterPrepare(CardApiTestBase):
     def test_owner_gets_prepare_data(self):
         self.client.force_authenticate(user=self.owner)
@@ -89,6 +93,57 @@ class TestCardRegisterPrepare(CardApiTestBase):
     def test_anonymous_rejected(self):
         resp = self.client.post("/api/v1/billing/card/register/prepare/", **self.headers)
         self.assertIn(resp.status_code, [401, 403])
+
+    @override_settings(TOSS_PAYMENTS_CLIENT_KEY="")
+    def test_missing_client_key_fails_before_profile_creation(self):
+        self.client.force_authenticate(user=self.owner)
+
+        resp = self.client.post(
+            "/api/v1/billing/card/register/prepare/",
+            **self.headers,
+        )
+
+        self.assertEqual(resp.status_code, 503)
+        self.assertFalse(BillingProfile.objects.filter(tenant=self.tenant).exists())
+
+    @override_settings(TOSS_PAYMENTS_SECRET_KEY="")
+    def test_missing_secret_key_fails_before_profile_creation(self):
+        self.client.force_authenticate(user=self.owner)
+
+        resp = self.client.post(
+            "/api/v1/billing/card/register/prepare/",
+            **self.headers,
+        )
+
+        self.assertEqual(resp.status_code, 503)
+        self.assertFalse(BillingProfile.objects.filter(tenant=self.tenant).exists())
+
+    @override_settings(TOSS_PAYMENTS_SECRET_KEY="live_sk_billing_secret")
+    def test_mixed_test_and_live_keys_are_rejected(self):
+        self.client.force_authenticate(user=self.owner)
+
+        resp = self.client.post(
+            "/api/v1/billing/card/register/prepare/",
+            **self.headers,
+        )
+
+        self.assertEqual(resp.status_code, 503)
+        self.assertFalse(BillingProfile.objects.filter(tenant=self.tenant).exists())
+
+    @override_settings(
+        TOSS_PAYMENTS_CLIENT_KEY="test_sk_wrong_type",
+        TOSS_PAYMENTS_SECRET_KEY="test_ck_wrong_type",
+    )
+    def test_swapped_client_and_secret_keys_are_rejected(self):
+        self.client.force_authenticate(user=self.owner)
+
+        resp = self.client.post(
+            "/api/v1/billing/card/register/prepare/",
+            **self.headers,
+        )
+
+        self.assertEqual(resp.status_code, 503)
+        self.assertFalse(BillingProfile.objects.filter(tenant=self.tenant).exists())
 
 
 class TestCardRegisterCallback(CardApiTestBase):

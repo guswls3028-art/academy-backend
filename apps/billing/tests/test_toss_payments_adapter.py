@@ -4,10 +4,22 @@ from unittest.mock import Mock, patch
 
 from django.test import SimpleTestCase
 
-from apps.billing.adapters.toss_payments import TossPaymentsClient
+from apps.billing.adapters.toss_payments import (
+    TossPaymentsClient,
+    resolve_card_company,
+)
 
 
 class TossPaymentsAdapterTests(SimpleTestCase):
+    def test_current_issuer_code_is_normalized_for_display(self):
+        self.assertEqual(resolve_card_company({"issuerCode": "51"}), "삼성카드")
+
+    def test_legacy_company_name_remains_supported(self):
+        self.assertEqual(
+            resolve_card_company({"company": "삼성", "issuerCode": "51"}),
+            "삼성",
+        )
+
     @patch("apps.billing.adapters.toss_payments._toss_http_call")
     def test_auto_billing_uses_official_idempotency_key_header(self, http_call):
         response = Mock(status_code=200, content=b"{}")

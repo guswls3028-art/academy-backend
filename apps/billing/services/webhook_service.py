@@ -30,6 +30,7 @@ from typing import Any
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
+from apps.billing.adapters.toss_payments import resolve_card_company
 from apps.billing.models import Invoice, PaymentTransaction
 from apps.billing.services import invoice_service
 from apps.core.models.program import Program
@@ -221,7 +222,7 @@ def _handle_done(tx: PaymentTransaction, data: dict[str, Any]) -> str:
         tx.processing_started_at = None
         card = data.get("card") or {}
         if card:
-            tx.card_company = card.get("company", tx.card_company) or tx.card_company
+            tx.card_company = resolve_card_company(card) or tx.card_company
             tx.card_number_masked = card.get("number", tx.card_number_masked) or tx.card_number_masked
         tx.save(update_fields=[
             "status", "provider_payment_key", "transaction_key",

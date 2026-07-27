@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote
 
@@ -30,6 +31,32 @@ logger = logging.getLogger(__name__)
 
 TOSS_API_BASE = "https://api.tosspayments.com/v1"
 TOSS_TIMEOUT_SECONDS = 60
+TOSS_CARD_ISSUER_NAMES = {
+    "3K": "기업 BC",
+    "46": "광주은행",
+    "71": "롯데카드",
+    "30": "한국산업은행",
+    "31": "BC카드",
+    "51": "삼성카드",
+    "38": "새마을금고",
+    "41": "신한카드",
+    "62": "신협",
+    "36": "씨티카드",
+    "33": "우리BC카드",
+    "W1": "우리카드",
+    "37": "우체국",
+    "39": "저축은행",
+    "35": "전북은행",
+    "42": "제주은행",
+    "15": "카카오뱅크",
+    "3A": "케이뱅크",
+    "24": "토스뱅크",
+    "21": "하나카드",
+    "61": "현대카드",
+    "11": "KB국민카드",
+    "91": "NH농협카드",
+    "34": "Sh수협은행",
+}
 TOSS_AMBIGUOUS_MUTATION_ERROR_CODES = frozenset(
     {
         "DUPLICATED_ORDER_ID",
@@ -39,6 +66,22 @@ TOSS_AMBIGUOUS_MUTATION_ERROR_CODES = frozenset(
         "PROVIDER_ERROR",
     }
 )
+
+
+def resolve_card_company(card: Mapping[str, Any] | None) -> str:
+    """Return a user-facing issuer name for legacy and current Toss payloads."""
+    if not isinstance(card, Mapping):
+        return ""
+
+    legacy_company = card.get("company")
+    if isinstance(legacy_company, str) and legacy_company.strip():
+        return legacy_company.strip()[:50]
+
+    issuer_code = card.get("issuerCode")
+    if not isinstance(issuer_code, str) or not issuer_code.strip():
+        return ""
+    normalized_code = issuer_code.strip().upper()
+    return TOSS_CARD_ISSUER_NAMES.get(normalized_code, normalized_code)[:50]
 
 
 class _TossUpstreamError(Exception):
@@ -190,7 +233,8 @@ class TossPaymentsClient:
         Body: { authKey, customerKey }
 
         Returns dict with success flag + billingKey, customerKey,
-        card.company, card.number on success.
+        card.issuerCode, card.number on success. Older API versions can still
+        return card.company and are normalized by the service layer.
         """
         return self._request(
             "POST",
@@ -208,14 +252,6 @@ class TossPaymentsClient:
         DELETE /v1/billing/{billingKey}
         """
         return self._request("DELETE", f"/billing/{quote(str(billing_key), safe='')}")
-
-    def get_billing_key(self, billing_key: str) -> dict[str, Any]:
-        """
-        빌링키 조회 (검증용).
-
-        GET /v1/billing/{billingKey}
-        """
-        return self._request("GET", f"/billing/{quote(str(billing_key), safe='')}")
 
     def charge_with_billing_key(
         self,

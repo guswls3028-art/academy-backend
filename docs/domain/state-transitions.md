@@ -910,6 +910,9 @@ true`가 필요하며 수강등록 비활성화, 자동 수납 비활성화, 시
 
 - Invoice/PaymentTransaction 런타임 상태 전이와 Toss 결제는 구현됨.
 - `TaxInvoiceIssue`의 외부 전자세금계산서 발행 provider 연동은 별도 범위다.
+- 카드 자동결제와 전자세금계산서 발행을 같은 provider 기능으로 간주하지 않는다.
+  발행사, `청구`/`영수` 시점, 카드 증빙과의 중복 정책을 오너와 세무대리인이
+  확정한 뒤 `INVOICE_REQUEST` 경로에만 provider 전송을 붙인다.
 
 ### F5. Subscription 배치 운영 의존성
 
