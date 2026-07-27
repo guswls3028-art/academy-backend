@@ -196,11 +196,7 @@ function Ensure-ApiCloudWatchAlarms {
     } else {
         10
     }
-    $unhealthyThreshold = if ($script:ObservabilityApiTargetUnhealthyThreshold -gt 0) {
-        $script:ObservabilityApiTargetUnhealthyThreshold
-    } else {
-        1
-    }
+    $minimumHealthyHosts = 1
 
     $fiveXxArgs = @(
         "cloudwatch", "put-metric-alarm",
@@ -223,17 +219,17 @@ function Ensure-ApiCloudWatchAlarms {
     $unhealthyArgs = @(
         "cloudwatch", "put-metric-alarm",
         "--alarm-name", "academy-api-UnHealthyHosts",
-        "--alarm-description", "API target unavailable; polled by Dev Alerts Cron.",
+        "--alarm-description", "API has no healthy target; polled by Dev Alerts Cron.",
         "--namespace", "AWS/ApplicationELB",
-        "--metric-name", "UnHealthyHostCount",
+        "--metric-name", "HealthyHostCount",
         "--dimensions"
     ) + $dimensions + @(
-        "--statistic", "Maximum",
+        "--statistic", "Minimum",
         "--period", $period.ToString(),
         "--evaluation-periods", "1",
-        "--threshold", $unhealthyThreshold.ToString(),
-        "--comparison-operator", "GreaterThanOrEqualToThreshold",
-        "--treat-missing-data", "notBreaching",
+        "--threshold", $minimumHealthyHosts.ToString(),
+        "--comparison-operator", "LessThanThreshold",
+        "--treat-missing-data", "breaching",
         "--region", $R
     )
     Invoke-Aws $unhealthyArgs -ErrorMessage "put-metric-alarm academy-api-UnHealthyHosts" | Out-Null

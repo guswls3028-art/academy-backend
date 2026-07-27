@@ -1342,7 +1342,7 @@ class Command(BaseCommand):
         if not getattr(settings, "DEV_ALERTS_SMS_ENABLED", False):
             raise CommandError("DEV_ALERTS_SMS_ENABLED=true가 필요합니다.")
         texts = {
-            "api_user_impact": "[학원+] 운영 장애 감지\nAPI 오류/비정상 대상\n/dev 확인",
+            "api_user_impact": "[학원+] API 장애 감지\n5xx 급증 또는 정상 서버 0대\n/dev",
         }
         registration = _send_ops_sms(texts[signal])
         if registration.get("status") != "ok":

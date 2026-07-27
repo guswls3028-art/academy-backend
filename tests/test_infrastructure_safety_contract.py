@@ -23,6 +23,7 @@ PIN_ASG_IMAGE = REPO_ROOT / "scripts" / "v1" / "pin-asg-image.ps1"
 DIFF = REPO_ROOT / "scripts" / "v1" / "core" / "diff.ps1"
 WORKER_USERDATA = REPO_ROOT / "scripts" / "v1" / "resources" / "worker_userdata.ps1"
 API_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "api.ps1"
+CLOUDWATCH_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "cloudwatch.ps1"
 IAM_RESOURCE = REPO_ROOT / "scripts" / "v1" / "resources" / "iam.ps1"
 WORKER_BEDROCK_POLICY = (
     REPO_ROOT / "scripts" / "v1" / "templates" / "iam"
@@ -67,6 +68,31 @@ def test_cloudflare_mutation_scripts_require_explicit_should_process() -> None:
         assert "SupportsShouldProcess = $true" in source
         assert "ConfirmImpact = 'High'" in source
         assert "$PSCmdlet.ShouldProcess" in source
+
+
+def test_api_user_impact_alarm_requires_zero_healthy_targets() -> None:
+    source = CLOUDWATCH_RESOURCE.read_text(encoding="utf-8-sig")
+    api_alarms = source.split(
+        "function Ensure-ApiCloudWatchAlarms {", maxsplit=1
+    )[1].split("function Ensure-RdsCloudWatchAlarms", maxsplit=1)[0]
+    healthy_target_alarm = api_alarms.split(
+        '"--alarm-name", "academy-api-UnHealthyHosts"', maxsplit=1
+    )[1].split("Invoke-Aws $unhealthyArgs", maxsplit=1)[0]
+    ssot = SSOT.read_text(encoding="utf-8-sig")
+    params = PARAMS.read_text(encoding="utf-8")
+
+    assert '"--alarm-name", "academy-api-UnHealthyHosts"' in api_alarms
+    assert '"--metric-name", "HealthyHostCount"' in healthy_target_alarm
+    assert '"--statistic", "Minimum"' in healthy_target_alarm
+    assert '"--comparison-operator", "LessThanThreshold"' in healthy_target_alarm
+    assert '"--treat-missing-data", "breaching"' in healthy_target_alarm
+    assert 'UnHealthyHostCount' not in healthy_target_alarm
+    assert 'ALARM("academy-api-UnHealthyHosts")' in api_alarms
+    assert "$minimumHealthyHosts = 1" in api_alarms
+    assert "ObservabilityApiMinimumHealthyHosts" not in ssot
+    assert "apiMinimumHealthyHosts" not in params
+    assert "apiTargetUnhealthyThreshold" not in ssot
+    assert "apiTargetUnhealthyThreshold" not in params
 
 
 def test_problem_studio_bedrock_policy_is_model_scoped_and_converged() -> None:

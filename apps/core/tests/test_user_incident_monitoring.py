@@ -882,6 +882,9 @@ class OperatorSmsSafetyTests(TestCase):
 
         text = send_mock.call_args.args[0]
         self.assertLessEqual(len(text.encode("utf-8")), 90)
+        self.assertIn("5xx 급증", text)
+        self.assertIn("정상 서버 0대", text)
+        self.assertNotIn("비정상 대상", text)
         self.assertNotIn("tenant", text.lower())
         verify_mock.assert_called_once_with("external-safe", 120)
         receipt = OpsAuditLog.objects.get(action="alerts.external_signal_sms")

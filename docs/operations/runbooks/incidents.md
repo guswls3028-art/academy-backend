@@ -1,6 +1,6 @@
 # 장애 대응 런북
 
-**Version:** V1.11.8 | **최종 수정:** 2026-07-26
+**Version:** V1.11.25 | **최종 수정:** 2026-07-27
 
 > 모든 AWS 명령은 `scripts/v1/run-with-env.ps1 --` 접두사를 사용한다.
 > 아래에서 `RUN_ENV`는 이 접두사의 줄임말이다:
@@ -47,9 +47,12 @@ DB INSERT를 기다리지 않으며 PII 없는 동일 신호를 애플리케이�
 문자 건수는 이 샘플 수이며 원시 요청 횟수는 CloudWatch/Sentry에서 확인한다.
 
 DB 장애처럼 감사 로그 자체를 쓸 수 없는 상황은 `academy-api-Target5XX`와
-`academy-api-UnHealthyHosts`를 묶은 `academy-api-UserImpact` composite alarm으로
-독립 감지한다. cron은 alarm transition timestamp를 SSM에 발송 전 `claimed:` 상태로
-기록하고, Solapi `sent_success` 확인 뒤 `delivered:` 상태로 바꾼다. 원격 명령 결과가
+`HealthyHostCount < 1`인 `academy-api-UnHealthyHosts`를 묶은
+`academy-api-UserImpact` composite alarm으로 독립 감지한다. 배포 중 새 대상이
+준비되는 동안 기존 정상 대상이 하나라도 있으면 사용자 영향 장애로 보지 않는다.
+이 외부 신호 문자는 `5xx 급증 또는 정상 서버 0대`로 두 원인을 구분해 표시한다.
+cron은 alarm transition timestamp를 SSM에 발송 전 `claimed:` 상태로 기록하고,
+Solapi `sent_success` 확인 뒤 `delivered:` 상태로 바꾼다. 원격 명령 결과가
 유실되거나 timeout이어도 같은 transition을 자동 재발송하지 않는다.
 
 운영자 SMS는 고객 알림톡/SMS 경로와 분리되어 있다. 수신번호와 발신번호 모두 코드와

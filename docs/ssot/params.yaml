@@ -268,7 +268,6 @@ observability:
   alarmEvaluationPeriods: 2
   alarmPeriodSeconds: 300
   apiAlb5xxThreshold: 10
-  apiTargetUnhealthyThreshold: 1
   sqsQueueDepthThreshold: 100
   sqsDlqDepthThreshold: 5
   batchQueueDepthThreshold: 50

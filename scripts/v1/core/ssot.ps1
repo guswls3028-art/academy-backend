@@ -376,7 +376,6 @@ function Load-SSOT {
     $script:ObservabilityAlarmPeriodSeconds = Coerce-Int $obs["alarmPeriodSeconds"] 300
     $script:ObservabilityAlarmEvaluationPeriods = Coerce-Int $obs["alarmEvaluationPeriods"] 2
     $script:ObservabilityApiAlb5xxThreshold = Coerce-Int $obs["apiAlb5xxThreshold"] 10
-    $script:ObservabilityApiTargetUnhealthyThreshold = Coerce-Int $obs["apiTargetUnhealthyThreshold"] 1
     $script:ObservabilitySqsQueueDepthThreshold = Coerce-Int $obs["sqsQueueDepthThreshold"] 100
     $script:ObservabilitySqsDlqDepthThreshold = Coerce-Int $obs["sqsDlqDepthThreshold"] 5
     $script:ObservabilityRdsCpuThresholdPercent = Coerce-Int $obs["rdsCpuThresholdPercent"] 80
