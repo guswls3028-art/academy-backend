@@ -30,10 +30,14 @@ class TestAttachmentViewIntegration(TestCase):
             author_role="staff", author_display_name="Admin", status="published",
         )
 
-    def _upload(self, files):
+    def _upload(self, files, *, idempotency_key=None):
+        data = {"files": files}
+        if idempotency_key is not None:
+            data["idempotency_key"] = idempotency_key
         request = self.factory.post(
             f"/api/v1/community/posts/{self.post.id}/attachments/",
-            data={"files": files}, format="multipart",
+            data=data,
+            format="multipart",
         )
         force_authenticate(request, user=self.staff)
         request.tenant = self.tenant
@@ -86,6 +90,81 @@ class TestAttachmentViewIntegration(TestCase):
             expires_in=3600,
             content_type="image/jpeg",
         )
+
+    @patch("apps.infrastructure.storage.r2.generate_presigned_get_url_storage")
+    @patch("apps.infrastructure.storage.r2.delete_object_r2_storage")
+    @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
+    def test_retry_reuses_completed_idempotent_batch(
+        self,
+        mock_upload,
+        mock_delete,
+        mock_presign,
+    ):
+        mock_presign.return_value = "https://storage.example/photo.jpg"
+        upload_key = "support-upload-retry-0001"
+
+        first = self._upload(
+            [
+                SimpleUploadedFile(
+                    "photo.jpg",
+                    b"\xff\xd8\xff\xe0jpeg",
+                    content_type="image/jpeg",
+                )
+            ],
+            idempotency_key=upload_key,
+        )
+        retry = self._upload(
+            [
+                SimpleUploadedFile(
+                    "photo.jpg",
+                    b"\xff\xd8\xff\xe0jpeg",
+                    content_type="image/jpeg",
+                )
+            ],
+            idempotency_key=upload_key,
+        )
+
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(retry.status_code, 200, retry.data)
+        self.assertEqual(first.data[0]["id"], retry.data[0]["id"])
+        self.assertEqual(PostAttachment.objects.filter(post=self.post).count(), 1)
+        self.assertEqual(mock_upload.call_count, 1)
+        mock_delete.assert_not_called()
+
+    @patch("apps.infrastructure.storage.r2.generate_presigned_get_url_storage")
+    @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
+    def test_retry_key_rejects_different_file_content(
+        self,
+        mock_upload,
+        mock_presign,
+    ):
+        mock_presign.return_value = "https://storage.example/photo.jpg"
+        upload_key = "support-upload-retry-0002"
+        first = self._upload(
+            [
+                SimpleUploadedFile(
+                    "photo.jpg",
+                    b"first-bytes",
+                    content_type="image/jpeg",
+                )
+            ],
+            idempotency_key=upload_key,
+        )
+        conflict = self._upload(
+            [
+                SimpleUploadedFile(
+                    "photo.jpg",
+                    b"other-bytes",
+                    content_type="image/jpeg",
+                )
+            ],
+            idempotency_key=upload_key,
+        )
+
+        self.assertEqual(first.status_code, 201, first.data)
+        self.assertEqual(conflict.status_code, 409, conflict.data)
+        self.assertEqual(PostAttachment.objects.filter(post=self.post).count(), 1)
+        self.assertEqual(mock_upload.call_count, 1)
 
     @patch("apps.infrastructure.storage.r2.upload_fileobj_to_r2_storage")
     def test_filename_path_traversal_sanitized(self, mock_upload):

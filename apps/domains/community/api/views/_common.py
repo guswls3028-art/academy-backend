@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 MAX_ATTACHMENT_SIZE = 50 * 1024 * 1024  # 50 MB per file
 MAX_ATTACHMENTS_PER_POST = 10
+IDEMPOTENCY_KEY_RE = re.compile(r"[A-Za-z0-9_-]{16,80}")
 
 # 화이트리스트 — 운영팀이 추가 요청 시 명시적으로 확장
 ALLOWED_CONTENT_TYPE_PREFIXES = (
@@ -74,6 +75,15 @@ def sanitize_filename(name: str, max_len: int = 200) -> str:
         else:
             name = name[:max_len]
     return name
+
+
+def normalize_idempotency_key(value) -> str | None:
+    key = str(value or "").strip()
+    if not key:
+        return None
+    if not IDEMPOTENCY_KEY_RE.fullmatch(key):
+        raise ValueError("invalid idempotency key")
+    return key
 
 
 def get_extension(filename: str) -> str:

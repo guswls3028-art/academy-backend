@@ -33,6 +33,12 @@ class PostReply(models.Model):
         max_length=20, default="staff", blank=True,
         help_text="작성자 역할 (staff/student)",
     )
+    platform_request_key = models.CharField(
+        max_length=80,
+        null=True,
+        blank=True,
+        help_text="플랫폼 답변 생성 재시도 식별자.",
+    )
     parent_reply = models.ForeignKey(
         "self",
         on_delete=models.CASCADE,
@@ -46,6 +52,13 @@ class PostReply(models.Model):
 
     class Meta:
         ordering = ["created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["post", "platform_request_key"],
+                condition=models.Q(platform_request_key__isnull=False),
+                name="comm_reply_platform_req_uq",
+            ),
+        ]
         verbose_name = "Post Reply"
         verbose_name_plural = "Post Replies"
 

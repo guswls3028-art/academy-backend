@@ -79,18 +79,9 @@ class DevDashboardSummaryView(APIView):
         ).exclude(tenant_id__in=exempt_ids).aggregate(total=Sum("total_amount"))["total"] or 0
 
         # ── Inbox ──
-        try:
-            from apps.domains.community.models.post import PostEntity
-            inbox_qs = PostEntity.objects.filter(
-                post_type="board",
-            ).filter(Q(title__startswith="[BUG]") | Q(title__startswith="[FB]"))
-            inbox_total = inbox_qs.count()
-            inbox_unanswered = inbox_qs.annotate(
-                _rc=Count("replies"),
-            ).filter(_rc=0).count()
-        except Exception:
-            inbox_total = 0
-            inbox_unanswered = 0
+        from apps.core.services.platform_inbox import platform_inbox_summary
+
+        inbox_summary = platform_inbox_summary()
 
         # ── Users ──
         users_total = User.objects.filter(is_active=True).count()
@@ -162,8 +153,8 @@ class DevDashboardSummaryView(APIView):
                 "paid_30d": paid_30d,
             },
             "inbox": {
-                "total": inbox_total,
-                "unanswered": inbox_unanswered,
+                "total": inbox_summary["total"],
+                "unanswered": inbox_summary["open"],
             },
             "users": {
                 "total": users_total,

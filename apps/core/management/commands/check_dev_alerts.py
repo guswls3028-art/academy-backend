@@ -260,35 +260,78 @@ def rule_audit_failed_24h(threshold: int = 5):
 
 
 def rule_unanswered_inbox(min_age_hours: int = 24):
-    """미답변 + 생성된지 N시간 이상 경과한 BUG/FB."""
+    """생성된 지 N시간 이상 지난 비공개 지원 티켓과 플랫폼 도입 문의."""
     try:
-        from apps.domains.community.models.post import PostEntity
+        from apps.core.models import LandingConsultRequest
+        from apps.core.services.platform_inbox import PROMO_LEAD_SOURCES
+        from apps.domains.community.models import (
+            PostEntity,
+            platform_support_q,
+        )
     except Exception:
         return None
-    from django.db.models import Count, Q
+    from django.db.models import F, Max, Q
+
     since = timezone.now() - timedelta(hours=min_age_hours)
-    qs = (
+    support_tickets = (
         PostEntity.objects.filter(post_type="board", created_at__lte=since)
-        .filter(Q(title__startswith="[BUG]") | Q(title__startswith="[FB]"))
-        .annotate(_rc=Count("replies"))
-        .filter(_rc=0)
+        .filter(platform_support_q())
+        .annotate(
+            _latest_platform_reply=Max(
+                "replies__created_at",
+                filter=Q(replies__author_role="platform_staff"),
+            ),
+            _latest_requester_reply=Max(
+                "replies__created_at",
+                filter=~Q(replies__author_role="platform_staff"),
+            ),
+        )
+        .filter(
+            Q(_latest_platform_reply__isnull=True)
+            | Q(_latest_requester_reply__gt=F("_latest_platform_reply"))
+        )
         .select_related("tenant")
         .order_by("-created_at")
     )
+    support_total = support_tickets.count()
     rows = [
         {
             "tenant": p.tenant.code if p.tenant else "—",
+            "source": "support",
             "title": (p.title or "")[:60],
             "at": p.created_at.isoformat() if p.created_at else None,
         }
-        for p in qs[:30]
+        for p in support_tickets[:15]
     ]
+    owner_tenant_id = getattr(settings, "OWNER_TENANT_ID", None)
+    lead_total = 0
+    if owner_tenant_id is not None:
+        leads = (
+            LandingConsultRequest.objects.filter(
+                tenant_id=owner_tenant_id,
+                source__in=PROMO_LEAD_SOURCES,
+                resolved_at__isnull=True,
+                created_at__lte=since,
+            )
+            .select_related("tenant")
+            .order_by("-created_at")
+        )
+        lead_total = leads.count()
+        rows.extend(
+            {
+                "tenant": lead.tenant.code if lead.tenant else "—",
+                "source": lead.source,
+                "title": (lead.interest or "도입 문의")[:60],
+                "at": lead.created_at.isoformat() if lead.created_at else None,
+            }
+            for lead in leads[:15]
+        )
     if not rows:
         return None
     return {
-        "title": f"📬 24h+ 미답변 문의 {len(rows)}건",
+        "title": f"📬 24h+ 미답변 문의 {support_total + lead_total}건",
         "rows": rows,
-        "total": len(rows),
+        "total": support_total + lead_total,
     }
 
 
@@ -384,19 +427,25 @@ def rule_user_incidents(window_minutes: int | None = None):
         row["count"] += 1
         row["at"] = log.created_at.isoformat(timespec="seconds")
 
-    from apps.domains.community.models.post import PostEntity
+    from apps.domains.community.models import (
+        PostEntity,
+        platform_support_q,
+        support_kind_for_post,
+    )
 
     bug_posts = (
         PostEntity.objects.filter(
             post_type="board",
             status="published",
-            title__startswith="[BUG]",
             created_at__gte=since,
         )
+        .filter(platform_support_q())
         .select_related("tenant")
         .order_by("created_at", "id")
     )
     for post in bug_posts.iterator(chunk_size=200):
+        if support_kind_for_post(post) != "bug":
+            continue
         fingerprint = _incident_fingerprint("bug_post", post.id)
         grouped[fingerprint] = {
             "fingerprint": fingerprint,

@@ -2,7 +2,12 @@ from typing import Optional
 
 from django.db.models import Prefetch, QuerySet, Q, Count
 
-from apps.domains.community.models import PostEntity, PostMapping, ScopeNode
+from apps.domains.community.models import (
+    PostEntity,
+    PostMapping,
+    ScopeNode,
+    platform_support_q,
+)
 
 
 # 삭제된 학생 게시물 제외 필터: created_by가 NULL(선생님/영구삭제)이거나 활성 학생만 포함
@@ -32,6 +37,11 @@ def _base_queryset(qs: QuerySet) -> QuerySet:
     )
 
 
+def _exclude_platform_support(qs: QuerySet) -> QuerySet:
+    """일반 커뮤니티/게시판 목록에서 비공개 개발자 문의를 제외."""
+    return qs.exclude(platform_support_q())
+
+
 def get_empty_post_queryset() -> QuerySet:
     """tenant 없을 때 등 빈 목록용."""
     return PostEntity.objects.none()
@@ -47,7 +57,9 @@ def get_all_posts_for_tenant(tenant, *, include_unpublished: bool = False) -> Qu
     qs = PostEntity.objects.filter(tenant=tenant)
     if not include_unpublished:
         qs = qs.filter(status="published")
-    return _base_queryset(qs.filter(_EXCLUDE_DELETED_AUTHOR)).order_by("-created_at")
+    return _base_queryset(
+        _exclude_platform_support(qs).filter(_EXCLUDE_DELETED_AUTHOR)
+    ).order_by("-created_at")
 
 
 def get_posts_for_node(
@@ -92,7 +104,9 @@ def get_posts_for_node(
     qs = PostEntity.objects.filter(id__in=post_ids, tenant=tenant)
     if not include_unpublished:
         qs = qs.filter(status="published")
-    return _base_queryset(qs.filter(_EXCLUDE_DELETED_AUTHOR)).order_by("-created_at")
+    return _base_queryset(
+        _exclude_platform_support(qs).filter(_EXCLUDE_DELETED_AUTHOR)
+    ).order_by("-created_at")
 
 
 def get_admin_post_list(
@@ -106,7 +120,9 @@ def get_admin_post_list(
 ) -> tuple[QuerySet, int]:
     """관리자용 목록. 필터: post_type, lecture, q(서버 검색). 페이지네이션."""
     qs = _base_queryset(
-        PostEntity.objects.filter(tenant=tenant).filter(_EXCLUDE_DELETED_AUTHOR)
+        _exclude_platform_support(
+            PostEntity.objects.filter(tenant=tenant)
+        ).filter(_EXCLUDE_DELETED_AUTHOR)
     ).order_by("-created_at").distinct()
 
     if post_type:
@@ -140,7 +156,13 @@ def get_post_counts_by_node(tenant, post_type: str, *, visible_node_ids: set[int
       }
     """
     qs = (
-        PostEntity.objects.filter(tenant=tenant, post_type=post_type, status="published")
+        _exclude_platform_support(
+            PostEntity.objects.filter(
+                tenant=tenant,
+                post_type=post_type,
+                status="published",
+            )
+        )
         .filter(_EXCLUDE_DELETED_AUTHOR)
     )
     if visible_node_ids is not None:
@@ -177,7 +199,9 @@ def get_posts_by_type_for_tenant(tenant, post_type: str, *, include_unpublished:
     qs = PostEntity.objects.filter(tenant=tenant, post_type=post_type)
     if not include_unpublished:
         qs = qs.filter(status="published")
-    return _base_queryset(qs.filter(_EXCLUDE_DELETED_AUTHOR)).order_by("-created_at")
+    return _base_queryset(
+        _exclude_platform_support(qs).filter(_EXCLUDE_DELETED_AUTHOR)
+    ).order_by("-created_at")
 
 
 def get_notice_posts_for_tenant(tenant, *, include_unpublished: bool = False) -> QuerySet:

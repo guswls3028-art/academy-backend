@@ -8,7 +8,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.domains.community.api.serializers import PostEntitySerializer
-from apps.domains.community.models import CommunityReport, PostEntity, PostReply, PostLike, PostReplyLike, CommunityUserBlock
+from apps.domains.community.models import (
+    CommunityReport,
+    CommunityUserBlock,
+    PostEntity,
+    PostLike,
+    PostReply,
+    PostReplyLike,
+    platform_support_q,
+)
 from apps.domains.community.selectors import (
     get_admin_post_list,
     get_all_posts_for_tenant,
@@ -272,8 +280,12 @@ class CommunityStatsView(APIView):
         since = timezone.now() - timedelta(days=days)
 
         # 글 카운트 — published 기준, post_type별 + 전체
+        visible_posts = PostEntity.objects.filter(
+            tenant=tenant,
+            status="published",
+        ).exclude(platform_support_q())
         posts_by_type = dict(
-            PostEntity.objects.filter(tenant=tenant, status="published", created_at__gte=since)
+            visible_posts.filter(created_at__gte=since)
             .values("post_type")
             .annotate(c=Count("id"))
             .values_list("post_type", "c")
@@ -281,11 +293,23 @@ class CommunityStatsView(APIView):
         posts_total = sum(posts_by_type.values())
 
         # 댓글
-        replies_total = PostReply.objects.filter(tenant=tenant, created_at__gte=since).count()
+        replies_total = PostReply.objects.filter(
+            tenant=tenant,
+            created_at__gte=since,
+            post__in=visible_posts,
+        ).count()
 
         # 좋아요 (글 + 댓글 합산)
-        post_likes_total = PostLike.objects.filter(tenant=tenant, created_at__gte=since).count()
-        reply_likes_total = PostReplyLike.objects.filter(tenant=tenant, created_at__gte=since).count()
+        post_likes_total = PostLike.objects.filter(
+            tenant=tenant,
+            created_at__gte=since,
+            post__in=visible_posts,
+        ).count()
+        reply_likes_total = PostReplyLike.objects.filter(
+            tenant=tenant,
+            created_at__gte=since,
+            reply__post__in=visible_posts,
+        ).count()
 
         # 신고 (status별)
         reports_by_status = dict(
@@ -298,7 +322,7 @@ class CommunityStatsView(APIView):
 
         # top 활성 게시글 (이번 기간 좋아요 + 댓글 합산 상위 5개)
         top_posts = list(
-            PostEntity.objects.filter(tenant=tenant, status="published")
+            visible_posts
             .annotate(
                 period_likes=Count("likes", filter=Q(likes__created_at__gte=since), distinct=True),
                 period_replies=Count("replies", filter=Q(replies__created_at__gte=since), distinct=True),
@@ -358,7 +382,12 @@ class CommunityStatsView(APIView):
         from apps.domains.community.models import PostEntity
         # title + content 합쳐 tokenize. 글 100개 한정 — 비용 제어.
         rows = (
-            PostEntity.objects.filter(tenant=tenant, status="published", created_at__gte=since)
+            PostEntity.objects.filter(
+                tenant=tenant,
+                status="published",
+                created_at__gte=since,
+            )
+            .exclude(platform_support_q())
             .only("title", "content")
             .order_by("-created_at")[:200]
         )

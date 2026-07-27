@@ -75,7 +75,7 @@ class PostReplySerializer(serializers.ModelSerializer):
     class Meta:
         model = PostReply
         fields = ["id", "post", "question", "content", "created_by", "created_by_display", "author_role", "created_at", "like_count", "is_liked", "parent_reply"]
-        read_only_fields = ["post", "created_by", "created_at"]
+        read_only_fields = ["post", "created_by", "author_role", "created_at"]
 
     def get_like_count(self, obj):
         # annotation 우선, 미존재 시 count() fallback (단건 조회 path)
@@ -257,6 +257,7 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "title",
             "content",
             "category_label",
+            "support_kind",
             "created_by",
             "created_by_display",
             "created_by_deleted",
@@ -273,7 +274,7 @@ class PostEntitySerializer(serializers.ModelSerializer):
             "attachments",
             "meta",
         ]
-        read_only_fields = ["tenant", "created_by", "meta"]
+        read_only_fields = ["tenant", "created_by", "meta", "support_kind"]
 
 
 class PostTemplateSerializer(serializers.ModelSerializer):

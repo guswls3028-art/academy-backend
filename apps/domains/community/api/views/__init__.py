@@ -5,8 +5,9 @@ from .template_views import PostTemplateViewSet
 from .platform_inbox_views import (
     PlatformInboxListView,
     PlatformInboxReplyView,
-    PlatformInboxDeleteReplyView,
     PlatformInboxAttachmentDownloadView,
+    PlatformInboxLeadDetailView,
+    PlatformInboxIncidentDetailView,
 )
 from .notification_views import (
     CommunityNotificationListView,
@@ -15,6 +16,7 @@ from .notification_views import (
     CommunityNotificationMarkAllReadView,
 )
 from .landing_public_views import LandingPublicPostsView
+from .support_ticket_views import SupportTicketListCreateView
 
 __all__ = [
     "PostViewSet",
@@ -26,11 +28,13 @@ __all__ = [
     "PostTemplateViewSet",
     "PlatformInboxListView",
     "PlatformInboxReplyView",
-    "PlatformInboxDeleteReplyView",
     "PlatformInboxAttachmentDownloadView",
+    "PlatformInboxLeadDetailView",
+    "PlatformInboxIncidentDetailView",
     "CommunityNotificationListView",
     "CommunityNotificationUnreadCountView",
     "CommunityNotificationReadView",
     "CommunityNotificationMarkAllReadView",
     "LandingPublicPostsView",
+    "SupportTicketListCreateView",
 ]

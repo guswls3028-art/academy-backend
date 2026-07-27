@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import uuid
 
 from django.db import transaction
 from apps.domains.community.services.html_sanitizer import sanitize_html
@@ -39,6 +40,7 @@ from ._common import (
     MAX_ATTACHMENT_SIZE,
     MAX_ATTACHMENTS_PER_POST,
     is_attachment_allowed,
+    normalize_idempotency_key,
     sanitize_filename,
 )
 
@@ -127,6 +129,10 @@ class PostViewSet(viewsets.ModelViewSet):
         2026-05-11 보안 리뷰 결과: like/reply_like/replies/reply_detail에서 visibility 우회 가능했음.
         helper로 일관 적용해서 학생 권한 누출(student A → student B의 QnA reaction) 차단.
         """
+        from apps.domains.community.models import support_kind_for_post
+
+        if support_kind_for_post(post):
+            return self._is_staff_request(request)
         if self._is_staff_request(request):
             return True
         student_ids = self._limited_reader_student_ids(request)
@@ -819,13 +825,6 @@ class PostViewSet(viewsets.ModelViewSet):
         if not files:
             return Response({"detail": "파일이 없습니다."}, status=status.HTTP_400_BAD_REQUEST)
 
-        existing_count = PostAttachment.objects.filter(post=post, tenant=tenant).count()
-        if existing_count + len(files) > MAX_ATTACHMENTS_PER_POST:
-            return Response(
-                {"detail": f"첨부파일은 최대 {MAX_ATTACHMENTS_PER_POST}개까지 가능합니다."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         # Step 1: Pre-validate ALL files (size + MIME + extension) before any upload
         for f in files:
             if f.size > MAX_ATTACHMENT_SIZE:
@@ -840,50 +839,161 @@ class PostViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
+        try:
+            supplied_key = normalize_idempotency_key(
+                request.data.get("idempotency_key")
+            )
+        except ValueError:
+            return Response(
+                {"detail": "첨부 재시도 키 형식이 올바르지 않습니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        upload_key = supplied_key or uuid.uuid4().hex
+        batch_prefix = (
+            f"tenants/{tenant.id}/community/posts/{post.id}/uploads/{upload_key}/"
+        )
+        planned_uploads = []
+        for index, f in enumerate(files):
+            safe_name = sanitize_filename(f.name)
+            content_hasher = hashlib.sha256()
+            for chunk in f.chunks():
+                content_hasher.update(chunk)
+            f.seek(0)
+            content_hash = content_hasher.hexdigest()
+            name_hash = hashlib.sha256(safe_name.encode()).hexdigest()[:8]
+            r2_key = (
+                f"{batch_prefix}{index}_{content_hash[:16]}_{name_hash}_{safe_name}"
+            )
+            planned_uploads.append(
+                (r2_key, safe_name, f.size, f.content_type, f)
+            )
+
         from apps.infrastructure.storage.r2 import upload_fileobj_to_r2_storage, delete_object_r2_storage
 
-        # Step 2: R2 uploads (outside atomic — external I/O)
         uploaded = []  # list of (r2_key, original_name, size_bytes, content_type)
         try:
-            for f in files:
-                safe_name = sanitize_filename(f.name)
-                name_hash = hashlib.md5(safe_name.encode()).hexdigest()[:8]
-                r2_key = f"tenants/{tenant.id}/community/posts/{post.id}/{name_hash}_{safe_name}"
-                upload_fileobj_to_r2_storage(
-                    fileobj=f,
-                    key=r2_key,
-                    content_type=f.content_type or "application/octet-stream",
-                )
-                uploaded.append((r2_key, safe_name, f.size, f.content_type))
-
-            # Step 3: DB creates (inside atomic)
+            # Serialize attachment batches per post. This makes a concurrent retry
+            # wait until the first transaction can be reused or rolled back.
             with transaction.atomic():
-                created = []
-                for r2_key, fname, fsize, ftype in uploaded:
-                    att = PostAttachment.objects.create(
-                        tenant=tenant,
+                PostEntity.objects.select_for_update().get(
+                    pk=post.pk,
+                    tenant=tenant,
+                )
+                existing_batch = list(
+                    PostAttachment.objects.filter(
                         post=post,
-                        r2_key=r2_key,
-                        original_name=fname,
-                        size_bytes=fsize,
-                        content_type=ftype or "application/octet-stream",
-                    )
-                    created.append(att)
-                    logger.info("PostAttachment created: post=%s, file=%s, key=%s", post.id, fname, r2_key)
+                        tenant=tenant,
+                        r2_key__startswith=batch_prefix,
+                    ).order_by("r2_key")
+                )
+                if existing_batch:
+                    expected = {
+                        r2_key: (
+                            safe_name,
+                            size_bytes,
+                            content_type or "application/octet-stream",
+                        )
+                        for (
+                            r2_key,
+                            safe_name,
+                            size_bytes,
+                            content_type,
+                            _,
+                        ) in planned_uploads
+                    }
+                    actual = {
+                        attachment.r2_key: (
+                            attachment.original_name,
+                            attachment.size_bytes,
+                            attachment.content_type,
+                        )
+                        for attachment in existing_batch
+                    }
+                    if actual != expected:
+                        return Response(
+                            {
+                                "detail": (
+                                    "같은 첨부 재시도 키가 다른 파일에 "
+                                    "사용되었습니다."
+                                )
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    created = existing_batch
+                    response_status = status.HTTP_200_OK
+                else:
+                    existing_count = PostAttachment.objects.filter(
+                        post=post,
+                        tenant=tenant,
+                    ).count()
+                    if existing_count + len(files) > MAX_ATTACHMENTS_PER_POST:
+                        return Response(
+                            {
+                                "detail": (
+                                    "첨부파일은 최대 "
+                                    f"{MAX_ATTACHMENTS_PER_POST}개까지 가능합니다."
+                                )
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
 
-            # Q&A 이미지 첨부 시 자동 매치업 검색 디스패치
-            if post.post_type == "qna":
+                    created = []
+                    for (
+                        r2_key,
+                        safe_name,
+                        file_size,
+                        content_type,
+                        f,
+                    ) in planned_uploads:
+                        upload_fileobj_to_r2_storage(
+                            fileobj=f,
+                            key=r2_key,
+                            content_type=(
+                                content_type or "application/octet-stream"
+                            ),
+                        )
+                        uploaded.append(
+                            (r2_key, safe_name, file_size, content_type)
+                        )
+                        att = PostAttachment.objects.create(
+                            tenant=tenant,
+                            post=post,
+                            r2_key=r2_key,
+                            original_name=safe_name,
+                            size_bytes=file_size,
+                            content_type=(
+                                content_type or "application/octet-stream"
+                            ),
+                        )
+                        created.append(att)
+                        logger.info(
+                            "PostAttachment created: post=%s, file=%s, key=%s",
+                            post.id,
+                            safe_name,
+                            r2_key,
+                        )
+                    response_status = status.HTTP_201_CREATED
+
+            if post.post_type == "qna" and response_status == status.HTTP_201_CREATED:
                 _dispatch_qna_matchup(post, created, tenant)
 
             serializer = PostAttachmentSerializer(created, many=True)
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            return Response(serializer.data, status=response_status)
         except Exception:
-            # Step 4: Best-effort R2 cleanup on failure
-            for r2_key, *_ in uploaded:
-                try:
-                    delete_object_r2_storage(key=r2_key)
-                except Exception:
-                    logger.warning("R2 orphan cleanup failed: key=%s", r2_key)
+            # Reacquire the same post lock before cleanup. A waiting retry either
+            # uploads after cleanup, or commits first and makes us skip its key.
+            with transaction.atomic():
+                PostEntity.objects.select_for_update().get(
+                    pk=post.pk,
+                    tenant=tenant,
+                )
+                for r2_key, *_ in uploaded:
+                    if PostAttachment.objects.filter(r2_key=r2_key).exists():
+                        continue
+                    try:
+                        delete_object_r2_storage(key=r2_key)
+                    except Exception:
+                        logger.warning("R2 orphan cleanup failed: key=%s", r2_key)
             raise
 
     @action(detail=True, methods=["get"], url_path=r"attachments/(?P<att_id>[^/.]+)/download")
@@ -900,7 +1010,6 @@ class PostViewSet(viewsets.ModelViewSet):
             att = PostAttachment.objects.get(id=int(att_id), post=post, tenant=tenant)
         except (PostAttachment.DoesNotExist, ValueError, TypeError):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
-
         from apps.domains.community.services.attachment_urls import build_attachment_download_url
 
         url = build_attachment_download_url(att, expires_in=3600, force_download=True)
@@ -927,6 +1036,12 @@ class PostViewSet(viewsets.ModelViewSet):
             att = PostAttachment.objects.get(id=int(att_id), post=post, tenant=tenant)
         except (PostAttachment.DoesNotExist, ValueError, TypeError):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        from apps.domains.community.models import support_kind_for_post
+        if support_kind_for_post(post):
+            return Response(
+                {"detail": "지원 문의 첨부파일은 제출 후 삭제할 수 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         from apps.infrastructure.storage.r2 import delete_object_r2_storage
         try:
@@ -952,6 +1067,12 @@ class PostViewSet(viewsets.ModelViewSet):
             reply = PostReply.objects.get(post=post, id=int(reply_id), tenant=tenant)
         except (PostReply.DoesNotExist, ValueError, TypeError):
             return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        from apps.domains.community.models import support_kind_for_post
+        if support_kind_for_post(post):
+            return Response(
+                {"detail": "지원 문의의 대화 기록은 제출 후 수정하거나 삭제할 수 없습니다."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
 
         # 학생은 본인 답변만 수정/삭제 가능
         request_student = get_request_student(request)
@@ -1065,9 +1186,13 @@ class PostViewSet(viewsets.ModelViewSet):
 
         # 학생 권한 시 STUDENT_PUBLIC_POST_TYPES만, staff는 모든 post_type 동일 그룹.
         from apps.domains.community.models.post import STUDENT_PUBLIC_POST_TYPES
-        from apps.domains.community.models import PostEntity
+        from apps.domains.community.models import PostEntity, platform_support_q
         from django.db.models import Q as _Q
-        siblings = PostEntity.objects.filter(tenant=tenant, post_type=post.post_type, status="published")
+        siblings = PostEntity.objects.filter(
+            tenant=tenant,
+            post_type=post.post_type,
+            status="published",
+        ).exclude(platform_support_q())
         if not self._is_staff_request(request):
             visible_node_ids = self._visible_node_ids_for_request(request)
             siblings = siblings.filter(

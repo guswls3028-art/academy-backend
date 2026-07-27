@@ -17,6 +17,7 @@ class LandingConsultRequest(TimestampModel):
     - message: 자유 메시지
     - privacy_agreed / privacy_policy_version / privacy_agreed_at: 도입·데모 문의 동의 증빙
     - read_at: 학원장이 확인한 시점 (null = 미확인)
+    - resolved_at: 운영자가 처리를 완료한 시점 (null = 미처리)
     - source: 어느 페이지/섹션에서 들어왔는지 (메인 contact / 갤러리 등)
     """
 
@@ -47,6 +48,7 @@ class LandingConsultRequest(TimestampModel):
         help_text="서버가 기록한 개인정보 수집·이용 동의 시각",
     )
     read_at = models.DateTimeField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True, db_index=True)
     # 학원장이 처리 메모 — 외부 비공개
     admin_memo = models.TextField(blank=True)
 

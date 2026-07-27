@@ -2,6 +2,68 @@ from django.db import models
 from apps.core.models import Tenant
 
 
+SUPPORT_KIND_CHOICES = [
+    ("bug", "버그"),
+    ("feedback", "피드백"),
+]
+SUPPORT_TITLE_PREFIXES = {
+    "[BUG]": "bug",
+    "[FB]": "feedback",
+    "[FEEDBACK]": "feedback",
+}
+
+
+def platform_support_kind_q(kind: str):
+    """명시 필드와 staff가 작성한 기존 board prefix만 지원 티켓으로 분류."""
+    if kind not in dict(SUPPORT_KIND_CHOICES):
+        return models.Q(pk__in=[])
+    legacy_prefixes = [
+        prefix
+        for prefix, prefix_kind in SUPPORT_TITLE_PREFIXES.items()
+        if prefix_kind == kind
+    ]
+    legacy_title_q = models.Q(pk__in=[])
+    for prefix in legacy_prefixes:
+        legacy_title_q |= models.Q(title__startswith=prefix)
+    return models.Q(support_kind=kind) | (
+        models.Q(
+            support_kind__isnull=True,
+            post_type="board",
+            author_role="staff",
+        )
+        & legacy_title_q
+    )
+
+
+def platform_support_q():
+    """신규 명시 필드 + 제한된 기존 제목 prefix compatibility filter."""
+    return platform_support_kind_q("bug") | platform_support_kind_q("feedback")
+
+
+def support_kind_for_post(post) -> str | None:
+    explicit = getattr(post, "support_kind", None)
+    if explicit in dict(SUPPORT_KIND_CHOICES):
+        return explicit
+    if (
+        getattr(post, "post_type", None) != "board"
+        or getattr(post, "author_role", None) != "staff"
+    ):
+        return None
+    title = str(getattr(post, "title", "") or "")
+    for prefix, kind in SUPPORT_TITLE_PREFIXES.items():
+        if title.startswith(prefix):
+            return kind
+    return None
+
+
+def support_subject(title: str) -> str:
+    value = str(title or "")
+    for prefix in SUPPORT_TITLE_PREFIXES:
+        if value.startswith(prefix):
+            return value[len(prefix):].strip()
+    return value
+
+
 POST_TYPE_CHOICES = [
     ("notice", "공지사항"),
     ("board", "게시판"),
@@ -44,6 +106,20 @@ class PostEntity(models.Model):
         blank=True,
         help_text="학생이 선택한 카테고리 (수강 중인 강의명 등)",
     )
+    support_kind = models.CharField(
+        max_length=20,
+        choices=SUPPORT_KIND_CHOICES,
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="개발자 비공개 지원 티켓 분류. null이면 일반 커뮤니티 글.",
+    )
+    support_request_key = models.CharField(
+        max_length=80,
+        null=True,
+        blank=True,
+        help_text="비공개 지원 티켓 생성 재시도 식별자.",
+    )
     created_by = models.ForeignKey(
         "students.Student",
         on_delete=models.SET_NULL,
@@ -85,6 +161,13 @@ class PostEntity(models.Model):
         indexes = [
             models.Index(fields=["tenant", "created_at"]),
             models.Index(fields=["tenant", "post_type"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["tenant", "support_request_key"],
+                condition=models.Q(support_request_key__isnull=False),
+                name="comm_post_support_req_uq",
+            ),
         ]
         verbose_name = "Post"
         verbose_name_plural = "Posts"

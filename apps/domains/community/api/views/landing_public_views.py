@@ -9,7 +9,7 @@ from rest_framework import status, views
 from rest_framework.response import Response
 from apps.core.permissions import TenantResolved
 
-from apps.domains.community.models import PostEntity
+from apps.domains.community.models import PostEntity, platform_support_q
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,9 @@ class LandingPublicPostsView(views.APIView):
             id__in=ids,
             status="published",
             author_role="staff",   # 학생 글 hero 노출 차단
-        ).only("id", "title", "post_type", "category_label", "published_at", "created_at")
+        ).exclude(platform_support_q()).only(
+            "id", "title", "post_type", "category_label", "published_at", "created_at"
+        )
         items = list(qs)
         # 본문 첫 이미지 추출 (preview용)
         import re
