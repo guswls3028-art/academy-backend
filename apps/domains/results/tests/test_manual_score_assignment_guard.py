@@ -22,6 +22,7 @@ from apps.domains.results.views.admin_exam_subjective_score_view import AdminExa
 from apps.domains.results.views.admin_exam_total_score_view import AdminExamTotalScoreView
 from apps.domains.results.views.session_scores_view import SessionScoresView
 from apps.domains.students.models import Student
+from apps.support.results.session_scores_dependencies import Attendance
 
 
 User = get_user_model()
@@ -58,6 +59,7 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
         self.assigned_enrollment = self._create_enrollment("assigned")
         self.unassigned_enrollment = self._create_enrollment("unassigned")
         self.session_roster_enrollment = self._create_enrollment("session-roster")
+        self.attendance_roster_enrollment = self._create_enrollment("attendance-roster")
         ExamEnrollment.objects.create(exam=self.exam, enrollment=self.assigned_enrollment)
         SessionEnrollment.objects.create(
             tenant=self.tenant,
@@ -270,6 +272,73 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
                 target_id=self.exam.id,
                 enrollment=self.session_roster_enrollment,
                 total_score=10,
+            ).exists()
+        )
+
+    def test_total_score_accepts_attendance_roster_and_materializes_exam_enrollment(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.attendance_roster_enrollment,
+            status="PRESENT",
+        )
+        response = self._patch(
+            AdminExamTotalScoreView,
+            {"score": 10, "max_score": 100},
+            enrollment=self.attendance_roster_enrollment,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertTrue(
+            ExamEnrollment.objects.filter(
+                exam=self.exam,
+                enrollment=self.attendance_roster_enrollment,
+            ).exists()
+        )
+
+    def test_attendance_from_another_lecture_is_not_a_score_roster_assignment(self):
+        other_lecture = Lecture.objects.create(
+            tenant=self.tenant,
+            title="Other Lecture",
+            name="Other Lecture",
+            subject="MATH",
+        )
+        cross_lecture_enrollment = self._create_enrollment("cross-lecture")
+        cross_lecture_enrollment.lecture = other_lecture
+        cross_lecture_enrollment.save(update_fields=["lecture"])
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=cross_lecture_enrollment,
+            status="PRESENT",
+        )
+
+        score_response = self._get_session_scores()
+        detail_request = self.factory.get("/results/admin/exams/detail/")
+        detail_request.tenant = self.tenant
+        force_authenticate(detail_request, user=self.admin)
+        detail_response = AdminExamResultDetailView.as_view()(
+            detail_request,
+            exam_id=self.exam.id,
+            enrollment_id=cross_lecture_enrollment.id,
+        )
+        write_response = self._patch(
+            AdminExamTotalScoreView,
+            {"score": 10, "max_score": 100},
+            enrollment=cross_lecture_enrollment,
+        )
+
+        self.assertEqual(score_response.status_code, 200, score_response.data)
+        self.assertNotIn(
+            cross_lecture_enrollment.id,
+            [row["enrollment_id"] for row in score_response.data["rows"]],
+        )
+        self.assertEqual(detail_response.status_code, 400, detail_response.data)
+        self.assertEqual(write_response.status_code, 400, write_response.data)
+        self.assertFalse(
+            ExamEnrollment.objects.filter(
+                exam=self.exam,
+                enrollment=cross_lecture_enrollment,
             ).exists()
         )
 
@@ -674,6 +743,39 @@ class ManualExamScoreAssignmentGuardTests(TestCase):
             ExamAttempt.objects.filter(
                 exam=self.exam,
                 enrollment=self.session_roster_enrollment,
+            ).exists()
+        )
+
+    def test_detail_for_attendance_roster_is_read_only_without_materializing_assignment(self):
+        Attendance.objects.create(
+            tenant=self.tenant,
+            session=self.session,
+            enrollment=self.attendance_roster_enrollment,
+            status="PRESENT",
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.attendance_roster_enrollment,
+            total_score=0,
+            max_score=100,
+        )
+        request = self.factory.get("/results/admin/exams/detail/")
+        request.tenant = self.tenant
+        force_authenticate(request, user=self.admin)
+
+        response = AdminExamResultDetailView.as_view()(
+            request,
+            exam_id=self.exam.id,
+            enrollment_id=self.attendance_roster_enrollment.id,
+        )
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(float(response.data["total_score"]), 0.0)
+        self.assertFalse(
+            ExamEnrollment.objects.filter(
+                exam=self.exam,
+                enrollment=self.attendance_roster_enrollment,
             ).exists()
         )
 

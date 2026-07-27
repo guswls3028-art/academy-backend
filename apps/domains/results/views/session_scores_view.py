@@ -262,6 +262,7 @@ class SessionScoresView(APIView):
             .filter(
                 tenant=tenant,
                 session=session,
+                enrollment__lecture=session.lecture,
                 enrollment__status="ACTIVE",
                 enrollment__student__deleted_at__isnull=True,
             )
@@ -273,6 +274,7 @@ class SessionScoresView(APIView):
             .filter(
                 tenant=tenant,
                 session=session,
+                enrollment__lecture=session.lecture,
                 enrollment__status="ACTIVE",
                 enrollment__student__deleted_at__isnull=True,
             )

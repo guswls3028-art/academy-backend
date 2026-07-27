@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from django.db.models import F
 from django.shortcuts import get_object_or_404
 
 
@@ -23,18 +24,27 @@ def exam_enrollment_exists(*, exam_id: int, enrollment_id: int) -> bool:
 
 
 def linked_session_enrollment_exists(*, exam: Any, enrollment_id: int) -> bool:
+    from apps.domains.attendance.models import Attendance
     from apps.domains.enrollment.models import SessionEnrollment
 
-    return SessionEnrollment.objects.filter(
-        tenant=exam.tenant,
-        session__exams__id=exam.id,
-        session__exams__tenant=exam.tenant,
-        session__lecture__tenant=exam.tenant,
-        enrollment_id=int(enrollment_id),
-        enrollment__tenant=exam.tenant,
-        enrollment__status="ACTIVE",
-        enrollment__student__deleted_at__isnull=True,
-    ).exists()
+    shared_scope = {
+        "tenant": exam.tenant,
+        "session__exams__id": exam.id,
+        "session__exams__tenant": exam.tenant,
+        "session__lecture__tenant": exam.tenant,
+        "enrollment_id": int(enrollment_id),
+        "enrollment__tenant": exam.tenant,
+        "enrollment__lecture_id": F("session__lecture_id"),
+        "enrollment__status": "ACTIVE",
+        "enrollment__student__deleted_at__isnull": True,
+    }
+    if SessionEnrollment.objects.filter(**shared_scope).exists():
+        return True
+
+    # SessionScoresView uses attendance as the effective roster when attendance
+    # records exist. Keep result-detail and manual-score guards aligned with the
+    # students that the score table actually exposes.
+    return Attendance.objects.filter(**shared_scope).exists()
 
 
 def materialize_exam_enrollment_from_linked_session(*, exam: Any, enrollment_id: int) -> bool:
