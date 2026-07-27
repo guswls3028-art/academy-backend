@@ -11,6 +11,8 @@ from django.db import transaction
 from django.db.models import Max
 from django.utils import timezone
 from openpyxl import Workbook, load_workbook
+from openpyxl.comments import Comment
+from openpyxl.formatting.rule import FormulaRule
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
@@ -22,6 +24,7 @@ from apps.domains.results.guards.score_edit_lease_guard import (
     require_score_edit_scope_available_for_exam,
 )
 from apps.domains.results.models import ExamAttempt, Result, ResultFact, ResultItem
+from apps.domains.results.utils.exam_absence import current_exam_absence_counts
 from apps.support.omr.score_adjustment import get_score_adjustment_from_answers
 from apps.support.omr.score_shape import get_exam_score_shape
 from apps.support.omr.sheet_resolver import resolve_omr_sheet_for_exam
@@ -65,8 +68,36 @@ _PARENT_PHONE_HEADERS = {
     "보호자연락처",
     "parentphone",
 }
+_ABSENCE_HEADERS = {
+    "결시",
+    "미응시",
+    "시험미응시",
+    "absent",
+    "absence",
+    "nottaken",
+    "notsubmitted",
+}
 _CORRECT_MARKERS = {"o", "○", "◯", "정답", "맞음", "맞아요", "true", "1", "v", "✓"}
 _WRONG_MARKERS = {"x", "×", "✕", "오답", "틀림", "틀렸음", "false", "0"}
+_ABSENCE_MARKERS = {
+    "결시",
+    "미응시",
+    "시험미응시",
+    "o",
+    "○",
+    "◯",
+    "x",
+    "×",
+    "✕",
+    "v",
+    "✓",
+    "y",
+    "yes",
+    "예",
+    "true",
+    "1",
+}
+_PRESENT_MARKERS = {"n", "no", "아니오", "false", "0"}
 
 
 class ExamResultWorkbookError(ValueError):
@@ -92,6 +123,8 @@ class Candidate:
     lecture_title: str
     lecture_color: str
     lecture_chip_label: str
+    exam_not_submitted_count: int = 0
+    is_not_submitted_for_exam: bool = False
 
     @property
     def lectures_payload(self) -> list[dict[str, Any]]:
@@ -117,6 +150,8 @@ class PlannedRow:
     total_score: float
     max_score: float
     will_overwrite: bool
+    is_not_submitted: bool
+    exam_not_submitted_count: int
 
 
 @dataclass
@@ -134,6 +169,7 @@ class ImportPlan:
 
     def as_payload(self, *, applied: bool = False) -> dict[str, Any]:
         overwrite_count = sum(1 for row in self.rows if row.will_overwrite)
+        not_submitted_count = sum(1 for row in self.rows if row.is_not_submitted)
         return {
             "ok": self.can_apply,
             "applied": bool(applied),
@@ -143,6 +179,7 @@ class ImportPlan:
             "question_count": len(self.questions),
             "matched_count": len(self.rows),
             "overwrite_count": overwrite_count,
+            "not_submitted_count": not_submitted_count,
             "errors": self.errors,
             "warnings": self.warnings,
             "rows": [
@@ -157,6 +194,8 @@ class ImportPlan:
                     "total_score": row.total_score,
                     "max_score": row.max_score,
                     "will_overwrite": row.will_overwrite,
+                    "is_not_submitted": row.is_not_submitted,
+                    "exam_not_submitted_count": row.exam_not_submitted_count,
                 }
                 for row in self.rows
             ],
@@ -171,7 +210,7 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
     sheet = workbook.active
     sheet.title = "시험결과"
 
-    last_column = 6 + len(questions) + 1
+    last_column = 7 + len(questions) + 1
     sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_column)
     sheet.cell(1, 1, _safe_excel_text(f"{exam.title} · 문항별 정오 입력"))
     sheet.cell(1, 1).font = Font(size=15, bold=True, color="FFFFFF")
@@ -181,6 +220,7 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
 
     guides = [
         "작성 방법: 틀린 문항만 X로 표시하세요. 정답은 빈칸 또는 O로 두면 됩니다.",
+        "시험에 응시하지 않은 학생은 결시 열에서 '결시'를 선택하세요. 문항은 비워 둡니다.",
         "객관식·단답형이 섞여 있어도 문항 번호 기준으로 반영됩니다.",
         "수강등록ID와 학생 정보는 수정하지 마세요. 점수는 업로드 후 자동 계산됩니다.",
         "기존에 쓰던 엑셀도 이름(또는 연락처)과 1, 2, 3… 문항 열이 있으면 업로드할 수 있습니다.",
@@ -203,6 +243,7 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
         "학부모연락처",
         "학생연락처",
         "강의",
+        "결시",
         *[question.number for question in questions],
         "점수(확인용)",
     ]
@@ -213,7 +254,8 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
     question_by_number = {question.number: question for question in questions}
-    for column, question in enumerate(questions, start=7):
+    sheet.cell(header_row, 7).fill = PatternFill("solid", fgColor="6B7280")
+    for column, question in enumerate(questions, start=8):
         cell = sheet.cell(header_row, column)
         cell.fill = PatternFill(
             "solid",
@@ -229,6 +271,15 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
         errorTitle="정오 표시 확인",
     )
     sheet.add_data_validation(data_validation)
+    absence_validation = DataValidation(
+        type="list",
+        formula1='"결시"',
+        allow_blank=True,
+        error="미응시 학생만 '결시'를 선택해 주세요.",
+        errorTitle="결시 표시 확인",
+    )
+    sheet.add_data_validation(absence_validation)
+    absence_fill = PatternFill("solid", fgColor="E5E7EB")
 
     for row_index, candidate in enumerate(candidates, start=header_row + 1):
         values = [
@@ -238,40 +289,62 @@ def build_exam_result_template(*, exam: Any, tenant: Any) -> bytes:
             _safe_excel_text(candidate.parent_phone),
             _safe_excel_text(candidate.student_phone),
             _safe_excel_text(candidate.lecture_title),
+            "결시" if candidate.is_not_submitted_for_exam else "",
         ]
         for column, value in enumerate(values, start=1):
             sheet.cell(row_index, column, value)
-        for question_column in range(7, 7 + len(questions)):
+        name_cell = sheet.cell(row_index, 3)
+        if candidate.exam_not_submitted_count > 0:
+            name_cell.fill = absence_fill
+            name_cell.comment = Comment(
+                f"누적 미응시 {candidate.exam_not_submitted_count}회",
+                "Academy",
+            )
+        for question_column in range(8, 8 + len(questions)):
             sheet.cell(row_index, question_column, "")
-        score_column = 7 + len(questions)
+        score_column = 8 + len(questions)
         score_terms = []
         for question_column, question_number in enumerate(
             [question.number for question in questions],
-            start=7,
+            start=8,
         ):
             question = question_by_number[question_number]
             letter = sheet.cell(row_index, question_column).column_letter
             score_terms.append(
                 f'IF(OR(UPPER({letter}{row_index})="X",{letter}{row_index}="×"),0,{question.max_score})'
             )
-        sheet.cell(row_index, score_column, f"=ROUND({'+'.join(score_terms) or '0'},1)")
+        sheet.cell(
+            row_index,
+            score_column,
+            f'=IF($G{row_index}="결시","결시",ROUND({"+".join(score_terms) or "0"},1))',
+        )
 
     if candidates:
-        first_question_column = 7
-        last_question_column = 6 + len(questions)
+        absence_validation.add(
+            f"G{header_row + 1}:G{header_row + len(candidates)}"
+        )
+        sheet.conditional_formatting.add(
+            f"C{header_row + 1}:C{header_row + len(candidates)}",
+            FormulaRule(
+                formula=[f'$G{header_row + 1}="결시"'],
+                fill=absence_fill,
+            ),
+        )
+        first_question_column = 8
+        last_question_column = 7 + len(questions)
         data_validation.add(
             f"{sheet.cell(header_row + 1, first_question_column).coordinate}:"
             f"{sheet.cell(header_row + len(candidates), last_question_column).coordinate}"
         )
 
-    widths = [16, 16, 12, 18, 18, 18]
+    widths = [16, 16, 12, 18, 18, 18, 10]
     for column, width in enumerate(widths, start=1):
         sheet.column_dimensions[get_column_letter(column)].width = width
-    for column in range(7, 7 + len(questions)):
+    for column in range(8, 8 + len(questions)):
         sheet.column_dimensions[get_column_letter(column)].width = 5
-    sheet.column_dimensions[get_column_letter(7 + len(questions))].width = 13
+    sheet.column_dimensions[get_column_letter(8 + len(questions))].width = 13
 
-    sheet.freeze_panes = f"G{header_row + 1}"
+    sheet.freeze_panes = f"H{header_row + 1}"
     sheet.auto_filter.ref = f"A{header_row}:{sheet.cell(header_row, last_column).coordinate}"
     sheet.sheet_view.showGridLines = False
 
@@ -341,6 +414,11 @@ def plan_exam_result_import(
             enrollment_id__in=list(by_id),
         ).values_list("enrollment_id", flat=True)
     )
+    current_exam_absence_ids = {
+        candidate.enrollment_id
+        for candidate in candidates
+        if candidate.is_not_submitted_for_exam
+    }
     question_by_number = {question.number: question for question in questions}
     used_enrollment_ids: set[int] = set()
 
@@ -364,7 +442,11 @@ def plan_exam_result_import(
             _value_at(row_values, column_index)
             for column_index in columns["questions"].values()
         ]
-        if not any(_has_value(value) for value in identity_values + question_values):
+        absence_value = _value_at(row_values, columns.get("absence"))
+        if not any(
+            _has_value(value)
+            for value in identity_values + question_values + [absence_value]
+        ):
             continue
 
         candidate, match_error = _match_candidate(
@@ -384,24 +466,36 @@ def plan_exam_result_import(
             )
             continue
 
-        correctness: dict[int, bool] = {}
-        marker_error = False
-        for question_number, column_index in columns["questions"].items():
-            raw_marker = _value_at(row_values, column_index)
-            parsed_marker = _parse_correctness_marker(raw_marker)
-            if parsed_marker is None:
-                plan.errors.append(
-                    _error(
-                        row_number,
-                        f"question_{question_number}",
-                        f"{question_number}번은 빈칸/O(정답) 또는 X(오답)로 입력해 주세요.",
-                    )
+        is_not_submitted = _parse_absence_marker(absence_value)
+        if is_not_submitted is None:
+            plan.errors.append(
+                _error(
+                    row_number,
+                    "absence",
+                    "결시 열은 비워 두거나 '결시'로 입력해 주세요.",
                 )
-                marker_error = True
-                continue
-            correctness[question_number] = parsed_marker
-        if marker_error:
+            )
             continue
+
+        correctness: dict[int, bool] = {}
+        if not is_not_submitted:
+            marker_error = False
+            for question_number, column_index in columns["questions"].items():
+                raw_marker = _value_at(row_values, column_index)
+                parsed_marker = _parse_correctness_marker(raw_marker)
+                if parsed_marker is None:
+                    plan.errors.append(
+                        _error(
+                            row_number,
+                            f"question_{question_number}",
+                            f"{question_number}번은 빈칸/O(정답) 또는 X(오답)로 입력해 주세요.",
+                        )
+                    )
+                    marker_error = True
+                    continue
+                correctness[question_number] = parsed_marker
+            if marker_error:
+                continue
 
         used_enrollment_ids.add(candidate.enrollment_id)
         correct_count = sum(1 for is_correct in correctness.values() if is_correct)
@@ -413,6 +507,14 @@ def plan_exam_result_import(
             questions=questions,
             correctness=correctness,
         )
+        if is_not_submitted:
+            total_score = 0.0
+        projected_absence_count = candidate.exam_not_submitted_count
+        was_not_submitted = candidate.enrollment_id in current_exam_absence_ids
+        if is_not_submitted and not was_not_submitted:
+            projected_absence_count += 1
+        elif not is_not_submitted and was_not_submitted:
+            projected_absence_count = max(0, projected_absence_count - 1)
         plan.rows.append(
             PlannedRow(
                 source_row=row_number,
@@ -423,6 +525,8 @@ def plan_exam_result_import(
                 total_score=total_score,
                 max_score=max_score,
                 will_overwrite=candidate.enrollment_id in existing_enrollment_ids,
+                is_not_submitted=is_not_submitted,
+                exam_not_submitted_count=projected_absence_count,
             )
         )
 
@@ -432,6 +536,11 @@ def plan_exam_result_import(
     if overwrite_count:
         plan.warnings.append(
             f"기존 결과가 있는 {overwrite_count}명은 이번 엑셀의 문항별 정오로 갱신됩니다."
+        )
+    not_submitted_count = sum(1 for row in plan.rows if row.is_not_submitted)
+    if not_submitted_count:
+        plan.warnings.append(
+            f"결시 {not_submitted_count}명은 점수·석차·문항 통계에서 제외됩니다."
         )
     return plan
 
@@ -466,12 +575,65 @@ def apply_exam_result_import(*, plan: ImportPlan) -> dict[str, Any]:
             enrollment=enrollment,
             initial_total=planned_row.total_score,
             initial_max=planned_row.max_score,
+            is_not_submitted=planned_row.is_not_submitted,
             now=now,
         )
         if attempt.status == "grading":
             raise ExamResultWorkbookError(
                 f"{planned_row.source_row}행 학생은 현재 채점 중이라 반영할 수 없습니다."
             )
+
+        if planned_row.is_not_submitted:
+            ResultItem.objects.select_for_update().filter(result=result).delete()
+            ResultFact.objects.create(
+                target_type="exam",
+                target_id=int(exam.id),
+                enrollment_id=enrollment_id,
+                submission_id=0,
+                attempt_id=int(attempt.id),
+                question_id=0,
+                answer="",
+                is_correct=False,
+                score=0.0,
+                max_score=float(planned_row.max_score),
+                source="excel_import",
+                meta={
+                    "excel_import": True,
+                    "status": "NOT_SUBMITTED",
+                    "filename": plan.filename,
+                    "source_row": planned_row.source_row,
+                    "imported_at": now.isoformat(),
+                },
+            )
+            result.attempt = attempt
+            result.objective_score = 0.0
+            result.total_score = 0.0
+            result.max_score = float(planned_row.max_score)
+            result.submitted_at = now
+            result.save(
+                update_fields=[
+                    "attempt",
+                    "objective_score",
+                    "total_score",
+                    "max_score",
+                    "submitted_at",
+                    "updated_at",
+                ]
+            )
+            meta = dict(attempt.meta or {}) if isinstance(attempt.meta, dict) else {}
+            meta["status"] = "NOT_SUBMITTED"
+            meta["total_score"] = 0.0
+            meta["max_score"] = float(planned_row.max_score)
+            meta["synced_from_result"] = True
+            meta["last_excel_import"] = {
+                "filename": plan.filename,
+                "source_row": planned_row.source_row,
+                "imported_at": now.isoformat(),
+            }
+            attempt.meta = meta
+            attempt.status = "done"
+            attempt.save(update_fields=["meta", "status", "updated_at"])
+            continue
 
         objective_score = 0.0
         item_total = 0.0
@@ -548,6 +710,7 @@ def apply_exam_result_import(*, plan: ImportPlan) -> dict[str, Any]:
         )
 
         meta = dict(attempt.meta or {}) if isinstance(attempt.meta, dict) else {}
+        meta.pop("status", None)
         meta["total_score"] = total_score
         meta["max_score"] = float(planned_row.max_score)
         meta["synced_from_result"] = True
@@ -618,10 +781,37 @@ def _exam_candidates(*, exam: Any, tenant: Any) -> list[Candidate]:
         exam_id=int(exam.id),
         tenant=tenant,
     )
-    return [_candidate_from_record(record) for record in records]
+    enrollment_ids = [record.enrollment_id for record in records]
+    absence_counts = current_exam_absence_counts(
+        tenant=tenant,
+        enrollment_ids=enrollment_ids,
+    )
+    current_exam_absence_ids = set(
+        ExamAttempt.objects.filter(
+            exam_id=int(exam.id),
+            enrollment_id__in=enrollment_ids,
+            enrollment__tenant=tenant,
+            is_representative=True,
+            meta__status="NOT_SUBMITTED",
+        ).values_list("enrollment_id", flat=True)
+    )
+    return [
+        _candidate_from_record(
+            record,
+            exam_not_submitted_count=absence_counts.get(record.enrollment_id, 0),
+            is_not_submitted_for_exam=record.enrollment_id
+            in current_exam_absence_ids,
+        )
+        for record in records
+    ]
 
 
-def _candidate_from_record(record: ResultImportCandidateRecord) -> Candidate:
+def _candidate_from_record(
+    record: ResultImportCandidateRecord,
+    *,
+    exam_not_submitted_count: int,
+    is_not_submitted_for_exam: bool,
+) -> Candidate:
     return Candidate(
         enrollment_id=record.enrollment_id,
         student_name=record.student_name,
@@ -632,6 +822,8 @@ def _candidate_from_record(record: ResultImportCandidateRecord) -> Candidate:
         lecture_title=record.lecture_title,
         lecture_color=record.lecture_color,
         lecture_chip_label=record.lecture_chip_label,
+        exam_not_submitted_count=exam_not_submitted_count,
+        is_not_submitted_for_exam=is_not_submitted_for_exam,
     )
 
 
@@ -690,6 +882,8 @@ def _find_header(worksheet, questions: list[QuestionSpec]) -> tuple[int, dict[st
                 columns["student_phone"] = index
             elif normalized in _PARENT_PHONE_HEADERS and "parent_phone" not in columns:
                 columns["parent_phone"] = index
+            elif normalized in _ABSENCE_HEADERS and "absence" not in columns:
+                columns["absence"] = index
 
             question_number = _question_number_from_header(value)
             if question_number is not None:
@@ -807,6 +1001,7 @@ def _locked_result_and_attempt(
     enrollment: Any,
     initial_total: float,
     initial_max: float,
+    is_not_submitted: bool,
     now,
 ) -> tuple[Result, ExamAttempt]:
     result = (
@@ -838,6 +1033,14 @@ def _locked_result_and_attempt(
         )
         last_index = attempts.aggregate(Max("attempt_index")).get("attempt_index__max") or 0
         attempts.filter(is_representative=True).update(is_representative=False)
+        initial_meta = {}
+        if not is_not_submitted:
+            initial_meta["initial_snapshot"] = {
+                "total_score": float(initial_total),
+                "max_score": float(initial_max),
+                "submitted_at": now.isoformat(),
+                "source": "excel_result_import",
+            }
         attempt = ExamAttempt.objects.create(
             exam_id=int(exam.id),
             enrollment_id=int(enrollment.id),
@@ -846,14 +1049,7 @@ def _locked_result_and_attempt(
             is_retake=bool(last_index),
             is_representative=True,
             status="done",
-            meta={
-                "initial_snapshot": {
-                    "total_score": float(initial_total),
-                    "max_score": float(initial_max),
-                    "submitted_at": now.isoformat(),
-                    "source": "excel_result_import",
-                }
-            },
+            meta=initial_meta,
         )
     elif not attempt.is_representative:
         ExamAttempt.objects.filter(
@@ -891,6 +1087,21 @@ def _parse_correctness_marker(value: Any) -> bool | None:
     if normalized in _CORRECT_MARKERS:
         return True
     if normalized in _WRONG_MARKERS:
+        return False
+    return None
+
+
+def _parse_absence_marker(value: Any) -> bool | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return False
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, (int, float)) and float(value) in {0.0, 1.0}:
+        return bool(int(value))
+    normalized = "".join(str(value).strip().lower().split())
+    if normalized in _ABSENCE_MARKERS:
+        return True
+    if normalized in _PRESENT_MARKERS:
         return False
     return None
 

@@ -90,7 +90,9 @@ Excel Result Import
 - `GET /api/v1/results/admin/exams/{exam_id}/result-import/template/`: 응시 대상 학생과 실제 문항 번호가 채워진 `.xlsx` 양식
 - `POST /api/v1/results/admin/exams/{exam_id}/result-import/`: 업로드 파일 미리검증
 - 같은 POST에 `apply=true`: 미리검증과 동일한 계약으로 원자적 반영
-- 정답은 빈칸/`O`, 오답은 `X`; 학생은 `수강등록ID` 우선, 없으면 같은 시험 roster 안에서 연락처와 이름으로만 확정한다.
+- 정답은 빈칸/`O`, 오답은 `X`; 시험 미응시는 `결시` 열에 `결시`(기존 양식의 `O`/`X` 체크도 허용)로 표시한다.
+- 결시는 대표 `ExamAttempt.meta.status=NOT_SUBMITTED`로 저장한다. 상세 인원 기록에는 남기되 점수·석차·문항/평균·합불 통계에 0점으로 넣지 않는다. 현재 대표 결과 기준 누적 미응시 횟수는 이후 전용 양식과 성적 화면의 학생 이름 음영으로 이어지며, 정상 점수를 다시 반영하면 해당 시험의 결시 상태가 해제된다.
+- 학생은 `수강등록ID` 우선, 없으면 같은 시험 roster 안에서 연락처와 이름으로만 확정한다.
 - 저장 결과는 `Result`/`ResultItem` 최신 snapshot과 변경 문항의 append-only `ResultFact(source=excel_import)`에 기록한다.
 
 OMR Score Shape

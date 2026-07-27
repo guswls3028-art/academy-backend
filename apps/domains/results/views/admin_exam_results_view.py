@@ -26,6 +26,7 @@ from apps.domains.results.views.session_scores_view import _safe_student_name, _
 from apps.domains.results.utils.clinic_highlight import compute_clinic_highlight_map
 from apps.domains.results.utils.ranking import compute_exam_rankings
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
+from apps.domains.results.utils.exam_absence import current_exam_absence_counts
 
 
 class AdminExamResultsView(ListAPIView):
@@ -192,6 +193,10 @@ class AdminExamResultsView(ListAPIView):
             items=achievement_items,
             tenant=request.tenant,
         )
+        exam_absence_count_map = current_exam_absence_counts(
+            tenant=request.tenant,
+            enrollment_ids=enrollment_ids_page,
+        )
         clinic_required_ids = (
             get_clinic_enrollment_ids_for_session(session=session, include_manual=False)
             if session
@@ -223,6 +228,11 @@ class AdminExamResultsView(ListAPIView):
                 float(r.max_score) if r.max_score is not None else None
             )
             achievement_data = achievement_map[(enrollment_id, exam_id)]
+            visible_total_score = (
+                None
+                if achievement_data["meta_status"] == "NOT_SUBMITTED"
+                else raw_total_score
+            )
             # passed = 1차 합격(석차 판정용). 기존 응답 호환.
             passed = achievement_data["is_pass"]
 
@@ -238,13 +248,13 @@ class AdminExamResultsView(ListAPIView):
                 "student_name": student_name,
 
                 # None 보존: 미응시·미채점 행은 점수 셀이 "미응시/미채점"로 표시되어야 함.
-                "exam_score": raw_total_score,
+                "exam_score": visible_total_score,
                 "exam_max_score": raw_max_score,
                 # Backward-compatible aliases for older/mobile consumers.
-                "total_score": raw_total_score,
+                "total_score": visible_total_score,
                 "max_score": raw_max_score,
 
-                "final_score": raw_total_score,
+                "final_score": visible_total_score,
 
                 "passed": passed,
                 "clinic_required": clinic_required,
@@ -262,6 +272,7 @@ class AdminExamResultsView(ListAPIView):
                 "submission_id": submission_id,
                 "submission_status": submission_status,
                 "name_highlight_clinic_target": highlight_map.get(enrollment_id, False),
+                "exam_not_submitted_count": exam_absence_count_map.get(enrollment_id, 0),
 
                 # 석차 정보
                 "rank": rank_info.get("rank"),

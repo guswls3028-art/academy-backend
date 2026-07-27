@@ -44,6 +44,7 @@ from apps.domains.results.models import Result, ExamAttempt
 from apps.domains.results.utils.session_exam import get_exams_for_session
 from apps.domains.results.utils.result_queries import latest_results_per_enrollment
 from apps.domains.results.utils.exam_achievement import compute_exam_achievement_bulk
+from apps.domains.results.utils.exam_absence import current_exam_absence_counts
 from apps.support.omr.score_shape import get_exam_score_shape
 from apps.domains.results.serializers.session_scores import SessionScoreRowSerializer
 from apps.support.results.session_scores_dependencies import (
@@ -295,6 +296,10 @@ class SessionScoresView(APIView):
         )
 
         enrollment_ids = list(enrollment_qs.values_list("id", flat=True))
+        exam_absence_count_map = current_exam_absence_counts(
+            tenant=tenant,
+            enrollment_ids=enrollment_ids,
+        )
 
         # -------------------------------------------------
         # 1b) 학생별 시험/과제 등록 여부 맵 (미등록 컬럼 비활성화용)
@@ -921,6 +926,7 @@ class SessionScoresView(APIView):
                     "progress_completed": progress_completed,
                     "progress_status": progress_status,
                     "name_highlight_clinic_target": name_highlight_clinic_target,
+                    "exam_not_submitted_count": exam_absence_count_map.get(eid, 0),
                     **display,
                 }
             )

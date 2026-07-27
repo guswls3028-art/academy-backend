@@ -1,7 +1,7 @@
 # apps/domains/results/views/admin_exam_summary_view.py
 from __future__ import annotations
 
-from django.db.models import Avg, Min, Max
+from django.db.models import Avg, Max, Min, Q
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -54,21 +54,30 @@ class AdminExamSummaryView(APIView):
         )
         pass_score = float(getattr(exam, "pass_score", 0.0) or 0.0) if exam else 0.0
 
-        # ✅ 중복 방어: enrollment당 최신 Result만
-        rs = latest_results_per_enrollment(target_type="exam", target_id=exam_id)
+        # ✅ 중복 방어: enrollment당 최신 Result만.
+        # participant_count는 결시 기록도 포함하는 기존 계약을 유지하되,
+        # 미응시는 점수가 아니므로 점수·합불 집계에서는 제외한다.
+        rs = latest_results_per_enrollment(
+            target_type="exam",
+            target_id=exam_id,
+        )
+        scored_rs = rs.filter(
+            Q(attempt__meta__status__isnull=True)
+            | ~Q(attempt__meta__status="NOT_SUBMITTED")
+        )
 
         participant_count = rs.values("enrollment_id").distinct().count()
         if participant_count == 0:
             return Response(AdminExamSummarySerializer(EMPTY).data)
 
-        agg = rs.aggregate(
+        agg = scored_rs.aggregate(
             avg_score=Avg("total_score"),
             min_score=Min("total_score"),
             max_score=Max("total_score"),
         )
 
-        pass_count = rs.filter(total_score__gte=pass_score).count()
-        fail_count = rs.filter(total_score__lt=pass_score).count()
+        pass_count = scored_rs.filter(total_score__gte=pass_score).count()
+        fail_count = scored_rs.filter(total_score__lt=pass_score).count()
         pass_rate = (pass_count / participant_count) if participant_count else 0.0
 
         # ✅ clinic_count는 session 기반으로만 계산 가능(시험만으론 clinic이 정의되지 않음)

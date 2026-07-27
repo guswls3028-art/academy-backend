@@ -32,6 +32,8 @@ class AdminExamResultRowSerializer(serializers.Serializer):
 
     # ✅ 클리닉 대상 하이라이트
     name_highlight_clinic_target = serializers.BooleanField(default=False)
+    # 현재 대표 결과 기준 누적 시험 미응시 횟수. 1회 이상이면 이름 음영 표시.
+    exam_not_submitted_count = serializers.IntegerField(default=0, min_value=0)
 
     # ✅ 학생 SSOT 표시용: 아바타 + 강의 딱지
     profile_photo_url = serializers.CharField(allow_null=True, allow_blank=True, required=False, default=None)

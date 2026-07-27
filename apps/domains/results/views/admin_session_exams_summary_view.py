@@ -1,7 +1,7 @@
 # apps/domains/results/views/admin_session_exams_summary_view.py
 from __future__ import annotations
 
-from django.db.models import Avg, Min, Max, Count
+from django.db.models import Avg, Max, Min, Q
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -87,9 +87,12 @@ class AdminSessionExamsSummaryView(APIView):
                 target_type="exam",
                 target_id=int(ex.id),
             )
+            scored_rs = rs.filter(
+                Q(attempt__meta__status__isnull=True)
+                | ~Q(attempt__meta__status="NOT_SUBMITTED")
+            )
 
-            agg = rs.aggregate(
-                participant_count=Count("id"),  # 이미 enrollment 1개씩으로 줄였으니 count(id)=participant
+            agg = scored_rs.aggregate(
                 avg_score=Avg("total_score"),
                 min_score=Min("total_score"),
                 highest_score=Max("total_score"),
@@ -97,12 +100,10 @@ class AdminSessionExamsSummaryView(APIView):
 
             pass_score = float(getattr(ex, "pass_score", 0.0) or 0.0)
 
-            pcount = rs.filter(total_score__gte=pass_score).count()
-            fcount = rs.filter(total_score__lt=pass_score).exclude(
-                attempt__meta__status="NOT_SUBMITTED",
-            ).count()
+            pcount = scored_rs.filter(total_score__gte=pass_score).count()
+            fcount = scored_rs.filter(total_score__lt=pass_score).count()
 
-            p_total = int(agg["participant_count"] or 0)
+            p_total = rs.count()
             p_rate = (pcount / p_total) if p_total else 0.0
 
             exam_rows.append({

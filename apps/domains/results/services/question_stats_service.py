@@ -2,9 +2,46 @@
 from __future__ import annotations
 
 from typing import Dict, List, Optional
-from django.db.models import Count, Avg, Max, Q, F, FloatField, ExpressionWrapper
+from django.db.models import (
+    Avg,
+    Count,
+    ExpressionWrapper,
+    F,
+    FloatField,
+    Max,
+    Q,
+    Subquery,
+)
 
 from apps.domains.results.models import ResultFact
+
+
+def _current_question_facts(
+    *,
+    exam_id: int,
+    attempt_ids: Optional[List[int]] = None,
+):
+    """Return the latest non-absence fact for each attempt/question pair."""
+    qs = (
+        ResultFact.objects.filter(
+            target_type="exam",
+            target_id=int(exam_id),
+        )
+        .exclude(question_id=0)
+        .filter(
+            Q(attempt__meta__status__isnull=True)
+            | ~Q(attempt__meta__status="NOT_SUBMITTED")
+        )
+    )
+    if attempt_ids:
+        qs = qs.filter(attempt_id__in=attempt_ids)
+    latest_fact_ids = (
+        qs.order_by()
+        .values("attempt_id", "enrollment_id", "question_id")
+        .annotate(latest_id=Max("id"))
+        .values("latest_id")
+    )
+    return qs.filter(id__in=Subquery(latest_fact_ids))
 
 
 class QuestionStatsService:
@@ -35,13 +72,10 @@ class QuestionStatsService:
         - 최대 점수
         """
 
-        qs = ResultFact.objects.filter(
-            target_type="exam",
-            target_id=int(exam_id),
+        qs = _current_question_facts(
+            exam_id=exam_id,
+            attempt_ids=attempt_ids,
         )
-
-        if attempt_ids:
-            qs = qs.filter(attempt_id__in=attempt_ids)
 
         rows = (
             qs.values("question_id")
@@ -87,15 +121,13 @@ class QuestionStatsService:
         - answer 값 기준
         """
 
-        qs = ResultFact.objects.filter(
-            target_type="exam",
-            target_id=int(exam_id),
+        qs = _current_question_facts(
+            exam_id=exam_id,
+            attempt_ids=attempt_ids,
+        ).filter(
             question_id=int(question_id),
             is_correct=False,
         )
-
-        if attempt_ids:
-            qs = qs.filter(attempt_id__in=attempt_ids)
 
         rows = qs.values("answer").annotate(cnt=Count("id"))
 
@@ -120,14 +152,12 @@ class QuestionStatsService:
         가장 많이 틀린 문항 TOP N
         """
 
-        qs = ResultFact.objects.filter(
-            target_type="exam",
-            target_id=int(exam_id),
+        qs = _current_question_facts(
+            exam_id=exam_id,
+            attempt_ids=attempt_ids,
+        ).filter(
             is_correct=False,
         )
-
-        if attempt_ids:
-            qs = qs.filter(attempt_id__in=attempt_ids)
 
         rows = (
             qs.values("question_id")

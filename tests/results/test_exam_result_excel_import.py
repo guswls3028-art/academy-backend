@@ -17,12 +17,23 @@ from apps.domains.enrollment.models import Enrollment, SessionEnrollment
 from apps.domains.exams.models import Exam, ExamEnrollment, ExamQuestion, Sheet
 from apps.domains.lectures.models import Lecture, Session
 from apps.domains.results.guards.score_edit_lease_guard import ScoreEditLeaseConflict
-from apps.domains.results.models import Result, ResultFact, ResultItem, ScoreEditDraft
+from apps.domains.results.models import (
+    ExamAttempt,
+    Result,
+    ResultFact,
+    ResultItem,
+    ScoreEditDraft,
+)
+from apps.domains.results.services.question_stats_service import QuestionStatsService
 from apps.domains.results.services.exam_result_excel_import import (
     apply_exam_result_import,
     build_exam_result_template,
     plan_exam_result_import,
 )
+from apps.domains.results.utils.exam_absence import current_exam_absence_counts
+from apps.domains.results.utils.ranking import compute_exam_rankings
+from apps.domains.results.views.admin_exam_results_view import AdminExamResultsView
+from apps.domains.results.views.admin_exam_summary_view import AdminExamSummaryView
 from apps.domains.results.views.admin_exam_result_excel_import_view import (
     AdminExamResultExcelImportView,
     AdminExamResultExcelTemplateView,
@@ -178,10 +189,69 @@ class ExamResultExcelImportTests(TestCase):
 
         self.assertEqual(sheet.cell(8, 1).value, "수강등록ID")
         self.assertEqual(sheet.cell(8, 3).value, "이름")
-        self.assertEqual(sheet.cell(8, 7).value, 1)
-        self.assertEqual(sheet.cell(8, 8).value, 2)
+        self.assertEqual(sheet.cell(8, 7).value, "결시")
+        self.assertEqual(sheet.cell(8, 8).value, 1)
+        self.assertEqual(sheet.cell(8, 9).value, 2)
         self.assertEqual(sheet.cell(9, 1).value, self.enrollment.id)
         self.assertEqual(sheet.cell(9, 3).value, "김학생")
+        self.assertIn('$G9="결시"', sheet.cell(9, 10).value)
+        self.assertIn(
+            '"결시"',
+            {validation.formula1 for validation in sheet.data_validations.dataValidation},
+        )
+
+    def test_template_keeps_cumulative_absence_name_shading(self):
+        previous_exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="이전 시험",
+            subject="수학",
+            exam_type=Exam.ExamType.REGULAR,
+            max_score=100,
+            pass_score=60,
+        )
+        previous_attempt = ExamAttempt.objects.create(
+            exam=previous_exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"status": "NOT_SUBMITTED"},
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=previous_exam.id,
+            enrollment=self.enrollment,
+            attempt=previous_attempt,
+            total_score=0,
+            max_score=100,
+            objective_score=0,
+        )
+        attempt = ExamAttempt.objects.create(
+            exam=self.exam,
+            enrollment=self.enrollment,
+            submission_id=0,
+            attempt_index=1,
+            is_representative=True,
+            status="done",
+            meta={"status": "NOT_SUBMITTED"},
+        )
+        Result.objects.create(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+            attempt=attempt,
+            total_score=0,
+            max_score=100,
+            objective_score=0,
+        )
+
+        payload = build_exam_result_template(exam=self.exam, tenant=self.tenant)
+        sheet = load_workbook(io.BytesIO(payload), data_only=False)["시험결과"]
+
+        self.assertEqual(sheet.cell(9, 7).value, "결시")
+        self.assertEqual(sheet.cell(9, 3).fill.fgColor.rgb, "00E5E7EB")
+        self.assertEqual(sheet.cell(9, 3).comment.text, "누적 미응시 2회")
 
     def test_template_escapes_formula_like_student_text(self):
         self.enrollment.student.name = "=HYPERLINK(\"https://invalid.example\")"
@@ -219,6 +289,80 @@ class ExamResultExcelImportTests(TestCase):
         self.assertEqual(row.wrong_question_numbers, (2,))
         self.assertEqual(row.total_score, 40.0)
         self.assertEqual(row.max_score, 100.0)
+        self.assertFalse(row.is_not_submitted)
+
+    def test_existing_absence_column_marks_student_not_submitted(self):
+        payload = _workbook_bytes(
+            [
+                ["학교", "이름", "학생연락처", "결시", 1, 2],
+                ["테스트고", "김학생", "010-1234-5678", "O", "", ""],
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="결시포함.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertTrue(plan.can_apply, plan.errors)
+        self.assertEqual(plan.as_payload()["not_submitted_count"], 1)
+        row = plan.rows[0]
+        self.assertTrue(row.is_not_submitted)
+        self.assertEqual(row.correct_count, 0)
+        self.assertEqual(row.wrong_question_numbers, ())
+        self.assertEqual(row.total_score, 0.0)
+        self.assertEqual(row.exam_not_submitted_count, 1)
+
+    def test_invalid_absence_marker_is_rejected(self):
+        payload = _workbook_bytes(
+            [
+                ["이름", "결시", 1, 2],
+                ["김학생", "아마도", "", ""],
+            ]
+        )
+
+        plan = plan_exam_result_import(
+            exam=self.exam,
+            tenant=self.tenant,
+            filename="잘못된결시.xlsx",
+            workbook_bytes=payload,
+        )
+
+        self.assertFalse(plan.can_apply)
+        self.assertEqual(plan.errors[0]["field"], "absence")
+
+    def test_question_stats_keep_distinct_legacy_facts_without_attempts(self):
+        second_enrollment = self._create_enrollment(
+            name="이학생",
+            username="excel-student-2",
+            ps_number="EX-002",
+            phone="01011112222",
+            parent_phone="01033334444",
+        )
+        for enrollment, is_correct in (
+            (self.enrollment, True),
+            (second_enrollment, False),
+        ):
+            ResultFact.objects.create(
+                target_type="exam",
+                target_id=self.exam.id,
+                enrollment=enrollment,
+                submission_id=0,
+                attempt=None,
+                question_id=self.choice_question.id,
+                answer="",
+                is_correct=is_correct,
+                score=40 if is_correct else 0,
+                max_score=40,
+                source="legacy_import",
+            )
+
+        stats = QuestionStatsService.per_question_stats(exam_id=self.exam.id)
+
+        self.assertEqual(stats[0]["attempts"], 2)
+        self.assertEqual(stats[0]["correct"], 1)
 
     def test_dimensionless_xlsx_is_matched_and_scored(self):
         payload = _without_worksheet_dimension(
@@ -296,6 +440,157 @@ class ExamResultExcelImportTests(TestCase):
                 source="excel_import",
             ).count(),
             2,
+        )
+
+    def test_apply_absence_uses_not_submitted_contract_and_excludes_stats(self):
+        scored_payload = _workbook_bytes(
+            [["수강등록ID", "이름", 1, 2], [self.enrollment.id, "김학생", "O", "X"]]
+        )
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="점수.xlsx",
+                workbook_bytes=scored_payload,
+            )
+        )
+        self.assertEqual(
+            ResultItem.objects.filter(result__enrollment=self.enrollment).count(),
+            2,
+        )
+
+        absence_payload = _workbook_bytes(
+            [
+                ["수강등록ID", "이름", "결시", 1, 2],
+                [self.enrollment.id, "김학생", "결시", "", ""],
+            ]
+        )
+        response = apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="결시.xlsx",
+                workbook_bytes=absence_payload,
+            )
+        )
+
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+        )
+        attempt = ExamAttempt.objects.get(id=result.attempt_id)
+        self.assertTrue(response["applied"])
+        self.assertEqual(response["not_submitted_count"], 1)
+        self.assertEqual((attempt.meta or {}).get("status"), "NOT_SUBMITTED")
+        self.assertEqual(float(result.total_score), 0.0)
+        self.assertEqual(float(result.objective_score), 0.0)
+        self.assertFalse(ResultItem.objects.filter(result=result).exists())
+        self.assertTrue(
+            ResultFact.objects.filter(
+                attempt=attempt,
+                question_id=0,
+                source="excel_import",
+                meta__status="NOT_SUBMITTED",
+            ).exists()
+        )
+        self.assertEqual(QuestionStatsService.per_question_stats(exam_id=self.exam.id), [])
+        self.assertEqual(
+            current_exam_absence_counts(
+                tenant=self.tenant,
+                enrollment_ids=[self.enrollment.id],
+            ),
+            {self.enrollment.id: 1},
+        )
+
+        list_request = self._request(
+            "get",
+            f"/results/admin/exams/{self.exam.id}/results/",
+        )
+        list_response = AdminExamResultsView.as_view()(
+            list_request,
+            exam_id=self.exam.id,
+        )
+        self.assertEqual(list_response.status_code, 200)
+        self.assertIsNone(list_response.data["results"][0]["final_score"])
+        self.assertEqual(
+            list_response.data["results"][0]["exam_not_submitted_count"],
+            1,
+        )
+
+        summary_request = self._request(
+            "get",
+            f"/results/admin/exams/{self.exam.id}/summary/",
+        )
+        summary_response = AdminExamSummaryView.as_view()(
+            summary_request,
+            exam_id=self.exam.id,
+        )
+        self.assertEqual(summary_response.status_code, 200)
+        self.assertEqual(summary_response.data["participant_count"], 1)
+        self.assertEqual(summary_response.data["fail_count"], 0)
+
+    def test_scored_reimport_clears_excel_absence(self):
+        absence_payload = _workbook_bytes(
+            [
+                ["수강등록ID", "이름", "미응시", 1, 2],
+                [self.enrollment.id, "김학생", "X", "", ""],
+            ]
+        )
+        apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="결시.xlsx",
+                workbook_bytes=absence_payload,
+            )
+        )
+
+        scored_payload = _workbook_bytes(
+            [
+                ["수강등록ID", "이름", "결시", 1, 2],
+                [self.enrollment.id, "김학생", "", "O", "X"],
+            ]
+        )
+        response = apply_exam_result_import(
+            plan=plan_exam_result_import(
+                exam=self.exam,
+                tenant=self.tenant,
+                filename="정정점수.xlsx",
+                workbook_bytes=scored_payload,
+            )
+        )
+
+        result = Result.objects.get(
+            target_type="exam",
+            target_id=self.exam.id,
+            enrollment=self.enrollment,
+        )
+        attempt = ExamAttempt.objects.get(id=result.attempt_id)
+        self.assertEqual(response["not_submitted_count"], 0)
+        self.assertNotIn("status", attempt.meta or {})
+        self.assertEqual(float(result.total_score), 40.0)
+        self.assertEqual(ResultItem.objects.filter(result=result).count(), 2)
+        question_stats = QuestionStatsService.per_question_stats(exam_id=self.exam.id)
+        self.assertEqual(
+            [
+                (row["question_id"], row["attempts"], row["correct"])
+                for row in question_stats
+            ],
+            [
+                (self.choice_question.id, 1, 1),
+                (self.short_question.id, 1, 0),
+            ],
+        )
+        ranking = compute_exam_rankings(exam_id=self.exam.id, tenant=self.tenant)
+        self.assertEqual(ranking[self.enrollment.id]["rank"], 1)
+        self.assertEqual(ranking[self.enrollment.id]["cohort_avg"], 40.0)
+        self.assertEqual(
+            current_exam_absence_counts(
+                tenant=self.tenant,
+                enrollment_ids=[self.enrollment.id],
+            ),
+            {},
         )
 
     def test_apply_is_blocked_while_manual_score_editor_holds_lease(self):
