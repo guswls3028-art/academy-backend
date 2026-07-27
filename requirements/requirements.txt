@@ -42,3 +42,5 @@ pillow
 python-pptx
 opencv-python-headless
 pywebpush>=2.0.0
+# URL loading imports the Problem Studio HWPX writer in API/smoke runtimes.
+python-hwpx==4.2.0
