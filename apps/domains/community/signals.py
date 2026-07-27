@@ -28,7 +28,27 @@ def on_session_saved(sender, instance, **kwargs):
 # self-action은 skip(자기 글 댓글/좋아요 무의미).
 # Student.user OneToOne으로 학생 recipient 매핑. staff 작성자(created_by=null)는 skip — 학원장 알림은 admin_notifications 별도.
 
-from apps.domains.community.models import PostReply, PostLike, PostReplyLike, CommunityNotification
+from apps.domains.community.models import (
+    CommunityNotification,
+    PostEntity,
+    PostLike,
+    PostReply,
+    PostReplyLike,
+)
+
+
+@receiver(post_save, sender=PostEntity)
+def on_platform_support_created(sender, instance: PostEntity, created: bool, **kwargs):
+    if (
+        not created
+        or instance.post_type != "board"
+        or instance.support_kind not in {"bug", "feedback"}
+    ):
+        return
+
+    from apps.core.services.platform_push import enqueue_platform_inbox
+
+    enqueue_platform_inbox(kind=instance.support_kind, item_id=instance.id)
 
 
 def _safe_get_user_id(student) -> int | None:

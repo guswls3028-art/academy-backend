@@ -1,7 +1,7 @@
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
-from apps.core.models import LandingConsultRequest, Tenant
+from apps.core.models import LandingConsultRequest, PlatformPushOutbox, Tenant
 
 
 @override_settings(
@@ -41,6 +41,16 @@ class LandingConsultPrivacyConsentTests(TestCase):
         self.assertTrue(consult.privacy_agreed)
         self.assertEqual(consult.privacy_policy_version, "1.2")
         self.assertIsNotNone(consult.privacy_agreed_at)
+
+    def test_promo_request_queues_platform_push_durably(self):
+        with override_settings(OWNER_TENANT_ID=self.tenant.id):
+            response = self.post()
+
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(PlatformPushOutbox.objects.filter(
+            kind="contact",
+            item_id=response.json()["id"],
+        ).exists())
 
     def test_promo_request_without_explicit_consent_is_rejected(self):
         response = self.post(privacy_agreed=False)

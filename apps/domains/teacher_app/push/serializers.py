@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from .models import PushNotificationConfig
+from .security import is_allowed_web_push_endpoint
 
 
 class PushSubscribeSerializer(serializers.Serializer):
@@ -9,9 +10,19 @@ class PushSubscribeSerializer(serializers.Serializer):
     auth_key = serializers.CharField(max_length=200)
     user_agent = serializers.CharField(max_length=300, required=False, default="")
 
+    def validate_endpoint(self, value):
+        if not is_allowed_web_push_endpoint(value):
+            raise serializers.ValidationError("지원되는 Web Push 주소가 아닙니다.")
+        return value
+
 
 class PushUnsubscribeSerializer(serializers.Serializer):
     endpoint = serializers.URLField(max_length=500)
+
+    def validate_endpoint(self, value):
+        if not is_allowed_web_push_endpoint(value):
+            raise serializers.ValidationError("지원되는 Web Push 주소가 아닙니다.")
+        return value
 
 
 class PushNotificationConfigSerializer(serializers.ModelSerializer):

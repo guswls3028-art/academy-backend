@@ -827,6 +827,25 @@ def test_deploy_verifier_waits_terminal_and_checks_exact_running_and_batch_uris(
     assert ".dockerignore$" in source
 
 
+def test_asg_pin_retries_only_the_expected_missing_runtime_container() -> None:
+    source = PIN_ASG_IMAGE.read_text(encoding="utf-8-sig")
+    retry_block = source.split(
+        "for ($startupElapsed = 0; $startupElapsed -le 300; $startupElapsed += 15)",
+        maxsplit=1,
+    )[1].split("$actual =", maxsplit=1)[0]
+
+    assert "Start-Sleep -Seconds 15" in retry_block
+    assert '$isMissingExpectedContainer' in retry_block
+    assert '[string]$result.Status -eq "Failed"' in retry_block
+    assert "[string]::IsNullOrWhiteSpace($stdout)" in retry_block
+    assert "No such (?:object|container)" in retry_block
+    assert "[Regex]::Escape($container)" in source
+    assert "Runtime container did not become inspectable within 300s" in retry_block
+    assert "Runtime verification command timed out" in retry_block
+    digest_check = source.split("$actual =", maxsplit=1)[1]
+    assert "Runtime digest mismatch" in digest_check
+
+
 def test_iam_managed_write_statements_converge_exactly_and_read_back() -> None:
     source = IAM_RESOURCE.read_text(encoding="utf-8-sig")
 

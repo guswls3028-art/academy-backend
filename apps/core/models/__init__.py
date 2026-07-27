@@ -9,6 +9,7 @@ from .landing_consult import LandingConsultRequest
 from .landing_testimonial import LandingTestimonialSubmission
 from .ops_audit import OpsAuditLog
 from .platform_inbox import PlatformInboxIncidentState
+from .platform_push_outbox import PlatformPushOutbox
 from .worker_heartbeat import WorkerHeartbeatModel
 from .login_throttle import LoginThrottleBucket
 
@@ -26,6 +27,7 @@ __all__ = [
     "LandingTestimonialSubmission",
     "OpsAuditLog",
     "PlatformInboxIncidentState",
+    "PlatformPushOutbox",
     "WorkerHeartbeatModel",
     "LoginThrottleBucket",
 ]

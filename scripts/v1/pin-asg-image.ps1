@@ -147,20 +147,46 @@ function Assert-PinState {
     $expectedUri = "$($script:AccountId).dkr.ecr.$($script:Region).amazonaws.com/$($deployment.Repo)@$($State.TargetDigest)"
     $container = switch ($Service) { "api" { "academy-api" }; "messaging" { "academy-messaging-worker" }; "ai" { "academy-ai-worker-cpu" }; "tools" { "academy-tools-worker" } }
     foreach ($instance in $instances) {
-        $remote = "set -e; ID=`$(docker inspect --format '{{.Image}}' '$container'); docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' `"`$ID`""
-        $params = Convert-JsonArgToFileRef (@{commands=@($remote);executionTimeout=@("120")} | ConvertTo-Json -Compress)
-        $paramsFile = $params -replace '^file://', ''
-        try { $sent = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instance.InstanceId, "--document-name", "AWS-RunShellScript", "--parameters", $params, "--timeout-seconds", "180", "--region", $script:Region, "--output", "json") }
-        finally { Remove-TempFiles @($paramsFile) }
-        $commandId = [string]$sent.Command.CommandId
-        if (-not $commandId) { throw "Runtime verification returned no SSM command id." }
         $result = $null
-        for ($elapsed = 0; $elapsed -lt 120; $elapsed += 3) {
-            Start-Sleep -Seconds 3
-            $result = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $commandId, "--instance-id", $instance.InstanceId, "--region", $script:Region, "--output", "json")
-            if ([string]$result.Status -eq "Success") { break }
-            if ([string]$result.Status -in @("Failed", "Cancelled", "TimedOut", "Cancelling")) { throw "Runtime verification failed on $($instance.InstanceId): $($result.Status)" }
+        $runtimeReady = $false
+        $escapedContainer = [Regex]::Escape($container)
+        for ($startupElapsed = 0; $startupElapsed -le 300; $startupElapsed += 15) {
+            $remote = "set -e; ID=`$(docker inspect --format '{{.Image}}' '$container'); docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' `"`$ID`""
+            $params = Convert-JsonArgToFileRef (@{commands=@($remote);executionTimeout=@("120")} | ConvertTo-Json -Compress)
+            $paramsFile = $params -replace '^file://', ''
+            try { $sent = Invoke-AwsJson @("ssm", "send-command", "--instance-ids", $instance.InstanceId, "--document-name", "AWS-RunShellScript", "--parameters", $params, "--timeout-seconds", "180", "--region", $script:Region, "--output", "json") }
+            finally { Remove-TempFiles @($paramsFile) }
+            $commandId = [string]$sent.Command.CommandId
+            if (-not $commandId) { throw "Runtime verification returned no SSM command id." }
+            $result = $null
+            for ($elapsed = 0; $elapsed -lt 120; $elapsed += 3) {
+                Start-Sleep -Seconds 3
+                $result = Invoke-AwsJson @("ssm", "get-command-invocation", "--command-id", $commandId, "--instance-id", $instance.InstanceId, "--region", $script:Region, "--output", "json")
+                if ([string]$result.Status -eq "Success") { break }
+                if ([string]$result.Status -in @("Failed", "Cancelled", "TimedOut", "Cancelling")) { break }
+            }
+            if ([string]$result.Status -eq "Success") {
+                $runtimeReady = $true
+                break
+            }
+            if ([string]$result.Status -notin @("Failed", "Cancelled", "TimedOut", "Cancelling")) {
+                throw "Runtime verification command timed out on $($instance.InstanceId): status=$($result.Status)"
+            }
+            $stderr = [string]$result.StandardErrorContent
+            $stdout = [string]$result.StandardOutputContent
+            $isMissingExpectedContainer = (
+                [string]$result.Status -eq "Failed" -and
+                [string]::IsNullOrWhiteSpace($stdout) -and
+                $stderr -match "No such (?:object|container):\s*['`"]?$escapedContainer['`"]?"
+            )
+            if (-not $isMissingExpectedContainer) {
+                throw "Runtime verification failed on $($instance.InstanceId): status=$($result.Status) stderr=$($stderr.Trim())"
+            }
+            if ($startupElapsed -ge 300) { break }
+            Write-Host "Waiting for runtime container: service=$Service instance=$($instance.InstanceId) container=$container elapsed=${startupElapsed}s" -ForegroundColor DarkGray
+            Start-Sleep -Seconds 15
         }
+        if (-not $runtimeReady) { throw "Runtime container did not become inspectable within 300s: service=$Service instance=$($instance.InstanceId) container=$container" }
         $actual = @(([string]$result.StandardOutputContent -split "`r?`n") | Where-Object { $_.Trim() } | Sort-Object -Unique)
         if ($actual.Count -ne 1 -or $actual[0] -ne $expectedUri) { throw "Runtime digest mismatch on $($instance.InstanceId): expected=$expectedUri actual=$($actual -join ',')" }
     }

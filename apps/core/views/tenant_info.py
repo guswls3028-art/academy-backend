@@ -216,11 +216,34 @@ class PublicOgMetaView(APIView):
         title = (tenant.og_title or "").strip() or (tenant.name or "").strip()
         description = (tenant.og_description or "").strip()
         image = (tenant.og_image_url or "").strip()
+        logo = ""
+        try:
+            from apps.infrastructure.storage import r2 as r2_storage
+
+            config = tenant.program.ui_config or {}
+            logo = (
+                r2_storage.resolve_admin_logo_url(
+                    logo_key=config.get("logo_key"),
+                    logo_url=config.get("logo_url"),
+                )
+                or ""
+            )
+        except Exception:
+            logo = ""
+        if not logo and tenant.logo:
+            try:
+                logo = tenant.logo.url
+            except (AttributeError, ValueError):
+                logo = ""
 
         return Response({
             "title": title,
             "description": description or f"{title} 학습 플랫폼",
             "image": image,
+            "favicon": logo,
+            "pwa_icon_192": logo,
+            "pwa_icon_512": logo,
+            "apple_touch_icon": logo,
         }, headers={
             "Cache-Control": "public, max-age=300",
             "Access-Control-Allow-Origin": "*",

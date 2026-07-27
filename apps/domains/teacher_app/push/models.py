@@ -7,7 +7,11 @@ from apps.core.models import Tenant
 
 
 class PushSubscription(TimestampModel):
-    """Web Push 구독 정보 — 선생님 브라우저/PWA별 1건"""
+    """Web Push 구독 정보 — 테넌트 사용자 브라우저/PWA별 1건."""
+
+    class AppScope(models.TextChoices):
+        TEACHER = "teacher", "Teacher"
+        PLATFORM = "platform", "Platform"
 
     objects = TenantQuerySet.as_manager()
 
@@ -26,12 +30,22 @@ class PushSubscription(TimestampModel):
     p256dh_key = models.CharField(max_length=200)
     auth_key = models.CharField(max_length=200)
     user_agent = models.CharField(max_length=300, blank=True, default="")
+    app_scope = models.CharField(
+        max_length=16,
+        choices=AppScope.choices,
+        default=AppScope.TEACHER,
+        db_index=True,
+    )
     is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["tenant", "user"]),
+            models.Index(
+                fields=["tenant", "app_scope", "is_active"],
+                name="teacher_push_scope_idx",
+            ),
         ]
         constraints = [
             models.UniqueConstraint(

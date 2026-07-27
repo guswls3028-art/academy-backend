@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from django.apps import apps
 from django.contrib.auth import get_user_model
 from django.test import TestCase, override_settings
@@ -210,6 +212,32 @@ class PlatformSupportInboxTests(TestCase):
         self.assertEqual(board_response.status_code, 200, board_response.data)
         board_ids = {item["id"] for item in board_response.data["results"]}
         self.assertEqual(board_ids, {self.normal_post.id})
+
+    def test_new_support_ticket_queues_platform_push_once(self):
+        response = SupportTicketListCreateView.as_view()(
+            self._request(
+                "post",
+                "/api/v1/community/support/",
+                user=self.customer_staff,
+                tenant=self.tenant,
+                data={
+                    "type": "bug",
+                    "subject": "알림 테스트",
+                    "content": "신규 버그 문의입니다.",
+                },
+            )
+        )
+
+        self.assertEqual(response.status_code, 201, response.data)
+        from apps.core.models import PlatformPushOutbox
+
+        self.assertEqual(
+            PlatformPushOutbox.objects.filter(
+                kind="bug",
+                item_id=response.data["id"],
+            ).count(),
+            1,
+        )
 
     def test_support_create_and_platform_reply_retries_are_idempotent(self):
         create_data = {
