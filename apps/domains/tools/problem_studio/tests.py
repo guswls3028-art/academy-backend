@@ -10,6 +10,7 @@ from unittest.mock import patch
 from django.apps import apps as django_apps
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase
+from hwpx import HwpxDocument
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.domains.tools.problem_studio.services import (
@@ -375,15 +376,25 @@ class ProblemStudioServiceTests(SimpleTestCase):
             first = inner.infolist()[0]
             names = inner.namelist()
             preview = inner.read("Preview/PrvText.txt").decode("utf-8")
+            header = inner.read("Contents/header.xml").decode("utf-8")
             section = inner.read("Contents/section0.xml").decode("utf-8")
+            settings = inner.read("settings.xml").decode("utf-8")
+            content = inner.read("Contents/content.hpf").decode("utf-8")
 
         self.assertEqual(first.filename, "mimetype")
         self.assertEqual(first.compress_type, zipfile.ZIP_STORED)
         self.assertIn("Contents/content.hpf", names)
         self.assertIn("Contents/header.xml", names)
+        self.assertIn('secCnt="1"', header)
+        self.assertIn('xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph"', header)
+        self.assertIn("<ha:HWPApplicationSetting", settings)
+        self.assertIn('<opf:itemref idref="header"', content)
         self.assertIn("산화수 보존", preview)
         self.assertIn("<hp:t>", section)
         self.assertIn("산화수 보존", extract_hwpx_text(hwpx_data))
+        with HwpxDocument.open(hwpx_data) as document:
+            self.assertTrue(document.validate().ok)
+            self.assertIn("산화수 보존", "\n".join(paragraph.text for paragraph in document.paragraphs))
 
     def test_transfer_package_uses_successful_ocr_text_for_image_source(self):
         uploaded = SimpleUploadedFile("scan.png", _TINY_PNG)

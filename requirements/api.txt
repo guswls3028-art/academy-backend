@@ -38,5 +38,8 @@ olefile==0.47
 # Problem Studio bounded local OCR for transfer packages.
 pytesseract
 
+# Problem Studio editor-compatible HWPX review documents.
+python-hwpx==4.2.0
+
 # Solapi (support.messaging views)
 solapi>=5.0.0

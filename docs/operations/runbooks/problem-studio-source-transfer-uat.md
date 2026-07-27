@@ -1,6 +1,6 @@
 # Problem Studio Source Transfer UAT
 
-Last verified: 2026-07-23
+Last verified: 2026-07-27
 
 목표는 자동 생성 성능 과장이 아니라, 선생님이 실제 받은 자료를 업로드했을 때
 `AI 타이핑 시작` 결과물을 내려받아 한글에서 수업용으로 수정할 수 있는지 확인하는 것이다.
@@ -44,6 +44,7 @@ Last verified: 2026-07-23
 | 소스/Windows COM 계약 | `repo-confirmed` | frontend `d3cb4dea`; 보이는 일반 편집 문서 선택, `InsertFile`, 보안 모듈 훅, 거부 폴백, 숨김/읽기 전용 차단, 문서 수명주기 비변경을 자동 검증한다. |
 | CI·운영 배포 경로 | `repo-confirmed` | GitHub Actions `29910478788`; Windows 게이트, 프런트 품질 게이트, Cloudflare 배포, 운영 canary/tenant/왕복 E2E가 통과했다. |
 | 반복 안정성 | `repo-confirmed` | 2026-07-22 봉인 Release 실행 파일 100회, 계약 시나리오 500건에서 실패 0건, 잔존 프로세스 0개, 관련 Windows 충돌 이벤트 0건이었다. |
+| HWPX 패키지 호환성 | `repo-confirmed` | 2026-07-27 손상 파일 사고 뒤 수동 ZIP/XML 생성기를 호환 스켈레톤 기반 생성기로 교체했다. ZIP 순서, 필수 header/settings/content 참조, 스키마, 패키지 재열기, preview/section 텍스트 동기화를 자동 검증한다. |
 | 정품 한컴 한글 2024 실기 | `needs-manual-validation` | 라이선스 편집 프로그램과 승인된 Automation 보안 모듈이 있는 PC에서 아래 실기 절차를 완료해야 한다. 뷰어 또는 모의 COM 결과만으로 합격 처리하지 않는다. |
 | 정확한 원본 HWP 레이아웃 재현 | `intentionally-unchanged` | 현재 산출물은 수정 가능한 선생님 검수본이며, 네이티브 `.hwp` 무손실 복제는 제품 약속이 아니다. |
 
@@ -59,7 +60,7 @@ Last verified: 2026-07-23
 6. `검수본 ZIP 내려받기`를 누른 뒤 ZIP을 열고 `00_먼저열기_검수체크리스트.doc`를 먼저 연다.
 7. 실제 한글 실기를 수행하는 PC에서는 `한글에서 열기`를 눌러 보이는 일반 편집 문서의 커서에 삽입되거나, 삽입할 문서가 없으면 HWPX가 새로 열리는지 확인한다. 한글 버전, Windows 버전, 연결 프로그램 SHA-256, 보안 모듈 이름을 결과에 기록한다.
 8. `01_자체양식_문제검수본.doc`에서 자동 분리된 문제/개념 후보를 확인한다.
-9. `03_자체양식_문제검수본.hwpx`를 한글에서 열어 텍스트 중심 검수본으로 사용할 수 있는지 확인한다.
+9. `03_자체양식_문제검수본.hwpx`는 먼저 자동 구조 검증(첫 ZIP 항목의 무압축 `mimetype`, 필수 header/settings/content 참조, 스키마, 패키지 재열기, preview/section 텍스트 일치)을 통과했는지 확인한 뒤 한글에서 열어 텍스트 중심 검수본으로 사용할 수 있는지 확인한다.
 10. `02_OCR_연결후보.csv`에서 남은 OCR 후보 ID, 원본, 쪽 범위, 우선순위, 권장처리를 확인한다.
 11. `00_변환리포트.html`에서 문서 수, 이미지 수, 경고 수, 구조화 상태, 자동 OCR 처리 수, 남은 OCR 후보 수를 확인한다.
 12. `00_manifest.json`에서 `quality_level`, `structured_problem_count`, `ocr_completed_unit_count`, `ocr_pending_unit_count`, `ocr_candidate_count`, `structure_limit_reached`를 확인한다.
@@ -88,6 +89,7 @@ Last verified: 2026-07-23
 | 큰 PDF | 60쪽 단위로 `.doc`이 분할된다. |
 | 이미지-only PDF | 페이지 이미지는 보존되고, 자동 OCR이 제한 단위 안에서 시도된다. 남은 페이지는 manifest/report/checklist/`02_OCR_연결후보.csv`에 OCR 후보로 기록된다. |
 | 80개 초과 구조화 후보 | `structure_limit_reached=true`이고 HWPX 검수 액션에 나머지를 원본 보존 문서에서 확인하라는 안내가 나온다. |
+| 한글에서 `파일이 손상되었습니다` 표시 | 생성 job ID, ZIP, HWPX, 배포 버전을 보존한다. `.doc` 우회본이 열려도 HWPX 합격으로 처리하지 않고 자동 구조 검증과 정품 한글 열기를 모두 다시 확인한다. |
 | 만료/재사용 한글 handoff | 5분 만료 또는 1회 소비 뒤 404가 반환되고 새 handoff를 발급해야 한다. |
 | 연결 프로그램 객체 누락/크기·SHA 불일치 | 다운로드 API는 URL을 발급하지 않고 503으로 닫힌다. |
 
