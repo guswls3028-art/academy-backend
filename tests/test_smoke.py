@@ -358,7 +358,9 @@ class TestSettingsIntegrity(TestCase):
             "assert s.CSRF_COOKIE_SECURE is True; "
             "headers = {header.lower() for header in s.CORS_ALLOW_HEADERS}; "
             "assert 'x-score-editor-client' in headers; "
-            "assert 'x-score-session-id' in headers"
+            "assert 'x-score-session-id' in headers; "
+            "assert 'https://dev.hakwonplus.com' in s.CORS_ALLOWED_ORIGINS; "
+            "assert 'https://dev.hakwonplus.com' in s.CSRF_TRUSTED_ORIGINS"
         )
         result = subprocess.run(
             [sys.executable, "-c", code],

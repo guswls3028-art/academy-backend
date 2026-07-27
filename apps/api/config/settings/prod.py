@@ -88,6 +88,7 @@ CORS_ALLOWED_ORIGIN_REGEXES = [
 CORS_ALLOWED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
+    "https://dev.hakwonplus.com",
     "https://academy-frontend.pages.dev",
     "https://limglish.kr",
     "https://www.limglish.kr",
@@ -126,6 +127,7 @@ CORS_ALLOW_HEADERS = list(default_headers) + [
 CSRF_TRUSTED_ORIGINS = [
     "https://hakwonplus.com",
     "https://www.hakwonplus.com",
+    "https://dev.hakwonplus.com",
     "https://academy-frontend.pages.dev",
     "https://limglish.kr",
     "https://www.limglish.kr",

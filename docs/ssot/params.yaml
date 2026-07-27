@@ -308,6 +308,7 @@ front:
     allowedOrigins:
       - "https://hakwonplus.com"
       - "https://www.hakwonplus.com"
+      - "https://dev.hakwonplus.com"
     credentials: true   # 쿠키 인증 사용 시 true
   deployStrategy: "versioned"  # versioned | atomic
   buildOutputDir: "dist"       # Vite 등 빌드 산출물 디렉터리(프론트 repo 기준)
