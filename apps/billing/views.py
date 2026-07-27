@@ -10,6 +10,7 @@ import json
 import logging
 import re
 
+from django.db.models import Q
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from rest_framework import generics, status
@@ -17,16 +18,30 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.billing.models import BillingKey, BillingProfile, Invoice, PaymentTransaction
+from apps.billing.models import (
+    BankTransferNotice,
+    BillingKey,
+    BillingProfile,
+    BusinessProfile,
+    Invoice,
+    PaymentTransaction,
+    TaxInvoiceIssue,
+)
 from apps.billing.serializers import (
+    BankTransferNoticeSerializer,
+    BankTransferNoticeSubmitSerializer,
+    BankTransferRejectSerializer,
     BillingKeySerializer,
     BillingProfileSerializer,
+    BusinessProfileSerializer,
     ExtendSubscriptionSerializer,
     InvoiceDetailSerializer,
     InvoiceListSerializer,
+    TaxInvoiceMarkIssuedSerializer,
     TenantSubscriptionSummarySerializer,
 )
 from apps.billing.services import (
+    bank_transfer_service,
     billing_key_service,
     invoice_service,
     subscription_service,
@@ -35,6 +50,7 @@ from apps.billing.services import (
 from apps.core.models.program import Program
 from apps.core.permissions import (
     IsSuperuserOnly,
+    IsPlatformAdmin,
     TenantResolvedAndOwner,
     TenantResolvedAndStaff,
 )
@@ -180,6 +196,16 @@ class AdminMarkInvoicePaidView(APIView):
                 {"detail": f"입금 확인 불가 상태: {inv.status}"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if BankTransferNotice.objects.filter(invoice=inv).exists():
+            return Response(
+                {
+                    "detail": (
+                        "입금 신고가 연결된 청구서는 입금 신고 탭에서 "
+                        "확인해 주세요."
+                    )
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
 
         try:
             inv = invoice_service.confirm_manual_payment(inv.pk)
@@ -196,6 +222,193 @@ class AdminMarkInvoicePaidView(APIView):
             payload={"invoice_id": inv.pk, "amount": inv.total_amount},
         )
         return Response(InvoiceDetailSerializer(inv).data)
+
+
+class AdminBankTransferNoticeListView(generics.ListAPIView):
+    """GET /api/v1/billing/admin/bank-transfer/notices/"""
+
+    permission_classes = [IsAuthenticated, IsPlatformAdmin]
+    serializer_class = BankTransferNoticeSerializer
+
+    def get_queryset(self):
+        qs = BankTransferNotice.objects.select_related(
+            "invoice",
+            "invoice__tenant",
+            "invoice__tax_invoice_issue",
+            "reviewed_by",
+        ).order_by("-submitted_at")
+        if self.request.query_params.get("actionable", "").lower() in (
+            "1",
+            "true",
+            "yes",
+        ):
+            qs = qs.filter(
+                Q(status="SUBMITTED")
+                | Q(invoice__tax_invoice_issue__status="READY")
+            )
+        status_filter = self.request.query_params.get("status")
+        if status_filter:
+            qs = qs.filter(status=status_filter.upper())
+        tax_status = self.request.query_params.get("tax_invoice_status")
+        if tax_status:
+            qs = qs.filter(invoice__tax_invoice_issue__status=tax_status.upper())
+        return qs
+
+
+class AdminBankTransferNoticeConfirmView(APIView):
+    """POST /api/v1/billing/admin/bank-transfer/notices/{pk}/confirm/"""
+
+    permission_classes = [IsAuthenticated, IsPlatformAdmin]
+
+    def post(self, request, pk):
+        try:
+            notice = bank_transfer_service.confirm_notice(
+                pk,
+                reviewer=request.user,
+            )
+        except BankTransferNotice.DoesNotExist:
+            return Response(
+                {"detail": "입금 신고를 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except (
+            bank_transfer_service.BankTransferConflict,
+            invoice_service.InvoiceTransitionError,
+        ) as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        record_audit(
+            request,
+            action="billing.bank_transfer_confirmed",
+            target_tenant=notice.invoice.tenant,
+            summary=(
+                f"Bank transfer confirmed: "
+                f"{notice.invoice.invoice_number} ({notice.amount}원)"
+            ),
+            payload={
+                "notice_id": notice.pk,
+                "invoice_id": notice.invoice_id,
+                "amount": notice.amount,
+                "tax_invoice_requested": notice.tax_invoice_requested,
+            },
+        )
+        notice = (
+            BankTransferNotice.objects.select_related(
+                "invoice",
+                "invoice__tenant",
+                "invoice__tax_invoice_issue",
+                "reviewed_by",
+            )
+            .get(pk=pk)
+        )
+        return Response(BankTransferNoticeSerializer(notice).data)
+
+
+class AdminBankTransferNoticeRejectView(APIView):
+    """POST /api/v1/billing/admin/bank-transfer/notices/{pk}/reject/"""
+
+    permission_classes = [IsAuthenticated, IsPlatformAdmin]
+
+    def post(self, request, pk):
+        serializer = BankTransferRejectSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            notice = bank_transfer_service.reject_notice(
+                pk,
+                reviewer=request.user,
+                reason=serializer.validated_data["reason"],
+            )
+        except BankTransferNotice.DoesNotExist:
+            return Response(
+                {"detail": "입금 신고를 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except bank_transfer_service.BankTransferConflict as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        record_audit(
+            request,
+            action="billing.bank_transfer_rejected",
+            target_tenant=notice.invoice.tenant,
+            summary=f"Bank transfer rejected: {notice.invoice.invoice_number}",
+            payload={
+                "notice_id": notice.pk,
+                "invoice_id": notice.invoice_id,
+                "reason": serializer.validated_data["reason"],
+            },
+        )
+        notice = (
+            BankTransferNotice.objects.select_related(
+                "invoice",
+                "invoice__tenant",
+                "invoice__tax_invoice_issue",
+                "reviewed_by",
+            )
+            .get(pk=pk)
+        )
+        return Response(BankTransferNoticeSerializer(notice).data)
+
+
+class AdminTaxInvoiceMarkIssuedView(APIView):
+    """POST /api/v1/billing/admin/tax-invoices/{pk}/mark-issued/"""
+
+    permission_classes = [IsAuthenticated, IsPlatformAdmin]
+
+    def post(self, request, pk):
+        serializer = TaxInvoiceMarkIssuedSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            issue = bank_transfer_service.mark_tax_invoice_issued(
+                pk,
+                issue_number=serializer.validated_data["issue_number"],
+                issued_at=serializer.validated_data.get("issued_at"),
+            )
+        except TaxInvoiceIssue.DoesNotExist:
+            return Response(
+                {"detail": "세금계산서 발행 건을 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except bank_transfer_service.BankTransferConflict as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        record_audit(
+            request,
+            action="billing.tax_invoice_issued",
+            target_tenant=issue.tenant,
+            summary=f"Tax invoice issued: {issue.invoice.invoice_number}",
+            payload={
+                "tax_invoice_issue_id": issue.pk,
+                "invoice_id": issue.invoice_id,
+                "issue_number": issue.issue_number,
+            },
+        )
+        notice = (
+            BankTransferNotice.objects.select_related(
+                "invoice",
+                "invoice__tenant",
+                "invoice__tax_invoice_issue",
+                "reviewed_by",
+            )
+            .filter(invoice_id=issue.invoice_id)
+            .first()
+        )
+        if notice:
+            return Response(BankTransferNoticeSerializer(notice).data)
+        return Response(
+            {
+                "id": issue.pk,
+                "invoice_id": issue.invoice_id,
+                "status": issue.status,
+                "issue_number": issue.issue_number,
+                "issued_at": issue.issued_at,
+            }
+        )
 
 
 class AdminDashboardView(APIView):
@@ -340,6 +553,167 @@ class MyBillingProfileView(APIView):
         serializer.is_valid(raise_exception=True)
         serializer.save()
         return Response(serializer.data)
+
+
+class MyBusinessProfileView(APIView):
+    """GET/PATCH /api/v1/billing/business-profile/"""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def get(self, request):
+        profile = BusinessProfile.objects.filter(tenant=request.tenant).first()
+        if profile is None:
+            return Response(
+                {
+                    "id": None,
+                    "business_name": "",
+                    "representative_name": "",
+                    "business_registration_number": "",
+                    "address": "",
+                    "business_type": "",
+                    "business_item": "",
+                    "tax_invoice_email": "",
+                    "manager_name": "",
+                    "manager_phone": "",
+                    "manager_email": "",
+                }
+            )
+        return Response(BusinessProfileSerializer(profile).data)
+
+    def patch(self, request):
+        profile = BusinessProfile.objects.filter(tenant=request.tenant).first()
+        serializer = BusinessProfileSerializer(
+            profile,
+            data=request.data,
+            partial=profile is not None,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save(tenant=request.tenant)
+        return Response(serializer.data)
+
+
+def _bank_transfer_summary(tenant) -> dict:
+    invoices = list(
+        Invoice.objects.filter(
+            tenant=tenant,
+            billing_mode="INVOICE_REQUEST",
+        )
+        .select_related(
+            "bank_transfer_notice",
+            "tax_invoice_issue",
+        )
+        .order_by("-period_start")[:12]
+    )
+    invoices.sort(
+        key=lambda invoice: (
+            0 if invoice.status in ("PENDING", "OVERDUE") else 1,
+            invoice.period_start,
+        )
+    )
+    invoice_rows = []
+    for invoice in invoices:
+        row = dict(InvoiceListSerializer(invoice).data)
+        try:
+            notice = invoice.bank_transfer_notice
+        except BankTransferNotice.DoesNotExist:
+            notice = None
+        row["bank_transfer_notice"] = (
+            BankTransferNoticeSerializer(notice).data if notice else None
+        )
+        invoice_rows.append(row)
+
+    profile = BusinessProfile.objects.filter(tenant=tenant).first()
+    return {
+        "bank_account": bank_transfer_service.get_bank_account(),
+        "billing_mode": tenant.program.billing_mode,
+        "business_profile": (
+            BusinessProfileSerializer(profile).data if profile else None
+        ),
+        "invoices": invoice_rows,
+    }
+
+
+class MyBankTransferSummaryView(APIView):
+    """GET /api/v1/billing/bank-transfer/"""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def get(self, request):
+        return Response(_bank_transfer_summary(request.tenant))
+
+
+class MyBankTransferActivateView(APIView):
+    """POST /api/v1/billing/bank-transfer/activate/"""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def post(self, request):
+        try:
+            invoice = bank_transfer_service.activate_for_tenant(
+                request.tenant.id
+            )
+        except bank_transfer_service.BankTransferUnavailable as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except bank_transfer_service.BankTransferConflict as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        record_audit(
+            request,
+            action="billing.bank_transfer_activated",
+            target_tenant=request.tenant,
+            summary=f"Bank transfer billing activated: {invoice.invoice_number}",
+            payload={"invoice_id": invoice.pk},
+        )
+        request.tenant.program.refresh_from_db()
+        return Response(_bank_transfer_summary(request.tenant))
+
+
+class MyBankTransferNoticeSubmitView(APIView):
+    """POST /api/v1/billing/bank-transfer/notices/"""
+
+    permission_classes = [IsAuthenticated, TenantResolvedAndOwner]
+
+    def post(self, request):
+        serializer = BankTransferNoticeSubmitSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            notice = bank_transfer_service.submit_notice(
+                tenant_id=request.tenant.id,
+                **serializer.validated_data,
+            )
+        except Invoice.DoesNotExist:
+            return Response(
+                {"detail": "청구서를 찾을 수 없습니다."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except bank_transfer_service.BankTransferUnavailable as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        except bank_transfer_service.BankTransferConflict as exc:
+            return Response(
+                {"detail": str(exc)},
+                status=status.HTTP_409_CONFLICT,
+            )
+        notice = (
+            BankTransferNotice.objects.select_related(
+                "invoice",
+                "invoice__tenant",
+                "invoice__tax_invoice_issue",
+                "reviewed_by",
+            )
+            .get(pk=notice.pk)
+        )
+        return Response(
+            BankTransferNoticeSerializer(notice).data,
+            status=status.HTTP_201_CREATED,
+        )
 
 
 class CardRegisterPrepareView(APIView):

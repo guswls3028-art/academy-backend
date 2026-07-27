@@ -624,6 +624,25 @@ VOID      → {} (종단)
 - API는 `can_mark_paid`, `payment_blocked_reason`, `is_terminal`을 노출해
   UI가 상태기계를 추측하지 않게 한다.
 
+#### 계좌이체 입금 신고
+
+`BankTransferNotice`는 고객의 신고와 실제 수납을 분리한다.
+
+```
+SUBMITTED → {CONFIRMED, REJECTED}
+REJECTED  → SUBMITTED (동일 청구서 재신고)
+CONFIRMED → {} (종단)
+```
+
+- 고객은 자기 테넌트의 `INVOICE_REQUEST`이면서 `PENDING/OVERDUE`인
+  청구서만 신고할 수 있다. 금액은 클라이언트 입력이 아니라
+  `Invoice.total_amount`에서 고정한다.
+- 플랫폼 superuser만 입금을 확인하거나 반려한다.
+- 확인은 `Program → Invoice → BankTransferNotice` 순서로 잠그며,
+  `PAID`, 수동 `PaymentTransaction(SUCCESS)`, 구독 갱신,
+  `TaxInvoiceIssue.READY`를 한 트랜잭션으로 처리한다.
+- 한 청구서에는 입금 신고 1행만 존재하며 반려된 행만 재신고할 수 있다.
+
 ---
 
 ### B13. PaymentTransaction
@@ -909,7 +928,11 @@ true`가 필요하며 수강등록 비활성화, 자동 수납 비활성화, 시
 ### F4. Billing 세금계산서 외부 발행 연동
 
 - Invoice/PaymentTransaction 런타임 상태 전이와 Toss 결제는 구현됨.
-- `TaxInvoiceIssue`의 외부 전자세금계산서 발행 provider 연동은 별도 범위다.
+- 계좌이체 고객은 사업자 정보를 저장하고 발행을 요청할 수 있다. 입금 확인 전
+  `REQUESTED`, 확인 후 `READY`, 운영자가 홈택스에서 실제 발행하고 국세청
+  승인번호를 기록하면 `ISSUED`가 된다.
+- `TaxInvoiceIssue`의 외부 전자세금계산서 자동 발행 provider 연동은 별도
+  범위다. `READY`는 국세청 발행 완료를 의미하지 않는다.
 - 카드 자동결제와 전자세금계산서 발행을 같은 provider 기능으로 간주하지 않는다.
   발행사, `청구`/`영수` 시점, 카드 증빙과의 중복 정책을 오너와 세무대리인이
   확정한 뒤 `INVOICE_REQUEST` 경로에만 provider 전송을 붙인다.

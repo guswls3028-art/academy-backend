@@ -83,6 +83,30 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 수 있고, 입금 확인과 `PaymentTransaction(provider=manual, SUCCESS)` 기록은
 원자적으로 처리된다.
 
+### PG 계약 전 즉시 수납 경로: 계좌이체
+
+`TOSS_AUTO_BILLING_ENABLED=false`인 동안에도 B2B 프로그램 이용료를 받을 수
+있도록 아래 운영 경로를 사용한다.
+
+1. `/academy/api/env`에 아래 값을 저장하고 API instance refresh를 수행한다.
+   - `BILLING_BANK_TRANSFER_ENABLED=true`
+   - `BILLING_BANK_NAME`
+   - `BILLING_BANK_ACCOUNT_NUMBER`
+   - `BILLING_BANK_ACCOUNT_HOLDER`
+2. 학원 오너가 `결제 / 구독 → 계좌이체 결제`에서 계좌이체 청구를 활성화한다.
+   처리 중인 카드 청구가 없을 때만 예정 카드 청구를 계좌이체 청구로 바꾼다.
+3. 오너가 표시된 청구 총액을 이체한 뒤 입금자명·이체 시각을 신고한다.
+   세금계산서를 원하면 사업자등록번호와 수신 이메일을 함께 저장한다.
+4. 플랫폼 superuser가 개발자 결제 콘솔의 `입금 신고` 탭에서 실제 통장 내역과
+   금액을 대조한 뒤 `입금 확인` 또는 `반려`를 선택한다.
+5. 입금 확인 시에만 청구서가 `PAID`가 되고 구독과 수납 장부에 반영된다.
+6. 세금계산서 요청 건은 `READY` 대기열에서 홈택스로 실제 발행한 뒤 국세청
+   승인번호를 `발행 완료 기록`에 입력한다.
+
+고객의 입금 신고만으로 결제 완료 처리하지 않는다. `READY`도 홈택스 발행 완료가
+아니며, 승인번호가 기록된 `ISSUED`만 발행 완료다. 운영 계좌 값은 소스나 문서에
+기록하지 않고 SSM 환경값으로만 관리한다.
+
 결제 완료 알림톡의 provider SID는 2026-07-08 실등록 감사 기준 미등록이다.
 승인 SID가 다시 등록되기 전에는 preview/send 모두 발송 불가로 fail-closed해야
 하며 운영 상태 API에서 `payment_complete`를 unavailable trigger로 명시한다.
@@ -335,8 +359,9 @@ aws ssm list-command-invocations --region ap-northeast-2 --command-id <위_명�
 ### 5. 전자세금계산서 발행사와 정책 확정
 
 Toss Payments는 카드 자동결제를 담당하며 전자세금계산서 국세청 전송은
-별도 발행사 연동 범위다. 현재 `BusinessProfile`과 `TaxInvoiceIssue` 추적
-모델만 있고 외부 발행 API는 연결하지 않았다.
+별도 발행사 연동 범위다. 현재 `BusinessProfile`, `BankTransferNotice`,
+`TaxInvoiceIssue`와 홈택스 수동 발행 대기열은 연결되어 있지만 외부 발행
+API는 연결하지 않았다.
 
 구현 전 오너가 확정할 항목:
 
@@ -349,7 +374,8 @@ Toss Payments는 카드 자동결제를 담당하며 전자세금계산서 국�
 6. 발행사 API 자격증명과 테스트/운영 환경
 
 발급시기와 중복 증빙 정책은 세무대리인 확인값을 정본으로 사용한다. 이 결정
-전에는 `TaxInvoiceIssue`를 실제 국세청 발행 상태로 올리지 않는다.
+전에는 외부 발행 API를 붙이지 않는다. 수동 경로에서는 홈택스 실제 발행 후
+승인번호를 확인한 운영자만 `TaxInvoiceIssue`를 `ISSUED`로 올린다.
 
 ---
 

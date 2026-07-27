@@ -11,6 +11,7 @@
 
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 from apps.core.models.base import TimestampModel
@@ -39,6 +40,12 @@ TAX_INVOICE_STATUS_CHOICES = [
     ("READY", "발행 준비"),
     ("ISSUED", "발행 완료"),
     ("FAILED", "발행 실패"),
+]
+
+BANK_TRANSFER_NOTICE_STATUS_CHOICES = [
+    ("SUBMITTED", "입금 확인 요청"),
+    ("CONFIRMED", "입금 확인"),
+    ("REJECTED", "확인 반려"),
 ]
 
 
@@ -201,6 +208,7 @@ class BusinessProfile(TimestampModel):
             "tax_invoice_email": self.tax_invoice_email,
             "manager_name": self.manager_name,
             "manager_phone": self.manager_phone,
+            "manager_email": self.manager_email,
         }
 
 
@@ -413,6 +421,87 @@ class TaxInvoiceIssue(TimestampModel):
         verbose_name = "세금계산서 발행"
         verbose_name_plural = "세금계산서 발행"
         ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["issue_number"],
+                condition=~models.Q(issue_number=""),
+                name="tax_invoice_unique_nonempty_issue_number",
+            ),
+        ]
 
     def __str__(self):
         return f"TaxInvoice({self.invoice.invoice_number}, {self.status})"
+
+
+class BankTransferNotice(TimestampModel):
+    """고객이 제출한 계좌이체 입금 확인 요청."""
+
+    invoice = models.OneToOneField(
+        Invoice,
+        on_delete=models.CASCADE,
+        related_name="bank_transfer_notice",
+    )
+    depositor_name = models.CharField(max_length=100, help_text="입금자명")
+    deposited_at = models.DateTimeField(help_text="고객이 입력한 이체 시각")
+    amount = models.PositiveIntegerField(help_text="확인 대상 청구 금액")
+    status = models.CharField(
+        max_length=20,
+        choices=BANK_TRANSFER_NOTICE_STATUS_CHOICES,
+        default="SUBMITTED",
+        db_index=True,
+    )
+    tax_invoice_requested = models.BooleanField(default=False)
+    business_profile_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="세금계산서 요청 시 사업자 정보 스냅샷",
+    )
+    submitted_at = models.DateTimeField(help_text="입금 확인 요청 시각")
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        related_name="reviewed_bank_transfer_notices",
+        null=True,
+        blank=True,
+    )
+    rejection_reason = models.TextField(blank=True)
+    memo = models.TextField(blank=True)
+
+    class Meta:
+        db_table = "billing_bank_transfer_notice"
+        verbose_name = "계좌이체 입금 확인 요청"
+        verbose_name_plural = "계좌이체 입금 확인 요청"
+        ordering = ["-submitted_at"]
+        indexes = [
+            models.Index(fields=["status", "submitted_at"]),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(status="SUBMITTED")
+                    | models.Q(reviewed_at__isnull=True)
+                ),
+                name="bank_notice_submitted_unreviewed",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(status__in=("CONFIRMED", "REJECTED"))
+                    | models.Q(reviewed_at__isnull=False)
+                ),
+                name="bank_notice_reviewed_has_time",
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(status="REJECTED")
+                    | ~models.Q(rejection_reason="")
+                ),
+                name="bank_notice_rejected_has_reason",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"BankTransferNotice({self.invoice.invoice_number}, "
+            f"{self.status})"
+        )

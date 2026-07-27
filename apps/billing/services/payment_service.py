@@ -155,6 +155,16 @@ def _claim_payment_attempt(
     invoice = Invoice.objects.select_for_update().select_related("tenant").get(pk=invoice_id)
 
     if (
+        invoice.billing_mode != "AUTO_CARD"
+        or program.billing_mode != "AUTO_CARD"
+    ):
+        return {
+            "claimed": False,
+            "reason": "billing_mode_changed",
+            "invoice": invoice,
+        }
+
+    if (
         program.cancel_at_period_end
         and program.subscription_expires_at is not None
         and invoice.period_start > program.subscription_expires_at

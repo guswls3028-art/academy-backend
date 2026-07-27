@@ -1,6 +1,7 @@
 from django.contrib import admin
 
 from .models import (
+    BankTransferNotice,
     BillingProfile,
     BillingKey,
     BusinessProfile,
@@ -93,3 +94,44 @@ class TaxInvoiceIssueAdmin(admin.ModelAdmin):
     )
     list_filter = ("status",)
     raw_id_fields = ("tenant", "invoice")
+
+
+@admin.register(BankTransferNotice)
+class BankTransferNoticeAdmin(admin.ModelAdmin):
+    list_display = (
+        "invoice",
+        "depositor_name",
+        "amount",
+        "status",
+        "tax_invoice_requested",
+        "deposited_at",
+        "submitted_at",
+    )
+    list_filter = ("status", "tax_invoice_requested")
+    search_fields = (
+        "invoice__invoice_number",
+        "invoice__tenant__code",
+        "depositor_name",
+    )
+    readonly_fields = (
+        "invoice",
+        "depositor_name",
+        "deposited_at",
+        "amount",
+        "status",
+        "tax_invoice_requested",
+        "business_profile_snapshot",
+        "submitted_at",
+        "reviewed_at",
+        "reviewed_by",
+        "rejection_reason",
+        "memo",
+        "created_at",
+        "updated_at",
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

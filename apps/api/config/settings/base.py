@@ -516,6 +516,16 @@ TOSS_PAYMENTS_SECRET_KEY = os.getenv("TOSS_PAYMENTS_SECRET_KEY", "")
 TOSS_PAYMENTS_CLIENT_KEY = os.getenv("TOSS_PAYMENTS_CLIENT_KEY", "")
 # 자동결제 승인 API 사용 가능 여부 (추가 계약 필요, 계약 전이면 False)
 TOSS_AUTO_BILLING_ENABLED = os.getenv("TOSS_AUTO_BILLING_ENABLED", "").lower() in ("1", "true", "yes")
+BILLING_BANK_TRANSFER_ENABLED = os.getenv(
+    "BILLING_BANK_TRANSFER_ENABLED", ""
+).lower() in ("1", "true", "yes")
+BILLING_BANK_NAME = os.getenv("BILLING_BANK_NAME", "").strip()
+BILLING_BANK_ACCOUNT_NUMBER = os.getenv(
+    "BILLING_BANK_ACCOUNT_NUMBER", ""
+).strip()
+BILLING_BANK_ACCOUNT_HOLDER = os.getenv(
+    "BILLING_BANK_ACCOUNT_HOLDER", ""
+).strip()
 BILLING_KEY_ENCRYPTION_WRITE_ENABLED = os.getenv(
     "BILLING_KEY_ENCRYPTION_WRITE_ENABLED", ""
 ).lower() in ("1", "true", "yes")

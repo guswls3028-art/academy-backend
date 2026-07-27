@@ -2,9 +2,13 @@
 Billing API Serializers.
 """
 
+import re
+
+from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import serializers
 
 from apps.billing.models import (
+    BankTransferNotice,
     BillingKey,
     BillingProfile,
     BusinessProfile,
@@ -22,16 +26,32 @@ class InvoiceStateContractSerializer(serializers.ModelSerializer):
     is_terminal = serializers.SerializerMethodField()
     can_mark_paid = serializers.SerializerMethodField()
     payment_blocked_reason = serializers.SerializerMethodField()
+    has_bank_transfer_notice = serializers.SerializerMethodField()
+
+    def get_has_bank_transfer_notice(self, obj: Invoice) -> bool:
+        try:
+            obj.bank_transfer_notice
+        except ObjectDoesNotExist:
+            return False
+        return True
 
     def get_is_terminal(self, obj: Invoice) -> bool:
         return obj.status in {"PAID", "VOID"}
 
     def get_can_mark_paid(self, obj: Invoice) -> bool:
-        return obj.status in {"PENDING", "FAILED", "OVERDUE"}
+        return (
+            obj.status in {"PENDING", "FAILED", "OVERDUE"}
+            and not self.get_has_bank_transfer_notice(obj)
+        )
 
     def get_payment_blocked_reason(self, obj: Invoice) -> str:
         if self.get_can_mark_paid(obj):
             return ""
+        if (
+            obj.status in {"PENDING", "FAILED", "OVERDUE"}
+            and self.get_has_bank_transfer_notice(obj)
+        ):
+            return "bank_transfer_review_required"
         return {
             "SCHEDULED": "invoice_not_pending",
             "PAID": "already_paid",
@@ -61,6 +81,7 @@ class InvoiceListSerializer(InvoiceStateContractSerializer):
             "is_terminal",
             "can_mark_paid",
             "payment_blocked_reason",
+            "has_bank_transfer_notice",
             "paid_at",
             "failed_at",
             "attempt_count",
@@ -93,6 +114,7 @@ class InvoiceDetailSerializer(InvoiceStateContractSerializer):
             "is_terminal",
             "can_mark_paid",
             "payment_blocked_reason",
+            "has_bank_transfer_notice",
             "paid_at",
             "failed_at",
             "failure_reason",
@@ -172,6 +194,162 @@ class BusinessProfileSerializer(serializers.ModelSerializer):
             "manager_phone",
             "manager_email",
         ]
+        read_only_fields = ["id"]
+
+    def validate_business_registration_number(self, value: str) -> str:
+        number = re.sub(r"\D", "", value or "")
+        if len(number) != 10:
+            raise serializers.ValidationError(
+                "사업자등록번호 10자리를 입력해 주세요."
+            )
+        digits = [int(char) for char in number]
+        weights = [1, 3, 7, 1, 3, 7, 1, 3, 5]
+        checksum = sum(
+            digit * weight
+            for digit, weight in zip(digits[:9], weights, strict=True)
+        )
+        checksum += (digits[8] * 5) // 10
+        if (10 - checksum % 10) % 10 != digits[9]:
+            raise serializers.ValidationError(
+                "유효한 사업자등록번호를 입력해 주세요."
+            )
+        return number
+
+
+# ──────────────────────────────────────────────
+# Bank transfer / tax invoice
+# ──────────────────────────────────────────────
+
+class BankTransferNoticeSubmitSerializer(serializers.Serializer):
+    invoice_id = serializers.IntegerField(min_value=1)
+    depositor_name = serializers.CharField(max_length=100)
+    deposited_at = serializers.DateTimeField()
+    tax_invoice_requested = serializers.BooleanField(default=False)
+
+    def validate_depositor_name(self, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("입금자명을 입력해 주세요.")
+        return value
+
+
+class BankTransferNoticeSerializer(serializers.ModelSerializer):
+    tenant_code = serializers.CharField(
+        source="invoice.tenant.code",
+        read_only=True,
+    )
+    tenant_name = serializers.CharField(
+        source="invoice.tenant.name",
+        read_only=True,
+    )
+    invoice_number = serializers.CharField(
+        source="invoice.invoice_number",
+        read_only=True,
+    )
+    invoice_status = serializers.CharField(
+        source="invoice.status",
+        read_only=True,
+    )
+    supply_amount = serializers.IntegerField(
+        source="invoice.supply_amount",
+        read_only=True,
+    )
+    tax_amount = serializers.IntegerField(
+        source="invoice.tax_amount",
+        read_only=True,
+    )
+    period_start = serializers.DateField(
+        source="invoice.period_start",
+        read_only=True,
+    )
+    period_end = serializers.DateField(
+        source="invoice.period_end",
+        read_only=True,
+    )
+    due_date = serializers.DateField(
+        source="invoice.due_date",
+        read_only=True,
+    )
+    tax_invoice_issue_id = serializers.SerializerMethodField()
+    tax_invoice_status = serializers.SerializerMethodField()
+    tax_invoice_issue_number = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.CharField(
+        source="reviewed_by.name",
+        read_only=True,
+        default="",
+    )
+
+    class Meta:
+        model = BankTransferNotice
+        fields = [
+            "id",
+            "tenant_code",
+            "tenant_name",
+            "invoice",
+            "invoice_number",
+            "invoice_status",
+            "supply_amount",
+            "tax_amount",
+            "amount",
+            "period_start",
+            "period_end",
+            "due_date",
+            "depositor_name",
+            "deposited_at",
+            "status",
+            "tax_invoice_requested",
+            "tax_invoice_issue_id",
+            "tax_invoice_status",
+            "tax_invoice_issue_number",
+            "business_profile_snapshot",
+            "submitted_at",
+            "reviewed_at",
+            "reviewed_by_name",
+            "rejection_reason",
+            "memo",
+        ]
+        read_only_fields = fields
+
+    def _tax_issue(self, obj: BankTransferNotice):
+        try:
+            return obj.invoice.tax_invoice_issue
+        except ObjectDoesNotExist:
+            return None
+
+    def get_tax_invoice_issue_id(self, obj: BankTransferNotice):
+        issue = self._tax_issue(obj)
+        return issue.pk if issue else None
+
+    def get_tax_invoice_status(self, obj: BankTransferNotice):
+        issue = self._tax_issue(obj)
+        return issue.status if issue else "NOT_REQUESTED"
+
+    def get_tax_invoice_issue_number(self, obj: BankTransferNotice):
+        issue = self._tax_issue(obj)
+        return issue.issue_number if issue else ""
+
+
+class BankTransferRejectSerializer(serializers.Serializer):
+    reason = serializers.CharField(max_length=500)
+
+    def validate_reason(self, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("반려 사유를 입력해 주세요.")
+        return value
+
+
+class TaxInvoiceMarkIssuedSerializer(serializers.Serializer):
+    issue_number = serializers.CharField(max_length=50)
+    issued_at = serializers.DateTimeField(required=False, allow_null=True)
+
+    def validate_issue_number(self, value: str) -> str:
+        value = re.sub(r"\D", "", value or "")
+        if len(value) != 24:
+            raise serializers.ValidationError(
+                "국세청 승인번호 24자리를 입력해 주세요."
+            )
+        return value
 
 
 # ──────────────────────────────────────────────

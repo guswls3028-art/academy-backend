@@ -544,6 +544,17 @@ class Command(BaseCommand):
                 or ""
             ).strip()
         )
+        bank_transfer_enabled = bool(
+            getattr(settings, "BILLING_BANK_TRANSFER_ENABLED", False)
+        )
+        bank_transfer_configured = all(
+            bool((getattr(settings, key, "") or "").strip())
+            for key in (
+                "BILLING_BANK_NAME",
+                "BILLING_BANK_ACCOUNT_NUMBER",
+                "BILLING_BANK_ACCOUNT_HOLDER",
+            )
+        )
         exempt_ids = set(getattr(settings, "BILLING_EXEMPT_TENANT_IDS", set()) or set())
 
         program = Program.objects.filter(tenant=tenant).first()
@@ -606,6 +617,19 @@ class Command(BaseCommand):
                     "toss_auto_billing_enabled": auto_billing_enabled,
                     "encrypted_billing_key_writes": encrypted_billing_key_writes,
                     "billing_primary_kek_configured": billing_primary_kek_configured,
+                },
+            ),
+            CanaryCheck(
+                name="billing_bank_transfer_account_configured",
+                severity="error",
+                ok=(not bank_transfer_enabled) or bank_transfer_configured,
+                detail=(
+                    "Enabled bank transfer billing requires a complete "
+                    "server-side collection account."
+                ),
+                data={
+                    "bank_transfer_enabled": bank_transfer_enabled,
+                    "bank_transfer_configured": bank_transfer_configured,
                 },
             ),
             CanaryCheck(

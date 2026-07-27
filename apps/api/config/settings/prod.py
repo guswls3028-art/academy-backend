@@ -230,6 +230,19 @@ if BILLING_KEY_ENCRYPTION_WRITE_ENABLED and not BILLING_KEY_ENCRYPTION_PRIMARY_K
     raise ImproperlyConfigured(
         "BILLING_KEY_ENCRYPTION_PRIMARY_KEY is required when encrypted billing-key writes are enabled."
     )
+if BILLING_BANK_TRANSFER_ENABLED and not all(
+    (
+        BILLING_BANK_NAME,
+        BILLING_BANK_ACCOUNT_NUMBER,
+        BILLING_BANK_ACCOUNT_HOLDER,
+    )
+):
+    from django.core.exceptions import ImproperlyConfigured
+
+    raise ImproperlyConfigured(
+        "Enabled bank transfer billing requires bank name, account number, "
+        "and account holder."
+    )
 if TOSS_AUTO_BILLING_ENABLED:
     if not (
         TOSS_PAYMENTS_CLIENT_KEY.startswith("live_ck_")

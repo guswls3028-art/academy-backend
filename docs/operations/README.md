@@ -18,7 +18,7 @@
 | [운영.md](운영.md) | legacy 혼합 운영 노트. 영상/배포 절차는 runbook 우선 | 일상 운영 참고 |
 | [operations-baseline.md](operations-baseline.md) | 배포/CI/보안/observability baseline |
 | [local-dev-db.md](local-dev-db.md) | 로컬 개발 DB 셋업 |
-| [billing-go-live-checklist.md](billing-go-live-checklist.md) | Toss 자동결제 오픈 전 체크리스트 |
+| [billing-go-live-checklist.md](billing-go-live-checklist.md) | 계좌이체 수납 운영 + Toss 자동결제 오픈 체크리스트 |
 
 ## Runbooks
 
