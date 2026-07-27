@@ -24,6 +24,14 @@ from .identity import (
     resolve_student_login_id,
     student_login_id_taken,
 )
+from .import_passwords import (
+    FIXED_PASSWORD_MODE,
+    PHONE_LAST4_PASSWORD_MODE,
+    RANDOM_PASSWORD_MODE,
+    StudentImportPasswordError,
+    StudentImportPasswordPolicy,
+    build_student_import_password_policy,
+)
 from .profile import (
     StudentProfileUpdateError,
     derive_omr_code,
@@ -61,6 +69,12 @@ __all__ = [
     "normalize_student_phone",
     "resolve_student_login_id",
     "student_login_id_taken",
+    "FIXED_PASSWORD_MODE",
+    "PHONE_LAST4_PASSWORD_MODE",
+    "RANDOM_PASSWORD_MODE",
+    "StudentImportPasswordError",
+    "StudentImportPasswordPolicy",
+    "build_student_import_password_policy",
     "StudentProfileUpdateError",
     "derive_omr_code",
     "normalize_phone",

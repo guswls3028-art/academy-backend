@@ -12,8 +12,11 @@ from academy.application.use_cases.ai.process_ai_job_from_sqs import PreparedJob
 from academy.application.use_cases.ai.pipelines.tier_enforcer import enforce_tier_limits
 from academy.application.use_cases.tools.worker_dispatcher import handle_tools_job
 from academy.framework.workers.ai_sqs_worker import _run_inference
-from apps.domains.ai.models import AIJobModel
+from apps.domains.ai.models import AIJobModel, AIResultModel
 from apps.domains.ai.queueing.publisher import publish_ai_job_sqs
+from apps.domains.ai.services.excel_job_secrets import (
+    EXCEL_CREDENTIALS_ENVELOPE_FIELD,
+)
 from apps.shared.contracts.ai_result import AIResult
 
 
@@ -99,6 +102,44 @@ class ToolWorkerRoutingTests(TestCase):
 
         job.refresh_from_db()
         assert job.completed_at is not None
+
+    @patch("apps.domains.ai.redis_status_cache.cache_job_status")
+    def test_excel_random_credentials_are_encrypted_and_plaintext_payload_is_scrubbed(
+        self,
+        cache_status,
+    ):
+        job = self._job("excel_parsing")
+        job.payload = {
+            **job.payload,
+            "initial_password": "plain-fixed-password",
+        }
+        job.save(update_fields=["payload", "updated_at"])
+        result = {
+            "created": 1,
+            "credentials": [{
+                "name": "보호학생",
+                "login_id": "student-1",
+                "password": "0042",
+            }],
+        }
+
+        repo = DjangoAIJobRepository()
+        with self.captureOnCommitCallbacks(execute=True):
+            assert repo.mark_done(job.job_id, timezone.now(), result)
+
+        stored = AIResultModel.objects.get(job=job).payload
+        assert stored["created"] == 1
+        assert EXCEL_CREDENTIALS_ENVELOPE_FIELD in stored
+        assert "0042" not in str(stored)
+        assert repo.get_result_payload_for_job(job) == {"created": 1}
+        assert repo.get_result_payload_for_job(
+            job,
+            include_excel_credentials=True,
+        ) == result
+        job.refresh_from_db()
+        assert "initial_password" not in job.payload
+        assert cache_status.call_args.kwargs["result"] == {"created": 1}
+        assert cache_status.call_args.kwargs["ttl"] is None
 
     def test_tools_inference_handler_bypasses_ai_dispatcher_imports(self):
         prepared = PreparedJob(

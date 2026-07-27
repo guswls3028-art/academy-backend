@@ -28,6 +28,7 @@ from .identity import (
     phone_digits,
     resolve_student_login_id,
 )
+from .import_passwords import build_student_import_password_policy
 from .lifecycle import permanently_delete_students, restore_student
 from .school import get_valid_school_types, is_valid_grade, normalize_school_from_name
 from apps.support.students.import_dependencies import get_tenant_site_url, send_welcome_messages
@@ -315,6 +316,7 @@ def resolve_student_import_row(
             tenant=tenant,
             password=initial_password,
             student_data=student_data,
+            must_change_password=True,
         )
 
     created.student._parent_password_for_notice = created.parent_password_for_notice
@@ -333,6 +335,7 @@ def import_students_from_rows(
     tenant_id: int,
     students_data: list[dict],
     initial_password: str,
+    password_mode: str = "fixed",
     send_welcome_message: bool = True,
     on_row_progress: Callable[[int, int], None] | None = None,
 ) -> dict:
@@ -353,11 +356,15 @@ def import_students_from_rows(
     if not tenant:
         raise ValueError("tenant_id not found")
 
-    initial_password = (initial_password or "").strip()
-    if len(initial_password) < 4:
-        raise ValueError("initial_password는 4자 이상이어야 합니다.")
+    password_policy = build_student_import_password_policy(
+        password_mode=password_mode,
+        initial_password=initial_password,
+    )
+    password_policy.validate_rows(students_data)
 
     created_students: list[Any] = []
+    student_password_by_id: dict[int, str] = {}
+    random_credentials: list[dict[str, str]] = []
     failed: list[dict[str, Any]] = []
     duplicates: list[dict[str, Any]] = []
     restored: list[dict[str, Any]] = []
@@ -379,10 +386,11 @@ def import_students_from_rows(
             continue
 
         try:
+            row_password = password_policy.password_for_row(row)
             resolved = resolve_student_import_row(
                 tenant,
                 row,
-                initial_password,
+                row_password,
                 identity_policy="phone_if_available",
                 valid_school_types=valid_school_types,
             )
@@ -412,6 +420,13 @@ def import_students_from_rows(
 
         if resolved.created:
             created_students.append(resolved.student)
+            student_password_by_id[resolved.student.id] = row_password
+            if password_policy.mode == "random":
+                random_credentials.append({
+                    "name": resolved.student.name or display_name,
+                    "login_id": resolved.student.ps_number or "",
+                    "password": row_password,
+                })
             if resolved.parent_phone:
                 parent_password_by_phone[resolved.parent_phone] = (
                     resolved.parent_password_for_notice
@@ -434,7 +449,8 @@ def import_students_from_rows(
         try:
             send_welcome_messages(
                 created_students=created_students,
-                student_password=initial_password,
+                student_password=password_policy.fixed_password,
+                student_password_by_id=student_password_by_id,
                 parent_password_by_phone=parent_password_by_phone,
                 site_url=get_tenant_site_url(tenant),
             )
@@ -453,7 +469,7 @@ def import_students_from_rows(
             f"이름·학부모 전화번호(010 11자리)를 확인해 주세요."
         )
 
-    return {
+    result = {
         "created": len(created_students),
         "failed": failed,
         "duplicates": duplicates,
@@ -461,6 +477,9 @@ def import_students_from_rows(
         "total": total,
         "processed_by": "worker",
     }
+    if random_credentials:
+        result["credentials"] = random_credentials
+    return result
 
 
 def resolve_student_import_conflicts(

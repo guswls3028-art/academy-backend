@@ -597,7 +597,9 @@ class ExcelParsingService:
           - file_key: str (R2 객체 키)
           - bucket: str (선택)
           - tenant_id: int (필수)
-          - initial_password: str (필수, 4자 이상)
+          - password_mode: str (fixed | phone_last4 | random, 기본 fixed)
+          - initial_password_secret: str (fixed 방식의 암호화 비밀번호)
+          - initial_password: str (배포 전 legacy job 호환)
           - lecture_id: int (선택) — 있으면 수강등록, 없으면 학생만 일괄 생성
           - session_id: int (선택, lecture_id 있을 때만)
         """
@@ -615,12 +617,20 @@ class ExcelParsingService:
         tenant_id = payload.get("tenant_id")
         lecture_id = payload.get("lecture_id")
         session_id = payload.get("session_id")
-        initial_password = (payload.get("initial_password") or "").strip()
+        password_mode = (payload.get("password_mode") or "fixed").strip()
 
         if not tenant_id:
             raise ValueError("payload.tenant_id required")
-        if len(initial_password) < 4:
-            raise ValueError("payload.initial_password 4자 이상 필요")
+        from apps.domains.ai.services.excel_job_secrets import (
+            recover_excel_initial_password,
+        )
+        from apps.domains.students.services import build_student_import_password_policy
+
+        initial_password = recover_excel_initial_password(payload)
+        password_policy = build_student_import_password_policy(
+            password_mode=password_mode,
+            initial_password=initial_password,
+        )
 
         tmp_dir = Path(tempfile.gettempdir())
         local_path = tmp_dir / f"excel_job_{job_id}.xlsx"
@@ -633,23 +643,37 @@ class ExcelParsingService:
 
             if lecture_id is not None:
                 from apps.domains.enrollment.services import lecture_enroll_from_excel_rows
+                from django.db import transaction
+                from django.utils import timezone
+                from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
 
                 if on_progress:
                     on_progress("enrolling", 50)
-                result = lecture_enroll_from_excel_rows(
-                    tenant_id=int(tenant_id),
-                    lecture_id=int(lecture_id),
-                    students_data=rows,
-                    initial_password=initial_password,
-                    session_id=int(session_id) if session_id is not None else None,
-                )
+                with transaction.atomic():
+                    result = lecture_enroll_from_excel_rows(
+                        tenant_id=int(tenant_id),
+                        lecture_id=int(lecture_id),
+                        students_data=rows,
+                        initial_password=password_policy.fixed_password,
+                        password_mode=password_policy.mode,
+                        session_id=int(session_id) if session_id is not None else None,
+                    )
+                    if isinstance(result, dict) and lecture_title:
+                        result["lecture_title"] = lecture_title
+                    if not DjangoAIJobRepository().mark_done(
+                        job_id,
+                        timezone.now(),
+                        result_payload=result,
+                    ):
+                        raise RuntimeError("excel_job_atomic_completion_failed")
                 if on_progress:
                     on_progress("enrolling", 95)
-                if isinstance(result, dict) and lecture_title:
-                    result["lecture_title"] = lecture_title
                 return result
 
             from apps.domains.students.services import import_students_from_rows
+            from django.db import transaction
+            from django.utils import timezone
+            from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
 
             _last_pct: list[int] = [-1]  # mutable for closure
 
@@ -660,18 +684,26 @@ class ExcelParsingService:
                         _last_pct[0] = pct
                         on_progress("creating", pct)
 
-            result = import_students_from_rows(
-                tenant_id=int(tenant_id),
-                students_data=rows,
-                initial_password=initial_password,
-                send_welcome_message=_payload_bool(
-                    payload.get("send_welcome_message"),
-                    default=True,
-                ),
-                on_row_progress=_row_progress if on_progress else None,
-            )
-            if isinstance(result, dict) and lecture_title:
-                result["lecture_title"] = lecture_title
+            with transaction.atomic():
+                result = import_students_from_rows(
+                    tenant_id=int(tenant_id),
+                    students_data=rows,
+                    initial_password=password_policy.fixed_password,
+                    password_mode=password_policy.mode,
+                    send_welcome_message=_payload_bool(
+                        payload.get("send_welcome_message"),
+                        default=True,
+                    ),
+                    on_row_progress=_row_progress if on_progress else None,
+                )
+                if isinstance(result, dict) and lecture_title:
+                    result["lecture_title"] = lecture_title
+                if not DjangoAIJobRepository().mark_done(
+                    job_id,
+                    timezone.now(),
+                    result_payload=result,
+                ):
+                    raise RuntimeError("excel_job_atomic_completion_failed")
             return result
         finally:
             # 더블 체크: 다운로드 성공/실패/부분 생성 여부와 관계없이 로컬 파일 삭제 시도

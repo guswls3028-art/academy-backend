@@ -33,6 +33,7 @@ from apps.support.students.view_dependencies import (
     dispatch_job,
     get_excel_parsing_job_status_response,
     get_tenant_site_url,
+    protect_excel_initial_password,
     send_event_notification,
     send_welcome_messages,
 )
@@ -43,7 +44,9 @@ from ..filters import StudentFilter
 from ..selectors import student_for_tenant_user, students_for_tenant
 from ..services import (
     StudentLifecycleError,
+    StudentImportPasswordError,
     StudentProfileUpdateError,
+    build_student_import_password_policy,
     create_student_account,
     import_students_from_rows,
     permanently_delete_students,
@@ -359,7 +362,8 @@ class StudentViewSet(ModelViewSet):
     def bulk_create_from_excel(self, request):
         """
         학생 엑셀 일괄 등록 — 워커 전담.
-        POST: multipart — file (엑셀), initial_password (4자 이상).
+        POST: multipart — file (엑셀), password_mode,
+        initial_password(fixed 방식일 때).
         응답: 202 { job_id, status }.
         """
         import logging
@@ -371,14 +375,20 @@ class StudentViewSet(ModelViewSet):
             )
         upload_file = request.FILES.get("file")
         initial_password = (request.data.get("initial_password") or "").strip()
+        password_mode = (request.data.get("password_mode") or "fixed").strip()
         send_welcome = parse_bool(
             request.data.get("send_welcome_message", True),
             field_name="send_welcome_message",
         )
         if not upload_file:
             raise ValidationError({"detail": "file(엑셀)은 필수입니다."})
-        if len(initial_password) < 4:
-            raise ValidationError({"detail": "initial_password는 4자 이상 필요합니다."})
+        try:
+            password_policy = build_student_import_password_policy(
+                password_mode=password_mode,
+                initial_password=initial_password,
+            )
+        except StudentImportPasswordError as exc:
+            raise ValidationError({"detail": str(exc)}) from exc
         validate_uploaded_file(
             upload_file,
             allowed_extensions=EXCEL_EXTENSIONS,
@@ -403,7 +413,8 @@ class StudentViewSet(ModelViewSet):
                 "file_key": file_key,
                 "bucket": bucket,
                 "tenant_id": tenant.id,
-                "initial_password": initial_password,
+                "password_mode": password_policy.mode,
+                **protect_excel_initial_password(password_policy.fixed_password),
                 "send_welcome_message": send_welcome,
             }
             out = dispatch_job(

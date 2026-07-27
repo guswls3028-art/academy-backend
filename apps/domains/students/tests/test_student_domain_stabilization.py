@@ -286,6 +286,46 @@ class TestStudentExcelUploadValidation(TestCase):
         mock_upload.assert_not_called()
         mock_dispatch.assert_not_called()
 
+    @patch("apps.domains.students.views.student_views.dispatch_job")
+    @patch("apps.domains.students.views.student_views.upload_fileobj_to_r2_excel")
+    def test_random_password_mode_does_not_require_fixed_password(self, mock_upload, mock_dispatch):
+        import io
+
+        import openpyxl
+
+        workbook = openpyxl.Workbook()
+        worksheet = workbook.active
+        worksheet.append(["이름", "학부모전화번호", "학생전화번호"])
+        worksheet.append(["랜덤업로드학생", "01070001111", "01090001234"])
+        stream = io.BytesIO()
+        workbook.save(stream)
+        upload = SimpleUploadedFile(
+            "students.xlsx",
+            stream.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        mock_dispatch.return_value = {"ok": True, "job_id": "excel-job-random"}
+        request = self.factory.post(
+            "/api/v1/students/bulk_create_from_excel/",
+            data={
+                "file": upload,
+                "password_mode": "random",
+                "initial_password": "",
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = StudentViewSet.as_view({"post": "bulk_create_from_excel"})(request)
+
+        self.assertEqual(response.status_code, 202, response.data)
+        payload = mock_dispatch.call_args.kwargs["payload"]
+        self.assertEqual(payload["password_mode"], "random")
+        self.assertNotIn("initial_password", payload)
+        self.assertNotIn("initial_password_secret", payload)
+        mock_upload.assert_called_once()
+
     def test_excel_job_status_route_accepts_uuid_job_id(self):
         url = reverse(
             "student-excel-job-status",

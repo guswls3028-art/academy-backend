@@ -33,6 +33,7 @@ def create_student_account(
     student_data: Mapping[str, Any],
     password: str | None = None,
     password_hash: str | None = None,
+    must_change_password: bool = False,
 ) -> StudentAccountCreationResult:
     """
     Create the canonical student account graph for one tenant.
@@ -79,6 +80,7 @@ def create_student_account(
             user.password = password_hash
         else:
             user.set_password(password)
+        user.must_change_password = must_change_password
         user.save()
 
         student = student_repo.student_create(

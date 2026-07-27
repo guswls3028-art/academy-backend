@@ -11,6 +11,7 @@ from academy.adapters.db.django import repositories_enrollment as enroll_repo
 from apps.support.enrollment.import_dependencies import (
     StudentImportDependencyError,
     resolve_student_import_row,
+    student_import_password_policy,
     student_import_valid_school_types,
 )
 
@@ -32,6 +33,7 @@ def lecture_enroll_from_excel_rows(
     lecture_id: int,
     students_data: list[dict],
     initial_password: str,
+    password_mode: str = "fixed",
     session_id: int | None = None,
 ) -> dict:
     """
@@ -47,13 +49,16 @@ def lecture_enroll_from_excel_rows(
     if not lecture:
         raise ValueError("해당 학원의 강의가 아닙니다.")
 
-    initial_password = (initial_password or "").strip()
-    if len(initial_password) < 4:
-        raise ValueError("initial_password는 4자 이상이어야 합니다.")
+    password_policy = student_import_password_policy(
+        password_mode=password_mode,
+        initial_password=initial_password,
+    )
+    password_policy.validate_rows(students_data)
 
     with transaction.atomic():
         student_ids: list[int] = []
         created_student_count = 0
+        random_credentials: list[dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
         valid_school_types = student_import_valid_school_types(tenant)
 
@@ -106,11 +111,12 @@ def lecture_enroll_from_excel_rows(
                 "high_school_class": raw.get("high_school_class"),
                 "major": raw.get("major"),
             }
+            row_password = password_policy.password_for_row(row)
             try:
                 resolved = resolve_student_import_row(
                     tenant,
                     row,
-                    initial_password,
+                    row_password,
                     identity_policy="phone_if_available",
                     valid_school_types=valid_school_types,
                 )
@@ -139,6 +145,12 @@ def lecture_enroll_from_excel_rows(
                 student_ids.append(student.id)
                 if resolved.created:
                     created_student_count += 1
+                    if password_policy.mode == "random":
+                        random_credentials.append({
+                            "name": student.name or name,
+                            "login_id": student.ps_number or "",
+                            "password": row_password,
+                        })
                 logger.debug(
                     "[lecture_enroll_excel] row=%s name=%r student_id=%s created=%s restored=%s duplicate=%s",
                     row_index,
@@ -217,8 +229,11 @@ def lecture_enroll_from_excel_rows(
                 defaults={"status": "PRESENT"},
             )
 
-        return {
+        result = {
             "enrolled_count": len(enrollments_created),
             "created_students_count": created_student_count,
             "session_id": target_session.id,
         }
+        if random_credentials:
+            result["credentials"] = random_credentials
+        return result

@@ -42,7 +42,10 @@ class JobProgressView(APIView):
                         status=status.HTTP_404_NOT_FOUND,
                     )
                 from apps.domains.ai.services.job_status_response import build_job_status_response
-                response_data = build_job_status_response(job_model)
+                response_data = build_job_status_response(
+                    job_model,
+                    include_excel_credentials=job_model.job_type == "excel_parsing",
+                )
                 # progress API 형식에 맞게 status만 상위로 (프론트가 status로 완료 판단)
                 return Response({
                     "job_id": job_id,
@@ -83,7 +86,25 @@ class JobProgressView(APIView):
         }
 
         if job_status in ["DONE", "FAILED", "REJECTED_BAD_INPUT", "FALLBACK_TO_GPU", "REVIEW_REQUIRED"]:
-            if "result" in cached_status:
+            if (
+                cached_status.get("job_type") == "excel_parsing"
+                and job_status == "DONE"
+            ):
+                job_model = get_job_model_for_status(
+                    job_id,
+                    tenant_id,
+                    job_type="excel_parsing",
+                )
+                if job_model:
+                    from apps.domains.ai.services.job_status_response import (
+                        build_job_status_response,
+                    )
+
+                    response_data["result"] = build_job_status_response(
+                        job_model,
+                        include_excel_credentials=True,
+                    ).get("result")
+            elif "result" in cached_status:
                 response_data["result"] = cached_status["result"]
             # status_for_exception 정책상 Lite/Basic 실패가 status=DONE으로 마킹돼도
             # error_message는 항상 노출해 silent-timeout(프론트 무한 폴링)을 방지.

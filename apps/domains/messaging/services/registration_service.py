@@ -83,6 +83,7 @@ def send_welcome_messages(
     *,
     created_students: list,
     student_password: str,
+    student_password_by_id: dict[int, str] | None = None,
     parent_password_by_phone: dict = None,
     site_url: str = "",
 ):
@@ -96,6 +97,7 @@ def send_welcome_messages(
     from .url_helpers import get_tenant_site_url
 
     parent_password_by_phone = parent_password_by_phone or {}
+    student_password_by_id = student_password_by_id or {}
     sent = 0
 
     if not created_students:
@@ -155,13 +157,17 @@ def send_welcome_messages(
         phone = (getattr(student, "phone", "") or "").replace("-", "").strip()
         parent_phone = (getattr(student, "parent_phone", "") or "").replace("-", "").strip()
         same_recipient = _same_recipient(phone, parent_phone)
+        password_for_student = student_password_by_id.get(
+            getattr(student, "id", None),
+            student_password,
+        )
 
         # 학생용 — registration_approved_student 템플릿
         if phone and len(phone) >= 10 and tmpl_student and sid_student and not same_recipient:
             replacements = {
                 "학생이름": name,
                 "학생아이디": ps_number,
-                "학생비밀번호": student_password,
+                "학생비밀번호": password_for_student,
                 "사이트링크": site_url,
                 "비밀번호안내": notice,
             }
@@ -205,7 +211,7 @@ def send_welcome_messages(
             replacements = {
                 "학생이름": name,
                 "학생아이디": ps_number,
-                "학생비밀번호": student_password,
+                "학생비밀번호": password_for_student,
                 "학부모아이디": parent_phone,
                 "학부모비밀번호": pwd,
                 "사이트링크": site_url,

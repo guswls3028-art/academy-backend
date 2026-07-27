@@ -17,6 +17,15 @@ def student_import_valid_school_types(tenant: Any):
     return _valid_types(tenant)
 
 
+def student_import_password_policy(*, password_mode: str | None, initial_password: str | None):
+    from apps.domains.students.services import build_student_import_password_policy
+
+    return build_student_import_password_policy(
+        password_mode=password_mode,
+        initial_password=initial_password,
+    )
+
+
 def resolve_student_import_row(
     tenant: Any,
     row: dict,

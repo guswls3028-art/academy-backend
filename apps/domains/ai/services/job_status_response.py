@@ -4,7 +4,12 @@
 from __future__ import annotations
 
 
-def build_job_status_response(job, result_payload=None) -> dict:
+def build_job_status_response(
+    job,
+    result_payload=None,
+    *,
+    include_excel_credentials: bool = False,
+) -> dict:
     """
     AIJobModel 인스턴스로부터 API 응답 dict 생성.
     - result: result_payload (caller 전달 또는 repository에서 조회)
@@ -12,7 +17,10 @@ def build_job_status_response(job, result_payload=None) -> dict:
     """
     if result_payload is None:
         from academy.adapters.db.django.repositories_ai import DjangoAIJobRepository
-        result_payload = DjangoAIJobRepository().get_result_payload_for_job(job)
+        result_payload = DjangoAIJobRepository().get_result_payload_for_job(
+            job,
+            include_excel_credentials=include_excel_credentials,
+        )
     progress = None
     try:
         from academy.adapters.cache.redis_progress_adapter import RedisProgressAdapter

@@ -1,8 +1,8 @@
 # 학생 생성 SSOT
 
 **상태:** Active  
-**최종 점검:** 2026-05-23  
-**코드 기준:** `apps/domains/students/services/creation.py`, `apps/domains/students/services/registration_approval.py`, `apps/domains/students/services/import_students.py`, `apps/domains/students/views/student_views.py`, `apps/domains/students/views/registration_views.py`, `apps/domains/students/services/lecture_enroll.py`, `apps/domains/students/services/bulk_from_excel.py`
+**최종 점검:** 2026-07-27
+**코드 기준:** `apps/domains/students/services/creation.py`, `apps/domains/students/services/registration_approval.py`, `apps/domains/students/services/import_students.py`, `apps/domains/students/services/import_passwords.py`, `apps/domains/students/views/student_views.py`, `apps/domains/students/views/registration_views.py`, `apps/domains/students/services/lecture_enroll.py`, `apps/domains/students/services/bulk_from_excel.py`
 
 ## 1. 책임 경계
 
@@ -31,6 +31,8 @@
 
 Excel/import/JSON bulk row orchestration SSOT는 `import_students_from_rows()`, `resolve_student_import_row()`, `resolve_student_import_conflicts()`다. 이 서비스는 학생 import 행의 중복/복원/생성 판단, school_level_mode 검증, 계정 그래프 호출, 학생-only Excel/JSON bulk welcome dispatch, delete-and-recreate conflict resolution을 소유한다. R2 업로드, AI job dispatch, HTTP 응답 모양은 여전히 view/worker compatibility boundary다.
 
+Excel 신규 학생 초기 비밀번호 정책 SSOT는 `build_student_import_password_policy()`다. `fixed`는 공통 4자 이상 비밀번호, `phone_last4`는 실제 학생 전화번호 뒤 4자리, `random`은 학생별 4자리 랜덤 비밀번호를 사용한다. `phone_last4`는 학생 전화번호가 없거나 자동 식별자를 사용한 행이 하나라도 있으면 생성 전에 전체 작업을 차단한다. 모든 Excel 신규 계정은 첫 로그인에서 비밀번호 변경이 필요하다. `fixed` 입력값과 `random` 결과는 서버 비밀키로 암호화해 AI job/result DB에 저장하고, 작업 종료 시 입력값은 제거한다. 랜덤 결과는 스태프 전용 tenant-scoped 상태 조회에서 완료 후 한 시간 동안만 복호화하며 Redis에는 평문을 캐시하지 않는다. 학생 생성과 암호화된 작업 완료 결과는 같은 DB 트랜잭션으로 커밋한다.
+
 Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 있으면 이름 50자까지 허용한다. 긴 이름을 무조건 비학생 행으로 버리면 실제 외국 이름, 관리 접두어, QA 태그가 있는 정상 행이 `등록할 학생 데이터가 없습니다.`로 실패할 수 있다.
 
 알림톡 outbox화와 단건 생성 duplicate response shape 수렴은 별도 슬라이스다.
@@ -58,6 +60,7 @@ Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 
 - 신규 학생 생성 welcome은 SYSTEM_AUTO다. legacy `send_welcome_message=false` 입력은 호환용으로만 받으며 계정 안내 발송을 끄지 않는다.
 - 학생 전화번호를 나중에 최초 등록하면 기존 학생 계정의 아이디 안내를 새 학생 번호로 발송한다. 비밀번호 변수는 `변경되지 않음`이다.
 - 복원은 생성이 아니므로 비밀번호를 재발급하지 않고 welcome 알림톡도 새 비밀번호처럼 보내지 않는다.
+- Excel 비밀번호 방식이 학생별로 달라지는 경우 welcome 알림톡은 학생 ID별 비밀번호 매핑을 사용한다.
 - 가입 신청 승인 알림톡 실패는 이미 커밋된 승인/학생 생성을 API 500으로 되돌리지 않는다. 발송 장애는 운영 로그/알림 재처리 대상이다.
 
 ## 4. Frontend 계약
@@ -65,7 +68,9 @@ Excel 파서의 학생 행 판별은 유효한 학부모/학생 전화번호가 
 - 학생 생성 API 호출은 `src/shared/api/contracts/students.ts`의 `createStudent()`가 canonical mapper다.
 - teacher 모바일 생성 시트는 role-local raw `/students/` POST를 쓰지 않고 shared contract를 호출한다.
 - admin/teacher Excel 업로드의 `sendWelcomeMessage`/`send_welcome_message` 값은 legacy compatibility 입력이다. 백엔드는 신규 계정 안내를 SYSTEM_AUTO로 발송한다.
-- teacher 모바일 Excel 업로드도 파일 선택 직후 즉시 업로드하지 않는다. `StudentListPage`의 Excel import bottom sheet에서 초기 비밀번호를 명시 확정한 뒤 shared upload contract를 호출한다.
+- admin/teacher Excel 업로드는 `phone_last4`를 기본으로 표시하고 `fixed`, `random`을 선택할 수 있다.
+- teacher 모바일 Excel 업로드도 파일 선택 직후 즉시 업로드하지 않는다. `StudentListPage`의 Excel import bottom sheet에서 초기 비밀번호 방식을 명시 확정한 뒤 shared upload contract를 호출한다.
+- `random` 작업 완료 시 작업박스에서 비밀번호 목록을 자동 다운로드하며, 완료 항목의 `비밀번호 목록` 버튼으로 다시 받을 수 있다.
 
 ## 5. 검증 기준
 

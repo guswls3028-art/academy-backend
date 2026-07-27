@@ -9,6 +9,47 @@ from typing import Optional
 from academy.domain.ai.entities import AIJob, AIJobStatus  # noqa: F401
 
 
+def _persistent_job_result(
+    job_type: str,
+    result_payload: Optional[dict],
+    *,
+    now: datetime,
+) -> Optional[dict]:
+    if job_type != "excel_parsing" or not isinstance(result_payload, dict):
+        return result_payload
+    from apps.domains.ai.services.excel_job_secrets import secure_excel_result
+
+    return secure_excel_result(result_payload, now=now)
+
+
+def _public_job_result(
+    job_type: str,
+    stored_payload: Optional[dict],
+    *,
+    include_excel_credentials: bool = False,
+) -> Optional[dict]:
+    if job_type != "excel_parsing" or not isinstance(stored_payload, dict):
+        return stored_payload
+    from apps.domains.ai.services.excel_job_secrets import public_excel_result
+
+    return public_excel_result(
+        stored_payload,
+        include_credentials=include_excel_credentials,
+    )
+
+
+def _scrub_terminal_job_payload(job) -> bool:
+    if job.job_type != "excel_parsing":
+        return False
+    from apps.domains.ai.services.excel_job_secrets import scrub_excel_job_payload
+
+    scrubbed = scrub_excel_job_payload(job.payload or {})
+    if scrubbed == (job.payload or {}):
+        return False
+    job.payload = scrubbed
+    return True
+
+
 def _model_to_entity(m) -> Optional[AIJob]:
     if m is None:
         return None
@@ -190,32 +231,58 @@ class DjangoAIJobRepository:
         return True
 
     def mark_done(self, job_id: str, now: datetime, result_payload: Optional[dict] = None) -> bool:
+        from django.db import transaction
         from apps.domains.ai.models import AIJobModel, AIResultModel
         job = AIJobModel.objects.select_for_update().filter(job_id=job_id).first()
         if not job:
             return False
+        persistent_result = _persistent_job_result(
+            job.job_type,
+            result_payload,
+            now=now,
+        )
+        payload_scrubbed = _scrub_terminal_job_payload(job)
         if job.status == "DONE":
             if job.completed_at is None:
                 job.completed_at = now
-                job.save(update_fields=["completed_at", "updated_at"])
-            if result_payload is not None:
-                res, _ = AIResultModel.objects.get_or_create(job=job, defaults={"payload": result_payload})
-                if res.payload != result_payload:
-                    res.payload = result_payload
+                update_fields = ["completed_at", "updated_at"]
+                if payload_scrubbed:
+                    update_fields.append("payload")
+                job.save(update_fields=update_fields)
+            elif payload_scrubbed:
+                job.save(update_fields=["payload", "updated_at"])
+            if persistent_result is not None:
+                res, _ = AIResultModel.objects.get_or_create(job=job, defaults={"payload": persistent_result})
+                if res.payload != persistent_result:
+                    res.payload = persistent_result
                     res.save(update_fields=["payload"])
+            transaction.on_commit(
+                lambda: self._cache_done_status(job, persistent_result)
+            )
             return True
         job.status = "DONE"
         job.locked_by = None
         job.locked_at = None
         job.lease_expires_at = None
         job.completed_at = now
-        job.save(update_fields=["status", "locked_by", "locked_at", "lease_expires_at", "completed_at", "updated_at"])
-        if result_payload is not None:
-            res, _ = AIResultModel.objects.get_or_create(job=job, defaults={"payload": result_payload})
-            if res.payload != result_payload:
-                res.payload = result_payload
+        update_fields = ["status", "locked_by", "locked_at", "lease_expires_at", "completed_at", "updated_at"]
+        if payload_scrubbed:
+            update_fields.append("payload")
+        job.save(update_fields=update_fields)
+        if persistent_result is not None:
+            res, _ = AIResultModel.objects.get_or_create(job=job, defaults={"payload": persistent_result})
+            if res.payload != persistent_result:
+                res.payload = persistent_result
                 res.save(update_fields=["payload"])
-        # ✅ 완료 시 Redis에 DONE 기록 (진행 상황 위젯 폴링용)
+        transaction.on_commit(
+            lambda: self._cache_done_status(job, persistent_result)
+        )
+        return True
+
+    @staticmethod
+    def _cache_done_status(job, persistent_result: Optional[dict]) -> None:
+        # Redis에는 공개 결과만 캐시한다. 랜덤 비밀번호는 암호화된 DB 결과에서
+        # staff-only 상태 조회 시 한 시간 동안만 복호화한다.
         try:
             from apps.domains.ai.redis_status_cache import cache_job_status
             cache_job_status(
@@ -223,13 +290,12 @@ class DjangoAIJobRepository:
                 job_id=job.job_id,
                 status="DONE",
                 job_type=job.job_type,
-                result=result_payload,
+                result=_public_job_result(job.job_type, persistent_result),
                 ttl=None,
             )
         except Exception as e:
             import logging
             logging.getLogger(__name__).warning("Failed to cache DONE in Redis: %s", e)
-        return True
 
     def mark_failed(
         self,
@@ -244,10 +310,16 @@ class DjangoAIJobRepository:
         if not job:
             return False
         final_str, _ = status_for_exception(tier or job.tier or "basic", job.job_type)
+        payload_scrubbed = _scrub_terminal_job_payload(job)
         if job.status == final_str:
             if job.completed_at is None:
                 job.completed_at = now
-                job.save(update_fields=["completed_at", "updated_at"])
+                update_fields = ["completed_at", "updated_at"]
+                if payload_scrubbed:
+                    update_fields.append("payload")
+                job.save(update_fields=update_fields)
+            elif payload_scrubbed:
+                job.save(update_fields=["payload", "updated_at"])
             return True
         err = (error_message or "")[:2000]
         job.status = final_str
@@ -257,7 +329,10 @@ class DjangoAIJobRepository:
         job.locked_at = None
         job.lease_expires_at = None
         job.completed_at = now
-        job.save(update_fields=["status", "error_message", "last_error", "locked_by", "locked_at", "lease_expires_at", "completed_at", "updated_at"])
+        update_fields = ["status", "error_message", "last_error", "locked_by", "locked_at", "lease_expires_at", "completed_at", "updated_at"]
+        if payload_scrubbed:
+            update_fields.append("payload")
+        job.save(update_fields=update_fields)
         # ✅ 실패 시 Redis에 최종 상태 기록 (진행 상황 위젯 폴링용)
         try:
             from apps.domains.ai.redis_status_cache import cache_job_status
@@ -282,11 +357,22 @@ class DjangoAIJobRepository:
             qs = qs.filter(job_type=job_type)
         return qs.first()
 
-    def get_result_payload_for_job(self, job_model) -> Optional[dict]:
+    def get_result_payload_for_job(
+        self,
+        job_model,
+        *,
+        include_excel_credentials: bool = False,
+    ) -> Optional[dict]:
         """job(AIJobModel)에 대한 결과 payload 반환."""
         from apps.domains.ai.models import AIResultModel
         row = AIResultModel.objects.filter(job=job_model).first()
-        return row.payload if row else None
+        if not row:
+            return None
+        return _public_job_result(
+            job_model.job_type,
+            row.payload,
+            include_excel_credentials=include_excel_credentials,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +435,10 @@ def job_save_failed(job_model, error_message: str, last_error: str) -> None:
         locked.status = "FAILED"
         locked.error_message = error_message
         locked.last_error = last_error
-        locked.save(update_fields=["status", "error_message", "last_error", "updated_at"])
+        update_fields = ["status", "error_message", "last_error", "updated_at"]
+        if _scrub_terminal_job_payload(locked):
+            update_fields.append("payload")
+        locked.save(update_fields=update_fields)
 
 
 def result_exists_for_job(job_model) -> bool:

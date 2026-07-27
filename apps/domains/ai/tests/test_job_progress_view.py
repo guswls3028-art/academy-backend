@@ -2,6 +2,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.utils import timezone
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 from apps.core.models import Tenant, TenantMembership
@@ -28,10 +29,10 @@ class JobProgressViewTests(TestCase):
         )
         TenantMembership.ensure_active(tenant=self.tenant, user=self.user, role="owner")
 
-    def _request(self, job_id: str):
+    def _request(self, job_id: str, *, user=None):
         request = self.factory.get(f"/api/v1/jobs/{job_id}/progress/")
         request.tenant = self.tenant
-        force_authenticate(request, user=self.user)
+        force_authenticate(request, user=user or self.user)
         return JobProgressView.as_view()(request, job_id=job_id)
 
     @patch("academy.adapters.cache.redis_progress_adapter.RedisProgressAdapter.get_progress", return_value=None)
@@ -81,3 +82,77 @@ class JobProgressViewTests(TestCase):
         self.assertEqual(response.data["status"], "UNKNOWN")
         self.assertNotIn("job_type", response.data)
         mock_redis_status.assert_called_once_with(str(self.tenant.id), job.job_id)
+
+    @patch("apps.domains.ai.views.job_progress_view.get_job_status_from_redis")
+    def test_excel_job_result_is_hidden_from_student_members(self, mock_redis_status):
+        mock_redis_status.return_value = {
+            "job_id": "excel-secret-job",
+            "job_type": "excel_parsing",
+            "status": "DONE",
+            "result": {
+                "credentials": [{
+                    "name": "보호학생",
+                    "login_id": "student-1",
+                    "password": "0042",
+                }],
+            },
+        }
+        from apps.domains.students.services import create_student_account
+
+        student_user = create_student_account(
+            tenant=self.tenant,
+            password="test1234",
+            student_data={
+                "name": "진행조회학생",
+                "ps_number": "AI-PROGRESS-STUDENT",
+                "phone": "01090001111",
+                "parent_phone": "01070001111",
+                "school_type": "HIGH",
+                "grade": 1,
+                "uses_identifier": False,
+            },
+        ).student.user
+
+        response = self._request("excel-secret-job", user=student_user)
+
+        self.assertEqual(response.status_code, 404, response.data)
+        self.assertNotIn("result", response.data)
+
+    @patch("apps.domains.ai.views.job_progress_view.get_job_status_from_redis")
+    def test_staff_can_recover_encrypted_excel_credentials_when_redis_is_sanitized(
+        self,
+        mock_redis_status,
+    ):
+        job = AIJobModel.objects.create(
+            job_id="excel-encrypted-result",
+            job_type="excel_parsing",
+            status="RUNNING",
+            tenant_id=str(self.tenant.id),
+            tier="basic",
+            payload={},
+        )
+        credentials = [{
+            "name": "보호학생",
+            "login_id": "student-1",
+            "password": "0042",
+        }]
+        from academy.adapters.db.django.repositories_ai import (
+            DjangoAIJobRepository,
+        )
+
+        DjangoAIJobRepository().mark_done(
+            job.job_id,
+            timezone.now(),
+            {"created": 1, "credentials": credentials},
+        )
+        mock_redis_status.return_value = {
+            "job_id": job.job_id,
+            "job_type": "excel_parsing",
+            "status": "DONE",
+            "result": {"created": 1},
+        }
+
+        response = self._request(job.job_id)
+
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["result"]["credentials"], credentials)

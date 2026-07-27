@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from io import BytesIO
 from unittest.mock import patch
 
+import openpyxl
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
@@ -11,8 +13,23 @@ from apps.core.models.tenant import Tenant
 from apps.core.models.tenant_membership import TenantMembership
 from apps.domains.enrollment.views import EnrollmentViewSet
 from apps.domains.lectures.models import Lecture
+from apps.domains.ai.services.excel_job_secrets import decrypt_excel_job_secret
 
 User = get_user_model()
+
+
+def _valid_xlsx_upload() -> SimpleUploadedFile:
+    workbook = openpyxl.Workbook()
+    worksheet = workbook.active
+    worksheet.append(["이름", "학부모전화번호", "학생전화번호"])
+    worksheet.append(["업로드학생", "01070001111", "01090001234"])
+    stream = BytesIO()
+    workbook.save(stream)
+    return SimpleUploadedFile(
+        "students.xlsx",
+        stream.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 class EnrollmentExcelUploadValidationTests(TestCase):
@@ -88,3 +105,63 @@ class EnrollmentExcelUploadValidationTests(TestCase):
         self.assertEqual(response.status_code, 400, response.data)
         mock_upload.assert_not_called()
         mock_dispatch.assert_not_called()
+
+    @patch("apps.domains.enrollment.views.dispatch_job")
+    @patch("apps.domains.enrollment.views.upload_fileobj_to_r2_excel")
+    def test_phone_last4_mode_does_not_require_fixed_password(self, mock_upload, mock_dispatch):
+        mock_dispatch.return_value = {"ok": True, "job_id": "excel-job-1"}
+        request = self.factory.post(
+            "/api/v1/enrollments/lecture_enroll_from_excel/",
+            data={
+                "file": _valid_xlsx_upload(),
+                "lecture_id": self.lecture.id,
+                "password_mode": "phone_last4",
+                "initial_password": "",
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = EnrollmentViewSet.as_view({"post": "lecture_enroll_from_excel"})(request)
+
+        self.assertEqual(response.status_code, 202, response.data)
+        payload = mock_dispatch.call_args.kwargs["payload"]
+        self.assertEqual(payload["password_mode"], "phone_last4")
+        self.assertNotIn("initial_password", payload)
+        self.assertNotIn("initial_password_secret", payload)
+        mock_upload.assert_called_once()
+
+    @patch("apps.domains.enrollment.views.dispatch_job")
+    @patch("apps.domains.enrollment.views.upload_fileobj_to_r2_excel")
+    def test_fixed_password_is_encrypted_before_job_dispatch(
+        self,
+        mock_upload,
+        mock_dispatch,
+    ):
+        mock_dispatch.return_value = {"ok": True, "job_id": "excel-job-fixed"}
+        request = self.factory.post(
+            "/api/v1/enrollments/lecture_enroll_from_excel/",
+            data={
+                "file": _valid_xlsx_upload(),
+                "lecture_id": self.lecture.id,
+                "password_mode": "fixed",
+                "initial_password": "fixed-secret-1234",
+            },
+            format="multipart",
+        )
+        force_authenticate(request, user=self.admin)
+        request.tenant = self.tenant
+
+        response = EnrollmentViewSet.as_view(
+            {"post": "lecture_enroll_from_excel"}
+        )(request)
+
+        self.assertEqual(response.status_code, 202, response.data)
+        payload = mock_dispatch.call_args.kwargs["payload"]
+        self.assertNotIn("initial_password", payload)
+        self.assertNotIn("fixed-secret-1234", payload["initial_password_secret"])
+        self.assertEqual(
+            decrypt_excel_job_secret(payload["initial_password_secret"]),
+            "fixed-secret-1234",
+        )

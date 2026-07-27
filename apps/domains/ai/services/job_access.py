@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 STAFF_ONLY_JOB_TYPES = frozenset({
+    "excel_parsing",
     "problem_studio_package",
     "problem_studio_transfer",
     "problem_studio_transcription",
