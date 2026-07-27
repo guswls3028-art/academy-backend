@@ -24,6 +24,7 @@ from apps.billing.services.billing_key_crypto import (
     BillingKeyCryptoError,
     decrypt_billing_key,
     encrypt_billing_key,
+    fingerprint_billing_key,
 )
 
 logger = logging.getLogger(__name__)
@@ -286,6 +287,7 @@ def issue_billing_key(tenant_id: int, auth_key: str) -> BillingKey:
                 billing_profile=profile,
                 provider="tosspayments",
                 billing_key=encrypt_billing_key(issued_key),
+                provider_key_fingerprint=fingerprint_billing_key(issued_key),
                 card_company=card_company,
                 card_number_masked=card_number,
                 is_active=True,
@@ -354,6 +356,49 @@ def issue_billing_key(tenant_id: int, auth_key: str) -> BillingKey:
         tenant_id, billing_key.card_number_masked, billing_key.card_company,
     )
     return billing_key
+
+
+def deactivate_billing_key_from_webhook(provider_billing_key: str) -> str:
+    """Deactivate the exact active key named by Toss BILLING_DELETED."""
+    if (
+        not isinstance(provider_billing_key, str)
+        or not provider_billing_key
+        or len(provider_billing_key) > 200
+    ):
+        return "invalid_billing_key"
+
+    fingerprint = fingerprint_billing_key(provider_billing_key)
+    snapshot = (
+        BillingKey.objects.filter(
+            provider="tosspayments",
+            provider_key_fingerprint=fingerprint,
+            is_active=True,
+        )
+        .values("id", "tenant_id")
+        .first()
+    )
+    if snapshot is None:
+        return "unmatched"
+
+    with transaction.atomic():
+        from apps.core.models.program import Program
+
+        Program.objects.select_for_update().get(tenant_id=snapshot["tenant_id"])
+        billing_key = BillingKey.objects.select_for_update().get(pk=snapshot["id"])
+        if not billing_key.is_active:
+            return "already_deactivated"
+        if billing_key.provider_key_fingerprint != fingerprint:
+            return "unmatched"
+        billing_key.is_active = False
+        billing_key.deactivated_at = timezone.now()
+        billing_key.save(update_fields=["is_active", "deactivated_at", "updated_at"])
+
+    logger.warning(
+        "Billing key deactivated from provider webhook: tenant=%s key_id=%s",
+        snapshot["tenant_id"],
+        snapshot["id"],
+    )
+    return "deactivated"
 
 
 def delete_billing_key(billing_key_id: int) -> bool:

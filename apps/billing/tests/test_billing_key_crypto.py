@@ -12,6 +12,7 @@ from apps.billing.services.billing_key_crypto import (
     BillingKeyDecryptionError,
     decrypt_billing_key,
     encrypt_billing_key,
+    fingerprint_billing_key,
     reencrypt_billing_key,
 )
 from apps.core.models import Tenant
@@ -38,6 +39,16 @@ class BillingKeyCryptoTests(SimpleTestCase):
     def test_phase_a_write_keeps_rolling_plaintext_compatibility(self):
         self.assertEqual(encrypt_billing_key("legacy-token"), "legacy-token")
         self.assertEqual(decrypt_billing_key("legacy-token"), "legacy-token")
+
+    def test_fingerprint_is_stable_and_does_not_contain_plaintext(self):
+        fingerprint = fingerprint_billing_key("billing-secret-token")
+
+        self.assertEqual(len(fingerprint), 64)
+        self.assertEqual(
+            fingerprint,
+            fingerprint_billing_key("billing-secret-token"),
+        )
+        self.assertNotIn("billing-secret-token", fingerprint)
 
     @override_settings(
         BILLING_KEY_ENCRYPTION_PRIMARY_KEY=NEW_KEK,
@@ -200,4 +211,8 @@ class BillingKeyRotationCommandTests(TestCase):
 
         self.assertTrue(direct.billing_key.startswith("enc:v1:"))
         self.assertNotIn("direct-model-provider-key", direct.billing_key)
+        self.assertEqual(
+            direct.provider_key_fingerprint,
+            fingerprint_billing_key("direct-model-provider-key"),
+        )
         self.assertIn("billing_key", BillingKeyAdmin.exclude)

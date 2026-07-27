@@ -45,6 +45,6 @@ urlpatterns = [
     path("cancel/", CancelSubscriptionView.as_view(), name="billing-cancel"),
     path("cancel/revoke/", RevokeCancelView.as_view(), name="billing-cancel-revoke"),
 
-    # ── Toss 웹훅 (공개, 서명 검증) ──
+    # ── Toss 웹훅 (공개, 결제 재조회 / 빌링키 fingerprint 검증) ──
     path("webhooks/toss/", TossWebhookView.as_view(), name="billing-webhook-toss"),
 ]

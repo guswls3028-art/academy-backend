@@ -113,6 +113,30 @@ UI/API 소비자는 `monthly_supply_amount`, `monthly_tax_amount`,
 
 **왜 내가 못하나:** 키 값 자체를 1단계 이후에만 얻을 수 있음.
 
+키를 로컬 보안 파일로 받은 뒤에는 값을 명령행이나 로그에 노출하지 않는 전용
+스크립트를 우선 사용한다.
+
+```powershell
+# Phase A: 테스트 키 저장 + 카드 등록 검증. 실제 자동결제는 계속 OFF.
+pwsh scripts/v1/set-toss-billing.ps1 `
+  -Mode Test `
+  -ClientKeyFile C:\secure\toss-client-key.txt `
+  -SecretKeyFile C:\secure\toss-secret-key.txt `
+  -RefreshInstances
+
+# Phase B: 라이브 키 저장 + 실제 자동결제 ON.
+pwsh scripts/v1/set-toss-billing.ps1 `
+  -Mode Live `
+  -ClientKeyFile C:\secure\toss-client-key.txt `
+  -SecretKeyFile C:\secure\toss-secret-key.txt `
+  -EnableAutoBilling `
+  -RefreshInstances
+```
+
+운영에서 `TOSS_AUTO_BILLING_ENABLED=true`는 `live_ck_`/`live_sk_` 키 한 세트,
+암호문 writer, primary KEK가 모두 준비된 경우에만 서버가 기동된다. 테스트 키로
+전역 자동결제를 켜는 것은 부팅 단계에서 차단한다.
+
 **무엇을 하나:**
 
 ```bash
@@ -250,7 +274,9 @@ python manage.py audit_billing_fields --strict
 1. Toss 가맹점 관리자 → **개발자 센터 > 웹훅** 메뉴
 2. "웹훅 추가" 클릭
 3. URL: `https://api.hakwonplus.com/api/v1/billing/webhooks/toss/` (끝 슬래시 필수)
-4. 이벤트 구독: **Payment.Status.Changed** (결제 상태 변경) 체크
+4. 이벤트 구독:
+   - **Payment.Status.Changed** (결제 상태 변경)
+   - **Billing.Deleted** / `BILLING_DELETED` (빌링키 삭제)
 5. 저장
 6. Toss 화면에서 "테스트 전송" 클릭
 7. 확인:

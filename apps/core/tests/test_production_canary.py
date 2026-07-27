@@ -253,6 +253,38 @@ class ProductionCanaryTests(TestCase):
         self.assertFalse(check["ok"])
         self.assertEqual(check["severity"], "error")
 
+    @override_settings(
+        TOSS_AUTO_BILLING_ENABLED=True,
+        TOSS_PAYMENTS_CLIENT_KEY="test_ck_not_live",
+        TOSS_PAYMENTS_SECRET_KEY="test_sk_not_live",
+    )
+    def test_auto_billing_enabled_with_test_keys_fails_live_pair_check(self):
+        payload = self._call_expect_fail()
+
+        check = next(
+            item for item in payload["checks"]
+            if item["name"] == "billing_auto_enabled_has_live_key_pair"
+        )
+        self.assertFalse(check["ok"])
+        self.assertEqual(check["severity"], "error")
+
+    @override_settings(
+        TOSS_AUTO_BILLING_ENABLED=True,
+        TOSS_PAYMENTS_CLIENT_KEY="live_ck_billing",
+        TOSS_PAYMENTS_SECRET_KEY="live_sk_billing",
+        BILLING_KEY_ENCRYPTION_WRITE_ENABLED=False,
+        BILLING_KEY_ENCRYPTION_PRIMARY_KEY="",
+    )
+    def test_auto_billing_enabled_without_encrypted_storage_fails(self):
+        payload = self._call_expect_fail()
+
+        check = next(
+            item for item in payload["checks"]
+            if item["name"] == "billing_auto_enabled_has_encrypted_key_storage"
+        )
+        self.assertFalse(check["ok"])
+        self.assertEqual(check["severity"], "error")
+
     def test_fee_management_is_available_without_allowlist(self):
         self.program.feature_flags = {"fee_management": False}
         self.program.save(update_fields=["feature_flags", "updated_at"])

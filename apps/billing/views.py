@@ -542,7 +542,24 @@ class TossWebhookView(APIView):
         logger.info("Toss webhook received: event=%s orderId=%s status=%s",
                     event_type, data.get("orderId"), data.get("status"))
 
-        if event_type.upper() == "PAYMENT_STATUS_CHANGED":
+        normalized_event_type = event_type.upper()
+        if normalized_event_type == "BILLING_DELETED":
+            provider_billing_key = data.get("billingKey")
+            if (
+                not isinstance(provider_billing_key, str)
+                or not provider_billing_key
+                or len(provider_billing_key) > 200
+            ):
+                return Response(
+                    {"detail": "billingKey is required"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            result = billing_key_service.deactivate_billing_key_from_webhook(
+                provider_billing_key
+            )
+            return Response({"ok": True, "result": result})
+
+        if normalized_event_type == "PAYMENT_STATUS_CHANGED":
             order_id = data.get("orderId")
             if not isinstance(order_id, str):
                 return Response({"detail": "orderId is required"}, status=status.HTTP_400_BAD_REQUEST)

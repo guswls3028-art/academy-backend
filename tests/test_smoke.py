@@ -299,6 +299,35 @@ class TestWriteApiRegistered(TestCase):
 class TestSettingsIntegrity(TestCase):
     """Test settings must be safe for CI."""
 
+    def _load_prod_settings(self, **overrides):
+        env = os.environ.copy()
+        env.update(
+            {
+                "SECRET_KEY": "test-production-secret-key-with-safe-length",
+                "MESSAGING_TENANT_BINDING_KEY": (
+                    "test-production-messaging-binding-key"
+                ),
+                "TOSS_AUTO_BILLING_ENABLED": "false",
+                "TOSS_PAYMENTS_CLIENT_KEY": "",
+                "TOSS_PAYMENTS_SECRET_KEY": "",
+                "BILLING_KEY_ENCRYPTION_WRITE_ENABLED": "false",
+                "BILLING_KEY_ENCRYPTION_PRIMARY_KEY": "",
+            }
+        )
+        env.update(overrides)
+        return subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import apps.api.config.settings.prod",
+            ],
+            cwd=Path(__file__).resolve().parents[1],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
     def test_settings_no_debug_in_test(self):
         """DEBUG must be False in test mode."""
         self.assertFalse(
@@ -339,4 +368,42 @@ class TestSettingsIntegrity(TestCase):
             text=True,
             check=False,
         )
+        self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+
+    def test_prod_auto_billing_rejects_test_key_pair(self):
+        result = self._load_prod_settings(
+            TOSS_AUTO_BILLING_ENABLED="true",
+            TOSS_PAYMENTS_CLIENT_KEY="test_ck_not_live",
+            TOSS_PAYMENTS_SECRET_KEY="test_sk_not_live",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("live_ck_/live_sk_", result.stderr or result.stdout)
+
+    def test_prod_auto_billing_rejects_unencrypted_key_storage(self):
+        result = self._load_prod_settings(
+            TOSS_AUTO_BILLING_ENABLED="true",
+            TOSS_PAYMENTS_CLIENT_KEY="live_ck_billing",
+            TOSS_PAYMENTS_SECRET_KEY="live_sk_billing",
+            BILLING_KEY_ENCRYPTION_WRITE_ENABLED="false",
+            BILLING_KEY_ENCRYPTION_PRIMARY_KEY="",
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            "encrypted billing-key writes",
+            result.stderr or result.stdout,
+        )
+
+    def test_prod_auto_billing_accepts_live_keys_with_encrypted_storage(self):
+        result = self._load_prod_settings(
+            TOSS_AUTO_BILLING_ENABLED="true",
+            TOSS_PAYMENTS_CLIENT_KEY="live_ck_billing",
+            TOSS_PAYMENTS_SECRET_KEY="live_sk_billing",
+            BILLING_KEY_ENCRYPTION_WRITE_ENABLED="true",
+            BILLING_KEY_ENCRYPTION_PRIMARY_KEY=(
+                "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA="
+            ),
+        )
+
         self.assertEqual(result.returncode, 0, result.stderr or result.stdout)

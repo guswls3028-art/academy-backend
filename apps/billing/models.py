@@ -90,6 +90,12 @@ class BillingKey(TimestampModel):
     billing_key = models.CharField(
         max_length=512, help_text="PG사 빌링키 (애플리케이션 암호화 저장)"
     )
+    provider_key_fingerprint = models.CharField(
+        max_length=64,
+        blank=True,
+        db_index=True,
+        help_text="PG 빌링키 SHA-256 식별자 (삭제 웹훅 조회용)",
+    )
     card_company = models.CharField(
         max_length=50, blank=True, help_text="카드사 (예: 삼성, 현대)"
     )
@@ -122,14 +128,27 @@ class BillingKey(TimestampModel):
     def save(self, *args, **kwargs):
         # Defense in depth for admin or future sanctioned model writers. Bulk
         # mutation remains intentionally outside this API and is audited.
-        from apps.billing.services.billing_key_crypto import encrypt_billing_key
+        from apps.billing.services.billing_key_crypto import (
+            ENCRYPTED_PREFIX,
+            encrypt_billing_key,
+            fingerprint_billing_key,
+        )
 
-        encrypted_value = encrypt_billing_key(self.billing_key)
+        plaintext_value = str(self.billing_key or "")
+        normalized_fields: list[str] = []
+        if plaintext_value and not plaintext_value.startswith(ENCRYPTED_PREFIX):
+            fingerprint = fingerprint_billing_key(plaintext_value)
+            if fingerprint and self.provider_key_fingerprint != fingerprint:
+                self.provider_key_fingerprint = fingerprint
+                normalized_fields.append("provider_key_fingerprint")
+
+        encrypted_value = encrypt_billing_key(plaintext_value)
         if encrypted_value != self.billing_key:
             self.billing_key = encrypted_value
-            update_fields = kwargs.get("update_fields")
-            if update_fields is not None:
-                kwargs["update_fields"] = {*update_fields, "billing_key"}
+            normalized_fields.append("billing_key")
+        update_fields = kwargs.get("update_fields")
+        if update_fields is not None and normalized_fields:
+            kwargs["update_fields"] = {*update_fields, *normalized_fields}
         super().save(*args, **kwargs)
 
 

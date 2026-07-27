@@ -6,7 +6,7 @@ Checks:
 2. subscription_expires_at NULL (active/grace, non-exempt)
 3. persisted active/grace status past its effective access period
 4. single-plan and monthly_price integrity (blocking)
-5. plaintext or undecryptable billing credentials
+5. plaintext, undecryptable, or unindexable billing credentials
 
 Usage:
   python manage.py audit_billing_fields                            # audit only (read-only)
@@ -230,6 +230,18 @@ class Command(BaseCommand):
         if tenant_code:
             billing_keys = billing_keys.filter(tenant__code=tenant_code)
         for billing_key in billing_keys.order_by("tenant__code", "id"):
+            if billing_key.is_active and not billing_key.provider_key_fingerprint:
+                issues.append({
+                    "program": getattr(billing_key.tenant, "program", None),
+                    "code": billing_key.tenant.code,
+                    "is_exempt": billing_key.tenant_id in exempt,
+                    "msg": (
+                        f"  [SECURITY] {billing_key.tenant.code:15s} "
+                        f"missing_billing_key_fingerprint id={billing_key.id} "
+                        "(rotate or re-register before enabling automatic billing)"
+                    ),
+                    "fix_value": None,
+                })
             if billing_key.billing_key.startswith(ENCRYPTED_PREFIX):
                 try:
                     decrypt_billing_key(billing_key.billing_key)

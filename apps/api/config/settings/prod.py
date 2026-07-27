@@ -228,6 +228,25 @@ if BILLING_KEY_ENCRYPTION_WRITE_ENABLED and not BILLING_KEY_ENCRYPTION_PRIMARY_K
     raise ImproperlyConfigured(
         "BILLING_KEY_ENCRYPTION_PRIMARY_KEY is required when encrypted billing-key writes are enabled."
     )
+if TOSS_AUTO_BILLING_ENABLED:
+    if not (
+        TOSS_PAYMENTS_CLIENT_KEY.startswith("live_ck_")
+        and TOSS_PAYMENTS_SECRET_KEY.startswith("live_sk_")
+    ):
+        from django.core.exceptions import ImproperlyConfigured
+
+        raise ImproperlyConfigured(
+            "Production automatic billing requires a live_ck_/live_sk_ Toss key pair."
+        )
+    if (
+        not BILLING_KEY_ENCRYPTION_WRITE_ENABLED
+        or not BILLING_KEY_ENCRYPTION_PRIMARY_KEY
+    ):
+        from django.core.exceptions import ImproperlyConfigured
+
+        raise ImproperlyConfigured(
+            "Production automatic billing requires encrypted billing-key writes and a primary KEK."
+        )
 _billing_encryption_keys = [
     BILLING_KEY_ENCRYPTION_PRIMARY_KEY,
     *BILLING_KEY_ENCRYPTION_FALLBACK_KEYS,

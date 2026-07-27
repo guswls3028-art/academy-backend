@@ -18,7 +18,8 @@ The command fails on critical user-facing risks:
 - `Video.current_job` pointing at a different tenant or video row
 - old UPLOADED or PROCESSING videos without a same-tenant active transcode job
 - explicit E2E, AUDIT, or CHAOS residue in the production tenant
-- auto billing enabled without the Toss server secret
+- auto billing enabled without a matching live Toss client/server key pair
+- auto billing enabled without encrypted billing-key writes and a primary KEK
 
 Warnings are emitted for operational debt that should be reviewed but may be accepted temporarily:
 

@@ -527,8 +527,23 @@ class Command(BaseCommand):
 
         today = timezone.localdate()
         auto_billing_enabled = bool(getattr(settings, "TOSS_AUTO_BILLING_ENABLED", False))
-        toss_secret_configured = bool((getattr(settings, "TOSS_PAYMENTS_SECRET_KEY", "") or "").strip())
-        toss_client_configured = bool((getattr(settings, "TOSS_PAYMENTS_CLIENT_KEY", "") or "").strip())
+        toss_secret_key = (getattr(settings, "TOSS_PAYMENTS_SECRET_KEY", "") or "").strip()
+        toss_client_key = (getattr(settings, "TOSS_PAYMENTS_CLIENT_KEY", "") or "").strip()
+        toss_secret_configured = bool(toss_secret_key)
+        toss_client_configured = bool(toss_client_key)
+        toss_live_pair_configured = (
+            toss_client_key.startswith("live_ck_")
+            and toss_secret_key.startswith("live_sk_")
+        )
+        encrypted_billing_key_writes = bool(
+            getattr(settings, "BILLING_KEY_ENCRYPTION_WRITE_ENABLED", False)
+        )
+        billing_primary_kek_configured = bool(
+            (
+                getattr(settings, "BILLING_KEY_ENCRYPTION_PRIMARY_KEY", "")
+                or ""
+            ).strip()
+        )
         exempt_ids = set(getattr(settings, "BILLING_EXEMPT_TENANT_IDS", set()) or set())
 
         program = Program.objects.filter(tenant=tenant).first()
@@ -558,6 +573,39 @@ class Command(BaseCommand):
                     "toss_auto_billing_enabled": auto_billing_enabled,
                     "toss_secret_configured": toss_secret_configured,
                     "toss_client_configured": toss_client_configured,
+                },
+            ),
+            CanaryCheck(
+                name="billing_auto_enabled_has_live_key_pair",
+                severity="error",
+                ok=(not auto_billing_enabled) or toss_live_pair_configured,
+                detail=(
+                    "Production automatic billing requires a matching live Toss "
+                    "client/server key pair."
+                ),
+                data={
+                    "toss_auto_billing_enabled": auto_billing_enabled,
+                    "toss_live_pair_configured": toss_live_pair_configured,
+                },
+            ),
+            CanaryCheck(
+                name="billing_auto_enabled_has_encrypted_key_storage",
+                severity="error",
+                ok=(
+                    (not auto_billing_enabled)
+                    or (
+                        encrypted_billing_key_writes
+                        and billing_primary_kek_configured
+                    )
+                ),
+                detail=(
+                    "Production automatic billing requires encrypted billing-key "
+                    "writes and a primary KEK."
+                ),
+                data={
+                    "toss_auto_billing_enabled": auto_billing_enabled,
+                    "encrypted_billing_key_writes": encrypted_billing_key_writes,
+                    "billing_primary_kek_configured": billing_primary_kek_configured,
                 },
             ),
             CanaryCheck(

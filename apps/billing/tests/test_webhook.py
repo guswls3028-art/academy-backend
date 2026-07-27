@@ -4,6 +4,7 @@ Toss 웹훅 테스트.
 범위:
 - 서버 간 Payment Query 검증
 - PAYMENT_STATUS_CHANGED 이벤트 처리 (DONE/ABORTED/CANCELED)
+- BILLING_DELETED 이벤트 처리
 - 멱등성 (동일 이벤트 재수신 시 중복 적용 방지)
 - 종단 상태 덮어쓰기 방지
 """
@@ -440,3 +441,54 @@ class TestWebhookUnhandledEvent(TestWebhookEndpointBase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json().get("result"), "unhandled_event_type")
+
+
+class TestWebhookBillingDeleted(TestWebhookEndpointBase):
+    def test_matching_provider_key_is_deactivated(self):
+        payload = {
+            "eventType": "BILLING_DELETED",
+            "billingKey": "bk_wh_test",
+            "reason": "CUSTOMER_REQUEST",
+        }
+
+        response = self.client.post(
+            self.url,
+            data=json.dumps(payload).encode(),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["result"], "deactivated")
+        self.billing_key.refresh_from_db()
+        self.assertFalse(self.billing_key.is_active)
+        self.assertIsNotNone(self.billing_key.deactivated_at)
+        self.query_payment.assert_not_called()
+
+    def test_unknown_provider_key_is_ignored(self):
+        response = self.client.post(
+            self.url,
+            data=json.dumps(
+                {
+                    "eventType": "BILLING_DELETED",
+                    "billingKey": "bk_unknown",
+                }
+            ).encode(),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["result"], "unmatched")
+        self.billing_key.refresh_from_db()
+        self.assertTrue(self.billing_key.is_active)
+        self.query_payment.assert_not_called()
+
+    def test_missing_provider_key_is_rejected(self):
+        response = self.client.post(
+            self.url,
+            data=json.dumps({"eventType": "BILLING_DELETED"}).encode(),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400, response.content)
+        self.billing_key.refresh_from_db()
+        self.assertTrue(self.billing_key.is_active)

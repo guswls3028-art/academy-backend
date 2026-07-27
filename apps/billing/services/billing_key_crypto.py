@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 
@@ -16,6 +18,14 @@ class BillingKeyConfigurationError(BillingKeyCryptoError):
 
 class BillingKeyDecryptionError(BillingKeyCryptoError):
     """Stored billing credential cannot be decrypted by configured keys."""
+
+
+def fingerprint_billing_key(value: str) -> str:
+    """Return a non-reversible lookup key for provider deletion webhooks."""
+    plaintext = str(value or "")
+    if not plaintext or plaintext.startswith(ENCRYPTED_PREFIX):
+        return ""
+    return hashlib.sha256(plaintext.encode("utf-8")).hexdigest()
 
 
 def _fernet_for_key(key: str) -> Fernet:
