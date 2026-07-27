@@ -15,7 +15,7 @@
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
 | [v1.11.23.md](v1.11.23.md) | **CURRENT** | 2026-07-27 KST | Real-use developer inbox, durable iPhone web-push alerts, tenant-specific installed-app branding, and agent-monitor removal |
-| [v1.11.22.md](v1.11.22.md) | production-deployed / v1.11.23로 승계 | 2026-07-27 KST | Structure-preserving cross-session exam copies, actionable workbook errors, and production incident verification |
+| [v1.11.22.md](v1.11.22.md) ([정정](v1.11.22-errata.md)) | production-deployed / v1.11.23로 승계 | 2026-07-27 KST | Structure-preserving cross-session exam copies, actionable workbook errors, and production incident verification |
 | [v1.11.21.md](v1.11.21.md) | production-deployed / v1.11.22로 승계 | 2026-07-27 KST | Ambiguity-safe Excel result imports, explicit attendance confirmation for fully blank rows, and production closure |
 | [v1.11.20.md](v1.11.20.md) | production-deployed / v1.11.21로 승계 | 2026-07-27 KST | Weekly wrong-note PDFs, per-question image persistence, teacher-first CTA, tenant-safe generation, and production closure |
 | [v1.11.19.md](v1.11.19.md) ([정정](v1.11.19-errata.md)) | production-deployed / v1.11.20로 승계 | 2026-07-27 KST | Selectable Excel student initial passwords, encrypted one-hour credential recovery, forced first-login change, and production closure |
