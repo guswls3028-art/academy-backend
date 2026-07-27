@@ -11,7 +11,11 @@ from rest_framework.exceptions import ValidationError
 from ..models import Staff
 from ..serializers import WorkMonthLockSerializer
 from academy.adapters.db.django import repositories_staffs as staff_repo
-from .helpers import IsPayrollManager, generate_payroll_snapshot
+from .helpers import (
+    IsPayrollManager,
+    StaffDomainPagination,
+    generate_payroll_snapshot,
+)
 
 
 class WorkMonthLockReconciliationRequired(Exception):
@@ -32,6 +36,7 @@ class WorkMonthLockViewSet(
     """Append-only payroll close boundary; reopen requires a separate workflow."""
     serializer_class = WorkMonthLockSerializer
     permission_classes = [IsAuthenticated, IsPayrollManager]
+    pagination_class = StaffDomainPagination
     filter_backends = [DjangoFilterBackend]
     filterset_fields = ["staff", "year", "month", "is_locked"]
 
@@ -77,6 +82,11 @@ class WorkMonthLockViewSet(
                     request.tenant.id,
                     staff_id,
                 )
+                if staff.pay_type == "MONTHLY":
+                    raise ValidationError(
+                        "월급 직원은 현재 자동 정산 대상이 아닙니다. "
+                        "근로계약·수당·공제 내역을 별도로 확인해 주세요."
+                    )
                 blockers = staff_repo.payroll_close_blockers(
                     staff,
                     year,

@@ -1,6 +1,7 @@
 # PATH: apps/domains/staffs/views/staff.py
 
 from django.db import transaction
+from django.db.models import Count
 from django.utils import timezone
 
 from django_filters.rest_framework import DjangoFilterBackend
@@ -24,10 +25,11 @@ from academy.adapters.db.django import repositories_core as core_repo
 from academy.adapters.db.django import repositories_teachers as teacher_repo
 from ..filters import StaffFilter
 from apps.core.models import TenantMembership
-from apps.core.permissions import is_effective_staff, TenantResolvedAndMember, TenantResolvedAndStaff
+from apps.core.permissions import TenantResolvedAndMember, TenantResolvedAndStaff
 from .helpers import (
     _owner_display_for_tenant,
     IsPayrollManager,
+    StaffDomainPagination,
     is_month_locked,
     can_manage_payroll,
 )
@@ -38,6 +40,7 @@ from .helpers import (
 
 class StaffViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, IsPayrollManager]
+    pagination_class = StaffDomainPagination
 
     filter_backends = (DjangoFilterBackend, SearchFilter, OrderingFilter)
     filterset_class = StaffFilter
@@ -47,6 +50,8 @@ class StaffViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action in ("work_current", "start_work"):
             return [IsAuthenticated(), TenantResolvedAndStaff()]
+        if self.action == "me":
+            return [IsAuthenticated(), TenantResolvedAndMember()]
         return super().get_permissions()
 
     def get_serializer_class(self):
@@ -62,22 +67,42 @@ class StaffViewSet(viewsets.ModelViewSet):
         if self.action == "list":
             tenant = getattr(self.request, "tenant", None)
             if tenant:
-                owner_user_id = TenantMembership.objects.filter(
+                owner_user_ids = TenantMembership.objects.filter(
                     tenant=tenant, role="owner", is_active=True
-                ).values_list("user_id", flat=True).first()
-                if owner_user_id:
-                    qs = qs.exclude(user_id=owner_user_id)
+                ).values_list("user_id", flat=True)
+                qs = qs.exclude(user_id__in=owner_user_ids)
         return qs
 
     def get_serializer_context(self):
-        # list 액션의 StaffListSerializer.get_role N+1 회피:
-        # 테넌트 Teacher의 (name, phone) 집합을 한 번에 로드해 직렬화 시 O(1) 룩업.
+        # list action role lookup uses memberships as SSOT for account-backed
+        # staff, plus a legacy Teacher key set for rows without an account.
         ctx = super().get_serializer_context()
         if self.action == "list":
             tenant = getattr(self.request, "tenant", None)
             if tenant:
-                ctx["teacher_keys"] = teacher_repo.teacher_name_phone_keys_tenant(tenant)
+                ctx["membership_roles"] = dict(
+                    TenantMembership.objects.filter(tenant=tenant)
+                    .values_list("user_id", "role")
+                )
+                ctx["teacher_keys"] = self._unambiguous_legacy_teacher_keys(
+                    tenant
+                )
         return ctx
+
+    def _unambiguous_legacy_teacher_keys(self, tenant):
+        staff_key_counts = {
+            (row["name"], row["phone"] or ""): row["row_count"]
+            for row in (
+                Staff.objects.filter(tenant=tenant, user__isnull=True)
+                .values("name", "phone")
+                .annotate(row_count=Count("id"))
+            )
+        }
+        return {
+            key
+            for key in teacher_repo.teacher_name_phone_keys_tenant(tenant)
+            if staff_key_counts.get(key) == 1
+        }
 
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
@@ -91,27 +116,118 @@ class StaffViewSet(viewsets.ModelViewSet):
         return response
 
     def perform_create(self, serializer):
-        serializer.save(tenant=self.request.tenant)
+        staff = serializer.save(tenant=self.request.tenant)
+        from apps.core.services.ops_audit import record_audit
+        record_audit(
+            self.request,
+            action="staff.created",
+            target_tenant=self.request.tenant,
+            target_user=staff.user,
+            summary=f"staff_id={staff.id}",
+            payload={
+                "staff_id": staff.id,
+                "role": self.request.data.get("role"),
+                "has_login": bool(staff.user_id),
+            },
+        )
+
+    def perform_update(self, serializer):
+        staff = serializer.save()
+        from apps.core.services.ops_audit import record_audit
+        record_audit(
+            self.request,
+            action="staff.updated",
+            target_tenant=self.request.tenant,
+            target_user=staff.user,
+            summary=f"staff_id={staff.id}",
+            payload={
+                "staff_id": staff.id,
+                "fields": sorted(
+                    key
+                    for key in self.request.data.keys()
+                    if key != "password"
+                ),
+            },
+        )
 
     def perform_destroy(self, instance):
+        target_user = instance.user
+        staff_id = instance.id
         serializer = self.get_serializer(instance)
         serializer.delete(instance)
+        from apps.core.services.ops_audit import record_audit
+        record_audit(
+            self.request,
+            action="staff.deleted_without_history",
+            target_tenant=self.request.tenant,
+            target_user=target_user,
+            summary=f"staff_id={staff_id}",
+            payload={"staff_id": staff_id},
+        )
 
     @action(detail=True, methods=["post"], url_path="change-password")
     def change_password(self, request, pk=None):
         """직원 비밀번호 변경. Body: { "password": "..." }"""
-        staff = self.get_object()
-        if not staff.user:
-            raise ValidationError("이 직원에게 연결된 계정이 없습니다.")
-
         new_password = (request.data.get("password") or "").strip()
         if not new_password:
             raise ValidationError({"password": "새 비밀번호를 입력하세요."})
         if len(new_password) < 4:
             raise ValidationError({"password": "비밀번호는 4자 이상이어야 합니다."})
 
-        from apps.core.services.password import force_reset_password
-        force_reset_password(staff.user, new_password)
+        with transaction.atomic():
+            staff_ref = self.get_object()
+            staff = (
+                Staff.objects.select_for_update()
+                .select_related("user")
+                .get(tenant=request.tenant, id=staff_ref.id)
+            )
+            if not staff.user_id:
+                raise ValidationError("이 직원에게 연결된 계정이 없습니다.")
+
+            from django.contrib.auth import get_user_model
+
+            target_user = get_user_model().objects.select_for_update().get(
+                id=staff.user_id
+            )
+            memberships = {
+                membership.user_id: membership
+                for membership in TenantMembership.objects.select_for_update()
+                .filter(
+                    tenant=request.tenant,
+                    user_id__in={request.user.id, target_user.id},
+                )
+                .order_by("user_id")
+            }
+            actor_membership = memberships.get(request.user.id)
+            target_membership = memberships.get(target_user.id)
+            if target_membership and target_membership.role == "owner":
+                raise PermissionDenied(
+                    "대표 계정 비밀번호는 직원관리에서 변경할 수 없습니다."
+                )
+            if (
+                target_membership
+                and target_membership.role == "admin"
+                and (
+                    not actor_membership
+                    or actor_membership.role != "owner"
+                )
+            ):
+                raise PermissionDenied(
+                    "관리자 계정 비밀번호는 대표만 변경할 수 있습니다."
+                )
+
+            from apps.core.services.password import force_reset_password
+
+            force_reset_password(target_user, new_password)
+        from apps.core.services.ops_audit import record_audit
+        record_audit(
+            request,
+            action="staff.password_reset",
+            target_tenant=request.tenant,
+            target_user=target_user,
+            summary=f"staff_id={staff.id}",
+            payload={"staff_id": staff.id},
+        )
         return Response({"detail": "비밀번호가 변경되었습니다."})
 
     @action(detail=False, methods=["get"], url_path="me", permission_classes=[IsAuthenticated, TenantResolvedAndMember])
@@ -126,10 +242,9 @@ class StaffViewSet(viewsets.ModelViewSet):
                 and request.user.is_authenticated
                 and core_repo.membership_exists_staff(tenant=tenant, user=request.user, staff_roles=("owner",))
             )
-            is_de_facto_owner = is_owner or is_effective_staff(request.user, tenant)
             owner_display_name = None
             owner_phone = None
-            if is_de_facto_owner and request.user:
+            if is_owner and request.user:
                 owner_display_name = (getattr(request.user, "name", None) or "").strip() or getattr(request.user, "username", "") or "원장"
                 owner_phone = (getattr(request.user, "phone", None) or "").strip() or None
 
@@ -154,10 +269,26 @@ class StaffViewSet(viewsets.ModelViewSet):
             )
             if staff_in_tenant:
                 payload["staff_id"] = staff_in_tenant.id
-                first_swt = staff_in_tenant.staff_work_types.order_by("id").first()
-                if first_swt:
-                    payload["default_work_type_id"] = first_swt.work_type_id
-            elif is_de_facto_owner and tenant and request.user:
+                assigned_work_types = list(
+                    staff_in_tenant.staff_work_types.filter(
+                        work_type__is_active=True,
+                    )
+                    .select_related("work_type")
+                    .order_by("id")
+                )
+                payload["assigned_work_types"] = [
+                    {
+                        "id": swt.work_type_id,
+                        "name": swt.work_type.name,
+                        "hourly_wage": swt.effective_hourly_wage,
+                    }
+                    for swt in assigned_work_types
+                ]
+                if len(assigned_work_types) == 1:
+                    payload["default_work_type_id"] = (
+                        assigned_work_types[0].work_type_id
+                    )
+            elif is_owner and tenant and request.user:
                 # staff_profile이 다른 테넌트에 있거나 없을 때: 현재 테넌트에서 Staff 조회/생성
                 from apps.domains.staffs.models import Staff, StaffWorkType, WorkType
                 owner_staff = Staff.objects.filter(tenant=tenant, user=request.user).first()
@@ -209,13 +340,41 @@ class StaffViewSet(viewsets.ModelViewSet):
                 }
             )
 
-    def _staff_display_role(self, tenant, staff) -> str:
+    def _staff_display_role(
+        self,
+        tenant,
+        staff,
+        *,
+        membership_roles=None,
+        teacher_keys=None,
+    ) -> str:
         """직원관리 목록·헤더 근무자 아바타와 동일한 직급 판별: owner(대표) / TEACHER(강사) / ASSISTANT(조교)."""
-        if getattr(staff, "user_id", None) and getattr(staff, "user", None):
-            if core_repo.membership_exists_staff(tenant, staff.user, staff_roles=("owner",)):
+        if getattr(staff, "user_id", None):
+            membership_role = (
+                membership_roles.get(staff.user_id)
+                if membership_roles is not None
+                else None
+            )
+            if membership_roles is None:
+                membership = core_repo.membership_get_full(tenant, staff.user)
+                membership_role = membership.role if membership else None
+            if membership_role == "owner":
                 return "owner"
+            if membership_role == "teacher":
+                return "TEACHER"
+            if membership_role in ("staff", "admin"):
+                return "ASSISTANT"
         from academy.adapters.db.django import repositories_teachers as teacher_repo
-        if teacher_repo.teacher_exists_tenant_name_phone(tenant, staff.name, staff.phone or ""):
+        is_teacher = (
+            (staff.name, staff.phone or "") in teacher_keys
+            if teacher_keys is not None
+            else teacher_repo.teacher_exists_tenant_name_phone(
+                tenant,
+                staff.name,
+                staff.phone or "",
+            )
+        )
+        if is_teacher:
             return "TEACHER"
         return "ASSISTANT"
 
@@ -238,11 +397,28 @@ class StaffViewSet(viewsets.ModelViewSet):
                 seen_staff.add(rec.staff_id)
                 record_by_staff[rec.staff_id] = rec
         staff_ids = list(record_by_staff.keys())
-        staffs = Staff.objects.filter(id__in=staff_ids).select_related("user").only("id", "name", "phone", "tenant_id", "user_id")
+        staffs = list(
+            Staff.objects.filter(id__in=staff_ids)
+            .select_related("user")
+            .only("id", "name", "phone", "tenant_id", "user_id")
+        )
+        user_ids = [staff.user_id for staff in staffs if staff.user_id]
+        membership_roles = dict(
+            TenantMembership.objects.filter(
+                tenant=tenant,
+                user_id__in=user_ids,
+            ).values_list("user_id", "role")
+        )
+        teacher_keys = self._unambiguous_legacy_teacher_keys(tenant)
         out = []
         for s in staffs:
             try:
-                role = self._staff_display_role(tenant, s)
+                role = self._staff_display_role(
+                    tenant,
+                    s,
+                    membership_roles=membership_roles,
+                    teacher_keys=teacher_keys,
+                )
             except Exception:
                 role = "ASSISTANT"
             rec = record_by_staff.get(s.id)
@@ -335,12 +511,29 @@ class StaffViewSet(viewsets.ModelViewSet):
             is_active=True,
         ).exists():
             raise ValidationError({"work_type": "선택한 근무 유형이 유효하지 않습니다."})
+        if not staff.is_active:
+            raise ValidationError("퇴사 처리된 직원은 근무를 시작할 수 없습니다.")
+        if (
+            not can_manage_payroll(request.user, staff.tenant)
+            and not staff.staff_work_types.filter(
+                tenant=staff.tenant,
+                work_type_id=work_type_id,
+                work_type__is_active=True,
+            ).exists()
+        ):
+            raise ValidationError(
+                {"work_type": "본인에게 배정된 근무 유형만 선택할 수 있습니다."}
+            )
 
         record = start_work_record(
             staff=staff,
             work_type_id=work_type_id,
             date=now.date(),
             start_time=now.time(),
+            require_assignment=not can_manage_payroll(
+                request.user,
+                staff.tenant,
+            ),
         )
 
         return Response(WorkRecordSerializer(record).data, status=201)

@@ -1,14 +1,21 @@
 # PATH: apps/domains/teachers/views.py
 from rest_framework.viewsets import ModelViewSet
+from rest_framework.permissions import IsAuthenticated
 from .serializers import TeacherSerializer
 from apps.core.permissions import TenantResolvedAndStaff
 from academy.adapters.db.django import repositories_teachers as teacher_repo
 from academy.adapters.db.django import repositories_staffs as staff_repo
+from apps.core.permissions import TenantResolvedAndPayrollManager
 
 
 class TeacherViewSet(ModelViewSet):
     serializer_class = TeacherSerializer
     permission_classes = [TenantResolvedAndStaff]
+
+    def get_permissions(self):
+        if self.action in ("create", "update", "partial_update", "destroy"):
+            return [IsAuthenticated(), TenantResolvedAndPayrollManager()]
+        return super().get_permissions()
 
     def get_queryset(self):
         return teacher_repo.teacher_filter_tenant(self.request.tenant)

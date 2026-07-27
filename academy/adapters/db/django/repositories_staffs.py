@@ -122,17 +122,38 @@ def payroll_snapshot_filter_tenant(tenant):
     return PayrollSnapshot.objects.filter(tenant=tenant)
 
 
-def get_payroll_snapshots_for_excel(tenant_id, year, month):
-    """엑셀 내보내기용: select_related, order_by 포함."""
+def get_payroll_snapshots_for_excel(tenant_id, year, month, snapshot_ids):
+    """엑셀 내보내기용: dispatch 시 고정한 snapshot 집합만 조회."""
     from apps.domains.staffs.models import PayrollSnapshot
     return (
         PayrollSnapshot.objects.filter(
             tenant_id=tenant_id,
             year=int(year),
             month=int(month),
+            id__in=snapshot_ids,
         )
         .select_related("staff", "generated_by")
-        .order_by("staff__name")
+        .order_by("staff_name")
+    )
+
+
+def payroll_activity_staff_ids(tenant, year, month):
+    """해당 월에 근무 또는 환급 기록이 있는 직원 id 집합."""
+    from django.db.models import Q
+
+    from apps.domains.staffs.models import Staff
+
+    return set(
+        Staff.objects.filter(tenant=tenant)
+        .filter(
+            Q(work_records__date__year=int(year), work_records__date__month=int(month))
+            | Q(
+                expense_records__date__year=int(year),
+                expense_records__date__month=int(month),
+            )
+        )
+        .values_list("id", flat=True)
+        .distinct()
     )
 
 
@@ -183,6 +204,7 @@ def payroll_snapshot_create_full(tenant, staff, year, month, work_hours, work_am
     return PayrollSnapshot.objects.create(
         tenant=tenant,
         staff=staff,
+        staff_name=staff.name,
         year=year,
         month=month,
         work_hours=work_hours,
@@ -235,6 +257,45 @@ def work_record_create_start(staff, work_type_id, date, start_time):
     )
 
 
+def work_record_get_for_update(tenant_id, record_id):
+    from apps.domains.staffs.models import WorkRecord
+
+    return WorkRecord.objects.select_for_update().get(
+        tenant_id=tenant_id,
+        id=record_id,
+    )
+
+
+def work_type_get_active_for_update(tenant_id, work_type_id):
+    from apps.domains.staffs.models import WorkType
+
+    return WorkType.objects.select_for_update().filter(
+        tenant_id=tenant_id,
+        id=work_type_id,
+        is_active=True,
+    ).first()
+
+
+def staff_work_type_assignment_exists(staff, work_type_id):
+    from apps.domains.staffs.models import StaffWorkType
+
+    return StaffWorkType.objects.filter(
+        tenant_id=staff.tenant_id,
+        staff=staff,
+        work_type_id=work_type_id,
+        work_type__is_active=True,
+    ).exists()
+
+
+def staff_work_type_get_for_update(tenant_id, assignment_id):
+    from apps.domains.staffs.models import StaffWorkType
+
+    return StaffWorkType.objects.select_for_update().get(
+        tenant_id=tenant_id,
+        id=assignment_id,
+    )
+
+
 def staff_work_type_queryset_tenant(tenant):
     from apps.domains.staffs.models import StaffWorkType
     return StaffWorkType.objects.filter(tenant=tenant).select_related("staff", "work_type")
@@ -243,6 +304,15 @@ def staff_work_type_queryset_tenant(tenant):
 def expense_record_queryset_tenant(tenant):
     from apps.domains.staffs.models import ExpenseRecord
     return ExpenseRecord.objects.filter(tenant=tenant).select_related("staff", "approved_by")
+
+
+def expense_record_get_for_update(tenant_id, record_id):
+    from apps.domains.staffs.models import ExpenseRecord
+
+    return ExpenseRecord.objects.select_for_update().get(
+        tenant_id=tenant_id,
+        id=record_id,
+    )
 
 
 def work_month_lock_queryset_tenant(tenant):

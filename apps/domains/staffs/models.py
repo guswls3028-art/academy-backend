@@ -293,16 +293,26 @@ class WorkRecord(TimestampModel):
             self.meal_minutes,
         )
 
-        wage = WageResolutionPolicy.resolve(
-            tenant=self.tenant,
-            staff=self.staff,
-            work_type=self.work_type,
-        )
+        wage = self.resolved_hourly_wage
+        if wage is None:
+            wage = WageResolutionPolicy.resolve(
+                tenant=self.tenant,
+                staff=self.staff,
+                work_type=self.work_type,
+            )
 
         amount = PayrollAmountPolicy.calculate(hours, wage, self.adjustment_amount)
         return hours, amount, wage
 
     def save(self, *args, **kwargs):
+        # 출근 시점 단가를 고정한다. 이후 단가 변경이나 과거 기록 재계산이
+        # 이미 시작된 근무의 적용 단가를 소급 변경해서는 안 된다.
+        if self.resolved_hourly_wage is None and self.work_type_id and self.staff_id:
+            self.resolved_hourly_wage = WageResolutionPolicy.resolve(
+                tenant=self.tenant,
+                staff=self.staff,
+                work_type=self.work_type,
+            )
         # Auto-calculate when end_time is set, unless manually edited
         if self.end_time and not self.is_manually_edited:
             self.work_hours, self.amount, self.resolved_hourly_wage = self.calculate_payroll()
@@ -423,6 +433,11 @@ class PayrollSnapshot(TimestampModel):
         on_delete=models.CASCADE,
         related_name="payroll_snapshots",
     )
+    staff_name = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="월마감 당시 직원명",
+    )
 
     year = models.PositiveIntegerField()
     month = models.PositiveIntegerField()
@@ -447,6 +462,8 @@ class PayrollSnapshot(TimestampModel):
     def save(self, *args, **kwargs):
         if self.pk:
             raise ValidationError("PayrollSnapshot은 수정할 수 없습니다.")
+        if not self.staff_name:
+            self.staff_name = self.staff.name
         super().save(*args, **kwargs)
 
     def __str__(self):

@@ -21,7 +21,14 @@ def has_open_work_record_conflict(*, staff, exclude_record_id: int | None = None
     )
 
 
-def start_work_record(*, staff, work_type_id: int, date, start_time):
+def start_work_record(
+    *,
+    staff,
+    work_type_id: int,
+    date,
+    start_time,
+    require_assignment: bool = False,
+):
     """Create one open clock-in record or fail with a deterministic conflict."""
     try:
         with transaction.atomic():
@@ -33,6 +40,27 @@ def start_work_record(*, staff, work_type_id: int, date, start_time):
                 staff.tenant_id,
                 staff.pk,
             )
+            if not locked_staff.is_active:
+                raise ValidationError(
+                    "퇴사 처리된 직원은 근무를 시작할 수 없습니다."
+                )
+            if not staff_repo.work_type_get_active_for_update(
+                locked_staff.tenant_id,
+                work_type_id,
+            ):
+                raise ValidationError(
+                    {"work_type": "선택한 근무 유형이 유효하지 않습니다."}
+                )
+            if (
+                require_assignment
+                and not staff_repo.staff_work_type_assignment_exists(
+                    locked_staff,
+                    work_type_id,
+                )
+            ):
+                raise ValidationError(
+                    {"work_type": "본인에게 배정된 근무 유형만 선택할 수 있습니다."}
+                )
             if staff_repo.is_month_locked(
                 locked_staff,
                 date.year,

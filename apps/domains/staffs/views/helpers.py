@@ -4,13 +4,16 @@
 from django.db import transaction
 from django.db.models import Sum
 
-from rest_framework.permissions import BasePermission
 from rest_framework.exceptions import ValidationError
+from rest_framework.pagination import PageNumberPagination
 
 from academy.adapters.db.django import repositories_staffs as staff_repo
 from academy.adapters.db.django import repositories_core as core_repo
 from apps.core.models import TenantMembership
-from apps.core.permissions import is_effective_staff
+from apps.core.permissions import (
+    TenantResolvedAndPayrollManager,
+    can_manage_staff_payroll,
+)
 
 
 def _owner_display_for_tenant(tenant, request=None):
@@ -41,12 +44,6 @@ def _owner_display_for_tenant(tenant, request=None):
             name = (getattr(request.user, "name", None) or "").strip() or request.user.username
             phone = (getattr(request.user, "phone", None) or "").strip() or None
             return {"id": None, "name": name, "phone": phone, "role": "OWNER", "is_owner": True}
-    # 4) DB에 원장 없을 때: 이 페이지 접근 가능한 사용자(슈퍼유저/스태프/테넌트 오너)를 대표로 표시
-    if request and request.user and request.user.is_authenticated:
-        if is_effective_staff(request.user, tenant):
-            name = (getattr(request.user, "name", None) or "").strip() or request.user.username or "원장"
-            phone = (getattr(request.user, "phone", None) or "").strip() or None
-            return {"id": None, "name": name, "phone": phone, "role": "OWNER", "is_owner": True}
     return None
 
 # ===========================
@@ -60,31 +57,18 @@ def can_access_staff_management(user, tenant=None) -> bool:
     - teacher, staff(조교) 역할 → Staff.is_manager 일 때만 True
     - 비용·시급 등 민감 정보는 이 권한 있는 사람만 접근.
     """
-    if not user or not user.is_authenticated:
-        return False
-    if not tenant:
-        return False
-    m = core_repo.membership_get_full(tenant, user)
-    if user.is_superuser:
-        return bool((m and m.is_active) or getattr(user, "tenant_id", None) == tenant.id)
-    if not m or not m.is_active:
-        return False
-    if m.role in ("owner", "admin"):
-        return True
-    if m.role in ("teacher", "staff"):
-        profile = getattr(user, "staff_profile", None)
-        return (
-            profile is not None
-            and getattr(profile, "tenant_id", None) == tenant.id
-            and getattr(profile, "is_manager", False)
-        )
-    return False
+    return can_manage_staff_payroll(user, tenant)
 
 
-class IsPayrollManager(BasePermission):
-    """직원관리 페이지 접근 = 관리자 권한 on만. 비용·시급 등 민감 정보 보호."""
-    def has_permission(self, request, view):
-        return can_access_staff_management(request.user, getattr(request, "tenant", None))
+IsPayrollManager = TenantResolvedAndPayrollManager
+
+
+class StaffDomainPagination(PageNumberPagination):
+    """Bounded lists with an explicit staff-domain page-size contract."""
+
+    page_size = 100
+    page_size_query_param = "page_size"
+    max_page_size = 500
 
 # ===========================
 # Helpers

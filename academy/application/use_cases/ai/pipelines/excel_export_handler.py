@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from io import BytesIO
 
@@ -91,15 +92,48 @@ def handle_staff_excel_export(job: AIJob) -> AIResult:
     payload = job.payload or {}
     year = payload.get("year")
     month = payload.get("month")
+    snapshot_ids = payload.get("snapshot_ids")
+    expected_revision = payload.get("revision")
     tenant_id = str(payload.get("tenant_id") or job.tenant_id or "")
 
-    if not year or not month or not tenant_id:
-        return AIResult.failed(job.id, "payload.year, month and tenant_id required")
+    if (
+        not year
+        or not month
+        or not tenant_id
+        or not isinstance(snapshot_ids, list)
+        or not snapshot_ids
+        or not expected_revision
+    ):
+        return AIResult.failed(
+            job.id,
+            "payload.year, month, tenant_id, snapshot_ids and revision required",
+        )
 
     try:
         from academy.adapters.db.django.repositories_staffs import get_payroll_snapshots_for_excel
 
-        qs = get_payroll_snapshots_for_excel(tenant_id, year, month)
+        normalized_ids = sorted({int(snapshot_id) for snapshot_id in snapshot_ids})
+        revision_source = ",".join(str(snapshot_id) for snapshot_id in normalized_ids)
+        actual_revision = hashlib.sha256(
+            revision_source.encode("utf-8")
+        ).hexdigest()[:16]
+        if actual_revision != expected_revision:
+            return AIResult.failed(job.id, "snapshot revision mismatch")
+
+        qs = list(
+            get_payroll_snapshots_for_excel(
+                tenant_id,
+                year,
+                month,
+                normalized_ids,
+            )
+        )
+        found_ids = {snapshot.id for snapshot in qs}
+        if found_ids != set(normalized_ids):
+            return AIResult.failed(
+                job.id,
+                "one or more fixed payroll snapshots are unavailable",
+            )
 
         from openpyxl import Workbook
         from openpyxl.styles import Font, Alignment
@@ -110,7 +144,7 @@ def handle_staff_excel_export(job: AIJob) -> AIResult:
 
         headers = [
             "직원명", "연도", "월", "근무시간",
-            "급여", "승인된 비용", "총 지급액", "확정자", "확정일시",
+            "근무기록 금액", "승인 선결제 환급", "정산 합계(공제 전)", "확정자", "확정일시",
         ]
         ws.append(headers)
 
@@ -120,7 +154,7 @@ def handle_staff_excel_export(job: AIJob) -> AIResult:
 
         for s in qs:
             ws.append([
-                s.staff.name,
+                s.staff_name or s.staff.name,
                 s.year,
                 s.month,
                 float(s.work_hours),

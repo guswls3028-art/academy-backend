@@ -14,6 +14,7 @@
 | [student-core.md](student-core.md) | 학생 | 학생 중심 계정·식별자·연결 도메인 통합 SSOT |
 | [student-creation.md](student-creation.md) | 학생 | 생성 계정 그래프 |
 | [student-lifecycle.md](student-lifecycle.md) | 학생 | 삭제/복원/영구삭제 생명주기 |
+| [staff-operations.md](staff-operations.md) | 직원 | 권한·퇴사·근태·비용·월마감·정산 표시 계약 |
 
 ## 도메인별
 

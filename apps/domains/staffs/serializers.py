@@ -1,6 +1,7 @@
 # PATH: apps/domains/staffs/serializers.py
 # 원칙: 테넌트별 완전 격리. 직원/User는 해당 테넌트 컨텍스트 내에서만 사용.
 import logging
+from datetime import datetime, timedelta
 
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
@@ -120,8 +121,17 @@ class StaffListSerializer(serializers.ModelSerializer):
         return obj.profile_photo.url
 
     def get_role(self, obj):
-        # ViewSet.list가 (name, phone) 키 집합을 컨텍스트로 주입하면 O(1) 룩업으로 N+1 회피.
-        # list 쿼리셋은 이미 owner Staff를 제외하므로 owner 분기 불필요.
+        # Account-backed staff use TenantMembership as the role SSOT.
+        # Legacy rows without an account retain the name/phone compatibility lookup.
+        membership_roles = self.context.get("membership_roles")
+        if membership_roles is not None and getattr(obj, "user_id", None):
+            membership_role = membership_roles.get(obj.user_id)
+            if membership_role == "teacher":
+                return "TEACHER"
+            if membership_role in ("staff", "admin"):
+                return "ASSISTANT"
+            if membership_role == "owner":
+                return "OWNER"
         teacher_keys = self.context.get("teacher_keys")
         if teacher_keys is not None:
             if (obj.name, obj.phone or "") in teacher_keys:
@@ -182,10 +192,14 @@ class StaffDetailSerializer(serializers.ModelSerializer):
         return obj.profile_photo.url
 
     def get_role(self, obj):
-        # 오너(owner) 멤버십이 있는 Staff → "OWNER"
         if getattr(obj, "user_id", None):
-            if core_repo.membership_exists_staff(obj.tenant, obj.user, staff_roles=("owner",)):
+            membership = core_repo.membership_get_full(obj.tenant, obj.user)
+            if membership and membership.role == "owner":
                 return "OWNER"
+            if membership and membership.role == "teacher":
+                return "TEACHER"
+            if membership and membership.role in ("staff", "admin"):
+                return "ASSISTANT"
         if teacher_repo.teacher_exists_tenant_name_phone(obj.tenant, obj.name, obj.phone or ""):
             return "TEACHER"
         return "ASSISTANT"
@@ -204,10 +218,21 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
     username = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=150)
     password = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=128)
 
+    def validate_name(self, value):
+        normalized = (value or "").strip()
+        if not normalized:
+            raise serializers.ValidationError("이름을 입력해 주세요.")
+        if len(normalized) > 50:
+            raise serializers.ValidationError("이름은 50자 이내로 입력해 주세요.")
+        return normalized
+
     def validate_phone(self, value):
-        if value:
-            return value.replace("-", "").replace(" ", "").strip()
-        return value
+        normalized = (value or "").replace("-", "").replace(" ", "").strip()
+        if normalized and (not normalized.isdigit() or not 9 <= len(normalized) <= 11):
+            raise serializers.ValidationError(
+                "전화번호는 숫자 9~11자리로 입력해 주세요."
+            )
+        return normalized
 
     class Meta:
         model = Staff
@@ -241,6 +266,21 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
                     "password": "로그인 아이디와 초기 비밀번호는 함께 입력하거나 둘 다 비워 주세요.",
                 }
             )
+        if password and len(password.strip()) < 4:
+            raise serializers.ValidationError(
+                {"password": "초기 비밀번호는 4자 이상이어야 합니다."}
+            )
+        requested_pay_type = attrs.get("pay_type")
+        current_pay_type = getattr(self.instance, "pay_type", None)
+        if requested_pay_type == "MONTHLY" and current_pay_type != "MONTHLY":
+            raise serializers.ValidationError(
+                {
+                    "pay_type": (
+                        "월급 정산은 기본급·일할·공제 정책이 설정되지 않아 선택할 수 없습니다. "
+                        "현재는 시급 정산만 지원합니다."
+                    )
+                }
+            )
         return attrs
 
     # =========================
@@ -269,6 +309,8 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
                         name=validated_data.get("name") or username,
                         phone=validated_data.get("phone") or "",
                     )
+                    user.must_change_password = True
+                    user.save(update_fields=["must_change_password"])
                     core_repo.membership_ensure_active(
                         tenant=tenant,
                         user=user,
@@ -314,39 +356,125 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         validated_data.pop("username", None)
         validated_data.pop("password", None)
 
-        # Teacher 동기화를 위해 old 값 보존 (super().update() 전)
-        old_name = instance.name
-        old_phone = instance.phone or ""
-        is_active_before = instance.is_active
-        wants_reactivation = not is_active_before and validated_data.get("is_active") is True
-        wants_deactivation = is_active_before and validated_data.get("is_active") is False
-        membership = (
-            core_repo.membership_get_full(instance.tenant, instance.user)
-            if instance.user_id
-            else None
-        )
-        if membership and membership.role in ("owner", "admin") and (
-            validated_data.get("is_active") is False or wants_reactivation
-        ):
-            raise serializers.ValidationError(
-                {"is_active": "대표/관리자 계정은 직원 화면에서 비활성화하거나 재활성화할 수 없습니다."}
-            )
-        if wants_reactivation and requested_role is None:
-            raise serializers.ValidationError(
-                {"role": "재활성화할 직원 역할(TEACHER 또는 ASSISTANT)을 명시해 주세요."}
-            )
-        if requested_role is not None and wants_deactivation:
-            raise serializers.ValidationError(
-                {"role": "비활성화와 역할 변경을 동시에 요청할 수 없습니다."}
-            )
-        if requested_role is not None and not is_active_before and not wants_reactivation:
-            raise serializers.ValidationError(
-                {"role": "비활성 직원의 역할은 재활성화 요청과 함께 지정해 주세요."}
-            )
-
         try:
             with transaction.atomic():
                 instance = Staff.objects.select_for_update().get(pk=instance.pk)
+                # All lifecycle decisions use the locked row so clock-in,
+                # concurrent profile edits, and offboarding cannot interleave.
+                old_name = instance.name
+                old_phone = instance.phone or ""
+                is_active_before = instance.is_active
+                wants_reactivation = (
+                    not is_active_before
+                    and validated_data.get("is_active") is True
+                )
+                wants_deactivation = (
+                    is_active_before
+                    and validated_data.get("is_active") is False
+                )
+                membership = (
+                    core_repo.membership_get_for_update(
+                        instance.tenant,
+                        instance.user,
+                    )
+                    if instance.user_id
+                    else None
+                )
+                legacy_teacher_count = (
+                    0
+                    if membership is not None
+                    else teacher_repo.teacher_count_tenant_name_phone(
+                        instance.tenant,
+                        old_name,
+                        old_phone,
+                    )
+                )
+                if legacy_teacher_count > 1 and (
+                    requested_role is not None
+                    or "name" in validated_data
+                    or "phone" in validated_data
+                    or "is_active" in validated_data
+                ):
+                    raise serializers.ValidationError(
+                        {
+                            "detail": (
+                                "동명이인 강사 기록이 여러 건이라 자동 동기화할 수 없습니다. "
+                                "계정을 연결하거나 중복 강사 기록을 먼저 정리해 주세요."
+                            )
+                        }
+                    )
+                if membership and membership.role in ("owner", "admin") and (
+                    validated_data.get("is_active") is False
+                    or wants_reactivation
+                ):
+                    raise serializers.ValidationError(
+                        {
+                            "is_active": (
+                                "대표/관리자 계정은 직원 화면에서 비활성화하거나 "
+                                "재활성화할 수 없습니다."
+                            )
+                        }
+                    )
+                if wants_reactivation and requested_role is None:
+                    raise serializers.ValidationError(
+                        {
+                            "role": (
+                                "재활성화할 직원 역할(TEACHER 또는 ASSISTANT)을 "
+                                "명시해 주세요."
+                            )
+                        }
+                    )
+                if requested_role is not None and wants_deactivation:
+                    raise serializers.ValidationError(
+                        {"role": "비활성화와 역할 변경을 동시에 요청할 수 없습니다."}
+                    )
+                if (
+                    membership
+                    and membership.role == "admin"
+                    and requested_role not in (None, "ASSISTANT")
+                ):
+                    raise serializers.ValidationError(
+                        {"role": "관리자 역할은 직원 화면에서 변경할 수 없습니다."}
+                    )
+                if (
+                    requested_role is not None
+                    and not is_active_before
+                    and not wants_reactivation
+                ):
+                    raise serializers.ValidationError(
+                        {"role": "비활성 직원의 역할은 재활성화 요청과 함께 지정해 주세요."}
+                    )
+                resulting_is_active = validated_data.get(
+                    "is_active",
+                    instance.is_active,
+                )
+                resulting_is_manager = validated_data.get(
+                    "is_manager",
+                    instance.is_manager,
+                )
+                if resulting_is_manager and not resulting_is_active:
+                    raise serializers.ValidationError(
+                        {
+                            "is_manager": (
+                                "퇴사 처리된 직원에게 급여관리 권한을 부여할 수 없습니다."
+                            )
+                        }
+                    )
+                if wants_deactivation and staff_repo.work_record_open_exists(instance):
+                    raise serializers.ValidationError(
+                        {
+                            "is_active": (
+                                "진행 중인 근무를 먼저 퇴근 처리한 뒤 퇴사 처리해 주세요."
+                            )
+                        }
+                    )
+                if wants_deactivation:
+                    validated_data["is_manager"] = False
+                was_teacher = (
+                    membership.role == "teacher"
+                    if membership is not None
+                    else legacy_teacher_count == 1
+                )
                 staff = super().update(instance, validated_data)
 
                 new_name = staff.name
@@ -354,16 +482,21 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
                 name_or_phone_changed = (old_name != new_name) or (old_phone != new_phone)
 
                 # 1) 이름/전화 변경 → Teacher 레코드 동기화 (old 값으로 찾아서 new 값으로 업데이트)
-                if name_or_phone_changed:
+                if name_or_phone_changed and was_teacher:
                     teacher_repo.teacher_update_name_phone(
                         staff.tenant, old_name, old_phone, new_name, new_phone,
                     )
+                if name_or_phone_changed and staff.user_id:
+                    staff.user.name = new_name
+                    staff.user.phone = new_phone
+                    staff.user.save(update_fields=["name", "phone"])
 
                 # 2) 비활성화 → Teacher도 비활성화 (이름/전화 동기화 후이므로 new 값 사용)
                 if is_active_before and staff.is_active is False:
-                    teacher_repo.teacher_update_is_active_by_name_phone(
-                        staff.tenant, new_name, new_phone, False,
-                    )
+                    if was_teacher:
+                        teacher_repo.teacher_update_is_active_by_name_phone(
+                            staff.tenant, new_name, new_phone, False,
+                        )
                     if staff.user_id:
                         from apps.core.services.tenant_access import (
                             TenantAccessMutationError,
@@ -407,8 +540,12 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
                 # Active role edits are a real lifecycle change, never a silent
                 # no-op. Keep Teacher profile and membership role atomic.
                 if is_active_before and staff.is_active and requested_role is not None:
+                    if membership and membership.role == "admin":
+                        # 목록의 ASSISTANT 표시는 직원관리 화면 분류일 뿐,
+                        # admin membership을 staff로 강등하라는 요청이 아니다.
+                        return staff
                     role = "teacher" if requested_role == "TEACHER" else "staff"
-                    if membership and membership.role in ("owner", "admin"):
+                    if membership and membership.role == "owner":
                         raise serializers.ValidationError(
                             {"role": "대표/관리자 역할은 직원 화면에서 변경할 수 없습니다."}
                         )
@@ -459,7 +596,62 @@ class StaffCreateUpdateSerializer(serializers.ModelSerializer):
         tenant = instance.tenant
 
         with transaction.atomic():
-            teacher_repo.teacher_delete_by_name_phone(tenant, instance.name, instance.phone or "")
+            instance = Staff.objects.select_for_update().get(
+                tenant=tenant,
+                pk=instance.pk,
+            )
+            protected_history = {
+                "근무기록": instance.work_records.exists(),
+                "비용": instance.expense_records.exists(),
+                "월마감": instance.work_month_locks.exists(),
+                "급여 스냅샷": instance.payroll_snapshots.exists(),
+            }
+            existing_history = [
+                label for label, exists in protected_history.items() if exists
+            ]
+            if existing_history:
+                raise serializers.ValidationError(
+                    {
+                        "detail": (
+                            f"{', '.join(existing_history)} 이력이 있어 삭제할 수 없습니다. "
+                            "직원 수정에서 퇴사 처리해 주세요."
+                        )
+                    }
+                )
+            membership = (
+                core_repo.membership_get_full(tenant, user)
+                if user
+                else None
+            )
+            legacy_teacher_count = (
+                0
+                if membership is not None
+                else teacher_repo.teacher_count_tenant_name_phone(
+                    tenant,
+                    instance.name,
+                    instance.phone or "",
+                )
+            )
+            if legacy_teacher_count > 1:
+                raise serializers.ValidationError(
+                    {
+                        "detail": (
+                            "동명이인 강사 기록이 여러 건이라 자동 삭제할 수 없습니다. "
+                            "중복 강사 기록을 먼저 정리해 주세요."
+                        )
+                    }
+                )
+            is_teacher = (
+                membership.role == "teacher"
+                if membership is not None
+                else legacy_teacher_count == 1
+            )
+            if is_teacher:
+                teacher_repo.teacher_delete_by_name_phone(
+                    tenant,
+                    instance.name,
+                    instance.phone or "",
+                )
             instance.delete()
             if user:
                 # User를 hard-delete하지 않고 비활성화 + 해당 테넌트 멤버십만 제거.
@@ -537,6 +729,63 @@ class WorkRecordSerializer(serializers.ModelSerializer):
         else:
             self.fields["staff"].queryset = Staff.objects.none()
             self.fields["work_type"].queryset = WorkType.objects.none()
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        start_time = attrs.get(
+            "start_time",
+            getattr(self.instance, "start_time", None),
+        )
+        end_time = attrs.get(
+            "end_time",
+            getattr(self.instance, "end_time", None),
+        )
+        date = attrs.get("date", getattr(self.instance, "date", None))
+        break_minutes = attrs.get(
+            "break_minutes",
+            getattr(self.instance, "break_minutes", 0),
+        ) or 0
+        meal_minutes = attrs.get(
+            "meal_minutes",
+            getattr(self.instance, "meal_minutes", 0),
+        ) or 0
+
+        if self.instance is None:
+            work_type = attrs.get("work_type")
+            if work_type is not None and not work_type.is_active:
+                raise serializers.ValidationError(
+                    {"work_type": "비활성 근무유형으로 새 근무기록을 만들 수 없습니다."}
+                )
+
+        if start_time and end_time and date:
+            start_dt = datetime.combine(date, start_time)
+            end_dt = datetime.combine(date, end_time)
+            if end_dt == start_dt:
+                raise serializers.ValidationError(
+                    {"end_time": "종료 시간은 시작 시간과 같을 수 없습니다."}
+                )
+            if end_dt < start_dt:
+                end_dt += timedelta(days=1)
+            worked_minutes = int((end_dt - start_dt).total_seconds() // 60)
+            if break_minutes + meal_minutes >= worked_minutes:
+                raise serializers.ValidationError(
+                    {
+                        "break_minutes": (
+                            "휴게·식사시간 합계는 전체 근무시간보다 짧아야 합니다."
+                        )
+                    }
+                )
+
+        initial_keys = set(getattr(self, "initial_data", {}).keys())
+        override_keys = {"work_hours", "amount"} & initial_keys
+        if self.instance is not None and override_keys and len(override_keys) != 2:
+            raise serializers.ValidationError(
+                {
+                    "work_hours": "근무시간과 금액을 수동 수정할 때는 둘 다 입력해 주세요.",
+                    "amount": "근무시간과 금액을 수동 수정할 때는 둘 다 입력해 주세요.",
+                }
+            )
+        return attrs
 
 
 # ---------------------------
@@ -622,8 +871,13 @@ class WorkMonthLockSerializer(serializers.ModelSerializer):
 
 
 class PayrollSnapshotSerializer(serializers.ModelSerializer):
-    staff_name = serializers.CharField(source="staff.name", read_only=True)
     generated_by_name = serializers.CharField(source="generated_by.username", read_only=True)
+    staff_name = serializers.SerializerMethodField()
+
+    def get_staff_name(self, obj):
+        # Additive migration keeps legacy rows untouched; old rows safely fall
+        # back to the current name, while new snapshots preserve the close-time name.
+        return obj.staff_name or obj.staff.name
 
     class Meta:
         model = PayrollSnapshot
