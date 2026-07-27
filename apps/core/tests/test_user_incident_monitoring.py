@@ -915,6 +915,17 @@ class DevAlertsWorkflowContractTests(SimpleTestCase):
             self.workflow,
         )
 
+    def test_dry_run_and_test_sms_never_dispatch_platform_push(self):
+        self.assertIn(
+            'if [ "$DRY_RUN" = "true" ] || [ "$TEST_SMS" = "true" ]; then',
+            self.workflow,
+        )
+        self.assertIn('PUSH_COMMAND=""', self.workflow)
+        self.assertIn(
+            "sh -c '${PUSH_COMMAND}python manage.py check_dev_alerts",
+            self.workflow,
+        )
+
     def test_external_signal_claim_precedes_dispatch_and_delivery_marker(self):
         claim = '--value "claimed:${EXTERNAL_SIGNAL_TOKEN}"'
         dispatch = "COMMAND_ID=$(aws ssm send-command"

@@ -123,6 +123,10 @@ jobs:
           if [ "$TEST_SMS" = "true" ]; then
             EXTRA_ARGS="--test-sms --wait-seconds=120"
           fi
+          PUSH_COMMAND="python manage.py dispatch_platform_push --silent && "
+          if [ "$DRY_RUN" = "true" ] || [ "$TEST_SMS" = "true" ]; then
+            PUSH_COMMAND=""
+          fi
 
           # DB 장애로 OpsAuditLog를 쓸 수 없는 경우에도 ALB 신호로 문자를 보낸다.
           # composite alarm의 transition timestamp를 SSM에 저장해 상태 전환당 1회만 발송한다.
@@ -178,7 +182,7 @@ jobs:
 
           # 매 실행마다 SSM runtime SSOT를 원자적으로 동기화한다. 설정 비활성화도
           # 위험한 in-place 컨테이너 재시작 없이 다음 5분 실행부터 반영된다.
-          CMD="set -eu; umask 077; ENV_JSON=\$(aws ssm get-parameter --name /academy/api/env --with-decryption --query Parameter.Value --output text --region ${{ env.AWS_REGION }}); printf '%s' \"\$ENV_JSON\" | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(k+chr(61)+str(v)) for k,v in d.items()]' > /opt/api.env.next; test -s /opt/api.env.next; mv /opt/api.env.next /opt/api.env; aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_HOST} >/dev/null 2>&1; docker pull ${ECR_IMAGE} >/dev/null 2>&1; docker run --rm --env-file /opt/api.env ${DOCKER_NETWORK} ${ECR_IMAGE} sh -c 'python manage.py dispatch_platform_push --silent && python manage.py check_dev_alerts --silent ${EXTRA_ARGS}' 2>&1"
+          CMD="set -eu; umask 077; ENV_JSON=\$(aws ssm get-parameter --name /academy/api/env --with-decryption --query Parameter.Value --output text --region ${{ env.AWS_REGION }}); printf '%s' \"\$ENV_JSON\" | python3 -c 'import json,sys; d=json.load(sys.stdin); [print(k+chr(61)+str(v)) for k,v in d.items()]' > /opt/api.env.next; test -s /opt/api.env.next; mv /opt/api.env.next /opt/api.env; aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin ${ECR_HOST} >/dev/null 2>&1; docker pull ${ECR_IMAGE} >/dev/null 2>&1; docker run --rm --env-file /opt/api.env ${DOCKER_NETWORK} ${ECR_IMAGE} sh -c '${PUSH_COMMAND}python manage.py check_dev_alerts --silent ${EXTRA_ARGS}' 2>&1"
 
           SSM_PARAMS=$(jq -n --arg cmd "$CMD" '{commands: [$cmd]}')
 
