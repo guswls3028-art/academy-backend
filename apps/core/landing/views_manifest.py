@@ -13,8 +13,12 @@ from ._helpers import tenant_required
 
 
 HAKWONPLUS_FRONTEND_ORIGIN = "https://hakwonplus.com"
-HAKWONPLUS_MANIFEST_ICON_192 = f"{HAKWONPLUS_FRONTEND_ORIGIN}/tenants/hakwonplus/pwa-192.png"
-HAKWONPLUS_MANIFEST_ICON_512 = f"{HAKWONPLUS_FRONTEND_ORIGIN}/tenants/hakwonplus/pwa-512.png"
+HAKWONPLUS_MANIFEST_ICON_192 = (
+    f"{HAKWONPLUS_FRONTEND_ORIGIN}/tenants/hakwonplus/pwa-192.png?v=20260727"
+)
+HAKWONPLUS_MANIFEST_ICON_512 = (
+    f"{HAKWONPLUS_FRONTEND_ORIGIN}/tenants/hakwonplus/pwa-512.png?v=20260727"
+)
 
 
 @method_decorator([csrf_exempt, tenant_required], name="dispatch")
