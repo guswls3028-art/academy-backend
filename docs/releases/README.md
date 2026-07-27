@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.31.md](v1.11.31.md) | **CURRENT** | 2026-07-28 KST | Final production closure for the isolated developer console, real-use inquiry inbox, iPhone identity, and durable push delivery |
+| [v1.11.32.md](v1.11.32.md) | **CURRENT** | 2026-07-28 KST | State-safe, mobile-friendly bank-transfer guidance with exact payable-invoice and saved-card controls |
+| [v1.11.31.md](v1.11.31.md) | production-deployed / v1.11.32로 승계 | 2026-07-28 KST | Final production closure for the isolated developer console, real-use inquiry inbox, iPhone identity, and durable push delivery |
 | [v1.11.30.md](v1.11.30.md) | production-deployed / v1.11.31로 승계 | 2026-07-28 KST | Tenant-safe staff lifecycle, intuitive attendance and reimbursement operations, and immutable settlement evidence |
 | [v1.11.29.md](v1.11.29.md) | production-deployed / v1.11.30로 승계 | 2026-07-28 KST | Isolated developer-console origin, canonical iPhone install identity, and production notification readiness |
 | [v1.11.28.md](v1.11.28.md) | production-deployed / v1.11.29로 승계 | 2026-07-28 KST | Deploy-safe API user-impact alarms and operator-readable incident SMS |
