@@ -11,6 +11,7 @@ from django.apps import apps as django_apps
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase
 from hwpx import HwpxDocument
+from hwpx.tools.package_validator import validate_package
 
 from apps.shared.contracts.ai_job import AIJob
 from apps.domains.tools.problem_studio.services import (
@@ -389,11 +390,17 @@ class ProblemStudioServiceTests(SimpleTestCase):
         self.assertIn('xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph"', header)
         self.assertIn("<ha:HWPApplicationSetting", settings)
         self.assertIn('<opf:itemref idref="header"', content)
+        self.assertIn('id="version"', content)
+        self.assertIn('href="../version.xml"', content)
         self.assertIn("산화수 보존", preview)
         self.assertIn("<hp:t>", section)
         self.assertIn("산화수 보존", extract_hwpx_text(hwpx_data))
+        package_report = validate_package(hwpx_data)
+        self.assertTrue(package_report.ok)
+        self.assertEqual(package_report.warnings, ())
         with HwpxDocument.open(hwpx_data) as document:
             self.assertTrue(document.validate().ok)
+            self.assertEqual(document.package.version_path(), "version.xml")
             self.assertIn("산화수 보존", "\n".join(paragraph.text for paragraph in document.paragraphs))
 
     def test_transfer_package_uses_successful_ocr_text_for_image_source(self):
