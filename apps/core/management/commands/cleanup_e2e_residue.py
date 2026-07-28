@@ -96,6 +96,9 @@ class Command(BaseCommand):
         from apps.domains.exams.models.exam import Exam
         from apps.domains.homework_results.models.homework import Homework
         from apps.domains.fees.models import FeeTemplate, InvoiceItem
+        from apps.domains.progress.models import ClinicLink
+        from apps.domains.results.models import Result
+        from apps.domains.submissions.models import Submission
         from apps.core.models import Tenant
 
         try:
@@ -196,6 +199,27 @@ class Command(BaseCommand):
             p_del = sum(p.delete()[0] for p in posts)
             m_del = sum(m.delete()[0] for m in matchups)
             t_del = sum(t.delete()[0] for t in templates)
+            exam_ids = [exam.id for exam in exams]
+            result_del = (
+                Result.objects.filter(target_type="exam", target_id__in=exam_ids).delete()[0]
+                if exam_ids else 0
+            )
+            submission_del = (
+                Submission.objects.filter(
+                    tenant_id=tenant_id,
+                    target_type=Submission.TargetType.EXAM,
+                    target_id__in=exam_ids,
+                ).delete()[0]
+                if exam_ids else 0
+            )
+            clinic_link_del = (
+                ClinicLink.objects.filter(
+                    tenant_id=tenant_id,
+                    source_type="exam",
+                    source_id__in=exam_ids,
+                ).delete()[0]
+                if exam_ids else 0
+            )
             e_del = sum(e.delete()[0] for e in exams)
             h_del = sum(h.delete()[0] for h in homeworks)
             f_del = 0
@@ -216,6 +240,9 @@ class Command(BaseCommand):
             f"  - 게시글 cascade rows: {p_del}\n"
             f"  - 매치업 cascade rows: {m_del}\n"
             f"  - 템플릿 cascade rows: {t_del}\n"
+            f"  - 시험 결과 cascade rows: {result_del}\n"
+            f"  - 시험 제출 cascade rows: {submission_del}\n"
+            f"  - 시험 클리닉 링크 cascade rows: {clinic_link_del}\n"
             f"  - 시험 cascade rows: {e_del}\n"
             f"  - 과제 cascade rows: {h_del}\n"
             f"  - 수납 비목 cascade rows: {f_del}\n"

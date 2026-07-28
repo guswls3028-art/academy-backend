@@ -7,9 +7,12 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from apps.core.models import Tenant
+from apps.domains.exams.models import Exam
 from apps.domains.fees.models import FeeTemplate, StudentFee
 from apps.domains.messaging.models import MessageTemplate
+from apps.domains.results.models import Result
 from apps.domains.students.models import Student
+from apps.domains.submissions.models import Submission
 
 
 User = get_user_model()
@@ -70,6 +73,46 @@ class CleanupE2EResidueTests(TestCase):
         self.assertFalse(referenced.is_active)
         self.assertFalse(referenced.auto_assign)
         self.assertTrue(StudentFee.objects.filter(fee_template=referenced).exists())
+
+    def test_exam_cleanup_removes_generic_result_and_submission_rows(self):
+        user = User.objects.create_user(
+            tenant=self.tenant,
+            username="cleanup-e2e-exam-user",
+            password="test1234",
+        )
+        exam = Exam.objects.create(
+            tenant=self.tenant,
+            title="[E2E-123456] Clinic remediation exam",
+            exam_type=Exam.ExamType.REGULAR,
+            max_score=100,
+            pass_score=80,
+        )
+        result = Result.objects.create(
+            target_type="exam",
+            target_id=exam.id,
+            total_score=20,
+            max_score=100,
+        )
+        submission = Submission.objects.create(
+            tenant=self.tenant,
+            user=user,
+            target_type=Submission.TargetType.EXAM,
+            target_id=exam.id,
+            source=Submission.Source.ONLINE,
+            status=Submission.Status.DONE,
+        )
+
+        call_command(
+            "cleanup_e2e_residue",
+            "--tenant-id",
+            str(self.tenant.id),
+            "--execute",
+            stdout=StringIO(),
+        )
+
+        self.assertFalse(Exam.objects.filter(id=exam.id).exists())
+        self.assertFalse(Result.objects.filter(id=result.id).exists())
+        self.assertFalse(Submission.objects.filter(id=submission.id).exists())
 
     def test_only_explicit_e2e_template_residue_is_removed(self):
         residue = MessageTemplate.objects.create(
