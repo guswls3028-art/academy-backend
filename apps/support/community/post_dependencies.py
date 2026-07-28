@@ -125,11 +125,29 @@ def active_student_for_assignment(*, student_id: int) -> Any | None:
     )
 
 
-def student_user_for_qna_e2e(*, student_id: int) -> Any | None:
+def student_user_for_qna_e2e(
+    *,
+    tenant_id: int,
+    student_id: int | None = None,
+) -> Any | None:
     from apps.domains.students.models import Student
 
-    student = Student.objects.filter(id=int(student_id)).select_related("user").first()
-    if not student or not getattr(student, "user_id", None):
+    students = (
+        Student.objects.filter(
+            tenant_id=int(tenant_id),
+            deleted_at__isnull=True,
+            user__isnull=False,
+            user__is_active=True,
+        )
+        .select_related("user")
+        .order_by("id")
+    )
+    if student_id is not None:
+        student = students.filter(id=int(student_id)).first()
+    else:
+        candidates = list(students[:2])
+        student = candidates[0] if len(candidates) == 1 else None
+    if student is None:
         return None
     return student.user
 

@@ -39,8 +39,11 @@ class Command(BaseCommand):
         parser.add_argument(
             "--student-id",
             type=int,
-            default=455,
-            help="Student ID to use for JWT auth",
+            default=None,
+            help=(
+                "Active Tenant 1 student ID to use for JWT auth. When omitted, "
+                "the command proceeds only if exactly one active student exists."
+            ),
         )
         parser.add_argument(
             "--dry-run",
@@ -63,11 +66,21 @@ class Command(BaseCommand):
         student_id = options["student_id"]
         dry_run = options["dry_run"]
 
-        self.stdout.write(f"[verify_qna_e2e_safe] tenant_id={tenant_id}, base={base}, student_id={student_id}, dry_run={dry_run}")
+        selector = f"id:{student_id}" if student_id is not None else "single-active"
+        self.stdout.write(
+            f"[verify_qna_e2e_safe] tenant_id={tenant_id}, base={base}, "
+            f"student_selector={selector}, dry_run={dry_run}"
+        )
 
-        user = student_user_for_qna_e2e(student_id=student_id)
+        user = student_user_for_qna_e2e(
+            tenant_id=tenant_id,
+            student_id=student_id,
+        )
         if not user:
-            self.stderr.write(self.style.ERROR(f"Student id={student_id} not found or has no user"))
+            self.stderr.write(self.style.ERROR(
+                "No unique active student fixture is available in Tenant 1. "
+                "Pass --student-id explicitly when more than one active student exists."
+            ))
             sys.exit(1)
 
         token = RefreshToken.for_user(user)
