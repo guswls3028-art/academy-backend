@@ -14,7 +14,7 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.12.0.md](v1.12.0.md) | **CURRENT** | 2026-07-28 KST | Isolated pre-production deployment gate, fail-closed API environment handling, and outage recurrence prevention |
+| [v1.12.0.md](v1.12.0.md) ([정정](v1.12.0-errata.md)) | **CURRENT** | 2026-07-28 KST | Isolated pre-production deployment gate, fail-closed API environment handling, and outage recurrence prevention |
 | [v1.11.37.md](v1.11.37.md) | production-deployed / v1.12.0로 승계 | 2026-07-28 KST | HakwonPlus owner root-routing incident closure, explicit developer-console boundary preservation, and production verification |
 | [v1.11.36.md](v1.11.36.md) | production-deployed / v1.11.37로 승계 | 2026-07-28 KST | Limglish signed-video incident closure, fail-closed CDN delivery, isolated playback proof, and safe API replacement |
 | [v1.11.35.md](v1.11.35.md) | production-deployed / v1.11.36로 승계 | 2026-07-28 KST | Atomic deployment evidence, honest verification decisions, stable wrong-note PDF boundaries, and production closure |
