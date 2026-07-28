@@ -28,6 +28,7 @@ $script:PlanMode = $true
 $R = $script:Region
 
 $verificationTime = Get-Date -Format "o"
+$script:VerificationRunId = [guid]::NewGuid().ToString("N")
 $findings = [System.Collections.ArrayList]::new()
 $finalStatus = "PASS"
 
@@ -148,12 +149,37 @@ if ($apiPublicUrl) {
 $runtimeImagesStatus = "not checked"
 $runtimeImagesCiDigest = ""
 $runtimeImagesInstanceCount = 0
+function Get-CurrentReleaseManifestEvidence {
+    $manifestPath = Join-Path $RepoRoot "docs\reports\release-manifest.latest.json"
+    return Get-SuccessfulReleaseImageDigests -Path $manifestPath
+}
+function Save-RuntimeImagesUnknownReport {
+    param([string]$Reason)
+    $manifestEvidence = Get-CurrentReleaseManifestEvidence
+    $script:VerificationReleaseManifestHash = $manifestEvidence.ManifestHash
+    $safeReason = ($Reason -replace '\|', '\|').Trim()
+    $unknownReport = @"
+# V1 Runtime Images — API 인스턴스 실제 실행 이미지
+
+**Generated:** $(Get-Date -Format "o")
+**SSOT:** docs/ssot/params.yaml
+
+### Successful Release vs Runtime
+**UNKNOWN** — 현재 검증 실행에서 런타임 이미지 digest를 수집하지 못했습니다.
+
+- Reason: $safeReason
+- Release manifest SHA256: $($script:VerificationReleaseManifestHash)
+- Instance count: 0
+"@
+    Save-RuntimeImagesReport -MarkdownContent $unknownReport
+}
 Write-Host "`n[2b] Runtime image digest 수집..." -ForegroundColor Cyan
 try {
     $runtimeImagesResult = Invoke-CollectRuntimeImagesReport -PassThru
     if ($runtimeImagesResult) {
         $runtimeImagesStatus = $runtimeImagesResult.Status
         $runtimeImagesCiDigest = $runtimeImagesResult.CiDigest
+        $script:VerificationReleaseManifestHash = $runtimeImagesResult.ManifestHash
         $runtimeImagesInstanceCount = @($runtimeImagesResult.Rows).Count
         if ($runtimeImagesStatus -eq "MISMATCH") {
             Add-Finding -Severity "FAIL" -Area "RuntimeImage" -Message "API 런타임 image digest가 성공 release-manifest.latest.json의 academy-api digest와 불일치합니다. docs/reports/runtime-images.latest.md 확인 필요."
@@ -162,10 +188,12 @@ try {
         }
     } else {
         $runtimeImagesStatus = "UNKNOWN"
+        Save-RuntimeImagesUnknownReport -Reason "collector returned no result"
         Add-Finding -Severity "WARNING" -Area "RuntimeImage" -Message "runtime-images.latest.md 생성 결과가 비어 있습니다."
     }
 } catch {
     $runtimeImagesStatus = "UNKNOWN"
+    Save-RuntimeImagesUnknownReport -Reason $_.Exception.Message
     Add-Finding -Severity "WARNING" -Area "RuntimeImage" -Message "runtime image digest 수집 실패: $($_.Exception.Message)"
 }
 
@@ -270,6 +298,14 @@ if ($script:AiSqsQueueUrl) {
         $vb = Invoke-AwsJson @("sqs", "get-queue-attributes", "--queue-url", $script:AiSqsQueueUrl, "--attribute-names", "VisibilityTimeout", "--region", $R, "--output", "json")
         if ($vb -and $vb.Attributes -and $vb.Attributes.VisibilityTimeout) { $aiVisibilityActual = $vb.Attributes.VisibilityTimeout }
     } catch { }
+}
+$msgVisibilityOk = [string]$msgVisibilityActual -eq [string]$script:MessagingVisibilityTimeoutSeconds
+$aiVisibilityOk = [string]$aiVisibilityActual -eq [string]$script:AiVisibilityTimeoutSeconds
+if (-not $msgVisibilityOk) {
+    Add-Finding -Severity "WARNING" -Area "SQS" -Message "Messaging VisibilityTimeout mismatch: expected=$($script:MessagingVisibilityTimeoutSeconds) actual=$msgVisibilityActual"
+}
+if (-not $aiVisibilityOk) {
+    Add-Finding -Severity "WARNING" -Area "SQS" -Message "AI VisibilityTimeout mismatch: expected=$($script:AiVisibilityTimeoutSeconds) actual=$aiVisibilityActual"
 }
 
 # --- 5. 리소스 수 (EC2, Batch 노드) ---
@@ -497,8 +533,8 @@ $consistencySb = [System.Text.StringBuilder]::new()
 [void]$consistencySb.AppendLine("## SSOT vs Actual (일부)")
 [void]$consistencySb.AppendLine("| 항목 | SSOT(기대) | Actual | 일치 |")
 [void]$consistencySb.AppendLine("|------|-----------|--------|------|")
-[void]$consistencySb.AppendLine("| Messaging SQS VisibilityTimeout(초) | $($script:MessagingVisibilityTimeoutSeconds) | $msgVisibilityActual | $(if ([string]$msgVisibilityActual -eq [string]$script:MessagingVisibilityTimeoutSeconds) { 'Yes' } else { 'Fix needed' }) |")
-[void]$consistencySb.AppendLine("| AI SQS VisibilityTimeout(초) | $($script:AiVisibilityTimeoutSeconds) | $aiVisibilityActual | $(if ([string]$aiVisibilityActual -eq [string]$script:AiVisibilityTimeoutSeconds) { 'Yes' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| Messaging SQS VisibilityTimeout(초) | $($script:MessagingVisibilityTimeoutSeconds) | $msgVisibilityActual | $(if ($msgVisibilityOk) { 'Yes' } else { 'Fix needed' }) |")
+[void]$consistencySb.AppendLine("| AI SQS VisibilityTimeout(초) | $($script:AiVisibilityTimeoutSeconds) | $aiVisibilityActual | $(if ($aiVisibilityOk) { 'Yes' } else { 'Fix needed' }) |")
 [void]$consistencySb.AppendLine("")
 [void]$consistencySb.AppendLine("**Drift 상세:** [drift.latest.md](./drift.latest.md). 이 PHASE는 read-only이며 차이는 Fix needed로만 기록.")
 Save-ConsistencyReport -MarkdownContent $consistencySb.ToString()
@@ -539,7 +575,7 @@ elseif ($runtimeImagesStatus -eq "UNKNOWN") { $s1Infra = "WARNING" }
 elseif ($rdsStatus -ne "available" -or $redisStatus -ne "available") { $s1Infra = "WARNING" }
 elseif ($driftFail -and $driftFail.Count -gt 0) { $s1Infra = "WARNING" }
 
-$s2Smoke = "PASS"
+$s2Smoke = "ADVISORY"
 if ($apiHealthStatus -ne "OK") { $s2Smoke = "FAIL" }
 elseif ($apiHealthResponseTime -and [int]($apiHealthResponseTime -replace 'ms','') -gt 2000) { $s2Smoke = "WARNING" }
 
@@ -548,7 +584,7 @@ if ($frontStatus -eq "not checked") { $s3Front = "WARNING" }
 elseif ($frontStatus -ne "OK") { $s3Front = "WARNING" }
 if ($r2Status -ne "OK (wrangler list success)" -and $r2Status -ne "not checked") { $s3Front = "WARNING" }
 
-$s4Sqs = "PASS"
+$s4Sqs = "ADVISORY"
 if ([int]$msgDlqDepth -gt 0 -or [int]$aiDlqDepth -gt 0) { $s4Sqs = "WARNING" }
 
 $s5Video = "ADVISORY"
@@ -603,13 +639,13 @@ if ($apiPublicUrl) {
 [void]$sb.AppendLine("| Redis 연결 가능 | $redisStatus | ElastiCache describe-replication-groups |")
 [void]$sb.AppendLine("| **섹션 1 종합** | **$s1Infra** | |")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 2) 기능 Smoke Test (PASS/WARNING/FAIL + 근거)")
+[void]$sb.AppendLine("## 2) 기능 Smoke Test (PASS/WARNING/FAIL/ADVISORY + 근거)")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("| 항목 | 결과 | 근거 |")
 [void]$sb.AppendLine("|------|------|------|")
 [void]$sb.AppendLine("| /health | $apiHealthStatus | 응답시간: $apiHealthResponseTime (기준 p95 &lt; 2s, 샘플 1회) |")
 [void]$sb.AppendLine("| API root | $apiSmokeStatus | 공개 HTTPS 도메인 기준, root는 필수 서비스 엔드포인트 아님 |")
-[void]$sb.AppendLine("| 핵심 API 1~2개(인증/CRUD) | 수동 검증 권장 | 샘플 20회 평균/최대 기록 시 reports/ 에 URL 또는 로그 경로 기입 |")
+[void]$sb.AppendLine("| 핵심 API 1~2개(인증/CRUD) | 미검증(ADVISORY) | 이 read-only 스크립트는 인증·CRUD를 실행하지 않음. 변경 범위에 맞는 canary/E2E 근거를 별도 기록 |")
 [void]$sb.AppendLine("| **섹션 2 종합** | **$s2Smoke** | |")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("## 3) 프론트 / R2 / CDN (PASS/WARNING/FAIL + 근거)")
@@ -632,12 +668,12 @@ if ($corsStaticStatus -ne "not checked") {
 [void]$sb.AppendLine("| R2 버킷 접근 | $r2Status | wrangler r2 bucket list |")
 [void]$sb.AppendLine("| **섹션 3 종합** | **$s3Front** | |")
 [void]$sb.AppendLine("")
-[void]$sb.AppendLine("## 4) SQS 워커 테스트 (PASS/WARNING/FAIL + 근거)")
+[void]$sb.AppendLine("## 4) SQS 워커 테스트 (PASS/WARNING/FAIL/ADVISORY + 근거)")
 [void]$sb.AppendLine("")
 [void]$sb.AppendLine("| 항목 | 결과 | 근거 |")
 [void]$sb.AppendLine("|------|------|------|")
-[void]$sb.AppendLine("| AI queue enqueue→consume | 수동 검증 권장 | SQS 메시지 발송 후 워커 로그 확인 |")
-[void]$sb.AppendLine("| Messaging queue enqueue→consume | 수동 검증 권장 | 동일 |")
+[void]$sb.AppendLine("| AI queue enqueue→consume | 미검증(ADVISORY) | 이 read-only 스크립트는 메시지를 enqueue하지 않음. AI 변경 시 통제된 실경로와 워커 로그를 별도 확인 |")
+[void]$sb.AppendLine("| Messaging queue enqueue→consume | 미검증(ADVISORY) | 이 read-only 스크립트는 메시지를 enqueue하지 않음. Messaging 변경 시 통제된 실경로와 provider/worker 로그를 별도 확인 |")
 [void]$sb.AppendLine("| DLQ 적재 없음 | Messaging DLQ=$msgDlqDepth AI DLQ=$aiDlqDepth | get-queue-attributes ApproximateNumberOfMessages (DLQ) |")
 [void]$sb.AppendLine("| **섹션 4 종합** | **$s4Sqs** | |")
 [void]$sb.AppendLine("")
@@ -698,6 +734,8 @@ Save-DeployVerificationReport -MarkdownContent $sb.ToString()
 $consistencySummary = "PASS"
 if (-not $apiConsensusOk -or -not $aiConsensusOk -or -not $msgConsensusOk -or -not $toolsConsensusOk) { $consistencySummary = "WARNING" }
 if ($solapiCleanupCandidateCount -gt 0) { if ($consistencySummary -eq "PASS") { $consistencySummary = "WARNING" } }
+if ($driftFail -and $driftFail.Count -gt 0) { $consistencySummary = "WARNING" }
+if (-not $msgVisibilityOk -or -not $aiVisibilityOk) { $consistencySummary = "WARNING" }
 $finalSb = [System.Text.StringBuilder]::new()
 [void]$finalSb.AppendLine("# V1 최종 배포 검증 보고서")
 [void]$finalSb.AppendLine("")

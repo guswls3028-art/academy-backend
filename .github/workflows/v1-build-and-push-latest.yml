@@ -308,6 +308,11 @@ jobs:
         run: |
           pytest tests/test_smoke.py -v --tb=short -x
 
+      - name: Verify deployment evidence contracts
+        shell: pwsh
+        run: |
+          ./scripts/v1/test-verification-contract.ps1
+
   # ============================================================
   # Phase 2: Build and push images (latest + sha tag)
   # ----------------------------------------------------------------

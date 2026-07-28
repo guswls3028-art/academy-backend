@@ -16,6 +16,7 @@ from apps.domains.staffs.models import (
     ExpenseRecord,
     PayrollSnapshot,
     Staff,
+    StaffWorkType,
     WorkMonthLock,
     WorkRecord,
     WorkType,
@@ -238,6 +239,11 @@ class TestStaffManagementPermissions(TestCase):
             base_hourly_wage=10000,
             is_active=True,
         )
+        StaffWorkType.objects.create(
+            tenant=self.tenant,
+            staff=self.staff,
+            work_type=self.work_type,
+        )
 
     def _start_work(self, staff, user, work_type_id):
         from apps.domains.staffs.views import StaffViewSet
@@ -323,7 +329,7 @@ class TestStaffManagementPermissions(TestCase):
 
         self.assertTrue(can_access_staff_management(admin_user, self.tenant))
 
-    def test_non_manager_teacher_can_start_own_work_with_tenant_work_type(self):
+    def test_non_manager_teacher_can_start_own_work_with_assigned_work_type(self):
         response = self._start_work(self.staff, self.staff.user, self.work_type.id)
 
         self.assertEqual(response.status_code, 201, response.data)

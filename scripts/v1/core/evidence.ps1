@@ -1,6 +1,7 @@
 ﻿# Evidence table — fixed columns per evidence.schema.md. Netprobe jobId/status included.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "batch.ps1")
 
 function Get-EvidenceSnapshot {
     param([string]$NetprobeJobId = "", [string]$NetprobeStatus = "")
@@ -38,7 +39,11 @@ function Get-EvidenceSnapshot {
         $q = $qO.jobQueues[0]; $ev["opsQueueArn"] = $q.jobQueueArn; $ev["opsQueueState"] = $q.state
     }
     $jd = Get-LatestJobDef -Name $script:VideoJobDefName
-    if ($jd) { $ev["videoJobDefRevision"] = $jd.revision; $ev["videoJobDefVcpus"] = $jd.containerProperties.vcpus; $ev["videoJobDefMemory"] = $jd.containerProperties.memory }
+    if ($jd) {
+        $ev["videoJobDefRevision"] = $jd.revision
+        $ev["videoJobDefVcpus"] = Get-BatchContainerResourceValue -ContainerProperties $jd.containerProperties -Type "VCPU"
+        $ev["videoJobDefMemory"] = Get-BatchContainerResourceValue -ContainerProperties $jd.containerProperties -Type "MEMORY"
+    }
     $ruleR = $null; $ruleS = $null
     if ($script:EventBridgeReconcileRule) { $ruleR = Invoke-AwsJson @("events", "describe-rule", "--name", $script:EventBridgeReconcileRule, "--region", $R, "--output", "json") }
     if ($script:EventBridgeScanStuckRule) { $ruleS = Invoke-AwsJson @("events", "describe-rule", "--name", $script:EventBridgeScanStuckRule, "--region", $R, "--output", "json") }

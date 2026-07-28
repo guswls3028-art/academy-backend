@@ -63,9 +63,12 @@
 ## 5. 실행 후 검증
 
 - **deploy.ps1 내장:** After-Deploy Verification에서 ASG desired/inService, ALB target health, Batch Video CE/Queue 상태 출력. 실패 시 경고.
-- **수동 검증:** 배포 후 tenant/API/워커 동작을 넓게 확인하려면
-  `pwsh scripts/v1/run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport` 후
-  `pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default`
+- **수동 검증:** `run-deploy-verification.ps1`은 read-only 인프라·health·drift·
+  런타임 이미지 증빙을 수집한다. 인증 CRUD와 AI/Messaging enqueue→consume은
+  실행하지 않으므로, 변경 도메인의 동작은
+  `pwsh scripts/v1/run-production-canary.ps1 -Mode PostDeploy -AwsProfile default -WriteReport`
+  또는 해당 E2E/provider·worker 로그로 별도 확인한 뒤
+  `pwsh scripts/v1/run-deploy-verification.ps1 -AwsProfile default` 결과와 함께 판단한다.
   특정 QnA 회귀만 좁게 재확인할 때는 `pwsh scripts/v1/run-qna-e2e-verify.ps1 -AwsProfile default`
   학생 영상 재생 경로만 좁게 재확인할 때는 `python scripts/post_deploy_smoke/video_playback_chain.py`
 - **이미지 digest:** `docs/reports/release-manifest.latest.json`은 배포·런타임 검증까지 성공한 6개 이미지의 유일한 수동 배포 입력이다. `deploy-api-and-verify-workers.ps1`이 LT/Batch 설정뿐 아니라 실제 InService 컨테이너의 `RepoDigests`까지 비교한다.

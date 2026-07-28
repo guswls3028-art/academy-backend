@@ -161,25 +161,64 @@ function Get-CiBuildImageDigests {
 
 function Get-SuccessfulReleaseImageDigests {
     param([string]$Path)
-    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "Successful release manifest not found: $Path"
     }
-    $manifest = Get-Content -LiteralPath $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+
+    try {
+        $manifestBytes = [System.IO.File]::ReadAllBytes($Path)
+        $manifestHash = [Convert]::ToHexString(
+            [System.Security.Cryptography.SHA256]::HashData($manifestBytes)
+        )
+        $utf8 = [System.Text.UTF8Encoding]::new($false, $true)
+        $manifestContent = $utf8.GetString($manifestBytes).TrimStart([char]0xFEFF)
+        $manifest = $manifestContent | ConvertFrom-Json -ErrorAction Stop
+    } catch {
+        throw "Successful release manifest cannot be read: $Path ($($_.Exception.Message))"
+    }
+
+    $expectedImages = @(
+        "academy-base",
+        "academy-api",
+        "academy-video-worker",
+        "academy-messaging-worker",
+        "academy-ai-worker-cpu",
+        "academy-tools-worker"
+    )
+    $imageProperties = if ($null -ne $manifest.images) {
+        @($manifest.images.PSObject.Properties)
+    } else {
+        @()
+    }
+    $actualImages = @($imageProperties | ForEach-Object { $_.Name })
+    $unexpectedImages = @($actualImages | Where-Object { $_ -notin $expectedImages })
+    $missingImages = @($expectedImages | Where-Object { $_ -notin $actualImages })
+    $schemaVersionValid = $manifest.schemaVersion -is [long] -and $manifest.schemaVersion -eq 1
+    $completeValid = $manifest.complete -is [bool] -and $manifest.complete -eq $true
+    $statusValid = $manifest.status -is [string] -and $manifest.status -ceq "successful"
+    $gitShaValid = $manifest.gitSha -is [string] -and $manifest.gitSha -match '^[0-9a-fA-F]{40}$'
     if (
-        [int]$manifest.schemaVersion -ne 1 -or
-        -not [bool]$manifest.complete -or
-        [string]$manifest.status -ne "successful" -or
-        @($manifest.images.PSObject.Properties).Count -ne 6
+        -not $schemaVersionValid -or
+        -not $completeValid -or
+        -not $statusValid -or
+        -not $gitShaValid -or
+        $imageProperties.Count -ne $expectedImages.Count -or
+        $unexpectedImages.Count -gt 0 -or
+        $missingImages.Count -gt 0
     ) {
-        throw "Release manifest is not complete/successful with exactly six images: $Path"
+        throw "Release manifest is not complete/successful with the required six images: $Path"
     }
     $digests = @{}
-    foreach ($property in $manifest.images.PSObject.Properties) {
+    foreach ($property in $imageProperties) {
         $digest = [string]$property.Value.digest
         if ($digest -notmatch '^sha256:[0-9a-f]{64}$') { throw "Invalid release digest: $($property.Name)=$digest" }
         $digests[$property.Name] = $digest
     }
-    return [PSCustomObject]@{ GitSha = [string]$manifest.gitSha; Digests = $digests }
+    return [PSCustomObject]@{
+        GitSha = [string]$manifest.gitSha
+        Digests = $digests
+        ManifestHash = $manifestHash
+    }
 }
 
 function Format-RuntimeImageMarkdownCell {
@@ -307,6 +346,7 @@ fi
     }
     $ciPath = Join-Path $repoRoot "docs\reports\release-manifest.latest.json"
     $ciReport = Get-SuccessfulReleaseImageDigests -Path $ciPath
+    $manifestHash = $ciReport.ManifestHash
     $ciDigest = $ciReport.Digests["academy-api"]
 
     foreach ($row in $rows) {
@@ -348,6 +388,7 @@ fi
         [void]$sb.AppendLine("**UNKNOWN** — 성공 release digest 또는 런타임 RepoDigests를 완전히 확인하지 못했습니다.")
     }
     [void]$sb.AppendLine("- Successful release digest (academy-api): $(if ($ciDigest) { $ciDigest } else { 'not found' })")
+    [void]$sb.AppendLine("- Release manifest SHA256: $manifestHash")
     [void]$sb.AppendLine("- Instance count: $($rows.Count)")
     [void]$sb.AppendLine("")
     [void]$sb.AppendLine("| InstanceId | Container | State | ConfigImage | ImageId | RepoDigests | CI Match | Error |")
@@ -361,6 +402,7 @@ fi
         return [PSCustomObject]@{
             Status = $overallStatus
             CiDigest = $ciDigest
+            ManifestHash = $manifestHash
             Rows = $rows
         }
     }

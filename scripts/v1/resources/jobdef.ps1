@@ -1,6 +1,7 @@
 ﻿# JobDef: drift-based register. Uses v1/templates/batch.
 # AWS·Cloudflare(클플) 인증: Cursor 룰(.cursor/rules)에 의거 .env 직접 열람 후 키 사용. 배포·검증 시 에이전트가 환경변수로 설정한 뒤 호출.
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "..\core\batch.ps1")
 $V4Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $BatchPath = Join-Path $V4Root "templates\batch"
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
@@ -27,8 +28,12 @@ function Test-JobDefDrift { param($Desired, $Current)
     $c = $Current.containerProperties
     $d = $Desired.containerProperties
     if ($c.image -ne $d.image) { return $true }
-    if ([int]$c.vcpus -ne [int]$d.vcpus) { return $true }
-    if ([int]$c.memory -ne [int]$d.memory) { return $true }
+    $currentVcpus = Get-BatchContainerResourceValue -ContainerProperties $c -Type "VCPU"
+    $desiredVcpus = Get-BatchContainerResourceValue -ContainerProperties $d -Type "VCPU"
+    $currentMemory = Get-BatchContainerResourceValue -ContainerProperties $c -Type "MEMORY"
+    $desiredMemory = Get-BatchContainerResourceValue -ContainerProperties $d -Type "MEMORY"
+    if ($null -eq $currentVcpus -or $null -eq $desiredVcpus -or $currentVcpus -ne $desiredVcpus) { return $true }
+    if ($null -eq $currentMemory -or $null -eq $desiredMemory -or $currentMemory -ne $desiredMemory) { return $true }
     return $false
 }
 

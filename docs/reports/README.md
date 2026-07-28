@@ -24,6 +24,10 @@
 ## history
 
 [history/](history/)에는 audit/drift/cost-waste-audit 스냅샷을 보관한다.
+배포 검증 이력은 고유 실행 ID로 audit, drift, runtime image, consistency,
+front connection, release manifest 사본을 함께 저장한다. 필수 사본이 없거나
+복사 중 원본이 바뀌면 이력 생성을 중단하므로 이후 `*.latest` 갱신과 무관하게
+당시 판정을 재현할 수 있다.
 
 ## incidents
 
