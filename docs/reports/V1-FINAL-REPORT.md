@@ -5,12 +5,12 @@
 ## 요약
 | 항목 | 값 |
 |------|-----|
-| 검증 시각 | 2026-07-28T03:48:52.9790349+09:00 |
-| 최종 상태 | PASS |
+| 검증 시각 | 2026-07-28T12:20:57.6013223+09:00 |
+| 최종 상태 | WARNING |
 | SSOT↔Actual 정합성 | **PASS** |
-| GO/NO-GO | **GO** |
+| GO/NO-GO | **CONDITIONAL GO** |
 
-
+WARNING 영향도·완화책·추적 계획 확인 후 배포 판단. 상세: 아래 리스크 섹션 및 deploy-verification-latest.md.
 
 ## 합의사항 체크
 | 항목 | 결과 |
@@ -33,7 +33,7 @@
 
 ## 남은 WARNING 및 후속 작업
 - Drift 1건 이상 시: SSOT 반영 또는 합의된 예외 문서화 후 drift.latest.md 갱신.
-- (현재 리스크 없음)
+- [WARNING] FrontR2Cdn: FrontR2Cdn section summary is WARNING.
 
 ## 상세 보고서
 - [deploy-verification-latest.md](./deploy-verification-latest.md) — 인프라·Smoke·프론트/R2/CDN·SQS·Video·관측·GO/NO-GO 상세
@@ -42,3 +42,7 @@
 - [runtime-images.latest.md](./runtime-images.latest.md) — API 인스턴스별 런타임 이미지 digest와 CI digest 일치 여부
 - [audit.latest.md](./audit.latest.md) — 리소스·지표 스냅샷
 - [drift.latest.md](./drift.latest.md) — SSOT 대비 drift
+
+
+
+**Verification Run ID:** 9c2b2f9fc47a4a4cb0c4373114f8ecd3

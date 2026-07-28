@@ -14,7 +14,8 @@
 
 | 버전 | 상태 | 봉인 시점 | 변경 |
 |------|------|-----------|------|
-| [v1.11.34.md](v1.11.34.md) | **CURRENT** | 2026-07-28 KST | Advertised-function security audit, OpenCV 5 OMR compatibility, browser hardening, accurate global AI disclosure, and explicit transfer consent |
+| [v1.11.35.md](v1.11.35.md) | **CURRENT** | 2026-07-28 KST | Atomic deployment evidence, honest verification decisions, stable wrong-note PDF boundaries, and production closure |
+| [v1.11.34.md](v1.11.34.md) | production-deployed / v1.11.35로 승계 | 2026-07-28 KST | Advertised-function security audit, OpenCV 5 OMR compatibility, browser hardening, accurate global AI disclosure, and explicit transfer consent |
 | [v1.11.33.md](v1.11.33.md) | production-deployed / v1.11.34로 승계 | 2026-07-28 KST | Warning-free Problem Studio HWPX version manifest and final production package evidence |
 | [v1.11.32.md](v1.11.32.md) | production-deployed / v1.11.33로 승계 | 2026-07-28 KST | State-safe, mobile-friendly bank-transfer guidance with exact payable-invoice and saved-card controls |
 | [v1.11.31.md](v1.11.31.md) | production-deployed / v1.11.32로 승계 | 2026-07-28 KST | Final production closure for the isolated developer console, real-use inquiry inbox, iPhone identity, and durable push delivery |
